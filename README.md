@@ -14,6 +14,7 @@
 - [验收与证据契约](docs/acceptance.md)
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [本次交付与后续问题](docs/progress.md)
+- [Mac 本地运行与基本可玩检查](docs/mac-playability.md)
 - [纳尔谢目标](targets/narshe.md) / [歌剧目标](targets/opera.md)
 - [Agent 工作规则](AGENTS.md)
 
