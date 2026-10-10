@@ -29,6 +29,7 @@ export type WorldCatalog = {
   contentHash: string;
   characters: Record<string, Character>;
   minimap?: FieldContent["minimap"];
+  bgm?: FieldContent["bgm"];
   characterIssues: Record<string, ContentIssue[]>;
   maps: Record<
     string,

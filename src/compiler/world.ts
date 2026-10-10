@@ -10,6 +10,7 @@ import { missingFieldPoses } from "../core/character-media.js";
 import { fieldCollisionRange } from "../core/collision.js";
 import { tableId } from "./table-id.js";
 import { loadMinimapMedia } from "./map-ui.js";
+import { loadBgmMedia } from "./bgm.js";
 import type { Character, Evidence, Op, Sprite } from "../field/types.js";
 import type {
   WorldMapContent,
@@ -104,6 +105,10 @@ export async function compileWorld(root: string) {
   const corpus = await loadCorpus(root),
     files = await readSnapshot(root + "/build/world-media");
   const minimap = await loadMinimapMedia(
+    root,
+    text(corpus.manifest.parentSourceSetHash),
+  );
+  const bgm = await loadBgmMedia(
     root,
     text(corpus.manifest.parentSourceSetHash),
   );
@@ -319,6 +324,7 @@ export async function compileWorld(root: string) {
     characters,
     characterIssues,
     minimap,
+    bgm,
     maps: Object.fromEntries(
       maps.map((m) => [
         String(m.mapId),

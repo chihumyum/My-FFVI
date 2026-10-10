@@ -33,6 +33,7 @@ export class GameSession {
     while (this.remainder >= 10) {
       this.remainder -= 10;
       if (this.battle) {
+        this.field.bgm.advance(10, this.field.content.bgm);
         this.battle.advance(10);
         continue;
       }

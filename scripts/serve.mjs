@@ -2,7 +2,7 @@ import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 const root = resolve(import.meta.dirname, '..');
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png' };
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.flac': 'audio/flac' };
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405).end(); return; }
@@ -15,6 +15,7 @@ const server = http.createServer(async (req, res) => {
     else if (url.pathname.startsWith('/world/maps/')) { base = resolve(root, 'build/world/maps'); relative = decodeURIComponent(url.pathname.slice('/world/maps/'.length)); }
     else if (url.pathname.startsWith('/world-media/')) { base = resolve(root, 'build/world-media'); relative = decodeURIComponent(url.pathname.slice('/world-media/'.length)); }
     else if (url.pathname.startsWith('/map-ui/')) { base = resolve(root, 'build/map-ui'); relative = decodeURIComponent(url.pathname.slice('/map-ui/'.length)); }
+    else if (url.pathname.startsWith('/bgm/tracks/')) { base = resolve(root, 'build/bgm/tracks'); relative = decodeURIComponent(url.pathname.slice('/bgm/tracks/'.length)); }
     else if (url.pathname.startsWith('/battle/sprites/')) { base = resolve(root, 'build/battle/sprites'); relative = decodeURIComponent(url.pathname.slice('/battle/sprites/'.length)); }
     else if (url.pathname.startsWith('/game/')) { base = resolve(root, 'apps/game'); relative = decodeURIComponent(url.pathname.slice(6)) || 'index.html'; }
     else if (url.pathname.startsWith('/runtime/core/')) { base = resolve(root, 'dist/src/core'); relative = decodeURIComponent(url.pathname.slice('/runtime/core/'.length)); }

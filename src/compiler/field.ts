@@ -6,6 +6,7 @@ import { ImportedProject } from "../contracts.js";
 import { compileEntityGroup } from "./entity-group.js";
 import { tableId } from "./table-id.js";
 import { loadMinimapMedia } from "./map-ui.js";
+import { loadBgmMedia } from "./bgm.js";
 import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
 import {
   int32,
@@ -88,6 +89,39 @@ export function decodeFieldOp(
     return { ...site, kind: simple[name as keyof typeof simple] };
   if (name === "SetEntities" && m.type === 1 && form([], [], [0]) && s[0])
     return { ...site, kind: "entities", group: s[0] };
+  // Source Audio.PlayBGM: i0 master ID, i1 async, i2 channel, r0 fade, r1 seek.
+  // Synchronous playback, pan and negative fades remain explicit blockers.
+  if (
+    name === "PlayBGM" &&
+    m.type === 1 &&
+    form([0, 1, 2], [0, 1]) &&
+    i[0]! > 0 &&
+    i[1] === 1 &&
+    [0, 1].includes(i[2]!) &&
+    [r[0] ?? 0, r[1] ?? 0].every((n) => Number.isFinite(n) && n >= 0)
+  )
+    return {
+      ...site,
+      kind: "bgm-play",
+      track: int32(i[0]),
+      channel: i[2]!,
+      fade: Math.fround(r[0] ?? 0),
+      seek: Math.fround(r[1] ?? 0),
+    };
+  if (
+    name === "StopBGM" &&
+    m.type === 1 &&
+    form([0], [0]) &&
+    [0, 1].includes(i[0]!) &&
+    Number.isFinite(r[0] ?? 0) &&
+    (r[0] ?? 0) >= 0
+  )
+    return {
+      ...site,
+      kind: "bgm-stop",
+      channel: i[0]!,
+      fade: Math.fround(r[0] ?? 0),
+    };
   // MnemonicField.ChangeMap, RVA 0xB4F500: reserve s[0], then load map/PointIn.
   if (
     name === "ChangeMap" &&
@@ -523,6 +557,7 @@ export async function compileField(root: string): Promise<FieldContent> {
     },
     characters: chars,
     minimap: await loadMinimapMedia(root, project.sourceSetHash),
+    bgm: await loadBgmMedia(root, project.sourceSetHash),
     scripts,
     scriptLocals,
     entry: {
@@ -543,8 +578,8 @@ export async function compileField(root: string): Promise<FieldContent> {
     },
     limitations: [
       "纳尔谢街道战斗使用可玩开发规则；完整地图流程、队伍菜单和存读档仍未完成。",
-      "当前为静音开发运行；脚本音效请求有记录，音频完成等待暂按静音模式立即完成。",
-      "音频、环境粒子、精确镜头与演出时序尚未接入；骑乘合成和碰撞等待正式对照。",
+      "共用背景音乐已接入；本检查点尚未确定初始音乐。脚本音效仍记录为省略，音效完成等待暂按静音模式立即完成。",
+      "同步音乐等待、环境音、环境粒子、精确镜头与演出时序尚未接入；骑乘合成和碰撞等待正式对照。",
       "此入口使用明确的开场状态，尚未执行完整地图初始化脚本。",
       "既有开场检查点的 NPC 使用静止、不可推动的开发近似；新实体组不继承这些行为省略。",
     ],

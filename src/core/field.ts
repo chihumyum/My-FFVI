@@ -9,6 +9,7 @@ import type {
 } from "../field/types.js";
 import { EventState, executeEventControl } from "./event-state.js";
 import { requireMinimapMedia } from "./minimap.js";
+import { BgmState } from "./bgm.js";
 import {
   buildCollisionMapping,
   collisionMask,
@@ -117,6 +118,7 @@ export class FieldGame {
   constructor(
     readonly content: FieldContent,
     readonly eventState: EventState = new EventState(),
+    readonly bgm: BgmState = new BgmState(),
   ) {
     this.entityList = [...content.map.entities];
     const groups = content.map.groups,
@@ -350,6 +352,7 @@ export class FieldGame {
     while (this.remainder >= 10) {
       this.remainder -= 10;
       if (this.stop) continue;
+      this.bgm.advance(10, this.content.bgm);
       this.time += 10;
       if (this.fade) {
         this.fade.elapsed += 10;
@@ -560,6 +563,26 @@ export class FieldGame {
           return;
         }
         switch (op.kind) {
+          case "bgm-play":
+          case "bgm-stop":
+            try {
+              if (op.kind === "bgm-play")
+                this.bgm.play(
+                  op.track,
+                  op.channel,
+                  op.fade,
+                  op.seek,
+                  this.content.bgm,
+                );
+              else this.bgm.stop(op.channel, op.fade);
+            } catch (error) {
+              this.block(
+                error instanceof Error ? error.message : String(error),
+                op,
+              );
+              return;
+            }
+            break;
           case "change-map":
             this.stop = {
               kind: "map-transition",

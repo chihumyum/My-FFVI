@@ -2,6 +2,7 @@ import { GameSession } from "/runtime/core/game-session.js";
 import { verifyContent } from "/runtime/core/content-integrity.js";
 import { Renderer } from "./renderer.js";
 import { BattleView } from "./battle-view.js";
+import { BgmOutput } from "./audio.js";
 const $ = (id) => document.getElementById(id),
   canvas = $("game");
 let content,
@@ -22,6 +23,7 @@ let content,
   failed = false;
 const images = new Map(),
   loading = new WeakSet();
+const audio = new BgmOutput();
 const query = new URLSearchParams(location.search);
 const preview = query.has("map")
   ? {
@@ -72,6 +74,8 @@ function setupMapViews(next) {
   lastMinimapFrame = 0;
 }
 function reset() {
+  audio.reset();
+  audio.unlock().catch(failure);
   session = new GameSession(content, battleContent);
   game = session.field;
   renderer = openingRenderer;
@@ -215,6 +219,12 @@ $("restart").onclick = reset;
 $("retry").onclick = reset;
 $("resume").onclick = () => pause(false);
 $("menu-button").onclick = () => pause(!paused);
+$("sound-button").onclick = () => {
+  audio.mute();
+  $("sound-button").textContent = audio.muted ? "声音关" : "声音开";
+  $("sound-button").setAttribute("aria-pressed", String(!audio.muted));
+  focus();
+};
 $("map-button").onclick = () => setMap(!mapOpen);
 $("minimap-button").onclick = () => setMap(true);
 $("close-map").onclick = () => setMap(false);
@@ -227,13 +237,29 @@ function frame(now) {
   try {
     const dt = last ? Math.min(50, now - last) : 0;
     last = now;
-    if (started && !paused && !mapOpen && !document.hidden) {
+    const ready = started && audio.ready(game.bgm, game.content.bgm);
+    if (started && !paused && !mapOpen && !document.hidden && ready) {
       if (!session.battle && held.size) game.move([...held.values()].at(-1));
       session.advance(dt);
       if (game.stop?.kind === "map-transition" && !loading.has(game.stop))
         loadMap(session);
       sync();
     }
+    const audioReady = started && audio.ready(game.bgm, game.content.bgm);
+    audio.project(
+      game.bgm,
+      game.content.bgm,
+      audioReady &&
+        !failed &&
+        !paused &&
+        !mapOpen &&
+        !document.hidden &&
+        (!game.stop || !!session.battle),
+    );
+    text(
+      "music-status",
+      started ? audio.status(audioReady, game.bgm.voices.length > 0) : "",
+    );
     if (session.battle) battleView.draw(session.battle);
     else if (renderer) renderer.draw(game);
     if (!$("minimap-button").hidden && now - lastMinimapFrame >= 125) {
@@ -247,6 +273,7 @@ function frame(now) {
 }
 function failure(error) {
   failed = true;
+  audio.reset();
   held.clear();
   for (const id of [
     "pause",
@@ -379,6 +406,7 @@ async function loadMap(owner) {
     if (session !== owner || owner.field.stop !== request) return;
     const prepared = owner.world.prepare(catalog, map);
     const next = prepared.field.content;
+    await audio.prepare(prepared.field.bgm, next.bgm);
     await loadImages(
       new Set([
         ...Object.values(next.map.textures),

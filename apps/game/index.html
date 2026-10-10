@@ -13,7 +13,8 @@
         ><span id="map-label">纳尔谢</span>
         <span class="muted">/ 开发预览</span></span
       ><span
-        ><button
+        ><button id="sound-button" aria-pressed="true">声音开</button>
+        <button
           id="map-button"
           disabled
           aria-expanded="false"
@@ -120,6 +121,7 @@
         ><span>M 地图 · Esc 暂停</span><a href="/">查看迁移工作台</a>
       </footer>
       <p id="status" class="muted" aria-live="polite">正在载入地图与角色…</p>
+      <p id="music-status" class="muted"></p>
     </main>
     <script type="module" src="./app.js"></script>
   </body>

@@ -6,6 +6,7 @@ import { missingFieldPoses } from "./character-media.js";
 import { canonical } from "./canonical.js";
 import { fieldCollisionRange, inCollisionRange } from "./collision.js";
 import { requireMinimapMedia } from "./minimap.js";
+import { BgmState } from "./bgm.js";
 
 export type PreparedMap = {
   readonly field: FieldGame;
@@ -15,6 +16,7 @@ type Ownership = {
   from: FieldGame;
   stop: MapTransitionStop;
   state: string;
+  bgm: string;
   catalogHash: string;
 };
 
@@ -136,6 +138,7 @@ export class WorldSession {
       scriptLocals: target.scriptLocals,
       characters,
       ...(catalog.minimap ? { minimap: catalog.minimap } : {}),
+      ...(catalog.bgm ? { bgm: catalog.bgm } : {}),
       entry: {
         player: {
           x: entry.x,
@@ -150,10 +153,16 @@ export class WorldSession {
       },
       limitations: [
         ...target.limitations,
-        "开发运行保留当前队伍外观；地图淡出、BGM、随机遇敌和完整交通工具生命周期尚未接入。",
+        "开发运行保留当前队伍外观；地图淡出、自动选曲、随机遇敌和完整交通工具生命周期尚未接入。脚本背景音乐已接入。",
       ],
     };
-    const field = new FieldGame(content, state);
+    if (
+      from.bgm.voices.length &&
+      catalog.bgm?.sourceSetHash !== from.content.bgm?.sourceSetHash
+    )
+      throw new Error("BGM media changed during map transition");
+    const bgm = from.bgm.snapshot();
+    const field = new FieldGame(content, state, new BgmState(bgm));
     const script = request.continuation || target.initializer;
     if (script) field.startEvent(script);
     if (field.stop?.kind === "unsupported") throw new Error(field.stop.message);
@@ -162,6 +171,7 @@ export class WorldSession {
       from,
       stop,
       state: canonical(snapshot),
+      bgm: canonical(bgm),
       catalogHash: catalog.contentHash,
     });
     return prepared;
@@ -173,7 +183,8 @@ export class WorldSession {
       !ownership ||
       ownership.from !== this.current ||
       ownership.stop !== this.current.stop ||
-      ownership.state !== canonical(this.current.eventState.snapshot())
+      ownership.state !== canonical(this.current.eventState.snapshot()) ||
+      ownership.bgm !== canonical(this.current.bgm.snapshot())
     )
       return false;
     this.transitions.push({
