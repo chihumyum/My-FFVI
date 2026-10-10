@@ -8,6 +8,8 @@ import { knowledgeContext, sourceBindingFacts, validateRegistry } from "./knowle
 import { Recipe } from "./remaster/recipes.js";
 import { readSnapshot, snapshotFile } from "./compiler/integrity.js";
 
+import { compileField } from "./compiler/field.js";
+
 const root = resolve(import.meta.dirname, "../..");
 const repo = root.endsWith(`${sep}dist`) ? dirname(root) : root;
 const readJson = async (path: string): Promise<unknown> => JSON.parse(await readFile(resolve(repo, path), "utf8"));
@@ -55,6 +57,13 @@ async function main() {
   const [command = "validate", target = "narshe", ...extra] = process.argv.slice(2);
   if (extra.length && !(command === "knowledge" && extra.length === 2 && extra[0] === "--state")) throw new Error("Unexpected arguments");
   if (command === "validate") { await loadRegistries(); console.log("Registry identities and contracts valid"); return; }
+  if (command === "field") {
+    const result = await compileField(repo);
+    const out = resolve(repo, "build/game"); await mkdir(out, {recursive:true});
+    await writeFile(resolve(out, "narshe.json.tmp"), canonical(result) + "\n");
+    await rename(resolve(out, "narshe.json.tmp"), resolve(out, "narshe.json"));
+    console.log(JSON.stringify({output:"build/game/narshe.json", contentHash:result.contentHash, entities:result.map.entities.length, scripts:Object.keys(result.scripts).length})); return;
+  }
   if (command === "compile") { await compile(); return; }
   if (command === "knowledge") {
     const { world } = await loadRegistries(); const { project } = await loadImport();

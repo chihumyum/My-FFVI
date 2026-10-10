@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>FFVI Web · 纳尔谢</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header>
+      <span class="brand">FINAL FANTASY VI <small>WEB</small></span
+      ><span>纳尔谢 <span class="muted">/ 开发预览</span></span
+      ><button id="menu-button" disabled>暂停</button>
+    </header>
+    <main>
+      <div id="stage">
+        <canvas
+          id="game"
+          width="512"
+          height="288"
+          tabindex="0"
+          aria-label="纳尔谢游戏画面。方向键移动，空格确认，Escape 暂停。"
+        ></canvas>
+        <section id="welcome" class="overlay">
+          <div class="panel">
+            <span class="eyebrow">FINAL FANTASY VI</span>
+            <h1>纳尔谢</h1>
+            <p>踏入雪中的矿镇。</p>
+            <p class="muted">
+              当前开放开场行军后的短片段：移动、守卫出场与对白。到第一场战斗时结束预览。
+            </p>
+            <button id="start" disabled>正在载入…</button>
+            <p id="load-error" role="alert" hidden></p>
+          </div>
+        </section>
+        <section id="pause" class="overlay" hidden>
+          <div class="panel">
+            <h2>已暂停</h2>
+            <button id="resume">继续</button
+            ><button id="restart">重新开始此片段</button>
+            <details>
+              <summary>当前迁移范围</summary>
+              <ul id="limitations"></ul>
+            </details>
+          </div>
+        </section>
+        <section id="dialogue" aria-live="polite" hidden>
+          <strong id="speaker"></strong>
+          <p id="message"></p>
+          <button id="next" aria-label="继续对话">继续 ▾</button>
+        </section>
+        <section id="stop" class="overlay" hidden>
+          <div class="panel">
+            <h2 id="stop-title">片段结束</h2>
+            <p id="stop-message"></p>
+            <button id="retry">重新开始</button>
+            <details>
+              <summary>事件位置</summary>
+              <code id="stop-source"></code>
+            </details>
+          </div>
+        </section>
+      </div>
+      <footer>
+        <span>方向键 / WASD 移动</span><span>空格 / Enter 确认</span
+        ><span>Esc 暂停</span><a href="/">查看迁移工作台</a>
+      </footer>
+      <p id="status" class="muted" aria-live="polite">正在载入地图与角色…</p>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

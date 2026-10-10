@@ -1,0 +1,235 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    system-ui,
+    -apple-system,
+    "PingFang SC",
+    sans-serif;
+  color: #e8e8ef;
+  background: #0b1019;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+header {
+  height: 76px;
+  padding: 0 5vw;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #253145;
+  font-size: 14px;
+}
+.brand {
+  font-family: Georgia, serif;
+  letter-spacing: 2px;
+}
+.brand small {
+  font: 10px system-ui;
+  letter-spacing: 1px;
+  padding-left: 10px;
+  color: #88aabc;
+}
+.muted {
+  color: #97a7bd;
+}
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: #a4bfcd;
+}
+main {
+  max-width: 1104px;
+  margin: 36px auto;
+  padding: 0 24px;
+}
+#stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16/9;
+  overflow: hidden;
+  border: 1px solid #3d485a;
+  box-shadow: 0 20px 70px #0008;
+  background: #101723;
+}
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  outline: none;
+}
+canvas:focus-visible {
+  outline: 2px solid #91b3cb;
+  outline-offset: -2px;
+}
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #080e1bcc;
+  backdrop-filter: blur(2px);
+}
+[hidden] {
+  display: none !important;
+}
+.panel {
+  width: min(520px, 85%);
+  text-align: center;
+  padding: 32px;
+  background: #101c2bed;
+  border: 1px solid #50647b;
+  box-shadow: 0 10px 40px #0009;
+}
+h1 {
+  font-weight: 450;
+  font-size: 36px;
+  letter-spacing: 8px;
+  margin: 16px 0;
+}
+h2 {
+  font-size: 25px;
+  font-weight: 450;
+}
+p {
+  font-size: 14px;
+  line-height: 1.8;
+}
+button {
+  border: 1px solid #6c879b;
+  background: #1b2e42;
+  color: #f3f5fa;
+  border-radius: 3px;
+  padding: 10px 24px;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover {
+  background: #2a435b;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 2px solid #d9bb77;
+  outline-offset: 3px;
+}
+.panel button {
+  margin: 10px 6px;
+}
+details {
+  text-align: left;
+  margin-top: 20px;
+  color: #9bb0c7;
+  font-size: 12px;
+  line-height: 1.8;
+}
+summary {
+  cursor: pointer;
+}
+code {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+li {
+  margin: 6px 0;
+}
+#dialogue {
+  position: absolute;
+  bottom: 4%;
+  left: 5%;
+  width: 90%;
+  padding: 16px 24px 32px;
+  background: #152a52ed;
+  border: 3px double #c1cbd9;
+  border-radius: 6px;
+  box-shadow: 0 3px 15px #0009;
+  min-height: 110px;
+}
+#dialogue strong {
+  font-size: 16px;
+  color: #d8cd9e;
+}
+#dialogue p {
+  font-size: 18px;
+  line-height: 1.6;
+  white-space: pre-line;
+  margin: 8px 0;
+}
+#next {
+  position: absolute;
+  right: 12px;
+  bottom: 6px;
+  border: 0;
+  background: transparent;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #b6c9e7;
+}
+footer {
+  display: flex;
+  gap: 24px;
+  padding-top: 20px;
+  color: #8094aa;
+  font-size: 12px;
+}
+a {
+  color: #a2bacb;
+  margin-left: auto;
+  text-decoration: none;
+}
+#status {
+  font-size: 12px;
+}
+@media (max-width: 700px) {
+  header {
+    padding: 0 16px;
+    height: 60px;
+  }
+  .brand {
+    font-size: 11px;
+    letter-spacing: 0;
+  }
+  .brand small {
+    display: none;
+  }
+  main {
+    padding: 0 8px;
+    margin: 20px auto;
+  }
+  .panel {
+    padding: 12px;
+  }
+  h1 {
+    font-size: 26px;
+    margin: 6px 0;
+  }
+  .panel p {
+    font-size: 12px;
+  }
+  footer {
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  #dialogue {
+    padding: 8px 12px 20px;
+  }
+  #dialogue p {
+    font-size: 14px;
+  }
+}
+
+#pause,
+#stop {
+  z-index: 2;
+}
+#dialogue {
+  z-index: 1;
+}

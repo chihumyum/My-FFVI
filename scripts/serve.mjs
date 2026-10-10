@@ -9,6 +9,10 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     let base, relative;
     if (url.pathname === '/reports/status.json') { base = resolve(root, 'build/reports'); relative = 'status.json'; }
+    else if (url.pathname === '/game/content.json') { base = resolve(root, 'build/game'); relative = 'narshe.json'; }
+    else if (url.pathname.startsWith('/game/')) { base = resolve(root, 'apps/game'); relative = decodeURIComponent(url.pathname.slice(6)) || 'index.html'; }
+    else if (url.pathname.startsWith('/runtime/core/')) { base = resolve(root, 'dist/src/core'); relative = decodeURIComponent(url.pathname.slice('/runtime/core/'.length)); }
+    else if (url.pathname.startsWith('/field/sprites/')) { base = resolve(root, 'build/field/sprites'); relative = decodeURIComponent(url.pathname.slice('/field/sprites/'.length)); }
     else if (url.pathname.startsWith('/imports/textures/')) { base = resolve(root, 'build/import/textures'); relative = decodeURIComponent(url.pathname.slice('/imports/textures/'.length)); }
     else { base = resolve(root, 'apps/workbench'); relative = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1)); }
     const file = resolve(base, relative);
@@ -18,5 +22,5 @@ const server = http.createServer(async (req, res) => {
     res.end(req.method === 'HEAD' ? undefined : body);
   } catch { res.writeHead(404).end('Not found; run the import and npm run pipeline first.'); }
 });
-server.listen(4173, '127.0.0.1', () => console.log('FFVI Reweb inspection workbench: http://127.0.0.1:4173'));
+server.listen(4173, '127.0.0.1', () => console.log('FFVI Web game: http://127.0.0.1:4173/game/ (workbench: /)'));
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close(() => process.exit(0)));

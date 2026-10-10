@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Evidence-driven FFVI web migration and HD-2D reconstruction pipeline",
-  "engines": { "node": ">=22.18" },
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/tests/*.test.js",
@@ -12,8 +14,15 @@
     "pipeline": "npm run build && node dist/src/cli.js compile",
     "knowledge": "node dist/src/cli.js knowledge",
     "accept": "node dist/src/cli.js accept",
-    "dev": "node scripts/serve.mjs"
+    "dev": "node scripts/serve.mjs",
+    "game:build": "npm run build && node dist/src/cli.js field",
+    "game:check": "npm run game:build && node scripts/check-field.mjs"
   },
-  "dependencies": { "zod": "4.6.5" },
-  "devDependencies": { "@types/node": "22.19.0", "typescript": "5.9.3" }
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.0",
+    "typescript": "5.9.3"
+  }
 }
