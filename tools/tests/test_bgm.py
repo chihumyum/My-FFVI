@@ -2,7 +2,8 @@ import sys
 import unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'source_adapter'))
-from export_bgm import platform_name, stream_metadata
+from export_bgm import platform_name
+from audio_export import stream_metadata
 
 
 class BgmTests(unittest.TestCase):

@@ -4,7 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { loadCorpus } from "../dist/src/compiler/corpus.js";
 import { decodeFieldOp } from "../dist/src/compiler/field.js";
-import { loadBgmMedia } from "../dist/src/compiler/bgm.js";
+import { loadAudioMedia } from "../dist/src/compiler/audio.js";
 import { FieldGame } from "../dist/src/core/field.js";
 import { WorldSession } from "../dist/src/core/world-session.js";
 import { verifyContent } from "../dist/src/core/content-integrity.js";
@@ -14,7 +14,7 @@ const read = async (path) =>
   verifyContent(JSON.parse(await readFile(root + "/" + path, "utf8")));
 const corpus = await loadCorpus(root),
   bootstrap = await read("build/game/narshe.json");
-const media = await loadBgmMedia(root, bootstrap.parentSourceSetHash);
+const media = await loadAudioMedia(root, bootstrap.parentSourceSetHash, "bgm");
 assert.deepEqual(media, bootstrap.bgm);
 const catalog = await read("build/world/catalog.json");
 assert.deepEqual(catalog.bgm, media);
@@ -82,7 +82,7 @@ const report = {
   entrances,
   limitations: [
     "Executes source audio operands and map initializers; no original-runtime or audible comparison.",
-    "SyncBGM, synchronous PlayBGM, negative fades, environment sound, SE and automatic map/battle music remain incomplete.",
+    "SyncBGM, synchronous PlayBGM, negative fades, SE and automatic map/battle music remain incomplete.",
   ],
 };
 await writeFile(

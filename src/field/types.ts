@@ -1,7 +1,7 @@
 /** Browser-safe field content: no Unity readers or renderer dependencies in the runtime. */
 import type { EventControlOp, ScriptLocals } from "../core/event-state.js";
 import type { MinimapMedia } from "../core/minimap.js";
-import type { BgmMedia } from "../core/bgm.js";
+import type { AudioMedia } from "../core/static-audio.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -87,6 +87,14 @@ export type Op = Site &
         seek: number;
       }
     | { kind: "bgm-stop"; channel: number; fade: number }
+    | {
+        kind: "environment-play";
+        track: number;
+        channel: number;
+        fade: number;
+        seek: number;
+      }
+    | { kind: "environment-stop"; channel: number; fade: number }
     | { kind: "call"; target: number }
     | { kind: "wait"; seconds: number }
     | { kind: "puppet"; slot: number; actor: string; target: number }
@@ -142,7 +150,8 @@ export type FieldContent = {
   };
   characters: Record<string, Character>;
   minimap?: MinimapMedia;
-  bgm?: BgmMedia;
+  bgm?: AudioMedia;
+  environment?: AudioMedia;
   scripts: Record<string, Op[]>;
   scriptLocals?: Record<string, ScriptLocals | null>;
   entry: {

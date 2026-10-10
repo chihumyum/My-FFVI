@@ -1,7 +1,7 @@
-import { bgmGain, bgmPosition } from "/runtime/core/bgm.js";
+import { audioGain, audioPosition } from "/runtime/core/static-audio.js";
 
 /** Web Audio projects the current session. Decode completion cannot mutate game state. */
-export class BgmOutput {
+export class AudioOutput {
   constructor() {
     this.buffers = new Map();
     this.pending = new Map();
@@ -21,8 +21,8 @@ export class BgmOutput {
       this.master.connect(this.analyser);
       this.analyser.connect(this.context.destination);
     }
-    await this.context.resume();
     this.running = true;
+    await this.context.resume();
   }
   reset() {
     for (const node of this.nodes.values()) {
@@ -31,6 +31,10 @@ export class BgmOutput {
       node.gain.disconnect();
     }
     this.nodes.clear();
+    this.lastSignal = undefined;
+    this.failure = undefined;
+    for (const key of this.errors.keys()) this.pending.delete(key);
+    this.errors.clear();
   }
   mute() {
     this.muted = !this.muted;
@@ -42,14 +46,14 @@ export class BgmOutput {
     if (!this.pending.has(key)) {
       const task = (async () => {
         const response = await fetch(track.file);
-        if (!response.ok) throw new Error("音乐资源载入失败");
+        if (!response.ok) throw new Error("声音资源载入失败");
         const raw = await response.arrayBuffer();
         const digest = [
           ...new Uint8Array(await crypto.subtle.digest("SHA-256", raw)),
         ]
           .map((n) => n.toString(16).padStart(2, "0"))
           .join("");
-        if (digest !== track.sha256) throw new Error("音乐资源摘要不匹配");
+        if (digest !== track.sha256) throw new Error("声音资源摘要不匹配");
         if (!this.context) throw new Error("音频尚未通过开始按钮启用");
         const buffer = await this.context.decodeAudioData(raw);
         if (
@@ -57,7 +61,7 @@ export class BgmOutput {
           Math.abs(buffer.duration - track.frames / track.sampleRate) >
             2 / buffer.sampleRate
         )
-          throw new Error("浏览器解码后的音乐长度不匹配");
+          throw new Error("浏览器解码后的声音长度不匹配");
         this.buffers.set(key, buffer);
       })();
       // A failed stale request is recorded by asset identity and cannot stop an unrelated session.
@@ -70,11 +74,9 @@ export class BgmOutput {
     }
     return this.pending.get(key);
   }
-  ready(state, media) {
+  ready(projection) {
     let ready = true;
-    for (const voice of state.voices) {
-      const track = media?.tracks[voice.track];
-      if (!track) throw new Error("缺少音乐资源 " + voice.track);
+    for (const { track } of projection) {
       if (this.errors.has(track.sha256)) throw this.errors.get(track.sha256);
       if (!this.buffers.has(track.sha256)) {
         this.load(track);
@@ -83,17 +85,11 @@ export class BgmOutput {
     }
     return ready;
   }
-  async prepare(state, media) {
-    await Promise.all(
-      state.voices.map((voice) => {
-        const track = media?.tracks[voice.track];
-        if (!track) throw new Error("缺少音乐资源 " + voice.track);
-        return this.load(track);
-      }),
-    );
-    if (!this.ready(state, media)) throw new Error("音乐资源尚未就绪");
+  async prepare(projection) {
+    await Promise.all(projection.map(({ track }) => this.load(track)));
+    if (!this.ready(projection)) throw new Error("声音资源尚未就绪");
   }
-  project(state, media, running) {
+  project(projection, running) {
     if (!this.context) return;
     if (this.failure) throw this.failure;
     if (running !== this.running) {
@@ -104,7 +100,7 @@ export class BgmOutput {
         },
       );
     }
-    const wanted = new Set(state.voices.map((voice) => voice.id));
+    const wanted = new Set(projection.map(({ id }) => id));
     for (const [id, node] of this.nodes)
       if (!wanted.has(id)) {
         node.source.stop();
@@ -114,15 +110,14 @@ export class BgmOutput {
       }
     if (!running) return;
     const keep = new Set();
-    for (const voice of state.voices) {
-      const track = media.tracks[voice.track];
+    for (const { id, voice, track, time } of projection) {
       keep.add(track.sha256);
-      let node = this.nodes.get(voice.id);
+      let node = this.nodes.get(id);
       // The simulation intentionally caps long render frames. Correct audible drift after a stall.
       if (
         node &&
         Math.abs(
-          state.time -
+          time -
             node.clock -
             1000 * (this.context.currentTime - node.audioClock),
         ) > 125
@@ -130,14 +125,14 @@ export class BgmOutput {
         node.source.stop();
         node.source.disconnect();
         node.gain.disconnect();
-        this.nodes.delete(voice.id);
+        this.nodes.delete(id);
         node = null;
       }
       if (!node) {
         const source = this.context.createBufferSource(),
           gain = this.context.createGain();
         source.buffer = this.buffers.get(track.sha256);
-        if (!source.buffer) throw new Error("音乐尚未完成解码");
+        if (!source.buffer) throw new Error("声音尚未完成解码");
         source.loop = track.loop !== null;
         if (track.loop) {
           source.loopStart = track.loop.start / track.sampleRate;
@@ -145,28 +140,28 @@ export class BgmOutput {
         }
         source.connect(gain);
         gain.connect(this.master);
-        gain.gain.value = bgmGain(voice, state.time);
-        source.start(0, bgmPosition(voice, state.time, track));
+        gain.gain.value = audioGain(voice, time, track);
+        source.start(0, audioPosition(voice, time, track));
         node = {
           source,
           gain,
-          clock: state.time,
+          clock: time,
           audioClock: this.context.currentTime,
         };
-        this.nodes.set(voice.id, node);
+        this.nodes.set(id, node);
       }
       // Linear gain is an explicit Web presentation curve, not a claim about the native mixer.
       node.gain.gain.cancelScheduledValues(this.context.currentTime);
       node.gain.gain.setValueAtTime(
-        bgmGain(voice, state.time),
+        audioGain(voice, time, track),
         this.context.currentTime,
       );
       node.gain.gain.linearRampToValueAtTime(
-        bgmGain(voice, state.time + 16),
+        audioGain(voice, time + 16, track),
         this.context.currentTime + 0.016,
       );
     }
-    // Keep active streams plus two recent inactive decodes, rather than all 105 PCM buffers.
+    // Keep active streams plus two recent inactive decodes, rather than the whole PCM library.
     const inactive = [...this.buffers.keys()].filter((key) => !keep.has(key));
     for (const key of inactive.slice(0, -2)) {
       this.buffers.delete(key);
@@ -174,14 +169,27 @@ export class BgmOutput {
     }
   }
   status(ready, active) {
-    if (!ready) return "正在载入音乐…";
+    if (!ready) return "正在载入声音…";
     if (this.muted) return "已静音";
     if (!this.running || !active) return "";
     this.analyser.getFloatTimeDomainData(this.wave);
     if (this.wave.some((value) => Math.abs(value) > 0.00001))
       this.lastSignal = performance.now();
     return performance.now() - (this.lastSignal ?? -1000) < 500
-      ? "音乐播放中"
+      ? "声音播放中"
       : "";
   }
+}
+
+/** Namespaced voice identities prevent BGM and environment slots from replacing each other. */
+export function audioProjection(field) {
+  return ["bgm", "environment"].flatMap((kind) => {
+    const state = field[kind],
+      media = field.content[kind];
+    return state.voices.map((voice) => {
+      const track = media?.tracks[voice.track];
+      if (!track) throw new Error("缺少声音资源 " + kind + "/" + voice.track);
+      return { id: kind + ":" + voice.id, voice, track, time: state.time };
+    });
+  });
 }

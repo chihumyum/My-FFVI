@@ -19,6 +19,7 @@
 - [共用碰撞与斜坡批次](docs/collision.md)
 - [小地图与相连地图批次](docs/minimap.md)
 - [共用背景音乐与原始音频导出](docs/bgm.md)
+- [共用环境音、来源音量与独立通道](docs/environment-audio.md)
 - [本次交付与后续问题](docs/progress.md)
 - [Web 场景运行与实现边界](docs/web-field.md)
 - [首战数据与规则迁移](docs/battle-migration.md)
@@ -39,6 +40,7 @@ python3 -m venv .venv
 .venv/bin/python tools/source_adapter/export_corpus.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 .venv/bin/python tools/source_adapter/export_map_ui.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 .venv/bin/python tools/source_adapter/export_bgm.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
+.venv/bin/python tools/source_adapter/export_environment.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 npm run pipeline
 .venv/bin/python tools/source_adapter/export_field.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 npm run game:check
@@ -58,10 +60,12 @@ Web 片段为 `http://127.0.0.1:4173/game/`，方向键/WASD 移动，空格/Ent
 .venv/bin/python tools/source_adapter/export_world_media.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 .venv/bin/python tools/source_adapter/export_map_ui.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 .venv/bin/python tools/source_adapter/export_bgm.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
+.venv/bin/python tools/source_adapter/export_environment.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 npm run world:build
 npm run world:check
 npm run minimap:check
 npm run bgm:check
+npm run environment:check
 ```
 
 `/game/?map=<地图ID>&entrance=<入口ObjectId>` 使用相同加载器检查来源入口；未知剧情状态仍未知。它是显式开发预览，不是通关存档，也不证明主线可达。
@@ -70,6 +74,7 @@ npm run bgm:check
 `minimap:check` 校验共用图标、来源标记，并自动发现相邻入口/出口对，通过真实移动验证往返切图与标记更新。游戏中按 M 展开总览，再按 M / Esc 返回。
 `bgm:check` 校验来源曲库，并在同一游戏 VM 中隔离执行可支持的 PlayBGM / StopBGM 原始指令参数及已加载入口。105 条音乐已按原始循环点导出；脚本选曲、跨图位置继承、暂停与静音已接入。开场开发检查点仍缺少已确认的初始选曲；可从 `/game/?map=175&entrance=1` 的来源初始化脚本检查音乐，点击开始后播放，右上角切换声音。未完成自动选曲、同步等待、战斗切曲和音效。
 `playable:check` 编译地图与首战内容，并检查胜负、结算、战后继续移动和失败重试。
+`environment:check` 检查完整脚本引用的 20 个环境音资源、独立静态通道与来源初始化；保留来源音量、循环和包络，相同 PCM 共用缓存但不合并语义 ID。暂停/变调及 SEAD 完整混音仍未迁移。
 `corpus:plan` 分析全量已导出的脚本与地图依赖，生成共用能力工作队列；导出命令和当前推进方式见 [批量迁移](docs/batch-migration.md)。
 `events:check` 用同一游戏 VM 整批运行符合能力条件的原始脚本，检查不同输入下的分支和状态变化；不代表这些地图已经可玩。
 `maps:check` 解析全部地图包、实体组和入口引用，并整批检查能力已闭合的实体组选择脚本。

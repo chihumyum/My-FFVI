@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import tempfile
-import wave
+from audio_export import decode_stream
 from export_field import checked_snapshot
 from import_source import REPO, canonical, digest, source_ref, write_json
 
@@ -20,21 +20,6 @@ def platform_name(name):
     if p.name != name or '\\' in name or p.suffix != '.mab' or name.count('.') != 1:
         raise ValueError('Unsupported BGM asset name')
     return p.stem + '.win.mab.bytes'
-
-
-def stream_metadata(raw):
-    if raw.get('version') != 'r2117' or raw.get('streamInfo', {}).get('total') != 1:
-        raise ValueError('Unreviewed decoder or multi-stream BGM')
-    rate, frames, channels = (raw[k] for k in ('sampleRate', 'numberOfSamples', 'channels'))
-    if any(type(n) is not int or n <= 0 for n in (rate, frames, channels)) or channels > 2:
-        raise ValueError('Unsupported BGM stream geometry')
-    loop = raw['loopingInfo']
-    if loop is not None and (set(loop) != {'start', 'end'} or
-            any(type(n) is not int for n in loop.values()) or
-            not 0 <= loop['start'] < loop['end'] <= frames):
-        raise ValueError('Invalid BGM sample loop')
-    return {'sampleRate': rate, 'frames': frames, 'channels': channels, 'loop': loop,
-            'codec': raw['encoding'], 'streamName': raw['streamInfo']['name']}
 
 
 def export_bgm(source, out):
@@ -74,7 +59,7 @@ def export_bgm(source, out):
     ffmpeg_version = subprocess.check_output(['ffmpeg', '-version'], text=True).splitlines()[0]
     tracks = {}; (out / 'tracks').mkdir()
     with tempfile.TemporaryDirectory(prefix='bgm-decode-', dir=REPO / 'build') as tmp:
-        temp = Path(tmp); bank = temp / 'source.mab'; pcm = temp / 'stream.wav'; flac = temp / 'stream.flac'
+        temp = Path(tmp); bank = temp / 'source.mab'
         for n, row in enumerate(sorted(rows, key=lambda r: int(r['id']))):
             track_id = str(int(row['id']))
             if int(track_id) <= 0 or track_id in tracks or row['bgm_name'] != 'ff6_bgm':
@@ -84,24 +69,8 @@ def export_bgm(source, out):
             if obj is None or obj.type.name != 'TextAsset': raise ValueError('Missing exact BGM bank: ' + path)
             raw = obj.read().m_Script.encode('utf-8', 'surrogateescape')
             bank.write_bytes(raw)
-            details = json.loads(subprocess.check_output(['vgmstream-cli', '-m', '-I', str(bank)], text=True))
-            meta = stream_metadata(details)
-            subprocess.run(['vgmstream-cli', '-i', '-W', '1', '-o', str(pcm), str(bank)],
-                           check=True, stdout=subprocess.DEVNULL)
-            with wave.open(str(pcm), 'rb') as wav:
-                if (wav.getframerate(), wav.getnframes(), wav.getnchannels(), wav.getsampwidth()) != (
-                        meta['sampleRate'], meta['frames'], meta['channels'], 2):
-                    raise ValueError('Decoded sample geometry changed')
-                pcm_hash = hashlib.sha256(wav.readframes(meta['frames'])).hexdigest()
-            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(pcm), '-map_metadata', '-1',
-                            '-fflags', '+bitexact', '-flags:a', '+bitexact', '-c:a', 'flac',
-                            '-compression_level', '5', str(flac)], check=True)
-            # Confirm that compression preserves every decoded sample, without retaining full WAVs.
-            restored = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(flac), '-f', 's16le', '-'])
-            if hashlib.sha256(restored).hexdigest() != pcm_hash: raise ValueError('BGM PCM round trip changed')
-            sha = digest(flac); relative = 'tracks/' + sha + '.flac'
-            shutil.copyfile(flac, out / relative)
-            tracks[track_id] = {**meta, 'file': relative, 'sha256': sha, 'pcmSha256': pcm_hash,
+            decoded = decode_stream(bank, temp, out)
+            tracks[track_id] = {**decoded,
                 'bankSha256': hashlib.sha256(raw).hexdigest(), 'source': ref(music, path, obj),
                 'tableSource': {**table_source, 'pointer': '/id/' + track_id}, 'assetName': row['asset_name']}
             if (n + 1) % 10 == 0: print(f'Decoded and verified {n + 1}/{len(rows)} BGM tracks', flush=True)

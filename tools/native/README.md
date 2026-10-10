@@ -56,3 +56,12 @@ may remain: use a fresh project to eliminate those assumptions when necessary.
 An inferred generic getter name is never proof of the source-level operation.
 Check virtual slots, PE bytes and assembly before turning output into runtime
 rules. The tool always marks `semanticsVerified:false`.
+
+`ExportBinaryMethods.java` handles already analyzed non-IL2CPP libraries such as
+the source `sead.dll`. It takes an ignored output directory and comma-separated
+RVAs. Import and analyze the library in a separate Ghidra project first; this
+exporter requires an existing function at every requested address and does not
+invent signatures. Its `complete.json` records the executable digest, every
+function-body byte range, decompiled text digests and entry references. Require
+the fresh receipt and recheck all ranges against the original PE file. It uses
+a 60-second decompiler limit per method and likewise never certifies semantics.

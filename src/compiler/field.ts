@@ -6,7 +6,7 @@ import { ImportedProject } from "../contracts.js";
 import { compileEntityGroup } from "./entity-group.js";
 import { tableId } from "./table-id.js";
 import { loadMinimapMedia } from "./map-ui.js";
-import { loadBgmMedia } from "./bgm.js";
+import { loadAudioMedia } from "./audio.js";
 import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
 import {
   int32,
@@ -89,27 +89,28 @@ export function decodeFieldOp(
     return { ...site, kind: simple[name as keyof typeof simple] };
   if (name === "SetEntities" && m.type === 1 && form([], [], [0]) && s[0])
     return { ...site, kind: "entities", group: s[0] };
-  // Source Audio.PlayBGM: i0 master ID, i1 async, i2 channel, r0 fade, r1 seek.
+  // Source Audio.PlayBGM/PlayEnvSe: i0 master ID, i1 async, i2 channel, r0 fade, r1 seek.
   // Synchronous playback, pan and negative fades remain explicit blockers.
   if (
-    name === "PlayBGM" &&
+    ["PlayBGM", "PlayEnvSe"].includes(name) &&
     m.type === 1 &&
     form([0, 1, 2], [0, 1]) &&
     i[0]! > 0 &&
     i[1] === 1 &&
     [0, 1].includes(i[2]!) &&
+    (name === "PlayBGM" || (r[1] ?? 0) === 0) &&
     [r[0] ?? 0, r[1] ?? 0].every((n) => Number.isFinite(n) && n >= 0)
   )
     return {
       ...site,
-      kind: "bgm-play",
+      kind: name === "PlayBGM" ? "bgm-play" : "environment-play",
       track: int32(i[0]),
       channel: i[2]!,
       fade: Math.fround(r[0] ?? 0),
       seek: Math.fround(r[1] ?? 0),
     };
   if (
-    name === "StopBGM" &&
+    ["StopBGM", "StopEnvSe"].includes(name) &&
     m.type === 1 &&
     form([0], [0]) &&
     [0, 1].includes(i[0]!) &&
@@ -118,7 +119,7 @@ export function decodeFieldOp(
   )
     return {
       ...site,
-      kind: "bgm-stop",
+      kind: name === "StopBGM" ? "bgm-stop" : "environment-stop",
       channel: i[0]!,
       fade: Math.fround(r[0] ?? 0),
     };
@@ -557,7 +558,12 @@ export async function compileField(root: string): Promise<FieldContent> {
     },
     characters: chars,
     minimap: await loadMinimapMedia(root, project.sourceSetHash),
-    bgm: await loadBgmMedia(root, project.sourceSetHash),
+    bgm: await loadAudioMedia(root, project.sourceSetHash, "bgm"),
+    environment: await loadAudioMedia(
+      root,
+      project.sourceSetHash,
+      "environment",
+    ),
     scripts,
     scriptLocals,
     entry: {
@@ -579,7 +585,8 @@ export async function compileField(root: string): Promise<FieldContent> {
     limitations: [
       "纳尔谢街道战斗使用可玩开发规则；完整地图流程、队伍菜单和存读档仍未完成。",
       "共用背景音乐已接入；本检查点尚未确定初始音乐。脚本音效仍记录为省略，音效完成等待暂按静音模式立即完成。",
-      "同步音乐等待、环境音、环境粒子、精确镜头与演出时序尚未接入；骑乘合成和碰撞等待正式对照。",
+      "同步音乐等待、环境音暂停/变调、音效、环境粒子、精确镜头与演出时序尚未接入；骑乘合成和碰撞等待正式对照。",
+      "环境音已保留来源音量、循环和线性淡入；SEAD 类别混音、起止宏、空间处理与混响未复现。",
       "此入口使用明确的开场状态，尚未执行完整地图初始化脚本。",
       "既有开场检查点的 NPC 使用静止、不可推动的开发近似；新实体组不继承这些行为省略。",
     ],

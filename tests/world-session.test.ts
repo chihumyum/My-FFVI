@@ -438,11 +438,61 @@ test("map changes replace marker groups and reject missing icons without committ
   assert.equal(minimapMarkers(f.world.field.entities).length, 0);
 });
 
-test("map preparation carries BGM position, validates before commit, and cannot leak an abandoned audio change", () => {
+for (const bus of ["bgm", "environment"] as const)
+  test(`map preparation carries ${bus} position, validates before commit, and cannot leak an abandoned audio change`, () => {
+    const f = fixture();
+    const track = {
+      file: "synthetic.flac",
+      sha256: "synthetic",
+      frames: 441000,
+      sampleRate: 44100,
+      channels: 2,
+      loop: null,
+      source,
+      tableSource: source,
+    };
+    const media = {
+      sourceSetHash: "bgm-fixture",
+      tracks: { 1: track, 2: track },
+    };
+    f.world.field.content[bus] = media;
+    f.catalog[bus] = media;
+    f.world.field[bus].play(1, 0, 0, 0, media);
+    f.world.field.advance(900);
+    f.world.field.startEvent("leave");
+    const before = f.world.field[bus].snapshot();
+    f.target.initializer = "arrival";
+    f.target.scripts.arrival = [
+      { ...site, kind: `${bus}-play`, track: 1, channel: 0, fade: 0, seek: 0 },
+      { ...site, kind: "exit" },
+    ];
+    const prepared = f.world.prepare(f.catalog, f.target);
+    assert.deepEqual(prepared.field[bus].snapshot(), before);
+    f.catalog[bus] = { ...media, sourceSetHash: "changed" };
+    assert.throws(() => f.world.prepare(f.catalog, f.target), /media changed/);
+    f.catalog[bus] = media;
+    f.target.scripts.arrival[0] = {
+      ...site,
+      kind: `${bus}-play`,
+      track: 99,
+      channel: 0,
+      fade: 0,
+      seek: 0,
+    };
+    assert.throws(
+      () => f.world.prepare(f.catalog, f.target),
+      /Missing audio media/,
+    );
+    assert.deepEqual(f.world.field[bus].snapshot(), before);
+    f.world.field[bus].stop(0, 0);
+    assert.equal(f.world.commit(prepared), false);
+  });
+
+test("BGM and environment commands keep separate channel identities, including across map preparation", () => {
   const f = fixture();
   const track = {
-    file: "synthetic.flac",
-    sha256: "synthetic",
+    file: "same.flac",
+    sha256: "same",
     frames: 441000,
     sampleRate: 44100,
     channels: 2,
@@ -451,35 +501,43 @@ test("map preparation carries BGM position, validates before commit, and cannot 
     tableSource: source,
   };
   const media = {
-    sourceSetHash: "bgm-fixture",
+    sourceSetHash: "shared-fixture",
     tracks: { 1: track, 2: track },
   };
-  f.world.field.content.bgm = media;
-  f.catalog.bgm = media;
-  f.world.field.bgm.play(1, 0, 0, 0, media);
-  f.world.field.advance(900);
+  for (const bus of ["bgm", "environment"] as const) {
+    f.world.field.content[bus] = media;
+    f.catalog[bus] = media;
+    f.world.field.content.scripts[bus] = [
+      { ...site, kind: `${bus}-play`, track: 1, channel: 0, fade: 0, seek: 0 },
+      { ...site, kind: "exit" },
+    ];
+    f.world.field.startEvent(bus);
+  }
+  f.world.field.advance(300);
+  assert.equal(
+    f.world.field.bgm.voices[0]!.id,
+    f.world.field.environment.voices[0]!.id,
+  );
+  assert.equal(f.world.field.bgm.time, f.world.field.environment.time);
   f.world.field.startEvent("leave");
-  const before = f.world.field.bgm.snapshot();
   f.target.initializer = "arrival";
   f.target.scripts.arrival = [
-    { ...site, kind: "bgm-play", track: 1, channel: 0, fade: 0, seek: 0 },
+    { ...site, kind: "environment-stop", channel: 0, fade: 0 },
+    {
+      ...site,
+      kind: "environment-play",
+      track: 2,
+      channel: 1,
+      fade: 0,
+      seek: 0,
+    },
     { ...site, kind: "exit" },
   ];
   const prepared = f.world.prepare(f.catalog, f.target);
-  assert.deepEqual(prepared.field.bgm.snapshot(), before);
-  f.target.scripts.arrival[0] = {
-    ...site,
-    kind: "bgm-play",
-    track: 99,
-    channel: 0,
-    fade: 0,
-    seek: 0,
-  };
-  assert.throws(
-    () => f.world.prepare(f.catalog, f.target),
-    /Missing BGM media/,
-  );
-  assert.deepEqual(f.world.field.bgm.snapshot(), before);
-  f.world.field.bgm.stop(0, 0);
-  assert.equal(f.world.commit(prepared), false);
+  assert.deepEqual(prepared.field.bgm.snapshot(), f.world.field.bgm.snapshot());
+  assert.equal(f.world.field.environment.voices[0]!.track, 1);
+  assert.equal(prepared.field.environment.voices[0]!.track, 2);
+  assert.ok(f.world.commit(prepared));
+  assert.equal(f.world.field.environment.snapshot().channels[0], null);
+  assert.equal(f.world.field.bgm.voices[0]!.track, 1);
 });

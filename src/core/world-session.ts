@@ -6,7 +6,7 @@ import { missingFieldPoses } from "./character-media.js";
 import { canonical } from "./canonical.js";
 import { fieldCollisionRange, inCollisionRange } from "./collision.js";
 import { requireMinimapMedia } from "./minimap.js";
-import { BgmState } from "./bgm.js";
+import { StaticAudioState } from "./static-audio.js";
 
 export type PreparedMap = {
   readonly field: FieldGame;
@@ -17,6 +17,7 @@ type Ownership = {
   stop: MapTransitionStop;
   state: string;
   bgm: string;
+  environment: string;
   catalogHash: string;
 };
 
@@ -139,6 +140,7 @@ export class WorldSession {
       characters,
       ...(catalog.minimap ? { minimap: catalog.minimap } : {}),
       ...(catalog.bgm ? { bgm: catalog.bgm } : {}),
+      ...(catalog.environment ? { environment: catalog.environment } : {}),
       entry: {
         player: {
           x: entry.x,
@@ -153,7 +155,8 @@ export class WorldSession {
       },
       limitations: [
         ...target.limitations,
-        "开发运行保留当前队伍外观；地图淡出、自动选曲、随机遇敌和完整交通工具生命周期尚未接入。脚本背景音乐已接入。",
+        "开发运行保留当前队伍外观；地图淡出、自动选曲、随机遇敌和完整交通工具生命周期尚未接入。脚本背景音乐和环境音播放/停止已接入。",
+        "环境音暂停/变调、SEAD 类别混音、起止宏、空间处理与混响尚未复现。",
       ],
     };
     if (
@@ -162,7 +165,19 @@ export class WorldSession {
     )
       throw new Error("BGM media changed during map transition");
     const bgm = from.bgm.snapshot();
-    const field = new FieldGame(content, state, new BgmState(bgm));
+    if (
+      from.environment.voices.length &&
+      catalog.environment?.sourceSetHash !==
+        from.content.environment?.sourceSetHash
+    )
+      throw new Error("Environment media changed during map transition");
+    const environment = from.environment.snapshot();
+    const field = new FieldGame(
+      content,
+      state,
+      new StaticAudioState(bgm),
+      new StaticAudioState(environment),
+    );
     const script = request.continuation || target.initializer;
     if (script) field.startEvent(script);
     if (field.stop?.kind === "unsupported") throw new Error(field.stop.message);
@@ -172,6 +187,7 @@ export class WorldSession {
       stop,
       state: canonical(snapshot),
       bgm: canonical(bgm),
+      environment: canonical(environment),
       catalogHash: catalog.contentHash,
     });
     return prepared;
@@ -184,7 +200,8 @@ export class WorldSession {
       ownership.from !== this.current ||
       ownership.stop !== this.current.stop ||
       ownership.state !== canonical(this.current.eventState.snapshot()) ||
-      ownership.bgm !== canonical(this.current.bgm.snapshot())
+      ownership.bgm !== canonical(this.current.bgm.snapshot()) ||
+      ownership.environment !== canonical(this.current.environment.snapshot())
     )
       return false;
     this.transitions.push({

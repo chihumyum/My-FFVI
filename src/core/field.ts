@@ -9,7 +9,7 @@ import type {
 } from "../field/types.js";
 import { EventState, executeEventControl } from "./event-state.js";
 import { requireMinimapMedia } from "./minimap.js";
-import { BgmState } from "./bgm.js";
+import { StaticAudioState } from "./static-audio.js";
 import {
   buildCollisionMapping,
   collisionMask,
@@ -118,7 +118,8 @@ export class FieldGame {
   constructor(
     readonly content: FieldContent,
     readonly eventState: EventState = new EventState(),
-    readonly bgm: BgmState = new BgmState(),
+    readonly bgm: StaticAudioState = new StaticAudioState(),
+    readonly environment: StaticAudioState = new StaticAudioState(),
   ) {
     this.entityList = [...content.map.entities];
     const groups = content.map.groups,
@@ -353,6 +354,7 @@ export class FieldGame {
       this.remainder -= 10;
       if (this.stop) continue;
       this.bgm.advance(10, this.content.bgm);
+      this.environment.advance(10, this.content.environment);
       this.time += 10;
       if (this.fade) {
         this.fade.elapsed += 10;
@@ -565,16 +567,18 @@ export class FieldGame {
         switch (op.kind) {
           case "bgm-play":
           case "bgm-stop":
+          case "environment-play":
+          case "environment-stop":
             try {
-              if (op.kind === "bgm-play")
-                this.bgm.play(
-                  op.track,
-                  op.channel,
-                  op.fade,
-                  op.seek,
-                  this.content.bgm,
-                );
-              else this.bgm.stop(op.channel, op.fade);
+              const bus = op.kind.startsWith("environment-")
+                ? this.environment
+                : this.bgm;
+              const media = op.kind.startsWith("environment-")
+                ? this.content.environment
+                : this.content.bgm;
+              if (op.kind === "bgm-play" || op.kind === "environment-play")
+                bus.play(op.track, op.channel, op.fade, op.seek, media);
+              else bus.stop(op.channel, op.fade);
             } catch (error) {
               this.block(
                 error instanceof Error ? error.message : String(error),
