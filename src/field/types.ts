@@ -10,6 +10,8 @@ export type Evidence = {
 };
 export type FieldEntity = Point & {
   id: string;
+  objectId?: number;
+  destination?: { mapId: number; entrance: number };
   layer: number;
   kind: number;
   width: number;
@@ -20,6 +22,12 @@ export type FieldEntity = Point & {
   collision: number | null;
   destinationLayer: number | null;
   source: Evidence;
+};
+export type EntityGroup = {
+  name: string;
+  source: Evidence;
+  entities: FieldEntity[];
+  blockers: { reason: string; source: Evidence }[];
 };
 export type Sprite = {
   file: string;
@@ -53,6 +61,7 @@ export type Op = Site &
   (
     | { kind: "nop" | "exit" | "return" | "join" | "hide" }
     | EventControlOp
+    | { kind: "entities"; group: string }
     | { kind: "fade-in"; seconds: number }
     | { kind: "ride"; actor: string; vehicle: 6 }
     | { kind: "sound"; soundId: number; channel: number; mode: number }
@@ -105,6 +114,8 @@ export type FieldContent = {
     textures: Record<string, string>;
     collisions: Record<string, number[]>;
     entities: FieldEntity[];
+    groups?: Record<string, EntityGroup>;
+    initialGroups?: string[];
     source: Evidence;
   };
   characters: Record<string, Character>;

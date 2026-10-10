@@ -132,3 +132,63 @@ test("map binding ambiguity, instruction domains and determinism survive corpus 
   assert.equal(bad.counts.mappedRecords, 0);
   assert.deepEqual(bad.maps[0]!.issues, ["map-package:ambiguous"]);
 });
+
+test("Resident script dependencies are evaluated in each map's alias scope", () => {
+  const { assets, tables } = fixture();
+  assets[0] = asset("Assets/Fixture/package.json", "map-package", {
+    asset_group_name: "fixture",
+    map: [
+      { name: "Room", script: [{ name: "start", asset: "Room/start" }] },
+      {
+        name: "Other",
+        script: [
+          { name: "start", asset: "Room/start" },
+          { name: "shared", asset: "Room/after" },
+        ],
+      },
+    ],
+  });
+  assets[1] = script("start", [op("ChangeScript", [], ["shared"])]);
+  const shared = asset(
+    "Assets/Shared/Resident/shared.json",
+    "script",
+    { Mnemonics: [op("UnreviewedSharedInstruction")] },
+    "resident.bundle",
+  );
+  assets.push(
+    asset(
+      "Assets/Shared/package.json",
+      "map-package",
+      {
+        asset_group_name: "map_script",
+        map: [
+          {
+            name: "Resident",
+            script: [{ name: "shared", asset: "Resident/shared" }],
+          },
+        ],
+      },
+      "resident.bundle",
+    ),
+    shared,
+  );
+  tables["map.csv"].push({
+    id: "2",
+    asset_name: "fixture",
+    map_name: "Other",
+    area_id: "1",
+  });
+  const report = analyzeCorpus(assets, tables, {}, sha);
+  assert.deepEqual(report.scripts.find((s) => s.id === shared.id)!.maps, ["1"]);
+  assert.ok(report.maps[0]!.blockers.includes("UnreviewedSharedInstruction"));
+  assert.ok(!report.maps[1]!.blockers.includes("UnreviewedSharedInstruction"));
+  assert.deepEqual(
+    report.dependencies
+      .filter((d) => d.kind === "script")
+      .map((d) => [d.mapId, d.candidates]),
+    [
+      ["1", [shared.id]],
+      ["2", [assets[2]!.id]],
+    ],
+  );
+});

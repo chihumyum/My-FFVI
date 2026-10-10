@@ -15,6 +15,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [共用事件状态与控制流](docs/event-vm.md)
+- [共用实体组与地图生命周期](docs/map-lifecycle.md)
 - [本次交付与后续问题](docs/progress.md)
 - [Web 场景运行与实现边界](docs/web-field.md)
 - [首战数据与规则迁移](docs/battle-migration.md)
@@ -47,6 +48,7 @@ Web 片段为 `http://127.0.0.1:4173/game/`，方向键/WASD 移动，空格/Ent
 `playable:check` 编译地图与首战内容，并检查胜负、结算、战后继续移动和失败重试。
 `corpus:plan` 分析全量已导出的脚本与地图依赖，生成共用能力工作队列；导出命令和当前推进方式见 [批量迁移](docs/batch-migration.md)。
 `events:check` 用同一游戏 VM 整批运行符合能力条件的原始脚本，检查不同输入下的分支和状态变化；不代表这些地图已经可玩。
+`maps:check` 解析全部地图包、实体组和入口引用，并整批检查能力已闭合的实体组选择脚本；未恢复的 NPC 行为和切图生命周期仍明确保留。
 工作台为 `http://127.0.0.1:4173`，展示真实纳尔谢图层、原始碰撞数据、剧情知识缺口、歌剧时间线与验收状态。它只用于检查；不宣称恢复了游戏规则。
 
 ```sh

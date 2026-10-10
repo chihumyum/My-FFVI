@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { bindMapPackages, resolveMapScript } from "./map-package.js";
 import { z } from "zod";
 import { Hash, SourceRef } from "../contracts.js";
 import { hash, record } from "./content.js";
@@ -22,7 +23,8 @@ type Row = Record<string, string>;
 type Site = { asset: string; index: number };
 type Dependency = {
   site: Site;
-  kind: "script" | "instruction";
+  kind: "script" | "instruction" | "entity-group";
+  mapId?: string;
   reference: string;
   candidates: string[];
   resolved: boolean;
@@ -87,66 +89,31 @@ export function analyzeCorpus(
       throw new Error(`Duplicate corpus identity: ${asset.id}`);
     byId.set(asset.id, asset);
   }
-  const byPath = new Map<string, CorpusAsset[]>();
-  for (const a of assets) {
-    const key = `${a.source.file}::${a.source.assetPath}`;
-    byPath.set(key, [...(byPath.get(key) ?? []), a]);
-  }
-  const packages = assets.filter((a) => a.kind === "map-package");
   const mapRows = tables["map.csv"] ?? [];
-  if (new Set(mapRows.map((r) => r.id)).size !== mapRows.length)
-    throw new Error("Duplicate map row");
-  const packageBindings = mapRows.map((row) => {
-    const matches = packages.flatMap((pkg) => {
-      const data = record(pkg.data);
-      if (data.asset_group_name !== row.asset_name) return [];
-      return array(data.map)
-        .map(record)
-        .filter((m) => m.name === row.map_name)
-        .map((map) => ({ pkg, map }));
-    });
-    const scriptIds: string[] = [],
-      issues: string[] = [];
-    if (matches.length !== 1)
-      issues.push(`map-package:${matches.length ? "ambiguous" : "missing"}`);
-    else {
-      const { pkg, map } = matches[0]!;
-      for (const value of array(map.script ?? [])) {
-        const ref = z.string().parse(record(value).asset);
-        if (
-          ref.startsWith("/") ||
-          ref.includes("\\") ||
-          ref.split("/").includes("..")
-        )
-          throw new Error("Unsafe package script reference");
-        const target = posix.join(
-          posix.dirname(pkg.source.assetPath),
-          `${ref}.json`,
-        );
-        const candidates = (
-          byPath.get(`${pkg.source.file}::${target}`) ?? []
-        ).filter((a) => a.kind === "script");
-        if (candidates.length === 1) scriptIds.push(candidates[0]!.id);
-        else
-          issues.push(
-            `script:${ref}:${candidates.length ? "ambiguous" : "missing"}`,
-          );
-      }
-    }
-    return {
-      id: row.id!,
-      name: row.map_name!,
-      areaId: row.area_id!,
-      scripts: ordered(scriptIds),
-      issues,
-    };
-  });
+  const packageBindings = bindMapPackages(assets, tables);
+  const byMap = new Map(packageBindings.map((map) => [map.id, map]));
   const users = new Map<string, Set<string>>();
-  for (const map of packageBindings)
-    for (const id of map.scripts) {
+  for (const map of packageBindings) {
+    const seen = new Set<string>(),
+      queue = [...map.scripts];
+    while (queue.length) {
+      const id = queue.pop()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
       if (!users.has(id)) users.set(id, new Set());
       users.get(id)!.add(map.id);
+      for (const raw of array(record(byId.get(id)!.data).Mnemonics)) {
+        const op = record(raw);
+        if (!["Encount", "ChangeScript"].includes(String(op.mnemonic)))
+          continue;
+        const ref = strings(
+          op.operands == null ? [] : (record(op.operands).sValues ?? []),
+        )[0];
+        const target = ref ? resolveMapScript(map, ref) : null;
+        if (target) queue.push(target);
+      }
     }
+  }
   const scripts = assets
     .filter((a) => a.kind === "script")
     .sort((a, b) => a.id.localeCompare(b.id));
@@ -240,24 +207,52 @@ export function analyzeCorpus(
         }
       } else f.unassessedSites++;
       // Only known lexical reference locations are resolved. Unknown/dynamic dispatch is not guessed.
+      if (m.mnemonic === "SetEntities") {
+        const ref = strings(operands.sValues ?? [])[0];
+        for (const mapId of mapIds) {
+          const id = byMap.get(mapId)!.groups[ref ?? ""];
+          dependencies.push({
+            site,
+            kind: "entity-group",
+            mapId,
+            reference: ref ?? "",
+            candidates: id ? [id] : [],
+            resolved: !!id,
+          });
+        }
+      }
       if (["Encount", "ChangeScript"].includes(String(m.mnemonic))) {
         const ref = strings(operands.sValues ?? [])[0];
         if (ref) {
-          const local = (namedScripts.get(ref) ?? []).filter(
-            (a) =>
-              a.source.file === asset.source.file &&
-              posix.dirname(a.source.assetPath) ===
-                posix.dirname(asset.source.assetPath),
-          );
-          dependencies.push({
-            site,
-            kind: "script",
-            reference: ref,
-            candidates: (local.length ? local : (namedScripts.get(ref) ?? []))
-              .map((a) => a.id)
-              .sort(),
-            resolved: local.length === 1,
-          });
+          if (field)
+            for (const mapId of mapIds) {
+              const target = resolveMapScript(byMap.get(mapId)!, ref);
+              dependencies.push({
+                site,
+                kind: "script",
+                mapId,
+                reference: ref,
+                candidates: target ? [target] : [],
+                resolved: !!target,
+              });
+            }
+          else {
+            const local = (namedScripts.get(ref) ?? []).filter(
+              (a) =>
+                a.source.file === asset.source.file &&
+                posix.dirname(a.source.assetPath) ===
+                  posix.dirname(asset.source.assetPath),
+            );
+            dependencies.push({
+              site,
+              kind: "script",
+              reference: ref,
+              candidates: (local.length ? local : (namedScripts.get(ref) ?? []))
+                .map((a) => a.id)
+                .sort(),
+              resolved: local.length === 1,
+            });
+          }
         }
       }
       if (
@@ -292,25 +287,31 @@ export function analyzeCorpus(
     };
   });
   const byScript = new Map(reports.map((r) => [r.id, r]));
-  const links = new Map<string, string[]>();
+  const links = new Map<string, { target: string; mapId?: string }[]>();
   for (const d of dependencies)
     if (d.kind === "script" && d.resolved) {
       links.set(d.site.asset, [
         ...(links.get(d.site.asset) ?? []),
-        d.candidates[0]!,
+        { target: d.candidates[0]!, ...(d.mapId ? { mapId: d.mapId } : {}) },
       ]);
     }
   const maps = packageBindings.map((map) => {
     const closure = new Set(map.scripts),
       queue = [...closure];
     while (queue.length)
-      for (const id of links.get(queue.pop()!) ?? [])
-        if (!closure.has(id)) {
-          closure.add(id);
-          queue.push(id);
+      for (const link of links.get(queue.pop()!) ?? [])
+        if (
+          (!link.mapId || link.mapId === map.id) &&
+          !closure.has(link.target)
+        ) {
+          closure.add(link.target);
+          queue.push(link.target);
         }
     const unresolvedReferences = dependencies.filter(
-      (d) => closure.has(d.site.asset) && !d.resolved,
+      (d) =>
+        closure.has(d.site.asset) &&
+        (!d.mapId || d.mapId === map.id) &&
+        !d.resolved,
     );
     const blockers = ordered(
       [...closure].flatMap((id) => byScript.get(id)?.blocked ?? []),
@@ -368,7 +369,7 @@ export function analyzeCorpus(
       "Static package membership includes every story variant; it does not establish reachability.",
       "Decoded sites mean the current field operand adapter accepted them, not that their dependencies or behavior work.",
       "Battle/AI and unbound scripts are unassessed by the field runtime, never counted as supported.",
-      "Reference closure covers package scripts, Call, SetPuppet, Jump, Branch, Encount continuations and ChangeScript names.",
+      "Reference closure covers package aliases, explicit Resident fallback, SetEntities groups, Call, SetPuppet, Jump, Branch, Encount continuations and ChangeScript names.",
       "Remaining native calls, entity selection, assets, battle rules, save/menu and audio still block full migration.",
     ],
     priorities,

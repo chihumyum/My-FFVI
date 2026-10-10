@@ -69,6 +69,11 @@ const contains = (e: FieldEntity, p: Point) =>
 export class FieldGame {
   readonly actors: Record<string, Actor> = {};
   readonly hiddenEntities = new Set<string>();
+  readonly activeGroups = new Set<string>();
+  private readonly entityList: FieldEntity[];
+  get entities(): readonly FieldEntity[] {
+    return this.entityList;
+  }
   get flags(): Record<string, Record<string, boolean>> {
     return this.eventState.flagView();
   }
@@ -88,9 +93,15 @@ export class FieldGame {
     readonly content: FieldContent,
     readonly eventState: EventState = new EventState(),
   ) {
+    this.entityList = [...content.map.entities];
+    for (const name of content.map.initialGroups ?? [])
+      this.activeGroups.add(name);
     const p = content.entry.player;
     this.actors["-1001"] = { ...p, id: "-1001", motion: null, steps: 0 };
-    for (const e of content.map.entities)
+    this.registerActors(this.entityList);
+  }
+  private registerActors(entities: readonly FieldEntity[]): void {
+    for (const e of entities)
       if (e.kind === 6 && e.asset)
         this.actors[e.id] = {
           id: e.id,
@@ -103,6 +114,25 @@ export class FieldGame {
           motion: null,
           steps: 0,
         };
+  }
+  /** Source SetEventEntityGroup appends entities; it does not replace existing groups. */
+  private activateGroup(name: string): void {
+    const group = this.content.map.groups?.[name];
+    if (!group) throw new Error(`缺少实体组 ${name}`);
+    if (this.activeGroups.has(name))
+      throw new Error(`重复实体组激活尚未恢复：${name}`);
+    if (group.blockers.length)
+      throw new Error(`${name}：${group.blockers[0]!.reason}`);
+    const ids = new Set(this.entityList.map((e) => e.id));
+    ids.add("-1001");
+    for (const e of group.entities) {
+      if (ids.has(e.id)) throw new Error(`实体身份冲突 ${e.id}`);
+      ids.add(e.id);
+    }
+    // Validate the entire group before any actor, collision, or trigger becomes visible.
+    this.entityList.push(...group.entities);
+    this.registerActors(group.entities);
+    this.activeGroups.add(name);
   }
   get player(): Actor {
     return this.actors["-1001"]!;
@@ -123,7 +153,7 @@ export class FieldGame {
       return null;
     }
     let mask = FILTER[cell]!;
-    for (const e of m.entities)
+    for (const e of this.entityList)
       if (
         !this.hiddenEntities.has(e.id) &&
         e.kind === 19 &&
@@ -188,7 +218,7 @@ export class FieldGame {
     const p = this.player,
       d = DELTA[p.direction],
       target = { x: p.x + d.x, y: p.y + d.y };
-    const e = this.content.map.entities.find(
+    const e = this.entityList.find(
       (e) =>
         !this.hiddenEntities.has(e.id) &&
         e.layer === p.layer &&
@@ -240,7 +270,7 @@ export class FieldGame {
   }
   private enter(): void {
     const p = this.player,
-      hits = this.content.map.entities.filter(
+      hits = this.entityList.filter(
         (e) =>
           !this.hiddenEntities.has(e.id) &&
           e.layer === p.layer &&
@@ -311,7 +341,7 @@ export class FieldGame {
   private hasEntity(id: string): boolean {
     return (
       !!this.actors[id] ||
-      this.content.map.entities.some((e) => e.id === id) ||
+      this.entityList.some((e) => e.id === id) ||
       !!this.content.entry.absentHideTargets?.includes(id)
     );
   }
@@ -389,6 +419,17 @@ export class FieldGame {
           return;
         }
         switch (op.kind) {
+          case "entities":
+            try {
+              this.activateGroup(op.group);
+            } catch (error) {
+              this.block(
+                error instanceof Error ? error.message : String(error),
+                op,
+              );
+              return;
+            }
+            break;
           case "nop":
             break;
           case "exit":

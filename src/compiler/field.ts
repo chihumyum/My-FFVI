@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { hash, record } from "./content.js";
 import { ImportedProject } from "../contracts.js";
+import { compileEntityGroup } from "./entity-group.js";
 import {
   int32,
   isCategory,
@@ -90,6 +92,8 @@ export function decodeFieldOp(
   } as const;
   if (Object.hasOwn(simple, name) && form([]))
     return { ...site, kind: simple[name as keyof typeof simple] };
+  if (name === "SetEntities" && m.type === 1 && form([], [], [0]) && s[0])
+    return { ...site, kind: "entities", group: s[0] };
   if (name === "Jump" && m.type === 1 && form([0]) && i[0]! >= 0)
     return { ...site, kind: "jump", target: i[0]! };
   const variable = (
@@ -276,12 +280,6 @@ export async function compileField(root: string): Promise<FieldContent> {
   const tables = record(
     JSON.parse(snapshotFile(imported, "tables.json").toString()),
   );
-  const table = (name: string) => list(tables[name]).map(record);
-  const resolveRow = (name: string, id: unknown) => {
-    const rows = table(name).filter((r) => r.id === String(id));
-    if (rows.length !== 1) throw new Error(`Ambiguous ${name} ${id}`);
-    return rows[0]!;
-  };
   const assets = project.narshe.assets;
   const asset = (name: string) => {
     const found = Object.values(assets).filter((a) =>
@@ -407,76 +405,71 @@ export async function compileField(root: string): Promise<FieldContent> {
     "ev_e_0005",
     "ev_e_0006",
   ];
-  const entities: FieldEntity[] = [];
-  for (const group of activeGroups) {
-    const a = asset(group);
-    for (const [layerIndex, rawLayer] of list(
-      record(a.data).layers,
-    ).entries()) {
-      const layer = record(rawLayer),
-        layerId = (
-          {
-            GroundObject: 1,
-            UpperObject: 2,
-            CeilObject: 3,
-            MinimapObject: 4,
-          } as Record<string, number>
-        )[string(layer.name)];
-      if (!layerId) throw new Error("Unknown entity layer");
-      for (const [objectIndex, raw] of list(layer.objects).entries()) {
-        const o = record(raw),
-          p = props(o.properties),
-          kind = integer(p.object_type);
-        if (
-          [2, 3, 4, 6, 19].includes(kind) &&
-          (o.visible === false || Number(o.rotation ?? 0))
-        )
-          throw new Error("Unsupported entity transform");
-        if (
-          kind === 19 &&
-          (p.through_condition_type !== 0 ||
-            p.target_transportation_ids !== "" ||
-            p.confirm_landing !== false)
-        )
-          throw new Error("Unsupported dynamic collision condition");
-        if (kind === 2 && p.action_id !== 2)
-          throw new Error("Unsupported event activation condition");
-        let image: string | null = null;
-        if (kind === 6 && Number(p.asset_id))
-          image = string(resolveRow("mapobject.csv", p.asset_id).asset_name);
-        const script = Number(p.script_id)
-          ? string(resolveRow("script.csv", p.script_id).script_name)
-          : null;
-        const x = Number(o.x) / 16,
-          y = Number(o.y) / 16 - (o.gid ? Number(o.height) / 16 : 0);
-        entities.push({
-          id: Number(p.entity_id)
-            ? String(p.entity_id)
-            : `${group}:${layerIndex}:${objectIndex}`,
-          x,
-          y,
-          width: Number(o.width) / 16,
-          height: Number(o.height) / 16,
-          kind,
-          layer: layerId,
-          direction:
-            (
-              { 1: "up", 2: "right", 4: "down", 8: "left" } as Record<
-                string,
-                Direction
-              >
-            )[String(p.direction)] ?? "down",
-          asset: image,
-          script,
-          collision: kind === 19 ? integer(p.collision_type) : null,
-          destinationLayer: kind === 4 ? integer(p.layer) : null,
-          source: {
-            ...a.source,
-            pointer: `/layers/${layerIndex}/objects/${objectIndex}`,
-          },
+  const pkg = asset("package"),
+    packageMaps = list(record(pkg.data).map)
+      .map(record)
+      .filter((m) => m.name === "Map_20010");
+  if (packageMaps.length !== 1)
+    throw new Error("Ambiguous opening map package");
+  const packageMap = packageMaps[0]!;
+  const groups: NonNullable<FieldContent["map"]["groups"]> = {};
+  for (const ref of [
+    { name: "entity_default", asset: packageMap.entity_default },
+    ...list(packageMap.entity).map(record),
+  ]) {
+    const name = string(ref.name),
+      relative = string(ref.asset);
+    if (
+      relative.startsWith("/") ||
+      relative.includes("\\") ||
+      relative.split("/").includes("..")
+    )
+      throw new Error("Unsafe entity group path");
+    const path = posix.join(
+        posix.dirname(pkg.source.assetPath),
+        relative + ".json",
+      ),
+      target = assets[path];
+    if (!target || groups[name])
+      throw new Error("Ambiguous or missing entity group " + name);
+    groups[name] = compileEntityGroup(name, target, tables);
+    for (const entity of groups[name]!.entities)
+      if (entity.asset && !chars[entity.asset])
+        groups[name]!.blockers.push({
+          reason: `Missing character media ${entity.asset}`,
+          source: entity.source,
         });
-      }
+  }
+  const entities: FieldEntity[] = [];
+  for (const name of activeGroups) {
+    const group = groups[name];
+    if (!group) throw new Error("Missing bootstrap group " + name);
+    for (const issue of group.blockers) {
+      const entity = group.entities.find(
+        (e) => e.source.pointer === issue.source.pointer,
+      );
+      // Preserve only the previously declared development omissions of this existing checkpoint.
+      // All new SetEntities activations must pass the complete group blockers at runtime.
+      if (
+        entity &&
+        ![2, 3, 4, 6, 19].includes(entity.kind) &&
+        /^(Unsupported entity kind |Unsupported entity direction$|Unsupported entity transform$)/.test(
+          issue.reason,
+        )
+      )
+        continue;
+      // Preserve this existing checkpoint's immovable/script-controlled NPC approximation.
+      // New group activation still stops on every unsupported NPC behavior.
+      if (
+        entity?.kind === 6 &&
+        /^(Unsupported actor interaction|Unsupported actor movement response)$/.test(
+          issue.reason,
+        )
+      )
+        continue;
+      throw new Error(issue.reason);
     }
+    entities.push(...group.entities);
   }
   if (new Set(entities.map((e) => e.id)).size !== entities.length)
     throw new Error("Ambiguous active entity identity");
@@ -549,6 +542,8 @@ export async function compileField(root: string): Promise<FieldContent> {
       textures,
       collisions,
       entities,
+      groups,
+      initialGroups: activeGroups,
       source: asset("tilemap").source,
     },
     characters: chars,
@@ -575,6 +570,7 @@ export async function compileField(root: string): Promise<FieldContent> {
       "当前为静音开发运行；脚本音效请求有记录，音频完成等待暂按静音模式立即完成。",
       "音频、环境粒子、精确镜头与演出时序尚未接入；骑乘合成和碰撞等待正式对照。",
       "此入口使用明确的开场状态，尚未执行完整地图初始化脚本。",
+      "既有开场检查点的 NPC 使用静止、不可推动的开发近似；新实体组不继承这些行为省略。",
     ],
   };
   return { ...result, contentHash: hash(result) };
