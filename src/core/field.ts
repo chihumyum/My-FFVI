@@ -69,6 +69,11 @@ export class FieldGame {
   readonly actors: Record<string, Actor> = {};
   readonly hiddenEntities = new Set<string>();
   readonly flags: Record<string, Record<string, boolean>> = {};
+  readonly presentationOmissions: {
+    site: Site;
+    kind: "sound" | "sound-sync";
+    soundId: number | null;
+  }[] = [];
   fade: { elapsed: number; duration: number } | null = null;
   dialogue: Dialogue | null = null;
   stop: Stop | null = null;
@@ -285,6 +290,13 @@ export class FieldGame {
       done: false,
     };
   }
+  private hasEntity(id: string): boolean {
+    return (
+      !!this.actors[id] ||
+      this.content.map.entities.some((e) => e.id === id) ||
+      !!this.content.entry.absentHideTargets?.includes(id)
+    );
+  }
   /** Only the session owner calls this after consuming a real battle victory. */
   finishEncounter(party: number): void {
     if (
@@ -308,10 +320,7 @@ export class FieldGame {
       for (const t of [...this.tasks]) {
         if (t.done || t.wait > 0) continue;
         const actor = this.actors[t.actor];
-        if (
-          !actor &&
-          !this.content.map.entities.some((e) => e.id === t.actor)
-        ) {
+        if (!actor && !this.hasEntity(t.actor)) {
           this.block(`缺少角色 ${t.actor}`);
           return;
         }
@@ -383,8 +392,7 @@ export class FieldGame {
             for (const p of t.pending.sort((a, b) => a.slot - b.slot)) {
               const c = this.task(t.script, p.target, p.actor);
               if (
-                (!this.actors[p.actor] &&
-                  !this.content.map.entities.some((e) => e.id === p.actor)) ||
+                !this.hasEntity(p.actor) ||
                 this.tasks.some(
                   (other) =>
                     !other.done && other.id !== t.id && other.actor === p.actor,
@@ -413,6 +421,8 @@ export class FieldGame {
             }
             actor.x = op.x;
             actor.y = op.y;
+            this.hiddenEntities.delete(actor.id);
+            if (op.animation === "WalkL") actor.direction = "left";
             break;
           case "move":
             t.move = op;
@@ -427,6 +437,24 @@ export class FieldGame {
             break;
           case "hide":
             this.hiddenEntities.add(t.actor);
+            break;
+          case "ride": {
+            const rider = this.actors[op.actor];
+            if (!rider || op.vehicle !== 6) {
+              this.block("未知骑乘对象", op);
+              return;
+            }
+            rider.mount = this.content.entry.player.mount;
+            break;
+          }
+          case "sound":
+          case "sound-sync":
+            // Explicit muted-development presentation lane, retained for later audio migration.
+            this.presentationOmissions.push({
+              site: op,
+              kind: op.kind,
+              soundId: op.kind === "sound" ? op.soundId : null,
+            });
             break;
           case "set-flag":
             (this.flags[op.namespace] ??= {})[op.flag] = true;

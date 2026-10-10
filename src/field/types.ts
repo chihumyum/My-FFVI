@@ -53,6 +53,9 @@ export type Op = Site &
     | { kind: "nop" | "exit" | "return" | "join" | "hide" }
     | { kind: "set-flag"; namespace: string; flag: number }
     | { kind: "fade-in"; seconds: number }
+    | { kind: "ride"; actor: string; vehicle: 6 }
+    | { kind: "sound"; soundId: number; channel: number; mode: number }
+    | { kind: "sound-sync" }
     | { kind: "call"; target: number }
     | { kind: "wait"; seconds: number }
     | { kind: "puppet"; slot: number; actor: string; target: number }
@@ -114,6 +117,7 @@ export type FieldContent = {
     };
     evidence: Evidence[];
     description: string;
+    absentHideTargets?: string[];
   };
   limitations: string[];
 };

@@ -82,6 +82,7 @@ export class BattleView {
   }
   sync(battle, paused) {
     if (this.instance !== battle) {
+      this.content = battle.content;
       this.instance = battle;
       this.selected = null;
       this.ability = null;
@@ -198,6 +199,13 @@ export class BattleView {
     const index = (
       combatant.side === "player" ? battle.players : battle.enemies
     ).indexOf(combatant);
+    if (battle.content.formation === "opposed") {
+      if (combatant.side === "player")
+        return { x: 235 + index * 15, y: 108 + index * 40 };
+      return combatant.placement.group === 2
+        ? { x: 408, y: 158 }
+        : { x: 90 + index * 65, y: 148 + index * 25 };
+    }
     return combatant.side === "player"
       ? { x: 350 + index * 15, y: 108 + index * 40 }
       : { x: 125 + index * 88, y: 178 - index * 30 };
@@ -220,6 +228,18 @@ export class BattleView {
       if (actor.hp === 0 && actor.side === "enemy") continue;
       c.save();
       if (actor.hp === 0) c.globalAlpha = 0.3;
+      const rightSide = actor.side === "enemy" && actor.placement?.group === 2;
+      const aimingRight =
+        actor.side === "player" &&
+        a?.actor === actor.id &&
+        this.position(
+          battle.combatants.find((t) => t.id === a.target),
+          battle,
+        ).x > x;
+      if (rightSide || aimingRight) {
+        c.translate(x * 2, 0);
+        c.scale(-1, 1);
+      }
       const draw = (key, offsetY = 0, crop = 0) => {
         const s = this.content.sprites[key],
           img = this.images.get(s.file);

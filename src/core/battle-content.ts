@@ -3,11 +3,13 @@ import type { AtbRules } from "./atb.js";
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "opening-playability-v1";
+  profile: "narshe-playability-v2";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;
   encounterId: number;
+  formation: "normal" | "opposed";
+  maxPartyLevel: number | null;
   atb: AtbRules;
   initialAtb: { player: [number, number]; enemy: [number, number] };
   gil: number;
@@ -40,8 +42,29 @@ export type CombatantDefinition = {
   growthGroup: string | null;
   abilities: number[];
   ai: { ability: number; weight: number }[];
+  placement: { x: number; y: number; group: number } | null;
   sprites: { idle: string; mount: string | null };
 };
+
+export type BattleEncounter = Pick<
+  BattleContent,
+  "encounterId" | "enemies" | "background" | "formation" | "maxPartyLevel"
+>;
+export type BattleCatalog = {
+  kind: "narshe-battle-catalog";
+  contentHash: string;
+  common: Omit<BattleContent, keyof BattleEncounter | "contentHash">;
+  encounters: Record<string, BattleEncounter>;
+};
+export function encounterContent(
+  catalog: BattleCatalog,
+  id: number,
+): BattleContent | null {
+  const encounter = catalog.encounters[String(id)];
+  return encounter
+    ? { ...catalog.common, ...encounter, contentHash: catalog.contentHash }
+    : null;
+}
 export type AbilityDefinition = {
   id: number;
   name: string;

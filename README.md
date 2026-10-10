@@ -13,6 +13,7 @@
 - [HD-2D 重制工作流](docs/remaster-workflow.md)
 - [验收与证据契约](docs/acceptance.md)
 - [实施计划与当前状态](docs/implementation-plan.md)
+- [按共用能力批量迁移](docs/batch-migration.md)
 - [本次交付与后续问题](docs/progress.md)
 - [Web 场景运行与实现边界](docs/web-field.md)
 - [首战数据与规则迁移](docs/battle-migration.md)
@@ -40,9 +41,10 @@ npm run check
 npm run dev
 ```
 
-Web 片段为 `http://127.0.0.1:4173/game/`，方向键/WASD 移动，空格/Enter 确认，Esc 暂停。当前从行军后开发检查点开始，可完成首战并返回地图；尚无后续战斗、跨地图和存读档。按用户要求先推进可玩实现，正式一致性对照后置。
+Web 片段为 `http://127.0.0.1:4173/game/`，方向键/WASD 移动，空格/Enter 确认，Esc 暂停。当前从行军后开发检查点开始，首战已浏览器实玩；街道后续遭遇已通过内核回归，新增画面尚未逐一实玩。尚无跨地图和存读档。按用户要求先推进可玩实现，正式一致性对照后置。
 
 `playable:check` 编译地图与首战内容，并检查胜负、结算、战后继续移动和失败重试。
+`corpus:plan` 分析全量已导出的脚本与地图依赖，生成共用能力工作队列；导出命令和当前推进方式见 [批量迁移](docs/batch-migration.md)。
 工作台为 `http://127.0.0.1:4173`，展示真实纳尔谢图层、原始碰撞数据、剧情知识缺口、歌剧时间线与验收状态。它只用于检查；不宣称恢复了游戏规则。
 
 ```sh

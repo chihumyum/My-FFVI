@@ -12,6 +12,7 @@
     "test": "npm run build && node --test dist/tests/*.test.js",
     "check": "npm test && node dist/src/cli.js validate",
     "pipeline": "npm run build && node dist/src/cli.js compile",
+    "corpus:plan": "npm run build && node dist/src/cli.js corpus",
     "knowledge": "node dist/src/cli.js knowledge",
     "accept": "node dist/src/cli.js accept",
     "dev": "node scripts/serve.mjs",

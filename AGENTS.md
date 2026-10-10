@@ -24,6 +24,10 @@ Add evidence-backed facts to the knowledge registry and record their scope. Fact
 
 Scene changes are recipes, semantic annotations, or versioned asset changes. A shared asset update requires an impact report and revalidation of dependent scenes. Preserve legacy logical collision and trigger anchors separately from new visual geometry.
 
+## Batch migration priority
+
+The user rejected scene-by-scene implementation. Follow `docs/batch-migration.md`: implement shared VM, world-state, map lifecycle, battle and presentation capabilities, then import their source-data dependents in batches. Use `npm run corpus:plan` to identify affected scripts and maps. Exact coordinates and message IDs are source parameters, not separate implementation tasks. Do not add new map-name or encounter-ID branches to runtime rules. The existing opening profile is a regression fixture and temporary bootstrap, not a template to copy across the game. Static decoding counts must never be reported as playable map coverage.
+
 ## Verification and delivery
 
 Run `npm run check`, Python tests, then the relevant real-source import/compile when adapters change. Acceptance commands intentionally fail while required lanes are unknown. Never relax a gate to make the build green. Add tests for semantic failures (state mismatch, identity loss, missing references, broken replay), not implementation mirrors.

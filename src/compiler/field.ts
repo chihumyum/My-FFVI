@@ -14,6 +14,8 @@ import type {
   Tileset,
 } from "../field/types.js";
 const directions: Direction[] = ["up", "right", "down", "left"];
+// Source GetFieldSpriteMoveSecondsPerCell, RVA 0x38D7F0; magnification is 1 in the development profile.
+const moveSeconds = [0.24, 0.48, 0.12, 0.96, 0.06, 1.92, 0.16, 0.096, 0.08];
 const integer = (x: unknown): number => {
   if (!Number.isSafeInteger(x)) throw new Error(`Expected integer: ${x}`);
   return x as number;
@@ -82,7 +84,7 @@ export function decodeFieldOp(
     name === "SetPos" &&
     form([0, 1, 2], [], [0]) &&
     [0, 3].includes(i[2]!) &&
-    ["", "Default"].includes(s[0]!)
+    ["", "Default", "WalkL"].includes(s[0]!)
   )
     return { ...site, kind: "position", x: i[0]!, y: i[1]!, animation: s[0]! };
   if (
@@ -90,14 +92,15 @@ export function decodeFieldOp(
     form([0, 1, 2]) &&
     directions[i[0]!] &&
     i[1]! >= 0 &&
-    [0, 2].includes(i[2]!)
+    i[2]! >= 0 &&
+    i[2]! < moveSeconds.length
   )
     return {
       ...site,
       kind: "move",
       direction: directions[i[0]!]!,
       steps: i[1]!,
-      secondsPerCell: i[2] === 2 ? 0.12 : 0.24,
+      secondsPerCell: moveSeconds[i[2]!]!,
     };
   if (name === "LookAt" && form([0]) && directions[i[0]!])
     return { ...site, kind: "look", direction: directions[i[0]!]! };
@@ -119,6 +122,23 @@ export function decodeFieldOp(
   }
   if (name === "Encount" && form([0], [], [0]))
     return { ...site, kind: "encounter", party: i[0]!, continuation: s[0]! };
+  if (name === "RideVehicleNPC" && form([0, 1]) && i[0] === 6 && i[1] === -1001)
+    return { ...site, kind: "ride", actor: String(i[1]), vehicle: 6 };
+  if (
+    name === "PlaySE" &&
+    form([0, 1, 2]) &&
+    i[0] === 102 &&
+    [0, 1].includes(i[1]!) &&
+    [0, 1].includes(i[2]!)
+  )
+    return {
+      ...site,
+      kind: "sound",
+      soundId: i[0],
+      channel: i[1]!,
+      mode: i[2]!,
+    };
+  if (name === "SyncSE" && form([])) return { ...site, kind: "sound-sync" };
   if (
     name === "SetFlag" &&
     form([0], [], [0]) &&
@@ -415,6 +435,24 @@ export async function compileField(root: string): Promise<FieldContent> {
     );
   }
   const entryScript = record(asset("sc_e_0001_5").data);
+  // These two source task targets are absent from this supplied entity group.
+  // Only their exact Hide-only routines may run; no synthetic visible entity is created.
+  const absentHideTargets = ["154", "156"];
+  for (const id of absentHideTargets) {
+    if (entities.some((e) => e.id === id))
+      throw new Error("Previously absent entity now needs source review");
+    const ops = scripts.sc_e_0006_1!;
+    const calls = ops.filter((op) => op.kind === "puppet" && op.actor === id);
+    if (
+      calls.length !== 1 ||
+      calls[0]?.kind !== "puppet" ||
+      ops
+        .slice(calls[0].target, calls[0].target + 3)
+        .map((op) => op.kind)
+        .join() !== "nop,hide,exit"
+    )
+      throw new Error("Absent entity target is no longer Hide-only");
+  }
   const ins = list(entryScript.Mnemonics).map(record);
   // Assert the source locations which derive (38,58) -> (38,49), rather than inventing a spawn.
   for (const [index, name, a, b] of [
@@ -448,6 +486,7 @@ export async function compileField(root: string): Promise<FieldContent> {
     characters: chars,
     scripts,
     entry: {
+      absentHideTargets,
       player: {
         x: 38,
         y: 49,
@@ -463,7 +502,8 @@ export async function compileField(root: string): Promise<FieldContent> {
       description: "开场行军之后的开发入口；开场影片和完整初始化尚未接入。",
     },
     limitations: [
-      "首场守卫战斗使用可玩开发规则；后续战斗、跨地图、队伍菜单和存读档尚未迁移。",
+      "纳尔谢街道战斗使用可玩开发规则；跨地图、队伍菜单和存读档尚未迁移。",
+      "当前为静音开发运行；脚本音效请求有记录，音频完成等待暂按静音模式立即完成。",
       "音频、环境粒子、精确镜头与演出时序尚未接入；骑乘合成和碰撞等待正式对照。",
       "此入口使用明确的开场状态，尚未执行完整地图初始化脚本。",
     ],

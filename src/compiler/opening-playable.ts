@@ -3,6 +3,8 @@ import { readSnapshot, snapshotFile } from "./integrity.js";
 import { tableInteger as int, type compileOpeningBattle } from "./battle.js";
 import type {
   BattleContent,
+  BattleCatalog,
+  BattleEncounter,
   CombatantDefinition,
   AbilityDefinition,
 } from "../core/battle-content.js";
@@ -11,7 +13,7 @@ import type {
 export async function compileOpeningPlayable(
   root: string,
   source: Awaited<ReturnType<typeof compileOpeningBattle>>,
-): Promise<BattleContent> {
+): Promise<BattleCatalog> {
   const field = record(
     JSON.parse(
       snapshotFile(
@@ -63,7 +65,9 @@ export async function compileOpeningPlayable(
     // Guard's unnamed physical actions get authored UI descriptions, not substituted assets.
     const displayName =
       contents.length === 1
-        ? name(contents[0]!.mes_id_name!)
+        ? contents[0]!.mes_id_name === "None"
+          ? `能力 #${id}`
+          : name(contents[0]!.mes_id_name!)
         : id === 1
           ? "攻击"
           : id === 377
@@ -130,77 +134,120 @@ export async function compileOpeningPlayable(
         memberships.some((m) => int(m.ability_id) === id),
       ),
       ai: [],
+      placement: null,
       sprites: {
         idle: sprite(`/${c.spriteGroup}/RideL_00.png`),
         mount: sprite("/BC_FF6_P022/WalkL_00.png"),
       },
     };
   });
-  const enemies: CombatantDefinition[] = source.encounter.enemies.map((e) => {
-    const r = row("monster.csv", e.monsterId);
-    const ops = record(e.ai.data).Mnemonics as {
-      mnemonic: string;
-      operands: { iValues: number[]; rValues: number[] };
-    }[];
-    const expected = [
-      "Nop",
-      "SyncAI",
-      "IsMyCondition",
-      "StartTable",
-      "Act",
-      "EndTable",
-      "JumpBattleAI",
-      "Nop",
-      "StartTable",
-      "Act",
-      "EndTable",
-      "JumpBattleAI",
-      "Nop",
-      "Exit",
-    ];
-    if (
-      r.initial_condition !== "0" ||
-      ops.map((o) => o.mnemonic).join() !== expected.join() ||
-      ops[2]?.operands.iValues[0] !== 12 ||
-      ops[2]?.operands.iValues[1] !== 7
-    )
-      throw new Error("Guard AI outside the no-condition development profile");
-    const action = ops[4]!.operands;
-    const ai = action.iValues.flatMap((id, n) =>
-      id ? [{ ability: id, weight: action.rValues[n]! }] : [],
-    );
-    if (
-      ai.some(
-        (a) =>
-          abilities[a.ability]?.kind !== "physical" ||
-          !Number.isFinite(a.weight) ||
-          a.weight <= 0,
+  const encounters: Record<string, BattleEncounter> = {};
+  for (const encounter of source.encounters) {
+    const enemies: CombatantDefinition[] = encounter.enemies.map((e) => {
+      const r = row("monster.csv", e.monsterId);
+      const ops = record(e.ai.data).Mnemonics as {
+        mnemonic: string;
+        operands: { iValues: number[]; rValues: number[] };
+      }[];
+      const guard = [
+        "Nop",
+        "SyncAI",
+        "IsMyCondition",
+        "StartTable",
+        "Act",
+        "EndTable",
+        "JumpBattleAI",
+        "Nop",
+        "StartTable",
+        "Act",
+        "EndTable",
+        "JumpBattleAI",
+        "Nop",
+        "Exit",
+      ];
+      const lobo = [
+        "Nop",
+        "SyncAI",
+        "IsMyCondition",
+        "IsLevelCheck",
+        "StartTable",
+        "Act",
+        "EndTable",
+        "JumpBattleAI",
+        "Nop",
+        "StartTable",
+        "Act",
+        "Act",
+        "EndTable",
+        "JumpBattleAI",
+        "Nop",
+        "StartTable",
+        "Act",
+        "EndTable",
+        "JumpBattleAI",
+        "Nop",
+        "Exit",
+      ];
+      const expected =
+        e.monsterId === 1 ? guard : e.monsterId === 26 ? lobo : [];
+      if (
+        r.initial_condition !== "0" ||
+        ops.map((o) => o.mnemonic).join() !== expected.join() ||
+        ops[2]?.operands.iValues[0] !== 12 ||
+        ops[2]?.operands.iValues[1] !== (e.monsterId === 1 ? 7 : 14)
       )
-    )
-      throw new Error("Unsupported Guard action");
-    return {
-      id: `enemy:${e.slot}`,
-      sourceId: e.monsterId,
-      name: name(r.mes_id_name!),
-      side: "enemy",
-      level: int(r.lv),
-      hp: int(r.hp),
-      mp: int(r.mp),
-      magic: int(r.magic),
-      attack: int(r.attack),
-      defense: int(r.defense),
-      magicDefense: int(r.ability_defense),
-      agility: int(r.agility),
-      weight: int(r.weight),
-      evasion: int(r.evasion_rate),
-      exp: int(r.exp),
-      gil: int(r.gill),
-      growthGroup: null,
-      abilities: ai.map((a) => a.ability),
-      ai,
-      sprites: { idle: e.sprite, mount: null },
+        throw new Error("Enemy AI outside the street profile");
+      if (
+        e.monsterId === 26 &&
+        (ops[3]!.operands.iValues.slice(0, 3).join() !== "1,7,8" ||
+          ops[3]!.operands.iValues.slice(3).some(Boolean))
+      )
+        throw new Error("Unreviewed Silver Lobo level branch");
+      const action = ops[e.monsterId === 1 ? 4 : 5]!.operands;
+      const ai = action.iValues.flatMap((id, n) =>
+        id ? [{ ability: id, weight: action.rValues[n]! }] : [],
+      );
+      if (
+        ai.some(
+          (a) =>
+            abilities[a.ability]?.kind !== "physical" ||
+            !Number.isFinite(a.weight) ||
+            a.weight <= 0,
+        )
+      )
+        throw new Error("Unsupported Guard action");
+      return {
+        id: `enemy:${e.slot}`,
+        sourceId: e.monsterId,
+        name: name(r.mes_id_name!),
+        side: "enemy",
+        level: int(r.lv),
+        hp: int(r.hp),
+        mp: int(r.mp),
+        magic: int(r.magic),
+        attack: int(r.attack),
+        defense: int(r.defense),
+        magicDefense: int(r.ability_defense),
+        agility: int(r.agility),
+        weight: int(r.weight),
+        evasion: int(r.evasion_rate),
+        exp: int(r.exp),
+        gil: int(r.gill),
+        growthGroup: null,
+        abilities: ai.map((a) => a.ability),
+        ai,
+        placement: { x: e.x, y: e.y, group: e.group },
+        sprites: { idle: e.sprite, mount: null },
+      };
+    });
+    encounters[encounter.partyId] = {
+      encounterId: encounter.partyId,
+      enemies,
+      background: encounter.background,
+      formation: encounter.pattern === 3 ? "opposed" : "normal",
+      maxPartyLevel: enemies.some((e) => e.sourceId === 26) ? 6 : null,
     };
-  });
+  }
   const growth: BattleContent["growth"] = {};
   for (const r of rows("growth_curve.csv")) {
     if (
@@ -216,12 +263,11 @@ export async function compileOpeningPlayable(
       mp: int(r.mp_value1),
     });
   }
-  const result: Omit<BattleContent, "contentHash"> = {
+  const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "opening-playability-v1",
+    profile: "narshe-playability-v2",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
-    encounterId: source.encounter.partyId,
     atb: source.atb,
     initialAtb: {
       player: initialAtb("ACCUMULATION_ATB_NORMAL"),
@@ -229,13 +275,11 @@ export async function compileOpeningPlayable(
     },
     gil: int(unique("initialize_data.csv", "key_name", "INIT_GIL").value1),
     players,
-    enemies,
     abilities,
     growth,
     experience: rows("exp_table.csv")
       .map((r) => ({ level: int(r.lv), exp: int(r.total_exp) }))
       .sort((a, b) => a.level - b.level),
-    background: source.encounter.background,
     sprites: Object.fromEntries(
       Object.entries(source.sprites).map(([key, s]) => [
         key,
@@ -243,12 +287,14 @@ export async function compileOpeningPlayable(
       ]),
     ),
     limitations: [
-      "首战可玩开发规则；未经原版一致性验收，不代表完整战斗系统。",
+      "纳尔谢街道可玩开发规则；未经原版一致性验收，不代表完整战斗系统。",
       "初始能力解锁、命中/伤害分支、蓄力/排队、经验成长采用已记录的临时规则。",
       "当前开放三种射线和治愈原力；其余四种魔导、道具、逃跑与通用战斗脚本尚未实现。",
       "掉落尚未结算，库存保持不变；队伍 HP、经验、Gil 只保存在本次页面会话。",
-      "站位、骑乘拼接和光束是临时二维表现；原版音效、特效、动画时序尚未接入。",
+      "站位、夹击队形、骑乘拼接和光束是临时二维表现；原版音效、特效、动画时序尚未接入。",
+      "狼犬只开放全队等级低于 7 的源 AI 分支；高等级分支仍明确停止。",
     ],
   };
+  const result = { kind: "narshe-battle-catalog" as const, common, encounters };
   return { ...result, contentHash: hash(result) };
 }

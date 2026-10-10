@@ -61,7 +61,7 @@ function sync() {
     battleView.sync(session.battle, paused);
     text(
       "status",
-      `纳尔谢 · 守卫战斗 · ${session.battle.phase === "active" ? "点击指令和目标；方向键选择，Enter 确认" : "战斗结束"}`,
+      `纳尔谢 · 战斗 · ${session.battle.phase === "active" ? "点击指令和目标；方向键选择，Enter 确认" : "战斗结束"}`,
     );
     return;
   }
@@ -194,7 +194,7 @@ async function init() {
     ...Object.values(content.characters).flatMap((c) =>
       Object.values(c.sprites).map((s) => s.file),
     ),
-    ...Object.values(battleContent.sprites).map((s) => s.file),
+    ...Object.values(battleContent.common.sprites).map((s) => s.file),
   ]);
   const images = new Map();
   await Promise.all(
@@ -210,7 +210,7 @@ async function init() {
   renderer = new Renderer(canvas, content, images);
   battleView = new BattleView(
     canvas,
-    battleContent,
+    battleContent.common,
     images,
     () => {
       if (session.continueVictory()) {
@@ -228,7 +228,7 @@ async function init() {
   for (const line of [
     content.entry.description,
     ...content.limitations,
-    ...battleContent.limitations,
+    ...battleContent.common.limitations,
   ]) {
     const li = document.createElement("li");
     li.textContent = line;

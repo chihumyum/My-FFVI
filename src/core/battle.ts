@@ -52,7 +52,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "opening-playability-v1"
+      content.profile !== "narshe-playability-v2"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -85,7 +85,7 @@ export class BattleGame {
       c.atb = this.randomInt(range[0], range[1]);
       c.queued = false;
     }
-    this.log("守卫挡住了去路。");
+    this.log("敌人出现了。");
   }
   get players() {
     return this.combatants.filter((c) => c.side === "player");

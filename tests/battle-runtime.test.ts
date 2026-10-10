@@ -26,15 +26,18 @@ function fixture(): BattleContent {
     growthGroup: "g",
     abilities: [10, 11, 12],
     ai: [],
+    placement: null,
     sprites: { idle: "synthetic", mount: null },
   };
   return {
     kind: "opening-battle-development",
-    profile: "opening-playability-v1",
+    profile: "narshe-playability-v2",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
     encounterId: 1000,
+    formation: "normal",
+    maxPartyLevel: null,
     atb: {
       coefficient: 21,
       enemyCoefficient: 12,

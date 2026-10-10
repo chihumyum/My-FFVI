@@ -213,6 +213,30 @@ test("unsupported operand forms and inline message controls are not erased", () 
   );
 });
 
+test("96ms source movement keeps input locked until all cells commit across frame partitions", () => {
+  const c = eventFixture();
+  const movement = decodeFieldOp(
+    {
+      mnemonic: "Move",
+      type: 2,
+      operands: { iValues: [2, 3, 7], rValues: [], sValues: [] },
+    },
+    site,
+    {},
+  );
+  c.scripts.event = [movement, ...ops({ kind: "exit" })];
+  const a = start(c),
+    b = start(c);
+  a.advance(290);
+  assert.equal(a.player.y, 4);
+  assert.equal(a.move("left"), false);
+  a.advance(10);
+  for (let n = 0; n < 30; n++) b.advance(10);
+  assert.deepEqual(a.actors, b.actors);
+  assert.equal(a.player.y, 5);
+  assert.equal(a.move("left"), true);
+});
+
 test("victory continuation hides a visual blocker and a non-visual trigger before releasing movement", () => {
   const c = eventFixture();
   c.map.entities.push({ ...entity("guard", 6, 2, 2), asset: "hero" });

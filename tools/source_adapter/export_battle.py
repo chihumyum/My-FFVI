@@ -1,4 +1,4 @@
-"""Export the source closure of the opening battle; never execute or alter source files."""
+"""Export battles referenced by the opening Narshe street events; source stays read-only."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -9,6 +9,24 @@ import shutil
 import tempfile
 from import_source import REPO, canonical, digest, source_ref, write_json
 from export_field import checked_snapshot
+
+
+def street_encounters(project):
+    """Follow encounter continuations from explicit opening-event roots, not all map eras."""
+    scripts = {Path(p).stem: a for p, a in project['narshe']['assets'].items()
+               if isinstance(a['data'], dict) and 'Mnemonics' in a['data']}
+    pending = ['sc_e_0002', 'sc_e_0004', 'sc_e_0005', 'sc_e_0006']
+    visited = set(); found = set()
+    while pending:
+        name = pending.pop()
+        if name in visited: continue
+        visited.add(name)
+        if name not in scripts: raise ValueError('Missing street script: ' + name)
+        for op in scripts[name]['data']['Mnemonics']:
+            if op['mnemonic'] != 'Encount': continue
+            found.add(op['operands']['iValues'][0])
+            pending.append(op['operands']['sValues'][0])
+    return sorted(found)
 
 
 def full_rect_picture(sprite, path):
@@ -41,12 +59,14 @@ def export_battle(source: Path, out: Path):
         found = sorted(bundle_root.glob(name + '_assets_all_*.bundle'))
         if len(found) != 1: raise ValueError('Ambiguous bundle: ' + name)
         return found[0]
-    party = row('monster_party.csv', 3)
-    monsters = [row('monster.csv', party[f'monster{i}']) for i in range(1, 10) if int(party[f'monster{i}'])]
+    party_ids = street_encounters(project)
+    parties = [row('monster_party.csv', identity) for identity in party_ids]
+    monsters = [row('monster.csv', party[f'monster{i}']) for party in parties
+                for i in range(1, 10) if int(party[f'monster{i}'])]
     initial = [r for r in tables['initialize_data.csv'] if r['key_name'].startswith('INIT_PARTY_')]
     characters = [row('character_status.csv', r['value1']) for r in initial]
-    names = {row('battle_background_asset.csv', party['battle_background_asset_id'])['asset_name'], 'bc_ff6_p022',
-             'monster_ai', 'battle_script', 'battleextradata', 'misc'}
+    names = {'bc_ff6_p022', 'monster_ai', 'battle_script', 'battleextradata', 'misc'}
+    names.update(row('battle_background_asset.csv', p['battle_background_asset_id'])['asset_name'] for p in parties)
     names.update(row('character_asset.csv', c['character_asset_id'])['asset_name'] for c in characters)
     names.update(row('monster_asset.csv', m['monster_asset_id'])['group_name'] for m in monsters)
     files = [one(name) for name in sorted(names)]
@@ -83,7 +103,8 @@ def export_battle(source: Path, out: Path):
                     'representation': 'source-texture-full-rect', 'width': picture.width, 'height': picture.height, 'pivot': [sprite.m_Pivot.x, sprite.m_Pivot.y]}
     for entry in sources:
         if digest(source / entry['file']) != entry['sha256']: raise ValueError('Source changed during export')
-    result = {'formatVersion': 1, 'adapterVersion': 'battle-0.1.0', 'parentSourceSetHash': project['sourceSetHash'],
+    result = {'formatVersion': 1, 'adapterVersion': 'battle-0.2.0', 'parentSourceSetHash': project['sourceSetHash'],
+        'encounterPartyIds': party_ids,
         'sourceSetHash': hashlib.sha256(canonical(sources).encode()).hexdigest(), 'sources': sources,
         'assets': assets, 'sprites': sprites, 'tableSources': table_sources}
     write_json(out / 'battle.json', result)
