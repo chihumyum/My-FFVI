@@ -85,7 +85,7 @@ export function compileEntityGroup(
           p = entityProperties(o.properties),
           kind = integer(p.object_type);
         const issue = (reason: string) => blockers.push({ reason, source });
-        if (![0, 1, 2, 3, 4, 6, 18, 19, 27].includes(kind))
+        if (![0, 1, 2, 3, 4, 6, 8, 18, 19, 27].includes(kind))
           issue(`Unsupported entity kind ${kind}`);
         if (kind === 1) issue("Unbound tile animation geometry");
         if (
@@ -141,6 +141,28 @@ export function compileEntityGroup(
         if (kind === 6) {
           if (!p.asset_id) issue("Unresolved actor asset");
         }
+        if (kind === 8) {
+          if (
+            text(row("action.csv", p.action_id).action_name) !==
+              "OpenTrigger" ||
+            integer(p.script_id ?? 0) !== 0 ||
+            Boolean(p.gimmick ?? false) ||
+            String(p.target_transportation_ids ?? "") !== "" ||
+            Boolean(p.birdview_puppet ?? false)
+          )
+            issue("Unsupported open trigger action/condition");
+          // The observed source subset uses single-cell contact rectangles. Larger
+          // or fractional placements need their contact geometry recovered first.
+          if (
+            !o.gid ||
+            o.width !== 16 ||
+            o.height !== 16 ||
+            ![o.x, o.y].every(
+              (v) => Number.isInteger(v) && Number(v) % 16 === 0,
+            )
+          )
+            issue("Unsupported open trigger geometry");
+        }
         const scriptId = integer(p.script_id ?? 0),
           assetId = integer(p.asset_id ?? 0),
           entityId = integer(p.entity_id ?? 0);
@@ -158,7 +180,7 @@ export function compileEntityGroup(
             string,
             Direction
           >
-        )[String(p.direction ?? 0)];
+        )[String(kind === 8 ? 0 : (p.direction ?? 0))];
         if (!direction) issue("Unsupported entity direction");
         const width = finite(o.width) / tileSize,
           height = finite(o.height) / tileSize;
@@ -167,6 +189,20 @@ export function compileEntityGroup(
           id: entityId ? String(entityId) : `${name}:${li}:${oi}`,
           objectId: integer(p.object_id ?? 0),
           ...(npc ? { npc: npc.npc } : {}),
+          ...(kind === 8
+            ? {
+                openTrigger: {
+                  direction: z
+                    .number()
+                    .int()
+                    .min(0)
+                    .max(15)
+                    .parse(p.direction ?? 15),
+                  linkObject: integer(p.link_object_id ?? 0),
+                  soundId: integer(p.se_id ?? 0),
+                },
+              }
+            : {}),
           ...(kind === 1
             ? {
                 tileAnimation: {

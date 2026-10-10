@@ -85,11 +85,32 @@ for (const run of checked.runs.filter((r) => r.result === "idle")) {
     world.field.previewMap(run.mapId, run.entrance);
     assert.ok(world.commit(world.prepare(catalog, origin)));
     const initialMarkers = minimapMarkers(world.field.minimapEntities);
+    const doors = [];
     for (const [input, destination] of [
       [step, target],
       [direction(arrival, back), origin],
     ]) {
-      assert.ok(world.field.move(input));
+      if (!world.field.move(input)) {
+        assert.equal(world.field.stop, null);
+        assert.ok(
+          world.field.openTriggers.busy,
+          "Transition step blocked without a door animation",
+        );
+        const pending = world.field.openTriggers.snapshot().pending;
+        let elapsed = 0;
+        while (world.field.openTriggers.busy && elapsed < 60000) {
+          world.field.advance(10);
+          elapsed += 10;
+        }
+        assert.equal(world.field.busy, false);
+        assert.equal(world.field.openTriggers.blocks(pending.trigger), false);
+        doors.push({
+          mapId: world.field.content.map.identity.mapId,
+          ...pending,
+          elapsed,
+        });
+        assert.ok(world.field.move(input));
+      }
       world.field.advance(240);
       assert.equal(world.field.stop?.kind, "map-transition");
       assert.equal(world.field.stop.request.mapId, destination.mapId);
@@ -113,6 +134,7 @@ for (const run of checked.runs.filter((r) => r.result === "idle")) {
       entrance: run.entrance,
       via: target.mapId,
       inputs: [step, direction(arrival, back)],
+      doors,
       transitions: world.transitions,
       markerCount: initialMarkers.length,
     });

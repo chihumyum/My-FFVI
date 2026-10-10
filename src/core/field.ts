@@ -11,6 +11,7 @@ import { EventState, executeEventControl } from "./event-state.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState } from "./static-audio.js";
 import { TileAnimationState } from "./tile-animation.js";
+import { OpenTriggerState } from "./open-trigger.js";
 import { ActorAnimation, FIELD_POSE } from "./actor-animation.js";
 import {
   buildCollisionMapping,
@@ -96,6 +97,7 @@ const contains = (e: FieldEntity, p: Point) =>
   p.x >= e.x && p.x < e.x + e.width && p.y >= e.y && p.y < e.y + e.height;
 export class FieldGame {
   readonly tileAnimations: TileAnimationState;
+  readonly openTriggers: OpenTriggerState;
   readonly collisionRange: CollisionRange;
   private readonly collisionMappings = new Map<number, number[]>();
   readonly actors: Record<string, Actor> = {};
@@ -138,6 +140,7 @@ export class FieldGame {
     readonly environment: StaticAudioState = new StaticAudioState(),
   ) {
     this.tileAnimations = new TileAnimationState(content.map);
+    this.openTriggers = new OpenTriggerState(this.tileAnimations);
     this.entityList = [...content.map.entities];
     const groups = content.map.groups,
       initial = content.map.initialGroups;
@@ -171,6 +174,7 @@ export class FieldGame {
     };
     Object.assign(this.actors, this.createActors(this.entityList));
     this.tileAnimations.register(this.entityList);
+    this.openTriggers.initialize(this.entityList, this.player);
   }
   private initialAnimation(
     asset: string,
@@ -237,6 +241,7 @@ export class FieldGame {
       this.tasks.some((t) => !t.done) ||
       !!this.dialogue ||
       !!this.stop ||
+      this.openTriggers.busy ||
       (this.interaction?.waitUntil ?? 0) > this.time
     );
   }
@@ -283,13 +288,24 @@ export class FieldGame {
     }
   }
   private occupied(points: Point[], layer: number): boolean {
-    return Object.values(this.actors).some(
-      (a) =>
-        a.id !== this.player.id &&
-        !this.hiddenEntities.has(a.id) &&
-        this.entityList.find((e) => e.id === a.id)?.npc?.collision !== false &&
-        a.layer === layer &&
-        points.some((p) => a.x === p.x && a.y === p.y),
+    return (
+      this.entityList.some(
+        (e) =>
+          e.kind === 8 &&
+          e.layer === layer &&
+          !this.hiddenEntities.has(e.id) &&
+          this.openTriggers.blocks(e.id) &&
+          points.some((p) => contains(e, p)),
+      ) ||
+      Object.values(this.actors).some(
+        (a) =>
+          a.id !== this.player.id &&
+          !this.hiddenEntities.has(a.id) &&
+          this.entityList.find((e) => e.id === a.id)?.npc?.collision !==
+            false &&
+          a.layer === layer &&
+          points.some((p) => a.x === p.x && a.y === p.y),
+      )
     );
   }
   private slopeDestination(
@@ -349,6 +365,38 @@ export class FieldGame {
     };
     const d = DELTA[direction];
     let to = { x: p.x + d.x, y: p.y + d.y };
+    const doors = this.entityList.filter(
+      (e) =>
+        e.kind === 8 &&
+        e.layer === p.layer &&
+        !this.hiddenEntities.has(e.id) &&
+        this.openTriggers.blocks(e.id) &&
+        contains(e, to),
+    );
+    if (doors.length) {
+      const e = doors[0]!,
+        site: Site = { script: "open-trigger", index: 0, source: e.source };
+      if (doors.length > 1)
+        this.block("同格开门触发器的接触顺序尚未恢复", site);
+      else
+        try {
+          if (
+            this.openTriggers.start(e, this.entityList, direction) &&
+            e.openTrigger!.soundId > 0
+          )
+            this.presentationOmissions.push({
+              site,
+              kind: "sound",
+              soundId: e.openTrigger!.soundId,
+            });
+        } catch (error) {
+          this.block(
+            error instanceof Error ? error.message : String(error),
+            site,
+          );
+        }
+      return faceBlockedStep();
+    }
     const fromMask = this.collision(p, p.layer),
       toMask = this.collision(to, p.layer);
     if (fromMask === null || toMask === null || !(fromMask & BIT[direction]))
@@ -399,7 +447,7 @@ export class FieldGame {
           ? this.actors[e.id]?.x === target.x &&
             this.actors[e.id]?.y === target.y
           : contains(e, target)) &&
-        [6, 8].includes(e.kind) &&
+        e.kind === 6 &&
         (!e.npc ||
           (!!(e.npc.acceptDirection & ACTION_SIDE[OPPOSITE[p.direction]]) &&
             (e.npc.interaction.kind === "blocked" ||
@@ -493,6 +541,7 @@ export class FieldGame {
       this.bgm.advance(10, this.content.bgm);
       this.environment.advance(10, this.content.environment);
       this.tileAnimations.advance(10);
+      this.openTriggers.advance();
       this.time += 10;
       if (this.fade) {
         this.fade.elapsed += 10;

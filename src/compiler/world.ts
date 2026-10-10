@@ -324,6 +324,7 @@ export async function compileWorld(root: string) {
       limitations: [
         "Package compilation does not establish story reachability or original parity.",
         "Unsupported entity groups, instructions and media remain executable stops.",
+        "OpenTrigger contact uses the development grid controller; source SE requests are recorded in the muted sound lane.",
       ],
     };
     maps.push({ ...value, contentHash: hash(value) });

@@ -24,6 +24,7 @@
     "npc:check": "npm run build && node scripts/check-npc.mjs",
     "tiles:check": "npm run build && node scripts/check-tile-animation.mjs",
     "actors:check": "npm run build && node scripts/check-actor-animation.mjs",
+    "doors:check": "npm run build && node scripts/check-open-trigger.mjs",
     "knowledge": "node dist/src/cli.js knowledge",
     "accept": "node dist/src/cli.js accept",
     "dev": "node scripts/serve.mjs",

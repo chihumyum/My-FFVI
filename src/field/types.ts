@@ -33,6 +33,12 @@ export type FieldEntity = Point & {
   minimap?: Point & { icon: number };
   destination?: { mapId: number; entrance: number };
   npc?: NpcProperties;
+  openTrigger?: {
+    /** Movement-facing mask, distinct from an actor's facing and NPC action side. */
+    direction: number;
+    linkObject: number;
+    soundId: number;
+  };
   tileAnimation?: {
     allLayers: boolean;
     loop: boolean;

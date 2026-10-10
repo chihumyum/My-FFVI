@@ -173,6 +173,22 @@ export class TileAnimationState {
       this.settings(this.cells.get(k)!, loop, f(1 / f(speed)));
     r.playing = true;
   }
+  /** OpenTrigger calls the nullable overload directly: no cue/reset, source loop, scale 1. */
+  playDefault(id: string): void {
+    const r = this.region(id);
+    for (const k of r.cells) this.settings(this.cells.get(k)!, null);
+    r.playing = true;
+  }
+  /** Entry-on-door setup adds a whole duration without resetting elapsed/count. */
+  forceLastFrame(id: string): void {
+    const r = this.region(id);
+    for (const k of r.cells) {
+      const c = this.cells.get(k)!;
+      this.settings(c, null);
+      this.add(c, c.total);
+      r.playing = false;
+    }
+  }
   advance(ms: number): void {
     for (const r of this.regions.values())
       if (r.playing) {
