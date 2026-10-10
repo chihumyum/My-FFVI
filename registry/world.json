@@ -4,22 +4,17 @@
     {
       "id": "narshe",
       "name": "纳尔谢",
-      "aliases": [
-        "Narshe",
-        "炭坑都市纳尔谢"
-      ],
+      "aliases": ["Narshe", "炭坑都市纳尔谢"],
       "questions": [
         "开场开发入口已建立；继续恢复完整初始化、后续实体组与重返条件。",
         "建立同一地点在不同世界阶段、剧情标记和局部状态下的变体条件。",
-        "确认碰撞值、Wait 时钟与 SysCall 选择器的原版语义。"
+        "确认 Wait 时钟与 SysCall 选择器，并对已恢复的碰撞进行原版运行对照。"
       ]
     },
     {
       "id": "opera",
       "name": "歌剧院",
-      "aliases": [
-        "Opera House"
-      ],
+      "aliases": ["Opera House"],
       "questions": [
         "将区域地图、演出资源包、Timeline 根与实际事件触发对应。",
         "选择一个短镜头并补齐外部模型、动画、材质与音频引用。",
@@ -28,6 +23,21 @@
     }
   ],
   "facts": [
+    {
+      "id": "narshe:map20010-minimap-services",
+      "subject": "narshe",
+      "predicate": "source.Map_20010.defaultMinimap",
+      "value": "entity_default declares 9 minimap signs: Inn, Weapon, Item, Armor, Accessory, GotoWorld, and 3 Gates. Sign presence does not establish shop access or story applicability.",
+      "when": { "mapName": "Map_20010" },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "Map_20010/entity_default.json:/layers/3/objects/0",
+        "Map_20010/entity_default.json:/layers/3/objects/8",
+        "Last.UI.Gps.MinimapIconType",
+        "docs/minimap.md"
+      ]
+    },
     {
       "id": "narshe:first-encounter-slots",
       "subject": "narshe",
@@ -88,9 +98,7 @@
       },
       "status": "observed",
       "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
-      "evidence": [
-        "Map_20010/sc_e_0002.json:/Mnemonics/5"
-      ]
+      "evidence": ["Map_20010/sc_e_0002.json:/Mnemonics/5"]
     },
     {
       "id": "narshe:field-armor-resource",
@@ -100,10 +108,7 @@
       "when": {},
       "status": "observed",
       "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
-      "evidence": [
-        "field_character_asset.csv:38",
-        "docs/web-field.md"
-      ]
+      "evidence": ["field_character_asset.csv:38", "docs/web-field.md"]
     },
     {
       "id": "narshe:opening-magitek-membership",

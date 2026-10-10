@@ -1,4 +1,4 @@
-// Source-backed entity-group execution and map-reference inspection; no media or story oracle.
+// Source-backed isolated group execution; minimap media is checked, no story oracle.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -15,10 +15,15 @@ import {
 import { hash } from "../dist/src/compiler/content.js";
 import { FieldGame } from "../dist/src/core/field.js";
 import { EventState } from "../dist/src/core/event-state.js";
+import { loadMinimapMedia } from "../dist/src/compiler/map-ui.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const corpus = await loadCorpus(root),
   byId = new Map(corpus.assets.map((a) => [a.id, a]));
+const minimap = await loadMinimapMedia(
+  root,
+  corpus.manifest.parentSourceSetHash,
+);
 for (const [suffix, sha256] of [
   [
     "GameAssembly.dll",
@@ -138,6 +143,7 @@ function run(map, asset, ops, input) {
       source: asset.source,
     },
     characters: {},
+    minimap,
     scripts: { [asset.id]: ops },
     scriptLocals: { [asset.id]: decodeScriptLocals(asset.data) },
     entry: {
@@ -296,6 +302,7 @@ const report = {
   kind: "entity-group-batch-check",
   lane: "implementation-only",
   sourceSetHash: corpus.sourceSetHash,
+  minimapSourceSetHash: minimap.sourceSetHash,
   counts,
   results,
   excluded,

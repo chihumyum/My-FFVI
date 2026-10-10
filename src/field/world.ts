@@ -28,6 +28,7 @@ export type WorldCatalog = {
   mediaSourceSetHash: string;
   contentHash: string;
   characters: Record<string, Character>;
+  minimap?: FieldContent["minimap"];
   characterIssues: Record<string, ContentIssue[]>;
   maps: Record<
     string,

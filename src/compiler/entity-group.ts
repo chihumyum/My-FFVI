@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { record } from "./content.js";
 import { tableId } from "./table-id.js";
+import { MINIMAP_ICON_TYPES } from "../core/minimap.js";
 import type {
   Direction,
   EntityGroup,
@@ -82,8 +83,15 @@ export function compileEntityGroup(
           p = entityProperties(o.properties),
           kind = integer(p.object_type);
         const issue = (reason: string) => blockers.push({ reason, source });
-        if (![0, 2, 3, 4, 6, 19, 27].includes(kind))
+        if (![0, 2, 3, 4, 6, 18, 19, 27].includes(kind))
           issue(`Unsupported entity kind ${kind}`);
+        if (
+          kind === 18 &&
+          !MINIMAP_ICON_TYPES.includes(
+            integer(p.minimap_icon_type) as (typeof MINIMAP_ICON_TYPES)[number],
+          )
+        )
+          issue("Unsupported minimap icon type");
         if ((o.visible === false && kind !== 27) || Number(o.rotation ?? 0))
           issue("Unsupported entity transform");
         if (kind === 27 && (name !== "entity_default" || o.gid))
@@ -163,6 +171,19 @@ export function compileEntityGroup(
         entities.push({
           id: entityId ? String(entityId) : `${name}:${li}:${oi}`,
           objectId: integer(p.object_id ?? 0),
+          ...(kind === 18
+            ? {
+                minimap: {
+                  icon: integer(p.minimap_icon_type),
+                  x:
+                    (integer(o.x) + Math.trunc(integer(o.width) / 2)) /
+                    tileSize,
+                  y:
+                    (integer(o.y) - Math.trunc(integer(o.height) / 2)) /
+                    tileSize,
+                },
+              }
+            : {}),
           ...(kind === 3
             ? {
                 destination: {

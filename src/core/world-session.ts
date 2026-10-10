@@ -5,6 +5,7 @@ import { FieldGame, type MapTransitionStop } from "./field.js";
 import { missingFieldPoses } from "./character-media.js";
 import { canonical } from "./canonical.js";
 import { fieldCollisionRange, inCollisionRange } from "./collision.js";
+import { requireMinimapMedia } from "./minimap.js";
 
 export type PreparedMap = {
   readonly field: FieldGame;
@@ -74,6 +75,8 @@ export class WorldSession {
       group = map.groups?.entity_default;
     if (!group) throw new Error("Missing default entity group");
     if (group.blockers.length) throw new Error(group.blockers[0]!.reason);
+    if (group.entities.some((e) => e.kind === 18) || catalog.minimap)
+      requireMinimapMedia(group.entities, catalog.minimap);
     if (group.entities.some((e) => e.id === "-1001"))
       throw new Error("Default entity conflicts with player identity");
     const candidates = group.entities.filter(
@@ -132,6 +135,7 @@ export class WorldSession {
       scripts: target.scripts,
       scriptLocals: target.scriptLocals,
       characters,
+      ...(catalog.minimap ? { minimap: catalog.minimap } : {}),
       entry: {
         player: {
           x: entry.x,

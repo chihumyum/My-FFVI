@@ -10,10 +10,14 @@ let content,
   game,
   renderer,
   openingRenderer,
+  minimapRenderer,
+  overviewRenderer,
   catalogPromise,
   battleView,
   started = false,
   paused = false,
+  mapOpen = false,
+  lastMinimapFrame = 0,
   last = 0,
   failed = false;
 const images = new Map(),
@@ -40,6 +44,7 @@ const focus = () => canvas.focus();
 function pause(value) {
   if (!started || (game.stop && !session.battle)) return;
   paused = value;
+  mapOpen = false;
   held.clear();
   $("pause").hidden = !value;
   $("menu-button").textContent = value ? "继续" : "暂停";
@@ -47,10 +52,30 @@ function pause(value) {
   if (value) $("resume").focus();
   else focus();
 }
+function setMap(value) {
+  if (
+    value &&
+    (!started || paused || session.battle || game.busy || !game.content.minimap)
+  )
+    return;
+  mapOpen = value;
+  held.clear();
+  if (value) overviewRenderer.overview(game);
+  sync();
+  if (value) $("close-map").focus();
+  else focus();
+}
+function setupMapViews(next) {
+  minimapRenderer = new Renderer($("minimap"), next, images);
+  overviewRenderer = new Renderer($("overview"), next, images);
+  mapOpen = false;
+  lastMinimapFrame = 0;
+}
 function reset() {
   session = new GameSession(content, battleContent);
   game = session.field;
   renderer = openingRenderer;
+  setupMapViews(content);
   started = true;
   paused = false;
   held.clear();
@@ -76,6 +101,18 @@ function sync() {
   const mapName =
     game.content.map.id === content.map.id ? "纳尔谢" : game.content.map.id;
   text("map-label", mapName);
+  const canMap =
+    started &&
+    !paused &&
+    !session.battle &&
+    !game.busy &&
+    !!game.content.minimap;
+  if (!canMap) mapOpen = false;
+  $("map-button").disabled = !canMap;
+  $("map-button").setAttribute("aria-expanded", String(mapOpen));
+  $("map-overview").hidden = !mapOpen;
+  $("minimap-button").hidden = !canMap || mapOpen;
+  text("overview-title", mapName);
   if (session.battle) {
     held.clear();
     $("dialogue").hidden = true;
@@ -123,20 +160,26 @@ function sync() {
   );
 }
 function confirm() {
-  if (!started || paused || game.stop) return;
+  if (!started || paused || mapOpen || game.stop) return;
   game.confirm();
   sync();
 }
 window.addEventListener("keydown", (e) => {
+  if (e.code === "KeyM" && started) {
+    e.preventDefault();
+    if (!e.repeat) setMap(!mapOpen);
+    return;
+  }
   if (e.code === "Escape" && started) {
     e.preventDefault();
     if (!e.repeat) {
-      if (session.battle && !paused && battleView.back()) sync();
+      if (mapOpen) setMap(false);
+      else if (session.battle && !paused && battleView.back()) sync();
       else pause(!paused);
     }
     return;
   }
-  if (!started || paused) return;
+  if (!started || paused || mapOpen) return;
   if (session.battle) {
     if (e.target === canvas || $("battle-menu").contains(e.target))
       battleView.keyboard(e);
@@ -172,6 +215,9 @@ $("restart").onclick = reset;
 $("retry").onclick = reset;
 $("resume").onclick = () => pause(false);
 $("menu-button").onclick = () => pause(!paused);
+$("map-button").onclick = () => setMap(!mapOpen);
+$("minimap-button").onclick = () => setMap(true);
+$("close-map").onclick = () => setMap(false);
 $("next").onclick = () => {
   confirm();
   focus();
@@ -181,7 +227,7 @@ function frame(now) {
   try {
     const dt = last ? Math.min(50, now - last) : 0;
     last = now;
-    if (started && !paused && !document.hidden) {
+    if (started && !paused && !mapOpen && !document.hidden) {
       if (!session.battle && held.size) game.move([...held.values()].at(-1));
       session.advance(dt);
       if (game.stop?.kind === "map-transition" && !loading.has(game.stop))
@@ -190,6 +236,10 @@ function frame(now) {
     }
     if (session.battle) battleView.draw(session.battle);
     else if (renderer) renderer.draw(game);
+    if (!$("minimap-button").hidden && now - lastMinimapFrame >= 125) {
+      minimapRenderer.overview(game);
+      lastMinimapFrame = now;
+    }
     requestAnimationFrame(frame);
   } catch (error) {
     failure(error);
@@ -198,9 +248,18 @@ function frame(now) {
 function failure(error) {
   failed = true;
   held.clear();
-  for (const id of ["pause", "dialogue", "stop", "battle-ui", "battle-result"])
+  for (const id of [
+    "pause",
+    "dialogue",
+    "stop",
+    "battle-ui",
+    "battle-result",
+    "map-overview",
+    "minimap-button",
+  ])
     $(id).hidden = true;
   $("menu-button").disabled = true;
+  $("map-button").disabled = true;
   $("welcome").hidden = false;
   $("load-error").hidden = false;
   $("load-error").textContent = String(error.message ?? error);
@@ -235,12 +294,14 @@ async function init() {
       Object.values(c.sprites).map((s) => s.file),
     ),
     ...Object.values(battleContent.common.sprites).map((s) => s.file),
+    ...Object.values(content.minimap?.icons ?? {}).map((s) => s.file),
   ]);
   await loadImages(urls);
   session = new GameSession(content, battleContent);
   game = session.field;
   renderer = new Renderer(canvas, content, images);
   openingRenderer = renderer;
+  setupMapViews(content);
   battleView = new BattleView(
     canvas,
     battleContent.common,
@@ -324,6 +385,7 @@ async function loadMap(owner) {
         ...Object.values(next.characters).flatMap((c) =>
           Object.values(c.sprites).map((s) => s.file),
         ),
+        ...Object.values(next.minimap?.icons ?? {}).map((s) => s.file),
       ]),
     );
     if (session !== owner) return;
@@ -335,6 +397,7 @@ async function loadMap(owner) {
     }
     game = owner.field;
     renderer = nextRenderer;
+    setupMapViews(next);
     held.clear();
     last = 0;
     canvas.setAttribute(

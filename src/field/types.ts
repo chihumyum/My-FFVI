@@ -1,5 +1,6 @@
 /** Browser-safe field content: no Unity readers or renderer dependencies in the runtime. */
 import type { EventControlOp, ScriptLocals } from "../core/event-state.js";
+import type { MinimapMedia } from "../core/minimap.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -11,6 +12,7 @@ export type Evidence = {
 export type FieldEntity = Point & {
   id: string;
   objectId?: number;
+  minimap?: Point & { icon: number };
   destination?: { mapId: number; entrance: number };
   layer: number;
   kind: number;
@@ -130,6 +132,7 @@ export type FieldContent = {
     source: Evidence;
   };
   characters: Record<string, Character>;
+  minimap?: MinimapMedia;
   scripts: Record<string, Op[]>;
   scriptLocals?: Record<string, ScriptLocals | null>;
   entry: {

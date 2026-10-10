@@ -230,6 +230,51 @@ a {
 #stop {
   z-index: 2;
 }
+#map-button {
+  margin-right: 8px;
+}
+#minimap-button {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  width: 19%;
+  padding: 2px;
+  opacity: 0.9;
+  border-color: #a2bacb;
+}
+#minimap {
+  aspect-ratio: 3/2;
+}
+#map-overview {
+  z-index: 2;
+  background: #080e1bed;
+}
+.map-panel {
+  width: 88%;
+  height: 92%;
+  display: flex;
+  flex-direction: column;
+}
+.map-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+}
+.map-heading button {
+  font-size: 12px;
+  padding: 6px 12px;
+}
+#overview {
+  flex: 1;
+  min-height: 0;
+  object-fit: contain;
+}
+.map-panel p {
+  margin: 0;
+  text-align: center;
+  font-size: 11px;
+}
 #dialogue {
   z-index: 1;
 }

@@ -1,3 +1,4 @@
+import { minimapMarkers, MINIMAP_ROTATION } from "/runtime/core/minimap.js";
 const FACING = { up: "WalkB", right: "WalkR", down: "Default", left: "WalkL" };
 export class Renderer {
   constructor(canvas, content, images) {
@@ -112,6 +113,94 @@ export class Renderer {
       this.sprite(a.asset, ride, a, x, y, 8, 14);
     } else this.sprite(a.asset, key, a, x, y);
   }
+  layer(l, cx, cy, w, h, time) {
+    this.ctx.globalAlpha = l.opacity;
+    for (
+      let y = Math.max(0, Math.floor(cy / 16));
+      y < Math.min(l.height, Math.ceil((cy + h) / 16));
+      y++
+    )
+      for (
+        let x = Math.max(0, Math.floor(cx / 16));
+        x < Math.min(l.width, Math.ceil((cx + w) / 16));
+        x++
+      )
+        this.tile(
+          l.data[y * l.width + x] >>> 0,
+          x * 16 - cx,
+          y * 16 - cy,
+          time,
+        );
+    this.ctx.globalAlpha = 1;
+  }
+  /** Development overview: source map/markers, fitted to the current map range. */
+  overview(game) {
+    const c = this.ctx,
+      range = game.collisionRange;
+    const w = this.canvas.width,
+      h = this.canvas.height;
+    const scale = Math.min(
+      (w - 16) / (range.width * 16),
+      (h - 16) / (range.height * 16),
+    );
+    const ox = (w - range.width * 16 * scale) / 2,
+      oy = (h - range.height * 16 * scale) / 2;
+    c.imageSmoothingEnabled = false;
+    c.fillStyle = "#09111b";
+    c.fillRect(0, 0, w, h);
+    c.save();
+    c.translate(ox, oy);
+    c.scale(scale, scale);
+    c.beginPath();
+    c.rect(0, 0, range.width * 16, range.height * 16);
+    c.clip();
+    for (const l of this.content.map.layers)
+      this.layer(
+        l,
+        range.x * 16,
+        range.y * 16,
+        range.width * 16,
+        range.height * 16,
+        game.time,
+      );
+    c.restore();
+    c.save();
+    c.beginPath();
+    c.rect(ox, oy, range.width * 16 * scale, range.height * 16 * scale);
+    c.clip();
+    const draw = (point, player = false) => {
+      const sprite = this.content.minimap?.icons[point.icon];
+      if (!sprite) throw new Error("缺少小地图图标 " + point.icon);
+      const image = this.images.get(sprite.file);
+      if (!image) throw new Error("缺少小地图图片");
+      const factor = w > 300 ? 1.5 : 0.75;
+      c.save();
+      c.translate(
+        ox + (point.x - range.x) * 16 * scale,
+        oy + (point.y - range.y) * 16 * scale,
+      );
+      c.rotate((MINIMAP_ROTATION[point.direction] * Math.PI) / 180);
+      if (player) {
+        c.shadowColor = "#fff";
+        c.shadowBlur = 3;
+      }
+      c.drawImage(
+        image,
+        (-sprite.width * factor) / 2,
+        (-sprite.height * factor) / 2,
+        sprite.width * factor,
+        sprite.height * factor,
+      );
+      c.restore();
+    };
+    for (const marker of minimapMarkers(game.minimapEntities)) draw(marker);
+    const p = this.point(game.player);
+    draw(
+      { icon: 0, x: p.x + 0.5, y: p.y + 0.5, direction: game.player.direction },
+      true,
+    );
+    c.restore();
+  }
   draw(game) {
     const c = this.ctx,
       m = this.content.map,
@@ -152,24 +241,7 @@ export class Renderer {
       for (const a of actors) if (a.layer === layer) this.actor(a, cx, cy);
     };
     for (const l of m.layers) {
-      c.globalAlpha = l.opacity;
-      for (
-        let y = Math.max(0, Math.floor(cy / 16));
-        y < Math.min(l.height, Math.ceil((cy + h) / 16));
-        y++
-      )
-        for (
-          let x = Math.max(0, Math.floor(cx / 16));
-          x < Math.min(l.width, Math.ceil((cx + w) / 16));
-          x++
-        )
-          this.tile(
-            l.data[y * l.width + x] >>> 0,
-            x * 16 - cx,
-            y * 16 - cy,
-            game.time,
-          );
-      c.globalAlpha = 1;
+      this.layer(l, cx, cy, w, h, game.time);
       if (l.name === "BottomLayer") drawActors(0);
       if (l.name === "GroundLayer") drawActors(1);
       if (l.name === "UpperLayer") drawActors(2);

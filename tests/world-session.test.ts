@@ -5,6 +5,7 @@ import { EventState } from "../src/core/event-state.js";
 import { decodeFieldOp } from "../src/compiler/field.js";
 import { verifyContent } from "../src/core/content-integrity.js";
 import { hash } from "../src/compiler/content.js";
+import { minimapMarkers } from "../src/core/minimap.js";
 import type {
   Character,
   FieldContent,
@@ -401,4 +402,38 @@ test("browser and compiler agree on digests; changed payloads and stale catalog 
     verifyContent(signed, "f".repeat(64)),
     /identity mismatch/,
   );
+});
+
+test("map changes replace marker groups and reject missing icons without committing the field", () => {
+  const f = fixture();
+  const marker: FieldEntity = {
+    ...f.target.map!.entities[0]!,
+    id: "sign",
+    kind: 18,
+    layer: 4,
+    minimap: { icon: 2, x: 2.5, y: 2.5 },
+  };
+  f.target.map!.groups!.entity_default!.entities.push(marker);
+  f.world.field.startEvent("leave");
+  const old = f.world.field;
+  assert.throws(
+    () => f.world.prepare(f.catalog, f.target),
+    /Missing minimap sprite/,
+  );
+  assert.equal(f.world.field, old);
+  const sprite = character.sprites.pose!;
+  f.catalog.minimap = {
+    sourceSetHash: "synthetic",
+    source,
+    icons: { 0: sprite, 2: sprite },
+  };
+  const prepared = f.world.prepare(f.catalog, f.target);
+  assert.equal(minimapMarkers(old.entities).length, 0);
+  assert.equal(f.world.commit(prepared), true);
+  assert.equal(minimapMarkers(f.world.field.entities).length, 1);
+  // A second map entry constructs its own default group, without retaining old signs.
+  f.target.map!.groups!.entity_default!.entities.splice(1);
+  f.world.field.previewMap(2, 10);
+  assert.equal(f.world.commit(f.world.prepare(f.catalog, f.target)), true);
+  assert.equal(minimapMarkers(f.world.field.entities).length, 0);
 });

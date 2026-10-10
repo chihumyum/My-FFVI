@@ -10,6 +10,7 @@ import {
 } from "../src/compiler/map-package.js";
 import type { CorpusAsset } from "../src/compiler/corpus.js";
 import { tableId } from "../src/compiler/table-id.js";
+import { minimapMarkers } from "../src/core/minimap.js";
 import type {
   EntityGroup,
   FieldContent,
@@ -442,4 +443,134 @@ test("numeric master joins accept source whitespace without merging invalid or d
     () => bindMapPackages([], { "map.csv": [{ id: "250" }, { id: "250 " }] }),
     /Duplicate map row/,
   );
+});
+
+test("minimap source centers are independent of collision anchors, editor GID and active actor layer", () => {
+  const props = { object_type: 18, minimap_icon_type: 2, direction: 1 };
+  const marker = {
+    x: 32,
+    y: 64,
+    width: 17,
+    height: 19,
+    properties: Object.entries(props).map(([name, value]) => ({ name, value })),
+  };
+  const compiled = compileEntityGroup(
+    "markers",
+    {
+      source,
+      data: {
+        layers: [
+          { name: "MinimapObject", objects: [marker, { ...marker, gid: 901 }] },
+        ],
+      },
+    },
+    {},
+  );
+  assert.deepEqual(compiled.blockers, []);
+  const points = minimapMarkers(compiled.entities);
+  assert.deepEqual(
+    points.map((p) => [p.x, p.y, p.icon, p.direction]),
+    [
+      [2.5, 55 / 16, 2, "up"],
+      [2.5, 55 / 16, 2, "up"],
+    ],
+  );
+  assert.notEqual(compiled.entities[0]!.y, compiled.entities[1]!.y);
+  assert.equal(points[0]!.source.pointer, "/layers/0/objects/0");
+  marker.properties.find((p) => p.name === "minimap_icon_type")!.value = 10;
+  assert.ok(
+    compileEntityGroup(
+      "markers",
+      {
+        source,
+        data: { layers: [{ name: "MinimapObject", objects: [marker] }] },
+      },
+      {},
+    ).blockers.some((b) => b.reason === "Unsupported minimap icon type"),
+  );
+});
+
+test("marker activation requires media, rolls back with its group and never blocks movement", () => {
+  const marker = {
+    ...entity("door-sign", 18, 2, 2),
+    layer: 4,
+    minimap: { icon: 2, x: 2.5, y: 2.5 },
+  };
+  const g = group("markers", [marker]);
+  const instructions = [raw("SetEntities", [], ["markers"]), raw("Exit")];
+  const missing = fixture([g], instructions);
+  missing.startEvent("event");
+  assert.match(missing.stop!.message, /Missing minimap sprite/);
+  assert.equal(missing.entities.length, 0);
+  assert.equal(missing.activeGroups.size, 0);
+  const game = fixture([g], instructions);
+  const sprite = {
+    file: "synthetic.png",
+    width: 12,
+    height: 12,
+    pivot: [0.5, 0.5],
+    sha256: "synthetic",
+    source,
+  };
+  game.content.minimap = {
+    sourceSetHash: "synthetic",
+    source,
+    icons: { 0: sprite, 2: sprite },
+  };
+  assert.deepEqual(minimapMarkers(game.entities), []);
+  game.startEvent("event");
+  assert.equal(game.stop, null);
+  assert.equal(minimapMarkers(game.entities).length, 1);
+  assert.equal(game.move("up"), true);
+  game.advance(240);
+  assert.equal(game.player.y, 2);
+  assert.equal(Object.keys(game.actors).length, 1);
+});
+
+test("minimap retains default signs and replaces event signs while spawned actors remain", () => {
+  const sign = (id: string) => ({
+    ...entity(id, 18, 1, 1),
+    minimap: { icon: 2, x: 1.5, y: 1.5 },
+  });
+  const a = group("first", [sign("old-sign"), entity("stays", 6, 4, 4)]),
+    b = group("second", [sign("new-sign")]);
+  const seed = fixture([a, b], []);
+  seed.content.scripts.event = [
+    { script: "event", index: 0, source, kind: "entities", group: "first" },
+    { script: "event", index: 1, source, kind: "wait", seconds: 1 },
+    { script: "event", index: 2, source, kind: "entities", group: "second" },
+    { script: "event", index: 3, source, kind: "exit" },
+  ];
+  const sprite = {
+    file: "synthetic.png",
+    width: 12,
+    height: 12,
+    pivot: [0.5, 0.5],
+    sha256: "synthetic",
+    source,
+  };
+  seed.content.minimap = {
+    sourceSetHash: "synthetic",
+    source,
+    icons: { 0: sprite, 2: sprite },
+  };
+  seed.content.map.groups!.entity_default = group("entity_default", [
+    sign("default-sign"),
+  ]);
+  seed.content.map.entities = seed.content.map.groups!.entity_default.entities;
+  seed.content.map.initialGroups = ["entity_default"];
+  const game = new FieldGame(seed.content);
+  game.startEvent("event");
+  assert.deepEqual(
+    minimapMarkers(game.minimapEntities).map((m) => m.id),
+    ["default-sign", "old-sign"],
+  );
+  game.advance(1100);
+  assert.equal(game.stop, null);
+  assert.deepEqual(
+    minimapMarkers(game.minimapEntities).map((m) => m.id),
+    ["default-sign", "new-sign"],
+  );
+  assert.ok(game.actors.stays);
+  assert.ok(game.entities.some((e) => e.id === "old-sign"));
 });

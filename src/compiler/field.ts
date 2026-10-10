@@ -5,6 +5,7 @@ import { hash, record } from "./content.js";
 import { ImportedProject } from "../contracts.js";
 import { compileEntityGroup } from "./entity-group.js";
 import { tableId } from "./table-id.js";
+import { loadMinimapMedia } from "./map-ui.js";
 import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
 import {
   int32,
@@ -521,6 +522,7 @@ export async function compileField(root: string): Promise<FieldContent> {
       source: asset("tilemap").source,
     },
     characters: chars,
+    minimap: await loadMinimapMedia(root, project.sourceSetHash),
     scripts,
     scriptLocals,
     entry: {

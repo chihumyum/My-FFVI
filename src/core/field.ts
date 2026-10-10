@@ -8,6 +8,7 @@ import type {
   MapRequest,
 } from "../field/types.js";
 import { EventState, executeEventControl } from "./event-state.js";
+import { requireMinimapMedia } from "./minimap.js";
 import {
   buildCollisionMapping,
   collisionMask,
@@ -89,8 +90,14 @@ export class FieldGame {
   readonly hiddenEntities = new Set<string>();
   readonly activeGroups = new Set<string>();
   private readonly entityList: FieldEntity[];
+  private readonly defaultProperties: readonly FieldEntity[];
+  private currentProperties: readonly FieldEntity[];
   get entities(): readonly FieldEntity[] {
     return this.entityList;
+  }
+  /** Source minimap queries current properties (default + latest event group), not all spawned bodies. */
+  get minimapEntities(): readonly FieldEntity[] {
+    return this.currentProperties;
   }
   get flags(): Record<string, Record<string, boolean>> {
     return this.eventState.flagView();
@@ -112,6 +119,21 @@ export class FieldGame {
     readonly eventState: EventState = new EventState(),
   ) {
     this.entityList = [...content.map.entities];
+    const groups = content.map.groups,
+      initial = content.map.initialGroups;
+    this.defaultProperties =
+      groups && initial
+        ? initial.includes("entity_default")
+          ? groups.entity_default!.entities
+          : []
+        : [...this.entityList];
+    const latest = initial?.filter((name) => name !== "entity_default").at(-1);
+    this.currentProperties =
+      groups && latest
+        ? [...this.defaultProperties, ...groups[latest]!.entities]
+        : this.defaultProperties;
+    if (this.entityList.some((e) => e.kind === 18))
+      requireMinimapMedia(this.entityList, content.minimap);
     this.collisionRange = fieldCollisionRange(
       content.map.width,
       content.map.height,
@@ -146,6 +168,8 @@ export class FieldGame {
       throw new Error(`重复实体组激活尚未恢复：${name}`);
     if (group.blockers.length)
       throw new Error(`${name}：${group.blockers[0]!.reason}`);
+    if (group.entities.some((e) => e.kind === 18))
+      requireMinimapMedia(group.entities, this.content.minimap);
     const ids = new Set(this.entityList.map((e) => e.id));
     ids.add("-1001");
     for (const e of group.entities) {
@@ -156,6 +180,7 @@ export class FieldGame {
     this.entityList.push(...group.entities);
     this.registerActors(group.entities);
     this.activeGroups.add(name);
+    this.currentProperties = [...this.defaultProperties, ...group.entities];
   }
   get player(): Actor {
     return this.actors["-1001"]!;

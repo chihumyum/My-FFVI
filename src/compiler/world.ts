@@ -9,6 +9,7 @@ import { decodeFieldOp, decodeScriptLocals } from "./field.js";
 import { missingFieldPoses } from "../core/character-media.js";
 import { fieldCollisionRange } from "../core/collision.js";
 import { tableId } from "./table-id.js";
+import { loadMinimapMedia } from "./map-ui.js";
 import type { Character, Evidence, Op, Sprite } from "../field/types.js";
 import type {
   WorldMapContent,
@@ -102,6 +103,10 @@ export function compileWorldCharacter(
 export async function compileWorld(root: string) {
   const corpus = await loadCorpus(root),
     files = await readSnapshot(root + "/build/world-media");
+  const minimap = await loadMinimapMedia(
+    root,
+    text(corpus.manifest.parentSourceSetHash),
+  );
   if (
     !array(corpus.manifest.sources)
       .map(record)
@@ -313,6 +318,7 @@ export async function compileWorld(root: string) {
     mediaSourceSetHash: text(media.sourceSetHash),
     characters,
     characterIssues,
+    minimap,
     maps: Object.fromEntries(
       maps.map((m) => [
         String(m.mapId),

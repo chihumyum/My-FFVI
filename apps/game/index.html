@@ -12,7 +12,17 @@
       ><span
         ><span id="map-label">纳尔谢</span>
         <span class="muted">/ 开发预览</span></span
-      ><button id="menu-button" disabled>暂停</button>
+      ><span
+        ><button
+          id="map-button"
+          disabled
+          aria-expanded="false"
+          aria-controls="map-overview"
+        >
+          地图
+        </button>
+        <button id="menu-button" disabled>暂停</button></span
+      >
     </header>
     <main>
       <div id="stage">
@@ -23,6 +33,34 @@
           tabindex="0"
           aria-label="纳尔谢游戏画面。方向键移动，空格确认，Escape 暂停。"
         ></canvas>
+        <button
+          id="minimap-button"
+          title="展开地图（M）"
+          aria-label="展开地图"
+          hidden
+        >
+          <canvas
+            id="minimap"
+            width="192"
+            height="128"
+            aria-label="当前位置与地图标记"
+          ></canvas>
+        </button>
+        <section id="map-overview" class="overlay" aria-label="地图总览" hidden>
+          <div class="map-panel">
+            <div class="map-heading">
+              <span id="overview-title"></span
+              ><button id="close-map">返回游戏 · M / Esc</button>
+            </div>
+            <canvas
+              id="overview"
+              width="768"
+              height="432"
+              aria-label="地图与当前位置"
+            ></canvas>
+            <p class="muted">红色箭头：当前位置 · 图标：出入口与商店</p>
+          </div>
+        </section>
         <section id="welcome" class="overlay">
           <div class="panel">
             <span class="eyebrow">FINAL FANTASY VI</span>
@@ -79,7 +117,7 @@
       </div>
       <footer>
         <span>方向键 / WASD 移动</span><span>空格 / Enter 确认</span
-        ><span>Esc 暂停</span><a href="/">查看迁移工作台</a>
+        ><span>M 地图 · Esc 暂停</span><a href="/">查看迁移工作台</a>
       </footer>
       <p id="status" class="muted" aria-live="polite">正在载入地图与角色…</p>
     </main>
