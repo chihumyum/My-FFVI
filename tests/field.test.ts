@@ -212,3 +212,31 @@ test("unsupported operand forms and inline message controls are not erased", () 
     "blocked",
   );
 });
+
+test("victory continuation hides a visual blocker and a non-visual trigger before releasing movement", () => {
+  const c = eventFixture();
+  c.map.entities.push({ ...entity("guard", 6, 2, 2), asset: "hero" });
+  c.scripts.event = ops({ kind: "encounter", party: 3, continuation: "after" });
+  c.scripts.after = ops(
+    { kind: "puppet", slot: 0, actor: "guard", target: 4 },
+    { kind: "puppet", slot: 1, actor: "trigger", target: 6 },
+    { kind: "join" },
+    { kind: "exit" },
+    { kind: "hide" },
+    { kind: "exit" },
+    { kind: "hide" },
+    { kind: "exit" },
+  );
+  const g = start(c);
+  assert.equal(g.stop?.kind, "encounter");
+  assert.throws(() => g.finishEncounter(4));
+  g.finishEncounter(3);
+  assert.equal(g.busy, false);
+  assert.deepEqual([...g.hiddenEntities].sort(), ["guard", "trigger"]);
+  assert.equal(g.move("left"), true);
+  g.advance(240);
+  assert.equal(g.move("right"), true);
+  g.advance(240);
+  assert.equal(g.stop, null);
+  assert.throws(() => g.finishEncounter(3));
+});

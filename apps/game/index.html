@@ -27,7 +27,7 @@
             <h1>纳尔谢</h1>
             <p>踏入雪中的矿镇。</p>
             <p class="muted">
-              当前开放开场行军后的短片段：移动、守卫出场与对白。到第一场战斗时结束预览。
+              当前开放开场行军后的短片段：探索矿镇、与守卫交战，再继续前行。首战规则和表现仍在迁移中。
             </p>
             <button id="start" disabled>正在载入…</button>
             <p id="load-error" role="alert" hidden></p>
@@ -48,6 +48,20 @@
           <strong id="speaker"></strong>
           <p id="message"></p>
           <button id="next" aria-label="继续对话">继续 ▾</button>
+        </section>
+        <section id="battle-ui" hidden aria-label="战斗操作">
+          <p id="battle-action" role="status"></p>
+          <div id="battle-menu"></div>
+          <div id="party" aria-label="队伍"></div>
+        </section>
+        <section id="battle-result" class="overlay" hidden>
+          <div class="panel">
+            <h2 id="battle-result-title"></h2>
+            <p id="battle-result-text"></p>
+            <p id="battle-levels"></p>
+            <button id="battle-return">继续前行</button
+            ><button id="battle-retry">重试战斗</button>
+          </div>
         </section>
         <section id="stop" class="overlay" hidden>
           <div class="panel">

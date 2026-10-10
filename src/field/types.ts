@@ -50,7 +50,9 @@ export type Character = {
 export type Site = { script: string; index: number; source: Evidence };
 export type Op = Site &
   (
-    | { kind: "nop" | "exit" | "return" | "join" }
+    | { kind: "nop" | "exit" | "return" | "join" | "hide" }
+    | { kind: "set-flag"; namespace: string; flag: number }
+    | { kind: "fade-in"; seconds: number }
     | { kind: "call"; target: number }
     | { kind: "wait"; seconds: number }
     | { kind: "puppet"; slot: number; actor: string; target: number }

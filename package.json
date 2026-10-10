@@ -18,7 +18,8 @@
     "game:build": "npm run build && node dist/src/cli.js field",
     "game:check": "npm run game:build && node scripts/check-field.mjs",
     "battle:build": "npm run build && node dist/src/cli.js battle",
-    "battle:check": "npm run battle:build && node scripts/check-battle.mjs"
+    "battle:check": "npm run battle:build && node scripts/check-battle.mjs",
+    "playable:check": "npm run game:build && npm run battle:build && node scripts/check-playable.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

@@ -233,3 +233,117 @@ a {
 #dialogue {
   z-index: 1;
 }
+#battle-ui {
+  position: absolute;
+  bottom: 2%;
+  left: 3%;
+  width: 94%;
+  display: grid;
+  grid-template-columns: 42% 58%;
+  gap: 0;
+  align-items: stretch;
+}
+#battle-action {
+  grid-column: 1/-1;
+  margin: 0 0 6px;
+  text-align: center;
+  color: #fff;
+  text-shadow: 0 1px 4px #000;
+  background: #101526bb;
+  border-radius: 3px;
+}
+#battle-menu,
+#party {
+  background: #172e59f0;
+  border: 3px double #c2cede;
+  border-radius: 5px;
+  padding: 8px 10px;
+}
+#battle-menu strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: #e4d7a5;
+  margin-bottom: 5px;
+}
+.battle-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+}
+.battle-choices button {
+  font-size: 13px;
+  padding: 4px 5px;
+  border: 1px solid transparent;
+  text-align: left;
+  background: transparent;
+}
+.battle-choices button:hover,
+.battle-choices button:focus-visible {
+  background: #315d8b;
+}
+.battle-choices button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+#party {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+.party-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 0.8fr;
+  gap: 8px;
+  align-items: center;
+  font-size: 14px;
+  padding: 5px 3px;
+  background: transparent;
+  border-color: transparent;
+  text-align: left;
+}
+.party-row:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.party-row.selected {
+  border-color: #cfb878;
+}
+.party-row.fallen {
+  color: #f99391;
+}
+.party-row progress {
+  width: 100%;
+  height: 9px;
+  accent-color: #e5c266;
+}
+#battle-result-text {
+  white-space: pre-line;
+}
+#battle-result {
+  z-index: 1;
+}
+@media (max-width: 700px) {
+  #battle-menu,
+  #party {
+    padding: 3px 4px;
+  }
+  .party-row {
+    font-size: 10px;
+    gap: 3px;
+    padding: 3px 0;
+  }
+  .battle-choices button {
+    font-size: 10px;
+    padding: 2px 0;
+  }
+  #battle-menu strong {
+    font-size: 10px;
+    margin-bottom: 2px;
+  }
+  #battle-action {
+    font-size: 10px;
+    line-height: 1.3;
+  }
+}

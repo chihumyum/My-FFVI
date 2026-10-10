@@ -177,7 +177,18 @@ export async function compileOpeningBattle(root: string) {
     const memberships = tableGroup("ability_random_group.csv", "group_id", status.values.ability_random_group_id!);
     // Keep all source memberships; this is not an unlocked-ability list.
     for (const member of memberships) tableInteger(member.values.ability_id);
+    for (let slot = 1; slot <= 6; slot++) {
+      const content = row("content.csv", status.values[`content_id${slot}`]!);
+      const table = { "2": "weapon.csv", "3": "armor.csv" }[content.values.type_id!];
+      if (!table) throw new Error("Unsupported opening equipment type");
+      row(table, content.values.type_value!);
+    }
+    tableGroup("growth_curve.csv", "group_id", status.values.growth_curve_group_id!);
   }
+  tableGroup("exp_table.csv", "group_id", 1);
+  unique("initialize_data.csv", "key_name", "INIT_GIL");
+  unique("game_constant_int.csv", "key_name", "ACCUMULATION_ATB_NORMAL");
+  unique("game_constant_int.csv", "key_name", "ENEMY_ACCUMULATION_ATB_NORMAL");
   const background = row("battle_background_asset.csv", party.values.battle_background_asset_id!);
   const battleScript = row("script.csv", party.values.script_name!);
   const constant = (key: string) => tableInteger(unique("game_constant_int.csv", "key_name", key).values.value1);

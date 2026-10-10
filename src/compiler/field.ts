@@ -62,6 +62,7 @@ export function decodeFieldOp(
     Exit: "exit",
     Return: "return",
     ExecPuppet: "join",
+    Hide: "hide",
   } as const;
   if (Object.hasOwn(simple, name) && form([]))
     return { ...site, kind: simple[name as keyof typeof simple] };
@@ -118,6 +119,21 @@ export function decodeFieldOp(
   }
   if (name === "Encount" && form([0], [], [0]))
     return { ...site, kind: "encounter", party: i[0]!, continuation: s[0]! };
+  if (
+    name === "SetFlag" &&
+    form([0], [], [0]) &&
+    i[0]! >= 0 &&
+    /^ScenarioFlag[14]$/.test(s[0]!)
+  )
+    return { ...site, kind: "set-flag", namespace: s[0]!, flag: i[0]! };
+  if (
+    name === "FadeIn" &&
+    form([3], [0]) &&
+    i[3] === 255 &&
+    Number.isFinite(r[0]) &&
+    r[0]! >= 0
+  )
+    return { ...site, kind: "fade-in", seconds: r[0]! };
   return blocked("Instruction or operand form has not been migrated");
 }
 
@@ -447,7 +463,7 @@ export async function compileField(root: string): Promise<FieldContent> {
       description: "开场行军之后的开发入口；开场影片和完整初始化尚未接入。",
     },
     limitations: [
-      "战斗、跨地图、队伍菜单和存读档尚未迁移，遇到对应事件时停住。",
+      "首场守卫战斗使用可玩开发规则；后续战斗、跨地图、队伍菜单和存读档尚未迁移。",
       "音频、环境粒子、精确镜头与演出时序尚未接入；骑乘合成和碰撞等待正式对照。",
       "此入口使用明确的开场状态，尚未执行完整地图初始化脚本。",
     ],

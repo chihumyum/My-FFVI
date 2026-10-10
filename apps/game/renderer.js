@@ -128,7 +128,14 @@ export class Renderer {
     c.fillStyle = "#09111b";
     c.fillRect(0, 0, w, h);
     const actors = Object.values(game.actors)
-      .filter((a) => a.x >= 0 && a.x < m.width && a.y >= 0 && a.y < m.height)
+      .filter(
+        (a) =>
+          !game.hiddenEntities.has(a.id) &&
+          a.x >= 0 &&
+          a.x < m.width &&
+          a.y >= 0 &&
+          a.y < m.height,
+      )
       .sort(
         (a, b) => this.point(a).y - this.point(b).y || a.id.localeCompare(b.id),
       );
@@ -156,6 +163,10 @@ export class Renderer {
       c.globalAlpha = 1;
       if (l.name === "GroundLayer") drawActors(1);
       if (l.name === "UpperLayer") drawActors(2);
+    }
+    if (game.fade) {
+      c.fillStyle = `rgba(0,0,0,${1 - game.fade.elapsed / game.fade.duration})`;
+      c.fillRect(0, 0, w, h);
     }
   }
 }

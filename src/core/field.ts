@@ -67,6 +67,9 @@ const contains = (e: FieldEntity, p: Point) =>
   p.x >= e.x && p.x < e.x + e.width && p.y >= e.y && p.y < e.y + e.height;
 export class FieldGame {
   readonly actors: Record<string, Actor> = {};
+  readonly hiddenEntities = new Set<string>();
+  readonly flags: Record<string, Record<string, boolean>> = {};
+  fade: { elapsed: number; duration: number } | null = null;
   dialogue: Dialogue | null = null;
   stop: Stop | null = null;
   time = 0;
@@ -110,7 +113,12 @@ export class FieldGame {
     }
     let mask = FILTER[cell]!;
     for (const e of m.entities)
-      if (e.kind === 19 && e.layer === layer && contains(e, p)) {
+      if (
+        !this.hiddenEntities.has(e.id) &&
+        e.kind === 19 &&
+        e.layer === layer &&
+        contains(e, p)
+      ) {
         if (e.collision === null || FILTER[e.collision] === undefined) {
           this.block("尚未支持的动态碰撞", {
             script: "collision",
@@ -141,7 +149,11 @@ export class FieldGame {
     if (
       Object.values(this.actors).some(
         (a) =>
-          a.id !== p.id && a.layer === p.layer && a.x === to.x && a.y === to.y,
+          !this.hiddenEntities.has(a.id) &&
+          a.id !== p.id &&
+          a.layer === p.layer &&
+          a.x === to.x &&
+          a.y === to.y,
       )
     )
       return false;
@@ -167,6 +179,7 @@ export class FieldGame {
       target = { x: p.x + d.x, y: p.y + d.y };
     const e = this.content.map.entities.find(
       (e) =>
+        !this.hiddenEntities.has(e.id) &&
         e.layer === p.layer &&
         e.script &&
         contains(e, target) &&
@@ -192,6 +205,10 @@ export class FieldGame {
       this.remainder -= 10;
       if (this.stop) continue;
       this.time += 10;
+      if (this.fade) {
+        this.fade.elapsed += 10;
+        if (this.fade.elapsed >= this.fade.duration) this.fade = null;
+      }
       let entered = false;
       for (const a of Object.values(this.actors)) {
         const m = a.motion;
@@ -213,7 +230,10 @@ export class FieldGame {
   private enter(): void {
     const p = this.player,
       hits = this.content.map.entities.filter(
-        (e) => e.layer === p.layer && contains(e, p),
+        (e) =>
+          !this.hiddenEntities.has(e.id) &&
+          e.layer === p.layer &&
+          contains(e, p),
       );
     const transitions = hits.filter((e) => e.kind === 4);
     if (transitions.length > 1) {
@@ -265,6 +285,22 @@ export class FieldGame {
       done: false,
     };
   }
+  /** Only the session owner calls this after consuming a real battle victory. */
+  finishEncounter(party: number): void {
+    if (
+      this.stop?.kind !== "encounter" ||
+      this.stop.party !== party ||
+      !this.stop.continuation
+    )
+      throw new Error("No matching field encounter to resume");
+    const continuation = this.stop.continuation;
+    if (!this.content.scripts[continuation])
+      throw new Error("Missing battle continuation");
+    this.stop = null;
+    this.remainder = 0;
+    this.tasks = [this.task(continuation, 0, "-1001")];
+    this.pump();
+  }
   private pump(): void {
     if (this.stop || this.dialogue) return;
     for (let budget = 0; budget < 512; budget++) {
@@ -272,15 +308,22 @@ export class FieldGame {
       for (const t of [...this.tasks]) {
         if (t.done || t.wait > 0) continue;
         const actor = this.actors[t.actor];
-        if (!actor) {
+        if (
+          !actor &&
+          !this.content.map.entities.some((e) => e.id === t.actor)
+        ) {
           this.block(`缺少角色 ${t.actor}`);
           return;
         }
-        if (actor.motion) continue;
+        if (actor?.motion) continue;
         if (t.children.some((id) => !this.tasks.find((c) => c.id === id)?.done))
           continue;
         t.children = [];
         if (t.move && t.remaining > 0) {
+          if (!actor) {
+            this.block("非角色实体不能移动");
+            return;
+          }
           const d = DELTA[t.move.direction];
           actor.direction = t.move.direction;
           actor.motion = {
@@ -340,7 +383,8 @@ export class FieldGame {
             for (const p of t.pending.sort((a, b) => a.slot - b.slot)) {
               const c = this.task(t.script, p.target, p.actor);
               if (
-                !this.actors[p.actor] ||
+                (!this.actors[p.actor] &&
+                  !this.content.map.entities.some((e) => e.id === p.actor)) ||
                 this.tasks.some(
                   (other) =>
                     !other.done && other.id !== t.id && other.actor === p.actor,
@@ -355,6 +399,10 @@ export class FieldGame {
             t.pending = [];
             break;
           case "position":
+            if (!actor) {
+              this.block("非角色实体不能定位", op);
+              return;
+            }
             if (
               op.animation !== "" &&
               op.animation !== "Default" &&
@@ -371,7 +419,21 @@ export class FieldGame {
             t.remaining = op.steps;
             break;
           case "look":
+            if (!actor) {
+              this.block("非角色实体不能转向", op);
+              return;
+            }
             actor.direction = op.direction;
+            break;
+          case "hide":
+            this.hiddenEntities.add(t.actor);
+            break;
+          case "set-flag":
+            (this.flags[op.namespace] ??= {})[op.flag] = true;
+            break;
+          case "fade-in":
+            this.fade = { elapsed: 0, duration: Math.round(op.seconds * 1000) };
+            t.wait = this.fade.duration;
             break;
           case "message":
             this.dialogue = {
@@ -384,7 +446,7 @@ export class FieldGame {
           case "encounter":
             this.stop = {
               kind: "encounter",
-              message: "已到达战斗入口。战斗系统尚未迁移。",
+              message: "此战斗尚未接入当前可玩片段。",
               site: op,
               party: op.party,
               continuation: op.continuation,

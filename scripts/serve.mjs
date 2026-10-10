@@ -10,6 +10,8 @@ const server = http.createServer(async (req, res) => {
     let base, relative;
     if (url.pathname === '/reports/status.json') { base = resolve(root, 'build/reports'); relative = 'status.json'; }
     else if (url.pathname === '/game/content.json') { base = resolve(root, 'build/game'); relative = 'narshe.json'; }
+    else if (url.pathname === '/game/battle.json') { base = resolve(root, 'build/game'); relative = 'opening-playable.json'; }
+    else if (url.pathname.startsWith('/battle/sprites/')) { base = resolve(root, 'build/battle/sprites'); relative = decodeURIComponent(url.pathname.slice('/battle/sprites/'.length)); }
     else if (url.pathname.startsWith('/game/')) { base = resolve(root, 'apps/game'); relative = decodeURIComponent(url.pathname.slice(6)) || 'index.html'; }
     else if (url.pathname.startsWith('/runtime/core/')) { base = resolve(root, 'dist/src/core'); relative = decodeURIComponent(url.pathname.slice('/runtime/core/'.length)); }
     else if (url.pathname.startsWith('/field/sprites/')) { base = resolve(root, 'build/field/sprites'); relative = decodeURIComponent(url.pathname.slice('/field/sprites/'.length)); }

@@ -1,6 +1,6 @@
 # 首场守卫战斗迁移
 
-当前交付是来源数据编译器和行动条计算模块。Web 游戏仍在 `Encount party=3` 处停住，尚不能出招、胜负结算或返回地图。按用户要求继续优先实现基本可玩流程；没有建设截图一致性采样，也没有启动 HD-2D。
+来源数据编译器和行动条模块已用于独立的首战可玩开发 profile。Web 已能出招、胜负结算并返回地图；完整规则未恢复。当前实现、临时规则和实玩检查见 [首战可玩开发规则](battle-playability.md)。按用户要求继续优先实现基本可玩流程；没有建设截图一致性采样，也没有启动 HD-2D。
 
 ## 数据与模块
 
@@ -23,9 +23,9 @@
 | Guard AI 的 `Act` | ability 1 与 377；源权重 65、35；另一个分支仅 ability 1 | 运行时分支触发，不应直接扁平化为固定概率循环 |
 | `monster_party.csv:3.script_name=8010` | 经 `script.csv:8010` 解析到 `sc_b_0239` | 不可把 8010 当作脚本文件名；脚本系统调用仍待实现 |
 | `initialize_data.csv` | 开场角色顺序 1、31、32；各自连接 character_status/character_asset | character_status 基础值不等于装备/成长/临时状态处理后的最终属性 |
-| `command.csv:26` | ability group 7，共 218–225 八项魔导能力 | 八项不是三人都可用；应结合能力成员表和过滤器恢复 |
+| `command.csv:26` | ability group 7，共 218–225 八项魔导能力 | 成员交集为 8/4/4；实际解锁初始化仍待恢复 |
 | `battle_background_asset.csv:9` | `bg_ff6_09`，512×256 源图 | 镜头、特效、音频 |
-| 字段后续 `sc_e_0002_1` | 隐藏实体 164、165、177，FadeIn，SetFlag | Flag 操作、触发器隐藏与事件恢复还没有实现 |
+| 字段后续 `sc_e_0002_1` | 隐藏实体 164、165、177，FadeIn，SetFlag | 首战后继已接入；通用旗标/事件语义仍需扩展 |
 
 编译保留源行、AI 和战斗脚本，不把原生调用或未迁移指令替换成空操作。敌人实例按槽位保留，同一 monster ID 出现两次不能去重成一个敌人。函数、能力与 content 连接由表生成，不使用固定伤害或固定 96 奖励。
 
@@ -49,13 +49,13 @@ increment = deltaSeconds * 30 * base * battle.ATBSpeed * (modifier / 100) * tota
 
 `build/native/reviewed-atb/complete.json` 记录原生文件、符号表、头文件、函数字节范围与输出摘要。它的 `semanticsVerified:false` 表示反编译工具不会自行认证语义；上面的算术推导是范围有限的人工审核记录。此模块的单元测试不是原版游玩一致性验收。
 
-## 下一步
+## 完整规则尚待恢复
 
 1. 恢复开场角色的最终 HP、能力、装备修正和魔导菜单过滤。不要直接把基础表当成完整初始化。
 2. `CalcExecuteFF6.MagicExecution` RVA `0xA94480` 已获得带类型研究输出。物理攻击 `0xA97B20` 曾先超时、再超出返回缓冲区限制；扩大有界缓冲区后已成功，输出 `build/native/physical-research/a97b20.c`（约 166 KB），并有 `complete.json` 收据。保留了类型传播警告，因此仍需按控制流和汇编审核；尚未把完整伤害规则移入 core。敌方基础攻击分支从该文件约 615 行开始，包含额外 `GetRandPlus(7)+56`；不能跳过它或替换成通用 RPG 公式。
-3. 用原生规则实现 Guard AI、出招、目标、命中和伤害，再接战斗 UI。伤害浮动调用 `CommonUtility.GetRandPlus(31)+224` 已定位，但尚未作为完整伤害公式发布。
-4. 恢复掉落、经验分配/升级和货币变更，胜利后续接 `sc_e_0002_1`。Hide 必须也能停用实体 177 的触发器，不仅隐藏守卫图片。
-5. 用浏览器实际打赢、失败并返回地图，判断基本可玩；正式一致性检查后置。
+3. 开发版 Guard AI、出招与伤害已有显式临时实现；继续恢复完整原生规则。伤害浮动调用 `CommonUtility.GetRandPlus(31)+224` 已定位，但尚未作为完整伤害公式发布。
+4. 补齐掉落、经验资格和升级规则。开发版已连接奖励与 `sc_e_0002_1`，并隐藏触发器 177；不能因此宣称通用结算系统完成。
+5. 已在浏览器打赢并返回地图；继续扩大基本可玩流程，正式一致性检查后置。
 
 ## 重建与检查
 
@@ -66,4 +66,4 @@ npm run check
 .venv/bin/python -m unittest discover -s tools/tests
 ```
 
-`battle:check` 检查真实源连接、重复敌人槽、图像尺寸与确定性重建，输出明确保留 `battleExecutable:false`。原有 `game:check` 仍验证地图到首战边界；没有修改严格验收门禁。
+`battle:check` 检查源数据包的真实源连接、重复敌人槽、图像尺寸与确定性重建；源数据包自身仍标记 `battleExecutable:false`。可玩开发包另由 `playable:check` 验证。原有 `game:check` 仍验证地图到首战边界；没有修改严格验收门禁。

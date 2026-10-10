@@ -10,6 +10,7 @@ import { readSnapshot, snapshotFile } from "./compiler/integrity.js";
 
 import { compileField } from "./compiler/field.js";
 import { compileOpeningBattle } from "./compiler/battle.js";
+import { compileOpeningPlayable } from "./compiler/opening-playable.js";
 
 const root = resolve(import.meta.dirname, "../..");
 const repo = root.endsWith(`${sep}dist`) ? dirname(root) : root;
@@ -60,11 +61,15 @@ async function main() {
   if (command === "validate") { await loadRegistries(); console.log("Registry identities and contracts valid"); return; }
   if (command === "battle") {
     const result = await compileOpeningBattle(repo);
+    const playable = await compileOpeningPlayable(repo, result);
     const out = resolve(repo, "build/game"); await mkdir(out, {recursive:true});
     await writeFile(resolve(out, "opening-battle.json.tmp"), canonical(result) + "\n");
     await rename(resolve(out, "opening-battle.json.tmp"), resolve(out, "opening-battle.json"));
+    await writeFile(resolve(out, "opening-playable.json.tmp"), canonical(playable) + "\n");
+    await rename(resolve(out, "opening-playable.json.tmp"), resolve(out, "opening-playable.json"));
     console.log(JSON.stringify({output:"build/game/opening-battle.json", contentHash:result.contentHash,
-      enemies:result.encounter.enemies.length, initialParty:result.initialParty.length, executable:false})); return;
+      enemies:result.encounter.enemies.length, initialParty:result.initialParty.length,
+      developmentOutput:"build/game/opening-playable.json", profile:playable.profile})); return;
   }
   if (command === "field") {
     const result = await compileField(repo);

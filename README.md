@@ -2,7 +2,7 @@
 
 以干净的边界、可追溯的证据和独立验收，将所提供的 FFVI Pixel Remaster 迁移到 Web，并建立语义驱动的 HD-2D 重制管线。
 
-项目由内容编译、游戏内核、世界知识、语义资产与场景生成、对照验收组成。首批目标是纳尔谢和歌剧演出片段。当前有独立 Web 纳尔谢片段：真实地图、角色移动/碰撞、守卫演出与对白；到第一场战斗入口停止。全游戏迁移尚未完成。另保留真实资源检查工作台。
+项目由内容编译、游戏内核、世界知识、语义资产与场景生成、对照验收组成。首批目标是纳尔谢和歌剧演出片段。当前有独立 Web 纳尔谢片段：真实地图、角色移动/碰撞、守卫演出与对白；现已接通首场守卫战斗、胜负和返回地图。全游戏迁移尚未完成。另保留真实资源检查工作台。
 
 **执行顺序：先迁移 Web 版，通过原版一致性验收，再调查 HD-2D，最后制作重制内容。** 现有歌剧效果按原版迁移；HD-2D 文档和契约目前仅作后续设计保留。
 
@@ -16,6 +16,7 @@
 - [本次交付与后续问题](docs/progress.md)
 - [Web 场景运行与实现边界](docs/web-field.md)
 - [首战数据与规则迁移](docs/battle-migration.md)
+- [首战可玩开发规则及临时实现](docs/battle-playability.md)
 - [Mac 本地运行与基本可玩检查](docs/mac-playability.md)
 - [纳尔谢目标](targets/narshe.md) / [歌剧目标](targets/opera.md)
 - [Agent 工作规则](AGENTS.md)
@@ -32,20 +33,16 @@ python3 -m venv .venv
 npm run pipeline
 .venv/bin/python tools/source_adapter/export_field.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 npm run game:check
+.venv/bin/python tools/source_adapter/export_battle.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
+npm run playable:check
 npm run check
 .venv/bin/python -m unittest discover -s tools/tests
 npm run dev
 ```
 
-Web 片段为 `http://127.0.0.1:4173/game/`，方向键/WASD 移动，空格/Enter 确认，Esc 暂停。当前从行军后开发检查点开始，到战斗入口停止；尚无战斗、跨地图和存读档。按用户要求先推进可玩实现，正式一致性对照后置。
+Web 片段为 `http://127.0.0.1:4173/game/`，方向键/WASD 移动，空格/Enter 确认，Esc 暂停。当前从行军后开发检查点开始，可完成首战并返回地图；尚无后续战斗、跨地图和存读档。按用户要求先推进可玩实现，正式一致性对照后置。
 
-首战数据可以另行只读导出并编译；目前尚未接入战斗 UI：
-
-```sh
-.venv/bin/python tools/source_adapter/export_battle.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
-npm run battle:check
-```
-
+`playable:check` 编译地图与首战内容，并检查胜负、结算、战后继续移动和失败重试。
 工作台为 `http://127.0.0.1:4173`，展示真实纳尔谢图层、原始碰撞数据、剧情知识缺口、歌剧时间线与验收状态。它只用于检查；不宣称恢复了游戏规则。
 
 ```sh
