@@ -11,6 +11,7 @@ import { EventState, executeEventControl } from "./event-state.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState } from "./static-audio.js";
 import { TileAnimationState } from "./tile-animation.js";
+import { ActorAnimation, FIELD_POSE } from "./actor-animation.js";
 import {
   buildCollisionMapping,
   collisionMask,
@@ -54,6 +55,7 @@ export type Actor = Point & {
   mount: string | null;
   motion: Motion | null;
   steps: number;
+  animation: ActorAnimation | null;
 };
 type Task = {
   id: number;
@@ -160,14 +162,36 @@ export class FieldGame {
     for (const name of content.map.initialGroups ?? [])
       this.activeGroups.add(name);
     const p = content.entry.player;
-    this.actors["-1001"] = { ...p, id: "-1001", motion: null, steps: 0 };
-    this.registerActors(this.entityList);
+    this.actors["-1001"] = {
+      ...p,
+      id: "-1001",
+      motion: null,
+      steps: 0,
+      animation: this.initialAnimation(p.asset, p.direction, p.mount),
+    };
+    Object.assign(this.actors, this.createActors(this.entityList));
     this.tileAnimations.register(this.entityList);
   }
-  private registerActors(entities: readonly FieldEntity[]): void {
+  private initialAnimation(
+    asset: string,
+    direction: Direction,
+    mount: string | null,
+  ): ActorAnimation | null {
+    const character = this.content.characters[asset];
+    // Mounted composition still uses the explicit opening presentation profile.
+    // Logic-only fixtures can omit media; explicit animation commands always require it.
+    if (mount || !character) return null;
+    const animation = new ActorAnimation(character);
+    animation.cue(FIELD_POSE[direction], -1);
+    return animation;
+  }
+  private createActors(
+    entities: readonly FieldEntity[],
+  ): Record<string, Actor> {
+    const actors: Record<string, Actor> = {};
     for (const e of entities)
       if (e.kind === 6 && e.asset)
-        this.actors[e.id] = {
+        actors[e.id] = {
           id: e.id,
           x: e.x,
           y: e.y,
@@ -177,7 +201,9 @@ export class FieldGame {
           mount: null,
           motion: null,
           steps: 0,
+          animation: this.initialAnimation(e.asset, e.direction, null),
         };
+    return actors;
   }
   /** Source SetEventEntityGroup appends entities; it does not replace existing groups. */
   private activateGroup(name: string): void {
@@ -196,9 +222,10 @@ export class FieldGame {
       ids.add(e.id);
     }
     // Validate the entire group before any actor, collision, or trigger becomes visible.
+    const actors = this.createActors(group.entities);
     this.tileAnimations.register(group.entities);
     this.entityList.push(...group.entities);
-    this.registerActors(group.entities);
+    Object.assign(this.actors, actors);
     this.activeGroups.add(name);
     this.currentProperties = [...this.defaultProperties, ...group.entities];
   }
@@ -312,23 +339,37 @@ export class FieldGame {
     const p = this.player;
     if (this.busy || p.motion) return false;
     p.direction = direction;
+    const faceBlockedStep = (): false => {
+      try {
+        p.animation?.look(direction);
+      } catch (error) {
+        this.block(error instanceof Error ? error.message : String(error));
+      }
+      return false;
+    };
     const d = DELTA[direction];
     let to = { x: p.x + d.x, y: p.y + d.y };
     const fromMask = this.collision(p, p.layer),
       toMask = this.collision(to, p.layer);
     if (fromMask === null || toMask === null || !(fromMask & BIT[direction]))
-      return false;
+      return faceBlockedStep();
     if (!(toMask & BIT[OPPOSITE[direction]])) {
       try {
         const redirected = this.slopeDestination(direction, to);
-        if (!redirected) return false;
+        if (!redirected) return faceBlockedStep();
         to = redirected;
       } catch (error) {
         this.block(error instanceof Error ? error.message : String(error));
         return false;
       }
     }
-    if (this.occupied([to], p.layer)) return false;
+    if (this.occupied([to], p.layer)) return faceBlockedStep();
+    try {
+      p.animation?.move(direction, 0.24);
+    } catch (error) {
+      this.block(error instanceof Error ? error.message : String(error));
+      return false;
+    }
     p.motion = {
       from: { x: p.x, y: p.y },
       to,
@@ -408,7 +449,18 @@ export class FieldGame {
         this.time +
         (action.kind === "script" && action.script === null ? 10 : 0),
     };
-    if (npc.eyeContact) actor.direction = OPPOSITE[p.direction];
+    if (npc.eyeContact) {
+      actor.direction = OPPOSITE[p.direction];
+      try {
+        actor.animation?.look(actor.direction);
+      } catch (error) {
+        this.block(
+          error instanceof Error ? error.message : String(error),
+          site,
+        );
+        return;
+      }
+    }
     if (action.kind === "script") {
       if (action.script !== null) this.beginRoot(action.script);
     } else this.dialogue = { ...action.message, task: 0 };
@@ -416,8 +468,14 @@ export class FieldGame {
   private finishInteraction(): void {
     if (!this.interaction || this.busy) return;
     const { actor, restoreDirection } = this.interaction;
-    if (restoreDirection && this.actors[actor])
+    if (restoreDirection && this.actors[actor]) {
       this.actors[actor]!.direction = restoreDirection;
+      try {
+        this.actors[actor]!.animation?.look(restoreDirection);
+      } catch (error) {
+        this.block(error instanceof Error ? error.message : String(error));
+      }
+    }
     this.interaction = null;
   }
   /** Integer 10 ms simulation steps make render-frame partitioning irrelevant. */
@@ -442,10 +500,23 @@ export class FieldGame {
       }
       let entered = false;
       for (const a of Object.values(this.actors)) {
+        try {
+          a.animation?.advance(10);
+        } catch (error) {
+          this.block(error instanceof Error ? error.message : String(error));
+          return;
+        }
         const m = a.motion;
         if (!m) continue;
         m.elapsed += 10;
+        try {
+          a.animation?.linkToMovement(Math.min(1, m.elapsed / m.duration));
+        } catch (error) {
+          this.block(error instanceof Error ? error.message : String(error));
+          return;
+        }
         if (m.elapsed >= m.duration) {
+          a.animation?.stop();
           a.x = m.to.x;
           a.y = m.to.y;
           a.motion = null;
@@ -600,7 +671,12 @@ export class FieldGame {
         }
         if (actor?.motion) continue;
         if (t.animationWait) {
-          if (this.tileAnimations.isPlaying(t.actor)) continue;
+          if (
+            actor
+              ? actor.animation?.playing
+              : this.tileAnimations.isPlaying(t.actor)
+          )
+            continue;
           t.animationWait = false;
         }
         if (t.children.some((id) => !this.tasks.find((c) => c.id === id)?.done))
@@ -612,6 +688,15 @@ export class FieldGame {
             return;
           }
           const d = DELTA[t.move.direction];
+          try {
+            actor.animation?.move(t.move.direction, t.move.secondsPerCell);
+          } catch (error) {
+            this.block(
+              error instanceof Error ? error.message : String(error),
+              t.move,
+            );
+            return;
+          }
           actor.direction = t.move.direction;
           actor.motion = {
             from: { x: actor.x, y: actor.y },
@@ -653,7 +738,22 @@ export class FieldGame {
           case "animation-cue":
           case "animation-play":
             try {
-              if (op.kind === "animation-cue")
+              if (actor) {
+                if (actor.mount)
+                  throw new Error(
+                    "Mounted actor animation dispatch is not implemented",
+                  );
+                if (!actor.animation)
+                  throw new Error(
+                    "Missing actor animation media " + actor.asset,
+                  );
+                const animation = actor.animation.clone();
+                if (op.kind === "animation-cue")
+                  animation.cue(op.animation, op.frame);
+                else animation.play(op.animation, op.loop, op.speed);
+                actor.animation = animation;
+                t.animationWait = op.kind === "animation-play" && !op.loop;
+              } else if (op.kind === "animation-cue")
                 this.tileAnimations.cue(t.actor, op.frame);
               else {
                 this.tileAnimations.play(t.actor, op.loop, op.speed);
@@ -772,10 +872,23 @@ export class FieldGame {
               this.block("尚未支持角色动画 " + op.animation, op);
               return;
             }
+            if (op.animation && actor.animation) {
+              try {
+                actor.animation.cue(op.animation, -1);
+              } catch (error) {
+                this.block(
+                  error instanceof Error ? error.message : String(error),
+                  op,
+                );
+                return;
+              }
+            }
             actor.x = op.x;
             actor.y = op.y;
             this.hiddenEntities.delete(actor.id);
-            if (op.animation === "WalkL") actor.direction = "left";
+            // The mounted development renderer still derives its pose from facing.
+            if (!actor.animation && op.animation === "WalkL")
+              actor.direction = "left";
             break;
           case "move":
             t.move = op;
@@ -787,6 +900,15 @@ export class FieldGame {
               return;
             }
             actor.direction = op.direction;
+            try {
+              actor.animation?.look(op.direction);
+            } catch (error) {
+              this.block(
+                error instanceof Error ? error.message : String(error),
+                op,
+              );
+              return;
+            }
             break;
           case "hide":
             if (this.tileAnimations.has(t.actor)) {
@@ -809,6 +931,7 @@ export class FieldGame {
               return;
             }
             rider.mount = this.content.entry.player.mount;
+            rider.animation = null;
             break;
           }
           case "sound":

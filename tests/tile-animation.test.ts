@@ -268,10 +268,10 @@ test("VM waits for one-shot region completion, async loops survive task end, rep
   loop.advance(100);
   assert.equal(loop.tileAnimations.isPlaying("1"), true);
 });
-test("animation dispatch rejects actor targets and unreviewed playback parameters", () => {
+test("animation dispatch rejects missing actor media and unreviewed playback parameters", () => {
   const g = game(play(1), "-1001");
   g.startEvent("test");
-  assert.match(g.stop!.message, /Unsupported animation target/);
+  assert.match(g.stop!.message, /Missing actor animation media/);
   for (const input of [play(2), play(1, -1), { ...play(1), type: 1 }])
     assert.equal(
       decodeFieldOp(input, { script: "test", index: 0, source }, {}).kind,

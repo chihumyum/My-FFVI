@@ -91,8 +91,8 @@ export function decodeFieldOp(
     return { ...site, kind: simple[name as keyof typeof simple] };
   if (name === "SetEntities" && m.type === 1 && form([], [], [0]) && s[0])
     return { ...site, kind: "entities", group: s[0] };
-  // Puppet animation dispatch is currently implemented only for tile regions.
-  // The runtime rejects actor/effect targets instead of treating them as no-ops.
+  // Runtime dispatch validates tile regions or unmounted actor media.
+  // Unsupported target families and missing animation keys remain blockers.
   if (
     name === "CueAnim" &&
     m.type === 2 &&

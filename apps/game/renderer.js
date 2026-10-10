@@ -1,5 +1,5 @@
 import { minimapMarkers, MINIMAP_ROTATION } from "/runtime/core/minimap.js";
-const FACING = { up: "WalkB", right: "WalkR", down: "Default", left: "WalkL" };
+import { FIELD_POSE as FACING } from "/runtime/core/actor-animation.js";
 export class Renderer {
   constructor(canvas, content, images) {
     this.canvas = canvas;
@@ -62,32 +62,36 @@ export class Renderer {
       y: m.from.y + (m.to.y - m.from.y) * t,
     };
   }
-  sprite(asset, key, a, x, y, crop = 0, lift = 0) {
+  sprite(asset, key, a, x, y, crop = 0, lift = 0, pose = null) {
     const char = this.content.characters[asset];
     if (!char) throw new Error("缺少角色 " + asset);
-    let animation = char.animations[key];
-    if (!animation) throw new Error("缺少动画 " + asset + "/" + key);
-    if (a.motion && a.steps % 2 && animation.next) {
-      animation = char.animations[animation.next];
-      if (!animation) throw new Error("缺少后续动画");
+    let f = pose;
+    if (!f) {
+      // Temporary mounted opening presentation; ordinary actors use the core's resolved frame.
+      let animation = char.animations[key];
+      if (!animation) throw new Error("缺少动画 " + asset + "/" + key);
+      if (a.motion && a.steps % 2 && animation.next) {
+        animation = char.animations[animation.next];
+        if (!animation) throw new Error("缺少后续动画");
+      }
+      const t = a.motion ? a.motion.elapsed / a.motion.duration : 1;
+      const frame =
+        animation.frames[
+          Math.min(
+            animation.frames.length - 1,
+            Math.floor(t * animation.frames.length),
+          )
+        ];
+      if (frame) f = { ...frame, flip: animation.flip !== frame.flip };
     }
-    const t = a.motion ? a.motion.elapsed / a.motion.duration : 1;
-    const f =
-      animation.frames[
-        Math.min(
-          animation.frames.length - 1,
-          Math.floor(t * animation.frames.length),
-        )
-      ];
     if (!f) throw new Error("空动画");
     const s = char.sprites[f.sprite],
       image = this.images.get(s.file);
     if (!image) throw new Error("缺少角色图像");
-    const flip = animation.flip !== f.flip,
-      c = this.ctx;
+    const c = this.ctx;
     c.save();
     c.translate(Math.round(x + f.x), Math.round(y - f.y - lift));
-    c.scale(flip ? -1 : 1, 1);
+    c.scale(f.flip ? -1 : 1, 1);
     c.globalAlpha = f.alpha;
     c.drawImage(
       image,
@@ -111,7 +115,7 @@ export class Renderer {
       this.sprite(a.mount, key, a, x, y);
       const ride = { WalkL: "RideL", WalkR: "RideR" }[key] ?? key;
       this.sprite(a.asset, ride, a, x, y, 8, 14);
-    } else this.sprite(a.asset, key, a, x, y);
+    } else this.sprite(a.asset, key, a, x, y, 0, 0, a.animation?.frame());
   }
   layer(l, cx, cy, w, h, game, layerIndex) {
     this.ctx.globalAlpha = l.opacity;

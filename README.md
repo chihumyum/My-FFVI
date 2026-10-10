@@ -20,6 +20,7 @@
 - [小地图与相连地图批次](docs/minimap.md)
 - [共用背景音乐与原始音频导出](docs/bgm.md)
 - [共用环境音、来源音量与独立通道](docs/environment-audio.md)
+- [共用角色姿态、播放与移动动画](docs/actor-animation.md)
 - [本次交付与后续问题](docs/progress.md)
 - [Web 场景运行与实现边界](docs/web-field.md)
 - [首战数据与规则迁移](docs/battle-migration.md)
@@ -67,6 +68,7 @@ npm run minimap:check
 npm run bgm:check
 npm run environment:check
 npm run tiles:check
+npm run actors:check
 ```
 
 `/game/?map=<地图ID>&entrance=<入口ObjectId>` 使用相同加载器检查来源入口；未知剧情状态仍未知。它是显式开发预览，不是通关存档，也不证明主线可达。
@@ -80,6 +82,7 @@ npm run tiles:check
 `events:check` 用同一游戏 VM 整批运行符合能力条件的原始脚本，检查不同输入下的分支和状态变化；不代表这些地图已经可玩。
 `maps:check` 解析全部地图包、实体组和入口引用，并使用当前 `world:build` 的几何绑定动画区域，整批检查能力已闭合的实体组选择脚本。
 `tiles:check` 检查全量来源动画区域的初始帧、末帧、复位和单次播放，并用共用 VM 执行满足条件的原始区域动画脚本。空区域、未支持的尺寸和角色/效果目标分别记录，不计为完整剧情覆盖。
+`actors:check` 检查全量角色动画条目的定位、单次播放和末帧，并运行依赖已支持的孤立原始脚本。未骑乘角色的行走、剧情姿态及同步等待由同一内核管理；骑乘组合、动态自定义动画、透明度插值等继续阻塞，详见 [角色动画批次](docs/actor-animation.md)。
 `world:build` 将全量地图、角色媒体和脚本编译成通用目录与地图包；`world:check` 整批尝试依赖已闭合的默认入口，保留每个失败原因。静态地图数、入口加载数与浏览器实玩分别记录。
 工作台为 `http://127.0.0.1:4173`，展示真实纳尔谢图层、原始碰撞数据、剧情知识缺口、歌剧时间线与验收状态。它只用于检查；不宣称恢复了游戏规则。
 
