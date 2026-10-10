@@ -8,14 +8,21 @@ import type {
   MapRequest,
 } from "../field/types.js";
 import { EventState, executeEventControl } from "./event-state.js";
+import {
+  buildCollisionMapping,
+  collisionMask,
+  diagonalBit,
+  fieldCollisionRange,
+  inCollisionRange,
+  redirectAtSlope,
+  type CollisionRange,
+} from "./collision.js";
 export const DELTA: Record<Direction, Point> = {
   up: { x: 0, y: -1 },
   right: { x: 1, y: 0 },
   down: { x: 0, y: 1 },
   left: { x: -1, y: 0 },
 };
-// MapConstants.CollisionFilter, source-bound by the compiler. Collision bits differ from facing bits.
-const FILTER = [15, 0, 14, 11, 7, 13, 6, 9];
 const BIT: Record<Direction, number> = { up: 1, left: 2, right: 4, down: 8 };
 const OPPOSITE: Record<Direction, Direction> = {
   up: "down",
@@ -76,6 +83,8 @@ export type Dialogue = {
 const contains = (e: FieldEntity, p: Point) =>
   p.x >= e.x && p.x < e.x + e.width && p.y >= e.y && p.y < e.y + e.height;
 export class FieldGame {
+  readonly collisionRange: CollisionRange;
+  private readonly collisionMappings = new Map<number, number[]>();
   readonly actors: Record<string, Actor> = {};
   readonly hiddenEntities = new Set<string>();
   readonly activeGroups = new Set<string>();
@@ -103,6 +112,11 @@ export class FieldGame {
     readonly eventState: EventState = new EventState(),
   ) {
     this.entityList = [...content.map.entities];
+    this.collisionRange = fieldCollisionRange(
+      content.map.width,
+      content.map.height,
+      this.entityList,
+    );
     for (const name of content.map.initialGroups ?? [])
       this.activeGroups.add(name);
     const p = content.entry.player;
@@ -152,16 +166,8 @@ export class FieldGame {
   private block(message: string, site: Site | null = null) {
     this.stop = { kind: "unsupported", message, site };
   }
-  private collision(p: Point, layer: number): number | null {
-    const m = this.content.map;
-    if (p.x < 0 || p.y < 0 || p.x >= m.width || p.y >= m.height) return 0;
-    const grid = m.collisions[layer],
-      cell = grid?.[p.y * m.width + p.x];
-    if (cell === undefined || FILTER[cell] === undefined) {
-      this.block(`尚未支持碰撞类型 ${String(cell)}`);
-      return null;
-    }
-    let mask = FILTER[cell]!;
+  private dynamicCollision(p: Point, layer: number): number | null {
+    let mask = 15;
     for (const e of this.entityList)
       if (
         !this.hiddenEntities.has(e.id) &&
@@ -169,7 +175,12 @@ export class FieldGame {
         e.layer === layer &&
         contains(e, p)
       ) {
-        if (e.collision === null || FILTER[e.collision] === undefined) {
+        if (
+          e.collision === null ||
+          !Number.isInteger(e.collision) ||
+          e.collision < 0 ||
+          e.collision > 7
+        ) {
           this.block("尚未支持的动态碰撞", {
             script: "collision",
             index: 0,
@@ -177,36 +188,96 @@ export class FieldGame {
           });
           return null;
         }
-        mask &= FILTER[e.collision]!;
+        mask &= collisionMask(e.collision);
       }
     return mask;
+  }
+  private collision(p: Point, layer: number): number | null {
+    if (!inCollisionRange(p, this.collisionRange)) return 0;
+    const cell =
+      this.content.map.collisions[layer]?.[p.y * this.content.map.width + p.x];
+    try {
+      const mask = collisionMask(cell as number),
+        dynamic = this.dynamicCollision(p, layer);
+      return dynamic === null ? null : mask & dynamic;
+    } catch (error) {
+      this.block(error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  }
+  private occupied(points: Point[], layer: number): boolean {
+    return Object.values(this.actors).some(
+      (a) =>
+        a.id !== this.player.id &&
+        !this.hiddenEntities.has(a.id) &&
+        a.layer === layer &&
+        points.some((p) => a.x === p.x && a.y === p.y),
+    );
+  }
+  private slopeDestination(
+    direction: Direction,
+    straight: Point,
+  ): Point | null {
+    const p = this.player,
+      map = this.content.map,
+      grid = map.collisions[p.layer];
+    if (!grid || !inCollisionRange(straight, this.collisionRange)) return null;
+    const delta = redirectAtSlope(
+      grid[straight.y * map.width + straight.x]!,
+      direction,
+    );
+    if (!delta) return null;
+    const to = { x: p.x + delta.x, y: p.y + delta.y };
+    if (!inCollisionRange(to, this.collisionRange)) return null;
+    let mapping = this.collisionMappings.get(p.layer);
+    if (!mapping) {
+      mapping = buildCollisionMapping(
+        grid,
+        map.width,
+        map.height,
+        this.collisionRange,
+      );
+      this.collisionMappings.set(p.layer, mapping);
+    }
+    if (
+      !(mapping[p.y * map.width + p.x]! & diagonalBit(delta.x, delta.y)) ||
+      !(mapping[to.y * map.width + to.x]! & diagonalBit(-delta.x, -delta.y))
+    )
+      return null;
+    const horizontal = { x: to.x, y: p.y },
+      vertical = { x: p.x, y: to.y };
+    // The native path graph is static. Dynamic colliders and actors must still block its swept corners.
+    const cells = [p, horizontal, vertical, to];
+    for (const cell of cells) {
+      const mask = this.dynamicCollision(cell, p.layer);
+      if (mask === null) return null;
+      const xBit = cell.x === p.x ? (delta.x > 0 ? 4 : 2) : delta.x > 0 ? 2 : 4;
+      const yBit = cell.y === p.y ? (delta.y > 0 ? 8 : 1) : delta.y > 0 ? 1 : 8;
+      if (!(mask & xBit) || !(mask & yBit)) return null;
+    }
+    return this.occupied([horizontal, vertical, to], p.layer) ? null : to;
   }
   move(direction: Direction): boolean {
     const p = this.player;
     if (this.busy || p.motion) return false;
     p.direction = direction;
-    const d = DELTA[direction],
-      to = { x: p.x + d.x, y: p.y + d.y };
+    const d = DELTA[direction];
+    let to = { x: p.x + d.x, y: p.y + d.y };
     const fromMask = this.collision(p, p.layer),
       toMask = this.collision(to, p.layer);
-    if (
-      fromMask === null ||
-      toMask === null ||
-      !(fromMask & BIT[direction]) ||
-      !(toMask & BIT[OPPOSITE[direction]])
-    )
+    if (fromMask === null || toMask === null || !(fromMask & BIT[direction]))
       return false;
-    if (
-      Object.values(this.actors).some(
-        (a) =>
-          !this.hiddenEntities.has(a.id) &&
-          a.id !== p.id &&
-          a.layer === p.layer &&
-          a.x === to.x &&
-          a.y === to.y,
-      )
-    )
-      return false;
+    if (!(toMask & BIT[OPPOSITE[direction]])) {
+      try {
+        const redirected = this.slopeDestination(direction, to);
+        if (!redirected) return false;
+        to = redirected;
+      } catch (error) {
+        this.block(error instanceof Error ? error.message : String(error));
+        return false;
+      }
+    }
+    if (this.occupied([to], p.layer)) return false;
     p.motion = {
       from: { x: p.x, y: p.y },
       to,

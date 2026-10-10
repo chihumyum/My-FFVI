@@ -4,6 +4,7 @@ import { EventState, int32 } from "./event-state.js";
 import { FieldGame, type MapTransitionStop } from "./field.js";
 import { missingFieldPoses } from "./character-media.js";
 import { canonical } from "./canonical.js";
+import { fieldCollisionRange, inCollisionRange } from "./collision.js";
 
 export type PreparedMap = {
   readonly field: FieldGame;
@@ -88,6 +89,10 @@ export class WorldSession {
       entry.y < 0 ||
       entry.x >= map.width ||
       entry.y >= map.height ||
+      !inCollisionRange(
+        entry,
+        fieldCollisionRange(map.width, map.height, group.entities),
+      ) ||
       !map.collisions[entry.layer]
     )
       throw new Error("Unsupported entrance geometry/layer");

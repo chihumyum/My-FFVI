@@ -101,7 +101,7 @@ test("directional collision checks both ends and unknown collision fails closed"
   assert.equal(g.move("up"), true);
   g.advance(240);
   assert.equal(g.move("up"), false); // its upper edge is blocked
-  c.map.collisions[1]![2 * 7 + 4] = 8;
+  c.map.collisions[1]![2 * 7 + 4] = 14;
   assert.equal(g.move("right"), false);
   assert.equal(g.stop?.kind, "unsupported");
 });
@@ -126,6 +126,52 @@ test("trigger waits for committed movement; message blocks inputs; encounter nev
   g.advance(10000);
   assert.equal(g.stop?.party, 3);
   assert.equal(g.player.y, 2);
+});
+test("a sourced slope moves diagonally, triggers only its committed destination, and can be traversed in reverse", () => {
+  const c = fixture();
+  c.map.collisions[1]![3 * 7 + 4] = 8;
+  c.map.entities.push({ ...entity("slope-event", 2, 4, 2), script: "event" });
+  c.scripts.event = ops(
+    { kind: "message", key: "synthetic", text: "arrived", speaker: "Fixture" },
+    { kind: "exit" },
+  );
+  const g = new FieldGame(c);
+  assert.equal(g.move("right"), true);
+  g.advance(230);
+  assert.deepEqual([g.player.x, g.player.y], [3, 3]);
+  assert.equal(g.dialogue, null);
+  g.advance(10);
+  assert.deepEqual([g.player.x, g.player.y], [4, 2]);
+  assert.equal((g.dialogue as { text: string } | null)?.text, "arrived");
+  g.confirm();
+  assert.equal(g.move("down"), true);
+  g.advance(240);
+  assert.deepEqual([g.player.x, g.player.y], [3, 3]);
+  assert.equal(g.stop, null);
+});
+test("diagonal steps cannot pass dynamic walls or NPCs at the destination or swept corners", () => {
+  for (const kind of [6, 19])
+    for (const [x, y] of [
+      [3, 3],
+      [4, 3],
+      [3, 2],
+      [4, 2],
+    ]) {
+      const c = fixture();
+      c.map.collisions[1]![3 * 7 + 4] = 8;
+      c.map.entities.push({
+        ...entity("blocker", kind, x!, y!),
+        asset: kind === 6 ? "npc" : null,
+        collision: kind === 19 ? 1 : null,
+      });
+      const g = new FieldGame(c);
+      // An NPC sharing the origin is already overlapping, not an obstacle ahead.
+      if (kind === 6 && x === 3 && y === 3) continue;
+      assert.equal(g.move("right"), false);
+      assert.equal(g.stop, null);
+      g.hiddenEntities.add("blocker");
+      assert.equal(g.move("right"), true);
+    }
 });
 test("puppet tasks join before dialogue; movement/waits are independent of render frame partitioning", () => {
   const c = eventFixture();

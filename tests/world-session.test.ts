@@ -292,6 +292,17 @@ test("failed dependencies and initializer mutations leave the old map and state 
       f.target.map!.groups!.entity_default!.entities[0]!.objectId = 99;
     },
     (f) => {
+      f.target.map!.groups!.entity_default!.entities.push({
+        ...f.target.map!.entities[0]!,
+        id: "range",
+        kind: 27,
+        x: 0,
+        y: 0,
+        width: 2,
+        height: 2,
+      });
+    },
+    (f) => {
       f.catalog = { ...f.catalog, characters: {} };
     },
     (f) => {

@@ -7,6 +7,8 @@ import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { decodeFieldOp, decodeScriptLocals } from "./field.js";
 import { missingFieldPoses } from "../core/character-media.js";
+import { fieldCollisionRange } from "../core/collision.js";
+import { tableId } from "./table-id.js";
 import type { Character, Evidence, Op, Sprite } from "../field/types.js";
 import type {
   WorldMapContent,
@@ -111,6 +113,17 @@ export async function compileWorld(root: string) {
       )
   )
     throw new Error("Unreviewed native world lifecycle profile");
+  if (
+    !array(corpus.manifest.sources)
+      .map(record)
+      .some(
+        (s) =>
+          String(s.file).endsWith("/Metadata/global-metadata.dat") &&
+          s.sha256 ===
+            "9b426d617a022020feee61cdfc19b16ce1a51c07542fe1dd59169e12f35a3e45",
+      )
+  )
+    throw new Error("Unreviewed native collision metadata profile");
   const media = record(
     JSON.parse(snapshotFile(files, "media.json").toString()),
   );
@@ -174,6 +187,23 @@ export async function compileWorld(root: string) {
       }
       const geometry = compileMapGeometry(tile, collision, textures);
       blockers.push(...geometry.blockers);
+      fieldCollisionRange(
+        geometry.width,
+        geometry.height,
+        groups.entity_default?.entities ?? [],
+      );
+      const mapRow = corpus.tables["map.csv"]!.find(
+        (row) => Number(row.id) === Number(binding.id),
+      )!;
+      if (tableId(mapRow.loop_type) !== 0)
+        blockers.push({
+          reason: "Looping field presentation is not implemented",
+          source: {
+            file: "map.csv",
+            assetPath: "map.csv",
+            pointer: `/id/${binding.id}/loop_type`,
+          },
+        });
       const { blockers: _unused, ...geometryData } = geometry;
       map = {
         ...geometryData,

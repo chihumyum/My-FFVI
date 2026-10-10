@@ -82,7 +82,7 @@ test("all-map geometry preserves tile flags and collision editor visibility but 
 test("unsupported collision, transforms and atlas cells remain batch diagnostics", () => {
   const f = geometry();
   f.tile.data.layers[0]!.data[1] = 2;
-  f.collision.data.layers[0]!.data[0] = 11;
+  f.collision.data.layers[0]!.data[0] = 14;
   Object.assign(f.tile.data.layers[0]!, { offsetx: 16 });
   const result = compileMapGeometry(f.tile, f.collision, f.textures);
   for (const reason of [

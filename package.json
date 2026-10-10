@@ -17,6 +17,7 @@
     "maps:check": "npm run build && node scripts/check-map-groups.mjs",
     "world:build": "npm run build && node scripts/build-world.mjs",
     "world:check": "npm run build && node scripts/check-world.mjs",
+    "collision:check": "npm run build && node scripts/check-collision.mjs",
     "knowledge": "node dist/src/cli.js knowledge",
     "accept": "node dist/src/cli.js accept",
     "dev": "node scripts/serve.mjs",

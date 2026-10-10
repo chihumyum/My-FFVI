@@ -106,7 +106,7 @@ export function compileMapGeometry(
     const data = array(l.data).map(uint);
     if (data.length !== width * height)
       issue("Invalid collision grid", collision.source, pointer);
-    if (data.some((v) => v > 7))
+    if (data.some((v) => v > 13))
       issue("Unsupported collision value", collision.source, pointer);
     collisions[id] = data;
   }

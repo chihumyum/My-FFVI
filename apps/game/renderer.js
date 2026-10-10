@@ -117,13 +117,22 @@ export class Renderer {
       m = this.content.map,
       p = this.point(game.player),
       w = this.canvas.width,
-      h = this.canvas.height;
-    const cx = Math.round(
-        Math.max(0, Math.min(m.width * 16 - w, (p.x + 0.5) * 16 - w / 2)),
-      ),
-      cy = Math.round(
-        Math.max(0, Math.min(m.height * 16 - h, (p.y + 0.5) * 16 - h / 2)),
+      h = this.canvas.height,
+      range = game.collisionRange;
+    const camera = (position, start, length, viewport) =>
+      Math.round(
+        length * 16 <= viewport
+          ? start * 16 + (length * 16 - viewport) / 2
+          : Math.max(
+              start * 16,
+              Math.min(
+                (start + length) * 16 - viewport,
+                (position + 0.5) * 16 - viewport / 2,
+              ),
+            ),
       );
+    const cx = camera(p.x, range.x, range.width, w),
+      cy = camera(p.y, range.y, range.height, h);
     c.imageSmoothingEnabled = false;
     c.fillStyle = "#09111b";
     c.fillRect(0, 0, w, h);

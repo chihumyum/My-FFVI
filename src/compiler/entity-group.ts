@@ -82,10 +82,12 @@ export function compileEntityGroup(
           p = entityProperties(o.properties),
           kind = integer(p.object_type);
         const issue = (reason: string) => blockers.push({ reason, source });
-        if (![0, 2, 3, 4, 6, 19].includes(kind))
+        if (![0, 2, 3, 4, 6, 19, 27].includes(kind))
           issue(`Unsupported entity kind ${kind}`);
-        if (o.visible === false || Number(o.rotation ?? 0))
+        if ((o.visible === false && kind !== 27) || Number(o.rotation ?? 0))
           issue("Unsupported entity transform");
+        if (kind === 27 && (name !== "entity_default" || o.gid))
+          issue("Unsupported map range placement");
         if (o.ellipse || o.polygon || o.polyline || o.point)
           issue("Unsupported entity geometry");
         if (
@@ -95,6 +97,13 @@ export function compileEntityGroup(
             p.confirm_landing !== false)
         )
           issue("Unsupported dynamic collision condition");
+        if (
+          kind === 19 &&
+          (!Number.isInteger(p.collision_type) ||
+            Number(p.collision_type) < 0 ||
+            Number(p.collision_type) > 7)
+        )
+          issue("Unsupported dynamic collision shape");
         if (
           kind === 2 &&
           (p.action_id !== 2 ||

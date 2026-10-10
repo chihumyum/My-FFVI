@@ -16,6 +16,7 @@
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [共用事件状态与控制流](docs/event-vm.md)
 - [共用实体组与地图生命周期](docs/map-lifecycle.md)
+- [共用碰撞与斜坡批次](docs/collision.md)
 - [本次交付与后续问题](docs/progress.md)
 - [Web 场景运行与实现边界](docs/web-field.md)
 - [首战数据与规则迁移](docs/battle-migration.md)
@@ -56,6 +57,7 @@ npm run world:check
 
 `/game/?map=<地图ID>&entrance=<入口ObjectId>` 使用相同加载器检查来源入口；未知剧情状态仍未知。它是显式开发预览，不是通关存档，也不证明主线可达。
 
+`collision:check` 对全量已就绪地图的原始碰撞图执行隔离步进，检查斜向边；不计作可玩地图覆盖。
 `playable:check` 编译地图与首战内容，并检查胜负、结算、战后继续移动和失败重试。
 `corpus:plan` 分析全量已导出的脚本与地图依赖，生成共用能力工作队列；导出命令和当前推进方式见 [批量迁移](docs/batch-migration.md)。
 `events:check` 用同一游戏 VM 整批运行符合能力条件的原始脚本，检查不同输入下的分支和状态变化；不代表这些地图已经可玩。
