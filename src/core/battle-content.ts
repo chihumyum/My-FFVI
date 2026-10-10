@@ -1,10 +1,11 @@
 import type { AtbRules } from "./atb.js";
 import type { ParameterValues } from "./parameters.js";
+import type { AbilityProgram, DevelopmentAbilityPlan } from "./ability.js";
 
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "narshe-playability-v2";
+  profile: "narshe-playability-v3";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;
@@ -60,11 +61,14 @@ export function encounterContent(
 export type AbilityDefinition = {
   id: number;
   name: string;
-  kind: "beam" | "heal" | "physical" | "unsupported";
+  program: AbilityProgram;
+  plan: DevelopmentAbilityPlan | null;
+  blockers: string[];
+  limitations: string[];
+  /** Presentation only. Logic dispatches the complete admitted effect plan. */
+  presentation: "beam" | "heal" | "physical" | "unsupported";
   power: number;
-  multiplier: number;
   cost: number;
   wait: number;
-  target: "enemy" | "ally";
   attribute: number;
 };

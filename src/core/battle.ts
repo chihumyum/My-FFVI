@@ -1,3 +1,7 @@
+import {
+  calculateDevelopmentEffects,
+  type AbilityEffectResult,
+} from "./ability.js";
 import { atbIncrement } from "./atb.js";
 import type {
   BattleContent,
@@ -18,8 +22,7 @@ export type BattleAction = {
   charge: number;
   elapsed: number;
   resolved: boolean;
-  amount: number | null;
-  missed: boolean;
+  effects: AbilityEffectResult[];
 };
 export type BattleReward = {
   exp: number;
@@ -52,7 +55,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v2"
+      content.profile !== "narshe-playability-v3"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -117,15 +120,24 @@ export class BattleGame {
       !actor ||
       !ability ||
       !actor.abilities.includes(abilityId) ||
-      ability.kind === "unsupported"
+      !ability.plan
     )
       return [];
+    if (
+      actor.side === "player" &&
+      ability.plan.effects.some((e) => e.kind === "physical")
+    )
+      return [];
+    const target = ability.plan.target;
     return this.combatants.filter(
       (t) =>
         t.hp > 0 &&
-        (ability.target === "ally"
-          ? t.side === actor.side
-          : t.side !== actor.side),
+        (target === "self"
+          ? t.id === actor.id
+          : target === "either" ||
+            (target === "ally"
+              ? t.side === actor.side
+              : t.side !== actor.side)),
     );
   }
   command(actorId: string, abilityId: number, targetId: string): boolean {
@@ -135,7 +147,7 @@ export class BattleGame {
     if (
       !actor ||
       !ability ||
-      ability.kind === "unsupported" ||
+      !ability.plan ||
       actor.mp < ability.cost ||
       !this.targets(actorId, abilityId).some((t) => t.id === targetId)
     )
@@ -159,8 +171,7 @@ export class BattleGame {
           : 0,
       elapsed: 0,
       resolved: false,
-      amount: null,
-      missed: false,
+      effects: [],
     });
   }
   advance(ms: number) {
@@ -218,7 +229,11 @@ export class BattleGame {
           }
         }
         const ability = this.content.abilities[choice.ability];
-        if (!ability || ability.kind !== "physical")
+        if (
+          !ability?.plan ||
+          ability.plan.effects.length !== 1 ||
+          ability.plan.effects[0]!.kind !== "physical"
+        )
           throw new Error("Unsupported enemy AI action");
         this.enqueue(
           c,
@@ -257,54 +272,43 @@ export class BattleGame {
     const actor = this.combatants.find((c) => c.id === action.actor)!,
       target = this.combatants.find((c) => c.id === action.target)!;
     const ability = this.content.abilities[action.ability]!;
-    action.resolved = true;
-    if (actor.hp <= 0 || target.hp <= 0 || actor.mp < ability.cost) return;
-    actor.mp -= ability.cost;
-    let amount: number;
-    if (ability.kind === "physical") {
-      // Bounded Guard branch. Accuracy/evasion and multiply order are provisional.
-      if (this.randomInt(0, 99) < Math.min(100, target.evasion)) {
-        action.missed = true;
-        action.amount = 0;
-        this.log(`${target.name} 闪避了攻击。`);
-        return;
-      }
-      const base = Math.trunc(
-        ((this.randomInt(56, 63) + 4 * actor.attack) *
-          actor.level *
-          actor.level) /
-          256,
-      );
-      const varied =
-        Math.trunc(
-          (base * ability.multiplier * this.randomInt(224, 255)) / 256,
-        ) + 1;
-      amount = Math.max(
-        1,
-        Math.trunc(((255 - target.defense) * varied) / 256) + 1,
-      );
-    } else if (ability.kind === "beam" || ability.kind === "heal") {
-      const base =
-        Math.trunc((actor.level * actor.magic * ability.power) / 32) +
-        4 * ability.power;
-      const varied = Math.trunc((base * this.randomInt(224, 255)) / 256) + 1;
-      amount =
-        ability.kind === "heal"
-          ? varied
-          : Math.max(
-              1,
-              Math.trunc(((255 - target.magicDefense) * varied) / 256) + 1,
-            );
-    } else throw new Error("Unimplemented ability cannot execute");
-    action.amount = amount;
-    if (ability.kind === "heal") {
-      target.hp = Math.min(target.maxHp, target.hp + amount);
-      this.log(`${target.name} 恢复 ${amount} HP。`);
-    } else {
-      target.hp = Math.max(0, target.hp - amount);
-      this.log(`${target.name} 受到 ${amount} 点伤害。`);
+    if (action.resolved) return;
+    if (!ability.plan) throw new Error("Unimplemented ability cannot execute");
+    if (actor.hp <= 0 || target.hp <= 0 || actor.mp < ability.cost) {
+      action.resolved = true;
+      return;
     }
+    const effects = calculateDevelopmentEffects(
+      ability.plan,
+      ability.power,
+      actor,
+      target,
+      (min, max) => this.randomInt(min, max),
+    );
+    // All effects were preflighted and computed. Commit cost once, then source order.
+    actor.mp -= ability.cost;
+    for (const effect of effects) {
+      if (effect.missed) {
+        this.log(`${target.name} 闪避了攻击。`);
+        continue;
+      }
+      const resource = effect.resource;
+      target[resource] = effect.recovery
+        ? Math.min(
+            resource === "hp" ? target.maxHp : target.maxMp,
+            target[resource] + effect.amount,
+          )
+        : Math.max(0, target[resource] - effect.amount);
+      this.log(
+        effect.recovery
+          ? `${target.name} 恢复 ${effect.amount} ${resource.toUpperCase()}。`
+          : `${target.name} 受到 ${effect.amount} 点伤害。`,
+      );
+    }
+    action.effects = effects;
+    action.resolved = true;
   }
+
   private checkOutcome() {
     if (this.phase !== "active" || this.action) return;
     if (!this.players.some((c) => c.hp > 0)) {

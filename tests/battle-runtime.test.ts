@@ -32,7 +32,7 @@ function fixture(): BattleContent {
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v2",
+    profile: "narshe-playability-v3",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -77,45 +77,109 @@ function fixture(): BattleContent {
       10: {
         id: 10,
         name: "Beam",
-        kind: "beam",
+        presentation: "beam",
+        program: {
+          abilityId: 10,
+          groupId: 1,
+          functions: [
+            { slot: 1, functionId: 800, type: 3, series: 0, values: [1, 0, 0] },
+          ],
+          process: { key: "None", values: [0, 0, 0] },
+          range: 3,
+          rules: {},
+        },
+        plan: {
+          effects: [{ slot: 1, kind: "magic" }],
+          target: "enemy",
+          multiplier: 1,
+        },
+        blockers: [],
+        limitations: [],
         power: 30,
-        multiplier: 1,
         cost: 0,
         wait: 0,
-        target: "enemy",
         attribute: 0,
       },
       11: {
         id: 11,
         name: "Heal",
-        kind: "heal",
+        presentation: "heal",
+        program: {
+          abilityId: 11,
+          groupId: 2,
+          functions: [
+            { slot: 1, functionId: 801, type: 1, series: 0, values: [2, 2, 0] },
+          ],
+          process: { key: "None", values: [0, 0, 0] },
+          range: 1,
+          rules: {},
+        },
+        plan: {
+          effects: [
+            { slot: 1, kind: "recovery", resource: "hp", calculation: "magic" },
+          ],
+          target: "ally",
+          multiplier: 1,
+        },
+        blockers: [],
+        limitations: [],
         power: 20,
-        multiplier: 1,
         cost: 2,
         wait: 0,
-        target: "ally",
         attribute: 0,
       },
       12: {
         id: 12,
         name: "Unsupported",
-        kind: "unsupported",
+        presentation: "unsupported",
+        program: {
+          abilityId: 12,
+          groupId: 3,
+          functions: [
+            {
+              slot: 1,
+              functionId: 802,
+              type: 999,
+              series: 0,
+              values: [0, 0, 0],
+            },
+          ],
+          process: { key: "None", values: [0, 0, 0] },
+          range: 3,
+          rules: {},
+        },
+        plan: null,
+        blockers: ["unsupported function 999"],
+        limitations: [],
         power: 0,
-        multiplier: 1,
         cost: 0,
         wait: 0,
-        target: "enemy",
         attribute: 0,
       },
       13: {
         id: 13,
         name: "Physical",
-        kind: "physical",
+        presentation: "physical",
+        program: {
+          abilityId: 13,
+          groupId: 4,
+          functions: [
+            { slot: 1, functionId: 803, type: 2, series: 0, values: [0, 0, 0] },
+          ],
+          process: { key: "None", values: [0, 0, 0] },
+          range: 7,
+          rules: {},
+        },
+        plan: {
+          effects: [{ slot: 1, kind: "physical" }],
+          target: "either",
+          multiplier: 1,
+        },
+        blockers: [],
+        limitations: [],
         power: 0,
-        multiplier: 1,
         cost: 0,
         wait: 0,
-        target: "enemy",
         attribute: 0,
       },
     },
@@ -126,6 +190,38 @@ function fixture(): BattleContent {
     limitations: [],
   };
 }
+test("compound recovery commits both resources once and consumes one action cost", () => {
+  const f = fixture();
+  const a = f.abilities[11]!;
+  a.power = 50;
+  a.plan = {
+    target: "self",
+    multiplier: 1,
+    effects: [
+      { slot: 1, kind: "recovery", resource: "hp", calculation: "fixed" },
+      { slot: 3, kind: "recovery", resource: "mp", calculation: "fixed" },
+    ],
+  };
+  const run = (parts: number[]) => {
+    const b = new BattleGame(f, 7);
+    const actor = b.players[0]!;
+    actor.hp = 1;
+    actor.maxMp = 100;
+    actor.mp = 8;
+    assert.deepEqual(
+      b.targets("a", 11).map((t) => t.id),
+      ["a"],
+    );
+    assert.equal(b.command("a", 11, "b"), false);
+    assert.equal(b.command("a", 11, "a"), true);
+    for (const part of parts) b.advance(part);
+    assert.equal(actor.hp, 51);
+    assert.equal(actor.mp, 56); // 8 - one 2 MP cost + 50 MP recovery
+    assert.equal(b.events.filter((e) => e.text.includes("恢复")).length, 2);
+    return b;
+  };
+  assert.deepEqual(run([900]).combatants, run(Array(90).fill(10)).combatants);
+});
 test("invalid commands do not spend turns; unsupported abilities cannot execute", () => {
   const b = new BattleGame(fixture(), 7),
     before = structuredClone(b.combatants);

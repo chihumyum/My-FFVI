@@ -24,6 +24,22 @@
   ],
   "facts": [
     {
+      "id": "narshe:magitek-healing-functions",
+      "subject": "narshe",
+      "predicate": "source.ability222.functionDispatch",
+      "value": "Ability 222 selects function group 431: Recovery(2,2,0) followed by Unique(0,0,0), with process_prog None. Unique is not a status-removal function. The native FF6 provider selects calculated HP recovery; status/target overrides and full runtime parity are separate dependencies.",
+      "when": { "abilityId": 222 },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "ability.csv:222.battle_function_group_id",
+        "function_group.csv:431",
+        "Serial.FF6.Calc.FunctionProvider::GetFunctionBaseCalc@0x3419C0",
+        "Last.Battle.Function.RecoveryFunction::Calc@0x66FD90",
+        "docs/ability-dispatch.md"
+      ]
+    },
+    {
       "id": "narshe:guard-base-magic",
       "subject": "narshe",
       "predicate": "source.monster1.baseMagic",

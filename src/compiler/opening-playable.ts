@@ -7,12 +7,12 @@ import {
   compileParameterLimits,
 } from "./parameters.js";
 import type { ParameterValues } from "../core/parameters.js";
+import { compileDevelopmentAbility } from "./ability.js";
 import type {
   BattleContent,
   BattleCatalog,
   BattleEncounter,
   CombatantDefinition,
-  AbilityDefinition,
 } from "../core/battle-content.js";
 
 /** Explicit temporary choices belong to this profile, not the generic source decoder. */
@@ -105,24 +105,7 @@ export async function compileOpeningPlayable(
             ? "突击"
             : null;
     if (!displayName) throw new Error("Missing ability display identity");
-    const kind: AbilityDefinition["kind"] = [218, 219, 220].includes(id)
-      ? "beam"
-      : id === 222
-        ? "heal"
-        : [1, 377].includes(id)
-          ? "physical"
-          : "unsupported";
-    abilities[id] = {
-      id,
-      name: displayName,
-      kind,
-      power: int(a.standard_value),
-      multiplier: a.process_prog === "multiply" ? int(a.data_a) / 100 : 1,
-      cost: int(a.use_value),
-      wait: int(a.ability_wait),
-      target: kind === "heal" ? "ally" : "enemy",
-      attribute: int(a.attribute_id),
-    };
+    abilities[id] = compileDevelopmentAbility(parameterReader, id, displayName);
   }
   const players: CombatantDefinition[] = source.initialParty.map((c) => {
     const r = row("character_status.csv", c.characterId);
@@ -238,7 +221,8 @@ export async function compileOpeningPlayable(
       if (
         ai.some(
           (a) =>
-            abilities[a.ability]?.kind !== "physical" ||
+            abilities[a.ability]?.plan?.effects.length !== 1 ||
+            abilities[a.ability]?.plan?.effects[0]?.kind !== "physical" ||
             !Number.isFinite(a.weight) ||
             a.weight <= 0,
         )
@@ -285,7 +269,7 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v2",
+    profile: "narshe-playability-v3",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,

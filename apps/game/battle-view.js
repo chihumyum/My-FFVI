@@ -166,13 +166,13 @@ export class BattleView {
     if (this.ability === null)
       for (const id of actor.abilities) {
         const a = this.content.abilities[id];
-        const disabled = a.kind === "unsupported" || actor.mp < a.cost;
+        const disabled = !a.plan || actor.mp < a.cost;
         const button = add(a.name, disabled, () => {
           this.ability = id;
           this.key = "";
           this.sync(battle, false);
         });
-        if (a.kind === "unsupported") button.title = "此能力尚未接入";
+        if (!a.plan) button.title = "此能力尚未接入";
       }
     else {
       for (const t of targets) {
@@ -283,14 +283,15 @@ export class BattleView {
         c.save();
         c.globalAlpha = Math.sin(((a.elapsed - 150) / 350) * Math.PI);
         c.strokeStyle =
-          ability.kind === "heal"
+          ability.presentation === "heal"
             ? "#6cf2a6"
             : ({ 1: "#ff884b", 2: "#89dcff", 3: "#ffff8c" }[
                 ability.attribute
               ] ?? "#fff");
-        c.lineWidth = ability.kind === "physical" ? 1 : 5;
+        c.lineWidth = ability.presentation === "physical" ? 1 : 5;
         c.beginPath();
-        if (ability.kind === "heal") c.arc(to.x, to.y - 24, 22, 0, Math.PI * 2);
+        if (ability.presentation === "heal")
+          c.arc(to.x, to.y - 24, 22, 0, Math.PI * 2);
         else {
           c.moveTo(from.x - 14, from.y - 24);
           c.lineTo(to.x, to.y - 24);
@@ -298,16 +299,20 @@ export class BattleView {
         c.stroke();
         c.restore();
       }
-      if (a.resolved && a.amount !== null) {
+      if (a.resolved) {
         c.font = "bold 15px monospace";
         c.textAlign = "center";
         c.lineWidth = 3;
         c.strokeStyle = "#101426";
-        c.fillStyle = ability.kind === "heal" ? "#80ffa7" : "white";
-        const text = a.missed ? "MISS" : String(a.amount),
-          y = to.y - 48 - (a.elapsed - 400) / 35;
-        c.strokeText(text, to.x, y);
-        c.fillText(text, to.x, y);
+        for (const [index, effect] of a.effects.entries()) {
+          c.fillStyle = effect.recovery ? "#80ffa7" : "white";
+          const text = effect.missed
+              ? "MISS"
+              : `${effect.amount}${effect.resource === "mp" ? " MP" : ""}`,
+            y = to.y - 48 - (a.elapsed - 400) / 35 - index * 18;
+          c.strokeText(text, to.x, y);
+          c.fillText(text, to.x, y);
+        }
       }
     }
   }
