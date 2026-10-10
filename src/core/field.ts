@@ -26,6 +26,12 @@ export const DELTA: Record<Direction, Point> = {
   left: { x: -1, y: 0 },
 };
 const BIT: Record<Direction, number> = { up: 1, left: 2, right: 4, down: 8 };
+const ACTION_SIDE: Record<Direction, number> = {
+  up: 1,
+  right: 2,
+  down: 4,
+  left: 8,
+};
 const OPPOSITE: Record<Direction, Direction> = {
   up: "down",
   left: "right",
@@ -115,6 +121,11 @@ export class FieldGame {
   private tasks: Task[] = [];
   private remainder = 0;
   private nextTask = 1;
+  private interaction: {
+    actor: string;
+    restoreDirection: Direction | null;
+    waitUntil: number;
+  } | null = null;
   constructor(
     readonly content: FieldContent,
     readonly eventState: EventState = new EventState(),
@@ -189,7 +200,12 @@ export class FieldGame {
     return this.actors["-1001"]!;
   }
   get busy(): boolean {
-    return this.tasks.some((t) => !t.done) || !!this.dialogue || !!this.stop;
+    return (
+      this.tasks.some((t) => !t.done) ||
+      !!this.dialogue ||
+      !!this.stop ||
+      (this.interaction?.waitUntil ?? 0) > this.time
+    );
   }
   private block(message: string, site: Site | null = null) {
     this.stop = { kind: "unsupported", message, site };
@@ -238,6 +254,7 @@ export class FieldGame {
       (a) =>
         a.id !== this.player.id &&
         !this.hiddenEntities.has(a.id) &&
+        this.entityList.find((e) => e.id === a.id)?.npc?.collision !== false &&
         a.layer === layer &&
         points.some((p) => a.x === p.x && a.y === p.y),
     );
@@ -326,20 +343,76 @@ export class FieldGame {
     const p = this.player,
       d = DELTA[p.direction],
       target = { x: p.x + d.x, y: p.y + d.y };
-    const e = this.entityList.find(
+    const hits = this.entityList.filter(
       (e) =>
         !this.hiddenEntities.has(e.id) &&
-        e.layer === p.layer &&
-        e.script &&
-        contains(e, target) &&
-        [6, 8].includes(e.kind),
+        (this.actors[e.id]?.layer ?? e.layer) === p.layer &&
+        (e.npc ? e.npc.interaction.kind !== "none" : !!e.script) &&
+        (e.kind === 6
+          ? this.actors[e.id]?.x === target.x &&
+            this.actors[e.id]?.y === target.y
+          : contains(e, target)) &&
+        [6, 8].includes(e.kind) &&
+        (!e.npc ||
+          (!!(e.npc.acceptDirection & ACTION_SIDE[OPPOSITE[p.direction]]) &&
+            (e.npc.interaction.kind === "blocked" ||
+              e.npc.talkMounts.includes(p.mount ?? "")))),
     );
-    if (e)
-      this.block("此交互尚未迁移", {
-        script: e.script!,
+    if (hits.length > 1) {
+      this.block("同格 NPC 交互目标不明确");
+      return;
+    }
+    const e = hits[0];
+    if (!e) return;
+    const site = {
+        script: e.script ?? "npc-talk",
         index: 0,
         source: e.source,
-      });
+      },
+      npc = e.npc,
+      actor = this.actors[e.id];
+    if (!npc || !actor) {
+      this.block("此交互尚未迁移", site);
+      return;
+    }
+    const action = npc.interaction;
+    if (action.kind === "blocked") {
+      this.block(action.reason, site);
+      return;
+    }
+    if (npc.moveType !== 0 || actor.motion) {
+      this.block("此 NPC 的移动控制器尚未迁移", site);
+      return;
+    }
+    if (
+      action.kind === "script" &&
+      action.script !== null &&
+      !this.content.scripts[action.script]
+    ) {
+      this.block("缺少 NPC 事件脚本 " + action.script, site);
+      return;
+    }
+    if (action.kind === "none") return;
+    this.interaction = {
+      actor: actor.id,
+      restoreDirection:
+        npc.eyeContact && npc.turnAround ? actor.direction : null,
+      // Empty source actions yield before returning control. One logical tick is the Web adaptation.
+      waitUntil:
+        this.time +
+        (action.kind === "script" && action.script === null ? 10 : 0),
+    };
+    if (npc.eyeContact) actor.direction = OPPOSITE[p.direction];
+    if (action.kind === "script") {
+      if (action.script !== null) this.beginRoot(action.script);
+    } else this.dialogue = { ...action.message, task: 0 };
+  }
+  private finishInteraction(): void {
+    if (!this.interaction || this.busy) return;
+    const { actor, restoreDirection } = this.interaction;
+    if (restoreDirection && this.actors[actor])
+      this.actors[actor]!.direction = restoreDirection;
+    this.interaction = null;
   }
   /** Integer 10 ms simulation steps make render-frame partitioning irrelevant. */
   advance(milliseconds: number): void {
@@ -740,7 +813,10 @@ export class FieldGame {
             return;
         }
       }
-      if (!changed) return;
+      if (!changed) {
+        this.finishInteraction();
+        return;
+      }
     }
     this.block("脚本在一个逻辑步中未让出执行权");
   }

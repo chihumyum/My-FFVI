@@ -2,6 +2,7 @@ import { z } from "zod";
 import { record } from "./content.js";
 import { tableId } from "./table-id.js";
 import { MINIMAP_ICON_TYPES } from "../core/minimap.js";
+import { compileNpc } from "./npc.js";
 import type {
   Direction,
   EntityGroup,
@@ -30,6 +31,7 @@ export function compileEntityGroup(
   name: string,
   asset: { data: unknown; source: Evidence },
   tables: Record<string, unknown>,
+  messages: Record<string, unknown> = {},
   tileSize = 16,
 ): EntityGroup {
   const entities: FieldEntity[] = [],
@@ -128,24 +130,7 @@ export function compileEntityGroup(
             String(p.target_transportation_ids ?? "") !== "")
         )
           issue("Unsupported map transition condition");
-        if (
-          kind === 6 &&
-          (Number(p.move_type ?? 0) !== 0 ||
-            p.all_layers === true ||
-            p.birdview_puppet === true)
-        )
-          issue("Unsupported autonomous or cross-layer actor");
         if (kind === 6) {
-          if (
-            Number(p.action_id ?? 0) !== 0 ||
-            Number(p.script_id ?? 0) !== 0 ||
-            String(p.message_key ?? "") !== ""
-          )
-            issue("Unsupported actor interaction");
-          if (p.pushed === true || p.affected === true || p.collision === false)
-            issue("Unsupported actor movement response");
-          if (Number(p.link_object_id ?? 0) !== 0)
-            issue("Unsupported actor route binding");
           if (!p.asset_id) issue("Unresolved actor asset");
         }
         const scriptId = integer(p.script_id ?? 0),
@@ -158,6 +143,8 @@ export function compileEntityGroup(
           kind === 6 && assetId
             ? text(row("mapobject.csv", assetId).asset_name)
             : null;
+        const npc = kind === 6 ? compileNpc(p, script, tables, messages) : null;
+        npc?.blockers.forEach(issue);
         const direction = (
           { 0: "down", 1: "up", 2: "right", 4: "down", 8: "left" } as Record<
             string,
@@ -171,6 +158,7 @@ export function compileEntityGroup(
         entities.push({
           id: entityId ? String(entityId) : `${name}:${li}:${oi}`,
           objectId: integer(p.object_id ?? 0),
+          ...(npc ? { npc: npc.npc } : {}),
           ...(kind === 18
             ? {
                 minimap: {

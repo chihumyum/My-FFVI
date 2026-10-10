@@ -182,7 +182,12 @@ export async function compileWorld(root: string) {
       reason,
       source,
     }));
-    const groups = compileMapGroups(binding, byId, corpus.tables);
+    const groups = compileMapGroups(
+      binding,
+      byId,
+      corpus.tables,
+      corpus.messages,
+    );
     let map: WorldMapContent["map"] = null;
     try {
       const tile = byId.get(binding.tilemap ?? ""),

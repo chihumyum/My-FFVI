@@ -345,6 +345,8 @@ test("unreviewed layers and NPC behavior do not erase other entry candidates or 
                 action_id: 4,
                 message_key: "fixture",
                 pushed: true,
+                move_type: 2,
+                affected: true,
                 link_object_id: 9,
               }),
             ],
@@ -352,7 +354,10 @@ test("unreviewed layers and NPC behavior do not erase other entry candidates or 
         ],
       },
     },
-    { "mapobject.csv": [{ id: "1", asset_name: "npc" }] },
+    {
+      "mapobject.csv": [{ id: "1", asset_name: "npc" }],
+      "action.csv": [{ id: "4", action_name: "Talk" }],
+    },
   );
   assert.equal(g.entities[0]!.layer, 0);
   assert.equal(g.entities[0]!.objectId, 12);
@@ -361,9 +366,9 @@ test("unreviewed layers and NPC behavior do not erase other entry candidates or 
     g.blockers.map((b) => b.reason),
     [
       "Unknown entity layer UnknownLayer",
-      "Unsupported actor interaction",
-      "Unsupported actor movement response",
-      "Unsupported actor route binding",
+      "Unsupported NPC movement controller 2",
+      "Unsupported NPC screen-effect stencil",
+      "Unsupported actor interaction: Missing localized message or speaker",
     ],
   );
 });

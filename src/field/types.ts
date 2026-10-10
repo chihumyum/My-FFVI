@@ -10,11 +10,29 @@ export type Evidence = {
   objectId?: string | undefined;
   pointer?: string;
 };
+export type FieldMessage = { key: string; text: string; speaker: string };
+export type NpcInteraction =
+  | { kind: "none" }
+  | { kind: "script"; script: string | null }
+  | { kind: "talk"; message: FieldMessage }
+  | { kind: "blocked"; reason: string };
+export type NpcProperties = {
+  moveType: number;
+  collision: boolean;
+  pushed: boolean;
+  eyeContact: boolean;
+  turnAround: boolean;
+  acceptDirection: number;
+  /** Empty string denotes walking; other entries are source transportation assets. */
+  talkMounts: string[];
+  interaction: NpcInteraction;
+};
 export type FieldEntity = Point & {
   id: string;
   objectId?: number;
   minimap?: Point & { icon: number };
   destination?: { mapId: number; entrance: number };
+  npc?: NpcProperties;
   layer: number;
   kind: number;
   width: number;

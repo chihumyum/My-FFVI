@@ -42,7 +42,7 @@ for (const [suffix, sha256] of [
   );
 const maps = bindMapPackages(corpus.assets, corpus.tables).map((map) => ({
   ...map,
-  compiledGroups: compileMapGroups(map, byId, corpus.tables),
+  compiledGroups: compileMapGroups(map, byId, corpus.tables, corpus.messages),
 }));
 const byMap = new Map(maps.map((m) => [m.id, m]));
 const links = [];

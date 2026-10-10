@@ -4,6 +4,7 @@ import { readSnapshot, snapshotFile } from "./integrity.js";
 import { hash, record } from "./content.js";
 import { ImportedProject } from "../contracts.js";
 import { compileEntityGroup } from "./entity-group.js";
+import { compileMessage } from "./message.js";
 import { tableId } from "./table-id.js";
 import { loadMinimapMedia } from "./map-ui.js";
 import { loadAudioMedia } from "./audio.js";
@@ -233,20 +234,11 @@ export function decodeFieldOp(
   if (name === "LookAt" && form([0]) && directions[i[0]!])
     return { ...site, kind: "look", direction: directions[i[0]!]! };
   if (name === "Msg" && form([1], [], [0]) && [0, 2].includes(i[1]!)) {
-    const text = record(messages.story_mes_zhc)[s[0]!],
-      speaker = record(messages.story_cha_zhc)[s[0]!];
-    if (typeof text !== "string" || typeof speaker !== "string")
-      return blocked("Missing localized message or speaker");
-    // Unsupported inline controls must not be swallowed by the display adapter.
-    if (/<|\\(?!n)/.test(text))
-      return blocked("Message contains an unsupported inline control");
-    return {
-      ...site,
-      kind: "message",
-      key: s[0]!,
-      text: text.replaceAll("\\n", "\n"),
-      speaker,
-    };
+    try {
+      return { ...site, kind: "message", ...compileMessage(s[0]!, messages) };
+    } catch (error) {
+      return blocked(error instanceof Error ? error.message : String(error));
+    }
   }
   if (name === "Encount" && form([0], [], [0]))
     return { ...site, kind: "encounter", party: i[0]!, continuation: s[0]! };
@@ -434,7 +426,12 @@ export async function compileField(root: string): Promise<FieldContent> {
       target = assets[path];
     if (!target || groups[name])
       throw new Error("Ambiguous or missing entity group " + name);
-    groups[name] = compileEntityGroup(name, target, tables);
+    groups[name] = compileEntityGroup(
+      name,
+      target,
+      tables,
+      record(field.messages),
+    );
     for (const entity of groups[name]!.entities)
       if (entity.asset && !chars[entity.asset])
         groups[name]!.blockers.push({
@@ -460,13 +457,11 @@ export async function compileField(root: string): Promise<FieldContent> {
         )
       )
         continue;
-      // Preserve this existing checkpoint's immovable/script-controlled NPC approximation.
-      // New group activation still stops on every unsupported NPC behavior.
+      // Preserve this existing checkpoint's unsupported encounter-NPC action omission.
+      // The opening's separate trigger scripts remain its explicit encounter approximation.
       if (
         entity?.kind === 6 &&
-        /^(Unsupported actor interaction|Unsupported actor movement response)$/.test(
-          issue.reason,
-        )
+        /^Unsupported NPC contact encounter$/.test(issue.reason)
       )
         continue;
       throw new Error(issue.reason);

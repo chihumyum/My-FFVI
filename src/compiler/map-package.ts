@@ -198,13 +198,14 @@ export function compileMapGroups(
   map: MapBinding,
   assets: Map<string, CorpusAsset>,
   tables: Tables,
+  messages: Record<string, unknown> = {},
 ): Record<string, EntityGroup> {
   return Object.fromEntries(
     Object.entries(map.groups).map(([name, id]) => {
       const asset = assets.get(id);
       if (!asset) throw new Error("Missing bound entity group " + id);
       try {
-        return [name, compileEntityGroup(name, asset, tables)];
+        return [name, compileEntityGroup(name, asset, tables, messages)];
       } catch (error) {
         return [
           name,

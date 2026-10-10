@@ -21,6 +21,7 @@
     "minimap:check": "npm run build && node scripts/check-minimap.mjs",
     "bgm:check": "npm run build && node scripts/check-bgm.mjs",
     "environment:check": "npm run build && node scripts/check-environment.mjs",
+    "npc:check": "npm run build && node scripts/check-npc.mjs",
     "knowledge": "node dist/src/cli.js knowledge",
     "accept": "node dist/src/cli.js accept",
     "dev": "node scripts/serve.mjs",
