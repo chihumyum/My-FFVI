@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "scene:narshe:source-study",
+  "version": "0.1.0",
+  "region": "narshe",
+  "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+  "sourceMap": "Map_20010",
+  "context": {},
+  "annotations": "unreviewed",
+  "styleVersion": null,
+  "requests": [],
+  "notes": [
+    "后续重制设计占位；全游戏 Web 迁移放行之前不调查或制作 HD-2D。",
+    "这是来源研究配方；尚未确认其开场剧情状态。",
+    "先划分物理建筑和空间身份，再生成语义资产需求。",
+    "风格参数待从原版与歌剧片段测量；禁止填入任意默认值作为已验证规范。"
+  ]
+}

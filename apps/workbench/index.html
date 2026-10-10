@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FFVI Reweb · 内容研究台</title><link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header><div><span class="eyebrow">FFVI REWEB / RESEARCH</span><h1>从原作出发。</h1><p>纳尔谢的空间，歌剧的时间。每个结论保留来源，每个未知保留位置。</p></div><span class="phase">阶段 0 · 来源检查</span></header>
+  <nav aria-label="研究目标"><button id="narshe-tab" aria-pressed="true">纳尔谢</button><button id="opera-tab" aria-pressed="false">歌剧演出</button></nav>
+  <div id="error" role="alert" hidden></div>
+  <main id="content" hidden>
+    <section class="workspace">
+      <div class="section-head"><div><h2 id="target-title"></h2><p id="target-subtitle"></p></div><label id="collision-control"><input type="checkbox" id="collision"> 原始碰撞值</label></div>
+      <div id="map-panel"><div id="layers" aria-label="地图图层"></div><div class="canvas-wrap"><canvas id="map" width="1024" height="1024" aria-label="纳尔谢源地图静态图层"></canvas></div><p id="map-status" class="caption"></p></div>
+      <div id="opera-panel" hidden><label class="select-label">演出资源包 <select id="opera-bundle"></select></label><p id="opera-summary" class="caption"></p><div id="timeline-list"></div></div>
+      <details><summary>待验证项与来源范围</summary><div id="diagnostics"></div></details>
+    </section>
+    <aside>
+      <section><h2>地点与剧情语义</h2><p id="region-binding"></p><p class="unknown">剧情阶段：尚未建立源标记映射</p><ul id="questions"></ul></section>
+      <section><h2>目标验收</h2><div id="acceptance"></div><p class="caption">静态查看器可用，不代表可玩迁移或演出还原通过。</p></section>
+      <section><h2>来源指纹</h2><code id="source-hash"></code><p id="corpus" class="caption"></p></section>
+    </aside>
+  </main>
+  <footer>本地研究工作台 · 原始内容保持独立 · 生成结果可重复构建</footer>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

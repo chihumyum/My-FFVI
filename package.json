@@ -1,0 +1,19 @@
+{
+  "name": "ffvi-reweb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Evidence-driven FFVI web migration and HD-2D reconstruction pipeline",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "check": "npm test && node dist/src/cli.js validate",
+    "pipeline": "npm run build && node dist/src/cli.js compile",
+    "knowledge": "node dist/src/cli.js knowledge",
+    "accept": "node dist/src/cli.js accept",
+    "dev": "node scripts/serve.mjs"
+  },
+  "dependencies": { "zod": "4.6.5" },
+  "devDependencies": { "@types/node": "22.19.0", "typescript": "5.9.3" }
+}

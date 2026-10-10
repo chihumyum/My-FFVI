@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "scene:opera:source-study",
+  "version": "0.1.0",
+  "region": "opera",
+  "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+  "sourceMap": "unresolved-timeline-root",
+  "context": {},
+  "annotations": "unreviewed",
+  "styleVersion": null,
+  "requests": [],
+  "notes": [
+    "后续重制设计占位；现阶段只忠实迁移现有演出，不扩大 HD-2D 表现。",
+    "从三个演出资源包定位一个真实激活的 Timeline 根。",
+    "曲线、材料与音频引用闭合后再生成可播放的 CutsceneIR。",
+    "固定镜头布景的适用视角需要记录，不能默认可自由探索。"
+  ]
+}
