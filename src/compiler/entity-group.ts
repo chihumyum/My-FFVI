@@ -85,8 +85,9 @@ export function compileEntityGroup(
           p = entityProperties(o.properties),
           kind = integer(p.object_type);
         const issue = (reason: string) => blockers.push({ reason, source });
-        if (![0, 2, 3, 4, 6, 18, 19, 27].includes(kind))
+        if (![0, 1, 2, 3, 4, 6, 18, 19, 27].includes(kind))
           issue(`Unsupported entity kind ${kind}`);
+        if (kind === 1) issue("Unbound tile animation geometry");
         if (
           kind === 18 &&
           !MINIMAP_ICON_TYPES.includes(
@@ -100,6 +101,13 @@ export function compileEntityGroup(
           issue("Unsupported map range placement");
         if (o.ellipse || o.polygon || o.polyline || o.point)
           issue("Unsupported entity geometry");
+        // TileMapObjectData declares integer pixel coordinates/dimensions. Fractional
+        // JSON conversion has not been recovered; do not silently round these bounds.
+        if (
+          kind === 1 &&
+          ![o.x, o.y, o.width, o.height].every(Number.isInteger)
+        )
+          issue("Unsupported fractional tile animation bounds");
         if (
           kind === 19 &&
           (p.through_condition_type !== 0 ||
@@ -159,6 +167,15 @@ export function compileEntityGroup(
           id: entityId ? String(entityId) : `${name}:${li}:${oi}`,
           objectId: integer(p.object_id ?? 0),
           ...(npc ? { npc: npc.npc } : {}),
+          ...(kind === 1
+            ? {
+                tileAnimation: {
+                  allLayers: z.boolean().parse(p.all_layers ?? true),
+                  loop: z.boolean().parse(p.is_loop ?? false),
+                  reverse: z.boolean().parse(p.reverse ?? false),
+                },
+              }
+            : {}),
           ...(kind === 18
             ? {
                 minimap: {
@@ -183,7 +200,7 @@ export function compileEntityGroup(
           kind,
           layer: layerId,
           x: finite(o.x) / tileSize,
-          y: finite(o.y) / tileSize - (o.gid ? height : 0),
+          y: finite(o.y) / tileSize - (o.gid && kind !== 1 ? height : 0),
           width,
           height,
           direction: direction ?? "down",

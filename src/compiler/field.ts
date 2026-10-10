@@ -9,6 +9,7 @@ import { tableId } from "./table-id.js";
 import { loadMinimapMedia } from "./map-ui.js";
 import { loadAudioMedia } from "./audio.js";
 import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
+import { bindTileAnimationRegions } from "./tile-animation.js";
 import {
   int32,
   isCategory,
@@ -90,6 +91,44 @@ export function decodeFieldOp(
     return { ...site, kind: simple[name as keyof typeof simple] };
   if (name === "SetEntities" && m.type === 1 && form([], [], [0]) && s[0])
     return { ...site, kind: "entities", group: s[0] };
+  // Puppet animation dispatch is currently implemented only for tile regions.
+  // The runtime rejects actor/effect targets instead of treating them as no-ops.
+  if (
+    name === "CueAnim" &&
+    m.type === 2 &&
+    form([], [0], [0]) &&
+    Number.isFinite(r[0]) &&
+    Number.isFinite(Math.fround(r[0]!))
+  )
+    return {
+      ...site,
+      kind: "animation-cue",
+      animation: s[0] ?? "",
+      frame: Math.fround(r[0]!),
+    };
+  if (
+    name === "PlayAnim" &&
+    m.type === 2 &&
+    form([1], [0], [0]) &&
+    [0, 1, -1].includes(i[1]!) &&
+    Number.isFinite(r[0]) &&
+    r[0]! >= 0
+  ) {
+    const speed = Math.fround(r[0] || 1);
+    if (
+      speed > 0 &&
+      Number.isFinite(speed) &&
+      Number.isFinite(Math.fround(1 / speed)) &&
+      Math.fround(1 / speed) > 0
+    )
+      return {
+        ...site,
+        kind: "animation-play",
+        animation: s[0] ?? "",
+        speed,
+        loop: i[1] === -1,
+      };
+  }
   // Source Audio.PlayBGM/PlayEnvSe: i0 master ID, i1 async, i2 channel, r0 fade, r1 seek.
   // Synchronous playback, pan and negative fades remain explicit blockers.
   if (
@@ -439,6 +478,7 @@ export async function compileField(root: string): Promise<FieldContent> {
           source: entity.source,
         });
   }
+  bindTileAnimationRegions(groups, geometry);
   const entities: FieldEntity[] = [];
   for (const name of activeGroups) {
     const group = groups[name];

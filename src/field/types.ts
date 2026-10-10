@@ -33,6 +33,13 @@ export type FieldEntity = Point & {
   minimap?: Point & { icon: number };
   destination?: { mapId: number; entrance: number };
   npc?: NpcProperties;
+  tileAnimation?: {
+    allLayers: boolean;
+    loop: boolean;
+    reverse: boolean;
+    /** Bound by the compiler to cells, never to a shared atlas tile ID. */
+    cells?: { layer: number; index: number }[];
+  };
   layer: number;
   kind: number;
   width: number;
@@ -124,12 +131,20 @@ export type Op = Site &
         secondsPerCell: number;
       }
     | { kind: "look"; direction: Direction }
+    | { kind: "animation-cue"; animation: string; frame: number }
+    | {
+        kind: "animation-play";
+        animation: string;
+        speed: number;
+        loop: boolean;
+      }
     | { kind: "message"; key: string; text: string; speaker: string }
     | { kind: "encounter"; party: number; continuation: string }
     | { kind: "blocked"; mnemonic: string; reason: string }
   );
 export type TileLayer = {
   name: string;
+  sourceGroup?: string;
   width: number;
   height: number;
   data: number[];

@@ -1,6 +1,6 @@
 // Source-backed isolated group execution; minimap media is checked, no story oracle.
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { loadCorpus } from "../dist/src/compiler/corpus.js";
 import {
@@ -16,6 +16,8 @@ import { hash } from "../dist/src/compiler/content.js";
 import { FieldGame } from "../dist/src/core/field.js";
 import { EventState } from "../dist/src/core/event-state.js";
 import { loadMinimapMedia } from "../dist/src/compiler/map-ui.js";
+import { bindTileAnimationRegions } from "../dist/src/compiler/tile-animation.js";
+import { verifyContent } from "../dist/src/core/content-integrity.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const corpus = await loadCorpus(root),
@@ -44,6 +46,29 @@ const maps = bindMapPackages(corpus.assets, corpus.tables).map((map) => ({
   ...map,
   compiledGroups: compileMapGroups(map, byId, corpus.tables, corpus.messages),
 }));
+const geometries = new Map();
+const catalog = await verifyContent(
+  JSON.parse(await readFile(root + "/build/world/catalog.json", "utf8")),
+);
+assert.equal(catalog.sourceSetHash, corpus.sourceSetHash);
+for (const map of maps) {
+  if (
+    !Object.values(map.compiledGroups).some((g) =>
+      g.entities.some((e) => e.tileAnimation),
+    )
+  )
+    continue;
+  const compiled = await verifyContent(
+    JSON.parse(
+      await readFile(root + `/build/world/maps/${map.id}.json`, "utf8"),
+    ),
+  );
+  assert.equal(catalog.maps[map.id].contentHash, compiled.contentHash);
+  if (compiled.map) {
+    bindTileAnimationRegions(map.compiledGroups, compiled.map);
+    geometries.set(map.id, compiled.map);
+  }
+}
 const byMap = new Map(maps.map((m) => [m.id, m]));
 const links = [];
 function link(map, site, destination, continuation = null) {
@@ -138,6 +163,7 @@ function run(map, asset, ops, input) {
       tilesets: [],
       textures: {},
       collisions: { 1: [0] },
+      ...geometries.get(map.id),
       entities: [],
       groups: map.compiledGroups,
       source: asset.source,
@@ -303,6 +329,7 @@ const report = {
   lane: "implementation-only",
   sourceSetHash: corpus.sourceSetHash,
   minimapSourceSetHash: minimap.sourceSetHash,
+  catalogHash: catalog.contentHash,
   counts,
   results,
   excluded,

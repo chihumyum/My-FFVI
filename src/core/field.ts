@@ -10,6 +10,7 @@ import type {
 import { EventState, executeEventControl } from "./event-state.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState } from "./static-audio.js";
+import { TileAnimationState } from "./tile-animation.js";
 import {
   buildCollisionMapping,
   collisionMask,
@@ -65,6 +66,7 @@ type Task = {
   pending: { slot: number; actor: string; target: number }[];
   remaining: number;
   move: Extract<Op, { kind: "move" }> | null;
+  animationWait: boolean;
   done: boolean;
 };
 export type MapTransitionStop = {
@@ -91,6 +93,7 @@ export type Dialogue = {
 const contains = (e: FieldEntity, p: Point) =>
   p.x >= e.x && p.x < e.x + e.width && p.y >= e.y && p.y < e.y + e.height;
 export class FieldGame {
+  readonly tileAnimations: TileAnimationState;
   readonly collisionRange: CollisionRange;
   private readonly collisionMappings = new Map<number, number[]>();
   readonly actors: Record<string, Actor> = {};
@@ -132,6 +135,7 @@ export class FieldGame {
     readonly bgm: StaticAudioState = new StaticAudioState(),
     readonly environment: StaticAudioState = new StaticAudioState(),
   ) {
+    this.tileAnimations = new TileAnimationState(content.map);
     this.entityList = [...content.map.entities];
     const groups = content.map.groups,
       initial = content.map.initialGroups;
@@ -158,6 +162,7 @@ export class FieldGame {
     const p = content.entry.player;
     this.actors["-1001"] = { ...p, id: "-1001", motion: null, steps: 0 };
     this.registerActors(this.entityList);
+    this.tileAnimations.register(this.entityList);
   }
   private registerActors(entities: readonly FieldEntity[]): void {
     for (const e of entities)
@@ -191,6 +196,7 @@ export class FieldGame {
       ids.add(e.id);
     }
     // Validate the entire group before any actor, collision, or trigger becomes visible.
+    this.tileAnimations.register(group.entities);
     this.entityList.push(...group.entities);
     this.registerActors(group.entities);
     this.activeGroups.add(name);
@@ -428,6 +434,7 @@ export class FieldGame {
       if (this.stop) continue;
       this.bgm.advance(10, this.content.bgm);
       this.environment.advance(10, this.content.environment);
+      this.tileAnimations.advance(10);
       this.time += 10;
       if (this.fade) {
         this.fade.elapsed += 10;
@@ -554,6 +561,7 @@ export class FieldGame {
       pending: [],
       remaining: 0,
       move: null,
+      animationWait: false,
       done: false,
     };
   }
@@ -591,6 +599,10 @@ export class FieldGame {
           return;
         }
         if (actor?.motion) continue;
+        if (t.animationWait) {
+          if (this.tileAnimations.isPlaying(t.actor)) continue;
+          t.animationWait = false;
+        }
         if (t.children.some((id) => !this.tasks.find((c) => c.id === id)?.done))
           continue;
         t.children = [];
@@ -638,6 +650,23 @@ export class FieldGame {
           return;
         }
         switch (op.kind) {
+          case "animation-cue":
+          case "animation-play":
+            try {
+              if (op.kind === "animation-cue")
+                this.tileAnimations.cue(t.actor, op.frame);
+              else {
+                this.tileAnimations.play(t.actor, op.loop, op.speed);
+                t.animationWait = !op.loop;
+              }
+            } catch (error) {
+              this.block(
+                error instanceof Error ? error.message : String(error),
+                op,
+              );
+              return;
+            }
+            break;
           case "bgm-play":
           case "bgm-stop":
           case "environment-play":
@@ -760,6 +789,13 @@ export class FieldGame {
             actor.direction = op.direction;
             break;
           case "hide":
+            if (this.tileAnimations.has(t.actor)) {
+              this.block(
+                "Tile animation visibility lifecycle is not implemented",
+                op,
+              );
+              return;
+            }
             this.hiddenEntities.add(t.actor);
             break;
           case "ride": {

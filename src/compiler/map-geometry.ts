@@ -52,7 +52,7 @@ export function compileMapGeometry(
     [layer.x ?? 0, layer.y ?? 0, layer.offsetx ?? 0, layer.offsety ?? 0].some(
       (v) => v !== 0,
     );
-  function walk(values: unknown, parent: string) {
+  function walk(values: unknown, parent: string, group = "") {
     for (const [index, value] of array(values).entries()) {
       const l = record(value),
         pointer = `${parent}/${index}`;
@@ -61,7 +61,7 @@ export function compileMapGeometry(
           issue("Unsupported group transform", tilemap.source, pointer);
           continue;
         }
-        walk(l.layers, pointer + "/layers");
+        walk(l.layers, pointer + "/layers", text(l.name));
       } else if (l.type === "tilelayer") {
         if (l.visible === false || transformed(l))
           issue("Unsupported tile layer transform", tilemap.source, pointer);
@@ -74,6 +74,7 @@ export function compileMapGeometry(
           issue("Unsupported tile rotation flag", tilemap.source, pointer);
         layers.push({
           name: text(l.name),
+          sourceGroup: group,
           width: positive(l.width),
           height: positive(l.height),
           data,

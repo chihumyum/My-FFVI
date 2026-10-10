@@ -4,6 +4,7 @@ import { loadCorpus } from "./corpus.js";
 import { hash, record } from "./content.js";
 import { bindMapPackages, compileMapGroups } from "./map-package.js";
 import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
+import { bindTileAnimationRegions } from "./tile-animation.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { decodeFieldOp, decodeScriptLocals } from "./field.js";
 import { missingFieldPoses } from "../core/character-media.js";
@@ -208,6 +209,7 @@ export async function compileWorld(root: string) {
       }
       const geometry = compileMapGeometry(tile, collision, textures);
       blockers.push(...geometry.blockers);
+      bindTileAnimationRegions(groups, geometry);
       fieldCollisionRange(
         geometry.width,
         geometry.height,

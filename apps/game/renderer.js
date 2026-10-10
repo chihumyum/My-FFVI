@@ -10,8 +10,8 @@ export class Renderer {
       (a, b) => b.firstgid - a.firstgid,
     );
   }
-  tile(raw, x, y, time) {
-    const gid = raw & 0x0fffffff;
+  tile(raw, x, y, time, resolved) {
+    const gid = (resolved ?? raw) & 0x0fffffff;
     if (!gid) return;
     const s = this.sets.find((s) => s.firstgid <= gid);
     if (!s) throw new Error("图块缺少图集");
@@ -19,7 +19,7 @@ export class Renderer {
     if (!image) throw new Error("缺少地图图片 " + s.image);
     let n = gid - s.firstgid,
       animation = s.tiles?.find((t) => t.id === n)?.animation;
-    if (animation?.length) {
+    if (resolved === undefined && animation?.length) {
       let t = time % animation.reduce((sum, f) => sum + f.duration, 0);
       for (const f of animation) {
         n = f.tileid;
@@ -113,7 +113,7 @@ export class Renderer {
       this.sprite(a.asset, ride, a, x, y, 8, 14);
     } else this.sprite(a.asset, key, a, x, y);
   }
-  layer(l, cx, cy, w, h, time) {
+  layer(l, cx, cy, w, h, game, layerIndex) {
     this.ctx.globalAlpha = l.opacity;
     for (
       let y = Math.max(0, Math.floor(cy / 16));
@@ -129,7 +129,8 @@ export class Renderer {
           l.data[y * l.width + x] >>> 0,
           x * 16 - cx,
           y * 16 - cy,
-          time,
+          game.time,
+          game.tileAnimations.tile(layerIndex, y * l.width + x),
         );
     this.ctx.globalAlpha = 1;
   }
@@ -154,14 +155,15 @@ export class Renderer {
     c.beginPath();
     c.rect(0, 0, range.width * 16, range.height * 16);
     c.clip();
-    for (const l of this.content.map.layers)
+    for (const [li, l] of this.content.map.layers.entries())
       this.layer(
         l,
         range.x * 16,
         range.y * 16,
         range.width * 16,
         range.height * 16,
-        game.time,
+        game,
+        li,
       );
     c.restore();
     c.save();
@@ -240,8 +242,8 @@ export class Renderer {
     const drawActors = (layer) => {
       for (const a of actors) if (a.layer === layer) this.actor(a, cx, cy);
     };
-    for (const l of m.layers) {
-      this.layer(l, cx, cy, w, h, game.time);
+    for (const [li, l] of m.layers.entries()) {
+      this.layer(l, cx, cy, w, h, game, li);
       if (l.name === "BottomLayer") drawActors(0);
       if (l.name === "GroundLayer") drawActors(1);
       if (l.name === "UpperLayer") drawActors(2);
