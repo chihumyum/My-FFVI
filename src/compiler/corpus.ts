@@ -46,7 +46,7 @@ export function instructionFamily(raw: unknown): string {
 
 function owner(name: string): string {
   if (
-    /^(Call|Return|Exit|Nop|Jump|Branch|Calc|SetFlag|ResetFlag|IsFlag)/.test(
+    /^(Call|Return|Exit|Nop|Jump|Branch|Calc|SetFlag|ResetFlag|FlipFlag|IsFlag)/.test(
       name,
     )
   )
@@ -260,9 +260,11 @@ export function analyzeCorpus(
           });
         }
       }
-      if (["Call", "SetPuppet"].includes(String(m.mnemonic))) {
+      if (
+        ["Call", "SetPuppet", "Jump", "Branch"].includes(String(m.mnemonic))
+      ) {
         const i = array(operands.iValues ?? []),
-          target = i[m.mnemonic === "Call" ? 0 : 2];
+          target = i[m.mnemonic === "Call" || m.mnemonic === "Jump" ? 0 : 2];
         const resolved =
           Number.isSafeInteger(target) &&
           Number(target) >= 0 &&
@@ -366,7 +368,7 @@ export function analyzeCorpus(
       "Static package membership includes every story variant; it does not establish reachability.",
       "Decoded sites mean the current field operand adapter accepted them, not that their dependencies or behavior work.",
       "Battle/AI and unbound scripts are unassessed by the field runtime, never counted as supported.",
-      "Reference closure covers only package scripts, Call, SetPuppet, Encount continuations and ChangeScript names.",
+      "Reference closure covers package scripts, Call, SetPuppet, Jump, Branch, Encount continuations and ChangeScript names.",
       "Remaining native calls, entity selection, assets, battle rules, save/menu and audio still block full migration.",
     ],
     priorities,
@@ -377,7 +379,8 @@ export function analyzeCorpus(
   return { ...result, contentHash: hash(result) };
 }
 
-export async function compileCorpus(root: string) {
+/** One verified corpus loader for scheduling and source-backed execution checks. */
+export async function loadCorpus(root: string) {
   const files = await readSnapshot(root + "/build/corpus");
   const manifest = record(
     JSON.parse(snapshotFile(files, "corpus.json").toString()),
@@ -423,6 +426,12 @@ export async function compileCorpus(root: string) {
   const tables = z
     .record(z.string(), z.array(z.record(z.string(), z.string())))
     .parse(JSON.parse(snapshotFile(files, "tables.json").toString()));
+  return { assets, tables, messages, sourceSetHash, manifest };
+}
+
+export async function compileCorpus(root: string) {
+  const { assets, tables, messages, sourceSetHash, manifest } =
+    await loadCorpus(root);
   return {
     report: analyzeCorpus(assets, tables, messages, sourceSetHash),
     manifest,

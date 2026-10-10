@@ -93,10 +93,12 @@ test("missing continuations, invalid instruction targets and omitted audio remai
     op("Call", [999]),
     op("Encount", [3], ["missing"]),
     op("PlaySE", [102, 0, 0]),
+    op("Jump", [999]),
+    op("Branch", [0, 1, 999], ["ScenarioFlag1", "＝", "imm"]),
   ]);
   const r = analyzeCorpus(assets, tables, {}, sha);
-  assert.equal(r.counts.unresolvedReferences, 2);
-  assert.equal(r.maps[0]!.unresolvedReferences.length, 2);
+  assert.equal(r.counts.unresolvedReferences, 4);
+  assert.equal(r.maps[0]!.unresolvedReferences.length, 4);
   const sound = r.priorities.find((p) => p.id === "PlaySE")!;
   assert.equal(sound.decodedSites, 0);
   assert.equal(sound.omittedSites, 1);

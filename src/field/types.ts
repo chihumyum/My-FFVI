@@ -1,4 +1,5 @@
 /** Browser-safe field content: no Unity readers or renderer dependencies in the runtime. */
+import type { EventControlOp, ScriptLocals } from "../core/event-state.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -51,7 +52,7 @@ export type Site = { script: string; index: number; source: Evidence };
 export type Op = Site &
   (
     | { kind: "nop" | "exit" | "return" | "join" | "hide" }
-    | { kind: "set-flag"; namespace: string; flag: number }
+    | EventControlOp
     | { kind: "fade-in"; seconds: number }
     | { kind: "ride"; actor: string; vehicle: 6 }
     | { kind: "sound"; soundId: number; channel: number; mode: number }
@@ -108,6 +109,7 @@ export type FieldContent = {
   };
   characters: Record<string, Character>;
   scripts: Record<string, Op[]>;
+  scriptLocals?: Record<string, ScriptLocals | null>;
   entry: {
     player: Point & {
       direction: Direction;

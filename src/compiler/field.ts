@@ -2,6 +2,15 @@ import { createHash } from "node:crypto";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { hash, record } from "./content.js";
 import { ImportedProject } from "../contracts.js";
+import {
+  int32,
+  isCategory,
+  isOperator,
+  validVariable,
+  type VariableRef,
+  type EventValue,
+  type ScriptLocals,
+} from "../core/event-state.js";
 import type {
   Character,
   Direction,
@@ -37,6 +46,19 @@ const props = (x: unknown) =>
   );
 const sha = (x: Buffer) => createHash("sha256").update(x).digest("hex");
 
+/** DataStorage.CreateScriptLocal copies initial values only when their count matches the labels. */
+export function decodeScriptLocals(raw: unknown): ScriptLocals | null {
+  const data = record(raw);
+  if (data.ScriptLocal == null) return null;
+  return {
+    labels: list(data.ScriptLocal).map(string),
+    values:
+      data.ScriptLocalValue == null
+        ? null
+        : list(data.ScriptLocalValue).map(int32),
+  };
+}
+
 /** Unsupported parameter forms survive as executable stops, never no-ops. */
 export function decodeFieldOp(
   raw: unknown,
@@ -68,6 +90,57 @@ export function decodeFieldOp(
   } as const;
   if (Object.hasOwn(simple, name) && form([]))
     return { ...site, kind: simple[name as keyof typeof simple] };
+  if (name === "Jump" && m.type === 1 && form([0]) && i[0]! >= 0)
+    return { ...site, kind: "jump", target: i[0]! };
+  const variable = (
+    category: string | undefined,
+    index: number | undefined,
+  ): VariableRef | null => {
+    if (category === undefined || index === undefined || !isCategory(category))
+      return null;
+    const ref = { category, index };
+    return validVariable(ref) ? ref : null;
+  };
+  if (
+    ["SetFlag", "ResetFlag", "FlipFlag"].includes(name) &&
+    m.type === 1 &&
+    form([0], [], [0])
+  ) {
+    const ref = variable(s[0], i[0]);
+    if (ref)
+      return {
+        ...site,
+        kind: "flag",
+        ref,
+        operation:
+          name === "SetFlag" ? "set" : name === "ResetFlag" ? "reset" : "flip",
+      };
+  }
+  if (
+    (name === "Calc" || name === "Branch") &&
+    m.type === 1 &&
+    form(name === "Branch" ? [0, 1, 2] : [0, 1], [], [0, 1, 2])
+  ) {
+    const left = variable(s[0], i[0]),
+      rightRef = variable(s[2], i[1]);
+    let right: EventValue | null = null;
+    if (s[2] === "imm" && i[1] !== undefined)
+      right = { kind: "immediate", value: int32(i[1]) };
+    else if (rightRef) right = { kind: "variable", ref: rightRef };
+    if (left && right && s[1] !== undefined && isOperator(s[1])) {
+      if (name === "Calc")
+        return { ...site, kind: "calc", left, operator: s[1], right };
+      if (i[2] !== undefined && i[2] >= 0)
+        return {
+          ...site,
+          kind: "branch",
+          left,
+          operator: s[1],
+          right,
+          target: i[2],
+        };
+    }
+  }
   if (name === "Call" && form([0]) && i[0]! >= 0)
     return { ...site, kind: "call", target: i[0]! };
   if (name === "Wait" && form([], [0]) && Number.isFinite(r[0]) && r[0]! >= 0)
@@ -139,13 +212,6 @@ export function decodeFieldOp(
       mode: i[2]!,
     };
   if (name === "SyncSE" && form([])) return { ...site, kind: "sound-sync" };
-  if (
-    name === "SetFlag" &&
-    form([0], [], [0]) &&
-    i[0]! >= 0 &&
-    /^ScenarioFlag[14]$/.test(s[0]!)
-  )
-    return { ...site, kind: "set-flag", namespace: s[0]!, flag: i[0]! };
   if (
     name === "FadeIn" &&
     form([3], [0]) &&
@@ -330,7 +396,7 @@ export async function compileField(root: string): Promise<FieldContent> {
       sprite.file = "/field/" + sprite.file;
     chars[name] = { sprites, animations, source: a.source as Evidence };
   }
-  // Explicit development checkpoint: flags still clear before the first encounter.
+  // Explicit development checkpoint; unrelated story flags remain unknown in the runtime.
   // The complete original map initializer is preserved in the import, not replaced.
   const activeGroups = [
     "entity_default",
@@ -415,6 +481,7 @@ export async function compileField(root: string): Promise<FieldContent> {
   if (new Set(entities.map((e) => e.id)).size !== entities.length)
     throw new Error("Ambiguous active entity identity");
   const scripts: Record<string, Op[]> = {};
+  const scriptLocals: Record<string, ScriptLocals | null> = {};
   for (const [path, a] of Object.entries(assets)) {
     const d = record(a.data);
     if (!Array.isArray(d.Mnemonics)) continue;
@@ -422,6 +489,7 @@ export async function compileField(root: string): Promise<FieldContent> {
       .split("/")
       .at(-1)!
       .replace(/\.json$/, "");
+    scriptLocals[name] = decodeScriptLocals(d);
     scripts[name] = d.Mnemonics.map((m, index) =>
       decodeFieldOp(
         m,
@@ -485,6 +553,7 @@ export async function compileField(root: string): Promise<FieldContent> {
     },
     characters: chars,
     scripts,
+    scriptLocals,
     entry: {
       absentHideTargets,
       player: {

@@ -6,6 +6,7 @@ import type {
   Point,
   Site,
 } from "../field/types.js";
+import { EventState, executeEventControl } from "./event-state.js";
 export const DELTA: Record<Direction, Point> = {
   up: { x: 0, y: -1 },
   right: { x: 1, y: 0 },
@@ -68,7 +69,9 @@ const contains = (e: FieldEntity, p: Point) =>
 export class FieldGame {
   readonly actors: Record<string, Actor> = {};
   readonly hiddenEntities = new Set<string>();
-  readonly flags: Record<string, Record<string, boolean>> = {};
+  get flags(): Record<string, Record<string, boolean>> {
+    return this.eventState.flagView();
+  }
   readonly presentationOmissions: {
     site: Site;
     kind: "sound" | "sound-sync";
@@ -81,7 +84,10 @@ export class FieldGame {
   private tasks: Task[] = [];
   private remainder = 0;
   private nextTask = 1;
-  constructor(readonly content: FieldContent) {
+  constructor(
+    readonly content: FieldContent,
+    readonly eventState: EventState = new EventState(),
+  ) {
     const p = content.entry.player;
     this.actors["-1001"] = { ...p, id: "-1001", motion: null, steps: 0 };
     for (const e of content.map.entities)
@@ -272,7 +278,19 @@ export class FieldGame {
       this.block("缺少事件脚本");
       return;
     }
-    this.tasks = [this.task(e.script, 0, "-1001")];
+    this.beginRoot(e.script);
+  }
+  /** Runs a package-provided event through the same VM as map triggers. */
+  startEvent(script: string): boolean {
+    if (this.busy || this.player.motion) return false;
+    if (!this.content.scripts[script])
+      throw new Error("Missing event script: " + script);
+    this.beginRoot(script);
+    return true;
+  }
+  private beginRoot(script: string): void {
+    this.eventState.beginScript(this.content.scriptLocals?.[script] ?? null);
+    this.tasks = [this.task(script, 0, "-1001")];
     this.pump();
   }
   private task(script: string, pc: number, actor: string): Task {
@@ -310,8 +328,7 @@ export class FieldGame {
       throw new Error("Missing battle continuation");
     this.stop = null;
     this.remainder = 0;
-    this.tasks = [this.task(continuation, 0, "-1001")];
-    this.pump();
+    this.beginRoot(continuation);
   }
   private pump(): void {
     if (this.stop || this.dialogue) return;
@@ -354,6 +371,23 @@ export class FieldGame {
         }
         t.pc++;
         changed = true;
+        try {
+          if (
+            executeEventControl(
+              op,
+              this.eventState,
+              t,
+              this.content.scripts[t.script]!.length,
+            )
+          )
+            continue;
+        } catch (error) {
+          this.block(
+            error instanceof Error ? error.message : String(error),
+            op,
+          );
+          return;
+        }
         switch (op.kind) {
           case "nop":
             break;
@@ -456,9 +490,6 @@ export class FieldGame {
               soundId: op.kind === "sound" ? op.soundId : null,
             });
             break;
-          case "set-flag":
-            (this.flags[op.namespace] ??= {})[op.flag] = true;
-            break;
           case "fade-in":
             this.fade = { elapsed: 0, duration: Math.round(op.seconds * 1000) };
             t.wait = this.fade.duration;
@@ -482,6 +513,9 @@ export class FieldGame {
             return;
           case "blocked":
             this.block(`${op.mnemonic}：${op.reason}`, op);
+            return;
+          default:
+            this.block(`未知编译指令 ${op.kind}，需要重新编译内容`, op);
             return;
         }
       }
