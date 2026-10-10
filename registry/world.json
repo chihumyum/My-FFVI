@@ -24,6 +24,24 @@
   ],
   "facts": [
     {
+      "id": "narshe:magitek-condition-reference",
+      "subject": "narshe",
+      "predicate": "source.magitek.conditionGroup402",
+      "value": "Abilities 218/219/220/222 select condition group 402. Group row 104 refers to condition row 13, whose type is 601 (Kappa). This is not evidence of an alive-target predicate; runtime eligibility still needs caller analysis.",
+      "when": { "conditionGroupId": 402 },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "ability.csv:218.condition_group_id",
+        "ability.csv:219.condition_group_id",
+        "ability.csv:220.condition_group_id",
+        "ability.csv:222.condition_group_id",
+        "condition_group.csv:104",
+        "condition.csv:13.condition_type",
+        "docs/conditions.md"
+      ]
+    },
+    {
       "id": "narshe:magitek-healing-functions",
       "subject": "narshe",
       "predicate": "source.ability222.functionDispatch",
