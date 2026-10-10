@@ -21,7 +21,7 @@ GameAssembly SHA256 固定为 `1a7e12c90c6a734e17dda507dd6ab7555090dff6a1e96f347
 
 ## 所有权与生命周期
 
-`src/compiler/npc.ts` 编译来源行为和边界，`src/compiler/message.ts` 为 Msg 与 NPC Talk 共用文字适配。缺失文本/说话人、未恢复的控制符、歧义主表及未实现动作保留来源位置和原因。`compileMapGroups` 的所有调用方使用同一来源消息集合，避免检查工具与地图构建采用不同能力。
+`src/compiler/interaction.ts` 编译共用动作、消息、方位与运输身份，`src/compiler/npc.ts` 附加 NPC 控制器和碰撞/转向边界，`src/compiler/message.ts` 为 Msg 与 NPC Talk 共用文字适配。缺失文本/说话人、未恢复的控制符、歧义主表及未实现动作保留来源位置和原因。`compileMapGroups` 的所有调用方使用同一来源消息集合，避免检查工具与地图构建采用不同能力。
 
 FieldGame 使用演员的当前位置、当前层、显隐、交互方位与载具匹配目标，不再使用演员移动前的实体锚点。多个同格候选保持歧义阻塞。直接 Talk 等待确认结束；脚本交互由同一任务 VM 运行，保留局部变量初始化、剧情分支、等待、角色演出和后续遇敌的生命周期。对话结束后不会在同一次确认中再次打开。
 
@@ -57,3 +57,5 @@ TypeScript 回归覆盖交互方向位序、角色移动/显隐/层与载具限�
 | `npc-check.json` | `a56da393917050741a6d5048086c35ecdc0310923792d7f4487ff4a1bfbafa54` |
 | `npc-browser-check.json` | `9701f97b3215b207379a1dc839f40014faf586965a55419b3ed3007f57dd68bc` |
 | `entity-group-check.json` | `bc2dbf5262f8fffca3f04d35e6ec3cad36afdb2db0589c81a5cefd7abd82144f` |
+
+2026-10-11 后续调查点批次将交互编译/运行和批量检查器提为 NPC 与 MapObject 共用。RunScript 的来源 SE 请求现在也显式记录；实际音效仍未迁移。检查器补充排除组/层级来源阻塞，最新孤立 NPC 计数为 659 个动作（180 Talk、107 空脚本、10 有内容脚本完成，362 脚本停止）。旧段落与摘要表是 NPC 首批历史收据；最新完整范围见 [当前进度](progress.md) 与 [调查点批次](map-object.md)。

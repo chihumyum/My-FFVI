@@ -321,7 +321,7 @@ test("missing scripts and ambiguous interactive actors fail before changing NPC 
   const missing = fixture({ action_id: 2, script_id: 11 });
   delete missing.content.scripts.conversation;
   missing.confirm();
-  assert.match(missing.stop!.message, /缺少 NPC/);
+  assert.match(missing.stop!.message, /缺少交互事件脚本/);
   assert.equal(missing.actors["10"]!.direction, "left");
   const seed = fixture();
   seed.content.map.entities.push({

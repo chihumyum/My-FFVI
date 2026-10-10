@@ -11,21 +11,29 @@ export type Evidence = {
   pointer?: string;
 };
 export type FieldMessage = { key: string; text: string; speaker: string };
-export type NpcInteraction =
+export type FieldInteraction =
   | { kind: "none" }
   | { kind: "script"; script: string | null }
   | { kind: "talk"; message: FieldMessage }
   | { kind: "blocked"; reason: string };
-export type NpcProperties = {
+export type InteractionProperties = {
+  acceptDirection: number;
+  /** Empty string denotes walking; other entries are source transportation assets. */
+  talkMounts: string[];
+  interaction: FieldInteraction;
+  /** EventAction assigns the property SE to RunScript; ordinary Talk leaves it zero. */
+  soundId: number;
+};
+export type NpcProperties = InteractionProperties & {
   moveType: number;
   collision: boolean;
   pushed: boolean;
   eyeContact: boolean;
   turnAround: boolean;
-  acceptDirection: number;
-  /** Empty string denotes walking; other entries are source transportation assets. */
-  talkMounts: string[];
-  interaction: NpcInteraction;
+};
+export type MapObjectProperties = InteractionProperties & {
+  /** Assetless FieldMapObjectDefault has no sprite, but still has a collider. */
+  collision: boolean;
 };
 export type FieldEntity = Point & {
   id: string;
@@ -33,6 +41,7 @@ export type FieldEntity = Point & {
   minimap?: Point & { icon: number };
   destination?: { mapId: number; entrance: number };
   npc?: NpcProperties;
+  mapObject?: MapObjectProperties;
   openTrigger?: {
     /** Movement-facing mask, distinct from an actor's facing and NPC action side. */
     direction: number;

@@ -14,6 +14,7 @@
 - [验收与证据契约](docs/acceptance.md)
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
+- [核心机制现状与优先次序](docs/core-mechanics.md)
 - [共用事件状态与控制流](docs/event-vm.md)
 - [共用实体组与地图生命周期](docs/map-lifecycle.md)
 - [共用碰撞与斜坡批次](docs/collision.md)
@@ -21,6 +22,7 @@
 - [共用背景音乐与原始音频导出](docs/bgm.md)
 - [共用环境音、来源音量与独立通道](docs/environment-audio.md)
 - [共用角色姿态、播放与移动动画](docs/actor-animation.md)
+- [共用调查点与隐形碰撞物](docs/map-object.md)
 - [本次交付与后续问题](docs/progress.md)
 - [Web 场景运行与实现边界](docs/web-field.md)
 - [首战数据与规则迁移](docs/battle-migration.md)
@@ -70,6 +72,7 @@ npm run environment:check
 npm run tiles:check
 npm run actors:check
 npm run doors:check
+npm run objects:check
 ```
 
 `/game/?map=<地图ID>&entrance=<入口ObjectId>` 使用相同加载器检查来源入口；未知剧情状态仍未知。它是显式开发预览，不是通关存档，也不证明主线可达。
@@ -85,8 +88,9 @@ npm run doors:check
 `tiles:check` 检查全量来源动画区域的初始帧、末帧、复位和单次播放，并用共用 VM 执行满足条件的原始区域动画脚本。空区域、未支持的尺寸和角色/效果目标分别记录，不计为完整剧情覆盖。
 `actors:check` 检查全量角色动画条目的定位、单次播放和末帧，并运行依赖已支持的孤立原始脚本。未骑乘角色的行走、剧情姿态及同步等待由同一内核管理；骑乘组合、动态自定义动画、透明度插值等继续阻塞，详见 [角色动画批次](docs/actor-animation.md)。
 
-`doors:check` 对来源门的方向限制、关联图块动画、完成后通行和入口开门状态执行隔离检查。共用 OpenTrigger 已接入地图运行时，418 个来源门通过检查；全量空闲入口增至 122 个，仍不代表完整地图剧情已迁移，详见 [接触开门批次](docs/open-trigger.md)。
+`doors:check` 对来源门的方向限制、关联图块动画、完成后通行和入口开门状态执行隔离检查。共用 OpenTrigger 已接入地图运行时，门批次记录了 418 个来源门通过、122 个空闲入口；最新结果见当前进度，完整地图剧情仍未迁移，详见 [接触开门批次](docs/open-trigger.md)。
 `world:build` 将全量地图、角色媒体和脚本编译成通用目录与地图包；`world:check` 整批尝试依赖已闭合的默认入口，保留每个失败原因。静态地图数、入口加载数与浏览器实玩分别记录。
+`objects:check` 和 `npc:check` 共用来源交互检查器，分别检查调查点/隐形碰撞物与 NPC 的原始动作和脚本；孤立动作不等于完整地图剧情，见 [调查点批次](docs/map-object.md)。
 工作台为 `http://127.0.0.1:4173`，展示真实纳尔谢图层、原始碰撞数据、剧情知识缺口、歌剧时间线与验收状态。它只用于检查；不宣称恢复了游戏规则。
 
 ```sh

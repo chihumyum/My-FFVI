@@ -129,7 +129,7 @@ export class FieldGame {
   private remainder = 0;
   private nextTask = 1;
   private interaction: {
-    actor: string;
+    entityId: string;
     restoreDirection: Direction | null;
     waitUntil: number;
   } | null = null;
@@ -291,10 +291,10 @@ export class FieldGame {
     return (
       this.entityList.some(
         (e) =>
-          e.kind === 8 &&
+          ((e.kind === 8 && this.openTriggers.blocks(e.id)) ||
+            (e.kind === 5 && e.mapObject?.collision)) &&
           e.layer === layer &&
           !this.hiddenEntities.has(e.id) &&
-          this.openTriggers.blocks(e.id) &&
           points.some((p) => contains(e, p)),
       ) ||
       Object.values(this.actors).some(
@@ -438,44 +438,49 @@ export class FieldGame {
     const p = this.player,
       d = DELTA[p.direction],
       target = { x: p.x + d.x, y: p.y + d.y };
-    const hits = this.entityList.filter(
-      (e) =>
+    const hits = this.entityList.filter((e) => {
+      const properties = e.npc ?? e.mapObject;
+      return (
+        (e.kind === 6 || e.kind === 5) &&
         !this.hiddenEntities.has(e.id) &&
         (this.actors[e.id]?.layer ?? e.layer) === p.layer &&
-        (e.npc ? e.npc.interaction.kind !== "none" : !!e.script) &&
+        (properties ? properties.interaction.kind !== "none" : !!e.script) &&
         (e.kind === 6
           ? this.actors[e.id]?.x === target.x &&
             this.actors[e.id]?.y === target.y
           : contains(e, target)) &&
-        e.kind === 6 &&
-        (!e.npc ||
-          (!!(e.npc.acceptDirection & ACTION_SIDE[OPPOSITE[p.direction]]) &&
-            (e.npc.interaction.kind === "blocked" ||
-              e.npc.talkMounts.includes(p.mount ?? "")))),
-    );
+        (!properties ||
+          (!!(
+            properties.acceptDirection & ACTION_SIDE[OPPOSITE[p.direction]]
+          ) &&
+            (properties.interaction.kind === "blocked" ||
+              properties.talkMounts.includes(p.mount ?? ""))))
+      );
+    });
     if (hits.length > 1) {
-      this.block("同格 NPC 交互目标不明确");
+      this.block("同格交互目标不明确");
       return;
     }
     const e = hits[0];
     if (!e) return;
     const site = {
-        script: e.script ?? "npc-talk",
+        script: e.script ?? "field-interaction",
         index: 0,
         source: e.source,
       },
       npc = e.npc,
+      properties = npc ?? e.mapObject,
       actor = this.actors[e.id];
-    if (!npc || !actor) {
+    if (!properties || (e.kind === 6 && (!npc || !actor))) {
       this.block("此交互尚未迁移", site);
       return;
     }
-    const action = npc.interaction;
+    const action = properties.interaction;
     if (action.kind === "blocked") {
       this.block(action.reason, site);
       return;
     }
-    if (npc.moveType !== 0 || actor.motion) {
+    if (npc && (npc.moveType !== 0 || actor?.motion)) {
       this.block("此 NPC 的移动控制器尚未迁移", site);
       return;
     }
@@ -484,20 +489,20 @@ export class FieldGame {
       action.script !== null &&
       !this.content.scripts[action.script]
     ) {
-      this.block("缺少 NPC 事件脚本 " + action.script, site);
+      this.block("缺少交互事件脚本 " + action.script, site);
       return;
     }
     if (action.kind === "none") return;
     this.interaction = {
-      actor: actor.id,
+      entityId: e.id,
       restoreDirection:
-        npc.eyeContact && npc.turnAround ? actor.direction : null,
+        npc?.eyeContact && npc.turnAround && actor ? actor.direction : null,
       // Empty source actions yield before returning control. One logical tick is the Web adaptation.
       waitUntil:
         this.time +
         (action.kind === "script" && action.script === null ? 10 : 0),
     };
-    if (npc.eyeContact) {
+    if (npc?.eyeContact && actor) {
       actor.direction = OPPOSITE[p.direction];
       try {
         actor.animation?.look(actor.direction);
@@ -509,17 +514,23 @@ export class FieldGame {
         return;
       }
     }
+    if (properties.soundId > 0)
+      this.presentationOmissions.push({
+        site,
+        kind: "sound",
+        soundId: properties.soundId,
+      });
     if (action.kind === "script") {
       if (action.script !== null) this.beginRoot(action.script);
     } else this.dialogue = { ...action.message, task: 0 };
   }
   private finishInteraction(): void {
     if (!this.interaction || this.busy) return;
-    const { actor, restoreDirection } = this.interaction;
-    if (restoreDirection && this.actors[actor]) {
-      this.actors[actor]!.direction = restoreDirection;
+    const { entityId, restoreDirection } = this.interaction;
+    if (restoreDirection && this.actors[entityId]) {
+      this.actors[entityId]!.direction = restoreDirection;
       try {
-        this.actors[actor]!.animation?.look(restoreDirection);
+        this.actors[entityId]!.animation?.look(restoreDirection);
       } catch (error) {
         this.block(error instanceof Error ? error.message : String(error));
       }

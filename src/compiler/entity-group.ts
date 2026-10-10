@@ -3,6 +3,7 @@ import { record } from "./content.js";
 import { tableId } from "./table-id.js";
 import { MINIMAP_ICON_TYPES } from "../core/minimap.js";
 import { compileNpc } from "./npc.js";
+import { compileInteraction } from "./interaction.js";
 import type {
   Direction,
   EntityGroup,
@@ -85,7 +86,7 @@ export function compileEntityGroup(
           p = entityProperties(o.properties),
           kind = integer(p.object_type);
         const issue = (reason: string) => blockers.push({ reason, source });
-        if (![0, 1, 2, 3, 4, 6, 8, 18, 19, 27].includes(kind))
+        if (![0, 1, 2, 3, 4, 5, 6, 8, 18, 19, 27].includes(kind))
           issue(`Unsupported entity kind ${kind}`);
         if (kind === 1) issue("Unbound tile animation geometry");
         if (
@@ -141,6 +142,23 @@ export function compileEntityGroup(
         if (kind === 6) {
           if (!p.asset_id) issue("Unresolved actor asset");
         }
+        if (kind === 5) {
+          if (integer(p.asset_id ?? 0) !== 0)
+            issue("Unsupported map object sprite asset");
+          if (z.boolean().parse(p.birdview_puppet ?? false))
+            issue("Unsupported birdview map object");
+          // Init() sizes the collider from the source rectangle minus two pixels.
+          // Only the aligned single-cell subset fits the current grid controller.
+          if (
+            !o.gid ||
+            o.width !== 16 ||
+            o.height !== 16 ||
+            ![o.x, o.y].every(
+              (v) => Number.isInteger(v) && Number(v) % 16 === 0,
+            )
+          )
+            issue("Unsupported map object geometry");
+        }
         if (kind === 8) {
           if (
             text(row("action.csv", p.action_id).action_name) !==
@@ -175,12 +193,15 @@ export function compileEntityGroup(
             : null;
         const npc = kind === 6 ? compileNpc(p, script, tables, messages) : null;
         npc?.blockers.forEach(issue);
+        const mapObject =
+          kind === 5 ? compileInteraction(p, script, tables, messages) : null;
+        mapObject?.blockers.forEach(issue);
         const direction = (
           { 0: "down", 1: "up", 2: "right", 4: "down", 8: "left" } as Record<
             string,
             Direction
           >
-        )[String(kind === 8 ? 0 : (p.direction ?? 0))];
+        )[String(kind === 8 || kind === 5 ? 0 : (p.direction ?? 0))];
         if (!direction) issue("Unsupported entity direction");
         const width = finite(o.width) / tileSize,
           height = finite(o.height) / tileSize;
@@ -189,6 +210,15 @@ export function compileEntityGroup(
           id: entityId ? String(entityId) : `${name}:${li}:${oi}`,
           objectId: integer(p.object_id ?? 0),
           ...(npc ? { npc: npc.npc } : {}),
+          ...(mapObject
+            ? {
+                mapObject: {
+                  ...mapObject.properties,
+                  // PropertyDefaultEntity differs from PropertyNonPlayer: nullable collision defaults false.
+                  collision: z.boolean().parse(p.collision ?? false),
+                },
+              }
+            : {}),
           ...(kind === 8
             ? {
                 openTrigger: {

@@ -325,6 +325,7 @@ export async function compileWorld(root: string) {
         "Package compilation does not establish story reachability or original parity.",
         "Unsupported entity groups, instructions and media remain executable stops.",
         "OpenTrigger contact uses the development grid controller; source SE requests are recorded in the muted sound lane.",
+        "Assetless map objects share NPC interaction dispatch; only aligned single-cell geometry is supported. Interaction icons and remote/counter selection remain unimplemented.",
       ],
     };
     maps.push({ ...value, contentHash: hash(value) });

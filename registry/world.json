@@ -24,6 +24,41 @@
   ],
   "facts": [
     {
+      "id": "opera:map20441-3-passage-script",
+      "subject": "opera",
+      "predicate": "source.Map_20441_3.passageScript",
+      "value": "Default entity 9 runs sc_e_0892. When MapLocalVariable[2] is not 1, its script moves entity 9 right one cell and sets that variable to 1; later interactions skip the move and show dialogue. This does not establish story-era applicability.",
+      "when": { "mapName": "Map_20441_3", "entityGroup": "entity_default" },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "Map_20441_3/entity_default.json:/layers/0/objects/6",
+        "Map_20441_3/sc_e_0892.json:/Mnemonics/1",
+        "Map_20441_3/sc_e_0892.json:/Mnemonics/3",
+        "Map_20441_3/sc_e_0892.json:/Mnemonics/9",
+        "Map_20441_3/sc_e_0892.json:/Mnemonics/13",
+        "docs/map-object.md"
+      ]
+    },
+    {
+      "id": "opera:map20441-3-object4-script",
+      "subject": "opera",
+      "predicate": "source.Map_20441_3.object4Script",
+      "value": "Default assetless entity 4 runs sc_e_0335, requesting SE 102 and cueing TileAnimation entity 14 to frame 1 then 0 around SyncSE. This ordinary field interaction is separate from the opera performance timeline.",
+      "when": { "mapName": "Map_20441_3", "entityGroup": "entity_default" },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "Map_20441_3/entity_default.json:/layers/0/objects/3",
+        "Map_20441_3/sc_e_0335.json:/Mnemonics/1",
+        "Map_20441_3/sc_e_0335.json:/Mnemonics/3",
+        "Map_20441_3/sc_e_0335.json:/Mnemonics/7",
+        "Map_20441_3/sc_e_0335.json:/Mnemonics/11",
+        "Map_20441_3/sc_e_0335.json:/Mnemonics/18",
+        "docs/map-object.md"
+      ]
+    },
+    {
       "id": "narshe:map20010-minimap-services",
       "subject": "narshe",
       "predicate": "source.Map_20010.defaultMinimap",
