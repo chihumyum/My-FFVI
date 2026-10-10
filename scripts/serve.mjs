@@ -11,6 +11,9 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/reports/status.json') { base = resolve(root, 'build/reports'); relative = 'status.json'; }
     else if (url.pathname === '/game/content.json') { base = resolve(root, 'build/game'); relative = 'narshe.json'; }
     else if (url.pathname === '/game/battle.json') { base = resolve(root, 'build/game'); relative = 'opening-playable.json'; }
+    else if (url.pathname === '/world/catalog.json') { base = resolve(root, 'build/world'); relative = 'catalog.json'; }
+    else if (url.pathname.startsWith('/world/maps/')) { base = resolve(root, 'build/world/maps'); relative = decodeURIComponent(url.pathname.slice('/world/maps/'.length)); }
+    else if (url.pathname.startsWith('/world-media/')) { base = resolve(root, 'build/world-media'); relative = decodeURIComponent(url.pathname.slice('/world-media/'.length)); }
     else if (url.pathname.startsWith('/battle/sprites/')) { base = resolve(root, 'build/battle/sprites'); relative = decodeURIComponent(url.pathname.slice('/battle/sprites/'.length)); }
     else if (url.pathname.startsWith('/game/')) { base = resolve(root, 'apps/game'); relative = decodeURIComponent(url.pathname.slice(6)) || 'index.html'; }
     else if (url.pathname.startsWith('/runtime/core/')) { base = resolve(root, 'dist/src/core'); relative = decodeURIComponent(url.pathname.slice('/runtime/core/'.length)); }

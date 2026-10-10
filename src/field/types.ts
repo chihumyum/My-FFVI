@@ -57,11 +57,21 @@ export type Character = {
   source: Evidence;
 };
 export type Site = { script: string; index: number; source: Evidence };
+export type MapRequest = {
+  mapId: number;
+  entrance: number;
+  continuation: string | null;
+  birdview: boolean;
+  skipFade: boolean;
+  skipBgm: boolean;
+  origin: "script" | "trigger" | "development";
+};
 export type Op = Site &
   (
     | { kind: "nop" | "exit" | "return" | "join" | "hide" }
     | EventControlOp
     | { kind: "entities"; group: string }
+    | { kind: "change-map"; request: MapRequest }
     | { kind: "fade-in"; seconds: number }
     | { kind: "ride"; actor: string; vehicle: 6 }
     | { kind: "sound"; soundId: number; channel: number; mode: number }
@@ -106,6 +116,7 @@ export type FieldContent = {
   contentHash: string;
   map: {
     id: string;
+    identity?: { mapId: number; areaId: number };
     width: number;
     height: number;
     tileSize: number;

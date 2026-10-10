@@ -43,12 +43,24 @@ npm run check
 npm run dev
 ```
 
-Web 片段为 `http://127.0.0.1:4173/game/`，方向键/WASD 移动，空格/Enter 确认，Esc 暂停。当前从行军后开发检查点开始，首战已浏览器实玩；街道后续遭遇已通过内核回归，新增画面尚未逐一实玩。尚无跨地图和存读档。按用户要求先推进可玩实现，正式一致性对照后置。
+Web 片段为 `http://127.0.0.1:4173/game/`，方向键/WASD 移动，空格/Enter 确认，Esc 暂停。当前从行军后开发检查点开始，首战已浏览器实玩；街道后续遭遇已通过内核回归。通用地图加载与切图请求已接入，完整相连地图流程和存读档尚未完成。按用户要求先推进可玩实现，正式一致性对照后置。
+
+全量地图包与媒体构建：
+
+```sh
+.venv/bin/python tools/source_adapter/export_corpus.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
+.venv/bin/python tools/source_adapter/export_world_media.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
+npm run world:build
+npm run world:check
+```
+
+`/game/?map=<地图ID>&entrance=<入口ObjectId>` 使用相同加载器检查来源入口；未知剧情状态仍未知。它是显式开发预览，不是通关存档，也不证明主线可达。
 
 `playable:check` 编译地图与首战内容，并检查胜负、结算、战后继续移动和失败重试。
 `corpus:plan` 分析全量已导出的脚本与地图依赖，生成共用能力工作队列；导出命令和当前推进方式见 [批量迁移](docs/batch-migration.md)。
 `events:check` 用同一游戏 VM 整批运行符合能力条件的原始脚本，检查不同输入下的分支和状态变化；不代表这些地图已经可玩。
-`maps:check` 解析全部地图包、实体组和入口引用，并整批检查能力已闭合的实体组选择脚本；未恢复的 NPC 行为和切图生命周期仍明确保留。
+`maps:check` 解析全部地图包、实体组和入口引用，并整批检查能力已闭合的实体组选择脚本。
+`world:build` 将全量地图、角色媒体和脚本编译成通用目录与地图包；`world:check` 整批尝试依赖已闭合的默认入口，保留每个失败原因。静态地图数、入口加载数与浏览器实玩分别记录。
 工作台为 `http://127.0.0.1:4173`，展示真实纳尔谢图层、原始碰撞数据、剧情知识缺口、歌剧时间线与验收状态。它只用于检查；不宣称恢复了游戏规则。
 
 ```sh

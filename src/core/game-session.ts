@@ -1,11 +1,14 @@
 import type { FieldContent } from "../field/types.js";
 import { encounterContent, type BattleCatalog } from "./battle-content.js";
 import { BattleGame, type Combatant } from "./battle.js";
-import { FieldGame } from "./field.js";
+import { WorldSession } from "./world-session.js";
 
 /** Owns the encounter handoff and consumes rewards exactly once. No renderer state drives progression. */
 export class GameSession {
-  readonly field: FieldGame;
+  readonly world: WorldSession;
+  get field() {
+    return this.world.field;
+  }
   battle: BattleGame | null = null;
   players: Combatant[] | undefined;
   gil: number;
@@ -20,7 +23,7 @@ export class GameSession {
   ) {
     if (field.sourceSetHash !== battleCatalog.common.fieldSourceSetHash)
       throw new Error("Field/battle source mismatch");
-    this.field = new FieldGame(field);
+    this.world = new WorldSession(field);
     this.gil = battleCatalog.common.gil;
   }
   advance(ms: number) {

@@ -5,6 +5,7 @@ import type {
   Op,
   Point,
   Site,
+  MapRequest,
 } from "../field/types.js";
 import { EventState, executeEventControl } from "./event-state.js";
 export const DELTA: Record<Direction, Point> = {
@@ -51,13 +52,21 @@ type Task = {
   move: Extract<Op, { kind: "move" }> | null;
   done: boolean;
 };
-export type Stop = {
-  kind: "unsupported" | "encounter";
+export type MapTransitionStop = {
+  kind: "map-transition";
   message: string;
   site: Site | null;
-  party?: number;
-  continuation?: string;
+  request: MapRequest;
 };
+export type Stop =
+  | MapTransitionStop
+  | {
+      kind: "unsupported" | "encounter";
+      message: string;
+      site: Site | null;
+      party?: number;
+      continuation?: string;
+    };
 export type Dialogue = {
   speaker: string;
   text: string;
@@ -297,11 +306,28 @@ export class FieldGame {
     const e = events[0];
     if (!e) return;
     if (e.kind === 3) {
-      this.block("跨地图尚未迁移", {
+      const site = {
         script: e.script ?? "map-transition",
         index: 0,
         source: e.source,
-      });
+      };
+      if (!e.destination) {
+        this.block("缺少跨地图目标", site);
+        return;
+      }
+      this.stop = {
+        kind: "map-transition",
+        message: "正在载入地图…",
+        site,
+        request: {
+          ...e.destination,
+          continuation: null,
+          birdview: false,
+          skipFade: false,
+          skipBgm: false,
+          origin: "trigger",
+        },
+      };
       return;
     }
     if (!e.script || !this.content.scripts[e.script]) {
@@ -317,6 +343,25 @@ export class FieldGame {
       throw new Error("Missing event script: " + script);
     this.beginRoot(script);
     return true;
+  }
+  /** Explicit diagnostic entry, never counted as a story transition or a new-game state. */
+  previewMap(mapId: number, entrance: number): void {
+    if (this.busy || this.player.motion)
+      throw new Error("Cannot preview a map during an event");
+    this.stop = {
+      kind: "map-transition",
+      message: "正在载入地图预览…",
+      site: null,
+      request: {
+        mapId,
+        entrance,
+        continuation: null,
+        birdview: false,
+        skipFade: true,
+        skipBgm: true,
+        origin: "development",
+      },
+    };
   }
   private beginRoot(script: string): void {
     this.eventState.beginScript(this.content.scriptLocals?.[script] ?? null);
@@ -419,6 +464,14 @@ export class FieldGame {
           return;
         }
         switch (op.kind) {
+          case "change-map":
+            this.stop = {
+              kind: "map-transition",
+              message: "正在载入地图…",
+              site: op,
+              request: op.request,
+            };
+            return;
           case "entities":
             try {
               this.activateGroup(op.group);
@@ -515,7 +568,11 @@ export class FieldGame {
             break;
           case "ride": {
             const rider = this.actors[op.actor];
-            if (!rider || op.vehicle !== 6) {
+            if (
+              !rider ||
+              op.vehicle !== 6 ||
+              !this.content.entry.player.mount
+            ) {
               this.block("未知骑乘对象", op);
               return;
             }

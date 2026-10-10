@@ -4,6 +4,8 @@ import { readSnapshot, snapshotFile } from "./integrity.js";
 import { hash, record } from "./content.js";
 import { ImportedProject } from "../contracts.js";
 import { compileEntityGroup } from "./entity-group.js";
+import { tableId } from "./table-id.js";
+import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
 import {
   int32,
   isCategory,
@@ -21,8 +23,6 @@ import type {
   FieldEntity,
   Op,
   Site,
-  TileLayer,
-  Tileset,
 } from "../field/types.js";
 const directions: Direction[] = ["up", "right", "down", "left"];
 // Source GetFieldSpriteMoveSecondsPerCell, RVA 0x38D7F0; magnification is 1 in the development profile.
@@ -39,13 +39,6 @@ const list = (x: unknown): unknown[] => {
   if (!Array.isArray(x)) throw new Error("Expected array");
   return x;
 };
-const props = (x: unknown) =>
-  Object.fromEntries(
-    list(x).map((p) => {
-      const r = record(p);
-      return [string(r.name), r.value];
-    }),
-  );
 const sha = (x: Buffer) => createHash("sha256").update(x).digest("hex");
 
 /** DataStorage.CreateScriptLocal copies initial values only when their count matches the labels. */
@@ -94,6 +87,28 @@ export function decodeFieldOp(
     return { ...site, kind: simple[name as keyof typeof simple] };
   if (name === "SetEntities" && m.type === 1 && form([], [], [0]) && s[0])
     return { ...site, kind: "entities", group: s[0] };
+  // MnemonicField.ChangeMap, RVA 0xB4F500: reserve s[0], then load map/PointIn.
+  if (
+    name === "ChangeMap" &&
+    m.type === 1 &&
+    form([0, 1, 2, 3, 4], [], [0]) &&
+    i.length >= 5 &&
+    i[0]! > 0 &&
+    i[1]! >= 0
+  )
+    return {
+      ...site,
+      kind: "change-map",
+      request: {
+        mapId: int32(i[0]),
+        entrance: int32(i[1]),
+        continuation: s[0] || null,
+        birdview: i[2] !== 0,
+        skipFade: i[3] !== 0,
+        skipBgm: i[4] !== 0,
+        origin: "script",
+      },
+    };
   if (name === "Jump" && m.type === 1 && form([0]) && i[0]! >= 0)
     return { ...site, kind: "jump", target: i[0]! };
   const variable = (
@@ -289,73 +304,24 @@ export async function compileField(root: string): Promise<FieldContent> {
     return found[0]!;
   };
   const rawMap = record(asset("tilemap").data);
-  if (
-    rawMap.tilewidth !== 16 ||
-    rawMap.tileheight !== 16 ||
-    rawMap.orientation !== "orthogonal"
-  )
-    throw new Error("Unsupported map geometry");
-  const layers: TileLayer[] = [];
-  const flatten = (ls: unknown) => {
-    for (const value of list(ls)) {
-      const l = record(value);
-      if (l.type === "group") {
-        if (
-          l.visible === false ||
-          Number(l.opacity ?? 1) !== 1 ||
-          Number(l.x ?? 0) ||
-          Number(l.y ?? 0) ||
-          Number(l.offsetx ?? 0) ||
-          Number(l.offsety ?? 0)
-        )
-          throw new Error("Unsupported group transform");
-        flatten(l.layers);
-      } else if (l.type === "tilelayer") {
-        if (
-          l.visible === false ||
-          Number(l.x ?? 0) ||
-          Number(l.y ?? 0) ||
-          Number(l.offsetx ?? 0) ||
-          Number(l.offsety ?? 0)
-        )
-          throw new Error("Unsupported tile layer transform");
-        layers.push({
-          name: string(l.name),
-          width: integer(l.width),
-          height: integer(l.height),
-          data: list(l.data).map(integer),
-          opacity: Number(l.opacity ?? 1),
-        });
-      } else if (
-        l.type !== "imagelayer" ||
-        props(l.properties).active !== false
-      )
-        throw new Error("Active non-tile layer needs a renderer");
-    }
-  };
-  flatten(rawMap.layers);
-  const textures: Record<string, string> = {};
-  for (const t of project.narshe.textures) {
-    if (sha(snapshotFile(imported, t.file)) !== t.sha256)
+  const media: Record<string, MapTexture> = {};
+  for (const texture of project.narshe.textures) {
+    if (sha(snapshotFile(imported, texture.file)) !== texture.sha256)
       throw new Error("Changed map texture");
-    textures[t.name + ".png"] = "/imports/" + t.file;
+    media[texture.name + ".png"] = {
+      url: "/imports/" + texture.file,
+      width: texture.width,
+      height: texture.height,
+      source: texture.source,
+    };
   }
-  const collisions: Record<string, number[]> = {};
-  for (const raw of list(record(asset("collision").data).layers)) {
-    const l = record(raw);
-    const id = (
-      { GroundCollision: 1, UpperCollision: 2 } as Record<string, number>
-    )[string(l.name)];
-    if (!id || l.width !== rawMap.width || l.height !== rawMap.height)
-      throw new Error("Unsupported collision layer");
-    collisions[id] = list(l.data).map(integer);
-  }
-  for (const data of [
-    ...layers.map((l) => l.data),
-    ...Object.values(collisions),
-  ])
-    if (data.length !== Number(rawMap.width) * Number(rawMap.height))
-      throw new Error("Invalid tile/collision grid");
+  const geometry = compileMapGeometry(
+    asset("tilemap"),
+    asset("collision"),
+    media,
+  );
+  if (geometry.blockers.length) throw new Error(geometry.blockers[0]!.reason);
+  const { layers, tilesets, textures, collisions } = geometry;
   const chars: Record<string, Character> = {};
   for (const [name, value] of Object.entries(record(field.characters))) {
     const c = record(value),
@@ -527,6 +493,10 @@ export async function compileField(root: string): Promise<FieldContent> {
     if (m.mnemonic !== name || operands[0] !== a || operands[1] !== b)
       throw new Error("Opening checkpoint evidence changed");
   }
+  const mapRows = list(tables["map.csv"])
+    .map(record)
+    .filter((row) => row.map_name === project.narshe.mapName);
+  if (mapRows.length !== 1) throw new Error("Ambiguous opening map identity");
   const result: Omit<FieldContent, "contentHash"> = {
     formatVersion: 1,
     kind: "field-development",
@@ -534,11 +504,15 @@ export async function compileField(root: string): Promise<FieldContent> {
     parentSourceSetHash: project.sourceSetHash,
     map: {
       id: project.narshe.mapName,
+      identity: {
+        mapId: tableId(mapRows[0]!.id),
+        areaId: tableId(mapRows[0]!.area_id),
+      },
       width: integer(rawMap.width),
       height: integer(rawMap.height),
       tileSize: integer(rawMap.tilewidth),
       layers,
-      tilesets: list(rawMap.tilesets) as Tileset[],
+      tilesets,
       textures,
       collisions,
       entities,
@@ -566,7 +540,7 @@ export async function compileField(root: string): Promise<FieldContent> {
       description: "开场行军之后的开发入口；开场影片和完整初始化尚未接入。",
     },
     limitations: [
-      "纳尔谢街道战斗使用可玩开发规则；跨地图、队伍菜单和存读档尚未迁移。",
+      "纳尔谢街道战斗使用可玩开发规则；完整地图流程、队伍菜单和存读档仍未完成。",
       "当前为静音开发运行；脚本音效请求有记录，音频完成等待暂按静音模式立即完成。",
       "音频、环境粒子、精确镜头与演出时序尚未接入；骑乘合成和碰撞等待正式对照。",
       "此入口使用明确的开场状态，尚未执行完整地图初始化脚本。",

@@ -2,16 +2,8 @@ import { createHash } from "node:crypto";
 import type { Capability, Diagnostic, ImportedProject, TargetReport } from "../contracts.js";
 import { lanes } from "../contracts.js";
 
-export function canonical(value: unknown): string {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new Error("Nonfinite number");
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (typeof value === "object") return `{${Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
-  throw new Error(`Unsupported canonical value: ${typeof value}`);
-}
+import { canonical } from "../core/canonical.js";
+export { canonical } from "../core/canonical.js";
 export function hash(value: unknown): string { return createHash("sha256").update(canonical(value)).digest("hex"); }
 export function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected object");

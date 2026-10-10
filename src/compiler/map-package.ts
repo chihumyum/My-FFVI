@@ -104,6 +104,7 @@ export function bindMapPackages(assets: CorpusAsset[], tables: Tables) {
     let scriptAliases: Aliases = {},
       groups: Record<string, string> = {};
     let tilemap: string | null = null,
+      packageId: string | null = null,
       collision: string | null = null,
       initializer: string | null = null,
       initializerName: string | null = null;
@@ -114,6 +115,7 @@ export function bindMapPackages(assets: CorpusAsset[], tables: Tables) {
       issues.push(`map-package:${matches.length ? "ambiguous" : "missing"}`);
     else {
       const { pkg, map } = matches[0]!;
+      packageId = pkg.id;
       const resolve = (raw: unknown, kind: CorpusAsset["kind"]) =>
         resolveAsset(pkg, raw, kind, issues);
       scriptAliases = aliases(pkg, map.script ?? [], "script", issues);
@@ -162,6 +164,7 @@ export function bindMapPackages(assets: CorpusAsset[], tables: Tables) {
     }
     return {
       id: String(tableId(row.id)),
+      packageId,
       name: row.map_name!,
       areaId: String(tableId(row.area_id)),
       scripts: [

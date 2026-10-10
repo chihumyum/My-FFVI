@@ -103,6 +103,15 @@ export function compileEntityGroup(
         )
           issue("Unsupported event activation condition");
         if (
+          kind === 3 &&
+          (p.action_id !== 3 ||
+            Number(p.script_id ?? 0) !== 0 ||
+            Number(p.link_object_id ?? 0) !== 0 ||
+            Number(p.gimmick ?? 0) !== 0 ||
+            String(p.target_transportation_ids ?? "") !== "")
+        )
+          issue("Unsupported map transition condition");
+        if (
           kind === 6 &&
           (Number(p.move_type ?? 0) !== 0 ||
             p.all_layers === true ||

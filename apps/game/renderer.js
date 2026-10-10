@@ -161,8 +161,10 @@ export class Renderer {
             game.time,
           );
       c.globalAlpha = 1;
+      if (l.name === "BottomLayer") drawActors(0);
       if (l.name === "GroundLayer") drawActors(1);
       if (l.name === "UpperLayer") drawActors(2);
+      if (l.name === "CeilLayer") drawActors(3);
     }
     if (game.fade) {
       c.fillStyle = `rgba(0,0,0,${1 - game.fade.elapsed / game.fade.duration})`;

@@ -4,7 +4,7 @@
 
 ## 当前可操作范围
 
-`npm run game:check` 编译并检查真实来源片段；`npm run dev` 后打开 `/game/`。进入开场行军结束后的显式开发检查点 `(38,49)`，方向键/WASD 移动，空格/Enter 确认，Esc 暂停。向上 11 格触发守卫出场、对白与靠近，随后由 GameSession 进入首场守卫战斗，胜利后执行 `sc_e_0002_1` 并继续移动。战斗需 `npm run battle:build`，详见 [可玩开发规则](battle-playability.md)。后续战斗、存读档和跨地图尚未实现。向后触发尚未支持的事件也会停止，不能当作完整地图自由探索入口。
+`npm run game:check` 编译并检查真实来源片段；`npm run dev` 后打开 `/game/`。进入开场行军结束后的显式开发检查点 `(38,49)`，方向键/WASD 移动，空格/Enter 确认，Esc 暂停。向上 11 格触发守卫出场、对白与靠近，随后由 GameSession 进入首场守卫战斗，胜利后执行 `sc_e_0002_1` 并继续移动。战斗需 `npm run battle:build`，详见 [可玩开发规则](battle-playability.md)。连续街道遭遇已有内核回归；通用地图加载和切图请求见 [地图生命周期](map-lifecycle.md)，完整相连地图流程及存读档仍未完成。向后触发尚未支持的事件也会停止，不能当作完整地图自由探索入口。
 
 浏览器已实际验证：地图与骑乘角色可见；起点左右受阻；短按及按住前进；暂停时不能移动；恢复后继续；守卫分两阶段移动；对白锁定玩家输入；确认后进入首战、取胜、结算并返回地图。控制台未见警告/错误。只检查了 Codex 内置浏览器，尚未完成 Chrome/Safari/Firefox 与性能验收。截图位于忽略的 `build/runtime/web-narshe-dialogue.png`。
 
