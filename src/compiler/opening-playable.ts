@@ -1,6 +1,12 @@
 import { hash, record } from "./content.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { tableInteger as int, type compileOpeningBattle } from "./battle.js";
+import {
+  compilePlayerParameters,
+  compileEnemyParameters,
+  compileParameterLimits,
+} from "./parameters.js";
+import type { ParameterValues } from "../core/parameters.js";
 import type {
   BattleContent,
   BattleCatalog,
@@ -56,6 +62,31 @@ export async function compileOpeningPlayable(
     const r = unique("game_constant_int.csv", "key_name", key);
     return [int(r.value1), int(r.value2)];
   };
+  const parameterReader = {
+    row: (table: string, id: string | number) => {
+      row(table, id); // Same missing-dependency diagnostic as the rest of this profile.
+      return source.tables[table]![String(id)]!;
+    },
+    unique: (table: string, key: string, value: string) => {
+      const r = unique(table, key, value);
+      return source.tables[table]![r.id!]!;
+    },
+  };
+  const parameterLimits = compileParameterLimits(parameterReader).values;
+  // Explicit opening-checkpoint inputs, NOT defaults for arbitrary characters,
+  // earned growth, equipment abilities or status effects.
+  const noTemporary: ParameterValues = {
+    hp: 0,
+    mp: 0,
+    magic: 0,
+    attack: 0,
+    defense: 0,
+    magicDefense: 0,
+    agility: 0,
+    weight: 0,
+    evasion: 0,
+    magicEvasion: 0,
+  };
   const abilities: BattleContent["abilities"] = {};
   for (const a of rows("ability.csv")) {
     const id = int(a.id);
@@ -95,20 +126,19 @@ export async function compileOpeningPlayable(
   }
   const players: CombatantDefinition[] = source.initialParty.map((c) => {
     const r = row("character_status.csv", c.characterId);
-    const equipment = Array.from({ length: 6 }, (_, n) => {
-      const content = row("content.csv", r[`content_id${n + 1}`]!);
-      return {
-        type: content.type_id,
-        values: row(
-          content.type_id === "2" ? "weapon.csv" : "armor.csv",
-          content.type_value!,
-        ),
-      };
-    });
-    const bonus = (key: string, type?: string) =>
-      equipment
-        .filter((e) => !type || e.type === type)
-        .reduce((sum, e) => sum + int(e.values[key]), 0);
+    const parameters = compilePlayerParameters(
+      parameterReader,
+      c.characterId,
+      {
+        additional: { hp: 0, mp: 0, magic: 0, agility: 0, weight: 0 },
+        correction: { magic: 0, agility: 0 },
+        temporary: noTemporary,
+        passive: { hp: 0, mp: 0, magicEvasion: 0 },
+        condition601: false,
+        twoHandMultiplier: 1,
+      },
+      parameterLimits,
+    ).confirmed;
     const memberships = rows("ability_random_group.csv").filter(
       (m) => m.group_id === r.ability_random_group_id,
     );
@@ -118,15 +148,7 @@ export async function compileOpeningPlayable(
       name: name(r.mes_id_name!),
       side: "player",
       level: int(r.lv),
-      hp: int(r.hp),
-      mp: int(r.mp),
-      magic: int(r.magic) + bonus("magic"),
-      attack: int(r.attack) + bonus("attack", "2"),
-      defense: int(r.defense) + bonus("defense", "3"),
-      magicDefense: int(r.ability_defense) + bonus("ability_defense", "3"),
-      agility: int(r.agility) + bonus("agility"),
-      weight: bonus("weight"),
-      evasion: int(r.evasion_rate) + bonus("evasion_rate", "3"),
+      ...parameters,
       exp: int(r.exp),
       gil: 0,
       growthGroup: r.growth_curve_group_id!,
@@ -145,6 +167,12 @@ export async function compileOpeningPlayable(
   for (const encounter of source.encounters) {
     const enemies: CombatantDefinition[] = encounter.enemies.map((e) => {
       const r = row("monster.csv", e.monsterId);
+      const parameters = compileEnemyParameters(
+        parameterReader,
+        e.monsterId,
+        noTemporary,
+        parameterLimits,
+      ).confirmed;
       const ops = record(e.ai.data).Mnemonics as {
         mnemonic: string;
         operands: { iValues: number[]; rValues: number[] };
@@ -222,15 +250,7 @@ export async function compileOpeningPlayable(
         name: name(r.mes_id_name!),
         side: "enemy",
         level: int(r.lv),
-        hp: int(r.hp),
-        mp: int(r.mp),
-        magic: int(r.magic),
-        attack: int(r.attack),
-        defense: int(r.defense),
-        magicDefense: int(r.ability_defense),
-        agility: int(r.agility),
-        weight: int(r.weight),
-        evasion: int(r.evasion_rate),
+        ...parameters,
         exp: int(r.exp),
         gil: int(r.gill),
         growthGroup: null,
@@ -289,6 +309,7 @@ export async function compileOpeningPlayable(
     limitations: [
       "纳尔谢街道可玩开发规则；未经原版一致性验收，不代表完整战斗系统。",
       "初始能力解锁、命中/伤害分支、蓄力/排队、经验成长采用已记录的临时规则。",
+      "初始数值使用分阶段属性确认；成长追加、Correction、临时与被动输入仍按开场检查点显式给零，未恢复通用状态/装备能力。",
       "当前开放三种射线和治愈原力；其余四种魔导、道具、逃跑与通用战斗脚本尚未实现。",
       "掉落尚未结算，库存保持不变；队伍 HP、经验、Gil 只保存在本次页面会话。",
       "站位、夹击队形、骑乘拼接和光束是临时二维表现；原版音效、特效、动画时序尚未接入。",

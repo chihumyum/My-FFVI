@@ -24,6 +24,21 @@
   ],
   "facts": [
     {
+      "id": "narshe:guard-base-magic",
+      "subject": "narshe",
+      "predicate": "source.monster1.baseMagic",
+      "value": "FFVI's EnemyCharacterParameter constructor uses monster.ability_attack, not monster.magic. Monster 1 therefore supplies base magic 6; temporary values and the final cap are separate. This does not establish an enemy magic action or AI branch.",
+      "when": { "monsterId": 1 },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "monster.csv:1.ability_attack",
+        "Last.Data.EnemyCharacterParameter::.ctor@0x4AFB70",
+        "GameAssembly.dll:0x4AFDF4-0x4AFE07",
+        "docs/character-parameters.md"
+      ]
+    },
+    {
       "id": "opera:map20441-3-passage-script",
       "subject": "opera",
       "predicate": "source.Map_20441_3.passageScript",

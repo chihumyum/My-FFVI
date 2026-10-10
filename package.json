@@ -33,6 +33,7 @@
     "game:check": "npm run game:build && node scripts/check-field.mjs",
     "battle:build": "npm run build && node dist/src/cli.js battle",
     "battle:check": "npm run battle:build && node scripts/check-battle.mjs",
+    "parameters:check": "npm run build && node scripts/check-parameters.mjs",
     "playable:check": "npm run game:build && npm run battle:build && node scripts/check-playable.mjs"
   },
   "dependencies": {

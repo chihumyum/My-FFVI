@@ -19,7 +19,7 @@ V2 边界：角色、能力和 Sprite 只保存一份，编组按源表数据选
 | 项目 | 当前依据与实现 | 仍未证明的部分 |
 |---|---|---|
 | 初始 HP | character_status 1/31/32 的 63/68/70；本地既有 Mac 首战截图 `build/runtime/battle.jpg` 可见这三个最大值 | 其他角色/剧情初始化、原版存档导入 |
-| 装备 | 六个 content 槽解析到 weapon/armor；总负重 8，基础魔力加装备修正，防御加防具；原生 SetBaseParameter `0x52B7B0`、UpdateEquipParameter `0x52D220`、ConfirmedWeight `0x534570`、GetArmorDefence `0x858530` 支持此方向 | 特殊装备、临时状态、数值上限和完整能力确认链 |
+| 属性与装备 | 六个 content 槽解析到 weapon/armor；十项共用确认算术保留分阶段上限、手槽/空手、特殊装备和回避输入。开场负重仍为 8；敌方魔力修正为 ability_attack。见 [属性确认](character-parameters.md) | 开场仍显式假定零成长追加/Correction/临时/被动值及双手倍率 1；穿戴效果、状态生成和能力解锁未完成 |
 | 魔导菜单 | command 26 / ability group 7，与角色 ability_random_group 取交集；成员为 8/4/4 项 | 运行时 OwnedAbility 的解锁值初始化未恢复；暂以成员视为已解锁。原生过滤器 `0x754770` 实际检查 SkillLevel > 99 |
 | ATB | 增量使用已审核的 `0x675950` 模块；初始范围取源表玩家/敌人 NORMAL 50–80 | 自有 xorshift32 PRNG；整数均匀抽样、speed=1、动作播放时冻结行动条，均为临时调度。不是 Unity RNG/原版模式复现 |
 | 蓄力与队列 | 玩家暂用 `wait*20/(agility*0.5+20)` 秒；敌人无蓄力；就绪队列顺序固定。执行前重验存活目标；已死目标换到同侧第一个存活目标 | 仅使用 `GetChantingTime 0x6765D0` 的普通分支方向；没有状态修正、反击/插队/特殊等待语义 |

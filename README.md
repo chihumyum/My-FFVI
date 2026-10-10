@@ -15,6 +15,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [角色与敌人数值确认](docs/character-parameters.md)
 - [共用事件状态与控制流](docs/event-vm.md)
 - [共用实体组与地图生命周期](docs/map-lifecycle.md)
 - [共用碰撞与斜坡批次](docs/collision.md)
@@ -49,6 +50,7 @@ npm run pipeline
 npm run game:check
 .venv/bin/python tools/source_adapter/export_battle.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 npm run playable:check
+npm run parameters:check
 npm run check
 .venv/bin/python -m unittest discover -s tools/tests
 npm run dev

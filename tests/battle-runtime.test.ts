@@ -21,6 +21,7 @@ function fixture(): BattleContent {
     agility: 40,
     weight: 0,
     evasion: 0,
+    magicEvasion: 0,
     exp: 0,
     gil: 0,
     growthGroup: "g",

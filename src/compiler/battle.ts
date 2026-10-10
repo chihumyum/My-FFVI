@@ -4,6 +4,9 @@ import { ImportedProject } from "../contracts.js";
 import { hash } from "./content.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import type { AtbRules } from "../core/atb.js";
+import { tableInteger } from "./table.js";
+import { parameterLimitKeys } from "./parameters.js";
+export { tableInteger } from "./table.js";
 
 const Source = z.object({
   file: z.string(),
@@ -46,16 +49,6 @@ export type BattleRow = {
   values: Row;
   source: Source & { rowId: string };
 };
-
-export function tableInteger(value: string | undefined): number {
-  if (
-    value === undefined ||
-    !/^-?(0|[1-9]\d*)$/.test(value.trim()) ||
-    !Number.isSafeInteger(Number(value))
-  )
-    throw new Error(`Invalid table integer: ${String(value)}`);
-  return Number(value);
-}
 
 /** Identity, never array position or first-match, selects a source row. */
 export function battleTableIndex(
@@ -351,6 +344,8 @@ export async function compileOpeningBattle(root: string) {
   unique("initialize_data.csv", "key_name", "INIT_GIL");
   unique("game_constant_int.csv", "key_name", "ACCUMULATION_ATB_NORMAL");
   unique("game_constant_int.csv", "key_name", "ENEMY_ACCUMULATION_ATB_NORMAL");
+  for (const key of Object.values(parameterLimitKeys))
+    unique("game_constant_int.csv", "key_name", key);
   const constant = (key: string) =>
     tableInteger(
       unique("game_constant_int.csv", "key_name", key).values.value1,

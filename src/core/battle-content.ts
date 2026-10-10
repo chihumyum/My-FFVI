@@ -1,4 +1,5 @@
 import type { AtbRules } from "./atb.js";
+import type { ParameterValues } from "./parameters.js";
 
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
@@ -22,21 +23,12 @@ export type BattleContent = {
   sprites: Record<string, { file: string; width: number; height: number }>;
   limitations: string[];
 };
-export type CombatantDefinition = {
+export type CombatantDefinition = ParameterValues & {
   id: string;
   sourceId: number;
   name: string;
   side: "player" | "enemy";
   level: number;
-  hp: number;
-  mp: number;
-  magic: number;
-  attack: number;
-  defense: number;
-  magicDefense: number;
-  agility: number;
-  weight: number;
-  evasion: number;
   exp: number;
   gil: number;
   growthGroup: string | null;
