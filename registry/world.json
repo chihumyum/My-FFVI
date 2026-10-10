@@ -29,6 +29,26 @@
   ],
   "facts": [
     {
+      "id": "narshe:first-encounter-slots",
+      "subject": "narshe",
+      "predicate": "opening.enemySlots",
+      "value": "party 3: slot 5 and slot 9 both reference monster 1; two enemy instances",
+      "when": { "profile": "opening-after-march" },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": ["monster_party.csv:3", "monster.csv:1", "docs/battle-migration.md"]
+    },
+    {
+      "id": "narshe:first-encounter-battle-script",
+      "subject": "narshe",
+      "predicate": "opening.battleScript",
+      "value": "monster_party.csv:3.script_name=8010 -> script.csv:8010 -> sc_b_0239",
+      "when": { "profile": "opening-after-march" },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": ["monster_party.csv:3", "script.csv:8010", "docs/battle-migration.md"]
+    },
+    {
       "id": "narshe:opening-checkpoint-derivation",
       "subject": "narshe",
       "predicate": "development.entry",

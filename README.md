@@ -15,6 +15,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [本次交付与后续问题](docs/progress.md)
 - [Web 场景运行与实现边界](docs/web-field.md)
+- [首战数据与规则迁移](docs/battle-migration.md)
 - [Mac 本地运行与基本可玩检查](docs/mac-playability.md)
 - [纳尔谢目标](targets/narshe.md) / [歌剧目标](targets/opera.md)
 - [Agent 工作规则](AGENTS.md)
@@ -37,6 +38,13 @@ npm run dev
 ```
 
 Web 片段为 `http://127.0.0.1:4173/game/`，方向键/WASD 移动，空格/Enter 确认，Esc 暂停。当前从行军后开发检查点开始，到战斗入口停止；尚无战斗、跨地图和存读档。按用户要求先推进可玩实现，正式一致性对照后置。
+
+首战数据可以另行只读导出并编译；目前尚未接入战斗 UI：
+
+```sh
+.venv/bin/python tools/source_adapter/export_battle.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
+npm run battle:check
+```
 
 工作台为 `http://127.0.0.1:4173`，展示真实纳尔谢图层、原始碰撞数据、剧情知识缺口、歌剧时间线与验收状态。它只用于检查；不宣称恢复了游戏规则。
 

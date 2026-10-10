@@ -9,6 +9,7 @@ import { Recipe } from "./remaster/recipes.js";
 import { readSnapshot, snapshotFile } from "./compiler/integrity.js";
 
 import { compileField } from "./compiler/field.js";
+import { compileOpeningBattle } from "./compiler/battle.js";
 
 const root = resolve(import.meta.dirname, "../..");
 const repo = root.endsWith(`${sep}dist`) ? dirname(root) : root;
@@ -57,6 +58,14 @@ async function main() {
   const [command = "validate", target = "narshe", ...extra] = process.argv.slice(2);
   if (extra.length && !(command === "knowledge" && extra.length === 2 && extra[0] === "--state")) throw new Error("Unexpected arguments");
   if (command === "validate") { await loadRegistries(); console.log("Registry identities and contracts valid"); return; }
+  if (command === "battle") {
+    const result = await compileOpeningBattle(repo);
+    const out = resolve(repo, "build/game"); await mkdir(out, {recursive:true});
+    await writeFile(resolve(out, "opening-battle.json.tmp"), canonical(result) + "\n");
+    await rename(resolve(out, "opening-battle.json.tmp"), resolve(out, "opening-battle.json"));
+    console.log(JSON.stringify({output:"build/game/opening-battle.json", contentHash:result.contentHash,
+      enemies:result.encounter.enemies.length, initialParty:result.initialParty.length, executable:false})); return;
+  }
   if (command === "field") {
     const result = await compileField(repo);
     const out = resolve(repo, "build/game"); await mkdir(out, {recursive:true});

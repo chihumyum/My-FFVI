@@ -1,0 +1,115 @@
+"""Export the source closure of the opening battle; never execute or alter source files."""
+from __future__ import annotations
+import argparse
+import hashlib
+import io
+import json
+from pathlib import Path
+import shutil
+import tempfile
+from import_source import REPO, canonical, digest, source_ref, write_json
+from export_field import checked_snapshot
+
+
+def full_rect_picture(sprite, path):
+    texture = sprite.m_RD.texture.deref_parse_as_object()
+    # Sprite.image uses a tight mesh box and can return fractional offsets.
+    # This representation keeps the source canvas and its original pivot.
+    if (sprite.m_SpriteAtlas or sprite.m_RD.settingsRaw != 64 or
+        sprite.m_Rect.x != 0 or sprite.m_Rect.y != 0 or
+        (texture.m_Width, texture.m_Height) != (sprite.m_Rect.width, sprite.m_Rect.height)):
+        raise ValueError('Sprite needs an atlas/mesh geometry adapter: ' + path)
+    picture = texture.image
+    if picture.size != (texture.m_Width, texture.m_Height):
+        raise ValueError('Decoded texture dimensions changed: ' + path)
+    return picture
+
+
+def export_battle(source: Path, out: Path):
+    import UnityPy
+    parent = checked_snapshot(REPO / 'build/import')
+    project = json.loads(parent['project.json'])
+    tables = json.loads(parent['tables.json'])
+    if hashlib.sha256(canonical(project['sources']).encode()).hexdigest() != project['sourceSetHash']:
+        raise ValueError('Base source manifest changed')
+    def row(table, identity):
+        found = [r for r in tables[table] if r['id'] == str(identity)]
+        if len(found) != 1: raise ValueError(f'Unresolved {table}:{identity}')
+        return found[0]
+    bundle_root = source / 'FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64'
+    def one(name):
+        found = sorted(bundle_root.glob(name + '_assets_all_*.bundle'))
+        if len(found) != 1: raise ValueError('Ambiguous bundle: ' + name)
+        return found[0]
+    party = row('monster_party.csv', 3)
+    monsters = [row('monster.csv', party[f'monster{i}']) for i in range(1, 10) if int(party[f'monster{i}'])]
+    initial = [r for r in tables['initialize_data.csv'] if r['key_name'].startswith('INIT_PARTY_')]
+    characters = [row('character_status.csv', r['value1']) for r in initial]
+    names = {row('battle_background_asset.csv', party['battle_background_asset_id'])['asset_name'], 'bc_ff6_p022',
+             'monster_ai', 'battle_script', 'battleextradata', 'misc'}
+    names.update(row('character_asset.csv', c['character_asset_id'])['asset_name'] for c in characters)
+    names.update(row('monster_asset.csv', m['monster_asset_id'])['group_name'] for m in monsters)
+    files = [one(name) for name in sorted(names)]
+    sources = {s['file']: s for s in project['sources']}
+    for file in files:
+        rel = file.relative_to(source).as_posix()
+        sources[rel] = {'file': rel, 'sha256': digest(file), 'bytes': file.stat().st_size}
+    sources = sorted(sources.values(), key=lambda s: s['file'])
+    for entry in sources:
+        if digest(source / entry['file']) != entry['sha256']: raise ValueError('Original source changed')
+    table_sources = {}
+    master = one('master')
+    for path, obj in UnityPy.load(str(master)).container.items():
+        if obj.type.name != 'TextAsset' or not path.endswith('.csv'): continue
+        name = Path(path).name
+        if name in table_sources: raise ValueError('Ambiguous source table: ' + name)
+        table_sources[name] = {**source_ref(master.name, path, obj), 'serializedFile': obj.assetsfile.name}
+    sprites = {}; assets = {}
+    for file in files:
+        env = UnityPy.load(str(file))
+        for path, obj in sorted(env.container.items(), key=lambda item: (item[0], item[1].type.name, str(item[1].path_id))):
+            ref = {**source_ref(file.name, path, obj), 'serializedFile': obj.assetsfile.name}
+            if obj.type.name == 'TextAsset' and path.endswith('.json'):
+                if path in assets: raise ValueError('Duplicate asset path')
+                assets[path] = {'source': ref, 'data': json.loads(obj.read().m_Script)}
+            elif obj.type.name == 'Sprite':
+                sprite = obj.read()
+                picture = full_rect_picture(sprite, path)
+                buf = io.BytesIO(); picture.save(buf, format='PNG'); raw = buf.getvalue()
+                sha = hashlib.sha256(raw).hexdigest(); target = 'sprites/' + sha + '.png'
+                (out / 'sprites').mkdir(exist_ok=True); (out / target).write_bytes(raw)
+                if path in sprites: raise ValueError('Duplicate sprite path')
+                sprites[path] = {'source': ref, 'name': sprite.m_Name, 'file': target, 'sha256': sha,
+                    'representation': 'source-texture-full-rect', 'width': picture.width, 'height': picture.height, 'pivot': [sprite.m_Pivot.x, sprite.m_Pivot.y]}
+    for entry in sources:
+        if digest(source / entry['file']) != entry['sha256']: raise ValueError('Source changed during export')
+    result = {'formatVersion': 1, 'adapterVersion': 'battle-0.1.0', 'parentSourceSetHash': project['sourceSetHash'],
+        'sourceSetHash': hashlib.sha256(canonical(sources).encode()).hexdigest(), 'sources': sources,
+        'assets': assets, 'sprites': sprites, 'tableSources': table_sources}
+    write_json(out / 'battle.json', result)
+    write_json(out / 'snapshot.json', {'formatVersion': 1, 'files': [
+        {'file': p.relative_to(out).as_posix(), 'sha256': digest(p)} for p in sorted(out.rglob('*')) if p.is_file()]})
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source', type=Path, required=True)
+    args = parser.parse_args()
+    staged = Path(tempfile.mkdtemp(prefix='.battle-', dir=REPO / 'build'))
+    target = REPO / 'build/battle'; backup = REPO / 'build/.previous-battle'
+    try:
+        result = export_battle(args.source.resolve(), staged)
+        if backup.exists(): raise RuntimeError('Inspect interrupted build/.previous-battle first')
+        if target.exists(): target.rename(backup)
+        try: staged.rename(target)
+        except BaseException:
+            if backup.exists(): backup.rename(target)
+            raise
+        if backup.exists(): shutil.rmtree(backup)
+        print(canonical({'sourceSetHash': result['sourceSetHash'], 'sprites': len(result['sprites']),
+            'jsonAssets': len(result['assets']), 'output': str(target)}))
+    finally:
+        if staged.exists(): shutil.rmtree(staged)
+
+if __name__ == '__main__': main()

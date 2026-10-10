@@ -16,7 +16,9 @@
     "accept": "node dist/src/cli.js accept",
     "dev": "node scripts/serve.mjs",
     "game:build": "npm run build && node dist/src/cli.js field",
-    "game:check": "npm run game:build && node scripts/check-field.mjs"
+    "game:check": "npm run game:build && node scripts/check-field.mjs",
+    "battle:build": "npm run build && node dist/src/cli.js battle",
+    "battle:check": "npm run battle:build && node scripts/check-battle.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"
