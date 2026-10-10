@@ -1,11 +1,19 @@
 import type { AtbRules } from "./atb.js";
 import type { ParameterValues } from "./parameters.js";
 import type { AbilityProgram, DevelopmentAbilityPlan } from "./ability.js";
+import type { BattleConditionCatalog } from "./battle-conditions.js";
+
+export type BattleCommandDefinition = {
+  id: number;
+  name: string;
+  abilityIds: number[];
+  forbiddenConditionIds: number[];
+};
 
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "narshe-playability-v3";
+  profile: "narshe-playability-v4";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;
@@ -18,6 +26,8 @@ export type BattleContent = {
   players: CombatantDefinition[];
   enemies: CombatantDefinition[];
   abilities: Record<string, AbilityDefinition>;
+  commands: Record<string, BattleCommandDefinition>;
+  conditions: BattleConditionCatalog;
   growth: Record<string, { level: number; hp: number; mp: number }[]>;
   experience: { level: number; exp: number }[];
   background: string;
@@ -34,6 +44,9 @@ export type CombatantDefinition = ParameterValues & {
   gil: number;
   growthGroup: string | null;
   abilities: number[];
+  commands: number[];
+  conditionIds: number[];
+  conditionResistances: Record<string, number>;
   ai: { ability: number; weight: number }[];
   placement: { x: number; y: number; group: number } | null;
   sprites: { idle: string; mount: string | null };
@@ -66,7 +79,7 @@ export type AbilityDefinition = {
   blockers: string[];
   limitations: string[];
   /** Presentation only. Logic dispatches the complete admitted effect plan. */
-  presentation: "beam" | "heal" | "physical" | "unsupported";
+  presentation: "beam" | "heal" | "physical" | "condition" | "unsupported";
   power: number;
   cost: number;
   wait: number;

@@ -118,7 +118,6 @@ test("unknown scope, selector, condition, series and parameter values never inhe
   for (const [column, value] of [
     ["battle_renge_id", "6"],
     ["accuracy_rate", "128"],
-    ["condition_group_id", "400"],
     ["content_flag_group_id", "11"],
     ["attribute_group_id", "999"],
     ["attack_count", "3"],

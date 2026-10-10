@@ -36,6 +36,7 @@
     "parameters:check": "npm run build && node scripts/check-parameters.mjs",
     "abilities:check": "npm run build && node scripts/check-abilities.mjs",
     "conditions:check": "npm run build && node scripts/check-conditions.mjs",
+    "battle-conditions:check": "npm run battle:build && node scripts/check-battle-conditions.mjs",
     "playable:check": "npm run game:build && npm run battle:build && node scripts/check-playable.mjs"
   },
   "dependencies": {

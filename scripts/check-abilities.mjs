@@ -76,6 +76,14 @@ for (const id of [760, 761, 764, 765, 766, 1288]) {
     const content = structuredClone(base);
     content.abilities[id] = ability;
     content.players[0].abilities = [id];
+    content.players[0].commands = [900001];
+    // Controlled mechanism setup, not a source command unlock.
+    content.commands[900001] = {
+      id: 900001,
+      name: "Controlled",
+      abilityIds: [id],
+      forbiddenConditionIds: [],
+    };
     content.initialAtb = { player: [100, 100], enemy: [0, 0] };
     const battle = new BattleGame(content, 11);
     const actor = battle.players[0];

@@ -6,6 +6,7 @@ import { readSnapshot, snapshotFile } from "./integrity.js";
 import type { AtbRules } from "../core/atb.js";
 import { tableInteger } from "./table.js";
 import { parameterLimitKeys } from "./parameters.js";
+import { compileConditionCatalog } from "./conditions.js";
 export { tableInteger } from "./table.js";
 
 const Source = z.object({
@@ -280,6 +281,13 @@ export async function compileOpeningBattle(root: string) {
   )
     throw new Error("Missing or ambiguous initial party slots");
   const command = row("command.csv", 26);
+  // A shared condition library, not proof that every behavior is executable.
+  compileConditionCatalog(
+    { row, group: tableGroup },
+    tables["condition.csv"]!.map((r) => tableInteger(r.id)),
+  );
+  for (const condition of tables["condition_group.csv"]!)
+    row("condition_group.csv", condition.id!);
   const magitek = tableGroup(
     "ability.csv",
     "ability_group_id",

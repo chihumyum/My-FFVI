@@ -10,6 +10,7 @@ export class BattleView {
     this.images = images;
     this.selected = null;
     this.ability = null;
+    this.commandId = null;
     this.key = "";
     this.instance = null;
     $("battle-return").onclick = onReturn;
@@ -31,7 +32,7 @@ export class BattleView {
         this.key = "";
       };
       $("party").append(button);
-      this.rows.set(p.id, { button, hp, meter });
+      this.rows.set(p.id, { button, name, hp, meter });
     }
   }
   hide() {
@@ -41,6 +42,7 @@ export class BattleView {
   back() {
     if (this.ability !== null) {
       this.ability = null;
+      this.commandId = null;
       this.key = "";
       return true;
     }
@@ -119,6 +121,13 @@ export class BattleView {
     }
     for (const p of battle.players) {
       const row = this.rows.get(p.id);
+      label(
+        row.name,
+        p.name +
+          (p.conditionIds.length
+            ? ` · ${p.conditionIds.map((id) => battle.conditions.name(id)).join("、")}`
+            : ""),
+      );
       label(row.hp, `${p.hp} / ${p.maxHp}`);
       row.meter.value = p.atb;
       row.button.disabled = !battle.ready.some((c) => c.id === p.id);
@@ -130,6 +139,25 @@ export class BattleView {
       this.ability = null;
     }
     const actor = battle.ready.find((p) => p.id === this.selected);
+    const options = actor
+      ? actor.commands.flatMap((commandId) =>
+          this.content.commands[commandId].abilityIds
+            .filter((id) => actor.abilities.includes(id))
+            .map((abilityId) => ({
+              commandId,
+              abilityId,
+              usable: battle.canUse(actor.id, abilityId, commandId),
+            })),
+        )
+      : [];
+    if (
+      actor &&
+      this.ability !== null &&
+      !battle.canUse(actor.id, this.ability, this.commandId)
+    ) {
+      this.ability = null;
+      this.commandId = null;
+    }
     const targets =
       actor && this.ability !== null
         ? battle.targets(actor.id, this.ability)
@@ -137,6 +165,8 @@ export class BattleView {
     const key = JSON.stringify([
       this.selected,
       this.ability,
+      this.commandId,
+      options,
       battle.ready.map((p) => p.id),
       targets.map((t) => t.id),
     ]);
@@ -148,7 +178,7 @@ export class BattleView {
     menu.replaceChildren();
     const title = document.createElement("strong");
     title.textContent = actor
-      ? `${actor.name} · ${this.ability === null ? "魔导" : "选择目标"}`
+      ? `${actor.name} · ${this.ability === null ? (actor.commands.length === 1 ? this.content.commands[actor.commands[0]].name : "行动") : "选择目标"}`
       : "等待行动条…";
     menu.append(title);
     if (!actor) return;
@@ -164,14 +194,20 @@ export class BattleView {
       return b;
     };
     if (this.ability === null)
-      for (const id of actor.abilities) {
+      for (const { abilityId: id, commandId, usable } of options) {
         const a = this.content.abilities[id];
-        const disabled = !a.plan || actor.mp < a.cost;
-        const button = add(a.name, disabled, () => {
-          this.ability = id;
-          this.key = "";
-          this.sync(battle, false);
-        });
+        const button = add(
+          actor.commands.length === 1
+            ? a.name
+            : `${this.content.commands[commandId].name} · ${a.name}`,
+          !usable,
+          () => {
+            this.ability = id;
+            this.commandId = commandId;
+            this.key = "";
+            this.sync(battle, false);
+          },
+        );
         if (!a.plan) button.title = "此能力尚未接入";
       }
     else {
@@ -179,7 +215,7 @@ export class BattleView {
         const ordinal =
           t.side === "enemy" ? ` ${battle.enemies.indexOf(t) + 1}` : "";
         add(t.name + ordinal, false, () => {
-          if (battle.command(actor.id, this.ability, t.id)) {
+          if (battle.command(actor.id, this.ability, t.id, this.commandId)) {
             this.ability = null;
             this.selected = null;
             this.key = "";
@@ -308,7 +344,13 @@ export class BattleView {
           c.fillStyle = effect.recovery ? "#80ffa7" : "white";
           const text = effect.missed
               ? "MISS"
-              : `${effect.amount}${effect.resource === "mp" ? " MP" : ""}`,
+              : effect.resource === "condition"
+                ? effect.recovery
+                  ? "状态解除"
+                  : effect.added
+                      .map((id) => battle.conditions.name(id))
+                      .join("、")
+                : `${effect.amount}${effect.resource === "mp" ? " MP" : ""}`,
             y = to.y - 48 - (a.elapsed - 400) / 35 - index * 18;
           c.strokeText(text, to.x, y);
           c.fillText(text, to.x, y);

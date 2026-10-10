@@ -3,6 +3,10 @@ import {
   type AbilityEffectResult,
 } from "./ability.js";
 import { atbIncrement } from "./atb.js";
+import {
+  BattleConditions,
+  conditionsAllowAction,
+} from "./battle-conditions.js";
 import type {
   BattleContent,
   CombatantDefinition,
@@ -19,6 +23,7 @@ export type BattleAction = {
   actor: string;
   target: string;
   ability: number;
+  commandId: number | null;
   charge: number;
   elapsed: number;
   resolved: boolean;
@@ -48,6 +53,7 @@ export class BattleGame {
   private randomState: number;
   private queue: BattleAction[] = [];
   private collected = false;
+  readonly conditions: BattleConditions;
   constructor(
     readonly content: BattleContent,
     seed: number,
@@ -55,17 +61,18 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v3"
+      content.profile !== "narshe-playability-v4"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
       throw new Error("Invalid battle seed");
     this.randomState = seed || 1;
+    this.conditions = new BattleConditions(content.conditions);
     this.combatants = [
       ...(players
         ? structuredClone(players)
         : content.players.map((p) => ({
-            ...p,
+            ...structuredClone(p),
             maxHp: p.hp,
             maxMp: p.mp,
             atb: 0,
@@ -83,6 +90,11 @@ export class BattleGame {
       new Set(this.combatants.map((c) => c.id)).size !== this.combatants.length
     )
       throw new Error("Duplicate battle identity");
+    this.validateConditionState();
+    for (const ability of Object.values(content.abilities))
+      this.conditions.validateReferences(ability.program.forbiddenConditionIds);
+    for (const command of Object.values(content.commands))
+      this.conditions.validateReferences(command.forbiddenConditionIds);
     for (const c of this.combatants) {
       const range = content.initialAtb[c.side];
       c.atb = this.randomInt(range[0], range[1]);
@@ -98,6 +110,64 @@ export class BattleGame {
   }
   get ready() {
     return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued);
+  }
+  private validateConditionState() {
+    for (const c of this.combatants) {
+      this.conditions.validateActive(c.conditionIds);
+      this.conditions.validateResistances(c.conditionResistances);
+      for (const id of c.commands)
+        if (!this.content.commands[id])
+          throw new Error("Unknown battle command: " + id);
+    }
+  }
+  /** Keep command context separate from ability identity: one ability may be
+   * offered by several commands. An omitted, ambiguous context is rejected. */
+  private actionCommand(
+    actor: Combatant,
+    abilityId: number,
+    requested?: number | null,
+  ) {
+    if (actor.side === "enemy") return requested == null ? null : undefined;
+    const choices = actor.commands.filter((id) =>
+      this.content.commands[id]?.abilityIds.includes(abilityId),
+    );
+    if (requested === undefined)
+      return choices.length === 1 ? choices[0] : undefined;
+    return requested !== null && choices.includes(requested)
+      ? requested
+      : undefined;
+  }
+  canUse(
+    actorId: string,
+    abilityId: number,
+    commandId?: number | null,
+  ): boolean {
+    const actor = this.combatants.find((c) => c.id === actorId),
+      ability = this.content.abilities[abilityId];
+    if (
+      !actor ||
+      !ability?.plan ||
+      !actor.abilities.includes(abilityId) ||
+      actor.hp <= 0 ||
+      actor.mp < ability.cost
+    )
+      return false;
+    this.conditions.validateActive(actor.conditionIds);
+    const command = this.actionCommand(actor, abilityId, commandId);
+    if (command === undefined) return false;
+    return (
+      conditionsAllowAction(
+        actor.conditionIds,
+        ability.program.forbiddenConditionIds,
+        command === null
+          ? []
+          : this.content.commands[command]!.forbiddenConditionIds,
+      ) &&
+      !(
+        actor.side === "player" &&
+        ability.plan.effects.some((e) => e.kind === "physical")
+      )
+    );
   }
   private randomInt(min: number, max: number) {
     if (!Number.isInteger(min) || !Number.isInteger(max) || min > max)
@@ -140,7 +210,12 @@ export class BattleGame {
               : t.side !== actor.side)),
     );
   }
-  command(actorId: string, abilityId: number, targetId: string): boolean {
+  command(
+    actorId: string,
+    abilityId: number,
+    targetId: string,
+    commandId?: number | null,
+  ): boolean {
     if (this.phase !== "active") return false;
     const actor = this.ready.find((c) => c.id === actorId),
       ability = this.content.abilities[abilityId];
@@ -148,23 +223,30 @@ export class BattleGame {
       !actor ||
       !ability ||
       !ability.plan ||
-      actor.mp < ability.cost ||
+      !this.canUse(actorId, abilityId, commandId) ||
       !this.targets(actorId, abilityId).some((t) => t.id === targetId)
     )
       return false;
-    this.enqueue(actor, ability, targetId);
+    this.enqueue(
+      actor,
+      ability,
+      targetId,
+      this.actionCommand(actor, abilityId, commandId)!,
+    );
     return true;
   }
   private enqueue(
     actor: Combatant,
     ability: AbilityDefinition,
     target: string,
+    commandId: number | null = null,
   ) {
     actor.queued = true;
     this.queue.push({
       actor: actor.id,
       target,
       ability: ability.id,
+      commandId,
       charge:
         actor.side === "player"
           ? Math.round((1000 * ability.wait * 20) / (actor.agility * 0.5 + 20))
@@ -177,6 +259,7 @@ export class BattleGame {
   advance(ms: number) {
     if (!Number.isFinite(ms) || ms < 0 || ms > 60000)
       throw new Error("Invalid battle elapsed time");
+    this.validateConditionState();
     this.remainder += ms;
     while (this.remainder >= 10) {
       this.remainder -= 10;
@@ -246,8 +329,10 @@ export class BattleGame {
     if (index >= 0) {
       const action = this.queue.splice(index, 1)[0]!,
         actor = this.combatants.find((c) => c.id === action.actor)!;
-      if (actor.hp <= 0) {
+      if (!this.canUse(actor.id, action.ability, action.commandId)) {
         actor.queued = false;
+        actor.atb = 0;
+        this.log(`${actor.name} 的行动已失效。`);
         return;
       }
       const targets = this.targets(actor.id, action.ability);
@@ -274,22 +359,72 @@ export class BattleGame {
     const ability = this.content.abilities[action.ability]!;
     if (action.resolved) return;
     if (!ability.plan) throw new Error("Unimplemented ability cannot execute");
-    if (actor.hp <= 0 || target.hp <= 0 || actor.mp < ability.cost) {
+    if (
+      !this.canUse(actor.id, ability.id, action.commandId) ||
+      target.hp <= 0
+    ) {
       action.resolved = true;
       return;
     }
-    const effects = calculateDevelopmentEffects(
-      ability.plan,
-      ability.power,
-      actor,
-      target,
-      (min, max) => this.randomInt(min, max),
-    );
+    this.conditions.validateActive(target.conditionIds);
+    const first = ability.plan.effects[0];
+    let nextConditions = [...target.conditionIds];
+    let effects: AbilityEffectResult[];
+    if (
+      ability.plan.effects.length === 1 &&
+      first &&
+      (first.kind === "add-condition" || first.kind === "recover-condition")
+    ) {
+      const change =
+        first.kind === "add-condition"
+          ? this.conditions.add(
+              target.conditionIds,
+              target.conditionResistances,
+              first.conditionId,
+              {
+                accuracy: first.accuracy,
+                magicEvasion: target.magicEvasion,
+                fixed: first.fixedHit,
+              },
+              (min, max) => this.randomInt(min, max),
+            )
+          : this.conditions.recover(target.conditionIds, first.conditionIds);
+      nextConditions = change.currentIds;
+      effects = [
+        {
+          slot: first.slot,
+          resource: "condition",
+          recovery: first.kind === "recover-condition",
+          added: change.added,
+          removed: change.removed,
+          missed: change.missed,
+        },
+      ];
+    } else
+      effects = calculateDevelopmentEffects(
+        ability.plan,
+        ability.power,
+        actor,
+        target,
+        (min, max) => this.randomInt(min, max),
+      );
     // All effects were preflighted and computed. Commit cost once, then source order.
     actor.mp -= ability.cost;
+    target.conditionIds = nextConditions;
     for (const effect of effects) {
       if (effect.missed) {
-        this.log(`${target.name} 闪避了攻击。`);
+        this.log(
+          effect.resource === "condition"
+            ? `${target.name} 的状态未改变。`
+            : `${target.name} 闪避了攻击。`,
+        );
+        continue;
+      }
+      if (effect.resource === "condition") {
+        for (const id of effect.added)
+          this.log(`${target.name} 陷入${this.conditions.name(id)}。`);
+        for (const id of effect.removed)
+          this.log(`${target.name} 的${this.conditions.name(id)}已解除。`);
         continue;
       }
       const resource = effect.resource;
@@ -312,12 +447,14 @@ export class BattleGame {
   private checkOutcome() {
     if (this.phase !== "active" || this.action) return;
     if (!this.players.some((c) => c.hp > 0)) {
+      this.clearBattleConditions();
       this.phase = "defeat";
       this.queue = [];
       this.log("队伍倒下了。");
       return;
     }
     if (this.enemies.some((c) => c.hp > 0)) return;
+    this.clearBattleConditions();
     this.phase = "victory";
     this.queue = [];
     const exp = this.enemies.reduce((sum, c) => sum + c.exp, 0),
@@ -351,6 +488,10 @@ export class BattleGame {
       drops: "pending",
     };
     this.log(`战斗胜利！获得 ${exp} EXP / ${gil} Gil。`);
+  }
+  private clearBattleConditions() {
+    for (const c of this.players)
+      c.conditionIds = this.conditions.battleEnd(c.conditionIds);
   }
   takeVictory(): { players: Combatant[]; gil: number } | null {
     if (this.phase !== "victory" || !this.reward || this.collected) return null;

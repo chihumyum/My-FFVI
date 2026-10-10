@@ -13,9 +13,18 @@ export type AbilityProgram = {
   process: { key: string; values: [number, number, number] };
   range: number;
   rules: Record<string, number>;
+  forbiddenConditionIds: number[];
 };
 export type AbilityEffect =
   | { slot: number; kind: "physical" | "magic" }
+  | {
+      slot: number;
+      kind: "add-condition";
+      conditionId: number;
+      fixedHit: boolean;
+      accuracy: number;
+    }
+  | { slot: number; kind: "recover-condition"; conditionIds: number[] }
   | {
       slot: number;
       kind: "recovery";
@@ -27,13 +36,23 @@ export type DevelopmentAbilityPlan = {
   target: "ally" | "enemy" | "self" | "either";
   multiplier: number;
 };
-export type AbilityEffectResult = {
+export type NumericalEffectResult = {
   slot: number;
   resource: "hp" | "mp";
   recovery: boolean;
   amount: number;
   missed: boolean;
 };
+export type AbilityEffectResult =
+  | NumericalEffectResult
+  | {
+      slot: number;
+      resource: "condition";
+      recovery: boolean;
+      added: number[];
+      removed: number[];
+      missed: boolean;
+    };
 
 /** Numerical branches only. Conditions, reflection, equipment effects and AI are
  * not inputs to this explicitly temporary executor; admission belongs to its profile.
@@ -44,7 +63,7 @@ export function calculateDevelopmentEffects(
   actor: { level: number; attack: number; magic: number; side: string },
   target: { defense: number; magicDefense: number; evasion: number },
   randomInt: (min: number, max: number) => number,
-): AbilityEffectResult[] {
+): NumericalEffectResult[] {
   // Preflight every effect before consuming even the first random value.
   for (const effect of plan.effects) {
     if (effect.kind === "physical" && actor.side !== "enemy")
@@ -59,7 +78,7 @@ export function calculateDevelopmentEffects(
     )
       throw new Error("Unimplemented ability effect");
   }
-  return plan.effects.map((effect): AbilityEffectResult => {
+  return plan.effects.map((effect): NumericalEffectResult => {
     let amount: number;
     if (effect.kind === "physical") {
       // Retained Guard branch; hit, rounding and multiplier order are provisional.

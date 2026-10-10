@@ -8,6 +8,8 @@ import {
 } from "./parameters.js";
 import type { ParameterValues } from "../core/parameters.js";
 import { compileDevelopmentAbility } from "./ability.js";
+import { compileBattleConditionCatalog } from "./conditions.js";
+import { compileBattleCommand } from "./commands.js";
 import type {
   BattleContent,
   BattleCatalog,
@@ -71,7 +73,26 @@ export async function compileOpeningPlayable(
       const r = unique(table, key, value);
       return source.tables[table]![r.id!]!;
     },
+    group: (table: string, key: string, value: string | number) => {
+      if (int(String(value)) === 0) return [];
+      const found = Object.values(source.tables[table] ?? {}).filter(
+        (r) => r.values[key] === String(value),
+      );
+      if (!found.length)
+        throw new Error(`Missing playable group ${table}.${key}=${value}`);
+      return found;
+    },
   };
+  const conditions = compileBattleConditionCatalog(
+    parameterReader,
+    rows("condition.csv").map((r) => int(r.id)),
+    name,
+  ).catalog;
+  const magitekCommand = compileBattleCommand(
+    parameterReader,
+    26,
+    name,
+  ).command;
   const parameterLimits = compileParameterLimits(parameterReader).values;
   // Explicit opening-checkpoint inputs, NOT defaults for arbitrary characters,
   // earned growth, equipment abilities or status effects.
@@ -109,6 +130,24 @@ export async function compileOpeningPlayable(
   }
   const players: CombatantDefinition[] = source.initialParty.map((c) => {
     const r = row("character_status.csv", c.characterId);
+    if (int(r.initial_condition_group))
+      throw new Error("Unimplemented initial player conditions");
+    for (let slot = 1; slot <= 6; slot++) {
+      const equipment = row("content.csv", r[`content_id${slot}`]!);
+      const item = row(
+        equipment.type_id === "2" ? "weapon.csv" : "armor.csv",
+        equipment.type_value!,
+      );
+      for (const key of [
+        "wear_condition_group_id",
+        "wear_function_group_id",
+        equipment.type_id === "2"
+          ? "additional_condition_group_id"
+          : "resistance_condition",
+      ])
+        if (int(item[key]))
+          throw new Error("Unimplemented equipment condition input");
+    }
     const parameters = compilePlayerParameters(
       parameterReader,
       c.characterId,
@@ -138,6 +177,9 @@ export async function compileOpeningPlayable(
       abilities: source.magitekAbilityIds.filter((id) =>
         memberships.some((m) => int(m.ability_id) === id),
       ),
+      commands: [magitekCommand.id],
+      conditionIds: [],
+      conditionResistances: {},
       ai: [],
       placement: null,
       sprites: {
@@ -150,6 +192,8 @@ export async function compileOpeningPlayable(
   for (const encounter of source.encounters) {
     const enemies: CombatantDefinition[] = encounter.enemies.map((e) => {
       const r = row("monster.csv", e.monsterId);
+      if (int(r.resistance_condition))
+        throw new Error("Unimplemented enemy resistance input");
       const parameters = compileEnemyParameters(
         parameterReader,
         e.monsterId,
@@ -239,6 +283,9 @@ export async function compileOpeningPlayable(
         gil: int(r.gill),
         growthGroup: null,
         abilities: ai.map((a) => a.ability),
+        commands: [],
+        conditionIds: [],
+        conditionResistances: {},
         ai,
         placement: { x: e.x, y: e.y, group: e.group },
         sprites: { idle: e.sprite, mount: null },
@@ -269,7 +316,7 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v3",
+    profile: "narshe-playability-v4",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,
@@ -280,6 +327,8 @@ export async function compileOpeningPlayable(
     gil: int(unique("initialize_data.csv", "key_name", "INIT_GIL").value1),
     players,
     abilities,
+    commands: { [magitekCommand.id]: magitekCommand },
+    conditions,
     growth,
     experience: rows("exp_table.csv")
       .map((r) => ({ level: int(r.lv), exp: int(r.total_exp) }))

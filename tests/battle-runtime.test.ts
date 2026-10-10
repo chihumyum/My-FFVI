@@ -26,13 +26,16 @@ function fixture(): BattleContent {
     gil: 0,
     growthGroup: "g",
     abilities: [10, 11, 12],
+    commands: [100],
+    conditionIds: [],
+    conditionResistances: {},
     ai: [],
     placement: null,
     sprites: { idle: "synthetic", mount: null },
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v3",
+    profile: "narshe-playability-v4",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -73,6 +76,15 @@ function fixture(): BattleContent {
         ai: [{ ability: 13, weight: 1 }],
       },
     ],
+    conditions: { rules: { definitions: [], eraseRules: [] }, behaviors: [] },
+    commands: {
+      100: {
+        id: 100,
+        name: "Synthetic command",
+        abilityIds: [10, 11, 12],
+        forbiddenConditionIds: [],
+      },
+    },
     abilities: {
       10: {
         id: 10,
@@ -87,6 +99,7 @@ function fixture(): BattleContent {
           process: { key: "None", values: [0, 0, 0] },
           range: 3,
           rules: {},
+          forbiddenConditionIds: [],
         },
         plan: {
           effects: [{ slot: 1, kind: "magic" }],
@@ -113,6 +126,7 @@ function fixture(): BattleContent {
           process: { key: "None", values: [0, 0, 0] },
           range: 1,
           rules: {},
+          forbiddenConditionIds: [],
         },
         plan: {
           effects: [
@@ -147,6 +161,7 @@ function fixture(): BattleContent {
           process: { key: "None", values: [0, 0, 0] },
           range: 3,
           rules: {},
+          forbiddenConditionIds: [],
         },
         plan: null,
         blockers: ["unsupported function 999"],
@@ -169,6 +184,7 @@ function fixture(): BattleContent {
           process: { key: "None", values: [0, 0, 0] },
           range: 7,
           rules: {},
+          forbiddenConditionIds: [],
         },
         plan: {
           effects: [{ slot: 1, kind: "physical" }],
@@ -190,6 +206,138 @@ function fixture(): BattleContent {
     limitations: [],
   };
 }
+function conditionFixture() {
+  const f = fixture();
+  f.conditions = {
+    rules: {
+      definitions: [
+        { id: 301, type: 6, overlapped: false, eraseGroupId: 1 },
+        { id: 302, type: 8, overlapped: false, eraseGroupId: 1 },
+      ],
+      eraseRules: [
+        { id: 1, groupId: 1, conditionId: 0, type: 2, eraseConditionId: 0 },
+      ],
+    },
+    behaviors: [{ id: 301, kind: "silence", name: "Silence", untilType: 2 }],
+  };
+  f.commands[100]!.forbiddenConditionIds = [301];
+  f.commands[101] = {
+    id: 101,
+    name: "Status",
+    abilityIds: [14, 15],
+    forbiddenConditionIds: [],
+  };
+  for (const p of f.players) {
+    p.abilities.push(14, 15);
+    p.commands.push(101);
+  }
+  f.abilities[14] = {
+    ...structuredClone(f.abilities[11]!),
+    id: 14,
+    name: "Recover",
+    wait: 0,
+    plan: {
+      target: "either",
+      multiplier: 1,
+      effects: [{ slot: 1, kind: "recover-condition", conditionIds: [301] }],
+    },
+  };
+  f.abilities[15] = {
+    ...structuredClone(f.abilities[11]!),
+    id: 15,
+    name: "Silence",
+    wait: 0,
+    plan: {
+      target: "either",
+      multiplier: 1,
+      effects: [
+        {
+          slot: 1,
+          kind: "add-condition",
+          conditionId: 301,
+          fixedHit: true,
+          accuracy: 100,
+        },
+      ],
+    },
+  };
+  return f;
+}
+test("status changes cancel a queued command without MP cost; cure restores eligibility", () => {
+  const f = conditionFixture();
+  f.abilities[10]!.cost = 3;
+  const run = (parts: number[]) => {
+    const b = new BattleGame(f, 11);
+    assert.equal(b.command("a", 15, "b", 101), true);
+    assert.equal(b.command("b", 10, "e1", 100), true);
+    for (const dt of parts) b.advance(dt);
+    assert.deepEqual(b.players[1]!.conditionIds, [301]);
+    assert.equal(b.canUse("b", 10, 100), false);
+    assert.equal(b.players[1]!.mp, 8);
+    assert.equal(b.players[0]!.mp, 6);
+    assert.equal(b.enemies[0]!.hp, 10);
+    b.players[0]!.atb = 100;
+    assert.equal(b.command("a", 14, "b", 101), true);
+    b.advance(500);
+    assert.deepEqual(b.players[1]!.conditionIds, []);
+    assert.equal(b.canUse("b", 10, 100), true);
+    assert.equal(b.players[0]!.mp, 4);
+    return { combatants: b.combatants, events: b.events, action: b.action };
+  };
+  assert.deepEqual(run([1000]), run(Array(100).fill(10)));
+  assert.deepEqual(
+    f.players.map((p) => p.conditionIds),
+    [[], []],
+  );
+});
+test("the selected command stays attached to an action and is checked again at resolution", () => {
+  const f = conditionFixture();
+  f.commands[102] = {
+    id: 102,
+    name: "Alternative",
+    abilityIds: [10],
+    forbiddenConditionIds: [],
+  };
+  f.players[0]!.commands.push(102);
+  f.players[0]!.conditionIds = [301];
+  let b = new BattleGame(f, 1);
+  assert.equal(b.canUse("a", 10), false); // Ambiguous source command.
+  assert.equal(b.canUse("a", 10, 100), false);
+  assert.equal(b.canUse("a", 10, 102), true);
+  f.abilities[10]!.program.forbiddenConditionIds = [301];
+  b = new BattleGame(f, 1);
+  assert.equal(b.canUse("a", 10, 102), false); // An alternative command cannot bypass ability restriction.
+  b.players[0]!.conditionIds = [];
+  assert.equal(b.command("a", 10, "e1", 102), true);
+  b.advance(10);
+  assert.equal(b.action?.commandId, 102);
+  b.players[0]!.conditionIds = [301];
+  b.advance(500);
+  assert.deepEqual(b.action?.effects, []);
+  assert.equal(b.enemies[0]!.hp, 10);
+});
+test("unknown active states and compound status plans never partially spend MP or apply effects", () => {
+  const f = conditionFixture();
+  f.players[0]!.conditionIds = [302];
+  assert.throws(() => new BattleGame(f, 1), /Unimplemented active/);
+  f.players[0]!.conditionIds = [];
+  f.abilities[15]!.plan!.effects.push({ slot: 2, kind: "magic" });
+  const b = new BattleGame(f, 1);
+  assert.equal(b.command("a", 15, "b", 101), true);
+  assert.throws(() => b.advance(500), /Unimplemented ability effect/);
+  assert.equal(b.players[0]!.mp, 8);
+  assert.deepEqual(b.players[1]!.conditionIds, []);
+});
+test("battle-only conditions clear before the party transfers to the field", () => {
+  const f = conditionFixture();
+  f.players[0]!.conditionIds = [301];
+  const b = new BattleGame(f, 1);
+  for (const enemy of b.enemies) enemy.hp = 0;
+  b.advance(10);
+  assert.equal(b.phase, "victory");
+  assert.deepEqual(b.takeVictory()!.players[0]!.conditionIds, []);
+  assert.deepEqual(f.players[0]!.conditionIds, [301]);
+});
 test("compound recovery commits both resources once and consumes one action cost", () => {
   const f = fixture();
   const a = f.abilities[11]!;

@@ -1,5 +1,9 @@
 import { tableInteger } from "./table.js";
-import type { BattleRow } from "./battle.js";
+import {
+  compileConditionGroup,
+  hasSilenceBehavior,
+  type ConditionReader,
+} from "./conditions.js";
 import type {
   AbilityProgram,
   AbilityFunction,
@@ -8,7 +12,7 @@ import type {
 } from "../core/ability.js";
 import type { AbilityDefinition } from "../core/battle-content.js";
 
-type Reader = { row(table: string, id: string | number): BattleRow };
+type Reader = ConditionReader;
 function int(value: string | undefined) {
   const parsed = tableInteger(value);
   if (parsed < -2147483648 || parsed > 2147483647)
@@ -80,7 +84,17 @@ export function compileAbilityProgram(reader: Reader, abilityId: number) {
     },
     range: int(a.battle_renge_id),
     rules: Object.fromEntries(ruleColumns.map((key) => [key, int(a[key])])),
+    forbiddenConditionIds: [],
   };
+  const forbidden = compileConditionGroup(
+    reader,
+    program.rules.condition_group_id!,
+  );
+  program.forbiddenConditionIds = forbidden.ids;
+  sources.push(
+    ...forbidden.sources,
+    ...forbidden.ids.map((id) => reader.row("condition.csv", id)),
+  );
   return { program, sources };
 }
 
@@ -109,6 +123,27 @@ export function compileDevelopmentAbility(
     } else if (fn.type === 3 && v1 === 1 && v2 === 0 && v3 === 0) {
       effects.push({ slot: fn.slot, kind: "magic" });
     } else if (
+      fn.type === 9 &&
+      [0, 1].includes(v2) &&
+      v3 === 0 &&
+      hasSilenceBehavior(reader.row("condition.csv", v1))
+    ) {
+      effects.push({
+        slot: fn.slot,
+        kind: "add-condition",
+        conditionId: v1,
+        fixedHit: v2 === 1,
+        accuracy: program.rules.accuracy_rate!,
+      });
+    } else if (fn.type === 12 && v2 === 0 && v3 === 0) {
+      const group = compileConditionGroup(reader, v1);
+      if (!group.ids.length) blockers.push("empty recovery condition group");
+      effects.push({
+        slot: fn.slot,
+        kind: "recover-condition",
+        conditionIds: group.ids,
+      });
+    } else if (
       fn.type === 1 &&
       [1, 2].includes(v1) &&
       [2, 3].includes(v2) &&
@@ -136,7 +171,7 @@ export function compileDevelopmentAbility(
       );
     }
   }
-  if (!effects.length) blockers.push("no implemented numeric effect");
+  if (!effects.length) blockers.push("no implemented effect");
   // More than one healing resource is supported. Other compositions need native
   // hit/death/condition sequencing before they can enter this development profile.
   if (
@@ -160,6 +195,9 @@ export function compileDevelopmentAbility(
     );
   }
   const r = program.rules;
+  const conditionOnly =
+    effects.length === 1 &&
+    ["add-condition", "recover-condition"].includes(effects[0]!.kind);
   for (const key of [
     "attribute_group_id",
     "attack_count",
@@ -171,15 +209,9 @@ export function compileDevelopmentAbility(
     "weak_hit_rate",
   ])
     if (r[key] !== 0) blockers.push(`unresolved ${key}=${r[key]}`);
-  if (r.accuracy_rate !== 100)
+  if (r.accuracy_rate !== 100 && !(conditionOnly && r.accuracy_rate! >= 0))
     blockers.push(`unresolved accuracy_rate=${r.accuracy_rate}`);
-  if (![0, 402].includes(r.condition_group_id!))
-    blockers.push(`unresolved condition_group_id=${r.condition_group_id}`);
-  else if (r.condition_group_id)
-    limitations.push(
-      `condition group ${r.condition_group_id}: current alive/no-status development restriction`,
-    );
-  if (![0, 1].includes(r.content_flag_group_id!))
+  if (!(conditionOnly ? [0] : [0, 1]).includes(r.content_flag_group_id!))
     blockers.push(
       `unresolved content_flag_group_id=${r.content_flag_group_id}`,
     );
@@ -189,7 +221,7 @@ export function compileDevelopmentAbility(
     );
   if (![3, 4, 604].includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
-  if (![1, 3].includes(r.system_id!))
+  if (!(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
   if (![0, 1].includes(r.reaction_type!))
     blockers.push(`unresolved reaction_type=${r.reaction_type}`);
@@ -214,8 +246,12 @@ export function compileDevelopmentAbility(
       `attribute ${attribute}: neutral-affinity development state required`,
     );
   limitations.push(
-    "no active conditions, equipment-added functions, undead or Runic overrides",
+    "only admitted silence behavior; no equipment-added functions, undead or Runic overrides",
   );
+  if (conditionOnly && attribute !== 0)
+    blockers.push("unresolved condition attribute");
+  if (conditionOnly && [290, 680, 681, 1333].includes(abilityId))
+    blockers.push("unresolved native condition ability override");
   const plan: DevelopmentAbilityPlan | null = blockers.length
     ? null
     : { effects, target: target!, multiplier };
@@ -232,10 +268,12 @@ export function compileDevelopmentAbility(
     attribute,
     presentation: !plan
       ? "unsupported"
-      : effects.every((e) => e.kind === "recovery")
-        ? "heal"
-        : effects[0]!.kind === "physical"
-          ? "physical"
-          : "beam",
+      : conditionOnly
+        ? "condition"
+        : effects.every((e) => e.kind === "recovery")
+          ? "heal"
+          : effects[0]!.kind === "physical"
+            ? "physical"
+            : "beam",
   };
 }

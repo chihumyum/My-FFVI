@@ -103,6 +103,13 @@ export class ConditionRules {
     return types.includes(type);
   }
 
+  /** CharacterParameterBase.IsAddable (0x4ac5f0) compares master identities. */
+  isAddable(ids: readonly number[], incomingId: number): boolean {
+    const current = ids.map((id) => this.definition(id).id);
+    const incoming = this.definition(incomingId);
+    return incoming.overlapped || !current.includes(incoming.id);
+  }
+
   resolveConflict(input: ConditionConflictInput): ConditionConflictResult {
     // Reject the entire unsupported context before any list operation.
     const currentIds = input.currentIds.map((id) => this.definition(id).id);
