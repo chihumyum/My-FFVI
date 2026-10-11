@@ -17,6 +17,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [v28 音频等待、玩家显隐与任务调度边界](docs/systems-v28.md)
 - [v27 空装备所有权、新游戏共享状态与序章宿主边界](docs/systems-v27.md)
 - [v26 战斗速度、失明、普通远程武器与新游戏候选](docs/systems-v26.md)
 - [v25 前后排、速度状态与普通商店](docs/systems-v25.md)

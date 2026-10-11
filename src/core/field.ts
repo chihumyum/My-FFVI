@@ -35,6 +35,8 @@ import type { FieldConditionPort } from "./field-conditions.js";
 import { projectFieldEntryContext } from "./field-entry-context.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState, type AudioSnapshot } from "./static-audio.js";
+import { audioReadinessTrack, pollAudioReadiness, type AudioReadinessPort } from "./audio-readiness.js";
+import { projectPlayerVisibility } from "./player-visibility.js";
 import { TileAnimationState, type TileCheckpoint } from "./tile-animation.js";
 import {
   OpenTriggerState,
@@ -131,6 +133,7 @@ type Task = {
   remaining: number;
   move: Extract<Op, { kind: "move" }> | null;
   animationWait: boolean;
+  audioWait: Extract<Op, { kind: "bgm-ready" | "bgm-sync" }> | null;
   treasure: { state: TreasureTaskState; entity: FieldEntity; site: Site;
     closeMessage: boolean; messageAvailableAt: number } | null;
   treasureRoot: boolean;
@@ -153,6 +156,10 @@ export type Stop =
     };
 export type Dialogue = FieldMessage & { task: number };
 export type FieldGameOptions = {
+  audioReadiness?: AudioReadinessPort;
+  /** Immutable host admission, never inferred from absent source fields or saved
+   * visibility. Missing capability keeps native child propagation unresolved. */
+  playerVisibility?: Readonly<{ childEntityObject: "absent" | "unresolved" }>;
   sourcePresentation?: SourcePresentationPort;
   /** Read-only admission before any shop greeting or interaction is published. */
   shop?: { validate(groupId: number): void };
@@ -169,9 +176,16 @@ export type FieldGameOptions = {
 const contains = (e: FieldEntity, p: Point) =>
   p.x >= e.x && p.x < e.x + e.width && p.y >= e.y && p.y < e.y + e.height;
 export class FieldGame {
+  /** A host preparation dependency, not a new voice or a load command. */
+  get pendingBgmTracks() {
+    const ids = new Set(this.tasks.filter((task) => !task.done && task.audioWait?.kind === "bgm-ready")
+      .map((task) => (task.audioWait as Extract<Op, { kind: "bgm-ready" }>).track));
+    return [...ids].map((id) => audioReadinessTrack(id, this.content.bgm));
+  }
   readonly transportationId: number | null;
   readonly cameraOffset: Readonly<Point>;
   private readonly partyActors: FieldPartyActors | null;
+  private readonly playerVisibilityChild: "absent" | "unresolved";
   readonly tileAnimations: TileAnimationState;
   readonly openTriggers: OpenTriggerState;
   readonly collisionRange: CollisionRange;
@@ -252,6 +266,13 @@ export class FieldGame {
     readonly options: FieldGameOptions = {},
   ) {
     cloneSourcePresentationContext(options.sourcePresentation?.context() ?? null);
+    if (options.playerVisibility !== undefined) {
+      checkpointKeys(options.playerVisibility, "childEntityObject");
+      if (options.playerVisibility.childEntityObject !== "absent" &&
+          options.playerVisibility.childEntityObject !== "unresolved")
+        throw new Error("Unknown player visibility host capability");
+    }
+    this.playerVisibilityChild = options.playerVisibility?.childEntityObject ?? "unresolved";
     if (content.entry.synchronization !== undefined) {
       checkpointKeys(content.entry.synchronization, "kind");
       if (content.entry.synchronization.kind !== "map-entry")
@@ -1296,6 +1317,7 @@ export class FieldGame {
       remaining: 0,
       move: null,
       animationWait: false,
+      audioWait: null,
       treasure: null,
       treasureRoot: false,
       done: false,
@@ -1363,6 +1385,16 @@ export class FieldGame {
         if (t.children.some((id) => !this.tasks.find((c) => c.id === id)?.done))
           continue;
         t.children = [];
+        if (t.audioWait) {
+          try {
+            if (pollAudioReadiness(t.audioWait, this.bgm, this.content.bgm, this.options.audioReadiness) === "wait")
+              continue;
+            t.audioWait = null;
+          } catch (error) {
+            this.block(error instanceof Error ? error.message : String(error), t.audioWait);
+            return;
+          }
+        }
         if (t.treasure) {
           const site = t.treasure.site;
           try { this.advanceTreasure(t); }
@@ -1547,6 +1579,16 @@ export class FieldGame {
               return;
             }
             break;
+          case "bgm-ready":
+          case "bgm-sync":
+            try {
+              if (pollAudioReadiness(op, this.bgm, this.content.bgm, this.options.audioReadiness) === "wait")
+                t.audioWait = op;
+            } catch (error) {
+              this.block(error instanceof Error ? error.message : String(error), op);
+              return;
+            }
+            break;
           case "bgm-play":
           case "bgm-stop":
           case "environment-play":
@@ -1691,6 +1733,22 @@ export class FieldGame {
                 error instanceof Error ? error.message : String(error),
                 op,
               );
+              return;
+            }
+            break;
+          case "player-visibility":
+            try {
+              const plan = projectPlayerVisibility(op.command, {
+                playerId: this.player.id,
+                partyPlayerId: this.partyActors?.checkpoint().context.player.id ?? null,
+                childEntityObject: this.playerVisibilityChild,
+              }, this.hiddenEntities);
+              // Keep the existing owner and publish only after all bindings and
+              // child propagation dependencies have passed preparation.
+              this.hiddenEntities.clear();
+              for (const id of plan.hiddenEntities) this.hiddenEntities.add(id);
+            } catch (error) {
+              this.block(error instanceof Error ? error.message : String(error), op);
               return;
             }
             break;

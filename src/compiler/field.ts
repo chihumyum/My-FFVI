@@ -16,6 +16,8 @@ import { compileNarsheMapEntrySeed } from "./map-party-entry.js";
 import { compilePartyEvent } from "./party.js";
 import { compileOwnedConditionInstruction } from "./owned-condition.js";
 import { compileSourcePresentationInstruction, sourcePresentationSelectors } from "./source-presentation.js";
+import { compileAudioReadinessInstruction } from "./audio-readiness.js";
+import { compilePlayerVisibilityInstruction, playerVisibilityMnemonics } from "./player-visibility.js";
 import { loadSystemSource } from "./system-source.js";
 import { compileTransportationCatalog, compileNarsheTransportationCheckpoint } from "./transportation.js";
 import { compilePartyActorCatalog, compileNarshePartyActorCheckpoint } from "./party-actors.js";
@@ -119,6 +121,14 @@ export function decodeFieldOp(
   } as const;
   if (Object.hasOwn(simple, name) && form([]))
     return { ...site, kind: simple[name as keyof typeof simple] };
+  if (playerVisibilityMnemonics.some((mnemonic) => mnemonic === name)) {
+    try { return { ...site, ...compilePlayerVisibilityInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "ReadyBGM" || name === "SyncBGM") {
+    try { return { ...site, ...compileAudioReadinessInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (name === "SysCall" && sourcePresentationSelectors.some((selector) => selector === s[0])) {
     try { return { ...site, ...compileSourcePresentationInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }

@@ -36,6 +36,7 @@ const checkpointStorage = () => new CheckpointStorage(localStorage);
 const images = new Map(),
   loading = new WeakSet();
 const audio = new AudioOutput();
+const runtime = { audioReadiness: { isReady: (track) => audio.isReady(track) } };
 const query = new URLSearchParams(location.search);
 const preview = query.has("map")
   ? {
@@ -101,7 +102,7 @@ function reset() {
   audio.reset();
   audio.unlock().catch(failure);
   const preferences = session?.battlePreferences;
-  session = new GameSession(content, battleContent);
+  session = new GameSession(content, battleContent, undefined, runtime);
   if (preferences) session.setBattlePreferences(preferences);
   game = session.field;
   renderer = openingRenderer;
@@ -285,7 +286,7 @@ function frame(now) {
   try {
     const dt = last ? Math.min(50, now - last) : 0;
     last = now;
-    const ready = started && audio.ready(audioProjection(game));
+    const ready = started && audio.ready(audioProjection(game), game.pendingBgmTracks);
     if (
       started &&
       !paused &&
@@ -301,7 +302,7 @@ function frame(now) {
       sync();
     }
     const projection = started ? audioProjection(game) : [];
-    const audioReady = started && audio.ready(projection);
+    const audioReady = started && audio.ready(projection, game.pendingBgmTracks);
     audio.project(
       projection,
       audioReady &&
@@ -311,6 +312,7 @@ function frame(now) {
         !mapOpen &&
         !document.hidden &&
         (!game.stop || !!session.battle),
+      game.pendingBgmTracks,
     );
     text(
       "music-status",
@@ -380,7 +382,7 @@ async function init() {
     ...Object.values(content.minimap?.icons ?? {}).map((s) => s.file),
   ]);
   await loadImages(urls);
-  session = new GameSession(content, battleContent);
+  session = new GameSession(content, battleContent, undefined, runtime);
   game = session.field;
   renderer = new Renderer(canvas, content, images);
   openingRenderer = renderer;
@@ -476,7 +478,7 @@ async function loadMap(owner) {
     if (session !== owner || owner.field.stop !== request) return;
     const prepared = owner.world.prepare(catalog, map);
     const next = prepared.field.content;
-    await audio.prepare(audioProjection(prepared.field));
+    await audio.prepare(audioProjection(prepared.field), prepared.field.pendingBgmTracks);
     await loadImages(
       new Set([
         ...Object.values(next.map.textures),
@@ -604,9 +606,10 @@ async function loadGame(previous) {
       content,
       battleContent,
       world,
+      runtime,
     );
     const next = candidate.field.content;
-    await audio.prepare(audioProjection(candidate.field));
+    await audio.prepare(audioProjection(candidate.field), candidate.field.pendingBgmTracks);
     await loadImages(
       new Set([
         ...Object.values(next.map.textures),

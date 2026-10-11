@@ -88,7 +88,10 @@
     "ordinary-weapon:check": "npm run battle:build && node scripts/check-ordinary-weapon-native.mjs && node scripts/check-ordinary-weapon.mjs",
     "new-game:check": "npm run battle:build && node scripts/check-new-game.mjs",
     "empty-equipment:check": "npm run battle:build && node scripts/check-empty-equipment.mjs",
-    "source-presentation:check": "npm run build && node scripts/check-source-presentation.mjs"
+    "source-presentation:check": "npm run build && node scripts/check-source-presentation.mjs",
+    "audio-readiness:check": "npm run build && node scripts/check-audio-readiness.mjs && node scripts/check-audio-readiness-ui.mjs",
+    "player-visibility:check": "npm run build && node scripts/check-player-visibility.mjs",
+    "field-task-control:check": "npm run build && node scripts/check-field-task-control.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

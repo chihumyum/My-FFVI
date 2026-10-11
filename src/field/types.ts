@@ -12,6 +12,8 @@ import type { TreasureTaskMessages } from "../core/treasure-task.js";
 import type { OwnedConditionEventOp } from "../core/owned-condition.js";
 import type { FieldEntryContextDefinition } from "../core/field-entry-context.js";
 import type { SourcePresentationOp } from "../core/source-presentation.js";
+import type { AudioReadinessOp } from "../core/audio-readiness.js";
+import type { PlayerVisibilityOp } from "../core/player-visibility.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -145,6 +147,8 @@ export type Op = Site &
     | RosterLifecycleEventOp
     | OwnedConditionEventOp
     | SourcePresentationOp
+    | AudioReadinessOp
+    | PlayerVisibilityOp
     | { kind: "entities"; group: string }
     | { kind: "change-map"; request: MapRequest }
     | { kind: "fade-in"; seconds: number }

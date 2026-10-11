@@ -2,6 +2,7 @@ import type { FieldContent } from "../field/types.js";
 import { encounterContent, battleDefinitionBlocker, type BattleCatalog } from "./battle-content.js";
 import { BattleGame } from "./battle.js";
 import { EventState } from "./event-state.js";
+import type { AudioReadinessPort } from "./audio-readiness.js";
 import type { ShopTradeRequest } from "./shop.js";
 import { projectBattleFieldState } from "./field-battle-entry.js";
 import {
@@ -33,6 +34,8 @@ export type GameCheckpoint = {
   owned: GameStateSnapshot;
   world: WorldCheckpoint;
 };
+/** External observations are rebound by the host on load, never trusted from saves. */
+export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort };
 
 /** Owns the encounter handoff and consumes rewards exactly once. No renderer state drives progression. */
 export class GameSession {
@@ -60,6 +63,7 @@ export class GameSession {
     field: FieldContent,
     readonly battleCatalog: BattleCatalog,
     readonly seed = 20261010,
+    runtime: GameSessionRuntime = {},
   ) {
     checkpointInteger(seed, 0, 0xffffffff);
     this.currentBattlePreferences = parseBattlePreferences(battleCatalog.common.timing);
@@ -81,6 +85,7 @@ export class GameSession {
     }
     this.world = new WorldSession(field, initialEvents, {
       current: {
+        ...runtime,
         inventory: this.state.fieldInventory,
         treasure: this.state.fieldTreasure,
         party: this.state.fieldParty,
@@ -161,6 +166,7 @@ export class GameSession {
     initial: FieldContent,
     battle: BattleCatalog,
     world?: { catalog: WorldCatalog; map: WorldMapContent },
+    runtime: GameSessionRuntime = {},
   ): GameSession {
     const s = structuredClone(raw);
     checkpointKeys(
@@ -178,7 +184,7 @@ export class GameSession {
     checkpointInteger(s.encounterSerial);
     checkpointNumber(s.remainder, 0, 10);
     if (s.remainder >= 10) throw new Error("Invalid session remainder");
-    const next = new GameSession(initial, battle, s.seed);
+    const next = new GameSession(initial, battle, s.seed, runtime);
     next.setBattlePreferences(s.battlePreferences);
     next.state.restore(s.owned);
     if (s.encounterSerial !== s.owned.completedBattles.length)

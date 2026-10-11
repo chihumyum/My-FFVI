@@ -375,7 +375,7 @@ export class WorldSession {
       const plan = prepareMapPartyEntry(appearance.catalog, {
         definition: target.partyEntry, entrance: request.entrance,
         mapViewType: request.birdview ? 1 : 0, prior,
-        playerVisible: !from.hiddenEntities.has("-1001"), party: appearance.current(),
+        playerVisible: !from.hiddenEntities.has(from.player.id), party: appearance.current(),
         transportation: transportation.identity(transport.currentId),
         canPartySwitching: readMapPartySwitching(read),
       });
@@ -392,7 +392,8 @@ export class WorldSession {
       state,
       new StaticAudioState(bgm),
       new StaticAudioState(environment),
-      { ...(owned?.ports ?? {}), ...(sourcePresentation ? { sourcePresentation } : {}) },
+      { ...(owned?.ports ?? {}), ...(sourcePresentation ? { sourcePresentation } : {}),
+        ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
     );
     const script = request.continuation || target.initializer;
     field.startMapEntry(script || null);

@@ -77,22 +77,25 @@ export class AudioOutput {
     }
     return this.pending.get(key);
   }
-  ready(projection) {
+  isReady(track) {
+    if (this.errors.has(track.sha256)) throw this.errors.get(track.sha256);
+    return this.buffers.has(track.sha256);
+  }
+  ready(projection, dependencies = []) {
     let ready = true;
-    for (const { track } of projection) {
-      if (this.errors.has(track.sha256)) throw this.errors.get(track.sha256);
-      if (!this.buffers.has(track.sha256)) {
+    for (const track of [...projection.map(({ track }) => track), ...dependencies]) {
+      if (!this.isReady(track)) {
         this.load(track);
         ready = false;
       }
     }
     return ready;
   }
-  async prepare(projection) {
-    await Promise.all(projection.map(({ track }) => this.load(track)));
-    if (!this.ready(projection)) throw new Error("声音资源尚未就绪");
+  async prepare(projection, dependencies = []) {
+    await Promise.all([...projection.map(({ track }) => track), ...dependencies].map((track) => this.load(track)));
+    if (!this.ready(projection, dependencies)) throw new Error("声音资源尚未就绪");
   }
-  project(projection, running) {
+  project(projection, running, dependencies = []) {
     if (!this.context) return;
     if (this.failure) throw this.failure;
     if (running !== this.running) {
@@ -112,7 +115,10 @@ export class AudioOutput {
         this.nodes.delete(id);
       }
     if (!running) return;
-    const keep = new Set();
+    // A ready asset may still be awaited by a field task on the next tick.
+    // Evicting it here could rotate three pending assets through two cache slots
+    // and prevent the simulation from ever observing all dependencies as ready.
+    const keep = new Set(dependencies.map((track) => track.sha256));
     for (const { id, voice, track, time } of projection) {
       keep.add(track.sha256);
       let node = this.nodes.get(id);
@@ -164,7 +170,7 @@ export class AudioOutput {
         this.context.currentTime + 0.016,
       );
     }
-    // Keep active streams plus two recent inactive decodes, rather than the whole PCM library.
+    // Keep active streams and pending dependencies plus two inactive decodes.
     const inactive = [...this.buffers.keys()].filter((key) => !keep.has(key));
     for (const key of inactive.slice(0, -2)) {
       this.buffers.delete(key);
