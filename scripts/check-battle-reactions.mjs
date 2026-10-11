@@ -28,7 +28,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v15");
+assert.equal(catalog.common.profile, "narshe-playability-v16");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 assert.deepEqual(catalog.common.reactions, {
   counterLimit: 1,
@@ -101,9 +101,9 @@ for (const asset of Object.values(exported.assets).filter((a) =>
   }
 }
 const probes = [];
-for (const [name, pc, expected] of [
-  ["sc_ai_002_Templar.json", 5, 379],
-  ["sc_ai_054_Tonberry.json", 5, 459],
+for (const [name, pc, expected, missingAbilityId, initialRouteBlocked] of [
+  ["sc_ai_002_Templar.json", 5, 379, 40, false],
+  ["sc_ai_054_Tonberry.json", 5, 459, 154, true],
 ]) {
   const original = programs.get(name);
   assert.equal(original.instructions[pc].op.kind, "counter-act");
@@ -193,14 +193,31 @@ for (const [name, pc, expected] of [
       id,
       `机制能力 #${id}`,
     );
-  let originalBlocker;
+  let originalBlocker = null;
   try {
     new BattleGame(full, 409);
   } catch (error) {
     originalBlocker = error.message;
   }
+  // v16 admits Templar's IsRecevieAbility predicate, so its first normal route
+  // can start. Admission of that route still does not close all source ability
+  // dependencies. Keep those two claims separate instead of requiring an old
+  // unsupported-opcode failure after that opcode has been implemented.
+  assert.equal(
+    originalBlocker !== null,
+    initialRouteBlocked,
+    "Unexpected original AI first-route admission",
+  );
+  const originalAbilityBlockers = full.enemies[0].abilities.flatMap((id) =>
+    full.abilities[id].plan
+      ? []
+      : [{ abilityId: id, blockers: full.abilities[id].blockers }],
+  );
+  const missingDependency = originalAbilityBlockers.find(
+    (entry) => entry.abilityId === missingAbilityId,
+  );
   assert.ok(
-    originalBlocker,
+    missingDependency?.blockers.length,
     "A controlled instruction must not be counted as the full enemy",
   );
   probes.push({
@@ -216,6 +233,8 @@ for (const [name, pc, expected] of [
     gaugeAfterNormal: 0,
     replay: true,
     originalBlocker,
+    originalInitialRouteAdmitted: originalBlocker === null,
+    originalAbilityBlockers,
   });
   if (probes.length === 1)
     await writeFile(

@@ -11,6 +11,7 @@ import { loadAudioMedia } from "./audio.js";
 import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
 import { bindTileAnimationRegions } from "./tile-animation.js";
 import { compileInventoryEvent } from "./inventory-event.js";
+import { compilePartyEvent } from "./party.js";
 import {
   int32,
   isCategory,
@@ -98,6 +99,20 @@ export function decodeFieldOp(
   ) {
     try {
       return { ...site, ...compileInventoryEvent(name, i, tables) };
+    } catch (error) {
+      return blocked(error instanceof Error ? error.message : String(error));
+    }
+  }
+  if (
+    (name === "OrganizePartySlot" || name === "ChangePartySlot") &&
+    m.type === 1 &&
+    i.length === 8 &&
+    r.length === 8 &&
+    s.length === 8 &&
+    form(name === "OrganizePartySlot" ? [0, 1, 2, 3, 4] : [0, 1])
+  ) {
+    try {
+      return { ...site, ...compilePartyEvent(name, i, tables) };
     } catch (error) {
       return blocked(error instanceof Error ? error.message : String(error));
     }

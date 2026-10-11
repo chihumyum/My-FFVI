@@ -1,8 +1,10 @@
 import { EventState, int32, type VariableRef } from "./event-state.js";
+import type { EquipmentOwnershipCommand } from "./inventory-ownership.js";
 
 /** Inventory is owned by GameState, never by a field or event task. */
 export type FieldInventoryCommand =
   | { kind: "grant-item" | "remove-item"; id: number; count: number }
+  | EquipmentOwnershipCommand
   | { kind: "grant-gil"; amount: number }
   | { kind: "pay-gil"; amount: number };
 
@@ -34,7 +36,12 @@ export function executeInventoryEvent(
 ): void {
   if (!inventory) throw new Error("Field inventory state is unavailable");
   const command = op.command;
-  if (command.kind === "grant-item" || command.kind === "remove-item") {
+  if (
+    command.kind === "grant-item" ||
+    command.kind === "remove-item" ||
+    command.kind === "grant-equipment" ||
+    command.kind === "remove-equipment"
+  ) {
     if (int32(command.id) <= 0 || int32(command.count) <= 0)
       throw new Error("Invalid field item amount");
   } else if (command.kind === "grant-gil" || command.kind === "pay-gil") {

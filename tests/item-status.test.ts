@@ -25,6 +25,7 @@ function setup(extraPlayers = false) {
         sourceId: 1100 + n,
       });
       battle.gameState.equipment[id] = [...battle.gameState.equipment.a!];
+      battle.gameState.initialParty.slots[0][n + 2]!.id = id;
     }
   common.commands[200] = {
     id: 200,

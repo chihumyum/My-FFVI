@@ -1,4 +1,5 @@
 import { itemFixture } from "./items.js";
+import { fixtureParty } from "./party.js";
 import type {
   Character,
   FieldContent,
@@ -188,6 +189,7 @@ export function checkpointFixture() {
     gameState: {
       kind: "game-state-development-v1",
       initialGil: 90,
+      initialParty: fixtureParty(["a", "b"]),
       limits: {
         gil: 9999999,
         item: 99,

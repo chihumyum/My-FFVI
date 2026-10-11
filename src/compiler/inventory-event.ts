@@ -53,6 +53,33 @@ export function compileInventoryEvent(
       result: null,
       dependencies,
     };
+  if (type === 2 || type === 3) {
+    const equipmentId = tableId(content.type_value);
+    const table = type === 2 ? "weapon.csv" : "armor.csv";
+    const equipment = row(table, equipmentId);
+    if (tableId(equipment.type_id) !== 1)
+      throw new Error("Unsupported or empty field equipment ownership type");
+    // RemoveOwnedItem locates the type and equipment row, not its ContentId.
+    // Do not silently choose between multiple content aliases of the same row.
+    if (
+      rows("content.csv").filter(
+        (r) =>
+          tableId(r.type_id) === type && tableId(r.type_value) === equipmentId,
+      ).length !== 1
+    )
+      throw new Error("Ambiguous equipment ownership content identity");
+    dependencies.push({ table, id: equipmentId });
+    return {
+      kind: "inventory",
+      command: {
+        kind: mnemonic === "GetItem" ? "grant-equipment" : "remove-equipment",
+        id,
+        count,
+      },
+      result: null,
+      dependencies,
+    };
+  }
   if (type !== 1)
     throw new Error(`Field inventory content type ${type} is not implemented`);
   const itemId = tableId(content.type_value),

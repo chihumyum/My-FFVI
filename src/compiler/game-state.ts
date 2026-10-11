@@ -2,6 +2,7 @@ import type { GameStateContent } from "../core/game-state.js";
 import type { compileOpeningBattle } from "./battle.js";
 import { tableInteger as int } from "./table.js";
 import { compileItem } from "./items.js";
+import { compileInitialPartyState } from "./party.js";
 
 /** Explicit opening bootstrap. It does not initialize unknown plot flags or
  * extend item stacks to the equipment-count/magic-stone ownership providers. */
@@ -56,6 +57,16 @@ export function compileGameState(
       level: unique("game_constant_int.csv", "MAX_LV"),
     },
     initialGil: unique("initialize_data.csv", "INIT_GIL"),
+    initialParty: compileInitialPartyState(
+      Object.fromEntries(
+        Object.keys(source.tables).map((table) => [table, rows(table)]),
+      ),
+      source.initialParty.map((p) => ({
+        id: `player:${p.characterId}`,
+        sourceId: p.characterId,
+        enabled: true,
+      })),
+    ).state,
     items,
     initialItems,
     equipment: Object.fromEntries(

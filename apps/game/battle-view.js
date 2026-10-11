@@ -17,24 +17,7 @@ export class BattleView {
     $("battle-return").onclick = onReturn;
     $("battle-retry").onclick = onRetry;
     this.rows = new Map();
-    for (const p of content.players) {
-      const button = document.createElement("button");
-      button.className = "party-row";
-      const name = document.createElement("span");
-      name.textContent = p.name;
-      const hp = document.createElement("span");
-      const meter = document.createElement("progress");
-      meter.max = 100;
-      meter.setAttribute("aria-label", p.name + " 行动条");
-      button.append(name, hp, meter);
-      button.onclick = () => {
-        this.selected = p.id;
-        this.actionSource = null;
-        this.key = "";
-      };
-      $("party").append(button);
-      this.rows.set(p.id, { button, name, hp, meter });
-    }
+    $("party").replaceChildren();
   }
   hide() {
     $("battle-ui").hidden = true;
@@ -89,7 +72,60 @@ export class BattleView {
       this.instance = battle;
       this.selected = null;
       this.actionSource = null;
+      this.commandId = null;
       this.key = "";
+    }
+    const party = $("party"),
+      memberIds = new Set(battle.players.map((p) => p.id)),
+      readyIds = new Set(
+        battle.phase === "active" ? battle.ready.map((p) => p.id) : [],
+      ),
+      ready = battle.players.filter((p) => readyIds.has(p.id));
+    if (!ready.some((p) => p.id === this.selected)) {
+      this.selected = ready[0]?.id ?? null;
+      this.actionSource = null;
+      this.commandId = null;
+    }
+    for (const [id, row] of this.rows) {
+      if (memberIds.has(id)) continue;
+      row.button.disabled = true;
+      row.button.remove();
+      this.rows.delete(id);
+    }
+    for (const [index, p] of battle.players.entries()) {
+      let row = this.rows.get(p.id);
+      if (!row) {
+        const button = document.createElement("button"),
+          name = document.createElement("span"),
+          hp = document.createElement("span"),
+          meter = document.createElement("progress");
+        button.className = "party-row";
+        meter.max = 100;
+        button.append(name, hp, meter);
+        button.onclick = () => {
+          this.selected = p.id;
+          this.actionSource = null;
+          this.commandId = null;
+          this.key = "";
+        };
+        row = { button, name, hp, meter };
+        this.rows.set(p.id, row);
+      }
+      if (party.children[index] !== row.button)
+        party.insertBefore(row.button, party.children[index] ?? null);
+      label(
+        row.name,
+        p.name +
+          (p.conditionIds.length
+            ? ` · ${p.conditionIds.map((id) => battle.conditions.name(id)).join("、")}`
+            : ""),
+      );
+      label(row.hp, `${p.hp} / ${p.maxHp}`);
+      row.meter.value = p.atb;
+      row.meter.setAttribute("aria-label", p.name + " 行动条");
+      row.button.disabled = !readyIds.has(p.id);
+      row.button.classList.toggle("selected", p.id === this.selected);
+      row.button.classList.toggle("fallen", p.hp === 0);
     }
     $("battle-ui").hidden = paused || battle.phase !== "active";
     $("battle-result").hidden = paused || battle.phase === "active";
@@ -120,26 +156,7 @@ export class BattleView {
       $("battle-retry").hidden = battle.phase !== "defeat";
       return;
     }
-    for (const p of battle.players) {
-      const row = this.rows.get(p.id);
-      label(
-        row.name,
-        p.name +
-          (p.conditionIds.length
-            ? ` · ${p.conditionIds.map((id) => battle.conditions.name(id)).join("、")}`
-            : ""),
-      );
-      label(row.hp, `${p.hp} / ${p.maxHp}`);
-      row.meter.value = p.atb;
-      row.button.disabled = !battle.ready.some((c) => c.id === p.id);
-      row.button.classList.toggle("selected", p.id === this.selected);
-      row.button.classList.toggle("fallen", p.hp === 0);
-    }
-    if (!battle.ready.some((p) => p.id === this.selected)) {
-      this.selected = battle.ready[0]?.id ?? null;
-      this.actionSource = null;
-    }
-    const actor = battle.ready.find((p) => p.id === this.selected);
+    const actor = ready.find((p) => p.id === this.selected);
     const canUse = (source, commandId) =>
       source.kind === "ability"
         ? battle.canUse(actor.id, source.id, commandId)
@@ -191,7 +208,7 @@ export class BattleView {
       this.actionSource,
       this.commandId,
       options,
-      battle.ready.map((p) => p.id),
+      ready.map((p) => p.id),
       targets,
     ]);
     label($("battle-action"), battle.events.at(-1)?.text ?? "");

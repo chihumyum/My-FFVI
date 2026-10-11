@@ -136,6 +136,7 @@ export async function compileOpeningPlayable(
     hp: 0,
     mp: 0,
     magic: 0,
+    vitality: 0,
     attack: 0,
     defense: 0,
     magicDefense: 0,
@@ -202,8 +203,15 @@ export async function compileOpeningPlayable(
       parameterReader,
       c.characterId,
       {
-        additional: { hp: 0, mp: 0, magic: 0, agility: 0, weight: 0 },
-        correction: { magic: 0, agility: 0 },
+        additional: {
+          hp: 0,
+          mp: 0,
+          magic: 0,
+          vitality: 0,
+          agility: 0,
+          weight: 0,
+        },
+        correction: { magic: 0, vitality: 0, agility: 0 },
         temporary: noTemporary,
         passive: { hp: 0, mp: 0, magicEvasion: 0 },
         condition601: false,
@@ -339,7 +347,7 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v15",
+    profile: "narshe-playability-v16",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,
@@ -399,8 +407,15 @@ export async function compileOpeningPlayable(
           parameterReader,
           p.characterId,
           {
-            additional: { hp: 0, mp: 0, magic: 0, agility: 0, weight: 0 },
-            correction: { magic: 0, agility: 0 },
+            additional: {
+              hp: 0,
+              mp: 0,
+              magic: 0,
+              vitality: 0,
+              agility: 0,
+              weight: 0,
+            },
+            correction: { magic: 0, vitality: 0, agility: 0 },
             temporary: noTemporary,
             passive: { hp: 0, mp: 0, magicEvasion: 0 },
             condition601: false,

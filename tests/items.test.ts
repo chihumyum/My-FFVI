@@ -22,6 +22,7 @@ function stateFixture() {
   const content: GameStateContent = {
     kind: "game-state-development-v1",
     initialGil: 0,
+    initialParty: fixtureParty(["a", "b"]),
     limits: { gil: 999, item: 99, hp: 9999, mp: 999, level: 99, exp: 15000000 },
     items: { 10: itemFixture(), 20: itemFixture(20, true) },
     initialItems: [
@@ -312,3 +313,4 @@ test("item compiler preserves independent three-slot menu/battle programs and bl
   item.battle_function_group_id = "999";
   assert.throws(() => compileItem(reader(), 601, "Synthetic"), /Unresolved/);
 });
+import { fixtureParty } from "./fixtures/party.js";

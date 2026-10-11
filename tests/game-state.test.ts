@@ -1,4 +1,5 @@
 import { itemFixture } from "./fixtures/items.js";
+import { fixtureParty } from "./fixtures/party.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { GameState, type GameStateContent } from "../src/core/game-state.js";
@@ -12,6 +13,7 @@ const content: GameStateContent = {
   kind: "game-state-development-v1",
   limits: { gil: 1000, item: 99, hp: 9999, mp: 999, level: 99, exp: 15000000 },
   initialGil: 90,
+  initialParty: fixtureParty(["a", "b"]),
   items: {
     10: itemFixture(10),
     20: { ...itemFixture(20, true), itemId: 2 },
@@ -285,7 +287,7 @@ test("shared-state restore rejects incompatible, incomplete, extra and inconsist
       x.roster.pop();
     },
     (x: typeof before) => {
-      x.party = ["unknown"];
+      x.party.slots[0][0].id = "unknown";
     },
     (x: typeof before) => {
       Object.assign(x.roster[0]!, { attack: 999999 });

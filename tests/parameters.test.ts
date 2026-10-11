@@ -22,6 +22,7 @@ const zero: ParameterValues = {
   hp: 0,
   mp: 0,
   magic: 0,
+  vitality: 0,
   attack: 0,
   defense: 0,
   magicDefense: 0,
@@ -34,6 +35,7 @@ const limits: ParameterLimits = {
   hp: 9999,
   mp: 999,
   magic: 128,
+  vitality: 128,
   naturalMagic: 128,
   attack: 255,
   defense: 255,
@@ -48,8 +50,8 @@ function state(): PlayerParameterInput {
   return {
     base: { ...zero },
     temporary: { ...zero },
-    additional: { hp: 0, mp: 0, magic: 0, agility: 0, weight: 0 },
-    correction: { magic: 0, agility: 0 },
+    additional: { hp: 0, mp: 0, magic: 0, vitality: 0, agility: 0, weight: 0 },
+    correction: { magic: 0, vitality: 0, agility: 0 },
     passive: { hp: 0, mp: 0, magicEvasion: 0 },
     equipment: [],
     condition601: false,
@@ -89,6 +91,50 @@ test("growth/correction caps precede equipment and temporary reductions", () => 
   s.base.defense = 400;
   s.temporary.defense = -100;
   assert.equal(confirmPlayerParameters(s, limits).defense, 155);
+});
+test("vitality clamps natural inputs before equipment and preserves signed staged arithmetic", () => {
+  const s = state();
+  s.base.vitality = 120;
+  s.additional.vitality = 20;
+  s.correction.vitality = 10;
+  s.temporary.vitality = -4;
+  s.equipment = [item(1, "weapon", { vitality: -6 })];
+  assert.equal(confirmPlayerParameters(s, limits).vitality, 118);
+  s.base.vitality = -40;
+  s.additional.vitality = 0;
+  s.correction.vitality = 0;
+  s.temporary.vitality = 5;
+  s.equipment = [item(2, "armor", { vitality: 7 })];
+  assert.equal(confirmPlayerParameters(s, limits).vitality, 12);
+  s.base.vitality = 0x7fffffff;
+  s.additional.vitality = 1;
+  assert.equal(confirmPlayerParameters(s, limits).vitality, 12);
+  assert.equal(
+    confirmEnemyParameters(
+      { ...zero, vitality: 140 },
+      { ...zero, vitality: -20 },
+      limits,
+    ).vitality,
+    120,
+  );
+  assert.equal(
+    confirmEnemyParameters(
+      { ...zero, vitality: 0x7fffffff },
+      { ...zero, vitality: 1 },
+      limits,
+    ).vitality,
+    0,
+  );
+  for (const provider of [
+    "base",
+    "additional",
+    "correction",
+    "temporary",
+  ] as const) {
+    const missing = state();
+    missing[provider].vitality = undefined as unknown as number;
+    assert.throws(() => confirmPlayerParameters(missing, limits), /int32/);
+  }
 });
 test("FFVI weapon attack follows the natural cap, and two hands multiply afterwards", () => {
   const s = state();
@@ -227,6 +273,7 @@ function reader() {
     max_hp_up: "5",
     max_mp_up: "2",
     magic: "4",
+    vitality: "2",
     agility: "3",
     weight: "7",
     evasion_rate: "20",
@@ -238,6 +285,7 @@ function reader() {
     hp: "80",
     mp: "12",
     magic: "20",
+    vitality: "30",
     attack: "30",
     defense: "40",
     ability_defense: "50",
@@ -291,10 +339,12 @@ test("source parameter binding uses row identities, weapon evasion and FFVI enem
     "Only slots 1 and 2 contribute weapon attack",
   );
   assert.equal(p.confirmed.magic, 44);
+  assert.equal(p.confirmed.vitality, 42);
   assert.equal(p.sources[1]!.objectId, source.objectId);
   const e = compileEnemyParameters(index, 998, { ...zero }, limits);
   assert.equal(e.base.magic, 70);
   assert.equal(e.confirmed.magic, 70);
+  assert.equal(e.confirmed.vitality, 30);
 });
 test("unresolved wear effects, missing equipment and non-equipment content stay blocked", () => {
   let r = reader();

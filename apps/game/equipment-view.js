@@ -5,6 +5,7 @@ const stats = [
   ["最大 HP", (p) => p.maxHp],
   ["最大 MP", (p) => p.maxMp],
   ["力量", (p) => p.physical?.strength],
+  ["耐力", (p) => p.vitality],
   ["攻击力", (p) => p.physical?.attack ?? p.attack],
   ["防御力", (p) => p.defense],
   ["魔力", (p) => p.magic],
@@ -49,7 +50,7 @@ export class EquipmentView {
     const players = session.battle?.players ?? session.players;
     const owned =
       state.roster.find((p) => p.id === this.playerId) ??
-      state.roster.find((p) => p.id === state.party[0]) ??
+      state.roster.find((p) => p.id === session.state.activeParty[0]?.id) ??
       state.roster[0];
     this.playerId = owned?.id ?? null;
     const key = JSON.stringify([

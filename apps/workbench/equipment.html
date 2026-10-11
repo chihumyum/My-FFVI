@@ -11,7 +11,7 @@
   <body>
     <h1>装备系统受控检查</h1>
     <p>
-      使用开场已有装备与共享菜单。先为一名队员卸下装备，再为其他队员选装；库存不会额外生成装备。
+      默认使用开场已有装备与共享菜单。可以卸装转移真实副本，也可以手动授予一件检查装备；授予属于受控输入，不代表剧情已取得。
       战斗入口、行动条与胜利按钮为受控输入，不表示剧情进度；检查点只保留在此页面内存中，不写入正式存档。
     </p>
     <div class="workbench-controls" aria-label="受控检查操作">
@@ -22,6 +22,11 @@
       <button id="win-fixture" disabled>完成受控胜利</button>
       <button id="save-fixture" disabled>记录检查点</button>
       <button id="load-fixture" disabled>恢复检查点</button>
+    </div>
+    <div class="workbench-controls" aria-label="受控装备取得">
+      <label for="grant-equipment-id">检查装备</label>
+      <select id="grant-equipment-id" disabled></select>
+      <button id="grant-equipment" disabled>授予一件检查装备</button>
     </div>
     <p id="receipt" role="status">载入…</p>
     <main>

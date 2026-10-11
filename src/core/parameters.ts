@@ -6,6 +6,7 @@ export const parameterNames = [
   "hp",
   "mp",
   "magic",
+  "vitality",
   "attack",
   "defense",
   "magicDefense",
@@ -34,9 +35,9 @@ export type PlayerParameterInput = {
   base: ParameterValues;
   additional: Pick<
     ParameterValues,
-    "hp" | "mp" | "magic" | "agility" | "weight"
+    "hp" | "mp" | "magic" | "vitality" | "agility" | "weight"
   >;
-  correction: Pick<ParameterValues, "magic" | "agility">;
+  correction: Pick<ParameterValues, "magic" | "vitality" | "agility">;
   temporary: ParameterValues;
   equipment: ParameterEquipment[];
   passive: Pick<ParameterValues, "hp" | "mp" | "magicEvasion">;
@@ -92,9 +93,17 @@ export function confirmPlayerParameters(
   checkLimits(limits);
   checkValues(input.base);
   checkValues(input.temporary);
-  for (const k of ["hp", "mp", "magic", "agility", "weight"] as const)
+  for (const k of [
+    "hp",
+    "mp",
+    "magic",
+    "vitality",
+    "agility",
+    "weight",
+  ] as const)
     int32(input.additional[k]);
-  for (const k of ["magic", "agility"] as const) int32(input.correction[k]);
+  for (const k of ["magic", "vitality", "agility"] as const)
+    int32(input.correction[k]);
   for (const k of ["hp", "mp", "magicEvasion"] as const)
     int32(input.passive[k]);
   if (
@@ -146,12 +155,12 @@ export function confirmPlayerParameters(
         passive[key],
       ),
     );
-  const staged = (key: "magic" | "agility") =>
+  const staged = (key: "magic" | "vitality" | "agility") =>
     clamp(
       add(
         clamp(
           add(base[key], additional[key], correction[key]),
-          key === "magic" ? limits.naturalMagic : limits.agility,
+          key === "magic" ? limits.naturalMagic : limits[key],
         ),
         temporary[key],
         sum(key),
@@ -162,6 +171,7 @@ export function confirmPlayerParameters(
     hp: resource("hp"),
     mp: resource("mp"),
     magic: staged("magic"),
+    vitality: staged("vitality"),
     agility: staged("agility"),
     // FFVI caps the natural + temporary part BEFORE adding weapons. No final 255 cap.
     attack: Math.max(

@@ -3,6 +3,7 @@ import type { EventControlOp, ScriptLocals } from "../core/event-state.js";
 import type { MinimapMedia } from "../core/minimap.js";
 import type { AudioMedia } from "../core/static-audio.js";
 import type { InventoryEventOp } from "../core/inventory-event.js";
+import type { PartyEventOp } from "../core/party.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -115,6 +116,7 @@ export type Op = Site &
     | { kind: "nop" | "exit" | "return" | "join" | "hide" }
     | EventControlOp
     | InventoryEventOp
+    | PartyEventOp
     | { kind: "entities"; group: string }
     | { kind: "change-map"; request: MapRequest }
     | { kind: "fade-in"; seconds: number }

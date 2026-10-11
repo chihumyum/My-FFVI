@@ -183,13 +183,16 @@ test("late map loads cannot overwrite intervening owned state, and draft ports c
   assert.equal(game.world.commit(prepared), false);
   assert.equal(game.field, from);
   assert.equal(game.state.snapshot().items[0]!.count, 1);
-  const draft = game.state.prepareFieldInventory();
-  const late = draft.port.prepare({ kind: "grant-gil", amount: 15 });
-  draft.port.prepare({ kind: "pay-gil", amount: 0 }).commit();
+  const draft = game.state.prepareFieldState();
+  const late = draft.ports.inventory.prepare({ kind: "grant-gil", amount: 15 });
+  draft.ports.inventory.prepare({ kind: "pay-gil", amount: 0 }).commit();
   assert.throws(late.commit, /Stale/);
-  const beforePublish = draft.port.prepare({ kind: "grant-gil", amount: 16 });
+  const beforePublish = draft.ports.inventory.prepare({
+    kind: "grant-gil",
+    amount: 16,
+  });
   assert.equal(draft.commit(), true);
   assert.throws(beforePublish.commit, /Stale/);
-  draft.port.prepare({ kind: "grant-gil", amount: 17 }).commit();
+  draft.ports.inventory.prepare({ kind: "grant-gil", amount: 17 }).commit();
   assert.equal(game.gil, 107);
 });

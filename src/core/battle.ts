@@ -106,7 +106,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v15"
+      content.profile !== "narshe-playability-v16"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -406,7 +406,7 @@ export class BattleGame {
   }
   enemyAIState(actorId: string): BattleAIState | null {
     const state = this.aiStates.get(actorId);
-    return state ? { ...state } : null;
+    return state ? structuredClone(state) : null;
   }
   /** Inspection/replay callers cannot mutate the live queue or its selections. */
   get pendingActions(): readonly BattleAction[] {

@@ -63,8 +63,11 @@ export class GameSession {
       battleCatalog.common.conditions,
     );
     this.world = new WorldSession(field, undefined, {
-      current: this.state.fieldInventory,
-      prepare: () => this.state.prepareFieldInventory(),
+      current: {
+        inventory: this.state.fieldInventory,
+        party: this.state.fieldParty,
+      },
+      prepare: () => this.state.prepareFieldState(),
     });
   }
   get checkpointReady(): boolean {
@@ -148,6 +151,14 @@ export class GameSession {
           this.field.stop.party!,
         );
         if (!content) continue;
+        if (this.state.battlePartyBlocker) {
+          this.field.stop = {
+            kind: "unsupported",
+            message: this.state.battlePartyBlocker,
+            site: this.field.stop.site,
+          };
+          continue;
+        }
         this.currentSeed =
           (this.seed + Math.imul(this.encounterSerial, 0x9e3779b1)) >>> 0;
         const lease = this.state.openBattle(content.encounterId);

@@ -41,6 +41,7 @@ test("counter readiness draws only its own instructions and preserves the ordina
   assert.equal(normal.state.actTurn, 1);
   const reaction = planBattleAIReaction(program, normal.state, context, {
     counterReady: true,
+    receivedAbilityId: 501,
     receivedSystemId: 3,
   });
   assert.equal(reaction.trigger, "reaction");
@@ -91,7 +92,7 @@ test("miss, recovery, system five and fatal hits wake AI without scheduling Coun
       program,
       initial.state,
       { ...context, self: { ...context.self, hp } },
-      { counterReady, receivedSystemId },
+      { counterReady, receivedAbilityId: 501, receivedSystemId },
     );
     assert.deepEqual(reaction.acts, []);
     assert.equal(reaction.behavior.variables[0], 1);
@@ -102,6 +103,7 @@ test("miss, recovery, system five and fatal hits wake AI without scheduling Coun
     () =>
       planBattleAIReaction(program, initial.state, context, {
         counterReady: true,
+        receivedAbilityId: 501,
         receivedSystemId: Number.NaN,
       }),
     /signed 32-bit/,
@@ -112,7 +114,7 @@ test("miss, recovery, system five and fatal hits wake AI without scheduling Coun
         program,
         { ...initial.state, status: "running" },
         context,
-        { counterReady: true, receivedSystemId: 3 },
+        { counterReady: true, receivedAbilityId: 501, receivedSystemId: 3 },
       ),
     /suspended SyncAI/,
   );
@@ -131,6 +133,7 @@ test("counter messages, mismatched weights and unknown operands remain explicit 
       () =>
         planBattleAIReaction(program, initial.state, context, {
           counterReady: true,
+          receivedAbilityId: 501,
           receivedSystemId: 3,
         }),
       (e) => e instanceof BattleAIError && e.pc === 1,

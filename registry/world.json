@@ -587,6 +587,46 @@
         "docs/inventory-events.md",
         "docs/item-status.md"
       ]
+    },
+    {
+      "id": "narshe:development-owned-systems-v16",
+      "subject": "narshe",
+      "predicate": "migration.ownedSystems",
+      "value": "Development v16 integrates three banks of four party positions, equipment acquisition/vitality and received-ability AI conditions through a single owned-state transaction. Active membership derives from the selected bank; map candidates publish inventory and party together. Snapshot v3 retains empty cells/rows; empty and back-row battles remain blocked. Of 196 source party instructions, 45 execute in the field and 151 actor-refresh paths remain blocked; 392 pure probes and 70 controlled presentation callbacks do not establish real actor refresh. Join/departure/disabled ownership remain unimplemented. Inventory admits 134 of 173 source sites with 462 probes, including 17 equipment grants and controlled save/battle chains; equipment admits 119 of 223 identities including five empty placeholders, with 104 blockers and 459 eligibility previews. Eleven parameters now include source-bound two-stage vitality. AI received-ability identity/system branches cover 26 instructions and two controlled host executions of the unchanged Templar program; original status 903 and abilities 3/40 still block the full enemy. 367 TypeScript and 18 Python tests, existing five encounters, 40 stable checkpoint restores and source-system regressions pass. Browser controlled crown equipment changes vitality 28 to 31 across preview, in-memory restore and battle; normal opening victory returns to (38,37) with 3096 Gil, levels 3/2/2, HP 63/63/43 and the initial key item unchanged. Final battle-menu participant cleanup passes six controlled DOM cases and browser selection. No extra formal stock, user-save overwrite, region expansion or HD-2D work. Static native receipts remain semanticsVerified=false; system and full-game gates remain incomplete.",
+      "when": {
+        "battleProfile": "narshe-playability-v16",
+        "gameStateProfile": "game-state-development-v1",
+        "saveProfile": "game-checkpoint-v1",
+        "ownedSnapshotVersion": 3
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x5343c0/0x536870 player vitality; 0x4afa30 enemy vitality; 0x8e0f30 owned Count",
+        "src/core/game-state.ts:prepareFieldState/fieldParty/fieldInventory/activeParty",
+        "src/core/party.ts; src/compiler/party.ts; src/core/inventory-ownership.ts",
+        "src/core/battle-ai.ts:receivedAbility; src/core/battle-reactions.ts",
+        "build/reports/party-check.json#sha256=9365bcbc2222ef07d859c5f78c844ddd757267c76304115c16bc7dec55b15aff",
+        "build/reports/party-native-check.json#sha256=0e445965c47c82370f87c4ad13e99b9e8474bd7f4a4a4391d07850c3dd9a869c",
+        "build/reports/inventory-ownership-native-check.json#sha256=43211855fef0dc18f6356f50ee76376cd184489f95f8492239473b1e983e37a7",
+        "build/reports/vitality-native-check.json#sha256=a43769e14aa4c954992239d3ee8b0bbd840856620af028b0a870eef67e660fc8",
+        "build/reports/equipment-check.json#858ab1fa687841a0914e67729b895d7bb725f51b5d00fa5f6c8c4549d03e795d",
+        "build/reports/inventory-events-check.json#a6ef2063ba92d6adfe86d680869cac41edbc6bcf9bf83a123c01dc5eee96b04a",
+        "build/reports/battle-received-ability-check.json#bd29a63bcb3a0f3a5bc5b9a372b1064d214cdc21a5dcf80cbe52da1affdb87aa",
+        "build/reports/battle-received-ability-native-check.json#9e0ba7fef294b9b22fbf9185728bb3983eac10803d27c8c7aea1e06948b5d900",
+        "build/reports/save-check.json#5dea22a3d59a8b2fe2f7bb9cf968a289bd8c99d67e3c85e43272b5036c4c2cc0",
+        "build/reports/systems-v16-check.log",
+        "build/reports/systems-v16-python.log",
+        "build/reports/systems-v16-browser-check.json#186b7df8a1c80cbb3d41e1f2b3f07d71c98ac6271b64b9e2f9ebc140ea4fab99",
+        "build/reports/systems-v16-party-menu-check.json#sha256=a08df0b30f1816e19c8167b5dfd684e72b244c2cb9598397e53163e05c5ac4ec",
+        "docs/systems-v16.md",
+        "docs/party.md",
+        "docs/battle-received-ability.md",
+        "build/reports/inventory-events-native-check.json#sha256=5c88c06830bab53e9a23b64f1d83b4419a63abf55664acc05ed20ed00fd2f9c4",
+        "build/reports/inventory-native-rebuild-check.log",
+        "build/reports/inventory-native-negative-check.json",
+        "build/reports/systems-v16-validation.json#a7f1c7e176697e274dfaadecfa43d3abfcce2c581928a670e3c0492050d7deae"
+      ]
     }
   ],
   "assets": []

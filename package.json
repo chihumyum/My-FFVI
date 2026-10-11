@@ -50,7 +50,11 @@
     "items:check": "npm run battle:build && node scripts/check-items.mjs",
     "item-status:check": "npm run battle:build && node scripts/check-item-status.mjs",
     "equipment:check": "npm run battle:build && node scripts/check-equipment.mjs",
-    "inventory-events:check": "npm run build && node scripts/check-inventory-events.mjs"
+    "inventory-events:check": "npm run battle:build && node scripts/check-inventory-events-native.mjs && node scripts/check-inventory-ownership-native.mjs && node scripts/check-inventory-events.mjs",
+    "party:check": "npm run battle:build && node scripts/check-party-native.mjs && node scripts/check-party.mjs && node scripts/check-party-menu.mjs",
+    "vitality:check": "npm run build && node scripts/check-vitality-native.mjs && node scripts/check-parameters.mjs",
+    "battle-received-ability:check": "npm run battle:build && node scripts/check-battle-received-ability.mjs --native build/runtime/game/GameAssembly.dll",
+    "inventory-ownership:check": "npm run inventory-events:check"
   },
   "dependencies": {
     "zod": "4.6.5"

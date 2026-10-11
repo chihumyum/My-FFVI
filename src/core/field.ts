@@ -16,6 +16,7 @@ import {
   executeInventoryEvent,
   type FieldInventoryPort,
 } from "./inventory-event.js";
+import { executePartyEvent, type FieldPartyPort } from "./party.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState, type AudioSnapshot } from "./static-audio.js";
 import { TileAnimationState, type TileCheckpoint } from "./tile-animation.js";
@@ -132,7 +133,10 @@ export type Dialogue = {
   key: string;
   task: number;
 };
-export type FieldGameOptions = { inventory?: FieldInventoryPort };
+export type FieldGameOptions = {
+  inventory?: FieldInventoryPort;
+  party?: FieldPartyPort;
+};
 const contains = (e: FieldEntity, p: Point) =>
   p.x >= e.x && p.x < e.x + e.width && p.y >= e.y && p.y < e.y + e.height;
 export class FieldGame {
@@ -953,6 +957,17 @@ export class FieldGame {
           return;
         }
         switch (op.kind) {
+          case "party":
+            try {
+              executePartyEvent(op, this.options.party);
+            } catch (error) {
+              this.block(
+                error instanceof Error ? error.message : String(error),
+                op,
+              );
+              return;
+            }
+            break;
           case "inventory":
             try {
               executeInventoryEvent(

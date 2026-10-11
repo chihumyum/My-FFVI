@@ -35,7 +35,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v15");
+assert.equal(catalog.common.profile, "narshe-playability-v16");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const assets = Object.values(exported.assets).filter((a) =>
   a.source.assetPath.includes("/MonsterAI/"),
@@ -244,6 +244,7 @@ const parameterChecks = [];
     turnCounter: 0,
     advancedActCount: 0,
     guardianActIsDadaluma: true,
+    receivedAbility: null,
   };
   assert.equal(program.instructions[checkpoint.pc].op.kind, "sync");
   const stage = planBattleAITurn(program, checkpoint, ctx);

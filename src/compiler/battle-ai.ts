@@ -172,6 +172,18 @@ export function compileBattleAI(
           target: i[1],
         };
       if (
+        ["IsRecevieAbility", "IsRecevieAbilitySystem"].includes(m.mnemonic) &&
+        form([0, 1]) &&
+        i[0] !== undefined &&
+        jump(i[1])
+      )
+        op = {
+          kind: "received-ability-branch",
+          field: m.mnemonic === "IsRecevieAbility" ? "id" : "systemId",
+          value: i[0],
+          target: i[1],
+        };
+      if (
         m.mnemonic === "IsMyCondition" &&
         form([0, 1]) &&
         i[0] !== undefined &&

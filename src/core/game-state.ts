@@ -6,6 +6,16 @@ import type {
   FieldInventoryPort,
   FieldInventoryTransaction,
 } from "./inventory-event.js";
+import { projectEquipmentOwnership } from "./inventory-ownership.js";
+import {
+  activePartyMembers,
+  previewPartyCommand,
+  validatePartyState,
+  type PartyState,
+  type PartyCommand,
+  type FieldPartyPort,
+  type PartyEventTransaction,
+} from "./party.js";
 import {
   equipmentAvailability,
   initialEquipmentStock,
@@ -41,6 +51,7 @@ export type GameStateContent = {
     exp: number;
   };
   initialGil: number;
+  initialParty: PartyState;
   /** Ordinary/important stacks; equipment has separate count/occupancy semantics. */
   items: Record<string, ItemDefinition>;
   initialItems: { id: number; count: number }[];
@@ -57,6 +68,7 @@ export type OwnedCharacter = {
   id: string;
   sourceId: number;
   name: string;
+  enabled: boolean;
   level: number;
   exp: number;
   hp: number;
@@ -67,11 +79,11 @@ export type OwnedCharacter = {
   equipment: number[];
 };
 export type GameStateSnapshot = {
-  formatVersion: 2;
+  formatVersion: 3;
   kind: "owned-game-state";
   catalogHash: string;
   roster: OwnedCharacter[];
-  party: string[];
+  party: PartyState;
   gil: number;
   totalGil: number;
   items: { id: number; count: number }[];
@@ -114,6 +126,9 @@ export class GameState {
   readonly fieldInventory: FieldInventoryPort = {
     prepare: (command) => this.prepareInventoryEvent(command),
   };
+  readonly fieldParty: FieldPartyPort = {
+    prepare: (command) => this.preparePartyEvent(command),
+  };
   constructor(
     content: GameStateContent,
     players: readonly CombatantDefinition[],
@@ -146,13 +161,14 @@ export class GameState {
       this.conditions.validateReferences(item.forbiddenConditionIds);
     }
     this.data = {
-      formatVersion: 2,
+      formatVersion: 3,
       kind: "owned-game-state",
       catalogHash,
       roster: players.map((p) => ({
         id: p.id,
         sourceId: p.sourceId,
         name: p.name,
+        enabled: true,
         level: p.level,
         exp: p.exp,
         hp: p.hp,
@@ -162,7 +178,7 @@ export class GameState {
         conditionIds: [...p.conditionIds],
         equipment: [...(content.equipment[p.id] ?? [])],
       })),
-      party: players.map((p) => p.id),
+      party: structuredClone(content.initialParty),
       gil: content.initialGil,
       totalGil: content.initialGil,
       items: structuredClone(content.initialItems),
@@ -183,7 +199,7 @@ export class GameState {
     );
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== 2 ||
+      data.formatVersion !== 3 ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -194,7 +210,7 @@ export class GameState {
     for (const p of data.roster) {
       keys(
         p,
-        "id,sourceId,name,level,exp,hp,mp,maxHp,maxMp,conditionIds,equipment",
+        "id,sourceId,name,enabled,level,exp,hp,mp,maxHp,maxMp,conditionIds,equipment",
       );
       const definition = this.definitions.get(p.id);
       if (
@@ -204,6 +220,8 @@ export class GameState {
         typeof p.name !== "string"
       )
         throw new Error("Unknown roster identity");
+      if (p.enabled !== true)
+        throw new Error("Unimplemented disabled roster equipment ownership");
       integer(p.level, limits.level, 1);
       integer(p.exp, limits.exp);
       integer(p.maxHp, limits.hp, 1);
@@ -239,12 +257,7 @@ export class GameState {
       );
     else if (data.equipmentStock.length)
       throw new Error("Unimplemented equipment stock");
-    distinct(data.party);
-    if (
-      !data.party.length ||
-      data.party.some((id) => !data.roster.some((p) => p.id === id))
-    )
-      throw new Error("Unknown party member");
+    validatePartyState(data.party, data.roster);
     distinct(data.items.map((item) => item.id));
     for (const item of data.items) {
       keys(item, "id,count");
@@ -309,6 +322,18 @@ export class GameState {
         entry.count = Math.max(0, entry.count - command.count);
       }
       next.items.sort((a, b) => a.id - b.id);
+    } else if (
+      command.kind === "grant-equipment" ||
+      command.kind === "remove-equipment"
+    ) {
+      const system = this.content.equipmentSystem;
+      if (!system) throw new Error("Equipment system is unavailable");
+      next.equipmentStock = projectEquipmentOwnership(
+        system.catalog,
+        next.roster,
+        next.equipmentStock,
+        command,
+      );
     } else if (command.kind === "grant-gil") {
       integer(command.amount, 0x7fffffff);
       next.gil = Math.min(this.content.limits.gil, next.gil + command.amount);
@@ -338,15 +363,44 @@ export class GameState {
       },
     };
   }
+  private projectPartyEvent(data: GameStateSnapshot, command: PartyCommand) {
+    const next = structuredClone(data);
+    const preview = previewPartyCommand(next.party, next.roster, command);
+    next.party = preview.state;
+    this.validate(next);
+    return {
+      next,
+      activeMembers: preview.activeMembers,
+      refreshActors: preview.refreshActors,
+    };
+  }
+  private preparePartyEvent(command: PartyCommand): PartyEventTransaction {
+    this.requireIdle();
+    const { next, ...projection } = this.projectPartyEvent(this.data, command);
+    const revision = this.revision;
+    return {
+      ...projection,
+      commit: () => {
+        this.requireIdle();
+        if (this.revision !== revision)
+          throw new Error("Stale field party transaction");
+        this.data = next;
+        this.revision++;
+      },
+    };
+  }
   /** Map initialization runs against this private draft. Publishing rebinds the
-   * same port to live state so later events keep a single inventory owner. */
-  prepareFieldInventory(): { port: FieldInventoryPort; commit(): boolean } {
+   * same ports to live state so later events keep a single state owner. */
+  prepareFieldState(): {
+    ports: { inventory: FieldInventoryPort; party: FieldPartyPort };
+    commit(): boolean;
+  } {
     this.requireIdle();
     const revision = this.revision;
     let data = this.snapshot(),
       generation = 0,
       published = false;
-    const port: FieldInventoryPort = {
+    const inventory: FieldInventoryPort = {
       prepare: (command) => {
         if (published) return this.prepareInventoryEvent(command);
         const { next, result } = this.projectInventoryEvent(data, command),
@@ -362,8 +416,24 @@ export class GameState {
         };
       },
     };
+    const party: FieldPartyPort = {
+      prepare: (command) => {
+        if (published) return this.preparePartyEvent(command);
+        const { next, ...projection } = this.projectPartyEvent(data, command),
+          version = generation;
+        return {
+          ...projection,
+          commit: () => {
+            if (published || generation !== version)
+              throw new Error("Stale candidate party transaction");
+            data = next;
+            generation++;
+          },
+        };
+      },
+    };
     return {
-      port,
+      ports: { inventory, party },
       commit: () => {
         if (published || this.active || this.revision !== revision)
           return false;
@@ -374,10 +444,20 @@ export class GameState {
       },
     };
   }
+  get activeParty() {
+    return activePartyMembers(this.data.party);
+  }
+  get battlePartyBlocker(): string | null {
+    const members = this.activeParty;
+    if (!members.length) return "当前编队没有成员，无法开始战斗";
+    if (members.some((member) => member.row !== "front"))
+      return "后排战斗规则尚未迁移";
+    return null;
+  }
   partyPlayers(): Combatant[] {
-    return this.data.party.map((id) => {
+    return this.activeParty.map(({ id }) => {
       const p = this.data.roster.find((p) => p.id === id)!;
-      const { equipment: _, ...progress } = p;
+      const { equipment: _, enabled: _enabled, ...progress } = p;
       return {
         ...structuredClone(this.definitions.get(id)!),
         ...structuredClone(progress),
@@ -529,9 +609,9 @@ export class GameState {
   }
   menuItemTargets(id: number): string[] {
     if (this.active) return [];
-    return this.data.party.filter(
-      (target) => this.previewItem(id, target) !== null,
-    );
+    return this.activeParty
+      .map(({ id }) => id)
+      .filter((target) => this.previewItem(id, target) !== null);
   }
   /** Menu eligibility and effects are projected again at confirmation. No effect
    * means no consumption; stock and the entire character projection commit once. */
@@ -582,6 +662,7 @@ export class GameState {
   }
   openBattle(encounterId: number): BattleLease {
     this.requireIdle();
+    if (this.battlePartyBlocker) throw new Error(this.battlePartyBlocker);
     integer(encounterId, 0x7fffffff, 1);
     const lease = Object.freeze({
       serial: this.data.completedBattles.length,
@@ -647,9 +728,10 @@ export class GameState {
         throw new Error("Invalid battle inventory consumption");
       stock.count -= used.count;
     }
+    const party = activePartyMembers(next.party);
     if (
-      result.players.length !== next.party.length ||
-      result.players.some((p, n) => p.id !== next.party[n])
+      result.players.length !== party.length ||
+      result.players.some((p, n) => p.id !== party[n]!.id)
     )
       throw new Error("Battle party identity changed");
     for (const player of result.players) {

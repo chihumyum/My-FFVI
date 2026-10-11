@@ -16,6 +16,7 @@ const controlIds = [
   "win-fixture",
   "save-fixture",
   "load-fixture",
+  "grant-equipment",
 ];
 
 async function initialize() {
@@ -28,6 +29,15 @@ async function initialize() {
   );
   if (!catalog.gameState.equipmentSystem)
     throw new Error("Equipment catalog is unavailable");
+  for (const definition of Object.values(
+    catalog.gameState.equipmentSystem.catalog.definitions,
+  )) {
+    if (definition.empty || definition.blockers.length) continue;
+    const option = document.createElement("option");
+    option.value = String(definition.id);
+    option.textContent = definition.name.replace(/<IC_[A-Z0-9_]+>/g, "");
+    $("grant-equipment-id").append(option);
+  }
   const fixtureField = structuredClone(field);
   const site = {
     script: "__equipment_probe",
@@ -86,7 +96,7 @@ async function initialize() {
       $("battle-projection").textContent = game.battle.players
         .map(
           (p) =>
-            `${p.name} · 攻击力 ${p.physical.attack} · 防御力 ${p.defense} · 魔法防御 ${p.magicDefense} · 最大 HP ${p.maxHp} / MP ${p.maxMp}`,
+            `${p.name} · 攻击力 ${p.physical.attack} · 耐力 ${p.vitality} · 防御力 ${p.defense} · 魔法防御 ${p.magicDefense} · 最大 HP ${p.maxHp} / MP ${p.maxMp}`,
         )
         .join("\n");
     } else {
@@ -101,6 +111,8 @@ async function initialize() {
     $("start-battle").disabled = busy || !game.checkpointReady;
     $("save-fixture").disabled = busy || !game.checkpointReady;
     $("load-fixture").disabled = busy || !saved || !!game.battle;
+    $("grant-equipment").disabled = busy || !game.checkpointReady;
+    $("grant-equipment-id").disabled = busy || !game.checkpointReady;
     for (const id of ["step-battle", "finish-battle", "win-fixture"])
       $(id).disabled = busy || game.battle?.phase !== "active";
   }
@@ -152,6 +164,16 @@ async function initialize() {
   const actions = {
     "reset-fixture": reset,
     "start-battle": start,
+    "grant-equipment": () => {
+      if (!game.checkpointReady) return;
+      const id = Number($("grant-equipment-id").value);
+      game.state.fieldInventory
+        .prepare({ kind: "grant-equipment", id, count: 1 })
+        .commit();
+      sync(
+        "共享库存已取得一件检查装备。可换装、记录检查点并进入战斗比较；正式开场和存档未写入。",
+      );
+    },
     "step-battle": () => {
       game.advance(410);
       sync("已推进 410 毫秒。");

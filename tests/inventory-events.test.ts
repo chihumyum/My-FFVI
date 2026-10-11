@@ -18,6 +18,8 @@ const tables = {
     { id: "201", type_id: "1", type_value: "88" },
     { id: "202", type_id: "1", type_value: "89" },
     { id: "303", type_id: "3", type_value: "88" },
+    { id: "304", type_id: "2", type_value: "88" },
+    { id: "305", type_id: "2", type_value: "89" },
     { id: "404", type_id: "9", type_value: "88" },
     { id: "505", type_id: "5", type_value: "1" },
   ],
@@ -25,6 +27,11 @@ const tables = {
     { id: "88", type_id: "1" },
     { id: "89", type_id: "2" },
   ],
+  "weapon.csv": [
+    { id: "88", type_id: "1" },
+    { id: "89", type_id: "2" },
+  ],
+  "armor.csv": [{ id: "88", type_id: "1" }],
   "product.csv": [
     { id: "91", group_id: "700", coefficient: "37", content_id: "0" },
   ],
@@ -107,9 +114,63 @@ test("inventory decoder preserves content identity and resolves fees by product 
   });
 });
 
+test("equipment event ownership keeps content, weapon and armor identities distinct", () => {
+  assert.deepEqual(inventoryOp("GetItem", [303, 2]), {
+    ...site,
+    kind: "inventory",
+    command: { kind: "grant-equipment", id: 303, count: 2 },
+    result: null,
+    dependencies: [
+      { table: "content.csv", id: 303 },
+      { table: "armor.csv", id: 88 },
+    ],
+  });
+  assert.deepEqual(inventoryOp("RemoveItem", [304, 3]), {
+    ...site,
+    kind: "inventory",
+    command: { kind: "remove-equipment", id: 304, count: 3 },
+    result: null,
+    dependencies: [
+      { table: "content.csv", id: 304 },
+      { table: "weapon.csv", id: 88 },
+    ],
+  });
+  assert.equal(decode("GetItem", [305, 1]).kind, "blocked");
+  assert.equal(
+    decode("GetItem", [303, 1], { ...tables, "armor.csv": [] }).kind,
+    "blocked",
+  );
+  assert.equal(
+    decode("RemoveItem", [304, 1], {
+      ...tables,
+      "content.csv": [
+        ...tables["content.csv"],
+        { id: "306", type_id: "2", type_value: "88" },
+      ],
+    }).kind,
+    "blocked",
+  );
+  const commands: FieldInventoryCommand[] = [];
+  executeInventoryEvent(
+    inventoryOp("GetItem", [303, 2]),
+    EventState.initialized(),
+    {
+      prepare(command) {
+        return {
+          result: null,
+          commit() {
+            commands.push(command);
+          },
+        };
+      },
+    },
+  );
+  assert.deepEqual(commands, [{ kind: "grant-equipment", id: 303, count: 2 }]);
+});
+
 test("missing, ambiguous, special and malformed inventory operands remain blockers", () => {
   for (const [name, values] of [
-    ["GetItem", [303, 1]],
+    ["GetItem", [305, 1]],
     ["GetItem", [404, 1]],
     ["RemoveItem", [505, 1]],
     ["GetItem", [201, -1]],

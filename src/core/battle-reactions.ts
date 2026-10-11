@@ -44,6 +44,12 @@ export function battleReaction(
   if (first.slot !== input.primarySlot)
     throw new Error("Unimplemented primary function reaction calculation");
   if (
+    !Number.isInteger(input.abilityId) ||
+    input.abilityId <= 0 ||
+    input.abilityId > 0x7fffffff
+  )
+    throw new Error("Missing received ability identity");
+  if (
     !Number.isInteger(input.systemId) ||
     input.systemId < 0 ||
     input.systemId > 0x7fffffff
@@ -56,5 +62,9 @@ export function battleReaction(
       throw new Error("Unimplemented excluded-ability recovery reaction");
     return null;
   }
-  return { counterReady: !first.missed, receivedSystemId: input.systemId };
+  return {
+    counterReady: !first.missed,
+    receivedAbilityId: input.abilityId,
+    receivedSystemId: input.systemId,
+  };
 }

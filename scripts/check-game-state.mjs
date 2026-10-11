@@ -20,7 +20,10 @@ const make = () =>
   );
 const owned = make(),
   initial = owned.snapshot();
-assert.deepEqual(initial.party, ["player:1", "player:31", "player:32"]);
+assert.deepEqual(
+  owned.activeParty.map((p) => p.id),
+  ["player:1", "player:31", "player:32"],
+);
 assert.equal(initial.gil, 3000);
 assert.deepEqual(initial.items, [{ id: 58, count: 1 }]);
 assert.equal(catalog.gameState.items[58].itemId, 57);

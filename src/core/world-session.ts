@@ -5,6 +5,7 @@ import {
   FieldGame,
   type MapTransitionStop,
   type FieldCheckpoint,
+  type FieldGameOptions,
 } from "./field.js";
 import { missingFieldPoses } from "./character-media.js";
 import { canonical } from "./canonical.js";
@@ -12,11 +13,9 @@ import { fieldCollisionRange, inCollisionRange } from "./collision.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState } from "./static-audio.js";
 import { checkpointKeys, checkpointInteger } from "./checkpoint-validation.js";
-import type { FieldInventoryPort } from "./inventory-event.js";
-
-export type WorldInventoryOwner = {
-  current: FieldInventoryPort;
-  prepare(): { port: FieldInventoryPort; commit(): boolean };
+export type WorldStateOwner = {
+  current: FieldGameOptions;
+  prepare(): { ports: FieldGameOptions; commit(): boolean };
 };
 
 type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount">;
@@ -157,7 +156,7 @@ type Ownership = {
   bgm: string;
   environment: string;
   catalogHash: string;
-  inventory?: { commit(): boolean };
+  owned?: { commit(): boolean };
 };
 
 /** Owns field lifetime. Hosts fetch and verify packages/images before committing a prepared map. */
@@ -178,14 +177,14 @@ export class WorldSession {
   constructor(
     private readonly initial: FieldContent,
     state = new EventState(),
-    private readonly inventory?: WorldInventoryOwner,
+    private readonly owned?: WorldStateOwner,
   ) {
     this.current = new FieldGame(
       initial,
       state,
       undefined,
       undefined,
-      inventory ? { inventory: inventory.current } : {},
+      owned?.current ?? {},
     );
   }
   get field(): FieldGame {
@@ -237,7 +236,7 @@ export class WorldSession {
     const next = FieldGame.restore(
       content,
       snapshot.field,
-      this.inventory ? { inventory: this.inventory.current } : {},
+      this.owned?.current ?? {},
     );
     this.current = next;
     this.location = structuredClone(loc);
@@ -280,13 +279,13 @@ export class WorldSession {
     )
       throw new Error("Environment media changed during map transition");
     const environment = from.environment.snapshot();
-    const inventory = this.inventory?.prepare();
+    const owned = this.owned?.prepare();
     const field = new FieldGame(
       content,
       state,
       new StaticAudioState(bgm),
       new StaticAudioState(environment),
-      inventory ? { inventory: inventory.port } : {},
+      owned?.ports ?? {},
     );
     const script = request.continuation || target.initializer;
     if (script) field.startEvent(script);
@@ -299,7 +298,7 @@ export class WorldSession {
       bgm: canonical(bgm),
       environment: canonical(environment),
       catalogHash: catalog.contentHash,
-      ...(inventory ? { inventory } : {}),
+      ...(owned ? { owned } : {}),
     });
     return prepared;
   }
@@ -315,7 +314,7 @@ export class WorldSession {
       ownership.environment !== canonical(this.current.environment.snapshot())
     )
       return false;
-    if (ownership.inventory && !ownership.inventory.commit()) return false;
+    if (ownership.owned && !ownership.owned.commit()) return false;
     this.transitions.push({
       from: this.current.content.map.identity!.mapId,
       to: value.request.request.mapId,

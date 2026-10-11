@@ -20,6 +20,12 @@ export type BattleAIOp =
   | { kind: "nop" | "sync" | "exit" | "end-table" }
   | { kind: "jump"; target: number }
   | { kind: "condition"; conditionId: number; target: number }
+  | {
+      kind: "received-ability-branch";
+      field: "id" | "systemId";
+      value: number;
+      target: number;
+    }
   | { kind: "level"; side: "player" | "enemy"; minimum: number; target: number }
   | { kind: "variable-assign"; index: number; value: number }
   | { kind: "variable-calc"; index: number; value: number; operator: Operator }
@@ -62,6 +68,8 @@ export type BattleAIState = {
   /** Native action-controller accounting, separate from the action-table row. */
   advancedActCount: number;
   guardianActIsDadaluma: boolean;
+  /** The current AI wake's source ability; entering SyncAI clears the receiver. */
+  receivedAbility: { id: number; systemId: number } | null;
 };
 export type BattleAIContext = {
   self: {
@@ -92,6 +100,7 @@ export type BattleAITurn = {
 export type BattleAIReaction = {
   /** A missed/Non calculation wakes received-ability AI, without counter readiness. */
   counterReady: boolean;
+  receivedAbilityId: number;
   receivedSystemId: number;
 };
 export class BattleAIError extends Error {
@@ -118,7 +127,12 @@ function route(
 ): BattleAITurn {
   const normalReady = wake === "normal";
   const trigger = typeof wake === "string" ? wake : "reaction";
-  const state = { ...current },
+  const state = {
+      ...current,
+      receivedAbility: current.receivedAbility
+        ? { ...current.receivedAbility }
+        : current.receivedAbility,
+    },
     acts: BattleAIAct[] = [],
     visited: number[] = [];
   const fail = (reason: string): never => {
@@ -135,6 +149,13 @@ function route(
   guarded(() => int32(state.advancedActCount));
   if (typeof state.guardianActIsDadaluma !== "boolean")
     fail("invalid action-controller loop state");
+  if (state.receivedAbility !== null) {
+    if (!state.receivedAbility) fail("missing received ability state");
+    guarded(() => int32(state.receivedAbility!.id));
+    guarded(() => int32(state.receivedAbility!.systemId));
+    if (state.receivedAbility.id <= 0 || state.receivedAbility.systemId < 0)
+      fail("invalid received ability state");
+  }
   const variableIndex = (index: number) => {
     guarded(() => int32(index));
     // Native operands <= 0 address the first cell, not a field variable bank.
@@ -145,8 +166,13 @@ function route(
     guarded(() => integerOperation(left, operator, right));
   if (program.kind !== "battle-ai-v4") fail("unsupported AI format");
   if (typeof wake !== "string") {
+    guarded(() => int32(wake.receivedAbilityId));
     guarded(() => int32(wake.receivedSystemId));
-    if (wake.receivedSystemId < 0 || typeof wake.counterReady !== "boolean")
+    if (
+      wake.receivedAbilityId <= 0 ||
+      wake.receivedSystemId < 0 ||
+      typeof wake.counterReady !== "boolean"
+    )
       fail("invalid reaction readiness");
   }
   if (program.blockers.length) fail(program.blockers.join("; "));
@@ -165,6 +191,13 @@ function route(
       program.instructions[state.pc]?.op.kind !== "sync"
     )
       fail("AI readiness requires a suspended SyncAI");
+    if (state.receivedAbility !== null)
+      fail("suspended SyncAI retained received ability state");
+    if (typeof wake !== "string")
+      state.receivedAbility = {
+        id: wake.receivedAbilityId,
+        systemId: wake.receivedSystemId,
+      };
     state.pc++;
     state.status = "running";
   } else if (state.status !== "running") fail("invalid AI initialization");
@@ -182,6 +215,7 @@ function route(
       state.turnCounter,
       state.advancedActCount,
       state.guardianActIsDadaluma,
+      state.receivedAbility,
       behavior.mode,
       behavior.variables,
     ]);
@@ -195,6 +229,9 @@ function route(
       case "blocked":
         fail(op.reason);
       case "sync":
+        // SyncAI 0x828fe0 calls controller ResetReadyFlag on its first clock;
+        // 0x15b8460 clears recevieAbility even when the previous wake missed.
+        state.receivedAbility = null;
         state.status = "waiting";
         return { trigger, state, behavior, acts, visited };
       case "exit":
@@ -207,6 +244,14 @@ function route(
         continue;
       case "condition":
         if (context.conditionIds.includes(op.conditionId)) {
+          state.pc = op.target + 1;
+          continue;
+        }
+        break;
+      case "received-ability-branch":
+        // Source getters 0x15b7e80/0x15b7ea0 return zero for no ability. These
+        // predicates have no HP, normal readiness or counter readiness gate.
+        if ((state.receivedAbility?.[op.field] ?? 0) === op.value) {
           state.pc = op.target + 1;
           continue;
         }
@@ -358,6 +403,7 @@ export function startBattleAI(
       turnCounter: 0,
       advancedActCount: 0,
       guardianActIsDadaluma: true,
+      receivedAbility: null,
     },
     context,
     "initial",

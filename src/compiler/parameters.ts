@@ -14,6 +14,7 @@ export const parameterLimitKeys = {
   mp: "MAX_MP",
   naturalMagic: "MAX_MAGIC",
   magic: "MAX_ABILITY_ATTACK",
+  vitality: "MAX_VITALITY",
   attack: "MAX_ATTACK",
   defense: "MAX_DEFENSE",
   magicDefense: "MAX_ABILITY_DEFENSE",
@@ -48,6 +49,7 @@ const commonColumns = {
   defense: "defense",
   magicDefense: "ability_defense",
   agility: "agility",
+  vitality: "vitality",
   evasion: "evasion_rate",
 } as const;
 function baseValues(row: BattleRow, player: boolean): ParameterValues {
@@ -70,9 +72,7 @@ export function compileParameterEquipment(
   const equipment: ParameterEquipment[] = slots.map(({ slot, contentId }) => {
     const content = reader.row("content.csv", contentId);
     const kind = { "2": "weapon", "3": "armor" }[content.values.type_id!] as
-      | "weapon"
-      | "armor"
-      | undefined;
+      "weapon" | "armor" | undefined;
     if (!kind)
       throw new Error(`Unresolved equipment content type: ${contentId}`);
     const item = reader.row(kind + ".csv", content.values.type_value!);
@@ -94,6 +94,7 @@ export function compileParameterEquipment(
         hp: int(r.max_hp_up),
         mp: int(r.max_mp_up),
         magic: int(r.magic),
+        vitality: int(r.vitality),
         agility: int(r.agility),
         weight: int(r.weight),
         evasion: int(r.evasion_rate),

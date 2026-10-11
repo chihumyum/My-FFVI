@@ -33,6 +33,7 @@ const zero = {
   hp: 0,
   mp: 0,
   magic: 0,
+  vitality: 0,
   attack: 0,
   defense: 0,
   magicDefense: 0,
@@ -42,14 +43,15 @@ const zero = {
   magicEvasion: 0,
 };
 const context = {
-  additional: { hp: 0, mp: 0, magic: 0, agility: 0, weight: 0 },
-  correction: { magic: 0, agility: 0 },
+  additional: { hp: 0, mp: 0, magic: 0, vitality: 0, agility: 0, weight: 0 },
+  correction: { magic: 0, vitality: 0, agility: 0 },
   temporary: zero,
   passive: { hp: 0, mp: 0, magicEvasion: 0 },
   condition601: false,
   twoHandMultiplier: 1,
 };
 const limits = compileParameterLimits(index);
+assert.equal(limits.values.vitality, 128);
 const players = [],
   blocked = [];
 for (const row of tables["character_status.csv"]) {
@@ -75,6 +77,28 @@ for (const row of tables["character_status.csv"]) {
     compiled,
     compilePlayerParameters(index, id, context, limits.values),
   );
+  const vitalityGear = Array.from({ length: 6 }, (_, slot) => {
+    const content = index.row(
+      "content.csv",
+      Number(row["content_id" + (slot + 1)]),
+    ).values;
+    return Number(
+      index.row(
+        content.type_id === "2" ? "weapon.csv" : "armor.csv",
+        content.type_value,
+      ).values.vitality,
+    );
+  }).reduce((sum, value) => sum + value, 0);
+  assert.equal(
+    compiled.confirmed.vitality,
+    Math.max(
+      0,
+      Math.min(
+        128,
+        Math.max(0, Math.min(128, Number(row.vitality))) + vitalityGear,
+      ),
+    ),
+  );
   players.push({
     characterId: id,
     ...compiled,
@@ -93,6 +117,10 @@ const enemies = tables["monster.csv"].map((row) => {
     confirmEnemyParameters(compiled.base, zero, limits.values),
   );
   assert.equal(compiled.base.magic, Number(row.ability_attack));
+  assert.equal(
+    compiled.confirmed.vitality,
+    Math.max(0, Math.min(128, Number(row.vitality))),
+  );
   return {
     monsterId: Number(row.id),
     initialCondition: row.initial_condition,

@@ -414,6 +414,10 @@ export async function compileOpeningBattle(root: string) {
   }
   unique("initialize_data.csv", "key_name", "INIT_GIL");
   for (const value of tables["initialize_data.csv"]!.filter((r) =>
+    /^INIT_CORPS_[1-4]$/.test(r.key_name!),
+  ))
+    row("initialize_data.csv", value.id!);
+  for (const value of tables["initialize_data.csv"]!.filter((r) =>
     /^INIT_ITEM_\d+$/.test(r.key_name!),
   )) {
     if (!/^INIT_ITEM_[1-5]$/.test(value.key_name!))

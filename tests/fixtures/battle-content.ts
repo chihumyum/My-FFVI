@@ -15,6 +15,7 @@ export function fixture(): BattleContent {
     hp: 80,
     mp: 8,
     magic: 20,
+    vitality: 30,
     attack: 20,
     defense: 30,
     magicDefense: 30,
@@ -37,7 +38,7 @@ export function fixture(): BattleContent {
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v15",
+    profile: "narshe-playability-v16",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -52,7 +53,15 @@ export function fixture(): BattleContent {
     },
     reactions: { counterLimit: 1, excludedAbilityIds: [] },
     initialAtb: { player: [100, 100], enemy: [0, 0] },
-    players: [unit, { ...structuredClone(unit), id: "b", name: "Second ally" }],
+    players: [
+      unit,
+      {
+        ...structuredClone(unit),
+        id: "b",
+        sourceId: 1001,
+        name: "Second ally",
+      },
+    ],
     enemies: [
       {
         ...structuredClone(unit),

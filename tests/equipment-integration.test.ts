@@ -40,7 +40,7 @@ test("equipment ownership includes inactive roster members and serializes compet
   assert.ok(
     game.state.equipmentInventory.every((entry) => entry.available === 0),
   );
-  initial.party = ["a"];
+  initial.party.slots[0][1].id = null;
   game.state.restore(initial);
 
   assert.equal(game.changeEquipment("a", 5, 5), true);
@@ -60,7 +60,10 @@ test("equipment ownership includes inactive roster members and serializes compet
     game.state.equipmentChoices("b", 5).some((choice) => choice.id === 501),
   );
   assert.equal(game.changeEquipment("b", 5, 501), true);
-  assert.deepEqual(game.state.snapshot().party, ["a"]);
+  assert.deepEqual(
+    game.state.activeParty.map((p) => p.id),
+    ["a"],
+  );
   const beforeSecondClaim = game.state.snapshot();
   assert.throws(
     () => game.changeEquipment("a", 5, 501),

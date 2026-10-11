@@ -68,7 +68,6 @@ export function compileEquipment(
     "trigger_ability_id",
     // These parameters are outside the shared confirmed-stat model. Preserve
     // the identity without silently dropping a nonzero equipment contribution.
-    "vitality",
     "intelligence",
     "spirit",
     "ability_disturbed_rate",

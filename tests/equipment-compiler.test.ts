@@ -84,6 +84,7 @@ function fixture() {
       hp: 100,
       mp: 25,
       magic: 40,
+      vitality: 25,
       attack: 20,
       strength: 30,
       defense: 30,
@@ -212,6 +213,19 @@ test("equipment compiler retains content namespaces, exact source dependencies a
     );
 });
 
+test("source vitality equipment is admitted with its exact numeric contribution", () => {
+  const f = fixture();
+  f.tables["weapon.csv"]![1]!.vitality = "7";
+  f.tables["armor.csv"]![4]!.vitality = "-3";
+  const compiled = f.compile().catalog;
+  assert.deepEqual(compiled.definitions[101]!.blockers, []);
+  assert.deepEqual(compiled.definitions[201]!.blockers, []);
+  assert.equal(compiled.definitions[101]!.parameter!.values.vitality, 7);
+  assert.equal(compiled.definitions[201]!.parameter!.values.vitality, -3);
+  delete f.tables["weapon.csv"]![1]!.vitality;
+  assert.throws(f.compile, /integer/i);
+});
+
 test("unknown effects preserve inventory identity but missing references, ambiguous empties and invalid flags fail compilation", () => {
   const f = fixture(),
     weapon = f.tables["weapon.csv"]![1]!;
@@ -226,10 +240,10 @@ test("unknown effects preserve inventory identity but missing references, ambigu
   assert.ok(
     blocked.blockers.some((b) => b.includes("wear_function_group_id=47")),
   );
-  weapon.vitality = "2";
+  weapon.intelligence = "2";
   assert.ok(
     compileEquipment(f.reader(), 101, "Synthetic").definition.blockers.some(
-      (b) => b.includes("vitality=2"),
+      (b) => b.includes("intelligence=2"),
     ),
   );
   f.tables["parts_group.csv"]![0]!.equip1_possible = "2";
@@ -251,6 +265,7 @@ test("source parameter contexts retain uncapped explicit growth and contain no s
     hp: 0,
     mp: 0,
     magic: 0,
+    vitality: 0,
     attack: 0,
     defense: 0,
     magicDefense: 0,
@@ -263,8 +278,15 @@ test("source parameter contexts retain uncapped explicit growth and contain no s
     f.reader(),
     1,
     {
-      additional: { hp: 20000, mp: 3000, magic: 2, agility: 1, weight: 0 },
-      correction: { magic: 1, agility: 2 },
+      additional: {
+        hp: 20000,
+        mp: 3000,
+        magic: 2,
+        vitality: 0,
+        agility: 1,
+        weight: 0,
+      },
+      correction: { magic: 1, vitality: 0, agility: 2 },
       temporary: zero,
       passive: { hp: 0, mp: 0, magicEvasion: 0 },
       condition601: false,
