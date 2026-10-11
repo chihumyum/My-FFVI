@@ -1,6 +1,6 @@
 # 能力函数分派与受限效果执行
 
-2026-10-11。当前迁移恢复了 `ability → function_group → function.type_id → FF6 provider` 的引用链，并用它取代技能 ID 分类。当前为 `narshe-playability-v5`，共用中性魔法与 content flags 见 [魔法计算](magic-calculation.md)，资格/受限状态见 [状态动作](battle-conditions.md)；下文保留 v3/v4 分派批次的范围和历史收据。完整命中、状态、反射、元素、角色能力解锁和 AI 尚未完成。
+2026-10-11。当前迁移恢复了 `ability → function_group → function.type_id → FF6 provider` 的引用链，并用它取代技能 ID 分类。当前为 `narshe-playability-v6`，共用物理与选定单手参数见 [物理计算](physical-calculation.md)，共用中性魔法与 content flags 见 [魔法计算](magic-calculation.md)，资格/受限状态见 [状态动作](battle-conditions.md)；下文保留 v3/v4 分派批次的范围和历史收据。完整命中、状态、反射、元素、角色能力解锁和 AI 尚未完成。
 
 ## 来源依据
 

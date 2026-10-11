@@ -61,7 +61,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v5"
+      content.profile !== "narshe-playability-v6"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -164,7 +164,7 @@ export class BattleGame {
           : this.content.commands[command]!.forbiddenConditionIds,
       ) &&
       !(
-        actor.side === "player" &&
+        !actor.physical &&
         ability.plan.effects.some((e) => e.kind === "physical")
       )
     );
@@ -194,7 +194,7 @@ export class BattleGame {
     )
       return [];
     if (
-      actor.side === "player" &&
+      !actor.physical &&
       ability.plan.effects.some((e) => e.kind === "physical")
     )
       return [];

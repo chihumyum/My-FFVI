@@ -1,4 +1,10 @@
 import {
+  calculateNeutralPhysical,
+  validateNeutralPhysical,
+  type PhysicalRules,
+  type PhysicalParameters,
+} from "./physical.js";
+import {
   calculateNeutralMagic,
   validateNeutralMagic,
   type MagicRules,
@@ -41,7 +47,7 @@ export type AbilityEffect =
 export type DevelopmentAbilityPlan = {
   effects: AbilityEffect[];
   target: "ally" | "enemy" | "self" | "either";
-  multiplier: number;
+  physical: PhysicalRules | null;
   magic: MagicRules | null;
 };
 export type NumericalEffectResult = {
@@ -50,6 +56,7 @@ export type NumericalEffectResult = {
   recovery: boolean;
   amount: number;
   missed: boolean;
+  critical?: boolean;
 };
 export type AbilityEffectResult =
   | NumericalEffectResult
@@ -68,7 +75,12 @@ export type AbilityEffectResult =
 export function calculateDevelopmentEffects(
   plan: DevelopmentAbilityPlan,
   power: number,
-  actor: MagicParticipant & { level: number; attack: number; magic: number },
+  actor: MagicParticipant & {
+    level: number;
+    attack: number;
+    magic: number;
+    physical?: PhysicalParameters | null;
+  },
   target: MagicParticipant & {
     defense: number;
     magicDefense: number;
@@ -79,10 +91,6 @@ export function calculateDevelopmentEffects(
 ): NumericalEffectResult[] {
   // Preflight every effect before consuming even the first random value.
   for (const effect of plan.effects) {
-    if (effect.kind === "physical" && actor.side !== "enemy")
-      throw new Error(
-        "Player physical formula is outside the development profile",
-      );
     if (
       !["physical", "magic", "recovery"].includes(effect.kind) ||
       (effect.kind === "recovery" &&
@@ -91,6 +99,19 @@ export function calculateDevelopmentEffects(
     )
       throw new Error("Unimplemented ability effect");
   }
+  const physicalInput = () => {
+    if (!plan.physical || !actor.physical)
+      throw new Error("Missing physical calculation inputs");
+    return {
+      rules: plan.physical,
+      power,
+      actor: { ...actor.physical, side: actor.side, level: actor.level },
+      target,
+      targetCount: 1,
+    };
+  };
+  if (plan.effects.some((e) => e.kind === "physical"))
+    validateNeutralPhysical(physicalInput());
   const needsMagic = plan.effects.some(
     (e) =>
       e.kind === "magic" ||
@@ -115,25 +136,12 @@ export function calculateDevelopmentEffects(
   return plan.effects.map((effect): NumericalEffectResult => {
     let amount: number;
     if (effect.kind === "physical") {
-      // Retained Guard branch; hit, rounding and multiplier order are provisional.
-      if (randomInt(0, 99) < Math.min(100, target.evasion))
-        return {
-          slot: effect.slot,
-          resource: "hp",
-          recovery: false,
-          amount: 0,
-          missed: true,
-        };
-      const base = Math.trunc(
-        ((randomInt(56, 63) + 4 * actor.attack) * actor.level * actor.level) /
-          256,
-      );
-      const varied =
-        Math.trunc((base * plan.multiplier * randomInt(224, 255)) / 256) + 1;
-      amount = Math.max(
-        1,
-        Math.trunc(((255 - target.defense) * varied) / 256) + 1,
-      );
+      return {
+        slot: effect.slot,
+        resource: "hp",
+        recovery: false,
+        ...calculateNeutralPhysical(physicalInput(), randomInt),
+      };
     } else if (effect.kind === "recovery" && effect.calculation === "fixed") {
       // GetFixedRecoveryStatus 0x3D8660, ability (not item) branch, no conditions.
       amount = power;

@@ -12,6 +12,7 @@ function fixture(): BattleContent {
     name: "Synthetic ally",
     side: "player",
     level: 2,
+    physical: { attack: 20, strength: 30, accuracy: 100, criticalRate: 0 },
     hp: 80,
     mp: 8,
     magic: 20,
@@ -35,7 +36,7 @@ function fixture(): BattleContent {
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v5",
+    profile: "narshe-playability-v6",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -105,7 +106,7 @@ function fixture(): BattleContent {
         plan: {
           effects: [{ slot: 1, kind: "magic" }],
           target: "enemy",
-          multiplier: 1,
+          physical: null,
           magic: { accuracy: 100, contentFlags: [1], forceDefense: false },
         },
         blockers: [],
@@ -136,7 +137,7 @@ function fixture(): BattleContent {
             { slot: 1, kind: "recovery", resource: "hp", calculation: "magic" },
           ],
           target: "ally",
-          multiplier: 1,
+          physical: null,
           magic: { accuracy: 100, contentFlags: [1], forceDefense: false },
         },
         blockers: [],
@@ -195,7 +196,11 @@ function fixture(): BattleContent {
         plan: {
           effects: [{ slot: 1, kind: "physical" }],
           target: "either",
-          multiplier: 1,
+          physical: {
+            normalAttack: true,
+            multiplyPercent: null,
+            contentFlags: [],
+          },
           magic: null,
         },
         blockers: [],
@@ -245,7 +250,7 @@ function conditionFixture() {
     wait: 0,
     plan: {
       target: "either",
-      multiplier: 1,
+      physical: null,
       magic: null,
       effects: [{ slot: 1, kind: "recover-condition", conditionIds: [301] }],
     },
@@ -257,7 +262,7 @@ function conditionFixture() {
     wait: 0,
     plan: {
       target: "either",
-      multiplier: 1,
+      physical: null,
       magic: null,
       effects: [
         {
@@ -272,6 +277,49 @@ function conditionFixture() {
   };
   return f;
 }
+test("player physical goes through command, cost and target settlement with deterministic replay", () => {
+  const f = fixture();
+  f.players[0]!.abilities = [13];
+  f.commands[100]!.abilityIds.push(13);
+  f.abilities[13]!.cost = 2;
+  for (const e of f.enemies) e.hp = 100;
+  const run = (parts: number[]) => {
+    const b = new BattleGame(f, 11);
+    assert.equal(b.command("a", 13, "e1", 100), true);
+    for (const dt of parts) b.advance(dt);
+    assert.equal(b.players[0]!.mp, 6);
+    assert.ok(b.enemies[0]!.hp < 100);
+    assert.equal(b.events.filter((e) => e.text.includes("点伤害")).length, 1);
+    return { combatants: b.combatants, events: b.events, action: b.action };
+  };
+  assert.deepEqual(run([900]), run(Array(90).fill(10)));
+});
+test("missing physical inputs block selection, and invalid arithmetic cannot partially commit", () => {
+  const f = fixture();
+  f.players[0]!.abilities = [13];
+  f.commands[100]!.abilityIds.push(13);
+  f.players[0]!.physical = null;
+  let b = new BattleGame(f, 11);
+  assert.equal(b.canUse("a", 13), false);
+  assert.deepEqual(b.targets("a", 13), []);
+  assert.equal(b.command("a", 13, "e1"), false);
+  f.players[0]!.physical = {
+    attack: 20,
+    strength: 30,
+    accuracy: 100,
+    criticalRate: 0,
+  };
+  f.abilities[13]!.plan!.physical!.contentFlags = [777];
+  f.abilities[13]!.cost = 2;
+  b = new BattleGame(f, 11);
+  const before = b.combatants.map((c) => ({ hp: c.hp, mp: c.mp }));
+  assert.equal(b.command("a", 13, "e1"), true);
+  assert.throws(() => b.advance(500), /Unimplemented physical/);
+  assert.deepEqual(
+    b.combatants.map((c) => ({ hp: c.hp, mp: c.mp })),
+    before,
+  );
+});
 test("magic misses spend MP once and replay with the same later random choices", () => {
   const f = fixture();
   f.abilities[10]!.cost = 3;
@@ -391,7 +439,7 @@ test("compound recovery commits both resources once and consumes one action cost
   a.power = 50;
   a.plan = {
     target: "self",
-    multiplier: 1,
+    physical: null,
     magic: null,
     effects: [
       { slot: 1, kind: "recovery", resource: "hp", calculation: "fixed" },

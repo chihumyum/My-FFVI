@@ -1,3 +1,8 @@
+import {
+  compilePhysicalLimits,
+  compilePlayerPhysical,
+  compileEnemyPhysical,
+} from "./physical-parameters.js";
 import { hash, record } from "./content.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { tableInteger as int, type compileOpeningBattle } from "./battle.js";
@@ -93,6 +98,13 @@ export async function compileOpeningPlayable(
     26,
     name,
   ).command;
+  const physicalLimits = compilePhysicalLimits(parameterReader).values;
+  const noPhysicalTemporary = {
+    attack: 0,
+    strength: 0,
+    accuracy: 0,
+    criticalRate: 0,
+  };
   const parameterLimits = compileParameterLimits(parameterReader).values;
   // Explicit opening-checkpoint inputs, NOT defaults for arbitrary characters,
   // earned growth, equipment abilities or status effects.
@@ -130,6 +142,8 @@ export async function compileOpeningPlayable(
   }
   const players: CombatantDefinition[] = source.initialParty.map((c) => {
     const r = row("character_status.csv", c.characterId);
+    if (int(r.corps) !== 1)
+      throw new Error("Physical profile requires front row");
     if (int(r.initial_condition_group))
       throw new Error("Unimplemented initial player conditions");
     for (let slot = 1; slot <= 6; slot++) {
@@ -138,9 +152,21 @@ export async function compileOpeningPlayable(
         equipment.type_id === "2" ? "weapon.csv" : "armor.csv",
         equipment.type_value!,
       );
+      if (item.process_prog !== "None" || (slot >= 5 && item.type_id !== "2"))
+        throw new Error("Unimplemented physical equipment provider");
       for (const key of [
         "wear_condition_group_id",
         "wear_function_group_id",
+        "trigger_ability_id",
+        ...(equipment.type_id === "2"
+          ? [
+              "attribute_id",
+              "attribute_group_id",
+              "effective_species",
+              "two_handed_flag",
+              "back_flag",
+            ]
+          : ["resistance_attribute", "resistance_species"]),
         equipment.type_id === "2"
           ? "additional_condition_group_id"
           : "resistance_condition",
@@ -170,6 +196,17 @@ export async function compileOpeningPlayable(
       name: name(r.mes_id_name!),
       side: "player",
       level: int(r.lv),
+      physical: compilePlayerPhysical(
+        parameterReader,
+        c.characterId,
+        {
+          selectedArm: 1,
+          additionalStrength: 0,
+          correctionStrength: 0,
+          temporary: noPhysicalTemporary,
+        },
+        physicalLimits,
+      ).confirmed,
       ...parameters,
       exp: int(r.exp),
       gil: 0,
@@ -192,6 +229,12 @@ export async function compileOpeningPlayable(
   for (const encounter of source.encounters) {
     const enemies: CombatantDefinition[] = encounter.enemies.map((e) => {
       const r = row("monster.csv", e.monsterId);
+      if (
+        ["attack_attribute", "attack_plus", "attack_plus_grop"].some((k) =>
+          int(r[k]),
+        )
+      )
+        throw new Error("Unimplemented enemy physical modifier");
       if (int(r.resistance_condition))
         throw new Error("Unimplemented enemy resistance input");
       const parameters = compileEnemyParameters(
@@ -278,6 +321,12 @@ export async function compileOpeningPlayable(
         name: name(r.mes_id_name!),
         side: "enemy",
         level: int(r.lv),
+        physical: compileEnemyPhysical(
+          parameterReader,
+          e.monsterId,
+          noPhysicalTemporary,
+          physicalLimits,
+        ).confirmed,
         ...parameters,
         exp: int(r.exp),
         gil: int(r.gill),
@@ -316,7 +365,7 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v5",
+    profile: "narshe-playability-v6",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,

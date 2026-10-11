@@ -283,6 +283,25 @@
         "build/reports/magic-check.json#24d2586bb40f56c3c4375522410486f8ae03f6a24949b8086301cebf9803c3f5",
         "docs/magic-calculation.md"
       ]
+    },
+    {
+      "id": "narshe:development-neutral-physical",
+      "subject": "narshe",
+      "predicate": "migration.neutralPhysical",
+      "value": "Development v6 replaces the provisional enemy physical formula and supports player selected-arm parameters, strength, physical variance-before-hit, integer multiply and ordinary critical draws. Source abilities 1/399 pass controlled BattleGame actions; 181 candidates have isolated scalar checks. Browser enemy attacks, evasion, recovery, beams, victory and field return passed. No new story command, region, AI, numerical status, equipment effect or original-parity claim.",
+      "when": {
+        "battleProfile": "narshe-playability-v6"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0xa97b20 PhysicalExecution",
+        "GameAssembly.dll:RVA 0x534d90 GetArmConfirmedAttack",
+        "GameAssembly.dll:RVA 0x533df0 ConfirmedPower",
+        "GameAssembly.dll:RVA 0x85e170 IsNormalAttackAbility",
+        "build/reports/physical-check.json#6242d078dd85e466d1db4412874f1887cf58900abbb9572f2c8d6e139806f39c",
+        "docs/physical-calculation.md"
+      ]
     }
   ],
   "assets": []

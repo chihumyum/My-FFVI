@@ -14,6 +14,17 @@ import type { AbilityDefinition } from "../core/battle-content.js";
 import { compileContentFlags } from "./content-flags.js";
 
 type Reader = ConditionReader;
+/** SerialBattleUtility 0x85e170; type and ID arrays recovered from 0x85f000.
+ * Source-specific classification stays in the compiler, not damage execution. */
+export function isSourceNormalAttack(abilityId: number, typeId: number) {
+  return (
+    [4, 16, 608].includes(typeId) ||
+    [
+      377, 396, 399, 400, 401, 402, 403, 405, 422, 433, 466, 468, 475, 497, 524,
+      550, 585, 619,
+    ].includes(abilityId)
+  );
+}
 function int(value: string | undefined) {
   const parsed = tableInteger(value);
   if (parsed < -2147483648 || parsed > 2147483647)
@@ -187,7 +198,7 @@ export function compileDevelopmentAbility(
     !effects.every((e) => e.kind === "recovery" && e.calculation === "fixed")
   )
     blockers.push("unresolved multi-effect sequencing");
-  let multiplier = 1;
+  let multiplyPercent: number | null = null;
   if (
     program.process.key === "multiply" &&
     effects.length === 1 &&
@@ -195,14 +206,14 @@ export function compileDevelopmentAbility(
     program.process.values[0] > 0 &&
     zero(program.process.values.slice(1))
   ) {
-    multiplier = program.process.values[0] / 100;
-    limitations.push("physical multiply order remains provisional");
+    multiplyPercent = program.process.values[0];
   } else if (program.process.key !== "None" || !zero(program.process.values)) {
     blockers.push(
       `unresolved process ${program.process.key}(${program.process.values.join(",")})`,
     );
   }
   const r = program.rules;
+  const physicalOnly = effects.length === 1 && effects[0]!.kind === "physical";
   const conditionOnly =
     effects.length === 1 &&
     ["add-condition", "recover-condition"].includes(effects[0]!.kind);
@@ -223,13 +234,17 @@ export function compileDevelopmentAbility(
     if (r[key] !== 0) blockers.push(`unresolved ${key}=${r[key]}`);
   if (
     r.accuracy_rate !== 100 &&
-    !((conditionOnly || magicOnly) && r.accuracy_rate! >= 0)
+    !((conditionOnly || magicOnly || physicalOnly) && r.accuracy_rate! >= 0)
   )
     blockers.push(`unresolved accuracy_rate=${r.accuracy_rate}`);
-  const allowedFlags = conditionOnly ? [] : magicOnly ? [1, 2, 5] : [1];
+  const allowedFlags = conditionOnly
+    ? []
+    : magicOnly || physicalOnly
+      ? [1, 2, 5]
+      : [1];
   if (program.contentFlags.some((id) => !allowedFlags.includes(id)))
     blockers.push(`unresolved content flags=${program.contentFlags.join(",")}`);
-  else if (program.contentFlags.length && !magicOnly)
+  else if (program.contentFlags.length && !magicOnly && !physicalOnly)
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
@@ -262,6 +277,10 @@ export function compileDevelopmentAbility(
   limitations.push(
     "only admitted silence behavior; no equipment-added functions, undead or Runic overrides",
   );
+  if (physicalOnly)
+    limitations.push(
+      "front rows, neutral affinities, selected single arm; no physical status/accessory/weapon modifiers",
+    );
   if (conditionOnly && attribute !== 0)
     blockers.push("unresolved condition attribute");
   if (conditionOnly && [290, 680, 681, 1333].includes(abilityId))
@@ -275,7 +294,13 @@ export function compileDevelopmentAbility(
     : {
         effects,
         target: target!,
-        multiplier,
+        physical: physicalOnly
+          ? {
+              normalAttack: isSourceNormalAttack(abilityId, r.type_id!),
+              multiplyPercent,
+              contentFlags: [...program.contentFlags],
+            }
+          : null,
         magic: magicOnly
           ? {
               accuracy: r.accuracy_rate!,

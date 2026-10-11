@@ -195,6 +195,29 @@ test("fixed HP and MP effects need neither a magic formula nor a random draw", (
     { slot: 3, resource: "mp", recovery: true, amount: 50, missed: false },
   ]);
 });
+test("physical admission retains integer multiply and source normal-attack semantics", () => {
+  const f = fixture();
+  f.functions[0]!.type_id = "2";
+  f.group.function1_value1 = f.group.function1_value2 = "0";
+  f.group.function3_id =
+    f.group.function3_value1 =
+    f.group.function3_value2 =
+      "0";
+  f.ability.accuracy_rate = "17"; // Physical uses actor accuracy, not this field.
+  f.ability.process_prog = "multiply";
+  f.ability.data_a = "150";
+  f.flags[0]!.content_flag_id = "5";
+  f.ability.content_flag_group_id = "11";
+  assert.deepEqual(f.compile().plan!.physical, {
+    normalAttack: false,
+    multiplyPercent: 150,
+    contentFlags: [5],
+  });
+  f.ability.type_id = "4";
+  assert.equal(f.compile().plan!.physical!.normalAttack, true);
+  f.ability.data_b = "1";
+  assert.equal(f.compile().plan, null);
+});
 test("the whole effect plan is preflighted before any RNG or partial calculation", () => {
   let draws = 0;
   assert.throws(
@@ -206,7 +229,7 @@ test("the whole effect plan is preflighted before any RNG or partial calculation
             { slot: 2, kind: "physical" },
           ],
           target: "enemy",
-          multiplier: 1,
+          physical: null,
           magic: { accuracy: 100, contentFlags: [], forceDefense: false },
         },
         40,
@@ -223,7 +246,7 @@ test("the whole effect plan is preflighted before any RNG or partial calculation
           return 0;
         },
       ),
-    /Player physical/,
+    /Missing physical/,
   );
   assert.equal(draws, 0);
 });

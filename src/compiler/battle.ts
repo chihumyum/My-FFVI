@@ -5,6 +5,7 @@ import { hash } from "./content.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import type { AtbRules } from "../core/atb.js";
 import { tableInteger } from "./table.js";
+import { physicalLimitKeys } from "./physical-parameters.js";
 import { parameterLimitKeys } from "./parameters.js";
 import { compileConditionCatalog } from "./conditions.js";
 export { tableInteger } from "./table.js";
@@ -357,7 +358,10 @@ export async function compileOpeningBattle(root: string) {
   unique("initialize_data.csv", "key_name", "INIT_GIL");
   unique("game_constant_int.csv", "key_name", "ACCUMULATION_ATB_NORMAL");
   unique("game_constant_int.csv", "key_name", "ENEMY_ACCUMULATION_ATB_NORMAL");
-  for (const key of Object.values(parameterLimitKeys))
+  for (const key of [
+    ...Object.values(parameterLimitKeys),
+    ...Object.values(physicalLimitKeys),
+  ])
     unique("game_constant_int.csv", "key_name", key);
   const constant = (key: string) =>
     tableInteger(

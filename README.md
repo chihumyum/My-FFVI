@@ -17,6 +17,8 @@
 - [核心机制现状与优先次序](docs/core-mechanics.md)
 - [角色与敌人数值确认](docs/character-parameters.md)
 - [技能函数分派与效果执行](docs/ability-dispatch.md)
+- [普通物理攻击与选定手槽参数](docs/physical-calculation.md)
+- [普通魔法与计算型恢复](docs/magic-calculation.md)
 - [共用事件状态与控制流](docs/event-vm.md)
 - [共用实体组与地图生命周期](docs/map-lifecycle.md)
 - [共用碰撞与斜坡批次](docs/collision.md)
@@ -53,6 +55,8 @@ npm run game:check
 npm run playable:check
 npm run parameters:check
 npm run abilities:check
+npm run physical:check
+npm run magic:check
 npm run check
 .venv/bin/python -m unittest discover -s tools/tests
 npm run dev

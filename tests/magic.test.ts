@@ -135,7 +135,7 @@ test("numerical effect adapter passes an actual miss through instead of spending
     {
       effects: [{ slot: 3, kind: "magic" }],
       target: "enemy",
-      multiplier: 1,
+      physical: null,
       magic: i.rules,
     },
     i.power,

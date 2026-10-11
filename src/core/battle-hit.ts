@@ -11,20 +11,20 @@ export function drawBattleRandom(
   return value;
 }
 
-/** Shared arithmetic in FF6 MagicExecution and AddConditionExection, AFTER
- * their distinct immunity, resistance and condition checks. Native MEva is
+/** Shared arithmetic in FF6 physical, magic and condition calculations, AFTER
+ * their distinct immunity, resistance and condition checks. Native evasion is
  * not a percentage. A rate of 255 skips the hit draw entirely. */
-export function magicHit(
+export function accuracyHit(
   accuracy: number,
-  magicEvasion: number,
+  evasion: number,
   random: BattleRandom,
 ): boolean {
-  for (const value of [accuracy, magicEvasion])
+  for (const value of [accuracy, evasion])
     if (!Number.isInteger(value) || value < 0 || value > 0x7fffffff)
-      throw new Error("Invalid magic hit input");
+      throw new Error("Invalid accuracy hit input");
   const rate = Math.min(255, accuracy);
   if (rate === 255) return true;
-  const chance = Math.trunc(Math.imul((128 - magicEvasion) * 2, rate) / 256);
+  const chance = Math.trunc(Math.imul((128 - evasion) * 2, rate) / 256);
   const draw = drawBattleRandom(random, 0, 255);
   return chance > Math.trunc((draw * 100) / 256);
 }

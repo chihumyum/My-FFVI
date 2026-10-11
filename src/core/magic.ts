@@ -1,4 +1,8 @@
-import { drawBattleRandom, magicHit, type BattleRandom } from "./battle-hit.js";
+import {
+  drawBattleRandom,
+  accuracyHit,
+  type BattleRandom,
+} from "./battle-hit.js";
 
 export type MagicRules = {
   accuracy: number;
@@ -75,7 +79,7 @@ export function calculateNeutralMagic(
   const base = validateNeutralMagic(input);
   const { rules, target, actor, recovery, targetCount } = input;
   if (
-    !magicHit(
+    !accuracyHit(
       rules.contentFlags.includes(1) ? 255 : rules.accuracy,
       target.magicEvasion,
       random,

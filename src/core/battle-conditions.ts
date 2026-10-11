@@ -1,5 +1,5 @@
 import { ConditionRules, type ConditionCatalog } from "./conditions.js";
-import { magicHit } from "./battle-hit.js";
+import { accuracyHit } from "./battle-hit.js";
 
 /** Only behavior functions whose state dependencies are implemented are admitted.
  * The full master catalog remains available for references and conflict rules. */
@@ -34,7 +34,7 @@ export function conditionHit(
   magicEvasion: number,
   randomInt: (min: number, max: number) => number,
 ): boolean {
-  return magicHit(accuracy, magicEvasion, randomInt);
+  return accuracyHit(accuracy, magicEvasion, randomInt);
 }
 
 /** Bounded battle behavior, not a general status engine. Silence has no periodic
