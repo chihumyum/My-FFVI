@@ -8,6 +8,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const index = process.argv.indexOf("--build-dir");
 const build = resolve(root, index < 0 ? "dist" : process.argv[index + 1]);
 const { loadCorpus } = await import(pathToFileURL(build + "/src/compiler/corpus.js"));
+const { loadSystemMessages } = await import(pathToFileURL(build + "/src/compiler/system-messages.js"));
 const { compileTreasureInventory, compileTreasureInventoryLimits, compileTreasureBoxInstruction } =
   await import(pathToFileURL(build + "/src/compiler/treasure-inventory.js"));
 const { planTreasureInventory, checkTreasureCapacity } =
@@ -23,6 +24,8 @@ const native = JSON.parse(await readFile(root + "build/reports/treasure-inventor
 assert.equal(native.nativeSha256, "1a7e12c90c6a734e17dda507dd6ab7555090dff6a1e96f3473a90c29916ca6dc");
 assert.equal(native.semanticsVerified, false);
 const corpus = await loadCorpus(root);
+const systemMessages = await loadSystemMessages(root, corpus.manifest.parentSourceSetHash, corpus.manifest.sources);
+const messages = { ...corpus.messages, system_zhc: systemMessages.messages };
 assert.ok(corpus.manifest.sources.some((s) => s.file === "GameAssembly.dll" && s.sha256 === native.nativeSha256));
 const constant = (key) => {
   const rows = corpus.tables["game_constant_int.csv"].filter((r) => r.key_name === key);
@@ -41,13 +44,13 @@ for (const asset of corpus.assets) {
       assert.equal(new Set(object.properties.map((p) => p.name)).size, object.properties.length);
       const source = { ...asset.source, sourceSetHash: corpus.sourceSetHash, pointer: `/layers/${li}/objects/${oi}` };
       const definition = compileTreasureInventory(p, corpus.tables, source);
-      fieldGroup ??= compileEntityGroup(basename(asset.source.assetPath, ".json"), asset, corpus.tables);
+      fieldGroup ??= compileEntityGroup(basename(asset.source.assetPath, ".json"), asset, corpus.tables, messages);
       const fieldEntities = fieldGroup.entities.filter((e) => e.source.pointer === source.pointer);
       assert.equal(fieldEntities.length, 1, `${source.assetPath} ${source.pointer}`);
       const fieldEntity = fieldEntities[0];
       assert.deepEqual(fieldEntity.treasure, Object.fromEntries(Object.entries(definition).filter(([key]) => key !== "source")));
       assert.equal(fieldEntity.mapObject.collision, p.collision);
-      assert.equal(fieldEntity.mapObject.interaction.kind, "blocked");
+      assert.equal(fieldEntity.mapObject.interaction.kind, "treasure");
       const fieldBlockers = fieldGroup.blockers.filter((b) => b.source.pointer === source.pointer);
       assert.equal(fieldBlockers.some((b) => /Ordinary treasure/.test(b.reason)), false);
       const rawContent = corpus.tables["content.csv"].filter((r) => +r.id === p.content_id);
@@ -99,9 +102,7 @@ for (const asset of corpus.assets) {
     const site = { script: basename(asset.source.assetPath, ".json"), index: i,
       source: { ...asset.source, pointer: `/Mnemonics/${i}` } };
     const op = decodeFieldOp(mnemonic, site, {}, corpus.tables);
-    if (request.message) {
-      assert.equal(op.kind, "blocked"); assert.match(op.reason, /message tasks/);
-    } else assert.deepEqual(op, { ...site, ...request });
+    assert.deepEqual(op, { ...site, ...request });
     instructions.push({ asset: asset.id, source: site.source, index: i, request, op });
   }
 }
@@ -114,7 +115,9 @@ for (const instruction of instructions) {
   // This binds the local source entity definition; active-group/story reachability remains unknown.
 }
 const fieldHostChecks = [];
-for (const instruction of instructions.filter((i) => i.op.kind === "treasure-box")) {
+// Message tasks are exercised separately by check-treasure-task. Preserve this
+// lane's original repeated message=false grant/save probes.
+for (const instruction of instructions.filter((i) => !i.request.message)) {
   const e = entities.find((e) => e.source.assetPath === instruction.propertySource.assetPath &&
     e.source.pointer === instruction.propertySource.pointer && e.source.file === instruction.propertySource.file);
   assert.deepEqual(e.fieldBlockers, []);
@@ -184,7 +187,8 @@ const report = {
   summary: { entityDefinitions: entities.length, capacityProbes: entities.length * 2,
     explicitInstructions: instructions.length, messageFalse: 22, messageTrue: 3,
     admittedFieldEntities: entities.filter((e) => e.fieldBlockers.length === 0).length,
-    compiledMessageFalse: instructions.filter((i) => i.op.kind === "treasure-box").length,
+    compiledMessageFalse: instructions.filter((i) => !i.request.message && i.op.kind === "treasure-box").length,
+    compiledMessageTrue: instructions.filter((i) => i.request.message && i.op.kind === "treasure-box").length,
     controlledFieldSaveChecks: fieldHostChecks.length,
     zeroRewards: 22, anonymousSourceEntities: 30 },
   doesNotEstablish: ["source-map-visuals", "ordinary-interaction", "message-rendering", "story-reachability", "original-game-execution", "full-game-parity"],

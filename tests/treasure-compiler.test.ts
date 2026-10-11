@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { compileEntityGroup } from "../src/compiler/entity-group.js";
 import { decodeFieldOp } from "../src/compiler/field.js";
 import { treasureEntityAsset, treasureInstruction, treasureSource, treasureTables } from "./fixtures/treasure-inventory.js";
+import { taskMessages, taskSystemMessages } from "./fixtures/treasure-task.js";
 
-test("treasure entities preserve collision and source reward while ordinary interaction is a stopped action", () => {
+test("treasure entities preserve source rewards and stop ordinary interaction when messages are missing", () => {
   for (const collision of [true, false]) {
     const group = compileEntityGroup("chests", treasureEntityAsset({ collision }), treasureTables());
     assert.deepEqual(group.blockers, []);
@@ -46,18 +47,27 @@ test("unrecovered treasure geometry, trigger conditions and reward dependencies 
   }
 });
 
-test("field VM compiler admits only the exact silent after path and retains a source-addressed message stop", () => {
+test("field VM compiler retains the exact after/message caller and source address", () => {
   const site = { script: "open", index: 4, source: { ...treasureSource, pointer: "/Mnemonics/4" } };
   assert.deepEqual(decodeFieldOp(treasureInstruction([42, 97, 1]), site, {}), {
     ...site, kind: "treasure-box", entityId: 42, after: true, message: false, actionSoundId: 0,
   });
   for (const value of [0, 2, -1]) {
-    const blocked = decodeFieldOp(treasureInstruction([42, 0, value]), site, {});
-    assert.equal(blocked.kind, "blocked");
-    if (blocked.kind !== "blocked") throw new Error("Expected message blocker");
-    assert.match(blocked.reason, /message tasks/);
-    assert.equal(blocked.source.pointer, "/Mnemonics/4");
+    assert.deepEqual(decodeFieldOp(treasureInstruction([42, 0, value]), site, {}), {
+      ...site, kind: "treasure-box", entityId: 42, after: true, message: true, actionSoundId: 0,
+    });
   }
   const unsupported = treasureInstruction([42, 0, 1]); unsupported.type = 2;
   assert.equal(decodeFieldOp(unsupported, site, {}).kind, "blocked");
+});
+
+test("ordinary treasure action binds source messages, centered layout and anonymous identity", () => {
+  const messages = { ...taskMessages(), system_zhc: taskSystemMessages };
+  const group = compileEntityGroup("chests", treasureEntityAsset({ entity_id: 0 }), treasureTables(), messages);
+  assert.deepEqual(group.blockers, []);
+  const entity = group.entities[0]!;
+  assert.equal(entity.mapObject!.interaction.kind, "treasure");
+  assert.equal(entity.treasureMessages!.reward!.alignment, "center");
+  assert.match(entity.treasureMessages!.reward!.text, /Sample medicine/);
+  assert.equal(entity.id, "chests:0:0");
 });

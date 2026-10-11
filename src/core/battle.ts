@@ -51,6 +51,7 @@ import type {
   CombatantDefinition,
   AbilityDefinition,
 } from "./battle-content.js";
+import { battleDefinitionBlocker } from "./battle-content.js";
 
 export type Combatant = CombatantDefinition & {
   maxHp: number;
@@ -141,7 +142,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v20"
+      content.profile !== "narshe-playability-v21"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -166,6 +167,8 @@ export class BattleGame {
       (!["source", "development-static"].includes(content.qualificationContext.mode) ||
        !["current", "unknown"].includes(content.qualificationContext.conditionContext)))
       throw new Error("Invalid battle qualification mode");
+    const templateBlocker = battleDefinitionBlocker(players ?? content.players, content.qualificationContext, content.conditions);
+    if (templateBlocker) throw new Error(templateBlocker);
     this.combatants = [
       ...(players
         ? structuredClone(players)

@@ -783,6 +783,51 @@
         "docs/treasure-inventory.md",
         "docs/systems-v20.md"
       ]
+    },
+    {
+      "id": "narshe:source-owned-magitek-checkpoint",
+      "subject": "narshe",
+      "predicate": "source.ownedMagitekCheckpoint",
+      "value": "The non-advertisement prelude sc_e_0001[18] AddCondition(607,0) resolves type607 to row53 and appends it to the selected Corps owners, not the entire roster or a transportation-derived battle temporary. Six pinned scripts bind the opening checkpoint. Formal development-static admission remains until owned field transactions and Magitek presentation are integrated.",
+      "when": {
+        "battleProfile": "narshe-playability-v21"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "docs/battle-entry.md",
+        "docs/systems-v21.md"
+      ]
+    },
+    {
+      "id": "narshe:treasure-task-lifecycle",
+      "subject": "narshe",
+      "predicate": "migration.treasureTasks",
+      "value": "Ordinary treasure interaction and explicit message tasks share owned inventory, fresh capacity reads and source message bindings. Reward commits before messages; the treasure flag commits after confirmation and the final message frame. Retained windows, independent script handoff, anonymous entities and concurrent handoff guards are implemented. Source-world compilation retains unsupported map and message-control gates; sound remains an explicit muted development omission.",
+      "when": {
+        "battleProfile": "narshe-playability-v21"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "docs/treasure-task.md",
+        "docs/systems-v21.md"
+      ]
+    },
+    {
+      "id": "narshe:ordinary-battle-templates",
+      "subject": "narshe",
+      "predicate": "migration.ordinaryBattleTemplates",
+      "value": "Eighteen exact ordinary player definitions are potential templates, not initial ownership or learned actions. Current owned growth, equipment, HP and learned state override template defaults. GameSession and BattleGame enforce source qualification, known conditions and ordinary appearance before admission. Formal opening remains development-static, so these templates alone do not unlock normal characters in story battles.",
+      "when": {
+        "battleProfile": "narshe-playability-v21"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "docs/player-battle.md",
+        "docs/systems-v21.md"
+      ]
     }
   ],
   "assets": []

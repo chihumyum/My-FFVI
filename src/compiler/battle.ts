@@ -14,6 +14,8 @@ import { compileCharacterGrowth } from "./character-growth.js";
 import type { CharacterGrowthPlan } from "../core/character-growth.js";
 import { compilePartyActorCatalog } from "./party-actors.js";
 import { compileTransportationCatalog } from "./transportation.js";
+import { compileBattleEntryCatalog, compileNarsheOwnedConditionCheckpoint } from "./battle-entry.js";
+import { loadCorpus } from "./corpus.js";
 import {
   compileAttackElements,
   compileElementResistances,
@@ -547,6 +549,20 @@ export async function compileOpeningBattle(root: string) {
         reason: error instanceof Error ? error.message : String(error) });
     }
   }
+  const corpus = await loadCorpus(root);
+  if (corpus.manifest.parentSourceSetHash !== project.sourceSetHash)
+    throw new Error("Battle entry script source mismatch");
+  const entryMisc = corpus.assets.filter((asset) =>
+    (asset.source.file === reactionSource.source.file || asset.source.file.endsWith("/" + reactionSource.source.file)) &&
+    battle.sources.some((s) => s.file === asset.source.file && s.sha256 === reactionSource.source.sha256) &&
+    ["assetPath", "objectId", "serializedFile"].every((key) =>
+      asset.source[key as keyof typeof asset.source] === reactionSource.source[key as keyof typeof reactionSource.source]));
+  if (entryMisc.length !== 1 || hash(entryMisc[0]!.data) !== hash(reactionSource.data))
+    throw new Error("Battle entry miscellaneous source mismatch");
+  const entryProviders = {
+    ...compileBattleEntryCatalog({ row }, tables, entryMisc[0]!),
+    ownedConditionCheckpoint: compileNarsheOwnedConditionCheckpoint({ row }, tables, corpus.assets),
+  };
   const result = {
     formatVersion: 1 as const,
     kind: "battle-source-data" as const,
@@ -566,6 +582,7 @@ export async function compileOpeningBattle(root: string) {
     characterGrowthBlockers,
     partyActors: partyActors.catalog,
     transportations,
+    entryProviders,
     magitekAbilityIds: magitek.map((a) => tableInteger(a.values.id)),
     battleAbilityIds: [...abilityIds].sort((a, b) => a - b),
     atb,

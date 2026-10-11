@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import { GameState } from "../src/core/game-state.js";
 import { EventState } from "../src/core/event-state.js";
 import { FieldGame } from "../src/core/field.js";
-import { compileTreasureInventory } from "../src/compiler/treasure-inventory.js";
+import { compileTreasureInventory, compileTreasureTaskMessages, compileTreasureInteraction } from "../src/compiler/treasure-inventory.js";
 import { treasureFlagRef } from "../src/core/treasure-inventory.js";
 import { checkpointFixture } from "./fixtures/checkpoint-game.js";
 import { equipmentGameFixture } from "./fixtures/equipment-game.js";
 import { treasureProperties, treasureSource, treasureTables } from "./fixtures/treasure-inventory.js";
 import { itemFixture } from "./fixtures/items.js";
+import { taskMessages, taskSystemMessages } from "./fixtures/treasure-task.js";
 import type { FieldEntity, Op } from "../src/field/types.js";
 
 function fixture(properties: Record<string, unknown> = {}) {
@@ -101,7 +102,7 @@ test("treasure saved isOpen survives a later flag reset without replaying a rewa
   assert.throws(() => FieldGame.restore(field, visible), /pickup treasure/);
 });
 
-test("unknown message/audio branches and inventory record-presence boundaries are atomic blockers", () => {
+test("missing messages, invalid callers and inventory record-presence boundaries are atomic blockers", () => {
   for (const change of [{ message: true }, { actionSoundId: 1 }, { after: false }]) {
     const { field, owner } = fixture();
     Object.assign(field.scripts.treasure![0]!, change);
@@ -117,6 +118,127 @@ test("unknown message/audio branches and inventory record-presence boundaries ar
   game.startEvent("treasure");
   assert.match(game.stop!.message, /record presence/);
   assert.deepEqual(owner.snapshot().items, []);
+});
+
+function interactive(properties: Record<string, unknown> = {}) {
+  const f = fixture(properties), definition = f.entity.treasure!;
+  f.entity.treasureMessages = compileTreasureTaskMessages(definition, taskMessages(), taskSystemMessages);
+  f.entity.mapObject!.interaction = { kind: "treasure", request: compileTreasureInteraction(definition) };
+  return { ...f, game: new FieldGame(f.field, f.events, undefined, undefined, { treasure: f.owner.fieldTreasure }) };
+}
+
+test("ordinary treasure grants once, waits for visible message and defers the flag until completion", () => {
+  const { game, owner, events, ref, field } = interactive();
+  game.confirm();
+  assert.equal(game.stop, null);
+  assert.equal(owner.snapshot().items.find((i) => i.id === 101)!.count, 1);
+  assert.equal(events.read(ref), 0);
+  assert.equal(game.dialogue!.alignment, "center");
+  assert.match(game.dialogue!.text, /Sample medicine/);
+  assert.equal(game.presentationOmissions.filter((o) => o.soundId === 909).length, 1);
+  assert.throws(() => game.checkpoint());
+  game.confirm(); // The first source frame must elapse before input completes.
+  assert.ok(game.dialogue);
+  game.advance(10);
+  game.confirm();
+  game.confirm();
+  assert.equal(game.dialogue, null);
+  assert.equal(game.messageWindow, null);
+  assert.equal(events.read(ref), 0);
+  game.advance(10);
+  assert.equal(events.read(ref), 1);
+  assert.equal(game.checkpointReady, false);
+  game.advance(10);
+  assert.equal(game.checkpointReady, true);
+  const restored = FieldGame.restore(field, game.checkpoint(), { treasure: owner.fieldTreasure });
+  restored.confirm();
+  assert.equal(restored.dialogue!.key, "SYN_EMPTY");
+  restored.advance(10); restored.confirm(); restored.advance(10);
+  assert.equal(restored.checkpointReady, true);
+  assert.equal(owner.snapshot().items.find((i) => i.id === 101)!.count, 1);
+  assert.equal(restored.presentationOmissions.length, 0);
+});
+
+test("capacity overflow keeps the window between two messages and never grants twice", () => {
+  const { game, owner, events, ref } = interactive();
+  owner.fieldInventory.prepare({ kind: "grant-item", id: 101, count: 99 }).commit();
+  game.confirm(); game.advance(10);
+  const reward = structuredClone(game.dialogue);
+  game.confirm();
+  assert.equal(game.dialogue, null);
+  assert.deepEqual(game.messageWindow, reward);
+  assert.equal(events.read(ref), 0);
+  game.confirm(); // No input wait during the retained window.
+  assert.equal(events.read(ref), 0);
+  game.advance(10);
+  assert.equal(game.dialogue!.key, "SYN_FULL");
+  game.advance(10); game.confirm();
+  assert.equal(game.messageWindow, null);
+  assert.equal(events.read(ref), 0);
+  game.advance(20);
+  assert.equal(events.read(ref), 1);
+  assert.equal(game.checkpointReady, true);
+  assert.equal(owner.snapshot().items.find((i) => i.id === 101)!.count, 99);
+});
+
+test("scripted treasure leaves an independent event alive and does not grant its property reward", () => {
+  const f = fixture({ script_id: 31 });
+  f.entity.treasureMessages = compileTreasureTaskMessages(f.entity.treasure!, taskMessages(), taskSystemMessages);
+  f.entity.mapObject!.interaction = { kind: "treasure", request: compileTreasureInteraction(f.entity.treasure!) };
+  const site = { script: "synthetic-treasure", index: 0, source: treasureSource };
+  f.field.scripts["synthetic-treasure"] = [
+    { ...site, kind: "wait", seconds: 0.05 },
+    { ...site, index: 1, kind: "message", key: "callback", speaker: "", text: "Script still running" },
+    { ...site, index: 2, kind: "exit" },
+  ];
+  const game = new FieldGame(f.field, f.events, undefined, undefined, { treasure: f.owner.fieldTreasure });
+  game.confirm(); game.advance(10);
+  assert.equal(game.busy, true);
+  assert.equal(game.dialogue, null);
+  game.advance(40);
+  assert.equal(game.dialogue!.key, "callback");
+  game.confirm();
+  assert.equal(game.stop, null);
+  assert.equal(game.checkpointReady, true);
+  assert.deepEqual(f.owner.snapshot().items, []);
+  assert.equal(f.events.read(f.ref), 0);
+});
+
+test("anonymous treasure interaction keeps the selected Web identity among source ID zero objects", () => {
+  const { field, owner, entity, events, ref } = interactive({ entity_id: 0 });
+  const other = structuredClone(entity);
+  other.id = "other-anonymous"; other.x = 5; other.treasure!.flagId = 261;
+  field.map.entities.push(other);
+  const game = new FieldGame(field, events, undefined, undefined, { treasure: owner.fieldTreasure });
+  game.confirm(); game.advance(10); game.confirm(); game.advance(20);
+  assert.equal(game.stop, null);
+  assert.equal(events.read(ref), 1);
+  assert.equal(events.read(treasureFlagRef(261)), 0);
+  assert.deepEqual(game.checkpoint().openedTreasures, ["treasure"]);
+});
+
+test("explicit message treasure suspends its script and a failed owner cannot open or advance it", () => {
+  const f = interactive({ pick_up: true });
+  (f.field.scripts.treasure![0] as Extract<Op, { kind: "treasure-box" }>).message = true;
+  const game = new FieldGame(f.field, f.events, undefined, undefined, { treasure: f.owner.fieldTreasure });
+  game.startEvent("treasure");
+  assert.equal(game.dialogue!.key, "SYNTHETIC_TREASURE");
+  assert.equal(f.events.read(f.ref), 0);
+  game.advance(10); game.confirm(); game.advance(20);
+  assert.equal(game.checkpointReady, true);
+  assert.equal(f.events.read(f.ref), 1);
+  const failed = interactive({ pick_up: true });
+  const broken = new FieldGame(failed.field, failed.events, undefined, undefined, { treasure: {
+    ...failed.owner.fieldTreasure,
+    prepare: () => ({ result: null, commit() { throw new Error("stale treasure owner"); } }),
+  } });
+  broken.confirm();
+  assert.match(broken.stop!.message, /stale treasure owner/);
+  assert.equal(broken.dialogue, null);
+  assert.equal(broken.hiddenEntities.has("treasure"), false);
+  assert.equal(broken.tileAnimations.isPlaying("region"), false);
+  assert.deepEqual(failed.owner.snapshot().items, []);
+  assert.equal(failed.events.read(failed.ref), 0);
 });
 
 test("treasure draft reads candidate inventory, including worn equipment but excluding important records", () => {

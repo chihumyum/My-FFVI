@@ -15,6 +15,7 @@ import { loadAudioMedia } from "./audio.js";
 import { compileMapPartyEntry } from "./map-party-entry.js";
 import { compileTransportationCatalog } from "./transportation.js";
 import { loadSystemSource } from "./system-source.js";
+import { loadSystemMessages } from "./system-messages.js";
 import { compileTreasureInventoryLimits } from "./treasure-inventory.js";
 import type { Character, Evidence, Op, Sprite } from "../field/types.js";
 import type {
@@ -110,6 +111,9 @@ export async function compileWorld(root: string) {
   const corpus = await loadCorpus(root),
     files = await readSnapshot(root + "/build/world-media");
   const systemSource = await loadSystemSource(root, text(corpus.manifest.parentSourceSetHash));
+  const systemMessages = await loadSystemMessages(root, text(corpus.manifest.parentSourceSetHash),
+    array(corpus.manifest.sources).map(record).map((s) => ({ file: text(s.file), sha256: text(s.sha256) })));
+  const messages = { ...corpus.messages, system_zhc: systemMessages.messages };
   if (systemSource.sourceSetHash !== corpus.sourceSetHash)
     throw new Error("Map entry system source mismatch");
   const transportation = compileTransportationCatalog(systemSource.reader,
@@ -197,7 +201,7 @@ export async function compileWorld(root: string) {
       binding,
       byId,
       corpus.tables,
-      corpus.messages,
+      messages,
     );
     let map: WorldMapContent["map"] = null;
     let partyEntry: WorldMapContent["partyEntry"];
@@ -367,6 +371,7 @@ export async function compileWorld(root: string) {
     characters,
     transportation,
     treasureInventoryLimits,
+    systemMessageSource: systemMessages.source,
     characterIssues,
     minimap,
     bgm,

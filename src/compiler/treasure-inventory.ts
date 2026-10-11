@@ -9,7 +9,10 @@ import {
 } from "../core/treasure-inventory.js";
 import { record } from "./content.js";
 import { compileInventoryEvent } from "./inventory-event.js";
+import { compileMessage } from "./message.js";
 import { tableId } from "./table-id.js";
+import type { TreasureTaskMessage, TreasureTaskMessages } from "../core/treasure-task.js";
+export type { TreasureTaskMessages } from "../core/treasure-task.js";
 
 export type TreasureInventorySource = {
   sourceSetHash: string;
@@ -143,4 +146,78 @@ export function compileTreasureBoxInstruction(raw: unknown): TreasureBoxRequest 
     throw new Error("Unsupported TreasureBox operand shape");
   return { kind: "treasure-box", entityId: integers[0]!, after: true,
     message: integers[2] !== 1, actionSoundId: 0 };
+}
+
+/** EventAction.OpenTreasureBox.MoveNext 0x7b7860 creates the ordinary action
+ * with after=false/message=true and copies PropertyTresureBox.SoundId. Its
+ * entity may be anonymous (native ID 0); the field host retains its Web key. */
+export function compileTreasureInteraction(
+  definition: TreasureInventoryDefinition,
+): TreasureBoxRequest {
+  validateTreasureInventory(definition);
+  return { kind: "treasure-box", entityId: definition.entityId, after: false,
+    message: true, actionSoundId: definition.presentation.soundId };
+}
+
+/** Compile only the treasure templates' demonstrated parameter and leading CT
+ * control. Other substitutions/inline controls remain explicit blockers. The
+ * resulting text is passed through the existing field-message validation. */
+export function compileTreasureTaskMessages(
+  definition: TreasureInventoryDefinition,
+  messages: Record<string, unknown>,
+  systemMessages: Record<string, unknown>,
+  request?: TreasureBoxRequest,
+): TreasureTaskMessages {
+  validateTreasureInventory(definition);
+  if (request && (request.kind !== "treasure-box" || request.entityId !== definition.entityId ||
+    typeof request.after !== "boolean" || typeof request.message !== "boolean" ||
+    int32(request.actionSoundId) < 0)) throw new Error("Invalid treasure message request");
+  const needsReward = request === undefined || request.message && (request.after || definition.scriptId === 0);
+  const token = definition.messages.valueToken;
+  const parameter = () => {
+    if (token === "NUM") return { token, value: String(definition.contentNum), sourceKey: null };
+    const name = systemMessages[definition.messages.contentNameKey];
+    if (typeof name !== "string" || !name)
+      throw new Error("Missing localized treasure content name");
+    // SetValue -> IconTextUtility.GetRepraceIconText removes all occurrences
+    // of the first angle tag. The observed content names use IC_* icons. Do
+    // not silently discard an unknown control as if it were a known icon.
+    const firstTag = name.match(/<[\s\S]*?>/u)?.[0];
+    if (firstTag && !/^<IC_[A-Z0-9_]+>$/u.test(firstTag))
+      throw new Error("Unsupported treasure content-name control");
+    const value = firstTag ? name.replaceAll(firstTag, "") : name;
+    if (/[<\\]/u.test(value) || /\([\p{L}\p{N}_]+\)/u.test(value))
+      throw new Error("Unsupported treasure content-name substitution");
+    return { token, value, sourceKey: definition.messages.contentNameKey };
+  };
+  // Script chests can contain a placeholder reward that their ordinary caller
+  // never formats. Retain every independently compilable message, but do not
+  // turn an unused reward-template failure into a false interaction blocker.
+  const optional = <T>(compile: () => T): T | null => {
+    try { return compile(); } catch (error) { if (needsReward) throw error; return null; }
+  };
+  const compiledParameter = optional(parameter);
+  const compile = (key: string, substitute: boolean): TreasureTaskMessage => {
+    const text = record(messages.story_mes_zhc ?? {})[key];
+    const speaker = record(messages.story_cha_zhc ?? {})[key];
+    if (!key || typeof text !== "string" || typeof speaker !== "string")
+      throw new Error("Missing localized treasure message or speaker");
+    let projected = text;
+    if (substitute && compiledParameter) projected = projected.replaceAll(`(${token})`, compiledParameter.value);
+    // EmptyMessage does not SetValue, so it cannot assume stale global tokens.
+    if (/\([\p{L}\p{N}_]+\)/u.test(projected) || /\([\p{L}\p{N}_]+\)/u.test(speaker))
+      throw new Error("Unsupported treasure message substitution");
+    const centered = /^<CT>/iu.test(projected);
+    if (centered) projected = projected.slice(4);
+    const result = compileMessage(key, {
+      story_mes_zhc: { [key]: projected }, story_cha_zhc: { [key]: speaker },
+    });
+    return { ...result, ...(centered ? { alignment: "center" as const } : {}) };
+  };
+  return {
+    reward: optional(() => compile(definition.presentation.messageKey, true)),
+    empty: compile(definition.messages.emptyKey, false),
+    countOver: optional(() => compile(definition.messages.countOverKey, true)),
+    parameter: compiledParameter,
+  };
 }

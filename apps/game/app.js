@@ -151,10 +151,11 @@ function sync() {
     return;
   }
   battleView.hide();
-  $("dialogue").hidden = !game.dialogue || paused;
-  if (game.dialogue) {
-    text("speaker", game.dialogue.speaker);
-    text("message", game.dialogue.text);
+  $("dialogue").hidden = !game.messageWindow || paused;
+  if (game.messageWindow) {
+    text("speaker", game.messageWindow.speaker);
+    text("message", game.messageWindow.text);
+    $("message").style.textAlign = game.messageWindow.alignment ?? "left";
   }
   $("stop").hidden = !game.stop;
   if (game.stop) {

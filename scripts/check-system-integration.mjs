@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { GameSession } from "../dist/src/core/game-session.js";
+import { battleDefinitionBlocker } from "../dist/src/core/battle-content.js";
 import { hash } from "../dist/src/compiler/content.js";
 const root = new URL("..", import.meta.url).pathname;
 const field = JSON.parse(await readFile(root + "build/game/narshe.json"));
@@ -10,7 +11,7 @@ for (const content of [field, battle]) {
   const { contentHash, ...input } = content;
   assert.equal(contentHash, hash(input));
 }
-assert.equal(battle.common.profile, "narshe-playability-v20");
+assert.equal(battle.common.profile, "narshe-playability-v21");
 assert.equal(field.entry.transportationId, 6);
 assert.equal(field.entry.partyActors.context.player.fieldAssetId, 38);
 assert.equal(field.entry.partyActors.context.player.riderFieldAssetId, 1);
@@ -43,7 +44,9 @@ assert.equal(snapshot.characterNames[battle.gameState.characterInitializations[l
 assert.deepEqual(snapshot.learnedAbilityIds, [...before.learnedAbilityIds, 229]);
 assert.equal(f.game.field.player.asset, field.entry.player.asset);
 assert.equal(f.game.field.partyActorCheckpoint.context.puppets[3].fieldAssetId, 2);
-assert.match(f.game.state.battlePartyBlocker, /战斗动作/);
+assert.equal(f.game.state.battlePartyBlocker, null);
+assert.match(battleDefinitionBlocker(f.game.state.partyPlayers(), battle.common.qualificationContext,
+  battle.common.conditions), /来源战斗入口/);
 cases.push({ name: "new owner plus source correction and full same-map refresh", level: locke.level, exp: locke.exp, hp: locke.hp, maxHp: locke.maxHp });
 const checkpoint = f.game.checkpoint();
 assert.deepEqual(GameSession.restore(JSON.parse(JSON.stringify(checkpoint)), f.content, battle).checkpoint(), checkpoint);
@@ -114,7 +117,7 @@ for (const mutate of [
   assert.throws(() => GameSession.restore(bad, f.content, battle));
 }
 cases.push({ name: "four forged native-actor checkpoint providers rejected" });
-const report = { kind: "source-system-integration-v20", sourceSetHash: field.parentSourceSetHash,
+const report = { kind: "source-system-integration-v21", sourceSetHash: field.parentSourceSetHash,
   fieldHash: field.contentHash, battleCatalogHash: battle.contentHash, cases,
   originalRuntimeOracle: false, storyCoverageExpanded: false, completeMigration: false };
 await writeFile(root + "build/reports/system-integration-check.json", JSON.stringify(report, null, 2) + "\n");

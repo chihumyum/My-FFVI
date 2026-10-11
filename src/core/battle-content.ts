@@ -29,7 +29,7 @@ export type BattleCommandDefinition = {
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "narshe-playability-v20";
+  profile: "narshe-playability-v21";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;
@@ -71,10 +71,40 @@ export type CombatantDefinition = ParameterValues & {
   conditionResistances: Record<string, number>;
   /** Current owned state, independent of the development action whitelist. */
   ownedAbilities?: BattleAbilityMember;
+  /** Admission constraints travel with reusable templates, independently of
+   * ownership. An empty action list never permits a static-menu fallback. */
+  battleRequirements?: {
+    qualification: "source";
+    conditionContext: "current";
+    forbiddenConditionTypes: number[];
+  };
   ai: BattleAIProgram | null;
   placement: { x: number; y: number; group: number } | null;
   sprites: { idle: string; mount: string | null };
 };
+
+export function battleDefinitionBlocker(
+  players: readonly Pick<CombatantDefinition, "name" | "conditionIds" | "battleRequirements">[],
+  context: BattleQualificationContext | undefined,
+  conditions: BattleConditionCatalog,
+): string | null {
+  for (const player of players) {
+    const required = player.battleRequirements;
+    if (!required) continue;
+    if (required.qualification !== "source" || required.conditionContext !== "current" ||
+        !Array.isArray(required.forbiddenConditionTypes) ||
+        required.forbiddenConditionTypes.some((id) => !Number.isInteger(id) || id < 1))
+      return "Invalid player battle template requirements";
+    if (context?.mode !== required.qualification || context.conditionContext !== required.conditionContext)
+      return `角色 ${player.name} 的来源战斗入口上下文尚未确认`;
+    if (player.conditionIds.some((id) => {
+      const row = conditions.rules.definitions.find((d) => d.id === id);
+      return row && required.forbiddenConditionTypes.includes(row.type);
+    }))
+      return `角色 ${player.name} 的特殊战斗外观尚未迁移`;
+  }
+  return null;
+}
 
 export type BattleEncounter = Pick<
   BattleContent,

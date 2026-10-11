@@ -16,6 +16,7 @@ import { compileDevelopmentAbility } from "./ability.js";
 import { compileBattleConditionCatalog } from "./conditions.js";
 import { compileBattleCommand } from "./commands.js";
 import { compileBattleAbilityCatalog } from "./battle-abilities.js";
+import { compilePlayerBattleDefinitions } from "./player-battle.js";
 import { compileBattleAI, battleAIAbilities } from "./battle-ai.js";
 import { compileGameState } from "./game-state.js";
 import { compileFieldConditionCatalog } from "./field-conditions.js";
@@ -370,7 +371,7 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v20",
+    profile: "narshe-playability-v21",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,
@@ -422,7 +423,20 @@ export async function compileOpeningPlayable(
     .map(([sourceId, plan]) => [`player:${sourceId}`, structuredClone(plan)]));
   gameState.rosterLifecycle.firstJoinLevelAdjustments = { ...firstJoinLevelAdjustments };
   gameState.partyActors = structuredClone(source.partyActors);
-  gameState.battleDefinitions = structuredClone(players);
+  const ordinary = compilePlayerBattleDefinitions({ ...parameterReader,
+    matching: (table, key, value) => Object.values(source.tables[table] ?? {})
+      .filter((r) => r.values[key] === String(value)),
+  }, {
+    tables: Object.fromEntries(Object.keys(source.tables).map((table) => [table, rows(table)])),
+    initializations: source.ownedInitializations, characterMedia: source.characterMedia,
+    sprites: source.sprites, name,
+  });
+  if (ordinary.blockers.length) throw new Error("Ordinary player template compilation failed: " + JSON.stringify(ordinary.blockers));
+  // Existing opening Magitek definitions remain an explicit development profile.
+  // Other potential members require source qualification and ordinary appearance
+  // at the entry boundary; merely joining the roster never grants a static menu.
+  gameState.battleDefinitions = [...structuredClone(players),
+    ...ordinary.definitions.filter((d) => !players.some((p) => p.id === d.id))];
   gameState.fieldConditions = compileFieldConditionCatalog(
     parameterReader,
     conditions,

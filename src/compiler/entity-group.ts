@@ -4,12 +4,13 @@ import { tableId } from "./table-id.js";
 import { MINIMAP_ICON_TYPES } from "../core/minimap.js";
 import { compileNpc } from "./npc.js";
 import { compileInteraction, compileInteractionEligibility } from "./interaction.js";
-import { compileTreasureInventoryDefinition } from "./treasure-inventory.js";
+import { compileTreasureInventoryDefinition, compileTreasureInteraction, compileTreasureTaskMessages } from "./treasure-inventory.js";
 import type {
   Direction,
   EntityGroup,
   Evidence,
   FieldEntity,
+  FieldInteraction,
 } from "../field/types.js";
 
 const rows = (v: unknown) => z.array(z.unknown()).parse(v);
@@ -197,13 +198,24 @@ export function compileEntityGroup(
         const mapObject =
           kind === 5 ? compileInteraction(p, script, tables, messages) : null;
         mapObject?.blockers.forEach(issue);
-        // FieldTresureBox.Init inherits this map-object collider. Its ordinary
-        // interaction is a stopped action; explicit TreasureBox may still target it.
+        // Message failures stop the action, not the whole entity group. An
+        // explicit message=false instruction can still use this reward binding.
         const treasure = kind === 7 ? compileTreasureInventoryDefinition(p, tables) : null;
+        let treasureMessages: FieldEntity["treasureMessages"];
+        let treasureAction: FieldInteraction = { kind: "none" };
+        if (treasure) {
+          try {
+            treasureMessages = compileTreasureTaskMessages(treasure, messages,
+              record(messages.system_zhc ?? {}), compileTreasureInteraction(treasure));
+            treasureAction = { kind: "treasure", request: compileTreasureInteraction(treasure) };
+          } catch (error) {
+            treasureAction = { kind: "blocked", reason: error instanceof Error ? error.message : String(error) };
+          }
+        }
         const treasureInteraction = kind === 7 ? {
           ...compileInteractionEligibility(p, tables),
           collision: z.boolean().parse(p.collision),
-          interaction: { kind: "blocked" as const, reason: "Ordinary treasure interaction is not implemented" },
+          interaction: treasureAction,
           soundId: integer(p.se_id),
         } : null;
         const direction = (
@@ -230,6 +242,7 @@ export function compileEntityGroup(
               }
             : {}),
           ...(treasure ? { treasure, mapObject: treasureInteraction! } : {}),
+          ...(treasureMessages ? { treasureMessages } : {}),
           ...(kind === 8
             ? {
                 openTrigger: {

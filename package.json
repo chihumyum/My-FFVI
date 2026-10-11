@@ -48,7 +48,7 @@
     "elements:check": "npm run battle:build && node scripts/check-elements.mjs",
     "playable:check": "npm run game:build && npm run battle:build && node scripts/check-playable.mjs",
     "items:check": "npm run battle:build && node scripts/check-items.mjs",
-    "item-status:check": "npm run battle:build && node scripts/check-item-status.mjs",
+    "item-status:check": "npm run battle:build && node scripts/check-item-status.mjs --native build/runtime/game/GameAssembly.dll",
     "equipment:check": "npm run battle:build && node scripts/check-equipment.mjs",
     "inventory-events:check": "npm run battle:build && node scripts/check-inventory-events-native.mjs && node scripts/check-inventory-ownership-native.mjs && node scripts/check-inventory-events.mjs",
     "party:check": "npm run battle:build && node scripts/check-party-native.mjs && node scripts/check-party.mjs && node scripts/check-party-menu.mjs",
@@ -67,7 +67,10 @@
     "systems:check": "npm run game:build && npm run battle:build && node scripts/check-system-integration.mjs",
     "battle-abilities:check": "npm run battle:build && node scripts/check-battle-abilities-native.mjs && node scripts/check-battle-abilities.mjs && node scripts/check-battle-abilities-ui.mjs",
     "map-party-entry:check": "npm run world:build && node scripts/check-map-party-entry-native.mjs && node scripts/check-map-party-entry.mjs",
-    "treasure-inventory:check": "npm run battle:build && node scripts/check-treasure-inventory-native.mjs && node scripts/check-treasure-inventory.mjs"
+    "treasure-inventory:check": "npm run battle:build && node scripts/check-treasure-inventory-native.mjs && node scripts/check-treasure-inventory.mjs",
+    "player-battle:check": "npm run battle:build && node tests/check-player-battle.mjs",
+    "treasure-task:check": "npm run build && node scripts/check-treasure-task-native.mjs && node scripts/check-treasure-task.mjs",
+    "battle-entry:check": "npm run battle:build && node scripts/check-battle-entry-native.mjs && node scripts/check-battle-entry.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

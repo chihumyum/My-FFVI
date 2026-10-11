@@ -1,5 +1,5 @@
 import type { FieldContent } from "../field/types.js";
-import { encounterContent, type BattleCatalog } from "./battle-content.js";
+import { encounterContent, battleDefinitionBlocker, type BattleCatalog } from "./battle-content.js";
 import { BattleGame } from "./battle.js";
 import { BattleAIError } from "./battle-ai.js";
 import { EventState } from "./event-state.js";
@@ -190,6 +190,11 @@ export class GameSession {
             message: this.state.battlePartyBlocker,
             site: this.field.stop.site,
           };
+          continue;
+        }
+        const templateBlocker = battleDefinitionBlocker(this.state.partyPlayers(), content.qualificationContext, content.conditions);
+        if (templateBlocker) {
+          this.field.stop = { kind: "unsupported", message: templateBlocker, site: this.field.stop.site };
           continue;
         }
         this.currentSeed =

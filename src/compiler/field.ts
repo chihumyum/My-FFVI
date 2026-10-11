@@ -144,8 +144,6 @@ export function decodeFieldOp(
   if (name === "TreasureBox") {
     try {
       const request = compileTreasureBoxInstruction(raw);
-      if (request.message)
-        return blocked("TreasureBox reward/empty/capacity message tasks are not implemented");
       return { ...site, ...request };
     } catch (error) {
       return blocked(error instanceof Error ? error.message : String(error));

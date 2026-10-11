@@ -130,3 +130,5 @@ npm run accept -- narshe
 原始资产和提取结果只保存在被 Git 忽略的 `build/` 下。再次导入会建立新的确定性快照，不修改游戏目录。导入和编译都有内容指纹，重复运行的内容结果应相同。
 
 `knowledge` 接受可选的 `--state '<JSON 上下文>'`。查询时只提供已有证据的状态值；没有证据就省略对应键。状态字符串只是上下文输入，不会自动建立它与原版剧情 flag 的映射。
+
+当前系统交付：[v21 集成说明](docs/systems-v21.md)。新增检查入口为 `npm run treasure-task:check`、`npm run player-battle:check` 和 `npm run battle-entry:check`；需要先完成文中的本地来源导入与世界构建。GitHub 仅追踪工具、源码、说明与合成夹具，原始游戏资源、提取文案、原生反编译与生成产物留在忽略目录。

@@ -12,6 +12,7 @@ const module = (path) => import(pathToFileURL(resolve(root, outDir, "src", path 
 const { loadCorpus } = await module("compiler/corpus");
 const { readSnapshot, snapshotFile } = await module("compiler/integrity");
 const { battleTableIndex } = await module("compiler/battle");
+const { battleDefinitionBlocker } = await module("core/battle-content");
 const { compileOwnedCharacterInitialization } = await module("compiler/owned-character");
 const { compileEquipmentCatalog } = await module("compiler/equipment");
 const { compileRosterLifecycleEvent } = await module("compiler/roster");
@@ -188,8 +189,9 @@ assert.throws(joining.commit, /Stale/);
 joinedState.fieldRoster.prepare(join).commit();
 joinedState.fieldRoster.prepare({ kind: "unlock", sourceId: 2, refreshActors: false }).commit();
 assert.deepEqual(joinedState.snapshot(), joined, "rejoining or unlocking an existing owner must not duplicate gear or history");
-assert.match(joinedState.battlePartyBlocker, /战斗动作/);
-assert.throws(() => joinedState.openBattle(3), /战斗动作/);
+assert.equal(joinedState.battlePartyBlocker, null);
+assert.match(battleDefinitionBlocker(joinedState.partyPlayers(), catalog.common.qualificationContext,
+  catalog.common.conditions), /来源战斗入口/);
 assert.deepEqual(joinedState.snapshot(), joined);
 const restoredJoined = make();
 restoredJoined.restore(JSON.parse(JSON.stringify(joined)));

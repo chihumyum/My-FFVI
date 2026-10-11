@@ -8,6 +8,7 @@ import type { RosterLifecycleEventOp } from "../core/roster.js";
 import type { FieldPartyActorCheckpoint } from "../core/field-party-actors.js";
 import type { PartyActorContext } from "../core/party-actors.js";
 import type { TreasureBoxRequest, TreasureInventoryDefinition, TreasureInventoryLimits } from "../core/treasure-inventory.js";
+import type { TreasureTaskMessages } from "../core/treasure-task.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -16,11 +17,18 @@ export type Evidence = {
   objectId?: string | undefined;
   pointer?: string;
 };
-export type FieldMessage = { key: string; text: string; speaker: string };
+export type FieldMessage = {
+  key: string;
+  text: string;
+  speaker: string;
+  /** Source MessageParser CT tag; absence retains the ordinary layout. */
+  alignment?: "center";
+};
 export type FieldInteraction =
   | { kind: "none" }
   | { kind: "script"; script: string | null }
   | { kind: "talk"; message: FieldMessage }
+  | { kind: "treasure"; request: TreasureBoxRequest }
   | { kind: "blocked"; reason: string };
 export type InteractionProperties = {
   acceptDirection: number;
@@ -50,6 +58,7 @@ export type FieldEntity = Point & {
   mapObject?: MapObjectProperties;
   /** Source property reward; native entityId may be zero for anonymous objects. */
   treasure?: TreasureInventoryDefinition;
+  treasureMessages?: TreasureTaskMessages;
   openTrigger?: {
     /** Movement-facing mask, distinct from an actor's facing and NPC action side. */
     direction: number;

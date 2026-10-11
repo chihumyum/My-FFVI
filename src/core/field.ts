@@ -2,6 +2,7 @@ import type {
   Direction,
   FieldContent,
   FieldEntity,
+  FieldMessage,
   Op,
   Point,
   Site,
@@ -15,10 +16,12 @@ import {
 import {
   executeInventoryEvent,
   type FieldInventoryPort,
+  type FieldInventoryTransaction,
 } from "./inventory-event.js";
 import { executePartyEvent, type FieldPartyPort, type PartyAppearanceCandidate } from "./party.js";
 import type { FieldTreasurePort } from "./treasure-port.js";
-import { planTreasureInventory, treasureFlagRef, validateTreasureInventory, type TreasureBoxRequest } from "./treasure-inventory.js";
+import { treasureFlagRef, validateTreasureInventory, type TreasureBoxRequest } from "./treasure-inventory.js";
+import { createTreasureTask, advanceTreasureTask, type TreasureTaskState, type TreasureTaskInput } from "./treasure-task.js";
 import type { PartyActorCatalog } from "./party-actors.js";
 import { FieldPartyActors, type FieldPartyActorCheckpoint } from "./field-party-actors.js";
 import { missingFieldPoses } from "./character-media.js";
@@ -120,6 +123,9 @@ type Task = {
   remaining: number;
   move: Extract<Op, { kind: "move" }> | null;
   animationWait: boolean;
+  treasure: { state: TreasureTaskState; entity: FieldEntity; site: Site;
+    closeMessage: boolean; messageAvailableAt: number } | null;
+  treasureRoot: boolean;
   done: boolean;
 };
 export type MapTransitionStop = {
@@ -137,12 +143,7 @@ export type Stop =
       party?: number;
       continuation?: string;
     };
-export type Dialogue = {
-  speaker: string;
-  text: string;
-  key: string;
-  task: number;
-};
+export type Dialogue = FieldMessage & { task: number };
 export type FieldGameOptions = {
   inventory?: FieldInventoryPort;
   treasure?: FieldTreasurePort;
@@ -187,6 +188,10 @@ export class FieldGame {
   }[] = [];
   fade: { elapsed: number; duration: number } | null = null;
   dialogue: Dialogue | null = null;
+  private retainedMessage: Dialogue | null = null;
+  private treasureSceneState: "player" | "message" = "player";
+  /** A close=false source message keeps its window during the post-input yield. */
+  get messageWindow(): Dialogue | null { return this.dialogue ?? this.retainedMessage; }
   stop: Stop | null = null;
   time = 0;
   private tasks: Task[] = [];
@@ -348,34 +353,134 @@ export class FieldGame {
       if (link) this.tileAnimations.forceLastFrame(link.id);
     }
   }
-  private executeTreasure(request: TreasureBoxRequest): void {
+  private prepareTreasureTask(request: TreasureBoxRequest, site: Site, selected?: FieldEntity): NonNullable<Task["treasure"]> {
     const port = this.options.treasure, limits = this.content.treasureInventoryLimits;
     if (!port || !limits || limits.item !== port.limits.item || limits.gil !== port.limits.gil)
       throw new Error("Missing or mismatched treasure inventory owner");
-    if (!request.after || request.message || request.actionSoundId !== 0)
-      throw new Error("Treasure message and interaction lifecycle is not implemented");
-    const matches = this.entityList.filter((e) => e.treasure?.entityId === request.entityId);
+    if (!selected && (!request.after || request.actionSoundId !== 0))
+      throw new Error("Invalid explicit treasure caller");
+    const matches = selected ? this.entityList.filter((e) => e === selected && e.treasure?.entityId === request.entityId) :
+      this.entityList.filter((e) => e.treasure?.entityId === request.entityId);
     if (matches.length !== 1) throw new Error("Missing or ambiguous treasure entity");
     const entity = matches[0]!, definition = entity.treasure!;
+    if (selected && (request.after || !request.message || request.actionSoundId !== definition.presentation.soundId))
+      throw new Error("Invalid ordinary treasure caller");
     // Exhausted stacks use a canonical zero record in our shared owner. Native
     // removes them; amounts above MAX_ITEM would distinguish these histories.
     if (definition.reward.kind !== "grant-gil" && definition.contentNum > limits.item)
       throw new Error("Treasure overflow requires native inventory record presence");
-    const value = this.eventState.read(treasureFlagRef(definition.flagId));
-    const plan = planTreasureInventory(definition, request, value !== 0, port.read(), limits);
-    if (plan.kind !== "grant" || plan.message || plan.prelude.soundId !== null)
-      throw new Error("Unimplemented treasure task branch");
+    const state = createTreasureTask(definition, request);
+    if (request.message) {
+      const messages = entity.treasureMessages;
+      if (!messages || (messages.reward && messages.reward.key !== definition.presentation.messageKey) ||
+          messages.empty.key !== definition.messages.emptyKey ||
+          (messages.countOver && messages.countOver.key !== definition.messages.countOverKey))
+        throw new Error("Missing or mismatched treasure message binding");
+      for (const message of [messages.reward, messages.empty, messages.countOver])
+        if (message && (typeof message.text !== "string" || typeof message.speaker !== "string" ||
+            (message.alignment !== undefined && message.alignment !== "center")))
+          throw new Error("Invalid treasure message presentation");
+    }
     const link = this.linkedTreasureTiles(entity);
     if (link && !this.tileAnimations.has(link.id)) throw new Error("Missing treasure tile binding");
-    new EventState(this.eventState.snapshot()).write(plan.flagWrite.ref, plan.flagWrite.value);
-    const transaction = port.prepare(plan.command);
-    if (transaction.result !== null) throw new Error("Unexpected treasure reward result");
-    // All dependencies have been checked; reject stale ownership before making
-    // field changes. The admitted branch has no asynchronous effect between them.
-    transaction.commit();
-    this.openTreasure(entity);
-    if (link) this.tileAnimations.playDefault(link.id);
-    this.eventState.write(plan.flagWrite.ref, plan.flagWrite.value);
+    new EventState(this.eventState.snapshot()).write(treasureFlagRef(definition.flagId), 1);
+    return { state, entity, site, closeMessage: true, messageAvailableAt: 0 };
+  }
+  private advanceTreasure(t: Task, acknowledgement?: TreasureTaskInput): void {
+    const pending = t.treasure!, port = this.options.treasure!;
+    let input = acknowledgement;
+    if (!input) {
+      if (pending.state.wait === "message") return;
+      if (pending.state.wait === "complete") {
+        t.treasure = null;
+        if (t.treasureRoot) t.done = true;
+        return;
+      }
+      if (pending.state.wait === "frame") input = { kind: "frame" };
+      else {
+        const value = this.eventState.read(treasureFlagRef(pending.state.definition.flagId));
+        if (value !== 0 && value !== 1) throw new Error("Unknown treasure opened flag");
+        input = { kind: pending.state.wait === "start" ? "start" : "sound-complete",
+          flag: value === 1, owned: port.read(), limits: port.limits };
+      }
+    }
+    const next = advanceTreasureTask(pending.state, input);
+    const draft = new EventState(this.eventState.snapshot());
+    const link = this.linkedTreasureTiles(pending.entity);
+    if (link && !this.tileAnimations.has(link.id)) throw new Error("Missing treasure tile binding");
+    const resolveMessage = (key: string): FieldMessage => {
+      const messages = pending.entity.treasureMessages;
+      const found = messages && [messages.reward, messages.empty, messages.countOver].find((m) => m?.key === key);
+      if (!found) throw new Error("Missing treasure message " + key);
+      return found;
+    };
+    // Validate the entire selected branch before its first grant/open, including
+    // messages beyond the next suspension. Unused script-chest reward templates
+    // may be absent; they never authorize a message-producing explicit caller.
+    for (const effect of [...next.effects, ...next.state.remaining]) {
+      if (effect.kind === "message") resolveMessage(effect.key);
+      else if (effect.kind === "set-message-value") {
+        const value = pending.entity.treasureMessages?.parameter;
+        if (!value || value.token !== effect.token || (effect.token === "NUM" ?
+            value.value !== String(effect.number) : value.sourceKey !== effect.messageKey))
+          throw new Error("Missing or mismatched treasure message parameter");
+      } else if (effect.kind === "flag") draft.write(effect.ref, effect.value);
+      else if (effect.kind === "run-script") {
+        if (!this.content.scripts[effect.name]) throw new Error("Missing treasure event script");
+        draft.beginScript(this.content.scriptLocals?.[effect.name] ?? null);
+      }
+    }
+    let transaction: FieldInventoryTransaction | null = null;
+    for (const effect of next.effects) {
+      if (effect.kind === "grant") {
+        if (transaction) throw new Error("Multiple treasure reward transactions");
+        transaction = port.prepare(effect.command);
+        if (transaction.result !== null) throw new Error("Unexpected treasure reward result");
+      }
+    }
+    // Commit the owner before publishing task progress, presentation or flags.
+    // No asynchronous dependency is evaluated inside this publication boundary.
+    transaction?.commit();
+    for (const effect of next.effects) {
+      switch (effect.kind) {
+        // This build's FieldController.DeactivateAction (0x2c8ef0) is a shared
+        // return stub. Task ownership, not this call, prevents repeated input.
+        case "deactivate-action": break;
+        case "sound":
+          this.presentationOmissions.push({ site: pending.site, kind: "sound", soundId: effect.id });
+          break;
+        case "open": this.openTreasure(pending.entity); break;
+        case "tile-animation": if (link) this.tileAnimations.playDefault(link.id); break;
+        case "run-script":
+          this.eventState.beginScript(this.content.scriptLocals?.[effect.name] ?? null);
+          this.tasks.push(this.task(effect.name, 0, "-1001"));
+          break;
+        // The compiler resolves the source parameter into the bound message;
+        // there is no mutable global substitution register in the Web renderer.
+        case "grant": case "set-message-value": break;
+        case "scene-state": this.treasureSceneState = effect.state; break;
+        case "message":
+          this.dialogue = { ...resolveMessage(effect.key), task: t.id };
+          this.retainedMessage = null;
+          pending.closeMessage = effect.close;
+          pending.messageAvailableAt = this.time + 10;
+          break;
+        case "flag": this.eventState.write(effect.ref, effect.value); break;
+        case "yield": t.wait = 10; break;
+      }
+    }
+    pending.state = next.state;
+  }
+  private treasureHandoffBlocked(): boolean {
+    return this.tasks.some((task) => {
+      if (task.done || !task.treasure) return false;
+      const state = task.treasure.state;
+      // The ordinary script wrapper explicitly does not own/wait for the
+      // registered event. Its final frame has no reward, message or flag left.
+      return !(task.treasureRoot && state.definition.scriptId > 0 &&
+        state.wait === "frame" && state.remaining.length === 0 &&
+        !state.request.after && !this.dialogue && this.treasureSceneState === "player");
+    });
   }
   get partyActorCheckpoint(): FieldPartyActorCheckpoint | null {
     return this.partyActors?.checkpoint() ?? null;
@@ -402,6 +507,7 @@ export class FieldGame {
     return (
       this.tasks.some((t) => !t.done) ||
       !!this.dialogue ||
+      this.treasureSceneState === "message" ||
       !!this.stop ||
       this.openTriggers.busy ||
       (this.interaction?.waitUntil ?? 0) > this.time
@@ -729,6 +835,17 @@ export class FieldGame {
   confirm(): void {
     if (this.stop) return;
     if (this.dialogue) {
+      const task = this.tasks.find((t) => t.id === this.dialogue!.task);
+      if (task?.treasure) {
+        if (this.time < task.treasure.messageAvailableAt) return;
+        const message = this.dialogue, close = task.treasure.closeMessage;
+        try { this.advanceTreasure(task, { kind: "message-complete" }); }
+        catch (error) {
+          this.block(error instanceof Error ? error.message : String(error), task.treasure.site);
+          return;
+        }
+        this.retainedMessage = close ? null : message;
+      } else this.retainedMessage = null;
       this.dialogue = null;
       this.pump();
       return;
@@ -793,6 +910,14 @@ export class FieldGame {
       return;
     }
     if (action.kind === "none") return;
+    let treasureTask: Task["treasure"] = null;
+    if (action.kind === "treasure") {
+      try { treasureTask = this.prepareTreasureTask(action.request, site, e); }
+      catch (error) {
+        this.block(error instanceof Error ? error.message : String(error), site);
+        return;
+      }
+    }
     this.interaction = {
       entityId: e.id,
       restoreDirection:
@@ -814,7 +939,7 @@ export class FieldGame {
         return;
       }
     }
-    if (properties.soundId > 0)
+    if (properties.soundId > 0 && action.kind !== "treasure")
       this.presentationOmissions.push({
         site,
         kind: "sound",
@@ -822,6 +947,12 @@ export class FieldGame {
       });
     if (action.kind === "script") {
       if (action.script !== null) this.beginRoot(action.script);
+    } else if (action.kind === "treasure") {
+      const task = this.task(site.script, 0, "-1001");
+      task.treasureRoot = true;
+      task.treasure = treasureTask;
+      this.tasks = [task];
+      this.pump();
     } else this.dialogue = { ...action.message, task: 0 };
   }
   private finishInteraction(): void {
@@ -1011,6 +1142,8 @@ export class FieldGame {
       remaining: 0,
       move: null,
       animationWait: false,
+      treasure: null,
+      treasureRoot: false,
       done: false,
     };
   }
@@ -1076,6 +1209,17 @@ export class FieldGame {
         if (t.children.some((id) => !this.tasks.find((c) => c.id === id)?.done))
           continue;
         t.children = [];
+        if (t.treasure) {
+          const site = t.treasure.site;
+          try { this.advanceTreasure(t); }
+          catch (error) {
+            this.block(error instanceof Error ? error.message : String(error), site);
+            return;
+          }
+          if (this.dialogue) return;
+          changed = true;
+          continue;
+        }
         if (t.move && t.remaining > 0) {
           if (!actor) {
             this.block("非角色实体不能移动");
@@ -1141,10 +1285,7 @@ export class FieldGame {
         switch (op.kind) {
           case "treasure-box":
             try {
-              this.executeTreasure(op);
-              // Native yields after setting the flag. One logical Web tick is
-              // the existing frame-boundary adaptation, not a parity claim.
-              t.wait = 10;
+              t.treasure = this.prepareTreasureTask(op, op);
             } catch (error) {
               this.block(error instanceof Error ? error.message : String(error), op);
               return;
@@ -1250,6 +1391,10 @@ export class FieldGame {
             }
             break;
           case "change-map":
+            if (this.treasureHandoffBlocked()) {
+              this.block("宝箱任务尚未完成，尚不支持并发切图", op);
+              return;
+            }
             this.stop = {
               kind: "map-transition",
               message: "正在载入地图…",
@@ -1416,6 +1561,10 @@ export class FieldGame {
             };
             return;
           case "encounter":
+            if (this.treasureHandoffBlocked()) {
+              this.block("宝箱任务尚未完成，尚不支持并发入战", op);
+              return;
+            }
             this.stop = {
               kind: "encounter",
               message: "此战斗尚未接入当前可玩片段。",
