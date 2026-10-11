@@ -11,6 +11,8 @@ import { loadAudioMedia } from "./audio.js";
 import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
 import { bindTileAnimationRegions } from "./tile-animation.js";
 import { compileInventoryEvent } from "./inventory-event.js";
+import { compileTreasureBoxInstruction, compileTreasureInventoryLimits } from "./treasure-inventory.js";
+import { compileNarsheMapEntrySeed } from "./map-party-entry.js";
 import { compilePartyEvent } from "./party.js";
 import { loadSystemSource } from "./system-source.js";
 import { compileTransportationCatalog, compileNarsheTransportationCheckpoint } from "./transportation.js";
@@ -135,6 +137,16 @@ export function decodeFieldOp(
   ) {
     try {
       return { ...site, ...compileInventoryEvent(name, i, tables) };
+    } catch (error) {
+      return blocked(error instanceof Error ? error.message : String(error));
+    }
+  }
+  if (name === "TreasureBox") {
+    try {
+      const request = compileTreasureBoxInstruction(raw);
+      if (request.message)
+        return blocked("TreasureBox reward/empty/capacity message tasks are not implemented");
+      return { ...site, ...request };
     } catch (error) {
       return blocked(error instanceof Error ? error.message : String(error));
     }
@@ -639,6 +651,7 @@ export async function compileField(root: string): Promise<FieldContent> {
   const transportationCatalog = compileTransportationCatalog(systemSource.reader,
     systemSource.tables["transportation.csv"]!.map((r) => tableId(r.id))).catalog;
   const transportation = compileNarsheTransportationCheckpoint(transportationCatalog, systemSource.assets);
+  const mapEntrySeed = compileNarsheMapEntrySeed(systemSource.assets);
   const miscSources = systemSource.assets.filter((a) => a.source.assetPath.endsWith("/serial_misc_assets.json"));
   if (miscSources.length !== 1) throw new Error("Missing or ambiguous party appearance source settings");
   const partyCatalog = compilePartyActorCatalog(systemSource.tables, miscSources[0]!.data).catalog;
@@ -687,12 +700,14 @@ export async function compileField(root: string): Promise<FieldContent> {
       project.sourceSetHash,
       "environment",
     ),
+    treasureInventoryLimits: compileTreasureInventoryLimits(systemSource.tables).limits,
     scripts,
     scriptLocals,
     scriptSystemFlags,
     entry: {
       absentHideTargets,
       transportationId: transportation.identity.id,
+      initialEventValues: [...mapEntrySeed.values, ...transportation.knownReleaseFlags],
       partyActors: { kind: "field-party-actors-v1", context: partyCheckpoint.context,
         playerAssetCacheId: partyCheckpoint.playerAssetCacheId },
       player: {
@@ -703,7 +718,7 @@ export async function compileField(root: string): Promise<FieldContent> {
         asset: "mo_ff6_p001",
         mount: "mo_ff6_v006_c00",
       },
-      evidence: [...transportation.scripts.map((s) => s.source),
+      evidence: [...transportation.scripts.map((s) => s.source), ...mapEntrySeed.scripts.map((s) => s.source),
         ...partyCheckpoint.sourceProof.entityGroups.map((s) => s.source), ...[29, 47, 63, 116].map((i) => ({
         ...asset("sc_e_0001_5").source,
         pointer: `/Mnemonics/${i}`,

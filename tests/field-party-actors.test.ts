@@ -122,11 +122,11 @@ test("missing candidate actor media blocks the entire party transaction", () => 
   assert.equal(game.field.player.asset, "alpha");
 });
 
-test("unrestored map actor initialization cannot silently drop a native actor checkpoint", () => {
+test("missing destination actor inputs cannot silently drop a native actor checkpoint", () => {
   const { game, world, target } = integration();
   const owned = game.state.snapshot(), actors = game.field.partyActorCheckpoint;
   game.field.previewMap(2, 1);
-  assert.throws(() => game.world.prepare(world, target), /队伍演员初始化/);
+  assert.throws(() => game.world.prepare(world, target), /Missing source map actor entry/);
   assert.deepEqual(game.state.snapshot(), owned);
   assert.deepEqual(game.field.partyActorCheckpoint, actors);
 });

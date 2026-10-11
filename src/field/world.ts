@@ -1,5 +1,7 @@
 import type { Character, Evidence, FieldContent, Op } from "./types.js";
 import type { ScriptLocals } from "../core/event-state.js";
+import type { MapPartyEntryDefinition } from "../core/map-party-entry.js";
+import type { TransportationCatalog } from "../core/transportation.js";
 
 export type ContentIssue = { reason: string; source: Evidence };
 export type WorldMapContent = {
@@ -13,8 +15,12 @@ export type WorldMapContent = {
   areaId: number;
   name: string;
   map: FieldContent["map"] | null;
+  /** Source MapSetup inputs, independent of geometry compilation/admission. */
+  partyEntry?: MapPartyEntryDefinition;
+  partyEntryBlockers?: ContentIssue[];
   scripts: Record<string, Op[]>;
   scriptLocals: Record<string, ScriptLocals | null>;
+  scriptSystemFlags?: FieldContent["scriptSystemFlags"];
   initializer: string | null;
   characterAssets: string[];
   blockers: ContentIssue[];
@@ -28,6 +34,8 @@ export type WorldCatalog = {
   mediaSourceSetHash: string;
   contentHash: string;
   characters: Record<string, Character>;
+  transportation?: TransportationCatalog;
+  treasureInventoryLimits?: FieldContent["treasureInventoryLimits"];
   minimap?: FieldContent["minimap"];
   bgm?: FieldContent["bgm"];
   environment?: FieldContent["environment"];

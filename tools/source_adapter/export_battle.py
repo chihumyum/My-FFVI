@@ -1,4 +1,4 @@
-"""Export battles referenced by the opening Narshe street events; source stays read-only."""
+"""Export street battle sources and explicitly requested character media; source stays read-only."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -43,7 +43,24 @@ def full_rect_picture(sprite, path):
     return picture
 
 
-def export_battle(source: Path, out: Path):
+def character_rows(tables, requested=()):
+    """Media selection never changes INIT_PARTY or grants a character to the game."""
+    initial = [r for r in tables['initialize_data.csv'] if r['key_name'].startswith('INIT_PARTY_')]
+    identities = {int(r['value1']) for r in initial}
+    for identity in requested:
+        if type(identity) is not int or identity <= 0:
+            raise ValueError('Invalid requested character identity')
+        identities.add(identity)
+    result = []
+    for identity in sorted(identities):
+        found = [r for r in tables['character_status.csv'] if r['id'] == str(identity)]
+        if len(found) != 1:
+            raise ValueError(f'Unresolved character_status.csv:{identity}')
+        result.append(found[0])
+    return result
+
+
+def export_battle(source: Path, out: Path, character_ids=()):
     import UnityPy
     parent = checked_snapshot(REPO / 'build/import')
     project = json.loads(parent['project.json'])
@@ -63,8 +80,7 @@ def export_battle(source: Path, out: Path):
     parties = [row('monster_party.csv', identity) for identity in party_ids]
     monsters = [row('monster.csv', party[f'monster{i}']) for party in parties
                 for i in range(1, 10) if int(party[f'monster{i}'])]
-    initial = [r for r in tables['initialize_data.csv'] if r['key_name'].startswith('INIT_PARTY_')]
-    characters = [row('character_status.csv', r['value1']) for r in initial]
+    characters = character_rows(tables, character_ids)
     names = {'bc_ff6_p022', 'monster_ai', 'battle_script', 'battleextradata', 'misc'}
     names.update(row('battle_background_asset.csv', p['battle_background_asset_id'])['asset_name'] for p in parties)
     names.update(row('character_asset.csv', c['character_asset_id'])['asset_name'] for c in characters)
@@ -103,7 +119,8 @@ def export_battle(source: Path, out: Path):
                     'representation': 'source-texture-full-rect', 'width': picture.width, 'height': picture.height, 'pivot': [sprite.m_Pivot.x, sprite.m_Pivot.y]}
     for entry in sources:
         if digest(source / entry['file']) != entry['sha256']: raise ValueError('Source changed during export')
-    result = {'formatVersion': 1, 'adapterVersion': 'battle-0.2.0', 'parentSourceSetHash': project['sourceSetHash'],
+    result = {'formatVersion': 1, 'adapterVersion': 'battle-0.3.0', 'parentSourceSetHash': project['sourceSetHash'],
+        'characterIds': [int(c['id']) for c in characters],
         'encounterPartyIds': party_ids,
         'sourceSetHash': hashlib.sha256(canonical(sources).encode()).hexdigest(), 'sources': sources,
         'assets': assets, 'sprites': sprites, 'tableSources': table_sources}
@@ -116,11 +133,13 @@ def export_battle(source: Path, out: Path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
+    parser.add_argument('--character-id', type=int, action='append', default=[],
+                        help='Additional source character media identity; repeatable, does not change the party')
     args = parser.parse_args()
     staged = Path(tempfile.mkdtemp(prefix='.battle-', dir=REPO / 'build'))
     target = REPO / 'build/battle'; backup = REPO / 'build/.previous-battle'
     try:
-        result = export_battle(args.source.resolve(), staged)
+        result = export_battle(args.source.resolve(), staged, args.character_id)
         if backup.exists(): raise RuntimeError('Inspect interrupted build/.previous-battle first')
         if target.exists(): target.rename(backup)
         try: staged.rename(target)

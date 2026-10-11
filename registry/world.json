@@ -738,6 +738,51 @@
         "build/reports/systems-v19-validation.json",
         "scripts/check-system-integration.mjs"
       ]
+    },
+    {
+      "id": "narshe:source-battle-command-qualification",
+      "subject": "narshe",
+      "predicate": "source.battleCommandQualification",
+      "value": "Owned skills, command order, chanting ability types, learned level and release conditions are distinct from executable effect plans. Command26 requires condition row53/type607; mount artwork and field transportation6 do not prove that battle condition. The v20 opening explicitly retains development-static command admission until the entry-condition and invalid-content providers are resolved.",
+      "when": {
+        "battleProfile": "narshe-playability-v20"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "docs/battle-abilities.md",
+        "docs/systems-v20.md"
+      ]
+    },
+    {
+      "id": "narshe:source-map-party-entry",
+      "subject": "narshe",
+      "predicate": "source.mapPartyEntry",
+      "value": "The inspected non-advertisement new-game prelude establishes ScenarioFlag3[45]=0; only this proven scenario bit and known transport release bits seed the development checkpoint. Ordinary MapSetup prepares player/hidden-party actor identities and target providers, preserves player visibility and resolves PointIn separately from saved-position, companion and party-switching paths. Unknown values remain blocked.",
+      "when": {
+        "battleProfile": "narshe-playability-v20"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "docs/map-party-entry.md",
+        "docs/systems-v20.md"
+      ]
+    },
+    {
+      "id": "narshe:source-treasure-capacity",
+      "subject": "narshe",
+      "predicate": "source.treasureCapacity",
+      "value": "Treasure CheckItemCountOver reads ordinary owned records including worn copies, not free equipment or the important list. Capacity affects messaging, not reward admission. Explicit TreasureBox after=true/message=false bypasses the opened-flag check and uses actionSoundId0. All22 silent instructions in this source have zero reward quantities; admitting them is not22 complete collectible treasure interactions. isOpen and the treasure flag must remain distinct across checkpoints.",
+      "when": {
+        "battleProfile": "narshe-playability-v20"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "docs/treasure-inventory.md",
+        "docs/systems-v20.md"
+      ]
     }
   ],
   "assets": []

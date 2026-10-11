@@ -2,6 +2,7 @@ import type { FieldContent } from "../field/types.js";
 import { encounterContent, type BattleCatalog } from "./battle-content.js";
 import { BattleGame } from "./battle.js";
 import { BattleAIError } from "./battle-ai.js";
+import { EventState } from "./event-state.js";
 import {
   parseBattlePreferences,
   type BattlePreferences,
@@ -71,9 +72,18 @@ export class GameSession {
       battleCatalog.contentHash,
       battleCatalog.common.conditions,
     );
-    this.world = new WorldSession(field, undefined, {
+    const initialEvents = new EventState();
+    const seeded = new Set<string>();
+    for (const { ref, value } of field.entry.initialEventValues ?? []) {
+      const identity = `${ref.category}:${ref.index}`;
+      if (seeded.has(identity)) throw new Error("Duplicate source checkpoint event seed");
+      seeded.add(identity);
+      initialEvents.write(ref, value);
+    }
+    this.world = new WorldSession(field, initialEvents, {
       current: {
         inventory: this.state.fieldInventory,
+        treasure: this.state.fieldTreasure,
         party: this.state.fieldParty,
         roster: this.state.fieldRoster,
         ...(battleCatalog.gameState.fieldConditions ? { fieldSteps: this.state.fieldSteps } : {}),

@@ -10,7 +10,7 @@ for (const content of [field, battle]) {
   const { contentHash, ...input } = content;
   assert.equal(contentHash, hash(input));
 }
-assert.equal(battle.common.profile, "narshe-playability-v19");
+assert.equal(battle.common.profile, "narshe-playability-v20");
 assert.equal(field.entry.transportationId, 6);
 assert.equal(field.entry.partyActors.context.player.fieldAssetId, 38);
 assert.equal(field.entry.partyActors.context.player.riderFieldAssetId, 1);
@@ -114,7 +114,7 @@ for (const mutate of [
   assert.throws(() => GameSession.restore(bad, f.content, battle));
 }
 cases.push({ name: "four forged native-actor checkpoint providers rejected" });
-const report = { kind: "source-system-integration-v19", sourceSetHash: field.parentSourceSetHash,
+const report = { kind: "source-system-integration-v20", sourceSetHash: field.parentSourceSetHash,
   fieldHash: field.contentHash, battleCatalogHash: battle.contentHash, cases,
   originalRuntimeOracle: false, storyCoverageExpanded: false, completeMigration: false };
 await writeFile(root + "build/reports/system-integration-check.json", JSON.stringify(report, null, 2) + "\n");

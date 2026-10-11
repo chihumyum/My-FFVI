@@ -226,8 +226,9 @@ export class Renderer {
               ),
             ),
       );
-    const cx = camera(p.x, range.x, range.width, w),
-      cy = camera(p.y, range.y, range.height, h);
+    // Source camera offsets are pixels with positive Y pointing upward.
+    const cx = camera(p.x + game.cameraOffset.x / 16, range.x, range.width, w),
+      cy = camera(p.y - game.cameraOffset.y / 16, range.y, range.height, h);
     c.imageSmoothingEnabled = false;
     c.fillStyle = "#09111b";
     c.fillRect(0, 0, w, h);

@@ -63,7 +63,7 @@ export class BattleView {
     if (this.actionSource !== null)
       return this.actionSource.kind === "item" ? "item-target" : "ability-target";
     if (this.commandId !== null)
-      return this.content.commands[this.commandId].kind === "item" ? "item" : "ability";
+      return this.instance.commandMenu(this.selected).find((c) => c.id === this.commandId)?.kind === "item" ? "item" : "ability";
     return "command";
   }
   publishClock() {
@@ -90,9 +90,7 @@ export class BattleView {
     return true;
   }
   commandUsesList(actor, commandId) {
-    const command = this.content.commands[commandId];
-    return command.kind === "item" ||
-      command.abilityIds.filter((id) => actor.abilities.includes(id)).length !== 1;
+    return this.instance?.commandMenu(actor.id).find((c) => c.id === commandId)?.usesList ?? true;
   }
   back() {
     if (this.paused || this.specialInput !== null) return false;
@@ -239,14 +237,15 @@ export class BattleView {
       return;
     }
     const actor = ready.find((p) => p.id === this.selected);
-    if (this.commandId !== null && !actor?.commands.includes(this.commandId)) this.resetMenu();
+    const commands = actor ? battle.commandMenu(actor.id) : [];
+    if (this.commandId !== null && !commands.some((c) => c.id === this.commandId && c.available)) this.resetMenu();
     const canUse = (source, commandId) =>
       source.kind === "ability"
         ? battle.canUse(actor.id, source.id, commandId)
         : battle.canUseItem(actor.id, source.id, commandId);
     const options = actor
-      ? actor.commands.flatMap((commandId) => {
-          const command = this.content.commands[commandId];
+      ? commands.flatMap((command) => {
+          const commandId = command.id;
           return command.kind === "item"
             ? battle.inventory
                 .filter((i) => i.count > 0 && !battle.items[i.id].important)
@@ -260,14 +259,13 @@ export class BattleView {
                   };
                 })
             : command.abilityIds
-                .filter((id) => actor.abilities.includes(id))
                 .map((id) => {
                   const source = { kind: "ability", id };
                   return {
                     commandId,
                     source,
                     usable: canUse(source, commandId),
-                    name: this.content.abilities[id].name,
+                    name: this.content.abilities[id]?.name ?? `能力 ${id} · 暂不可用`,
                   };
                 });
         })
@@ -291,6 +289,7 @@ export class BattleView {
       this.actionSource,
       this.commandId,
       options,
+      commands,
       ready.map((p) => p.id),
       targets,
       paused,
@@ -306,7 +305,7 @@ export class BattleView {
     menu.replaceChildren();
     const title = document.createElement("strong");
     title.textContent = actor
-      ? `${actor.name} · ${this.specialInput !== null ? "特殊输入中…" : this.actionSource !== null ? "选择目标" : this.commandId !== null ? this.content.commands[this.commandId].name : "选择指令"}`
+      ? `${actor.name} · ${this.specialInput !== null ? "特殊输入中…" : this.actionSource !== null ? "选择目标" : this.commandId !== null ? commands.find((c) => c.id === this.commandId)?.name ?? "选择能力" : "选择指令"}`
       : "等待行动条…";
     menu.append(title);
     if (!actor || this.specialInput !== null) return;
@@ -326,16 +325,17 @@ export class BattleView {
       return b;
     };
     if (this.commandId === null) {
-      for (const commandId of actor.commands) {
-        const command = this.content.commands[commandId];
+      for (const command of commands) {
+        const commandId = command.id;
         const commandOptions = options.filter((option) => option.commandId === commandId);
         const usesList = this.commandUsesList(actor, commandId);
-        add(command.name, !usesList && !commandOptions[0]?.usable, () => {
+        const button = add(command.name + (command.blockers.length ? " · 暂不可用" : ""), !command.available || (!usesList && !commandOptions[0]?.usable), () => {
           this.commandId = commandId;
           this.actionSource = usesList ? null : commandOptions[0].source;
           this.key = "";
           this.sync(battle, this.paused);
         });
+        if (command.blockers.length) button.title = command.blockers.join("；");
       }
     } else if (this.actionSource === null) {
       for (const { source, commandId, usable, name } of options.filter((option) => option.commandId === this.commandId)) {

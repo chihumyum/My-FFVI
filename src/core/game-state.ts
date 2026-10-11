@@ -61,6 +61,8 @@ import {
   type InitializedOwnedCharacter,
 } from "./owned-character.js";
 import { canonical } from "./canonical.js";
+import type { FieldTreasurePort } from "./treasure-port.js";
+import type { TreasureInventoryRead, TreasureRewardCommand } from "./treasure-inventory.js";
 import { recoverJoinedCharacter } from "./character-recovery.js";
 import type { PartyActorCatalog, PartyActorMember } from "./party-actors.js";
 import {
@@ -89,6 +91,8 @@ export type GameStateContent = {
   characterInitializations?: Record<string, OwnedCharacterInitializationTemplate>;
   characterGrowth?: Record<string, CharacterGrowthPlan>;
   partyActors?: PartyActorCatalog;
+  /** Source templates for potential party members, not additional owned actors. */
+  battleDefinitions?: CombatantDefinition[];
   rosterLifecycle: {
     initial: Record<
       string,
@@ -167,6 +171,7 @@ function keys(value: object, expected: string) {
 export class GameState {
   private readonly content: GameStateContent;
   private readonly definitions: Map<string, CombatantDefinition>;
+  private readonly initialIds: readonly string[];
   private data: GameStateSnapshot;
   private active: {
     lease: BattleLease;
@@ -182,6 +187,7 @@ export class GameState {
   readonly fieldInventory: FieldInventoryPort = {
     prepare: (command) => this.prepareInventoryEvent(command),
   };
+  readonly fieldTreasure: FieldTreasurePort;
   readonly fieldParty: FieldPartyPort = {
     prepare: (command) => this.preparePartyEvent(command),
   };
@@ -199,7 +205,18 @@ export class GameState {
       ? new FieldConditions(structuredClone(content.fieldConditions))
       : null;
     this.content = structuredClone(content);
-    this.definitions = new Map(players.map((p) => [p.id, structuredClone(p)]));
+    this.initialIds = players.map((p) => p.id);
+    const definitions = content.battleDefinitions ?? players;
+    distinct(definitions.map((p) => p.id));
+    distinct(definitions.map((p) => p.sourceId));
+    if (players.some((p) => !definitions.some((d) => d.id === p.id && d.sourceId === p.sourceId)))
+      throw new Error("Missing initial battle definition");
+    this.definitions = new Map(definitions.map((p) => [p.id, structuredClone(p)]));
+    this.fieldTreasure = {
+      limits: { item: content.limits.item, gil: content.limits.gil },
+      read: () => this.treasureInventoryRead(this.data),
+      prepare: (command) => this.prepareTreasureReward(command),
+    };
     distinct(players.map((p) => p.id));
     if (content.kind !== "game-state-development-v1" || !players.length)
       throw new Error("Unsupported owned-state content");
@@ -328,7 +345,7 @@ export class GameState {
     }));
     if (canonical(data.characterNames) !== canonical(names))
       throw new Error("Owned character name binding mismatch");
-    if ([...this.definitions.keys()].some((id) => !data.roster.some((p) => p.id === id)))
+    if (this.initialIds.some((id) => !data.roster.some((p) => p.id === id)))
       throw new Error("Missing roster member");
     if (this.content.equipmentSystem)
       validateRosterLifecycle(
@@ -387,7 +404,7 @@ export class GameState {
       throw new Error("Unimplemented disabled roster equipment ownership");
     const lifecycle = this.content.rosterLifecycle.initial[p.id];
     if (
-      (lifecycle ? p.ownedId !== lifecycle.ownedId : p.ownedId <= this.definitions.size) ||
+      (lifecycle ? p.ownedId !== lifecycle.ownedId : p.ownedId <= this.initialIds.length) ||
       p.jobId !== (template?.initial.jobId ?? lifecycle?.jobId)
     )
       throw new Error("Unimplemented roster identity/job change");
@@ -490,12 +507,13 @@ export class GameState {
   private projectInventoryEvent(
     data: GameStateSnapshot,
     command: FieldInventoryCommand,
+    treasure = false,
   ) {
     const next = structuredClone(data);
     let result: boolean | null = null;
     if (command.kind === "grant-item" || command.kind === "remove-item") {
       integer(command.id, 0x7fffffff, 1);
-      integer(command.count, 0x7fffffff, 1);
+      integer(command.count, 0x7fffffff, treasure && command.kind === "grant-item" ? 0 : 1);
       if (!this.content.items[command.id])
         throw new Error("Unimplemented inventory content: " + command.id);
       let entry = next.items.find((i) => i.id === command.id);
@@ -517,7 +535,14 @@ export class GameState {
     ) {
       const system = this.content.equipmentSystem;
       if (!system) throw new Error("Equipment system is unavailable");
-      next.equipmentStock = projectEquipmentOwnership(
+      if (treasure && command.kind === "grant-equipment" && command.count === 0) {
+        const definition = system.catalog.definitions[command.id];
+        if (!definition || definition.id !== command.id || definition.empty)
+          throw new Error("Unknown treasure equipment ownership identity");
+        if (!next.equipmentStock.some((s) => s.id === command.id))
+          next.equipmentStock.push({ id: command.id, count: 0 });
+        next.equipmentStock.sort((a, b) => a.id - b.id);
+      } else next.equipmentStock = projectEquipmentOwnership(
         system.catalog,
         next.roster.filter((p) => p.enabled),
         next.equipmentStock,
@@ -534,6 +559,28 @@ export class GameState {
     } else throw new Error("Unknown field inventory command");
     this.validate(next);
     return { next, result };
+  }
+  private treasureInventoryRead(data: GameStateSnapshot): TreasureInventoryRead {
+    return {
+      gil: data.gil,
+      normalOwnedItems: [
+        ...data.items.filter((item) => !this.content.items[item.id]!.important),
+        ...data.equipmentStock,
+      ].map((item) => ({ ...item })).sort((a, b) => a.id - b.id),
+    };
+  }
+  private prepareTreasureReward(command: TreasureRewardCommand): FieldInventoryTransaction {
+    this.requireIdle();
+    if (!["grant-gil", "grant-item", "grant-equipment"].includes(command.kind))
+      throw new Error("Invalid treasure reward command");
+    const { next, result } = this.projectInventoryEvent(this.data, command, true);
+    const revision = this.revision;
+    return { result, commit: () => {
+      this.requireIdle();
+      if (this.revision !== revision) throw new Error("Stale treasure inventory transaction");
+      this.data = next;
+      this.revision++;
+    } };
   }
   private prepareInventoryEvent(
     command: FieldInventoryCommand,
@@ -653,6 +700,7 @@ export class GameState {
   prepareFieldState(): {
     ports: {
       inventory: FieldInventoryPort;
+      treasure: FieldTreasurePort;
       party: FieldPartyPort;
       roster: FieldRosterPort;
       fieldSteps?: FieldConditionPort;
@@ -681,6 +729,23 @@ export class GameState {
             generation++;
           },
         };
+      },
+    };
+    const treasure: FieldTreasurePort = {
+      limits: { ...this.fieldTreasure.limits },
+      read: () => this.treasureInventoryRead(published ? this.data : data),
+      prepare: (command) => {
+        if (published) return this.prepareTreasureReward(command);
+        if (!["grant-gil", "grant-item", "grant-equipment"].includes(command.kind))
+          throw new Error("Invalid treasure reward command");
+        const { next, result } = this.projectInventoryEvent(data, command, true);
+        const version = generation;
+        return { result, commit: () => {
+          if (published || generation !== version)
+            throw new Error("Stale candidate treasure transaction");
+          data = next;
+          generation++;
+        } };
       },
     };
     const party: FieldPartyPort = {
@@ -739,6 +804,7 @@ export class GameState {
     return {
       ports: {
         inventory,
+        treasure,
         party,
         roster,
         ...(this.fieldConditions ? { fieldSteps } : {}),
@@ -860,6 +926,10 @@ export class GameState {
       return {
         ...structuredClone(definition),
         ...structuredClone(progress),
+        ...(p.abilities ? { ownedAbilities: {
+          sourceId: p.sourceId, jobId: p.jobId, magicStoneId: p.magicStoneId,
+          abilities: structuredClone(p.abilities),
+        } } : {}),
         ...(this.content.equipmentSystem ? this.projectOwnedParameters(p) : {}),
         atb: 0,
         queued: false,

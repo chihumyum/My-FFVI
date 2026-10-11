@@ -15,6 +15,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [v20 战斗资格、地图入口与宝箱事务](docs/systems-v20.md)
 - [v17 并行系统集成与验收](docs/systems-v17.md)
 - [角色生命周期](docs/roster-lifecycle.md)、[战斗计时](docs/battle-timing.md)、[普通毒](docs/poison-conditions.md)
 - [三组编队与角色所有权](docs/party.md)

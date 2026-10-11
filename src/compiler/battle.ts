@@ -44,7 +44,8 @@ const SourceFile = z.object({
 });
 const Export = z.object({
   formatVersion: z.literal(1),
-  adapterVersion: z.literal("battle-0.2.0"),
+  adapterVersion: z.literal("battle-0.3.0"),
+  characterIds: z.array(z.number().int().positive()),
   parentSourceSetHash: z.string(),
   sourceSetHash: z.string(),
   encounterPartyIds: z.array(z.number().int().positive()),
@@ -305,6 +306,18 @@ export async function compileOpeningBattle(root: string) {
     new Set(initialParty.map((c) => c.slot)).size !== initialParty.length
   )
     throw new Error("Missing or ambiguous initial party slots");
+  if (new Set(battle.characterIds).size !== battle.characterIds.length ||
+      initialParty.some((c) => !battle.characterIds.includes(c.characterId)))
+    throw new Error("Invalid battle character media scope");
+  const characterMedia = Object.fromEntries(battle.characterIds.map((id) => {
+    const character = row("character_status.csv", id);
+    const asset = row("character_asset.csv", character.values.character_asset_id!);
+    const spriteGroup = asset.values.asset_name!;
+    if (!Object.keys(battle.sprites).some((p) =>
+      p.toLowerCase().includes(`/${spriteGroup.toLowerCase()}/`)))
+      throw new Error("Unresolved selected character media: " + id);
+    return [id, { characterId: id, spriteGroup, source: asset.source }];
+  }));
   const command = row("command.csv", 26);
   row("command.csv", 3);
   // A shared condition library, not proof that every behavior is executable.
@@ -546,6 +559,7 @@ export async function compileOpeningBattle(root: string) {
     },
     encounters,
     initialParty,
+    characterMedia,
     ownedInitializations,
     ownedInitializationBlockers,
     characterGrowth,

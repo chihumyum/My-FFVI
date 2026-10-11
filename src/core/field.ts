@@ -17,6 +17,8 @@ import {
   type FieldInventoryPort,
 } from "./inventory-event.js";
 import { executePartyEvent, type FieldPartyPort, type PartyAppearanceCandidate } from "./party.js";
+import type { FieldTreasurePort } from "./treasure-port.js";
+import { planTreasureInventory, treasureFlagRef, validateTreasureInventory, type TreasureBoxRequest } from "./treasure-inventory.js";
 import type { PartyActorCatalog } from "./party-actors.js";
 import { FieldPartyActors, type FieldPartyActorCheckpoint } from "./field-party-actors.js";
 import { missingFieldPoses } from "./character-media.js";
@@ -87,7 +89,7 @@ export type Actor = Point & {
   animation: ActorAnimation | null;
 };
 export type FieldCheckpoint = {
-  kind: "idle-field-v3";
+  kind: "idle-field-v4";
   contentHash: string;
   time: number;
   remainder: number;
@@ -97,6 +99,7 @@ export type FieldCheckpoint = {
   eventState: EventStateSnapshot;
   activeGroups: string[];
   hiddenEntities: string[];
+  openedTreasures: string[];
   actors: (Omit<Actor, "motion" | "animation"> & {
     animation: ActorPlayback | null;
   })[];
@@ -142,6 +145,7 @@ export type Dialogue = {
 };
 export type FieldGameOptions = {
   inventory?: FieldInventoryPort;
+  treasure?: FieldTreasurePort;
   party?: FieldPartyPort;
   roster?: FieldRosterPort;
   fieldSteps?: FieldConditionPort;
@@ -153,6 +157,7 @@ const contains = (e: FieldEntity, p: Point) =>
   p.x >= e.x && p.x < e.x + e.width && p.y >= e.y && p.y < e.y + e.height;
 export class FieldGame {
   readonly transportationId: number | null;
+  readonly cameraOffset: Readonly<Point>;
   private readonly partyActors: FieldPartyActors | null;
   readonly tileAnimations: TileAnimationState;
   readonly openTriggers: OpenTriggerState;
@@ -160,6 +165,7 @@ export class FieldGame {
   private readonly collisionMappings = new Map<number, number[]>();
   readonly actors: Record<string, Actor> = {};
   readonly hiddenEntities = new Set<string>();
+  private readonly openedTreasures = new Set<string>();
   readonly activeGroups = new Set<string>();
   private readonly entityList: FieldEntity[];
   private readonly defaultProperties: readonly FieldEntity[];
@@ -200,6 +206,11 @@ export class FieldGame {
     readonly options: FieldGameOptions = {},
   ) {
     this.transportationId = content.entry.transportationId ?? null;
+    const offset = content.entry.cameraOffset ?? { x: 0, y: 0 };
+    checkpointKeys(offset, "x,y");
+    if (!Number.isFinite(offset.x) || !Number.isFinite(offset.y))
+      throw new Error("Invalid field entry camera offset");
+    this.cameraOffset = Object.freeze({ ...offset });
     if (this.transportationId !== null)
       checkpointInteger(this.transportationId, 1, 0x7fffffff);
     this.tileAnimations = new TileAnimationState(content.map);
@@ -235,6 +246,9 @@ export class FieldGame {
       steps: 0,
       animation: this.initialAnimation(p.asset, p.direction, p.mount),
     };
+    if (content.entry.playerVisible !== undefined && typeof content.entry.playerVisible !== "boolean")
+      throw new Error("Unknown field entry player visibility");
+    if (content.entry.playerVisible === false) this.hiddenEntities.add("-1001");
     Object.assign(this.actors, this.createActors(this.entityList));
     this.partyActors = content.entry.partyActors && options.partyAppearance
       ? new FieldPartyActors(options.partyAppearance.catalog, content.entry.partyActors, this.transportationId) : null;
@@ -243,7 +257,9 @@ export class FieldGame {
       if (media.asset !== this.player.asset || media.mount !== (this.player.mount || null))
         throw new Error("Field entry does not match source player appearance");
     }
+    const treasures = this.prepareTreasureInitialization(this.entityList);
     this.tileAnimations.register(this.entityList);
+    this.initializeTreasures(treasures);
     this.openTriggers.initialize(this.entityList, this.player);
   }
   private initialAnimation(
@@ -297,14 +313,69 @@ export class FieldGame {
     }
     // Validate the entire group before any actor, collision, or trigger becomes visible.
     const actors = this.createActors(group.entities);
+    const treasures = this.prepareTreasureInitialization(group.entities);
     this.tileAnimations.register(group.entities);
     this.entityList.push(...group.entities);
+    this.initializeTreasures(treasures);
     Object.assign(this.actors, actors);
     this.activeGroups.add(name);
     this.currentProperties = [...this.defaultProperties, ...group.entities];
   }
   get player(): Actor {
     return this.actors["-1001"]!;
+  }
+  private prepareTreasureInitialization(entities: readonly FieldEntity[]): FieldEntity[] {
+    return entities.filter((e) => e.kind === 7).filter((e) => {
+      if (!e.treasure) throw new Error("Missing treasure source binding");
+      validateTreasureInventory(e.treasure);
+      const value = this.eventState.read(treasureFlagRef(e.treasure.flagId));
+      if (value !== 0 && value !== 1) throw new Error("Unknown treasure entry flag");
+      return value === 1;
+    });
+  }
+  private linkedTreasureTiles(entity: FieldEntity): FieldEntity | undefined {
+    // Source SearchTileAnimRegionEnitity returns only the first registered match.
+    return this.entityList.find((e) => e.kind === 1 && e.objectId === entity.treasure!.presentation.linkObjectId);
+  }
+  private openTreasure(entity: FieldEntity): void {
+    this.openedTreasures.add(entity.id);
+    if (entity.treasure!.presentation.pickUp) this.hiddenEntities.add(entity.id);
+  }
+  private initializeTreasures(entities: readonly FieldEntity[]): void {
+    for (const entity of entities) {
+      this.openTreasure(entity);
+      const link = this.linkedTreasureTiles(entity);
+      if (link) this.tileAnimations.forceLastFrame(link.id);
+    }
+  }
+  private executeTreasure(request: TreasureBoxRequest): void {
+    const port = this.options.treasure, limits = this.content.treasureInventoryLimits;
+    if (!port || !limits || limits.item !== port.limits.item || limits.gil !== port.limits.gil)
+      throw new Error("Missing or mismatched treasure inventory owner");
+    if (!request.after || request.message || request.actionSoundId !== 0)
+      throw new Error("Treasure message and interaction lifecycle is not implemented");
+    const matches = this.entityList.filter((e) => e.treasure?.entityId === request.entityId);
+    if (matches.length !== 1) throw new Error("Missing or ambiguous treasure entity");
+    const entity = matches[0]!, definition = entity.treasure!;
+    // Exhausted stacks use a canonical zero record in our shared owner. Native
+    // removes them; amounts above MAX_ITEM would distinguish these histories.
+    if (definition.reward.kind !== "grant-gil" && definition.contentNum > limits.item)
+      throw new Error("Treasure overflow requires native inventory record presence");
+    const value = this.eventState.read(treasureFlagRef(definition.flagId));
+    const plan = planTreasureInventory(definition, request, value !== 0, port.read(), limits);
+    if (plan.kind !== "grant" || plan.message || plan.prelude.soundId !== null)
+      throw new Error("Unimplemented treasure task branch");
+    const link = this.linkedTreasureTiles(entity);
+    if (link && !this.tileAnimations.has(link.id)) throw new Error("Missing treasure tile binding");
+    new EventState(this.eventState.snapshot()).write(plan.flagWrite.ref, plan.flagWrite.value);
+    const transaction = port.prepare(plan.command);
+    if (transaction.result !== null) throw new Error("Unexpected treasure reward result");
+    // All dependencies have been checked; reject stale ownership before making
+    // field changes. The admitted branch has no asynchronous effect between them.
+    transaction.commit();
+    this.openTreasure(entity);
+    if (link) this.tileAnimations.playDefault(link.id);
+    this.eventState.write(plan.flagWrite.ref, plan.flagWrite.value);
   }
   get partyActorCheckpoint(): FieldPartyActorCheckpoint | null {
     return this.partyActors?.checkpoint() ?? null;
@@ -317,8 +388,10 @@ export class FieldGame {
   }
   private preparePartyAppearance(appearance: PartyAppearanceCandidate | undefined, setDummy = true): () => void {
     if (!this.partyActors || !appearance) throw new Error("Party actor refresh is unavailable");
-    return this.partyActors.prepare(appearance, ({ asset, mount }) => {
+    return this.partyActors.prepare(appearance, ({ asset, mount }, plan) => {
       const actor = this.player;
+      if (plan.cameraOffset && (plan.cameraOffset.x !== this.cameraOffset.x || plan.cameraOffset.y !== this.cameraOffset.y))
+        throw new Error("Changing the field camera offset during party refresh is not implemented");
       if (actor.motion) throw new Error("Party appearance refresh during player movement is not supported");
       this.requirePlayerMedia(asset, mount);
       const animation = this.initialAnimation(asset, actor.direction, mount);
@@ -346,7 +419,7 @@ export class FieldGame {
     if (!this.checkpointReady)
       throw new Error("Cannot save during field movement or an event");
     return {
-      kind: "idle-field-v3",
+      kind: "idle-field-v4",
       contentHash: this.content.contentHash,
       time: this.time,
       remainder: this.remainder,
@@ -356,6 +429,7 @@ export class FieldGame {
       eventState: this.eventState.snapshot(),
       activeGroups: [...this.activeGroups],
       hiddenEntities: [...this.hiddenEntities],
+      openedTreasures: [...this.openedTreasures],
       actors: Object.values(this.actors).map(
         ({ motion: _, animation, ...actor }) => ({
           ...actor,
@@ -377,9 +451,9 @@ export class FieldGame {
     const s = structuredClone(raw);
     checkpointKeys(
       s,
-      "kind,contentHash,time,remainder,nextTask,transportationId,partyActors,eventState,activeGroups,hiddenEntities,actors,tiles,doors,bgm,environment",
+      "kind,contentHash,time,remainder,nextTask,transportationId,partyActors,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment",
     );
-    if (s.kind !== "idle-field-v3" || s.contentHash !== content.contentHash ||
+    if (s.kind !== "idle-field-v4" || s.contentHash !== content.contentHash ||
       s.transportationId !== (content.entry.transportationId ?? null))
       throw new Error("Field checkpoint source/version mismatch");
     checkpointNumber(s.time);
@@ -409,6 +483,14 @@ export class FieldGame {
     checkpointIds(s.hiddenEntities);
     if (s.hiddenEntities.some((id) => !next.hasEntity(id)))
       throw new Error("Unknown hidden saved entity");
+    checkpointIds(s.openedTreasures);
+    if (s.openedTreasures.some((id) => !next.entities.some((e) => e.id === id && e.treasure)))
+      throw new Error("Unknown opened treasure identity");
+    for (const id of s.openedTreasures) {
+      const entity = next.entities.find((e) => e.id === id)!;
+      if (entity.treasure!.presentation.pickUp && !s.hiddenEntities.includes(id))
+        throw new Error("Opened pickup treasure is still visible");
+    }
     if (!Array.isArray(s.actors)) throw new Error("Missing saved actors");
     checkpointSameIds(
       s.actors.map((a) => a.id),
@@ -437,7 +519,10 @@ export class FieldGame {
       if (animation) animation.restore(a.animation);
       Object.assign(actor, a, { animation, motion: null });
     }
+    next.hiddenEntities.clear();
     s.hiddenEntities.forEach((id) => next.hiddenEntities.add(id));
+    next.openedTreasures.clear();
+    s.openedTreasures.forEach((id) => next.openedTreasures.add(id));
     next.tileAnimations.restoreCheckpoint(s.tiles);
     next.openTriggers.restoreCheckpoint(s.doors, next.entities);
     next.time = s.time;
@@ -492,7 +577,7 @@ export class FieldGame {
       this.entityList.some(
         (e) =>
           ((e.kind === 8 && this.openTriggers.blocks(e.id)) ||
-            (e.kind === 5 && e.mapObject?.collision)) &&
+            ((e.kind === 5 || e.kind === 7) && e.mapObject?.collision)) &&
           e.layer === layer &&
           !this.hiddenEntities.has(e.id) &&
           points.some((p) => contains(e, p)),
@@ -655,7 +740,8 @@ export class FieldGame {
     const hits = this.entityList.filter((e) => {
       const properties = e.npc ?? e.mapObject;
       return (
-        (e.kind === 6 || e.kind === 5) &&
+        (e.kind === 6 || e.kind === 5 || e.kind === 7) &&
+        !(e.kind === 7 && e.mapObject?.collision === false && this.openedTreasures.has(e.id)) &&
         !this.hiddenEntities.has(e.id) &&
         (this.actors[e.id]?.layer ?? e.layer) === p.layer &&
         (properties ? properties.interaction.kind !== "none" : !!e.script) &&
@@ -1053,6 +1139,17 @@ export class FieldGame {
           return;
         }
         switch (op.kind) {
+          case "treasure-box":
+            try {
+              this.executeTreasure(op);
+              // Native yields after setting the flag. One logical Web tick is
+              // the existing frame-boundary adaptation, not a parity claim.
+              t.wait = 10;
+            } catch (error) {
+              this.block(error instanceof Error ? error.message : String(error), op);
+              return;
+            }
+            break;
           case "roster":
             try {
               // AffectLeaderWithCondition returns immediately only when this

@@ -94,6 +94,7 @@ test("transportation identity is independent of mounted artwork and survives a m
     assert.deepEqual(copy.checkpoint(), game.checkpoint());
     for (const invalid of [999, id === 101 ? 106 : 101]) {
       const bad = game.checkpoint();
+      assert.ok(bad.world.location!.traveler, "independent geometry fixture keeps its explicit traveler");
       bad.world.location!.traveler.transportationId = invalid;
       bad.world.field.transportationId = invalid;
       assert.throws(() => GameSession.restore(bad, f.field, f.battle, {

@@ -15,6 +15,7 @@ import type { ParameterValues } from "../core/parameters.js";
 import { compileDevelopmentAbility } from "./ability.js";
 import { compileBattleConditionCatalog } from "./conditions.js";
 import { compileBattleCommand } from "./commands.js";
+import { compileBattleAbilityCatalog } from "./battle-abilities.js";
 import { compileBattleAI, battleAIAbilities } from "./battle-ai.js";
 import { compileGameState } from "./game-state.js";
 import { compileFieldConditionCatalog } from "./field-conditions.js";
@@ -105,12 +106,30 @@ export async function compileOpeningPlayable(
     rows("condition.csv").map((r) => int(r.id)),
     name,
   ).catalog;
+  const battleAbilities = compileBattleAbilityCatalog(parameterReader,
+    Object.fromEntries(Object.entries(source.tables).map(([key, values]) => [key, Object.values(values).map((r) => r.values)])),
+    Object.values(source.ownedInitializations).map((t) => t.initial.sourceId)).catalog;
   const magitekCommand = compileBattleCommand(
     parameterReader,
     26,
     name,
   ).command;
   const itemCommand = compileBattleCommand(parameterReader, 3, name).command;
+  const commands: BattleContent["commands"] = Object.fromEntries(battleAbilities.commands.map((c) => {
+    const referenced = c.abilityId ? row("ability.csv", c.abilityId) : null;
+    return [c.id, {
+      id: c.id, name: c.nameKey === "None" ? `指令 #${c.id}` : name(c.nameKey),
+      kind: c.executionType === 2 && c.listType === 1 && !c.abilityId ? "item" : "ability",
+      abilityIds: c.abilityId ? [c.abilityId] : battleAbilities.abilities
+        .filter((a) => a.groupId !== 0 && c.abilityTypes.includes(a.typeId)).map((a) => a.id),
+      forbiddenConditionIds: [...c.forbiddenConditionIds],
+      referencedAbility: referenced ? { id: c.abilityId, typeId: int(referenced.type_id), wait: int(referenced.ability_wait) } : null,
+    }];
+  }));
+  // Preserve the explicitly admitted temporary opening menu during migration
+  // of the battle-entry condition and invalid-content providers.
+  commands[magitekCommand.id] = magitekCommand;
+  commands[itemCommand.id] = itemCommand;
   if (itemCommand.kind !== "item")
     throw new Error("Unexpected source item command");
   if (itemCommand.kind === "item")
@@ -351,11 +370,16 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v19",
+    profile: "narshe-playability-v20",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,
     timing: { mode: "active", atbSpeed: 1 },
+    battleAbilities,
+    qualificationContext: {
+      mode: "development-static", conditionContext: "unknown", battleType: 0,
+      magicLearningValue: null, invalidContentIds: null, itemMenuAvailable: null,
+    },
     reactions: source.reactions,
     initialAtb: {
       player: initialAtb("ACCUMULATION_ATB_NORMAL"),
@@ -363,10 +387,7 @@ export async function compileOpeningPlayable(
     },
     players,
     abilities,
-    commands: {
-      [magitekCommand.id]: magitekCommand,
-      [itemCommand.id]: itemCommand,
-    },
+    commands,
     conditions,
     growth,
     experience: rows("exp_table.csv")
@@ -380,6 +401,7 @@ export async function compileOpeningPlayable(
     ),
     limitations: [
       "纳尔谢街道可玩开发规则；未经原版一致性验收，不代表完整战斗系统。",
+      "持有能力→战斗指令资格已接共享投影；607魔导状态与地图禁用内容的战斗入口提供器尚未闭合。当前开场仍显式使用临时静态魔导菜单，不能据此声称一般角色的战斗入口已完成。",
       "已准入的数值分支、ATB、蓄力与时钟门控已按本版来源接入；即时/等待模式及技能、道具菜单已接入，时速固定为 1。固定 10 ms 推进与 400/900 ms 动作表现仍是临时策略，原生动态语义尚未验证。初始持有能力已来源绑定，活动战斗能力仍限受控子集，完整成长/学习未完成。",
       "初始数值使用分阶段属性确认；来源追加经验、普通成长和自然等级学习已接入共享持有状态。特殊学习、魔石、Correction、临时与被动提供器仍未完整恢复，新持有角色的战斗动作独立准入。",
       "当前开放三种射线和治愈原力，以及来源普通 HP/MP 恢复、玩家复活、解除沉默和普通毒的道具；道具目前限我方目标。普通毒的战斗周期、属性相性、地图步伤和解除已接入；开场 currentTransport=6 由来源初始化与前导脚本闭合，该交通跳过普通步伤。完整上下车、特殊毒 row 88、其他活动状态、特殊道具、逃跑与完整战斗脚本仍阻塞。",
@@ -400,6 +422,7 @@ export async function compileOpeningPlayable(
     .map(([sourceId, plan]) => [`player:${sourceId}`, structuredClone(plan)]));
   gameState.rosterLifecycle.firstJoinLevelAdjustments = { ...firstJoinLevelAdjustments };
   gameState.partyActors = structuredClone(source.partyActors);
+  gameState.battleDefinitions = structuredClone(players);
   gameState.fieldConditions = compileFieldConditionCatalog(
     parameterReader,
     conditions,

@@ -128,6 +128,12 @@ const battle = {
     input: { paused: false, helpPaused: false, progressEnabled: true, uiWaiting: false, forceWaiting: false },
   },
   setClockInput(input) { this.timingState.input = { ...input }; },
+  commandMenu(actorId) {
+    const actor = this.players.find((p) => p.id === actorId);
+    assert.ok(actor, "menu query must use a current participant");
+    assert.deepEqual(actor.commands, [], "party-only fixture has no command provider");
+    return [];
+  },
 };
 const rows = () =>
   elements

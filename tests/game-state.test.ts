@@ -27,6 +27,21 @@ function state() {
   const battle = fixture();
   return new GameState(content, battle.players, "fixture", battle.conditions);
 }
+test("additional battle templates do not create owners or change the mandatory initial roster", () => {
+  const battle = fixture(), input = structuredClone(content);
+  input.battleDefinitions = [...structuredClone(battle.players),
+    { ...structuredClone(battle.players[0]!), id: "future", sourceId: 999 }];
+  const owner = new GameState(input, battle.players, "fixture", battle.conditions);
+  assert.deepEqual(owner.snapshot().roster.map((p) => p.id), ["a", "b"]);
+  assert.deepEqual(owner.partyPlayers().map((p) => p.id), ["a", "b"]);
+  const saved = owner.snapshot();
+  owner.restore(saved);
+  assert.deepEqual(owner.snapshot(), saved);
+  saved.roster.pop();
+  assert.throws(() => owner.restore(saved), /Missing roster member/);
+  input.battleDefinitions = input.battleDefinitions.filter((p) => p.id !== "a");
+  assert.throws(() => new GameState(input, battle.players, "fixture", battle.conditions), /Missing initial battle/);
+});
 function session() {
   const battle = fixture();
   battle.fieldSourceSetHash = "fixture";

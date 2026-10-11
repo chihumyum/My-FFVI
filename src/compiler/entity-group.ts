@@ -3,7 +3,8 @@ import { record } from "./content.js";
 import { tableId } from "./table-id.js";
 import { MINIMAP_ICON_TYPES } from "../core/minimap.js";
 import { compileNpc } from "./npc.js";
-import { compileInteraction } from "./interaction.js";
+import { compileInteraction, compileInteractionEligibility } from "./interaction.js";
+import { compileTreasureInventoryDefinition } from "./treasure-inventory.js";
 import type {
   Direction,
   EntityGroup,
@@ -86,7 +87,7 @@ export function compileEntityGroup(
           p = entityProperties(o.properties),
           kind = integer(p.object_type);
         const issue = (reason: string) => blockers.push({ reason, source });
-        if (![0, 1, 2, 3, 4, 5, 6, 8, 18, 19, 27].includes(kind))
+        if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 18, 19, 27].includes(kind))
           issue(`Unsupported entity kind ${kind}`);
         if (kind === 1) issue("Unbound tile animation geometry");
         if (
@@ -142,7 +143,7 @@ export function compileEntityGroup(
         if (kind === 6) {
           if (!p.asset_id) issue("Unresolved actor asset");
         }
-        if (kind === 5) {
+        if (kind === 5 || kind === 7) {
           if (integer(p.asset_id ?? 0) !== 0)
             issue("Unsupported map object sprite asset");
           if (z.boolean().parse(p.birdview_puppet ?? false))
@@ -196,12 +197,21 @@ export function compileEntityGroup(
         const mapObject =
           kind === 5 ? compileInteraction(p, script, tables, messages) : null;
         mapObject?.blockers.forEach(issue);
+        // FieldTresureBox.Init inherits this map-object collider. Its ordinary
+        // interaction is a stopped action; explicit TreasureBox may still target it.
+        const treasure = kind === 7 ? compileTreasureInventoryDefinition(p, tables) : null;
+        const treasureInteraction = kind === 7 ? {
+          ...compileInteractionEligibility(p, tables),
+          collision: z.boolean().parse(p.collision),
+          interaction: { kind: "blocked" as const, reason: "Ordinary treasure interaction is not implemented" },
+          soundId: integer(p.se_id),
+        } : null;
         const direction = (
           { 0: "down", 1: "up", 2: "right", 4: "down", 8: "left" } as Record<
             string,
             Direction
           >
-        )[String(kind === 8 || kind === 5 ? 0 : (p.direction ?? 0))];
+        )[String(kind === 8 || kind === 5 || kind === 7 ? 0 : (p.direction ?? 0))];
         if (!direction) issue("Unsupported entity direction");
         const width = finite(o.width) / tileSize,
           height = finite(o.height) / tileSize;
@@ -219,6 +229,7 @@ export function compileEntityGroup(
                 },
               }
             : {}),
+          ...(treasure ? { treasure, mapObject: treasureInteraction! } : {}),
           ...(kind === 8
             ? {
                 openTrigger: {

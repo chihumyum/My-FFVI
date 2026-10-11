@@ -3,7 +3,27 @@ import sys
 from types import SimpleNamespace as N
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'source_adapter'))
-from export_battle import full_rect_picture
+from export_battle import full_rect_picture, character_rows
+
+
+class CharacterMediaTests(unittest.TestCase):
+    def fixture(self):
+        return {'initialize_data.csv': [{'key_name': 'INIT_PARTY_1', 'value1': '4'}],
+                'character_status.csv': [{'id': '2'}, {'id': '4'}, {'id': '7'}]}
+
+    def test_media_expansion_preserves_initial_party_and_stable_source_identity(self):
+        tables = self.fixture()
+        rows = character_rows(tables, [7, 2, 7])
+        self.assertEqual([r['id'] for r in rows], ['2', '4', '7'])
+        self.assertEqual(tables['initialize_data.csv'], [{'key_name': 'INIT_PARTY_1', 'value1': '4'}])
+        self.assertEqual([r['id'] for r in character_rows(tables)], ['4'])
+
+    def test_missing_duplicate_or_noninteger_id_cannot_select_another_character(self):
+        for request in ([3], [0], [-1], [True], [2.0], ['2']):
+            with self.assertRaises(ValueError): character_rows(self.fixture(), request)
+        tables = self.fixture()
+        tables['character_status.csv'].append({'id': '4'})
+        with self.assertRaises(ValueError): character_rows(tables)
 
 
 class BattleSpriteTests(unittest.TestCase):

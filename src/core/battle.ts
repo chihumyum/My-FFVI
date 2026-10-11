@@ -1,5 +1,6 @@
 import type { AbilityEffectResult } from "./ability.js";
 import type { ParameterValues } from "./parameters.js";
+import { projectBattleAbilities, type BattleAbilityProjection } from "./battle-abilities.js";
 import { atbIncrement } from "./atb.js";
 import {
   chantingSeconds,
@@ -86,6 +87,16 @@ export type BattleReward = {
   drops: "pending";
 };
 export type BattleEvent = { time: number; text: string };
+export type BattleMenuCommand = {
+  id: number;
+  name: string;
+  kind: "ability" | "item" | "unresolved";
+  abilityIds: number[];
+  menu: "normal" | "extra";
+  available: boolean;
+  usesList: boolean;
+  blockers: string[];
+};
 
 /** Playability profile only. All provisional rules are enumerated in docs/battle-playability.md.
  * Fixed simulation steps + owned PRNG make failures reproducible; they do not reproduce Unity RNG.
@@ -130,7 +141,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v19"
+      content.profile !== "narshe-playability-v20"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -149,6 +160,12 @@ export class BattleGame {
     this.stock = structuredClone(inventory.stacks);
     validateReactionRules(content.reactions);
     this.conditions = new BattleConditions(content.conditions);
+    if (Boolean(content.battleAbilities) !== Boolean(content.qualificationContext))
+      throw new Error("Incomplete battle qualification configuration");
+    if (content.qualificationContext &&
+      (!["source", "development-static"].includes(content.qualificationContext.mode) ||
+       !["current", "unknown"].includes(content.qualificationContext.conditionContext)))
+      throw new Error("Invalid battle qualification mode");
     this.combatants = [
       ...(players
         ? structuredClone(players)
@@ -174,6 +191,11 @@ export class BattleGame {
     )
       throw new Error("Duplicate battle identity");
     this.validateConditionState();
+    if (this.usesSourceQualification)
+      for (const player of this.players) {
+        if (!player.ownedAbilities) throw new Error("Source battle player lacks owned abilities");
+        this.commandQualification(player.id);
+      }
     for (const ability of Object.values(content.abilities))
       this.conditions.validateReferences(ability.program.forbiddenConditionIds);
     for (const command of Object.values(content.commands))
@@ -219,6 +241,62 @@ export class BattleGame {
   }
   get ready() {
     return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued);
+  }
+  private get usesSourceQualification() {
+    return this.content.qualificationContext?.mode === "source";
+  }
+  /** A read-only source query is also available while the opening development
+   * actions remain in use. Unknown entry conditions are never guessed empty. */
+  commandQualification(actorId: string): BattleAbilityProjection | null {
+    const actor = this.players.find((p) => p.id === actorId),
+      catalog = this.content.battleAbilities,
+      context = this.content.qualificationContext;
+    if (!actor || !actor.ownedAbilities || !catalog || !context) return null;
+    if (actor.ownedAbilities.sourceId !== actor.sourceId)
+      throw new Error("Battle owned ability identity mismatch");
+    return projectBattleAbilities(catalog, actor.ownedAbilities, {
+      conditionIds: context.conditionContext === "current" ? actor.conditionIds : null,
+      battleType: context.battleType,
+      magicLearningValue: context.magicLearningValue,
+      invalidContentIds: context.invalidContentIds,
+      itemMenuAvailable: context.itemMenuAvailable,
+      partySize: this.players.length,
+    });
+  }
+  /** The UI receives source menu entries, including unresolved commands. Effect
+   * support is separate from qualification and cannot grant an owned ability. */
+  commandMenu(actorId: string): BattleMenuCommand[] {
+    const actor = this.players.find((p) => p.id === actorId);
+    if (!actor) return [];
+    if (!this.usesSourceQualification)
+      return actor.commands.map((id) => {
+        const command = this.content.commands[id]!;
+        const abilityIds = command.abilityIds.filter((id) => actor.abilities.includes(id));
+        return { id, name: command.name, kind: command.kind, abilityIds, menu: "normal",
+          available: true, usesList: command.kind === "item" || abilityIds.length !== 1, blockers: [] };
+      });
+    const projection = this.commandQualification(actorId);
+    if (!projection) throw new Error("Missing source battle ability projection");
+    return projection.entries.filter((entry) => entry.released !== false && entry.menu !== "none")
+      .map((entry) => {
+        const command = this.content.commands[entry.commandId];
+        const blockers = [...entry.blockers];
+        if (!command) blockers.push("Battle command execution metadata is not admitted");
+        const kind = entry.kind === "item" ? "item" : entry.kind === "unresolved" ? "unresolved" : "ability";
+        if (command && command.kind !== kind) blockers.push("Battle command execution kind mismatch");
+        if (kind === "ability" && entry.abilityIds.length &&
+          entry.abilityIds.every((id) => !this.content.abilities[id]?.plan))
+          blockers.push("Battle ability effects are not admitted");
+        return { id: entry.commandId, name: command?.name || entry.nameKey || "指令 " + entry.commandId,
+          kind, abilityIds: [...entry.abilityIds], menu: entry.menu as "normal" | "extra",
+          available: entry.released === true && entry.available === true && blockers.length === 0,
+          usesList: entry.kind !== "direct", blockers };
+      });
+  }
+  private qualifiedAbility(actor: Combatant, abilityId: number): boolean {
+    return actor.side !== "player" || !this.usesSourceQualification
+      ? actor.abilities.includes(abilityId)
+      : this.commandMenu(actor.id).some((command) => command.available && command.abilityIds.includes(abilityId));
   }
   get preferences(): BattlePreferences {
     return { ...this.currentPreferences };
@@ -295,7 +373,9 @@ export class BattleGame {
       !item ||
       item.important ||
       !item.uses.battle.plan ||
-      !actor.commands.includes(commandId) ||
+      !(this.usesSourceQualification
+        ? this.commandMenu(actorId).some((c) => c.id === commandId && c.kind === "item" && c.available)
+        : actor.commands.includes(commandId)) ||
       command?.kind !== "item" ||
       this.availableItemCount(itemId, except) < 1
     )
@@ -398,7 +478,7 @@ export class BattleGame {
     for (const c of this.combatants) {
       this.conditions.validateActive(c.conditionIds);
       this.conditions.validateResistances(c.conditionResistances);
-      for (const id of c.commands)
+      for (const id of (c.side === "player" && this.usesSourceQualification ? [] : c.commands))
         if (!this.content.commands[id])
           throw new Error("Unknown battle command: " + id);
     }
@@ -411,11 +491,11 @@ export class BattleGame {
     requested?: number | null,
   ) {
     if (actor.side === "enemy") return requested == null ? null : undefined;
-    const choices = actor.commands.filter(
-      (id) =>
-        this.content.commands[id]?.kind === "ability" &&
-        this.content.commands[id]?.abilityIds.includes(abilityId),
-    );
+    const choices = this.usesSourceQualification
+      ? this.commandMenu(actor.id).filter((c) => c.kind === "ability" && c.available &&
+        c.abilityIds.includes(abilityId)).map((c) => c.id)
+      : actor.commands.filter((id) => this.content.commands[id]?.kind === "ability" &&
+        this.content.commands[id]?.abilityIds.includes(abilityId));
     if (requested === undefined)
       return choices.length === 1 ? choices[0] : undefined;
     return requested !== null && choices.includes(requested)
@@ -432,7 +512,7 @@ export class BattleGame {
     if (
       !actor ||
       !ability?.plan ||
-      !actor.abilities.includes(abilityId) ||
+      !this.qualifiedAbility(actor, abilityId) ||
       actor.hp <= 0 ||
       actor.mp < ability.cost ||
       (ability.plan.targeting.normalFormationOnly &&
@@ -631,7 +711,7 @@ export class BattleGame {
     if (
       !actor ||
       !ability ||
-      !actor.abilities.includes(abilityId) ||
+      !this.qualifiedAbility(actor, abilityId) ||
       !ability.plan
     )
       return [];

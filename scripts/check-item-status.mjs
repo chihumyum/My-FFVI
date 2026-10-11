@@ -48,7 +48,7 @@ async function readCandidate(path) {
 const tables = JSON.parse(snapshotFile(importFiles, "tables.json"));
 const manifest = JSON.parse(snapshotFile(importFiles, "project.json"));
 const battleExport = JSON.parse(snapshotFile(battleFiles, "battle.json"));
-assert.equal(catalog.common.profile, "narshe-playability-v19");
+assert.equal(catalog.common.profile, "narshe-playability-v20");
 assert.equal(source.parentSourceSetHash, manifest.sourceSetHash);
 assert.equal(source.sourceSetHash, battleExport.sourceSetHash);
 assert.equal(battleExport.parentSourceSetHash, manifest.sourceSetHash);

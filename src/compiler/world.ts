@@ -6,12 +6,16 @@ import { bindMapPackages, compileMapGroups } from "./map-package.js";
 import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
 import { bindTileAnimationRegions } from "./tile-animation.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
-import { decodeFieldOp, decodeScriptLocals } from "./field.js";
+import { decodeFieldOp, decodeScriptLocals, decodeConditionVisualFlag } from "./field.js";
 import { missingFieldPoses } from "../core/character-media.js";
 import { fieldCollisionRange } from "../core/collision.js";
 import { tableId } from "./table-id.js";
 import { loadMinimapMedia } from "./map-ui.js";
 import { loadAudioMedia } from "./audio.js";
+import { compileMapPartyEntry } from "./map-party-entry.js";
+import { compileTransportationCatalog } from "./transportation.js";
+import { loadSystemSource } from "./system-source.js";
+import { compileTreasureInventoryLimits } from "./treasure-inventory.js";
 import type { Character, Evidence, Op, Sprite } from "../field/types.js";
 import type {
   WorldMapContent,
@@ -105,6 +109,12 @@ export function compileWorldCharacter(
 export async function compileWorld(root: string) {
   const corpus = await loadCorpus(root),
     files = await readSnapshot(root + "/build/world-media");
+  const systemSource = await loadSystemSource(root, text(corpus.manifest.parentSourceSetHash));
+  if (systemSource.sourceSetHash !== corpus.sourceSetHash)
+    throw new Error("Map entry system source mismatch");
+  const transportation = compileTransportationCatalog(systemSource.reader,
+    systemSource.tables["transportation.csv"]!.map((row) => tableId(row.id))).catalog;
+  const treasureInventoryLimits = compileTreasureInventoryLimits(systemSource.tables).limits;
   const minimap = await loadMinimapMedia(
     root,
     text(corpus.manifest.parentSourceSetHash),
@@ -190,6 +200,8 @@ export async function compileWorld(root: string) {
       corpus.messages,
     );
     let map: WorldMapContent["map"] = null;
+    let partyEntry: WorldMapContent["partyEntry"];
+    const partyEntryBlockers: ContentIssue[] = [];
     try {
       const tile = byId.get(binding.tilemap ?? ""),
         collision = byId.get(binding.collision ?? "");
@@ -238,6 +250,16 @@ export async function compileWorld(root: string) {
       };
       if (!groups.entity_default)
         blockers.push({ reason: "Missing default entity group", source });
+      const defaultGroup = byId.get(binding.groups.entity_default ?? "");
+      try {
+        if (!defaultGroup || !groups.entity_default)
+          throw new Error("Missing source map party default group");
+        partyEntry = compileMapPartyEntry(corpus.tables, Number(binding.id), geometry,
+          defaultGroup, groups.entity_default.entities).definition;
+      } catch (error) {
+        partyEntryBlockers.push({ reason: error instanceof Error ? error.message : String(error),
+          source: defaultGroup?.source ?? source });
+      }
     } catch (error) {
       blockers.push({
         reason: error instanceof Error ? error.message : String(error),
@@ -245,7 +267,8 @@ export async function compileWorld(root: string) {
       });
     }
     const scripts: WorldMapContent["scripts"] = {},
-      scriptLocals: WorldMapContent["scriptLocals"] = {};
+      scriptLocals: WorldMapContent["scriptLocals"] = {},
+      scriptSystemFlags: NonNullable<WorldMapContent["scriptSystemFlags"]> = {};
     const aliases = { ...binding.residentScripts, ...binding.scriptAliases };
     for (const [name, id] of Object.entries(aliases)) {
       if (!id) continue;
@@ -253,6 +276,7 @@ export async function compileWorld(root: string) {
       try {
         const data = record(asset.data);
         scriptLocals[name] = decodeScriptLocals(data);
+        scriptSystemFlags[name] = decodeConditionVisualFlag(data);
         scripts[name] = array(data.Mnemonics).map((raw, index): Op => {
           const site = {
             script: name,
@@ -282,6 +306,7 @@ export async function compileWorld(root: string) {
           },
         ];
         scriptLocals[name] = null;
+        scriptSystemFlags[name] = null;
       }
     }
     for (const group of Object.values(groups))
@@ -310,8 +335,11 @@ export async function compileWorld(root: string) {
       areaId: Number(binding.areaId),
       name: binding.name,
       map,
+      ...(partyEntry ? { partyEntry } : {}),
+      partyEntryBlockers,
       scripts,
       scriptLocals,
+      scriptSystemFlags,
       initializer: binding.initializer ? binding.initializerName : null,
       characterAssets: [
         ...new Set(
@@ -337,6 +365,8 @@ export async function compileWorld(root: string) {
     parentSourceSetHash: text(corpus.manifest.parentSourceSetHash),
     mediaSourceSetHash: text(media.sourceSetHash),
     characters,
+    transportation,
+    treasureInventoryLimits,
     characterIssues,
     minimap,
     bgm,

@@ -1,5 +1,5 @@
 /** Browser-safe field content: no Unity readers or renderer dependencies in the runtime. */
-import type { EventControlOp, ScriptLocals } from "../core/event-state.js";
+import type { EventControlOp, ScriptLocals, VariableRef } from "../core/event-state.js";
 import type { MinimapMedia } from "../core/minimap.js";
 import type { AudioMedia } from "../core/static-audio.js";
 import type { InventoryEventOp } from "../core/inventory-event.js";
@@ -7,6 +7,7 @@ import type { PartyEventOp } from "../core/party.js";
 import type { RosterLifecycleEventOp } from "../core/roster.js";
 import type { FieldPartyActorCheckpoint } from "../core/field-party-actors.js";
 import type { PartyActorContext } from "../core/party-actors.js";
+import type { TreasureBoxRequest, TreasureInventoryDefinition, TreasureInventoryLimits } from "../core/treasure-inventory.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -47,6 +48,8 @@ export type FieldEntity = Point & {
   destination?: { mapId: number; entrance: number };
   npc?: NpcProperties;
   mapObject?: MapObjectProperties;
+  /** Source property reward; native entityId may be zero for anonymous objects. */
+  treasure?: TreasureInventoryDefinition;
   openTrigger?: {
     /** Movement-facing mask, distinct from an actor's facing and NPC action side. */
     direction: number;
@@ -119,6 +122,7 @@ export type Op = Site &
     | { kind: "nop" | "exit" | "return" | "join" | "hide" }
     | EventControlOp
     | InventoryEventOp
+    | TreasureBoxRequest
     | PartyEventOp
     | RosterLifecycleEventOp
     | { kind: "entities"; group: string }
@@ -209,11 +213,18 @@ export type FieldContent = {
   minimap?: MinimapMedia;
   bgm?: AudioMedia;
   environment?: AudioMedia;
+  treasureInventoryLimits?: TreasureInventoryLimits;
   scripts: Record<string, Op[]>;
   scriptLocals?: Record<string, ScriptLocals | null>;
   /** Integrator.Execute reads this per source Format; absence is unknown. */
   scriptSystemFlags?: Record<string, { keepBadStatusVisual: boolean } | null>;
   entry: {
+    /** Native FieldEntity.Init preserves Show/Hide; ordinary entry supplies the prior visibility. */
+    playerVisible?: boolean;
+    /** Source map scroll offset in native pixels (native Y points upward). */
+    cameraOffset?: Point;
+    /** Source-proven bootstrap cells. Applied only by a new session, never save restoration. */
+    initialEventValues?: { ref: VariableRef; value: number }[];
     /** Current TransportationInfo identity. Rider artwork is independent. */
     transportationId?: number;
     partyActors?: FieldPartyActorCheckpoint;

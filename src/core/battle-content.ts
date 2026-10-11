@@ -7,6 +7,14 @@ import type { ElementResistances } from "./elements.js";
 import type { BattleAIProgram } from "./battle-ai.js";
 import type { BattleReactionRules } from "./battle-reactions.js";
 import type { GameStateContent } from "./game-state.js";
+import type { BattleAbilityCatalog, BattleAbilityContext, BattleAbilityMember } from "./battle-abilities.js";
+
+export type BattleQualificationContext = Omit<BattleAbilityContext, "conditionIds" | "partySize"> & {
+  /** Source mode enforces qualification. The explicit development mode keeps
+   * the existing bounded actions while exposing unresolved source queries. */
+  mode: "source" | "development-static";
+  conditionContext: "current" | "unknown";
+};
 
 export type BattleCommandDefinition = {
   id: number;
@@ -21,7 +29,7 @@ export type BattleCommandDefinition = {
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "narshe-playability-v19";
+  profile: "narshe-playability-v20";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;
@@ -36,6 +44,8 @@ export type BattleContent = {
   enemies: CombatantDefinition[];
   abilities: Record<string, AbilityDefinition>;
   commands: Record<string, BattleCommandDefinition>;
+  battleAbilities?: BattleAbilityCatalog;
+  qualificationContext?: BattleQualificationContext;
   conditions: BattleConditionCatalog;
   growth: Record<string, { level: number; hp: number; mp: number }[]>;
   experience: { level: number; exp: number }[];
@@ -59,6 +69,8 @@ export type CombatantDefinition = ParameterValues & {
   commands: number[];
   conditionIds: number[];
   conditionResistances: Record<string, number>;
+  /** Current owned state, independent of the development action whitelist. */
+  ownedAbilities?: BattleAbilityMember;
   ai: BattleAIProgram | null;
   placement: { x: number; y: number; group: number } | null;
   sprites: { idle: string; mount: string | null };

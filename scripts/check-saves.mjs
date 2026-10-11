@@ -93,10 +93,80 @@ assert.deepEqual(
   "Repeated reloads preserve the entire next encounter/field outcome, including seeds and rewards",
 );
 
-const runs = [];
-// Full native party MapSetup remains a formal game gate. Keep the independent
-// geometry/checkpoint mechanism probe explicit instead of discarding that host
-// silently while calling it a migrated game transition.
+const runs = [], nativePartyRuns = [], nativePartyBoundaryChecks = [];
+// Exercise a real source ordinary entrance with the shared owned/actor host.
+// Selecting an already-idle source entry is a controlled lifecycle probe; it
+// does not claim the story has reached that map from the opening.
+let nativeFixture;
+for (const entry of prior.runs.filter((r) => r.result === "idle")) {
+  const map = await read(`build/world/maps/${entry.mapId}.json`);
+  const point = map.partyEntry?.pointIns.find((p) => p.id === entry.entrance);
+  if (!point || point.linkObject !== 0 || map.partyEntry.loopType !== 0 || map.partyEntryBlockers?.length ||
+      map.partyEntry.conditionColliders.some((c) => c.collisionType !== 0 && c.throughConditionType !== 0)) continue;
+  nativeFixture = { map, entry }; break;
+}
+assert.ok(nativeFixture, "A source ordinary PointIn must exercise the native actor lifecycle");
+{
+  const { map, entry } = nativeFixture;
+  const game = new GameSession(field, battle), old = game.field,
+    oldActors = old.partyActorCheckpoint;
+  assert.ok(oldActors);
+  old.hiddenEntities.add("-1001");
+  old.previewMap(entry.mapId, entry.entrance);
+  const prepared = game.world.prepare(catalog, map);
+  assert.equal(game.world.commit(prepared), true);
+  assert.equal(game.world.commit(prepared), false);
+  assert.equal(game.checkpointReady, true);
+  const point = map.partyEntry.pointIns.find((p) => p.id === entry.entrance);
+  assert.deepEqual([game.field.player.x, game.field.player.y, game.field.player.layer, game.field.player.direction],
+    [point.x, point.y, point.layer, point.direction]);
+  assert.equal(game.field.hiddenEntities.has("-1001"), true);
+  assert.deepEqual(game.field.partyActorCheckpoint.context.puppets, oldActors.context.puppets);
+  assert.equal(game.field.transportationId, 6);
+  assert.deepEqual(game.field.content.entry.cameraOffset, { x: 0, y: 16 });
+  assert.equal(game.world.checkpoint().location.traveler, null);
+  assert.deepEqual(game.field.content.treasureInventoryLimits, battle.gameState.limits && {
+    item: battle.gameState.limits.item, gil: battle.gameState.limits.gil });
+  const copy = await restore(game, { catalog, map });
+  assert.deepEqual(copy.field.content.entry.cameraOffset, game.field.content.entry.cameraOffset);
+  nativePartyRuns.push({ mapId: entry.mapId, entrance: entry.entrance, contentHash: map.contentHash,
+    result: "pass", mode: "source-ordinary-entry-controlled-probe", transportationId: 6, cameraOffset: { x: 0, y: 16 } });
+  // A current unknown value remains unknown after checkpoint restore. A source
+  // bootstrap seed is not a repair policy for saved event state.
+  const unknown = game.checkpoint();
+  unknown.world.field.eventState.scenario[2 * 256 + 45] = null;
+  const missing = GameSession.restore(unknown, field, battle, { catalog, map });
+  missing.field.previewMap(entry.mapId, entry.entrance);
+  assert.throws(() => missing.world.prepare(catalog, map), /Unknown.*switching flag/);
+  nativePartyBoundaryChecks.push({ name: "restored-unknown-party-flag", result: "blocked" });
+  for (const [name, change, pattern] of [
+    ["multi-party-placement", (g) => g.field.eventState.write({ category: "ScenarioFlag3", index: 45 }, 1), /party placement/],
+    ["disabled-vehicle-release", (g) => g.field.eventState.write({ category: "TreasureFlag4", index: 137 }, 0), /Disabled current map transportation/],
+    ["saved-position-native-path", (g) => { g.field.stop.request.entrance = -1; }, /Saved-position/],
+    ["bird-view", (g) => { g.field.stop.request.birdview = true; }, /view\/loop/],
+  ]) {
+    const gate = new GameSession(field, battle), owned = gate.state.snapshot(), old = gate.field;
+    gate.field.previewMap(entry.mapId, entry.entrance);
+    change(gate);
+    const variables = gate.field.eventState.snapshot();
+    assert.throws(() => gate.world.prepare(catalog, map), pattern);
+    assert.equal(gate.field, old);
+    assert.deepEqual(gate.state.snapshot(), owned);
+    assert.deepEqual(gate.field.eventState.snapshot(), variables);
+    nativePartyBoundaryChecks.push({ name, result: "blocked" });
+  }
+  for (const [name, change] of [
+    ["forged-condition-residents", (s) => { s.world.field.partyActors.context.conditionResidents = []; }],
+    ["forged-camera-provider", (s) => { s.world.field.partyActors.context.camera.mapArea.width = 123; }],
+    ["duplicate-traveler-owner", (s) => { s.world.location.traveler = { asset: "mo_ff6_p001", mount: "mo_ff6_v006_c00", transportationId: 6 }; }],
+  ]) {
+    const bad = game.checkpoint(); change(bad);
+    assert.throws(() => GameSession.restore(bad, field, battle, { catalog, map }));
+    nativePartyBoundaryChecks.push({ name, result: "blocked" });
+  }
+}
+// Keep the independent geometry/checkpoint mechanism profile separate. It does
+// not own native actors and cannot count as a native party lifecycle check.
 const geometryField = structuredClone(field), geometryBattle = structuredClone(battle);
 delete geometryField.entry.partyActors;
 delete geometryBattle.gameState.partyActors;
@@ -104,17 +174,9 @@ for (const content of [geometryField, geometryBattle]) {
   const { contentHash: _, ...payload } = content;
   content.contentHash = await contentDigest(payload);
 }
-let formalMapBoundaryChecked = false;
 for (const entry of prior.runs.filter((r) => r.result === "idle")) {
   const map = await read(`build/world/maps/${entry.mapId}.json`);
   assert.equal(map.contentHash, entry.contentHash);
-  if (!formalMapBoundaryChecked) {
-    const formal = new GameSession(field, battle), owned = formal.state.snapshot();
-    formal.field.previewMap(entry.mapId, entry.entrance);
-    assert.throws(() => formal.world.prepare(catalog, map), /队伍演员初始化/);
-    assert.deepEqual(formal.state.snapshot(), owned);
-    formalMapBoundaryChecked = true;
-  }
   const game = new GameSession(geometryField, geometryBattle);
   game.field.previewMap(entry.mapId, entry.entrance);
   assert.equal(game.world.commit(game.world.prepare(catalog, map)), true);
@@ -149,14 +211,16 @@ const report = {
     result: "pass",
   },
   runs,
+  nativePartyRuns,
+  nativePartyBoundaryChecks,
   worldMechanismProfile: { bootstrapHash: geometryField.contentHash,
     battleCatalogHash: geometryBattle.contentHash, nativePartyLifecycle: false,
-    formalMapBoundaryChecked },
+    ordinaryPartyEntryCheckedSeparately: true },
   lane: "source-backed-implementation",
   limitations: [
     "Idle map checkpoints only; no active event or battle continuation save.",
     "Existing development entrances are mechanism probes, not new playable maps or story reachability.",
-    "Formal native-party map transitions remain blocked; the separate geometry probe explicitly omits that host.",
+    "Ordinary source MapSetup/PointIn uses the native actor host; unknown state and unimplemented multi-party/view/saved-position paths remain blocked.",
     "Does not establish original-game save format, save permission, parity or browser storage behavior.",
   ],
 };
@@ -171,6 +235,8 @@ console.log(
       profile: report.profile,
       street: report.street,
       existingIdleEntrances: runs.length,
+      nativePartyEntries: nativePartyRuns.length,
+      nativePartyBlockedDependencies: nativePartyBoundaryChecks.length,
       maps: new Set(runs.map((r) => r.mapId)).size,
       contentHash,
     },
