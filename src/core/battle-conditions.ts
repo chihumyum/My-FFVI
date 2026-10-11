@@ -1,5 +1,12 @@
 import { ConditionRules, type ConditionCatalog } from "./conditions.js";
 import { accuracyHit } from "./battle-hit.js";
+import {
+  advancePoisonClocks,
+  reconcilePoisonClocks,
+  type PoisonAdvanceInput,
+  type PoisonState,
+} from "./condition-poison.js";
+export type { PoisonState, PoisonTick } from "./condition-poison.js";
 
 /** Only behavior functions whose state dependencies are implemented are admitted.
  * The full master catalog remains available for references and conflict rules. */
@@ -12,6 +19,13 @@ export type BattleConditionCatalog = {
     | { id: number; kind: "silence"; name: string; untilType: 2 }
     | { id: number; kind: "unable-fight"; name: string; untilType: 3 }
     | { id: number; kind: "dying"; name: string; untilType: 3 }
+    | {
+        id: number;
+        kind: "poison";
+        name: string;
+        untilType: 3;
+        hpDivisor: number;
+      }
   )[];
 };
 export type ConditionChange = {
@@ -44,8 +58,8 @@ export function conditionHit(
   return accuracyHit(accuracy, magicEvasion, randomInt);
 }
 
-/** Bounded battle behavior, not a general status engine. Silence has no periodic
- * numerical update; source command/ability restrictions supply its gameplay effect.
+/** Bounded battle behavior, not a general status engine. Poison has a pure
+ * battle-local clock/HP projection; the host owns publication and life settlement.
  * Equipment conditions, undead overrides and other behaviors remain blocked. */
 export class BattleConditions {
   private readonly rules: ConditionRules;
@@ -71,7 +85,13 @@ export class BattleConditions {
           : b.untilType === 3 &&
             ((b.kind === "unable-fight" &&
               this.definitions.get(b.id)?.type === 5) ||
-              (b.kind === "dying" && this.definitions.get(b.id)?.type === 4)))
+              (b.kind === "dying" && this.definitions.get(b.id)?.type === 4) ||
+              (b.kind === "poison" &&
+                this.definitions.get(b.id)?.type === 10 &&
+                this.definitions.get(b.id)?.overlapped === false &&
+                Number.isInteger(b.hpDivisor) &&
+                b.hpDivisor > 0 &&
+                b.hpDivisor <= 0x7fffffff)))
       )
         throw new Error("Unsupported battle condition behavior");
     }
@@ -111,6 +131,39 @@ export class BattleConditions {
   isUnableFight(ids: readonly number[]) {
     this.validateActive(ids);
     return ids.some((id) => this.behaviors.get(id)!.kind === "unable-fight");
+  }
+  types(ids: readonly number[]): number[] {
+    this.validateActive(ids);
+    return ids.map((id) => this.definitions.get(id)!.type);
+  }
+  poisonIds(ids: readonly number[]): number[] {
+    this.validateActive(ids);
+    const result = ids.filter(
+      (id) => this.behaviors.get(id)!.kind === "poison",
+    );
+    if (new Set(result).size !== result.length)
+      throw new Error("Duplicate active poison condition");
+    return result;
+  }
+  reconcilePoisonState(
+    conditionIds: readonly number[],
+    previousState: Readonly<PoisonState>,
+    atbSpeed: number,
+  ): PoisonState {
+    this.poisonIds(conditionIds);
+    return reconcilePoisonClocks(
+      [...this.behaviors.values()].filter((b) => b.kind === "poison"),
+      conditionIds,
+      previousState,
+      atbSpeed,
+    );
+  }
+  advancePoison(input: PoisonAdvanceInput) {
+    this.poisonIds(input.conditionIds);
+    return advancePoisonClocks(
+      [...this.behaviors.values()].filter((b) => b.kind === "poison"),
+      input,
+    );
   }
   /** IfNeededDying 0x7680e0: no-op at zero HP, otherwise float32 ratio,
    * add missing source row or remove one occurrence. No conflict pass here. */

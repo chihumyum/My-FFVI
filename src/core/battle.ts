@@ -2,6 +2,12 @@ import type { AbilityEffectResult } from "./ability.js";
 import type { ParameterValues } from "./parameters.js";
 import { atbIncrement } from "./atb.js";
 import {
+  chantingSeconds,
+  advanceChanting,
+  battleClockGate,
+  type BattleClockInput,
+} from "./battle-timing.js";
+import {
   initialEnemyBehavior,
   type EnemyBehaviorState,
 } from "./enemy-behavior.js";
@@ -33,6 +39,7 @@ import {
 import {
   BattleConditions,
   conditionsAllowAction,
+  type PoisonState,
 } from "./battle-conditions.js";
 import type {
   BattleContent,
@@ -60,6 +67,7 @@ export type BattleAction = {
   targetIds: string[];
   source: { kind: "ability"; id: number } | { kind: "item"; id: number };
   commandId: number | null;
+  /** Native float32 seconds remaining, including a negative ready remainder. */
   charge: number;
   elapsed: number;
   resolved: boolean;
@@ -90,7 +98,15 @@ export class BattleGame {
   private queue: BattleAction[] = [];
   private reactions: BattleAction[] = [];
   private aiStates = new Map<string, BattleAIState>();
+  private poisonStates = new Map<string, PoisonState>();
   private collected = false;
+  private clockInput = {
+    paused: false,
+    helpPaused: false,
+    progressEnabled: true,
+    uiWaiting: false,
+    forceWaiting: false,
+  };
   readonly conditions: BattleConditions;
   readonly items: Record<string, ItemDefinition>;
   private stock: ItemStack[];
@@ -106,12 +122,19 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v16"
+      content.profile !== "narshe-playability-v17"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
       throw new Error("Invalid battle seed");
     this.randomState = seed || 1;
+    if (
+      !content.timing ||
+      !["active", "wait"].includes(content.timing.mode) ||
+      !Number.isFinite(Math.fround(content.timing.atbSpeed)) ||
+      content.timing.atbSpeed <= 0
+    )
+      throw new Error("Missing battle timing settings");
     this.items = structuredClone(inventory.definitions);
     validateItemStacks(inventory.stacks, this.items, inventory.limit);
     this.stock = structuredClone(inventory.stacks);
@@ -168,6 +191,14 @@ export class BattleGame {
       c.queued = false;
       Object.assign(c, this.conditions.settleLife(c.hp, c.conditionIds, false));
       if (c.hp === 0) c.atb = 0;
+      this.poisonStates.set(
+        c.id,
+        this.conditions.reconcilePoisonState(
+          c.conditionIds,
+          [],
+          content.timing.atbSpeed,
+        ),
+      );
     }
     this.log("敌人出现了。");
   }
@@ -179,6 +210,27 @@ export class BattleGame {
   }
   get ready() {
     return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued);
+  }
+  /** Host pause/menu inputs are separate from action presentation and ready units. */
+  setClockInput(
+    input: Pick<
+      BattleClockInput,
+      "paused" | "helpPaused" | "progressEnabled" | "uiWaiting" | "forceWaiting"
+    >,
+  ): void {
+    battleClockGate({
+      ...input,
+      mode: this.content.timing.mode,
+      battleResult: 0,
+    });
+    this.clockInput = { ...input };
+  }
+  private clockGate() {
+    return battleClockGate({
+      ...this.clockInput,
+      mode: this.content.timing.mode,
+      battleResult: this.phase === "active" ? 0 : 1,
+    });
   }
   get inventory() {
     return this.stock.map((i) => ({
@@ -269,9 +321,14 @@ export class BattleGame {
       selection: structuredClone(choice.selection),
       targetIds: [...choice.targetIds],
       commandId,
-      // Ordinary item command 3 has command_wait=0; the profile's presentation
-      // timing remains the same provisional 400/900 ms used by abilities.
-      charge: 0,
+      charge: chantingSeconds({
+        actor: actor.side,
+        firstAbility: null,
+        command: this.content.commands[commandId]!,
+        agility: actor.agility,
+        conditionTypes: this.conditions.types(actor.conditionIds),
+        atbSpeed: this.content.timing.atbSpeed,
+      }),
       elapsed: 0,
       resolved: false,
       results: [],
@@ -411,6 +468,11 @@ export class BattleGame {
   /** Inspection/replay callers cannot mutate the live queue or its selections. */
   get pendingActions(): readonly BattleAction[] {
     return structuredClone([...this.reactions, ...this.queue]);
+  }
+  conditionClockState(actorId: string): PoisonState {
+    const state = this.poisonStates.get(actorId);
+    if (!state) throw new Error("Unknown condition clock owner");
+    return structuredClone(state);
   }
   private admitAITurn(actor: Combatant, turn: BattleAITurn) {
     const program = actor.ai!;
@@ -615,10 +677,24 @@ export class BattleGame {
       targetIds: [...choice.targetIds],
       source: { kind: "ability", id: ability.id },
       commandId,
+      // ActDecision 0x1587aa0 routes Interrupt directly to the executor;
+      // it never enters Progress.SetActData/GetChantingTime.
       charge:
-        actor.side === "player"
-          ? Math.round((1000 * ability.wait * 20) / (actor.agility * 0.5 + 20))
-          : 0,
+        kind === "counter"
+          ? 0
+          : chantingSeconds({
+              actor: actor.side,
+              firstAbility: {
+                id: ability.id,
+                typeId: ability.program.rules.type_id!,
+                wait: ability.wait,
+              },
+              command:
+                commandId === null ? null : this.content.commands[commandId]!,
+              agility: actor.agility,
+              conditionTypes: this.conditions.types(actor.conditionIds),
+              atbSpeed: this.content.timing.atbSpeed,
+            }),
       elapsed: 0,
       resolved: false,
       results: [],
@@ -637,15 +713,62 @@ export class BattleGame {
     if (!Number.isFinite(ms) || ms < 0 || ms > 60000)
       throw new Error("Invalid battle elapsed time");
     this.validateConditionState();
+    if (!this.clockGate().simulation) return;
     this.remainder += ms;
     while (this.remainder >= 10) {
-      this.remainder -= 10;
       if (this.phase === "active") this.tick();
+      this.remainder -= 10;
     }
   }
   private tick() {
+    // One failed simulation step consumes neither logical time nor randomness.
+    // Definitions/media/AI programs stay shared; only mutable runtime values are copied.
+    const before = {
+      units: this.combatants.map((c) => ({
+        ...c,
+        conditionIds: [...c.conditionIds],
+        behavior: c.behavior ? structuredClone(c.behavior) : null,
+      })),
+      action: structuredClone(this.action),
+      queue: structuredClone(this.queue),
+      reactions: structuredClone(this.reactions),
+      ai: structuredClone(this.aiStates),
+      poison: structuredClone(this.poisonStates),
+      stock: structuredClone(this.stock),
+      consumedItems: structuredClone(this.consumedItems),
+      events: [...this.events],
+      time: this.time,
+      random: this.randomState,
+      phase: this.phase,
+      reward: this.reward,
+    };
+    try {
+      this.step();
+    } catch (error) {
+      for (const [index, unit] of before.units.entries())
+        Object.assign(this.combatants[index]!, unit);
+      this.action = before.action;
+      this.queue = before.queue;
+      this.reactions = before.reactions;
+      this.aiStates = before.ai;
+      this.poisonStates = before.poison;
+      this.stock = before.stock;
+      this.consumedItems = before.consumedItems;
+      this.events.splice(0, this.events.length, ...before.events);
+      this.time = before.time;
+      this.randomState = before.random;
+      this.phase = before.phase;
+      this.reward = before.reward;
+      throw error;
+    }
+  }
+  private step() {
+    const gate = this.clockGate();
+    if (!gate.simulation) return;
     this.time += 10;
-    // Serial action presentation freezes meters; command input still works for already-ready actors.
+    // The presentation remains a development profile. FF6 progress clocks run
+    // after the executor update even while this action is on screen.
+    const presenting = this.action !== null;
     if (this.action) {
       this.action.elapsed += 10;
       if (!this.action.resolved && this.action.elapsed >= 400)
@@ -655,35 +778,44 @@ export class BattleGame {
         const kind = this.action.kind;
         this.action = null;
         this.finishActorAction(actor, kind);
-        this.checkOutcome();
       }
-      return;
     }
-    if (!this.reactions.length) {
+    if (gate.conditions) this.advanceConditions(0.01);
+    if (gate.progress) {
       for (const pending of this.queue)
-        pending.charge = Math.max(0, pending.charge - 10);
+        pending.charge = advanceChanting(
+          pending.charge,
+          0.01,
+          this.content.timing.atbSpeed,
+        );
       for (const c of this.combatants) {
         if (c.hp <= 0 || c.queued) continue;
-        c.atb = Math.min(
-          100,
-          c.atb +
-            atbIncrement(this.content.atb, {
-              agility: c.agility,
-              weight: c.weight,
-              enemy: c.side === "enemy",
-              speedPercent: 100,
-              battleSpeed: 1,
-              seconds: 0.01,
-            }),
-        );
+        if (c.atb < 100)
+          c.atb = Math.fround(
+            c.atb +
+              atbIncrement(this.content.atb, {
+                agility: c.agility,
+                weight: c.weight,
+                enemy: c.side === "enemy",
+                speedPercent: 100,
+                battleSpeed: this.content.timing.atbSpeed,
+                seconds: 0.01,
+              }),
+          );
         if (c.side === "enemy" && c.atb >= 100) {
           if (!this.players.some((p) => p.hp > 0)) break;
           this.decideEnemyAction(c);
         }
       }
     }
+    if (presenting) {
+      // BattleMainUpdate 0x1588930 performs end judgment after Progress.Update,
+      // including the frame on which execution finishes.
+      this.checkOutcome();
+      return;
+    }
     const queue = this.reactions.length ? this.reactions : this.queue;
-    const index = queue.findIndex((a) => a.charge === 0);
+    const index = queue.findIndex((a) => a.charge <= 0);
     if (index >= 0) {
       const action = queue.splice(index, 1)[0]!,
         actor = this.combatants.find((c) => c.id === action.actor)!;
@@ -709,6 +841,59 @@ export class BattleGame {
       this.log(`${actor.name} · ${this.actionDefinition(action).name}`);
     }
     this.checkOutcome();
+  }
+  private advanceConditions(seconds: number) {
+    // Prepare all actors before publishing any HP, lifetime, queue or log change.
+    const staged = this.combatants.map((actor) => {
+      const result = this.conditions.advancePoison({
+        conditionIds: actor.conditionIds,
+        state: this.poisonStates.get(actor.id)!,
+        hp: actor.hp,
+        maxHp: actor.maxHp,
+        elementResistances: actor.elementResistances,
+        seconds,
+        atbSpeed: this.content.timing.atbSpeed,
+        // Time-stop types remain outside the active condition capability set.
+        isTimeStopped: false,
+      });
+      const life = result.ticks.length
+        ? this.conditions.settleLife(
+            result.hp,
+            this.conditions.updateDying(
+              result.hp,
+              actor.maxHp,
+              actor.conditionIds,
+            ),
+            this.conditions.isUnableFight(actor.conditionIds),
+          )
+        : { hp: actor.hp, conditionIds: [...actor.conditionIds] };
+      const state = this.conditions.reconcilePoisonState(
+        life.conditionIds,
+        result.state,
+        this.content.timing.atbSpeed,
+      );
+      return { actor, life, state, ticks: result.ticks };
+    });
+    for (const { actor, life, state, ticks } of staged) {
+      const died = actor.hp > 0 && life.hp === 0;
+      Object.assign(actor, life);
+      this.poisonStates.set(actor.id, state);
+      if (died) {
+        actor.atb = 0;
+        actor.queued = false;
+        this.queue = this.queue.filter((action) => action.actor !== actor.id);
+        this.reactions = this.reactions.filter(
+          (action) => action.actor !== actor.id,
+        );
+      }
+      for (const tick of ticks)
+        this.log(
+          tick.recovery
+            ? `${actor.name} 因中毒属性吸收恢复 ${tick.amount} HP。`
+            : `${actor.name} 因中毒受到 ${tick.amount} 点伤害。`,
+        );
+      if (died) this.log(`${actor.name} 倒下了。`);
+    }
   }
   /** CounterAct supplies the attacker explicitly, even for friendly fire. Its
    * target is not selected through the player's menu or the normal enemy AI.
@@ -869,6 +1054,22 @@ export class BattleGame {
         effects: entry.effects,
       }));
       const reactions = this.planReactions(action, projected, results);
+      const poison = staged.map((entry) => {
+        const removed = entry.effects.flatMap((effect) =>
+          effect.resource === "condition" ? effect.removed : [],
+        );
+        const previous = this.poisonStates
+          .get(entry.target.id)!
+          .filter((clock) => !removed.includes(clock.conditionId));
+        return {
+          id: entry.target.id,
+          state: this.conditions.reconcilePoisonState(
+            entry.state.conditionIds,
+            previous,
+            this.content.timing.atbSpeed,
+          ),
+        };
+      });
       // One transaction includes effects, enemy parameters, AI PCs, both queues,
       // result/log publication and the owned random stream.
       if (action.source.kind === "item") {
@@ -878,6 +1079,7 @@ export class BattleGame {
         else this.consumedItems.push({ id: action.source.id, count: 1 });
       }
       actor.mp -= ability.cost;
+      for (const next of poison) this.poisonStates.set(next.id, next.state);
       for (const entry of staged) {
         const lifeChanged = (entry.target.hp === 0) !== (entry.state.hp === 0);
         Object.assign(entry.target, entry.state);
@@ -973,6 +1175,7 @@ export class BattleGame {
         player,
       );
     this.phase = "victory";
+    this.poisonStates.clear();
     this.queue = [];
     this.reactions = [];
     this.reward = {
@@ -988,6 +1191,7 @@ export class BattleGame {
   private clearBattleConditions() {
     for (const c of this.players)
       c.conditionIds = this.conditions.battleEnd(c.conditionIds);
+    this.poisonStates.clear();
   }
   previewVictory(): {
     players: Combatant[];

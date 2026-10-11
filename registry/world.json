@@ -627,6 +627,37 @@
         "build/reports/inventory-native-negative-check.json",
         "build/reports/systems-v16-validation.json#a7f1c7e176697e274dfaadecfa43d3abfcce2c581928a670e3c0492050d7deae"
       ]
+    },
+    {
+      "id": "narshe:development-owned-systems-v17",
+      "subject": "narshe",
+      "predicate": "migration.ownedSystems",
+      "value": "Development v17 integrates roster lifecycle metadata/enabled equipment ownership, source battle clock gates/chanting, and ordinary poison through shared state. Snapshot v4 keeps native owned identity, jobs/additional level and global released jobs; inventory, party and roster share one candidate revision. Six exact lifecycle selectors decode 19 source sites; 103 remain blocked. All 19 real field paths still block on actor refresh; 10 controlled callbacks publish and 9 require missing new-owner providers. Source timing checks cover 1530 abilities and 9180 inputs; action presentation no longer freezes allowed progress, interrupt counters bypass chanting, and end judgment follows same-frame condition updates. Ordinary poison admits 17 of 25 source actions, with 20 controlled source/menu/battle checks; source row 88 and field walking damage remain blocked. Failed simulation steps roll back owned combat values, queues, RNG, AI, clocks, inventory and time; invalid dead-plus-poison stable saves are rejected. 430 TypeScript and 18 Python tests, five existing encounters and 40 stable restores pass. Browser controlled poison changes HP 63 to 60 then uses a 16-second period; victory and in-memory restore retain poison, one antidote cures and releases the field movement guard. Normal opening victory returns to (38,37), 3096 Gil, levels 3/2/2 and HP 63/63/58. No user save overwrite, region expansion or HD-2D work. Full actor presentation, owner initialization/growth/learning, other statuses and special battle reactions remain incomplete; static native receipts are semanticsVerified=false and all systems/full-game gates remain incomplete.",
+      "when": {
+        "battleProfile": "narshe-playability-v17",
+        "gameStateProfile": "game-state-development-v1",
+        "saveProfile": "game-checkpoint-v1",
+        "ownedSnapshotVersion": 4
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "build/reports/roster-lifecycle-check.json#sha256=cbb47059b03174e60bf2f13e3350ef1de136daefe666397364a2a1deb700505e",
+        "build/reports/roster-lifecycle-native-check.json#sha256=832133fe36fe96fd4b8b35db46bd72c396fd1a558e6e3fbd77518e6a0e7f7e25",
+        "build/reports/battle-timing-check.json#sha256=45ab2c9cc146931ba22b72c6524a0e93069080f2e578e1b25e92be37e3b20cdb",
+        "build/reports/battle-timing-native-check.json#sha256=0e62b609e13714cedbf777e63cedf49718cd52bc62a2e9660bfa7f08232015d9",
+        "build/reports/poison-check.json#sha256=55415ff0607bd6781df55273ebfa279b5caa3aa721e790f230b00a64c9b50727",
+        "build/reports/poison-native-check.json#sha256=e048819c6ed2878d3f308c5ad9d053714d33af54791b60aba1255fef17e4ac1e",
+        "build/reports/save-check.json#sha256=305c67b2cd66ee4c1b59b86b6ef8e598de4e5d11c2cc123c605da4cd263ef601",
+        "build/reports/systems-v17-browser-check.json#sha256=f4d6fada102b7381c1c55c319e6c2f71aa1c6abd10a66e2bcfbe4d4e16df6a26",
+        "build/reports/systems-v17-check.log",
+        "build/reports/systems-v17-python-final.log",
+        "build/reports/systems-v17-validation.json#7fb6948cf0c1a9f0631c258c63d3be8d25f4cc95f1e5755f436a7f9c8633bbe0",
+        "docs/systems-v17.md",
+        "docs/roster-lifecycle.md",
+        "docs/battle-timing.md",
+        "docs/poison-conditions.md"
+      ]
     }
   ],
   "assets": []

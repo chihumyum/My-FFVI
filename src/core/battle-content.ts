@@ -14,18 +14,22 @@ export type BattleCommandDefinition = {
   kind: "ability" | "item";
   abilityIds: number[];
   forbiddenConditionIds: number[];
+  /** Command.AbilityId is independent of the ability selected by the actor. */
+  referencedAbility: { id: number; typeId: number; wait: number } | null;
 };
 
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "narshe-playability-v16";
+  profile: "narshe-playability-v17";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;
   encounterId: number;
   formation: "normal" | "opposed";
   atb: AtbRules;
+  /** Explicit development settings until the source configuration menu is migrated. */
+  timing: { mode: "active" | "wait"; atbSpeed: number };
   reactions: BattleReactionRules;
   initialAtb: { player: [number, number]; enemy: [number, number] };
   players: CombatantDefinition[];

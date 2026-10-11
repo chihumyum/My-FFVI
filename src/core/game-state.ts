@@ -8,6 +8,14 @@ import type {
 } from "./inventory-event.js";
 import { projectEquipmentOwnership } from "./inventory-ownership.js";
 import {
+  prepareRosterLifecycle,
+  validateRosterLifecycle,
+  type RosterMember,
+  type RosterCommand,
+  type FieldRosterPort,
+  type RosterLifecycleTransaction,
+} from "./roster.js";
+import {
   activePartyMembers,
   previewPartyCommand,
   validatePartyState,
@@ -52,6 +60,18 @@ export type GameStateContent = {
   };
   initialGil: number;
   initialParty: PartyState;
+  rosterLifecycle: {
+    initial: Record<
+      string,
+      Pick<
+        RosterMember,
+        "ownedId" | "jobId" | "additionalLevel" | "magicStoneId" | "ownedJobs"
+      >
+    >;
+    releasedJobIds: number[];
+    jobIds: number[];
+    firstJoinLevelAdjustments?: Record<string, number>;
+  };
   /** Ordinary/important stacks; equipment has separate count/occupancy semantics. */
   items: Record<string, ItemDefinition>;
   initialItems: { id: number; count: number }[];
@@ -64,11 +84,8 @@ export type GameStateContent = {
     growth: Record<string, { level: number; hp: number; mp: number }[]>;
   };
 };
-export type OwnedCharacter = {
-  id: string;
-  sourceId: number;
+export type OwnedCharacter = RosterMember & {
   name: string;
-  enabled: boolean;
   level: number;
   exp: number;
   hp: number;
@@ -76,10 +93,9 @@ export type OwnedCharacter = {
   maxHp: number;
   maxMp: number;
   conditionIds: number[];
-  equipment: number[];
 };
 export type GameStateSnapshot = {
-  formatVersion: 3;
+  formatVersion: 4;
   kind: "owned-game-state";
   catalogHash: string;
   roster: OwnedCharacter[];
@@ -88,6 +104,7 @@ export type GameStateSnapshot = {
   totalGil: number;
   items: { id: number; count: number }[];
   equipmentStock: EquipmentStock[];
+  releasedJobIds: number[];
   completedBattles: { serial: number; encounterId: number }[];
 };
 export type BattleLease = {
@@ -129,6 +146,9 @@ export class GameState {
   readonly fieldParty: FieldPartyPort = {
     prepare: (command) => this.preparePartyEvent(command),
   };
+  readonly fieldRoster: FieldRosterPort = {
+    prepare: (command) => this.prepareRosterEvent(command),
+  };
   constructor(
     content: GameStateContent,
     players: readonly CombatantDefinition[],
@@ -149,6 +169,8 @@ export class GameState {
       if (!equipment || equipment.length !== 6)
         throw new Error("Missing source equipment slots");
       equipment.forEach((id) => integer(id, 0x7fffffff, 1));
+      if (!content.rosterLifecycle?.initial[p.id])
+        throw new Error("Missing source roster lifecycle metadata");
     }
     for (const [key, item] of Object.entries(content.items)) {
       if (
@@ -161,10 +183,11 @@ export class GameState {
       this.conditions.validateReferences(item.forbiddenConditionIds);
     }
     this.data = {
-      formatVersion: 3,
+      formatVersion: 4,
       kind: "owned-game-state",
       catalogHash,
       roster: players.map((p) => ({
+        ...structuredClone(content.rosterLifecycle.initial[p.id]!),
         id: p.id,
         sourceId: p.sourceId,
         name: p.name,
@@ -183,6 +206,7 @@ export class GameState {
       totalGil: content.initialGil,
       items: structuredClone(content.initialItems),
       equipmentStock: [],
+      releasedJobIds: [...content.rosterLifecycle.releasedJobIds],
       completedBattles: [],
     };
     if (this.content.equipmentSystem)
@@ -195,11 +219,11 @@ export class GameState {
   private validate(data: GameStateSnapshot) {
     keys(
       data,
-      "formatVersion,kind,catalogHash,roster,party,gil,totalGil,items,equipmentStock,completedBattles",
+      "formatVersion,kind,catalogHash,roster,party,gil,totalGil,items,equipmentStock,releasedJobIds,completedBattles",
     );
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== 3 ||
+      data.formatVersion !== 4 ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -207,53 +231,25 @@ export class GameState {
     integer(data.gil, limits.gil);
     integer(data.totalGil, 0x7fffffff);
     distinct(data.roster.map((p) => p.id));
-    for (const p of data.roster) {
-      keys(
-        p,
-        "id,sourceId,name,enabled,level,exp,hp,mp,maxHp,maxMp,conditionIds,equipment",
-      );
-      const definition = this.definitions.get(p.id);
+    distinct(data.roster.map((p) => p.ownedId));
+    distinct(data.roster.map((p) => p.sourceId));
+    distinct(data.releasedJobIds);
+    for (const job of data.releasedJobIds)
       if (
-        !definition ||
-        definition.side !== "player" ||
-        definition.sourceId !== p.sourceId ||
-        typeof p.name !== "string"
+        !this.content.rosterLifecycle.jobIds.includes(
+          integer(job, 0x7fffffff, 1),
+        )
       )
-        throw new Error("Unknown roster identity");
-      if (p.enabled !== true)
-        throw new Error("Unimplemented disabled roster equipment ownership");
-      integer(p.level, limits.level, 1);
-      integer(p.exp, limits.exp);
-      integer(p.maxHp, limits.hp, 1);
-      integer(p.maxMp, limits.mp);
-      integer(p.hp, p.maxHp);
-      integer(p.mp, p.maxMp);
-      distinct(p.conditionIds);
-      p.conditionIds.forEach((id) => integer(id, 0x7fffffff, 1));
-      this.conditions.validateActive(p.conditionIds);
-      if ((p.hp === 0) !== this.conditions.isUnableFight(p.conditionIds))
-        throw new Error("Owned HP/death state mismatch");
-      if (
-        !this.content.equipmentSystem &&
-        (p.equipment.length !== 6 ||
-          p.equipment.some((id, n) => id !== this.content.equipment[p.id]?.[n]))
-      )
-        throw new Error("Unimplemented equipment change");
-      if (this.content.equipmentSystem) {
-        const projection = this.projectOwnedParameters(p);
-        if (p.maxHp !== projection.maxHp || p.maxMp !== projection.maxMp)
-          throw new Error(
-            "Owned resource maximum disagrees with equipment/growth",
-          );
-      }
-    }
+        throw new Error("Unknown released job");
+    for (const p of data.roster)
+      this.validateOwnedMember(p, data.roster.length);
     if (data.roster.length !== this.definitions.size)
       throw new Error("Missing roster member");
     if (this.content.equipmentSystem)
-      validateEquipmentState(
-        this.content.equipmentSystem.catalog,
-        data.roster,
-        data.equipmentStock,
+      validateRosterLifecycle(
+        this.rosterState(data),
+        this.rosterCatalog(),
+        () => {}, // Complete member fields were checked above; this validates ownership and slots.
       );
     else if (data.equipmentStock.length)
       throw new Error("Unimplemented equipment stock");
@@ -273,6 +269,103 @@ export class GameState {
         throw new Error("Invalid battle receipt sequence");
       integer(b.encounterId, 0x7fffffff, 1);
     }
+  }
+  private validateOwnedMember(p: OwnedCharacter, rosterSize: number) {
+    const limits = this.content.limits;
+    keys(
+      p,
+      "id,sourceId,name,enabled,level,exp,hp,mp,maxHp,maxMp,conditionIds,equipment,ownedId,jobId,additionalLevel,magicStoneId,ownedJobs",
+    );
+    const definition = this.definitions.get(p.id);
+    if (
+      !definition ||
+      definition.side !== "player" ||
+      definition.sourceId !== p.sourceId ||
+      typeof p.name !== "string"
+    )
+      throw new Error("Unknown roster identity");
+    if (typeof p.enabled !== "boolean")
+      throw new Error("Invalid roster availability");
+    if (!this.content.equipmentSystem && !p.enabled)
+      throw new Error("Unimplemented disabled roster equipment ownership");
+    const lifecycle = this.content.rosterLifecycle.initial[p.id];
+    if (
+      !lifecycle ||
+      p.ownedId !== lifecycle.ownedId ||
+      p.jobId !== lifecycle.jobId
+    )
+      throw new Error("Unimplemented roster identity/job change");
+    integer(p.ownedId, rosterSize, 1);
+    integer(p.additionalLevel, limits.level, 1);
+    if (
+      p.additionalLevel !==
+      lifecycle.additionalLevel + p.level - definition.level
+    )
+      throw new Error("Owned level disagrees with source additional level");
+    if (p.magicStoneId !== 0)
+      throw new Error("Unimplemented owned magic stone");
+    distinct(p.ownedJobs.map((j) => j.id));
+    for (const job of p.ownedJobs) {
+      keys(job, "id,level,proficiency");
+      if (
+        !this.content.rosterLifecycle.jobIds.includes(
+          integer(job.id, 0x7fffffff, 1),
+        )
+      )
+        throw new Error("Unknown owned job");
+      integer(job.level, 0x7fffffff, 1);
+      integer(job.proficiency, 0x7fffffff);
+    }
+    if (!p.ownedJobs.some((j) => j.id === p.jobId))
+      throw new Error("Current job is not owned");
+    integer(p.level, limits.level, 1);
+    integer(p.exp, limits.exp);
+    integer(p.maxHp, limits.hp, 1);
+    integer(p.maxMp, limits.mp);
+    integer(p.hp, p.maxHp);
+    integer(p.mp, p.maxMp);
+    distinct(p.conditionIds);
+    p.conditionIds.forEach((id) => integer(id, 0x7fffffff, 1));
+    this.conditions.validateActive(p.conditionIds);
+    if ((p.hp === 0) !== this.conditions.isUnableFight(p.conditionIds))
+      throw new Error("Owned HP/death state mismatch");
+    // Source death settlement erases ordinary poison. Restores must reject the
+    // conflicting stable state rather than publishing an incurable field block.
+    if (p.hp === 0 && this.conditions.poisonIds(p.conditionIds).length)
+      throw new Error("Owned death/poison state mismatch");
+    if (
+      !this.content.equipmentSystem &&
+      (p.equipment.length !== 6 ||
+        p.equipment.some((id, n) => id !== this.content.equipment[p.id]?.[n]))
+    )
+      throw new Error("Unimplemented equipment change");
+    if (this.content.equipmentSystem) {
+      if (
+        this.content.equipmentSystem.catalog.characters[p.sourceId]?.jobId !==
+        p.jobId
+      )
+        throw new Error("Equipment job disagrees with owned job");
+      const projection = this.projectOwnedParameters(p);
+      if (p.maxHp !== projection.maxHp || p.maxMp !== projection.maxMp)
+        throw new Error(
+          "Owned resource maximum disagrees with equipment/growth",
+        );
+    }
+  }
+  private rosterState(data: GameStateSnapshot) {
+    return {
+      roster: data.roster,
+      party: data.party,
+      equipmentStock: data.equipmentStock,
+      releasedJobIds: data.releasedJobIds,
+    };
+  }
+  private rosterCatalog() {
+    const system = this.content.equipmentSystem;
+    if (!system)
+      throw new Error("Roster lifecycle equipment system is unavailable");
+    const { initial: _, ...metadata } = this.content.rosterLifecycle;
+    return { ...metadata, equipment: system.catalog };
   }
   get gil() {
     return this.data.gil;
@@ -330,7 +423,7 @@ export class GameState {
       if (!system) throw new Error("Equipment system is unavailable");
       next.equipmentStock = projectEquipmentOwnership(
         system.catalog,
-        next.roster,
+        next.roster.filter((p) => p.enabled),
         next.equipmentStock,
         command,
       );
@@ -389,10 +482,65 @@ export class GameState {
       },
     };
   }
+  private projectRosterEvent(data: GameStateSnapshot, command: RosterCommand) {
+    const preview = prepareRosterLifecycle(
+      this.rosterState(data),
+      command,
+      this.rosterCatalog(),
+      {
+        validateMember: (member) =>
+          this.validateOwnedMember(member, data.roster.length),
+        projectEquipment: (member) => {
+          const projected = this.projectOwnedParameters(member);
+          member.maxHp = projected.maxHp;
+          member.maxMp = projected.maxMp;
+          member.hp = Math.min(member.hp, member.maxHp);
+          member.mp = Math.min(member.mp, member.maxMp);
+          member.conditionIds = this.conditions.updateDying(
+            member.hp,
+            member.maxHp,
+            member.conditionIds,
+          );
+          return member;
+        },
+        // AddFromMaster, CorrectLevel learning/growth and FullRecovery remain
+        // absent providers until their complete source effects are available.
+      },
+    );
+    const next = { ...structuredClone(data), ...preview.state };
+    this.validate(next);
+    return {
+      next,
+      activeMembers: preview.activeMembers,
+      refreshActors: preview.refreshActors,
+    };
+  }
+  private prepareRosterEvent(
+    command: RosterCommand,
+  ): RosterLifecycleTransaction {
+    this.requireIdle();
+    const { next, ...projection } = this.projectRosterEvent(this.data, command);
+    const revision = this.revision;
+    return {
+      ...projection,
+      commit: () => {
+        this.requireIdle();
+        if (this.revision !== revision)
+          throw new Error("Stale field roster transaction");
+        this.data = next;
+        this.revision++;
+      },
+    };
+  }
   /** Map initialization runs against this private draft. Publishing rebinds the
    * same ports to live state so later events keep a single state owner. */
   prepareFieldState(): {
-    ports: { inventory: FieldInventoryPort; party: FieldPartyPort };
+    ports: {
+      inventory: FieldInventoryPort;
+      party: FieldPartyPort;
+      roster: FieldRosterPort;
+      movementBlocker: () => string | null;
+    };
     commit(): boolean;
   } {
     this.requireIdle();
@@ -432,8 +580,30 @@ export class GameState {
         };
       },
     };
+    const roster: FieldRosterPort = {
+      prepare: (command) => {
+        if (published) return this.prepareRosterEvent(command);
+        const { next, ...projection } = this.projectRosterEvent(data, command),
+          version = generation;
+        return {
+          ...projection,
+          commit: () => {
+            if (published || generation !== version)
+              throw new Error("Stale candidate roster transaction");
+            data = next;
+            generation++;
+          },
+        };
+      },
+    };
     return {
-      ports: { inventory, party },
+      ports: {
+        inventory,
+        party,
+        roster,
+        movementBlocker: () =>
+          this.movementBlocker(published ? this.data : data),
+      },
       commit: () => {
         if (published || this.active || this.revision !== revision)
           return false;
@@ -447,6 +617,19 @@ export class GameState {
   get activeParty() {
     return activePartyMembers(this.data.party);
   }
+  private movementBlocker(data: GameStateSnapshot): string | null {
+    return activePartyMembers(data.party).some(
+      ({ id }) =>
+        this.conditions.poisonIds(
+          data.roster.find((p) => p.id === id)!.conditionIds,
+        ).length > 0,
+    )
+      ? "中毒的地图行走伤害尚未迁移；可在菜单中解除中毒后继续。"
+      : null;
+  }
+  get fieldMovementBlocker() {
+    return this.movementBlocker(this.data);
+  }
   get battlePartyBlocker(): string | null {
     const members = this.activeParty;
     if (!members.length) return "当前编队没有成员，无法开始战斗";
@@ -457,7 +640,16 @@ export class GameState {
   partyPlayers(): Combatant[] {
     return this.activeParty.map(({ id }) => {
       const p = this.data.roster.find((p) => p.id === id)!;
-      const { equipment: _, enabled: _enabled, ...progress } = p;
+      const {
+        equipment: _,
+        enabled: _enabled,
+        ownedId: _ownedId,
+        jobId: _job,
+        additionalLevel: _additionalLevel,
+        magicStoneId: _magicStone,
+        ownedJobs: _jobs,
+        ...progress
+      } = p;
       return {
         ...structuredClone(this.definitions.get(id)!),
         ...structuredClone(progress),
@@ -514,7 +706,7 @@ export class GameState {
     return system
       ? equipmentAvailability(
           system.catalog,
-          this.data.roster,
+          this.data.roster.filter((p) => p.enabled),
           this.data.equipmentStock,
         )
       : [];
@@ -525,7 +717,7 @@ export class GameState {
     if (!system) throw new Error("Equipment system is unavailable");
     const prepared = previewEquipmentChange(
       system.catalog,
-      this.data.roster,
+      this.data.roster.filter((p) => p.enabled),
       this.data.equipmentStock,
       playerId,
       slot,
@@ -547,7 +739,8 @@ export class GameState {
     if (this.active || !this.content.equipmentSystem) return [];
     const system = this.content.equipmentSystem;
     const p = this.data.roster.find((p) => p.id === playerId);
-    if (!p || !Number.isInteger(slot) || slot < 1 || slot > 6) return [];
+    if (!p?.enabled || !Number.isInteger(slot) || slot < 1 || slot > 6)
+      return [];
     const candidates = new Set([
       system.catalog.characters[p.sourceId]!.emptySlots[slot - 1]!,
       p.equipment[slot - 1]!,
@@ -744,6 +937,7 @@ export class GameState {
         maxHp: player.maxHp,
         maxMp: player.maxMp,
         level: player.level,
+        additionalLevel: target.additionalLevel + player.level - target.level,
         exp: player.exp,
         conditionIds: [...player.conditionIds],
       });

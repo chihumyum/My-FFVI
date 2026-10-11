@@ -1,5 +1,6 @@
 import { itemFixture } from "./fixtures/items.js";
 import { fixtureParty } from "./fixtures/party.js";
+import { fixtureRosterLifecycle } from "./fixtures/roster-lifecycle.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { GameState, type GameStateContent } from "../src/core/game-state.js";
@@ -14,6 +15,7 @@ const content: GameStateContent = {
   limits: { gil: 1000, item: 99, hp: 9999, mp: 999, level: 99, exp: 15000000 },
   initialGil: 90,
   initialParty: fixtureParty(["a", "b"]),
+  rosterLifecycle: fixtureRosterLifecycle(fixture().players),
   items: {
     10: itemFixture(10),
     20: { ...itemFixture(20, true), itemId: 2 },

@@ -17,6 +17,7 @@ import {
   type FieldInventoryPort,
 } from "./inventory-event.js";
 import { executePartyEvent, type FieldPartyPort } from "./party.js";
+import { executeRosterLifecycleEvent, type FieldRosterPort } from "./roster.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState, type AudioSnapshot } from "./static-audio.js";
 import { TileAnimationState, type TileCheckpoint } from "./tile-animation.js";
@@ -136,6 +137,9 @@ export type Dialogue = {
 export type FieldGameOptions = {
   inventory?: FieldInventoryPort;
   party?: FieldPartyPort;
+  roster?: FieldRosterPort;
+  /** Read the current owned-state draft; unsupported step effects must not disappear. */
+  movementBlocker?: () => string | null;
 };
 const contains = (e: FieldEntity, p: Point) =>
   p.x >= e.x && p.x < e.x + e.width && p.y >= e.y && p.y < e.y + e.height;
@@ -499,7 +503,7 @@ export class FieldGame {
   }
   move(direction: Direction): boolean {
     const p = this.player;
-    if (this.busy || p.motion) return false;
+    if (this.busy || p.motion || this.movementBlocker) return false;
     p.direction = direction;
     const faceBlockedStep = (): false => {
       try {
@@ -572,6 +576,9 @@ export class FieldGame {
       manual: true,
     };
     return true;
+  }
+  get movementBlocker(): string | null {
+    return this.options.movementBlocker?.() ?? null;
   }
   confirm(): void {
     if (this.stop) return;
@@ -909,6 +916,10 @@ export class FieldGame {
             this.block("非角色实体不能移动");
             return;
           }
+          if (actor.id === this.player.id && this.movementBlocker) {
+            this.block(this.movementBlocker, t.move);
+            return;
+          }
           const d = DELTA[t.move.direction];
           try {
             actor.animation?.move(t.move.direction, t.move.secondsPerCell);
@@ -957,6 +968,17 @@ export class FieldGame {
           return;
         }
         switch (op.kind) {
+          case "roster":
+            try {
+              executeRosterLifecycleEvent(op, this.options.roster);
+            } catch (error) {
+              this.block(
+                error instanceof Error ? error.message : String(error),
+                op,
+              );
+              return;
+            }
+            break;
           case "party":
             try {
               executePartyEvent(op, this.options.party);

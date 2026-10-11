@@ -179,7 +179,8 @@ function sync() {
         ? "空格 / Enter 继续对白"
         : game.busy
           ? "事件进行中…"
-          : `${mapName} · ${game.player.x}, ${game.player.y} · ${session.gil} Gil`,
+          : (game.movementBlocker ??
+            `${mapName} · ${game.player.x}, ${game.player.y} · ${session.gil} Gil`),
   );
 }
 function confirm() {

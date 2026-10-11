@@ -1,5 +1,6 @@
 import { itemFixture } from "./items.js";
 import { fixtureParty } from "./party.js";
+import { fixtureRosterLifecycle } from "./roster-lifecycle.js";
 import type {
   Character,
   FieldContent,
@@ -190,6 +191,7 @@ export function checkpointFixture() {
       kind: "game-state-development-v1",
       initialGil: 90,
       initialParty: fixtureParty(["a", "b"]),
+      rosterLifecycle: fixtureRosterLifecycle(common.players),
       limits: {
         gil: 9999999,
         item: 99,

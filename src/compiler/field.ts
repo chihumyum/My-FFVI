@@ -13,6 +13,10 @@ import { bindTileAnimationRegions } from "./tile-animation.js";
 import { compileInventoryEvent } from "./inventory-event.js";
 import { compilePartyEvent } from "./party.js";
 import {
+  compileRosterLifecycleEvent,
+  rosterLifecycleSelectors,
+} from "./roster.js";
+import {
   int32,
   isCategory,
   isOperator,
@@ -92,6 +96,21 @@ export function decodeFieldOp(
   } as const;
   if (Object.hasOwn(simple, name) && form([]))
     return { ...site, kind: simple[name as keyof typeof simple] };
+  if (
+    name === "SysCall" &&
+    m.type === 1 &&
+    i.length === 8 &&
+    r.length === 8 &&
+    s.length === 8 &&
+    form([], [], [0]) &&
+    rosterLifecycleSelectors.includes(s[0]!)
+  ) {
+    try {
+      return { ...site, ...compileRosterLifecycleEvent(s[0]!, tables) };
+    } catch (error) {
+      return blocked(error instanceof Error ? error.message : String(error));
+    }
+  }
   if (
     (name === "GetItem" || name === "RemoveItem" || name === "RemoveGil") &&
     m.type === 1 &&

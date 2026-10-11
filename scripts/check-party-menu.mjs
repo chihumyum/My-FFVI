@@ -230,10 +230,7 @@ const report = {
 };
 await mkdir(new URL("../build/reports/", import.meta.url), { recursive: true });
 await writeFile(
-  new URL(
-    "../build/reports/systems-v16-party-menu-check.json",
-    import.meta.url,
-  ),
+  new URL("../build/reports/party-menu-check.json", import.meta.url),
   JSON.stringify(report, null, 2) + "\n",
 );
 console.log(JSON.stringify(report, null, 2));

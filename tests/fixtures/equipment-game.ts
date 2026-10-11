@@ -48,6 +48,13 @@ export function equipmentGameFixture(options: { capped?: boolean } = {}) {
   };
   catalog.common.players[0]!.sourceId = 1;
   catalog.common.players[1]!.sourceId = 2;
+  catalog.gameState.rosterLifecycle.jobIds = [1, 2];
+  catalog.gameState.rosterLifecycle.releasedJobIds = [1, 2];
+  catalog.gameState.rosterLifecycle.initial.b!.jobId = 2;
+  for (const metadata of Object.values(
+    catalog.gameState.rosterLifecycle.initial,
+  ))
+    metadata.ownedJobs = [1, 2].map((id) => ({ id, level: 1, proficiency: 0 }));
   catalog.common.players[0]!.hp = options.capped ? 100 : 130;
   catalog.common.players[0]!.mp = options.capped ? 10 : 28;
   catalog.common.players[1]!.hp = options.capped ? 95 : 120;

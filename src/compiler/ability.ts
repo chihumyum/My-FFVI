@@ -3,6 +3,7 @@ import {
   compileConditionGroup,
   hasSilenceBehavior,
   hasUnableFightBehavior,
+  hasPoisonBehavior,
   type ConditionReader,
 } from "./conditions.js";
 import type {
@@ -147,7 +148,8 @@ export function compileDevelopmentAbility(
   const a = sources[0]!.values;
   const blockers: string[] = [];
   const limitations = [
-    "development formulas/targeting/scheduling; no original-game parity",
+    "admitted arithmetic and ATB/chanting gates are source-backed; native dynamic semantics and original-game parity remain unverified",
+    "fixed 10 ms stepping, 400/900 ms action presentation and UI time-scale/settings remain provisional",
   ];
   const effects: AbilityEffect[] = [];
   const zero = (values: number[]) => values.every((v) => v === 0);
@@ -163,7 +165,8 @@ export function compileDevelopmentAbility(
       fn.type === 9 &&
       [0, 1].includes(v2) &&
       v3 === 0 &&
-      hasSilenceBehavior(reader.row("condition.csv", v1))
+      (hasSilenceBehavior(reader.row("condition.csv", v1)) ||
+        hasPoisonBehavior(reader.row("condition.csv", v1)))
     ) {
       effects.push({
         slot: fn.slot,
@@ -347,7 +350,7 @@ export function compileDevelopmentAbility(
     blockers.push("unresolved non-magic element carrier");
   if (elements.length > 8) blockers.push("unreviewed magic element count");
   limitations.push(
-    "only admitted silence/death/dying behavior; no equipment-added functions, undead or Runic overrides",
+    "only admitted silence/death/dying and ordinary poison battle behaviors; poison row 88, field poison steps and other active condition providers remain blocked; no equipment-added functions, undead or Runic overrides",
   );
   if (physicalOnly)
     limitations.push(

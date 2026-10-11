@@ -61,6 +61,39 @@ export function hasSilenceBehavior(row: BattleRow): boolean {
   return hasPassiveBehavior(row, 6, 2);
 }
 
+/** Ordinary FF6 poison. Row 88's condition-group provider is not equivalent
+ * to the ordinary row and remains blocked. Field steps remain a host blocker
+ * while this battle behavior persists; damage_number is not battle damage. */
+export function hasPoisonBehavior(row: BattleRow): boolean {
+  const v = row.values;
+  return (
+    int(v.condition_type) === 10 &&
+    int(v.system_type) === 1 &&
+    int(v.resistance_decision) === 1 &&
+    int(v.until_type) === 3 &&
+    int(v.rate_type1) === 3 &&
+    int(v.rate_value1) > 0 &&
+    int(v.rate_value1) <= 0x7fffffff &&
+    int(v.damage_number) === 32 &&
+    [
+      "until_value",
+      "overlapped_type",
+      "invalid_type",
+      "target_type",
+      "condition_group_id",
+      "parameter_group_id",
+      "attribute_group_id",
+      "species_group_id",
+      "rate_type2",
+      "rate_value2",
+      "recovery_invalid",
+      "attack_target",
+      "game_over_target",
+      "state_cover_unavailable",
+    ].every((key) => int(v[key]) === 0)
+  );
+}
+
 export function hasUnableFightBehavior(row: BattleRow): boolean {
   const v = row.values;
   return (
@@ -151,7 +184,17 @@ export function compileBattleConditionCatalog(
                     untilType: 3,
                   },
                 ]
-              : [];
+              : hasPoisonBehavior(row)
+                ? [
+                    {
+                      id: d.id,
+                      kind: "poison",
+                      name: name(row.values.mes_id_name!),
+                      untilType: 3,
+                      hpDivisor: int(row.values.rate_value1),
+                    },
+                  ]
+                : [];
       },
     ),
   };

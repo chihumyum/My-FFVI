@@ -11,7 +11,7 @@
 | 概念 | 来源含义 | Web 边界 |
 | --- | --- | --- |
 | `CharacterStatus.Id` | 原始角色参数行 ID | 编译指令中的 `sourceId`，不能当作拥有实例 ID |
-| `OwnedCharacterData.Id` | 原生已拥有角色身份；`AddFromMaster` 用已拥有数量加一分配 | 运行期使用独立字符串 `id`；现有 `player:<sourceId>` 是 Web 稳定身份，不宣称等于原生数值 ID |
+| `OwnedCharacterData.Id` | 原生已拥有角色身份；`AddFromMaster` 用已拥有数量加一分配 | v17 单独保存原生数值 `ownedId`；字符串 `id`（当前 `player:<sourceId>`）仍是 Web 稳定身份 |
 | `IsEnableCorps` | 已拥有角色的独立可用标志 | 纯模型保留 `enabled`，组织队伍不隐式设置它 |
 | `CorpsSlot` | 三个已保存队伍，0/1/2 | 来源脚本使用 1/2/3，编译时转换一次 |
 | `Corps.CharacterId` | 一个固定位置引用的 owned 身份，0 表示空 | 使用 `null`；与装备的内容占位记录完全无关 |
@@ -19,7 +19,7 @@
 
 `activePartyMembers` 返回 `{id,index,row}`。它只略去空位置，保留原 `index`，不压缩原快照，不自动过滤 disabled，不挑选其他非空队伍。同一角色可以被多个已保存队伍引用；同一队伍重复引用同一角色在当前运行期明确阻塞。这一重复限制是 Web 对现有战斗/字段能力的准入限制，不是原生 `SetSlot` 的去重规则。
 
-目前 `GameState` 的已拥有定义仍只有开场三人，且只接受 `enabled=true`。禁用后的装备登记/持有转移尚未接入；不能让快照注入 disabled，同时仍按旧的全名册方式预留装备。纯模型关于 disabled 的来源测试不扩大真实游戏的准入。
+v17 的 `GameState` 已拥有定义仍只有开场三人；现在校验并保存 enabled，只有 enabled 名册登记装备副本。快照 v4 保留原生持有身份、职业历史和已释放职业；离队与重加入由独立生命周期事务处理。新角色完整初始化和真实演员刷新仍阻塞，见 [角色生命周期](roster-lifecycle.md)。本文以下计数属于 v16 编队批次；v17 最新集成结果见 [系统批次](systems-v17.md)。
 
 ## 来源指令
 

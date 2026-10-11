@@ -28,7 +28,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v16");
+assert.equal(catalog.common.profile, "narshe-playability-v17");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 assert.deepEqual(catalog.common.reactions, {
   counterLimit: 1,
@@ -147,6 +147,7 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked] of [
     name: "机制检查普通攻击",
     kind: "ability",
     abilityIds: [1],
+    referencedAbility: null,
     forbiddenConditionIds: [],
   };
   content.players[0].abilities.push(1);
@@ -172,11 +173,15 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked] of [
   b.advance(500);
   assert.equal(b.enemies[0].atb, 100);
   assert.equal(b.enemies[0].queued, true);
-  assert.deepEqual(b.pendingActions, [normal]);
+  assert.deepEqual(
+    b.pendingActions.map(({ charge, ...a }) => a),
+    [{ ...normal, charge: undefined }].map(({ charge, ...a }) => a),
+  );
+  assert.ok(b.pendingActions[0].charge < normal.charge);
   b.advance(10);
   assert.equal(b.action.kind, "normal");
   b.advance(900);
-  assert.equal(b.enemies[0].atb, 0);
+  assert.ok(b.enemies[0].atb > 0 && b.enemies[0].atb < 1);
   const replay = (parts) => {
     const b = new BattleGame(content, 409);
     b.command(attacker, 1, enemy.id, 900001);

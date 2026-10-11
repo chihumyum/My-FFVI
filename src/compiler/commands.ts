@@ -18,7 +18,8 @@ export function compileBattleCommand(
     int(v.ability_group_id),
   );
   const direct = int(v.ability_id);
-  if (direct) members.push(reader.row("ability.csv", direct));
+  const referenced = direct ? reader.row("ability.csv", direct) : null;
+  if (referenced) members.push(referenced);
   const command: BattleCommandDefinition = {
     id: int(v.id),
     name: name(v.mes_id_name!),
@@ -31,6 +32,13 @@ export function compileBattleCommand(
         : "ability",
     abilityIds: [...new Set(members.map((r) => int(r.values.id)))],
     forbiddenConditionIds: group.ids,
+    referencedAbility: referenced
+      ? {
+          id: int(referenced.values.id),
+          typeId: int(referenced.values.type_id),
+          wait: int(referenced.values.ability_wait),
+        }
+      : null,
   };
   return {
     command,

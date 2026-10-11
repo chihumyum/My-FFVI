@@ -4,6 +4,7 @@ import type { MinimapMedia } from "../core/minimap.js";
 import type { AudioMedia } from "../core/static-audio.js";
 import type { InventoryEventOp } from "../core/inventory-event.js";
 import type { PartyEventOp } from "../core/party.js";
+import type { RosterLifecycleEventOp } from "../core/roster.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -117,6 +118,7 @@ export type Op = Site &
     | EventControlOp
     | InventoryEventOp
     | PartyEventOp
+    | RosterLifecycleEventOp
     | { kind: "entities"; group: string }
     | { kind: "change-map"; request: MapRequest }
     | { kind: "fade-in"; seconds: number }

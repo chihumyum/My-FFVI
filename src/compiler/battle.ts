@@ -389,6 +389,15 @@ export async function compileOpeningBattle(root: string) {
     );
   }
   tableGroup("exp_table.csv", "group_id", 1);
+  // Job ownership and the source experience provider are shared lifecycle
+  // inputs, independent from the current battle's visible commands.
+  for (const value of tables["job.csv"]!) row("job.csv", value.id!);
+  for (const value of tables["intermediate_growth_curve.csv"]!.filter((r) =>
+    initialParty.some((p) => p.characterId === tableInteger(r.character_id)),
+  )) {
+    row("intermediate_growth_curve.csv", value.id!);
+    tableGroup("exp_table.csv", "group_id", value.exp_table_group_id!);
+  }
   // Equipment is shared inventory content, not a list of scene-specific swaps.
   // Preserve all source identities and the eligibility/element dependencies;
   // executable effects are admitted separately by the equipment compiler.
@@ -414,7 +423,7 @@ export async function compileOpeningBattle(root: string) {
   }
   unique("initialize_data.csv", "key_name", "INIT_GIL");
   for (const value of tables["initialize_data.csv"]!.filter((r) =>
-    /^INIT_CORPS_[1-4]$/.test(r.key_name!),
+    /^INIT_CORPS_[1-4]$|^INT_JOB_[1-6]$/.test(r.key_name!),
   ))
     row("initialize_data.csv", value.id!);
   for (const value of tables["initialize_data.csv"]!.filter((r) =>

@@ -44,7 +44,7 @@ const make = () =>
     catalog.common.conditions,
   );
 const initial = make().snapshot();
-assert.equal(initial.formatVersion, 3);
+assert.equal(initial.formatVersion, 4);
 assert.deepEqual(
   initial.roster.map((p) => [p.sourceId, p.enabled]),
   [
@@ -130,7 +130,8 @@ const entries = [],
   trueHostBlockers = [],
   controlledRefreshChecks = [],
   rosterBlockers = [],
-  lifecycleBlockers = [];
+  lifecycleBlockers = [],
+  lifecycleDecoded = [];
 for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
   for (const [index, raw] of asset.data.Mnemonics.entries()) {
     const site = {
@@ -143,16 +144,16 @@ for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
       /^メンバー(加入|離脱)：/.test(raw.operands.sValues?.[0] ?? "")
     ) {
       const decoded = decodeFieldOp(raw, site, corpus.messages, corpus.tables);
-      assert.equal(
-        decoded.kind,
-        "blocked",
-        "Lifecycle commands require more than a party slot edit",
-      );
-      lifecycleBlockers.push({
-        site,
-        selector: raw.operands.sValues[0],
-        reason: decoded.reason,
-      });
+      if (decoded.kind === "roster")
+        lifecycleDecoded.push({ site, selector: raw.operands.sValues[0] });
+      else {
+        assert.equal(decoded.kind, "blocked");
+        lifecycleBlockers.push({
+          site,
+          selector: raw.operands.sValues[0],
+          reason: decoded.reason,
+        });
+      }
     }
     if (!["OrganizePartySlot", "ChangePartySlot"].includes(raw.mnemonic))
       continue;
@@ -315,6 +316,7 @@ const report = {
     controlledRefreshCallbacks: controlledRefreshChecks.length,
     unownedRosterBlockers: rosterBlockers.length,
     lifecycleSelectorsBlocked: lifecycleBlockers.length,
+    lifecycleSelectorsDecoded: lifecycleDecoded.length,
   },
   entries,
   pureChecks,
@@ -323,6 +325,7 @@ const report = {
   controlledRefreshChecks,
   rosterBlockers,
   lifecycleBlockers,
+  lifecycleDecoded,
   doesNotEstablish: [
     "story-reachability",
     "additional-owned-characters",

@@ -29,7 +29,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v16");
+assert.equal(catalog.common.profile, "narshe-playability-v17");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const base = encounterContent(catalog, 3);
 const inventory = tables["ability.csv"].map((row) => {
@@ -62,6 +62,7 @@ content.commands[900001] = {
   name: "受控机制检查",
   kind: "ability",
   abilityIds: [ability.id],
+  referencedAbility: null,
   forbiddenConditionIds: [],
 };
 content.players[0].commands = [900001];

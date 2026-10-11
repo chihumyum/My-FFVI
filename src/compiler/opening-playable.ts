@@ -347,10 +347,11 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v16",
+    profile: "narshe-playability-v17",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,
+    timing: { mode: "active", atbSpeed: 1 },
     reactions: source.reactions,
     initialAtb: {
       player: initialAtb("ACCUMULATION_ATB_NORMAL"),
@@ -375,9 +376,9 @@ export async function compileOpeningPlayable(
     ),
     limitations: [
       "纳尔谢街道可玩开发规则；未经原版一致性验收，不代表完整战斗系统。",
-      "初始能力解锁、命中/伤害分支、蓄力/排队、经验成长采用已记录的临时规则。",
+      "已准入的数值分支、ATB、蓄力与时钟门控已按本版来源接入；固定 10 ms 推进、400/900 ms 动作表现和 UI 时速设置仍是临时策略，原生动态语义尚未验证。初始能力解锁与成长仍限当前开发配置。",
       "初始数值使用分阶段属性确认；成长追加、Correction、临时与被动输入仍按开场检查点显式给零，未恢复通用状态/装备能力。",
-      "当前开放三种射线和治愈原力，以及来源普通 HP/MP 恢复、玩家复活和解除沉默道具；道具目前限我方目标。毒、石化等其余状态行为、特殊道具、逃跑与完整战斗脚本尚未实现。",
+      "当前开放三种射线和治愈原力，以及来源普通 HP/MP 恢复、玩家复活、解除沉默和普通毒的道具；道具目前限我方目标。普通毒的战斗周期、属性相性和解除已接入；特殊毒 row 88、石化等其他活动状态、特殊道具、逃跑与完整战斗脚本仍阻塞。地图毒步伤未迁移，当前编队带毒时移动会明确阻塞，可先在菜单解毒。",
       "角色、库存、普通换装与奖励由共享状态保存，可在稳定地图检查点保存/读取。剧情普通物品授予/移除和部分收费指令已接入；特殊装备、掉落与商店尚未完成，开场没有额外发放测试药品或备用装备。",
       "站位、夹击队形、骑乘拼接和光束是临时二维表现；原版音效、特效、动画时序尚未接入。",
       "敌方行动使用来源 AI、独立回合与变量，连续行动整组入队。普通反击按命中结果触发并优先执行，保留原行动条；最终攻击、恢复专用反应、完整自动目标及特殊指令仍未接入，未知依赖会明确停止。",

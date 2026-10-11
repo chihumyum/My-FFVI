@@ -8,6 +8,7 @@ import { compileItem } from "../src/compiler/items.js";
 import { fixture } from "./fixtures/battle-content.js";
 import { checkpointFixture } from "./fixtures/checkpoint-game.js";
 import { itemFixture } from "./fixtures/items.js";
+import { fixtureRosterLifecycle } from "./fixtures/roster-lifecycle.js";
 
 function stateFixture() {
   const battle = fixture();
@@ -16,6 +17,7 @@ function stateFixture() {
     kind: "item",
     name: "Items",
     abilityIds: [],
+    referencedAbility: null,
     forbiddenConditionIds: [],
   };
   battle.players.forEach((p) => p.commands.push(200));
@@ -23,6 +25,7 @@ function stateFixture() {
     kind: "game-state-development-v1",
     initialGil: 0,
     initialParty: fixtureParty(["a", "b"]),
+    rosterLifecycle: fixtureRosterLifecycle(battle.players),
     limits: { gil: 999, item: 99, hp: 9999, mp: 999, level: 99, exp: 15000000 },
     items: { 10: itemFixture(), 20: itemFixture(20, true) },
     initialItems: [

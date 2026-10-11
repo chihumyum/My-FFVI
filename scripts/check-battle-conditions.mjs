@@ -31,7 +31,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v16");
+assert.equal(catalog.common.profile, "narshe-playability-v17");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const abilities = tables["ability.csv"].map((r) =>
   compileAbilityProgram(index, Number(r.id)),
@@ -105,6 +105,7 @@ const run = (parts) => {
     name: "Controlled source action",
     kind: "ability",
     abilityIds: [389, 763],
+    referencedAbility: null,
     forbiddenConditionIds: [],
   };
   for (const p of content.players) {

@@ -65,7 +65,13 @@ test("counter interrupts pending actions, targets the attacker, and preserves a 
   assert.equal(b.enemies[0]!.queued, true);
   assert.ok(b.players[0]!.hp < b.players[0]!.maxHp);
   assert.equal(b.players[1]!.hp, b.players[1]!.maxHp);
-  assert.deepEqual(b.pendingActions, pending);
+  assert.deepEqual(
+    b.pendingActions.map(({ charge, ...action }) => action),
+    pending.map(({ charge, ...action }) => action),
+  );
+  assert.ok(
+    b.pendingActions.every((action, i) => action.charge < pending[i]!.charge),
+  );
 });
 
 test("reaction branches see post-action HP and leave a partially filled gauge intact", () => {
@@ -93,7 +99,7 @@ test("reaction branches see post-action HP and leave a partially filled gauge in
   assert.equal(b.pendingActions[0]!.kind, "counter");
   assert.equal(b.pendingActions[0]!.source.id, 10);
   b.advance(1410);
-  assert.equal(b.enemies[0]!.atb, gauge);
+  assert.ok(b.enemies[0]!.atb > gauge);
   assert.equal(b.enemies[0]!.queued, false);
 });
 
@@ -171,13 +177,13 @@ test("a later unsupported counter rolls back every target, cost, AI parameter, q
   op.abilities = [12];
   for (const b of [clean, broken]) {
     b.command("a", 10, { kind: "side", side: "enemy" });
-    b.advance(10);
+    b.advance(400);
   }
   const before = structuredClone(broken.combatants);
   const pending = broken.pendingActions;
   const ais = broken.enemies.map((e) => broken.enemyAIState(e.id));
   const logs = [...broken.events];
-  assert.throws(() => broken.advance(400), /unimplemented ability 12/);
+  assert.throws(() => broken.advance(10), /unimplemented ability 12/);
   assert.deepEqual(broken.combatants, before);
   assert.deepEqual(broken.pendingActions, pending);
   assert.deepEqual(
@@ -188,7 +194,7 @@ test("a later unsupported counter rolls back every target, cost, AI parameter, q
   assert.equal(broken.action!.resolved, false);
   assert.deepEqual(broken.action!.results, []);
   op.abilities = [13];
-  clean.advance(400);
+  clean.advance(20);
   broken.advance(10);
   assert.deepEqual(broken.action!.results, clean.action!.results);
   assert.deepEqual(broken.pendingActions, clean.pendingActions);
@@ -215,7 +221,7 @@ test("counter fees and lost targets invalidate the counter without consuming its
       });
     b.advance(510);
     assert.equal(b.action, null);
-    assert.equal(b.enemies[0]!.atb, gauge);
+    assert.ok(b.enemies[0]!.atb > gauge);
     assert.equal(b.enemies[0]!.queued, false);
     assert.deepEqual(b.pendingActions, []);
   }
@@ -253,7 +259,7 @@ test("enemy AI cycles physical and magic decisions through the shared action que
     sequence.push(battle.action!.source.id);
     assert.equal(battle.action!.actor, "e1");
     battle.advance(900);
-    assert.equal(battle.enemies[0]!.atb, 0);
+    assert.ok(battle.enemies[0]!.atb > 0 && battle.enemies[0]!.atb < 1); // Released, then one FF6 progress update.
     assert.equal(battle.enemies[0]!.queued, false);
   }
   assert.deepEqual(sequence, [13, 10, 13]);
@@ -305,7 +311,7 @@ test("a loop submits in source order and releases its gauge only after the last 
     assert.equal(b.action!.actor, "e1");
     b.advance(900);
   }
-  assert.equal(b.enemies[0]!.atb, 0);
+  assert.ok(b.enemies[0]!.atb > 0 && b.enemies[0]!.atb < 1); // Released, then one FF6 progress update.
   assert.equal(b.enemies[0]!.queued, false);
   assert.equal(b.enemies[0]!.mp, e.mp - 2 * f.abilities[10]!.cost);
   assert.equal(b.enemyAIState("e1")!.actTurn, 1);
@@ -345,7 +351,7 @@ test("an unaffordable loop member does not release the gauge or cancel a later a
   assert.equal(b.action!.source.id, 13);
   b.advance(900);
   assert.equal(b.enemies[0]!.queued, false);
-  assert.equal(b.enemies[0]!.atb, 0);
+  assert.ok(b.enemies[0]!.atb > 0 && b.enemies[0]!.atb < 1); // Released, then one FF6 progress update.
   assert.equal(b.enemies[0]!.mp, 3);
 });
 
@@ -354,7 +360,7 @@ test("death between loop members removes the remaining group without charging it
   f.players.forEach((p) => {
     p.hp = 10000;
   });
-  f.abilities[10]!.wait = 0.04; // 20 ms: ready immediately after the first enemy action.
+  f.abilities[10]!.wait = 1; // Native integer wait: becomes ready during the first enemy action.
   f.enemies[0]!.ai = syntheticAI([
     ["Nop"],
     ["SyncAI"],
@@ -409,7 +415,7 @@ test("a later target failure rolls back the entire loop, its controller counters
   assert.deepEqual(broken.enemyAIState("e1"), initial);
   f.abilities[10]!.plan!.targeting.modes = ["single"];
   clean.advance(10);
-  broken.advance(10);
+  broken.advance(0); // Retry the retained failed step without adding more wall time.
   assert.deepEqual(broken.action, clean.action);
   assert.deepEqual(broken.pendingActions, clean.pendingActions);
   assert.deepEqual(broken.enemyAIState("e1"), clean.enemyAIState("e1"));
@@ -615,7 +621,7 @@ test("failed AI target resolution rolls back its random stream, turn and queue",
   assert.equal(broken.enemies[0]!.behavior!.mode, 0);
   f.abilities[13]!.plan!.targeting.modes = ["single"];
   clean.advance(10);
-  broken.advance(10);
+  broken.advance(0); // Retry the retained failed step without adding more wall time.
   assert.deepEqual(broken.action, clean.action);
   assert.deepEqual(broken.enemyAIState("e1"), clean.enemyAIState("e1"));
   assert.deepEqual(broken.enemies[0]!.behavior, clean.enemies[0]!.behavior);
@@ -720,6 +726,7 @@ function conditionFixture() {
     name: "Status",
     kind: "ability",
     abilityIds: [14, 15],
+    referencedAbility: null,
     forbiddenConditionIds: [],
   };
   for (const p of f.players) {
@@ -890,6 +897,7 @@ test("the selected command stays attached to an action and is checked again at r
     name: "Alternative",
     kind: "ability",
     abilityIds: [10],
+    referencedAbility: null,
     forbiddenConditionIds: [],
   };
   f.players[0]!.commands.push(102);
@@ -1254,7 +1262,7 @@ test("revival includes fallen players, restores exact ratio and derives dying", 
   b.advance(410);
   assert.equal(fallen.hp, 10);
   assert.deepEqual(fallen.conditionIds, [304]);
-  assert.equal(fallen.atb, 0);
+  assert.ok(fallen.atb > 0 && fallen.atb < 1); // Revival resets, then this frame advances the gauge.
   assert.equal(fallen.queued, false);
   assert.equal(b.players[0]!.mp, 6);
   assert.deepEqual(
@@ -1305,7 +1313,7 @@ test("lethal damage cancels a charged action and revival cannot resurrect that c
   assert.equal(b.command("c", 16, "b"), true);
   b.advance(910);
   assert.equal(target.hp, 10);
-  assert.equal(target.atb, 0);
+  assert.ok(target.atb > 0 && target.atb < 1);
   assert.equal(target.queued, false);
   assert.ok(!b.events.some((e) => e.text === "Second ally · Beam"));
 });
@@ -1331,12 +1339,12 @@ test("invalid revival dependency rolls back HP, conditions, cost and queued stat
   const f = revivalFixture(),
     b = new BattleGame(f, 1);
   b.command("a", 16, "b");
-  b.advance(10);
+  b.advance(400);
   const before = structuredClone(b.combatants);
   const restore = f.abilities[16]!.plan!.effects[1]!;
   if (restore.kind !== "recover-max-hp") assert.fail();
   restore.value = 0;
-  assert.throws(() => b.advance(400), /Invalid revival/);
+  assert.throws(() => b.advance(10), /Invalid revival/);
   assert.deepEqual(b.combatants, before);
   assert.deepEqual(b.action!.results, []);
   assert.equal(b.action!.resolved, false);

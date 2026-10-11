@@ -203,6 +203,7 @@ function sourceHost(missed, parts) {
     name: "机制普通攻击",
     kind: "ability",
     abilityIds: [1],
+    referencedAbility: null,
     forbiddenConditionIds: [],
   };
   const player = content.players[0];

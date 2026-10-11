@@ -193,6 +193,10 @@ assert.equal(
 owned.cancelBattle(lease);
 const grownSave = owned.snapshot();
 Object.assign(grownSave.roster[0], {
+  additionalLevel:
+    grownSave.roster[0].additionalLevel +
+    grown.level -
+    grownSave.roster[0].level,
   level: grown.level,
   maxHp: growthProjection.maxHp,
   maxMp: growthProjection.maxMp,

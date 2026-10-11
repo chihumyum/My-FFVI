@@ -66,6 +66,8 @@ export class GameSession {
       current: {
         inventory: this.state.fieldInventory,
         party: this.state.fieldParty,
+        roster: this.state.fieldRoster,
+        movementBlocker: () => this.state.fieldMovementBlocker,
       },
       prepare: () => this.state.prepareFieldState(),
     });

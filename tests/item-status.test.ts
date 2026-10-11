@@ -25,6 +25,10 @@ function setup(extraPlayers = false) {
         sourceId: 1100 + n,
       });
       battle.gameState.equipment[id] = [...battle.gameState.equipment.a!];
+      battle.gameState.rosterLifecycle.initial[id] = {
+        ...structuredClone(battle.gameState.rosterLifecycle.initial.a!),
+        ownedId: n + 3,
+      };
       battle.gameState.initialParty.slots[0][n + 2]!.id = id;
     }
   common.commands[200] = {
@@ -32,6 +36,7 @@ function setup(extraPlayers = false) {
     kind: "item",
     name: "Items",
     abilityIds: [],
+    referencedAbility: null,
     forbiddenConditionIds: [],
   };
   common.players.forEach((p) => p.commands.push(200));

@@ -54,6 +54,9 @@
     "party:check": "npm run battle:build && node scripts/check-party-native.mjs && node scripts/check-party.mjs && node scripts/check-party-menu.mjs",
     "vitality:check": "npm run build && node scripts/check-vitality-native.mjs && node scripts/check-parameters.mjs",
     "battle-received-ability:check": "npm run battle:build && node scripts/check-battle-received-ability.mjs --native build/runtime/game/GameAssembly.dll",
+    "roster-lifecycle:check": "npm run battle:build && node scripts/check-roster-lifecycle-native.mjs && node scripts/check-roster-lifecycle.mjs",
+    "poison:check": "npm run battle:build && node scripts/check-poison.mjs",
+    "battle-timing:check": "npm run battle:build && node scripts/check-battle-timing.mjs --native build/runtime/game/GameAssembly.dll",
     "inventory-ownership:check": "npm run inventory-events:check"
   },
   "dependencies": {
