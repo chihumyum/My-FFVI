@@ -26,6 +26,7 @@ const { compileOrdinaryWeaponEffects } = await module(
 );
 const { decodeFieldOp } = await module("compiler/field");
 const { createNewGame } = await module("core/new-game");
+const { GameState } = await module("core/game-state");
 const { EventState } = await module("core/event-state");
 const { hash } = await module("compiler/content");
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -50,6 +51,7 @@ const battle = JSON.parse(
 const field = JSON.parse(
   snapshotFile(await readSnapshot(root + "build/field"), "field.json"),
 );
+const publishedBytes = await readFile(root + "build/game/opening-playable.json", "utf8");
 assert.equal(native.semanticsVerified, false);
 assert.equal(corpus.manifest.parentSourceSetHash, project.sourceSetHash);
 assert.equal(battle.parentSourceSetHash, project.sourceSetHash);
@@ -155,16 +157,16 @@ check(
   },
 );
 check(
-  "source equipped copies and native empty-slot Count remain separate and complete",
+  "source equipment ownership includes ordinary copies and native empty-slot Count",
   () => {
-    assert.deepEqual(plan.owned.equipmentStock, [
+    assert.deepEqual(plan.owned.equipmentStock.filter((entry) => !definition.equipment.definitions[entry.id].empty), [
       { id: 95, count: 1 },
       { id: 104, count: 2 },
       { id: 201, count: 3 },
       { id: 216, count: 3 },
       { id: 244, count: 3 },
     ]);
-    assert.deepEqual(plan.nativeInitialization.emptyEquipmentStocks, [
+    assert.deepEqual(plan.owned.equipmentStock.filter((entry) => definition.equipment.definitions[entry.id].empty), [
       { id: 93, count: 5 },
       { id: 197, count: 5 },
       { id: 198, count: 5 },
@@ -281,15 +283,35 @@ check(
   },
 );
 check(
-  "incomplete ownership host prevents new-game publication despite a valid initializer plan",
+  "incomplete field host prevents new-game publication despite initialized shared ownership",
   () => {
     assert.equal(plan.publication.state, "blocked");
     assert.deepEqual(plan.publication.missingProviders, [
-      "native-empty-equipment-ownership-lifecycle",
       "source-new-game-field-host",
     ]);
   },
 );
+check("published source initializer creates shared ownership without checkpoint conditions or refill on restore", () => {
+  const published = JSON.parse(publishedBytes);
+  const { contentHash, ...body } = published;
+  assert.equal(contentHash, hash(body));
+  assert.equal(published.common.profile, "narshe-playability-v27");
+  assert.equal(hash(published.gameState.sourceNewGame), hash(definition));
+  const fresh = GameState.createNewGame(published.gameState, published.common.players,
+    published.contentHash, published.common.conditions);
+  const saved = fresh.snapshot();
+  assert.equal(saved.formatVersion, 7);
+  assert.deepEqual(saved.equipmentStock, plan.owned.equipmentStock);
+  assert.deepEqual(saved.roster.map((member) => member.conditionIds), [[], [], []]);
+  assert.deepEqual(saved.roster.map((member) => member.sourceId), [1, 31, 32]);
+  saved.equipmentStock.find((entry) => entry.id === 200).count = 0;
+  fresh.restore(saved);
+  assert.deepEqual(fresh.snapshot(), saved);
+  const development = new GameState(published.gameState, published.common.players,
+    published.contentHash, published.common.conditions);
+  assert.deepEqual(development.snapshot().roster.map((member) => member.conditionIds), [[53], [53], [53]]);
+  assert.equal(fresh.snapshot().equipmentStock.find((entry) => entry.id === 200).count, 0);
+});
 const firstOperation = decodeFieldOp(
   startScript.data.Mnemonics[1],
   { script: route.scriptName, index: 1 },
@@ -297,10 +319,11 @@ const firstOperation = decodeFieldOp(
   corpus.tables,
 );
 check(
-  "the actual start script retains its unresolved advertisement controller call",
+  "the actual start script requires an explicit source presentation host",
   () => {
     assert.equal(startScript.data.Mnemonics[1].mnemonic, "SysCall");
-    assert.equal(firstOperation.kind, "blocked");
+    assert.equal(firstOperation.kind, "source-presentation");
+    assert.equal(firstOperation.command.kind, "advertisement-probe");
   },
 );
 const report = {
@@ -320,7 +343,7 @@ const report = {
   ordinaryWeaponEffectsSource: extra[0].source,
   initialOwnerSourceIds: plan.owned.roster.map((p) => p.sourceId),
   initialEquipmentStock: plan.owned.equipmentStock,
-  nativeEmptyEquipmentStocks: plan.nativeInitialization.emptyEquipmentStocks,
+  nativeEmptyEquipmentStocks: plan.owned.equipmentStock.filter((entry) => definition.equipment.definitions[entry.id].empty),
   counts: {
     cases: cases.length,
     scenarioFlags: 1024,

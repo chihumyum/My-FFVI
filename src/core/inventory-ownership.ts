@@ -32,7 +32,7 @@ export function projectEquipmentOwnership(
   if (!definition || definition.id !== command.id)
     throw new Error("Unknown equipment ownership identity");
   if (definition.empty)
-    throw new Error("Empty equipment placeholders cannot be owned stock");
+    throw new Error("Field inventory changes to empty equipment are not implemented");
   const next = stock.map((entry) => ({ ...entry }));
   let entry = next.find((entry) => entry.id === command.id);
   if (command.kind === "grant-equipment") {

@@ -1,3 +1,4 @@
+import { fixtureEquipmentGrants } from "./fixtures/equipment.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { projectAbilityCost } from "../src/core/ability-cost.js";
@@ -71,7 +72,7 @@ test("FixedEquip adds one passive per copy and removes only the first matching r
 
 test("equipment and passive candidates cancel cleanly, conserve copies across owners and reject stale state", () => {
   const { catalog, roster } = abilityCostFixture();
-  const stock = [...initialEquipmentStock(catalog, roster), { id: 701, count: 1 }];
+  const stock = [...initialEquipmentStock(catalog, roster, fixtureEquipmentGrants(catalog)), { id: 701, count: 1 }];
   const initial = structuredClone({ roster, stock });
   const proposal = previewEquipmentChange(catalog, roster, stock, roster[0]!.id, 5, 701);
   const passive = applyEquipmentAbilityChange([], roster[0]!, proposal.roster[0]!, catalog);

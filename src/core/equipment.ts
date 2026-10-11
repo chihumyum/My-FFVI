@@ -140,7 +140,7 @@ export function validateEquipmentBattleRows(
   loadout: EquipmentLoadout,
   rows: BattleRowCatalog,
 ): void {
-  validateLoadout(catalog, loadout);
+  validateEquipmentLoadout(catalog, loadout);
   validateBattleRowCatalog(rows);
   for (const id of loadout.equipment) {
     const item = definition(catalog, id);
@@ -175,7 +175,8 @@ export function equipmentSlotAllowed(
     : item.parts[slot - 1]!;
 }
 
-function validateLoadout(catalog: EquipmentCatalog, loadout: EquipmentLoadout) {
+/** Validate slot/effect identity without inventing or requiring ownership. */
+export function validateEquipmentLoadout(catalog: EquipmentCatalog, loadout: EquipmentLoadout) {
   if (catalog.kind !== "equipment-development-v1")
     throw new Error("Unsupported equipment catalog");
   const owner = character(catalog, loadout.sourceId);
@@ -204,7 +205,7 @@ function validateLoadout(catalog: EquipmentCatalog, loadout: EquipmentLoadout) {
 /** All slots participate in native GetMPDiameter; stock and inactive owners do
  * not. Preserve copies here even though the cost provider is non-stacking. */
 export function equipmentAbilityCostProviders(catalog: EquipmentCatalog, loadout: EquipmentLoadout) {
-  validateLoadout(catalog, loadout);
+  validateEquipmentLoadout(catalog, loadout);
   return loadout.equipment.flatMap((id) => {
     const item = definition(catalog, id);
     if (!item.abilityCost) return [];
@@ -284,23 +285,77 @@ export function applyEquipmentAbilityChange(
   return result;
 }
 
+function equipmentStockCounts(catalog: EquipmentCatalog, stock: readonly EquipmentStock[]) {
+  if (catalog.kind !== "equipment-development-v1")
+    throw new Error("Unsupported equipment catalog");
+  validateOrdinaryWeaponEffects(catalog.ordinaryWeaponEffects);
+  integer(catalog.limit, 1);
+  if (!Array.isArray(stock)) throw new Error("Equipment ownership is required");
+  const counts = new Map<number, number>();
+  for (const stack of stock) {
+    if (!stack || Object.keys(stack).sort().join(",") !== "count,id")
+      throw new Error("Invalid equipment stock record");
+    definition(catalog, stack.id);
+    if (counts.has(stack.id)) throw new Error("Duplicate equipment stock");
+    counts.set(stack.id, integer(stack.count, 0, catalog.limit));
+  }
+  return counts;
+}
+
+/** GetNonEquipItem 0xab6120 consumes owned Count, not free copies. The source
+ * orders Content.TypeId 2 (weapon) before 3 (armor). Same-type ties need the
+ * original owned-list order, which this ID-keyed stock deliberately does not
+ * claim to preserve; reject them instead of choosing an arbitrary identity. */
+export function selectEmptyEquipment(
+  catalog: EquipmentCatalog,
+  stock: readonly EquipmentStock[],
+  sourceId: number,
+  slot: number,
+): number | null {
+  const counts = equipmentStockCounts(catalog, stock);
+  const owner = character(catalog, sourceId);
+  integer(slot, 1, 6);
+  const candidates: EquipmentDefinition[] = [];
+  for (const [id, count] of counts) {
+    if (count === 0) continue;
+    const item = definition(catalog, id);
+    if (typeof item.empty !== "boolean" || !["weapon", "armor"].includes(item.kind))
+      throw new Error("Invalid empty equipment identity");
+    if (item.empty && equipmentSlotAllowed(item, slot, owner)) candidates.push(item);
+  }
+  const preferred = candidates.some((item) => item.kind === "weapon")
+    ? candidates.filter((item) => item.kind === "weapon") : candidates;
+  if (preferred.length > 1)
+    throw new Error("Ambiguous empty equipment: original owned-list order is unavailable");
+  return preferred[0]?.id ?? null;
+}
+
+/** Source FiexedEquipCount registers empty slots too. Empty registration may
+ * exceed Count; it is not a consumable-copy budget. Only supplied enabled
+ * owners participate, and only identities in the owned inventory are returned. */
+export function equipmentRegistrations(
+  catalog: EquipmentCatalog,
+  roster: readonly EquipmentLoadout[],
+  stock: readonly EquipmentStock[],
+): { id: number; count: number; equipped: number; slots: { ownerId: string; slot: EquipmentSlot }[] }[] {
+  validateEquipmentState(catalog, roster, stock);
+  return stock.map(({ id, count }) => {
+    const slots = roster.flatMap((owner) => owner.equipment.flatMap((contentId, index) =>
+      contentId === id ? [{ ownerId: owner.id, slot: (index + 1) as EquipmentSlot }] : []));
+    return { id, count, equipped: slots.length, slots };
+  });
+}
+
+/** Player-facing copies and battle item eligibility exclude empty equipment.
+ * Query equipmentRegistrations for its source registration count instead. */
 export function equipmentAvailability(
   catalog: EquipmentCatalog,
   roster: readonly EquipmentLoadout[],
   stock: readonly EquipmentStock[],
 ): { id: number; count: number; equipped: number; available: number }[] {
-  validateEquipmentState(catalog, roster, stock);
-  const occupied = new Map<number, number>();
-  for (const p of roster)
-    for (const id of p.equipment)
-      if (!definition(catalog, id).empty)
-        occupied.set(id, (occupied.get(id) ?? 0) + 1);
-  return stock.map(({ id, count }) => ({
-    id,
-    count,
-    equipped: occupied.get(id) ?? 0,
-    available: count - (occupied.get(id) ?? 0),
-  }));
+  return equipmentRegistrations(catalog, roster, stock)
+    .filter(({ id }) => !definition(catalog, id).empty)
+    .map(({ id, count, equipped }) => ({ id, count, equipped, available: count - equipped }));
 }
 
 export function validateEquipmentState(
@@ -308,19 +363,7 @@ export function validateEquipmentState(
   roster: readonly EquipmentLoadout[],
   stock: readonly EquipmentStock[],
 ) {
-  if (catalog.kind !== "equipment-development-v1")
-    throw new Error("Unsupported equipment catalog");
-  validateOrdinaryWeaponEffects(catalog.ordinaryWeaponEffects);
-  integer(catalog.limit, 1);
-  const counts = new Map<number, number>();
-  for (const stack of stock) {
-    if (Object.keys(stack).sort().join(",") !== "count,id")
-      throw new Error("Invalid equipment stock record");
-    const item = definition(catalog, stack.id);
-    if (item.empty || counts.has(stack.id))
-      throw new Error("Duplicate or empty equipment stock");
-    counts.set(stack.id, integer(stack.count, 0, catalog.limit));
-  }
+  const counts = equipmentStockCounts(catalog, stock);
   const identities = new Set<string>();
   const sources = new Set<number>();
   for (const p of roster) {
@@ -328,8 +371,10 @@ export function validateEquipmentState(
       throw new Error("Duplicate equipment owner");
     identities.add(p.id);
     sources.add(p.sourceId);
-    validateLoadout(catalog, p);
+    validateEquipmentLoadout(catalog, p);
     for (const id of p.equipment) {
+      // A saved equipped empty remains a valid identity at Count zero (or
+      // after removal from the owned list). Count gates new selection only.
       if (definition(catalog, id).empty) continue;
       const available = counts.get(id) ?? 0;
       if (available <= 0) throw new Error("Equipment exceeds owned count");
@@ -365,6 +410,8 @@ export function previewEquipmentChange(
   const changes: { slot: number; from: number; to: number }[] = [];
   if (previous === contentId)
     return { roster: next, stock: structuredClone([...stock]), changes };
+  if (incoming.empty && !stock.some((stack) => stack.id === contentId && stack.count !== 0))
+    throw new Error("No owned empty equipment");
   if (
     !incoming.empty &&
     !equipmentAvailability(catalog, roster, stock).some(
@@ -377,11 +424,11 @@ export function previewEquipmentChange(
   if (slot <= 2 && !incoming.empty) {
     const otherSlot = slot === 1 ? 2 : 1;
     const other = definition(catalog, target.equipment[otherSlot - 1]!);
-    // Native SetEquip 0x333110 removes the other ordinary hand on conflict.
-    if (!other.empty && other.kind === incoming.kind) {
-      const empty = owner.emptySlots[otherSlot - 1];
-      if (!empty || !definition(catalog, empty).empty)
-        throw new Error("Unresolved empty equipment slot");
+    // SetEquip's shield branch checks both Armor pointers, including an empty
+    // shield. Only its ordinary two-weapon branch excludes ListTypeId 2.
+    if (other.kind === incoming.kind && (incoming.kind === "armor" || !other.empty)) {
+      const empty = selectEmptyEquipment(catalog, stock, target.sourceId, otherSlot);
+      if (empty === null) throw new Error("No owned empty equipment for conflicting hand");
       target.equipment[otherSlot - 1] = empty;
       changes.push({ slot: otherSlot, from: other.id, to: empty });
     }
@@ -390,17 +437,33 @@ export function previewEquipmentChange(
   return { roster: next, stock: structuredClone([...stock]), changes };
 }
 
-/** Bootstrap total ownership from explicitly supplied starting loadouts only.
- * No empty placeholders are granted, and no spare equipment is invented. */
+/** CreateItems grants precede AddFromMaster: each of the six initial slots,
+ * including empty equipment, adds one owned copy. Grants must be supplied
+ * explicitly; this function never infers the source's five-copy seed from
+ * catalog membership. AddOwnedItem clamps every addition to the source limit. */
 export function initialEquipmentStock(
   catalog: EquipmentCatalog,
   roster: readonly EquipmentLoadout[],
+  explicitInitialGrants: readonly EquipmentStock[],
 ): EquipmentStock[] {
+  equipmentStockCounts(catalog, []);
+  if (!Array.isArray(explicitInitialGrants))
+    throw new Error("Explicit initial equipment grants are required");
   const totals = new Map<number, number>();
-  for (const p of roster)
-    for (const id of p.equipment)
-      if (!definition(catalog, id).empty)
-        totals.set(id, (totals.get(id) ?? 0) + 1);
+  const add = (id: number, count: number) => {
+    definition(catalog, id);
+    integer(count);
+    totals.set(id, Math.min(catalog.limit, (totals.get(id) ?? 0) + count));
+  };
+  for (const grant of explicitInitialGrants) {
+    if (!grant || Object.keys(grant).sort().join(",") !== "count,id")
+      throw new Error("Invalid initial equipment grant");
+    add(grant.id, grant.count);
+  }
+  for (const p of roster) {
+    validateEquipmentLoadout(catalog, p);
+    for (const id of p.equipment) add(id, 1);
+  }
   const stock = [...totals]
     .map(([id, count]) => ({ id, count }))
     .sort((a, b) => a.id - b.id);
@@ -417,7 +480,7 @@ export function equipmentAttackArm(
   slots: readonly number[],
 ): 1 | 2 {
   const owner = character(catalog, sourceId);
-  validateLoadout(catalog, {
+  validateEquipmentLoadout(catalog, {
     id: "projection",
     sourceId,
     equipment: [...slots],

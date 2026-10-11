@@ -24,7 +24,7 @@ type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount"> & {
   transportationId: number | null;
 };
 export type WorldCheckpoint = {
-  kind: "idle-world-v5";
+  kind: "idle-world-v6";
   initialHash: string;
   location: {
     catalogHash: string;
@@ -179,6 +179,8 @@ type Ownership = {
   bgm: string;
   environment: string;
   actors: string;
+  presentation: string;
+  publishPresentation(): void;
   catalogHash: string;
   owned?: { commit(): boolean };
 };
@@ -216,7 +218,7 @@ export class WorldSession {
   }
   checkpoint(): WorldCheckpoint {
     return {
-      kind: "idle-world-v5",
+      kind: "idle-world-v6",
       initialHash: this.initial.contentHash,
       location: structuredClone(this.location),
       field: this.current.checkpoint(),
@@ -230,7 +232,7 @@ export class WorldSession {
   ): void {
     checkpointKeys(snapshot, "kind,initialHash,location,field");
     if (
-      snapshot.kind !== "idle-world-v5" ||
+      snapshot.kind !== "idle-world-v6" ||
       snapshot.initialHash !== this.initial.contentHash
     )
       throw new Error("World checkpoint source/version mismatch");
@@ -331,6 +333,22 @@ export class WorldSession {
       throw new Error("Environment media changed during map transition");
     const environment = from.environment.snapshot();
     const owned = this.owned?.prepare();
+    const presentation = from.sourcePresentationContext;
+    const presentationHost = this.owned?.current.sourcePresentation;
+    if (canonical(presentation) !== canonical(presentationHost?.context() ?? null) ||
+        (presentationHost && presentation === null) || (!presentationHost && owned?.ports.sourcePresentation))
+      throw new Error("Unbound candidate map presentation context");
+    let presentationPublished = false;
+    // Candidate entry scripts may query the detached context. External title
+    // effects cannot escape a map preparation that could still be discarded.
+    const sourcePresentation = presentationHost ? {
+      context: () => presentationPublished ? presentationHost.context() : structuredClone(presentation!),
+      prepare: (effects: Parameters<NonNullable<typeof presentationHost.prepare>>[0]) => {
+        if (!presentationPublished) throw new Error("Title effects during candidate map entry are not implemented");
+        if (!presentationHost.prepare) throw new Error("Source title/fade/input effect host is unavailable");
+        return presentationHost.prepare(effects);
+      },
+    } : undefined;
     const prior = from.partyActorCheckpoint;
     let actorEntry: { plan: MapPartyEntryPlan; assets: string[] } | undefined;
     if (prior) {
@@ -374,7 +392,7 @@ export class WorldSession {
       state,
       new StaticAudioState(bgm),
       new StaticAudioState(environment),
-      owned?.ports ?? {},
+      { ...(owned?.ports ?? {}), ...(sourcePresentation ? { sourcePresentation } : {}) },
     );
     const script = request.continuation || target.initializer;
     field.startMapEntry(script || null);
@@ -388,6 +406,8 @@ export class WorldSession {
       bgm: canonical(bgm),
       environment: canonical(environment),
       actors: this.actorState(from),
+      presentation: canonical(presentation),
+      publishPresentation: () => { presentationPublished = true; },
       catalogHash: catalog.contentHash,
       ...(owned ? { owned } : {}),
     });
@@ -404,10 +424,12 @@ export class WorldSession {
       ownership.state !== canonical(this.current.eventState.snapshot()) ||
       ownership.bgm !== canonical(this.current.bgm.snapshot()) ||
       ownership.environment !== canonical(this.current.environment.snapshot()) ||
-      ownership.actors !== this.actorState(this.current)
+      ownership.actors !== this.actorState(this.current) ||
+      ownership.presentation !== canonical(this.current.sourcePresentationContext)
     )
       return false;
     if (ownership.owned && !ownership.owned.commit()) return false;
+    ownership.publishPresentation();
     this.transitions.push({
       from: this.current.content.map.identity!.mapId,
       to: value.request.request.mapId,

@@ -15,6 +15,7 @@ import { compileTreasureBoxInstruction, compileTreasureInventoryLimits } from ".
 import { compileNarsheMapEntrySeed } from "./map-party-entry.js";
 import { compilePartyEvent } from "./party.js";
 import { compileOwnedConditionInstruction } from "./owned-condition.js";
+import { compileSourcePresentationInstruction, sourcePresentationSelectors } from "./source-presentation.js";
 import { loadSystemSource } from "./system-source.js";
 import { compileTransportationCatalog, compileNarsheTransportationCheckpoint } from "./transportation.js";
 import { compilePartyActorCatalog, compileNarshePartyActorCheckpoint } from "./party-actors.js";
@@ -118,6 +119,10 @@ export function decodeFieldOp(
   } as const;
   if (Object.hasOwn(simple, name) && form([]))
     return { ...site, kind: simple[name as keyof typeof simple] };
+  if (name === "SysCall" && sourcePresentationSelectors.some((selector) => selector === s[0])) {
+    try { return { ...site, ...compileSourcePresentationInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (
     name === "SysCall" &&
     m.type === 1 &&

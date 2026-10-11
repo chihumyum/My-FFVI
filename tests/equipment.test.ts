@@ -1,3 +1,4 @@
+import { fixtureEquipmentGrants } from "./fixtures/equipment.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -19,8 +20,13 @@ import {
 test("total ownership includes equipped copies and all roster members reserve stock", () => {
   const catalog = equipmentCatalog(),
     roster = equipmentRoster(catalog);
-  const stock = initialEquipmentStock(catalog, roster);
+  const stock = initialEquipmentStock(catalog, roster, fixtureEquipmentGrants(catalog));
   assert.deepEqual(stock, [
+    { id: 1, count: 5 },
+    { id: 2, count: 5 },
+    { id: 3, count: 5 },
+    { id: 4, count: 5 },
+    { id: 5, count: 9 },
     { id: 101, count: 1 },
     { id: 102, count: 1 },
     { id: 201, count: 2 },
@@ -54,7 +60,7 @@ test("total ownership includes equipped copies and all roster members reserve st
 test("unequip and transfer release reservations without granting or consuming total copies", () => {
   const catalog = equipmentCatalog(),
     roster = equipmentRoster(catalog),
-    stock = initialEquipmentStock(catalog, roster);
+    stock = initialEquipmentStock(catalog, roster, fixtureEquipmentGrants(catalog));
   const before = structuredClone({ roster, stock });
   const remove = previewEquipmentChange(
     catalog,
@@ -95,7 +101,7 @@ test("unequip and transfer release reservations without granting or consuming to
 test("empty placeholders and same-slot confirmations never fabricate ordinary stock", () => {
   const catalog = equipmentCatalog(),
     roster = equipmentRoster(catalog),
-    stock = initialEquipmentStock(catalog, roster);
+    stock = initialEquipmentStock(catalog, roster, fixtureEquipmentGrants(catalog));
   const unchanged = previewEquipmentChange(
     catalog,
     roster,
@@ -119,8 +125,8 @@ test("empty placeholders and same-slot confirmations never fabricate ordinary st
   assert.deepEqual(stock, unchanged.stock);
   assert.throws(
     () =>
-      validateEquipmentState(catalog, roster, [...stock, { id: 1, count: 1 }]),
-    /empty equipment stock/,
+      validateEquipmentState(catalog, roster, stock.map((s) => s.id === 1 ? { ...s, count: 100 } : s)),
+    /Invalid/,
   );
   assert.throws(
     () => validateEquipmentState(catalog, roster, [...stock, stock[0]!]),
@@ -131,7 +137,7 @@ test("empty placeholders and same-slot confirmations never fabricate ordinary st
 test("ordinary hand conflicts remove the other hand atomically and release its copy", () => {
   const catalog = equipmentCatalog(),
     roster = equipmentRoster(catalog),
-    stock = initialEquipmentStock(catalog, roster);
+    stock = initialEquipmentStock(catalog, roster, fixtureEquipmentGrants(catalog));
   stock.find((s) => s.id === 102)!.count++;
   const weapon = previewEquipmentChange(
     catalog,
@@ -168,7 +174,7 @@ test("ordinary hand conflicts remove the other hand atomically and release its c
 test("slot, job and accessory-only restrictions apply at confirmation", () => {
   const catalog = equipmentCatalog(),
     roster = equipmentRoster(catalog),
-    stock = initialEquipmentStock(catalog, roster);
+    stock = initialEquipmentStock(catalog, roster, fixtureEquipmentGrants(catalog));
   stock.push({ id: 501, count: 1 });
   assert.throws(
     () => previewEquipmentChange(catalog, roster, stock, "owner:1", 3, 501),
@@ -199,7 +205,7 @@ test("slot, job and accessory-only restrictions apply at confirmation", () => {
 test("missing effects, providers and final hand dependencies cannot partially change equipment", () => {
   const catalog = equipmentCatalog(),
     roster = equipmentRoster(catalog),
-    stock = initialEquipmentStock(catalog, roster);
+    stock = initialEquipmentStock(catalog, roster, fixtureEquipmentGrants(catalog));
   stock.push({ id: 501, count: 1 });
   const original = structuredClone({ roster, stock });
   catalog.definitions[501]!.blockers = ["unknown wear function"];
@@ -213,12 +219,13 @@ test("missing effects, providers and final hand dependencies cannot partially ch
     /provider/,
   );
   catalog.characters[1]!.hasTwoSwordStyle = false;
-  catalog.characters[1]!.emptySlots[0] = 999;
+  // Default empty identity comes from actual eligible ownership.
+  for (const entry of stock) if ([1, 2].includes(entry.id)) entry.count = 0;
   stock.find((s) => s.id === 102)!.count++;
   const beforeFailure = structuredClone(stock);
   assert.throws(
     () => previewEquipmentChange(catalog, roster, stock, "owner:1", 2, 102),
-    /Unknown equipment/,
+    /No owned empty equipment/,
   );
   assert.deepEqual(roster, original.roster);
   assert.deepEqual(stock, beforeFailure);

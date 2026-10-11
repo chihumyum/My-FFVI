@@ -34,4 +34,4 @@ The user rejected scene-by-scene implementation. Follow `docs/batch-migration.md
 
 Run `npm run check`, Python tests, then the relevant real-source import/compile when adapters change. Acceptance commands intentionally fail while required lanes are unknown. Never relax a gate to make the build green. Add tests for semantic failures (state mismatch, identity loss, missing references, broken replay), not implementation mirrors.
 
-Keep original game assets, extracted story text, local paths and generated previews in ignored local outputs. Commit tools, schemas, manifests, authored metadata and redistributable synthetic fixtures. No automatic publication or remote creation is part of this project setup.
+Keep original game assets, extracted story text, local paths and generated previews in ignored local outputs. Commit tools, schemas, manifests, authored metadata and redistributable synthetic fixtures. The user has authorized Git tracking and synchronization to the private `chihumyum/ffvi-reweb` GitHub repository. Keep the repository private and exclude original assets and generated local outputs from commits.

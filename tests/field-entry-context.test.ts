@@ -129,7 +129,7 @@ test("map entry has an explicit no-script completion and strict checkpoint bindi
   assert.equal(g.battleEntryContext.state.footAttributeType, 0);
   assert.throws(() => g.startMapEntry(null), /pending source/);
   const saved = g.checkpoint();
-  assert.equal(saved.kind, "idle-field-v5");
+  assert.equal(saved.kind, "idle-field-v6");
   assert.equal(FieldGame.restore(c, saved).entrySynchronized, true);
   for (const proof of [null, false, 1, undefined]) {
     const bad = { ...saved, entrySynchronized: proof };
@@ -215,7 +215,7 @@ test("WorldSession owns entry synchronization across candidates, publication and
   world.field.advance(100);
   assert.equal(world.field.entrySynchronized, true);
   const checkpoint = world.checkpoint();
-  assert.equal(checkpoint.kind, "idle-world-v5");
+  assert.equal(checkpoint.kind, "idle-world-v6");
   const restored = new WorldSession(field);
   restored.restore(checkpoint, catalog, target);
   assert.equal(restored.field.entrySynchronized, true);

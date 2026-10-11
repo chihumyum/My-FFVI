@@ -68,7 +68,7 @@ for (const id of [1, 2, 31, 32]) assert.ok(templates.has(id), JSON.stringify(blo
 for (const id of [4, 14, 33]) assert.ok(blocked.some((b) => b.sourceId === id && /conditions/.test(b.reason)));
 const make = () => new GameState(catalog.gameState, catalog.common.players, catalog.contentHash, catalog.common.conditions);
 const state = make(), initial = state.snapshot();
-assert.equal(initial.formatVersion, 6);
+assert.equal(initial.formatVersion, 7);
 const openingChecks = [];
 for (const player of catalog.common.players) {
   const template = templates.get(player.sourceId);
@@ -145,10 +145,17 @@ assert.equal(sideEffects.nameBinding.key, "ROCK");
 assert.equal(preview.state.roster.at(-1).abilities.owned.length, 59);
 assert.equal(preview.state.roster.at(-1).ownedId, 4);
 const increments = new Map();
-for (const id of templates.get(2).initial.equipment)
-  if (!equipment.definitions[id].empty) increments.set(id, (increments.get(id) ?? 0) + 1);
-for (const [id, count] of increments)
-  assert.equal(preview.state.equipmentStock.find((s) => s.id === id).count, (initial.equipmentStock.find((s) => s.id === id)?.count ?? 0) + count);
+const sourceCharacter = reader().row("character_status.csv", 2).values;
+const sourceEquipment = Array.from({ length: 6 }, (_, i) => Number(sourceCharacter[`content_id${i + 1}`]));
+assert.deepEqual(templates.get(2).initial.equipment, sourceEquipment);
+// AddFromMaster (328110) issues six AddOwnedItem calls before SetEquip;
+// its initial grants include empty gear and repeated accessory identities.
+for (const id of sourceEquipment) increments.set(id, (increments.get(id) ?? 0) + 1);
+assert.equal([...increments.values()].reduce((sum, count) => sum + count, 0), 6);
+const expectedCounts = new Map(initial.equipmentStock.map(({ id, count }) => [id, count]));
+for (const [id, count] of increments) expectedCounts.set(id, (expectedCounts.get(id) ?? 0) + count);
+const expectedStock = [...expectedCounts].sort(([a], [b]) => a - b).map(([id, count]) => ({ id, count }));
+assert.deepEqual(preview.state.equipmentStock, expectedStock);
 const failed = { ...providers, validateMember: (member) => { providers.validateMember(member); if (member.sourceId === 2) throw new Error("controlled publication rejection"); } };
 assert.throws(() => prepareRosterLifecycle(lifecycle, { kind: "unlock", sourceId: 2, refreshActors: false },
   { equipment, jobIds: catalog.gameState.rosterLifecycle.jobIds }, failed), /controlled publication rejection/);
@@ -187,8 +194,7 @@ assert.deepEqual(joined.items, initial.items);
 assert.equal(joined.gil, initial.gil);
 assert.deepEqual(joined.completedBattles, initial.completedBattles);
 assert.equal(joined.equipmentStock.length, initial.equipmentStock.length + 1);
-for (const stack of joined.equipmentStock)
-  assert.equal(stack.count, (initial.equipmentStock.find((s) => s.id === stack.id)?.count ?? 0) + (increments.get(stack.id) ?? 0));
+assert.deepEqual(joined.equipmentStock, expectedStock);
 assert.throws(joining.commit, /Stale/);
 joinedState.fieldRoster.prepare(join).commit();
 joinedState.fieldRoster.prepare({ kind: "unlock", sourceId: 2, refreshActors: false }).commit();

@@ -116,7 +116,7 @@ for (const item of rangedEquip) {
 }
 
 if (!sourceOnly) {
-  assert.equal(published.common.profile, "narshe-playability-v26");
+  assert.equal(published.common.profile, "narshe-playability-v27");
   assert.equal(published.common.sourceContentHash, source.contentHash);
   assert.equal(source.nativeProfile.sha256, native.nativeSha256);
   assert.deepEqual(source.ordinaryWeaponEffects, effects);
@@ -128,8 +128,13 @@ if (!sourceOnly) {
   }
   const make = () => new GameState(published.gameState, published.common.players, published.contentHash, published.common.conditions);
   const bootstrap = make().snapshot();
+  // CreateItems (aac310) gives five copies of each source TypeId 2 empty
+  // weapon/armor. AddFromMaster (328110) adds two empty accessories for each
+  // of the three initial owners. These Counts share the ordinary stock owner.
   assert.deepEqual(bootstrap.equipmentStock, [
-    { id: 95, count: 1 }, { id: 104, count: 2 }, { id: 201, count: 3 }, { id: 216, count: 3 }, { id: 244, count: 3 },
+    { id: 93, count: 5 }, { id: 95, count: 1 }, { id: 104, count: 2 },
+    { id: 197, count: 5 }, { id: 198, count: 5 }, { id: 199, count: 5 }, { id: 200, count: 11 },
+    { id: 201, count: 3 }, { id: 216, count: 3 }, { id: 244, count: 3 },
   ]);
   const content = encounterContent(published, Number(Object.keys(published.encounters)[0])); assert.ok(content);
   const exclusions = projectBattleFieldState(content.battleEntry,

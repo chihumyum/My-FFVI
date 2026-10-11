@@ -27,6 +27,14 @@ const { activePartyMembers } = await module("core/party");
 const { firstJoinLevelAdjustments } = await module("core/character-growth");
 
 const corpus = await loadCorpus(root);
+function sourceEmptyEquipment(id) {
+  const content = corpus.tables["content.csv"].find((row) => Number(row.id) === id);
+  assert.ok(content && ["2", "3"].includes(content.type_id));
+  const table = content.type_id === "2" ? "weapon.csv" : "armor.csv";
+  const equipment = corpus.tables[table].find((row) => row.id === content.type_value);
+  assert.ok(equipment);
+  return equipment.type_id === "2";
+}
 const native = JSON.parse(
   await readFile(
     root + "/build/reports/roster-lifecycle-native-check.json",
@@ -53,7 +61,7 @@ const make = () =>
     catalog.common.conditions,
   );
 const initial = make().snapshot();
-assert.equal(initial.formatVersion, 6);
+assert.equal(initial.formatVersion, 7);
 const { dependencies, ...initialMetadata } = compileInitialRosterLifecycle(
   corpus.tables,
   initial.roster,
@@ -222,8 +230,10 @@ for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
       if (op.command.removeEquipment) {
         assert.deepEqual(target.equipment, member.equipment);
         for (const stack of before.equipmentStock) {
+          // RemoveEquipmentsItems (7fd310) skips ListTypeId 2, unlike
+          // AddFromMaster's unconditional per-slot initial grants.
           const removed = member.equipment.filter(
-            (id) => id === stack.id,
+            (id) => id === stack.id && !sourceEmptyEquipment(id),
           ).length;
           assert.equal(
             after.equipmentStock.find((s) => s.id === stack.id).count,
@@ -256,11 +266,16 @@ for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
         assert.deepEqual(after.party.slots[0][3], { id: target.id, row: "front" });
         assert.deepEqual(after.learnedAbilityIds, [...before.learnedAbilityIds, 229]);
         assert.deepEqual(after.characterNames, { ...before.characterNames, ROCK: target.name });
-        for (const stack of after.equipmentStock) {
-          const extra = template.initial.equipment.filter((id) =>
-            id === stack.id && !catalog.gameState.equipmentSystem.catalog.definitions[id].empty).length;
-          assert.equal(stack.count, (before.equipmentStock.find((s) => s.id === stack.id)?.count ?? 0) + extra);
-        }
+        const sourceCharacter = corpus.tables["character_status.csv"].find((row) => Number(row.id) === target.sourceId);
+        assert.ok(sourceCharacter);
+        const sourceEquipment = Array.from({ length: 6 }, (_, i) => Number(sourceCharacter[`content_id${i + 1}`]));
+        assert.deepEqual(template.initial.equipment, sourceEquipment);
+        const expectedCounts = new Map(before.equipmentStock.map(({ id, count }) => [id, count]));
+        // AddFromMaster (328110) grants all six source slots, including the
+        // repeated empty accessories; this is a new owner, not a rejoin.
+        for (const id of sourceEquipment) expectedCounts.set(id, (expectedCounts.get(id) ?? 0) + 1);
+        assert.deepEqual(after.equipmentStock, [...expectedCounts].sort(([a], [b]) => a - b)
+          .map(([id, count]) => ({ id, count })));
         dynamicOwnedPublications.push({ site, selector, sourceId: target.sourceId, ownedId: target.ownedId,
           level: target.level, hp: target.hp, maxHp: target.maxHp, ownedHash: hash(after) });
       }

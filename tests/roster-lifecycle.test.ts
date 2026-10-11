@@ -1,3 +1,4 @@
+import { fixtureEquipmentGrants } from "./fixtures/equipment.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { initialEquipmentStock } from "../src/core/equipment.js";
@@ -32,7 +33,7 @@ function setup() {
   const state: RosterLifecycleState<Owner> = {
     roster,
     party: emptyPartyState(),
-    equipmentStock: initialEquipmentStock(equipment, roster),
+    equipmentStock: initialEquipmentStock(equipment, roster, fixtureEquipmentGrants(equipment)),
     releasedJobIds: [1, 2],
   };
   state.party.selectedSlot = 1;

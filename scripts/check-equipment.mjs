@@ -108,10 +108,15 @@ const make = () =>
   );
 const owned = make(),
   initial = owned.snapshot();
-assert.equal(initial.formatVersion, 6);
+assert.equal(initial.formatVersion, 7);
 assert.deepEqual(initial.equipmentStock, [
+  { id: 93, count: 5 },
   { id: 95, count: 1 },
   { id: 104, count: 2 },
+  { id: 197, count: 5 },
+  { id: 198, count: 5 },
+  { id: 199, count: 5 },
+  { id: 200, count: 11 },
   { id: 201, count: 3 },
   { id: 216, count: 3 },
   { id: 244, count: 3 },

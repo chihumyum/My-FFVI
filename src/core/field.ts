@@ -20,6 +20,9 @@ import {
 } from "./inventory-event.js";
 import { executePartyEvent, type FieldPartyPort, type PartyAppearanceCandidate } from "./party.js";
 import { executeOwnedConditionEvent, type FieldOwnedConditionPort } from "./owned-condition.js";
+import { executeSourcePresentation, cloneSourcePresentationContext, sourcePresentationCheckpoint,
+  type SourcePresentationContext, type SourcePresentationPort } from "./source-presentation.js";
+import { canonical } from "./canonical.js";
 import type { PartyActorPlan } from "./party-actors.js";
 import type { FieldTreasurePort } from "./treasure-port.js";
 import { treasureFlagRef, validateTreasureInventory, type TreasureBoxRequest } from "./treasure-inventory.js";
@@ -95,7 +98,7 @@ export type Actor = Point & {
   animation: ActorAnimation | null;
 };
 export type FieldCheckpoint = {
-  kind: "idle-field-v5";
+  kind: "idle-field-v6";
   contentHash: string;
   time: number;
   remainder: number;
@@ -103,6 +106,7 @@ export type FieldCheckpoint = {
   transportationId: number | null;
   entrySynchronized: boolean | null;
   partyActors: FieldPartyActorCheckpoint | null;
+  sourcePresentation: SourcePresentationContext | null;
   eventState: EventStateSnapshot;
   activeGroups: string[];
   hiddenEntities: string[];
@@ -149,6 +153,7 @@ export type Stop =
     };
 export type Dialogue = FieldMessage & { task: number };
 export type FieldGameOptions = {
+  sourcePresentation?: SourcePresentationPort;
   /** Read-only admission before any shop greeting or interaction is published. */
   shop?: { validate(groupId: number): void };
   ownedConditions?: FieldOwnedConditionPort;
@@ -246,6 +251,7 @@ export class FieldGame {
     readonly environment: StaticAudioState = new StaticAudioState(),
     readonly options: FieldGameOptions = {},
   ) {
+    cloneSourcePresentationContext(options.sourcePresentation?.context() ?? null);
     if (content.entry.synchronization !== undefined) {
       checkpointKeys(content.entry.synchronization, "kind");
       if (content.entry.synchronization.kind !== "map-entry")
@@ -559,6 +565,7 @@ export class FieldGame {
   }
   get checkpointReady(): boolean {
     return (
+      this.sourcePresentationContext?.advertisementOpeningFader !== "present" &&
       this.synchronizedEntry !== false &&
       !this.busy &&
       !this.fade &&
@@ -566,11 +573,14 @@ export class FieldGame {
       Object.values(this.actors).every((a) => a.motion === null)
     );
   }
+  get sourcePresentationContext(): SourcePresentationContext | null {
+    return cloneSourcePresentationContext(this.options.sourcePresentation?.context() ?? null);
+  }
   checkpoint(): FieldCheckpoint {
     if (!this.checkpointReady)
       throw new Error("Cannot save during field movement or an event");
     return {
-      kind: "idle-field-v5",
+      kind: "idle-field-v6",
       contentHash: this.content.contentHash,
       time: this.time,
       remainder: this.remainder,
@@ -578,6 +588,7 @@ export class FieldGame {
       transportationId: this.transportationId,
       entrySynchronized: this.synchronizedEntry,
       partyActors: this.partyActorCheckpoint,
+      sourcePresentation: sourcePresentationCheckpoint(this.sourcePresentationContext),
       eventState: this.eventState.snapshot(),
       activeGroups: [...this.activeGroups],
       hiddenEntities: [...this.hiddenEntities],
@@ -603,11 +614,14 @@ export class FieldGame {
     const s = structuredClone(raw);
     checkpointKeys(
       s,
-      "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment",
+      "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment",
     );
-    if (s.kind !== "idle-field-v5" || s.contentHash !== content.contentHash ||
+    if (s.kind !== "idle-field-v6" || s.contentHash !== content.contentHash ||
       s.transportationId !== (content.entry.transportationId ?? null))
       throw new Error("Field checkpoint source/version mismatch");
+    const presentation = sourcePresentationCheckpoint(options.sourcePresentation?.context() ?? null);
+    if (canonical(sourcePresentationCheckpoint(s.sourcePresentation)) !== canonical(presentation))
+      throw new Error("Field checkpoint source presentation context mismatch");
     // Pending entry scripts cannot be saved. Unknown bootstrap context cannot
     // acquire a source synchronization proof merely by editing a checkpoint.
     if (s.entrySynchronized !== (content.entry.synchronization ? true : null))
@@ -1423,6 +1437,15 @@ export class FieldGame {
           return;
         }
         switch (op.kind) {
+          case "source-presentation":
+            try {
+              if (executeSourcePresentation(op, this.eventState, this.options.sourcePresentation) === "end")
+                t.done = true;
+            } catch (error) {
+              this.block(error instanceof Error ? error.message : String(error), op);
+              return;
+            }
+            break;
           case "treasure-box":
             try {
               t.treasure = this.prepareTreasureTask(op, op);

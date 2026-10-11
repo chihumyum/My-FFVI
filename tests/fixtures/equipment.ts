@@ -2,6 +2,7 @@ import type {
   EquipmentCatalog,
   EquipmentDefinition,
   EquipmentParameterContext,
+  EquipmentStock,
 } from "../../src/core/equipment.js";
 import type {
   ParameterLimits,
@@ -13,6 +14,12 @@ import type { OrdinaryWeaponEffectsCatalog } from "../../src/core/ordinary-weapo
 /** Explicit authored fixture: none of its weapons has an additional attack. */
 export function fixtureWeaponEffects(): OrdinaryWeaponEffectsCatalog {
   return { kind: "ordinary-weapon-effects-v1", additionalAbilities: [] };
+}
+
+/** Explicit authored CreateItems inputs for these synthetic test catalogs. */
+export function fixtureEquipmentGrants(catalog: EquipmentCatalog): EquipmentStock[] {
+  return Object.values(catalog.definitions).filter((item) => item.empty)
+    .map((item) => ({ id: item.id, count: 5 }));
 }
 
 export const equipmentZero: ParameterValues = {

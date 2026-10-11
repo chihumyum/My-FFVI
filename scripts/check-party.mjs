@@ -50,7 +50,7 @@ const make = () =>
     catalog.common.conditions,
   );
 const initial = make().snapshot();
-assert.equal(initial.formatVersion, 6);
+assert.equal(initial.formatVersion, 7);
 assert.equal(Object.keys(catalog.gameState.characterInitializations).length, 18);
 assert.deepEqual(
   initial.roster.map((p) => [p.sourceId, p.enabled]),

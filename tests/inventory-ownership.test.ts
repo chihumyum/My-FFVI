@@ -1,3 +1,4 @@
+import { fixtureEquipmentGrants } from "./fixtures/equipment.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { projectEquipmentOwnership } from "../src/core/inventory-ownership.js";
@@ -11,7 +12,7 @@ import { equipmentCatalog, equipmentRoster } from "./fixtures/equipment.js";
 test("source equipment grants add to total ownership, including worn copies, without changing loadouts", () => {
   const catalog = equipmentCatalog(),
     roster = equipmentRoster(catalog);
-  const stock = initialEquipmentStock(catalog, roster);
+  const stock = initialEquipmentStock(catalog, roster, fixtureEquipmentGrants(catalog));
   const before = structuredClone({ catalog, roster, stock });
   const next = projectEquipmentOwnership(catalog, roster, stock, {
     kind: "grant-equipment",
@@ -44,7 +45,7 @@ test("source equipment grants add to total ownership, including worn copies, wit
 test("equipment receipt feeds the existing swap transaction without creating a second inventory", () => {
   const catalog = equipmentCatalog(),
     roster = equipmentRoster(catalog);
-  const stock = initialEquipmentStock(catalog, roster);
+  const stock = initialEquipmentStock(catalog, roster, fixtureEquipmentGrants(catalog));
   assert.throws(
     () => previewEquipmentChange(catalog, roster, stock, "owner:1", 1, 102),
     /No available/,
@@ -75,7 +76,7 @@ test("equipment receipt feeds the existing swap transaction without creating a s
 test("equipment removal exhausts spare stock but blocks unimplemented worn-count deficits atomically", () => {
   const catalog = equipmentCatalog(),
     roster = equipmentRoster(catalog);
-  const stock = initialEquipmentStock(catalog, roster);
+  const stock = initialEquipmentStock(catalog, roster, fixtureEquipmentGrants(catalog));
   const received = projectEquipmentOwnership(catalog, roster, stock, {
     kind: "grant-equipment",
     id: 102,
@@ -129,7 +130,7 @@ test("unsupported wear effects may be held but receipt does not authorize equipp
     roster = equipmentRoster(catalog);
   catalog.definitions[202]!.blockers = ["synthetic unimplemented wear effect"];
   catalog.definitions[202]!.parameter = null;
-  const stock = initialEquipmentStock(catalog, roster);
+  const stock = initialEquipmentStock(catalog, roster, fixtureEquipmentGrants(catalog));
   const received = projectEquipmentOwnership(catalog, roster, stock, {
     kind: "grant-equipment",
     id: 202,
@@ -153,7 +154,7 @@ test("unsupported wear effects may be held but receipt does not authorize equipp
 test("equipment ownership rejects empty placeholders, unknown identities and malformed amounts", () => {
   const catalog = equipmentCatalog(),
     roster = equipmentRoster(catalog);
-  const stock = initialEquipmentStock(catalog, roster);
+  const stock = initialEquipmentStock(catalog, roster, fixtureEquipmentGrants(catalog));
   const before = structuredClone({ catalog, roster, stock });
   for (const id of [0, 1, 2, 3, 4, 5, 999])
     assert.throws(() =>

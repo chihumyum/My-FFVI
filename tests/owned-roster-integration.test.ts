@@ -1,3 +1,4 @@
+import { initialEquipmentStock } from "../src/core/equipment.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { GameState, type GameStateContent } from "../src/core/game-state.js";
@@ -6,7 +7,7 @@ import { characterGrowthFixture } from "./fixtures/character-growth.js";
 import { fixture } from "./fixtures/battle-content.js";
 import { fixtureParty } from "./fixtures/party.js";
 import { itemFixture } from "./fixtures/items.js";
-import { fixtureWeaponEffects } from "./fixtures/equipment.js";
+import { fixtureWeaponEffects, fixtureEquipmentGrants } from "./fixtures/equipment.js";
 
 /** Synthetic owners use two distinct source IDs with the same numerical plan.
  * No real game resource or region is needed to prove transaction semantics. */
@@ -35,7 +36,7 @@ function setup(missingJoinGrowth = false) {
       releasedJobIds: [12], jobIds: [1, 12], firstJoinLevelAdjustments: { 3: 1 } },
     items: { 10: itemFixture(10) }, initialItems: [{ id: 10, count: 1 }],
     equipment: { first: [...original.initial.equipment] },
-    equipmentSystem: { catalog: gear, contexts: { first: original.parameterContext, joining: joining.parameterContext },
+    equipmentSystem: { catalog: gear, initialStock: initialEquipmentStock(gear, [{ id: "first", sourceId: 2, equipment: original.initial.equipment }], fixtureEquipmentGrants(gear)), contexts: { first: original.parameterContext, joining: joining.parameterContext },
       limits: original.limits, growth: {} },
   };
   const make = () => new GameState(content, [player], "synthetic-owned-growth", battle.conditions);
@@ -61,7 +62,7 @@ test("new owner joins with native experience correction, one gear registration a
   assert.deepEqual(after.learnedAbilityIds, before.learnedAbilityIds);
   assert.equal(after.characterNames.JOINING, member.name);
   for (const entry of before.equipmentStock)
-    assert.equal(after.equipmentStock.find((s) => s.id === entry.id)!.count, entry.count * 2);
+    assert.equal(after.equipmentStock.find((s) => s.id === entry.id)!.count, entry.count + member.equipment.filter((id) => id === entry.id).length);
   state.fieldRoster.prepare({ kind: "unlock", sourceId: 3, refreshActors: false }).commit();
   assert.deepEqual(state.snapshot(), after);
   const restored = make();

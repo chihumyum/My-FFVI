@@ -19,7 +19,6 @@ test("fresh source initialization clears every event bank then enables only its 
   assert.equal(plan.stage, "after-data-create-before-field-load");
   assert.equal(plan.publication.state, "blocked");
   assert.deepEqual(plan.publication.missingProviders, [
-    "native-empty-equipment-ownership-lifecycle",
     "source-new-game-field-host",
   ]);
   assert.equal(plan.events.scenario.length, 1024);
@@ -88,8 +87,8 @@ test("initialization returns detached complete candidates and preserves native H
 });
 
 test("native empty-slot Count includes both five seed copies and initial owner additions", () => {
-  const plan = createNewGame(compile().definition);
-  const empty = plan.nativeInitialization.emptyEquipmentStocks;
+  const definition = compile().definition, plan = createNewGame(definition);
+  const empty = plan.owned.equipmentStock.filter((entry) => definition.equipment.definitions[entry.id]!.empty);
   assert.deepEqual(empty, [
     { id: 1, count: 5 },
     { id: 2, count: 5 },
@@ -97,13 +96,11 @@ test("native empty-slot Count includes both five seed copies and initial owner a
     { id: 4, count: 6 },
     { id: 5, count: 7 },
   ]);
-  assert.deepEqual(plan.owned.equipmentStock, [
+  assert.deepEqual(plan.owned.equipmentStock.filter((entry) => !definition.equipment.definitions[entry.id]!.empty), [
     { id: 101, count: 1 },
     { id: 201, count: 1 },
   ]);
-  assert.ok(
-    empty.every((p) => !plan.owned.equipmentStock.some((s) => s.id === p.id)),
-  );
+  assert.equal(Object.hasOwn(plan.nativeInitialization, "emptyEquipmentStocks"), false);
 });
 
 test("initial item and equipment grants merge by shared ownership and respect source capacities", () => {
@@ -150,6 +147,19 @@ test("missing optional initial Gil means source zero, while missing start route 
     (r) => r.key_name !== "INT_START_MAP_ID",
   );
   assert.throws(() => compile(f), /Missing|Ambiguous/);
+});
+
+test("configured empty-equipment grants merge with native seeds and each initial slot", () => {
+  const f = newGameFixture();
+  f.tables["initialize_data.csv"]!.push(
+    { id: "10", key_name: "INIT_ITEM_2", value1: "1", value2: "2" },
+    { id: "11", key_name: "INIT_ITEM_3", value1: "5", value2: "1" },
+  );
+  const plan = createNewGame(compile(f).definition);
+  // Empty weapon 1 is not equipped; empty accessory 5 occupies both slots.
+  assert.equal(plan.owned.equipmentStock.find((s) => s.id === 1)!.count, 7);
+  assert.equal(plan.owned.equipmentStock.find((s) => s.id === 5)!.count, 8);
+  assert.deepEqual(plan.owned.items, [{ id: 701, count: 2 }]);
 });
 
 test("creation order differs from Corps positions when source initialization has an empty position", () => {

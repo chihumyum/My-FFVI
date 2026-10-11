@@ -1,8 +1,10 @@
+import { initialEquipmentStock } from "../../src/core/equipment.js";
 import { checkpointFixture } from "./checkpoint-game.js";
 import {
   equipmentCatalog,
   equipmentContext,
   equipmentLimits,
+  fixtureEquipmentGrants,
 } from "./equipment.js";
 
 /** Controlled mechanism probe, not a source-derived character or save. Expected
@@ -42,6 +44,10 @@ export function equipmentGameFixture(options: { capped?: boolean } = {}) {
   };
   catalog.gameState.equipmentSystem = {
     catalog: equipment,
+    initialStock: initialEquipmentStock(equipment, [
+      { id: "a", sourceId: 1, equipment: catalog.gameState.equipment.a! },
+      { id: "b", sourceId: 2, equipment: catalog.gameState.equipment.b! },
+    ], fixtureEquipmentGrants(equipment)),
     contexts,
     limits,
     growth: structuredClone(growth),

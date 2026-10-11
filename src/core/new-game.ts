@@ -5,7 +5,6 @@ import {
   type EquipmentCatalog,
   type EquipmentStock,
 } from "./equipment.js";
-import { projectEquipmentOwnership } from "./inventory-ownership.js";
 import {
   createOwnedCharacter,
   type InitializedOwnedCharacter,
@@ -35,8 +34,7 @@ export type NewGameDefinition = {
   gil: number;
   limits: { gil: number; item: number };
   equipment: EquipmentCatalog;
-  /** CreateItems grants these native empty-slot records before creating owners.
-   * They are not saleable/equippable copies in the shared ownership model. */
+  /** CreateItems grants these native empty-slot records before creating owners. */
   emptyEquipmentGrants: { id: number; count: 5 }[];
   transportation: TransportationCatalog;
 };
@@ -47,10 +45,7 @@ export type NewGamePlan = {
   /** A complete initializer candidate is not yet an admitted game session. */
   publication: {
     state: "blocked";
-    missingProviders: [
-      "native-empty-equipment-ownership-lifecycle",
-      "source-new-game-field-host",
-    ];
+    missingProviders: ["source-new-game-field-host"];
   };
   events: EventStateSnapshot;
   /** The shared owner must add its source growth contexts and save binding,
@@ -65,7 +60,7 @@ export type NewGamePlan = {
     releasedJobIds: number[];
     learnedAbilityIds: number[];
     characterNames: Record<string, string>;
-    completedBattles: string[];
+    completedBattles: never[];
   };
   entry: {
     mapId: number;
@@ -84,10 +79,6 @@ export type NewGamePlan = {
   };
   battlePreferences: { mode: "wait"; speedIndex: 2 };
   nativeInitialization: {
-    /** Actual native Count after CreateItems and each initial AddFromMaster.
-     * A host must preserve these separately or reject publication; dropping
-     * them is not a complete source initialization. */
-    emptyEquipmentStocks: { id: number; count: number }[];
     ownedTransportationIds: number[];
     parkedTransportationMapIds: Record<string, -1>;
     crystalFlags: [false, false, false, false];
@@ -170,19 +161,24 @@ export function createNewGame(definition: NewGameDefinition): NewGamePlan {
       .some((slot) => slot.some((cell) => cell.id !== null))
   )
     throw new Error("New-game party must start in the first Corps slot");
-  let equipmentStock = initialEquipmentStock(definition.equipment, roster);
+  const emptyIds = new Set<number>();
+  for (const grant of definition.emptyEquipmentGrants) {
+    checkpointKeys(grant, "id,count");
+    if (emptyIds.has(grant.id) || grant.count !== 5 || !definition.equipment.definitions[grant.id]?.empty)
+      throw new Error("Invalid native empty-equipment initialization");
+    emptyIds.add(grant.id);
+  }
+  for (const item of Object.values(definition.equipment.definitions))
+    if (item.empty && !emptyIds.has(item.id))
+      throw new Error("Missing native empty-equipment grant");
+  const initialEquipmentGrants: EquipmentStock[] = [];
   const items = new Map<number, number>();
   for (const grant of definition.inventory) {
     checkpointKeys(grant, "kind,id,count");
     integer(grant.id, 1, "content identity");
     integer(grant.count, 1, "item count");
     if (grant.kind === "equipment") {
-      equipmentStock = projectEquipmentOwnership(
-        definition.equipment,
-        roster,
-        equipmentStock,
-        { kind: "grant-equipment", id: grant.id, count: grant.count },
-      );
+      initialEquipmentGrants.push({ id: grant.id, count: grant.count });
     } else if (grant.kind === "item") {
       if (definition.equipment.definitions[grant.id])
         throw new Error("New-game item and equipment identity overlap");
@@ -195,29 +191,10 @@ export function createNewGame(definition: NewGameDefinition): NewGamePlan {
       items.set(grant.id, Math.min(next, definition.limits.item));
     } else throw new Error("Unresolved initial inventory owner");
   }
-  const emptyIds = new Set<number>();
-  for (const grant of definition.emptyEquipmentGrants) {
-    checkpointKeys(grant, "id,count");
-    if (
-      emptyIds.has(grant.id) ||
-      grant.count !== 5 ||
-      !definition.equipment.definitions[grant.id]?.empty
-    )
-      throw new Error("Invalid native empty-equipment initialization");
-    emptyIds.add(grant.id);
-  }
-  for (const item of Object.values(definition.equipment.definitions))
-    if (item.empty && !emptyIds.has(item.id))
-      throw new Error("Missing native empty-equipment grant");
-  const emptyEquipmentStocks = definition.emptyEquipmentGrants.map((grant) => {
-    let count = Math.min(grant.count, definition.limits.item);
-    for (const owner of roster)
-      for (const id of owner.equipment)
-        if (id === grant.id)
-          count = Math.min(count + 1, definition.limits.item);
-    return { id: grant.id, count };
-  });
-
+  // CreateItems grants configured items and the empty records before any
+  // AddFromMaster. Initialization is independent of field reward admission.
+  const equipmentStock = initialEquipmentStock(definition.equipment, roster,
+    [...initialEquipmentGrants, ...definition.emptyEquipmentGrants]);
   const transportation = new Transportations(definition.transportation);
   const events = EventState.initialized();
   // CreateTransportationData visits each nonzero type. Its type-1 record writes
@@ -231,10 +208,7 @@ export function createNewGame(definition: NewGameDefinition): NewGamePlan {
     stage: "after-data-create-before-field-load",
     publication: {
       state: "blocked",
-      missingProviders: [
-        "native-empty-equipment-ownership-lifecycle",
-        "source-new-game-field-host",
-      ],
+      missingProviders: ["source-new-game-field-host"],
     },
     events: events.snapshot(),
     owned: {
@@ -266,7 +240,6 @@ export function createNewGame(definition: NewGameDefinition): NewGamePlan {
     },
     battlePreferences: { mode: "wait", speedIndex: 2 },
     nativeInitialization: {
-      emptyEquipmentStocks,
       ownedTransportationIds: definition.transportation.definitions.map(
         (d) => d.id,
       ),

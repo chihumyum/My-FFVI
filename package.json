@@ -86,7 +86,9 @@
     "battle-speed-settings:check": "npm run battle:build && node scripts/check-battle-speed-settings-native.mjs && node scripts/check-battle-speed-settings.mjs",
     "condition-blind:check": "npm run battle:build && node scripts/check-condition-blind.mjs",
     "ordinary-weapon:check": "npm run battle:build && node scripts/check-ordinary-weapon-native.mjs && node scripts/check-ordinary-weapon.mjs",
-    "new-game:check": "npm run build && node scripts/check-new-game.mjs"
+    "new-game:check": "npm run battle:build && node scripts/check-new-game.mjs",
+    "empty-equipment:check": "npm run battle:build && node scripts/check-empty-equipment.mjs",
+    "source-presentation:check": "npm run build && node scripts/check-source-presentation.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

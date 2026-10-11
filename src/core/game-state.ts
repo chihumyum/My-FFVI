@@ -31,7 +31,7 @@ import {
 } from "./party.js";
 import {
   equipmentAvailability,
-  initialEquipmentStock,
+  selectEmptyEquipment,
   previewEquipmentChange,
   projectEquipmentParameters,
   validateEquipmentState,
@@ -67,6 +67,7 @@ import {
   type InitializedOwnedCharacter,
 } from "./owned-character.js";
 import { canonical } from "./canonical.js";
+import { createNewGame, type NewGameDefinition, type NewGamePlan } from "./new-game.js";
 import type { FieldTreasurePort } from "./treasure-port.js";
 import type { TreasureInventoryRead, TreasureRewardCommand } from "./treasure-inventory.js";
 import { recoverJoinedCharacter } from "./character-recovery.js";
@@ -95,6 +96,9 @@ export type GameStateContent = {
   };
   initialGil: number;
   initialParty: PartyState;
+  /** Source initializer bound by this content package. The development field
+   * checkpoint remains a separate constructor mode. */
+  sourceNewGame?: NewGameDefinition;
   /** Explicit source-bound development checkpoint state, applied after source
    * AddFromMaster initialization. This never creates or enables an owner. */
   initialOwnedConditions?: { id: string; conditionIds: number[] }[];
@@ -123,6 +127,9 @@ export type GameStateContent = {
   equipment: Record<string, number[]>;
   equipmentSystem?: {
     catalog: EquipmentCatalog;
+    /** Complete source-bound initial Count, including native empty equipment.
+     * This is consumed once, never inferred from restored loadouts. */
+    initialStock: EquipmentStock[];
     contexts: Record<string, EquipmentParameterContext>;
     limits: { parameters: ParameterLimits; physical: PhysicalLimits };
     /** The current fixed-increment development growth profile, not full growth providers. */
@@ -144,7 +151,7 @@ export type OwnedCharacter = RosterMember & {
   growth: CharacterGrowthProgress | null;
 };
 export type GameStateSnapshot = {
-  formatVersion: 6;
+  formatVersion: 7;
   kind: "owned-game-state";
   catalogHash: string;
   roster: OwnedCharacter[];
@@ -212,11 +219,22 @@ export class GameState {
     prepare: (command) => this.prepareOwnedConditionEvent(command),
   };
   readonly fieldShop = { validate: (groupId: number): void => { this.shopOptions(groupId); } };
+  /** Creates only the shared owner. The field host must independently prepare
+   * and publish the source route before this can become a new game session. */
+  static createNewGame(
+    content: GameStateContent,
+    players: readonly CombatantDefinition[],
+    catalogHash: string,
+    conditions: BattleConditionCatalog,
+  ): GameState {
+    return new GameState(content, players, catalogHash, conditions, "new-game");
+  }
   constructor(
     content: GameStateContent,
     players: readonly CombatantDefinition[],
     readonly catalogHash: string,
     conditions: BattleConditionCatalog,
+    initialization: "development-checkpoint" | "new-game" = "development-checkpoint",
   ) {
     this.conditions = new BattleConditions(structuredClone(conditions));
     this.ownedConditionDefinitions = conditions.rules.definitions.map(({ id, type }) => ({ id, type }));
@@ -247,6 +265,9 @@ export class GameState {
     keys(content.limits, "gil,item,hp,mp,level,exp");
     for (const max of Object.values(content.limits))
       integer(max, 0x7fffffff, 1);
+    if (!["development-checkpoint", "new-game"].includes(initialization))
+      throw new Error("Unknown owned-state initialization mode");
+    const fresh = initialization === "new-game" ? this.sourceNewGamePlan(players) : null;
     for (const p of players) {
       const equipment = content.equipment[p.id];
       if (!equipment || equipment.length !== 6)
@@ -268,7 +289,7 @@ export class GameState {
     const initializedMembers = new Map<string, InitializedOwnedCharacter>();
     const learnedAbilityIds: number[] = [];
     const characterNames: Record<string, string> = {};
-    if (content.characterInitializations) {
+    if (!fresh && content.characterInitializations) {
       distinct(Object.values(content.characterInitializations).map((t) => t.initial.sourceId));
       for (const player of players) {
         const template = content.characterInitializations[player.id];
@@ -291,7 +312,7 @@ export class GameState {
       }
     }
     this.data = {
-      formatVersion: 6,
+      formatVersion: 7,
       kind: "owned-game-state",
       catalogHash,
       roster: players.map((p) => ({
@@ -322,8 +343,16 @@ export class GameState {
       characterNames,
       completedBattles: [],
     };
+    if (fresh) {
+      Object.assign(this.data, structuredClone(fresh.owned), {
+        roster: fresh.owned.roster.map((member) => ({
+          ...structuredClone(member),
+          growth: content.characterGrowth?.[member.id] ? initialCharacterGrowth() : null,
+        })),
+      });
+    }
     const seeded = new Set<string>();
-    for (const seed of this.content.initialOwnedConditions ?? []) {
+    for (const seed of fresh ? [] : this.content.initialOwnedConditions ?? []) {
       keys(seed, "id,conditionIds");
       if (seeded.has(seed.id) || !this.initialIds.includes(seed.id) || !Array.isArray(seed.conditionIds))
         throw new Error("Invalid initial owned condition checkpoint identity");
@@ -332,12 +361,42 @@ export class GameState {
       this.conditions.validateActive(seed.conditionIds);
       this.data.roster.find((member) => member.id === seed.id)!.conditionIds = [...seed.conditionIds];
     }
-    if (this.content.equipmentSystem)
-      this.data.equipmentStock = initialEquipmentStock(
-        this.content.equipmentSystem.catalog,
-        this.data.roster,
-      );
+    if (!fresh && this.content.equipmentSystem) {
+      if (!Array.isArray(this.content.equipmentSystem.initialStock))
+        throw new Error("Missing source initial equipment ownership");
+      this.data.equipmentStock = structuredClone(this.content.equipmentSystem.initialStock);
+    }
     this.validate(this.data);
+  }
+  private sourceNewGamePlan(players: readonly CombatantDefinition[]): NewGamePlan {
+    const definition = this.content.sourceNewGame, system = this.content.equipmentSystem;
+    if (!definition || !system) throw new Error("Missing source new-game initializer");
+    const same = (left: unknown, right: unknown) => canonical(left) === canonical(right);
+    const plan = createNewGame(definition);
+    if (!same(definition.characters.map(({ id, template }) => ({ id, sourceId: template.initial.sourceId })),
+      players.map(({ id, sourceId }) => ({ id, sourceId }))) ||
+      !same(definition.party, this.content.initialParty) ||
+      !same(definition.releasedJobIds, this.content.rosterLifecycle.releasedJobIds) ||
+      definition.gil !== this.content.initialGil ||
+      definition.limits.gil !== this.content.limits.gil || definition.limits.item !== this.content.limits.item ||
+      !same(plan.owned.items, [...this.content.initialItems].sort((a, b) => a.id - b.id)) ||
+      !same(plan.owned.equipmentStock, system.initialStock))
+      throw new Error("Source new-game ownership binding mismatch");
+    if (definition.equipment.limit !== system.catalog.limit ||
+      !same(definition.equipment.ordinaryWeaponEffects, system.catalog.ordinaryWeaponEffects))
+      throw new Error("Source new-game equipment catalog mismatch");
+    for (const [id, item] of Object.entries(definition.equipment.definitions))
+      if (!same(item, system.catalog.definitions[id]))
+        throw new Error("Source new-game equipment definition mismatch");
+    for (const { id, template } of definition.characters) {
+      if (!same(template, this.content.characterInitializations?.[id]) ||
+        !same(template.parameterContext, system.contexts[id]) ||
+        !same(template.limits, system.limits) ||
+        !same(template.initial.equipment, this.content.equipment[id]) ||
+        !same(definition.equipment.characters[template.initial.sourceId], system.catalog.characters[template.initial.sourceId]))
+        throw new Error("Source new-game character context mismatch");
+    }
+    return plan;
   }
   private validate(data: GameStateSnapshot) {
     keys(
@@ -346,7 +405,7 @@ export class GameState {
     );
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== 6 ||
+      data.formatVersion !== 7 ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -1173,8 +1232,11 @@ export class GameState {
     const p = this.data.roster.find((p) => p.id === playerId);
     if (!p?.enabled || !Number.isInteger(slot) || slot < 1 || slot > 6)
       return [];
+    let empty: number | null;
+    try { empty = selectEmptyEquipment(system.catalog, this.data.equipmentStock, p.sourceId, slot); }
+    catch { return []; }
     const candidates = new Set([
-      system.catalog.characters[p.sourceId]!.emptySlots[slot - 1]!,
+      ...(empty === null ? [] : [empty]),
       p.equipment[slot - 1]!,
       ...this.equipmentInventory
         .filter((i) => i.available > 0)

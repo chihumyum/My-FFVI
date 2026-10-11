@@ -9,7 +9,7 @@
         "炭坑都市纳尔谢"
       ],
       "questions": [
-        "真正新游戏候选已恢复；继续补空装备所有权、序章字段宿主及后续剧情演化。",
+        "来源新游戏共享状态与空装备所有权已接通；继续补序章表现、地图入口及后续剧情演化。",
         "建立同一地点在不同世界阶段、剧情标记和局部状态下的变体条件。",
         "确认 Wait 时钟与 SysCall 选择器，并对已恢复的碰撞进行原版运行对照。"
       ]
@@ -1097,6 +1097,60 @@
         "GameAssembly.dll:RVA 0xaae860",
         "GameAssembly.dll:RVA 0xaac310",
         "docs/new-game.md"
+      ]
+    },
+    {
+      "id": "narshe:source-empty-equipment-v27",
+      "subject": "narshe",
+      "predicate": "migration.emptyEquipmentOwnership",
+      "value": "Source CreateItems seeds five copies of each empty equipment content 93/197/198/199/200. AddFromMaster adds all six initial slots, making initial Count for 200 eleven. GetNonEquipItem selects owned Count != 0 with slot qualification, preferring weapon over armor. Existing-owner refit and secede exclude empty counts. Web stores all counts in one equipmentStock; no original-game dynamic parity is claimed.",
+      "when": {
+        "battleProfile": "narshe-playability-v27"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0xaac310",
+        "GameAssembly.dll:RVA 0x328110",
+        "GameAssembly.dll:RVA 0xab6120",
+        "GameAssembly.dll:RVA 0x7f74c0,0x7fd310",
+        "docs/empty-equipment.md"
+      ]
+    },
+    {
+      "id": "narshe:source-new-game-owner-v27",
+      "subject": "narshe",
+      "predicate": "migration.newGameOwnership",
+      "value": "A source-bound GameState.createNewGame factory creates initial owners without the development checkpoint condition53. Empty Count, items, party, templates, limits and parameter contexts are bound to the same content package. Restore never reseeds Count. This establishes shared owned state only; the source field session remains unpublished.",
+      "when": {
+        "battleProfile": "narshe-playability-v27"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "initialize_data.csv:INIT_PARTY,INIT_ITEM,INT_START_MAP_ID",
+        "GameAssembly.dll:RVA 0xaae860",
+        "docs/new-game.md",
+        "docs/systems-v27.md"
+      ]
+    },
+    {
+      "id": "narshe:source-title-presentation-v27",
+      "subject": "narshe",
+      "predicate": "migration.sourceTitlePresentation",
+      "value": "The opening SysCall writes MapLocalVariable[7]=1 only when an AdvertisementOpeningFader exists; absent leaves its prior value unchanged. Return-to-title requests FadeOut(2,null), GotoTitle and Stop input, then End. Web requires trusted lifecycle context, blocks missing effect hosts and rejects active-demo checkpoints. In controlled execution sc_e_0001 passes this probe and next stops at HidePlayer index2; the full opening is not playable.",
+      "when": {
+        "battleProfile": "narshe-playability-v27"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x295520",
+        "GameAssembly.dll:RVA 0x2920c0",
+        "GameAssembly.dll:RVA 0xae7c50",
+        "GameAssembly.dll:RVA 0xae8c60",
+        "sc_e_0001.json:/Mnemonics/1,2",
+        "docs/source-presentation.md"
       ]
     }
   ],

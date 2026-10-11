@@ -22,6 +22,8 @@ import { compileShopCatalog } from "./shop.js";
 import { compilePlayerBattleDefinitions } from "./player-battle.js";
 import { compileBattleAI, battleAIAbilities } from "./battle-ai.js";
 import { compileGameState } from "./game-state.js";
+import { compileNewGame } from "./new-game.js";
+import { createNewGame } from "../core/new-game.js";
 import { compileFieldConditionCatalog } from "./field-conditions.js";
 import { firstJoinLevelAdjustments } from "../core/character-growth.js";
 import {
@@ -295,7 +297,7 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v26",
+    profile: "narshe-playability-v27",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,
@@ -392,8 +394,15 @@ export async function compileOpeningPlayable(
     ),
     source.ordinaryWeaponEffects.catalog,
   ).catalog;
+  const newGame = compileNewGame({ ...parameterReader,
+    matching: (table, key, value) => Object.values(source.tables[table] ?? {})
+      .filter((r) => r.values[key] === String(value)),
+  }, Object.fromEntries(Object.entries(source.tables).map(([key, values]) =>
+    [key, Object.values(values).map((r) => r.values)])), name, source.ordinaryWeaponEffects.catalog);
+  gameState.sourceNewGame = newGame.definition;
   gameState.equipmentSystem = {
     catalog: equipment,
+    initialStock: createNewGame(newGame.definition).owned.equipmentStock,
     contexts: Object.fromEntries(
       Object.values(source.ownedInitializations).map((t) => [
         `player:${t.initial.sourceId}`,

@@ -2,7 +2,7 @@ import type { BattleRow } from "./battle.js";
 import { tableInteger as int } from "./table.js";
 import { compileEquipmentCatalog, compileEquipmentParameterContext } from "./equipment.js";
 import { confirmPlayerParameters, parameterNames, type ParameterValues } from "../core/parameters.js";
-import { initialEquipmentStock, projectEquipmentParameters } from "../core/equipment.js";
+import { validateEquipmentLoadout, projectEquipmentParameters } from "../core/equipment.js";
 import { createOwnedCharacter, type OwnedCharacterAbilities, type OwnedCharacterInitializationTemplate } from "../core/owned-character.js";
 import type { OrdinaryWeaponEffectsCatalog } from "../core/ordinary-weapon.js";
 
@@ -167,7 +167,7 @@ export function compileOwnedCharacterInitialization(
     condition601: false, twoHandMultiplier: 1,
   }, { additionalStrength: 0, correctionStrength: 0, temporary: { attack: 0, strength: 0, accuracy: 0, criticalRate: 0 } });
   sources.push(...parameters.sources);
-  initialEquipmentStock(compiledEquipment.catalog, [{ id: "initialization", sourceId, equipment }]);
+  validateEquipmentLoadout(compiledEquipment.catalog, { id: "initialization", sourceId, equipment });
   const confirmed = projectEquipmentParameters(compiledEquipment.catalog, equipment, parameters.context, parameters.limits).parameters;
   const beforeEquipment = confirmPlayerParameters({ ...parameters.context.parameters, equipment: [] }, parameters.limits.parameters);
   const template: OwnedCharacterInitializationTemplate = {

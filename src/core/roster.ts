@@ -1,6 +1,7 @@
 import { checkpointKeys } from "./checkpoint-validation.js";
 import {
-  initialEquipmentStock,
+  validateEquipmentLoadout,
+  selectEmptyEquipment,
   validateEquipmentState,
   type EquipmentCatalog,
   type EquipmentStock,
@@ -196,7 +197,7 @@ export function validateRosterLifecycle<T extends RosterMember>(
     if (!member.ownedJobs.some((j) => j.id === member.jobId))
       throw new Error("Current job is not owned");
     // Disabled loadouts retain their identities but do not reserve inventory.
-    initialEquipmentStock(equipment, [member]);
+    validateEquipmentLoadout(equipment, member);
     validateMember(structuredClone(member));
   }
   validatePartyState(state.party, state.roster);
@@ -303,11 +304,11 @@ export function prepareRosterLifecycle<T extends RosterMember>(
     state.roster[state.roster.indexOf(member)] = structuredClone(next);
     member = state.roster.find((r) => r.sourceId === command.sourceId)!;
   };
-  const equipmentCounts = (direction: 1 | -1) => {
+  const equipmentCounts = (direction: 1 | -1, includeEmpty = false) => {
     for (const id of member!.equipment) {
       const definition = equipment.definitions[id];
       if (!definition) throw new Error("Unknown lifecycle equipment");
-      if (definition.empty) continue;
+      if (definition.empty && !includeEmpty) continue;
       let stack = state.equipmentStock.find((s) => s.id === id);
       if (!stack) state.equipmentStock.push((stack = { id, count: 0 }));
       const before = stack.count;
@@ -364,7 +365,8 @@ export function prepareRosterLifecycle<T extends RosterMember>(
     )
       throw new Error("Initializer changed source owned identity");
     state.roster.push(member);
-    equipmentCounts(1);
+    // AddFromMaster grants all six initial slots, unlike later re-registration.
+    equipmentCounts(1, true);
     receipts.push({ kind: "unlocked", id: member.id, ownedId });
   }
   if (!member) throw new Error("Roster lifecycle references unowned character");
@@ -374,7 +376,11 @@ export function prepareRosterLifecycle<T extends RosterMember>(
       const character = equipment.characters[member.sourceId];
       if (!character || character.emptySlots.length !== 6)
         throw new Error("Missing empty equipment slots");
-      member.equipment = [...character.emptySlots];
+      member.equipment = character.emptySlots.map((_, index) => {
+        const id = selectEmptyEquipment(equipment, state.equipmentStock, member!.sourceId, index + 1);
+        if (id === null) throw new Error("Missing owned empty equipment for roster removal");
+        return id;
+      });
       projectEquipment("remove-all");
     }
     setEnabled(false);

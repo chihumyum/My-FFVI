@@ -5,6 +5,11 @@ import { encodeSavedGame, decodeSavedGame } from "../src/core/saved-game.js";
 import { equipmentGameFixture } from "./fixtures/equipment-game.js";
 
 const startingStock = [
+  { id: 1, count: 5 },
+  { id: 2, count: 5 },
+  { id: 3, count: 5 },
+  { id: 4, count: 5 },
+  { id: 5, count: 8 },
   { id: 101, count: 1 },
   { id: 102, count: 1 },
   { id: 201, count: 2 },
@@ -316,14 +321,14 @@ test("saved equipment restores exactly and a valid save checksum cannot admit im
       (s) => {
         s.owned.equipmentStock.push({ ...s.owned.equipmentStock[0]! });
       },
-      /Duplicate or empty equipment stock/,
+      /Duplicate equipment stock/,
     ],
     [
-      "empty-slot stock",
+      "old ownership version cannot omit native empty counts",
       (s) => {
-        s.owned.equipmentStock.push({ id: 1, count: 1 });
+        (s.owned as { formatVersion: number }).formatVersion = 6;
       },
-      /Duplicate or empty equipment stock/,
+      /source\/version mismatch/,
     ],
     [
       "unknown stock",

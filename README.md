@@ -6,6 +6,8 @@
 
 **执行顺序：先迁移 Web 版，通过原版一致性验收，再调查 HD-2D，最后制作重制内容。** 现有歌剧效果按原版迁移；HD-2D 文档和契约目前仅作后续设计保留。
 
+源码、合成测试、架构和实施记录由 Git 跟踪，并同步至私有仓库 [chihumyum/ffvi-reweb](https://github.com/chihumyum/ffvi-reweb)。原始游戏资源和生成产物保留在本地，不进入仓库。
+
 ## 文档入口
 
 - [完整架构](docs/architecture.md)
@@ -15,6 +17,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [v27 空装备所有权、新游戏共享状态与序章宿主边界](docs/systems-v27.md)
 - [v26 战斗速度、失明、普通远程武器与新游戏候选](docs/systems-v26.md)
 - [v25 前后排、速度状态与普通商店](docs/systems-v25.md)
 - [v24 防护、装备 MP 费用与普通掉落](docs/systems-v24.md)

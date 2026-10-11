@@ -1,3 +1,4 @@
+import { fixtureEquipmentGrants } from "./fixtures/equipment.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { compileEquipment } from "../src/compiler/equipment.js";
@@ -93,7 +94,7 @@ test("additional attacks require the independent source list, preserve its order
 
 test("ranged gear swaps either hand atomically, selects that arm and conserves total ownership", () => {
   const catalog = ordinaryWeaponEquipment(), roster = equipmentRoster(catalog);
-  const stock = [...initialEquipmentStock(catalog, roster), { id: 162, count: 1 }];
+  const stock = [...initialEquipmentStock(catalog, roster, fixtureEquipmentGrants(catalog)), { id: 162, count: 1 }];
   const before = structuredClone({ roster, stock });
   const changed = previewEquipmentChange(catalog, roster, stock, "owner:1", 2, 162);
   assert.deepEqual(changed.roster[0]!.equipment.slice(0, 2), [1, 162]);
