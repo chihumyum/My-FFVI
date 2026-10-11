@@ -314,6 +314,11 @@ export async function compileOpeningBattle(root: string) {
   }
   for (const id of [...abilityIds].sort((a, b) => a - b)) {
     const ability = row("ability.csv", id);
+    tableGroup(
+      "content_flag_group.csv",
+      "group_id",
+      ability.values.content_flag_group_id!,
+    );
     const group = row(
       "function_group.csv",
       ability.values.battle_function_group_id!,

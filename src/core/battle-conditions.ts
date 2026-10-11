@@ -1,4 +1,5 @@
 import { ConditionRules, type ConditionCatalog } from "./conditions.js";
+import { magicHit } from "./battle-hit.js";
 
 /** Only behavior functions whose state dependencies are implemented are admitted.
  * The full master catalog remains available for references and conflict rules. */
@@ -33,16 +34,7 @@ export function conditionHit(
   magicEvasion: number,
   randomInt: (min: number, max: number) => number,
 ): boolean {
-  for (const value of [accuracy, magicEvasion])
-    if (!Number.isInteger(value) || value < 0 || value > 0x7fffffff)
-      throw new Error("Invalid condition hit input");
-  const rate = Math.min(255, accuracy);
-  if (rate === 255) return true;
-  const chance = Math.trunc(Math.imul((128 - magicEvasion) * 2, rate) / 256);
-  const draw = randomInt(0, 255);
-  if (!Number.isInteger(draw) || draw < 0 || draw > 255)
-    throw new Error("Invalid condition random draw");
-  return chance > Math.trunc((draw * 100) / 256);
+  return magicHit(accuracy, magicEvasion, randomInt);
 }
 
 /** Bounded battle behavior, not a general status engine. Silence has no periodic

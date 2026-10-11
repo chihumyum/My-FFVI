@@ -26,6 +26,8 @@ Scene changes are recipes, semantic annotations, or versioned asset changes. A s
 
 ## Batch migration priority
 
+The latest user instruction is systems first, content population afterward. Until the shared gameplay systems form a working loop, prioritize battle resolution/status/scheduling/AI, persistent party/inventory/equipment/growth, saves and field integration. Existing content remains regression material; new source records may be used as controlled mechanism probes. Do not resume map-count or region-expansion work merely because one more parser or calculation is available. Track the systems gate in `docs/core-mechanics.md`.
+
 The user rejected scene-by-scene implementation. Follow `docs/batch-migration.md`: implement shared VM, world-state, map lifecycle, battle and presentation capabilities, then import their source-data dependents in batches. Use `npm run corpus:plan` to identify affected scripts and maps. Exact coordinates and message IDs are source parameters, not separate implementation tasks. Do not add new map-name or encounter-ID branches to runtime rules. The existing opening profile is a regression fixture and temporary bootstrap, not a template to copy across the game. Static decoding counts must never be reported as playable map coverage.
 
 ## Verification and delivery

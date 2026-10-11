@@ -11,6 +11,7 @@ import type {
   DevelopmentAbilityPlan,
 } from "../core/ability.js";
 import type { AbilityDefinition } from "../core/battle-content.js";
+import { compileContentFlags } from "./content-flags.js";
 
 type Reader = ConditionReader;
 function int(value: string | undefined) {
@@ -85,6 +86,7 @@ export function compileAbilityProgram(reader: Reader, abilityId: number) {
     range: int(a.battle_renge_id),
     rules: Object.fromEntries(ruleColumns.map((key) => [key, int(a[key])])),
     forbiddenConditionIds: [],
+    contentFlags: [],
   };
   const forbidden = compileConditionGroup(
     reader,
@@ -95,6 +97,12 @@ export function compileAbilityProgram(reader: Reader, abilityId: number) {
     ...forbidden.sources,
     ...forbidden.ids.map((id) => reader.row("condition.csv", id)),
   );
+  const flags = compileContentFlags(
+    reader,
+    program.rules.content_flag_group_id!,
+  );
+  program.contentFlags = flags.ids;
+  sources.push(...flags.sources);
   return { program, sources };
 }
 
@@ -198,6 +206,10 @@ export function compileDevelopmentAbility(
   const conditionOnly =
     effects.length === 1 &&
     ["add-condition", "recover-condition"].includes(effects[0]!.kind);
+  const magicOnly =
+    effects.length === 1 &&
+    (effects[0]!.kind === "magic" ||
+      (effects[0]!.kind === "recovery" && effects[0]!.calculation === "magic"));
   for (const key of [
     "attribute_group_id",
     "attack_count",
@@ -209,15 +221,17 @@ export function compileDevelopmentAbility(
     "weak_hit_rate",
   ])
     if (r[key] !== 0) blockers.push(`unresolved ${key}=${r[key]}`);
-  if (r.accuracy_rate !== 100 && !(conditionOnly && r.accuracy_rate! >= 0))
+  if (
+    r.accuracy_rate !== 100 &&
+    !((conditionOnly || magicOnly) && r.accuracy_rate! >= 0)
+  )
     blockers.push(`unresolved accuracy_rate=${r.accuracy_rate}`);
-  if (!(conditionOnly ? [0] : [0, 1]).includes(r.content_flag_group_id!))
-    blockers.push(
-      `unresolved content_flag_group_id=${r.content_flag_group_id}`,
-    );
-  else if (r.content_flag_group_id)
+  const allowedFlags = conditionOnly ? [] : magicOnly ? [1, 2, 5] : [1];
+  if (program.contentFlags.some((id) => !allowedFlags.includes(id)))
+    blockers.push(`unresolved content flags=${program.contentFlags.join(",")}`);
+  else if (program.contentFlags.length && !magicOnly)
     limitations.push(
-      `content flags ${r.content_flag_group_id}: opening development restriction`,
+      `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
   if (![3, 4, 604].includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
@@ -252,9 +266,26 @@ export function compileDevelopmentAbility(
     blockers.push("unresolved condition attribute");
   if (conditionOnly && [290, 680, 681, 1333].includes(abilityId))
     blockers.push("unresolved native condition ability override");
+  if (magicOnly)
+    limitations.push(
+      "reviewed neutral magic arithmetic; no accessory, critical, counter-stat or weapon modifiers; single-target action only",
+    );
   const plan: DevelopmentAbilityPlan | null = blockers.length
     ? null
-    : { effects, target: target!, multiplier };
+    : {
+        effects,
+        target: target!,
+        multiplier,
+        magic: magicOnly
+          ? {
+              accuracy: r.accuracy_rate!,
+              contentFlags: [...program.contentFlags],
+              // GetRecoveryStatus 0x3d9af0 supplies this source-specific override.
+              forceDefense:
+                effects[0]!.kind === "recovery" && abilityId === 210,
+            }
+          : null,
+      };
   return {
     id: abilityId,
     name,

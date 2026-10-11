@@ -265,6 +265,24 @@
         "build/reports/battle-condition-check.json#b0affc0a339467ffc5e1df9fa9952a5f3afa7dff9a3c5cb079ad5e3e0bd53d5a",
         "docs/battle-conditions.md"
       ]
+    },
+    {
+      "id": "narshe:development-neutral-magic",
+      "subject": "narshe",
+      "predicate": "migration.neutralMagic",
+      "value": "Development v5 uses shared neutral magic arithmetic for the existing beams and calculated recovery. Source flag identities, hit/variance draw order, enemy factor, defense and caps are checked. 83 source records have controlled scalar probes, not full spell support. Browser recovery, beams, victory and field return passed; statuses, affinities, accessories, full AI and original parity remain incomplete.",
+      "when": {
+        "battleProfile": "narshe-playability-v5"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0xa94480 MagicExecution",
+        "GameAssembly.dll:RVA 0xa9ef80 RecoveryExection",
+        "GameAssembly.dll:RVA 0x4daa50 GetContentFlagList",
+        "build/reports/magic-check.json#24d2586bb40f56c3c4375522410486f8ae03f6a24949b8086301cebf9803c3f5",
+        "docs/magic-calculation.md"
+      ]
     }
   ],
   "assets": []

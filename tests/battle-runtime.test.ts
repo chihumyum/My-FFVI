@@ -35,7 +35,7 @@ function fixture(): BattleContent {
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v4",
+    profile: "narshe-playability-v5",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -100,11 +100,13 @@ function fixture(): BattleContent {
           range: 3,
           rules: {},
           forbiddenConditionIds: [],
+          contentFlags: [],
         },
         plan: {
           effects: [{ slot: 1, kind: "magic" }],
           target: "enemy",
           multiplier: 1,
+          magic: { accuracy: 100, contentFlags: [1], forceDefense: false },
         },
         blockers: [],
         limitations: [],
@@ -127,6 +129,7 @@ function fixture(): BattleContent {
           range: 1,
           rules: {},
           forbiddenConditionIds: [],
+          contentFlags: [],
         },
         plan: {
           effects: [
@@ -134,6 +137,7 @@ function fixture(): BattleContent {
           ],
           target: "ally",
           multiplier: 1,
+          magic: { accuracy: 100, contentFlags: [1], forceDefense: false },
         },
         blockers: [],
         limitations: [],
@@ -162,6 +166,7 @@ function fixture(): BattleContent {
           range: 3,
           rules: {},
           forbiddenConditionIds: [],
+          contentFlags: [],
         },
         plan: null,
         blockers: ["unsupported function 999"],
@@ -185,11 +190,13 @@ function fixture(): BattleContent {
           range: 7,
           rules: {},
           forbiddenConditionIds: [],
+          contentFlags: [],
         },
         plan: {
           effects: [{ slot: 1, kind: "physical" }],
           target: "either",
           multiplier: 1,
+          magic: null,
         },
         blockers: [],
         limitations: [],
@@ -239,6 +246,7 @@ function conditionFixture() {
     plan: {
       target: "either",
       multiplier: 1,
+      magic: null,
       effects: [{ slot: 1, kind: "recover-condition", conditionIds: [301] }],
     },
   };
@@ -250,6 +258,7 @@ function conditionFixture() {
     plan: {
       target: "either",
       multiplier: 1,
+      magic: null,
       effects: [
         {
           slot: 1,
@@ -263,6 +272,44 @@ function conditionFixture() {
   };
   return f;
 }
+test("magic misses spend MP once and replay with the same later random choices", () => {
+  const f = fixture();
+  f.abilities[10]!.cost = 3;
+  f.abilities[10]!.plan!.magic = {
+    accuracy: 100,
+    contentFlags: [],
+    forceDefense: false,
+  };
+  for (const e of f.enemies) e.magicEvasion = 128;
+  const run = (parts: number[]) => {
+    const b = new BattleGame(f, 11);
+    assert.equal(b.command("a", 10, "e1"), true);
+    for (const dt of parts) b.advance(dt);
+    assert.equal(b.players[0]!.mp, 5);
+    assert.equal(b.enemies[0]!.hp, 10);
+    assert.equal(b.events.filter((e) => e.text.includes("闪避")).length, 1);
+    return { combatants: b.combatants, events: b.events, action: b.action };
+  };
+  assert.deepEqual(run([900]), run(Array(90).fill(10)));
+});
+test("old profiles and unknown magic modifiers cannot silently use neutral calculations", () => {
+  const f = fixture();
+  assert.throws(
+    () =>
+      new BattleGame(
+        { ...f, profile: "narshe-playability-v4" } as unknown as BattleContent,
+        1,
+      ),
+    /Unsupported battle runtime profile/,
+  );
+  f.abilities[10]!.cost = 3;
+  f.abilities[10]!.plan!.magic!.contentFlags = [3];
+  const b = new BattleGame(f, 1);
+  assert.equal(b.command("a", 10, "e1"), true);
+  assert.throws(() => b.advance(500), /Unimplemented magic content flag/);
+  assert.equal(b.players[0]!.mp, 8);
+  assert.equal(b.enemies[0]!.hp, 10);
+});
 test("status changes cancel a queued command without MP cost; cure restores eligibility", () => {
   const f = conditionFixture();
   f.abilities[10]!.cost = 3;
@@ -345,6 +392,7 @@ test("compound recovery commits both resources once and consumes one action cost
   a.plan = {
     target: "self",
     multiplier: 1,
+    magic: null,
     effects: [
       { slot: 1, kind: "recovery", resource: "hp", calculation: "fixed" },
       { slot: 3, kind: "recovery", resource: "mp", calculation: "fixed" },

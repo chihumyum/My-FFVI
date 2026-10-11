@@ -55,6 +55,7 @@ function fixture() {
     { id: "801", type_id: "1", series_id: "0" },
     { id: "802", type_id: "99", series_id: "0" },
   ];
+  const flags = [{ id: "1", group_id: "11", content_flag_id: "999" }];
   const source = {
     file: "synthetic",
     assetPath: "synthetic.csv",
@@ -67,18 +68,22 @@ function fixture() {
         "ability.csv": [ability],
         "function_group.csv": [group],
         "function.csv": functions,
+        "content_flag_group.csv": flags,
       },
       Object.fromEntries(
-        ["ability.csv", "function_group.csv", "function.csv"].map((t) => [
-          t,
-          source,
-        ]),
+        [
+          "ability.csv",
+          "function_group.csv",
+          "function.csv",
+          "content_flag_group.csv",
+        ].map((t) => [t, source]),
       ),
     );
   return {
     ability,
     group,
     functions,
+    flags,
     reader,
     compile: () => compileDevelopmentAbility(reader(), 901, "Synthetic"),
   };
@@ -147,13 +152,42 @@ test("broken references and malformed integers fail instead of producing partial
   f.group.function2_value1 = "2";
   assert.throws(() => f.compile(), /Orphan/);
 });
+test("magic rules depend on referenced flags, not magic group numbers or a fixed accuracy", () => {
+  const f = fixture();
+  f.functions[0]!.type_id = "3";
+  f.group.function1_value2 = "0";
+  f.group.function3_id = "0";
+  f.group.function3_value1 = "0";
+  f.group.function3_value2 = "0";
+  f.flags[0]!.group_id = "987";
+  f.flags[0]!.content_flag_id = "5";
+  f.ability.content_flag_group_id = "987";
+  f.ability.accuracy_rate = "150";
+  const a = f.compile();
+  assert.deepEqual(a.plan!.magic, {
+    accuracy: 150,
+    contentFlags: [5],
+    forceDefense: false,
+  });
+  assert.deepEqual(a.program.contentFlags, [5]);
+  f.flags[0]!.content_flag_id = "3";
+  assert.equal(f.compile().plan, null);
+  f.ability.content_flag_group_id = "999";
+  assert.throws(() => f.compile(), /Unresolved/);
+});
 test("fixed HP and MP effects need neither a magic formula nor a random draw", () => {
   const a = fixture().compile();
   const results = calculateDevelopmentEffects(
     a.plan!,
     a.power,
     { level: 99, attack: 999, magic: 999, side: "player" },
-    { defense: 255, magicDefense: 255, evasion: 100 },
+    {
+      defense: 255,
+      magicDefense: 255,
+      evasion: 100,
+      magicEvasion: 0,
+      side: "player",
+    },
     () => assert.fail("Fixed recovery must not draw randomness"),
   );
   assert.deepEqual(results, [
@@ -173,10 +207,17 @@ test("the whole effect plan is preflighted before any RNG or partial calculation
           ],
           target: "enemy",
           multiplier: 1,
+          magic: { accuracy: 100, contentFlags: [], forceDefense: false },
         },
         40,
         { level: 5, attack: 30, magic: 20, side: "player" },
-        { defense: 0, magicDefense: 0, evasion: 0 },
+        {
+          defense: 0,
+          magicDefense: 0,
+          evasion: 0,
+          magicEvasion: 0,
+          side: "enemy",
+        },
         () => {
           draws++;
           return 0;
