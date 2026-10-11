@@ -47,6 +47,18 @@ import {
   BattleConditions,
   type BattleConditionCatalog,
 } from "./battle-conditions.js";
+import {
+  FieldConditions,
+  type FieldConditionCatalog,
+  type FieldConditionPort,
+} from "./field-conditions.js";
+import {
+  createOwnedCharacter,
+  validateOwnedCharacterAbilities,
+  type OwnedCharacterAbilities,
+  type OwnedCharacterInitializationTemplate,
+} from "./owned-character.js";
+import { canonical } from "./canonical.js";
 
 export type GameStateContent = {
   kind: "game-state-development-v1";
@@ -60,6 +72,8 @@ export type GameStateContent = {
   };
   initialGil: number;
   initialParty: PartyState;
+  fieldConditions?: FieldConditionCatalog;
+  characterInitializations?: Record<string, OwnedCharacterInitializationTemplate>;
   rosterLifecycle: {
     initial: Record<
       string,
@@ -93,9 +107,11 @@ export type OwnedCharacter = RosterMember & {
   maxHp: number;
   maxMp: number;
   conditionIds: number[];
+  /** Null only in logic fixtures that have no source initialization provider. */
+  abilities: OwnedCharacterAbilities | null;
 };
 export type GameStateSnapshot = {
-  formatVersion: 4;
+  formatVersion: 5;
   kind: "owned-game-state";
   catalogHash: string;
   roster: OwnedCharacter[];
@@ -105,6 +121,8 @@ export type GameStateSnapshot = {
   items: { id: number; count: number }[];
   equipmentStock: EquipmentStock[];
   releasedJobIds: number[];
+  learnedAbilityIds: number[];
+  characterNames: Record<string, string>;
   completedBattles: { serial: number; encounterId: number }[];
 };
 export type BattleLease = {
@@ -140,6 +158,11 @@ export class GameState {
   } | null = null;
   private revision = 0;
   private readonly conditions: BattleConditions;
+  private readonly fieldConditions: FieldConditions | null;
+  private readonly initialLearnedAbilityIds: number[];
+  readonly fieldSteps: FieldConditionPort = {
+    prepareStep: (transportationId) => this.prepareFieldStep(transportationId),
+  };
   readonly fieldInventory: FieldInventoryPort = {
     prepare: (command) => this.prepareInventoryEvent(command),
   };
@@ -156,6 +179,9 @@ export class GameState {
     conditions: BattleConditionCatalog,
   ) {
     this.conditions = new BattleConditions(structuredClone(conditions));
+    this.fieldConditions = content.fieldConditions
+      ? new FieldConditions(structuredClone(content.fieldConditions))
+      : null;
     this.content = structuredClone(content);
     this.definitions = new Map(players.map((p) => [p.id, structuredClone(p)]));
     distinct(players.map((p) => p.id));
@@ -182,8 +208,35 @@ export class GameState {
       integer(item.itemId, 0x7fffffff, 1);
       this.conditions.validateReferences(item.forbiddenConditionIds);
     }
+    const initializedAbilities = new Map<string, OwnedCharacterAbilities>();
+    const learnedAbilityIds: number[] = [];
+    const characterNames: Record<string, string> = {};
+    if (content.characterInitializations) {
+      if (Object.keys(content.characterInitializations).length !== players.length)
+        throw new Error("Missing initial character template");
+      for (const player of players) {
+        const template = content.characterInitializations[player.id];
+        if (!template || template.initial.sourceId !== player.sourceId)
+          throw new Error("Initial character template identity mismatch");
+        const initialized = createOwnedCharacter(template, {
+          id: player.id,
+          ownedId: content.rosterLifecycle.initial[player.id]!.ownedId,
+          releasedJobIds: content.rosterLifecycle.releasedJobIds,
+          learnedAbilityIds,
+        });
+        initializedAbilities.set(player.id, initialized.member.abilities);
+        learnedAbilityIds.push(...initialized.learnedAbilityIdsToAppend);
+        if (initialized.nameBinding) {
+          const key = initialized.nameBinding.key;
+          if (Object.hasOwn(characterNames, key))
+            throw new Error("Duplicate initial character name binding");
+          characterNames[key] = player.name;
+        }
+      }
+    }
+    this.initialLearnedAbilityIds = [...learnedAbilityIds];
     this.data = {
-      formatVersion: 4,
+      formatVersion: 5,
       kind: "owned-game-state",
       catalogHash,
       roster: players.map((p) => ({
@@ -199,6 +252,7 @@ export class GameState {
         maxHp: p.hp,
         maxMp: p.mp,
         conditionIds: [...p.conditionIds],
+        abilities: structuredClone(initializedAbilities.get(p.id) ?? null),
         equipment: [...(content.equipment[p.id] ?? [])],
       })),
       party: structuredClone(content.initialParty),
@@ -207,6 +261,8 @@ export class GameState {
       items: structuredClone(content.initialItems),
       equipmentStock: [],
       releasedJobIds: [...content.rosterLifecycle.releasedJobIds],
+      learnedAbilityIds,
+      characterNames,
       completedBattles: [],
     };
     if (this.content.equipmentSystem)
@@ -219,11 +275,11 @@ export class GameState {
   private validate(data: GameStateSnapshot) {
     keys(
       data,
-      "formatVersion,kind,catalogHash,roster,party,gil,totalGil,items,equipmentStock,releasedJobIds,completedBattles",
+      "formatVersion,kind,catalogHash,roster,party,gil,totalGil,items,equipmentStock,releasedJobIds,learnedAbilityIds,characterNames,completedBattles",
     );
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== 4 ||
+      data.formatVersion !== 5 ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -243,6 +299,14 @@ export class GameState {
         throw new Error("Unknown released job");
     for (const p of data.roster)
       this.validateOwnedMember(p, data.roster.length);
+    if (canonical(data.learnedAbilityIds) !== canonical(this.initialLearnedAbilityIds))
+      throw new Error("Unimplemented learned ability history change");
+    const names = Object.fromEntries(data.roster.flatMap((p) => {
+      const template = this.content.characterInitializations?.[p.id];
+      return template?.nameTag ? [[template.nameTag, p.name]] : [];
+    }));
+    if (canonical(data.characterNames) !== canonical(names))
+      throw new Error("Owned character name binding mismatch");
     if (data.roster.length !== this.definitions.size)
       throw new Error("Missing roster member");
     if (this.content.equipmentSystem)
@@ -274,7 +338,7 @@ export class GameState {
     const limits = this.content.limits;
     keys(
       p,
-      "id,sourceId,name,enabled,level,exp,hp,mp,maxHp,maxMp,conditionIds,equipment,ownedId,jobId,additionalLevel,magicStoneId,ownedJobs",
+      "id,sourceId,name,enabled,level,exp,hp,mp,maxHp,maxMp,conditionIds,equipment,ownedId,jobId,additionalLevel,magicStoneId,ownedJobs,abilities",
     );
     const definition = this.definitions.get(p.id);
     if (
@@ -286,6 +350,13 @@ export class GameState {
       throw new Error("Unknown roster identity");
     if (typeof p.enabled !== "boolean")
       throw new Error("Invalid roster availability");
+    const template = this.content.characterInitializations?.[p.id];
+    if (template) {
+      if (!p.abilities) throw new Error("Missing owned abilities");
+      validateOwnedCharacterAbilities(p.abilities);
+      if (canonical(p.abilities) !== canonical(template.initial.abilities))
+        throw new Error("Unimplemented owned ability learning change");
+    } else if (p.abilities !== null) throw new Error("Unbound owned ability state");
     if (!this.content.equipmentSystem && !p.enabled)
       throw new Error("Unimplemented disabled roster equipment ownership");
     const lifecycle = this.content.rosterLifecycle.initial[p.id];
@@ -539,7 +610,8 @@ export class GameState {
       inventory: FieldInventoryPort;
       party: FieldPartyPort;
       roster: FieldRosterPort;
-      movementBlocker: () => string | null;
+      fieldSteps?: FieldConditionPort;
+      movementBlocker: (transportationId: number | null, manual: boolean) => string | null;
     };
     commit(): boolean;
   } {
@@ -547,7 +619,8 @@ export class GameState {
     const revision = this.revision;
     let data = this.snapshot(),
       generation = 0,
-      published = false;
+      published = false,
+      publicationRevision: number | null = null;
     const inventory: FieldInventoryPort = {
       prepare: (command) => {
         if (published) return this.prepareInventoryEvent(command);
@@ -596,13 +669,35 @@ export class GameState {
         };
       },
     };
+    const fieldSteps: FieldConditionPort = {
+      prepareStep: (transportationId) => {
+        if (published) return this.prepareFieldStep(transportationId);
+        const { next, result } = this.projectFieldStep(data, transportationId),
+          version = generation;
+        return {
+          result,
+          commit: () => {
+            if (generation !== version || (published &&
+              (this.active || this.revision !== publicationRevision)))
+              throw new Error("Stale candidate field step transaction");
+            data = next;
+            generation++;
+            if (published) {
+              this.data = next;
+              this.revision++;
+            }
+          },
+        };
+      },
+    };
     return {
       ports: {
         inventory,
         party,
         roster,
-        movementBlocker: () =>
-          this.movementBlocker(published ? this.data : data),
+        ...(this.fieldConditions ? { fieldSteps } : {}),
+        movementBlocker: (transportationId, manual) =>
+          this.movementBlocker(published ? this.data : data, transportationId, manual),
       },
       commit: () => {
         if (published || this.active || this.revision !== revision)
@@ -610,6 +705,7 @@ export class GameState {
         this.data = data;
         this.revision++;
         published = true;
+        publicationRevision = this.revision;
         return true;
       },
     };
@@ -617,18 +713,60 @@ export class GameState {
   get activeParty() {
     return activePartyMembers(this.data.party);
   }
-  private movementBlocker(data: GameStateSnapshot): string | null {
-    return activePartyMembers(data.party).some(
+  private projectFieldStep(data: GameStateSnapshot, transportationId: number) {
+    if (!this.fieldConditions)
+      throw new Error("地图状态结算的来源规则尚未载入");
+    const next = structuredClone(data);
+    const result = this.fieldConditions.projectStep(
+      activePartyMembers(next.party).map(({ id }) => next.roster.find((p) => p.id === id)!),
+      transportationId,
+    );
+    for (const member of result.members) {
+      const target = next.roster.find((p) => p.id === member.id)!;
+      target.hp = member.hp;
+      target.conditionIds = [...member.conditionIds];
+    }
+    this.validate(next);
+    return { next, result };
+  }
+  private prepareFieldStep(transportationId: number) {
+    this.requireIdle();
+    const revision = this.revision;
+    const { next, result } = this.projectFieldStep(this.data, transportationId);
+    return {
+      result,
+      commit: () => {
+        if (this.active || this.revision !== revision)
+          throw new Error("Stale field step transaction");
+        this.data = next;
+        this.revision++;
+      },
+    };
+  }
+  private movementBlocker(data: GameStateSnapshot, transportationId: number | null, _manual: boolean): string | null {
+    const poisoned = activePartyMembers(data.party).some(
       ({ id }) =>
         this.conditions.poisonIds(
           data.roster.find((p) => p.id === id)!.conditionIds,
         ).length > 0,
-    )
-      ? "中毒的地图行走伤害尚未迁移；可在菜单中解除中毒后继续。"
-      : null;
+    );
+    if (!poisoned) return null;
+    if (!this.fieldConditions)
+      return "中毒的地图行走伤害尚未迁移；可在菜单中解除中毒后继续。";
+    if (transportationId === null)
+      return "当前交通状态尚未确定，无法结算地图毒伤；可在菜单中解除中毒。";
+    try {
+      this.projectFieldStep(data, transportationId);
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
   }
   get fieldMovementBlocker() {
-    return this.movementBlocker(this.data);
+    return this.movementBlocker(this.data, null, true);
+  }
+  fieldMoveBlocker(transportationId: number | null, manual: boolean): string | null {
+    return this.movementBlocker(this.data, transportationId, manual);
   }
   get battlePartyBlocker(): string | null {
     const members = this.activeParty;
@@ -648,6 +786,7 @@ export class GameState {
         additionalLevel: _additionalLevel,
         magicStoneId: _magicStone,
         ownedJobs: _jobs,
+        abilities: _abilities,
         ...progress
       } = p;
       return {

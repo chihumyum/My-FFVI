@@ -38,7 +38,7 @@ export function fixture(): BattleContent {
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v17",
+    profile: "narshe-playability-v18",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",

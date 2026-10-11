@@ -18,9 +18,11 @@ export type WorldStateOwner = {
   prepare(): { ports: FieldGameOptions; commit(): boolean };
 };
 
-type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount">;
+type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount"> & {
+  transportationId: number | null;
+};
 export type WorldCheckpoint = {
-  kind: "idle-world-v1";
+  kind: "idle-world-v2";
   initialHash: string;
   location: {
     catalogHash: string;
@@ -125,6 +127,7 @@ function worldFieldContent(
     ...(catalog.bgm ? { bgm: catalog.bgm } : {}),
     ...(catalog.environment ? { environment: catalog.environment } : {}),
     entry: {
+      ...(traveler.transportationId !== null ? { transportationId: traveler.transportationId } : {}),
       player: {
         x: entry.x,
         y: entry.y,
@@ -192,7 +195,7 @@ export class WorldSession {
   }
   checkpoint(): WorldCheckpoint {
     return {
-      kind: "idle-world-v1",
+      kind: "idle-world-v2",
       initialHash: this.initial.contentHash,
       location: structuredClone(this.location),
       field: this.current.checkpoint(),
@@ -206,7 +209,7 @@ export class WorldSession {
   ): void {
     checkpointKeys(snapshot, "kind,initialHash,location,field");
     if (
-      snapshot.kind !== "idle-world-v1" ||
+      snapshot.kind !== "idle-world-v2" ||
       snapshot.initialHash !== this.initial.contentHash
     )
       throw new Error("World checkpoint source/version mismatch");
@@ -214,7 +217,13 @@ export class WorldSession {
     const loc = snapshot.location;
     if (loc !== null) {
       checkpointKeys(loc, "catalogHash,mapId,entrance,traveler");
-      checkpointKeys(loc.traveler, "asset,mount");
+      checkpointKeys(loc.traveler, "asset,mount,transportationId");
+      if (loc.traveler.transportationId !== null)
+        checkpointInteger(loc.traveler.transportationId, 1, 0x7fffffff);
+      // Transport switching is not admitted by this host yet. RideVehicleNPC
+      // changes artwork, not this identity; a save cannot invent a new mode.
+      if (loc.traveler.transportationId !== (this.initial.entry.transportationId ?? null))
+        throw new Error("Saved transportation identity changed without a supported transition");
       checkpointInteger(loc.mapId, 1, 0x7fffffff);
       checkpointInteger(loc.entrance, 0, 0x7fffffff);
       if (
@@ -258,7 +267,7 @@ export class WorldSession {
       catalog,
       target,
       request,
-      { asset: from.player.asset, mount: from.player.mount ?? "" },
+      { asset: from.player.asset, mount: from.player.mount ?? "", transportationId: from.transportationId },
       from.content.parentSourceSetHash,
     );
     // Work on a copy: failed preparation cannot clear old local variables or alter flags.
@@ -333,6 +342,7 @@ export class WorldSession {
       traveler: {
         asset: value.field.content.entry.player.asset,
         mount: value.field.content.entry.player.mount,
+        transportationId: value.field.content.entry.transportationId ?? null,
       },
     };
     return true;

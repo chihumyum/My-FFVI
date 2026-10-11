@@ -28,7 +28,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v17");
+assert.equal(catalog.common.profile, "narshe-playability-v18");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const resistances = ["monster.csv", "armor.csv"].flatMap((table) =>
   tables[table].map((row) => {

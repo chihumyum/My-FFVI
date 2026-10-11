@@ -123,6 +123,11 @@ const battle = {
   conditions: { name: (id) => "condition " + id },
   inventory: [],
   items: {},
+  preferences: { mode: "active" },
+  timingState: {
+    input: { paused: false, helpPaused: false, progressEnabled: true, uiWaiting: false, forceWaiting: false },
+  },
+  setClockInput(input) { this.timingState.input = { ...input }; },
 };
 const rows = () =>
   elements

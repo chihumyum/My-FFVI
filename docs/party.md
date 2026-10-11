@@ -1,5 +1,7 @@
 # 剧情编队与角色身份
 
+当前接续为 v18：持有快照已升级 v5，生命周期与 enabled 装备登记见 [角色生命周期](roster-lifecycle.md)，普通初始能力/历史/名称见 [角色初始化](owned-character.md)。下方 v16 的来源统计与保存版本是历史记录；实际演员刷新仍未准入。
+
 2026-10-11。本轮把编队做成独立、可序列化的纯模型，并接入共享 `GameState`、字段指令和地图候选事务。来源中的 `OrganizePartySlot`、`ChangePartySlot` 可以批量编译；当前真实字段执行器仅执行不要求角色外观刷新的切换。要求刷新外观、加入、离队及编队 UI 的来源指令继续明确阻塞，不能用修改数组代替未恢复的行为。
 
 这一步不扩张开场名册，也不创建任何测试装备或新增地图。核心模型不保存 HP、等级、装备或地图精灵；这些值仍由各自唯一所有者管理。
@@ -103,3 +105,11 @@ node scripts/check-party.mjs
 22 项单测覆盖 ID 分离、固定空位、前后排、disabled 的两种查询、未选中槽编辑、未知末位原子失败、非法快照、重复身份、来源操作数准入以及 presentation 事务。`check-party.mjs` 读取完整来源语料和本轮实际内容编译结果，另行检验开场编队、真实 `GameState`、字段执行器、库存/角色保持及 JSON/字段检查点恢复。
 
 来源验证分开报告：196 个指令解码（92 组织、104 切换），392 个独立纯模型投影，45 个无刷新的实际字段宿主执行，151 个要求刷新的实际字段宿主阻塞。后者再分为 70 个可通过受控回调完成的事务和 81 个涉及未拥有角色的阻塞，二者不能混进宿主通过数；122 个来源加入/离队 selector 实例保持 blocked。具体回执位于本地忽略产物 `build/reports/party-native-check.json` 和 `build/reports/party-check.json`。
+
+## v18 状态外观研究接续（未实现）
+
+本地 `build/native/v18-condition-appearance/complete.json` 的八个方法导出补齐了一部分外观选择证据，没有开放刷新端口。`Search(0x9e30a0)` 不使用 currentStructure，匹配不到返回 null；调用方此前已设普通角色素材，因此不能把 null 当作清空或异常。
+
+`serial_misc_assets.change_character_condition_list` 的 condition type 665/666/677 分别查 resident character 202/203/205，再投影 field asset 43/44/46；条件行 ID 79/80/101 与 type 身份必须区分。`SetConditionData` 只登记已定义枚举且 resident 字典中确有该角色的项。特殊偏移的真实字段为 `character_viewpoint_offset_list`：已读 40 项，field asset 1–32 为 (0,16)、34 为 (0,48)，找不到时为来源 (0,0)，随后仍要处理地图范围修正。
+
+当前数据没有 `affected_condition_companion_list` 不能证明运行时没有跟随者；FF6 `ContainsBird(0x40a900)` 只判断 transportationId==3，不能换成场上是否有鸟演员。完整刷新还依赖当前 resident、跟随、多队伍、队长源位置与交通缓存。未提供上下文时保持未知，禁止默认空列表或 false。本段为静态研究定位，后续实现仍需可重跑来源检查和实际宿主/浏览器验收。

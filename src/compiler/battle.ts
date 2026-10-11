@@ -8,6 +8,7 @@ import { tableInteger } from "./table.js";
 import { physicalLimitKeys } from "./physical-parameters.js";
 import { parameterLimitKeys } from "./parameters.js";
 import { compileConditionCatalog } from "./conditions.js";
+import { compileOwnedCharacterInitialization } from "./owned-character.js";
 import {
   compileAttackElements,
   compileElementResistances,
@@ -187,6 +188,7 @@ export async function compileOpeningBattle(root: string) {
   const {
     row,
     group: tableGroup,
+    matching,
     unique,
     selected,
   } = battleTableIndex(tables, battle.tableSources);
@@ -305,6 +307,10 @@ export async function compileOpeningBattle(root: string) {
     { row, group: tableGroup },
     tables["condition.csv"]!.map((r) => tableInteger(r.id)),
   );
+  for (const condition of tables["condition.csv"]!) {
+    const soundId = tableInteger(condition.field_se_asset_id);
+    if (soundId > 0) row("se_asset.csv", soundId);
+  }
   for (const condition of tables["condition_group.csv"]!)
     row("condition_group.csv", condition.id!);
   const magitek = tableGroup(
@@ -422,6 +428,10 @@ export async function compileOpeningBattle(root: string) {
       );
   }
   unique("initialize_data.csv", "key_name", "INIT_GIL");
+  // Field status monitors dispatch on the current transport's source type.
+  // A mounted sprite alone cannot supply this identity.
+  for (const value of tables["transportation.csv"] ?? [])
+    row("transportation.csv", value.id!);
   for (const value of tables["initialize_data.csv"]!.filter((r) =>
     /^INIT_CORPS_[1-4]$|^INT_JOB_[1-6]$/.test(r.key_name!),
   ))
@@ -487,6 +497,12 @@ export async function compileOpeningBattle(root: string) {
     counterLimit: 1 as const,
     excludedAbilityIds: excluded as number[],
   };
+  const ownedInitializations = Object.fromEntries(initialParty.map((p) => [
+    p.characterId,
+    compileOwnedCharacterInitialization(
+      { row, matching, group: tableGroup, unique }, tables, p.characterId, (key) => key,
+    ).template,
+  ]));
   const result = {
     formatVersion: 1 as const,
     kind: "battle-source-data" as const,
@@ -499,7 +515,9 @@ export async function compileOpeningBattle(root: string) {
     },
     encounters,
     initialParty,
+    ownedInitializations,
     magitekAbilityIds: magitek.map((a) => tableInteger(a.values.id)),
+    battleAbilityIds: [...abilityIds].sort((a, b) => a - b),
     atb,
     reactions,
     reactionSource: reactionSource.source,

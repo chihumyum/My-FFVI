@@ -239,6 +239,23 @@ a {
 #pause h2 {
   margin: 0 0 12px;
 }
+.battle-settings {
+  margin: 16px 0;
+  text-align: left;
+}
+.battle-settings select {
+  margin-left: 12px;
+  font: inherit;
+  color: inherit;
+  background: #15243a;
+  border: 1px solid #7691b8;
+  border-radius: 4px;
+  padding: 6px 12px;
+}
+.battle-settings p {
+  margin: 6px 0;
+  font-size: 13px;
+}
 #owned-state {
   display: grid;
   grid-template-columns: 3fr 2fr;

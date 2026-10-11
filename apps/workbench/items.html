@@ -10,11 +10,12 @@
   <body>
     <h1>道具系统受控检查</h1>
     <p>
-      使用来源道具与正式菜单/战斗组件。受伤值、药品和行动条为测试输入，不表示剧情获得，也不写入正式存档。
+      使用来源道具与正式菜单/战斗组件。受伤值、药品、行动条和步行交通身份 1 为测试输入，不表示剧情获得，也不写入正式存档。
     </p>
     <button id="reset-fixture">重置受控输入</button
     ><button id="reset-status-fixture">重置复活／解除状态输入</button
     ><button id="reset-poison-fixture">重置中毒输入</button
+    ><button id="field-step">完成一格移动</button
     ><button id="start-battle">进入受控战斗</button
     ><button id="step-battle">推进战斗 410 毫秒</button
     ><button id="finish-battle">结束当前动作</button
@@ -22,6 +23,8 @@
     ><button id="win-fixture">完成受控胜利</button
     ><button id="save-fixture">记录检查点</button
     ><button id="load-fixture">恢复检查点</button>
+    <label for="battle-mode">战斗模式</label>
+    <select id="battle-mode"><option value="active">即时</option><option value="wait">等待</option></select>
     <p id="receipt" role="status">载入…</p>
     <p id="condition-readout"></p>
     <main>

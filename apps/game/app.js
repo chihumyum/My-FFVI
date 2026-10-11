@@ -62,6 +62,7 @@ function pause(value) {
   $("pause").hidden = !value;
   $("menu-button").textContent = value ? "继续" : "暂停";
   if (value) {
+    $("battle-mode").value = session.battlePreferences.mode;
     syncSaveControls();
     inventoryView.reset();
     inventoryView.render(session);
@@ -95,7 +96,9 @@ function reset() {
   if (checkpointBusy) return;
   audio.reset();
   audio.unlock().catch(failure);
+  const preferences = session?.battlePreferences;
   session = new GameSession(content, battleContent);
+  if (preferences) session.setBattlePreferences(preferences);
   game = session.field;
   renderer = openingRenderer;
   setupMapViews(content);
@@ -239,6 +242,10 @@ $("restart").onclick = reset;
 $("retry").onclick = reset;
 $("resume").onclick = () => pause(false);
 $("menu-button").onclick = () => pause(!paused);
+$("battle-mode").onchange = () => {
+  session.setBattlePreferences({ mode: $("battle-mode").value });
+  sync();
+};
 $("save-game").onclick = saveGame;
 $("load-game").onclick = () => loadGame(false);
 $("load-start").onclick = () => loadGame(false);

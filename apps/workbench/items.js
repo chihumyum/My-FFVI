@@ -13,6 +13,8 @@ const [field, catalog] = await Promise.all(
   ),
 );
 const fixtureField = structuredClone(field);
+// Controlled transport input, separate from the opening's rider artwork.
+fixtureField.entry.transportationId = 1;
 const site = {
   script: "__item_probe",
   index: 0,
@@ -61,6 +63,8 @@ function sync(message) {
   $("start-battle").disabled = !!game.battle;
   $("save-fixture").disabled = !game.checkpointReady;
   $("load-fixture").disabled = !saved || !!game.battle;
+  $("field-step").disabled = !game.checkpointReady;
+  $("battle-mode").value = game.battlePreferences.mode;
   for (const id of [
     "step-battle",
     "finish-battle",
@@ -69,14 +73,17 @@ function sync(message) {
   ])
     $(id).disabled = !game.battle;
   $("condition-readout").textContent =
-    game.battle?.phase === "active"
+    game.battle
       ? game.battle.players
           .map((p) => {
-            const clocks = game.battle.conditionClockState(p.id);
+            const clocks = game.battle.phase === "active"
+              ? game.battle.conditionClockState(p.id)
+              : [];
             return `${p.name}：HP ${p.hp}/${p.maxHp} · ATB ${p.atb.toFixed(2)}${clocks.length ? ` · 毒计时 ${clocks[0].elapsedSeconds.toFixed(2)}/${clocks[0].thresholdSeconds.toFixed(2)} 秒` : ""}`;
           })
           .join("；")
-      : (game.field.movementBlocker ?? "当前队伍没有未支持的地图状态效果。");
+      : (game.field.movementBlocker ??
+        `交通身份 ${game.field.transportationId} · 完成步数 ${game.field.player.steps} · 坐标 ${game.field.player.x},${game.field.player.y} · ${game.state.snapshot().roster.map((p) => `${p.name} HP ${p.hp}/${p.maxHp}`).join("；")}`);
 }
 function reset() {
   poisonProbe = false;
@@ -163,6 +170,17 @@ function leave() {
 $("reset-fixture").onclick = reset;
 $("reset-status-fixture").onclick = resetStatus;
 $("reset-poison-fixture").onclick = resetPoison;
+$("battle-mode").onchange = () => {
+  game.setBattlePreferences({ mode: $("battle-mode").value });
+  sync();
+};
+$("field-step").onclick = () => {
+  const direction = game.field.player.y === fixtureField.entry.player.y ? "up" : "down";
+  if (game.field.move(direction)) {
+    game.advance(240);
+    sync("完成一格移动；毒伤经正式字段步点与共享状态事务结算。");
+  } else sync(game.field.movementBlocker ?? "此步被地图碰撞或事件阻挡。");
+};
 $("start-battle").onclick = start;
 $("step-battle").onclick = () => {
   game.advance(410);

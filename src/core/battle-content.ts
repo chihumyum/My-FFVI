@@ -21,7 +21,7 @@ export type BattleCommandDefinition = {
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "narshe-playability-v17";
+  profile: "narshe-playability-v18";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;

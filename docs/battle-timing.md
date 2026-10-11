@@ -35,7 +35,7 @@
 
 FF6 的进度时钟只在下列条件下早退：进度被禁用；`ATBBattleType.Wait=0` 且 UI 报告正在等待；UI 报告强制等待。`Active=1` 忽略普通 UI 等待。它不会因为当前有动作播放或反击队列就全局停止行动条和蓄力。
 
-本构建的 KeyInput UIManager `0x46d1d0` / `0x46d0e0` 与菜单方法 `0x8e40f0` / `0x8e40d0` 一致：信息状态 0（None）、1（主命令）不等待；2/3（物品/目标）、4/5（能力/目标）、6（目标）、7/8（装备/换装）普通等待；9（特殊输入）、10（老虎机）强制等待。没有菜单/信息控制器时返回 false。纯选择器 `keyInputMenuWaiting` 接受这个确定的 KeyInput 枚举；Touch 枚举有不同的特殊帮助/老虎机编号，不能混用。Web 自己的菜单生命周期尚须显式映射，读通原版枚举不等于该映射已完成。
+本构建的 KeyInput UIManager `0x46d1d0` / `0x46d0e0` 与菜单方法 `0x8e40f0` / `0x8e40d0` 一致：信息状态 0（None）、1（主命令）不等待；2/3（物品/目标）、4/5（能力/目标）、6（目标）、7/8（装备/换装）普通等待；9（特殊输入）、10（老虎机）强制等待。没有菜单/信息控制器时返回 false。纯选择器 `keyInputMenuWaiting` 接受这个确定的 KeyInput 枚举；Touch 枚举有不同的特殊帮助/老虎机编号，不能混用。Web 菜单使用下述独立语义状态，不将这些数值直接当成 Web 状态。
 
 通过门控之后，调用顺序为单位状态更新、战场状态更新、专用已过时间、行动条 UI、加入行动条数据、处理无法战斗者、增加行动条、扣减蓄力、处理下一回合状态、逃跑和 UI。濒死特殊能力计时另有自己的数据与 25.6 秒上限，本批不据此开放该机制。
 
@@ -63,6 +63,22 @@ battleClockGate({
 
 `advanceChanting` 的 `deltaSeconds` 仅经过 Unity 时间缩放，不预乘 ATB 速度；函数内部还会乘 `atbSpeed`。`battleClockGate` 仅决定允许调用，不累计时间。动作播放使用 simulation 判断，行动条/蓄力使用 progress 判断，周期状态还需 conditions 及每单位/状态自己的限制。不同的数值函数继续各自读取所需速度，不能把所有时钟都折成同一个倍速。
 
+## Web 菜单与玩家设置
+
+`BattlePreferences` 只有 `mode: "active" | "wait"`。`BattleGame.setPreferences` 校验后切换有效模式，`preferences` 与 `timingState` 返回副本；后者显示模式、来源 profile 的 ATB 速度、宿主时钟输入与有效门控。切换不改 `content.timing` 或内容摘要，也不重置蓄力、状态进度或随机流。设置保存由会话/存档所有者处理，战斗视图不写存储。原版速度配置档位到 `ATBSpeed` 的完整映射尚未恢复，因此不开放猜测的速度选项。
+
+`BattleView` 的 `menuState` 与 `battleMenuWaiting` 使用独立 Web 状态：
+
+| Web 状态 | 等待角色 |
+| --- | --- |
+| `none`、`command` | 不因为已有可行动角色而等待 |
+| `ability`、`ability-target`、`item`、`item-target` | WAIT 暂停行动条、蓄力与周期状态；active 继续 |
+| `special-input`、`slot` | 两种模式都强制等待进度 |
+
+菜单层级为指令、技能/道具列表、目标；只有一个能力的命令可直接选择目标。返回目标页时回到对应列表，再返回主指令页；切换角色、目标失效、最后一件道具被别人预订、确认动作或战斗实例替换会同步清理过期选择。每次按钮输入即时发布时钟状态，旧 DOM 按钮不能在重绘后提交过期动作。主页面暂停保留菜单层级并停止完整模拟，恢复后重新采用原菜单的等待角色，不累计暂停期间的墙钟时间。
+
+`setSpecialInput("special-input" | "slot" | null)` 是给未来已准入输入提供者的显式生命周期接口。进入期间普通菜单与角色切换停用，提供者完成或取消后必须释放；Escape 仍可交给宿主暂停。当前没有以该接口启用未恢复的必杀技、老虎机或其他特殊能力，也不开放战斗换装。视图每次发布菜单状态保留宿主的 `helpPaused`、`progressEnabled`，不会以重绘覆盖这些门控。
+
 ## 验证范围
 
 独立 Python 预期从原始 `ability.csv` 读取等待和类型，以 IEEE float32 分阶段计算；JavaScript 候选函数逐一比较玩家普通/急速/缓慢/必杀剑、敌人及非整数速度分支。命令引用期待值直接读取原始 `command.csv ability_id`，与内容目录中的投影比较。来源检查同时验证全部相关 C 导出的完成回执、原始 PE 方法范围、类型头和符号摘要，以及四个共享调用的限定字节。失败的 `v17-battle-timing-selectors` 导出没有完整回执，不参与检查；完整的八方法批次是 `v17-battle-clock-selectors`。
@@ -72,8 +88,12 @@ npm run build
 node --test dist/tests/battle-timing.test.js
 node --test dist/tests/battle-clock-integration.test.js dist/tests/poison-integration.test.js
 node scripts/check-battle-timing.mjs --native build/runtime/game/GameAssembly.dll
+node --test dist/tests/battle-settings.test.js
+node scripts/check-battle-menu-timing.mjs
 ```
 
 输出是 `build/reports/battle-timing-check.json` 和 `battle-timing-native-check.json`。宿主回归另覆盖类型 15/16 的非零等待反击绕过蓄力、普通队列恢复，以及动作完成同帧毒伤导致的失败或胜利。最终主战斗循环、来源和浏览器回归见 [v17 集成](systems-v17.md)；纯函数通过与完整系统/原版动态一致性分别记录。
 
-开发 profile 的固定 10 ms 调度、初始 RNG、设置默认值、400 ms 命中点和 900 ms 动作表现仍是明确的临时策略。完整 UI 状态生命周期、特殊队列、战场状态、逃跑、濒死特殊能力及原版动画完成信号仍需要各自的来源闭合。
+Web 菜单检查输出 `build/reports/battle-menu-timing-check.json`，使用真实 `BattleView` 和 `BattleGame`，只替换 DOM 接口；覆盖模式切换、技能/道具/目标、返回、暂停、失效选择、旧按钮、特殊输入接口和实例替换。另检查六个相关已完成原生方法的回执、C 摘要及原 DLL 字节范围。该检查不是实际浏览器布局或原版动态对照；独立构建可用 `--runtime build/battle-settings-test` 指定编译目录。
+
+开发 profile 的固定 10 ms 调度、初始 RNG、未恢复的原版设置默认值、400 ms 命中点和 900 ms 动作表现仍是明确的临时策略。特殊输入提供者、特殊队列、战场状态、逃跑、濒死特殊能力及原版动画完成信号仍需要各自的来源闭合。

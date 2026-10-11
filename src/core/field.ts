@@ -18,6 +18,7 @@ import {
 } from "./inventory-event.js";
 import { executePartyEvent, type FieldPartyPort } from "./party.js";
 import { executeRosterLifecycleEvent, type FieldRosterPort } from "./roster.js";
+import type { FieldConditionPort } from "./field-conditions.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState, type AudioSnapshot } from "./static-audio.js";
 import { TileAnimationState, type TileCheckpoint } from "./tile-animation.js";
@@ -83,11 +84,12 @@ export type Actor = Point & {
   animation: ActorAnimation | null;
 };
 export type FieldCheckpoint = {
-  kind: "idle-field-v1";
+  kind: "idle-field-v2";
   contentHash: string;
   time: number;
   remainder: number;
   nextTask: number;
+  transportationId: number | null;
   eventState: EventStateSnapshot;
   activeGroups: string[];
   hiddenEntities: string[];
@@ -138,12 +140,14 @@ export type FieldGameOptions = {
   inventory?: FieldInventoryPort;
   party?: FieldPartyPort;
   roster?: FieldRosterPort;
+  fieldSteps?: FieldConditionPort;
   /** Read the current owned-state draft; unsupported step effects must not disappear. */
-  movementBlocker?: () => string | null;
+  movementBlocker?: (transportationId: number | null, manual: boolean) => string | null;
 };
 const contains = (e: FieldEntity, p: Point) =>
   p.x >= e.x && p.x < e.x + e.width && p.y >= e.y && p.y < e.y + e.height;
 export class FieldGame {
+  readonly transportationId: number | null;
   readonly tileAnimations: TileAnimationState;
   readonly openTriggers: OpenTriggerState;
   readonly collisionRange: CollisionRange;
@@ -176,6 +180,7 @@ export class FieldGame {
   private tasks: Task[] = [];
   private remainder = 0;
   private nextTask = 1;
+  private pendingPlayerStep: ReturnType<FieldConditionPort["prepareStep"]> | null = null;
   private interaction: {
     entityId: string;
     restoreDirection: Direction | null;
@@ -188,6 +193,9 @@ export class FieldGame {
     readonly environment: StaticAudioState = new StaticAudioState(),
     readonly options: FieldGameOptions = {},
   ) {
+    this.transportationId = content.entry.transportationId ?? null;
+    if (this.transportationId !== null)
+      checkpointInteger(this.transportationId, 1, 0x7fffffff);
     this.tileAnimations = new TileAnimationState(content.map);
     this.openTriggers = new OpenTriggerState(this.tileAnimations);
     this.entityList = [...content.map.entities];
@@ -306,11 +314,12 @@ export class FieldGame {
     if (!this.checkpointReady)
       throw new Error("Cannot save during field movement or an event");
     return {
-      kind: "idle-field-v1",
+      kind: "idle-field-v2",
       contentHash: this.content.contentHash,
       time: this.time,
       remainder: this.remainder,
       nextTask: this.nextTask,
+      transportationId: this.transportationId,
       eventState: this.eventState.snapshot(),
       activeGroups: [...this.activeGroups],
       hiddenEntities: [...this.hiddenEntities],
@@ -335,9 +344,10 @@ export class FieldGame {
     const s = structuredClone(raw);
     checkpointKeys(
       s,
-      "kind,contentHash,time,remainder,nextTask,eventState,activeGroups,hiddenEntities,actors,tiles,doors,bgm,environment",
+      "kind,contentHash,time,remainder,nextTask,transportationId,eventState,activeGroups,hiddenEntities,actors,tiles,doors,bgm,environment",
     );
-    if (s.kind !== "idle-field-v1" || s.contentHash !== content.contentHash)
+    if (s.kind !== "idle-field-v2" || s.contentHash !== content.contentHash ||
+      s.transportationId !== (content.entry.transportationId ?? null))
       throw new Error("Field checkpoint source/version mismatch");
     checkpointNumber(s.time);
     checkpointNumber(s.remainder, 0, 10);
@@ -562,12 +572,15 @@ export class FieldGame {
       }
     }
     if (this.occupied([to], p.layer)) return faceBlockedStep();
+    let step: ReturnType<FieldConditionPort["prepareStep"]> | null;
     try {
+      step = this.preparePlayerStep();
       p.animation?.move(direction, 0.24);
     } catch (error) {
       this.block(error instanceof Error ? error.message : String(error));
       return false;
     }
+    this.pendingPlayerStep = step;
     p.motion = {
       from: { x: p.x, y: p.y },
       to,
@@ -578,7 +591,15 @@ export class FieldGame {
     return true;
   }
   get movementBlocker(): string | null {
-    return this.options.movementBlocker?.() ?? null;
+    return this.options.movementBlocker?.(this.transportationId, true) ?? null;
+  }
+  private preparePlayerStep() {
+    // Native SetupCharacterData captures the moving corps at move start.
+    // The owner rejects changes to that snapshot before completion; it must
+    // never silently recalculate against a different party at the destination.
+    return this.transportationId !== null && this.options.fieldSteps
+      ? this.options.fieldSteps.prepareStep(this.transportationId)
+      : null;
   }
   confirm(): void {
     if (this.stop) return;
@@ -729,6 +750,24 @@ export class FieldGame {
           return;
         }
         if (m.elapsed >= m.duration) {
+          // Resolve all owned effects before publishing coordinates or starting
+          // destination events. A failed/stale provider leaves this move pending.
+          if (a.id === this.player.id && this.pendingPlayerStep) {
+            try {
+              const step = this.pendingPlayerStep;
+              step.commit();
+              this.pendingPlayerStep = null;
+              if (step.result.soundId !== null)
+                this.presentationOmissions.push({
+                  site: { script: "field-condition-step", index: a.steps, source: this.content.map.source },
+                  kind: "sound",
+                  soundId: step.result.soundId,
+                });
+            } catch (error) {
+              this.block(error instanceof Error ? error.message : String(error));
+              return;
+            }
+          }
           a.animation?.stop();
           a.x = m.to.x;
           a.y = m.to.y;
@@ -916,12 +955,17 @@ export class FieldGame {
             this.block("非角色实体不能移动");
             return;
           }
-          if (actor.id === this.player.id && this.movementBlocker) {
-            this.block(this.movementBlocker, t.move);
+          const moveBlocker = actor.id === this.player.id
+            ? this.options.movementBlocker?.(this.transportationId, false) ?? null
+            : null;
+          if (moveBlocker) {
+            this.block(moveBlocker, t.move);
             return;
           }
           const d = DELTA[t.move.direction];
+          let step: ReturnType<FieldConditionPort["prepareStep"]> | null = null;
           try {
+            if (actor.id === this.player.id) step = this.preparePlayerStep();
             actor.animation?.move(t.move.direction, t.move.secondsPerCell);
           } catch (error) {
             this.block(
@@ -930,6 +974,7 @@ export class FieldGame {
             );
             return;
           }
+          if (actor.id === this.player.id) this.pendingPlayerStep = step;
           actor.direction = t.move.direction;
           actor.motion = {
             from: { x: actor.x, y: actor.y },

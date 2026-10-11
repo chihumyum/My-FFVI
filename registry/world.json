@@ -658,6 +658,66 @@
         "docs/battle-timing.md",
         "docs/poison-conditions.md"
       ]
+    },
+    {
+      "id": "narshe:development-owned-systems-v18",
+      "subject": "narshe",
+      "predicate": "migration.ownedSystems",
+      "value": "Development v18 integrates source ordinary owned initialization, field poison step transactions and WAIT menus/preferences. Opening owners keep 63/4/4 owned abilities, 63 global history IDs including unlearned entries, and only the TINA name tag. 18 source initializations compile and 16 remain blocked; actual story owner creation, growth/learning and actor refresh remain incomplete. Owned state v5 and session/field/world checkpoints v2 preserve abilities/history/names, WAIT preference and independent transportation identity. Move-start snapshots commit once before destination events and battle borrowing; stale or forged transport/state fails atomically. Opening transport is unknown and poisoned movement stays blocked; explicit transport 1 is a controlled probe. Browser HP 63->62->61 restores to 62 and WAIT; 8.1 seconds in WAIT keeps 62, active mode gives 59, one antidote plus controlled victory/return and a field step keeps 59. A workbench victory clock-readout error was fixed and the exit path replayed without console errors. 467 TypeScript and 18 Python tests, source regressions, five encounters, 40 restores and 131 existing idle entrances pass. Normal opening move/pause/WAIT/save availability pass without overwriting user saves. No new playable regions or HD-2D; native receipts remain semanticsVerified=false, full systems and full-game gates incomplete.",
+      "when": {
+        "battleProfile": "narshe-playability-v18",
+        "gameStateProfile": "game-state-development-v1",
+        "saveProfile": "game-checkpoint-v2",
+        "ownedSnapshotVersion": 5
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "build/reports/owned-character-check.json#sha256=3c35b2f7f6f6330f3b8385432be63a8802c0a8f343660f5e14e6d8d544e50ea1",
+        "build/reports/owned-character-native-check.json#sha256=54197c3c2beff0a4c8d822d60f87a633658d6ac339e8be646263a720d53f42e9",
+        "build/reports/field-conditions-check.json#sha256=1faa684f199a74fc75114335b0ba16feb9ffb7f0859176cf11b00070c87aaee4",
+        "build/reports/field-conditions-native-check.json#sha256=348b0c6f2ec839a8a93e057afc437f91afdabf993d8b2af666f2bf7b972fa317",
+        "build/reports/battle-menu-timing-check.json#sha256=7c023266e58ba509aa4b3895cdde435aac3556918b4efdfbab5238ced5cc355d",
+        "build/reports/save-check.json#sha256=01c58c71a990d96c2ec9cbe19af31441146a10c5d53a3a5b215883cb8387352d",
+        "build/reports/systems-v18-browser-check.json#sha256=b7d7030b628d03d112a627ca224b3602679e40b7b3d39cfce512cde3060abeab",
+        "docs/systems-v18.md",
+        "docs/owned-character.md",
+        "docs/field-conditions.md",
+        "docs/battle-timing.md"
+      ]
+    },
+    {
+      "id": "narshe:source-character-name-tags",
+      "subject": "narshe",
+      "predicate": "source.initialCharacterNameBinding",
+      "value": "UpdateNameTag selects character_default_name by character_id and uses tag_name as MessageManager key; mes_id_name only localizes the display name. Source character 1 binds TINA, while 31 and 32 have no matching default-name row and return without binding. This static source observation does not establish dynamic rename dialogue rendering.",
+      "when": {
+        "characterInitializationProfile": "owned-character-initialization-v1"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x338890 UpdateNameTag; 0x8067c0 character-id selector; 0x4a5d70 TagName getter",
+        "character_default_name.csv",
+        "docs/owned-character.md"
+      ]
+    },
+    {
+      "id": "narshe:source-poison-transport-identity",
+      "subject": "narshe",
+      "predicate": "source.fieldPoisonTransportation",
+      "value": "Field MoveEndAction runs condition damage only for current transport type 1. RideVehicleNPC changes rider presentation without proving currentTransport identity; the Magitek mount and operand 6 must not infer transport 6 or poison immunity. Source ordinary condition row 10 uses maxHP/32 integer damage, keeps living HP at least 1, and executes before destination events. The opening transport selection remains unknown.",
+      "when": {
+        "conditionId": 10
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x7da810 MoveEndAction; 0x407ff0 GetPoisonDamageValue; 0x337810 SubtractionHp; 0x2cb0c0 RideVehicleNPC",
+        "condition.csv:10.damage_number",
+        "transportation.csv:type_id",
+        "docs/field-conditions.md"
+      ]
     }
   ],
   "assets": []

@@ -8,6 +8,10 @@ import {
   type BattleClockInput,
 } from "./battle-timing.js";
 import {
+  parseBattlePreferences,
+  type BattlePreferences,
+} from "./battle-preferences.js";
+import {
   initialEnemyBehavior,
   type EnemyBehaviorState,
 } from "./enemy-behavior.js";
@@ -100,6 +104,7 @@ export class BattleGame {
   private aiStates = new Map<string, BattleAIState>();
   private poisonStates = new Map<string, PoisonState>();
   private collected = false;
+  private currentPreferences: BattlePreferences;
   private clockInput = {
     paused: false,
     helpPaused: false,
@@ -122,7 +127,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v17"
+      content.profile !== "narshe-playability-v18"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -135,6 +140,7 @@ export class BattleGame {
       content.timing.atbSpeed <= 0
     )
       throw new Error("Missing battle timing settings");
+    this.currentPreferences = parseBattlePreferences({ mode: content.timing.mode });
     this.items = structuredClone(inventory.definitions);
     validateItemStacks(inventory.stacks, this.items, inventory.limit);
     this.stock = structuredClone(inventory.stacks);
@@ -211,6 +217,22 @@ export class BattleGame {
   get ready() {
     return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued);
   }
+  get preferences(): BattlePreferences {
+    return { ...this.currentPreferences };
+  }
+  setPreferences(preferences: BattlePreferences): void {
+    this.currentPreferences = parseBattlePreferences(preferences);
+  }
+  /** Copies of the effective settings/host inputs for UI, diagnostics and replay.
+   * Source content remains unchanged when a player switches battle mode. */
+  get timingState() {
+    return {
+      mode: this.currentPreferences.mode,
+      atbSpeed: this.content.timing.atbSpeed,
+      input: { ...this.clockInput },
+      gate: this.clockGate(),
+    };
+  }
   /** Host pause/menu inputs are separate from action presentation and ready units. */
   setClockInput(
     input: Pick<
@@ -220,7 +242,7 @@ export class BattleGame {
   ): void {
     battleClockGate({
       ...input,
-      mode: this.content.timing.mode,
+      mode: this.currentPreferences.mode,
       battleResult: 0,
     });
     this.clockInput = { ...input };
@@ -228,7 +250,7 @@ export class BattleGame {
   private clockGate() {
     return battleClockGate({
       ...this.clockInput,
-      mode: this.content.timing.mode,
+      mode: this.currentPreferences.mode,
       battleResult: this.phase === "active" ? 0 : 1,
     });
   }

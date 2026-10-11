@@ -2,6 +2,10 @@ import type { FieldContent } from "../field/types.js";
 import { encounterContent, type BattleCatalog } from "./battle-content.js";
 import { BattleGame } from "./battle.js";
 import { BattleAIError } from "./battle-ai.js";
+import {
+  parseBattlePreferences,
+  type BattlePreferences,
+} from "./battle-preferences.js";
 import { WorldSession, type WorldCheckpoint } from "./world-session.js";
 import {
   GameState,
@@ -16,13 +20,14 @@ import {
 } from "./checkpoint-validation.js";
 
 export type GameCheckpoint = {
-  formatVersion: 1;
+  formatVersion: 2;
   kind: "game-checkpoint";
   sourceSetHash: string;
   battleCatalogHash: string;
   seed: number;
   encounterSerial: number;
   remainder: number;
+  battlePreferences: BattlePreferences;
   owned: GameStateSnapshot;
   world: WorldCheckpoint;
 };
@@ -48,12 +53,16 @@ export class GameSession {
   private encounterSerial = 0;
   private currentSeed = 0;
   private remainder = 0;
+  private currentBattlePreferences: BattlePreferences;
   constructor(
     field: FieldContent,
     readonly battleCatalog: BattleCatalog,
     readonly seed = 20261010,
   ) {
     checkpointInteger(seed, 0, 0xffffffff);
+    this.currentBattlePreferences = parseBattlePreferences({
+      mode: battleCatalog.common.timing.mode,
+    });
     if (field.sourceSetHash !== battleCatalog.common.fieldSourceSetHash)
       throw new Error("Field/battle source mismatch");
     this.state = new GameState(
@@ -67,10 +76,19 @@ export class GameSession {
         inventory: this.state.fieldInventory,
         party: this.state.fieldParty,
         roster: this.state.fieldRoster,
-        movementBlocker: () => this.state.fieldMovementBlocker,
+        ...(battleCatalog.gameState.fieldConditions ? { fieldSteps: this.state.fieldSteps } : {}),
+        movementBlocker: (transportationId, manual) => this.state.fieldMoveBlocker(transportationId, manual),
       },
       prepare: () => this.state.prepareFieldState(),
     });
+  }
+  get battlePreferences(): BattlePreferences {
+    return { ...this.currentBattlePreferences };
+  }
+  setBattlePreferences(value: BattlePreferences): void {
+    const next = parseBattlePreferences(value);
+    this.battle?.setPreferences(next);
+    this.currentBattlePreferences = next;
   }
   get checkpointReady(): boolean {
     return (
@@ -92,13 +110,14 @@ export class GameSession {
     if (!this.checkpointReady)
       throw new Error("Cannot save during battle, movement or an event");
     return {
-      formatVersion: 1,
+      formatVersion: 2,
       kind: "game-checkpoint",
       sourceSetHash: this.field.content.parentSourceSetHash,
       battleCatalogHash: this.battleCatalog.contentHash,
       seed: this.seed,
       encounterSerial: this.encounterSerial,
       remainder: this.remainder,
+      battlePreferences: this.battlePreferences,
       owned: this.state.snapshot(),
       world: this.world.checkpoint(),
     };
@@ -112,10 +131,10 @@ export class GameSession {
     const s = structuredClone(raw);
     checkpointKeys(
       s,
-      "formatVersion,kind,sourceSetHash,battleCatalogHash,seed,encounterSerial,remainder,owned,world",
+      "formatVersion,kind,sourceSetHash,battleCatalogHash,seed,encounterSerial,remainder,battlePreferences,owned,world",
     );
     if (
-      s.formatVersion !== 1 ||
+      s.formatVersion !== 2 ||
       s.kind !== "game-checkpoint" ||
       s.sourceSetHash !== initial.parentSourceSetHash ||
       s.battleCatalogHash !== battle.contentHash
@@ -126,6 +145,7 @@ export class GameSession {
     checkpointNumber(s.remainder, 0, 10);
     if (s.remainder >= 10) throw new Error("Invalid session remainder");
     const next = new GameSession(initial, battle, s.seed);
+    next.setBattlePreferences(s.battlePreferences);
     next.state.restore(s.owned);
     if (s.encounterSerial !== s.owned.completedBattles.length)
       throw new Error("Saved encounter sequence disagrees with rewards");
@@ -172,6 +192,7 @@ export class GameSession {
             this.state.battleInventory(lease),
             this.state.battleProgression(lease),
           );
+          this.battle.setPreferences(this.currentBattlePreferences);
           this.battleLease = lease;
           this.encounterSerial++;
         } catch (error) {
@@ -212,6 +233,7 @@ export class GameSession {
       this.state.battleInventory(this.battleLease),
       this.state.battleProgression(this.battleLease),
     );
+    this.battle.setPreferences(this.currentBattlePreferences);
     return true;
   }
 }

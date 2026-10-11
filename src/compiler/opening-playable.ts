@@ -17,6 +17,7 @@ import { compileBattleConditionCatalog } from "./conditions.js";
 import { compileBattleCommand } from "./commands.js";
 import { compileBattleAI, battleAIAbilities } from "./battle-ai.js";
 import { compileGameState } from "./game-state.js";
+import { compileFieldConditionCatalog } from "./field-conditions.js";
 import {
   compileEquipmentCatalog,
   compileEquipmentParameterContext,
@@ -146,8 +147,10 @@ export async function compileOpeningPlayable(
     magicEvasion: 0,
   };
   const abilities: BattleContent["abilities"] = {};
-  for (const a of rows("ability.csv")) {
-    const id = int(a.id);
+  // Initialization preserves locked/unused skills without admitting their
+  // entire execution dependency graph into this development battle profile.
+  for (const id of source.battleAbilityIds) {
+    const a = row("ability.csv", id);
     const contents = rows("content.csv").filter(
       (c) => c.type_id === "4" && c.type_value === a.id,
     );
@@ -347,7 +350,7 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v17",
+    profile: "narshe-playability-v18",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,
@@ -376,15 +379,27 @@ export async function compileOpeningPlayable(
     ),
     limitations: [
       "纳尔谢街道可玩开发规则；未经原版一致性验收，不代表完整战斗系统。",
-      "已准入的数值分支、ATB、蓄力与时钟门控已按本版来源接入；固定 10 ms 推进、400/900 ms 动作表现和 UI 时速设置仍是临时策略，原生动态语义尚未验证。初始能力解锁与成长仍限当前开发配置。",
+      "已准入的数值分支、ATB、蓄力与时钟门控已按本版来源接入；即时/等待模式及技能、道具菜单已接入，时速固定为 1。固定 10 ms 推进与 400/900 ms 动作表现仍是临时策略，原生动态语义尚未验证。初始持有能力已来源绑定，活动战斗能力仍限受控子集，完整成长/学习未完成。",
       "初始数值使用分阶段属性确认；成长追加、Correction、临时与被动输入仍按开场检查点显式给零，未恢复通用状态/装备能力。",
-      "当前开放三种射线和治愈原力，以及来源普通 HP/MP 恢复、玩家复活、解除沉默和普通毒的道具；道具目前限我方目标。普通毒的战斗周期、属性相性和解除已接入；特殊毒 row 88、石化等其他活动状态、特殊道具、逃跑与完整战斗脚本仍阻塞。地图毒步伤未迁移，当前编队带毒时移动会明确阻塞，可先在菜单解毒。",
+      "当前开放三种射线和治愈原力，以及来源普通 HP/MP 恢复、玩家复活、解除沉默和普通毒的道具；道具目前限我方目标。普通毒的战斗周期、属性相性、地图步伤和解除已接入；开场 currentTransport 身份尚未恢复，不能从魔导装甲外观推断，有毒时移动仍明确阻塞，可先菜单解毒。特殊毒 row 88、其他活动状态、特殊道具、逃跑与完整战斗脚本仍阻塞。",
       "角色、库存、普通换装与奖励由共享状态保存，可在稳定地图检查点保存/读取。剧情普通物品授予/移除和部分收费指令已接入；特殊装备、掉落与商店尚未完成，开场没有额外发放测试药品或备用装备。",
       "站位、夹击队形、骑乘拼接和光束是临时二维表现；原版音效、特效、动画时序尚未接入。",
       "敌方行动使用来源 AI、独立回合与变量，连续行动整组入队。普通反击按命中结果触发并优先执行，保留原行动条；最终攻击、恢复专用反应、完整自动目标及特殊指令仍未接入，未知依赖会明确停止。",
     ],
   };
   const gameState = compileGameState(source, name);
+  gameState.characterInitializations = Object.fromEntries(
+    source.initialParty.map((p) => {
+      const template = structuredClone(source.ownedInitializations[p.characterId]!);
+      template.initial.name = name(template.nameKey);
+      return [`player:${p.characterId}`, template];
+    }),
+  );
+  gameState.fieldConditions = compileFieldConditionCatalog(
+    parameterReader,
+    conditions,
+    rows("transportation.csv").map((r) => int(r.id)),
+  ).catalog;
   const equipment = compileEquipmentCatalog(
     parameterReader,
     rows("content.csv")

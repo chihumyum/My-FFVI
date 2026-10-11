@@ -82,6 +82,14 @@
             <h2>已暂停</h2>
             <button id="resume">继续</button
             ><button id="restart">重新开始此片段</button>
+            <div class="battle-settings">
+              <label for="battle-mode">战斗模式</label>
+              <select id="battle-mode" aria-describedby="battle-mode-help">
+                <option value="active">即时</option>
+                <option value="wait">等待</option>
+              </select>
+              <p id="battle-mode-help">等待模式下，选择技能、道具和目标时暂停 ATB。</p>
+            </div>
             <section id="owned-state" aria-label="队伍与库存">
               <div>
                 <h3>队伍</h3>

@@ -57,7 +57,10 @@
     "roster-lifecycle:check": "npm run battle:build && node scripts/check-roster-lifecycle-native.mjs && node scripts/check-roster-lifecycle.mjs",
     "poison:check": "npm run battle:build && node scripts/check-poison.mjs",
     "battle-timing:check": "npm run battle:build && node scripts/check-battle-timing.mjs --native build/runtime/game/GameAssembly.dll",
-    "inventory-ownership:check": "npm run inventory-events:check"
+    "inventory-ownership:check": "npm run inventory-events:check",
+    "field-conditions:check": "npm run battle:build && node scripts/check-field-conditions-native.mjs && node scripts/check-field-conditions.mjs",
+    "owned-character:check": "npm run battle:build && node scripts/check-owned-character-native.mjs && node scripts/check-owned-character.mjs",
+    "battle-menu-timing:check": "npm run battle:build && node scripts/check-battle-menu-timing.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

@@ -3,6 +3,25 @@ const $ = (id) => document.getElementById(id);
 const label = (node, text) => {
   if (node.textContent !== text) node.textContent = text;
 };
+/** Web interaction states, deliberately independent of the native UI enum.
+ * Their timing roles match the recovered KeyInput waiting/force-wait rules. */
+export function battleMenuWaiting(state) {
+  switch (state) {
+    case "none":
+    case "command":
+      return { uiWaiting: false, forceWaiting: false };
+    case "ability":
+    case "ability-target":
+    case "item":
+    case "item-target":
+      return { uiWaiting: true, forceWaiting: false };
+    case "special-input":
+    case "slot":
+      return { uiWaiting: false, forceWaiting: true };
+    default:
+      throw new Error("Unknown Web battle menu state");
+  }
+}
 export class BattleView {
   constructor(canvas, content, images, onReturn, onRetry) {
     this.canvas = canvas;
@@ -14,25 +33,87 @@ export class BattleView {
     this.commandId = null;
     this.key = "";
     this.instance = null;
+    this.paused = false;
+    this.specialInput = null;
+    this.revision = 0;
     $("battle-return").onclick = onReturn;
     $("battle-retry").onclick = onRetry;
     this.rows = new Map();
     $("party").replaceChildren();
   }
   hide() {
+    this.resetMenu();
+    this.selected = null;
+    this.publishClock();
+    this.instance = null;
     $("battle-ui").hidden = true;
     $("battle-result").hidden = true;
   }
+  resetMenu() {
+    this.actionSource = null;
+    this.commandId = null;
+    this.specialInput = null;
+    this.key = "";
+    this.revision++;
+  }
+  get menuState() {
+    if (!this.instance || this.instance.phase !== "active" || this.selected === null)
+      return "none";
+    if (this.specialInput !== null) return this.specialInput;
+    if (this.actionSource !== null)
+      return this.actionSource.kind === "item" ? "item-target" : "ability-target";
+    if (this.commandId !== null)
+      return this.content.commands[this.commandId].kind === "item" ? "item" : "ability";
+    return "command";
+  }
+  publishClock() {
+    if (!this.instance) return;
+    this.instance.setClockInput({
+      ...this.instance.timingState.input,
+      paused: this.paused,
+      ...battleMenuWaiting(this.menuState),
+    });
+    $("battle-menu").setAttribute("data-menu-state", this.menuState);
+    $("battle-menu").setAttribute("data-battle-mode", this.instance.preferences.mode);
+  }
+  /** Explicit hook for a future supported input provider. No special command
+   * is enabled by this hook; its owner must complete/cancel and release it. */
+  setSpecialInput(state) {
+    if (state !== null && state !== "special-input" && state !== "slot")
+      throw new Error("Unknown Web special input state");
+    if (!this.instance || this.instance.phase !== "active" || this.selected === null)
+      return false;
+    if (state !== null && this.paused) return false;
+    this.specialInput = state;
+    this.key = "";
+    this.sync(this.instance, this.paused);
+    return true;
+  }
+  commandUsesList(actor, commandId) {
+    const command = this.content.commands[commandId];
+    return command.kind === "item" ||
+      command.abilityIds.filter((id) => actor.abilities.includes(id)).length !== 1;
+  }
   back() {
+    if (this.paused || this.specialInput !== null) return false;
     if (this.actionSource !== null) {
       this.actionSource = null;
+      const actor = this.instance?.ready.find((p) => p.id === this.selected);
+      if (!actor || !this.commandUsesList(actor, this.commandId)) this.commandId = null;
+      this.key = "";
+      if (this.instance) this.sync(this.instance, this.paused);
+      return true;
+    }
+    if (this.commandId !== null) {
       this.commandId = null;
       this.key = "";
+      if (this.instance) this.sync(this.instance, this.paused);
       return true;
     }
     return false;
   }
   keyboard(e) {
+    if (this.paused || !this.instance || this.instance.phase !== "active") return;
     if (
       ![
         "ArrowUp",
@@ -67,13 +148,13 @@ export class BattleView {
     }
   }
   sync(battle, paused) {
+    if (typeof paused !== "boolean") throw new Error("Missing battle pause state");
+    this.paused = paused;
     if (this.instance !== battle) {
       this.content = battle.content;
       this.instance = battle;
       this.selected = null;
-      this.actionSource = null;
-      this.commandId = null;
-      this.key = "";
+      this.resetMenu();
     }
     const party = $("party"),
       memberIds = new Set(battle.players.map((p) => p.id)),
@@ -83,8 +164,7 @@ export class BattleView {
       ready = battle.players.filter((p) => readyIds.has(p.id));
     if (!ready.some((p) => p.id === this.selected)) {
       this.selected = ready[0]?.id ?? null;
-      this.actionSource = null;
-      this.commandId = null;
+      this.resetMenu();
     }
     for (const [id, row] of this.rows) {
       if (memberIds.has(id)) continue;
@@ -103,10 +183,11 @@ export class BattleView {
         meter.max = 100;
         button.append(name, hp, meter);
         button.onclick = () => {
+          if (this.paused || this.specialInput !== null || this.instance?.phase !== "active" ||
+            !this.instance?.ready.some((member) => member.id === p.id)) return;
           this.selected = p.id;
-          this.actionSource = null;
-          this.commandId = null;
-          this.key = "";
+          this.resetMenu();
+          this.sync(this.instance, this.paused);
         };
         row = { button, name, hp, meter };
         this.rows.set(p.id, row);
@@ -123,13 +204,14 @@ export class BattleView {
       label(row.hp, `${p.hp} / ${p.maxHp}`);
       row.meter.value = p.atb;
       row.meter.setAttribute("aria-label", p.name + " 行动条");
-      row.button.disabled = !readyIds.has(p.id);
+      row.button.disabled = paused || this.specialInput !== null || !readyIds.has(p.id);
       row.button.classList.toggle("selected", p.id === this.selected);
       row.button.classList.toggle("fallen", p.hp === 0);
     }
     $("battle-ui").hidden = paused || battle.phase !== "active";
     $("battle-result").hidden = paused || battle.phase === "active";
     if (battle.phase !== "active") {
+      this.publishClock();
       label(
         $("battle-result-title"),
         battle.phase === "victory" ? "战斗胜利" : "队伍倒下了",
@@ -157,6 +239,7 @@ export class BattleView {
       return;
     }
     const actor = ready.find((p) => p.id === this.selected);
+    if (this.commandId !== null && !actor?.commands.includes(this.commandId)) this.resetMenu();
     const canUse = (source, commandId) =>
       source.kind === "ability"
         ? battle.canUse(actor.id, source.id, commandId)
@@ -210,46 +293,65 @@ export class BattleView {
       options,
       ready.map((p) => p.id),
       targets,
+      paused,
+      this.specialInput,
     ]);
+    this.publishClock();
     label($("battle-action"), battle.events.at(-1)?.text ?? "");
     if (key === this.key) return;
     this.key = key;
+    const revision = ++this.revision;
     const menu = $("battle-menu"),
       focused = menu.contains(document.activeElement);
     menu.replaceChildren();
     const title = document.createElement("strong");
     title.textContent = actor
-      ? `${actor.name} · ${this.actionSource === null ? (actor.commands.length === 1 ? this.content.commands[actor.commands[0]].name : "行动") : "选择目标"}`
+      ? `${actor.name} · ${this.specialInput !== null ? "特殊输入中…" : this.actionSource !== null ? "选择目标" : this.commandId !== null ? this.content.commands[this.commandId].name : "选择指令"}`
       : "等待行动条…";
     menu.append(title);
-    if (!actor) return;
+    if (!actor || this.specialInput !== null) return;
     const choices = document.createElement("div");
     choices.className = "battle-choices";
     menu.append(choices);
     const add = (text, disabled, click) => {
       const b = document.createElement("button");
       b.textContent = text;
-      b.disabled = disabled;
-      b.onclick = click;
+      b.disabled = disabled || paused;
+      b.onclick = () => {
+        if (this.instance !== battle || this.paused || revision !== this.revision ||
+          battle.phase !== "active" || !battle.ready.some((p) => p.id === actor.id)) return;
+        click();
+      };
       choices.append(b);
       return b;
     };
-    if (this.actionSource === null)
-      for (const { source, commandId, usable, name } of options) {
+    if (this.commandId === null) {
+      for (const commandId of actor.commands) {
+        const command = this.content.commands[commandId];
+        const commandOptions = options.filter((option) => option.commandId === commandId);
+        const usesList = this.commandUsesList(actor, commandId);
+        add(command.name, !usesList && !commandOptions[0]?.usable, () => {
+          this.commandId = commandId;
+          this.actionSource = usesList ? null : commandOptions[0].source;
+          this.key = "";
+          this.sync(battle, this.paused);
+        });
+      }
+    } else if (this.actionSource === null) {
+      for (const { source, commandId, usable, name } of options.filter((option) => option.commandId === this.commandId)) {
         add(
-          actor.commands.length === 1
-            ? name
-            : `${this.content.commands[commandId].name} · ${name}`,
+          name,
           !usable,
           () => {
             this.actionSource = source;
             this.commandId = commandId;
             this.key = "";
-            this.sync(battle, false);
+            this.sync(battle, this.paused);
           },
         );
       }
-    else {
+      add("返回", false, () => this.back());
+    } else {
       for (const choice of targets) {
         const selection = choice.selection;
         const t = battle.combatants.find((c) => c.id === choice.targetIds[0]);
@@ -279,18 +381,14 @@ export class BattleView {
                   this.commandId,
                 )
           ) {
-            this.actionSource = null;
+            this.resetMenu();
             this.selected = null;
-            this.key = "";
             this.canvas.focus();
-            this.sync(battle, false);
           }
+          this.sync(battle, this.paused);
         });
       }
-      add("返回", false, () => {
-        this.back();
-        this.sync(battle, false);
-      });
+      add("返回", false, () => this.back());
     }
     if (focused) menu.querySelector("button:not(:disabled)")?.focus();
   }

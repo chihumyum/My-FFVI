@@ -18,6 +18,47 @@ function win(game: GameSession) {
   }
   assert.equal(game.battle?.phase, "victory");
 }
+test("battle preferences survive save, next encounter and retry without changing source content", () => {
+  const f = checkpointFixture();
+  const original = structuredClone(f.battle);
+  f.game.setBattlePreferences({ mode: "wait" });
+  const copy = GameSession.restore(f.game.checkpoint(), f.field, f.battle);
+  assert.deepEqual(copy.battlePreferences, { mode: "wait" });
+  const exposed = copy.battlePreferences;
+  exposed.mode = "active";
+  assert.equal(copy.battlePreferences.mode, "wait");
+  copy.field.startEvent("fight");
+  copy.advance(10);
+  assert.equal(copy.battle!.preferences.mode, "wait");
+  copy.setBattlePreferences({ mode: "active" });
+  assert.equal(copy.battle!.preferences.mode, "active");
+  assert.throws(() => copy.setBattlePreferences({ mode: "bad" as "active" }));
+  assert.equal(copy.battlePreferences.mode, "active");
+  for (const member of copy.battle!.players) {
+    member.hp = 0;
+    member.conditionIds = [305];
+  }
+  copy.advance(10);
+  assert.equal(copy.battle!.phase, "defeat");
+  assert.equal(copy.retryBattle(), true);
+  assert.equal(copy.battle!.preferences.mode, "active");
+  assert.deepEqual(f.battle, original);
+});
+
+test("checkpoint rejects unknown preferences and the previous schema before changing the session", () => {
+  const f = checkpointFixture();
+  const valid = f.game.checkpoint();
+  for (const preferences of [null, {}, { mode: "turbo" }, { mode: "wait", speed: 2 }]) {
+    const bad = structuredClone(valid);
+    Object.assign(bad, { battlePreferences: preferences });
+    assert.throws(() => GameSession.restore(bad, f.field, f.battle));
+    assert.deepEqual(f.game.checkpoint(), valid);
+  }
+  const old = structuredClone(valid);
+  Object.assign(old, { formatVersion: 1 });
+  assert.throws(() => GameSession.restore(old, f.field, f.battle), /version mismatch/);
+});
+
 test("checkpoint carries party, quantities, flags, groups, doors and looping media without replaying field initialization", () => {
   const f = checkpointFixture(),
     { game } = f;

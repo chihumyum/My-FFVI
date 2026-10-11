@@ -44,7 +44,7 @@ const make = () =>
     catalog.common.conditions,
   );
 const initial = make().snapshot();
-assert.equal(initial.formatVersion, 4);
+assert.equal(initial.formatVersion, 5);
 assert.deepEqual(
   initial.roster.map((p) => [p.sourceId, p.enabled]),
   [

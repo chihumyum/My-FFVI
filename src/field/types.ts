@@ -209,6 +209,8 @@ export type FieldContent = {
   scripts: Record<string, Op[]>;
   scriptLocals?: Record<string, ScriptLocals | null>;
   entry: {
+    /** Current TransportationInfo identity. Rider artwork is independent. */
+    transportationId?: number;
     player: Point & {
       direction: Direction;
       layer: number;
