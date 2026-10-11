@@ -83,7 +83,7 @@ for (const d of admitted) {
   assert.deepEqual(target, before); abilityProbes++;
 }
 for (const defense of [0, 64, 255]) for (const critical of [false, true]) for (const defended of [false, true]) {
-  const input = { rules: { normalAttack: true, multiplyPercent: null, contentFlags: [] }, power: 0,
+  const input = { rows: { actor: "front", target: "front", ignoreActorPenalty: false, ignoreTargetPenalty: false }, rules: { normalAttack: true, multiplyPercent: null, contentFlags: [] }, power: 0,
     actor: { side: "player", level: 10, attackElements: [], attack: 40, strength: 30, accuracy: 100, criticalRate: 3 },
     target: { side: "enemy", defense, evasion: 0, elementResistances: {}, conditionTypes: defended ? [19, 1] : [19] }, targetCount: 1 };
   const random = [31, 0, critical ? 0 : 99];

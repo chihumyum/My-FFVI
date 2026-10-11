@@ -2,6 +2,7 @@ import type { FieldContent } from "../field/types.js";
 import { encounterContent, battleDefinitionBlocker, type BattleCatalog } from "./battle-content.js";
 import { BattleGame } from "./battle.js";
 import { EventState } from "./event-state.js";
+import type { ShopTradeRequest } from "./shop.js";
 import { projectBattleFieldState } from "./field-battle-entry.js";
 import {
   parseBattlePreferences,
@@ -87,6 +88,7 @@ export class GameSession {
         party: this.state.fieldParty,
         roster: this.state.fieldRoster,
         ownedConditions: this.state.fieldOwnedConditions,
+        shop: this.state.fieldShop,
         ...(battleCatalog.gameState.fieldConditions ? { fieldSteps: this.state.fieldSteps } : {}),
         ...(this.state.fieldPartyAppearance ? { partyAppearance: this.state.fieldPartyAppearance } : {}),
         movementBlocker: (transportationId, manual) => this.state.fieldMoveBlocker(transportationId, manual),
@@ -117,6 +119,28 @@ export class GameSession {
   changeEquipment(playerId: string, slot: number, contentId: number): boolean {
     if (!this.checkpointReady) return false;
     return this.state.changeEquipment(playerId, slot, contentId);
+  }
+  private requireShop() {
+    const shop = this.field.currentShop;
+    if (this.battle || this.battleLease || this.state.inBattle || this.field.stop || !shop)
+      throw new Error("No ordinary shop is open");
+    return shop;
+  }
+  shopOptions() {
+    return this.state.shopOptions(this.requireShop().groupId);
+  }
+  tradeShop(request: ShopTradeRequest) {
+    const shop = this.requireShop(), field = this.field;
+    const transaction = this.state.prepareShopTrade(shop.groupId, request);
+    const current = this.requireShop();
+    if (this.field !== field || current.id !== shop.id || current.groupId !== shop.groupId)
+      throw new Error("Shop changed before trade confirmation");
+    transaction.commit();
+    return transaction.plan;
+  }
+  closeShop(): boolean {
+    if (this.battle || this.battleLease || this.state.inBattle) return false;
+    return this.field.closeShop();
   }
   checkpoint(): GameCheckpoint {
     if (!this.checkpointReady)

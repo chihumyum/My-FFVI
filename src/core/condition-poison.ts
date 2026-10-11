@@ -2,6 +2,7 @@ import {
   validateElementResistances,
   type ElementResistances,
 } from "./elements.js";
+import { conditionProgressCycleSeconds } from "./condition-speed.js";
 
 export type PoisonDefinition = { id: number; hpDivisor: number };
 /** Battle-local runtime state. Stable field saves retain condition identities,
@@ -29,20 +30,11 @@ export type PoisonAdvanceInput = {
   isTimeStopped: boolean;
 };
 
-/** CalcATBProgressCycleForVital(unit, 1), despite its name, uses only the
- * condition cycle coefficient and ATBSpeed. Haste/slow providers are not yet
- * admitted by BattleConditions; the source neutral coefficient is 16. */
-function cycle(atbSpeed: number): number {
-  const speed = Math.fround(atbSpeed);
-  const result = Math.fround(16 / speed);
-  if (
-    !Number.isFinite(atbSpeed) ||
-    !Number.isFinite(speed) ||
-    speed <= 0 ||
-    !Number.isFinite(result) ||
-    result <= 0 ||
-    Math.fround(result * 0.5) <= 0
-  )
+/** The type1 provider uses confirmed current condition TYPES. Row identities
+ * are deliberately not interpreted here; the owning catalog resolves them. */
+function cycle(conditionTypes: readonly number[], atbSpeed: number): number {
+  const result = conditionProgressCycleSeconds(conditionTypes, atbSpeed);
+  if (Math.fround(result * 0.5) <= 0)
     throw new Error("Invalid poison ATB speed");
   return result;
 }
@@ -110,8 +102,9 @@ export function reconcilePoisonClocks(
   conditionIds: readonly number[],
   previousState: Readonly<PoisonState>,
   atbSpeed: number,
+  conditionTypes: readonly number[],
 ): PoisonState {
-  const thresholdSeconds = Math.fround(cycle(atbSpeed) * 0.5);
+  const thresholdSeconds = Math.fround(cycle(conditionTypes, atbSpeed) * 0.5);
   const all = definitions(behaviors);
   const previous = validateState(all, previousState);
   return activeIds(all, conditionIds).map((conditionId) => {
@@ -162,8 +155,9 @@ function tickHp(
 export function advancePoisonClocks(
   behaviors: readonly PoisonDefinition[],
   input: PoisonAdvanceInput,
+  conditionTypes: readonly number[],
 ): { hp: number; state: PoisonState; ticks: PoisonTick[] } {
-  const nextThreshold = cycle(input.atbSpeed);
+  const nextThreshold = cycle(conditionTypes, input.atbSpeed);
   const all = definitions(behaviors);
   const active = activeIds(all, input.conditionIds);
   const clocks = validateState(all, input.state);

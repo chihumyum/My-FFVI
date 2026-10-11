@@ -8,6 +8,17 @@ import { GameState } from "../dist/src/core/game-state.js";
 import { BattleGame } from "../dist/src/core/battle.js";
 import { projectBattleFieldState } from "../dist/src/core/field-battle-entry.js";
 
+/** Actual source-owned opening stock and six-slot identities. Numerical probes
+ * may grant controlled actions, but row/cost providers still use owned data. */
+export function sourceBattleInventory(catalog, encounterId = 3) {
+  const state = new GameState(catalog.gameState, catalog.common.players,
+    catalog.contentHash, catalog.common.conditions);
+  const lease = state.openBattle(encounterId);
+  const inventory = state.battleInventory(lease);
+  state.cancelBattle(lease);
+  return inventory;
+}
+
 export function sourceBattleContent(catalog, encounterId) {
   const content = structuredClone(encounterContent(catalog, encounterId));
   assert.ok(content, "Missing source probe encounter");

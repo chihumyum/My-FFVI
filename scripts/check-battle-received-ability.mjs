@@ -1,3 +1,4 @@
+import { sourceBattleInventory } from "./battle-probe-context.mjs";
 // Independent raw-operand expectations and unchanged source-AI host probes.
 // This checks a development mechanism; it is not native dynamic parity.
 import assert from "node:assert/strict";
@@ -226,9 +227,9 @@ function sourceHost(missed, parts) {
   // The unchanged AI mechanism host must not erase that full-enemy boundary.
   const withSourceConditions = structuredClone(content);
   withSourceConditions.enemies[0].conditionIds = [...initialConditionIds];
-  assert.throws(() => new BattleGame(withSourceConditions, 509),
+  assert.throws(() => new BattleGame(withSourceConditions, 509, undefined, sourceBattleInventory(catalog)),
     /Unimplemented active battle condition: 93/);
-  const battle = new BattleGame(content, 509);
+  const battle = new BattleGame(content, 509, undefined, sourceBattleInventory(catalog));
   assert.ok(battle.command(player.id, 1, enemy.id, 900001));
   for (const dt of parts) battle.advance(dt);
   assert.equal(battle.action.source.id, 1);

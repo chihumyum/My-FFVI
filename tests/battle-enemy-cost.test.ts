@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BattleGame } from "../src/core/battle.js";
+import { ControlledBattleGame as BattleGame } from "./fixtures/controlled-battle.js";
+import { BattleGame as SourceBattleGame } from "../src/core/battle.js";
 import { fixture } from "./fixtures/battle-content.js";
 import { syntheticAI } from "./fixtures/battle-ai.js";
 import { battleEntryRuntimeFixture } from "./fixtures/battle-entry-runtime.js";
@@ -132,12 +133,13 @@ test("unknown hand eligibility preserves confirmed duplicate relic records and i
   qualification.members[0]!.equipment.splice(4, 2, 701, 701);
   qualification.equipmentCatalog.characters[1000]!.hasTwoSwordStyle = true;
   content.battleEntry!.items.push({ id: 701, type: 3, listType: 0, throwFlag: 0, battleFunctionGroupId: 0 });
+  content.battleRows!.equipment.push({ contentId: 701, weapon: null });
   content.players[0]!.ownedAbilities!.abilities.owned.push(
     structuredClone(relic.abilityCost!.ability), structuredClone(relic.abilityCost!.ability));
   content.battleAbilities!.abilities.push({ id: relic.abilityCost!.ability.abilityId, typeId: 0, groupId: 0, range: 0 });
   content.abilities[11]!.cost = 3;
   const before = structuredClone({ content, inventory });
-  const battle = new BattleGame(content, 1753, undefined, inventory);
+  const battle = new SourceBattleGame(content, 1753, undefined, inventory);
   assert.equal(battle.itemQualification("a").canChangeEquipment, null);
   assert.equal(battle.commandMenu("a").find((command) => command.id === 3)!.available, true);
   assert.equal(battle.canUseItem("a", 10001, 3), true);
@@ -147,5 +149,5 @@ test("unknown hand eligibility preserves confirmed duplicate relic records and i
   assert.deepEqual({ content, inventory }, before);
   const malformed = structuredClone(content);
   malformed.players[0]!.ownedAbilities!.abilities.owned.pop();
-  assert.throws(() => new BattleGame(malformed, 1753, undefined, inventory), /passive.*mismatch/);
+  assert.throws(() => new SourceBattleGame(malformed, 1753, undefined, inventory), /passive.*mismatch/);
 });

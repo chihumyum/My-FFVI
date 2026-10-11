@@ -1,3 +1,4 @@
+import { sourceBattleInventory } from "./battle-probe-context.mjs";
 // Supplied-build death/revival probes; controlled party context, no story unlock.
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
@@ -28,7 +29,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v24");
+assert.equal(catalog.common.profile, "narshe-playability-v25");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const conditions = compileBattleConditionCatalog(
   reader,
@@ -109,7 +110,7 @@ for (const id of [34, 35])
     for (const hp of [1, 7, 80, 9999]) {
       const content = fixture(id, deathId, hp);
       function run(partitions) {
-        const battle = new BattleGame(content, 113);
+        const battle = new BattleGame(content, 113, undefined, sourceBattleInventory(catalog));
         const actor = battle.players[0],
           target = battle.players[1];
         assert.equal(target.hp, 0);
@@ -138,7 +139,7 @@ for (const id of [34, 35])
       });
     }
 // Two source Raise actions: later resolution misses without healing the survivor.
-const pair = new BattleGame(fixture(34), 117);
+const pair = new BattleGame(fixture(34), 117, undefined, sourceBattleInventory(catalog));
 pair.command(pair.players[0].id, 34, pair.players[1].id);
 pair.command(pair.players[2].id, 34, pair.players[1].id);
 pair.advance(6000);

@@ -7,12 +7,23 @@ import {
   type ProtectionBehavior,
 } from "./protection.js";
 import {
+  advanceSlowClocks,
+  conditionAtbSpeedPercent,
+  hasteConditionType,
+  reconcileSlowClocks,
+  slowConditionType,
+  validateSpeedBehavior,
+  type SlowState,
+  type SpeedBehavior,
+} from "./condition-speed.js";
+import {
   advancePoisonClocks,
   reconcilePoisonClocks,
   type PoisonAdvanceInput,
   type PoisonState,
 } from "./condition-poison.js";
 export type { PoisonState, PoisonTick } from "./condition-poison.js";
+export type { SlowState } from "./condition-speed.js";
 
 /** Only behavior functions whose state dependencies are implemented are admitted.
  * The full master catalog remains available for references and conflict rules. */
@@ -25,6 +36,7 @@ export type BattleConditionCatalog = {
     | { id: number; kind: "defend"; name: string; untilType: 1 }
     | { id: number; kind: "silence"; name: string; untilType: 2 }
     | ProtectionBehavior
+    | SpeedBehavior
     | { id: number; kind: "unable-fight"; name: string; untilType: 3 }
     | { id: number; kind: "dying"; name: string; untilType: 3 }
     /** No timer or numeric modifier; a battle appearance host must execute
@@ -89,6 +101,7 @@ export class BattleConditions {
     if (this.behaviors.size !== catalog.behaviors.length)
       throw new Error("Duplicate battle condition behavior");
     for (const b of this.behaviors.values()) {
+      if (b.kind === "haste" || b.kind === "slow") validateSpeedBehavior(b);
       if (
         (typeof b.name !== "string" || (!b.name && !["magitek", "defend"].includes(b.kind))) ||
         !(b.kind === "defend"
@@ -99,6 +112,9 @@ export class BattleConditions {
           : b.kind === "physical-protection" || b.kind === "magic-protection"
           ? b.untilType === 2 && this.definitions.get(b.id)?.overlapped === false &&
             this.definitions.get(b.id)?.type === (b.kind === "physical-protection" ? physicalProtectionType : magicProtectionType)
+          : b.kind === "haste" || b.kind === "slow"
+          ? b.untilType === 2 && this.definitions.get(b.id)?.overlapped === false &&
+            this.definitions.get(b.id)?.type === (b.kind === "haste" ? hasteConditionType : slowConditionType)
           : b.untilType === 3 &&
             ((b.kind === "unable-fight" &&
               this.definitions.get(b.id)?.type === 5) ||
@@ -156,6 +172,29 @@ export class BattleConditions {
     this.validateActive(ids);
     return ids.map((id) => this.definitions.get(id)!.type);
   }
+  private speedBehaviors(): SpeedBehavior[] {
+    return [...this.behaviors.values()].filter((b): b is SpeedBehavior =>
+      b.kind === "haste" || b.kind === "slow");
+  }
+  speedPercent(ids: readonly number[]): number {
+    this.validateActive(ids);
+    return conditionAtbSpeedPercent(this.speedBehaviors(), ids);
+  }
+  reconcileSlowState(
+    ids: readonly number[],
+    previous: Readonly<SlowState>,
+  ): SlowState {
+    this.validateActive(ids);
+    return reconcileSlowClocks(this.speedBehaviors(), ids, previous);
+  }
+  advanceSlow(
+    ids: readonly number[],
+    state: Readonly<SlowState>,
+    seconds: number,
+  ): SlowState {
+    this.validateActive(ids);
+    return advanceSlowClocks(this.speedBehaviors(), ids, state, seconds);
+  }
   magitekIds(ids: readonly number[]): number[] {
     this.validateActive(ids);
     const result = ids.filter((id) => this.behaviors.get(id)!.kind === "magitek");
@@ -182,6 +221,7 @@ export class BattleConditions {
       conditionIds,
       previousState,
       atbSpeed,
+      this.types(conditionIds),
     );
   }
   advancePoison(input: PoisonAdvanceInput) {
@@ -189,6 +229,7 @@ export class BattleConditions {
     return advancePoisonClocks(
       [...this.behaviors.values()].filter((b) => b.kind === "poison"),
       input,
+      this.types(input.conditionIds),
     );
   }
   /** IfNeededDying 0x7680e0: no-op at zero HP, otherwise float32 ratio,

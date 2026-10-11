@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { GameState, type GameStateContent } from "../src/core/game-state.js";
 import { GameSession } from "../src/core/game-session.js";
-import { BattleGame } from "../src/core/battle.js";
+import { ControlledBattleGame as BattleGame } from "./fixtures/controlled-battle.js";
 import { fixture } from "./fixtures/battle-content.js";
 import type { BattleCatalog } from "../src/core/battle-content.js";
 import type { FieldContent, Site } from "../src/field/types.js";

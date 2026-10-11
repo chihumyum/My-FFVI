@@ -17,11 +17,11 @@ export function compileFieldConditionCatalog(
   transportationIds: readonly number[],
 ): { catalog: FieldConditionCatalog; sources: BattleRow[] } {
   const sources: BattleRow[] = [];
-  // Defend and ordinary protection are removed at battle end. Their field
+  // Defend, ordinary protection and speed states are removed at battle end. Their field
   // application/appearance is not admitted; a checkpoint cannot inject them
   // as passive statuses and carry them into another encounter.
   const behaviors = battle.behaviors.filter((behavior) =>
-    !["defend", "physical-protection", "magic-protection"].includes(behavior.kind)).map(
+    !["defend", "physical-protection", "magic-protection", "haste", "slow"].includes(behavior.kind)).map(
     (behavior): FieldConditionCatalog["behaviors"][number] => {
       const row = reader.row("condition.csv", behavior.id);
       sources.push(row);

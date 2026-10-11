@@ -6,7 +6,7 @@ import {
   startBattleAI,
   type BattleAIContext,
 } from "../src/core/battle-ai.js";
-import { BattleGame } from "../src/core/battle.js";
+import { ControlledBattleGame as BattleGame } from "./fixtures/controlled-battle.js";
 import { battleReaction } from "../src/core/battle-reactions.js";
 import { initialEnemyBehavior } from "../src/core/enemy-behavior.js";
 import { GameSession } from "../src/core/game-session.js";

@@ -1,3 +1,4 @@
+import { sourceBattleInventory } from "./battle-probe-context.mjs";
 // Real-source scalar checks. Does not grant spells, supply AI or close spell dependencies.
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
@@ -25,7 +26,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v24");
+assert.equal(catalog.common.profile, "narshe-playability-v25");
 const candidates = [];
 for (const row of tables["ability.csv"]) {
   const decoded = compileAbilityProgram(reader, Number(row.id));
@@ -95,7 +96,7 @@ const base = encounterContent(catalog, 3);
 const run = (parts) => {
   const content = structuredClone(base);
   content.initialAtb = { player: [100, 100], enemy: [0, 0] };
-  const battle = new BattleGame(content, 11);
+  const battle = new BattleGame(content, 11, undefined, sourceBattleInventory(catalog));
   const actor = battle.players[0];
   actor.hp = 1;
   const mp = actor.mp;

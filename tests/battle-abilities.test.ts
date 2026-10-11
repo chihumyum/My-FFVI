@@ -130,14 +130,15 @@ test("source battle actions follow current learning and conditions instead of st
   assert.equal(content.players[0]!.ownedAbilities!.abilities.owned.find((a) => a.abilityId === 11)!.skillLevel, 99);
 });
 
-test("positive source MP fees need an equipment owner, while zero cost stays known", () => {
+test("zero source MP cost stays known, while physical execution still needs its owned row provider", () => {
   const content = sourceQualifiedBattleFixture(), battle = new BattleGame(content, 31);
   content.abilities[10]!.cost = 3;
   assert.equal(battle.abilityCost("a", 10), null);
   assert.equal(battle.canUse("a", 10, 7), false);
   content.abilities[13]!.cost = 0;
   assert.equal(battle.abilityCost("a", 13)!.mp, 0);
-  assert.equal(battle.canUse("a", 13, 1), true);
+  assert.equal(battle.canUse("a", 13, 1), false);
+  assert.equal(battle.command("a", 13, "e1", 1), false);
 });
 
 test("unknown battle commands and missing effects are visible disabled entries", () => {

@@ -1,3 +1,4 @@
+import { sourceBattleInventory } from "./battle-probe-context.mjs";
 // Private source scalars and controlled actions; never grants story commands or AI support.
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
@@ -28,7 +29,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v24");
+assert.equal(catalog.common.profile, "narshe-playability-v25");
 const limits = compilePhysicalLimits(reader);
 const zero = { attack: 0, strength: 0, accuracy: 0, criticalRate: 0 };
 const players = tables["character_status.csv"].flatMap((row) =>
@@ -93,6 +94,7 @@ for (const row of tables["ability.csv"]) {
     for (const evasion of [0, 64, 128])
       for (const hitDraw of [0, 255]) {
         const input = {
+          rows: { actor: "front", target: "front", ignoreActorPenalty: false, ignoreTargetPenalty: false },
           rules: {
             normalAttack: isSourceNormalAttack(p.abilityId, p.rules.type_id),
             multiplyPercent:
@@ -162,7 +164,7 @@ for (const abilityId of [1, 399]) {
     content.players[0].abilities = [abilityId];
     content.players[0].commands = [900001];
     content.initialAtb = { player: [100, 100], enemy: [0, 0] };
-    const battle = new BattleGame(content, 11),
+    const battle = new BattleGame(content, 11, undefined, sourceBattleInventory(catalog)),
       actor = battle.players[0],
       target = battle.enemies[0];
     const before = { hp: target.hp, mp: actor.mp };

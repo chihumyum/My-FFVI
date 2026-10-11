@@ -1,3 +1,4 @@
+import { sourceBattleInventory } from "./battle-probe-context.mjs";
 // Real-source condition/action/item probes with explicit controlled ownership.
 // These are not original-game recordings or proof of story acquisition.
 import assert from "node:assert/strict";
@@ -299,7 +300,7 @@ function battleChain(partitions) {
     player: content.players.map(() => 100),
     enemy: content.enemies.map(() => 0),
   };
-  const battle = new BattleGame(content, 91);
+  const battle = new BattleGame(content, 91, undefined, sourceBattleInventory(catalog));
   const actor = battle.players[0],
     enemy = battle.enemies[0];
   assert.equal(enemy.magicEvasion, 0);

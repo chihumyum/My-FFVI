@@ -1,6 +1,7 @@
 /** Timing for the supplied FFVI PR build. These functions do not own queues,
  * action presentation, condition lifetimes, or the outer replay step.
  * Native bindings and unresolved host dependencies: docs/battle-timing.md. */
+import { conditionChantingModifier } from "./condition-speed.js";
 export type ChantingAbility = { id: number; typeId: number; wait: number };
 export type ChantingCommand = {
   id: number;
@@ -64,9 +65,7 @@ export function chantingSeconds(input: ChantingInput): number {
   let wait = input.firstAbility?.wait ?? 0;
   if (input.command?.referencedAbility?.typeId === 623)
     wait = input.command.referencedAbility.wait;
-  let conditionModifier = input.conditionTypes.includes(15) ? 2 : 1;
-  if (input.conditionTypes.includes(16))
-    conditionModifier = f(conditionModifier * 0.5);
+  const conditionModifier = conditionChantingModifier(input.conditionTypes);
   // The FF6 provider checks Command.Id == 12, not its ability or list type.
   const killingSword = input.command?.id === 12;
   const agilityContribution = killingSword ? 0 : f(f(input.agility) * 0.5);

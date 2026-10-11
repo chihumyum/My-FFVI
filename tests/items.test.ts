@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BattleGame } from "../src/core/battle.js";
+import { ControlledBattleGame as BattleGame } from "./fixtures/controlled-battle.js";
 import { GameState, type GameStateContent } from "../src/core/game-state.js";
 import { GameSession } from "../src/core/game-session.js";
 import { battleTableIndex } from "../src/compiler/battle.js";

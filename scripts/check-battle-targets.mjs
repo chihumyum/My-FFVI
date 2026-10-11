@@ -1,3 +1,4 @@
+import { sourceBattleInventory } from "./battle-probe-context.mjs";
 // Source range inventory plus a real all-enemy action in controlled contexts.
 // This does not grant a story command or substitute for the full source AI.
 import assert from "node:assert/strict";
@@ -29,7 +30,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v24");
+assert.equal(catalog.common.profile, "narshe-playability-v25");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const base = encounterContent(catalog, 3);
 const inventory = tables["ability.csv"].map((row) => {
@@ -72,7 +73,7 @@ for (const enemy of content.enemies) enemy.hp = 5000;
 const sourceResults = [];
 for (const count of [1, 2]) {
   const run = (parts) => {
-    const battle = new BattleGame(content, 71);
+    const battle = new BattleGame(content, 71, undefined, sourceBattleInventory(catalog));
     const actor = battle.players[0];
     for (const enemy of battle.enemies.slice(count)) enemy.hp = 0;
     const choice = battle.targetChoices(actor.id, ability.id);
@@ -133,6 +134,7 @@ const enemyEffects = content.players.map((target) =>
     target,
     (min) => min,
     content.players.length,
+    { actor: "front", target: "front", ignoreActorPenalty: false, ignoreTargetPenalty: false },
   ),
 );
 assert.ok(enemyEffects.every((effects) => effects[0].amount > 0));

@@ -18,6 +18,8 @@ import { compileBattleEntryCatalog, compileNarsheOwnedConditionCheckpoint } from
 import { compileBattleAppearance } from "./battle-appearance.js";
 import { compileAbilityProgram } from "./ability.js";
 import { compileEquipmentAbilityCost } from "./ability-cost.js";
+import { compileBattleRowCatalog } from "./battle-row.js";
+import { compileShopCatalog } from "./shop.js";
 import { loadCorpus } from "./corpus.js";
 import {
   compileAttackElements,
@@ -493,6 +495,10 @@ export async function compileOpeningBattle(root: string) {
   }
   for (const key of ["MAX_GIL", "MAX_ITEM", "MAX_EXP", "MAX_LV"])
     unique("game_constant_int.csv", "key_name", key);
+  // Retain the full shared row/ordinary-shop dependency closure. Localization
+  // is resolved in the playable compiler; row identities remain provenance-bound.
+  compileBattleRowCatalog({ row }, tables);
+  const shops = compileShopCatalog({ row, matching, unique }, tables, (key) => key);
   for (let slot = 1; slot <= 8; slot++)
     unique("game_constant_int.csv", "key_name", `MONSTER_DROP_RATE_${slot}`);
   // Retain the complete wear-function -> owned passive -> menu-function chain,
@@ -608,6 +614,7 @@ export async function compileOpeningBattle(root: string) {
     transportations,
     entryProviders,
     battleAppearance,
+    shopBlockers: shops.blockers,
     magitekAbilityIds: magitek.map((a) => tableInteger(a.values.id)),
     battleAbilityIds: [...abilityIds].sort((a, b) => a - b),
     atb,

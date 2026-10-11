@@ -88,7 +88,7 @@ export function compileEntityGroup(
           p = entityProperties(o.properties),
           kind = integer(p.object_type);
         const issue = (reason: string) => blockers.push({ reason, source });
-        if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 18, 19, 27].includes(kind))
+        if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 17, 18, 19, 27].includes(kind))
           issue(`Unsupported entity kind ${kind}`);
         if (kind === 1) issue("Unbound tile animation geometry");
         if (
@@ -141,7 +141,7 @@ export function compileEntityGroup(
             String(p.target_transportation_ids ?? "") !== "")
         )
           issue("Unsupported map transition condition");
-        if (kind === 6) {
+        if (kind === 6 || kind === 17) {
           if (!p.asset_id) issue("Unresolved actor asset");
         }
         if (kind === 5 || kind === 7) {
@@ -190,10 +190,15 @@ export function compileEntityGroup(
           ? text(row("script.csv", scriptId).script_name)
           : null;
         const image =
-          kind === 6 && assetId
+          (kind === 6 || kind === 17) && assetId
             ? text(row("mapobject.csv", assetId).asset_name)
             : null;
-        const npc = kind === 6 ? compileNpc(p, script, tables, messages) : null;
+        // MapManager.CreateEntity cases 6 and 17 share PropertyNpc and
+        // FieldNonPlayer.Init; ShopNPC has the same movement/media gates.
+        const npc =
+          kind === 6 || kind === 17
+            ? compileNpc(p, script, tables, messages)
+            : null;
         npc?.blockers.forEach(issue);
         const mapObject =
           kind === 5 ? compileInteraction(p, script, tables, messages) : null;

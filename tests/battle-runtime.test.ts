@@ -1,7 +1,7 @@
 import test from "node:test";
 import { cyclingAI, syntheticAI } from "./fixtures/battle-ai.js";
 import assert from "node:assert/strict";
-import { BattleGame } from "../src/core/battle.js";
+import { ControlledBattleGame as BattleGame } from "./fixtures/controlled-battle.js";
 import { compileTargetRule } from "../src/compiler/battle-targets.js";
 import type { BattleContent } from "../src/core/battle-content.js";
 import { fixture } from "./fixtures/battle-content.js";

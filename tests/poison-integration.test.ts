@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { GameSession } from "../src/core/game-session.js";
-import { BattleGame } from "../src/core/battle.js";
+import { ControlledBattleGame as BattleGame } from "./fixtures/controlled-battle.js";
 import { encounterContent } from "../src/core/battle-content.js";
 import { checkpointFixture } from "./fixtures/checkpoint-game.js";
 import { recoveryItemFixture } from "./fixtures/items.js";

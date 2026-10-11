@@ -1,3 +1,4 @@
+import { sourceBattleInventory } from "./battle-probe-context.mjs";
 // Real source projections and controlled actions; no unlock, AI or parity claim.
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
@@ -28,7 +29,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v24");
+assert.equal(catalog.common.profile, "narshe-playability-v25");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const resistances = ["monster.csv", "armor.csv"].flatMap((table) =>
   tables[table].map((row) => {
@@ -132,7 +133,7 @@ for (const enemy of content.enemies) enemy.hp = 5000;
 content.enemies[0].elementResistances = { 1: 3 };
 content.enemies[1].elementResistances = { 1: 4 };
 const run = (target, parts) => {
-  const battle = new BattleGame(content, 71);
+  const battle = new BattleGame(content, 71, undefined, sourceBattleInventory(catalog));
   battle.enemies[1].hp = 2000;
   assert.equal(battle.command(battle.players[0].id, 218, target, 26), true);
   for (const part of parts) battle.advance(part);

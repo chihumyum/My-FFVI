@@ -1,3 +1,4 @@
+import { sourceBattleInventory } from "./battle-probe-context.mjs";
 // Source instruction/ability probes hosted in explicit synthetic action tables.
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
@@ -28,7 +29,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v24");
+assert.equal(catalog.common.profile, "narshe-playability-v25");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 assert.deepEqual(catalog.common.reactions, {
   counterLimit: 1,
@@ -152,7 +153,7 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked, condition
   };
   content.players[0].abilities.push(1);
   content.players[0].commands.push(900001);
-  const b = new BattleGame(content, 409);
+  const b = new BattleGame(content, 409, undefined, sourceBattleInventory(catalog));
   const attacker = b.players[0].id;
   assert.equal(b.command(attacker, 1, enemy.id, 900001), true);
   b.advance(10);
@@ -183,7 +184,7 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked, condition
   b.advance(900);
   assert.ok(b.enemies[0].atb > 0 && b.enemies[0].atb < 1);
   const replay = (parts) => {
-    const b = new BattleGame(content, 409);
+    const b = new BattleGame(content, 409, undefined, sourceBattleInventory(catalog));
     b.command(attacker, 1, enemy.id, 900001);
     parts.forEach((dt) => b.advance(dt));
     return b;
@@ -200,7 +201,7 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked, condition
     );
   let originalBlocker = null;
   try {
-    new BattleGame(full, 409);
+    new BattleGame(full, 409, undefined, sourceBattleInventory(catalog));
   } catch (error) {
     originalBlocker = error.message;
   }
@@ -235,7 +236,7 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked, condition
     assert.equal(reader.row("condition.csv", 93).values.condition_type, "19");
     const withSourceConditions = structuredClone(full);
     withSourceConditions.enemies[0].conditionIds = ids;
-    assert.throws(() => new BattleGame(withSourceConditions, 409),
+    assert.throws(() => new BattleGame(withSourceConditions, 409, undefined, sourceBattleInventory(catalog)),
       /Unimplemented active battle condition: 93/);
     originalConditionBlocker = {
       monsterId: conditionMonsterId, source: monster.source,

@@ -149,6 +149,8 @@ export type Stop =
     };
 export type Dialogue = FieldMessage & { task: number };
 export type FieldGameOptions = {
+  /** Read-only admission before any shop greeting or interaction is published. */
+  shop?: { validate(groupId: number): void };
   ownedConditions?: FieldOwnedConditionPort;
   inventory?: FieldInventoryPort;
   treasure?: FieldTreasurePort;
@@ -210,6 +212,33 @@ export class FieldGame {
     restoreDirection: Direction | null;
     waitUntil: number;
   } | null = null;
+  private shopTask: {
+    id: number;
+    groupId: number;
+    entityId: string;
+    stage: "greeting" | "open" | "farewell";
+    close: FieldMessage | null;
+  } | null = null;
+  /** Only the open window authorizes a transaction. Greeting/farewell remain
+   * busy field states but cannot buy, sell, or be closed a second time. */
+  get currentShop(): { id: number; groupId: number; entityId: string } | null {
+    const shop = this.shopTask;
+    return !this.stop && shop?.stage === "open"
+      ? { id: shop.id, groupId: shop.groupId, entityId: shop.entityId }
+      : null;
+  }
+  closeShop(): boolean {
+    const shop = this.shopTask;
+    if (!shop || shop.stage !== "open" || this.stop) return false;
+    if (shop.close) {
+      shop.stage = "farewell";
+      this.dialogue = { ...shop.close, task: shop.id };
+    } else {
+      this.shopTask = null;
+      this.pump();
+    }
+    return true;
+  }
   constructor(
     readonly content: FieldContent,
     readonly eventState: EventState = new EventState(),
@@ -298,7 +327,7 @@ export class FieldGame {
   ): Record<string, Actor> {
     const actors: Record<string, Actor> = {};
     for (const e of entities)
-      if (e.kind === 6 && e.asset)
+      if ((e.kind === 6 || e.kind === 17) && e.asset)
         actors[e.id] = {
           id: e.id,
           x: e.x,
@@ -521,6 +550,7 @@ export class FieldGame {
     return (
       this.tasks.some((t) => !t.done) ||
       !!this.dialogue ||
+      !!this.shopTask ||
       this.treasureSceneState === "message" ||
       !!this.stop ||
       this.openTriggers.busy ||
@@ -856,6 +886,21 @@ export class FieldGame {
   confirm(): void {
     if (this.stop) return;
     if (this.dialogue) {
+      if (this.shopTask) {
+        if (
+          this.dialogue.task !== this.shopTask.id ||
+          this.shopTask.stage === "open"
+        ) {
+          this.block("商店对话状态不一致");
+          return;
+        }
+        if (this.shopTask.stage === "greeting") this.shopTask.stage = "open";
+        else this.shopTask = null;
+        this.dialogue = null;
+        this.retainedMessage = null;
+        this.pump();
+        return;
+      }
       const task = this.tasks.find((t) => t.id === this.dialogue!.task);
       if (task?.treasure) {
         if (this.time < task.treasure.messageAvailableAt) return;
@@ -878,12 +923,16 @@ export class FieldGame {
     const hits = this.entityList.filter((e) => {
       const properties = e.npc ?? e.mapObject;
       return (
-        (e.kind === 6 || e.kind === 5 || e.kind === 7) &&
-        !(e.kind === 7 && e.mapObject?.collision === false && this.openedTreasures.has(e.id)) &&
+        (e.kind === 6 || e.kind === 17 || e.kind === 5 || e.kind === 7) &&
+        !(
+          e.kind === 7 &&
+          e.mapObject?.collision === false &&
+          this.openedTreasures.has(e.id)
+        ) &&
         !this.hiddenEntities.has(e.id) &&
         (this.actors[e.id]?.layer ?? e.layer) === p.layer &&
         (properties ? properties.interaction.kind !== "none" : !!e.script) &&
-        (e.kind === 6
+        (e.kind === 6 || e.kind === 17
           ? this.actors[e.id]?.x === target.x &&
             this.actors[e.id]?.y === target.y
           : contains(e, target)) &&
@@ -909,7 +958,7 @@ export class FieldGame {
       npc = e.npc,
       properties = npc ?? e.mapObject,
       actor = this.actors[e.id];
-    if (!properties || (e.kind === 6 && (!npc || !actor))) {
+    if (!properties || ((e.kind === 6 || e.kind === 17) && (!npc || !actor))) {
       this.block("此交互尚未迁移", site);
       return;
     }
@@ -931,6 +980,35 @@ export class FieldGame {
       return;
     }
     if (action.kind === "none") return;
+    if (action.kind === "shop") {
+      try {
+        if (
+          !Number.isInteger(action.groupId) ||
+          action.groupId <= 0 ||
+          !this.options.shop
+        )
+          throw new Error("Missing ordinary shop state provider");
+        for (const message of [action.start, action.close])
+          if (
+            message !== null &&
+            (!message ||
+              typeof message.key !== "string" ||
+              !message.key ||
+              typeof message.text !== "string" ||
+              typeof message.speaker !== "string" ||
+              (message.alignment !== undefined &&
+                message.alignment !== "center"))
+          )
+            throw new Error("Invalid ordinary shop message");
+        this.options.shop.validate(action.groupId);
+      } catch (error) {
+        this.block(
+          error instanceof Error ? error.message : String(error),
+          site,
+        );
+        return;
+      }
+    }
     let treasureTask: Task["treasure"] = null;
     if (action.kind === "treasure") {
       try { treasureTask = this.prepareTreasureTask(action.request, site, e); }
@@ -974,6 +1052,16 @@ export class FieldGame {
       task.treasure = treasureTask;
       this.tasks = [task];
       this.pump();
+    } else if (action.kind === "shop") {
+      const id = this.nextTask++;
+      this.shopTask = {
+        id,
+        groupId: action.groupId,
+        entityId: e.id,
+        stage: action.start ? "greeting" : "open",
+        close: action.close ? { ...action.close } : null,
+      };
+      if (action.start) this.dialogue = { ...action.start, task: id };
     } else this.dialogue = { ...action.message, task: 0 };
   }
   private finishInteraction(): void {
@@ -1238,7 +1326,7 @@ export class FieldGame {
     this.pump();
   }
   private pump(): void {
-    if (this.stop || this.dialogue) return;
+    if (this.stop || this.dialogue || this.shopTask) return;
     for (let budget = 0; budget < 512; budget++) {
       let changed = false;
       for (const t of [...this.tasks]) {

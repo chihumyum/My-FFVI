@@ -162,7 +162,7 @@ export function compilePlayerBattleDefinitions(
       result.definitions.push({
         ...structuredClone(projection.parameters),
         id: `player:${sourceId}`, sourceId, name: template.initial.name,
-        side: "player", level: template.initial.level, exp: template.initial.exp, gil: 0,
+        side: "player", row: "front", level: template.initial.level, exp: template.initial.exp, gil: 0,
         growthGroup: String(int(character.values.growth_curve_group_id)),
         physical: structuredClone(projection.physicalByArm[arm]),
         attackElements: [...projection.attackElementsByArm[arm]],

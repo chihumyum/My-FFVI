@@ -30,6 +30,12 @@ export type FieldInteraction =
   | { kind: "none" }
   | { kind: "script"; script: string | null }
   | { kind: "talk"; message: FieldMessage }
+  | {
+      kind: "shop";
+      groupId: number;
+      start: FieldMessage | null;
+      close: FieldMessage | null;
+    }
   | { kind: "treasure"; request: TreasureBoxRequest }
   | { kind: "blocked"; reason: string };
 export type InteractionProperties = {

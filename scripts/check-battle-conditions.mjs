@@ -1,3 +1,4 @@
+import { sourceBattleInventory } from "./battle-probe-context.mjs";
 // Private source action checks. Controlled ownership/ATB are not story unlocks.
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
@@ -31,7 +32,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v24");
+assert.equal(catalog.common.profile, "narshe-playability-v25");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const abilities = tables["ability.csv"].map((r) =>
   compileAbilityProgram(index, Number(r.id)),
@@ -113,7 +114,7 @@ const run = (parts) => {
     p.commands = [900001];
   }
   content.initialAtb = { player: [100, 100], enemy: [0, 0] };
-  const b = new BattleGame(content, 11),
+  const b = new BattleGame(content, 11, undefined, sourceBattleInventory(catalog)),
     actor = b.players[0],
     target = b.enemies[0];
   assert.equal(target.magicEvasion, 0);

@@ -1,5 +1,6 @@
 import { InventoryView } from "./inventory-view.js";
 import { EquipmentView } from "./equipment-view.js";
+import { ShopView } from "./shop-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
 import { battleAppearanceQuads } from "/runtime/core/battle-appearance.js";
 import { verifyContent } from "/runtime/core/content-integrity.js";
@@ -21,6 +22,7 @@ let content,
   battleView,
   inventoryView,
   equipmentView,
+  shopView,
   started = false,
   paused = false,
   mapOpen = false,
@@ -109,6 +111,7 @@ function reset() {
   for (const id of ["welcome", "pause", "stop", "dialogue"])
     $(id).hidden = true;
   battleView.hide();
+  shopView.reset();
   $("menu-button").disabled = false;
   $("menu-button").textContent = "暂停";
   canvas.setAttribute(
@@ -125,6 +128,10 @@ function text(id, value) {
   if (node.textContent !== value) node.textContent = value;
 }
 function sync() {
+  shopView?.render(
+    session,
+    started && !paused && !document.hidden && !session.battle && !game.stop,
+  );
   const mapName =
     game.content.map.id === content.map.id ? "纳尔谢" : game.content.map.id;
   text("map-label", mapName);
@@ -180,12 +187,14 @@ function sync() {
       ? game.stop.kind === "map-transition"
         ? "地图载入中…"
         : "当前片段已停止，可重新开始。"
-      : game.dialogue
-        ? "空格 / Enter 继续对白"
-        : game.busy
-          ? "事件进行中…"
-          : (game.movementBlocker ??
-            `${mapName} · ${game.player.x}, ${game.player.y} · ${session.gil} Gil`),
+      : game.currentShop
+        ? "选择商品和数量，Esc 返回或离开商店"
+        : game.dialogue
+          ? "空格 / Enter 继续对白"
+          : game.busy
+            ? "事件进行中…"
+            : (game.movementBlocker ??
+              `${mapName} · ${game.player.x}, ${game.player.y} · ${session.gil} Gil`),
   );
 }
 function confirm() {
@@ -203,6 +212,7 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (!e.repeat) {
       if (mapOpen) setMap(false);
+      else if (!paused && game.currentShop && shopView.back()) sync();
       else if (session.battle && !paused && battleView.back()) sync();
       else pause(!paused);
     }
@@ -263,7 +273,7 @@ $("minimap-button").onclick = () => setMap(true);
 $("close-map").onclick = () => setMap(false);
 $("next").onclick = () => {
   confirm();
-  focus();
+  if (!game.currentShop) focus();
 };
 function frame(now) {
   if (failed) return;
@@ -399,6 +409,11 @@ async function init() {
   equipmentView = new EquipmentView($("equipment-menu"), () => {
     inventoryView.render(session);
     syncSaveControls();
+  });
+  shopView = new ShopView($("shop-menu"), () => {
+    held.clear();
+    sync();
+    if (!game.currentShop) focus();
   });
   showLimitations();
   if (preview) {

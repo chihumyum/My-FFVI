@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BattleGame } from "../src/core/battle.js";
+import { ControlledBattleGame as BattleGame } from "./fixtures/controlled-battle.js";
 import { BattleConditions } from "../src/core/battle-conditions.js";
 import { projectActionTarget } from "../src/core/action-effects.js";
 import { compileTargetRule } from "../src/compiler/battle-targets.js";
@@ -106,7 +106,8 @@ test("action effects derive physical guard from condition identity and do not ha
   actor.level = 25; actor.physical = { attack: 70, strength: 20, accuracy: 100, criticalRate: 0 };
   const damage = (ability: number, guarded: boolean) => {
     const result = projectActionTarget(c.abilities[ability]!.plan!, c.abilities[ability]!.power,
-      actor, { ...target, conditionIds: guarded ? [701] : [] }, conditions, (min) => min, 1);
+      actor, { ...target, conditionIds: guarded ? [701] : [] }, conditions, (min) => min, 1, 0,
+      { actor: "front", target: "front", ignoreActorPenalty: false, ignoreTargetPenalty: false });
     const effect = result.effects[0]!;
     assert.notEqual(effect.resource, "condition");
     return effect.resource === "condition" ? 0 : effect.amount;

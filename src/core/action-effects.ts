@@ -5,6 +5,7 @@ import {
 } from "./ability.js";
 import { calculateRevivalEffects, revivalEffects } from "./battle-revival.js";
 import type { BattleConditions } from "./battle-conditions.js";
+import type { PhysicalRowContext } from "./battle-row.js";
 
 /** Effects need numerical and condition state, not a battle renderer, command
  * queue or encounter definition. Owned characters can use menu items before a
@@ -31,6 +32,7 @@ export function projectActionTarget(
   random: (min: number, max: number) => number,
   targetCount: number,
   cost = 0,
+  physicalRows?: PhysicalRowContext,
 ) {
   for (const key of ["hp", "mp", "maxHp", "maxMp"] as const)
     if (
@@ -104,6 +106,7 @@ export function projectActionTarget(
       { ...target, conditionTypes: conditions.types(target.conditionIds) },
       random,
       targetCount,
+      physicalRows,
     );
   }
   const state = {

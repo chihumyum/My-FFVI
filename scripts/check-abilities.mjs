@@ -1,3 +1,4 @@
+import { sourceBattleInventory } from "./battle-probe-context.mjs";
 // Private source checks. Dispatch counts are not unlocked or playable abilities.
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -90,7 +91,7 @@ for (const id of [760, 761, 764, 765, 766, 1288]) {
       forbiddenConditionIds: [],
     };
     content.initialAtb = { player: [100, 100], enemy: [0, 0] };
-    const battle = new BattleGame(content, 11);
+    const battle = new BattleGame(content, 11, undefined, sourceBattleInventory(catalog));
     const actor = battle.players[0];
     actor.hp = 1;
     actor.mp = 0;

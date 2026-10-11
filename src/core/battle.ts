@@ -45,6 +45,8 @@ import {
 } from "./battle-ai.js";
 import { battleReaction, validateReactionRules } from "./battle-reactions.js";
 import { projectActionTarget } from "./action-effects.js";
+import { projectPhysicalRows, validateBattleRow, validateBattleRowCatalog, type PhysicalRowContext } from "./battle-row.js";
+import type { SlowState } from "./condition-speed.js";
 import {
   validateItemStacks,
   type ItemDefinition,
@@ -134,6 +136,7 @@ export class BattleGame {
   private reactions: BattleAction[] = [];
   private aiStates = new Map<string, BattleAIState>();
   private poisonStates = new Map<string, PoisonState>();
+  private slowStates = new Map<string, SlowState>();
   private collected = false;
   private currentPreferences: BattlePreferences;
   private clockInput = {
@@ -167,7 +170,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v24"
+      content.profile !== "narshe-playability-v25"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -187,6 +190,7 @@ export class BattleGame {
     this.inventoryQualification = inventory.qualification ? structuredClone(inventory.qualification) : undefined;
     validateReactionRules(content.reactions);
     this.conditions = new BattleConditions(content.conditions);
+    if (content.battleRows) validateBattleRowCatalog(content.battleRows);
     if (content.drops !== null) {
       validateBattleDropCatalog(content.drops);
       if (content.enemies.some((enemy) => !content.drops!.monsters.some((row) => row.id === enemy.sourceId)))
@@ -285,6 +289,7 @@ export class BattleGame {
           content.timing.atbSpeed,
         ),
       );
+      this.slowStates.set(c.id, this.conditions.reconcileSlowState(c.conditionIds, []));
     }
     this.reconcileAppearances();
     this.log("敌人出现了。");
@@ -537,6 +542,7 @@ export class BattleGame {
       !item ||
       item.important ||
       !item.uses.battle.plan ||
+      item.uses.battle.plan.effects.some((effect) => effect.kind === "physical") ||
       !(this.usesSourceQualification
         ? this.commandMenu(actorId).some((c) => c.id === commandId && c.kind === "item" && c.available)
         : actor.commands.includes(commandId)) ||
@@ -647,6 +653,8 @@ export class BattleGame {
   }
   private validateConditionState() {
     for (const c of this.combatants) {
+      validateBattleRow(c.row);
+      if (c.side === "enemy" && c.row !== "front") throw new Error("Unresolved enemy battle row");
       this.conditions.validateActive(c.conditionIds);
       this.conditions.validateResistances(c.conditionResistances);
       for (const id of (c.side === "player" && this.usesSourceQualification ? [] : c.commands))
@@ -691,6 +699,18 @@ export class BattleGame {
     if (typeof name !== "string") throw new Error("Missing battle reward content name");
     return name;
   }
+  /** GetCorpsId reads current battle members; weapon exceptions use the frozen
+   * owned entry loadout. Item/machine-specific providers are not inferred. */
+  private physicalRows(actor: Combatant, abilityId: number, target: Combatant): PhysicalRowContext {
+    if (!this.content.battleRows) throw new Error("Missing physical row catalog");
+    const loadout = actor.side === "player"
+      ? this.inventoryQualification?.members.find((member) => member.id === actor.id) : null;
+    if (actor.side === "player" && (!loadout || loadout.sourceId !== actor.sourceId))
+      throw new Error("Missing physical row player equipment provider");
+    return projectPhysicalRows(this.content.battleRows, { abilityId,
+      actor: { side: actor.side, row: actor.row, equipment: loadout?.equipment ?? null,
+        conditionTypes: this.conditions.types(actor.conditionIds) }, targetRow: target.row });
+  }
   canUse(
     actorId: string,
     abilityId: number,
@@ -709,6 +729,10 @@ export class BattleGame {
     )
       return false;
     this.conditions.validateActive(actor.conditionIds);
+    if (ability.plan.effects.some((effect) => effect.kind === "physical")) {
+      try { this.physicalRows(actor, abilityId, actor); }
+      catch { return false; }
+    }
     const command = this.actionCommand(actor, abilityId, commandId);
     if (command === undefined) return false;
     if (actor.side === "player" && this.usesSourceQualification &&
@@ -777,6 +801,11 @@ export class BattleGame {
   conditionClockState(actorId: string): PoisonState {
     const state = this.poisonStates.get(actorId);
     if (!state) throw new Error("Unknown condition clock owner");
+    return structuredClone(state);
+  }
+  slowClockState(actorId: string): SlowState {
+    const state = this.slowStates.get(actorId);
+    if (!state) throw new Error("Unknown slow clock owner");
     return structuredClone(state);
   }
   private admitAITurn(actor: Combatant, turn: BattleAITurn) {
@@ -1048,6 +1077,7 @@ export class BattleGame {
       reactions: structuredClone(this.reactions),
       ai: structuredClone(this.aiStates),
       poison: structuredClone(this.poisonStates),
+      slow: structuredClone(this.slowStates),
       stock: structuredClone(this.stock),
       consumedItems: structuredClone(this.consumedItems),
       observedAbilityIds: [...this.observedAbilityIds],
@@ -1071,6 +1101,7 @@ export class BattleGame {
       this.reactions = before.reactions;
       this.aiStates = before.ai;
       this.poisonStates = before.poison;
+      this.slowStates = before.slow;
       this.stock = before.stock;
       this.consumedItems = before.consumedItems;
       this.observedAbilityIds = before.observedAbilityIds;
@@ -1119,7 +1150,7 @@ export class BattleGame {
                 agility: c.agility,
                 weight: c.weight,
                 enemy: c.side === "enemy",
-                speedPercent: 100,
+                speedPercent: this.conditions.speedPercent(c.conditionIds),
                 battleSpeed: this.content.timing.atbSpeed,
                 seconds: 0.01,
               }),
@@ -1195,13 +1226,16 @@ export class BattleGame {
         result.state,
         this.content.timing.atbSpeed,
       );
-      return { actor, life, state, ticks: result.ticks };
+      const slow = this.conditions.reconcileSlowState(life.conditionIds,
+        this.conditions.advanceSlow(actor.conditionIds, this.slowStates.get(actor.id)!, seconds));
+      return { actor, life, state, slow, ticks: result.ticks };
     });
-    for (const { actor, life, state, ticks } of staged) {
+    for (const { actor, life, state, slow, ticks } of staged) {
       const died = actor.hp > 0 && life.hp === 0;
       Object.assign(actor, life);
       this.observeDropLife(actor);
       this.poisonStates.set(actor.id, state);
+      this.slowStates.set(actor.id, slow);
       if (died) {
         actor.atb = 0;
         actor.queued = false;
@@ -1335,6 +1369,10 @@ export class BattleGame {
           (min, max) => this.randomInt(min, max),
           choice.targetIds.length,
           payment,
+          ability.plan!.effects.some((effect) => effect.kind === "physical")
+            ? action.source.kind === "ability" ? this.physicalRows(actor, action.source.id, target)
+              : (() => { throw new Error("Physical item row providers are unavailable"); })()
+            : undefined,
         );
         const messages: string[] = [];
         for (const effect of effects) {
@@ -1396,6 +1434,8 @@ export class BattleGame {
             previous,
             this.content.timing.atbSpeed,
           ),
+          slow: this.conditions.reconcileSlowState(entry.state.conditionIds,
+            this.slowStates.get(entry.target.id)!.filter((clock) => !removed.includes(clock.conditionId))),
         };
       });
       // One transaction includes effects, enemy parameters, AI PCs, both queues,
@@ -1408,7 +1448,10 @@ export class BattleGame {
       } else if (!this.observedAbilityIds.includes(action.source.id))
         this.observedAbilityIds.push(action.source.id);
       actor.mp -= payment;
-      for (const next of poison) this.poisonStates.set(next.id, next.state);
+      for (const next of poison) {
+        this.poisonStates.set(next.id, next.state);
+        this.slowStates.set(next.id, next.slow);
+      }
       for (const entry of staged) {
         const lifeChanged = (entry.target.hp === 0) !== (entry.state.hp === 0);
         Object.assign(entry.target, entry.state);
@@ -1510,6 +1553,7 @@ export class BattleGame {
       );
     this.phase = "victory";
     this.poisonStates.clear();
+    this.slowStates.clear();
     this.queue = [];
     this.reactions = [];
     this.reward = {
@@ -1527,6 +1571,7 @@ export class BattleGame {
     for (const c of this.players)
       c.conditionIds = this.conditions.battleEnd(c.conditionIds);
     this.poisonStates.clear();
+    this.slowStates.clear();
   }
   previewVictory(): {
     players: Combatant[];

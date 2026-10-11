@@ -1,5 +1,6 @@
 import { cyclingAI } from "./battle-ai.js";
 import { compileTargetRule } from "../../src/compiler/battle-targets.js";
+import { controlledRowCatalog } from "./controlled-battle.js";
 import type {
   BattleContent,
   CombatantDefinition,
@@ -10,6 +11,7 @@ export function fixture(): BattleContent {
     sourceId: 1000,
     name: "Synthetic ally",
     side: "player",
+    row: "front",
     level: 2,
     physical: { attack: 20, strength: 30, accuracy: 100, criticalRate: 0 },
     hp: 80,
@@ -36,9 +38,9 @@ export function fixture(): BattleContent {
     placement: null,
     sprites: { idle: "synthetic", mount: null },
   };
-  return {
+  const content: BattleContent = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v24",
+    profile: "narshe-playability-v25",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -281,4 +283,6 @@ export function fixture(): BattleContent {
     sprites: {},
     limitations: [],
   };
+  content.battleRows = controlledRowCatalog(content);
+  return content;
 }

@@ -15,6 +15,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [v25 前后排、速度状态与普通商店](docs/systems-v25.md)
 - [v24 防护、装备 MP 费用与普通掉落](docs/systems-v24.md)
 - [v23 完整技能目录、普通魔法、防御与字段入战](docs/systems-v23.md)
 - [v22 持有状态、动态入战与魔导外观](docs/systems-v22.md)
@@ -86,6 +87,9 @@ npm run battle-entry-runtime:check
 npm run battle-appearance:check
 npm run battle-ability-content:check
 npm run defend:check
+npm run battle-row:check
+npm run condition-speed:check
+npm run shop:check
 npm run field-entry-context:check
 npm run check
 .venv/bin/python -m unittest discover -s tools/tests

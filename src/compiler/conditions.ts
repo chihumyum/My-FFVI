@@ -3,6 +3,7 @@ import type { BattleRow } from "./battle.js";
 import type { BattleConditionCatalog } from "../core/battle-conditions.js";
 import { hasDefendBehavior } from "./defend.js";
 import { compileProtectionBehavior } from "./protection.js";
+import { compileSpeedBehavior } from "./condition-speed.js";
 import {
   ConditionRules,
   type ConditionCatalog,
@@ -175,6 +176,8 @@ export function compileBattleConditionCatalog(
         const row = reader.row("condition.csv", d.id);
         const protection = compileProtectionBehavior(row, name);
         if (protection) return [protection];
+        const speed = compileSpeedBehavior(row, name);
+        if (speed) return [speed];
         return hasDefendBehavior(row)
           ? [{ id: d.id, kind: "defend", untilType: 1,
               name: row.values.mes_id_name === "None" ? "" : name(row.values.mes_id_name!) }]

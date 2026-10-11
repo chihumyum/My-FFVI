@@ -149,7 +149,8 @@ test("the shared action target projection derives numerical protection from live
   let random = [31, 0, 99];
   const physical = projectActionTarget({ effects: [{ slot: 1, kind: "physical" }], targeting,
     physical: { normalAttack: true, multiplyPercent: null, contentFlags: [] }, magic: null },
-  0, actor, target, engine, () => random.shift()!, 1);
+  0, actor, target, engine, () => random.shift()!, 1, 0,
+  { actor: "front", target: "front", ignoreActorPenalty: false, ignoreTargetPenalty: false });
   assert.equal(physical.state.hp, 952); assert.equal(random.length, 0);
   random = [0, 31];
   const magic = projectActionTarget({ effects: [{ slot: 1, kind: "magic" }], targeting, physical: null,

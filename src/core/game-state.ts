@@ -9,6 +9,8 @@ import type {
 } from "./inventory-event.js";
 import { projectEquipmentOwnership } from "./inventory-ownership.js";
 import type { BattleDropGrant } from "./battle-rewards.js";
+import { projectShopTrade, shopBuyOptions, shopSellOptions, validateShopCatalog,
+  type ShopCatalog, type ShopInventoryRead, type ShopTradeRequest } from "./shop.js";
 import {
   prepareRosterLifecycle,
   validateRosterLifecycle,
@@ -100,6 +102,7 @@ export type GameStateContent = {
   characterInitializations?: Record<string, OwnedCharacterInitializationTemplate>;
   characterGrowth?: Record<string, CharacterGrowthPlan>;
   partyActors?: PartyActorCatalog;
+  shops?: ShopCatalog;
   /** Source templates for potential party members, not additional owned actors. */
   battleDefinitions?: CombatantDefinition[];
   rosterLifecycle: {
@@ -208,6 +211,7 @@ export class GameState {
   readonly fieldOwnedConditions: FieldOwnedConditionPort = {
     prepare: (command) => this.prepareOwnedConditionEvent(command),
   };
+  readonly fieldShop = { validate: (groupId: number): void => { this.shopOptions(groupId); } };
   constructor(
     content: GameStateContent,
     players: readonly CombatantDefinition[],
@@ -220,6 +224,11 @@ export class GameState {
       ? new FieldConditions(structuredClone(content.fieldConditions))
       : null;
     this.content = structuredClone(content);
+    if (content.shops) {
+      validateShopCatalog(content.shops);
+      if (content.shops.itemLimit !== content.limits.item || content.shops.gilLimit !== content.limits.gil)
+        throw new Error("Shop and owned inventory limits differ");
+    }
     this.initialIds = players.map((p) => p.id);
     const definitions = content.battleDefinitions ?? players;
     distinct(definitions.map((p) => p.id));
@@ -596,6 +605,51 @@ export class GameState {
       ].map((item) => ({ ...item })).sort((a, b) => a.id - b.id),
     };
   }
+  private shopInventoryRead(data: GameStateSnapshot): ShopInventoryRead {
+    const system = this.content.equipmentSystem;
+    if (!system) throw new Error("Shop equipment ownership is unavailable");
+    return { gil: data.gil, entries: [
+      ...data.items.map((item) => ({ ...item, kind: "item" as const, equipped: 0 })),
+      ...equipmentAvailability(system.catalog, data.roster.filter((p) => p.enabled), data.equipmentStock)
+        .map(({ id, count, equipped }) => ({ id, count, equipped, kind: "equipment" as const })),
+    ] };
+  }
+  shopOptions(groupId: number) {
+    this.requireIdle();
+    return this.projectShopOptions(this.data, groupId);
+  }
+  private projectShopOptions(data: GameStateSnapshot, groupId: number) {
+    const catalog = this.content.shops;
+    if (!catalog) throw new Error("Ordinary shop rules are unavailable");
+    const inventory = this.shopInventoryRead(data);
+    return { groupId, name: catalog.groups.find((group) => group.id === groupId)?.name ?? "",
+      gil: inventory.gil, buy: shopBuyOptions(catalog, groupId, inventory),
+      sell: shopSellOptions(catalog, groupId, inventory) };
+  }
+  /** One candidate owns both stock and money. The field host controls whether
+   * this group is currently open; stale or repeated publication is rejected. */
+  prepareShopTrade(groupId: number, request: ShopTradeRequest) {
+    this.requireIdle();
+    const catalog = this.content.shops;
+    if (!catalog) throw new Error("Ordinary shop rules are unavailable");
+    const plan = projectShopTrade(catalog, groupId, request, this.shopInventoryRead(this.data));
+    const revision = this.revision;
+    let next = this.snapshot();
+    for (const command of plan.commands) {
+      const projected = this.projectInventoryEvent(next, command);
+      if (projected.result === false) throw new Error("Shop payment failed");
+      next = projected.next;
+    }
+    const stock = this.shopInventoryRead(next);
+    if (stock.gil !== plan.gilAfter || stock.entries.find((entry) => entry.id === plan.contentId)?.count !== plan.countAfter)
+      throw new Error("Shop ownership projection differs from its trade plan");
+    return { plan: structuredClone(plan), commit: () => {
+      this.requireIdle();
+      if (revision !== this.revision) throw new Error("Stale shop trade transaction");
+      this.data = next;
+      this.revision++;
+    } };
+  }
   private prepareTreasureReward(command: TreasureRewardCommand): FieldInventoryTransaction {
     this.requireIdle();
     if (!["grant-gil", "grant-item", "grant-equipment"].includes(command.kind))
@@ -753,6 +807,7 @@ export class GameState {
       party: FieldPartyPort;
       roster: FieldRosterPort;
       ownedConditions: FieldOwnedConditionPort;
+      shop: { validate(groupId: number): void };
       fieldSteps?: FieldConditionPort;
       partyAppearance?: { catalog: PartyActorCatalog; current(): PartyAppearanceCandidate };
       movementBlocker: (transportationId: number | null, manual: boolean) => string | null;
@@ -870,6 +925,7 @@ export class GameState {
         party,
         roster,
         ownedConditions,
+        shop: { validate: (groupId) => { this.projectShopOptions(published ? this.data : data, groupId); } },
         ...(this.fieldConditions ? { fieldSteps } : {}),
         ...(this.content.partyActors ? { partyAppearance: {
           catalog: this.content.partyActors,
@@ -963,14 +1019,12 @@ export class GameState {
   get battlePartyBlocker(): string | null {
     const members = this.activeParty;
     if (!members.length) return "当前编队没有成员，无法开始战斗";
-    if (members.some((member) => member.row !== "front"))
-      return "后排战斗规则尚未迁移";
     const missing = members.find(({ id }) => !this.definitions.has(id));
     if (missing) return "角色的战斗动作与表现尚未迁移：" + this.data.roster.find((p) => p.id === missing.id)!.name;
     return null;
   }
   partyPlayers(): Combatant[] {
-    return this.activeParty.map(({ id }) => {
+    return this.activeParty.map(({ id, row }) => {
       const p = this.data.roster.find((p) => p.id === id)!;
       const definition = this.definitions.get(id);
       if (!definition) throw new Error("Unimplemented owned character battle definition: " + id);
@@ -989,6 +1043,7 @@ export class GameState {
       return {
         ...structuredClone(definition),
         ...structuredClone(progress),
+        row,
         ...(p.abilities ? { ownedAbilities: {
           sourceId: p.sourceId, jobId: p.jobId, magicStoneId: p.magicStoneId,
           abilities: structuredClone(p.abilities),

@@ -3,6 +3,7 @@ import { battleEntryFixture } from "./battle-entry.js";
 import { itemFixture } from "./items.js";
 import type { BattleInventoryWithQualification } from "../../src/core/battle-entry.js";
 import type { BattleAppearanceGeometry } from "../../src/core/battle-appearance.js";
+import { controlledRowCatalog } from "./controlled-battle.js";
 
 /** Synthetic owners share stock but intentionally have different hand loadouts. */
 export function battleEntryRuntimeFixture(count = 1) {
@@ -13,6 +14,7 @@ export function battleEntryRuntimeFixture(count = 1) {
   equipment.characters = Object.fromEntries(content.players.map((player) => [player.sourceId,
     { ...structuredClone(equipment.characters[1]!), sourceId: player.sourceId, jobId: 12 }]));
   for (const gear of Object.values(equipment.definitions)) gear.jobIds = [12];
+  content.battleRows = controlledRowCatalog(content, equipment);
   const inventory: BattleInventoryWithQualification = {
     definitions: Object.fromEntries([10001, 10002, 10003, 10004, 10005].map((id) => [id, itemFixture(id)])),
     stacks: [{ id: 10001, count }], limit: 99,

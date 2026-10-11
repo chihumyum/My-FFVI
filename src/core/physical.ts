@@ -10,6 +10,7 @@ import {
   type ElementResistances,
 } from "./elements.js";
 import { physicalProtectionDamage, physicalProtectionType } from "./protection.js";
+import { validatePhysicalRows, type PhysicalRowContext } from "./battle-row.js";
 
 export type PhysicalRules = {
   normalAttack: boolean;
@@ -27,6 +28,7 @@ export type PhysicalParameters = {
 };
 export type PhysicalInput = {
   rules: PhysicalRules;
+  rows: PhysicalRowContext;
   power: number;
   actor: PhysicalParameters & {
     side: "player" | "enemy";
@@ -59,7 +61,7 @@ function baseDamage(input: PhysicalInput, enemyDraw: number) {
   return Math.trunc(f(f(scaled % 65536) + f(power)));
 }
 
-/** PhysicalExecution 0xa97b20, front rows, explicit affinities, correction=1,
+/** PhysicalExecution 0xa97b20, explicit rows and affinities, correction=1,
  * Defend type 1 and Proteus type 19 only; no other numerical conditions, accessory/weapon procs,
  * species, counters or copies.
  * The compiler/profile must establish that context. Silence is allowed.
@@ -68,6 +70,7 @@ export function validatePhysical(input: PhysicalInput): void {
   const { actor, target, rules, power, targetCount } = input;
   if (!rules || !Array.isArray(rules.contentFlags))
     throw new Error("Missing physical calculation rules");
+  validatePhysicalRows(input.rows);
   validateElements(actor.attackElements);
   validateElementResistances(target.elementResistances);
   if (target.conditionTypes !== undefined &&
@@ -103,7 +106,9 @@ export function validatePhysical(input: PhysicalInput): void {
   // Reject overflow before any draws. The base must stay nonnegative;
   // absorption changes the sign later. Native overflow and special weapons are blocked.
   const rawPower = power + actor.attack;
-  const upper = baseDamage(input, 7);
+  const rawUpper = baseDamage(input, 7);
+  const upper = input.rows.actor === "back" && !input.rows.ignoreActorPenalty
+    ? Math.trunc(rawUpper * 0.5) : rawUpper;
   const product = upper * (rules.multiplyPercent ?? 100);
   const multiplied =
     rules.multiplyPercent === null ? upper : Math.trunc(product * 0.01);
@@ -129,6 +134,10 @@ export function calculatePhysical(input: PhysicalInput, random: BattleRandom) {
     input,
     actor.side === "enemy" ? drawBattleRandom(random, 0, 7) : 0,
   );
+  // Actor-row correction precedes multiply, variance and even a flag5 defense
+  // bypass. Native truncates here, not after multiplying the final damage.
+  if (input.rows.actor === "back" && !input.rows.ignoreActorPenalty)
+    base = Math.trunc(base * 0.5);
   if (rules.multiplyPercent !== null)
     base = Math.trunc(base * rules.multiplyPercent * 0.01);
   const factor = 224 + drawBattleRandom(random, 0, 31);
@@ -148,6 +157,10 @@ export function calculatePhysical(input: PhysicalInput, random: BattleRandom) {
     if (target.conditionTypes?.includes(physicalProtectionType))
       amount = physicalProtectionDamage(amount);
     amount = Math.trunc(((255 - target.defense) * amount) / 256) + 1;
+    // Target-row correction is inside the defense branch, after its +1 and
+    // before Defend, friendly-fire, critical and elemental resolution.
+    if (input.rows.target === "back" && !input.rows.ignoreTargetPenalty)
+      amount = Math.trunc(amount * 0.5);
     // Source type 1 is checked inside the defense branch, before player-vs-
     // player halving, critical, elements and target-count correction.
     if (target.conditionTypes?.includes(1)) amount = Math.trunc(amount * 0.5);

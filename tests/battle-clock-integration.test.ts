@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BattleGame } from "../src/core/battle.js";
+import { ControlledBattleGame as BattleGame } from "./fixtures/controlled-battle.js";
 import { fixture } from "./fixtures/battle-content.js";
 import { syntheticAI } from "./fixtures/battle-ai.js";
 

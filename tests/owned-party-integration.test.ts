@@ -170,7 +170,7 @@ test("map initializer party plus inventory commit together; a failed or stale pr
   assert.equal(restored.state.snapshot().items[0]!.count, 3);
 });
 
-test("empty and back-row parties are preserved but cannot silently enter the front-row battle profile", () => {
+test("empty parties stay blocked while a rear party enters battle without losing its owned row", () => {
   for (const slot of [1, 2] as const) {
     const { game, field } = setup();
     const snapshot = game.state.snapshot();
@@ -183,9 +183,16 @@ test("empty and back-row parties are preserved but cannot silently enter the fro
     const before = game.state.snapshot();
     game.field.startEvent("fight");
     game.advance(10);
-    assert.equal(game.field.stop?.kind, "unsupported");
-    assert.equal(game.battle, null);
-    assert.equal(game.state.inBattle, false);
+    if (slot === 1) {
+      assert.equal(game.field.stop?.kind, "unsupported");
+      assert.equal(game.battle, null);
+      assert.equal(game.state.inBattle, false);
+    } else {
+      assert.ok(game.battle);
+      assert.equal(game.state.inBattle, true);
+      assert.deepEqual(game.battle.players.map(({ id, row }) => ({ id, row })), [{ id: "a", row: "back" }]);
+      assert.deepEqual(game.state.activeParty, [{ id: "a", index: 0, row: "back" }]);
+    }
     assert.deepEqual(game.state.snapshot(), before);
   }
 });

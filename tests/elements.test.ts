@@ -70,6 +70,7 @@ const magic = (): MagicInput => ({
   targetCount: 1,
 });
 const physical = (): PhysicalInput => ({
+  rows: { actor: "front", target: "front", ignoreActorPenalty: false, ignoreTargetPenalty: false },
   rules: { normalAttack: true, multiplyPercent: null, contentFlags: [] },
   power: 0,
   actor: {

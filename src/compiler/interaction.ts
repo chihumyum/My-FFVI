@@ -6,6 +6,7 @@ import type {
 import { record } from "./content.js";
 import { tableId } from "./table-id.js";
 import { compileMessage } from "./message.js";
+import { compileShopInteraction } from "./shop.js";
 
 const integer = (value: unknown) => z.number().int().parse(value);
 const bool = (value: unknown) => z.boolean().parse(value ?? false);
@@ -98,6 +99,8 @@ export function compileInteraction(
           kind: "talk",
           message: compileMessage(z.string().parse(p.message_key), messages),
         };
+      } else if (action === "Shop") {
+        interaction = compileShopInteraction(p, tables, messages);
       } else throw new Error("Unsupported interactive action " + action);
       Object.assign(properties, compileInteractionEligibility(p, tables));
       properties.interaction = interaction;

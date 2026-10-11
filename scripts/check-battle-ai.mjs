@@ -1,3 +1,4 @@
+import { sourceBattleInventory } from "./battle-probe-context.mjs";
 // Source-bound control-flow and controlled-host checks, not playable-enemy coverage.
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
@@ -35,7 +36,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v24");
+assert.equal(catalog.common.profile, "narshe-playability-v25");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const assets = Object.values(exported.assets).filter((a) =>
   a.source.assetPath.includes("/MonsterAI/"),
@@ -355,7 +356,7 @@ for (const [name, pc, expected] of [
   });
   content.initialAtb = { player: [0, 0], enemy: [100, 100] };
   for (const id of enemy.abilities) content.abilities[id] = ability(id);
-  const b = new BattleGame(content, 317);
+  const b = new BattleGame(content, 317, undefined, sourceBattleInventory(catalog));
   const actions = [];
   for (let i = 0; i < expected.length; i++) {
     b.advance(10);
@@ -372,7 +373,7 @@ for (const [name, pc, expected] of [
   }
   assert.deepEqual(b.pendingActions, []);
   const run = (parts) => {
-    const battle = new BattleGame(content, 317);
+    const battle = new BattleGame(content, 317, undefined, sourceBattleInventory(catalog));
     for (const dt of parts) battle.advance(dt);
     return {
       units: battle.combatants,
@@ -387,7 +388,7 @@ for (const [name, pc, expected] of [
   const full = structuredClone(content);
   full.enemies[0].ai = original;
   full.enemies[0].abilities = battleAIAbilities(original);
-  assert.throws(() => new BattleGame(full, 317), /unsupported AI instruction/);
+  assert.throws(() => new BattleGame(full, 317, undefined, sourceBattleInventory(catalog)), /unsupported AI instruction/);
   loopHostChecks.push({
     source: original.source,
     sourcePc: pc,
@@ -428,7 +429,7 @@ for (const name of [
   content.initialAtb = { player: [0, 0], enemy: [100, 100] };
   for (const id of enemy.abilities) content.abilities[id] = ability(id);
   function run(parts) {
-    const battle = new BattleGame(content, 239);
+    const battle = new BattleGame(content, 239, undefined, sourceBattleInventory(catalog));
     for (const ms of parts) battle.advance(ms);
     return {
       combatants: battle.combatants,
@@ -452,7 +453,7 @@ for (const name of [
     const higher = structuredClone(content);
     higher.enemies[0].hp = 10113;
     assert.throws(
-      () => new BattleGame(higher, 239),
+      () => new BattleGame(higher, 239, undefined, sourceBattleInventory(catalog)),
       (e) =>
         e instanceof BattleAIError &&
         e.pc === 7 &&
@@ -482,7 +483,7 @@ high.enemies.forEach((e) => {
 high.drops = null;
 high.players[0].level = 7;
 assert.throws(
-  () => new BattleGame(high, 241),
+  () => new BattleGame(high, 241, undefined, sourceBattleInventory(catalog)),
   (e) =>
     e instanceof BattleAIError &&
     e.pc === 10 &&

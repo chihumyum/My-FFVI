@@ -5,6 +5,7 @@ import { calculateMagic, type MagicInput } from "../src/core/magic.js";
 import { magicProtectionDamage, physicalProtectionDamage } from "../src/core/protection.js";
 
 const physical = (): PhysicalInput => ({
+  rows: { actor: "front", target: "front", ignoreActorPenalty: false, ignoreTargetPenalty: false },
   rules: { normalAttack: true, multiplyPercent: null, contentFlags: [] }, power: 0,
   actor: { side: "player", level: 10, attackElements: [], attack: 40, strength: 30, accuracy: 100, criticalRate: 3 },
   target: { side: "enemy", defense: 64, evasion: 0, elementResistances: {}, conditionTypes: [19] }, targetCount: 1,

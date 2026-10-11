@@ -79,7 +79,10 @@
     "field-entry-context:check": "npm run build && node scripts/check-field-entry-context.mjs",
     "protection:check": "npm run battle:build && node scripts/check-protection-native.mjs && node scripts/check-protection.mjs",
     "ability-cost:check": "npm run battle:build && node scripts/check-ability-cost-native.mjs && node scripts/check-ability-cost.mjs",
-    "battle-rewards:check": "npm run battle:build && node scripts/check-battle-rewards-native.mjs && node scripts/check-battle-rewards.mjs"
+    "battle-rewards:check": "npm run battle:build && node scripts/check-battle-rewards-native.mjs && node scripts/check-battle-rewards.mjs",
+    "battle-row:check": "npm run battle:build && node scripts/check-battle-row-native.mjs && node scripts/check-battle-row.mjs",
+    "condition-speed:check": "npm run battle:build && node scripts/check-condition-speed-native.mjs && node scripts/check-condition-speed.mjs",
+    "shop:check": "npm run battle:build && node scripts/check-shop-native.mjs && node scripts/check-shop.mjs && node scripts/check-shop-menu.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

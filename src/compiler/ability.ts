@@ -18,6 +18,7 @@ import { compileTargetRule } from "./battle-targets.js";
 import { compileAttackElements } from "./elements.js";
 import { compileDefendEffect } from "./defend.js";
 import { hasProtectionBehavior } from "./protection.js";
+import { hasSpeedBehavior } from "./condition-speed.js";
 
 type Reader = ConditionReader;
 /** SerialBattleUtility 0x85e170; type and ID arrays recovered from 0x85f000.
@@ -175,7 +176,8 @@ export function compileDevelopmentAbility(
       v3 === 0 &&
       (hasSilenceBehavior(reader.row("condition.csv", v1)) ||
         hasPoisonBehavior(reader.row("condition.csv", v1)) ||
-        hasProtectionBehavior(reader.row("condition.csv", v1)))
+        hasProtectionBehavior(reader.row("condition.csv", v1)) ||
+        hasSpeedBehavior(reader.row("condition.csv", v1)))
     ) {
       effects.push({
         slot: fn.slot,
@@ -292,6 +294,13 @@ export function compileDevelopmentAbility(
     hasProtectionBehavior(reader.row("condition.csv", first.conditionId));
   const protectionSupport = protectionOnly && r.system_id === 2 && [1, 3].includes(r.type_id!);
   const protectionSpell = protectionSupport && r.type_id === 1;
+  const speedOnly = effects.length === 1 && first?.kind === "add-condition" &&
+    hasSpeedBehavior(reader.row("condition.csv", first.conditionId));
+  const speedSupport = speedOnly && [1, 3].includes(r.type_id!) &&
+    r.system_id === (int(reader.row("condition.csv", first.conditionId).values.condition_type) === 15 ? 2 : 5);
+  const speedSpell = speedSupport && r.type_id === 1;
+  if (speedOnly && !speedSupport)
+    blockers.push(`unresolved speed ability type/system ${r.type_id}/${r.system_id}`);
   const magicOnly =
     effects.length === 1 &&
     (effects[0]!.kind === "magic" ||
@@ -318,7 +327,7 @@ export function compileDevelopmentAbility(
     blockers.push(`unresolved accuracy_rate=${r.accuracy_rate}`);
   const allowedFlags = revival
     ? [1, 3]
-    : protectionSpell
+    : protectionSpell || speedSpell
       ? [1, 3]
     : conditionOnly
       ? []
@@ -333,11 +342,11 @@ export function compileDevelopmentAbility(
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (!defendOnly && !ordinaryMagic && !protectionSpell && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
+  if (!defendOnly && !ordinaryMagic && !protectionSpell && !speedSpell && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
-  if (!defendOnly && !protectionSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
+  if (!defendOnly && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
-  if ((ordinaryMagic || protectionSpell) && int(a.ability_lv) !== 0)
+  if ((ordinaryMagic || protectionSpell || speedSpell) && int(a.ability_lv) !== 0)
     blockers.push("unresolved level-specific ability consumption");
   if (abilityId === 154)
     blockers.push("unresolved play-time ability cost provider");
@@ -349,7 +358,7 @@ export function compileDevelopmentAbility(
       ([59, 360, 1312, 1330].includes(abilityId) || r.type_id === 623) &&
       !program.contentFlags.includes(2))
     blockers.push("unresolved all-target magic correction provider");
-  if ((ordinaryMagic || protectionSpell) && program.contentFlags.includes(3))
+  if ((ordinaryMagic || protectionSpell || speedSpell) && program.contentFlags.includes(3))
     limitations.push("source flag 3 is Runic targeting; active Runic behavior must remain blocked by the host");
   if (![0, 1].includes(r.reaction_type!))
     blockers.push(`unresolved reaction_type=${r.reaction_type}`);

@@ -974,6 +974,61 @@
         "docs/battle-rewards.md",
         "build/reports/battle-rewards-check.json"
       ]
+    },
+    {
+      "id": "narshe:source-battle-rows-v25",
+      "subject": "narshe",
+      "predicate": "migration.battleRows",
+      "value": "Player row is projected from the current party cell, while equipment exceptions use six owned entry slots. Actor and target penalties occupy distinct source integer stages. Non-player parameters use Front. Missing ownership blocks physical action; ranged equipment, dual wield, Change command and special formations are not granted by row metadata.",
+      "when": {
+        "battleProfile": "narshe-playability-v25"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0xa97b20",
+        "GameAssembly.dll:RVA 0x3d6990",
+        "GameAssembly.dll:RVA 0x3d6830",
+        "docs/battle-row.md"
+      ]
+    },
+    {
+      "id": "narshe:source-condition-speed-v25",
+      "subject": "narshe",
+      "predicate": "migration.conditionSpeed",
+      "value": "Ordinary condition rows 21/type15 and 25/type16 use separate ATB, chanting and progress-cycle providers. Slow accumulates float32 delta time without an ordinary until2 expiry. Clocks are battle-local and transactional; special row95 remains blocked. Twenty-four source action plans admit the shared behavior without granting learned actions.",
+      "when": {
+        "battleProfile": "narshe-playability-v25"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "condition.csv:21,25,95",
+        "GameAssembly.dll:RVA 0x675950",
+        "GameAssembly.dll:RVA 0x6765d0",
+        "GameAssembly.dll:RVA 0x766a00",
+        "GameAssembly.dll:RVA 0x51a890",
+        "docs/condition-speed.md"
+      ]
+    },
+    {
+      "id": "narshe:source-ordinary-shops-v25",
+      "subject": "narshe",
+      "predicate": "migration.ordinaryShops",
+      "value": "Ordinary action8 ShopNPC shares NPC interaction and source greeting/close messages. A single owned transaction publishes stock and Gil after full-count, equipped-copy and money-headroom checks. The catalog admits 92 groups and 595 products; 64 of 71 source entities satisfy current dependencies, not story reachability. Special script shops remain blocked.",
+      "when": {
+        "battleProfile": "narshe-playability-v25"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "action.csv:8",
+        "GameAssembly.dll:RVA 0x4e9080",
+        "GameAssembly.dll:RVA 0x69fd00",
+        "GameAssembly.dll:RVA 0x6a0f30",
+        "GameAssembly.dll:RVA 0x2cd030",
+        "docs/shops.md"
+      ]
     }
   ],
   "assets": []

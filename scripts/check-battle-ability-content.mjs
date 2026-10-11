@@ -83,7 +83,8 @@ for (const row of source.tables['ability.csv']) {
   if (effects[0]?.kind === 'defend') target.id = actor.id;
   const before = structuredClone({ actor, target });
   const result = projectActionTarget(definition.plan, definition.power, actor, target, conditions,
-    (min) => min, 1, definition.cost);
+    (min) => min, 1, definition.cost,
+    { actor: 'front', target: 'front', ignoreActorPenalty: false, ignoreTargetPenalty: false });
   conditions.validateActive(result.state.conditionIds);
   assert.deepEqual({ actor, target }, before, 'Target projection must remain pure: ' + id);
   assert.equal(result.effects.length, definition.plan.effects.length);

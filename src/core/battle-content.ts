@@ -11,6 +11,7 @@ import type { BattleAbilityCatalog, BattleAbilityContext, BattleAbilityMember } 
 import type { BattleEntryCatalog } from "./battle-entry.js";
 import type { BattleAppearanceActor, BattleAppearanceCatalog } from "./battle-appearance.js";
 import type { BattleDropCatalog } from "./battle-rewards.js";
+import type { BattleRow, BattleRowCatalog } from "./battle-row.js";
 
 export type BattleQualificationContext = Omit<BattleAbilityContext, "conditionIds" | "partySize"> & {
   /** Source mode enforces qualification. The explicit development mode keeps
@@ -32,7 +33,7 @@ export type BattleCommandDefinition = {
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "narshe-playability-v24";
+  profile: "narshe-playability-v25";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;
@@ -55,6 +56,7 @@ export type BattleContent = {
   /** content.type_id=4, with explicit null when the source has no content row. */
   abilityContentIds?: Record<string, number | null>;
   battleAppearance?: BattleAppearanceCatalog;
+  battleRows?: BattleRowCatalog;
   conditions: BattleConditionCatalog;
   growth: Record<string, { level: number; hp: number; mp: number }[]>;
   experience: { level: number; exp: number }[];
@@ -67,6 +69,8 @@ export type CombatantDefinition = ParameterValues & {
   sourceId: number;
   name: string;
   side: "player" | "enemy";
+  /** Player corps is projected from the current party cell at entry. */
+  row: BattleRow;
   level: number;
   physical: PhysicalParameters | null;
   attackElements: number[];

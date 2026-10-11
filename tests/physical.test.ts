@@ -17,6 +17,7 @@ import { battleTableIndex } from "../src/compiler/battle.js";
 function input(): PhysicalInput {
   return {
     rules: { normalAttack: true, multiplyPercent: null, contentFlags: [] },
+    rows: { actor: "front", target: "front", ignoreActorPenalty: false, ignoreTargetPenalty: false },
     power: 0,
     actor: {
       side: "player",

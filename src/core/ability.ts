@@ -13,6 +13,7 @@ import {
 import type { TargetRule } from "./battle-targets.js";
 import type { ElementResistances } from "./elements.js";
 import type { DefendEffect } from "./defend.js";
+import type { PhysicalRowContext } from "./battle-row.js";
 /** Decoded source dispatch, separate from the bounded playability executor. */
 export type AbilityFunction = {
   slot: number;
@@ -105,6 +106,7 @@ export function calculateDevelopmentEffects(
   },
   randomInt: (min: number, max: number) => number,
   targetCount = 1,
+  physicalRows?: PhysicalRowContext,
 ): NumericalEffectResult[] {
   if (
     !Number.isInteger(targetCount) ||
@@ -127,8 +129,10 @@ export function calculateDevelopmentEffects(
   const physicalInput = () => {
     if (!plan.physical || !actor.physical)
       throw new Error("Missing physical calculation inputs");
+    if (!physicalRows) throw new Error("Missing physical row context");
     return {
       rules: plan.physical,
+      rows: physicalRows,
       power,
       actor: {
         ...actor.physical,
