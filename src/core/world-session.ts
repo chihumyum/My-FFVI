@@ -24,7 +24,7 @@ type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount"> & {
   transportationId: number | null;
 };
 export type WorldCheckpoint = {
-  kind: "idle-world-v6";
+  kind: "idle-world-v7";
   initialHash: string;
   location: {
     catalogHash: string;
@@ -45,6 +45,7 @@ function worldFieldContent(
   traveler: Traveler,
   parentSourceSetHash: string,
   actorEntry?: { plan: MapPartyEntryPlan; assets: string[] },
+  fade?: FieldContent["entry"]["fade"],
 ): FieldContent {
   const indexed = catalog.maps[String(request.mapId)];
   if (
@@ -137,11 +138,13 @@ function worldFieldContent(
     scriptLocals: target.scriptLocals,
     ...(target.scriptSystemFlags ? { scriptSystemFlags: target.scriptSystemFlags } : {}),
     characters,
+    ...(catalog.playerFactory ? { playerFactory: structuredClone(catalog.playerFactory) } : {}),
     ...(catalog.minimap ? { minimap: catalog.minimap } : {}),
     ...(catalog.bgm ? { bgm: catalog.bgm } : {}),
     ...(catalog.environment ? { environment: catalog.environment } : {}),
     ...(catalog.treasureInventoryLimits ? { treasureInventoryLimits: catalog.treasureInventoryLimits } : {}),
     entry: {
+      ...(fade ? { fade: structuredClone(fade) } : {}),
       synchronization: { kind: "map-entry" },
       ...(actorEntry ? { partyActors: actorEntry.plan.checkpoint,
         playerVisible: actorEntry.plan.player.visible, cameraOffset: actorEntry.plan.cameraOffset } : {}),
@@ -180,6 +183,7 @@ type Ownership = {
   environment: string;
   actors: string;
   presentation: string;
+  fade: string;
   publishPresentation(): void;
   catalogHash: string;
   owned?: { commit(): boolean };
@@ -210,7 +214,7 @@ export class WorldSession {
       state,
       undefined,
       undefined,
-      owned?.current ?? {},
+      { ...(owned?.current ?? {}), ...(initial.playerFactory ? { playerVisibility: initial.playerFactory.capability } : {}) },
     );
   }
   get field(): FieldGame {
@@ -218,7 +222,7 @@ export class WorldSession {
   }
   checkpoint(): WorldCheckpoint {
     return {
-      kind: "idle-world-v6",
+      kind: "idle-world-v7",
       initialHash: this.initial.contentHash,
       location: structuredClone(this.location),
       field: this.current.checkpoint(),
@@ -232,7 +236,7 @@ export class WorldSession {
   ): void {
     checkpointKeys(snapshot, "kind,initialHash,location,field");
     if (
-      snapshot.kind !== "idle-world-v6" ||
+      snapshot.kind !== "idle-world-v7" ||
       snapshot.initialHash !== this.initial.contentHash
     )
       throw new Error("World checkpoint source/version mismatch");
@@ -291,12 +295,13 @@ export class WorldSession {
         traveler,
         this.initial.parentSourceSetHash,
         actorEntry,
+        this.initial.entry.fade,
       );
     }
     const next = FieldGame.restore(
       content,
       snapshot.field,
-      this.owned?.current ?? {},
+      { ...(this.owned?.current ?? {}), ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}) },
     );
     this.current = next;
     this.location = structuredClone(loc);
@@ -386,14 +391,16 @@ export class WorldSession {
       { asset: actorEntry?.plan.player.asset ?? from.player.asset,
         mount: actorEntry?.plan.player.mount ?? from.player.mount ?? "",
         transportationId: actorEntry?.plan.checkpoint.context.currentTransport?.id ?? from.transportationId },
-      from.content.parentSourceSetHash, actorEntry);
+      from.content.parentSourceSetHash, actorEntry, this.initial.entry.fade);
     const field = new FieldGame(
       content,
       state,
       new StaticAudioState(bgm),
       new StaticAudioState(environment),
       { ...(owned?.ports ?? {}), ...(sourcePresentation ? { sourcePresentation } : {}),
+        ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}),
         ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
+      from.fader.fork(),
     );
     const script = request.continuation || target.initializer;
     field.startMapEntry(script || null);
@@ -408,6 +415,7 @@ export class WorldSession {
       environment: canonical(environment),
       actors: this.actorState(from),
       presentation: canonical(presentation),
+      fade: canonical(from.fader.snapshot()),
       publishPresentation: () => { presentationPublished = true; },
       catalogHash: catalog.contentHash,
       ...(owned ? { owned } : {}),
@@ -426,7 +434,8 @@ export class WorldSession {
       ownership.bgm !== canonical(this.current.bgm.snapshot()) ||
       ownership.environment !== canonical(this.current.environment.snapshot()) ||
       ownership.actors !== this.actorState(this.current) ||
-      ownership.presentation !== canonical(this.current.sourcePresentationContext)
+      ownership.presentation !== canonical(this.current.sourcePresentationContext) ||
+      ownership.fade !== canonical(this.current.fader.snapshot())
     )
       return false;
     if (ownership.owned && !ownership.owned.commit()) return false;

@@ -37,7 +37,9 @@ def export_field(source, out):
         if len(found) != 1: raise ValueError(f'Ambiguous asset: {pattern}')
         return found[0]
     character_files = {name: one(name + '_assets_all_*.bundle') for name in CHARACTERS}
-    files = sorted(character_files.values())
+    # The fresh-player lifecycle capability is bound to the prefab factory as
+    # well as GameAssembly. Sprite bundles do not establish child-entity absence.
+    files = sorted([*character_files.values(), one('chara_field_assets_all_*.bundle')])
     sources = {s['file']: s for s in project['sources']}
     for f in files:
         rel = f.relative_to(source).as_posix()
@@ -88,7 +90,7 @@ def export_field(source, out):
             values[key] = value
     for item in sources:
         if digest(source / item['file']) != item['sha256']: raise ValueError('Source changed during export')
-    result = {'formatVersion': 1, 'adapterVersion': 'field-0.1.0',
+    result = {'formatVersion': 1, 'adapterVersion': 'field-0.1.1',
         'parentSourceSetHash': project['sourceSetHash'],
         'sourceSetHash': hashlib.sha256(canonical(sources).encode()).hexdigest(), 'sources': sources,
         'characters': chars, 'messages': messages, 'messageSources': message_sources}

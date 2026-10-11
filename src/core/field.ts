@@ -37,6 +37,14 @@ import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState, type AudioSnapshot } from "./static-audio.js";
 import { audioReadinessTrack, pollAudioReadiness, type AudioReadinessPort } from "./audio-readiness.js";
 import { projectPlayerVisibility } from "./player-visibility.js";
+import { FieldFadeState, type FieldFadeSnapshot } from "./field-fade.js";
+import { projectFieldPuppetInitialization, projectFieldPuppetActorEntry, resolveFieldPuppetActor,
+  fieldPuppetAssignments, type FieldPuppetActorsPort, type FieldPuppetScriptContext } from "./field-puppet-actors.js";
+import {
+  prepareFieldCall, prepareFieldReturn, prepareFieldPuppetEntry,
+  fieldPuppetControlStep, projectFieldPuppetReady,
+  type FieldTaskRange, type FieldPuppetStatus,
+} from "./field-task-control.js";
 import { TileAnimationState, type TileCheckpoint } from "./tile-animation.js";
 import {
   OpenTriggerState,
@@ -100,7 +108,7 @@ export type Actor = Point & {
   animation: ActorAnimation | null;
 };
 export type FieldCheckpoint = {
-  kind: "idle-field-v6";
+  kind: "idle-field-v7";
   contentHash: string;
   time: number;
   remainder: number;
@@ -120,6 +128,7 @@ export type FieldCheckpoint = {
   doors: OpenTriggerCheckpoint;
   bgm: AudioSnapshot;
   environment: AudioSnapshot;
+  fade: FieldFadeSnapshot | null;
 };
 type Task = {
   id: number;
@@ -127,9 +136,15 @@ type Task = {
   pc: number;
   stack: number[];
   actor: string;
+  sourceEntityId: number | null;
   wait: number;
-  children: number[];
-  pending: { slot: number; actor: string; target: number }[];
+  /** null is the main core (or the external treasure coroutine). */
+  slot: number | null;
+  state: "awake" | "ready";
+  range: FieldTaskRange;
+  lastClock: number;
+  puppetWait: Extract<Op, { kind: "exec-puppets" | "finish-puppets" }> | null;
+  fadeWait: Extract<Op, { kind: "field-fade" }> | null;
   remaining: number;
   move: Extract<Op, { kind: "move" }> | null;
   animationWait: boolean;
@@ -156,6 +171,7 @@ export type Stop =
     };
 export type Dialogue = FieldMessage & { task: number };
 export type FieldGameOptions = {
+  puppetActors?: FieldPuppetActorsPort;
   audioReadiness?: AudioReadinessPort;
   /** Immutable host admission, never inferred from absent source fields or saved
    * visibility. Missing capability keeps native child propagation unresolved. */
@@ -212,7 +228,7 @@ export class FieldGame {
     kind: "sound" | "sound-sync";
     soundId: number | null;
   }[] = [];
-  fade: { elapsed: number; duration: number } | null = null;
+  get fade() { return this.fader.projection; }
   dialogue: Dialogue | null = null;
   private retainedMessage: Dialogue | null = null;
   private treasureSceneState: "player" | "message" = "player";
@@ -221,6 +237,8 @@ export class FieldGame {
   stop: Stop | null = null;
   time = 0;
   private tasks: Task[] = [];
+  private puppetLifecycle: { script: FieldPuppetScriptContext; leaderId: number | null;
+    assignments: boolean[]; finished: boolean } | null = null;
   private remainder = 0;
   private nextTask = 1;
   private synchronizedEntry: boolean | null = null;
@@ -264,6 +282,7 @@ export class FieldGame {
     readonly bgm: StaticAudioState = new StaticAudioState(),
     readonly environment: StaticAudioState = new StaticAudioState(),
     readonly options: FieldGameOptions = {},
+    readonly fader: FieldFadeState = new FieldFadeState(content.entry.fade ?? null),
   ) {
     cloneSourcePresentationContext(options.sourcePresentation?.context() ?? null);
     if (options.playerVisibility !== undefined) {
@@ -487,7 +506,11 @@ export class FieldGame {
     // messages beyond the next suspension. Unused script-chest reward templates
     // may be absent; they never authorize a message-producing explicit caller.
     for (const effect of [...next.effects, ...next.state.remaining]) {
-      if (effect.kind === "message") resolveMessage(effect.key);
+      if (effect.kind === "message") {
+        resolveMessage(effect.key);
+        if (this.messageWindow && this.messageWindow.task !== t.id)
+          throw new Error("Concurrent source message windows are not implemented");
+      }
       else if (effect.kind === "set-message-value") {
         const value = pending.entity.treasureMessages?.parameter;
         if (!value || value.token !== effect.token || (effect.token === "NUM" ?
@@ -496,9 +519,14 @@ export class FieldGame {
       } else if (effect.kind === "flag") draft.write(effect.ref, effect.value);
       else if (effect.kind === "run-script") {
         if (!this.content.scripts[effect.name]) throw new Error("Missing treasure event script");
+        if (this.tasks.some((task) => !task.done && !task.treasureRoot && task.slot === null))
+          throw new Error("Treasure script cannot replace an active main core");
         draft.beginScript(this.content.scriptLocals?.[effect.name] ?? null);
       }
     }
+    const scripts = next.effects.filter((effect) => effect.kind === "run-script");
+    if (scripts.length > 1) throw new Error("Multiple treasure event registrations");
+    const publishScript = scripts[0] ? this.preparePuppetStart(scripts[0].name) : null;
     let transaction: FieldInventoryTransaction | null = null;
     for (const effect of next.effects) {
       if (effect.kind === "grant") {
@@ -522,6 +550,7 @@ export class FieldGame {
         case "tile-animation": if (link) this.tileAnimations.playDefault(link.id); break;
         case "run-script":
           this.eventState.beginScript(this.content.scriptLocals?.[effect.name] ?? null);
+          publishScript!();
           this.tasks.push(this.task(effect.name, 0, "-1001"));
           break;
         // The compiler resolves the source parameter into the bound message;
@@ -586,10 +615,13 @@ export class FieldGame {
   }
   get checkpointReady(): boolean {
     return (
+      // The source actor host also owns native camera/collision/hidden puppet
+      // state. Stable saves remain blocked until that owner has a bound codec.
+      !this.options.puppetActors &&
       this.sourcePresentationContext?.advertisementOpeningFader !== "present" &&
       this.synchronizedEntry !== false &&
       !this.busy &&
-      !this.fade &&
+      !this.fader.active &&
       !this.interaction &&
       Object.values(this.actors).every((a) => a.motion === null)
     );
@@ -601,7 +633,7 @@ export class FieldGame {
     if (!this.checkpointReady)
       throw new Error("Cannot save during field movement or an event");
     return {
-      kind: "idle-field-v6",
+      kind: "idle-field-v7",
       contentHash: this.content.contentHash,
       time: this.time,
       remainder: this.remainder,
@@ -624,6 +656,7 @@ export class FieldGame {
       doors: this.openTriggers.checkpoint(),
       bgm: this.bgm.snapshot(),
       environment: this.environment.snapshot(),
+      fade: this.fader.snapshot(),
     };
   }
   /** Rebuild dependencies from trusted content without replaying initialization or triggers. */
@@ -632,12 +665,14 @@ export class FieldGame {
     raw: FieldCheckpoint,
     options: FieldGameOptions = {},
   ): FieldGame {
+    if (options.puppetActors)
+      throw new Error("Source puppet host checkpoints require a bound actor/camera/collision codec");
     const s = structuredClone(raw);
     checkpointKeys(
       s,
-      "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment",
+      "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,fade",
     );
-    if (s.kind !== "idle-field-v6" || s.contentHash !== content.contentHash ||
+    if (s.kind !== "idle-field-v7" || s.contentHash !== content.contentHash ||
       s.transportationId !== (content.entry.transportationId ?? null))
       throw new Error("Field checkpoint source/version mismatch");
     const presentation = sourcePresentationCheckpoint(options.sourcePresentation?.context() ?? null);
@@ -651,12 +686,15 @@ export class FieldGame {
     checkpointNumber(s.remainder, 0, 10);
     checkpointInteger(s.nextTask, 1);
     if (s.remainder >= 10) throw new Error("Invalid field remainder");
+    if ((s.fade !== null) !== (content.entry.fade !== undefined))
+      throw new Error("Field checkpoint cannot grant a missing fade host");
     const next = new FieldGame(
       content,
       new EventState(s.eventState),
       StaticAudioState.restore(s.bgm, content.bgm),
       StaticAudioState.restore(s.environment, content.environment),
       options,
+      FieldFadeState.restore(s.fade),
     );
     checkpointIds(s.activeGroups);
     const initial = [...next.activeGroups];
@@ -948,6 +986,7 @@ export class FieldGame {
         this.retainedMessage = close ? null : message;
       } else this.retainedMessage = null;
       this.dialogue = null;
+      if (task) task.lastClock = -1; // explicit input is a new host clock
       this.pump();
       return;
     }
@@ -1129,10 +1168,7 @@ export class FieldGame {
       this.tileAnimations.advance(10);
       this.openTriggers.advance();
       this.time += 10;
-      if (this.fade) {
-        this.fade.elapsed += 10;
-        if (this.fade.elapsed >= this.fade.duration) this.fade = null;
-      }
+      this.fader.advance(0.01);
       let entered = false;
       for (const a of Object.values(this.actors)) {
         try {
@@ -1179,7 +1215,7 @@ export class FieldGame {
       }
       for (const t of this.tasks) t.wait = Math.max(0, t.wait - 10);
       if (entered) this.enter();
-      this.pump();
+      this.pump(0.01);
     }
   }
   private enter(): void {
@@ -1256,7 +1292,7 @@ export class FieldGame {
     if (this.content.entry.synchronization?.kind !== "map-entry" ||
         this.synchronizedEntry !== false || this.entryTaskStarted)
       throw new Error("No pending source map entry");
-    if (this.busy || this.player.motion || this.fade)
+    if (this.busy || this.player.motion)
       throw new Error("Cannot begin map entry during field activity");
     if (script !== null && !this.content.scripts[script])
       throw new Error("Missing map entry script: " + script);
@@ -1276,7 +1312,7 @@ export class FieldGame {
   }
   private finishMapEntry(): void {
     if (this.synchronizedEntry === false && this.entryTaskStarted &&
-        !this.busy && !this.fade && !this.interaction &&
+        !this.busy && !this.fader.active && !this.interaction &&
         Object.values(this.actors).every((actor) => actor.motion === null))
       this.synchronizedEntry = true;
   }
@@ -1300,9 +1336,32 @@ export class FieldGame {
     };
   }
   private beginRoot(script: string): void {
-    this.eventState.beginScript(this.content.scriptLocals?.[script] ?? null);
+    try {
+      const locals = this.content.scriptLocals?.[script] ?? null;
+      new EventState(this.eventState.snapshot()).beginScript(locals);
+      const publish = this.preparePuppetStart(script);
+      this.eventState.beginScript(locals);
+      publish();
+    } catch (error) {
+      this.block(error instanceof Error ? error.message : String(error), this.content.scripts[script]?.[0] ?? null);
+      return;
+    }
     this.tasks = [this.task(script, 0, "-1001")];
     this.pump();
+  }
+  /** Source host effects and all native bindings are prepared before locals or
+   * tasks change. The port publishes back into this field's actor owners. */
+  private preparePuppetStart(name: string): () => void {
+    if (!this.content.scriptPuppetContexts && !this.options.puppetActors)
+      return () => { this.puppetLifecycle = null; };
+    const script = this.content.scriptPuppetContexts?.[name], port = this.options.puppetActors;
+    if (!script || !port) throw new Error("Source puppet lifecycle host or script context is unavailable");
+    const plan = projectFieldPuppetInitialization({ phase: "start", script, ...port.read() });
+    const publish = port.prepare(plan);
+    if (typeof publish !== "function") throw new Error("Invalid source puppet actor transaction");
+    const next = { script: structuredClone(script), leaderId: plan.leaderId,
+      assignments: plan.assignments ?? fieldPuppetAssignments(), finished: false };
+    return () => { publish(); this.puppetLifecycle = next; };
   }
   private task(script: string, pc: number, actor: string): Task {
     return {
@@ -1310,10 +1369,15 @@ export class FieldGame {
       script,
       pc,
       actor,
+      sourceEntityId: null,
       stack: [],
       wait: 0,
-      children: [],
-      pending: [],
+      slot: null,
+      state: "ready",
+      range: { min: 0, max: (this.content.scripts[script]?.length ?? 0) - 1 },
+      lastClock: -1,
+      puppetWait: null,
+      fadeWait: null,
       remaining: 0,
       move: null,
       animationWait: false,
@@ -1339,6 +1403,8 @@ export class FieldGame {
       !this.stop.continuation
     )
       throw new Error("No matching field encounter to resume");
+    if (this.options.puppetActors || this.content.scriptPuppetContexts)
+      throw new Error("Source puppet battle return requires a candidate owned-state actor host");
     const continuation = this.stop.continuation;
     if (!this.content.scripts[continuation])
       throw new Error("Missing battle continuation");
@@ -1361,34 +1427,121 @@ export class FieldGame {
     this.prepareEncounterReturn(party)();
     this.pump();
   }
-  private pump(): void {
-    if (this.stop || this.dialogue || this.shopTask) return;
-    for (let budget = 0; budget < 512; budget++) {
-      let changed = false;
-      for (const t of [...this.tasks]) {
-        if (t.done || t.wait > 0) continue;
+  private puppetStatuses(): FieldPuppetStatus[] {
+    const result = Array<FieldPuppetStatus>(32).fill("sleep");
+    for (const task of this.tasks)
+      if (!task.done && task.slot !== null) result[task.slot] = task.state;
+    return result;
+  }
+  private puppetControlContext() {
+    // Legacy development fixtures have no source world-map/callback host.
+    // Source lifecycle admission instead requires an explicit trusted port;
+    // missing data there never inherits these development-only assumptions.
+    if (this.options.puppetActors) {
+      const context = this.options.puppetActors.controlContext();
+      if (!context) throw new Error("Source puppet control context is unavailable");
+      return context;
+    }
+    return { worldMapScript: false, callback: "absent" as const };
+  }
+  private preparePuppetCollision(enabled: boolean | null): () => void {
+    if (enabled === null || !this.options.puppetActors) return () => {};
+    const publish = this.options.puppetActors.prepareCollision(enabled);
+    if (typeof publish !== "function") throw new Error("Invalid source puppet collision transaction");
+    return publish;
+  }
+  private pump(frameDeltaSeconds = 0): void {
+    if (this.stop || this.shopTask) return;
+    // Native Integrator clocks main, then the 32 global tracks. Core.Clock
+    // drains Next results before the following core gets its first instruction.
+    // External treasure coroutines do not occupy the native main core.
+    for (const task of this.tasks.filter((t) => t.treasureRoot)) {
+      this.clockTask(task, frameDeltaSeconds);
+      if (this.stop) return;
+    }
+    // A treasure coroutine can register the main script during this same host
+    // frame. Discover it after that registration, without re-clocking a core.
+    const main = this.tasks.find((t) => t.slot === null && !t.treasureRoot);
+    if (main) this.clockTask(main, frameDeltaSeconds);
+    if (this.stop) return;
+    for (let slot = 0; slot < 32; slot++) {
+      const task = this.tasks.find((t) => !t.done && t.slot === slot);
+      if (task) this.clockTask(task, frameDeltaSeconds);
+      if (this.stop) return;
+    }
+    if (main?.done) {
+      if (this.treasureHandoffBlocked()) {
+        this.block("Main script ended with an unfinished treasure task");
+        return;
+      }
+      if (this.puppetLifecycle && !this.puppetLifecycle.finished) {
+        try {
+          const port = this.options.puppetActors!;
+          const plan = projectFieldPuppetInitialization({ phase: "finish", script: this.puppetLifecycle.script, ...port.read() });
+          const publish = port.prepare(plan);
+          if (typeof publish !== "function") throw new Error("Invalid source puppet actor transaction");
+          publish();
+          this.puppetLifecycle.finished = true;
+        } catch (error) {
+          this.block(error instanceof Error ? error.message : String(error));
+          return;
+        }
+      }
+      // Ready cores get this frame before main termination cancels their next
+      // clock. Awake entries never start merely because main has ended.
+      for (const task of this.tasks) if (task.slot !== null) task.done = true;
+    }
+    this.finishInteraction();
+    this.finishMapEntry();
+  }
+  private clockTask(t: Task, frameDeltaSeconds: number): void {
+    if (t.done || t.state !== "ready" || t.lastClock === this.time ||
+        t.wait > 0 || this.dialogue?.task === t.id) return;
+    t.lastClock = this.time;
+    for (let budget = 0; budget < 4096; budget++) {
+        if (t.done || t.wait > 0 || this.dialogue?.task === t.id) return;
         const actor = this.actors[t.actor];
         if (!actor && !this.hasEntity(t.actor)) {
           this.block(`缺少角色 ${t.actor}`);
           return;
         }
-        if (actor?.motion) continue;
+        // A movement suspends its own instruction, not every core currently
+        // bound to that actor (in particular, the main core's dialogue/flags).
+        if (actor?.motion && t.move) return;
         if (t.animationWait) {
           if (
             actor
               ? actor.animation?.playing
               : this.tileAnimations.isPlaying(t.actor)
           )
-            continue;
+            return;
           t.animationWait = false;
         }
-        if (t.children.some((id) => !this.tasks.find((c) => c.id === id)?.done))
-          continue;
-        t.children = [];
+        if (t.puppetWait) {
+          try {
+            const result = fieldPuppetControlStep({ kind: t.puppetWait.kind === "finish-puppets" ? "finish" : "exec",
+              firstClock: false, asynchronous: false, ...this.puppetControlContext(), slots: this.puppetStatuses() });
+            this.preparePuppetCollision(result.collisionEnabled)();
+            if (result.flow === "wait") return;
+            t.puppetWait = null;
+          } catch (error) {
+            this.block(error instanceof Error ? error.message : String(error), t.puppetWait);
+            return;
+          }
+        }
+        if (t.fadeWait) {
+          try {
+            if (this.fader.poll(t.fadeWait.direction) === "wait") return;
+            t.fadeWait = null;
+          } catch (error) {
+            this.block(error instanceof Error ? error.message : String(error), t.fadeWait);
+            return;
+          }
+        }
         if (t.audioWait) {
           try {
             if (pollAudioReadiness(t.audioWait, this.bgm, this.content.bgm, this.options.audioReadiness) === "wait")
-              continue;
+              return;
             t.audioWait = null;
           } catch (error) {
             this.block(error instanceof Error ? error.message : String(error), t.audioWait);
@@ -1403,7 +1556,6 @@ export class FieldGame {
             return;
           }
           if (this.dialogue) return;
-          changed = true;
           continue;
         }
         if (t.move && t.remaining > 0) {
@@ -1440,7 +1592,6 @@ export class FieldGame {
             manual: false,
           };
           t.remaining--;
-          changed = true;
           continue;
         }
         t.move = null;
@@ -1449,8 +1600,19 @@ export class FieldGame {
           this.block(`无效脚本位置 ${t.script}:${t.pc}`);
           return;
         }
+        if (actor?.motion && ["move", "position", "look", "animation-play", "animation-cue"].includes(op.kind)) {
+          this.block("Concurrent source actor movement arbitration is not implemented", op);
+          return;
+        }
+        if (op.kind === "message" && this.messageWindow && this.messageWindow.task !== t.id) {
+          this.block("Concurrent source message windows are not implemented", op);
+          return;
+        }
+        if (t.pc < t.range.min || t.pc > t.range.max) {
+          this.block("Field control flow leaves the source task range", op);
+          return;
+        }
         t.pc++;
-        changed = true;
         try {
           if (
             executeEventControl(
@@ -1639,51 +1801,102 @@ export class FieldGame {
           case "exit":
             t.done = true;
             break;
-          case "return": {
-            const pc = t.stack.pop();
-            if (pc === undefined) {
-              this.block("空调用栈", op);
-              return;
-            }
-            t.pc = pc;
-            break;
-          }
+          case "return":
           case "call":
-            if (t.stack.length >= 64) {
-              this.block("脚本递归超过限制", op);
+            try {
+              Object.assign(t, op.kind === "call"
+                ? prepareFieldCall({ nextPc: t.pc, target: op.target, stack: t.stack, range: t.range })
+                : prepareFieldReturn({ stack: t.stack, range: t.range }));
+            } catch (error) {
+              this.block(error instanceof Error ? error.message : String(error), op);
               return;
             }
-            t.stack.push(t.pc);
-            t.pc = op.target;
             break;
           case "wait":
             t.wait = Math.ceil(op.seconds * 100);
             t.wait *= 10;
             break;
           case "puppet":
-            if (t.pending.some((p) => p.slot === op.slot)) {
-              this.block("重复的角色演出槽", op);
+            try {
+              const host = this.options.puppetActors, lifecycle = this.puppetLifecycle;
+              const nextKind = this.content.scripts[t.script]?.[op.target + 1]?.kind;
+              const plan = host && lifecycle ? projectFieldPuppetActorEntry({ ...host.read(), script: lifecycle.script,
+                entityId: Number(op.actor), nextMnemonic: nextKind === "hide" ? "Hide" : nextKind ?? "unknown",
+                leaderId: lifecycle.leaderId, assignments: lifecycle.assignments }) : null;
+              if (plan?.skipEntry) {
+                const publish = host!.prepare(plan);
+                if (typeof publish !== "function") throw new Error("Invalid source puppet actor transaction");
+                publish();
+                if (plan.assignments) lifecycle!.assignments = plan.assignments;
+                break;
+              }
+              const entry = prepareFieldPuppetEntry({ ...op, slots: this.puppetStatuses(),
+                instructions: this.content.scripts[t.script]! });
+              const publish = plan ? host!.prepare(plan) : () => {};
+              if (typeof publish !== "function") throw new Error("Invalid source puppet actor transaction");
+              const child = this.task(t.script, entry.pc, plan?.actor ?? entry.actor);
+              child.sourceEntityId = plan?.entityId ?? null;
+              child.range = entry.range;
+              child.slot = entry.slot;
+              child.state = "awake";
+              publish();
+              if (plan?.assignments) lifecycle!.assignments = plan.assignments;
+              this.tasks.push(child);
+            } catch (error) {
+              this.block(error instanceof Error ? error.message : String(error), op);
               return;
             }
-            t.pending.push(op);
             break;
-          case "join":
-            for (const p of t.pending.sort((a, b) => a.slot - b.slot)) {
-              const c = this.task(t.script, p.target, p.actor);
-              if (
-                !this.hasEntity(p.actor) ||
-                this.tasks.some(
-                  (other) =>
-                    !other.done && other.id !== t.id && other.actor === p.actor,
-                )
-              ) {
-                this.block("角色演出归属冲突", op);
+          case "join": // Old authored fixtures; source compilation uses exec-puppets.
+          case "exec-puppets":
+          case "finish-puppets":
+            try {
+              const command = op.kind === "finish-puppets"
+                ? { ...op, kind: "finish-puppets" as const }
+                : { ...op, kind: "exec-puppets" as const,
+                    asynchronous: op.kind === "exec-puppets" && op.asynchronous };
+              const result = fieldPuppetControlStep({ kind: command.kind === "finish-puppets" ? "finish" : "exec",
+                firstClock: true, asynchronous: command.kind === "exec-puppets" && command.asynchronous,
+                ...this.puppetControlContext(), slots: this.puppetStatuses() });
+              // Resolve and validate the whole starting batch before publishing
+              // any Ready state or visibility change. No partial Exec on error.
+              const ready = result.startSlots.map((slot) => {
+                const child = this.tasks.find((other) => !other.done && other.slot === slot)!;
+                let actor = child.actor;
+                let binding: "present" | "absent" | "unknown";
+                if (child.sourceEntityId !== null && this.options.puppetActors) {
+                  const { catalog, context } = this.options.puppetActors.read();
+                  const resolved = resolveFieldPuppetActor(catalog, context, child.sourceEntityId);
+                  binding = resolved.actor === null ? "absent" : "present";
+                  actor = resolved.actor ?? actor;
+                } else binding = this.hasEntity(actor) ? "present" : "unknown";
+                if (this.tileAnimations.has(actor) && this.hiddenEntities.has(actor))
+                  throw new Error("Tile puppet Show lifecycle is not implemented");
+                return { child, actor, plan: projectFieldPuppetReady(binding) };
+              });
+              const host = this.options.puppetActors;
+              const publish = host && this.puppetLifecycle ? host.prepare({ leaderId: null,
+                assignments: result.clearAssignments ? fieldPuppetAssignments() : null,
+                effects: ready.filter((r) => r.plan.showActor).map((r) => ({ kind: "show", actor: r.actor })) }) : () => {};
+              if (typeof publish !== "function") throw new Error("Invalid source puppet Ready transaction");
+              const publishCollision = this.preparePuppetCollision(result.collisionEnabled);
+              publish();
+              publishCollision();
+              if (result.clearAssignments && this.puppetLifecycle) this.puppetLifecycle.assignments = fieldPuppetAssignments();
+              for (const { child, actor, plan } of ready) {
+                child.done = plan.status === "sleep";
+                child.state = "ready";
+                child.actor = actor;
+                if (plan.showActor) this.hiddenEntities.delete(actor);
+              }
+              if (result.flow === "wait") {
+                t.puppetWait = command;
                 return;
               }
-              this.tasks.push(c);
-              t.children.push(c.id);
+            } catch (error) {
+              this.block(error instanceof Error ? error.message : String(error), op);
+              return;
             }
-            t.pending = [];
             break;
           case "position":
             if (!actor) {
@@ -1785,9 +1998,16 @@ export class FieldGame {
               soundId: op.kind === "sound" ? op.soundId : null,
             });
             break;
-          case "fade-in":
-            this.fade = { elapsed: 0, duration: Math.round(op.seconds * 1000) };
-            t.wait = this.fade.duration;
+          case "field-fade":
+            try {
+              if (this.fader.start(op, frameDeltaSeconds) === "wait") {
+                t.fadeWait = op;
+                return;
+              }
+            } catch (error) {
+              this.block(error instanceof Error ? error.message : String(error), op);
+              return;
+            }
             break;
           case "message":
             this.dialogue = {
@@ -1817,12 +2037,9 @@ export class FieldGame {
             this.block(`未知编译指令 ${op.kind}，需要重新编译内容`, op);
             return;
         }
-      }
-      if (!changed) {
-        this.finishInteraction();
-        this.finishMapEntry();
-        return;
-      }
+        // Even a zero-duration source wait yields its core once. The next
+        // opcode is reached on a later logical frame, never another scan pass.
+        if (op.kind === "wait" || t.audioWait || t.animationWait) return;
     }
     this.block("脚本在一个逻辑步中未让出执行权");
   }

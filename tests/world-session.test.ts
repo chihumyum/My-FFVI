@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { WorldSession } from "../src/core/world-session.js";
+import { DEVELOPMENT_TRANSPARENT_FADE } from "../src/core/field-fade.js";
 import { EventState } from "../src/core/event-state.js";
 import { decodeFieldOp } from "../src/compiler/field.js";
 import { verifyContent } from "../src/core/content-integrity.js";
@@ -108,6 +109,7 @@ function fixture(
       ],
     },
     entry: {
+      fade: structuredClone(DEVELOPMENT_TRANSPARENT_FADE),
       player: {
         x: 1,
         y: 1,
@@ -184,6 +186,33 @@ const flag = (index: number): Op => ({
   operation: "set",
 });
 const exit: Op = { ...site, kind: "exit" };
+
+test("a map candidate forks the global fade; failed or stale preparation cannot alter the live overlay", () => {
+  const { world, target, catalog } = fixture();
+  world.field.fader.start({ kind: "field-fade", direction: "out", seconds: -1, color: null });
+  world.field.advance(200);
+  const before = world.field.fader.snapshot();
+  world.field.startEvent("leave");
+  target.initializer = "init";
+  target.scripts.init = [{ ...site, kind: "field-fade", direction: "in", seconds: 0.2, color: null }, exit];
+  const candidate = world.prepare(catalog, target);
+  assert.deepEqual(world.field.fader.snapshot(), before);
+  assert.notDeepEqual(candidate.field.fader.snapshot(), before);
+  assert.equal(candidate.field.entrySynchronized, false);
+  assert.equal(world.commit(candidate), true);
+  world.field.advance(300);
+  assert.equal(world.field.fader.projection?.rendererColor.a, 0);
+  assert.equal(world.field.entrySynchronized, true);
+  const saved = world.checkpoint();
+  world.restore(saved, catalog, target);
+  assert.deepEqual(world.checkpoint(), saved);
+
+  const next = fixture();
+  next.world.field.startEvent("leave");
+  const stale = next.world.prepare(next.catalog, next.target);
+  next.world.field.fader.start({ kind: "field-fade", direction: "out", seconds: 0, color: null });
+  assert.equal(next.world.commit(stale), false);
+});
 
 test("ChangeMap decodes reserved continuation and flag operands without dropping unknown forms", () => {
   const raw = {

@@ -100,6 +100,7 @@ test("a controlled puppet task executes player visibility against the actual pla
   ];
   const npc = JSON.stringify(field.actors.npc);
   field.startEvent("puppet");
+  field.advance(10); // main resumes after the completed puppet clock
   assert.equal(field.stop, null);
   assert.equal(field.busy, false);
   assert.deepEqual(field.hiddenEntities, new Set([field.player.id]));

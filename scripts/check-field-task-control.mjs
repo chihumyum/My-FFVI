@@ -1,5 +1,5 @@
-// Full local corpus decoding plus bounded pure control projections. No field
-// host, source actor alias resolution or playable-map coverage is claimed.
+// Full local corpus decoding plus pure and controlled shared-scheduler probes.
+// The controlled development actor context is not formal story admission.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -16,6 +16,9 @@ const module = (name) => import(pathToFileURL(resolve(compiled, "src", name + ".
 const { loadCorpus } = await module("compiler/corpus");
 const { decodeFieldOp } = await module("compiler/field");
 const { hash } = await module("compiler/content");
+const { FieldGame } = await module("core/field");
+const { EventState } = await module("core/event-state");
+const { checkpointFixture } = await import(pathToFileURL(resolve(compiled, "tests/fixtures/checkpoint-game.js")).href);
 const { compileFieldTaskControlInstruction, fieldTaskControlMnemonics } = await module("compiler/field-task-control");
 const { prepareFieldCall, prepareFieldReturn, prepareFieldPuppetEntry, fieldPuppetControlStep,
   projectFieldPuppetReady, fieldPuppetMainEnd } = await module("core/field-task-control");
@@ -52,6 +55,7 @@ for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
     assert.ok(formComplete(raw));
     counts.decoded++;
     const current = decodeFieldOp(raw, site, {}, corpus.tables);
+    assert.deepEqual(current, { ...site, ...op }, "Shared decoding must preserve every recovered operand");
     const routes = shared[raw.mnemonic] ??= {};
     routes[current.kind] = (routes[current.kind] ?? 0) + 1;
     const result = { site, mnemonic: raw.mnemonic, instructionHash: hash(raw), op, sharedKind: current.kind };
@@ -91,11 +95,11 @@ assert.deepEqual(sourceCounts, {
 });
 assert.equal(pairs.length, 7796);
 assert.equal(pairs.filter((p) => p.marker === 1 && p.asynchronous).length, 477);
-// Explicitly distinguish the staged capability from current production routing.
-assert.equal(shared.ExecPuppet["exec-puppets"] ?? 0, 0);
-assert.equal(shared.FinishPuppet["finish-puppets"] ?? 0, 0);
+assert.deepEqual(shared.ExecPuppet, { "exec-puppets": 7796 });
+assert.deepEqual(shared.FinishPuppet, { "finish-puppets": 477 });
 
 const controlled = [];
+const controlledFields = [];
 for (const asynchronous of [false, true]) {
   const sourceOp = decoded.find((entry) => entry.op.kind === "exec-puppets" && entry.op.asynchronous === asynchronous);
   assert.ok(sourceOp);
@@ -122,17 +126,42 @@ for (const asynchronous of [false, true]) {
   for (const callback of ["unknown", "unsupported"])
     assert.throws(() => fieldPuppetControlStep({ ...input, slots: staged, callback }), /callback/);
   controlled.push({ source: sourceOp.site, controlledSlotAndActorContext: true, start, finish, cancelled, done, pendingOnly });
+  const { field } = checkpointFixture();
+  const finishOp = decoded.find((entry) => entry.op.kind === "finish-puppets");
+  const site = { script: "controlled-task-host", index: 0, source: { file: "synthetic", assetPath: "scheduler" } };
+  const variable = { category: "MapLocalVariable", index: 0 };
+  field.scripts[site.script] = [
+    { ...site, kind: "puppet", slot: 4, actor: "-1001", target: 5 },
+    { ...sourceOp.site, ...sourceOp.op },
+    { ...site, index: 2, kind: "calc", left: variable, operator: "←", right: { kind: "immediate", value: 7 } },
+    { ...finishOp.site, ...finishOp.op },
+    { ...site, index: 4, kind: "exit" },
+    { ...site, index: 5, kind: "wait", seconds: 0 },
+    { ...site, index: 6, kind: "exit" },
+  ];
+  const state = EventState.initialized(); state.write(variable, 0);
+  const game = new FieldGame(field, state);
+  game.startEvent(site.script);
+  assert.equal(game.stop, null);
+  assert.equal(state.read(variable), asynchronous ? 7 : 0);
+  assert.equal(game.busy, true);
+  game.advance(10); assert.equal(game.busy, true);
+  game.advance(10); assert.equal(game.busy, false); assert.equal(game.stop, null);
+  assert.equal(state.read(variable), 7);
+  controlledFields.push({ source: sourceOp.site, finishSource: finishOp.site,
+    controlledDevelopmentActorContext: true, asynchronous, mainObservesCompletionAtMs: 20 });
 }
 const report = { kind: "field-task-control", sourceSetHash: corpus.sourceSetHash,
   nativeReportSha256: createHash("sha256").update(nativeBytes).digest("hex"),
-  originalGameExecuted: false, sharedFieldSchedulerIntegrated: false,
+  originalGameExecuted: false, sharedFieldSchedulerIntegrated: true, formalNativeActorHostIntegrated: false,
   sourceCounts, totalDecoded: decoded.length, totalBlocked: blocked.length,
   generatedHelperPairs: pairs.length, asynchronousHelpers: pairs.filter((p) => p.asynchronous).length,
-  sharedDecoderRoutes: shared, controlled, decoded, blocked,
+  sharedDecoderRoutes: shared, controlled, controlledFields, decoded, blocked,
   limits: ["All-corpus counts include legacy and development records and do not measure playable content",
-    "Actor aliases, callbacks, first/last InitializePlayerPuppetEntities and host publication remain unintegrated",
-    "Current shared synchronous join is a development approximation; async and Finish remain blocked"] };
+    "Formal GameSession native actors/camera, callbacks and complete lifecycle bindings remain unresolved",
+    "Shared scheduler probes use explicit development actor hosts; native-host save/restore and battle return remain blocked"] };
 await writeFile(output, JSON.stringify(report, null, 2) + "\n");
 console.log(JSON.stringify({ result: "pass", decoded: decoded.length, blocked: blocked.length,
   generatedHelperPairs: pairs.length, asynchronousHelpers: report.asynchronousHelpers,
-  controlledPureProbes: controlled.length, sharedFieldSchedulerIntegrated: false }));
+  controlledPureProbes: controlled.length, controlledFieldProbes: controlledFields.length,
+  sharedFieldSchedulerIntegrated: true, formalNativeActorHostIntegrated: false }));

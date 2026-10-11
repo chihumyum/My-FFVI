@@ -5,7 +5,7 @@ import { hash } from "../src/compiler/content.js";
 
 function fixture() {
   const sources = [{ file: "Assets/message.bundle", sha256: "a".repeat(64), bytes: 123 }];
-  return { formatVersion: 1, adapterVersion: "field-0.1.0", parentSourceSetHash: "parent",
+  return { formatVersion: 1, adapterVersion: "field-0.1.1", parentSourceSetHash: "parent",
     sources, sourceSetHash: hash(sources), messages: { system_zhc: { SYN_ITEM: "Synthetic item" } },
     messageSources: [{ file: "message.bundle", assetPath: "Assets/Message/system_zhc.txt", objectId: "9223372036854775807" }] };
 }

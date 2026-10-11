@@ -194,7 +194,7 @@ test("FieldGame title effects require a host transaction and failures never reac
 
 test("native End terminates the current Field task rather than returning to a call or waiting two seconds", () => {
   const f = fixture(), h = host(), state = EventState.initialized(), before = state.snapshot();
-  f.content.scripts.test = [{ ...site, kind: "call", target: 3 }, flag(1), exit,
+  f.content.scripts.test = [{ ...site, kind: "call", target: 2 }, flag(1), exit,
     presentation(1), flag(2), { ...site, kind: "return" }];
   const field = new FieldGame(f.content, state, undefined, undefined, h.owner.current);
   field.startEvent("test");
@@ -214,7 +214,7 @@ test("Field checkpoints distinguish null, unknown and absent by trusted context 
     const options: FieldGameOptions = context ? { sourcePresentation: { context: () => context } } : {};
     const field = new FieldGame(f.content, new EventState(), undefined, undefined, options);
     const saved = field.checkpoint();
-    assert.equal(saved.kind, "idle-field-v6");
+    assert.equal(saved.kind, "idle-field-v7");
     assert.deepEqual(saved.sourcePresentation, context);
     assert.deepEqual(FieldGame.restore(f.content, saved, options).checkpoint(), saved);
     for (const changed of contexts) {
@@ -363,7 +363,7 @@ test("published maps read current presentation context and world restore does no
   assert.equal(prepared.field.eventState.read(mapFlag), 0, "PointIn cleared the old map; absence did not write one");
   assert.equal(world.commit(prepared), true);
   const saved = world.checkpoint();
-  assert.equal(saved.kind, "idle-world-v6");
+  assert.equal(saved.kind, "idle-world-v7");
   const restored = new WorldSession(f.content, new EventState(), h.owner);
   restored.restore(saved, f.catalog, f.target);
   assert.deepEqual(restored.checkpoint(), saved);

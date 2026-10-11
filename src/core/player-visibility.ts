@@ -9,6 +9,15 @@ export type PlayerVisibilityOp = {
   command: PlayerVisibilityCommand;
 };
 
+/** Compiler-bound static factory admission, included in content identity rather
+ * than mutable saves. Only the source prefab's fresh actual player and supported
+ * lifecycles inherit it; replacing/rebinding ChildEntityObject needs a new host. */
+export type PlayerVisibilityFactory = {
+  factory: "native-field-player-v1";
+  capability: { childEntityObject: "absent" };
+  sources: { file: string; sha256: string }[];
+};
+
 /** The host binds FieldController.player, not GetFieldEntity's negative script
  * identities. Null partyPlayerId means no party appearance host is installed;
  * an installed host must identify exactly the same existing player instance.

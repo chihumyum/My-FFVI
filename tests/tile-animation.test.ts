@@ -191,7 +191,7 @@ function game(instruction: unknown, target = "1") {
   const raw = (mnemonic: string, iValues: number[] = []) => ({
     mnemonic,
     type: 1,
-    operands: { iValues, rValues: [], sValues: [] },
+    operands: { iValues: [...iValues, ...Array(8 - iValues.length).fill(0)], rValues: Array(8).fill(0), sValues: Array(8).fill("") },
   });
   const instructions = [
     raw("SetPuppet", [0, Number(target), 3]),
@@ -257,13 +257,17 @@ test("VM waits for one-shot region completion, async loops survive task end, rep
   a.advance(60);
   assert.equal(a.busy, true);
   a.advance(10);
+  assert.equal(a.busy, true); // Slot completed after the main core's clock.
+  a.advance(10);
   assert.equal(a.busy, false);
   b.advance(7);
   b.advance(23);
-  b.advance(40);
+  b.advance(50);
   assert.deepEqual(a.tileAnimations.snapshot(), b.tileAnimations.snapshot());
   const loop = game(play(-1));
   loop.startEvent("test");
+  assert.equal(loop.busy, true);
+  loop.advance(10);
   assert.equal(loop.busy, false);
   loop.advance(100);
   assert.equal(loop.tileAnimations.isPlaying("1"), true);

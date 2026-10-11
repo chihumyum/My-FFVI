@@ -69,6 +69,7 @@ for (const kind of ["encounter", "change-map"] as const) {
       operation(5, { kind: "exit" }),
       operation(6, { kind: "wait", seconds: 0.01 }),
       handoff(kind, 7),
+      operation(8, { kind: "exit" }),
     ];
     assert.equal(game.startEvent("handoff"), true);
     assert.equal(count(), 1);

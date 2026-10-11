@@ -177,7 +177,7 @@ test("puppet tasks join before dialogue; movement/waits are independent of rende
   const c = eventFixture();
   c.map.entities.push({ ...entity("npc", 6, 0, 0), asset: "npc" });
   c.scripts.event = ops(
-    { kind: "call", target: 4 },
+    { kind: "call", target: 3 },
     { kind: "message", key: "test", speaker: "Fixture", text: "done" },
     { kind: "exit" },
     { kind: "nop" },
@@ -301,6 +301,8 @@ test("victory continuation hides a visual blocker and a non-visual trigger befor
   assert.equal(g.stop?.kind, "encounter");
   assert.throws(() => g.finishEncounter(4));
   g.finishEncounter(3);
+  assert.equal(g.busy, true, "synchronous Exec yields its main core once");
+  g.advance(10);
   assert.equal(g.busy, false);
   assert.deepEqual([...g.hiddenEntities].sort(), ["guard", "trigger"]);
   assert.equal(g.move("left"), true);

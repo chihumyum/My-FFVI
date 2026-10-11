@@ -1,5 +1,6 @@
 import { minimapMarkers, MINIMAP_ROTATION } from "/runtime/core/minimap.js";
 import { FIELD_POSE as FACING } from "/runtime/core/actor-animation.js";
+import { fieldFadeOverlay } from "/runtime/core/field-fade.js";
 export class Renderer {
   constructor(canvas, content, images) {
     this.canvas = canvas;
@@ -255,7 +256,8 @@ export class Renderer {
       if (l.name === "CeilLayer") drawActors(3);
     }
     if (game.fade) {
-      c.fillStyle = `rgba(0,0,0,${1 - game.fade.elapsed / game.fade.duration})`;
+      const color = fieldFadeOverlay(game.fade);
+      c.fillStyle = `rgba(${color.r * 255},${color.g * 255},${color.b * 255},${color.a})`;
       c.fillRect(0, 0, w, h);
     }
   }

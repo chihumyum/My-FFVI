@@ -35,6 +35,7 @@ export type WorldCatalog = {
   contentHash: string;
   characters: Record<string, Character>;
   transportation?: TransportationCatalog;
+  playerFactory?: FieldContent["playerFactory"];
   treasureInventoryLimits?: FieldContent["treasureInventoryLimits"];
   systemMessageSource?: Evidence & { sourceSetHash: string; sha256: string };
   minimap?: FieldContent["minimap"];

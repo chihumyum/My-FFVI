@@ -7,6 +7,7 @@ import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
 import { bindTileAnimationRegions } from "./tile-animation.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { decodeFieldOp, decodeScriptLocals, decodeConditionVisualFlag } from "./field.js";
+import { compilePlayerVisibilityFactory } from "./player-visibility.js";
 import { missingFieldPoses } from "../core/character-media.js";
 import { fieldCollisionRange } from "../core/collision.js";
 import { tableId } from "./table-id.js";
@@ -372,6 +373,8 @@ export async function compileWorld(root: string) {
     mediaSourceSetHash: text(media.sourceSetHash),
     characters,
     transportation,
+    playerFactory: compilePlayerVisibilityFactory(array(corpus.manifest.sources).map(record)
+      .map((s) => ({ file: text(s.file), sha256: text(s.sha256) }))),
     treasureInventoryLimits,
     systemMessageSource: systemMessages.source,
     characterIssues,

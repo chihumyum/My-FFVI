@@ -1,8 +1,8 @@
-# Field task control: source recovery and staged pure capability
+# Field task control: source recovery and shared scheduler
 
-This v28 work recovers this build's `Call`, `Return`, `SetPuppet`, `ExecPuppet`, and `FinishPuppet` control rules. It supplies strict decoding and pure projections. **It does not replace the production `FieldGame` scheduler.** The current development `join` implementation remains an approximation; newly recognized asynchronous execution and `FinishPuppet` remain blocked in the shared decoder.
+The v28 work recovered this build's `Call`, `Return`, `SetPuppet`, `ExecPuppet`, and `FinishPuppet` control rules. v29 routes the shared compiler through that strict decoder and replaces the task-local pending/children executor with the recovered global 32-slot scheduler in `FieldGame`. Source actor initialization remains an explicit host capability; the existing development game does not yet supply the complete native actor/camera host.
 
-The implementation is deliberately separated from actor initialization. Applying the new scheduling rules while omitting native player/party/companion initialization would turn missing state into incorrect visible behavior. The existing field and audio integration were not edited by this work.
+The source actor port prepares initialization, entry, Ready, finalization and three collision switches before publication. A package that declares source puppet contexts requires this port; unknown callbacks or dependencies block. Packages without either retain their documented development actor bootstrap. They are not evidence of native lifecycle completion. See [actor host boundaries](field-puppet-actors.md) and [v29 integration](systems-v29.md).
 
 ## Evidence and validation
 
@@ -69,9 +69,9 @@ On the first clock, `ExecPuppet` (`0x2bfa70`) invokes its callback if present, r
 
 `src/compiler/field-task-control.ts` requires exact eight-element integer/real/string arrays, checked integer ranges, known format types and reserved zero/empty fields. Generated type-2 records can execute in the main core; their format type is not proof of a PuppetCore execution context. Missing legacy arrays are not padded from an assumed default. `Call.i1` accepts the two observed marker values but has no runtime asynchronous effect.
 
-## Required host closure before production integration
+## Source host requirements and remaining closure
 
-The next integration batch must address these together:
+These requirements remain the acceptance contract. v29 supplies shared scheduling and a controlled source port; the formal game still needs the complete actor/camera owner and its lifecycle:
 
 1. **Player and party aliases.** `PuppetCoreEntry` remaps `-1001`, the status-resident leader identity, resident character identities and party puppet identities. It can copy position/layer, show or hide entities, and alter party assignment. The `characteristics && !keepPlayerPuppet` branch may skip player registration; it examines the next mnemonic and has a distinct Hide path. Neither a negative source ID nor a Web entity with the same name is sufficient proof of identity.
 2. **Initial and final actor state.** `InitializePlayerPuppetEntities` (`0x5f2e90`) runs around ordinary field scripts under the native `isFieldScript`, `isSkipInitialize` and hooked-script conditions. It initializes the camera dummy, projects the leader and six native puppet identities, handles the companion, copies position/layer/facing/animation, and applies riding/visibility behavior. The final path can restore the player from its puppet. Existing hidden actor media state alone does not supply all positions, layers or camera context.
@@ -81,4 +81,4 @@ The next integration batch must address these together:
 6. **Frame order and cancellation.** Drain one core's Next instructions until wait before moving to the next core. Prevent the current pump's instruction-by-instruction interleaving and repeated clocks in one logical frame. Apply main-end cancellation after the frame, followed by the recovered finalization transaction. Validate source ranges at jumps and returns.
 7. **Checkpoint context.** Stable saves must not serialize pending/active slots as idle or reset disabled collision/unknown callback state by omission. Establish trusted entry context and decide the stable checkpoint contract before changing the live scheduler. Old development checkpoints are not proof that native initialization ran.
 
-The production decoder is intentionally not routed to this module yet. The source report includes its current routing separately. This staged capability should not be counted as completion of the field task system, a fresh new-game host, or asynchronous story playback.
+The decoder is now routed to this module. Controlled FieldGame tests cover source aliases, collision publication, unknown callbacks and failed preparations. Native host saves/restores and battle return explicitly reject missing owner codecs/candidate bindings. No implicit script-end collision recovery is added after an asynchronous Exec. Treasure message conflicts are rejected before rewards, and main termination cannot discard a pending treasure flag. Movement waits suspend their owning task; competing actor movement remains explicitly unsupported. These results do not establish a fresh new-game host or complete asynchronous story playback.

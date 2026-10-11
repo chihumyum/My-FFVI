@@ -8,7 +8,7 @@ export function bindSystemMessages(
   parentSourceSetHash: string,
   expectedSources: readonly { file: string; sha256: string }[],
 ) {
-  if (field.formatVersion !== 1 || field.adapterVersion !== "field-0.1.0" ||
+  if (field.formatVersion !== 1 || field.adapterVersion !== "field-0.1.1" ||
       field.parentSourceSetHash !== parentSourceSetHash || !Array.isArray(field.sources) ||
       field.sourceSetHash !== hash(field.sources) || !Array.isArray(field.messageSources))
     throw new Error("System message source manifest mismatch");

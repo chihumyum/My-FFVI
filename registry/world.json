@@ -9,7 +9,7 @@
         "炭坑都市纳尔谢"
       ],
       "questions": [
-        "来源新游戏共享状态已接通；继续闭合玩家子实体、相机、消息、淡出及演出任务宿主，不能跳过角色替换和开始/结束清理。",
+        "来源新游戏共享状态已接通；继续绑定正式隐藏演员/相机、真实视觉 offset 与回调、标题到字段的渐变初态和叙述消息。共享调度及受控生命周期已实现，不代表完整序章已可玩。",
         "建立同一地点在不同世界阶段、剧情标记和局部状态下的变体条件。",
         "确认 Wait 时钟与 SysCall 选择器，并对已恢复的碰撞进行原版运行对照。"
       ]
@@ -1199,6 +1199,70 @@
         "GameAssembly.dll:RVA 0x2bae50,0x2bfa70,0x2bfec0",
         "GameAssembly.dll:RVA 0x5f40c0,0x5f2e90",
         "docs/field-task-control.md"
+      ]
+    },
+    {
+      "id": "narshe:task-control-v29",
+      "subject": "narshe",
+      "predicate": "migration.taskControlBoundary",
+      "value": "FieldGame now drains one core per clock, main before 32 global puppet slots. Call skips its target label; puppet entry executes its target within first-Exit bounds. Source callbacks, three collision switches and lifecycle effects use an explicit controlled port. Formal GameSession native actor/camera ownership remains incomplete; source-host saves and battle return are blocked. Treasure message conflicts preflight before grants and main termination cannot discard pending treasure flags.",
+      "when": {
+        "battleProfile": "narshe-playability-v29"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x2bae50,0x2bfa70,0x2bfec0,0x5f4fd0",
+        "docs/field-task-control.md",
+        "docs/field-puppet-actors.md",
+        "docs/systems-v29.md"
+      ]
+    },
+    {
+      "id": "narshe:field-fade-v29",
+      "subject": "narshe",
+      "predicate": "migration.fieldFade",
+      "value": "Signed float32 FadeIn/Out uses one Image/CanvasRenderer owner. Negative duration is asynchronous; nonnegative first clock waits. Existing waiters observe current alpha after replacement. World candidates fork active fade state, stable field/world v7 saves preserve it, and missing trusted seeds remain unknown. The transparent development seed is not a native new-game initial-state proof.",
+      "when": {
+        "battleProfile": "narshe-playability-v29"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "GameAssembly.dll:RVA 0xb4ba80,0xb4bc60,0xb4be40,0xb02f30,0xb02f70",
+        "GameAssembly.dll:RVA 0x146ddf0,0xfc4d70",
+        "docs/field-fade.md"
+      ]
+    },
+    {
+      "id": "narshe:player-factory-v29",
+      "subject": "narshe",
+      "predicate": "migration.playerVisibility",
+      "value": "Fresh player child absence is admitted only for the exact DLL and chara_field prefab factory chain. Field adapter field-0.1.1 includes the prefab digest; source scripts that mutate unsupported child chains remain blocked. This is static source binding, not original-game dynamic parity.",
+      "when": {
+        "battleProfile": "narshe-playability-v29"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "GameAssembly.dll:sha256 1a7e12c90c6a734e17dda507dd6ab7555090dff6a1e96f3473a90c29916ca6dc",
+        "chara_field_assets_all_9e395e2f928b4e4c1168ce78cb733ac7.bundle:sha256 82befd5fd3adeed5c8055c90a9aa3b8a09837be9094f9677d33ead3cbf3a0daa",
+        "docs/player-visibility.md"
+      ]
+    },
+    {
+      "id": "narshe:field-camera-v29",
+      "subject": "narshe",
+      "predicate": "migration.fieldCamera",
+      "value": "Source actor 0 is scrollDummy, separate from physical actors. Pure target, coordinate, SetPos and Lerp projections are source-bound; EntityLoadingCompleteStep seeds full tile-map range then the first type27 object overrides it. Formal FieldGame/renderer consumption, visual offsets, registered SetPos callbacks and viewport/effect handling remain incomplete.",
+      "when": {
+        "battleProfile": "narshe-playability-v29"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x2d9b50,0x2d2a10,0x2fe6c0,0xb277c0",
+        "docs/field-camera.md"
       ]
     }
   ],

@@ -16,7 +16,7 @@ const module = (name) => import(pathToFileURL(resolve(compiled, "src", name + ".
 const { loadCorpus } = await module("compiler/corpus");
 const { hash } = await module("compiler/content");
 const { decodeFieldOp } = await module("compiler/field");
-const { compilePlayerVisibilityInstruction, playerVisibilityMnemonics } = await module("compiler/player-visibility");
+const { compilePlayerVisibilityInstruction, compilePlayerVisibilityFactory, playerVisibilityMnemonics } = await module("compiler/player-visibility");
 const { projectPlayerVisibility } = await module("core/player-visibility");
 const { FieldGame } = await module("core/field");
 const { EventState } = await module("core/event-state");
@@ -31,6 +31,9 @@ const native = JSON.parse(nativeBytes);
 assert.equal(native.semanticsVerified, false);
 const corpus = await loadCorpus(root);
 assert.equal(corpus.manifest.sources.find((s) => s.file === "GameAssembly.dll")?.sha256, native.nativeSha256);
+const factory = compilePlayerVisibilityFactory(corpus.manifest.sources);
+assert.equal(factory.capability.childEntityObject, "absent");
+assert.equal(native.playerFactory.capability.childEntityObject, "absent");
 const calls = [];
 for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
   for (const [index, instruction] of (asset.data.Mnemonics ?? []).entries()) {
@@ -60,7 +63,7 @@ const controlled = [];
 const fieldExecutions = [];
 const controlledSource = { file: "controlled", assetPath: "player-visibility-host" };
 const successorFlag = { category: "ScenarioFlag1", index: 14 };
-const provedHost = { playerVisibility: { childEntityObject: "absent" } };
+const provedHost = { playerVisibility: factory.capability };
 function fieldContent(op, playerVisible) {
   const site = { script: "controlled-visibility", index: 1, source: controlledSource };
   return {
@@ -179,11 +182,11 @@ const report = {
   lane: "source-player-visibility-controlled-projection", sourceSetHash: corpus.sourceSetHash,
   parentSourceSetHash: corpus.manifest.parentSourceSetHash,
   nativeReportSha256: sha(nativeBytes), calls, controlled, rejected,
-  fieldExecutions, rejectedFields, restoreAndShow,
+  fieldExecutions, rejectedFields, restoreAndShow, factory,
   controlledHost: { ...binding,
-    note: "Explicit synthetic child absence, not a claim about the formal source player's factory" },
+    note: "Controlled field geometry/identity; child capability compiled from the exact reviewed DLL and complete prefab source" },
   semanticsVerified: false, originalGameExecuted: false,
-  doesNotEstablish: ["native-dynamic-parity", "formal-player-child-absence", "browser-rendering",
+  doesNotEstablish: ["native-dynamic-parity", "arbitrary-or-rebound-child-absence", "browser-rendering",
     "complete-prelude-execution", "reachable-script-or-map-coverage", "full-game-migration"],
 };
 const bytes = JSON.stringify(report, null, 2) + "\n";

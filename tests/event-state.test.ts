@@ -15,7 +15,7 @@ const instruction = (
   mnemonic: string,
   iValues: number[] = [],
   sValues: string[] = [],
-) => ({ mnemonic, type: 1, operands: { iValues, rValues: [], sValues } });
+) => ({ mnemonic, type: 1, operands: { iValues: [...iValues, ...Array(8 - iValues.length).fill(0)], rValues: Array(8).fill(0), sValues: [...sValues, ...Array(8 - sValues.length).fill("")] } });
 function host(raw: unknown[], state = new EventState()) {
   const c: FieldContent = {
     formatVersion: 1,
@@ -125,7 +125,7 @@ test("signed arithmetic wraps additions/multiplication and preserves source zero
 test("one field VM runs a counted loop, nested call and flag branch without scene rules", () => {
   const g = host([
     instruction("Calc", [0, 3], ["MapLocalVariable", "←", "imm"]),
-    instruction("Call", [6]),
+    instruction("Call", [5]),
     instruction("Branch", [0, 0, 4], ["MapLocalVariable", "＝", "imm"]),
     instruction("Jump", [1]),
     instruction("SetFlag", [8], ["ScenarioFlag3"]),

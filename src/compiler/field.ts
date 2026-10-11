@@ -17,7 +17,10 @@ import { compilePartyEvent } from "./party.js";
 import { compileOwnedConditionInstruction } from "./owned-condition.js";
 import { compileSourcePresentationInstruction, sourcePresentationSelectors } from "./source-presentation.js";
 import { compileAudioReadinessInstruction } from "./audio-readiness.js";
-import { compilePlayerVisibilityInstruction, playerVisibilityMnemonics } from "./player-visibility.js";
+import { compilePlayerVisibilityInstruction, compilePlayerVisibilityFactory, playerVisibilityMnemonics } from "./player-visibility.js";
+import { compileFieldTaskControlInstruction, fieldTaskControlMnemonics } from "./field-task-control.js";
+import { compileFieldFadeInstruction } from "./field-fade.js";
+import { DEVELOPMENT_TRANSPARENT_FADE } from "../core/field-fade.js";
 import { loadSystemSource } from "./system-source.js";
 import { compileTransportationCatalog, compileNarsheTransportationCheckpoint } from "./transportation.js";
 import { compilePartyActorCatalog, compileNarshePartyActorCheckpoint } from "./party-actors.js";
@@ -96,18 +99,19 @@ export function decodeFieldOp(
   messages: Record<string, unknown>,
   tables: Record<string, unknown> = {},
 ): Op {
-  const m = record(raw),
-    o = record(m.operands),
-    i = list(o.iValues).map(integer),
-    r = list(o.rValues).map(Number),
-    s = list(o.sValues).map(string);
-  const name = string(m.mnemonic);
+  const m = record(raw), name = string(m.mnemonic);
   const blocked = (reason: string): Op => ({
     ...site,
     kind: "blocked",
     mnemonic: name,
     reason,
   });
+  if (name === "FadeIn" || name === "FadeOut") {
+    try { return { ...site, ...compileFieldFadeInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  const o = record(m.operands), i = list(o.iValues).map(integer),
+    r = list(o.rValues).map(Number), s = list(o.sValues).map(string);
   const form = (is: number[], rs: number[] = [], ss: number[] = []) =>
     i.every((v, n) => v === 0 || is.includes(n)) &&
     r.every((v, n) => v === 0 || rs.includes(n)) &&
@@ -115,12 +119,14 @@ export function decodeFieldOp(
   const simple = {
     Nop: "nop",
     Exit: "exit",
-    Return: "return",
-    ExecPuppet: "join",
     Hide: "hide",
   } as const;
   if (Object.hasOwn(simple, name) && form([]))
     return { ...site, kind: simple[name as keyof typeof simple] };
+  if (fieldTaskControlMnemonics.some((mnemonic) => mnemonic === name)) {
+    try { return { ...site, ...compileFieldTaskControlInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (playerVisibilityMnemonics.some((mnemonic) => mnemonic === name)) {
     try { return { ...site, ...compilePlayerVisibilityInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
@@ -332,18 +338,8 @@ export function decodeFieldOp(
         };
     }
   }
-  if (name === "Call" && form([0]) && i[0]! >= 0)
-    return { ...site, kind: "call", target: i[0]! };
   if (name === "Wait" && form([], [0]) && Number.isFinite(r[0]) && r[0]! >= 0)
     return { ...site, kind: "wait", seconds: r[0]! };
-  if (name === "SetPuppet" && form([0, 1, 2]))
-    return {
-      ...site,
-      kind: "puppet",
-      slot: i[0]!,
-      actor: String(i[1]),
-      target: i[2]!,
-    };
   if (
     name === "SetPos" &&
     form([0, 1, 2], [], [0]) &&
@@ -394,14 +390,6 @@ export function decodeFieldOp(
       mode: i[2]!,
     };
   if (name === "SyncSE" && form([])) return { ...site, kind: "sound-sync" };
-  if (
-    name === "FadeIn" &&
-    form([3], [0]) &&
-    i[3] === 255 &&
-    Number.isFinite(r[0]) &&
-    r[0]! >= 0
-  )
-    return { ...site, kind: "fade-in", seconds: r[0]! };
   return blocked("Instruction or operand form has not been migrated");
 }
 
@@ -728,7 +716,9 @@ export async function compileField(root: string): Promise<FieldContent> {
     scripts,
     scriptLocals,
     scriptSystemFlags,
+    playerFactory: compilePlayerVisibilityFactory(extended.map((s) => ({ file: string(s.file), sha256: string(s.sha256) }))),
     entry: {
+      fade: structuredClone(DEVELOPMENT_TRANSPARENT_FADE),
       absentHideTargets,
       transportationId: transportation.identity.id,
       initialEventValues: [...mapEntrySeed.values, ...transportation.knownReleaseFlags],

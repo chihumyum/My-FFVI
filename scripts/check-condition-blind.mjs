@@ -148,7 +148,7 @@ if (!sourceOnly) {
   const published = JSON.parse(await readFile(resolve(root, option('--catalog', 'build/game/opening-playable.json')), 'utf8'));
   const original = structuredClone(published);
   for (const value of [source, published]) { const { contentHash, ...rest } = value; assert.equal(contentHash, hash(rest)); }
-  assert.equal(published.common.profile, 'narshe-playability-v28');
+  assert.equal(published.common.profile, 'narshe-playability-v29');
   assert.equal(published.common.sourceContentHash, source.contentHash); assert.equal(source.nativeProfile.sha256, native.nativeSha256);
   for (const d of definitions) { assert.deepEqual(published.common.abilities[d.id].plan, d.plan); assert.deepEqual(published.common.abilities[d.id].blockers, d.blockers); report.publishedProbes++; }
   assert.deepEqual(published.common.conditions.behaviors.filter((b) => b.kind === 'blind'), compiled.filter(Boolean)); report.publishedProbes++;

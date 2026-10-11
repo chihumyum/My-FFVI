@@ -13,7 +13,10 @@ import type { OwnedConditionEventOp } from "../core/owned-condition.js";
 import type { FieldEntryContextDefinition } from "../core/field-entry-context.js";
 import type { SourcePresentationOp } from "../core/source-presentation.js";
 import type { AudioReadinessOp } from "../core/audio-readiness.js";
-import type { PlayerVisibilityOp } from "../core/player-visibility.js";
+import type { PlayerVisibilityOp, PlayerVisibilityFactory } from "../core/player-visibility.js";
+import type { FieldTaskControlOp } from "../core/field-task-control.js";
+import type { FieldFadeOp, FieldFadeInitial } from "../core/field-fade.js";
+import type { FieldPuppetScriptContext } from "../core/field-puppet-actors.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -149,9 +152,10 @@ export type Op = Site &
     | SourcePresentationOp
     | AudioReadinessOp
     | PlayerVisibilityOp
+    | FieldTaskControlOp
+    | FieldFadeOp
     | { kind: "entities"; group: string }
     | { kind: "change-map"; request: MapRequest }
-    | { kind: "fade-in"; seconds: number }
     | { kind: "ride"; actor: string; vehicle: 6 }
     | { kind: "sound"; soundId: number; channel: number; mode: number }
     | { kind: "sound-sync" }
@@ -239,11 +243,17 @@ export type FieldContent = {
   bgm?: AudioMedia;
   environment?: AudioMedia;
   treasureInventoryLimits?: TreasureInventoryLimits;
+  playerFactory?: PlayerVisibilityFactory;
   scripts: Record<string, Op[]>;
   scriptLocals?: Record<string, ScriptLocals | null>;
   /** Integrator.Execute reads this per source Format; absence is unknown. */
   scriptSystemFlags?: Record<string, { keepBadStatusVisual: boolean } | null>;
+  /** Full source lifecycle admission. Development checkpoints without this
+   * capability retain their documented actor-bootstrap limitation. */
+  scriptPuppetContexts?: Record<string, FieldPuppetScriptContext | null>;
   entry: {
+    /** Explicit host seed. Missing means unknown, never an implicit clear screen. */
+    fade?: FieldFadeInitial;
     /** A source MapSetup/PointIn entry. The host must finish its initializer or
      * continuation before publishing SetupEncountData qualification inputs. */
     synchronization?: { kind: "map-entry" };

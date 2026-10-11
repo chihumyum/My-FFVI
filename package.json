@@ -91,7 +91,10 @@
     "source-presentation:check": "npm run build && node scripts/check-source-presentation.mjs",
     "audio-readiness:check": "npm run build && node scripts/check-audio-readiness.mjs && node scripts/check-audio-readiness-ui.mjs",
     "player-visibility:check": "npm run build && node scripts/check-player-visibility.mjs",
-    "field-task-control:check": "npm run build && node scripts/check-field-task-control.mjs"
+    "field-task-control:check": "npm run build && node scripts/check-field-task-control.mjs",
+    "field-fade:check": "npm run build && node scripts/check-field-fade.mjs",
+    "field-camera:check": "npm run build && node scripts/check-field-camera.mjs",
+    "field-puppet-actors:check": "npm run build && node scripts/check-field-puppet-actors.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

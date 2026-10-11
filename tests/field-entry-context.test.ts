@@ -1,4 +1,5 @@
 import test from "node:test";
+import { DEVELOPMENT_TRANSPARENT_FADE } from "../src/core/field-fade.js";
 import assert from "node:assert/strict";
 import { compileFieldEntryContext } from "../src/compiler/field-entry-context.js";
 import { projectFieldEntryContext, type FieldEntryContextDefinition } from "../src/core/field-entry-context.js";
@@ -129,7 +130,7 @@ test("map entry has an explicit no-script completion and strict checkpoint bindi
   assert.equal(g.battleEntryContext.state.footAttributeType, 0);
   assert.throws(() => g.startMapEntry(null), /pending source/);
   const saved = g.checkpoint();
-  assert.equal(saved.kind, "idle-field-v6");
+  assert.equal(saved.kind, "idle-field-v7");
   assert.equal(FieldGame.restore(c, saved).entrySynchronized, true);
   for (const proof of [null, false, 1, undefined]) {
     const bad = { ...saved, entrySynchronized: proof };
@@ -160,11 +161,12 @@ test("initializer battle stops retain unknown current foot context until their c
 
 test("initializer synchronization waits for puppet movement, dialogue and fade completion", () => {
   const c = content();
+  c.entry.fade = { ...structuredClone(DEVELOPMENT_TRANSPARENT_FADE), rendererColor: { r: 1, g: 1, b: 1, a: 1 } };
   c.map.entities.push({ id: "npc", kind: 6, x: 3, y: 1, layer: 1, width: 1, height: 1, asset: "npc", direction: "down", script: null, collision: null, destinationLayer: null, source });
   c.scripts.init = ops(
     { kind: "puppet", slot: 0, actor: "npc", target: 6 }, { kind: "join" },
     { kind: "message", key: "synthetic", text: "ready", speaker: "" },
-    { kind: "fade-in", seconds: 0.1 }, { kind: "exit" }, { kind: "nop" },
+    { kind: "field-fade", direction: "in", seconds: 0.1, color: null }, { kind: "exit" }, { kind: "nop" },
     { kind: "move", direction: "down", steps: 1, secondsPerCell: 0.12 }, { kind: "exit" },
   );
   const g = new FieldGame(c);
@@ -172,13 +174,13 @@ test("initializer synchronization waits for puppet movement, dialogue and fade c
   g.advance(110);
   assert.equal(g.entrySynchronized, false);
   assert.equal(g.dialogue, null);
-  g.advance(10);
+  g.advance(20); // main observes the completed puppet on the following clock
   assert.equal((g.dialogue as { text: string } | null)?.text, "ready");
   assert.equal(g.entrySynchronized, false);
   g.confirm();
   g.advance(90);
   assert.equal(g.entrySynchronized, false);
-  g.advance(10);
+  g.advance(30); // float32 final sample and coroutine completion are distinct
   assert.equal(g.entrySynchronized, true);
   assert.equal(g.actors.npc!.y, 2);
 });
@@ -215,7 +217,7 @@ test("WorldSession owns entry synchronization across candidates, publication and
   world.field.advance(100);
   assert.equal(world.field.entrySynchronized, true);
   const checkpoint = world.checkpoint();
-  assert.equal(checkpoint.kind, "idle-world-v6");
+  assert.equal(checkpoint.kind, "idle-world-v7");
   const restored = new WorldSession(field);
   restored.restore(checkpoint, catalog, target);
   assert.equal(restored.field.entrySynchronized, true);

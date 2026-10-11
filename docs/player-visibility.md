@@ -34,7 +34,11 @@ projectPlayerVisibility(command, binding, hiddenEntities): PlayerVisibilityPlan
 
 `FieldGameOptions.playerVisibility` 是不可变宿主能力，只含 `childEntityObject`。构造时验证并复制枚举，外部修改原 options 不会改变准入；缺省为 unresolved。每次操作读取 `this.player.id` 与当前 party checkpoint 的真实 player identity，全部准备成功后修改原来的同一个 hidden Set。任务 actor 不参与目标选择，包括已有 puppet task 的受控调用。该能力不写存档，恢复保存的隐藏状态也不会获得 child absence；后续显隐仍需宿主重新提供证明。
 
-原生 child 的工厂来源尚未形成通用入口能力，正式来源入口应保留 `unresolved` gate，不能为推进前导而宣称 absent。受控测试中的 absent 是显式夹具条件。独立模块和 decoder 完成不等于完整开场流程已经通过。
+v29 增加 `compilePlayerVisibilityFactory(manifest.sources): PlayerVisibilityFactory`。它要求本版完整 `GameAssembly.dll` 和 `chara_field_assets_all_9e395e2f928b4e4c1168ce78cb733ac7.bundle` 的准确文件身份与 SHA，同时拒绝缺失、重复和未知摘要。返回 `factory:"native-field-player-v1"`、`capability:{childEntityObject:"absent"}` 和这两个来源引用。编译后随 FieldContent / WorldCatalog 的内容摘要绑定；宿主构造字段时重新提供能力，存档不能自己授予能力。
+
+这个准入基于完整创建链，而非预制件少一个字段：`MapManager.CreateFieldPlayer 0x308050` 在同一 rootObjectTransform 下实例化准确 FieldPlayer 预制件，获取 FieldPlayer 组件并调用虚表 InitInstance；`FieldController.CreateFieldPlayer 0x2d6e30` 把结果登记为实际 player。完整预制件层级只有 FieldPlayer、FieldRideOnEntity、FieldShadowEntity 三个 MonoBehaviour，没有额外 Awake / OnEnable / Start / 反序列化脚本。ChildEntityObject 是未序列化的托管接口字段，托管创建先为 null；已核实的 Player→Chara→Sprite→Entity→Entities 构造链、Sprite→Entity Awake、Chara.InitInstance→Entity.InitInstance / SetSerialOffset 与 RideOn.Init 均保留该 null。骑乘 renderer 是另一个字段，不能拿它充当 child。
+
+能力范围是这一版本预制件创建的实际玩家，以及当前准入的字段生命周期。任意旧实例、主动重新绑定 child、其它预制件或未知原生行为仍不能获得 absent。证据是静态来源闭包，不是运行原版观察。独立模块、decoder 和工厂准入也不等于完整开场流程通过。
 
 ## 解码与验收
 
@@ -43,15 +47,17 @@ projectPlayerVisibility(command, binding, hiddenEntities): PlayerVisibilityPlan
 命令：
 
 ```sh
-npx tsc --outDir build/v28-visibility-dist
-node --test build/v28-visibility-dist/tests/player-visibility.test.js
-node --test build/v28-visibility-dist/tests/player-visibility-field.test.js
+npx tsc --outDir build/v29-visibility-dist
+node --test build/v29-visibility-dist/tests/player-visibility.test.js
+node --test build/v29-visibility-dist/tests/player-visibility-field.test.js
+node --test build/v29-visibility-dist/tests/player-visibility-factory.test.js
 node scripts/check-player-visibility-native.mjs
-node scripts/check-player-visibility.mjs --compiled-dir build/v28-visibility-dist
+node scripts/check-player-visibility.mjs --compiled-dir build/v29-visibility-dist
 ```
 
 - 8 项语义测试：真实玩家与 puppet 区分、重复显隐、Show 的激活规则、实例失配、child 未知、候选所有权、地图宿主传递、严格解码。
 - 7 项 FieldGame 集成测试：缺能力/未知拒绝、即时骑乘显隐、puppet 调用目标、party 实例失配、隐藏状态读档与能力分离、宿主能力不可变、防止存档注入。
-- native checker 验证 10 个已导出方法、9 个原始机器码绑定、继承/接口/字段身份及完整字节摘要；保留 `semanticsVerified:false`。
+- 2 项工厂测试验证双来源摘要绑定、候选副本、缺失/重复/未知来源拒绝。
+- native checker 验证 14 个已导出方法、18 个原始机器码绑定、继承/接口/字段身份、完整预制件脚本层级及字节摘要；保留 `semanticsVerified:false`。
 - source checker 校验 112 个真实来源指令与共用 decoder 的一致性，在显式受控 owner 上运行 224 次双初态纯投影和 224 次真实 FieldGame 执行/存档恢复；另检查 4 个纯依赖拒绝、4 个字段宿主拒绝及真实 Hide→保存→恢复→Show 链。来源文件、SHA、十进制字符串 object ID、JSON pointer 均保留到 ignored 报告。受控字段没有冒充完整前导或浏览器渲染。
 - 报告位于 `build/reports/player-visibility-{native-,}check.json`。这些不是可玩地图数量，也不证明脚本可达性、浏览器效果、完整前导或原版动态一致性。
