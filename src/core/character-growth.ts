@@ -1,5 +1,5 @@
 import { checkpointKeys } from "./checkpoint-validation.js";
-import { validateOwnedCharacterAbilities, type OwnedCharacterAbilities } from "./owned-character.js";
+import { validateOwnedCharacterAbilities, type OwnedCharacterAbilities, type OwnedAbility } from "./owned-character.js";
 
 /** Additional parameter storage is not the capped equipment projection. */
 export type CharacterGrowthAdditional = {
@@ -169,12 +169,18 @@ export function expectedOwnedGrowth(plan: CharacterGrowthPlan, progress: Charact
   return { level, exp, additional, abilities };
 }
 
-export function validateCharacterGrowth(plan: CharacterGrowthPlan, member: CharacterGrowthMember, progress: CharacterGrowthProgress): void {
+export function validateCharacterGrowth(plan: CharacterGrowthPlan, member: CharacterGrowthMember,
+  progress: CharacterGrowthProgress, equipmentAbilities: readonly OwnedAbility[] = []): void {
   const expected = expectedOwnedGrowth(plan, progress);
+  validateOwnedCharacterAbilities(member.abilities, equipmentAbilities);
+  const passiveIds = new Set(equipmentAbilities.map((a) => a.abilityId));
+  if (expected.abilities.owned.some((a) => passiveIds.has(a.abilityId)))
+    throw new Error("Equipment passive conflicts with ordinary learning");
+  const ordinary = { ...member.abilities, owned: member.abilities.owned.filter((a) => !passiveIds.has(a.abilityId)) };
   if (member.sourceId !== plan.sourceId || member.jobId !== plan.jobId || member.magicStoneId !== 0)
     throw new Error("Unimplemented character growth identity, job or magic stone");
   if (member.level !== expected.level || member.additionalLevel !== expected.level || member.exp !== expected.exp ||
-      !same(progress.additional, expected.additional) || !same(member.abilities, expected.abilities))
+      !same(progress.additional, expected.additional) || !same(ordinary, expected.abilities))
     throw new Error("Owned character growth disagrees with source projection");
 }
 
@@ -185,9 +191,10 @@ export function validateObservedLearning(
   plan: CharacterGrowthPlan,
   member: Pick<CharacterGrowthMember, "abilities">,
   observedAbilityIds: readonly number[],
+  equipmentAbilities: readonly OwnedAbility[] = [],
 ): void {
   validatePlan(plan);
-  validateOwnedCharacterAbilities(member.abilities);
+  validateOwnedCharacterAbilities(member.abilities, equipmentAbilities);
   if (!Array.isArray(observedAbilityIds)) throw new Error("Missing observed battle abilities");
   observedAbilityIds.forEach((id) => integer(id, 1));
   if (member.abilities.owned.some((a) => a.abilityId === 74) &&
@@ -203,8 +210,9 @@ export function growCharacter<T extends CharacterGrowthMember>(
   progress: CharacterGrowthProgress,
   request: CharacterGrowthRequest,
   projectParameters: (member: T, progress: CharacterGrowthProgress) => { maxHp: number; maxMp: number },
+  equipmentAbilities: readonly OwnedAbility[] = [],
 ): { member: T; progress: CharacterGrowthProgress; learnedAbilityIdsToAppend: number[]; steps: CharacterGrowthStep[] } {
-  validateCharacterGrowth(plan, member, progress);
+  validateCharacterGrowth(plan, member, progress, equipmentAbilities);
   if (request.kind !== "correct-level" && request.kind !== "add-experience")
     throw new Error("Unknown character growth request");
   if (request.kind === "correct-level") {
@@ -215,7 +223,7 @@ export function growCharacter<T extends CharacterGrowthMember>(
     integer(request.amount, 0, plan.maxExp);
     if (!["field", "battle"].includes(request.context)) throw new Error("Unknown growth execution context");
     if (request.context === "battle") {
-      validateObservedLearning(plan, member, request.observedAbilityIds);
+      validateObservedLearning(plan, member, request.observedAbilityIds, equipmentAbilities);
       if (plan.hasBattleBackgroundLearning)
         throw new Error("Unimplemented battle background learning provider");
     }
@@ -231,13 +239,22 @@ export function growCharacter<T extends CharacterGrowthMember>(
   } else candidateProgress.additionalExp = Math.min(plan.maxExp, progress.additionalExp + request.amount);
   const expected = expectedOwnedGrowth(plan, candidateProgress);
   candidateProgress.additional = expected.additional;
+  // Equipment passives share OwnedAbilityList but not ordinary learning order.
+  // Keep their current positions/copies; new natural abilities append after
+  // existing records, as AddAbility does, without entering the passive list.
+  const passiveIds = new Set(equipmentAbilities.map((a) => a.abilityId));
+  const owned = member.abilities.owned.map((a) => structuredClone(passiveIds.has(a.abilityId)
+    ? a : expected.abilities.owned.find((row) => row.abilityId === a.abilityId)!));
+  for (const ability of expected.abilities.owned)
+    if (!owned.some((a) => a.abilityId === ability.abilityId)) owned.push(structuredClone(ability));
+  expected.abilities.owned = owned;
   const candidate: T = { ...structuredClone(member), level: expected.level, additionalLevel: expected.level,
     exp: expected.exp, abilities: expected.abilities };
   const resources = projectParameters(structuredClone(candidate), structuredClone(candidateProgress));
   candidate.maxHp = integer(resources.maxHp, 1); candidate.maxMp = integer(resources.maxMp);
   candidate.hp = Math.min(integer(member.hp), candidate.maxHp);
   candidate.mp = Math.min(integer(member.mp), candidate.maxMp);
-  validateCharacterGrowth(plan, candidate, candidateProgress);
+  validateCharacterGrowth(plan, candidate, candidateProgress, equipmentAbilities);
   const steps: CharacterGrowthStep[] = [];
   for (let level = member.level + 1; level <= candidate.level; level++) {
     const row = plan.growth[level - 1]!;

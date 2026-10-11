@@ -38,7 +38,7 @@ export function fixture(): BattleContent {
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v23",
+    profile: "narshe-playability-v24",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -53,6 +53,7 @@ export function fixture(): BattleContent {
     },
     timing: { mode: "active", atbSpeed: 1 },
     reactions: { counterLimit: 1, excludedAbilityIds: [] },
+    drops: null,
     initialAtb: { player: [100, 100], enemy: [0, 0] },
     players: [
       unit,

@@ -9,6 +9,7 @@ import {
   validateElementResistances,
   type ElementResistances,
 } from "./elements.js";
+import { physicalProtectionDamage, physicalProtectionType } from "./protection.js";
 
 export type PhysicalRules = {
   normalAttack: boolean;
@@ -59,7 +60,7 @@ function baseDamage(input: PhysicalInput, enemyDraw: number) {
 }
 
 /** PhysicalExecution 0xa97b20, front rows, explicit affinities, correction=1,
- * Defend type 1 only; no other numerical conditions, accessory/weapon procs,
+ * Defend type 1 and Proteus type 19 only; no other numerical conditions, accessory/weapon procs,
  * species, counters or copies.
  * The compiler/profile must establish that context. Silence is allowed.
  */
@@ -144,6 +145,8 @@ export function calculatePhysical(input: PhysicalInput, random: BattleRandom) {
   )
     return { amount: 0, missed: true, critical: false };
   if (!rules.contentFlags.includes(5)) {
+    if (target.conditionTypes?.includes(physicalProtectionType))
+      amount = physicalProtectionDamage(amount);
     amount = Math.trunc(((255 - target.defense) * amount) / 256) + 1;
     // Source type 1 is checked inside the defense branch, before player-vs-
     // player halving, critical, elements and target-count correction.

@@ -9,6 +9,7 @@ import {
   validateElementResistances,
   type ElementResistances,
 } from "./elements.js";
+import { magicProtectionDamage, magicProtectionType } from "./protection.js";
 
 export type MagicRules = {
   accuracy: number;
@@ -26,13 +27,15 @@ export type MagicInput = {
     magicDefense: number;
     magicEvasion: number;
     elementResistances: ElementResistances;
+    /** Derived live condition types, distinct from master row identities. */
+    conditionTypes?: readonly number[];
   };
   recovery: boolean;
   targetCount: number;
 };
 
 /** Scalar FF6 MagicExecution 0xa94480, fixType=0. The caller must establish
- * explicit affinities, no modifying conditions/accessories, no critical magic,
+ * explicit affinities, only Shell type 412 as a modifying condition, no accessories/critical magic,
  * weapon/scroll carrier, counter-stat substitution or provider overrides.
  * Silence does not modify this arithmetic. This is not a complete spell action.
  */
@@ -42,6 +45,10 @@ export function validateMagic(input: MagicInput): number {
     throw new Error("Missing magic calculation rules");
   validateElements(rules.elements);
   validateElementResistances(target.elementResistances);
+  if (target.conditionTypes !== undefined &&
+      (!Array.isArray(target.conditionTypes) || target.conditionTypes.some((type) =>
+        !Number.isInteger(type) || type < 0 || type > 0x7fffffff)))
+    throw new Error("Invalid magic condition types");
   // Bound repeated weakness multiplication even for synthetic malformed carriers.
   if (rules.elements.length > 8)
     throw new Error("Unreviewed magic element count");
@@ -106,6 +113,8 @@ export function calculateMagic(input: MagicInput, random: BattleRandom) {
   let amount = ignoreDefense
     ? varied
     : Math.trunc(((255 - target.magicDefense) * varied) / 256) + 1;
+  if (!ignoreDefense && target.conditionTypes?.includes(magicProtectionType))
+    amount = magicProtectionDamage(amount);
   if (!recovery && actor.side === "player" && target.side === "player")
     amount = Math.trunc(amount * 0.5);
   const elemental = magicElementDamage(

@@ -17,6 +17,7 @@ import { compileTransportationCatalog } from "./transportation.js";
 import { compileBattleEntryCatalog, compileNarsheOwnedConditionCheckpoint } from "./battle-entry.js";
 import { compileBattleAppearance } from "./battle-appearance.js";
 import { compileAbilityProgram } from "./ability.js";
+import { compileEquipmentAbilityCost } from "./ability-cost.js";
 import { loadCorpus } from "./corpus.js";
 import {
   compileAttackElements,
@@ -492,6 +493,11 @@ export async function compileOpeningBattle(root: string) {
   }
   for (const key of ["MAX_GIL", "MAX_ITEM", "MAX_EXP", "MAX_LV"])
     unique("game_constant_int.csv", "key_name", key);
+  for (let slot = 1; slot <= 8; slot++)
+    unique("game_constant_int.csv", "key_name", `MONSTER_DROP_RATE_${slot}`);
+  // Retain the complete wear-function -> owned passive -> menu-function chain,
+  // independently of the executable battle ability dictionary.
+  for (const id of [304, 305]) compileEquipmentAbilityCost({ row }, id);
   unique("game_constant_int.csv", "key_name", "ACCUMULATION_ATB_NORMAL");
   unique("game_constant_int.csv", "key_name", "ENEMY_ACCUMULATION_ATB_NORMAL");
   unique("game_constant_int.csv", "key_name", "RATE_HAVE_NEAR_DEATH");

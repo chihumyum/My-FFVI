@@ -8,6 +8,7 @@ import type {
   FieldInventoryTransaction,
 } from "./inventory-event.js";
 import { projectEquipmentOwnership } from "./inventory-ownership.js";
+import type { BattleDropGrant } from "./battle-rewards.js";
 import {
   prepareRosterLifecycle,
   validateRosterLifecycle,
@@ -33,6 +34,9 @@ import {
   projectEquipmentParameters,
   validateEquipmentState,
   equipmentAttackArm,
+  equipmentAbilityCostProviders,
+  validateEquipmentAbilityOwnership,
+  applyEquipmentAbilityChange,
   type EquipmentCatalog,
   type EquipmentParameterContext,
   type EquipmentStock,
@@ -413,11 +417,13 @@ export class GameState {
     const growthPlan = this.content.characterGrowth?.[p.id];
     if (template) {
       if (!p.abilities) throw new Error("Missing owned abilities");
-      validateOwnedCharacterAbilities(p.abilities);
+      const passives = this.equipmentAbilities(p);
+      validateOwnedCharacterAbilities(p.abilities, passives);
       if (growthPlan) {
         if (!p.growth) throw new Error("Missing owned character growth");
-        validateCharacterGrowth(growthPlan, { ...p, abilities: p.abilities }, p.growth);
-      } else if (canonical(p.abilities) !== canonical(template.initial.abilities))
+        validateCharacterGrowth(growthPlan, { ...p, abilities: p.abilities }, p.growth, passives);
+      } else if (canonical({ ...p.abilities, owned: p.abilities.owned.filter((a) =>
+        !passives.some((passive) => passive.abilityId === a.abilityId)) }) !== canonical(template.initial.abilities))
         throw new Error("Unimplemented owned ability learning change");
     } else if (p.abilities !== null) throw new Error("Unbound owned ability state");
     if (!growthPlan && p.growth !== null) throw new Error("Unbound owned growth state");
@@ -1045,7 +1051,7 @@ export class GameState {
     if (!plan || !member.growth || !member.abilities)
       throw new Error("Unimplemented source character growth: " + member.id);
     const result = growCharacter(plan, { ...member, abilities: member.abilities }, member.growth,
-      request, (candidate, growth) => this.projectOwnedParameters({ ...candidate, growth }));
+      request, (candidate, growth) => this.projectOwnedParameters({ ...candidate, growth }), this.equipmentAbilities(member));
     const next: OwnedCharacter = { ...result.member, growth: result.progress };
     next.conditionIds = this.conditions.updateDying(next.hp, next.maxHp, next.conditionIds);
     return next;
@@ -1070,6 +1076,17 @@ export class GameState {
         )
       : [];
   }
+  private equipmentAbilities(member: OwnedCharacter) {
+    const catalog = this.content.equipmentSystem?.catalog;
+    if (!catalog) return [];
+    const providers = equipmentAbilityCostProviders(catalog, member);
+    if (!member.abilities) {
+      if (providers.length) throw new Error("Equipment passive lacks owned ability state");
+      return [];
+    }
+    validateEquipmentAbilityOwnership(catalog, member, member.abilities.owned);
+    return providers.map((provider) => provider.ability);
+  }
   private previewEquipment(playerId: string, slot: number, contentId: number) {
     this.requireIdle();
     const system = this.content.equipmentSystem;
@@ -1084,7 +1101,11 @@ export class GameState {
     );
     const next = this.snapshot(),
       p = next.roster.find((p) => p.id === playerId)!;
-    p.equipment = prepared.roster.find((p) => p.id === playerId)!.equipment;
+    const loadout = prepared.roster.find((p) => p.id === playerId)!;
+    if (p.abilities) p.abilities.owned = applyEquipmentAbilityChange(p.abilities.owned, p, loadout, system.catalog);
+    else if (equipmentAbilityCostProviders(system.catalog, loadout).length)
+      throw new Error("Equipment passive lacks owned ability state");
+    p.equipment = loadout.equipment;
     const projection = this.projectOwnedParameters(p);
     p.maxHp = projection.maxHp;
     p.maxMp = projection.maxMp;
@@ -1272,7 +1293,7 @@ export class GameState {
         if (player.hp === 0) {
           if (amount !== 0 || !owned.abilities) throw new Error("Invalid nonrecipient experience award");
           validateObservedLearning(this.content.characterGrowth![owned.id]!,
-            { abilities: owned.abilities }, observedAbilityIds);
+            { abilities: owned.abilities }, observedAbilityIds, this.equipmentAbilities(owned));
           return { ...this.projectOwnedParameters(owned), level: owned.level, exp: owned.exp };
         }
         const next = this.projectGrowth({ ...owned, hp: player.hp, mp: player.mp,
@@ -1296,11 +1317,12 @@ export class GameState {
   prepareVictory(
     lease: BattleLease,
     result: { players: Combatant[]; gil: number; consumedItems: ItemStack[];
-      awardedExperience?: { id: string; amount: number }[]; observedAbilityIds?: number[] },
+      awardedExperience?: { id: string; amount: number }[]; observedAbilityIds?: number[];
+      dropGrants?: BattleDropGrant[] },
   ): () => void {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
-    const next = this.snapshot(),
-      revision = this.revision;
+    let next = this.snapshot();
+    const revision = this.revision;
     integer(result.gil, 0x7fffffff);
     validateItemStacks(
       result.consumedItems,
@@ -1317,6 +1339,18 @@ export class GameState {
       )
         throw new Error("Invalid battle inventory consumption");
       stock.count -= used.count;
+    }
+    const grants = result.dropGrants ?? [];
+    if (!Array.isArray(grants)) throw new Error("Invalid battle drop grants");
+    distinct(grants.map((grant) => grant.id));
+    // FixedStatusInfo.SaveItem removes used items before adding DropItemList.
+    // Reuse the single inventory owner so caps include equipped copies and a
+    // late invalid grant cannot publish an earlier grant or consumed item.
+    for (const grant of grants) {
+      keys(grant, "kind,id,count");
+      if (!["grant-item", "grant-equipment"].includes(grant.kind))
+        throw new Error("Unimplemented battle drop ownership kind");
+      next = this.projectInventoryEvent(next, grant).next;
     }
     const party = activePartyMembers(next.party);
     if (
@@ -1349,7 +1383,7 @@ export class GameState {
         if (player.hp === 0) {
           if (award.amount !== 0 || !target.abilities) throw new Error("Invalid nonrecipient experience award");
           validateObservedLearning(this.content.characterGrowth![target.id]!,
-            { abilities: target.abilities }, result.observedAbilityIds);
+            { abilities: target.abilities }, result.observedAbilityIds, this.equipmentAbilities(target));
           projected = resources;
         } else projected = this.projectGrowth(resources, { kind: "add-experience", amount: award.amount,
           context: "battle", observedAbilityIds: result.observedAbilityIds });

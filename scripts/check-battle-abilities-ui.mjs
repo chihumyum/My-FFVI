@@ -8,7 +8,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const outDir = process.argv.includes("--dist") ? process.argv[process.argv.indexOf("--dist") + 1] : "dist";
 const module = (path) => import(pathToFileURL(resolve(root, outDir, path + ".js")));
 const { BattleGame } = await module("src/core/battle");
-const { sourceQualifiedBattleFixture } = await module("tests/fixtures/battle-abilities");
+const { battleEntryRuntimeFixture } = await module("tests/fixtures/battle-entry-runtime");
 class Element {
   constructor(tag) {
     this.tag = tag; this.children = []; this.parentElement = null;
@@ -44,10 +44,10 @@ globalThis.document = {
   getElementById: (id) => { assert.ok(elements.has(id)); return elements.get(id); },
   createElement: (tag) => new Element(tag), activeElement: null,
 };
-const content = sourceQualifiedBattleFixture();
+const { content, inventory } = battleEntryRuntimeFixture();
 content.players[0].ownedAbilities.abilities.commandIds.push(999);
 content.abilities[11].name = "<IC_WMGC>Heal";
-const battle = new BattleGame(content, 71);
+const battle = new BattleGame(content, 71, undefined, inventory);
 const canvas = new Element("canvas"); canvas.getContext = () => ({});
 const view = new BattleView(canvas, content, new Map(), () => {}, () => {});
 const menu = elements.get("battle-menu");

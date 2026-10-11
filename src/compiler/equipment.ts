@@ -21,6 +21,7 @@ import type {
   EquipmentParameterContext,
 } from "../core/equipment.js";
 import type { PhysicalParameters } from "../core/physical.js";
+import { compileEquipmentAbilityCost } from "./ability-cost.js";
 
 type Reader = {
   row(table: string, id: string | number): BattleRow;
@@ -54,6 +55,17 @@ export function compileEquipment(
     return n === 1;
   };
   const blockers: string[] = [];
+  let abilityCost: EquipmentDefinition["abilityCost"];
+  const needsAbilityCost = [304, 305].includes(contentId) || int(r.wear_function_group_id) !== 0;
+  if (needsAbilityCost) {
+    try {
+      const compiled = compileEquipmentAbilityCost(reader, contentId);
+      abilityCost = compiled.provider;
+      sources.push(...compiled.sources);
+    } catch (error) {
+      blockers.push(`${kind}:${r.id} wear_function_group_id=${r.wear_function_group_id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   const requireZero = (column: string) => {
     const value = int(r[column]);
     if (value) blockers.push(`${kind}:${r.id} ${column}=${value}`);
@@ -64,7 +76,6 @@ export function compileEquipment(
     blockers.push(`${kind}:${r.id} process_prog=${r.process_prog}`);
   for (const column of [
     "wear_condition_group_id",
-    "wear_function_group_id",
     "trigger_ability_id",
     // These parameters are outside the shared confirmed-stat model. Preserve
     // the identity without silently dropping a nonzero equipment contribution.
@@ -100,7 +111,7 @@ export function compileEquipment(
     ...resistance.sources.map((s) => s.source),
   );
   const parameter =
-    int(r.wear_condition_group_id) === 0 && int(r.wear_function_group_id) === 0
+    int(r.wear_condition_group_id) === 0 && (!needsAbilityCost || abilityCost)
       ? compileParameterEquipment(reader, [{ slot: 1, contentId }])
           .equipment[0]!
       : null;
@@ -125,6 +136,7 @@ export function compileEquipment(
     criticalRate: kind === "weapon" ? int(r.critical_rate) : 0,
     attackElements: attack.elements,
     elementResistances: resistance.resistances,
+    ...(abilityCost ? { abilityCost } : {}),
     blockers,
   };
   return { definition, sources };

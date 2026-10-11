@@ -1,5 +1,9 @@
 import type { AbilityEffectResult } from "./ability.js";
 import type { ParameterValues } from "./parameters.js";
+import { projectAbilityCost, type AbilityCostOwner, type AbilityCostProjection } from "./ability-cost.js";
+import { equipmentAbilityCostProviders, equipmentOwnedAbilities, validateEquipmentAbilityOwnership } from "./equipment.js";
+import type { OwnedAbility } from "./owned-character.js";
+import { projectBattleDrops, validateBattleDropCatalog, type BattleDropPlan, type BattleDropGrant } from "./battle-rewards.js";
 import { projectBattleAbilities, type BattleAbilityProjection } from "./battle-abilities.js";
 import {
   createBattleAppearanceState,
@@ -99,7 +103,8 @@ export type BattleReward = {
   each: number;
   recipients: string[];
   levels: { id: string; from: number; to: number }[];
-  drops: "pending";
+  drops: BattleDropPlan["drops"] | "pending";
+  dropPlan: BattleDropPlan | null;
 };
 export type BattleEvent = { time: number; text: string };
 export type BattleMenuCommand = {
@@ -142,8 +147,13 @@ export class BattleGame {
   readonly items: Record<string, ItemDefinition>;
   private stock: ItemStack[];
   private readonly inventoryQualification: BattleEntryInventory | undefined;
+  private readonly costOwners = new Map<string, AbilityCostOwner>();
+  private readonly unresolvedCostOwners = new Set<string>();
+  private readonly equipmentAbilities = new Map<string, OwnedAbility[]>();
   private consumedItems: ItemStack[] = [];
   private observedAbilityIds: number[] = [];
+  private dropRegistrations: number[] = [];
+  private dropDead = new Set<string>();
   constructor(
     readonly content: BattleContent,
     seed: number,
@@ -157,7 +167,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v23"
+      content.profile !== "narshe-playability-v24"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -177,6 +187,11 @@ export class BattleGame {
     this.inventoryQualification = inventory.qualification ? structuredClone(inventory.qualification) : undefined;
     validateReactionRules(content.reactions);
     this.conditions = new BattleConditions(content.conditions);
+    if (content.drops !== null) {
+      validateBattleDropCatalog(content.drops);
+      if (content.enemies.some((enemy) => !content.drops!.monsters.some((row) => row.id === enemy.sourceId)))
+        throw new Error("Missing enemy drop definition");
+    }
     if (Boolean(content.battleAbilities) !== Boolean(content.qualificationContext))
       throw new Error("Incomplete battle qualification configuration");
     if (content.qualificationContext &&
@@ -210,6 +225,24 @@ export class BattleGame {
     )
       throw new Error("Duplicate battle identity");
     this.validateInventoryQualification();
+    if (this.inventoryQualification) for (const player of this.players) {
+      const catalog = this.inventoryQualification.equipmentCatalog,
+        loadout = this.inventoryQualification.members.find((member) => member.id === player.id);
+      if (!loadout || loadout.sourceId !== player.sourceId)
+        throw new Error("Battle ability cost owner mismatch");
+      const passives = equipmentOwnedAbilities(catalog, loadout);
+      if (player.ownedAbilities) validateEquipmentAbilityOwnership(catalog, loadout, player.ownedAbilities.abilities.owned);
+      else if (passives.length) throw new Error("Equipment passive lacks owned battle abilities");
+      this.equipmentAbilities.set(player.id, passives);
+      try { equipmentAbilityCostProviders(catalog, loadout); }
+      catch {
+        // An unknown equipment provider blocks dependent MP fees, not an
+        // independently admitted consumable or a known zero-cost command.
+        this.unresolvedCostOwners.add(player.id);
+        continue;
+      }
+      this.costOwners.set(player.id, { side: "player", catalog, loadout });
+    }
     this.validateConditionState();
     this.reconcileAppearances();
     if (this.usesSourceQualification)
@@ -242,6 +275,7 @@ export class BattleGame {
       c.atb = this.randomInt(range[0], range[1]);
       c.queued = false;
       Object.assign(c, this.conditions.settleLife(c.hp, c.conditionIds, false));
+      this.observeDropLife(c);
       if (c.hp === 0) c.atb = 0;
       this.poisonStates.set(
         c.id,
@@ -260,6 +294,19 @@ export class BattleGame {
   }
   get enemies() {
     return this.combatants.filter((c) => c.side === "enemy");
+  }
+  get registeredDropMonsters(): readonly number[] {
+    return [...this.dropRegistrations];
+  }
+  /** UnableFight.Start calls SetLotMonster, once per start, including another
+   * start after revival. Two enemies sharing a master identity remain two rolls. */
+  private observeDropLife(unit: Combatant) {
+    if (unit.side !== "enemy" || this.content.drops === null) return;
+    if (!this.conditions.isUnableFight(unit.conditionIds)) this.dropDead.delete(unit.id);
+    else if (!this.dropDead.has(unit.id)) {
+      this.dropDead.add(unit.id);
+      this.dropRegistrations.push(unit.sourceId);
+    }
   }
   get ready() {
     return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued);
@@ -376,7 +423,7 @@ export class BattleGame {
       invalidContentIds: context.invalidContentIds,
       itemMenuAvailable: this.usesSourceQualification ? this.itemQualification(actorId).available : context.itemMenuAvailable,
       partySize: this.players.length,
-    });
+    }, this.equipmentAbilities.get(actorId));
   }
   /** The UI receives source menu entries, including unresolved commands. Effect
    * support is separate from qualification and cannot grant an owned ability. */
@@ -626,19 +673,37 @@ export class BattleGame {
       ? requested
       : undefined;
   }
+  /** Menu, eligibility and final payment share the same frozen entry loadout.
+   * A source player with a positive fee requires an established equipment owner.
+   * Legacy synthetic profiles explicitly use the unmodified base fee. */
+  abilityCost(actorId: string, abilityId: number): AbilityCostProjection | null {
+    const actor = this.combatants.find((c) => c.id === actorId), ability = this.content.abilities[abilityId];
+    if (!actor || !ability?.plan) return null;
+    if (this.unresolvedCostOwners.has(actorId))
+      return ability.cost === 0 ? projectAbilityCost(ability, { side: "enemy" }) : null;
+    const owner = this.costOwners.get(actorId);
+    if (owner) return projectAbilityCost(ability, owner);
+    if (actor.side === "player" && this.usesSourceQualification && ability.cost !== 0) return null;
+    return projectAbilityCost(ability, { side: "enemy" });
+  }
+  rewardItemName(contentId: number): string {
+    const name = this.items[contentId]?.name ?? this.inventoryQualification?.equipmentCatalog.definitions[contentId]?.name;
+    if (typeof name !== "string") throw new Error("Missing battle reward content name");
+    return name;
+  }
   canUse(
     actorId: string,
     abilityId: number,
     commandId?: number | null,
   ): boolean {
     const actor = this.combatants.find((c) => c.id === actorId),
-      ability = this.content.abilities[abilityId];
+      ability = this.content.abilities[abilityId], cost = this.abilityCost(actorId, abilityId);
     if (
       !actor ||
       !ability?.plan ||
       !this.qualifiedAbility(actor, abilityId) ||
       actor.hp <= 0 ||
-      actor.mp < ability.cost ||
+      !cost || (actor.side === "player" && actor.mp < cost.mp) ||
       (ability.plan.targeting.normalFormationOnly &&
         this.content.formation !== "normal")
     )
@@ -986,6 +1051,8 @@ export class BattleGame {
       stock: structuredClone(this.stock),
       consumedItems: structuredClone(this.consumedItems),
       observedAbilityIds: [...this.observedAbilityIds],
+      dropRegistrations: [...this.dropRegistrations],
+      dropDead: new Set(this.dropDead),
       events: [...this.events],
       time: this.time,
       random: this.randomState,
@@ -1007,6 +1074,8 @@ export class BattleGame {
       this.stock = before.stock;
       this.consumedItems = before.consumedItems;
       this.observedAbilityIds = before.observedAbilityIds;
+      this.dropRegistrations = before.dropRegistrations;
+      this.dropDead = before.dropDead;
       this.events.splice(0, this.events.length, ...before.events);
       this.time = before.time;
       this.randomState = before.random;
@@ -1131,6 +1200,7 @@ export class BattleGame {
     for (const { actor, life, state, ticks } of staged) {
       const died = actor.hp > 0 && life.hp === 0;
       Object.assign(actor, life);
+      this.observeDropLife(actor);
       this.poisonStates.set(actor.id, state);
       if (died) {
         actor.atb = 0;
@@ -1237,6 +1307,10 @@ export class BattleGame {
       action.resolved = true;
       return;
     }
+    const cost = action.source.kind === "item" ? 0 : this.abilityCost(actor.id, action.source.id)!.mp;
+    // IsUsableAbility checks MP for players only. UseMp still charges enemies,
+    // clamping the resulting resource at zero instead of cancelling their act.
+    const payment = Math.min(actor.mp, cost);
     const randomBefore = this.randomState;
     try {
       const choice = resolveBattleTargets(
@@ -1260,7 +1334,7 @@ export class BattleGame {
           this.conditions,
           (min, max) => this.randomInt(min, max),
           choice.targetIds.length,
-          ability.cost,
+          payment,
         );
         const messages: string[] = [];
         for (const effect of effects) {
@@ -1276,7 +1350,7 @@ export class BattleGame {
             messages.push(`${target.name} · 无效。`);
           } else if (effect.resource === "condition") {
             for (const id of effect.added)
-              if (this.conditions.name(id)) messages.push(`${target.name} 陷入${this.conditions.name(id)}。`);
+              if (this.conditions.name(id)) messages.push(`${target.name} 获得${this.conditions.name(id)}状态。`);
             for (const id of effect.removed)
               if (this.conditions.name(id)) messages.push(
                 `${target.name} 的${this.conditions.name(id)}已解除。`,
@@ -1300,7 +1374,7 @@ export class BattleGame {
       // but cannot mutate the live battle until EVERY target and reaction admits.
       const projected = this.combatants.map((c) => ({
         ...c,
-        mp: c.mp - (c === actor ? ability.cost : 0),
+        mp: c.mp - (c === actor ? payment : 0),
         ...staged.find((entry) => entry.target.id === c.id)?.state,
       }));
       const results = staged.map((entry) => ({
@@ -1333,11 +1407,12 @@ export class BattleGame {
         else this.consumedItems.push({ id: action.source.id, count: 1 });
       } else if (!this.observedAbilityIds.includes(action.source.id))
         this.observedAbilityIds.push(action.source.id);
-      actor.mp -= ability.cost;
+      actor.mp -= payment;
       for (const next of poison) this.poisonStates.set(next.id, next.state);
       for (const entry of staged) {
         const lifeChanged = (entry.target.hp === 0) !== (entry.state.hp === 0);
         Object.assign(entry.target, entry.state);
+        this.observeDropLife(entry.target);
         if (lifeChanged) {
           entry.target.atb = 0;
           entry.target.queued = false;
@@ -1368,6 +1443,7 @@ export class BattleGame {
     if (this.phase !== "active" || this.action) return;
     for (const c of this.combatants) {
       Object.assign(c, this.conditions.settleLife(c.hp, c.conditionIds, false));
+      this.observeDropLife(c);
       if (c.hp === 0) {
         c.atb = 0;
         c.queued = false;
@@ -1425,6 +1501,8 @@ export class BattleGame {
     // StatusUp. The owned provider preserves their existing growth exactly.
     if (this.projectProgression) for (const c of players.filter((p) => p.hp === 0))
       Object.assign(c, this.projectProgression(structuredClone(c), 0, [...this.observedAbilityIds]));
+    const dropPlan = this.content.drops === null ? null : projectBattleDrops(this.content.drops,
+      this.dropRegistrations, (min, max) => this.randomInt(min, max));
     for (const player of players)
       Object.assign(
         this.combatants.find((c) => c.id === player.id)!,
@@ -1440,7 +1518,8 @@ export class BattleGame {
       each,
       recipients: recipients.map((c) => c.id),
       levels,
-      drops: "pending",
+      drops: dropPlan ? structuredClone(dropPlan.drops) : "pending",
+      dropPlan,
     };
     this.log(`战斗胜利！获得 ${exp} EXP / ${gil} Gil。`);
   }
@@ -1455,6 +1534,7 @@ export class BattleGame {
     consumedItems: ItemStack[];
     awardedExperience: { id: string; amount: number }[];
     observedAbilityIds: number[];
+    dropGrants: BattleDropGrant[];
   } | null {
     if (this.phase !== "victory" || !this.reward || this.collected) return null;
     return {
@@ -1464,6 +1544,7 @@ export class BattleGame {
         queued: false,
       })),
       gil: this.reward.gil,
+      dropGrants: structuredClone(this.reward.dropPlan?.grants ?? []),
       observedAbilityIds: [...this.observedAbilityIds],
       awardedExperience: this.players.map((p) => ({ id: p.id,
         amount: this.reward!.recipients.includes(p.id) ? this.reward!.each : 0 })),
@@ -1478,6 +1559,7 @@ export class BattleGame {
     consumedItems: ItemStack[];
     awardedExperience: { id: string; amount: number }[];
     observedAbilityIds: number[];
+    dropGrants: BattleDropGrant[];
   } | null {
     const result = this.previewVictory();
     if (result) this.collected = true;

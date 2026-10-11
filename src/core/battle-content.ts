@@ -10,6 +10,7 @@ import type { GameStateContent } from "./game-state.js";
 import type { BattleAbilityCatalog, BattleAbilityContext, BattleAbilityMember } from "./battle-abilities.js";
 import type { BattleEntryCatalog } from "./battle-entry.js";
 import type { BattleAppearanceActor, BattleAppearanceCatalog } from "./battle-appearance.js";
+import type { BattleDropCatalog } from "./battle-rewards.js";
 
 export type BattleQualificationContext = Omit<BattleAbilityContext, "conditionIds" | "partySize"> & {
   /** Source mode enforces qualification. The explicit development mode keeps
@@ -31,7 +32,7 @@ export type BattleCommandDefinition = {
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "narshe-playability-v23";
+  profile: "narshe-playability-v24";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;
@@ -41,6 +42,8 @@ export type BattleContent = {
   /** Explicit development settings until the source configuration menu is migrated. */
   timing: { mode: "active" | "wait"; atbSpeed: number };
   reactions: BattleReactionRules;
+  /** null explicitly marks an unported reward lane in development fixtures. */
+  drops: BattleDropCatalog | null;
   initialAtb: { player: [number, number]; enemy: [number, number] };
   players: CombatantDefinition[];
   enemies: CombatantDefinition[];

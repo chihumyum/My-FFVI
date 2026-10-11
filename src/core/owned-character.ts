@@ -67,7 +67,10 @@ function unique(values: readonly number[], label: string) {
 
 /** Validation also serves save admission; unknown learned or command identities
  * cannot be silently converted into a new source initialization. */
-export function validateOwnedCharacterAbilities(value: OwnedCharacterAbilities): void {
+export function validateOwnedCharacterAbilities(
+  value: OwnedCharacterAbilities,
+  equipmentAbilities: readonly OwnedAbility[] = [],
+): void {
   checkpointKeys(value, "commandIds,owned,byCommand,additionOrder,sortOrder,slots,skillLevelTargets,learning,equipment");
   for (const ids of [value.commandIds, value.additionOrder, value.sortOrder, value.learning, value.equipment]) {
     if (!Array.isArray(ids)) throw new Error("Missing owned character ability list");
@@ -75,7 +78,15 @@ export function validateOwnedCharacterAbilities(value: OwnedCharacterAbilities):
   }
   if (!Array.isArray(value.owned) || !Array.isArray(value.byCommand) || !Array.isArray(value.slots))
     throw new Error("Missing owned character abilities");
-  unique(value.owned.map((a) => a.abilityId), "ability identity");
+  const passiveIds = new Set(equipmentAbilities.map((a) => a.abilityId));
+  unique(value.owned.filter((a) => !passiveIds.has(a.abilityId)).map((a) => a.abilityId), "ability identity");
+  for (const id of passiveIds) {
+    const expected = equipmentAbilities.filter((a) => a.abilityId === id),
+      actual = value.owned.filter((a) => a.abilityId === id);
+    if (expected.some((a) => a.skillLevel !== 0 || a.contentId !== expected[0]!.contentId) ||
+        actual.length !== expected.length || actual.some((a) => a.skillLevel !== 0 || a.contentId !== expected[0]!.contentId))
+      throw new Error("Equipment passive owned-ability mismatch");
+  }
   const owned = new Map(value.owned.map((a) => [a.abilityId, a]));
   for (const ability of value.owned) {
     checkpointKeys(ability, "abilityId,contentId,skillLevel");

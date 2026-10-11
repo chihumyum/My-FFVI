@@ -1,5 +1,6 @@
 import { tableInteger as int } from "./table.js";
 import type { BattleRow } from "./battle.js";
+import { compileEquipmentAbilityCost } from "./ability-cost.js";
 import {
   confirmPlayerParameters,
   confirmEnemyParameters,
@@ -80,9 +81,15 @@ export function compileParameterEquipment(
     const r = item.values;
     // Wear functions and conditions must be resolved by their own providers before
     // the resulting equipment/state can use this direct-row adapter.
-    for (const column of ["wear_condition_group_id", "wear_function_group_id"])
-      if (int(r[column]) !== 0)
-        throw new Error(`Unresolved ${kind}:${r.id} ${column}=${r[column]}`);
+    if (int(r.wear_condition_group_id) !== 0)
+      throw new Error(`Unresolved ${kind}:${r.id} wear_condition_group_id=${r.wear_condition_group_id}`);
+    if ([304, 305].includes(contentId) || int(r.wear_function_group_id) !== 0) {
+      try {
+        sources.push(...compileEquipmentAbilityCost(reader, contentId).sources);
+      } catch (error) {
+        throw new Error(`Unresolved ${kind}:${r.id} wear_function_group_id=${r.wear_function_group_id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     return {
       slot,
       kind,

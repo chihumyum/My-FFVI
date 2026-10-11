@@ -112,8 +112,13 @@ const published = JSON.parse(await readFile(resolve(root, option('--catalog', 'b
 const { contentHash, ...body } = published; assert.equal(hash(body), contentHash);
 assert.equal(hash(published.common.abilities), hash(compiled.abilities), 'Published battle uses the complete source dictionary');
 assert.deepEqual(published.common.abilityContentIds, compiled.abilityContentIds);
-for (const id of [304, 305]) assert.ok(published.gameState.equipmentSystem.catalog.definitions[id].blockers.length,
-  'MP-cost passive equipment must remain outside the current parameter host');
+for (const [id, modifier, abilityId] of [[304, 'half', 291], [305, 'one', 292]]) {
+  const equipment = published.gameState.equipmentSystem.catalog.definitions[id];
+  assert.deepEqual(equipment.blockers, []);
+  assert.equal(equipment.abilityCost.modifier, modifier);
+  assert.equal(equipment.abilityCost.ability.abilityId, abilityId);
+  assert.equal(compiled.abilities[abilityId].plan, null, 'A passive does not become an executable command');
+}
 const entryId = Number(Object.keys(published.encounters)[0]);
 const make = () => {
   const state = new GameState(published.gameState, published.common.players, contentHash, published.common.conditions);

@@ -2,6 +2,11 @@ import { ConditionRules, type ConditionCatalog } from "./conditions.js";
 import { accuracyHit } from "./battle-hit.js";
 import { applyDefend, clearDefendOnAdmission } from "./defend.js";
 import {
+  magicProtectionType,
+  physicalProtectionType,
+  type ProtectionBehavior,
+} from "./protection.js";
+import {
   advancePoisonClocks,
   reconcilePoisonClocks,
   type PoisonAdvanceInput,
@@ -19,6 +24,7 @@ export type BattleConditionCatalog = {
   behaviors: (
     | { id: number; kind: "defend"; name: string; untilType: 1 }
     | { id: number; kind: "silence"; name: string; untilType: 2 }
+    | ProtectionBehavior
     | { id: number; kind: "unable-fight"; name: string; untilType: 3 }
     | { id: number; kind: "dying"; name: string; untilType: 3 }
     /** No timer or numeric modifier; a battle appearance host must execute
@@ -90,6 +96,9 @@ export class BattleConditions {
             this.definitions.get(b.id)?.overlapped === false
           : b.kind === "silence"
           ? b.untilType === 2 && this.definitions.get(b.id)?.type === 6
+          : b.kind === "physical-protection" || b.kind === "magic-protection"
+          ? b.untilType === 2 && this.definitions.get(b.id)?.overlapped === false &&
+            this.definitions.get(b.id)?.type === (b.kind === "physical-protection" ? physicalProtectionType : magicProtectionType)
           : b.untilType === 3 &&
             ((b.kind === "unable-fight" &&
               this.definitions.get(b.id)?.type === 5) ||

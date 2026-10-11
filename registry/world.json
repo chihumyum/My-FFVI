@@ -919,6 +919,61 @@
         "docs/field-entry-context.md",
         "build/reports/field-entry-context-check.json"
       ]
+    },
+    {
+      "id": "narshe:source-protection-v24",
+      "subject": "narshe",
+      "predicate": "migration.protection",
+      "value": "Ordinary condition rows 23/type19 and 22/type412 reduce physical and magic damage at different integer calculation stages. They persist through ordinary ATB actions, clear on death and battle end, and do not enter owned field status. v24 admits seven bounded ability definitions; alternate rows 93/94 and source particles remain unsupported.",
+      "when": {
+        "battleProfile": "narshe-playability-v24"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "condition.csv:22,23",
+        "GameAssembly.dll:RVA 0xa97b20",
+        "GameAssembly.dll:RVA 0xa94480",
+        "docs/protection.md",
+        "build/reports/protection-check.json"
+      ]
+    },
+    {
+      "id": "narshe:source-ability-cost-v24",
+      "subject": "narshe",
+      "predicate": "migration.abilityCost",
+      "value": "Equipment content 304/305 adds one skill-zero owned passive record per equipped copy through wear function62. Fees use float32 half rounded AwayFromZero or positive cost one, with 305 precedence. v24 preserves passive copy order through changes, natural growth and saved owned state. Enemy level-zero actions remain eligible below their fee and clamp paid MP to zero; other equipment effects and cost providers remain blocked.",
+      "when": {
+        "battleProfile": "narshe-playability-v24"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "content.csv:304,305",
+        "GameAssembly.dll:RVA 0x85b3d0",
+        "GameAssembly.dll:RVA 0x85e980",
+        "GameAssembly.dll:RVA 0x15ae7b0",
+        "docs/ability-cost.md",
+        "build/reports/ability-cost-check.json"
+      ]
+    },
+    {
+      "id": "narshe:source-battle-drops-v24",
+      "subject": "narshe",
+      "predicate": "migration.battleDrops",
+      "value": "Enemy death registers monster identity in death order without source-ID deduplication. Victory rolls drop_rate then one of eight weighted slots, merges rewards in first-result order, and admits items or equipment through owned inventory after used-item removal. v24 source compilation admits 499 of 508 ordinary drop definitions; nine missing content references remain blocked. These are provider counts, not playable monsters. Web result confirmation timing and RNG sequence have not passed original-game parity.",
+      "when": {
+        "battleProfile": "narshe-playability-v24"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x5282a0",
+        "GameAssembly.dll:RVA 0x1586e30",
+        "GameAssembly.dll:RVA 0x501e20",
+        "docs/battle-rewards.md",
+        "build/reports/battle-rewards-check.json"
+      ]
     }
   ],
   "assets": []

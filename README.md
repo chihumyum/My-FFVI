@@ -15,6 +15,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [v24 防护、装备 MP 费用与普通掉落](docs/systems-v24.md)
 - [v23 完整技能目录、普通魔法、防御与字段入战](docs/systems-v23.md)
 - [v22 持有状态、动态入战与魔导外观](docs/systems-v22.md)
 - [v21 宝箱任务与普通角色模板](docs/systems-v21.md)

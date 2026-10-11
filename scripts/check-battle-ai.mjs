@@ -35,7 +35,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v23");
+assert.equal(catalog.common.profile, "narshe-playability-v24");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const assets = Object.values(exported.assets).filter((a) =>
   a.source.assetPath.includes("/MonsterAI/"),
@@ -477,6 +477,9 @@ assert.ok(
 high.enemies.forEach((e) => {
   e.sourceId = 987654;
 });
+// This intentionally changed identity probes AI dispatch only. It has no
+// source monster/drop row and must not masquerade as a complete encounter.
+high.drops = null;
 high.players[0].level = 7;
 assert.throws(
   () => new BattleGame(high, 241),

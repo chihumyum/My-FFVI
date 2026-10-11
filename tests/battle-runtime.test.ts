@@ -205,7 +205,7 @@ test("a later unsupported counter rolls back every target, cost, AI parameter, q
   );
 });
 
-test("counter fees and lost targets invalidate the counter without consuming its ordinary gauge", () => {
+test("enemy counters ignore MP shortage while lost targets cancel without consuming the ordinary gauge", () => {
   for (const reason of ["cost", "target"] as const) {
     const f = counterFixture();
     f.abilities[13]!.cost = 2;
@@ -220,6 +220,13 @@ test("counter fees and lost targets invalidate the counter without consuming its
         p.hp = 0;
       });
     b.advance(510);
+    if (reason === "cost") {
+      assert.equal(b.action!.kind, "counter");
+      assert.deepEqual(b.action!.targetIds, ["a"]);
+      b.advance(900);
+      assert.equal(b.enemies[0]!.mp, 0);
+      assert.ok(b.players[0]!.hp < b.players[0]!.maxHp);
+    }
     assert.equal(b.action, null);
     assert.ok(b.enemies[0]!.atb > gauge);
     assert.equal(b.enemies[0]!.queued, false);
@@ -320,7 +327,7 @@ test("a loop submits in source order and releases its gauge only after the last 
   assert.equal(b.action!.kind, "normal");
 });
 
-test("an unaffordable loop member does not release the gauge or cancel a later affordable action", () => {
+test("an enemy loop member below its fee still executes before the later action and clamps MP at zero", () => {
   const f = fixture();
   f.players.forEach((p) => {
     p.hp = 10000;
@@ -340,19 +347,23 @@ test("an unaffordable loop member does not release the gauge or cancel a later a
   b.advance(910);
   assert.equal(b.enemies[0]!.mp, 3);
   b.advance(10);
-  assert.equal(b.action, null);
+  assert.equal(b.action!.source.id, 10);
   assert.equal(b.enemies[0]!.queued, true);
   assert.equal(b.enemies[0]!.atb, 100);
   assert.deepEqual(
     b.pendingActions.map((a) => a.source.id),
     [13],
   );
+  b.advance(900);
+  assert.equal(b.enemies[0]!.mp, 0);
+  assert.equal(b.enemies[0]!.queued, true);
+  assert.equal(b.enemies[0]!.atb, 100);
   b.advance(10);
   assert.equal(b.action!.source.id, 13);
   b.advance(900);
   assert.equal(b.enemies[0]!.queued, false);
   assert.ok(b.enemies[0]!.atb > 0 && b.enemies[0]!.atb < 1); // Released, then one FF6 progress update.
-  assert.equal(b.enemies[0]!.mp, 3);
+  assert.equal(b.enemies[0]!.mp, 0);
 });
 
 test("death between loop members removes the remaining group without charging it", () => {

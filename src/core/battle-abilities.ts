@@ -1,4 +1,4 @@
-import { validateOwnedCharacterAbilities, type OwnedCharacterAbilities } from "./owned-character.js";
+import { validateOwnedCharacterAbilities, type OwnedCharacterAbilities, type OwnedAbility } from "./owned-character.js";
 
 /** Source identities in this module are master-table row IDs. In particular,
  * condition IDs are not condition types and are not field transport IDs. */
@@ -90,10 +90,11 @@ export function projectBattleAbilities(
   catalog: BattleAbilityCatalog,
   member: BattleAbilityMember,
   context: BattleAbilityContext,
+  equipmentAbilities: readonly OwnedAbility[] = [],
 ): BattleAbilityProjection {
   if (catalog.kind !== "battle-abilities-v1" || ![0, 1].includes(context.battleType))
     throw new Error("Invalid battle ability projection context");
-  validateOwnedCharacterAbilities(member.abilities);
+  validateOwnedCharacterAbilities(member.abilities, equipmentAbilities);
   if (!Number.isSafeInteger(member.magicStoneId) || member.magicStoneId < 0)
     throw new Error("Invalid battle magic-stone identity");
   const characters = uniqueIndex(catalog.characters, (r) => r.sourceId, "character catalog");

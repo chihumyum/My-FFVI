@@ -76,7 +76,10 @@
     "battle-entry-runtime:check": "npm run battle:build && node scripts/check-battle-entry-runtime-native.mjs && node scripts/check-battle-entry-runtime.mjs",
     "battle-ability-content:check": "npm run battle:build && node scripts/check-battle-ability-content.mjs",
     "defend:check": "npm run battle:build && node scripts/check-defend-native.mjs && node scripts/check-defend.mjs",
-    "field-entry-context:check": "npm run build && node scripts/check-field-entry-context.mjs"
+    "field-entry-context:check": "npm run build && node scripts/check-field-entry-context.mjs",
+    "protection:check": "npm run battle:build && node scripts/check-protection-native.mjs && node scripts/check-protection.mjs",
+    "ability-cost:check": "npm run battle:build && node scripts/check-ability-cost-native.mjs && node scripts/check-ability-cost.mjs",
+    "battle-rewards:check": "npm run battle:build && node scripts/check-battle-rewards-native.mjs && node scripts/check-battle-rewards.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

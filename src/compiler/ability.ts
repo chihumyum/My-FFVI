@@ -17,6 +17,7 @@ import { compileContentFlags } from "./content-flags.js";
 import { compileTargetRule } from "./battle-targets.js";
 import { compileAttackElements } from "./elements.js";
 import { compileDefendEffect } from "./defend.js";
+import { hasProtectionBehavior } from "./protection.js";
 
 type Reader = ConditionReader;
 /** SerialBattleUtility 0x85e170; type and ID arrays recovered from 0x85f000.
@@ -173,14 +174,17 @@ export function compileDevelopmentAbility(
       [0, 1].includes(v2) &&
       v3 === 0 &&
       (hasSilenceBehavior(reader.row("condition.csv", v1)) ||
-        hasPoisonBehavior(reader.row("condition.csv", v1)))
+        hasPoisonBehavior(reader.row("condition.csv", v1)) ||
+        hasProtectionBehavior(reader.row("condition.csv", v1)))
     ) {
       effects.push({
         slot: fn.slot,
         kind: "add-condition",
         conditionId: v1,
         fixedHit: v2 === 1,
-        accuracy: program.rules.accuracy_rate!,
+        // AddConditionExecution 0xa91a90: flag 1 skips the evasion calculation;
+        // it does not bypass resistance (flag 4 in Function9.Calc 0x4f1d70).
+        accuracy: program.contentFlags.includes(1) ? 255 : program.rules.accuracy_rate!,
       });
     } else if (
       fn.type === 11 &&
@@ -284,6 +288,10 @@ export function compileDevelopmentAbility(
   const conditionOnly =
     effects.length === 1 &&
     ["add-condition", "recover-condition", "defend"].includes(effects[0]!.kind);
+  const protectionOnly = effects.length === 1 && first?.kind === "add-condition" &&
+    hasProtectionBehavior(reader.row("condition.csv", first.conditionId));
+  const protectionSupport = protectionOnly && r.system_id === 2 && [1, 3].includes(r.type_id!);
+  const protectionSpell = protectionSupport && r.type_id === 1;
   const magicOnly =
     effects.length === 1 &&
     (effects[0]!.kind === "magic" ||
@@ -310,6 +318,8 @@ export function compileDevelopmentAbility(
     blockers.push(`unresolved accuracy_rate=${r.accuracy_rate}`);
   const allowedFlags = revival
     ? [1, 3]
+    : protectionSpell
+      ? [1, 3]
     : conditionOnly
       ? []
       : ordinaryMagic
@@ -323,11 +333,11 @@ export function compileDevelopmentAbility(
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (!defendOnly && !ordinaryMagic && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
+  if (!defendOnly && !ordinaryMagic && !protectionSpell && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
-  if (!defendOnly && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
+  if (!defendOnly && !protectionSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
-  if (ordinaryMagic && int(a.ability_lv) !== 0)
+  if ((ordinaryMagic || protectionSpell) && int(a.ability_lv) !== 0)
     blockers.push("unresolved level-specific ability consumption");
   if (abilityId === 154)
     blockers.push("unresolved play-time ability cost provider");
@@ -339,7 +349,7 @@ export function compileDevelopmentAbility(
       ([59, 360, 1312, 1330].includes(abilityId) || r.type_id === 623) &&
       !program.contentFlags.includes(2))
     blockers.push("unresolved all-target magic correction provider");
-  if (ordinaryMagic && program.contentFlags.includes(3))
+  if ((ordinaryMagic || protectionSpell) && program.contentFlags.includes(3))
     limitations.push("source flag 3 is Runic targeting; active Runic behavior must remain blocked by the host");
   if (![0, 1].includes(r.reaction_type!))
     blockers.push(`unresolved reaction_type=${r.reaction_type}`);
@@ -379,11 +389,11 @@ export function compileDevelopmentAbility(
     blockers.push("unresolved non-magic element carrier");
   if (elements.length > 8) blockers.push("unreviewed magic element count");
   limitations.push(
-    "only admitted active battle behaviors with their required hosts; poison row 88 and other unknown providers remain blocked; no equipment-added functions, undead, Runic or MP-cost equipment overrides",
+    "only admitted active battle behaviors with their required hosts; poison row 88 and other unknown providers remain blocked; MP-cost equipment needs an owned source loadout; weapon-added actions, undead and Runic remain unsupported",
   );
   if (physicalOnly)
     limitations.push(
-      "front rows, selected single arm; no species, physical status/accessory/weapon modifiers",
+      "front rows, selected single arm; Defend and ordinary Protect only; other species, physical status/accessory/weapon modifiers remain unsupported",
     );
   if (conditionOnly && attribute !== 0)
     blockers.push("unresolved condition attribute");

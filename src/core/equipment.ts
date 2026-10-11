@@ -9,6 +9,7 @@ import {
   type PhysicalLimits,
 } from "./physical-parameters.js";
 import type { PhysicalParameters } from "./physical.js";
+import type { OwnedAbility } from "./owned-character.js";
 import {
   mergeElementResistances,
   validateElements,
@@ -17,6 +18,12 @@ import {
 } from "./elements.js";
 
 export type EquipmentSlot = 1 | 2 | 3 | 4 | 5 | 6;
+export type EquipmentAbilityCost = {
+  kind: "equipment-mp-cost";
+  modifier: "half" | "one";
+  /** AddEquipAbility creates one skill-level-zero entry per equipped copy. */
+  ability: OwnedAbility;
+};
 export type EquipmentDefinition = {
   /** Inventory uses content identity, never the weapon/armor row identity. */
   id: number;
@@ -32,6 +39,7 @@ export type EquipmentDefinition = {
   criticalRate: number;
   attackElements: number[];
   elementResistances: ElementResistances;
+  abilityCost?: EquipmentAbilityCost;
   /** An identity may be stored before all its effects are executable. */
   blockers: string[];
 };
@@ -105,6 +113,18 @@ function executable(item: EquipmentDefinition) {
     throw new Error("Invalid equipment definition");
   for (const n of [item.strength, item.accuracy, item.criticalRate])
     integer(n, -0x80000000);
+  if (item.abilityCost) validateAbilityCost(item);
+}
+
+function validateAbilityCost(item: EquipmentDefinition): EquipmentAbilityCost {
+  const value = item.abilityCost;
+  if (!value || value.kind !== "equipment-mp-cost" ||
+      !["half", "one"].includes(value.modifier) || item.kind !== "armor" || item.empty ||
+      value.ability.skillLevel !== 0)
+    throw new Error("Invalid equipment ability cost provider");
+  integer(value.ability.abilityId, 1);
+  integer(value.ability.contentId, 1);
+  return value;
 }
 
 /** Native IsEquipSlot 0x4d7830 indexes hand flags relative to dominant arm. */
@@ -122,6 +142,8 @@ export function equipmentSlotAllowed(
 }
 
 function validateLoadout(catalog: EquipmentCatalog, loadout: EquipmentLoadout) {
+  if (catalog.kind !== "equipment-development-v1")
+    throw new Error("Unsupported equipment catalog");
   const owner = character(catalog, loadout.sourceId);
   if (!loadout.id || loadout.equipment.length !== 6)
     throw new Error("Invalid equipment loadout");
@@ -143,6 +165,89 @@ function validateLoadout(catalog: EquipmentCatalog, loadout: EquipmentLoadout) {
     hands.every((p) => p.kind === "armor" && !p.empty)
   )
     throw new Error("Unresolved equipment hand conflict");
+}
+
+/** All slots participate in native GetMPDiameter; stock and inactive owners do
+ * not. Preserve copies here even though the cost provider is non-stacking. */
+export function equipmentAbilityCostProviders(catalog: EquipmentCatalog, loadout: EquipmentLoadout) {
+  validateLoadout(catalog, loadout);
+  return loadout.equipment.flatMap((id) => {
+    const item = definition(catalog, id);
+    if (!item.abilityCost) return [];
+    return [{ contentId: item.id, ...structuredClone(validateAbilityCost(item)) }];
+  });
+}
+
+/** Existing passive ownership is independent of whether the host can currently
+ * evaluate hand/job/parameter eligibility. Read only verified wear providers
+ * from the trusted catalog; unknown eligibility must not erase known copies. */
+export function equipmentOwnedAbilities(catalog: EquipmentCatalog, loadout: EquipmentLoadout): OwnedAbility[] {
+  const owner = catalog.characters[loadout.sourceId];
+  if (catalog.kind !== "equipment-development-v1" || !owner || owner.sourceId !== loadout.sourceId ||
+      !loadout.id || !Array.isArray(loadout.equipment) || loadout.equipment.length !== 6)
+    throw new Error("Invalid equipment ability owner");
+  return loadout.equipment.flatMap((id) => {
+    const item = definition(catalog, id);
+    return item.abilityCost ? [structuredClone(validateAbilityCost(item).ability)] : [];
+  });
+}
+
+/** Save/entry admission is catalog-aware: only these resolved equipment
+ * abilities may have duplicate identities, with exactly one entry per copy. */
+export function validateEquipmentAbilityOwnership(
+  catalog: EquipmentCatalog, loadout: EquipmentLoadout, owned: readonly OwnedAbility[],
+) {
+  const providers = equipmentOwnedAbilities(catalog, loadout);
+  const known = new Map<number, OwnedAbility>();
+  for (const item of Object.values(catalog.definitions)) {
+    if (!item.abilityCost) continue;
+    const ability = validateAbilityCost(item).ability;
+    const existing = known.get(ability.abilityId);
+    if (existing && (existing.contentId !== ability.contentId || existing.skillLevel !== ability.skillLevel))
+      throw new Error("Conflicting equipment ability identity");
+    known.set(ability.abilityId, ability);
+  }
+  for (const [id, expected] of known) {
+    const records = owned.filter((ability) => ability.abilityId === id);
+    if (records.length !== providers.filter((p) => p.abilityId === id).length ||
+        records.some((ability) => ability.contentId !== expected.contentId || ability.skillLevel !== 0))
+      throw new Error("Equipment passive owned-ability mismatch");
+  }
+}
+
+/** FixedEquip: remove first matching old ability; SetEquip; append the new
+ * passive only while equipped copies outnumber matching owned records. No
+ * command/order/slot/learning/equipment-ability-list finalizer is invoked by
+ * this AddEquipAbility branch. The caller publishes this detached list with
+ * the equipment candidate, never separately. */
+export function applyEquipmentAbilityChange(
+  owned: readonly OwnedAbility[], before: EquipmentLoadout, after: EquipmentLoadout,
+  catalog: EquipmentCatalog,
+): OwnedAbility[] {
+  if (before.id !== after.id || before.sourceId !== after.sourceId)
+    throw new Error("Equipment ability owner changed");
+  equipmentAbilityCostProviders(catalog, before);
+  validateEquipmentAbilityOwnership(catalog, before, owned);
+  equipmentAbilityCostProviders(catalog, after);
+  const result = structuredClone([...owned]);
+  const current = structuredClone(before);
+  const changed = before.equipment.flatMap((id, slot) => id === after.equipment[slot] ? [] : [slot]);
+  for (const slot of changed) {
+    const previous = definition(catalog, current.equipment[slot]!).abilityCost;
+    if (previous) {
+      const index = result.findIndex((ability) => ability.abilityId === previous.ability.abilityId);
+      if (index >= 0) result.splice(index, 1);
+    }
+    current.equipment[slot] = after.equipment[slot]!;
+    const next = definition(catalog, current.equipment[slot]!).abilityCost;
+    if (next) {
+      const equipped = current.equipment.filter((id) => id === current.equipment[slot]).length;
+      const count = result.filter((ability) => ability.abilityId === next.ability.abilityId).length;
+      if (equipped > count) result.push(structuredClone(next.ability));
+    }
+  }
+  validateEquipmentAbilityOwnership(catalog, after, result);
+  return result;
 }
 
 export function equipmentAvailability(

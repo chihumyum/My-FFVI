@@ -5,6 +5,7 @@ import { compileBattleAbilityCatalog } from "../src/compiler/battle-abilities.js
 import { battleTableIndex } from "../src/compiler/battle.js";
 import { BattleGame } from "../src/core/battle.js";
 import { battleAbilityFixture, sourceQualifiedBattleFixture } from "./fixtures/battle-abilities.js";
+import { battleEntryRuntimeFixture } from "./fixtures/battle-entry-runtime.js";
 
 test("source commands use current skill levels and types, never raw ownership or a stale projection", () => {
   const f = battleAbilityFixture(), before = structuredClone(f);
@@ -116,7 +117,7 @@ test("range-12 command qualification uses the native party-count gate", () => {
 });
 
 test("source battle actions follow current learning and conditions instead of static lists", () => {
-  const content = sourceQualifiedBattleFixture(), battle = new BattleGame(content, 31);
+  const { content, inventory } = battleEntryRuntimeFixture(), battle = new BattleGame(content, 31, undefined, inventory);
   assert.equal(battle.canUse("a", 10, 7), true);
   assert.equal(battle.canUse("a", 11, 7), false, "stale development list cannot grant unlearned healing");
   assert.equal(battle.canUse("a", 12, 7), false, "source ownership cannot grant an unsupported effect");
@@ -127,6 +128,16 @@ test("source battle actions follow current learning and conditions instead of st
   assert.equal(battle.canUse("a", 11, 7), false);
   assert.equal(battle.commandMenu("a").find((c) => c.id === 7)!.available, false);
   assert.equal(content.players[0]!.ownedAbilities!.abilities.owned.find((a) => a.abilityId === 11)!.skillLevel, 99);
+});
+
+test("positive source MP fees need an equipment owner, while zero cost stays known", () => {
+  const content = sourceQualifiedBattleFixture(), battle = new BattleGame(content, 31);
+  content.abilities[10]!.cost = 3;
+  assert.equal(battle.abilityCost("a", 10), null);
+  assert.equal(battle.canUse("a", 10, 7), false);
+  content.abilities[13]!.cost = 0;
+  assert.equal(battle.abilityCost("a", 13)!.mp, 0);
+  assert.equal(battle.canUse("a", 13, 1), true);
 });
 
 test("unknown battle commands and missing effects are visible disabled entries", () => {

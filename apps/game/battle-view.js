@@ -224,7 +224,9 @@ export class BattleView {
       label(
         $("battle-result-text"),
         r
-          ? `${r.exp} EXP · ${r.gil} Gil\n存活队员各获得 ${r.each} EXP`
+          ? `${r.exp} EXP · ${r.gil} Gil\n存活队员各获得 ${r.each} EXP` +
+            (Array.isArray(r.drops) && r.drops.length ? "\n" + r.drops.map((drop) =>
+              `${itemName({ name: battle.rewardItemName(drop.id) })} × ${drop.count}`).join(" · ") : "")
           : "重新挑战这场战斗。",
       );
       label(
@@ -268,12 +270,13 @@ export class BattleView {
                 .map((id) => {
                   const source = { kind: "ability", id };
                   const ability = this.content.abilities[id];
+                  const cost = battle.abilityCost(actor.id, id);
                   const displayName = battleLabel(ability?.name || (command.abilityIds.length === 1 ? command.name : "行动"));
                   return {
                     commandId,
                     source,
                     usable: canUse(source, commandId),
-                    name: displayName + (ability?.cost ? ` · MP ${ability.cost}` : ""),
+                    name: displayName + (cost ? cost.mp ? ` · MP ${cost.mp}` : "" : ability?.cost ? " · MP ?" : ""),
                   };
                 });
         })

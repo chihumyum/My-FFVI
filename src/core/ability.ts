@@ -81,8 +81,8 @@ export type AbilityEffectResult =
       missed: boolean;
     };
 
-/** Numerical branches only. Conditions, reflection, equipment effects and AI are
- * not inputs to this explicitly temporary executor; admission belongs to its profile.
+/** Numerical branches only, with admitted live target condition types. Status
+ * application, reflection, equipment effects and AI are owned by the action host.
  * This computes the whole action before the caller commits HP/MP or cost. */
 export function calculateDevelopmentEffects(
   plan: DevelopmentAbilityPlan,

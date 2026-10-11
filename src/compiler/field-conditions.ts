@@ -17,10 +17,11 @@ export function compileFieldConditionCatalog(
   transportationIds: readonly number[],
 ): { catalog: FieldConditionCatalog; sources: BattleRow[] } {
   const sources: BattleRow[] = [];
-  // Defend is battle-local until=1 state. It is removed at battle end and has
-  // no admitted field lifecycle; exposing it as a passive field status would
-  // also let a forged checkpoint carry protection into another encounter.
-  const behaviors = battle.behaviors.filter((behavior) => behavior.kind !== "defend").map(
+  // Defend and ordinary protection are removed at battle end. Their field
+  // application/appearance is not admitted; a checkpoint cannot inject them
+  // as passive statuses and carry them into another encounter.
+  const behaviors = battle.behaviors.filter((behavior) =>
+    !["defend", "physical-protection", "magic-protection"].includes(behavior.kind)).map(
     (behavior): FieldConditionCatalog["behaviors"][number] => {
       const row = reader.row("condition.csv", behavior.id);
       sources.push(row);
