@@ -9,6 +9,7 @@ import type { FieldPartyActorCheckpoint } from "../core/field-party-actors.js";
 import type { PartyActorContext } from "../core/party-actors.js";
 import type { TreasureBoxRequest, TreasureInventoryDefinition, TreasureInventoryLimits } from "../core/treasure-inventory.js";
 import type { TreasureTaskMessages } from "../core/treasure-task.js";
+import type { OwnedConditionEventOp } from "../core/owned-condition.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -134,6 +135,7 @@ export type Op = Site &
     | TreasureBoxRequest
     | PartyEventOp
     | RosterLifecycleEventOp
+    | OwnedConditionEventOp
     | { kind: "entities"; group: string }
     | { kind: "change-map"; request: MapRequest }
     | { kind: "fade-in"; seconds: number }

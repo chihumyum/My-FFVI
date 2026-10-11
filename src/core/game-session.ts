@@ -1,8 +1,8 @@
 import type { FieldContent } from "../field/types.js";
 import { encounterContent, battleDefinitionBlocker, type BattleCatalog } from "./battle-content.js";
 import { BattleGame } from "./battle.js";
-import { BattleAIError } from "./battle-ai.js";
 import { EventState } from "./event-state.js";
+import { projectBattleFieldState } from "./field-battle-entry.js";
 import {
   parseBattlePreferences,
   type BattlePreferences,
@@ -86,6 +86,7 @@ export class GameSession {
         treasure: this.state.fieldTreasure,
         party: this.state.fieldParty,
         roster: this.state.fieldRoster,
+        ownedConditions: this.state.fieldOwnedConditions,
         ...(battleCatalog.gameState.fieldConditions ? { fieldSteps: this.state.fieldSteps } : {}),
         ...(this.state.fieldPartyAppearance ? { partyAppearance: this.state.fieldPartyAppearance } : {}),
         movementBlocker: (transportationId, manual) => this.state.fieldMoveBlocker(transportationId, manual),
@@ -179,11 +180,30 @@ export class GameSession {
       }
       this.field.advance(10);
       if (this.field.stop?.kind === "encounter") {
-        const content = encounterContent(
+        let content = encounterContent(
           this.battleCatalog,
           this.field.stop.party!,
         );
         if (!content) continue;
+        if (content.battleEntry && content.qualificationContext?.mode === "source") {
+          try {
+            const entry = projectBattleFieldState(content.battleEntry, {
+              mapId: this.field.content.map.identity?.mapId ?? null,
+              transportationId: this.field.transportationId,
+              // No source save-point or encounter-foot controller is hosted
+              // yet. Relevant unknowns block entry instead of becoming false.
+              isSavePoint: null, beastFieldController: null, footAttributeType: null,
+            }, this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
+            if (entry.invalidContentIds === null || entry.blockers.length)
+              throw new Error(entry.blockers.join("; ") || "Unknown battle field exclusions");
+            content = { ...content, qualificationContext: { ...content.qualificationContext,
+              invalidContentIds: entry.invalidContentIds, conditionContext: "current" } };
+          } catch (error) {
+            this.field.stop = { kind: "unsupported", message: error instanceof Error ? error.message : String(error),
+              site: this.field.stop.site };
+            continue;
+          }
+        }
         if (this.state.battlePartyBlocker) {
           this.field.stop = {
             kind: "unsupported",
@@ -213,10 +233,9 @@ export class GameSession {
           this.encounterSerial++;
         } catch (error) {
           this.state.cancelBattle(lease);
-          if (!(error instanceof BattleAIError)) throw error;
           this.field.stop = {
             kind: "unsupported",
-            message: error.message,
+            message: error instanceof Error ? error.message : String(error),
             site: this.field.stop.site,
           };
         }

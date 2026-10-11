@@ -1,5 +1,5 @@
 // Real source compilation plus controlled provider probes. The source-bound
-// prelude checkpoint is not execution of that prelude or a new formal save.
+// prelude checkpoint is source-bound bootstrap state, not a replay of the prelude.
 import assert from "node:assert/strict";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -74,9 +74,12 @@ for (const owner of snapshot.roster) {
 const selected = checkpoint.selectedSourceIds.map((sourceId) => snapshot.roster.find((owner) => owner.sourceId === sourceId).id);
 const controlled = appendSelectedPartyCondition(snapshot.roster, selected, checkpoint.conditionId);
 assert.deepEqual(controlled.map((owner) => owner.conditionIds), [[53], [53], [53]]);
-assert.deepEqual(state.snapshot(), snapshot, "Research projection never changes the formal checkpoint");
-assert.equal(published.common.qualificationContext.mode, "development-static");
-assert.equal(published.common.qualificationContext.conditionContext, "unknown");
+assert.deepEqual(state.snapshot(), snapshot, "Idempotent research projection never changes the formal checkpoint");
+assert.deepEqual(snapshot.roster.map((owner) => owner.conditionIds), [[53], [53], [53]], "Published checkpoint binds the owned source condition");
+assert.deepEqual(published.common.battleEntry, catalog);
+assert.equal(published.common.qualificationContext.mode, "source");
+assert.equal(published.common.qualificationContext.conditionContext, "current");
+assert.ok(published.common.battleAppearance, "607 admission includes its presentation provider");
 
 const qualified = [];
 for (const owner of controlled) {
@@ -122,9 +125,9 @@ const report = {
   sourceRows: compiled.sources.length, checkpointSourceRows: checkpoint.sources.length, checkpointScripts: checkpoint.scripts.length,
   sourceItemProbes: catalog.items.filter((item) => item.type === 1).length, ordinaryItemCandidates: itemCandidates,
   openingInvalidContentIds: opening.invalidContentIds, players, controlledQualification: qualified,
-  formalMode: "development-static", formalOwnedCondition607: false,
+  formalMode: "source", formalOwnedCondition607: true,
   originalGameExecuted: false, semanticsVerified: false,
-  blockers: ["Madou character-size and armor presentation not integrated", "general field AddCondition transaction not implemented"],
+  blockers: ["special command providers and full effect coverage remain separate", "original-game dynamic oracle unavailable"],
 };
 await mkdir(root + "build/reports", { recursive: true });
 await writeFile(root + "build/reports/battle-entry-check.json", JSON.stringify(report, null, 2) + "\n");

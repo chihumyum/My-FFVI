@@ -61,6 +61,20 @@ export function hasSilenceBehavior(row: BattleRow): boolean {
   return hasPassiveBehavior(row, 6, 2);
 }
 
+/** Madou Start/Remove changes armor rendering and the effect posture size.
+ * Its active admission also requires the separate battle appearance host. */
+export function hasMagitekBehavior(row: Pick<BattleRow, "values">): boolean {
+  const v = row.values;
+  return int(v.condition_type) === 607 && int(v.system_type) === 4 &&
+    int(v.resistance_decision) === 1 && int(v.until_type) === 3 &&
+    ["until_value", "overlapped_type", "invalid_type", "target_type",
+      "condition_group_id", "parameter_group_id", "attribute_group_id", "species_group_id",
+      "rate_type1", "rate_type2", "rate_value1", "rate_value2", "recovery_invalid",
+      "attack_target", "game_over_target", "state_cover_unavailable", "damage_number",
+      "battle_effect_asset_id", "battle_effect_shadow_cloning", "field_se_asset_id", "icon_id",
+    ].every((key) => int(v[key]) === 0);
+}
+
 /** Ordinary FF6 poison. Row 88's condition-group provider is not equivalent
  * to the ordinary row and remains blocked. Field steps remain a host blocker
  * while this battle behavior persists; damage_number is not battle damage. */
@@ -194,7 +208,10 @@ export function compileBattleConditionCatalog(
                       hpDivisor: int(row.values.rate_value1),
                     },
                   ]
-                : [];
+                : hasMagitekBehavior(row)
+                  ? [{ id: d.id, kind: "magitek", untilType: 3,
+                    name: row.values.mes_id_name === "None" ? "" : name(row.values.mes_id_name!) }]
+                  : [];
       },
     ),
   };

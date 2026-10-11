@@ -4,6 +4,8 @@
 
 v20 的正式开场仍使用显式 `development-static` 模式。查询接口已经连接共享名册，来源模式的准入与菜单已有受控测试；但战斗入口何时建立条件行 53，以及 `CurrentlyInvalidContentIds` 初始上下文尚未闭合，不能切换正式开场菜单。开场的骑乘图片、地图交通工具或 `RideVehicleNPC` 都不能代替这两个状态来源。
 
+以上为 v20 的交付边界。v21 恢复了来源入口提供器，v22 已接入逐角色实时库存、当前字段排除上下文、持有607与来源表现，并将正式开场切至 `source`；当前运行契约见[来源战斗资格的运行接线](battle-entry-runtime.md)。下文保留当时的调查记录和局部方法证据。
+
 ## 数据与接口
 
 - `src/compiler/battle-abilities.ts` 的 `compileBattleAbilityCatalog(reader, tables, sourceIds)` 返回 `catalog` 和逐行 `sources`。catalog 保留命令、条件、能力的来源身份及未支持提供器；能力效果计划另由既有编译器决定。
@@ -35,22 +37,23 @@ Gogo（来源角色 13）依赖队友/装备的专用提供器；非零装备能
 
 原生 `MadouCondition.Start`（`0x922070`）已经消费条件类型 607，并调用 `ChangeRideOnMagicArmor(true)`；它不说明该条件是谁创建的。`ChangeRideOnMagicArmor`（`0x6827f0`）、`InitRideOnMagicArmor`（`0x682df0`）与 `CreateRideMagicArmorTable`（`0x158cc40`）仅建立或改变表现，没有恢复战斗入口的条件创建。
 
-`GetBattleInvalidContentIds`（`0x850720`）只从输入列表排除来源 content 23/412；它不能证明输入列表为空。字段 `SetupCurrentInvalidContent`、`ContentInvalidController` 与原生入战条件桥仍是下一步依赖。
+`GetBattleInvalidContentIds`（`0x850720`）只从输入列表排除来源 content 23/412；它不能证明输入列表为空。字段 `SetupCurrentInvalidContent`、`ContentInvalidController` 与原生入战条件桥在 v20 仍是待恢复依赖，后续来源及运行接线分别记于 v21/v22 文档。
 
 `CreateBattlePlayerData`（`0x684f00`）的此次 Ghidra 导出产生大量 unreachable/PIC 警告并截断主体。收据和字节指纹证明导出关联了正确二进制，不能证明其 C 输出完整；已将此限制写入 native 报告，不以这份截断 C 关闭 607 入口缺口。
 
 ## 验收通道
 
-隔离 TypeScript 输出到 `build/v20-battle-abilities-dist` 后可运行：
+以下使用当前 v22 的隔离 TypeScript 输出，复验原有资格模块及现已接入 source 的宿主；历史来源收据继续保留：
 
 ```sh
-node --test build/v20-battle-abilities-dist/tests/battle-abilities.test.js
+node_modules/.bin/tsc --outDir build/v22-battle-entry-dist --incremental false
+node --test build/v22-battle-entry-dist/tests/battle-abilities.test.js
 node scripts/check-battle-abilities-native.mjs
-node scripts/check-battle-abilities.mjs --dist build/v20-battle-abilities-dist
-node scripts/check-battle-abilities-ui.mjs --dist build/v20-battle-abilities-dist
-node scripts/check-battle-menu-timing.mjs --runtime build/v20-battle-abilities-dist
+node scripts/check-battle-abilities.mjs --dist build/v22-battle-entry-dist
+node scripts/check-battle-abilities-ui.mjs --dist build/v22-battle-entry-dist
+node scripts/check-battle-menu-timing.mjs --runtime build/v22-battle-entry-dist
 ```
 
 来源检查绑定 24 个原生方法、13 段原始字节、18 个可初始化角色的 20 种命令及 54 次受控投影，另检查真实等级学习和 3 名共享初始角色的查询复制。8029 条来源行记录包含完整主表依赖，数量不表示能力效果覆盖或可玩角色覆盖。UI 检查使用真实 BattleGame 与受控 DOM 验证未知项、学会技能、状态变化后清理选择和缺效果名称安全；浏览器绘制、原版执行与一致性验收仍是独立通道。
 
-所有原生指纹、来源主表行和报告存于 ignored `build/`。该批完成的是资格查询与可切换的来源准入接口；正式开场依然明确使用有限测试配置，不声称全角色战斗或完整游戏已迁移。
+所有原生指纹、来源主表行和报告存于 ignored `build/`。v20 完成资格查询与可切换的来源准入接口，当时正式开场使用有限测试配置。v22 正式开场已改用 source 资格，仍不声称全角色战斗或完整游戏已迁移；当前限制见[运行接线文档](battle-entry-runtime.md)。

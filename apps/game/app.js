@@ -1,6 +1,7 @@
 import { InventoryView } from "./inventory-view.js";
 import { EquipmentView } from "./equipment-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
+import { battleAppearanceQuads } from "/runtime/core/battle-appearance.js";
 import { verifyContent } from "/runtime/core/content-integrity.js";
 import { CheckpointStorage } from "/runtime/core/saved-game.js";
 import { Renderer } from "./renderer.js";
@@ -385,6 +386,7 @@ async function init() {
         focus();
       }
     },
+    battleAppearanceQuads,
   );
   inventoryView = new InventoryView(
     $("pause"),

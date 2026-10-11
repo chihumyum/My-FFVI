@@ -23,11 +23,12 @@ export function battleMenuWaiting(state) {
   }
 }
 export class BattleView {
-  constructor(canvas, content, images, onReturn, onRetry) {
+  constructor(canvas, content, images, onReturn, onRetry, appearanceQuads) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.content = content;
     this.images = images;
+    this.appearanceQuads = appearanceQuads;
     this.selected = null;
     this.actionSource = null;
     this.commandId = null;
@@ -192,11 +193,12 @@ export class BattleView {
       }
       if (party.children[index] !== row.button)
         party.insertBefore(row.button, party.children[index] ?? null);
+      const conditionNames = p.conditionIds.map((id) => battle.conditions.name(id)).filter(Boolean);
       label(
         row.name,
         p.name +
-          (p.conditionIds.length
-            ? ` · ${p.conditionIds.map((id) => battle.conditions.name(id)).join("、")}`
+          (conditionNames.length
+            ? ` · ${conditionNames.join("、")}`
             : ""),
       );
       label(row.hp, `${p.hp} / ${p.maxHp}`);
@@ -424,7 +426,6 @@ export class BattleView {
         x -= Math.sin(Math.min(1, a.elapsed / 900) * Math.PI) * 9;
       if (actor.hp === 0 && actor.side === "enemy") continue;
       c.save();
-      if (actor.hp === 0) c.globalAlpha = 0.3;
       const rightSide = actor.side === "enemy" && actor.placement?.group === 2;
       const aimingRight =
         actor.side === "player" &&
@@ -434,11 +435,19 @@ export class BattleView {
           battle.combatants.find((t) => t.id === a.targetIds[0]),
           battle,
         ).x > x;
-      if (rightSide || aimingRight) {
+      const dying = battle.content.conditions.dying &&
+        actor.conditionIds.includes(battle.content.conditions.dying.conditionId);
+      const appearance = battle.appearanceFrame(actor.id, {
+        key: actor.hp === 0 ? "down" : dying ? aimingRight ? "dyingR00" : "dying" :
+          aimingRight ? "IdleR00" : "default",
+        bodyFrame: 0, armorFrame: 0,
+      });
+      if (actor.hp === 0 && !appearance) c.globalAlpha = 0.3;
+      if (!appearance && (rightSide || aimingRight)) {
         c.translate(x * 2, 0);
         c.scale(-1, 1);
       }
-      const draw = (key, offsetY = 0, crop = 0) => {
+      const draw = (key) => {
         const s = this.content.sprites[key],
           img = this.images.get(s.file);
         c.drawImage(
@@ -446,16 +455,21 @@ export class BattleView {
           0,
           0,
           s.width,
-          s.height - crop,
+          s.height,
           x - s.width / 2,
-          y - s.height - offsetY,
+          y - s.height,
           s.width,
-          s.height - crop,
+          s.height,
         );
       };
-      if (actor.sprites.mount) {
-        draw(actor.sprites.mount);
-        draw(actor.sprites.idle, 22, 8);
+      if (appearance) {
+        for (const layer of [appearance.armor, appearance.body]) {
+          if (!layer) continue;
+          const sprite = this.content.sprites[layer.sprite], img = this.images.get(sprite.file);
+          for (const { source, destination } of this.appearanceQuads(layer))
+            c.drawImage(img, source.x, source.y, source.width, source.height,
+              x + destination.x, y + destination.y, destination.width, destination.height);
+        }
       } else draw(actor.sprites.idle);
       if (actor.id === this.selected && actor.hp > 0) {
         c.fillStyle = "#f1d87f";

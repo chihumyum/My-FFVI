@@ -22,7 +22,7 @@ import {
 } from "../dist/src/core/battle-ai.js";
 import { initialEnemyBehavior } from "../dist/src/core/enemy-behavior.js";
 import { BattleGame } from "../dist/src/core/battle.js";
-import { encounterContent } from "../dist/src/core/battle-content.js";
+import { controlledBattleContent as encounterContent } from "./battle-probe-context.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const args = process.argv.slice(2);

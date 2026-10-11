@@ -67,7 +67,7 @@ const conditions = new FieldConditions(field.catalog);
 const battleConditions = new BattleConditions(battle.catalog);
 assert.deepEqual(
   field.catalog.behaviors.map((b) => b.id),
-  [4, 5, 6, 10, 100],
+  [4, 5, 6, 10, 53, 100],
 );
 assert.deepEqual(
   field.catalog.behaviors.find((b) => b.id === 10),
@@ -149,6 +149,7 @@ stepCase(
   0,
   null,
 );
+stepCase("Magitek source condition has no step damage or sound", member(160, 160, [53]), 160, [53], 0, null);
 for (const { id, type } of field.catalog.transportations.filter(
   (t) => t.type !== 1,
 )) {

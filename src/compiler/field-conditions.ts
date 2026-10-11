@@ -4,7 +4,7 @@ import {
   type FieldConditionCatalog,
 } from "../core/field-conditions.js";
 import type { BattleRow } from "./battle.js";
-import { hasPoisonBehavior, type ConditionReader } from "./conditions.js";
+import { hasMagitekBehavior, hasPoisonBehavior, type ConditionReader } from "./conditions.js";
 import { tableInteger as int } from "./table.js";
 
 /** Compile only independently admitted active conditions. Decoding the generic
@@ -36,6 +36,8 @@ export function compileFieldConditionCatalog(
       }
       if (damage !== 0 || soundId !== 0)
         throw new Error("Unresolved active field condition provider");
+      if (behavior.kind === "magitek" && !hasMagitekBehavior(row))
+        throw new Error("Unresolved field Magitek condition provider");
       return { id: behavior.id, kind: "none" };
     },
   );

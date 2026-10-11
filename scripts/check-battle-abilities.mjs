@@ -1,6 +1,6 @@
 // Actual source tables + controlled contexts + current owned-state integration.
-// Supplying condition 53 here is a mechanism probe, not evidence that battle
-// entry created that condition. The published profile keeps that gap explicit.
+// Controlled condition alternatives are separate from the published owned
+// checkpoint; battles read condition53 instead of inferring it from transport.
 import assert from "node:assert/strict";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -20,6 +20,7 @@ const { projectEquipmentParameters } = await module("core/equipment");
 const { GameState } = await module("core/game-state");
 const { BattleGame } = await module("core/battle");
 const { encounterContent } = await module("core/battle-content");
+const { projectBattleFieldState } = await module("core/field-battle-entry");
 const { hash } = await module("compiler/content");
 const corpus = await loadCorpus(root);
 const battleSource = JSON.parse(snapshotFile(await readSnapshot(root + "build/battle"), "battle.json"));
@@ -37,7 +38,7 @@ const compiled = compileBattleAbilityCatalog(battleTableIndex(corpus.tables, bat
   templates.map(([, t]) => t.initial.sourceId).sort((a, b) => a - b));
 assert.deepEqual(published.common.battleAbilities, compiled.catalog);
 assert.deepEqual(published.common.qualificationContext, {
-  mode: "development-static", conditionContext: "unknown", battleType: 0,
+  mode: "source", conditionContext: "current", battleType: 0,
   magicLearningValue: null, invalidContentIds: null, itemMenuAvailable: null,
 });
 const context = { conditionIds: [], battleType: 0, magicLearningValue: null, invalidContentIds: [], itemMenuAvailable: true, partySize: 3 };
@@ -102,15 +103,25 @@ for (const player of players) {
   assert.deepEqual(player.ownedAbilities, { sourceId: owner.sourceId, jobId: owner.jobId, magicStoneId: owner.magicStoneId, abilities: owner.abilities });
 }
 const content = encounterContent(published, Number(Object.keys(published.encounters)[0]));
-const battle = new BattleGame(content, 71, players);
+const exclusions = projectBattleFieldState(published.common.battleEntry, { mapId: 3, transportationId: 6,
+  isSavePoint: null, beastFieldController: null, footAttributeType: null }, published.gameState.fieldConditions.transportations);
+assert.ok(exclusions.invalidContentIds);
+content.qualificationContext = { ...content.qualificationContext, invalidContentIds: exclusions.invalidContentIds };
+const lease = state.openBattle(content.encounterId);
+const battle = new BattleGame(content, 71, state.battlePlayers(lease), state.battleInventory(lease));
 for (const player of battle.players) {
   const result = battle.commandQualification(player.id);
   assert.ok(result);
-  assert.equal(result.entries.find((c) => c.commandId === 26).released, null);
-  assert.match(result.blockers.join(), /Unknown battle condition context/);
-  assert.match(result.blockers.join(), /Unknown battle content exclusion/);
-  assert.deepEqual(battle.commandMenu(player.id).map((c) => c.id), player.commands);
+  assert.equal(result.entries.find((c) => c.commandId === 26).released, true);
+  assert.equal(result.entries.find((c) => c.commandId === 26).available, true);
+  assert.equal(result.entries.find((c) => c.commandId === 1).released, false);
+  assert.equal(result.entries.find((c) => c.commandId === 3).available, true);
+  assert.equal(battle.canUse(player.id, 218, 26), true);
+  assert.deepEqual(player.commands, [], "Static opening commands no longer grant actions");
+  assert.deepEqual(player.abilities, [], "Owned source qualification supplies actions");
+  assert.ok(battle.appearanceFrame(player.id, { key: "default", bodyFrame: 0, armorFrame: 0 }).armor);
 }
+state.cancelBattle(lease);
 assert.deepEqual(state.snapshot(), snapshot, "inspection and battle copies cannot mutate shared owner state");
 const report = {
   lane: "source-controlled-owned-battle-qualification", contentHash, nativeReportSha256: hash(native),
@@ -118,7 +129,7 @@ const report = {
   sourceRows: compiled.sources.length, sourceProjections,
   sourceLearning: { sourceId: 1, level: learning.level, abilityId: 32 }, sharedPlayers: players.length,
   runtimeMode: published.common.qualificationContext.mode,
-  blockers: ["battle-entry-condition-53", "currently-invalid-content-context", "special-command-providers", "full-ability-effect-coverage"],
+  blockers: ["special-command-providers", "full-ability-effect-coverage", "original-game-dynamic-oracle"],
   originalGameExecution: false, playableCoverage: false,
 };
 await mkdir(root + "build/reports", { recursive: true });

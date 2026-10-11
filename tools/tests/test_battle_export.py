@@ -3,7 +3,7 @@ import sys
 from types import SimpleNamespace as N
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'source_adapter'))
-from export_battle import full_rect_picture, character_rows
+from export_battle import full_rect_picture, character_rows, sprite_geometry
 
 
 class CharacterMediaTests(unittest.TestCase):
@@ -29,16 +29,33 @@ class CharacterMediaTests(unittest.TestCase):
 class BattleSpriteTests(unittest.TestCase):
     def fixture(self):
         full = N(size=(32, 32))
-        texture = N(m_Width=32, m_Height=32, image=full)
+        texture = N(m_Width=32, m_Height=32, image=full,
+                    m_TextureSettings=N(m_WrapU=1, m_WrapV=1, m_FilterMode=0))
         sprite = N(m_SpriteAtlas=None, m_Rect=N(x=0, y=0, width=32, height=32),
                    m_RD=N(settingsRaw=64, texture=N(deref_parse_as_object=lambda: texture)),
-                   image=N(size=(20, 28)))
+                   image=N(size=(20, 28)), m_PixelsToUnits=1.0)
         return sprite, texture, full
 
     def test_trimmed_mesh_does_not_shift_the_exported_source_canvas(self):
         sprite, _, full = self.fixture()
         self.assertIs(full_rect_picture(sprite, 'synthetic.png'), full)
         self.assertNotEqual(sprite.image.size, full.size)
+
+    def test_sampling_units_are_preserved_not_replaced_with_renderer_defaults(self):
+        sprite, texture, _ = self.fixture()
+        sprite.m_PixelsToUnits = 2.5
+        texture.m_TextureSettings.m_WrapU = 0
+        texture.m_TextureSettings.m_FilterMode = 2
+        self.assertEqual(sprite_geometry(sprite, 'synthetic.png'),
+                         {'pixelsPerUnit': 2.5, 'textureWrap': [0, 1], 'filterMode': 2})
+
+    def test_unknown_sampling_metadata_is_rejected(self):
+        for field, value in [('m_PixelsToUnits', 0), ('m_PixelsToUnits', float('nan')),
+                             ('m_WrapV', None), ('m_FilterMode', 4)]:
+            sprite, texture, _ = self.fixture()
+            target = sprite if field == 'm_PixelsToUnits' else texture.m_TextureSettings
+            setattr(target, field, value)
+            with self.assertRaises(ValueError): sprite_geometry(sprite, 'synthetic.png')
 
     def test_atlas_geometry_and_dimension_changes_are_not_silently_flattened(self):
         for change in ('atlas', 'settings', 'offset', 'fraction', 'texture'):

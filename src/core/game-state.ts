@@ -1,4 +1,5 @@
 import type { CombatantDefinition, BattleContent } from "./battle-content.js";
+import type { BattleEntryInventory, BattleInventoryWithQualification } from "./battle-entry.js";
 import type { Combatant, BattleStatProjection } from "./battle.js";
 import { projectActionTarget, type ActionParticipant } from "./action-effects.js";
 import type {
@@ -42,7 +43,6 @@ import {
   validateItemStacks,
   type ItemDefinition,
   type ItemStack,
-  type BattleInventory,
 } from "./items.js";
 import {
   BattleConditions,
@@ -65,6 +65,8 @@ import type { FieldTreasurePort } from "./treasure-port.js";
 import type { TreasureInventoryRead, TreasureRewardCommand } from "./treasure-inventory.js";
 import { recoverJoinedCharacter } from "./character-recovery.js";
 import type { PartyActorCatalog, PartyActorMember } from "./party-actors.js";
+import { projectOwnedCondition, type FieldOwnedConditionPort,
+  type OwnedConditionCommand, type OwnedConditionTransaction } from "./owned-condition.js";
 import {
   growCharacter,
   initialCharacterGrowth,
@@ -87,6 +89,9 @@ export type GameStateContent = {
   };
   initialGil: number;
   initialParty: PartyState;
+  /** Explicit source-bound development checkpoint state, applied after source
+   * AddFromMaster initialization. This never creates or enables an owner. */
+  initialOwnedConditions?: { id: string; conditionIds: number[] }[];
   fieldConditions?: FieldConditionCatalog;
   characterInitializations?: Record<string, OwnedCharacterInitializationTemplate>;
   characterGrowth?: Record<string, CharacterGrowthPlan>;
@@ -177,9 +182,11 @@ export class GameState {
     lease: BattleLease;
     players: Combatant[];
     items: ItemStack[];
+    qualification: BattleEntryInventory | null;
   } | null = null;
   private revision = 0;
   private readonly conditions: BattleConditions;
+  private readonly ownedConditionDefinitions: { id: number; type: number }[];
   private readonly fieldConditions: FieldConditions | null;
   readonly fieldSteps: FieldConditionPort = {
     prepareStep: (transportationId) => this.prepareFieldStep(transportationId),
@@ -194,6 +201,9 @@ export class GameState {
   readonly fieldRoster: FieldRosterPort = {
     prepare: (command) => this.prepareRosterEvent(command),
   };
+  readonly fieldOwnedConditions: FieldOwnedConditionPort = {
+    prepare: (command) => this.prepareOwnedConditionEvent(command),
+  };
   constructor(
     content: GameStateContent,
     players: readonly CombatantDefinition[],
@@ -201,6 +211,7 @@ export class GameState {
     conditions: BattleConditionCatalog,
   ) {
     this.conditions = new BattleConditions(structuredClone(conditions));
+    this.ownedConditionDefinitions = conditions.rules.definitions.map(({ id, type }) => ({ id, type }));
     this.fieldConditions = content.fieldConditions
       ? new FieldConditions(structuredClone(content.fieldConditions))
       : null;
@@ -298,6 +309,16 @@ export class GameState {
       characterNames,
       completedBattles: [],
     };
+    const seeded = new Set<string>();
+    for (const seed of this.content.initialOwnedConditions ?? []) {
+      keys(seed, "id,conditionIds");
+      if (seeded.has(seed.id) || !this.initialIds.includes(seed.id) || !Array.isArray(seed.conditionIds))
+        throw new Error("Invalid initial owned condition checkpoint identity");
+      seeded.add(seed.id);
+      distinct(seed.conditionIds);
+      this.conditions.validateActive(seed.conditionIds);
+      this.data.roster.find((member) => member.id === seed.id)!.conditionIds = [...seed.conditionIds];
+    }
     if (this.content.equipmentSystem)
       this.data.equipmentStock = initialEquipmentStock(
         this.content.equipmentSystem.catalog,
@@ -695,6 +716,28 @@ export class GameState {
       },
     };
   }
+  private projectOwnedConditionEvent(data: GameStateSnapshot, command: OwnedConditionCommand) {
+    const next = structuredClone(data);
+    const preview = projectOwnedCondition(next.roster, next.party, command, this.ownedConditionDefinitions);
+    next.roster = preview.roster;
+    this.validate(next);
+    return { next, targets: preview.targets, steps: preview.steps.map((step) => ({
+      targetId: step.targetId,
+      appearance: this.projectPartyAppearance({ ...next, roster: step.roster }),
+      setDummy: false as const, affectLeader: true as const,
+    })) };
+  }
+  private prepareOwnedConditionEvent(command: OwnedConditionCommand): OwnedConditionTransaction {
+    this.requireIdle();
+    const { next, ...projection } = this.projectOwnedConditionEvent(this.data, command);
+    const revision = this.revision;
+    return { ...projection, commit: () => {
+      this.requireIdle();
+      if (this.revision !== revision) throw new Error("Stale field owned condition transaction");
+      this.data = next;
+      this.revision++;
+    } };
+  }
   /** Map initialization runs against this private draft. Publishing rebinds the
    * same ports to live state so later events keep a single state owner. */
   prepareFieldState(): {
@@ -703,6 +746,7 @@ export class GameState {
       treasure: FieldTreasurePort;
       party: FieldPartyPort;
       roster: FieldRosterPort;
+      ownedConditions: FieldOwnedConditionPort;
       fieldSteps?: FieldConditionPort;
       partyAppearance?: { catalog: PartyActorCatalog; current(): PartyAppearanceCandidate };
       movementBlocker: (transportationId: number | null, manual: boolean) => string | null;
@@ -801,12 +845,25 @@ export class GameState {
         };
       },
     };
+    const ownedConditions: FieldOwnedConditionPort = {
+      prepare: (command) => {
+        if (published) return this.prepareOwnedConditionEvent(command);
+        const { next, ...projection } = this.projectOwnedConditionEvent(data, command), version = generation;
+        return { ...projection, commit: () => {
+          if (published || generation !== version)
+            throw new Error("Stale candidate owned condition transaction");
+          data = next;
+          generation++;
+        } };
+      },
+    };
     return {
       ports: {
         inventory,
         treasure,
         party,
         roster,
+        ownedConditions,
         ...(this.fieldConditions ? { fieldSteps } : {}),
         ...(this.content.partyActors ? { partyAppearance: {
           catalog: this.content.partyActors,
@@ -1165,10 +1222,22 @@ export class GameState {
       serial: this.data.completedBattles.length,
       encounterId,
     });
+    const players = this.partyPlayers();
+    const equipment = this.content.equipmentSystem;
+    const qualification: BattleEntryInventory | null = equipment ? {
+      equipmentCatalog: structuredClone(equipment.catalog),
+      equipmentStock: equipmentAvailability(equipment.catalog, this.data.roster.filter((p) => p.enabled),
+        this.data.equipmentStock).map(({ id, count, equipped }) => ({ id, count, equipped })),
+      members: players.map((player) => {
+        const owner = this.data.roster.find((member) => member.id === player.id)!;
+        return { id: owner.id, sourceId: owner.sourceId, equipment: [...owner.equipment] };
+      }),
+    } : null;
     this.active = {
       lease,
-      players: this.partyPlayers(),
+      players,
       items: structuredClone(this.data.items),
+      qualification,
     };
     return lease;
   }
@@ -1176,12 +1245,13 @@ export class GameState {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     return structuredClone(this.active.players);
   }
-  battleInventory(lease: BattleLease): BattleInventory {
+  battleInventory(lease: BattleLease): BattleInventoryWithQualification {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     return structuredClone({
       definitions: this.content.items,
       stacks: this.active.items,
       limit: this.content.limits.item,
+      ...(this.active.qualification ? { qualification: this.active.qualification } : {}),
     });
   }
   battleProgression(

@@ -12,7 +12,7 @@ import {
 import { readSnapshot, snapshotFile } from "../dist/src/compiler/integrity.js";
 import { hash } from "../dist/src/compiler/content.js";
 import { BattleGame } from "../dist/src/core/battle.js";
-import { encounterContent } from "../dist/src/core/battle-content.js";
+import { controlledBattleContent as encounterContent } from "./battle-probe-context.mjs";
 
 const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const source = await compileOpeningBattle(root);
@@ -83,6 +83,7 @@ for (const id of [760, 761, 764, 765, 766, 1288]) {
       name: "Controlled",
       kind: "ability",
       abilityIds: [id],
+      referencedAbility: null,
       forbiddenConditionIds: [],
     };
     content.initialAtb = { player: [100, 100], enemy: [0, 0] };

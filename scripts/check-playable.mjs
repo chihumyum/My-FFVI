@@ -17,7 +17,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   content.common.players.map((p) => p.abilities.length),
-  [8, 4, 4],
+  [0, 0, 0], // Reusable definitions do not grant actions; the source menu below does.
 );
 assert.deepEqual(
   content.common.players.map((p) => p.weight),
@@ -40,6 +40,9 @@ function enter(parts = [1000]) {
   return s;
 }
 const s = enter();
+assert.equal(s.battle.content.qualificationContext.mode, "source");
+assert.deepEqual(s.battle.players.map((p) => s.battle.commandMenu(p.id).find((c) => c.id === 26).abilityIds.length), [8, 4, 4]);
+assert.ok(s.battle.players.every((p) => p.conditionIds.includes(53) && p.appearanceState.magitek));
 const split = enter(Array(100).fill(10));
 assert.equal(
   s.battle.time,

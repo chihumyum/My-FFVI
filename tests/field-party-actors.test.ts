@@ -52,6 +52,30 @@ test("mounted refresh replaces the source inner rider and preserves the outer tr
   assert.deepEqual(player, { id: "player", fieldAssetId: 38, riderFieldAssetId: 2, riding: true });
 });
 
+test("ordered actor refreshes prepare every intermediate bitmap before publishing any actor state", () => {
+  const { host, candidate } = standalone();
+  const before = host.checkpoint();
+  const next = structuredClone(candidate);
+  next.activeMembers[0]!.sourceId = 3;
+  next.activeMembers[0]!.jobId = 7;
+  next.parties[0] = structuredClone(next.activeMembers);
+  const steps = [{ appearance: candidate, setDummy: false }, { appearance: next, setDummy: false }];
+  const visible: string[] = [];
+  assert.throws(() => host.prepareSequence(steps, ({ asset }) => {
+    if (asset === "charlie") throw new Error("missing second bitmap");
+    return () => { visible.push(asset); };
+  }), /second bitmap/);
+  assert.deepEqual(host.checkpoint(), before);
+  assert.equal(visible.length, 0);
+  const publish = host.prepareSequence(steps, ({ asset }) => () => { visible.push(asset); });
+  assert.deepEqual(host.checkpoint(), before);
+  assert.equal(visible.length, 0);
+  publish();
+  assert.deepEqual(visible, ["bravo", "charlie"]);
+  assert.equal(host.checkpoint().context.player.fieldAssetId, 3);
+  assert.equal(host.checkpoint().playerAssetCacheId, 3);
+});
+
 test("native actor saves reject altered providers, hidden identities and unresolved player media atomically", () => {
   const { host, origin } = standalone(true);
   for (const mutate of [
@@ -161,4 +185,51 @@ test("condition visual flags preserve explicit false separately from absent sour
   assert.deepEqual(decodeConditionVisualFlag({ SystemFlag: { KeepBadStatusVisual: 0 } }), { keepBadStatusVisual: false });
   assert.deepEqual(decodeConditionVisualFlag({ SystemFlag: { KeepBadStatusVisual: 1 } }), { keepBadStatusVisual: true });
   assert.throws(() => decodeConditionVisualFlag({ SystemFlag: { KeepBadStatusVisual: false } }));
+});
+
+function ownedConditionIntegration(flag: boolean | undefined = false) {
+  const { field, battle } = integration();
+  battle.common.conditions.rules.definitions.push({ id: 53, type: 607, overlapped: false, eraseGroupId: 3 });
+  battle.common.conditions.behaviors.push({ id: 53, kind: "magitek", name: "", untilType: 3 });
+  battle.gameState.partyActors!.conditionTypes[53] = 607;
+  field.scripts.refresh = [op({ kind: "owned-condition", command: {
+    kind: "add-condition", conditionType: 607, target: 0,
+  }, dependencies: [] }), op({ kind: "exit" })];
+  if (flag !== undefined) field.scriptSystemFlags = { refresh: { keepBadStatusVisual: flag } };
+  return { field, battle, game: new GameSession(field, battle) };
+}
+
+test("field owned condition updates refresh actors, survive restore and remove by source status identity without replay", () => {
+  const { field, battle, game } = ownedConditionIntegration();
+  const before = game.state.snapshot();
+  for (let n = 0; n < 2; n++) {
+    game.field.startEvent("refresh"); game.advance(10);
+    assert.equal(game.field.stop, null);
+  }
+  assert.deepEqual(game.state.snapshot().roster.map((p) => p.conditionIds), [[53], [53]]);
+  assert.deepEqual(game.state.snapshot().roster.map((p) => p.hp), before.roster.map((p) => p.hp));
+  const saved = game.checkpoint();
+  const restored = GameSession.restore(saved, field, battle);
+  assert.deepEqual(restored.checkpoint(), saved);
+  field.scripts.refresh = [op({ kind: "owned-condition", command: {
+    kind: "remove-condition", conditionType: 607, target: before.roster[0]!.sourceId,
+  }, dependencies: [] }), op({ kind: "exit" })];
+  restored.field.startEvent("refresh"); restored.advance(10);
+  assert.equal(restored.field.stop, null);
+  assert.deepEqual(restored.state.snapshot().roster.map((p) => p.conditionIds), [[], [53]]);
+});
+
+test("owned condition visual uncertainty or missing actor media cannot partially publish the roster", () => {
+  for (const mode of ["unknown", "keep", "media"] as const) {
+    const { field, battle } = ownedConditionIntegration();
+    if (mode === "unknown") delete field.scriptSystemFlags;
+    else if (mode === "keep") field.scriptSystemFlags!.refresh = { keepBadStatusVisual: true };
+    const game = new GameSession(field, battle), before = game.state.snapshot(), actors = game.field.partyActorCheckpoint;
+    if (mode === "media") delete field.characters.alpha;
+    game.field.startEvent("refresh"); game.advance(10);
+    assert.equal(game.field.stop?.kind, "unsupported");
+    assert.match(game.field.stop!.message, /condition-visual|Missing party appearance media/);
+    assert.deepEqual(game.state.snapshot(), before);
+    assert.deepEqual(game.field.partyActorCheckpoint, actors);
+  }
 });

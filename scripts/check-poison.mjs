@@ -18,7 +18,7 @@ import { verifyContent } from "../dist/src/core/content-integrity.js";
 import { BattleConditions } from "../dist/src/core/battle-conditions.js";
 import { BattleGame } from "../dist/src/core/battle.js";
 import { GameState } from "../dist/src/core/game-state.js";
-import { encounterContent } from "../dist/src/core/battle-content.js";
+import { sourceBattleContent as encounterContent, controlledBattleContent } from "./battle-probe-context.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const reportPath = root + "build/reports/poison-check.json";
@@ -281,7 +281,7 @@ cases.push({
 const cure = compileDevelopmentAbility(index, 763, "source-cure-763");
 assert.ok(cure.plan);
 function battleChain(partitions) {
-  const content = structuredClone(encounterContent(catalog, 3));
+  const content = controlledBattleContent(catalog, 3);
   const sourceAction = admitted.find((a) => a.id === 417);
   content.abilities[417] = sourceAction;
   content.abilities[763] = cure;

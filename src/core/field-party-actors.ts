@@ -84,6 +84,28 @@ export class FieldPartyActors {
     if (!asset || (player.riding && !mount)) throw new Error("Unresolved playable actor appearance");
     return { asset: asset.asset, mount: mount?.asset ?? null };
   }
+  /** A source event can refresh once per target. Build that ordered sequence
+   * against an isolated actor state, checking every intermediate media binding
+   * before the caller publishes any owned state. Renderer callbacks only run
+   * after all preparations succeed, in the same source order. */
+  prepareSequence(
+    steps: readonly { appearance: PartyAppearanceCandidate; setDummy: boolean }[],
+    prepareRenderer: (media: { asset: string; mount: string | null }, plan: PartyActorPlan) => () => void,
+  ): () => void {
+    const draft = new FieldPartyActors(this.catalog, this.origin, this.state.context.currentTransport?.id ?? null);
+    draft.restore(this.checkpoint());
+    const publications: (() => void)[] = [];
+    for (const step of steps) {
+      draft.prepare(step.appearance, (media, plan) => {
+        const publish = prepareRenderer(media, plan);
+        if (typeof publish !== "function") throw new Error("Invalid party renderer transaction");
+        publications.push(publish);
+        return () => {};
+      }, step.setDummy)();
+    }
+    const next = draft.checkpoint();
+    return () => { this.state = next; for (const publish of publications) publish(); };
+  }
   /** All fallible media/animation preparation happens before owned publication. */
   prepare(candidate: PartyAppearanceCandidate,
     prepareRenderer: (media: { asset: string; mount: string | null }, plan: PartyActorPlan) => () => void,

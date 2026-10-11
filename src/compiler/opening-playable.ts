@@ -1,13 +1,11 @@
 import {
   compilePhysicalLimits,
-  compilePlayerPhysical,
   compileEnemyPhysical,
 } from "./physical-parameters.js";
 import { hash, record } from "./content.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { tableInteger as int, type compileOpeningBattle } from "./battle.js";
 import {
-  compilePlayerParameters,
   compileEnemyParameters,
   compileParameterLimits,
 } from "./parameters.js";
@@ -71,14 +69,6 @@ export async function compileOpeningPlayable(
       throw new Error(`Ambiguous playable dependency ${table}:${value}`);
     return found[0]!;
   };
-  const sprite = (suffix: string) => {
-    const found = Object.keys(source.sprites).filter((p) =>
-      p.toLowerCase().endsWith(suffix.toLowerCase()),
-    );
-    if (found.length !== 1)
-      throw new Error("Missing exact battle pose " + suffix);
-    return found[0]!;
-  };
   const initialAtb = (key: string): [number, number] => {
     const r = unique("game_constant_int.csv", "key_name", key);
     return [int(r.value1), int(r.value2)];
@@ -127,8 +117,8 @@ export async function compileOpeningPlayable(
       referencedAbility: referenced ? { id: c.abilityId, typeId: int(referenced.type_id), wait: int(referenced.ability_wait) } : null,
     }];
   }));
-  // Preserve the explicitly admitted temporary opening menu during migration
-  // of the battle-entry condition and invalid-content providers.
+  // Bind these command definitions to their strict source compiler as well.
+  // Membership and availability are projected from each current owned actor.
   commands[magitekCommand.id] = magitekCommand;
   commands[itemCommand.id] = itemCommand;
   if (itemCommand.kind !== "item")
@@ -189,112 +179,40 @@ export async function compileOpeningPlayable(
     if (!displayName) throw new Error("Missing ability display identity");
     abilities[id] = compileDevelopmentAbility(parameterReader, id, displayName);
   }
+  const ordinary = compilePlayerBattleDefinitions({ ...parameterReader,
+    matching: (table, key, value) => Object.values(source.tables[table] ?? {})
+      .filter((r) => r.values[key] === String(value)),
+  }, {
+    tables: Object.fromEntries(Object.keys(source.tables).map((table) => [table, rows(table)])),
+    initializations: source.ownedInitializations, characterMedia: source.characterMedia,
+    sprites: source.sprites, name,
+  });
+  if (ordinary.blockers.length) throw new Error("Ordinary player template compilation failed: " + JSON.stringify(ordinary.blockers));
+  if (source.battleAppearance.blockers.length)
+    throw new Error("Battle appearance compilation failed: " + JSON.stringify(source.battleAppearance.blockers));
+  for (const definition of ordinary.definitions) {
+    const appearance = source.battleAppearance.actors[definition.sourceId];
+    if (!appearance || appearance.sourceId !== definition.sourceId ||
+        source.battleAppearance.catalog.conditions.find((row) => row.id === source.battleAppearance.catalog.conditionId)?.type !== 607)
+      throw new Error("Missing source battle appearance binding: " + definition.sourceId);
+    definition.appearance = structuredClone(appearance);
+    definition.battleRequirements!.forbiddenConditionTypes =
+      definition.battleRequirements!.forbiddenConditionTypes.filter((type) => type !== 607);
+  }
+  const checkpoint = source.entryProviders.ownedConditionCheckpoint;
+  const checkpointIds = [...checkpoint.selectedSourceIds].sort((a, b) => a - b);
+  const initialIds = source.initialParty.map((p) => p.characterId).sort((a, b) => a - b);
+  if (checkpoint.scope !== "narshe-development-checkpoint-non-advertisement" ||
+      checkpoint.target !== "selected-party" || checkpoint.conditionType !== 607 ||
+      JSON.stringify(checkpointIds) !== JSON.stringify(initialIds) ||
+      conditions.rules.definitions.find((d) => d.id === checkpoint.conditionId)?.type !== checkpoint.conditionType)
+    throw new Error("Unbound owned condition checkpoint");
   const players: CombatantDefinition[] = source.initialParty.map((c) => {
-    const r = row("character_status.csv", c.characterId);
-    if (int(r.corps) !== 1)
-      throw new Error("Physical profile requires front row");
-    if (int(r.initial_condition_group))
-      throw new Error("Unimplemented initial player conditions");
-    for (let slot = 1; slot <= 6; slot++) {
-      const equipment = row("content.csv", r[`content_id${slot}`]!);
-      const item = row(
-        equipment.type_id === "2" ? "weapon.csv" : "armor.csv",
-        equipment.type_value!,
-      );
-      if (item.process_prog !== "None" || (slot >= 5 && item.type_id !== "2"))
-        throw new Error("Unimplemented physical equipment provider");
-      for (const key of [
-        "wear_condition_group_id",
-        "wear_function_group_id",
-        "trigger_ability_id",
-        ...(equipment.type_id === "2"
-          ? [
-              "attribute_group_id",
-              "weak_attribute",
-              "effective_species",
-              "two_handed_flag",
-              "back_flag",
-            ]
-          : ["resistance_species"]),
-        equipment.type_id === "2"
-          ? "additional_condition_group_id"
-          : "resistance_condition",
-      ])
-        if (int(item[key]))
-          throw new Error("Unimplemented equipment condition input");
-    }
-    const parameters = compilePlayerParameters(
-      parameterReader,
-      c.characterId,
-      {
-        additional: {
-          hp: 0,
-          mp: 0,
-          magic: 0,
-          vitality: 0,
-          agility: 0,
-          weight: 0,
-        },
-        correction: { magic: 0, vitality: 0, agility: 0 },
-        temporary: noTemporary,
-        passive: { hp: 0, mp: 0, magicEvasion: 0 },
-        condition601: false,
-        twoHandMultiplier: 1,
-      },
-      parameterLimits,
-    ).confirmed;
-    const memberships = rows("ability_random_group.csv").filter(
-      (m) => m.group_id === r.ability_random_group_id,
-    );
-    const equipmentElements = compileEquipmentElements(
-      parameterReader,
-      Array.from({ length: 6 }, (_, n) => int(r[`content_id${n + 1}`])),
-      1,
-    );
-    return {
-      id: `player:${c.characterId}`,
-      sourceId: c.characterId,
-      name: name(r.mes_id_name!),
-      side: "player",
-      level: int(r.lv),
-      // This checkpoint has no base/temporary element grants or resistance overrides.
-      attackElements: equipmentElements.attackElements,
-      elementResistances: equipmentElements.resistances,
-      physical: compilePlayerPhysical(
-        parameterReader,
-        c.characterId,
-        {
-          selectedArm: 1,
-          additionalStrength: 0,
-          correctionStrength: 0,
-          temporary: noPhysicalTemporary,
-        },
-        physicalLimits,
-      ).confirmed,
-      ...parameters,
-      exp: int(r.exp),
-      gil: 0,
-      growthGroup: r.growth_curve_group_id!,
-      abilities: source.magitekAbilityIds.filter((id) =>
-        memberships.some((m) => int(m.ability_id) === id),
-      ),
-      commands: [
-        magitekCommand.id,
-        ...([1, 2, 3, 4, 5, 6].some(
-          (n) => int(r[`command_id${n}`]) === itemCommand.id,
-        )
-          ? [itemCommand.id]
-          : []),
-      ],
-      conditionIds: [],
-      conditionResistances: {},
-      ai: null,
-      placement: null,
-      sprites: {
-        idle: sprite(`/${c.spriteGroup}/RideL_00.png`),
-        mount: sprite("/BC_FF6_P022/WalkL_00.png"),
-      },
-    };
+    const definition = ordinary.definitions.find((p) => p.sourceId === c.characterId);
+    if (!definition) throw new Error("Missing initial ordinary battle template");
+    // A source-bound state at the existing development checkpoint. It is not
+    // the AddFromMaster initial state or a replay of the skipped prelude.
+    return { ...structuredClone(definition), conditionIds: [checkpoint.conditionId] };
   });
   const encounters: Record<string, BattleEncounter> = {};
   for (const encounter of source.encounters) {
@@ -369,16 +287,24 @@ export async function compileOpeningPlayable(
       mp: int(r.mp_value1),
     });
   }
+  const abilityContentIds = Object.fromEntries(rows("ability.csv").map((ability) => {
+    const matches = rows("content.csv").filter((content) => int(content.type_id) === 4 && content.type_value === ability.id);
+    if (matches.length > 1) throw new Error("Ambiguous ability content identity: " + ability.id);
+    return [ability.id!, matches[0] ? int(matches[0].id) : null];
+  }));
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v21",
+    profile: "narshe-playability-v22",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,
     timing: { mode: "active", atbSpeed: 1 },
     battleAbilities,
+    battleEntry: structuredClone(source.entryProviders.catalog),
+    battleAppearance: structuredClone(source.battleAppearance.catalog),
+    abilityContentIds,
     qualificationContext: {
-      mode: "development-static", conditionContext: "unknown", battleType: 0,
+      mode: "source", conditionContext: "current", battleType: 0,
       magicLearningValue: null, invalidContentIds: null, itemMenuAvailable: null,
     },
     reactions: source.reactions,
@@ -402,12 +328,12 @@ export async function compileOpeningPlayable(
     ),
     limitations: [
       "纳尔谢街道可玩开发规则；未经原版一致性验收，不代表完整战斗系统。",
-      "持有能力→战斗指令资格已接共享投影；607魔导状态与地图禁用内容的战斗入口提供器尚未闭合。当前开场仍显式使用临时静态魔导菜单，不能据此声称一般角色的战斗入口已完成。",
+      "战斗指令由当前持有能力、条件与来源入战资格动态投影；607魔导状态、装甲外观和剧情增删共用持有状态。开发检查点直接装载来源绑定的片头状态，尚未完整执行新游戏前导。未知地图/步行/兽原依赖仍阻塞。",
       "已准入的数值分支、ATB、蓄力与时钟门控已按本版来源接入；即时/等待模式及技能、道具菜单已接入，时速固定为 1。固定 10 ms 推进与 400/900 ms 动作表现仍是临时策略，原生动态语义尚未验证。初始持有能力已来源绑定，活动战斗能力仍限受控子集，完整成长/学习未完成。",
       "初始数值使用分阶段属性确认；来源追加经验、普通成长和自然等级学习已接入共享持有状态。特殊学习、魔石、Correction、临时与被动提供器仍未完整恢复，新持有角色的战斗动作独立准入。",
       "当前开放三种射线和治愈原力，以及来源普通 HP/MP 恢复、玩家复活、解除沉默和普通毒的道具；道具目前限我方目标。普通毒的战斗周期、属性相性、地图步伤和解除已接入；开场 currentTransport=6 由来源初始化与前导脚本闭合，该交通跳过普通步伤。完整上下车、特殊毒 row 88、其他活动状态、特殊道具、逃跑与完整战斗脚本仍阻塞。",
       "角色、库存、普通换装与奖励由共享状态保存，可在稳定地图检查点保存/读取。剧情普通物品授予/移除和部分收费指令已接入；特殊装备、掉落与商店尚未完成，开场没有额外发放测试药品或备用装备。",
-      "站位、夹击队形、骑乘拼接和光束是临时二维表现；原版音效、特效、动画时序尚未接入。",
+      "魔导装甲的默认/死亡/濒死姿态使用来源别名、UV和像素偏移；站位、夹击队形、动作与光束仍为临时二维表现，原版音效、特效与完整动画时序尚未接入。",
       "敌方行动使用来源 AI、独立回合与变量，连续行动整组入队。普通反击按命中结果触发并优先执行，保留原行动条；最终攻击、恢复专用反应、完整自动目标及特殊指令仍未接入，未知依赖会明确停止。",
     ],
   };
@@ -423,20 +349,8 @@ export async function compileOpeningPlayable(
     .map(([sourceId, plan]) => [`player:${sourceId}`, structuredClone(plan)]));
   gameState.rosterLifecycle.firstJoinLevelAdjustments = { ...firstJoinLevelAdjustments };
   gameState.partyActors = structuredClone(source.partyActors);
-  const ordinary = compilePlayerBattleDefinitions({ ...parameterReader,
-    matching: (table, key, value) => Object.values(source.tables[table] ?? {})
-      .filter((r) => r.values[key] === String(value)),
-  }, {
-    tables: Object.fromEntries(Object.keys(source.tables).map((table) => [table, rows(table)])),
-    initializations: source.ownedInitializations, characterMedia: source.characterMedia,
-    sprites: source.sprites, name,
-  });
-  if (ordinary.blockers.length) throw new Error("Ordinary player template compilation failed: " + JSON.stringify(ordinary.blockers));
-  // Existing opening Magitek definitions remain an explicit development profile.
-  // Other potential members require source qualification and ordinary appearance
-  // at the entry boundary; merely joining the roster never grants a static menu.
-  gameState.battleDefinitions = [...structuredClone(players),
-    ...ordinary.definitions.filter((d) => !players.some((p) => p.id === d.id))];
+  gameState.battleDefinitions = structuredClone(ordinary.definitions);
+  gameState.initialOwnedConditions = players.map((p) => ({ id: p.id, conditionIds: [...p.conditionIds] }));
   gameState.fieldConditions = compileFieldConditionCatalog(
     parameterReader,
     conditions,

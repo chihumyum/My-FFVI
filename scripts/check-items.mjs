@@ -6,7 +6,7 @@ import { compileOpeningPlayable } from "../dist/src/compiler/opening-playable.js
 import { GameState } from "../dist/src/core/game-state.js";
 import { GameSession } from "../dist/src/core/game-session.js";
 import { BattleGame } from "../dist/src/core/battle.js";
-import { encounterContent } from "../dist/src/core/battle-content.js";
+import { sourceBattleContent as encounterContent, controlledBattleContent } from "./battle-probe-context.mjs";
 import {
   encodeSavedGame,
   decodeSavedGame,

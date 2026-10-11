@@ -15,7 +15,8 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
-- [v20 战斗资格、地图入口与宝箱事务](docs/systems-v20.md)
+- [v22 持有状态、动态入战与魔导外观](docs/systems-v22.md)
+- [v21 宝箱任务与普通角色模板](docs/systems-v21.md)
 - [v17 并行系统集成与验收](docs/systems-v17.md)
 - [角色生命周期](docs/roster-lifecycle.md)、[战斗计时](docs/battle-timing.md)、[普通毒](docs/poison-conditions.md)
 - [三组编队与角色所有权](docs/party.md)
@@ -63,7 +64,10 @@ python3 -m venv .venv
 npm run pipeline
 .venv/bin/python tools/source_adapter/export_field.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 npm run game:check
-.venv/bin/python tools/source_adapter/export_battle.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
+.venv/bin/python tools/source_adapter/export_battle.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster" \
+  --character-id 2 --character-id 3 --character-id 5 --character-id 6 --character-id 7 \
+  --character-id 8 --character-id 11 --character-id 12 --character-id 13 --character-id 15 \
+  --character-id 17 --character-id 18 --character-id 19 --character-id 26 --character-id 29
 npm run playable:check
 npm run parameters:check
 npm run abilities:check
@@ -75,6 +79,9 @@ npm run items:check
 npm run item-status:check -- --native "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster/GameAssembly.dll"
 npm run equipment:check
 npm run inventory-events:check
+npm run owned-condition:check
+npm run battle-entry-runtime:check
+npm run battle-appearance:check
 npm run check
 .venv/bin/python -m unittest discover -s tools/tests
 npm run dev

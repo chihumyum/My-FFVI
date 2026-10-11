@@ -19,6 +19,7 @@ const { compileRosterLifecycleEvent } = await module("compiler/roster");
 const { createOwnedCharacter, validateOwnedCharacterAbilities } = await module("core/owned-character");
 const { prepareRosterLifecycle } = await module("core/roster");
 const { GameState } = await module("core/game-state");
+const { GameSession } = await module("core/game-session");
 const { hash } = await module("compiler/content");
 const corpus = await loadCorpus(root);
 const battle = JSON.parse(snapshotFile(await readSnapshot(root + "build/battle"), "battle.json"));
@@ -190,8 +191,12 @@ joinedState.fieldRoster.prepare(join).commit();
 joinedState.fieldRoster.prepare({ kind: "unlock", sourceId: 2, refreshActors: false }).commit();
 assert.deepEqual(joinedState.snapshot(), joined, "rejoining or unlocking an existing owner must not duplicate gear or history");
 assert.equal(joinedState.battlePartyBlocker, null);
-assert.match(battleDefinitionBlocker(joinedState.partyPlayers(), catalog.common.qualificationContext,
-  catalog.common.conditions), /来源战斗入口/);
+assert.equal(catalog.common.qualificationContext.mode, "source");
+assert.equal(catalog.common.qualificationContext.conditionContext, "current");
+assert.equal(battleDefinitionBlocker(joinedState.partyPlayers(), catalog.common.qualificationContext,
+  catalog.common.conditions), null);
+assert.match(battleDefinitionBlocker(joinedState.partyPlayers(),
+  { ...catalog.common.qualificationContext, mode: "development-static" }, catalog.common.conditions), /来源战斗入口/);
 assert.deepEqual(joinedState.snapshot(), joined);
 const restoredJoined = make();
 restoredJoined.restore(JSON.parse(JSON.stringify(joined)));
@@ -241,6 +246,26 @@ assert.deepEqual(candidateState.snapshot(), joined);
 assert.equal(candidate.commit(), false);
 candidate.ports.roster.prepare(join).commit();
 assert.deepEqual(candidateState.snapshot(), joined, "published candidate port must use the shared owner");
+const runtimeField = JSON.parse(await readFile(root + "build/game/narshe.json", "utf8"));
+const probeName = "controlled_owned_character_entry", probeSource = { file: "controlled-source-check", assetPath: "owned-entry" };
+runtimeField.scripts[probeName] = [
+  { ...sourceJoin, kind: "roster", script: probeName, index: 0, source: probeSource },
+  { kind: "encounter", party: Number(Object.keys(catalog.encounters)[0]), continuation: "controlled_owned_return",
+    script: probeName, index: 1, source: probeSource },
+];
+runtimeField.scripts.controlled_owned_return = [{ kind: "exit", script: "controlled_owned_return", index: 0, source: probeSource }];
+runtimeField.scriptSystemFlags[probeName] = { keepBadStatusVisual: false };
+const runtimeSession = new GameSession(runtimeField, catalog);
+assert.equal(runtimeSession.field.startEvent(probeName), true); runtimeSession.advance(10);
+assert.ok(runtimeSession.battle, runtimeSession.field.stop?.message);
+const runtimeOwner = runtimeSession.state.snapshot().roster.find((owner) => owner.sourceId === 2);
+assert.deepEqual(runtimeOwner, newOwner);
+const runtimePlayer = runtimeSession.battle.players.find((player) => player.sourceId === 2);
+assert.equal(runtimePlayer.appearanceState.magitek, null);
+assert.equal(runtimePlayer.level, newOwner.level);
+assert.deepEqual(runtimePlayer.ownedAbilities.abilities, newOwner.abilities);
+assert.deepEqual(runtimeSession.battle.content.qualificationContext.invalidContentIds, [16, 17, 23, 412, 1309]);
+assert.equal(runtimeSession.battle.commandQualification(runtimePlayer.id).entries.find((entry) => entry.commandId === 26).released, false);
 const report = { lane: "controlled-source-owned-initialization-and-game-state",
   catalogHash: contentHash, sourceSetHash: corpus.sourceSetHash, nativeSha256: native.nativeSha256,
   decoded, blocked, openingChecks, rejected, globalHistoryCount: initial.learnedAbilityIds.length,
@@ -248,10 +273,13 @@ const report = { lane: "controlled-source-owned-initialization-and-game-state",
   sharedStateJoin: { sourceCommand: sourceJoin, controlledCommand: join, newOwner,
     sourceGrowthLevel: 5, historyAppend: [229], equipmentIncrements: [...increments], failedJoins,
     duplicateCommitRejected: true, repeatedJoinIdempotent: true, roundTripIdempotent: true,
-    staleCommitRejected: true, candidatePublicationAtomic: true, battleDefinitionStillBlocked: true },
+    staleCommitRejected: true, candidatePublicationAtomic: true, battleDefinitionStillBlocked: false,
+    gameSessionSourceEntry: { sourceId: runtimePlayer.sourceId, actorRefresh: true, appearance: "ordinary",
+      qualification: runtimeSession.battle.content.qualificationContext } },
   acceptance: { compiledSourceInitializations: decoded.length, blockedSourceInitializations: blocked.length, sourceCatalogAndRuntimeOwners: openingChecks.length,
     invalidSavesRejected: rejected.length, jsonRoundTrip: true, controlledUnlock: true, failedPublicationAtomic: true,
-    originalRuntimeOracle: false, sourceFirstJoinGrowth: true, sourceNoRecoveryJoin: true, dynamicOwnerRoundTrip: true, renderedNewOwner: false },
+    originalRuntimeOracle: false, sourceFirstJoinGrowth: true, sourceNoRecoveryJoin: true, dynamicOwnerRoundTrip: true,
+    gameSessionSourceBattleEntry: true, browserRenderedNewOwner: false },
 };
 const output = JSON.stringify(report, null, 2) + "\n";
 await writeFile(root + "build/reports/owned-character-check.json", output);

@@ -13,7 +13,7 @@ import {
 import { compileDevelopmentAbility } from "../dist/src/compiler/ability.js";
 import { selectBattleAIAbilities } from "../dist/src/core/battle-ai.js";
 import { BattleGame } from "../dist/src/core/battle.js";
-import { encounterContent } from "../dist/src/core/battle-content.js";
+import { controlledBattleContent as encounterContent } from "./battle-probe-context.mjs";
 import { hash } from "../dist/src/compiler/content.js";
 
 const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
@@ -28,7 +28,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v21");
+assert.equal(catalog.common.profile, "narshe-playability-v22");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 assert.deepEqual(catalog.common.reactions, {
   counterLimit: 1,

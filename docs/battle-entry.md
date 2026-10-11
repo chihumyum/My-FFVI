@@ -1,6 +1,6 @@
 # 战斗入口与持有条件
 
-2026-10-12。本批交付来源编译与纯资格提供器，不扩张地图覆盖。正式开场继续使用 `development-static`；开场魔导状态的来源已经找到，但其完整战斗表现尚未接入。来源证据、受控机制探针和正式运行范围分别记录，不能把前两者当成原版动态一致性。
+2026-10-12。本文保留 v21 来源编译与纯资格提供器的证据记录。当时正式开场使用 `development-static`，完整表现尚未接入；v22 的运行接线与当前边界见[来源战斗资格的运行接线](battle-entry-runtime.md)。来源证据、受控机制探针和正式运行范围分别记录，不能把前两者当成原版动态一致性。
 
 ## 魔导状态来自剧情持有状态
 
@@ -28,15 +28,15 @@
 
 row53 的 `system_type=4`、`until_type=3`，参数、属性、种族与附属条件组均为0；来源没有直接数值修正。`BattleEndRecovery`（`455de0`）保留 until3/19，因此它不会在战斗结束自动消失。地图/交通变更的 `RemoveCondition`（`9e6240`、`9e5f50`）在本版创建空移除规则，不能凭换图或下交通工具就清除607。后续明确的剧情清除仍需对应来源处理。
 
-## 为什么仍未开启正式 source 魔导战斗
+## v21 尚未开启正式 source 魔导战斗的原因
 
 `BattleConditionController.Init` 的真实协程入口是 `6f4e0 → 466860`。回调 `4674c0` 合并角色/职业初始条件后遍历已有 `CurrentConditionList`；`4677f0` 按条件 type 建立状态函数，重新投影临时参数。它读取上述持有状态，不负责凭交通身份创造607。
 
 `MadouConditionFunction.Start`（`922070`）设置607、初始化状态效果、调用 `ChangeRideOnMagicArmor(true)`，保存玩家原角色尺寸并调用 `SelectedCharaSize(currentConditions,607)`。`Remove`（`921fc0`）销毁效果、关闭装甲表现、恢复之前保存的角色尺寸。其 `Update` 共享方法 `2c8ef0` 仅返回。
 
-因此 row53 即使没有属性加成，也不是无作用状态。当前不能只把53加进允许状态列表来打开魔导菜单；装甲切换、尺寸选择与恢复需要一起实现。字段 `External.Character.AddCondition` 还有队伍演员刷新及 `AffectLeaderWithCondition` 副作用，纯存储函数不替代这一事务。
+因此 row53 即使没有属性加成，也不是无作用状态。v21 不能只把53加进允许状态列表来打开魔导菜单；装甲切换、尺寸选择与恢复需要一起实现，v22 已接入该表现事务。字段 `External.Character.AddCondition` 还有队伍演员刷新及 `AffectLeaderWithCondition` 副作用，纯存储函数不替代这一事务。
 
-`source.entryProviders.ownedConditionCheckpoint` 是完整的来源检查点证据。正式 `GameState` 不假装已经执行该前导剧情，正式战斗继续保留原开发模式。新增普通角色模板的共享入口由来源资格与条件要求显式保护，模板准备完成不等于授予入战执行权。
+`source.entryProviders.ownedConditionCheckpoint` 是完整的来源检查点证据。v21 的正式 `GameState` 不假装已经执行该前导剧情，战斗保留原开发模式。新增普通角色模板的共享入口由来源资格与条件要求显式保护，模板准备完成不等于授予入战执行权。
 
 ## 共用提供器
 
@@ -55,15 +55,17 @@ FF6 `ItemFilterData` 构造函数（`850950`）建立空角色使用限制字典
 
 ## 验证与限制
 
+以下为当前版本的复验命令；原有提供器测试和 v21 原生证据继续保留，来源检查现绑定 v22 的正式 source 入口。
+
 ```sh
-node_modules/.bin/tsc --outDir build/v21-battle-entry-dist --incremental false
-node --test build/v21-battle-entry-dist/tests/battle-entry.test.js
+node_modules/.bin/tsc --outDir build/v22-battle-entry-dist --incremental false
+node --test build/v22-battle-entry-dist/tests/battle-entry.test.js
 node scripts/check-battle-entry-native.mjs
-node scripts/check-battle-entry.mjs --dist build/v21-battle-entry-dist
+node scripts/check-battle-entry.mjs --dist build/v22-battle-entry-dist
 ```
 
 17 项合成测试覆盖地图/存档点/交通差异、常量序列断档、未知上下文、库存守恒、空手/已装备资格、尚未支持的效果与菜单区分、owned 身份和原子失败。真实来源检查重新编译并逐字段比较 `build/game/opening-battle.json.entryProviders`，校验6段脚本、实际库存与三名开场角色的受控资格投影，以及50个来源物品候选探针。探针不会修改正式名册或添加测试资源。
 
 原生证据检查包含43个导出方法与15段原始机器码，验证 DLL、符号、结构头、metadata、导出文本和源字节摘要；共享 getter/委托的真实字段通过符号与原始机器码交叉定位。`semanticsVerified=false` 与 `originalGameExecuted=false` 保留。649个地图规则和273个物品/装备定义是提供器的数据范围，不是可玩地图或全部物品效果覆盖。
 
-当前剩余边界为607完整表现/移除宿主、通用字段 AddCondition 事务、特殊命令的额外提供器及原版动态对照。正式 source 模式的开关必须跟随实际宿主能力，不由来源解析数量决定。
+v21 剩余边界为607完整表现/移除宿主、通用字段 AddCondition 事务、特殊命令的额外提供器及原版动态对照。后续更新由[运行接线文档](battle-entry-runtime.md)记录。正式 source 模式的开关必须跟随实际宿主能力，不由来源解析数量决定。

@@ -14,7 +14,7 @@ import { compileTargetRule } from "../dist/src/compiler/battle-targets.js";
 import { readSnapshot, snapshotFile } from "../dist/src/compiler/integrity.js";
 import { hash } from "../dist/src/compiler/content.js";
 import { BattleGame } from "../dist/src/core/battle.js";
-import { encounterContent } from "../dist/src/core/battle-content.js";
+import { controlledBattleContent as encounterContent } from "./battle-probe-context.mjs";
 import { calculateDevelopmentEffects } from "../dist/src/core/ability.js";
 import { battleTargetChoices } from "../dist/src/core/battle-targets.js";
 
@@ -29,7 +29,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v21");
+assert.equal(catalog.common.profile, "narshe-playability-v22");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const base = encounterContent(catalog, 3);
 const inventory = tables["ability.csv"].map((row) => {

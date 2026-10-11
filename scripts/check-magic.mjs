@@ -10,7 +10,7 @@ import {
 import { calculateMagic } from "../dist/src/core/magic.js";
 import { hash } from "../dist/src/compiler/content.js";
 import { BattleGame } from "../dist/src/core/battle.js";
-import { encounterContent } from "../dist/src/core/battle-content.js";
+import { controlledBattleContent as encounterContent } from "./battle-probe-context.mjs";
 
 const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const imported = await readSnapshot(root + "/build/import");
@@ -25,7 +25,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v21");
+assert.equal(catalog.common.profile, "narshe-playability-v22");
 const candidates = [];
 for (const row of tables["ability.csv"]) {
   const decoded = compileAbilityProgram(reader, Number(row.id));

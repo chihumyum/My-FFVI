@@ -24,8 +24,8 @@ const { battleTableIndex } = await module("compiler/battle");
 const { compilePlayerBattleDefinitions } = await module("compiler/player-battle");
 const { compileRosterLifecycleEvent } = await module("compiler/roster");
 const { GameState } = await module("core/game-state");
-const { BattleGame } = await module("core/battle");
-const { encounterContent } = await module("core/battle-content");
+const { GameSession } = await module("core/game-session");
+const { battleDefinitionBlocker } = await module("core/battle-content");
 const { verifyContent } = await module("core/content-integrity");
 const { hash } = await module("compiler/content");
 const sha = (data) => createHash("sha256").update(data).digest("hex");
@@ -111,14 +111,24 @@ for (const [label, change, pattern] of [
   assert.match(result.blockers[0].reasons.join(), pattern, label);
   rejected.push({ name: label, stage: result.blockers[0].stage });
 }
-// This controlled host adds definitions to the catalog only. Initial owners,
-// equipment and global history stay identical until the real join transaction.
+// The ordinary compiler remains narrow. The published package explicitly adds
+// the independently compiled appearance actor before removing its 607 blocker.
+assert.equal(published.common.qualificationContext.mode, "source");
+assert.equal(published.common.qualificationContext.conditionContext, "current");
+for (const definition of compiled.definitions) {
+  const enriched = published.gameState.battleDefinitions.find((d) => d.sourceId === definition.sourceId);
+  assert.deepEqual(enriched, { ...definition,
+    appearance: source.battleAppearance.actors[definition.sourceId],
+    battleRequirements: { ...definition.battleRequirements, forbiddenConditionTypes: [] } });
+}
+assert.match(battleDefinitionBlocker([{ ...definitions.get(2), conditionIds: [53] }],
+  published.common.qualificationContext, published.common.conditions), /特殊战斗外观/);
+assert.match(battleDefinitionBlocker([definitions.get(2)],
+  { ...published.common.qualificationContext, mode: "development-static" }, published.common.conditions), /来源战斗入口/);
+// These potential definitions do not create owners. Only the source join
+// transaction may acquire a character, equipment and initial learning history.
 const content = structuredClone(published.gameState);
-const merged = new Map(compiled.definitions.map((d) => [d.id, structuredClone(d)]));
-for (const player of published.common.players) merged.set(player.id, structuredClone(player));
-content.battleDefinitions = [...merged.values()];
-const controlledHash = hash({ content, common: published.common, purpose: "source-player-battle-probe" });
-const make = () => new GameState(content, published.common.players, controlledHash, published.common.conditions);
+const make = () => new GameState(content, published.common.players, published.contentHash, published.common.conditions);
 const state = make(), original = state.snapshot();
 assert.deepEqual(original.roster.map((p) => p.sourceId), published.common.players.map((p) => p.sourceId));
 assert.equal(original.roster.some((p) => p.sourceId === 2), false);
@@ -144,19 +154,49 @@ assert.equal(player.maxHp, owner.maxHp);
 assert.equal(player.level, owner.level);
 assert.deepEqual(player.ownedAbilities.abilities, owner.abilities);
 assert.deepEqual(player.sprites, definitions.get(2).sprites);
-const battleContent = encounterContent(published, lease.encounterId);
-// Known ordinary conditions/exclusions are an explicit controlled context.
-// The real GameSession entry provider is checked by its owning integration lane.
-battleContent.qualificationContext = { mode: "source", conditionContext: "current", battleType: 0,
-  magicLearningValue: null, invalidContentIds: [], itemMenuAvailable: true };
-const game = new BattleGame(battleContent, 29, players, restored.battleInventory(lease),
-  restored.battleProgression(lease, battleContent.experience));
-const qualification = game.commandQualification(owner.id);
-assert.equal(qualification.entries.find((e) => e.commandId === 26).released, false);
-assert.ok(qualification.entries.some((e) => e.commandId === 1 && e.abilityIds.includes(1)));
 assert.deepEqual(restored.snapshot(), joined);
 restored.cancelBattle(lease);
 assert.deepEqual(restored.snapshot(), joined);
+
+// The actual host derives exclusions from its current field and transport,
+// supplies the lease equipment snapshot and executes both appearance paths.
+const runtimeField = JSON.parse(await readFile(resolve(root, option("--field", "build/game/narshe.json")), "utf8"));
+const probe = { file: "controlled-source-player-entry", assetPath: "shared-host" };
+runtimeField.scripts.controlled_join = [
+  { kind: "roster", command: join, dependencies: [], script: "controlled_join", index: 0, source: probe },
+  { kind: "exit", script: "controlled_join", index: 1, source: probe },
+];
+runtimeField.scriptSystemFlags.controlled_join = { keepBadStatusVisual: false };
+const runtime = new GameSession(runtimeField, published, 29);
+assert.equal(runtime.field.startEvent("controlled_join"), true); runtime.advance(10);
+assert.equal(runtime.field.stop, null);
+assert.deepEqual(runtime.state.snapshot(), joined);
+assert.equal(runtime.field.partyActorCheckpoint.context.puppets[3].fieldAssetId, 2);
+const saved = runtime.checkpoint();
+const session = GameSession.restore(JSON.parse(JSON.stringify(saved)), runtimeField, published);
+const enter = (session, field) => {
+  field.scripts.controlled_entry = [{ kind: "encounter", party: lease.encounterId,
+    continuation: "controlled_return", script: "controlled_entry", index: 0, source: probe }];
+  field.scripts.controlled_return = [{ kind: "exit", script: "controlled_return", index: 0, source: probe }];
+  assert.equal(session.field.startEvent("controlled_entry"), true); session.advance(10);
+  assert.ok(session.battle, session.field.stop?.message);
+};
+enter(session, runtimeField);
+const game = session.battle, battleContent = game.content;
+assert.deepEqual(battleContent.qualificationContext.invalidContentIds, [16, 17, 23, 412, 1309]);
+assert.equal(battleContent.qualificationContext.itemMenuAvailable, null, "a common flag does not grant individual item eligibility");
+const entered = game.players.find((p) => p.sourceId === 2);
+assert.equal(entered.hp, owner.hp); assert.equal(entered.maxHp, owner.maxHp); assert.equal(entered.level, owner.level);
+assert.equal(entered.appearanceState.magitek, null);
+assert.deepEqual(entered.ownedAbilities.abilities, owner.abilities);
+const qualification = game.commandQualification(owner.id);
+assert.equal(qualification.entries.find((e) => e.commandId === 26).released, false);
+assert.ok(qualification.entries.some((e) => e.commandId === 1 && e.abilityIds.includes(1)));
+assert.equal(game.commandMenu(owner.id).find((entry) => entry.id === 1).available, true);
+assert.equal(game.appearanceFrame(owner.id, { key: "default", bodyFrame: 0, armorFrame: 0 }).armor, null);
+assert.equal(game.players.filter((p) => p.appearanceState.magitek).length, 3);
+assert.deepEqual(session.state.snapshot(), joined);
+
 // Re-equipping uses the new owner's current slots, not this static definition.
 const empty = content.equipmentSystem.catalog.characters[2].emptySlots[0];
 assert.equal(restored.changeEquipment(owner.id, 1, empty), true);
@@ -164,6 +204,11 @@ const changed = restored.partyPlayers().find((p) => p.sourceId === 2);
 assert.notEqual(changed.physical.attack, player.physical.attack);
 assert.equal(changed.hp, owner.hp);
 assert.deepEqual(changed.ownedAbilities.abilities, player.ownedAbilities.abilities);
+const equipmentField = structuredClone(runtimeField);
+const equipmentSession = GameSession.restore(JSON.parse(JSON.stringify(saved)), equipmentField, published);
+assert.equal(equipmentSession.changeEquipment(owner.id, 1, empty), true);
+enter(equipmentSession, equipmentField);
+assert.equal(equipmentSession.battle.players.find((p) => p.sourceId === 2).physical.attack, changed.physical.attack);
 const uniqueSources = [...new Map(compiled.dependencies.flatMap((d) => d.sources).map((s) => [hash(s), s])).values()];
 const report = {
   formatVersion: 1, lane: "source-controlled-player-battle-templates", sourceSetHash: source.parentSourceSetHash,
@@ -173,9 +218,10 @@ const report = {
   blockers: compiled.blockers, initializationBlockers: source.ownedInitializationBlockers,
   sourceRows: uniqueSources.length, sourceRowsHash: hash(uniqueSources), media,
   rejected, controlledEntry: { sourceId: owner.sourceId, id: owner.id, level: owner.level, exp: owner.exp,
-    hp: owner.hp, maxHp: owner.maxHp, sourceDefinitionLevel: definitions.get(2).level, refreshActors: false,
+    hp: owner.hp, maxHp: owner.maxHp, sourceDefinitionLevel: definitions.get(2).level, refreshActors: true,
     saveRestore: true, sourceQualification: true, reequippedAttack: changed.physical.attack,
-    ordinaryContext: battleContent.qualificationContext },
+    ordinaryContext: battleContent.qualificationContext, actualGameSessionEntry: true,
+    sourceMountedPlayers: 3, sourceOrdinaryPlayers: 1, ownedAbilitiesUnchanged: true },
   initialOwnerIds: original.roster.map((p) => p.sourceId), requiredContext: compiled.requiredContext,
   limitations: compiled.limitations, originalGameExecution: false, storyReachability: false,
 };

@@ -19,6 +19,9 @@ export type BattleConditionCatalog = {
     | { id: number; kind: "silence"; name: string; untilType: 2 }
     | { id: number; kind: "unable-fight"; name: string; untilType: 3 }
     | { id: number; kind: "dying"; name: string; untilType: 3 }
+    /** No timer or numeric modifier; a battle appearance host must execute
+     * Start/Remove. Empty name is the source's hidden None message identity. */
+    | { id: number; kind: "magitek"; name: string; untilType: 3 }
     | {
         id: number;
         kind: "poison";
@@ -79,13 +82,16 @@ export class BattleConditions {
       throw new Error("Duplicate battle condition behavior");
     for (const b of this.behaviors.values()) {
       if (
-        !b.name ||
+        (typeof b.name !== "string" || (!b.name && b.kind !== "magitek")) ||
         !(b.kind === "silence"
           ? b.untilType === 2 && this.definitions.get(b.id)?.type === 6
           : b.untilType === 3 &&
             ((b.kind === "unable-fight" &&
               this.definitions.get(b.id)?.type === 5) ||
               (b.kind === "dying" && this.definitions.get(b.id)?.type === 4) ||
+              (b.kind === "magitek" &&
+                this.definitions.get(b.id)?.type === 607 &&
+                this.definitions.get(b.id)?.overlapped === false) ||
               (b.kind === "poison" &&
                 this.definitions.get(b.id)?.type === 10 &&
                 this.definitions.get(b.id)?.overlapped === false &&
@@ -135,6 +141,12 @@ export class BattleConditions {
   types(ids: readonly number[]): number[] {
     this.validateActive(ids);
     return ids.map((id) => this.definitions.get(id)!.type);
+  }
+  magitekIds(ids: readonly number[]): number[] {
+    this.validateActive(ids);
+    const result = ids.filter((id) => this.behaviors.get(id)!.kind === "magitek");
+    if (result.length > 1) throw new Error("Multiple active Magitek conditions");
+    return result;
   }
   poisonIds(ids: readonly number[]): number[] {
     this.validateActive(ids);

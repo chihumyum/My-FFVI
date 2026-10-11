@@ -15,6 +15,7 @@ import type { CharacterGrowthPlan } from "../core/character-growth.js";
 import { compilePartyActorCatalog } from "./party-actors.js";
 import { compileTransportationCatalog } from "./transportation.js";
 import { compileBattleEntryCatalog, compileNarsheOwnedConditionCheckpoint } from "./battle-entry.js";
+import { compileBattleAppearance } from "./battle-appearance.js";
 import { loadCorpus } from "./corpus.js";
 import {
   compileAttackElements,
@@ -38,6 +39,9 @@ const Sprite = z.object({
   width: z.number().int().positive(),
   height: z.number().int().positive(),
   pivot: z.tuple([z.number(), z.number()]),
+  pixelsPerUnit: z.number().finite().positive(),
+  textureWrap: z.tuple([z.number().int().min(0).max(3), z.number().int().min(0).max(3)]),
+  filterMode: z.number().int().min(0).max(2),
 });
 const SourceFile = z.object({
   file: z.string(),
@@ -563,6 +567,12 @@ export async function compileOpeningBattle(root: string) {
     ...compileBattleEntryCatalog({ row }, tables, entryMisc[0]!),
     ownedConditionCheckpoint: compileNarsheOwnedConditionCheckpoint({ row }, tables, corpus.assets),
   };
+  const appearanceMisc = entryMisc[0]!;
+  if (typeof appearanceMisc.source.objectId !== "string") throw new Error("Missing battle appearance source object identity");
+  const battleAppearance = compileBattleAppearance({ row, matching, unique }, {
+    tables, misc: { source: { ...appearanceMisc.source, objectId: appearanceMisc.source.objectId }, data: appearanceMisc.data }, sprites: battle.sprites,
+    sourceIds: Object.values(ownedInitializations).map((value) => value.initial.sourceId),
+  });
   const result = {
     formatVersion: 1 as const,
     kind: "battle-source-data" as const,
@@ -583,6 +593,7 @@ export async function compileOpeningBattle(root: string) {
     partyActors: partyActors.catalog,
     transportations,
     entryProviders,
+    battleAppearance,
     magitekAbilityIds: magitek.map((a) => tableInteger(a.values.id)),
     battleAbilityIds: [...abilityIds].sort((a, b) => a - b),
     atb,

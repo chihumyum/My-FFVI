@@ -13,7 +13,7 @@ import { verifyContent } from "../dist/src/core/content-integrity.js";
 import { GameState } from "../dist/src/core/game-state.js";
 import { GameSession } from "../dist/src/core/game-session.js";
 import { BattleGame } from "../dist/src/core/battle.js";
-import { encounterContent } from "../dist/src/core/battle-content.js";
+import { sourceBattleContent as encounterContent, controlledBattleContent } from "./battle-probe-context.mjs";
 import {
   encodeSavedGame,
   decodeSavedGame,
@@ -48,7 +48,7 @@ async function readCandidate(path) {
 const tables = JSON.parse(snapshotFile(importFiles, "tables.json"));
 const manifest = JSON.parse(snapshotFile(importFiles, "project.json"));
 const battleExport = JSON.parse(snapshotFile(battleFiles, "battle.json"));
-assert.equal(catalog.common.profile, "narshe-playability-v21");
+assert.equal(catalog.common.profile, "narshe-playability-v22");
 assert.equal(source.parentSourceSetHash, manifest.sourceSetHash);
 assert.equal(source.sourceSetHash, battleExport.sourceSetHash);
 assert.equal(battleExport.parentSourceSetHash, manifest.sourceSetHash);

@@ -11,7 +11,7 @@ import {
   compileAbilityProgram,
 } from "../dist/src/compiler/ability.js";
 import { compileBattleConditionCatalog } from "../dist/src/compiler/conditions.js";
-import { encounterContent } from "../dist/src/core/battle-content.js";
+import { controlledBattleContent as encounterContent } from "./battle-probe-context.mjs";
 import { BattleGame } from "../dist/src/core/battle.js";
 import { revivalEffects } from "../dist/src/core/battle-revival.js";
 import { hash } from "../dist/src/compiler/content.js";
@@ -28,7 +28,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v21");
+assert.equal(catalog.common.profile, "narshe-playability-v22");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const conditions = compileBattleConditionCatalog(
   reader,

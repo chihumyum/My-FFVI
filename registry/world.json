@@ -828,6 +828,43 @@
         "docs/player-battle.md",
         "docs/systems-v21.md"
       ]
+    },
+    {
+      "id": "narshe:source-owned-magitek-v22",
+      "subject": "narshe",
+      "predicate": "migration.ownedConditionTransaction",
+      "value": "In v22, source type607 resolves to row53 in owned state. Field add/remove prepares all ordered actor refreshes before commit; target0 is current Corps, -1 is enabled roster, positive targets are source character identities. Explicit development-checkpoint seeds are not replayed after restore. Source qualification replaces the static opening menu, while unknown actual field-entry dependencies still block. Full prelude execution and native dynamic parity remain incomplete.",
+      "when": {
+        "battleProfile": "narshe-playability-v22"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "condition.csv:53",
+        "docs/owned-conditions.md",
+        "docs/battle-entry.md",
+        "docs/systems-v22.md",
+        "build/reports/owned-condition-check.json"
+      ]
+    },
+    {
+      "id": "narshe:source-magitek-appearance-v22",
+      "subject": "narshe",
+      "predicate": "migration.magitekAppearance",
+      "value": "Source Magitek Start/Remove saves and restores a posture category, not a pixel height. Body and armor follow independent source aliases, UV offsets and local positions; exact R aliases supply right-facing media. Full-rect geometry uses PPU1, bottom-center pivot, point sampling and Clamp edges. v22 admits this lifecycle with strict media checks; full animation scheduling, transformed states and original-game visual parity remain unverified.",
+      "when": {
+        "battleProfile": "narshe-playability-v22"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "condition.csv:53",
+        "serial_misc_assets.json:battle_anim_alias_table",
+        "GameAssembly.dll:RVA 0x922070",
+        "GameAssembly.dll:RVA 0x921fc0",
+        "docs/battle-appearance.md",
+        "build/reports/battle-appearance-check.json"
+      ]
     }
   ],
   "assets": []

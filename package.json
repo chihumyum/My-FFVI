@@ -70,7 +70,10 @@
     "treasure-inventory:check": "npm run battle:build && node scripts/check-treasure-inventory-native.mjs && node scripts/check-treasure-inventory.mjs",
     "player-battle:check": "npm run battle:build && node tests/check-player-battle.mjs",
     "treasure-task:check": "npm run build && node scripts/check-treasure-task-native.mjs && node scripts/check-treasure-task.mjs",
-    "battle-entry:check": "npm run battle:build && node scripts/check-battle-entry-native.mjs && node scripts/check-battle-entry.mjs"
+    "battle-entry:check": "npm run battle:build && node scripts/check-battle-entry-native.mjs && node scripts/check-battle-entry.mjs",
+    "owned-condition:check": "npm run battle:build && node scripts/check-owned-condition-native.mjs && node scripts/check-owned-condition.mjs",
+    "battle-appearance:check": "npm run battle:build && node scripts/check-battle-appearance.mjs --native build/runtime/game/GameAssembly.dll && node scripts/check-battle-appearance-ui.mjs",
+    "battle-entry-runtime:check": "npm run battle:build && node scripts/check-battle-entry-runtime-native.mjs && node scripts/check-battle-entry-runtime.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

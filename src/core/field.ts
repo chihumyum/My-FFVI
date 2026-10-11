@@ -19,6 +19,8 @@ import {
   type FieldInventoryTransaction,
 } from "./inventory-event.js";
 import { executePartyEvent, type FieldPartyPort, type PartyAppearanceCandidate } from "./party.js";
+import { executeOwnedConditionEvent, type FieldOwnedConditionPort } from "./owned-condition.js";
+import type { PartyActorPlan } from "./party-actors.js";
 import type { FieldTreasurePort } from "./treasure-port.js";
 import { treasureFlagRef, validateTreasureInventory, type TreasureBoxRequest } from "./treasure-inventory.js";
 import { createTreasureTask, advanceTreasureTask, type TreasureTaskState, type TreasureTaskInput } from "./treasure-task.js";
@@ -145,6 +147,7 @@ export type Stop =
     };
 export type Dialogue = FieldMessage & { task: number };
 export type FieldGameOptions = {
+  ownedConditions?: FieldOwnedConditionPort;
   inventory?: FieldInventoryPort;
   treasure?: FieldTreasurePort;
   party?: FieldPartyPort;
@@ -493,15 +496,16 @@ export class FieldGame {
   }
   private preparePartyAppearance(appearance: PartyAppearanceCandidate | undefined, setDummy = true): () => void {
     if (!this.partyActors || !appearance) throw new Error("Party actor refresh is unavailable");
-    return this.partyActors.prepare(appearance, ({ asset, mount }, plan) => {
-      const actor = this.player;
-      if (plan.cameraOffset && (plan.cameraOffset.x !== this.cameraOffset.x || plan.cameraOffset.y !== this.cameraOffset.y))
-        throw new Error("Changing the field camera offset during party refresh is not implemented");
-      if (actor.motion) throw new Error("Party appearance refresh during player movement is not supported");
-      this.requirePlayerMedia(asset, mount);
-      const animation = this.initialAnimation(asset, actor.direction, mount);
-      return () => { Object.assign(actor, { asset, mount, animation }); };
-    }, setDummy);
+    return this.partyActors.prepare(appearance, (media, plan) => this.preparePartyRenderer(media, plan), setDummy);
+  }
+  private preparePartyRenderer({ asset, mount }: { asset: string; mount: string | null }, plan: PartyActorPlan): () => void {
+    const actor = this.player;
+    if (plan.cameraOffset && (plan.cameraOffset.x !== this.cameraOffset.x || plan.cameraOffset.y !== this.cameraOffset.y))
+      throw new Error("Changing the field camera offset during party refresh is not implemented");
+    if (actor.motion) throw new Error("Party appearance refresh during player movement is not supported");
+    this.requirePlayerMedia(asset, mount);
+    const animation = this.initialAnimation(asset, actor.direction, mount);
+    return () => { Object.assign(actor, { asset, mount, animation }); };
   }
   get busy(): boolean {
     return (
@@ -1333,6 +1337,22 @@ export class FieldGame {
                 error instanceof Error ? error.message : String(error),
                 op,
               );
+              return;
+            }
+            break;
+          case "owned-condition":
+            try {
+              executeOwnedConditionEvent(op, this.options.ownedConditions, (steps) => {
+                if (!steps.length) return () => {};
+                const visual = this.content.scriptSystemFlags?.[t.script];
+                if (visual?.keepBadStatusVisual !== false)
+                  throw new Error("Unknown or unsupported owned condition-visual context");
+                if (!this.partyActors) throw new Error("Party actor refresh is unavailable");
+                return this.partyActors.prepareSequence(steps,
+                  (media, plan) => this.preparePartyRenderer(media, plan));
+              });
+            } catch (error) {
+              this.block(error instanceof Error ? error.message : String(error), op);
               return;
             }
             break;

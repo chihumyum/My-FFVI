@@ -1,4 +1,17 @@
 import { equipmentSlotAllowed, type EquipmentCatalog } from "./equipment.js";
+import type { BattleInventory } from "./items.js";
+
+/** Frozen equipment ownership at the battle lease. Consumable counts belong to
+ * BattleGame's live stock; copying them here would make menu eligibility stale. */
+export type BattleEntryInventory = {
+  equipmentCatalog: EquipmentCatalog;
+  equipmentStock: { id: number; count: number; equipped: number }[];
+  members: { id: string; sourceId: number; equipment: number[] }[];
+};
+
+export type BattleInventoryWithQualification = BattleInventory & {
+  qualification?: BattleEntryInventory;
+};
 
 /** This catalog supplies qualification inputs, never executable item effects. */
 export type BattleEntryCatalog = {
@@ -19,7 +32,8 @@ export type FieldInvalidContentContext = {
   mapId: number;
   /** null represents no transportation controller, not an unknown identity. */
   transportation: { id: number; type: number } | null;
-  isSavePoint: boolean;
+  /** null is unresolved; only the walking sleeping-content branch needs it. */
+  isSavePoint: boolean | null;
   /** Unknown current BeastFieldEncount state must not become false. */
   beastField: boolean | null;
 };
@@ -71,7 +85,8 @@ export function projectFieldInvalidContents(catalog: BattleEntryCatalog, context
 } {
   catalogKind(catalog);
   natural(context.mapId, 1);
-  if (typeof context.isSavePoint !== "boolean" || context.beastField !== null && typeof context.beastField !== "boolean")
+  if (context.isSavePoint !== null && typeof context.isSavePoint !== "boolean" ||
+    context.beastField !== null && typeof context.beastField !== "boolean")
     throw new Error("Invalid field exclusion context");
   const maps = catalog.maps.filter((row) => row.id === context.mapId);
   if (maps.length !== 1) throw new Error("Missing or ambiguous field exclusion map");
@@ -90,7 +105,11 @@ export function projectFieldInvalidContents(catalog: BattleEntryCatalog, context
     add(catalog.movingContents.map((row) => row.id));
     add(catalog.transportationContents);
   } else {
-    if (!context.isSavePoint && map.sleepingAvailability === 0) add(catalog.sleepingContents);
+    if (map.sleepingAvailability === 0 && catalog.sleepingContents.length) {
+      if (context.isSavePoint === null)
+        return { invalidContentIds: null, blockers: ["Unknown save-point sleeping-content context"] };
+      if (!context.isSavePoint) add(catalog.sleepingContents);
+    }
     if (map.movingAvailability === 0) add(catalog.movingContents.map((row) => row.id));
     if (map.movingAvailability === 2) add(catalog.movingContents.filter((row) => row.value2 === 0).map((row) => row.id));
   }
@@ -107,6 +126,27 @@ export function projectFieldInvalidContents(catalog: BattleEntryCatalog, context
 export function battleUseInvalidContents(invalidContentIds: readonly number[]): number[] {
   identities(invalidContentIds);
   return invalidContentIds.filter((id) => id !== 23 && id !== 412);
+}
+
+/** The item list directly checks the filtered list. It does not change whether
+ * the item command itself can open or delete the candidate from owned stock. */
+export function battleItemContentAllowed(invalidContentIds: readonly number[] | null, contentId: number): boolean | null {
+  natural(contentId, 1);
+  return invalidContentIds === null ? null : !battleUseInvalidContents(invalidContentIds).includes(contentId);
+}
+
+/** CanUseBattleAbility reads FunctionGroup.Function1Id, not function.type_id.
+ * The FF6 AbilityFilterData inherits IsInvalidContentIdInBattle=false. Missing
+ * list-ability content is unresolved; it cannot silently bypass the provider. */
+export function battleAbilityContentAllowed(
+  invalidContentIds: readonly number[] | null,
+  contentId: number | null,
+  firstFunctionId: number,
+): boolean | null {
+  natural(firstFunctionId);
+  if (contentId !== null) natural(contentId, 1);
+  if (invalidContentIds === null || contentId === null) return null;
+  return !battleUseInvalidContents(invalidContentIds).includes(contentId) || firstFunctionId !== 28;
 }
 
 /** Ordinary item command (AbilityId=0). Item candidates can still be disabled

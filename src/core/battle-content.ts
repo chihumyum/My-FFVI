@@ -8,6 +8,8 @@ import type { BattleAIProgram } from "./battle-ai.js";
 import type { BattleReactionRules } from "./battle-reactions.js";
 import type { GameStateContent } from "./game-state.js";
 import type { BattleAbilityCatalog, BattleAbilityContext, BattleAbilityMember } from "./battle-abilities.js";
+import type { BattleEntryCatalog } from "./battle-entry.js";
+import type { BattleAppearanceActor, BattleAppearanceCatalog } from "./battle-appearance.js";
 
 export type BattleQualificationContext = Omit<BattleAbilityContext, "conditionIds" | "partySize"> & {
   /** Source mode enforces qualification. The explicit development mode keeps
@@ -29,7 +31,7 @@ export type BattleCommandDefinition = {
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "narshe-playability-v21";
+  profile: "narshe-playability-v22";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;
@@ -46,6 +48,10 @@ export type BattleContent = {
   commands: Record<string, BattleCommandDefinition>;
   battleAbilities?: BattleAbilityCatalog;
   qualificationContext?: BattleQualificationContext;
+  battleEntry?: BattleEntryCatalog;
+  /** content.type_id=4, with explicit null when the source has no content row. */
+  abilityContentIds?: Record<string, number | null>;
+  battleAppearance?: BattleAppearanceCatalog;
   conditions: BattleConditionCatalog;
   growth: Record<string, { level: number; hp: number; mp: number }[]>;
   experience: { level: number; exp: number }[];
@@ -71,6 +77,7 @@ export type CombatantDefinition = ParameterValues & {
   conditionResistances: Record<string, number>;
   /** Current owned state, independent of the development action whitelist. */
   ownedAbilities?: BattleAbilityMember;
+  appearance?: BattleAppearanceActor;
   /** Admission constraints travel with reusable templates, independently of
    * ownership. An empty action list never permits a static-menu fallback. */
   battleRequirements?: {

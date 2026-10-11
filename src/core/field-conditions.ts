@@ -76,7 +76,7 @@ export class FieldConditions {
         integer(b.soundId, 0, "sound identity");
       } else if (
         b.kind !== "none" ||
-        ![4, 5, 6].includes(this.definitions.get(b.id)!)
+        ![4, 5, 6, 607].includes(this.definitions.get(b.id)!)
       )
         throw new Error("Unsupported field condition behavior");
       this.behaviors.set(b.id, { ...b });

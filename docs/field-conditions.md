@@ -4,6 +4,8 @@ v19 补充：当前纳尔谢开发入口的交通身份已由实际前导闭合�
 
 本模块补齐普通毒从战斗结束、稳定存档到下一次地图移动的数值行为。它不增加地图覆盖，也不把受控来源检查视为原版动态一致性。当前只准入本版普通毒 row 10；特殊毒 row 88、地形伤害、珠铃回复和其他活动状态提供器仍单独阻塞。
 
+v22 补充：607/row53 已作为明确零步伤提供器接入。编译器复核其 `damage_number=0`、`field_se_asset_id=0` 及完整已知行为后，允许条件随普通移动保留，不增加字段计时器。字段 Add/Remove 的存储与逐目标外观事务见 [字段持有状态](owned-conditions.md)；这不准入其他未知状态。
+
 ## 来源与规则
 
 来源集合为 `6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965`，原始 `GameAssembly.dll` SHA-256 为 `1a7e12c90c6a734e17dda507dd6ab7555090dff6a1e96f3473a90c29916ca6dc`。编译器从 `condition.csv` 读取字段 `damage_number`、`field_se_asset_id`，从 `transportation.csv` 读取 `type_id`，从 `game_constant_int.csv` 读取 `RATE_HAVE_NEAR_DEATH`，保留行身份、原始文件摘要及十进制字符串对象 ID。
@@ -68,7 +70,7 @@ node scripts/check-field-conditions.mjs
 
 并行开发可将 `tsc` 输出隔离到 `build/checks/field-conditions-dist`，再向来源脚本传 `--compiled-dir build/checks/field-conditions-dist`。来源检查需要已有的 `build/import`、`build/battle` 与本地原生导出；不向正式开场配置注入毒、角色或物品。
 
-纯模块测试覆盖 12 个场景，包括整数截断、零伤害音效、最低 HP、濒死、条件顺序、移动编队、交通身份、序列化与解毒、未知提供器及输入不变性。来源检查从新读取的表运行 22 个受控探针，保留 199 行来源身份，并组合来源施毒动作 417、战后保留、字段扣血、序列化以及来源解毒物品 12 的恢复计划。这个组合验证规则连接，不证明该动作或物品已在所有故事流程取得。
+纯模块测试覆盖 12 个场景，包括整数截断、零伤害音效、最低 HP、濒死、条件顺序、移动编队、交通身份、序列化与解毒、未知提供器及输入不变性。来源检查从新读取的表运行 23 个受控探针（v22 新增 607 零步伤），保留 199 行来源身份，并组合来源施毒动作 417、战后保留、字段扣血、序列化以及来源解毒物品 12 的恢复计划。这个组合验证规则连接，不证明该动作或物品已在所有故事流程取得。
 
 `check-field-conditions.mjs` 先运行 `check-field-conditions-native.mjs`；后者重新读取原始 DLL、IL2CPP 符号/头文件、37 个导出方法与 7 个共享字节范围生成回执。已有回执不作为通过依据。导出来自 `v18-field-poison`、`v18-field-foot-monitor`、`v18-field-movement-callback`、`v18-field-transport-final`，并复用 `initial-equipment`、`initial-party` 的复制构造器。全部原始资源和生成回执保留在忽略的 `build/`。
 

@@ -14,6 +14,7 @@ import { compileInventoryEvent } from "./inventory-event.js";
 import { compileTreasureBoxInstruction, compileTreasureInventoryLimits } from "./treasure-inventory.js";
 import { compileNarsheMapEntrySeed } from "./map-party-entry.js";
 import { compilePartyEvent } from "./party.js";
+import { compileOwnedConditionInstruction } from "./owned-condition.js";
 import { loadSystemSource } from "./system-source.js";
 import { compileTransportationCatalog, compileNarsheTransportationCheckpoint } from "./transportation.js";
 import { compilePartyActorCatalog, compileNarshePartyActorCheckpoint } from "./party-actors.js";
@@ -148,6 +149,10 @@ export function decodeFieldOp(
     } catch (error) {
       return blocked(error instanceof Error ? error.message : String(error));
     }
+  }
+  if (name === "AddCondition" || name === "RemoveCondition") {
+    try { return { ...site, ...compileOwnedConditionInstruction(raw, tables) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if (
     (name === "OrganizePartySlot" || name === "ChangePartySlot") &&

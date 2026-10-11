@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import io
 import json
+import math
 from pathlib import Path
 import shutil
 import tempfile
@@ -41,6 +42,22 @@ def full_rect_picture(sprite, path):
     if picture.size != (texture.m_Width, texture.m_Height):
         raise ValueError('Decoded texture dimensions changed: ' + path)
     return picture
+
+
+def sprite_geometry(sprite, path):
+    """Keep source sampling/units; consumers decide which geometry they support."""
+    texture = sprite.m_RD.texture.deref_parse_as_object()
+    settings = texture.m_TextureSettings
+    scale = sprite.m_PixelsToUnits
+    if not isinstance(scale, (int, float)) or not math.isfinite(scale) or scale <= 0:
+        raise ValueError('Invalid source sprite pixels per unit: ' + path)
+    wrap = [settings.m_WrapU, settings.m_WrapV]
+    filtering = settings.m_FilterMode
+    if any(type(value) is not int or value not in range(4) for value in wrap):
+        raise ValueError('Unresolved source texture wrapping: ' + path)
+    if type(filtering) is not int or filtering not in range(3):
+        raise ValueError('Unresolved source texture filtering: ' + path)
+    return {'pixelsPerUnit': scale, 'textureWrap': wrap, 'filterMode': filtering}
 
 
 def character_rows(tables, requested=()):
@@ -116,7 +133,8 @@ def export_battle(source: Path, out: Path, character_ids=()):
                 (out / 'sprites').mkdir(exist_ok=True); (out / target).write_bytes(raw)
                 if path in sprites: raise ValueError('Duplicate sprite path')
                 sprites[path] = {'source': ref, 'name': sprite.m_Name, 'file': target, 'sha256': sha,
-                    'representation': 'source-texture-full-rect', 'width': picture.width, 'height': picture.height, 'pivot': [sprite.m_Pivot.x, sprite.m_Pivot.y]}
+                    'representation': 'source-texture-full-rect', 'width': picture.width, 'height': picture.height, 'pivot': [sprite.m_Pivot.x, sprite.m_Pivot.y],
+                    **sprite_geometry(sprite, path)}
     for entry in sources:
         if digest(source / entry['file']) != entry['sha256']: raise ValueError('Source changed during export')
     result = {'formatVersion': 1, 'adapterVersion': 'battle-0.3.0', 'parentSourceSetHash': project['sourceSetHash'],

@@ -1,6 +1,20 @@
 import type { AbilityEffectResult } from "./ability.js";
 import type { ParameterValues } from "./parameters.js";
 import { projectBattleAbilities, type BattleAbilityProjection } from "./battle-abilities.js";
+import {
+  createBattleAppearanceState,
+  reconcileBattleAppearance,
+  projectBattleAppearanceFrame,
+  type BattleAppearanceState,
+  type BattleAppearanceProjection,
+} from "./battle-appearance.js";
+import {
+  projectBattleItemMenu,
+  battleItemContentAllowed,
+  battleAbilityContentAllowed,
+  type BattleEntryInventory,
+  type BattleInventoryWithQualification,
+} from "./battle-entry.js";
 import { atbIncrement } from "./atb.js";
 import {
   chantingSeconds,
@@ -29,7 +43,6 @@ import { battleReaction, validateReactionRules } from "./battle-reactions.js";
 import { projectActionTarget } from "./action-effects.js";
 import {
   validateItemStacks,
-  type BattleInventory,
   type ItemDefinition,
   type ItemStack,
 } from "./items.js";
@@ -60,6 +73,7 @@ export type Combatant = CombatantDefinition & {
   queued: boolean;
   /** Shared enemy parameters; deliberately separate from VM execution state. */
   behavior: EnemyBehaviorState | null;
+  appearanceState?: BattleAppearanceState;
 };
 export type BattleStatProjection = Omit<ParameterValues, "hp" | "mp"> &
   Pick<
@@ -127,13 +141,14 @@ export class BattleGame {
   readonly conditions: BattleConditions;
   readonly items: Record<string, ItemDefinition>;
   private stock: ItemStack[];
+  private readonly inventoryQualification: BattleEntryInventory | undefined;
   private consumedItems: ItemStack[] = [];
   private observedAbilityIds: number[] = [];
   constructor(
     readonly content: BattleContent,
     seed: number,
     players?: Combatant[],
-    inventory: BattleInventory = { definitions: {}, stacks: [], limit: 99 },
+    inventory: BattleInventoryWithQualification = { definitions: {}, stacks: [], limit: 99 },
     private readonly projectProgression?: (
       player: Combatant,
       amount: number,
@@ -142,7 +157,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v21"
+      content.profile !== "narshe-playability-v22"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -159,6 +174,7 @@ export class BattleGame {
     this.items = structuredClone(inventory.definitions);
     validateItemStacks(inventory.stacks, this.items, inventory.limit);
     this.stock = structuredClone(inventory.stacks);
+    this.inventoryQualification = inventory.qualification ? structuredClone(inventory.qualification) : undefined;
     validateReactionRules(content.reactions);
     this.conditions = new BattleConditions(content.conditions);
     if (Boolean(content.battleAbilities) !== Boolean(content.qualificationContext))
@@ -193,7 +209,9 @@ export class BattleGame {
       new Set(this.combatants.map((c) => c.id)).size !== this.combatants.length
     )
       throw new Error("Duplicate battle identity");
+    this.validateInventoryQualification();
     this.validateConditionState();
+    this.reconcileAppearances();
     if (this.usesSourceQualification)
       for (const player of this.players) {
         if (!player.ownedAbilities) throw new Error("Source battle player lacks owned abilities");
@@ -234,6 +252,7 @@ export class BattleGame {
         ),
       );
     }
+    this.reconcileAppearances();
     this.log("敌人出现了。");
   }
   get players() {
@@ -247,6 +266,97 @@ export class BattleGame {
   }
   private get usesSourceQualification() {
     return this.content.qualificationContext?.mode === "source";
+  }
+  private appearanceCandidate(unit: Combatant): BattleAppearanceState | undefined {
+    const actor = unit.appearance, catalog = this.content.battleAppearance;
+    const hasMagitek = this.conditions.types(unit.conditionIds).includes(607);
+    if (!actor || !catalog) {
+      if (hasMagitek || actor || unit.appearanceState)
+        throw new Error("Missing source battle appearance provider");
+      return undefined;
+    }
+    if (actor.sourceId !== unit.sourceId) throw new Error("Battle appearance actor identity mismatch");
+    const state = reconcileBattleAppearance(catalog, actor,
+      unit.appearanceState ?? createBattleAppearanceState(actor), unit.conditionIds);
+    if (!unit.appearanceState || Boolean(state.magitek) !== Boolean(unit.appearanceState.magitek)) {
+      // These are the host's supported default/down/dying streams, not an
+      // animation-time guess. Check every body and armor frame independently.
+      for (const key of ["default", "down", "dying", "IdleR00", "dyingR00"]) {
+        const alias = catalog.aliases[key];
+        if (!alias?.body.length || state.magitek && !alias.armor.length)
+          throw new Error("Missing battle appearance pose: " + key);
+        for (let bodyFrame = 0; bodyFrame < alias.body.length; bodyFrame++)
+          projectBattleAppearanceFrame(catalog, actor, state, { key, bodyFrame, armorFrame: 0 }, this.content.sprites);
+        if (state.magitek)
+          for (let armorFrame = 1; armorFrame < alias.armor.length; armorFrame++)
+            projectBattleAppearanceFrame(catalog, actor, state, { key, bodyFrame: 0, armorFrame }, this.content.sprites);
+      }
+    }
+    return state;
+  }
+  /** All actors prepare before any appearance state is published. Tick rollback
+   * also includes these candidates, so failed effects cannot partially dismount. */
+  private reconcileAppearances() {
+    const candidates = this.combatants.map((unit) => ({ unit, state: this.appearanceCandidate(unit) }));
+    for (const { unit, state } of candidates) if (state) unit.appearanceState = state;
+  }
+  /** The renderer receives exact source layers; it never mutates pose caches. */
+  appearanceFrame(actorId: string, frame: { key: string; bodyFrame: number; armorFrame: number }): BattleAppearanceProjection | null {
+    const unit = this.combatants.find((c) => c.id === actorId);
+    if (!unit) throw new Error("Unknown battle appearance actor");
+    const state = this.appearanceCandidate(unit);
+    if (!state) return null;
+    const candidate = projectBattleAppearanceFrame(this.content.battleAppearance!, unit.appearance!, state, frame, this.content.sprites);
+    unit.appearanceState = candidate.state;
+    return candidate.projection;
+  }
+  private validateInventoryQualification() {
+    const input = this.inventoryQualification, catalog = this.content.battleEntry;
+    if (!input) return;
+    if (!catalog) {
+      if (this.usesSourceQualification) throw new Error("Battle inventory qualification lacks source catalog");
+      return;
+    }
+    if (input.members.length !== this.players.length ||
+      new Set(input.members.map((m) => m.id)).size !== input.members.length)
+      throw new Error("Battle inventory qualification member mismatch");
+    const stock = new Map(input.equipmentStock.map((row) => [row.id, row]));
+    if (stock.size !== input.equipmentStock.length) throw new Error("Duplicate battle equipment stock");
+    for (const row of input.equipmentStock) {
+      const item = catalog.items.find((i) => i.id === row.id);
+      if (!item || ![2, 3].includes(item.type)) throw new Error("Invalid battle equipment stock content");
+    }
+    const occupied = new Map<number, number>();
+    for (const player of this.players) {
+      const member = input.members.find((m) => m.id === player.id);
+      if (!member || member.sourceId !== player.sourceId || member.equipment.length !== 6)
+        throw new Error("Battle inventory qualification member mismatch");
+      for (const id of member.equipment) {
+        const gear = input.equipmentCatalog.definitions[id];
+        if (!gear) throw new Error("Missing battle equipment qualification metadata");
+        if (!gear.empty) occupied.set(id, (occupied.get(id) ?? 0) + 1);
+      }
+      this.itemQualification(player.id);
+    }
+    for (const [id, count] of occupied)
+      if ((stock.get(id)?.equipped ?? 0) < count)
+        throw new Error("Battle equipment occupancy omits an active owner");
+  }
+  /** Recomputed from current stock for one actor. Queued reservations constrain
+   * execution, but do not rewrite the source's Count/EquipCount menu predicate. */
+  itemQualification(actorId: string): ReturnType<typeof projectBattleItemMenu> {
+    const actor = this.players.find((p) => p.id === actorId),
+      input = this.inventoryQualification, catalog = this.content.battleEntry;
+    if (!actor || !input || !catalog)
+      return { available: null, usableItemIds: [], canChangeEquipment: null,
+        blockers: ["Unknown per-character battle inventory qualification"] };
+    const member = input.members.find((m) => m.id === actorId);
+    if (!member || member.sourceId !== actor.sourceId)
+      throw new Error("Battle inventory qualification member mismatch");
+    return projectBattleItemMenu(catalog, {
+      sourceId: actor.sourceId, equipment: member.equipment,
+      inventory: [...this.stock.map((row) => ({ ...row, equipped: 0 })), ...input.equipmentStock],
+    }, input.equipmentCatalog);
   }
   /** A read-only source query is also available while the opening development
    * actions remain in use. Unknown entry conditions are never guessed empty. */
@@ -262,7 +372,7 @@ export class BattleGame {
       battleType: context.battleType,
       magicLearningValue: context.magicLearningValue,
       invalidContentIds: context.invalidContentIds,
-      itemMenuAvailable: context.itemMenuAvailable,
+      itemMenuAvailable: this.usesSourceQualification ? this.itemQualification(actorId).available : context.itemMenuAvailable,
       partySize: this.players.length,
     });
   }
@@ -284,6 +394,8 @@ export class BattleGame {
       .map((entry) => {
         const command = this.content.commands[entry.commandId];
         const blockers = [...entry.blockers];
+        if (entry.kind === "item" && entry.available === null)
+          blockers.push(...this.itemQualification(actorId).blockers);
         if (!command) blockers.push("Battle command execution metadata is not admitted");
         const kind = entry.kind === "item" ? "item" : entry.kind === "unresolved" ? "unresolved" : "ability";
         if (command && command.kind !== kind) blockers.push("Battle command execution kind mismatch");
@@ -383,6 +495,10 @@ export class BattleGame {
       this.availableItemCount(itemId, except) < 1
     )
       return false;
+    if (this.usesSourceQualification && (
+      !this.itemQualification(actorId).usableItemIds.includes(itemId) ||
+      battleItemContentAllowed(this.content.qualificationContext!.invalidContentIds, itemId) !== true
+    )) return false;
     this.conditions.validateActive(actor.conditionIds);
     return conditionsAllowAction(
       actor.conditionIds,
@@ -525,6 +641,17 @@ export class BattleGame {
     this.conditions.validateActive(actor.conditionIds);
     const command = this.actionCommand(actor, abilityId, commandId);
     if (command === undefined) return false;
+    if (actor.side === "player" && this.usesSourceQualification &&
+      this.commandMenu(actorId).find((c) => c.id === command)?.usesList) {
+      const contentId = this.content.abilityContentIds
+        ? this.content.abilityContentIds[abilityId] ?? null
+        : actor.ownedAbilities?.abilities.owned.find((a) => a.abilityId === abilityId)?.contentId ?? null;
+      if (battleAbilityContentAllowed(
+        this.content.qualificationContext!.invalidContentIds,
+        contentId,
+        ability.program.functions.find((f) => f.slot === 1)?.functionId ?? 0,
+      ) !== true) return false;
+    }
     return (
       conditionsAllowAction(
         actor.conditionIds,
@@ -836,6 +963,7 @@ export class BattleGame {
         ...c,
         conditionIds: [...c.conditionIds],
         behavior: c.behavior ? structuredClone(c.behavior) : null,
+        ...(c.appearanceState ? { appearanceState: structuredClone(c.appearanceState) } : {}),
       })),
       action: structuredClone(this.action),
       queue: structuredClone(this.queue),
@@ -852,7 +980,9 @@ export class BattleGame {
       reward: this.reward,
     };
     try {
+      this.reconcileAppearances();
       this.step();
+      this.reconcileAppearances();
     } catch (error) {
       for (const [index, unit] of before.units.entries())
         Object.assign(this.combatants[index]!, unit);

@@ -15,7 +15,7 @@ import { readSnapshot, snapshotFile } from "../dist/src/compiler/integrity.js";
 import { hash } from "../dist/src/compiler/content.js";
 import { BattleGame } from "../dist/src/core/battle.js";
 import { conditionsAllowAction } from "../dist/src/core/battle-conditions.js";
-import { encounterContent } from "../dist/src/core/battle-content.js";
+import { controlledBattleContent as encounterContent } from "./battle-probe-context.mjs";
 
 const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const imported = await readSnapshot(root + "/build/import");
@@ -31,7 +31,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v21");
+assert.equal(catalog.common.profile, "narshe-playability-v22");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const abilities = tables["ability.csv"].map((r) =>
   compileAbilityProgram(index, Number(r.id)),
