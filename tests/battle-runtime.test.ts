@@ -39,7 +39,7 @@ function fixture(): BattleContent {
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v8",
+    profile: "narshe-playability-v9",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -80,7 +80,23 @@ function fixture(): BattleContent {
         ai: [{ ability: 13, weight: 1 }],
       },
     ],
-    conditions: { rules: { definitions: [], eraseRules: [] }, behaviors: [] },
+    conditions: {
+      hpZeroConditionId: 305,
+      dying: { conditionId: 304, thresholdDivisor: 8 },
+      rules: {
+        definitions: [
+          { id: 305, type: 5, overlapped: false, eraseGroupId: 3 },
+          { id: 304, type: 4, overlapped: false, eraseGroupId: 3 },
+        ],
+        eraseRules: [
+          { id: 3, groupId: 3, conditionId: 305, type: 1, eraseConditionId: 0 },
+        ],
+      },
+      behaviors: [
+        { id: 305, kind: "unable-fight", name: "Fallen", untilType: 3 },
+        { id: 304, kind: "dying", name: "Dying", untilType: 3 },
+      ],
+    },
     commands: {
       100: {
         id: 100,
@@ -115,6 +131,7 @@ function fixture(): BattleContent {
             defaultMode: "single",
             defaultRelation: "enemy",
             normalFormationOnly: false,
+            life: "alive",
           },
           physical: null,
           magic: {
@@ -158,6 +175,7 @@ function fixture(): BattleContent {
             defaultMode: "single",
             defaultRelation: "ally",
             normalFormationOnly: false,
+            life: "alive",
           },
           physical: null,
           magic: {
@@ -230,6 +248,7 @@ function fixture(): BattleContent {
             defaultMode: "single",
             defaultRelation: "enemy",
             normalFormationOnly: false,
+            life: "alive",
           },
           physical: {
             normalAttack: true,
@@ -324,16 +343,23 @@ test("a later target with unknown affinity cannot partially commit earlier damag
 function conditionFixture() {
   const f = fixture();
   f.conditions = {
+    hpZeroConditionId: f.conditions.hpZeroConditionId,
+    dying: f.conditions.dying,
     rules: {
       definitions: [
+        ...f.conditions.rules.definitions,
         { id: 301, type: 6, overlapped: false, eraseGroupId: 1 },
         { id: 302, type: 8, overlapped: false, eraseGroupId: 1 },
       ],
       eraseRules: [
+        ...f.conditions.rules.eraseRules,
         { id: 1, groupId: 1, conditionId: 0, type: 2, eraseConditionId: 0 },
       ],
     },
-    behaviors: [{ id: 301, kind: "silence", name: "Silence", untilType: 2 }],
+    behaviors: [
+      ...f.conditions.behaviors,
+      { id: 301, kind: "silence", name: "Silence", untilType: 2 },
+    ],
   };
   f.commands[100]!.forbiddenConditionIds = [301];
   f.commands[101] = {
@@ -358,6 +384,7 @@ function conditionFixture() {
         defaultMode: "single",
         defaultRelation: "enemy",
         normalFormationOnly: false,
+        life: "alive",
       },
       physical: null,
       magic: null,
@@ -376,6 +403,7 @@ function conditionFixture() {
         defaultMode: "single",
         defaultRelation: "enemy",
         normalFormationOnly: false,
+        life: "alive",
       },
       physical: null,
       magic: null,
@@ -560,6 +588,7 @@ test("compound recovery commits both resources once and consumes one action cost
       defaultMode: "single",
       defaultRelation: "ally",
       normalFormationOnly: false,
+      life: "alive",
     },
     physical: null,
     magic: null,
@@ -812,4 +841,148 @@ test("group status effects keep individual resistance and recover individual ide
     [[], []],
   );
   assert.equal(b.players[0]!.mp, 4);
+});
+
+function revivalFixture() {
+  const f = conditionFixture();
+  f.players.push({
+    ...structuredClone(f.players[0]!),
+    id: "c",
+    name: "Third ally",
+  });
+  f.players[1]!.conditionIds = [305];
+  f.enemies.forEach((e) => {
+    e.hp = 5000;
+    e.agility = 0;
+  });
+  f.abilities[16] = {
+    ...structuredClone(f.abilities[11]!),
+    id: 16,
+    name: "Revive",
+    cost: 2,
+    wait: 0,
+    plan: {
+      effects: [
+        { slot: 1, kind: "recover-condition", conditionIds: [305] },
+        { slot: 2, kind: "recover-max-hp", mode: "divide", value: 8 },
+      ],
+      targeting: {
+        ...compileTargetRule(7, 1)!,
+        life: "include-fallen-players",
+      },
+      magic: null,
+      physical: null,
+    },
+  };
+  for (const p of f.players) p.abilities.push(16);
+  f.commands[101]!.abilityIds.push(16);
+  return f;
+}
+
+test("revival includes fallen players, restores exact ratio and derives dying", () => {
+  const f = revivalFixture(),
+    b = new BattleGame(f, 41);
+  const fallen = b.players[1]!;
+  assert.equal(fallen.hp, 0);
+  assert.equal(fallen.maxHp, 80);
+  assert.equal(fallen.atb, 0);
+  assert.equal(
+    b.targets("a", 11).some((c) => c.id === "b"),
+    false,
+  );
+  assert.equal(
+    b.targets("a", 16).some((c) => c.id === "b"),
+    true,
+  );
+  assert.equal(b.command("b", 16, "b"), false);
+  assert.equal(b.command("a", 16, "b"), true);
+  b.advance(410);
+  assert.equal(fallen.hp, 10);
+  assert.deepEqual(fallen.conditionIds, [304]);
+  assert.equal(fallen.atb, 0);
+  assert.equal(fallen.queued, false);
+  assert.equal(b.players[0]!.mp, 6);
+  assert.deepEqual(
+    b.action!.results[0]!.effects.map((e) => e.missed),
+    [false, false],
+  );
+  b.advance(500);
+  assert.equal(b.phase, "active");
+  assert.deepEqual(f.players[1]!.conditionIds, [305]);
+});
+
+test("two queued revivals retain their target; the later miss cannot heal a living unit", () => {
+  const run = (partition: number[]) => {
+    const b = new BattleGame(revivalFixture(), 17);
+    b.command("a", 16, "b");
+    b.command("c", 16, "b");
+    for (const dt of partition) b.advance(dt);
+    assert.equal(b.players[1]!.hp, 10);
+    assert.equal(b.players[0]!.mp, 6);
+    assert.equal(b.players[2]!.mp, 6);
+    assert.deepEqual(b.action!.targetIds, ["b"]);
+    assert.ok(b.action!.results[0]!.effects.every((e) => e.missed));
+    return { units: b.combatants, events: b.events, action: b.action };
+  };
+  assert.deepEqual(run([1320]), run(Array(132).fill(10)));
+});
+
+test("lethal damage cancels a charged action and revival cannot resurrect that command", () => {
+  const f = revivalFixture();
+  f.players[1]!.conditionIds = [301];
+  f.commands[100]!.forbiddenConditionIds = [];
+  f.abilities[10]!.wait = 100;
+  f.abilities[17] = { ...structuredClone(f.abilities[10]!), id: 17, wait: 0 };
+  f.abilities[17]!.plan!.targeting = compileTargetRule(7, 3)!;
+  f.players[0]!.abilities.push(17);
+  f.commands[100]!.abilityIds.push(17);
+  const b = new BattleGame(f, 71),
+    target = b.players[1]!;
+  target.hp = 1;
+  assert.equal(b.command("b", 10, "e1"), true);
+  assert.equal(b.command("a", 17, "b"), true);
+  b.advance(410);
+  assert.equal(target.hp, 0);
+  assert.deepEqual(target.conditionIds, [305]);
+  assert.equal(target.atb, 0);
+  assert.equal(target.queued, false);
+  assert.equal(target.mp, 8);
+  assert.equal(b.command("c", 16, "b"), true);
+  b.advance(910);
+  assert.equal(target.hp, 10);
+  assert.equal(target.atb, 0);
+  assert.equal(target.queued, false);
+  assert.ok(!b.events.some((e) => e.text === "Second ally · Beam"));
+});
+
+test("death persists after victory and battle reentry, without receiving experience", () => {
+  const f = revivalFixture(),
+    b = new BattleGame(f, 12);
+  for (const enemy of b.enemies) enemy.hp = 0;
+  b.advance(10);
+  assert.equal(b.phase, "victory");
+  assert.ok(!b.reward!.recipients.includes("b"));
+  const result = b.takeVictory()!;
+  assert.deepEqual(result.players[1]!.conditionIds, [305]);
+  assert.equal(result.players[1]!.hp, 0);
+  const next = new BattleGame(f, 13, result.players);
+  assert.equal(next.players[1]!.hp, 0);
+  assert.equal(next.players[1]!.atb, 0);
+  assert.equal(next.canUse("b", 16), false);
+  assert.equal(b.takeVictory(), null);
+});
+
+test("invalid revival dependency rolls back HP, conditions, cost and queued state", () => {
+  const f = revivalFixture(),
+    b = new BattleGame(f, 1);
+  b.command("a", 16, "b");
+  b.advance(10);
+  const before = structuredClone(b.combatants);
+  const restore = f.abilities[16]!.plan!.effects[1]!;
+  if (restore.kind !== "recover-max-hp") assert.fail();
+  restore.value = 0;
+  assert.throws(() => b.advance(400), /Invalid revival/);
+  assert.deepEqual(b.combatants, before);
+  assert.deepEqual(b.action!.results, []);
+  assert.equal(b.action!.resolved, false);
 });

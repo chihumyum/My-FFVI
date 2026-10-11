@@ -3,6 +3,7 @@ import {
   type AbilityEffectResult,
 } from "./ability.js";
 import { atbIncrement } from "./atb.js";
+import { calculateRevivalEffects, revivalEffects } from "./battle-revival.js";
 import { validateElements, validateElementResistances } from "./elements.js";
 import {
   battleTargetChoices,
@@ -70,7 +71,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v8"
+      content.profile !== "narshe-playability-v9"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -112,6 +113,8 @@ export class BattleGame {
       const range = content.initialAtb[c.side];
       c.atb = this.randomInt(range[0], range[1]);
       c.queued = false;
+      Object.assign(c, this.conditions.settleLife(c.hp, c.conditionIds, false));
+      if (c.hp === 0) c.atb = 0;
     }
     this.log("敌人出现了。");
   }
@@ -225,8 +228,8 @@ export class BattleGame {
   targets(actorId: string, abilityId: number): Combatant[] {
     return this.targetChoices(actorId, abilityId)
       .filter((choice) => choice.selection.kind === "single")
-      .map(
-        (choice) => this.combatants.find((c) => c.id === choice.targetIds[0])!,
+      .map((choice) =>
+        this.combatants.find((c) => c.id === choice.targetIds[0])!,
       );
   }
   command(
@@ -415,7 +418,13 @@ export class BattleGame {
         this.conditions.validateActive(target.conditionIds);
         let conditionIds = [...target.conditionIds];
         let effects: AbilityEffectResult[];
-        if (
+        if (revivalEffects(ability.plan!)) {
+          ({ effects, conditionIds } = calculateRevivalEffects(
+            ability.plan!,
+            this.conditions,
+            target,
+          ));
+        } else if (
           ability.plan!.effects.length === 1 &&
           first &&
           (first.kind === "add-condition" || first.kind === "recover-condition")
@@ -470,7 +479,9 @@ export class BattleGame {
             messages.push(
               effect.resource === "condition"
                 ? `${target.name} 的状态未改变。`
-                : `${target.name} 闪避了攻击。`,
+                : effect.recovery
+                  ? `${target.name} 的恢复未生效。`
+                  : `${target.name} 闪避了攻击。`,
             );
           } else if (effect.resource !== "condition" && effect.nullified) {
             messages.push(`${target.name} · 无效。`);
@@ -489,6 +500,12 @@ export class BattleGame {
                   state[resource] + effect.amount,
                 )
               : Math.max(0, state[resource] - effect.amount);
+            if (resource === "hp")
+              state.conditionIds = this.conditions.updateDying(
+                state.hp,
+                target.maxHp,
+                state.conditionIds,
+              );
             messages.push(
               effect.recovery
                 ? `${target.name} 恢复 ${effect.amount} ${resource.toUpperCase()}。`
@@ -496,13 +513,31 @@ export class BattleGame {
             );
           }
         }
+        Object.assign(
+          state,
+          this.conditions.settleLife(
+            state.hp,
+            state.conditionIds,
+            this.conditions.isUnableFight(target.conditionIds),
+          ),
+        );
+        if (target.hp > 0 && state.hp === 0)
+          messages.push(`${target.name} 倒下了。`);
+        else if (target.hp === 0 && state.hp > 0)
+          messages.push(`${target.name} 重新加入战斗。`);
         return { target, state, effects, messages };
       });
       // One transaction: no HP, MP, conditions, results or logs change until
       // every target succeeds. The owned random stream also rolls back on error.
       actor.mp -= ability.cost;
       for (const entry of staged) {
+        const lifeChanged = (entry.target.hp === 0) !== (entry.state.hp === 0);
         Object.assign(entry.target, entry.state);
+        if (lifeChanged) {
+          entry.target.atb = 0;
+          entry.target.queued = false;
+          this.queue = this.queue.filter((a) => a.actor !== entry.target.id);
+        }
         for (const message of entry.messages) this.log(message);
       }
       action.selection = choice.selection;
@@ -520,6 +555,14 @@ export class BattleGame {
 
   private checkOutcome() {
     if (this.phase !== "active" || this.action) return;
+    for (const c of this.combatants) {
+      Object.assign(c, this.conditions.settleLife(c.hp, c.conditionIds, false));
+      if (c.hp === 0) {
+        c.atb = 0;
+        c.queued = false;
+        this.queue = this.queue.filter((a) => a.actor !== c.id);
+      }
+    }
     if (!this.players.some((c) => c.hp > 0)) {
       this.clearBattleConditions();
       this.phase = "defeat";

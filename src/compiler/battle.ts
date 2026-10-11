@@ -377,6 +377,7 @@ export async function compileOpeningBattle(root: string) {
   unique("initialize_data.csv", "key_name", "INIT_GIL");
   unique("game_constant_int.csv", "key_name", "ACCUMULATION_ATB_NORMAL");
   unique("game_constant_int.csv", "key_name", "ENEMY_ACCUMULATION_ATB_NORMAL");
+  unique("game_constant_int.csv", "key_name", "RATE_HAVE_NEAR_DEATH");
   for (const key of [
     ...Object.values(parameterLimitKeys),
     ...Object.values(physicalLimitKeys),

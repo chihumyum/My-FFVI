@@ -24,13 +24,17 @@ export function compileConditionGroup(
   return { ids, sources };
 }
 
-export function hasSilenceBehavior(row: BattleRow): boolean {
+function hasPassiveBehavior(
+  row: BattleRow,
+  type: number,
+  until: number,
+): boolean {
   const v = row.values;
   return (
-    int(v.condition_type) === 6 &&
+    int(v.condition_type) === type &&
     int(v.system_type) === 1 &&
     int(v.resistance_decision) === 1 &&
-    int(v.until_type) === 2 &&
+    int(v.until_type) === until &&
     [
       "until_value",
       "overlapped_type",
@@ -53,29 +57,105 @@ export function hasSilenceBehavior(row: BattleRow): boolean {
   );
 }
 
+export function hasSilenceBehavior(row: BattleRow): boolean {
+  return hasPassiveBehavior(row, 6, 2);
+}
+
+export function hasUnableFightBehavior(row: BattleRow): boolean {
+  const v = row.values;
+  return (
+    int(v.condition_type) === 5 &&
+    int(v.system_type) === 1 &&
+    int(v.until_type) === 3 &&
+    int(v.resistance_decision) === 1 &&
+    [
+      "attack_target",
+      "game_over_target",
+      "recovery_invalid",
+      "state_cover_unavailable",
+    ].every((key) => int(v[key]) === 1) &&
+    [
+      "until_value",
+      "overlapped_type",
+      "invalid_type",
+      "target_type",
+      "condition_group_id",
+      "parameter_group_id",
+      "attribute_group_id",
+      "species_group_id",
+      "rate_type1",
+      "rate_type2",
+      "rate_value1",
+      "rate_value2",
+      "damage_number",
+    ].every((key) => int(v[key]) === 0)
+  );
+}
+
 export function compileBattleConditionCatalog(
-  reader: ConditionReader,
+  reader: ConditionReader & {
+    unique(table: string, key: string, value: string): BattleRow;
+  },
   ids: readonly number[],
   name: (key: string) => string,
 ) {
   const result = compileConditionCatalog(reader, ids);
+  const dying = result.catalog.definitions.filter((d) => d.type === 4);
+  const threshold = reader.unique(
+    "game_constant_int.csv",
+    "key_name",
+    "RATE_HAVE_NEAR_DEATH",
+  );
+  if (
+    dying.length !== 1 ||
+    !hasPassiveBehavior(reader.row("condition.csv", dying[0]!.id), 4, 3) ||
+    int(threshold.values.value1) < 1
+  )
+    throw new Error("Unresolved dying condition dependency");
   const catalog: BattleConditionCatalog = {
     rules: result.catalog,
-    behaviors: result.catalog.definitions.flatMap((d) => {
-      const row = reader.row("condition.csv", d.id);
-      return hasSilenceBehavior(row)
-        ? [
-            {
-              id: d.id,
-              kind: "silence" as const,
-              name: name(row.values.mes_id_name!),
-              untilType: 2 as const,
-            },
-          ]
-        : [];
-    }),
+    // UpdateConditionHp 0x459980 passes master identity 5 to the dictionary
+    // overload 0x4582c0; this is not a first-match condition-type lookup.
+    hpZeroConditionId: 5,
+    dying: {
+      conditionId: dying[0]!.id,
+      thresholdDivisor: int(threshold.values.value1),
+    },
+    behaviors: result.catalog.definitions.flatMap(
+      (d): BattleConditionCatalog["behaviors"] => {
+        const row = reader.row("condition.csv", d.id);
+        return hasSilenceBehavior(row)
+          ? [
+              {
+                id: d.id,
+                kind: "silence" as const,
+                name: name(row.values.mes_id_name!),
+                untilType: 2 as const,
+              },
+            ]
+          : hasUnableFightBehavior(row)
+            ? [
+                {
+                  id: d.id,
+                  kind: "unable-fight",
+                  name: name(row.values.mes_id_name!),
+                  untilType: 3,
+                },
+              ]
+            : hasPassiveBehavior(row, 4, 3)
+              ? [
+                  {
+                    id: d.id,
+                    kind: "dying",
+                    name: name(row.values.mes_id_name!),
+                    untilType: 3,
+                  },
+                ]
+              : [];
+      },
+    ),
   };
-  return { catalog, sources: result.sources };
+  return { catalog, sources: [...result.sources, threshold] };
 }
 
 /** Supply the complete condition master ID list from this source snapshot.

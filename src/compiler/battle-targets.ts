@@ -55,6 +55,7 @@ export function compileTargetRule(
       return null;
   }
   return {
+    life: "alive",
     relation,
     modes,
     defaultMode: [20, 21].includes(range) ? "side" : modes[0]!,

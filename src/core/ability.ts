@@ -43,6 +43,12 @@ export type AbilityEffect =
   | { slot: number; kind: "recover-condition"; conditionIds: number[] }
   | {
       slot: number;
+      kind: "recover-max-hp";
+      mode: "percent" | "divide";
+      value: number;
+    }
+  | {
+      slot: number;
       kind: "recovery";
       resource: "hp" | "mp";
       calculation: "fixed" | "magic";

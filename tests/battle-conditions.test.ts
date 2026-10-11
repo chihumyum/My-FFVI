@@ -9,16 +9,28 @@ import { compileConditionGroup } from "../src/compiler/conditions.js";
 import { battleTableIndex } from "../src/compiler/battle.js";
 
 const catalog = {
+  hpZeroConditionId: 305,
+  dying: { conditionId: 304, thresholdDivisor: 8 },
   rules: {
     definitions: [
+      { id: 304, type: 4, overlapped: false, eraseGroupId: 1 },
+      { id: 305, type: 5, overlapped: false, eraseGroupId: 3 },
       { id: 301, type: 6, overlapped: false, eraseGroupId: 1 },
       { id: 6, type: 99, overlapped: true, eraseGroupId: 1 },
     ],
     eraseRules: [
+      { id: 3, groupId: 3, type: 1, conditionId: 305, eraseConditionId: 0 },
       { id: 1, groupId: 1, type: 2, conditionId: 0, eraseConditionId: 0 },
     ],
   },
   behaviors: [
+    { id: 304, kind: "dying" as const, name: "Dying", untilType: 3 as const },
+    {
+      id: 305,
+      kind: "unable-fight" as const,
+      name: "Fallen",
+      untilType: 3 as const,
+    },
     {
       id: 301,
       kind: "silence" as const,
@@ -27,6 +39,55 @@ const catalog = {
     },
   ],
 };
+test("derived dying state uses the source ratio boundary and removes one record", () => {
+  const engine = new BattleConditions(catalog);
+  assert.deepEqual(engine.updateDying(10, 80, [301]), [301, 304]);
+  assert.deepEqual(engine.updateDying(11, 80, [304, 301]), [301]);
+  assert.deepEqual(engine.updateDying(9, 80, [304, 301]), [304, 301]);
+  assert.deepEqual(engine.updateDying(11, 80, [304, 304]), [304]);
+  assert.deepEqual(engine.updateDying(0, 80, [304]), [304]);
+  assert.deepEqual(engine.battleEnd([304, 301]), [304]);
+  assert.deepEqual(engine.settleLife(0, [304], false).conditionIds, [305]);
+});
+test("HP-zero applies source identity, conflict cleanup and persistent death", () => {
+  const engine = new BattleConditions(catalog);
+  const before = [301];
+  assert.deepEqual(engine.settleLife(0, before, false), {
+    hp: 0,
+    conditionIds: [305],
+  });
+  assert.deepEqual(before, [301]);
+  assert.deepEqual(engine.settleLife(42, [305], false), {
+    hp: 0,
+    conditionIds: [305],
+  });
+  assert.deepEqual(engine.battleEnd([305]), [305]);
+  assert.throws(() => engine.settleLife(0, [6], false), /Unimplemented/);
+  assert.throws(
+    () => new BattleConditions({ ...catalog, hpZeroConditionId: 5 }),
+    /HP-zero/,
+  );
+});
+test("removing death restores at least one HP only after all effects settle", () => {
+  const engine = new BattleConditions(catalog);
+  const change = engine.recover([305], [305]);
+  assert.deepEqual(engine.settleLife(0, change.currentIds, true), {
+    hp: 1,
+    conditionIds: [],
+  });
+  assert.deepEqual(engine.settleLife(10, change.currentIds, true), {
+    hp: 10,
+    conditionIds: [],
+  });
+  assert.deepEqual(engine.settleLife(10, [305], true), {
+    hp: 0,
+    conditionIds: [305],
+  });
+  assert.deepEqual(engine.settleLife(0, [305], true), {
+    hp: 0,
+    conditionIds: [305],
+  });
+});
 test("condition hit uses native evasion units and strict integer threshold", () => {
   const hit = (accuracy: number, evasion: number, draw: number) =>
     conditionHit(accuracy, evasion, (min, max) => {

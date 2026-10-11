@@ -139,6 +139,7 @@ test("numerical effect adapter passes an actual miss through instead of spending
         defaultMode: "single",
         defaultRelation: "enemy",
         normalFormationOnly: false,
+            life: "alive",
       },
       physical: null,
       magic: i.rules,

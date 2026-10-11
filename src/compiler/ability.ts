@@ -2,6 +2,7 @@ import { tableInteger } from "./table.js";
 import {
   compileConditionGroup,
   hasSilenceBehavior,
+  hasUnableFightBehavior,
   type ConditionReader,
 } from "./conditions.js";
 import type {
@@ -164,6 +165,17 @@ export function compileDevelopmentAbility(
         fixedHit: v2 === 1,
         accuracy: program.rules.accuracy_rate!,
       });
+    } else if (
+      fn.type === 11 &&
+      v2 === 0 &&
+      v3 === 0 &&
+      hasUnableFightBehavior(reader.row("condition.csv", v1))
+    ) {
+      effects.push({
+        slot: fn.slot,
+        kind: "recover-condition",
+        conditionIds: [v1],
+      });
     } else if (fn.type === 12 && v2 === 0 && v3 === 0) {
       const group = compileConditionGroup(reader, v1);
       if (!group.ids.length) blockers.push("empty recovery condition group");
@@ -171,6 +183,19 @@ export function compileDevelopmentAbility(
         slot: fn.slot,
         kind: "recover-condition",
         conditionIds: group.ids,
+      });
+    } else if (
+      fn.type === 34 &&
+      v1 === 2 &&
+      [4, 5].includes(v2) &&
+      v3 > 0 &&
+      (v2 !== 4 || v3 <= 100)
+    ) {
+      effects.push({
+        slot: fn.slot,
+        kind: "recover-max-hp",
+        mode: v2 === 4 ? "percent" : "divide",
+        value: v3,
       });
     } else if (
       fn.type === 1 &&
@@ -201,10 +226,24 @@ export function compileDevelopmentAbility(
     }
   }
   if (!effects.length) blockers.push("no implemented effect");
+  const first = effects[0],
+    second = effects[1];
+  const revival =
+    effects.length === 2 &&
+    first?.kind === "recover-condition" &&
+    first.conditionIds.length > 0 &&
+    first.conditionIds.every((id) =>
+      hasUnableFightBehavior(reader.row("condition.csv", id)),
+    ) &&
+    second?.kind === "recover-max-hp" &&
+    first.slot < second.slot;
+  if (effects.some((e) => e.kind === "recover-max-hp") && !revival)
+    blockers.push("unresolved HP-ratio recovery composition");
   // More than one healing resource is supported. Other compositions need native
   // hit/death/condition sequencing before they can enter this development profile.
   if (
     effects.length > 1 &&
+    !revival &&
     !effects.every((e) => e.kind === "recovery" && e.calculation === "fixed")
   )
     blockers.push("unresolved multi-effect sequencing");
@@ -246,18 +285,20 @@ export function compileDevelopmentAbility(
     !((conditionOnly || magicOnly || physicalOnly) && r.accuracy_rate! >= 0)
   )
     blockers.push(`unresolved accuracy_rate=${r.accuracy_rate}`);
-  const allowedFlags = conditionOnly
-    ? []
-    : magicOnly || physicalOnly
-      ? [1, 2, 5]
-      : [1];
+  const allowedFlags = revival
+    ? [1, 3]
+    : conditionOnly
+      ? []
+      : magicOnly || physicalOnly
+        ? [1, 2, 5]
+        : [1];
   if (program.contentFlags.some((id) => !allowedFlags.includes(id)))
     blockers.push(`unresolved content flags=${program.contentFlags.join(",")}`);
   else if (program.contentFlags.length && !magicOnly && !physicalOnly)
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (![3, 4, 604].includes(r.type_id!))
+  if (!(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
   if (!(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
@@ -270,6 +311,17 @@ export function compileDevelopmentAbility(
       "reflection unavailable: no-reflect development state required",
     );
   const targeting = compileTargetRule(program.range, r.system_id!);
+  if (
+    targeting &&
+    (revival ||
+      (effects.length === 1 &&
+        first?.kind === "recover-condition" &&
+        first.conditionIds.length > 0 &&
+        first.conditionIds.every((id) =>
+          hasUnableFightBehavior(reader.row("condition.csv", id)),
+        )))
+  )
+    targeting.life = "include-fallen-players";
   if (!targeting) blockers.push(`unresolved battle range ${program.range}`);
   if (targeting?.normalFormationOnly)
     limitations.push(
@@ -288,7 +340,7 @@ export function compileDevelopmentAbility(
     blockers.push("unresolved non-magic element carrier");
   if (elements.length > 8) blockers.push("unreviewed magic element count");
   limitations.push(
-    "only admitted silence behavior; no equipment-added functions, undead or Runic overrides",
+    "only admitted silence/death/dying behavior; no equipment-added functions, undead or Runic overrides",
   );
   if (physicalOnly)
     limitations.push(
@@ -296,8 +348,12 @@ export function compileDevelopmentAbility(
     );
   if (conditionOnly && attribute !== 0)
     blockers.push("unresolved condition attribute");
-  if (conditionOnly && [290, 680, 681, 1333].includes(abilityId))
+  if ((conditionOnly || revival) && [290, 680, 681, 1333].includes(abilityId))
     blockers.push("unresolved native condition ability override");
+  if (revival)
+    limitations.push(
+      "player revival only; enemy revival AI/rewards, items and summon execution remain unresolved",
+    );
   if (magicOnly)
     limitations.push(
       "reviewed magic and elemental arithmetic; no accessory, critical, counter-stat or weapon modifiers",
@@ -338,12 +394,14 @@ export function compileDevelopmentAbility(
     attribute,
     presentation: !plan
       ? "unsupported"
-      : conditionOnly
-        ? "condition"
-        : effects.every((e) => e.kind === "recovery")
-          ? "heal"
-          : effects[0]!.kind === "physical"
-            ? "physical"
-            : "beam",
+      : revival
+        ? "heal"
+        : conditionOnly
+          ? "condition"
+          : effects.every((e) => e.kind === "recovery")
+            ? "heal"
+            : effects[0]!.kind === "physical"
+              ? "physical"
+              : "beam",
   };
 }

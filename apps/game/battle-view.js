@@ -220,7 +220,8 @@ export class BattleView {
             : selection.kind === "side"
               ? `${selection.side === "player" ? "我方" : "敌方"}全体（${choice.targetIds.length}）`
               : t.name +
-                (t.side === "enemy" ? ` ${battle.enemies.indexOf(t) + 1}` : "");
+                (t.side === "enemy" ? ` ${battle.enemies.indexOf(t) + 1}` : "") +
+                (t.hp === 0 ? " · 战斗不能" : "");
         add(text, false, () => {
           if (
             battle.command(actor.id, this.ability, selection, this.commandId)

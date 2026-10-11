@@ -352,6 +352,30 @@
         "build/reports/element-check.json#1c8417dbd327e8f3908e39bb686ade792555c5fbb184ec9b2331e83cf8dba500",
         "docs/elemental-affinities.md"
       ]
+    },
+    {
+      "id": "narshe:development-death-revival",
+      "subject": "narshe",
+      "predicate": "migration.deathRevival",
+      "value": "Development v9 shares HP-zero death identity, dying threshold, player revival, cancellation of charged actions and post-battle status persistence. Source abilities 34/35 pass 16 controlled boundary and frame-partition checks. Browser Raise restores player:31 from 0/80 to 10/80 HP, clears death, retains dying and resets ATB. Enemy revival AI/rewards, undead, automatic revival, full scheduling and original parity remain incomplete. No new story unlock or region.",
+      "when": {
+        "battleProfile": "narshe-playability-v9"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "condition.csv:4",
+        "condition.csv:5",
+        "condition.csv:100",
+        "game_constant_int.csv:232",
+        "ability.csv:34",
+        "ability.csv:35",
+        "GameAssembly.dll:RVA 0x459980 UpdateConditionHp",
+        "GameAssembly.dll:RVA 0x7680e0 IfNeededDying",
+        "GameAssembly.dll:RVA 0x4f7d60 SetupValueToDisplay",
+        "build/reports/battle-life-check.json#382cce47b8a96f433b19d6cd52ef7b261ac577baa1b93ccbcb05031dae052428",
+        "docs/battle-life.md"
+      ]
     }
   ],
   "assets": []

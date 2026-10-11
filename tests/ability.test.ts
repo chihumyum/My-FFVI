@@ -238,6 +238,7 @@ test("the whole effect plan is preflighted before any RNG or partial calculation
             defaultMode: "single",
             defaultRelation: "enemy",
             normalFormationOnly: false,
+            life: "alive",
           },
           physical: null,
           magic: {

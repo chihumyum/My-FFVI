@@ -4,6 +4,7 @@ import { drawBattleRandom } from "./battle-hit.js";
 export type BattleSide = "player" | "enemy";
 export type TargetMode = "single" | "side" | "all";
 export type TargetRule = {
+  life: "alive" | "include-fallen-players";
   relation: "ally" | "enemy" | "self" | "either";
   modes: TargetMode[];
   defaultMode: TargetMode;
@@ -21,7 +22,7 @@ export type TargetChoice = {
 };
 type Unit = { id: string; side: BattleSide; hp: number };
 
-/** Alive-only development context. Revive, hidden/untargetable units, confusion,
+/** Bounded development context. Hidden/untargetable units, confusion,
  * reflection and position-group scopes require their own admitted state inputs. */
 export function battleTargetChoices(
   rule: TargetRule,
@@ -30,6 +31,7 @@ export function battleTargetChoices(
   formation: "normal" | "opposed",
 ): TargetChoice[] {
   if (
+    !["alive", "include-fallen-players"].includes(rule.life) ||
     !["ally", "enemy", "self", "either"].includes(rule.relation) ||
     !rule.modes.length ||
     new Set(rule.modes).size !== rule.modes.length ||
@@ -45,7 +47,8 @@ export function battleTargetChoices(
     return [];
   const eligible = units.filter(
     (u) =>
-      u.hp > 0 &&
+      (u.hp > 0 ||
+        (rule.life === "include-fallen-players" && u.side === "player")) &&
       (rule.relation === "self"
         ? u.id === actor.id
         : rule.relation === "either" ||
