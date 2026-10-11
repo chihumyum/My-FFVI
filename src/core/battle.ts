@@ -11,10 +11,12 @@ import {
   BattleAIError,
   selectBattleAIAbilities,
   planBattleAITurn,
+  planBattleAIReaction,
   startBattleAI,
   type BattleAIState,
   type BattleAITurn,
 } from "./battle-ai.js";
+import { battleReaction, validateReactionRules } from "./battle-reactions.js";
 import { calculateRevivalEffects, revivalEffects } from "./battle-revival.js";
 import { validateElements, validateElementResistances } from "./elements.js";
 import {
@@ -43,7 +45,7 @@ export type Combatant = CombatantDefinition & {
   behavior: EnemyBehaviorState | null;
 };
 export type BattleAction = {
-  kind: "normal" | "loop";
+  kind: "normal" | "loop" | "counter";
   actor: string;
   selection: TargetSelection;
   targetIds: string[];
@@ -77,6 +79,7 @@ export class BattleGame {
   private remainder = 0;
   private randomState: number;
   private queue: BattleAction[] = [];
+  private reactions: BattleAction[] = [];
   private aiStates = new Map<string, BattleAIState>();
   private collected = false;
   readonly conditions: BattleConditions;
@@ -87,12 +90,13 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v12"
+      content.profile !== "narshe-playability-v13"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
       throw new Error("Invalid battle seed");
     this.randomState = seed || 1;
+    validateReactionRules(content.reactions);
     this.conditions = new BattleConditions(content.conditions);
     this.combatants = [
       ...(players
@@ -228,7 +232,10 @@ export class BattleGame {
       throw new Error("Invalid random range");
     return min + Math.floor(this.randomUnit() * (max - min + 1));
   }
-  private aiContext(actor: Combatant) {
+  private aiContext(
+    actor: Combatant,
+    units: readonly Combatant[] = this.combatants,
+  ) {
     if (!actor.behavior) throw new Error("Missing enemy behavior parameters");
     return {
       self: {
@@ -238,8 +245,8 @@ export class BattleGame {
         behavior: actor.behavior,
       },
       conditionIds: actor.conditionIds,
-      players: this.players,
-      enemies: this.enemies,
+      players: units.filter((c) => c.side === "player"),
+      enemies: units.filter((c) => c.side === "enemy"),
     };
   }
   enemyAIState(actorId: string): BattleAIState | null {
@@ -248,7 +255,7 @@ export class BattleGame {
   }
   /** Inspection/replay callers cannot mutate the live queue or its selections. */
   get pendingActions(): readonly BattleAction[] {
-    return structuredClone(this.queue);
+    return structuredClone([...this.reactions, ...this.queue]);
   }
   private admitAITurn(actor: Combatant, turn: BattleAITurn) {
     const program = actor.ai!;
@@ -256,12 +263,25 @@ export class BattleGame {
       throw new BattleAIError(program.source, pc, reason);
     };
     if (turn.state.status !== "waiting")
-      fail(turn.state.pc, "normal action path does not return to SyncAI");
-    if (turn.acts.filter((a) => a.selected).length !== 1)
+      fail(
+        turn.state.pc,
+        `${turn.trigger} action path does not return to SyncAI`,
+      );
+    if (
+      turn.trigger === "normal" &&
+      turn.acts.filter((a) => a.selected).length !== 1
+    )
       fail(
         turn.state.pc,
         "normal action path must select exactly one table row",
       );
+    if (
+      turn.trigger === "reaction" &&
+      turn.acts.some((a) => a.kind !== "counter-act")
+    )
+      fail(turn.state.pc, "reaction path emitted a normal action");
+    if (turn.acts.length > 1000)
+      fail(turn.state.pc, "AI exceeded host action budget");
     for (const pc of turn.visited) {
       const op = program.instructions[pc]!.op;
       if (op.kind === "condition")
@@ -449,7 +469,10 @@ export class BattleGame {
       results: [],
     };
   }
-  private finishActorAction(actor: Combatant) {
+  private finishActorAction(actor: Combatant, kind: BattleAction["kind"]) {
+    // Interrupt actions have no ordinary ATB completion delegate. In particular,
+    // a counter must preserve a partially filled gauge or an already queued turn.
+    if (kind === "counter") return;
     // Native ActExectionEndDelegate keeps the gauge while normal/Loop actions
     // remain in chanting or execution stacks. One LoopAct is one table turn.
     actor.queued = this.queue.some((pending) => pending.actor === actor.id);
@@ -474,50 +497,54 @@ export class BattleGame {
         this.resolve(this.action);
       if (this.action.elapsed >= 900) {
         const actor = this.combatants.find((c) => c.id === this.action!.actor)!;
+        const kind = this.action.kind;
         this.action = null;
-        this.finishActorAction(actor);
+        this.finishActorAction(actor, kind);
         this.checkOutcome();
       }
       return;
     }
-    for (const pending of this.queue)
-      pending.charge = Math.max(0, pending.charge - 10);
-    for (const c of this.combatants) {
-      if (c.hp <= 0 || c.queued) continue;
-      c.atb = Math.min(
-        100,
-        c.atb +
-          atbIncrement(this.content.atb, {
-            agility: c.agility,
-            weight: c.weight,
-            enemy: c.side === "enemy",
-            speedPercent: 100,
-            battleSpeed: 1,
-            seconds: 0.01,
-          }),
-      );
-      if (c.side === "enemy" && c.atb >= 100) {
-        if (!this.players.some((p) => p.hp > 0)) break;
-        this.decideEnemyAction(c);
+    if (!this.reactions.length) {
+      for (const pending of this.queue)
+        pending.charge = Math.max(0, pending.charge - 10);
+      for (const c of this.combatants) {
+        if (c.hp <= 0 || c.queued) continue;
+        c.atb = Math.min(
+          100,
+          c.atb +
+            atbIncrement(this.content.atb, {
+              agility: c.agility,
+              weight: c.weight,
+              enemy: c.side === "enemy",
+              speedPercent: 100,
+              battleSpeed: 1,
+              seconds: 0.01,
+            }),
+        );
+        if (c.side === "enemy" && c.atb >= 100) {
+          if (!this.players.some((p) => p.hp > 0)) break;
+          this.decideEnemyAction(c);
+        }
       }
     }
-    const index = this.queue.findIndex((a) => a.charge === 0);
+    const queue = this.reactions.length ? this.reactions : this.queue;
+    const index = queue.findIndex((a) => a.charge === 0);
     if (index >= 0) {
-      const action = this.queue.splice(index, 1)[0]!,
+      const action = queue.splice(index, 1)[0]!,
         actor = this.combatants.find((c) => c.id === action.actor)!;
       if (!this.canUse(actor.id, action.ability, action.commandId)) {
-        this.finishActorAction(actor);
+        this.finishActorAction(actor, action.kind);
         this.log(`${actor.name} 的行动已失效。`);
         return;
       }
       const choice = resolveBattleTargets(
         action.selection,
-        this.targetChoices(actor.id, action.ability),
+        this.actionTargetChoices(action),
         this.combatants,
         (min, max) => this.randomInt(min, max),
       );
       if (!choice) {
-        this.finishActorAction(actor);
+        this.finishActorAction(actor, action.kind);
         this.checkOutcome();
         return;
       }
@@ -529,6 +556,81 @@ export class BattleGame {
       );
     }
     this.checkOutcome();
+  }
+  /** CounterAct supplies the attacker explicitly, even for friendly fire. Its
+   * target is not selected through the player's menu or the normal enemy AI.
+   * This profile admits living single-target ranges 3/7 only. Existing fallback
+   * keeps the selected faction if that attacker dies before the counter starts. */
+  private counterTargetChoices(units: readonly Combatant[]): TargetChoice[] {
+    return units
+      .filter((c) => c.hp > 0)
+      .map((c) => ({
+        selection: { kind: "single" as const, id: c.id },
+        targetIds: [c.id],
+      }));
+  }
+  private actionTargetChoices(action: BattleAction) {
+    return action.kind === "counter"
+      ? this.counterTargetChoices(this.combatants)
+      : this.targetChoices(action.actor, action.ability);
+  }
+  private planReactions(
+    action: BattleAction,
+    units: readonly Combatant[],
+    results: readonly { target: string; effects: AbilityEffectResult[] }[],
+  ) {
+    const ability = this.content.abilities[action.ability]!;
+    const updates: { actor: string; turn: BattleAITurn }[] = [];
+    const decisions: BattleAction[] = [];
+    for (const result of results) {
+      const actor = units.find((c) => c.id === result.target)!;
+      if (actor.side !== "enemy") continue;
+      const reaction = battleReaction(this.content.reactions, {
+        actor: action.actor,
+        target: actor.id,
+        isCounter: action.kind === "counter",
+        abilityId: ability.id,
+        systemId: ability.program.rules.system_id!,
+        primarySlot: ability.program.functions[0]?.slot ?? -1,
+        effects: result.effects,
+      });
+      if (!reaction) continue;
+      const turn = planBattleAIReaction(
+        actor.ai!,
+        this.aiStates.get(actor.id)!,
+        this.aiContext(actor, units),
+        reaction,
+      );
+      this.admitAITurn(actor, turn);
+      for (const act of turn.acts) {
+        for (const id of selectBattleAIAbilities(act, {
+          integer: (min, max) => this.randomInt(min, max),
+          float: (min, max) =>
+            Math.fround(min + this.randomUnit() * (max - min)),
+        })) {
+          const choice = this.counterTargetChoices(units).find(
+            (c) => c.targetIds[0] === action.actor,
+          );
+          if (!choice)
+            throw new BattleAIError(
+              actor.ai!.source,
+              act.pc,
+              `no admitted counter target for ability ${id}`,
+            );
+          decisions.push(
+            this.createAction(
+              actor,
+              this.content.abilities[id]!,
+              choice,
+              null,
+              "counter",
+            ),
+          );
+        }
+      }
+      updates.push({ actor: actor.id, turn });
+    }
+    return { updates, decisions };
   }
   private resolve(action: BattleAction) {
     const actor = this.combatants.find((c) => c.id === action.actor)!;
@@ -543,7 +645,7 @@ export class BattleGame {
     try {
       const choice = resolveBattleTargets(
         action.selection,
-        this.targetChoices(actor.id, ability.id),
+        this.actionTargetChoices(action),
         this.combatants,
         (min, max) => this.randomInt(min, max),
       );
@@ -667,8 +769,20 @@ export class BattleGame {
           messages.push(`${target.name} 重新加入战斗。`);
         return { target, state, effects, messages };
       });
-      // One transaction: no HP, MP, conditions, results or logs change until
-      // every target succeeds. The owned random stream also rolls back on error.
+      // AI must see the completed action's HP/MP/conditions, including its cost,
+      // but cannot mutate the live battle until EVERY target and reaction admits.
+      const projected = this.combatants.map((c) => ({
+        ...c,
+        mp: c.mp - (c === actor ? ability.cost : 0),
+        ...staged.find((entry) => entry.target.id === c.id)?.state,
+      }));
+      const results = staged.map((entry) => ({
+        target: entry.target.id,
+        effects: entry.effects,
+      }));
+      const reactions = this.planReactions(action, projected, results);
+      // One transaction includes effects, enemy parameters, AI PCs, both queues,
+      // result/log publication and the owned random stream.
       actor.mp -= ability.cost;
       for (const entry of staged) {
         const lifeChanged = (entry.target.hp === 0) !== (entry.state.hp === 0);
@@ -677,15 +791,21 @@ export class BattleGame {
           entry.target.atb = 0;
           entry.target.queued = false;
           this.queue = this.queue.filter((a) => a.actor !== entry.target.id);
+          this.reactions = this.reactions.filter(
+            (a) => a.actor !== entry.target.id,
+          );
         }
         for (const message of entry.messages) this.log(message);
       }
+      for (const update of reactions.updates) {
+        this.aiStates.set(update.actor, update.turn.state);
+        this.combatants.find((c) => c.id === update.actor)!.behavior =
+          update.turn.behavior;
+      }
+      this.reactions.push(...reactions.decisions);
       action.selection = choice.selection;
       action.targetIds = choice.targetIds;
-      action.results = staged.map((entry) => ({
-        target: entry.target.id,
-        effects: entry.effects,
-      }));
+      action.results = results;
       action.resolved = true;
     } catch (error) {
       this.randomState = randomBefore;
@@ -701,12 +821,14 @@ export class BattleGame {
         c.atb = 0;
         c.queued = false;
         this.queue = this.queue.filter((a) => a.actor !== c.id);
+        this.reactions = this.reactions.filter((a) => a.actor !== c.id);
       }
     }
     if (!this.players.some((c) => c.hp > 0)) {
       this.clearBattleConditions();
       this.phase = "defeat";
       this.queue = [];
+      this.reactions = [];
       this.log("队伍倒下了。");
       return;
     }
@@ -714,6 +836,7 @@ export class BattleGame {
     this.clearBattleConditions();
     this.phase = "victory";
     this.queue = [];
+    this.reactions = [];
     const exp = this.enemies.reduce((sum, c) => sum + c.exp, 0),
       gil = this.enemies.reduce((sum, c) => sum + c.gil, 0);
     const recipients = this.players.filter((c) => c.hp > 0),

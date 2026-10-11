@@ -35,7 +35,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v12");
+assert.equal(catalog.common.profile, "narshe-playability-v13");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const assets = Object.values(exported.assets).filter((a) =>
   a.source.assetPath.includes("/MonsterAI/"),
@@ -332,7 +332,7 @@ for (const [name, pc, expected] of [
   content.enemies = [content.enemies[0]];
   const enemy = content.enemies[0];
   enemy.ai = {
-    kind: "battle-ai-normal-v3",
+    kind: "battle-ai-v4",
     source: null,
     entry: 0,
     end: 6,
@@ -453,8 +453,8 @@ for (const name of [
       () => new BattleGame(higher, 239),
       (e) =>
         e instanceof BattleAIError &&
-        e.pc === 6 &&
-        /CounterAct/.test(e.message),
+        e.pc === 7 &&
+        /ability 696/.test(e.message),
     );
   }
   hostChecks.push({
@@ -492,7 +492,7 @@ const report = {
   sourceContentHash: source.contentHash,
   catalogHash: catalog.contentHash,
   scriptCount: rows.length,
-  fullyDecodedNormalPrograms: rows.filter((r) => !r.blockers.length).length,
+  fullyDecodedPrograms: rows.filter((r) => !r.blockers.length).length,
   rows,
   traces,
   parameterChecks,
@@ -505,7 +505,7 @@ const report = {
     "host-probes-use-opening-parameters-and-poses-with-source-ai",
     "no-confusion-behavior-from-condition-branch-probe",
     "no-function-38-ability-696-effects",
-    "no-counter-interrupt-or-full-boss-event-support",
+    "only-basic-counter-readiness-and-CounterAct-no-final-or-full-boss-event-support",
     "loop-ability-effects-and-auto-targets-must-pass-existing-admission",
     "loop-host-probes-import-source-instructions-into-explicit-synthetic-normal-tables",
     "advanced-counter-query-triggers-and-ability-6-gauge-exception-remain-gated",
@@ -523,7 +523,7 @@ await writeFile(
 console.log(
   JSON.stringify({
     scripts: rows.length,
-    decoded: report.fullyDecodedNormalPrograms,
+    decoded: report.fullyDecodedPrograms,
     hostChecks: hostChecks.length,
     loopInstructions: loopInstructions.length,
     loopHostChecks: loopHostChecks.length,

@@ -194,7 +194,7 @@ export function compileBattleAI(
           target: i[2],
         };
       if (
-        m.mnemonic === "Act" &&
+        ["Act", "CounterAct"].includes(m.mnemonic) &&
         i.length &&
         i.every((id) => id > 0) &&
         s.every((v) => v === "") &&
@@ -206,7 +206,11 @@ export function compileBattleAI(
             ) &&
             r.some((w) => Math.fround(w) > 0)))
       )
-        op = { kind: "act", abilities: i, weights: r };
+        op = {
+          kind: m.mnemonic === "Act" ? "act" : "counter-act",
+          abilities: i,
+          weights: r,
+        };
       if (
         m.mnemonic === "LoopAct" &&
         i.length &&
@@ -223,7 +227,7 @@ export function compileBattleAI(
     return { mnemonic: m.mnemonic, op };
   });
   return {
-    kind: "battle-ai-normal-v3",
+    kind: "battle-ai-v4",
     source,
     entry,
     end,
@@ -236,7 +240,9 @@ export function battleAIAbilities(program: BattleAIProgram): number[] {
   return [
     ...new Set(
       program.instructions.flatMap(({ op }) =>
-        op.kind === "act" || op.kind === "loop-act" ? op.abilities : [],
+        op.kind === "act" || op.kind === "loop-act" || op.kind === "counter-act"
+          ? op.abilities
+          : [],
       ),
     ),
   ];

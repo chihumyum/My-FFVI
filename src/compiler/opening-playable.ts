@@ -313,10 +313,11 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v12",
+    profile: "narshe-playability-v13",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,
+    reactions: source.reactions,
     initialAtb: {
       player: initialAtb("ACCUMULATION_ATB_NORMAL"),
       enemy: initialAtb("ENEMY_ACCUMULATION_ATB_NORMAL"),
@@ -343,7 +344,7 @@ export async function compileOpeningPlayable(
       "当前开放三种射线和治愈原力；其余四种魔导、道具、逃跑与通用战斗脚本尚未实现。",
       "掉落尚未结算，库存保持不变；队伍 HP、经验、Gil 只保存在本次页面会话。",
       "站位、夹击队形、骑乘拼接和光束是临时二维表现；原版音效、特效、动画时序尚未接入。",
-      "敌方普通行动使用来源 AI 分支、行动表、独立回合进度和敌人变量；连续行动整组入队并逐次结算。反击、完整自动目标及特殊指令尚未接入，未知依赖会明确停止。",
+      "敌方行动使用来源 AI、独立回合与变量，连续行动整组入队。普通反击按命中结果触发并优先执行，保留原行动条；最终攻击、恢复专用反应、完整自动目标及特殊指令仍未接入，未知依赖会明确停止。",
     ],
   };
   const result = { kind: "narshe-battle-catalog" as const, common, encounters };

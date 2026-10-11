@@ -15,6 +15,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [普通反击与优先队列](docs/battle-reactions.md)
 - [连续行动、队列与回合释放](docs/battle-action-groups.md)
 - [角色与敌人数值确认](docs/character-parameters.md)
 - [技能函数分派与效果执行](docs/ability-dispatch.md)
@@ -58,6 +59,7 @@ npm run parameters:check
 npm run abilities:check
 npm run physical:check
 npm run magic:check
+npm run battle-reactions:check
 npm run check
 .venv/bin/python -m unittest discover -s tools/tests
 npm run dev

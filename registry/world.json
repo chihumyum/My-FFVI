@@ -445,6 +445,35 @@
         "build/reports/loop-opening-browser-check.json#f55e50188f9590030b48cd498005fff5a451cd18a9e9ab3cec7dc2de139c9aa5",
         "docs/battle-action-groups.md"
       ]
+    },
+    {
+      "id": "narshe:development-counter-reactions",
+      "subject": "narshe",
+      "predicate": "migration.counterReactions",
+      "value": "Development v13 adds primary-result reaction classification, source CounterAct, priority FIFO and atomic effect/AI/reaction commits. Counters preserve pending normal actions and gauges; self actions and counter chains do not trigger ordinary counters. All 233 source CounterAct instructions pass isolated decoding/selection checks, with two original instructions in explicitly synthetic hosts; full Templar and Tonberry programs remain blocked. 207 fully decoded AI programs are not playable-enemy coverage. 262 TypeScript and 18 Python tests, existing five encounters and browser opening victory/field return pass. Browser controlled actions 1,379,1 preserve enemy ATB 100 through its counter and release it after its normal action. Counter count one adopts a native constructor default in the bounded host; effective original deserialization is unverified. Final/recovery-special triggers, complete scheduling, dynamic abilities, global party/inventory/save and original parity remain incomplete. No new region or story unlock.",
+      "when": {
+        "battleProfile": "narshe-playability-v13"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x81fd50 CounterAct",
+        "GameAssembly.dll:RVA 0x1591640 InitCounterAI",
+        "GameAssembly.dll:RVA 0x15918e0 IsCounter",
+        "GameAssembly.dll:RVA 0x85e0e0 IsLocalSerialCounter",
+        "GameAssembly.dll:RVA 0x8f3030 GetICalcResult",
+        "GameAssembly.dll:RVA 0x15b8550 SetActAbilityCounter",
+        "GameAssembly.dll:RVA 0x15ace70 SetBattleActData",
+        "GameAssembly.dll:RVA 0x15aa590 InitPrepareState",
+        "GameAssembly.dll:RVA 0x6773f0 ActExectionEndDelegate",
+        "serial_misc_assets.json:not_counter_ability_id",
+        "build/reports/ai-counter-native-check.json#4e2a8dfd0612f91f13fb30c3c13b4ddb8687de940b1f0b11ea0a710aeb5ba27e",
+        "build/reports/battle-reactions-check.json#511c5bacb86fa660238123a06162158d5f9c37c1858379ec91b8788ba185ad7d",
+        "build/reports/battle-ai-check.json#ec0667905787e7195a8da5e2155197e3bbc286a7dfe5df04476365bab66fbe99",
+        "build/reports/counter-browser-check.json#e9919d478b9e4581638bbc10bd556f785a630a2e5210ef51cc8c504b126f50b9",
+        "build/reports/counter-opening-browser-check.json#12a6525d06a5624b36a6c5bbce752f0174f7bff8da484ec84e87fdde29b55c91",
+        "docs/battle-reactions.md"
+      ]
     }
   ],
   "assets": []

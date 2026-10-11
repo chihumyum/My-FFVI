@@ -5,6 +5,7 @@ import type { AbilityProgram, DevelopmentAbilityPlan } from "./ability.js";
 import type { BattleConditionCatalog } from "./battle-conditions.js";
 import type { ElementResistances } from "./elements.js";
 import type { BattleAIProgram } from "./battle-ai.js";
+import type { BattleReactionRules } from "./battle-reactions.js";
 
 export type BattleCommandDefinition = {
   id: number;
@@ -16,13 +17,14 @@ export type BattleCommandDefinition = {
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "narshe-playability-v12";
+  profile: "narshe-playability-v13";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;
   encounterId: number;
   formation: "normal" | "opposed";
   atb: AtbRules;
+  reactions: BattleReactionRules;
   initialAtb: { player: [number, number]; enemy: [number, number] };
   gil: number;
   players: CombatantDefinition[];

@@ -58,6 +58,9 @@ assert.deepEqual(saved.atb, {
   maxHighSpeed: 50,
   maxLowSpeed: 50,
 });
+assert.deepEqual(saved.reactions, { counterLimit: 1, excludedAbilityIds: [696, 1140, 1262] });
+assert.ok(saved.reactionSource.assetPath.endsWith("/serial_misc_assets.json"));
+assert.match(saved.reactionSource.objectId, /^-?\d+$/);
 const background = saved.sprites[opening.background];
 assert.deepEqual([background.width, background.height], [512, 256]);
 for (const s of Object.values(saved.sprites)) {

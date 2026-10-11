@@ -7,6 +7,7 @@ import {
   drawBattleAIAbility,
   selectBattleAIAbilities,
   planBattleAITurn,
+  planBattleAIReaction,
   startBattleAI,
   type BattleAIContext,
 } from "../src/core/battle-ai.js";
@@ -18,6 +19,124 @@ const context: BattleAIContext = {
   players: [{ level: 1 }],
   enemies: [{ level: 2 }],
 };
+
+test("counter readiness draws only its own instructions and preserves the ordinary table position", () => {
+  const program = syntheticAI([
+    ["Nop"],
+    ["SyncAI"],
+    ["StartTable", [0]],
+    ["Act", [601]],
+    ["CounterAct", [602, 604], [25, 75]],
+    ["Act", [603]],
+    ["EndTable"],
+    ["JumpBattleAI", [0]],
+  ]);
+  const initial = startBattleAI(program, context);
+  assert.deepEqual(initial.acts, []);
+  const normal = planBattleAITurn(program, initial.state, context);
+  assert.deepEqual(
+    normal.acts.map((a) => a.kind),
+    ["act", "act"],
+  );
+  assert.equal(normal.state.actTurn, 1);
+  const reaction = planBattleAIReaction(program, normal.state, context, {
+    counterReady: true,
+    receivedSystemId: 3,
+  });
+  assert.equal(reaction.trigger, "reaction");
+  assert.equal(reaction.state.actTurn, 1);
+  assert.equal(reaction.state.turnCounter, 0);
+  assert.deepEqual(
+    reaction.acts.map((a) => [a.kind, a.pc]),
+    [["counter-act", 4]],
+  );
+  let draws = 0;
+  assert.deepEqual(
+    selectBattleAIAbilities(reaction.acts[0]!, {
+      integer: () => {
+        throw new Error("unexpected integer draw");
+      },
+      float: () => {
+        draws++;
+        return 25;
+      },
+    }),
+    [604],
+  );
+  assert.equal(draws, 1);
+  assert.equal(
+    planBattleAITurn(program, reaction.state, context).acts.find(
+      (a) => a.selected,
+    )!.abilities[0],
+    603,
+  );
+});
+
+test("miss, recovery, system five and fatal hits wake AI without scheduling CounterAct", () => {
+  const program = syntheticAI([
+    ["Nop"],
+    ["SyncAI"],
+    ["ValueCalc", [0, 1], [], ["＋"]],
+    ["CounterAct", [602]],
+    ["JumpBattleAI", [0]],
+  ]);
+  const initial = startBattleAI(program, context);
+  for (const [counterReady, receivedSystemId, hp] of [
+    [false, 3, 100],
+    [true, 2, 100],
+    [true, 5, 100],
+    [true, 3, 0],
+  ] as const) {
+    const reaction = planBattleAIReaction(
+      program,
+      initial.state,
+      { ...context, self: { ...context.self, hp } },
+      { counterReady, receivedSystemId },
+    );
+    assert.deepEqual(reaction.acts, []);
+    assert.equal(reaction.behavior.variables[0], 1);
+    assert.equal(reaction.state.actTurn, 0);
+  }
+  assert.equal(context.self.behavior.variables[0], 0);
+  assert.throws(
+    () =>
+      planBattleAIReaction(program, initial.state, context, {
+        counterReady: true,
+        receivedSystemId: Number.NaN,
+      }),
+    /signed 32-bit/,
+  );
+  assert.throws(
+    () =>
+      planBattleAIReaction(
+        program,
+        { ...initial.state, status: "running" },
+        context,
+        { counterReady: true, receivedSystemId: 3 },
+      ),
+    /suspended SyncAI/,
+  );
+});
+
+test("counter messages, mismatched weights and unknown operands remain explicit blockers", () => {
+  for (const row of [
+    ["CounterAct", [602], [0]],
+    ["CounterAct", [602, 603], [100]],
+    ["CounterAct", [602], [100], ["unimplemented message"]],
+  ] as Parameters<typeof syntheticAI>[0]) {
+    const program = syntheticAI([["SyncAI"], row]);
+    const initial = startBattleAI(program, context);
+    assert.equal(program.instructions[1]!.op.kind, "blocked");
+    assert.throws(
+      () =>
+        planBattleAIReaction(program, initial.state, context, {
+          counterReady: true,
+          receivedSystemId: 3,
+        }),
+      (e) => e instanceof BattleAIError && e.pc === 1,
+    );
+  }
+});
 
 test("initialization writes 15-cell per-enemy parameters and finite variable loops make progress", () => {
   const program = syntheticAI([
@@ -544,7 +663,7 @@ test("unknown branches stay inspectable and block precisely when reached", () =>
     ["EndTable"],
     ["JumpBattleAI", [0]],
     ["Nop"],
-    ["CounterAct", [701]],
+    ["FinalAttackAct", [701]],
   ]);
   const state = startBattleAI(program, context).state;
   assert.equal(program.instructions[8]!.op.kind, "blocked");

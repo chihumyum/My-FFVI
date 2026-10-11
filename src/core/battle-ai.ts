@@ -1,5 +1,5 @@
-/** Normal-action BattleAI control flow. Counter/interrupt triggers are separate
- * capabilities; an unknown instruction is never an implicit fallthrough. */
+/** Source BattleAI control flow. Readiness is supplied by the battle scheduler;
+ * an unknown instruction is never an implicit fallthrough. */
 import {
   copyEnemyBehavior,
   enemyVariableCount,
@@ -41,12 +41,12 @@ export type BattleAIOp =
   | { kind: "mode-set"; value: number }
   | { kind: "mode-branch"; value: number; equal: boolean; target: number }
   | { kind: "start-table"; tableId: number | null }
-  | { kind: "act"; abilities: number[]; weights: number[] }
+  | { kind: "act" | "counter-act"; abilities: number[]; weights: number[] }
   | { kind: "loop-act"; abilities: number[]; counts: number[] }
   | { kind: "blocked"; reason: string };
 export type BattleAIInstruction = { mnemonic: string; op: BattleAIOp };
 export type BattleAIProgram = {
-  kind: "battle-ai-normal-v3";
+  kind: "battle-ai-v4";
   source: BattleAISource | null;
   entry: number;
   end: number;
@@ -79,14 +79,20 @@ export type BattleAIAct = {
   pc: number;
   selected: boolean;
 } & (
-  | { kind: "act"; abilities: number[]; weights: number[] }
+  | { kind: "act" | "counter-act"; abilities: number[]; weights: number[] }
   | { kind: "loop-act"; abilities: number[]; counts: number[] }
 );
 export type BattleAITurn = {
+  trigger: "initial" | "normal" | "reaction";
   state: BattleAIState;
   behavior: EnemyBehaviorState;
   acts: BattleAIAct[];
   visited: number[];
+};
+export type BattleAIReaction = {
+  /** A missed/Non calculation wakes received-ability AI, without counter readiness. */
+  counterReady: boolean;
+  receivedSystemId: number;
 };
 export class BattleAIError extends Error {
   constructor(
@@ -108,8 +114,10 @@ function route(
   program: BattleAIProgram,
   current: BattleAIState,
   context: BattleAIContext,
-  normalReady: boolean,
+  wake: "initial" | "normal" | BattleAIReaction,
 ): BattleAITurn {
+  const normalReady = wake === "normal";
+  const trigger = typeof wake === "string" ? wake : "reaction";
   const state = { ...current },
     acts: BattleAIAct[] = [],
     visited: number[] = [];
@@ -135,7 +143,12 @@ function route(
   };
   const calculate = (left: number, operator: Operator, right: number) =>
     guarded(() => integerOperation(left, operator, right));
-  if (program.kind !== "battle-ai-normal-v3") fail("unsupported AI format");
+  if (program.kind !== "battle-ai-v4") fail("unsupported AI format");
+  if (typeof wake !== "string") {
+    guarded(() => int32(wake.receivedSystemId));
+    if (wake.receivedSystemId < 0 || typeof wake.counterReady !== "boolean")
+      fail("invalid reaction readiness");
+  }
   if (program.blockers.length) fail(program.blockers.join("; "));
   if (
     !Number.isInteger(program.entry) ||
@@ -146,12 +159,12 @@ function route(
   )
     fail("invalid program segment");
   if (state.status === "exited") fail("AI already exited");
-  if (normalReady) {
+  if (wake !== "initial") {
     if (
       state.status !== "waiting" ||
       program.instructions[state.pc]?.op.kind !== "sync"
     )
-      fail("normal readiness requires a suspended SyncAI");
+      fail("AI readiness requires a suspended SyncAI");
     state.pc++;
     state.status = "running";
   } else if (state.status !== "running") fail("invalid AI initialization");
@@ -183,10 +196,10 @@ function route(
         fail(op.reason);
       case "sync":
         state.status = "waiting";
-        return { state, behavior, acts, visited };
+        return { trigger, state, behavior, acts, visited };
       case "exit":
         state.status = "exited";
-        return { state, behavior, acts, visited };
+        return { trigger, state, behavior, acts, visited };
       case "jump":
         // The instruction sets the source label address, then Core.Clock's
         // ForwardStep advances once. Do not execute the label instruction.
@@ -271,6 +284,23 @@ function route(
           state.turnCounter++;
         }
         break;
+      case "counter-act":
+        // CounterAct 0x81fd50 uses counter readiness, living HP and received
+        // ability SYSTEM ID. It neither reads nor advances a normal table row.
+        if (
+          typeof wake !== "string" &&
+          wake.counterReady &&
+          context.self.hp > 0 &&
+          ![2, 5].includes(wake.receivedSystemId)
+        )
+          acts.push({
+            kind: "counter-act",
+            pc: state.pc,
+            selected: true,
+            abilities: [...op.abilities],
+            weights: [...op.weights],
+          });
+        break;
       case "loop-act":
         if (normalReady) {
           guarded(() => validateBattleAILoop(op));
@@ -330,7 +360,7 @@ export function startBattleAI(
       guardianActIsDadaluma: true,
     },
     context,
-    false,
+    "initial",
   );
 }
 export function planBattleAITurn(
@@ -338,7 +368,15 @@ export function planBattleAITurn(
   state: BattleAIState,
   context: BattleAIContext,
 ) {
-  return route(program, state, context, true);
+  return route(program, state, context, "normal");
+}
+export function planBattleAIReaction(
+  program: BattleAIProgram,
+  state: BattleAIState,
+  context: BattleAIContext,
+  reaction: BattleAIReaction,
+) {
+  return route(program, state, context, reaction);
 }
 
 export type BattleAIRandom = {
@@ -402,7 +440,7 @@ export function selectBattleAIAbilities(
   act: BattleAIAct,
   random: BattleAIRandom,
 ): number[] {
-  if (act.kind === "act") {
+  if (act.kind !== "loop-act") {
     // Native Act consumes its draw even when another table row is selected.
     const id = drawBattleAIAbility(act, random);
     return act.selected ? [id] : [];

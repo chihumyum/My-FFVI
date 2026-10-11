@@ -408,6 +408,24 @@ export async function compileOpeningBattle(root: string) {
     maxHighSpeed: constant("MAX_HIGH_SPEED"),
     maxLowSpeed: constant("MAX_LOW_SPEED"),
   };
+  const reactionSource = json("serial_misc_assets");
+  const misc = z.record(z.string(), z.unknown()).parse(reactionSource.data);
+  const excluded = misc.not_counter_ability_id;
+  if (
+    !Array.isArray(excluded) ||
+    excluded.some((id) => !Number.isInteger(id) || Number(id) <= 0) ||
+    new Set(excluded).size !== excluded.length
+  )
+    throw new Error("Invalid source counter exclusions");
+  // Adopt CounterMiscInfo .ctor 0xb1ee50's default of one for this single-result
+  // development host. The asset omits a count; effective Unity deserialization
+  // is not dynamically verified. An override needs a reviewed host contract.
+  if ("counter_misc_info" in misc)
+    throw new Error("Unreviewed counter count override");
+  const reactions = {
+    counterLimit: 1 as const,
+    excludedAbilityIds: excluded as number[],
+  };
   const result = {
     formatVersion: 1 as const,
     kind: "battle-source-data" as const,
@@ -422,6 +440,8 @@ export async function compileOpeningBattle(root: string) {
     initialParty,
     magitekAbilityIds: magitek.map((a) => tableInteger(a.values.id)),
     atb,
+    reactions,
+    reactionSource: reactionSource.source,
     tables: selected,
     sprites: battle.sprites,
     limitations: [

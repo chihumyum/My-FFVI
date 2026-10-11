@@ -40,7 +40,7 @@ function fixture(): BattleContent {
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v12",
+    profile: "narshe-playability-v13",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -53,6 +53,7 @@ function fixture(): BattleContent {
       maxHighSpeed: 50,
       maxLowSpeed: 50,
     },
+    reactions: { counterLimit: 1, excludedAbilityIds: [] },
     initialAtb: { player: [100, 100], enemy: [0, 0] },
     gil: 0,
     players: [unit, { ...structuredClone(unit), id: "b", name: "Second ally" }],
@@ -118,7 +119,7 @@ function fixture(): BattleContent {
           ],
           process: { key: "None", values: [0, 0, 0] },
           range: 3,
-          rules: {},
+          rules: { system_id: 3 },
           elements: [],
           forbiddenConditionIds: [],
           contentFlags: [],
@@ -160,7 +161,7 @@ function fixture(): BattleContent {
           ],
           process: { key: "None", values: [0, 0, 0] },
           range: 1,
-          rules: {},
+          rules: { system_id: 3 },
           elements: [],
           forbiddenConditionIds: [],
           contentFlags: [],
@@ -210,7 +211,7 @@ function fixture(): BattleContent {
           ],
           process: { key: "None", values: [0, 0, 0] },
           range: 3,
-          rules: {},
+          rules: { system_id: 3 },
           elements: [],
           forbiddenConditionIds: [],
           contentFlags: [],
@@ -235,7 +236,7 @@ function fixture(): BattleContent {
           ],
           process: { key: "None", values: [0, 0, 0] },
           range: 7,
-          rules: {},
+          rules: { system_id: 3 },
           elements: [],
           forbiddenConditionIds: [],
           contentFlags: [],
@@ -272,6 +273,234 @@ function fixture(): BattleContent {
     limitations: [],
   };
 }
+
+function counterFixture() {
+  const f = fixture();
+  f.players.forEach((p) => {
+    p.hp = 2000;
+  });
+  f.enemies.forEach((e) => {
+    e.hp = 2000;
+    e.abilities = [13, 10, 12];
+    e.ai = syntheticAI([
+      ["Nop"],
+      ["SyncAI"],
+      ["StartTable", [0]],
+      ["ValueCalc", [0, 1], [], ["＋"]],
+      ["Act", [13]],
+      ["CounterAct", [13]],
+      ["Act", [10]],
+      ["EndTable"],
+      ["JumpBattleAI", [0]],
+    ]);
+  });
+  f.abilities[11]!.program.rules.system_id = 2;
+  return f;
+}
+
+test("counter interrupts pending actions, targets the attacker, and preserves a queued ordinary turn", () => {
+  const f = counterFixture();
+  f.initialAtb.enemy = [100, 100];
+  const b = new BattleGame(f, 359);
+  assert.equal(b.command("a", 10, "e1"), true);
+  assert.equal(b.command("b", 10, "e2"), true);
+  b.advance(10);
+  assert.equal(b.action!.actor, "a");
+  const pending = b.pendingActions;
+  assert.deepEqual(
+    pending.map((a) => a.actor),
+    ["b", "e1", "e2"],
+  );
+  b.advance(400);
+  assert.deepEqual(
+    b.pendingActions.map((a) => [a.kind, a.actor]),
+    [
+      ["counter", "e1"],
+      ["normal", "b"],
+      ["normal", "e1"],
+      ["normal", "e2"],
+    ],
+  );
+  assert.equal(b.enemyAIState("e1")!.actTurn, 1);
+  assert.equal(b.enemies[0]!.behavior!.variables[0], 2);
+  assert.equal(b.enemies[0]!.atb, 100);
+  b.advance(510);
+  assert.equal(b.action!.kind, "counter");
+  assert.equal(b.action!.actor, "e1");
+  assert.deepEqual(b.action!.targetIds, ["a"]);
+  b.advance(900);
+  assert.equal(b.enemies[0]!.atb, 100);
+  assert.equal(b.enemies[0]!.queued, true);
+  assert.ok(b.players[0]!.hp < b.players[0]!.maxHp);
+  assert.equal(b.players[1]!.hp, b.players[1]!.maxHp);
+  assert.deepEqual(b.pendingActions, pending);
+});
+
+test("reaction branches see post-action HP and leave a partially filled gauge intact", () => {
+  const f = counterFixture();
+  f.enemies[0]!.ai = syntheticAI([
+    ["Nop"],
+    ["SyncAI"],
+    ["StartTable", [0]],
+    ["Act", [13]],
+    ["EndTable"],
+    ["IsCheckHp", [1999, 8], [], ["≦"]],
+    ["CounterAct", [13]],
+    ["JumpBattleAI", [0]],
+    ["Nop"],
+    ["CounterAct", [10]],
+    ["JumpBattleAI", [0]],
+  ]);
+  const b = new BattleGame(f, 367);
+  b.enemies[0]!.atb = 51;
+  b.command("a", 10, "e1");
+  b.advance(10);
+  const gauge = b.enemies[0]!.atb;
+  b.advance(400);
+  assert.ok(b.enemies[0]!.hp < 1999);
+  assert.equal(b.pendingActions[0]!.kind, "counter");
+  assert.equal(b.pendingActions[0]!.ability, 10);
+  b.advance(1410);
+  assert.equal(b.enemies[0]!.atb, gauge);
+  assert.equal(b.enemies[0]!.queued, false);
+});
+
+test("misses and healing wake source AI but do not turn into ordinary turns or damage counters", () => {
+  for (const healing of [false, true]) {
+    const f = counterFixture();
+    if (healing) {
+      f.abilities[10]!.plan = structuredClone(f.abilities[11]!.plan);
+      f.abilities[10]!.plan!.targeting = compileTargetRule(7, 2)!;
+      f.abilities[10]!.program.rules.system_id = 2;
+    } else {
+      f.abilities[10]!.plan!.magic!.contentFlags = [];
+      f.abilities[10]!.plan!.magic!.accuracy = 0;
+    }
+    const b = new BattleGame(f, 373);
+    b.command("a", 10, "e1");
+    b.advance(410);
+    assert.equal(b.action!.results[0]!.effects[0]!.missed, !healing);
+    assert.equal(b.pendingActions.length, 0);
+    assert.equal(b.enemies[0]!.behavior!.variables[0], 1);
+    assert.equal(b.enemyAIState("e1")!.actTurn, 0);
+  }
+});
+
+test("zero damage can counter, while fatal hits never enqueue a living CounterAct", () => {
+  for (const fatal of [false, true]) {
+    const f = counterFixture();
+    if (fatal) f.enemies[0]!.hp = 1;
+    else {
+      f.abilities[10]!.plan!.magic!.elements = [1];
+      f.enemies[0]!.elementResistances = { 1: 3 };
+    }
+    const b = new BattleGame(f, 379);
+    b.command("a", 10, "e1");
+    b.advance(410);
+    if (fatal) assert.equal(b.enemies[0]!.hp, 0);
+    else assert.equal(b.enemies[0]!.hp, 2000);
+    assert.equal(
+      b.pendingActions.filter((a) => a.kind === "counter").length,
+      fatal ? 0 : 1,
+    );
+  }
+});
+
+test("a counter may target a friendly attacker and cannot recursively trigger that attacker's counter AI", () => {
+  const b = new BattleGame(counterFixture(), 383);
+  // Controlled friendly-fire host. Normal enemy automatic targeting is still
+  // restricted to players; the reaction rule itself must retain explicit identity.
+  b.command("a", 10, "e2");
+  b.advance(10);
+  b.action!.actor = "e1";
+  b.action!.ability = 13;
+  b.action!.commandId = null;
+  b.advance(400);
+  assert.equal(b.pendingActions[0]!.actor, "e2");
+  assert.deepEqual(b.pendingActions[0]!.targetIds, ["e1"]);
+  const targetState = b.enemyAIState("e1");
+  b.advance(910);
+  assert.equal(b.action!.kind, "counter");
+  assert.ok(b.enemies[0]!.hp < 2000);
+  assert.deepEqual(b.enemyAIState("e1"), targetState);
+  assert.equal(b.enemies[0]!.behavior!.variables[0], 0);
+  assert.equal(b.pendingActions.length, 0);
+});
+
+test("a later unsupported counter rolls back every target, cost, AI parameter, queue and random draw", () => {
+  const f = counterFixture();
+  f.abilities[10]!.plan!.targeting = compileTargetRule(4, 3)!;
+  f.abilities[10]!.cost = 2;
+  const clean = new BattleGame(structuredClone(f), 389);
+  const broken = new BattleGame(f, 389);
+  const op = broken.enemies[1]!.ai!.instructions[5]!.op;
+  assert.equal(op.kind, "counter-act");
+  if (op.kind !== "counter-act") throw new Error("invalid fixture");
+  op.abilities = [12];
+  for (const b of [clean, broken]) {
+    b.command("a", 10, { kind: "side", side: "enemy" });
+    b.advance(10);
+  }
+  const before = structuredClone(broken.combatants);
+  const pending = broken.pendingActions;
+  const ais = broken.enemies.map((e) => broken.enemyAIState(e.id));
+  const logs = [...broken.events];
+  assert.throws(() => broken.advance(400), /unimplemented ability 12/);
+  assert.deepEqual(broken.combatants, before);
+  assert.deepEqual(broken.pendingActions, pending);
+  assert.deepEqual(
+    broken.enemies.map((e) => broken.enemyAIState(e.id)),
+    ais,
+  );
+  assert.deepEqual(broken.events, logs);
+  assert.equal(broken.action!.resolved, false);
+  assert.deepEqual(broken.action!.results, []);
+  op.abilities = [13];
+  clean.advance(400);
+  broken.advance(10);
+  assert.deepEqual(broken.action!.results, clean.action!.results);
+  assert.deepEqual(broken.pendingActions, clean.pendingActions);
+  assert.deepEqual(broken.combatants, clean.combatants);
+  assert.deepEqual(
+    broken.enemies.map((e) => broken.enemyAIState(e.id)),
+    clean.enemies.map((e) => clean.enemyAIState(e.id)),
+  );
+});
+
+test("counter fees and lost targets invalidate the counter without consuming its ordinary gauge", () => {
+  for (const reason of ["cost", "target"] as const) {
+    const f = counterFixture();
+    f.abilities[13]!.cost = 2;
+    const b = new BattleGame(f, 397);
+    b.enemies[0]!.atb = 52;
+    b.command("a", 10, "e1");
+    b.advance(410);
+    const gauge = b.enemies[0]!.atb;
+    if (reason === "cost") b.enemies[0]!.mp = 0;
+    else
+      b.players.forEach((p) => {
+        p.hp = 0;
+      });
+    b.advance(510);
+    assert.equal(b.action, null);
+    assert.equal(b.enemies[0]!.atb, gauge);
+    assert.equal(b.enemies[0]!.queued, false);
+    assert.deepEqual(b.pendingActions, []);
+  }
+});
+
+test("counter decisions and interleaved normal turns replay across frame partitions", () => {
+  const f = counterFixture();
+  const one = new BattleGame(f, 401),
+    partitioned = new BattleGame(structuredClone(f), 401);
+  for (const b of [one, partitioned]) {
+    b.command("a", 10, "e1");
+    b.command("b", 10, "e2");
+  }
+  one.advance(60000);
+  for (let n = 0; n < 6000; n++) partitioned.advance(10);
+  assert.deepEqual(partitioned, one);
+});
 
 test("enemy AI cycles physical and magic decisions through the shared action queue", () => {
   const f = fixture();
