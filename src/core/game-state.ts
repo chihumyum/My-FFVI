@@ -1,6 +1,24 @@
 import type { CombatantDefinition } from "./battle-content.js";
-import type { Combatant } from "./battle.js";
+import type { Combatant, BattleStatProjection } from "./battle.js";
 import { projectActionTarget } from "./action-effects.js";
+import type {
+  FieldInventoryCommand,
+  FieldInventoryPort,
+  FieldInventoryTransaction,
+} from "./inventory-event.js";
+import {
+  equipmentAvailability,
+  initialEquipmentStock,
+  previewEquipmentChange,
+  projectEquipmentParameters,
+  validateEquipmentState,
+  equipmentAttackArm,
+  type EquipmentCatalog,
+  type EquipmentParameterContext,
+  type EquipmentStock,
+} from "./equipment.js";
+import type { ParameterLimits } from "./parameters.js";
+import type { PhysicalLimits } from "./physical-parameters.js";
 import {
   validateItemStacks,
   type ItemDefinition,
@@ -23,10 +41,17 @@ export type GameStateContent = {
     exp: number;
   };
   initialGil: number;
-  /** Ordinary/important item stacks only; equipment stock and magic stones remain separate capabilities. */
+  /** Ordinary/important stacks; equipment has separate count/occupancy semantics. */
   items: Record<string, ItemDefinition>;
   initialItems: { id: number; count: number }[];
   equipment: Record<string, number[]>;
+  equipmentSystem?: {
+    catalog: EquipmentCatalog;
+    contexts: Record<string, EquipmentParameterContext>;
+    limits: { parameters: ParameterLimits; physical: PhysicalLimits };
+    /** The current fixed-increment development growth profile, not full growth providers. */
+    growth: Record<string, { level: number; hp: number; mp: number }[]>;
+  };
 };
 export type OwnedCharacter = {
   id: string;
@@ -42,7 +67,7 @@ export type OwnedCharacter = {
   equipment: number[];
 };
 export type GameStateSnapshot = {
-  formatVersion: 1;
+  formatVersion: 2;
   kind: "owned-game-state";
   catalogHash: string;
   roster: OwnedCharacter[];
@@ -50,6 +75,7 @@ export type GameStateSnapshot = {
   gil: number;
   totalGil: number;
   items: { id: number; count: number }[];
+  equipmentStock: EquipmentStock[];
   completedBattles: { serial: number; encounterId: number }[];
 };
 export type BattleLease = {
@@ -85,6 +111,9 @@ export class GameState {
   } | null = null;
   private revision = 0;
   private readonly conditions: BattleConditions;
+  readonly fieldInventory: FieldInventoryPort = {
+    prepare: (command) => this.prepareInventoryEvent(command),
+  };
   constructor(
     content: GameStateContent,
     players: readonly CombatantDefinition[],
@@ -117,7 +146,7 @@ export class GameState {
       this.conditions.validateReferences(item.forbiddenConditionIds);
     }
     this.data = {
-      formatVersion: 1,
+      formatVersion: 2,
       kind: "owned-game-state",
       catalogHash,
       roster: players.map((p) => ({
@@ -137,18 +166,24 @@ export class GameState {
       gil: content.initialGil,
       totalGil: content.initialGil,
       items: structuredClone(content.initialItems),
+      equipmentStock: [],
       completedBattles: [],
     };
+    if (this.content.equipmentSystem)
+      this.data.equipmentStock = initialEquipmentStock(
+        this.content.equipmentSystem.catalog,
+        this.data.roster,
+      );
     this.validate(this.data);
   }
   private validate(data: GameStateSnapshot) {
     keys(
       data,
-      "formatVersion,kind,catalogHash,roster,party,gil,totalGil,items,completedBattles",
+      "formatVersion,kind,catalogHash,roster,party,gil,totalGil,items,equipmentStock,completedBattles",
     );
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== 1 ||
+      data.formatVersion !== 2 ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -181,13 +216,29 @@ export class GameState {
       if ((p.hp === 0) !== this.conditions.isUnableFight(p.conditionIds))
         throw new Error("Owned HP/death state mismatch");
       if (
-        p.equipment.length !== 6 ||
-        p.equipment.some((id, n) => id !== this.content.equipment[p.id]?.[n])
+        !this.content.equipmentSystem &&
+        (p.equipment.length !== 6 ||
+          p.equipment.some((id, n) => id !== this.content.equipment[p.id]?.[n]))
       )
         throw new Error("Unimplemented equipment change");
+      if (this.content.equipmentSystem) {
+        const projection = this.projectOwnedParameters(p);
+        if (p.maxHp !== projection.maxHp || p.maxMp !== projection.maxMp)
+          throw new Error(
+            "Owned resource maximum disagrees with equipment/growth",
+          );
+      }
     }
     if (data.roster.length !== this.definitions.size)
       throw new Error("Missing roster member");
+    if (this.content.equipmentSystem)
+      validateEquipmentState(
+        this.content.equipmentSystem.catalog,
+        data.roster,
+        data.equipmentStock,
+      );
+    else if (data.equipmentStock.length)
+      throw new Error("Unimplemented equipment stock");
     distinct(data.party);
     if (
       !data.party.length ||
@@ -234,6 +285,95 @@ export class GameState {
     if (this.active)
       throw new Error("Owned state is reserved by an active battle");
   }
+  private projectInventoryEvent(
+    data: GameStateSnapshot,
+    command: FieldInventoryCommand,
+  ) {
+    const next = structuredClone(data);
+    let result: boolean | null = null;
+    if (command.kind === "grant-item" || command.kind === "remove-item") {
+      integer(command.id, 0x7fffffff, 1);
+      integer(command.count, 0x7fffffff, 1);
+      if (!this.content.items[command.id])
+        throw new Error("Unimplemented inventory content: " + command.id);
+      let entry = next.items.find((i) => i.id === command.id);
+      if (command.kind === "grant-item") {
+        if (!entry) next.items.push((entry = { id: command.id, count: 0 }));
+        entry.count = Math.min(
+          this.content.limits.item,
+          entry.count + command.count,
+        );
+      } else if (entry) {
+        // RemoveOwnedItem exhausts the stack even when the requested count is
+        // greater. A zero stack is our canonical equivalent of source removal.
+        entry.count = Math.max(0, entry.count - command.count);
+      }
+      next.items.sort((a, b) => a.id - b.id);
+    } else if (command.kind === "grant-gil") {
+      integer(command.amount, 0x7fffffff);
+      next.gil = Math.min(this.content.limits.gil, next.gil + command.amount);
+      next.totalGil += command.amount;
+    } else if (command.kind === "pay-gil") {
+      integer(command.amount, 0x7fffffff);
+      result = next.gil >= command.amount;
+      if (result) next.gil -= command.amount;
+    } else throw new Error("Unknown field inventory command");
+    this.validate(next);
+    return { next, result };
+  }
+  private prepareInventoryEvent(
+    command: FieldInventoryCommand,
+  ): FieldInventoryTransaction {
+    this.requireIdle();
+    const { next, result } = this.projectInventoryEvent(this.data, command),
+      revision = this.revision;
+    return {
+      result,
+      commit: () => {
+        this.requireIdle();
+        if (this.revision !== revision)
+          throw new Error("Stale field inventory transaction");
+        this.data = next;
+        this.revision++;
+      },
+    };
+  }
+  /** Map initialization runs against this private draft. Publishing rebinds the
+   * same port to live state so later events keep a single inventory owner. */
+  prepareFieldInventory(): { port: FieldInventoryPort; commit(): boolean } {
+    this.requireIdle();
+    const revision = this.revision;
+    let data = this.snapshot(),
+      generation = 0,
+      published = false;
+    const port: FieldInventoryPort = {
+      prepare: (command) => {
+        if (published) return this.prepareInventoryEvent(command);
+        const { next, result } = this.projectInventoryEvent(data, command),
+          version = generation;
+        return {
+          result,
+          commit: () => {
+            if (published || generation !== version)
+              throw new Error("Stale candidate inventory transaction");
+            data = next;
+            generation++;
+          },
+        };
+      },
+    };
+    return {
+      port,
+      commit: () => {
+        if (published || this.active || this.revision !== revision)
+          return false;
+        this.data = data;
+        this.revision++;
+        published = true;
+        return true;
+      },
+    };
+  }
   partyPlayers(): Combatant[] {
     return this.data.party.map((id) => {
       const p = this.data.roster.find((p) => p.id === id)!;
@@ -241,11 +381,117 @@ export class GameState {
       return {
         ...structuredClone(this.definitions.get(id)!),
         ...structuredClone(progress),
+        ...(this.content.equipmentSystem ? this.projectOwnedParameters(p) : {}),
         atb: 0,
         queued: false,
         behavior: null,
       };
     });
+  }
+  private projectOwnedParameters(
+    p: Pick<OwnedCharacter, "id" | "sourceId" | "level" | "equipment">,
+  ): BattleStatProjection {
+    const system = this.content.equipmentSystem;
+    if (!system) throw new Error("Equipment system is unavailable");
+    const definition = this.definitions.get(p.id),
+      original = system.contexts[p.id];
+    if (
+      !definition ||
+      definition.sourceId !== p.sourceId ||
+      !original ||
+      p.level < definition.level
+    )
+      throw new Error("Unresolved equipment growth origin");
+    const context = structuredClone(original);
+    for (let level = definition.level + 1; level <= p.level; level++) {
+      const matches = system.growth[definition.growthGroup!]?.filter(
+        (g) => g.level === level,
+      );
+      if (matches?.length !== 1)
+        throw new Error("Missing or ambiguous equipment growth dependency");
+      context.parameters.additional.hp += matches[0]!.hp;
+      context.parameters.additional.mp += matches[0]!.mp;
+    }
+    const projected = projectEquipmentParameters(
+      system.catalog,
+      p.equipment,
+      context,
+      system.limits,
+    );
+    const arm = equipmentAttackArm(system.catalog, p.sourceId, p.equipment);
+    const { hp, mp, ...parameters } = projected.parameters;
+    return {
+      ...parameters,
+      maxHp: hp,
+      maxMp: mp,
+      physical: projected.physicalByArm[arm],
+      attackElements: projected.attackElementsByArm[arm],
+      elementResistances: projected.elementResistances,
+    };
+  }
+  get equipmentInventory() {
+    const system = this.content.equipmentSystem;
+    return system
+      ? equipmentAvailability(
+          system.catalog,
+          this.data.roster,
+          this.data.equipmentStock,
+        )
+      : [];
+  }
+  private previewEquipment(playerId: string, slot: number, contentId: number) {
+    this.requireIdle();
+    const system = this.content.equipmentSystem;
+    if (!system) throw new Error("Equipment system is unavailable");
+    const prepared = previewEquipmentChange(
+      system.catalog,
+      this.data.roster,
+      this.data.equipmentStock,
+      playerId,
+      slot,
+      contentId,
+    );
+    const next = this.snapshot(),
+      p = next.roster.find((p) => p.id === playerId)!;
+    p.equipment = prepared.roster.find((p) => p.id === playerId)!.equipment;
+    const projection = this.projectOwnedParameters(p);
+    p.maxHp = projection.maxHp;
+    p.maxMp = projection.maxMp;
+    p.hp = Math.min(p.hp, p.maxHp);
+    p.mp = Math.min(p.mp, p.maxMp);
+    p.conditionIds = this.conditions.updateDying(p.hp, p.maxHp, p.conditionIds);
+    this.validate(next);
+    return { next, changes: prepared.changes, projection };
+  }
+  equipmentChoices(playerId: string, slot: number) {
+    if (this.active || !this.content.equipmentSystem) return [];
+    const system = this.content.equipmentSystem;
+    const p = this.data.roster.find((p) => p.id === playerId);
+    if (!p || !Number.isInteger(slot) || slot < 1 || slot > 6) return [];
+    const candidates = new Set([
+      system.catalog.characters[p.sourceId]!.emptySlots[slot - 1]!,
+      p.equipment[slot - 1]!,
+      ...this.equipmentInventory
+        .filter((i) => i.available > 0)
+        .map((i) => i.id),
+    ]);
+    return [...candidates].flatMap((id) => {
+      try {
+        const preview = this.previewEquipment(playerId, slot, id);
+        return [
+          { id, changes: preview.changes, projection: preview.projection },
+        ];
+      } catch {
+        return [];
+      }
+    });
+  }
+  changeEquipment(playerId: string, slot: number, contentId: number): boolean {
+    const preview = this.previewEquipment(playerId, slot, contentId);
+    if (!preview.changes.length) return false;
+    this.data = preview.next;
+    this.revision++;
+    return true;
   }
   private previewItem(id: number, targetId: string) {
     this.requireIdle();
@@ -257,7 +503,7 @@ export class GameState {
       !item.uses.menu.plan ||
       !this.data.items.some((i) => i.id === id && i.count > 0) ||
       !target ||
-      target.hp <= 0 ||
+      (target.hp <= 0 && item.uses.menu.plan.targeting.life === "alive") ||
       target.conditionIds.some((c) => item.forbiddenConditionIds.includes(c))
     )
       return null;
@@ -273,7 +519,11 @@ export class GameState {
       1,
     );
     return projection.state.hp !== target.hp ||
-      projection.state.mp !== target.mp
+      projection.state.mp !== target.mp ||
+      projection.state.conditionIds.length !== target.conditionIds.length ||
+      projection.state.conditionIds.some(
+        (id, n) => id !== target.conditionIds[n],
+      )
       ? projection
       : null;
   }
@@ -355,6 +605,19 @@ export class GameState {
       stacks: this.active.items,
       limit: this.content.limits.item,
     });
+  }
+  battleProgression(
+    lease: BattleLease,
+  ): ((player: Combatant) => BattleStatProjection) | undefined {
+    if (this.active?.lease !== lease) throw new Error("Stale battle lease");
+    if (!this.content.equipmentSystem) return undefined;
+    return (player) => {
+      if (this.active?.lease !== lease) throw new Error("Stale battle lease");
+      const owned = this.data.roster.find((p) => p.id === player.id);
+      if (!owned || owned.sourceId !== player.sourceId)
+        throw new Error("Battle roster identity changed");
+      return this.projectOwnedParameters({ ...owned, level: player.level });
+    };
   }
   cancelBattle(lease: BattleLease): void {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");

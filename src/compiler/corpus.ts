@@ -64,6 +64,8 @@ function owner(name: string): string {
   )
     return "entity-and-animation";
   if (/^(Msg|Select)/.test(name)) return "dialogue-and-ui";
+  if (/^(GetItem|RemoveItem|RemoveGil)$/.test(name))
+    return "inventory-and-owned-state";
   if (/^(PlaySE|StopSE|SyncSE|PlayBGM|StopBGM|FadeBGM|Volume)/.test(name))
     return "audio";
   if (/^(Fade|Color|Shake|Camera|Wait)/.test(name))
@@ -186,6 +188,7 @@ export function analyzeCorpus(
             raw,
             { script: asset.id, index, source: asset.source },
             messages,
+            tables,
           );
           if (op.kind === "blocked") reason = op.reason;
           else if (op.kind === "sound" || op.kind === "sound-sync") {

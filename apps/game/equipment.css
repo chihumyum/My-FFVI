@@ -1,0 +1,117 @@
+.equipment-view {
+  text-align: left;
+  padding: 16px;
+  border: 1px solid #33435b;
+  background: #101c2b;
+}
+.equipment-view h3 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+.equipment-view h4 {
+  margin: 16px 0 8px;
+}
+.equipment-view p {
+  line-height: 1.6;
+  font-size: 13px;
+}
+.equipment-party,
+.equipment-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.equipment-view button {
+  margin: 0;
+  padding: 7px 9px;
+  font-size: 13px;
+  text-align: left;
+}
+.equipment-view button[aria-pressed="true"] {
+  border-color: #dcc386;
+  background: #35465b;
+}
+.equipment-resources {
+  color: #b7c7dd;
+}
+.equipment-body {
+  display: grid;
+  grid-template-columns: minmax(135px, 1fr) minmax(220px, 1.35fr);
+  gap: 16px;
+  align-items: start;
+}
+.equipment-slots {
+  display: grid;
+  gap: 6px;
+}
+.equipment-slot span,
+.equipment-slot strong {
+  display: block;
+}
+.equipment-slot span {
+  color: #aec1d5;
+  font-size: 11px;
+  padding-bottom: 3px;
+}
+.equipment-slot strong {
+  font-weight: 500;
+}
+.equipment-view table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.equipment-view th,
+.equipment-view td {
+  border-bottom: 1px solid #29394f;
+  padding: 5px 4px;
+  text-align: right;
+}
+.equipment-view th:first-child {
+  text-align: left;
+  font-weight: 400;
+}
+.equipment-view caption {
+  text-align: left;
+  color: #d8cd9e;
+  padding-bottom: 8px;
+}
+.equipment-view thead {
+  color: #a4bbd1;
+}
+.equipment-up {
+  color: #a5dfc1;
+}
+.equipment-down {
+  color: #f7b3aa;
+}
+.equipment-changes {
+  white-space: pre-line;
+  color: #d8cd9e;
+}
+.equipment-options > button {
+  margin-right: 6px;
+}
+.equipment-status {
+  color: #d8cd9e;
+  min-height: 1.6em;
+}
+.equipment-stock {
+  color: #c1d0e2;
+  margin-top: 12px;
+}
+.equipment-stock summary {
+  padding-bottom: 8px;
+}
+@media (max-width: 520px) {
+  .equipment-view {
+    padding: 10px;
+  }
+  .equipment-body {
+    grid-template-columns: 1fr;
+  }
+  .equipment-slots {
+    grid-template-columns: 1fr 1fr;
+  }
+}

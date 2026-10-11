@@ -62,12 +62,23 @@ for (const item of Object.values(catalog.gameState.items).sort(
       itemId: item.itemId,
       context,
       admitted: !!use.plan,
+      checkedFixedRecovery:
+        !!use.plan &&
+        use.plan.effects.every(
+          (e) => e.kind === "recovery" && e.calculation === "fixed",
+        ),
       blockers: use.blockers,
       contentSource: content.source,
       itemSource: row.source,
       program: use.program,
     });
-    if (!use.plan) continue;
+    if (
+      !use.plan ||
+      !use.plan.effects.every(
+        (e) => e.kind === "recovery" && e.calculation === "fixed",
+      )
+    )
+      continue;
     const expect = (before) => {
       const after = { hp: before.hp, mp: before.mp };
       // Independent source interpretation of the admitted function.type_id=1,
@@ -210,7 +221,8 @@ const report = {
     "player targets only",
     "fixed ordinary HP/MP recovery only",
     "original timing, reservation refunds and behavior parity unverified",
-    "no revive, equipment-use, non-guaranteed consumption, shops, drops or event inventory",
+    "revival and condition cures are checked separately by check-item-status.mjs",
+    "this lane does not check equipment-use, non-guaranteed consumption, shops, drops or event inventory",
   ],
 };
 report.contentHash = hash(report);

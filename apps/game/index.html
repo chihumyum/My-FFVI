@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>FFVI Web</title>
     <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="/game/equipment.css" />
   </head>
   <body>
     <header>
@@ -96,6 +97,10 @@
             </section>
             <div id="item-targets" hidden></div>
             <p id="item-status" role="status"></p>
+            <details>
+              <summary>装备</summary>
+              <section id="equipment-menu" aria-label="装备菜单"></section>
+            </details>
             <div class="save-controls">
               <button id="save-game">保存进度</button>
               <button id="load-game" disabled>读取进度</button>

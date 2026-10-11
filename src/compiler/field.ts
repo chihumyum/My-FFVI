@@ -10,6 +10,7 @@ import { loadMinimapMedia } from "./map-ui.js";
 import { loadAudioMedia } from "./audio.js";
 import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
 import { bindTileAnimationRegions } from "./tile-animation.js";
+import { compileInventoryEvent } from "./inventory-event.js";
 import {
   int32,
   isCategory,
@@ -63,6 +64,7 @@ export function decodeFieldOp(
   raw: unknown,
   site: Site,
   messages: Record<string, unknown>,
+  tables: Record<string, unknown> = {},
 ): Op {
   const m = record(raw),
     o = record(m.operands),
@@ -89,6 +91,17 @@ export function decodeFieldOp(
   } as const;
   if (Object.hasOwn(simple, name) && form([]))
     return { ...site, kind: simple[name as keyof typeof simple] };
+  if (
+    (name === "GetItem" || name === "RemoveItem" || name === "RemoveGil") &&
+    m.type === 1 &&
+    form(name === "RemoveGil" ? [0] : [0, 1])
+  ) {
+    try {
+      return { ...site, ...compileInventoryEvent(name, i, tables) };
+    } catch (error) {
+      return blocked(error instanceof Error ? error.message : String(error));
+    }
+  }
   if (name === "SetEntities" && m.type === 1 && form([], [], [0]) && s[0])
     return { ...site, kind: "entities", group: s[0] };
   // Runtime dispatch validates tile regions or unmounted actor media.
@@ -529,6 +542,7 @@ export async function compileField(root: string): Promise<FieldContent> {
           source: { ...a.source, pointer: `/Mnemonics/${index}` },
         },
         record(field.messages),
+        tables,
       ),
     );
   }

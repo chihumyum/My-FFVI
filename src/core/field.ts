@@ -12,6 +12,10 @@ import {
   executeEventControl,
   type EventStateSnapshot,
 } from "./event-state.js";
+import {
+  executeInventoryEvent,
+  type FieldInventoryPort,
+} from "./inventory-event.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState, type AudioSnapshot } from "./static-audio.js";
 import { TileAnimationState, type TileCheckpoint } from "./tile-animation.js";
@@ -128,6 +132,7 @@ export type Dialogue = {
   key: string;
   task: number;
 };
+export type FieldGameOptions = { inventory?: FieldInventoryPort };
 const contains = (e: FieldEntity, p: Point) =>
   p.x >= e.x && p.x < e.x + e.width && p.y >= e.y && p.y < e.y + e.height;
 export class FieldGame {
@@ -173,6 +178,7 @@ export class FieldGame {
     readonly eventState: EventState = new EventState(),
     readonly bgm: StaticAudioState = new StaticAudioState(),
     readonly environment: StaticAudioState = new StaticAudioState(),
+    readonly options: FieldGameOptions = {},
   ) {
     this.tileAnimations = new TileAnimationState(content.map);
     this.openTriggers = new OpenTriggerState(this.tileAnimations);
@@ -313,7 +319,11 @@ export class FieldGame {
     };
   }
   /** Rebuild dependencies from trusted content without replaying initialization or triggers. */
-  static restore(content: FieldContent, raw: FieldCheckpoint): FieldGame {
+  static restore(
+    content: FieldContent,
+    raw: FieldCheckpoint,
+    options: FieldGameOptions = {},
+  ): FieldGame {
     const s = structuredClone(raw);
     checkpointKeys(
       s,
@@ -330,6 +340,7 @@ export class FieldGame {
       new EventState(s.eventState),
       StaticAudioState.restore(s.bgm, content.bgm),
       StaticAudioState.restore(s.environment, content.environment),
+      options,
     );
     checkpointIds(s.activeGroups);
     const initial = [...next.activeGroups];
@@ -942,6 +953,21 @@ export class FieldGame {
           return;
         }
         switch (op.kind) {
+          case "inventory":
+            try {
+              executeInventoryEvent(
+                op,
+                this.eventState,
+                this.options.inventory,
+              );
+            } catch (error) {
+              this.block(
+                error instanceof Error ? error.message : String(error),
+                op,
+              );
+              return;
+            }
+            break;
           case "animation-cue":
           case "animation-play":
             try {

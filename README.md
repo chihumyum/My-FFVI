@@ -16,6 +16,9 @@
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
 - [共享角色、库存与奖励状态](docs/shared-game-state.md)
+- [复活与解除状态道具](docs/item-status.md)
+- [装备库存、换装与动态属性](docs/equipment.md)
+- [剧情物品与 Gil 事务](docs/inventory-events.md)
 - [稳定检查点与浏览器存读档](docs/checkpoint-saves.md)
 - [普通反击与优先队列](docs/battle-reactions.md)
 - [连续行动、队列与回合释放](docs/battle-action-groups.md)
@@ -63,6 +66,10 @@ npm run physical:check
 npm run magic:check
 npm run battle-reactions:check
 npm run game-state:check
+npm run items:check
+npm run item-status:check -- --native "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster/GameAssembly.dll"
+npm run equipment:check
+npm run inventory-events:check
 npm run check
 .venv/bin/python -m unittest discover -s tools/tests
 npm run dev

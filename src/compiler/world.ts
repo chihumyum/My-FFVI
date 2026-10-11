@@ -260,7 +260,7 @@ export async function compileWorld(root: string) {
             source: { ...asset.source, pointer: `/Mnemonics/${index}` },
           };
           try {
-            return decodeFieldOp(raw, site, corpus.messages);
+            return decodeFieldOp(raw, site, corpus.messages, corpus.tables);
           } catch (error) {
             return {
               ...site,

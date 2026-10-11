@@ -92,8 +92,8 @@ const result = {
     "not-a-complete-save-game",
     "not-original-game-parity",
     "only-item-content-type-one-stacks",
-    "equipment-slots-preserved-but-stock-and-swap-not-implemented",
-    "no-item-use-or-drop-rolls",
+    "equipment-stock-and-swap-checked-separately-in-check-equipment",
+    "item-use-checked-separately-drop-rolls-pending",
     "initial-ability-unlocks-and-growth-still-development-rules",
   ],
 };

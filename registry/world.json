@@ -552,6 +552,41 @@
         "build/reports/save-check.json#6e01339c52acf35d40f4d3b04bf87afcab902f9830a6cef96422f2e6717228c8",
         "docs/item-actions.md"
       ]
+    },
+    {
+      "id": "narshe:development-owned-systems-v15",
+      "subject": "narshe",
+      "predicate": "migration.ownedSystems",
+      "value": "Development v15 integrates ordinary equipment changes, field item/Gil events, revival and supported condition-cure items through one owned state. Equipment quantities include worn copies; availability accounts for the entire roster. Slot/job qualification, atomic hand conflict handling, real-copy transfer, raw growth reprojection and snapshot v2 validation are implemented. 223 source equipment identities yield 106 admitted including five empty placeholders and 117 explicit blockers; 423 isolated eligibility previews and 18 existing slots are checked, not full-world acquisition. Of 173 field GetItem/RemoveItem/RemoveGil sites, 117 ordinary/important-item and Gil sites are admitted with 411 controlled probes; equipment/magicstone events and quantity queries remain incomplete. Map preparation keeps inventory changes private until publication and rejects stale state. Menu/battle contain 14/16 item plans but active conditions remain only 4/5/6/100; 17 fixed-recovery and 29 revive/cure source probes pass. 323 TypeScript and 18 Python tests, existing five encounters and 40 checkpoint restores pass. Final-catalog browser checks cover real equipment transfer, preview/battle agreement, growth and in-memory restore; item revival/cure uses explicitly controlled inputs. Normal opening menu equip/unequip, natural battle victory, map return and movement pass; at (38,35), Gil is 3096, levels 3/2/2 and HP 63/63/64 with initial key item unchanged. No extra formal equipment or consumables were granted and previous user saves were preserved. Full initialization/roster/party, acquisition/drop/steal, learning, other statuses/passives/special equipment, scheduling and original parity remain incomplete. No new region, story unlock or HD-2D work.",
+      "when": {
+        "battleProfile": "narshe-playability-v15",
+        "gameStateProfile": "game-state-development-v1",
+        "saveProfile": "game-checkpoint-v1",
+        "ownedSnapshotVersion": 2
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x4d7830 IsEquipSlot; 0x4d71c0 CanEquipped; 0x32cce0 FixedEquip; 0x333110 SetEquip",
+        "GameAssembly.dll:RVA 0x15a6b50 GetFightAttackArmType",
+        "GameAssembly.dll:RVA 0x7fb670 FF6 Phoenix Down second-slot eligibility exclusion",
+        "content.csv -> weapon.csv/armor.csv -> parts_group.csv/job_group.csv",
+        "src/core/game-state.ts:fieldInventory/prepareFieldInventory/changeEquipment/battleProgression",
+        "src/core/world-session.ts:prepare/commit",
+        "build/reports/equipment-native-check.json#7f70de2bc607d5e564a60926191f3d0345b99aaae7de06dc9f0bb5502b837894",
+        "build/reports/inventory-events-native-check.json#5c88c06830bab53e9a23b64f1d83b4419a63abf55664acc05ed20ed00fd2f9c4",
+        "build/reports/items-check.json#6a3378089843cc1b9f7cc46e9cd637109b1fd2ba5a7d06c2464ba270d4603719",
+        "build/reports/item-status-check.json#4700a2f11f060d2dddd236c70f24e10e8b711f36457563b6766408a9f6021dec",
+        "build/reports/equipment-check.json#bda51750882883edfe87429d8a19b927842e35068cb7861f477af153367cae8b",
+        "build/reports/inventory-events-check.json#6c34a5a0219c8d2e3976f6b52837847d23a0b9f9a45a209b44b12c69dcd688bf",
+        "build/reports/save-check.json#1e988d247dbfd1be659577468dee0fb674d57ce70b9f3fd64975216d08abf957",
+        "build/reports/equipment-browser-check.json#33bffd43558ec2a89e0fddc1f0b8478c3ce345d35784ec0a9545458968f3c275",
+        "build/reports/item-status-browser-check.json#5abe4405b6b2f8b2a3261ab075d8fd87f01243cd0db265d03ada67486eb76bc8",
+        "build/reports/systems-opening-browser-check.json#7f4cf3334581fe7bfec8cccbbc84420d9c9770a47c406a5c28253d2c206e72ab",
+        "docs/equipment.md",
+        "docs/inventory-events.md",
+        "docs/item-status.md"
+      ]
     }
   ],
   "assets": []

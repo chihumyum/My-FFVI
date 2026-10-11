@@ -1,4 +1,5 @@
 import type { AbilityEffectResult } from "./ability.js";
+import type { ParameterValues } from "./parameters.js";
 import { atbIncrement } from "./atb.js";
 import {
   initialEnemyBehavior,
@@ -47,6 +48,11 @@ export type Combatant = CombatantDefinition & {
   /** Shared enemy parameters; deliberately separate from VM execution state. */
   behavior: EnemyBehaviorState | null;
 };
+export type BattleStatProjection = Omit<ParameterValues, "hp" | "mp"> &
+  Pick<
+    Combatant,
+    "maxHp" | "maxMp" | "physical" | "attackElements" | "elementResistances"
+  >;
 export type BattleAction = {
   kind: "normal" | "loop" | "counter";
   actor: string;
@@ -94,10 +100,13 @@ export class BattleGame {
     seed: number,
     players?: Combatant[],
     inventory: BattleInventory = { definitions: {}, stacks: [], limit: 99 },
+    private readonly projectProgression?: (
+      player: Combatant,
+    ) => BattleStatProjection,
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v14"
+      content.profile !== "narshe-playability-v15"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -280,7 +289,11 @@ export class BattleGame {
       plan: use.plan,
       power: item.power,
       cost: 0,
-      presentation: "heal",
+      presentation: use.plan?.effects.every(
+        (e) => e.kind === "recover-condition",
+      )
+        ? "condition"
+        : "heal",
       attribute: 0,
       program: {
         functions: use.program.functions,
@@ -936,10 +949,22 @@ export class BattleGame {
           (g) => g.level === next,
         );
         if (!growth) throw new Error("Missing level growth dependency");
-        c.maxHp = Math.min(9999, c.maxHp + growth.hp);
-        c.maxMp = Math.min(999, c.maxMp + growth.mp);
+        if (!this.projectProgression) {
+          c.maxHp = Math.min(9999, c.maxHp + growth.hp);
+          c.maxMp = Math.min(999, c.maxMp + growth.mp);
+        }
       }
       c.level = Math.max(c.level, level);
+      if (this.projectProgression) {
+        Object.assign(c, this.projectProgression(structuredClone(c)));
+        c.hp = Math.min(c.hp, c.maxHp);
+        c.mp = Math.min(c.mp, c.maxMp);
+      }
+      c.conditionIds = this.conditions.updateDying(
+        c.hp,
+        c.maxHp,
+        c.conditionIds,
+      );
       if (c.level !== from) levels.push({ id: c.id, from, to: c.level });
     }
     for (const player of players)

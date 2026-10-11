@@ -84,11 +84,32 @@ function reset() {
     "受控输入就绪：队员 HP 1、MP 0；恢复药 × 2、圣灵药 × 1、终极圣灵药 × 1。",
   );
 }
+function resetStatus() {
+  game = new GameSession(fixtureField, catalog);
+  saved = null;
+  const s = game.state.snapshot();
+  s.roster[1].hp = 0;
+  s.roster[1].conditionIds = [5];
+  s.roster[2].conditionIds = [6];
+  game.state.restore(s);
+  game.state.changeItems(
+    [
+      { id: 10, count: 2 },
+      { id: 15, count: 1 },
+      { id: 21, count: 1 },
+    ],
+    "grant",
+  );
+  view.reset();
+  sync(
+    "受控输入就绪：第二名队员战斗不能，第三名沉默；不死鸟之尾 × 2、万能药 × 1、山彦烟幕 × 1。",
+  );
+}
 function start() {
   game.field.startEvent("__item_probe");
   game.advance(10);
   game.battle.players.forEach((p) => {
-    p.atb = 100;
+    p.atb = p.hp > 0 ? 100 : 0;
   });
   game.battle.enemies.forEach((p) => {
     p.atb = 0;
@@ -105,6 +126,7 @@ function leave() {
   sync("胜利已提交并返回空闲地图；菜单读取战后 HP/MP 与剩余数量。");
 }
 $("reset-fixture").onclick = reset;
+$("reset-status-fixture").onclick = resetStatus;
 $("start-battle").onclick = start;
 $("step-battle").onclick = () => {
   game.advance(410);

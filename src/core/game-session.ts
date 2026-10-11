@@ -56,13 +56,16 @@ export class GameSession {
     checkpointInteger(seed, 0, 0xffffffff);
     if (field.sourceSetHash !== battleCatalog.common.fieldSourceSetHash)
       throw new Error("Field/battle source mismatch");
-    this.world = new WorldSession(field);
     this.state = new GameState(
       battleCatalog.gameState,
       battleCatalog.common.players,
       battleCatalog.contentHash,
       battleCatalog.common.conditions,
     );
+    this.world = new WorldSession(field, undefined, {
+      current: this.state.fieldInventory,
+      prepare: () => this.state.prepareFieldInventory(),
+    });
   }
   get checkpointReady(): boolean {
     return (
@@ -75,6 +78,10 @@ export class GameSession {
   useMenuItem(id: number, targetId: string): boolean {
     if (!this.checkpointReady) return false;
     return this.state.useMenuItem(id, targetId);
+  }
+  changeEquipment(playerId: string, slot: number, contentId: number): boolean {
+    if (!this.checkpointReady) return false;
+    return this.state.changeEquipment(playerId, slot, contentId);
   }
   checkpoint(): GameCheckpoint {
     if (!this.checkpointReady)
@@ -150,6 +157,7 @@ export class GameSession {
             this.currentSeed,
             this.state.battlePlayers(lease),
             this.state.battleInventory(lease),
+            this.state.battleProgression(lease),
           );
           this.battleLease = lease;
           this.encounterSerial++;
@@ -189,6 +197,7 @@ export class GameSession {
       this.currentSeed,
       this.state.battlePlayers(this.battleLease),
       this.state.battleInventory(this.battleLease),
+      this.state.battleProgression(this.battleLease),
     );
     return true;
   }

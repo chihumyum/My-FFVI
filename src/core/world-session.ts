@@ -12,6 +12,12 @@ import { fieldCollisionRange, inCollisionRange } from "./collision.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState } from "./static-audio.js";
 import { checkpointKeys, checkpointInteger } from "./checkpoint-validation.js";
+import type { FieldInventoryPort } from "./inventory-event.js";
+
+export type WorldInventoryOwner = {
+  current: FieldInventoryPort;
+  prepare(): { port: FieldInventoryPort; commit(): boolean };
+};
 
 type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount">;
 export type WorldCheckpoint = {
@@ -151,6 +157,7 @@ type Ownership = {
   bgm: string;
   environment: string;
   catalogHash: string;
+  inventory?: { commit(): boolean };
 };
 
 /** Owns field lifetime. Hosts fetch and verify packages/images before committing a prepared map. */
@@ -171,8 +178,15 @@ export class WorldSession {
   constructor(
     private readonly initial: FieldContent,
     state = new EventState(),
+    private readonly inventory?: WorldInventoryOwner,
   ) {
-    this.current = new FieldGame(initial, state);
+    this.current = new FieldGame(
+      initial,
+      state,
+      undefined,
+      undefined,
+      inventory ? { inventory: inventory.current } : {},
+    );
   }
   get field(): FieldGame {
     return this.current;
@@ -220,7 +234,11 @@ export class WorldSession {
         this.initial.parentSourceSetHash,
       );
     }
-    const next = FieldGame.restore(content, snapshot.field);
+    const next = FieldGame.restore(
+      content,
+      snapshot.field,
+      this.inventory ? { inventory: this.inventory.current } : {},
+    );
     this.current = next;
     this.location = structuredClone(loc);
     this.catalogHash = loc?.catalogHash ?? null;
@@ -262,11 +280,13 @@ export class WorldSession {
     )
       throw new Error("Environment media changed during map transition");
     const environment = from.environment.snapshot();
+    const inventory = this.inventory?.prepare();
     const field = new FieldGame(
       content,
       state,
       new StaticAudioState(bgm),
       new StaticAudioState(environment),
+      inventory ? { inventory: inventory.port } : {},
     );
     const script = request.continuation || target.initializer;
     if (script) field.startEvent(script);
@@ -279,6 +299,7 @@ export class WorldSession {
       bgm: canonical(bgm),
       environment: canonical(environment),
       catalogHash: catalog.contentHash,
+      ...(inventory ? { inventory } : {}),
     });
     return prepared;
   }
@@ -294,6 +315,7 @@ export class WorldSession {
       ownership.environment !== canonical(this.current.environment.snapshot())
     )
       return false;
+    if (ownership.inventory && !ownership.inventory.commit()) return false;
     this.transitions.push({
       from: this.current.content.map.identity!.mapId,
       to: value.request.request.mapId,

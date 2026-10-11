@@ -389,6 +389,29 @@ export async function compileOpeningBattle(root: string) {
     );
   }
   tableGroup("exp_table.csv", "group_id", 1);
+  // Equipment is shared inventory content, not a list of scene-specific swaps.
+  // Preserve all source identities and the eligibility/element dependencies;
+  // executable effects are admitted separately by the equipment compiler.
+  for (const value of tables["content.csv"]!.filter((r) =>
+    ["2", "3"].includes(r.type_id!),
+  )) {
+    row("content.csv", value.id!);
+    const kind = value.type_id === "2" ? "weapon.csv" : "armor.csv";
+    const item = row(kind, value.type_value!);
+    row("parts_group.csv", item.values.parts_group_id!);
+    row("job_group.csv", item.values.equip_job_group_id!);
+    if (kind === "weapon.csv")
+      compileAttackElements(
+        { row, group: tableGroup },
+        tableInteger(item.values.attribute_id),
+        tableInteger(item.values.attribute_group_id),
+      );
+    else
+      compileElementResistances(
+        { row, group: tableGroup },
+        tableInteger(item.values.resistance_attribute),
+      );
+  }
   unique("initialize_data.csv", "key_name", "INIT_GIL");
   for (const value of tables["initialize_data.csv"]!.filter((r) =>
     /^INIT_ITEM_\d+$/.test(r.key_name!),

@@ -15,10 +15,19 @@ export class InventoryView {
     const find = (id) => this.root.querySelector(`#${id}`);
     const state = session.state.snapshot(),
       players = session.battle?.players ?? session.players;
+    const status = (p) =>
+      p.conditionIds
+        .map(
+          (id) =>
+            session.battleCatalog.common.conditions.behaviors.find(
+              (b) => b.id === id,
+            ).name,
+        )
+        .join("、");
     find("owned-party").textContent = players
       .map(
         (p) =>
-          `${p.name} · Lv ${p.level}\nHP ${p.hp} / ${p.maxHp}　MP ${p.mp} / ${p.maxMp}`,
+          `${p.name} · Lv ${p.level}\nHP ${p.hp} / ${p.maxHp}　MP ${p.mp} / ${p.maxMp}${status(p) ? `\n${status(p)}` : ""}`,
       )
       .join("\n\n");
     find("owned-gil").textContent = `${state.gil} Gil`;
@@ -76,7 +85,7 @@ export class InventoryView {
       for (const p of players)
         button(
           targetList,
-          `${p.name} · HP ${p.hp}/${p.maxHp} · MP ${p.mp}/${p.maxMp}`,
+          `${p.name} · HP ${p.hp}/${p.maxHp} · MP ${p.mp}/${p.maxMp}${status(p) ? ` · ${status(p)}` : ""}`,
           !targets.includes(p.id),
           () => {
             try {

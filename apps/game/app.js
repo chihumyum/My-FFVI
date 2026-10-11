@@ -1,4 +1,5 @@
 import { InventoryView } from "./inventory-view.js";
+import { EquipmentView } from "./equipment-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
 import { verifyContent } from "/runtime/core/content-integrity.js";
 import { CheckpointStorage } from "/runtime/core/saved-game.js";
@@ -18,6 +19,7 @@ let content,
   catalogPromise,
   battleView,
   inventoryView,
+  equipmentView,
   started = false,
   paused = false,
   mapOpen = false,
@@ -63,6 +65,8 @@ function pause(value) {
     syncSaveControls();
     inventoryView.reset();
     inventoryView.render(session);
+    equipmentView.reset();
+    equipmentView.render(session);
   }
   sync();
   if (value) $("resume").focus();
@@ -376,8 +380,15 @@ async function init() {
   inventoryView = new InventoryView(
     $("pause"),
     battleContent.gameState.items,
-    syncSaveControls,
+    () => {
+      equipmentView.render(session);
+      syncSaveControls();
+    },
   );
+  equipmentView = new EquipmentView($("equipment-menu"), () => {
+    inventoryView.render(session);
+    syncSaveControls();
+  });
   showLimitations();
   if (preview) {
     text("welcome-title", "地图开发预览");

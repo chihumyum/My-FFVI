@@ -18,6 +18,10 @@ import { compileBattleCommand } from "./commands.js";
 import { compileBattleAI, battleAIAbilities } from "./battle-ai.js";
 import { compileGameState } from "./game-state.js";
 import {
+  compileEquipmentCatalog,
+  compileEquipmentParameterContext,
+} from "./equipment.js";
+import {
   compileEquipmentElements,
   compileElementResistances,
 } from "./elements.js";
@@ -335,7 +339,7 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v14",
+    profile: "narshe-playability-v15",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,
@@ -365,17 +369,59 @@ export async function compileOpeningPlayable(
       "纳尔谢街道可玩开发规则；未经原版一致性验收，不代表完整战斗系统。",
       "初始能力解锁、命中/伤害分支、蓄力/排队、经验成长采用已记录的临时规则。",
       "初始数值使用分阶段属性确认；成长追加、Correction、临时与被动输入仍按开场检查点显式给零，未恢复通用状态/装备能力。",
-      "当前开放三种射线和治愈原力，以及来源普通 HP/MP 恢复道具；道具目前限我方目标。其余魔导、复活/特殊道具、逃跑与完整战斗脚本尚未实现。",
-      "角色、库存与奖励由共享状态保存，可在稳定地图检查点保存/读取。掉落、商店、剧情物品授予和换装尚未接入；开场没有额外发放测试药品。",
+      "当前开放三种射线和治愈原力，以及来源普通 HP/MP 恢复、玩家复活和解除沉默道具；道具目前限我方目标。毒、石化等其余状态行为、特殊道具、逃跑与完整战斗脚本尚未实现。",
+      "角色、库存、普通换装与奖励由共享状态保存，可在稳定地图检查点保存/读取。剧情普通物品授予/移除和部分收费指令已接入；特殊装备、掉落与商店尚未完成，开场没有额外发放测试药品或备用装备。",
       "站位、夹击队形、骑乘拼接和光束是临时二维表现；原版音效、特效、动画时序尚未接入。",
       "敌方行动使用来源 AI、独立回合与变量，连续行动整组入队。普通反击按命中结果触发并优先执行，保留原行动条；最终攻击、恢复专用反应、完整自动目标及特殊指令仍未接入，未知依赖会明确停止。",
     ],
+  };
+  const gameState = compileGameState(source, name);
+  const equipment = compileEquipmentCatalog(
+    parameterReader,
+    rows("content.csv")
+      .filter((c) => ["2", "3"].includes(c.type_id!))
+      .map((c) => int(c.id)),
+    source.initialParty.map((p) => p.characterId),
+    name,
+    Object.fromEntries(
+      source.initialParty.map((p) => [
+        p.characterId,
+        { hasTwoSwordStyle: false, hasTwoHand: false, equipAnyJob: false },
+      ]),
+    ),
+  ).catalog;
+  gameState.equipmentSystem = {
+    catalog: equipment,
+    contexts: Object.fromEntries(
+      source.initialParty.map((p) => [
+        `player:${p.characterId}`,
+        compileEquipmentParameterContext(
+          parameterReader,
+          p.characterId,
+          {
+            additional: { hp: 0, mp: 0, magic: 0, agility: 0, weight: 0 },
+            correction: { magic: 0, agility: 0 },
+            temporary: noTemporary,
+            passive: { hp: 0, mp: 0, magicEvasion: 0 },
+            condition601: false,
+            twoHandMultiplier: 1,
+          },
+          {
+            additionalStrength: 0,
+            correctionStrength: 0,
+            temporary: noPhysicalTemporary,
+          },
+        ).context,
+      ]),
+    ),
+    limits: { parameters: parameterLimits, physical: physicalLimits },
+    growth,
   };
   const result = {
     kind: "narshe-battle-catalog" as const,
     common,
     encounters,
-    gameState: compileGameState(source, name),
+    gameState,
   };
   return { ...result, contentHash: hash(result) };
 }

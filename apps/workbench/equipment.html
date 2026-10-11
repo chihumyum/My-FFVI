@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>装备系统受控检查</title>
+    <link rel="stylesheet" href="/game/style.css" />
+    <link rel="stylesheet" href="./equipment.css" />
+    <link rel="stylesheet" href="/game/equipment.css" />
+  </head>
+  <body>
+    <h1>装备系统受控检查</h1>
+    <p>
+      使用开场已有装备与共享菜单。先为一名队员卸下装备，再为其他队员选装；库存不会额外生成装备。
+      战斗入口、行动条与胜利按钮为受控输入，不表示剧情进度；检查点只保留在此页面内存中，不写入正式存档。
+    </p>
+    <div class="workbench-controls" aria-label="受控检查操作">
+      <button id="reset-fixture" disabled>重置开场装备</button>
+      <button id="start-battle" disabled>进入受控战斗</button>
+      <button id="step-battle" disabled>推进战斗 410 毫秒</button>
+      <button id="finish-battle" disabled>结束当前动作</button>
+      <button id="win-fixture" disabled>完成受控胜利</button>
+      <button id="save-fixture" disabled>记录检查点</button>
+      <button id="load-fixture" disabled>恢复检查点</button>
+    </div>
+    <p id="receipt" role="status">载入…</p>
+    <main>
+      <section id="equipment-panel" aria-label="装备菜单"></section>
+      <section class="workbench-battle" aria-label="受控战斗">
+        <h2>战斗参数</h2>
+        <p id="battle-projection">进入战斗后显示实际参战队员参数。</p>
+        <canvas
+          id="game"
+          width="512"
+          height="288"
+          tabindex="0"
+          aria-label="受控战斗画面"
+        ></canvas>
+        <section id="battle-ui" hidden aria-label="战斗操作">
+          <p id="battle-action" role="status"></p>
+          <div id="battle-menu"></div>
+          <div id="party"></div>
+        </section>
+        <section id="battle-result" hidden>
+          <h2 id="battle-result-title"></h2>
+          <p id="battle-result-text"></p>
+          <p id="battle-levels"></p>
+          <button id="battle-return">返回装备菜单</button>
+          <button id="battle-retry">重试</button>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="./equipment.js"></script>
+  </body>
+</html>
