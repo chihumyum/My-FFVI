@@ -10,6 +10,7 @@ import type { PartyActorContext } from "../core/party-actors.js";
 import type { TreasureBoxRequest, TreasureInventoryDefinition, TreasureInventoryLimits } from "../core/treasure-inventory.js";
 import type { TreasureTaskMessages } from "../core/treasure-task.js";
 import type { OwnedConditionEventOp } from "../core/owned-condition.js";
+import type { FieldEntryContextDefinition } from "../core/field-entry-context.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -207,6 +208,7 @@ export type FieldContent = {
   map: {
     id: string;
     identity?: { mapId: number; areaId: number };
+    entryContext?: FieldEntryContextDefinition;
     width: number;
     height: number;
     tileSize: number;
@@ -230,6 +232,9 @@ export type FieldContent = {
   /** Integrator.Execute reads this per source Format; absence is unknown. */
   scriptSystemFlags?: Record<string, { keepBadStatusVisual: boolean } | null>;
   entry: {
+    /** A source MapSetup/PointIn entry. The host must finish its initializer or
+     * continuation before publishing SetupEncountData qualification inputs. */
+    synchronization?: { kind: "map-entry" };
     /** Native FieldEntity.Init preserves Show/Hide; ordinary entry supplies the prior visibility. */
     playerVisible?: boolean;
     /** Source map scroll offset in native pixels (native Y points upward). */

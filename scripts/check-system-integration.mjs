@@ -16,7 +16,7 @@ for (const content of [field, battle]) {
   const { contentHash, ...input } = content;
   assert.equal(contentHash, hash(input));
 }
-assert.equal(battle.common.profile, "narshe-playability-v22");
+assert.equal(battle.common.profile, "narshe-playability-v23");
 assert.equal(battle.common.qualificationContext.mode, "source");
 assert.equal(battle.common.qualificationContext.conditionContext, "current");
 assert.equal(field.entry.transportationId, 6);
@@ -211,7 +211,7 @@ for (const [label, mutateBattle, mutateField, pattern] of [
   assert.deepEqual(blocked.state.snapshot(), before, label + " cannot leave a lease or mutate ownership");
   cases.push({ name: label + " rejects source battle entry atomically" });
 }
-const report = { kind: "source-system-integration-v22", sourceSetHash: field.parentSourceSetHash,
+const report = { kind: "source-system-integration-v23", sourceSetHash: field.parentSourceSetHash,
   fieldHash: field.contentHash, battleCatalogHash: battle.contentHash, cases,
   originalRuntimeOracle: false, storyCoverageExpanded: false, completeMigration: false };
 await writeFile(root + "build/reports/system-integration-check.json", JSON.stringify(report, null, 2) + "\n");

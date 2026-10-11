@@ -29,6 +29,7 @@ import { FieldPartyActors, type FieldPartyActorCheckpoint } from "./field-party-
 import { missingFieldPoses } from "./character-media.js";
 import { executeRosterLifecycleEvent, type FieldRosterPort } from "./roster.js";
 import type { FieldConditionPort } from "./field-conditions.js";
+import { projectFieldEntryContext } from "./field-entry-context.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState, type AudioSnapshot } from "./static-audio.js";
 import { TileAnimationState, type TileCheckpoint } from "./tile-animation.js";
@@ -94,12 +95,13 @@ export type Actor = Point & {
   animation: ActorAnimation | null;
 };
 export type FieldCheckpoint = {
-  kind: "idle-field-v4";
+  kind: "idle-field-v5";
   contentHash: string;
   time: number;
   remainder: number;
   nextTask: number;
   transportationId: number | null;
+  entrySynchronized: boolean | null;
   partyActors: FieldPartyActorCheckpoint | null;
   eventState: EventStateSnapshot;
   activeGroups: string[];
@@ -200,6 +202,8 @@ export class FieldGame {
   private tasks: Task[] = [];
   private remainder = 0;
   private nextTask = 1;
+  private synchronizedEntry: boolean | null = null;
+  private entryTaskStarted = false;
   private pendingPlayerStep: ReturnType<FieldConditionPort["prepareStep"]> | null = null;
   private interaction: {
     entityId: string;
@@ -213,6 +217,12 @@ export class FieldGame {
     readonly environment: StaticAudioState = new StaticAudioState(),
     readonly options: FieldGameOptions = {},
   ) {
+    if (content.entry.synchronization !== undefined) {
+      checkpointKeys(content.entry.synchronization, "kind");
+      if (content.entry.synchronization.kind !== "map-entry")
+        throw new Error("Unknown field entry synchronization source");
+      this.synchronizedEntry = false;
+    }
     this.transportationId = content.entry.transportationId ?? null;
     const offset = content.entry.cameraOffset ?? { x: 0, y: 0 };
     checkpointKeys(offset, "x,y");
@@ -519,6 +529,7 @@ export class FieldGame {
   }
   get checkpointReady(): boolean {
     return (
+      this.synchronizedEntry !== false &&
       !this.busy &&
       !this.fade &&
       !this.interaction &&
@@ -529,12 +540,13 @@ export class FieldGame {
     if (!this.checkpointReady)
       throw new Error("Cannot save during field movement or an event");
     return {
-      kind: "idle-field-v4",
+      kind: "idle-field-v5",
       contentHash: this.content.contentHash,
       time: this.time,
       remainder: this.remainder,
       nextTask: this.nextTask,
       transportationId: this.transportationId,
+      entrySynchronized: this.synchronizedEntry,
       partyActors: this.partyActorCheckpoint,
       eventState: this.eventState.snapshot(),
       activeGroups: [...this.activeGroups],
@@ -561,11 +573,15 @@ export class FieldGame {
     const s = structuredClone(raw);
     checkpointKeys(
       s,
-      "kind,contentHash,time,remainder,nextTask,transportationId,partyActors,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment",
+      "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment",
     );
-    if (s.kind !== "idle-field-v4" || s.contentHash !== content.contentHash ||
+    if (s.kind !== "idle-field-v5" || s.contentHash !== content.contentHash ||
       s.transportationId !== (content.entry.transportationId ?? null))
       throw new Error("Field checkpoint source/version mismatch");
+    // Pending entry scripts cannot be saved. Unknown bootstrap context cannot
+    // acquire a source synchronization proof merely by editing a checkpoint.
+    if (s.entrySynchronized !== (content.entry.synchronization ? true : null))
+      throw new Error("Field checkpoint entry synchronization mismatch");
     checkpointNumber(s.time);
     checkpointNumber(s.remainder, 0, 10);
     checkpointInteger(s.nextTask, 1);
@@ -638,6 +654,7 @@ export class FieldGame {
     next.time = s.time;
     next.remainder = s.remainder;
     next.nextTask = s.nextTask;
+    next.synchronizedEntry = s.entrySynchronized;
     return next;
   }
   private block(message: string, site: Site | null = null) {
@@ -1108,6 +1125,37 @@ export class FieldGame {
       throw new Error("Missing event script: " + script);
     this.beginRoot(script);
     return true;
+  }
+  /** Called exactly once by the source map-entry host. A normal event cannot
+   * stand in for LastSettings -> SetupEncountData. No-script entries still
+   * execute the source post-setup boundary. */
+  startMapEntry(script: string | null): void {
+    if (this.content.entry.synchronization?.kind !== "map-entry" ||
+        this.synchronizedEntry !== false || this.entryTaskStarted)
+      throw new Error("No pending source map entry");
+    if (this.busy || this.player.motion || this.fade)
+      throw new Error("Cannot begin map entry during field activity");
+    if (script !== null && !this.content.scripts[script])
+      throw new Error("Missing map entry script: " + script);
+    this.entryTaskStarted = true;
+    if (script !== null) this.beginRoot(script);
+    else this.finishMapEntry();
+  }
+  get entrySynchronized(): boolean | null { return this.synchronizedEntry; }
+  get battleEntryContext(): ReturnType<typeof projectFieldEntryContext> {
+    return projectFieldEntryContext(this.content.map.entryContext, {
+      mapId: this.content.map.identity?.mapId ?? null,
+      transportationId: this.transportationId,
+      activeGroups: [...this.activeGroups],
+      player: this.player,
+      entrySynchronized: this.synchronizedEntry,
+    });
+  }
+  private finishMapEntry(): void {
+    if (this.synchronizedEntry === false && this.entryTaskStarted &&
+        !this.busy && !this.fade && !this.interaction &&
+        Object.values(this.actors).every((actor) => actor.motion === null))
+      this.synchronizedEntry = true;
   }
   /** Explicit diagnostic entry, never counted as a story transition or a new-game state. */
   previewMap(mapId: number, entrance: number): void {
@@ -1603,6 +1651,7 @@ export class FieldGame {
       }
       if (!changed) {
         this.finishInteraction();
+        this.finishMapEntry();
         return;
       }
     }

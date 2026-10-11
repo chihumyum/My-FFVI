@@ -59,12 +59,15 @@ const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
-assert.deepEqual(
-  Object.values(catalog.common.abilities)
-    .filter((a) => a.plan)
-    .map((a) => a.id),
-  [1, 218, 219, 220, 222, 377, 402],
-);
+assert.equal(Object.keys(catalog.common.abilities).length, decoded.length);
+for (const ability of admitted) {
+  const published = catalog.common.abilities[ability.id];
+  assert.ok(published);
+  assert.deepEqual(published.program, ability.program);
+  if (published.plan) assert.deepEqual(published.plan, ability.plan);
+  else assert.ok(published.blockers.length, "A blocked source plan needs an explicit host/display reason");
+}
+for (const ability of blocked) assert.equal(catalog.common.abilities[ability.abilityId].plan, null);
 const base = encounterContent(catalog, 3);
 assert.ok(base);
 const results = [];

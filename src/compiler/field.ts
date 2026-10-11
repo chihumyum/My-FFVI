@@ -20,6 +20,7 @@ import { compileTransportationCatalog, compileNarsheTransportationCheckpoint } f
 import { compilePartyActorCatalog, compileNarshePartyActorCheckpoint } from "./party-actors.js";
 import { compileOwnedCharacterInitialization } from "./owned-character.js";
 import { compileInitialPartyState } from "./party.js";
+import { compileFieldEntryContext } from "./field-entry-context.js";
 import { activePartyMembers } from "../core/party.js";
 import {
   compileRosterLifecycleEvent,
@@ -682,6 +683,7 @@ export async function compileField(root: string): Promise<FieldContent> {
         mapId: tableId(mapRows[0]!.id),
         areaId: tableId(mapRows[0]!.area_id),
       },
+      entryContext: compileFieldEntryContext(systemSource.assets, systemSource.tables, tableId(mapRows[0]!.id)),
       width: integer(rawMap.width),
       height: integer(rawMap.height),
       tileSize: integer(rawMap.tilewidth),

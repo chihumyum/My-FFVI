@@ -157,7 +157,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v22"
+      content.profile !== "narshe-playability-v23"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -281,7 +281,9 @@ export class BattleGame {
     if (!unit.appearanceState || Boolean(state.magitek) !== Boolean(unit.appearanceState.magitek)) {
       // These are the host's supported default/down/dying streams, not an
       // animation-time guess. Check every body and armor frame independently.
-      for (const key of ["default", "down", "dying", "IdleR00", "dyingR00"]) {
+      const poses = ["default", "down", "dying", "IdleR00", "dyingR00"];
+      if (this.content.conditions.behaviors.some((behavior) => behavior.kind === "defend")) poses.push("ready");
+      for (const key of poses) {
         const alias = catalog.aliases[key];
         if (!alias?.body.length || state.magitek && !alias.armor.length)
           throw new Error("Missing battle appearance pose: " + key);
@@ -538,7 +540,7 @@ export class BattleGame {
       sameTargetSelection(c.selection, selection),
     );
     if (!choice) return false;
-    this.queue.push({
+    const action: BattleAction = {
       kind: "normal",
       actor: actorId,
       source: { kind: "item", id: itemId },
@@ -556,7 +558,10 @@ export class BattleGame {
       elapsed: 0,
       resolved: false,
       results: [],
-    });
+    };
+    const conditionIds = this.conditions.admitAtbAction(actor.conditionIds, []);
+    this.queue.push(action);
+    actor.conditionIds = conditionIds;
     actor.queued = true;
     return true;
   }
@@ -822,7 +827,12 @@ export class BattleGame {
         );
       // Commit the whole group only after every target has been selected. A
       // later failure cannot leave half a LoopAct in the live queue.
+      const conditionIds = this.conditions.admitAtbAction(actor.conditionIds, decisions.map((action) => {
+        const ability = this.content.abilities[action.source.id]!;
+        return { id: ability.id, type: ability.program.rules.type_id! };
+      }));
       this.queue.push(...decisions);
+      actor.conditionIds = conditionIds;
       actor.queued = true;
       this.aiStates.set(actor.id, turn.state);
       actor.behavior = turn.behavior;
@@ -894,7 +904,10 @@ export class BattleGame {
       choice,
       this.actionCommand(actor, abilityId, commandId)!,
     );
+    const conditionIds = this.conditions.admitAtbAction(actor.conditionIds,
+      [{ id: ability.id, type: ability.program.rules.type_id! }]);
     this.queue.push(action);
+    actor.conditionIds = conditionIds;
     actor.queued = true;
     return true;
   }
@@ -1078,7 +1091,8 @@ export class BattleGame {
       action.selection = choice.selection;
       action.targetIds = choice.targetIds;
       this.action = action;
-      this.log(`${actor.name} · ${this.actionDefinition(action).name}`);
+      const actionName = this.actionDefinition(action).name;
+      this.log(actionName ? `${actor.name} · ${actionName}` : `${actor.name} 行动。`);
     }
     this.checkOutcome();
   }
@@ -1262,9 +1276,9 @@ export class BattleGame {
             messages.push(`${target.name} · 无效。`);
           } else if (effect.resource === "condition") {
             for (const id of effect.added)
-              messages.push(`${target.name} 陷入${this.conditions.name(id)}。`);
+              if (this.conditions.name(id)) messages.push(`${target.name} 陷入${this.conditions.name(id)}。`);
             for (const id of effect.removed)
-              messages.push(
+              if (this.conditions.name(id)) messages.push(
                 `${target.name} 的${this.conditions.name(id)}已解除。`,
               );
           } else {

@@ -17,6 +17,7 @@ import { compileTransportationCatalog } from "./transportation.js";
 import { loadSystemSource } from "./system-source.js";
 import { loadSystemMessages } from "./system-messages.js";
 import { compileTreasureInventoryLimits } from "./treasure-inventory.js";
+import { compileFieldEntryContext } from "./field-entry-context.js";
 import type { Character, Evidence, Op, Sprite } from "../field/types.js";
 import type {
   WorldMapContent,
@@ -248,6 +249,7 @@ export async function compileWorld(root: string) {
         ...geometryData,
         id: binding.name,
         identity: { mapId: Number(binding.id), areaId: Number(binding.areaId) },
+        entryContext: compileFieldEntryContext(corpus.assets, corpus.tables, Number(binding.id)),
         entities: groups.entity_default?.entities ?? [],
         groups,
         initialGroups: ["entity_default"],

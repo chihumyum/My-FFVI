@@ -58,6 +58,12 @@ export function projectActionTarget(
       conditions,
       target,
     ));
+  } else if (plan.effects.length === 1 && first?.kind === "defend") {
+    if (cost !== 0 || targetCount !== 1) throw new Error("Invalid Defend action context");
+    const change = conditions.defend(target.conditionIds, first.conditionId, actor.id, target.id);
+    conditionIds = change.currentIds;
+    effects = [{ slot: first.slot, resource: "condition", recovery: false,
+      added: change.added, removed: change.removed, missed: change.missed }];
   } else if (
     plan.effects.length === 1 &&
     first &&
@@ -95,7 +101,7 @@ export function projectActionTarget(
       plan,
       power,
       actor,
-      target,
+      { ...target, conditionTypes: conditions.types(target.conditionIds) },
       random,
       targetCount,
     );

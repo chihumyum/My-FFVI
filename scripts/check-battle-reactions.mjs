@@ -28,7 +28,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v22");
+assert.equal(catalog.common.profile, "narshe-playability-v23");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 assert.deepEqual(catalog.common.reactions, {
   counterLimit: 1,
@@ -101,9 +101,9 @@ for (const asset of Object.values(exported.assets).filter((a) =>
   }
 }
 const probes = [];
-for (const [name, pc, expected, missingAbilityId, initialRouteBlocked] of [
-  ["sc_ai_002_Templar.json", 5, 379, 40, false],
-  ["sc_ai_054_Tonberry.json", 5, 459, 154, true],
+for (const [name, pc, expected, missingAbilityId, initialRouteBlocked, conditionMonsterId] of [
+  ["sc_ai_002_Templar.json", 5, 379, null, false, 3],
+  ["sc_ai_054_Tonberry.json", 5, 459, 154, true, null],
 ]) {
   const original = programs.get(name);
   assert.equal(original.instructions[pc].op.kind, "counter-act");
@@ -204,10 +204,9 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked] of [
   } catch (error) {
     originalBlocker = error.message;
   }
-  // v16 admits Templar's IsRecevieAbility predicate, so its first normal route
-  // can start. Admission of that route still does not close all source ability
-  // dependencies. Keep those two claims separate instead of requiring an old
-  // unsupported-opcode failure after that opcode has been implemented.
+  // Templar's received-ability predicate and ordinary magic now compile, so
+  // its first route can start in this controlled host. Its source initial
+  // state is checked separately below; Tonberry still has an ability blocker.
   assert.equal(
     originalBlocker !== null,
     initialRouteBlocked,
@@ -218,13 +217,32 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked] of [
       ? []
       : [{ abilityId: id, blockers: full.abilities[id].blockers }],
   );
-  const missingDependency = originalAbilityBlockers.find(
-    (entry) => entry.abilityId === missingAbilityId,
-  );
-  assert.ok(
-    missingDependency?.blockers.length,
-    "A controlled instruction must not be counted as the full enemy",
-  );
+  let originalConditionBlocker = null;
+  if (missingAbilityId !== null) {
+    const missingDependency = originalAbilityBlockers.find(
+      (entry) => entry.abilityId === missingAbilityId,
+    );
+    assert.ok(missingDependency?.blockers.length,
+      "A controlled instruction must not be counted as the full enemy");
+    assert.match(missingDependency.blockers.join(), /play-time ability cost provider/);
+  } else {
+    assert.deepEqual(originalAbilityBlockers, [], "Templar action plans now compile");
+    const monster = reader.row("monster.csv", conditionMonsterId);
+    assert.equal(monster.values.initial_condition, "903");
+    const group = reader.group("condition_group.csv", "group_id", monster.values.initial_condition);
+    const ids = group.map((row) => Number(row.values.condition_id));
+    assert.deepEqual(ids, [93]);
+    assert.equal(reader.row("condition.csv", 93).values.condition_type, "19");
+    const withSourceConditions = structuredClone(full);
+    withSourceConditions.enemies[0].conditionIds = ids;
+    assert.throws(() => new BattleGame(withSourceConditions, 409),
+      /Unimplemented active battle condition: 93/);
+    originalConditionBlocker = {
+      monsterId: conditionMonsterId, source: monster.source,
+      groupId: Number(monster.values.initial_condition),
+      groupRows: group, conditionIds: ids, activeConditionBlocked: true,
+    };
+  }
   probes.push({
     source: original.source,
     sourcePc: pc,
@@ -240,6 +258,7 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked] of [
     originalBlocker,
     originalInitialRouteAdmitted: originalBlocker === null,
     originalAbilityBlockers,
+    originalConditionBlocker,
   });
   if (probes.length === 1)
     await writeFile(

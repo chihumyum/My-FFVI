@@ -15,6 +15,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [v23 完整技能目录、普通魔法、防御与字段入战](docs/systems-v23.md)
 - [v22 持有状态、动态入战与魔导外观](docs/systems-v22.md)
 - [v21 宝箱任务与普通角色模板](docs/systems-v21.md)
 - [v17 并行系统集成与验收](docs/systems-v17.md)
@@ -82,6 +83,9 @@ npm run inventory-events:check
 npm run owned-condition:check
 npm run battle-entry-runtime:check
 npm run battle-appearance:check
+npm run battle-ability-content:check
+npm run defend:check
+npm run field-entry-context:check
 npm run check
 .venv/bin/python -m unittest discover -s tools/tests
 npm run dev

@@ -10,7 +10,9 @@ import {
   compileParameterLimits,
 } from "./parameters.js";
 import type { ParameterValues } from "../core/parameters.js";
-import { compileDevelopmentAbility } from "./ability.js";
+import { compileBattleAbilityContent } from "./battle-ability-content.js";
+import { loadCorpus } from "./corpus.js";
+import { bindSystemMessages } from "./system-messages.js";
 import { compileBattleConditionCatalog } from "./conditions.js";
 import { compileBattleCommand } from "./commands.js";
 import { compileBattleAbilityCatalog } from "./battle-abilities.js";
@@ -157,28 +159,27 @@ export async function compileOpeningPlayable(
     evasion: 0,
     magicEvasion: 0,
   };
-  const abilities: BattleContent["abilities"] = {};
-  // Initialization preserves locked/unused skills without admitting their
-  // entire execution dependency graph into this development battle profile.
-  for (const id of source.battleAbilityIds) {
-    const a = row("ability.csv", id);
-    const contents = rows("content.csv").filter(
-      (c) => c.type_id === "4" && c.type_value === a.id,
-    );
-    // Guard's unnamed physical actions get authored UI descriptions, not substituted assets.
-    const displayName =
-      contents.length === 1
-        ? contents[0]!.mes_id_name === "None"
-          ? `能力 #${id}`
-          : name(contents[0]!.mes_id_name!)
-        : id === 1
-          ? "攻击"
-          : id === 377
-            ? "突击"
-            : null;
-    if (!displayName) throw new Error("Missing ability display identity");
-    abilities[id] = compileDevelopmentAbility(parameterReader, id, displayName);
-  }
+  const corpus = await loadCorpus(root);
+  if (corpus.manifest.parentSourceSetHash !== source.parentSourceSetHash)
+    throw new Error("Mismatched ability message sources");
+  if (!Array.isArray(corpus.manifest.sources)) throw new Error("Missing ability message sources");
+  const messageSources = corpus.manifest.sources.map((raw: unknown) => {
+    const sourceFile = record(raw);
+    if (typeof sourceFile.file !== "string" || typeof sourceFile.sha256 !== "string")
+      throw new Error("Invalid ability message source identity");
+    return { file: sourceFile.file, sha256: sourceFile.sha256 };
+  });
+  const systemMessages = bindSystemMessages(field, source.parentSourceSetHash, messageSources).messages;
+  const storyMessages = record(corpus.messages.story_mes_zhc);
+  const abilityContent = compileBattleAbilityContent(parameterReader,
+    Object.fromEntries(Object.keys(source.tables).map((table) => [table, rows(table)])), (key) => {
+      const found = [systemMessages[key], storyMessages[key]].filter((value): value is string => typeof value === "string");
+      const uniqueValues = [...new Set(found)];
+      return uniqueValues.length === 1 ? uniqueValues[0]! : null;
+    });
+  // Definitions describe executable capabilities, never acquisition. Commands
+  // still use each actor's actual owned list and current source qualification.
+  const { abilities, abilityContentIds } = abilityContent;
   const ordinary = compilePlayerBattleDefinitions({ ...parameterReader,
     matching: (table, key, value) => Object.values(source.tables[table] ?? {})
       .filter((r) => r.values[key] === String(value)),
@@ -287,14 +288,9 @@ export async function compileOpeningPlayable(
       mp: int(r.mp_value1),
     });
   }
-  const abilityContentIds = Object.fromEntries(rows("ability.csv").map((ability) => {
-    const matches = rows("content.csv").filter((content) => int(content.type_id) === 4 && content.type_value === ability.id);
-    if (matches.length > 1) throw new Error("Ambiguous ability content identity: " + ability.id);
-    return [ability.id!, matches[0] ? int(matches[0].id) : null];
-  }));
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v22",
+    profile: "narshe-playability-v23",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,

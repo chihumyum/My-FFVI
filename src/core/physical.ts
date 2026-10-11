@@ -37,6 +37,8 @@ export type PhysicalInput = {
     defense: number;
     evasion: number;
     elementResistances: ElementResistances;
+    /** Derived live condition types, distinct from master row identities. */
+    conditionTypes?: readonly number[];
   };
   targetCount: number;
 };
@@ -57,7 +59,8 @@ function baseDamage(input: PhysicalInput, enemyDraw: number) {
 }
 
 /** PhysicalExecution 0xa97b20, front rows, explicit affinities, correction=1,
- * no numerical conditions, accessory/weapon procs, species, counters or copies.
+ * Defend type 1 only; no other numerical conditions, accessory/weapon procs,
+ * species, counters or copies.
  * The compiler/profile must establish that context. Silence is allowed.
  */
 export function validatePhysical(input: PhysicalInput): void {
@@ -66,6 +69,10 @@ export function validatePhysical(input: PhysicalInput): void {
     throw new Error("Missing physical calculation rules");
   validateElements(actor.attackElements);
   validateElementResistances(target.elementResistances);
+  if (target.conditionTypes !== undefined &&
+      (!Array.isArray(target.conditionTypes) || target.conditionTypes.some((type) =>
+        !Number.isInteger(type) || type < 0 || type > 0x7fffffff)))
+    throw new Error("Invalid physical condition types");
   for (const value of [
     power,
     actor.level,
@@ -138,6 +145,9 @@ export function calculatePhysical(input: PhysicalInput, random: BattleRandom) {
     return { amount: 0, missed: true, critical: false };
   if (!rules.contentFlags.includes(5)) {
     amount = Math.trunc(((255 - target.defense) * amount) / 256) + 1;
+    // Source type 1 is checked inside the defense branch, before player-vs-
+    // player halving, critical, elements and target-count correction.
+    if (target.conditionTypes?.includes(1)) amount = Math.trunc(amount * 0.5);
     if (actor.side === "player" && target.side === "player")
       amount = Math.trunc(amount * 0.5);
   }

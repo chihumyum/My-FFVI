@@ -16,6 +16,7 @@ import type { AbilityDefinition } from "../core/battle-content.js";
 import { compileContentFlags } from "./content-flags.js";
 import { compileTargetRule } from "./battle-targets.js";
 import { compileAttackElements } from "./elements.js";
+import { compileDefendEffect } from "./defend.js";
 
 type Reader = ConditionReader;
 /** SerialBattleUtility 0x85e170; type and ID arrays recovered from 0x85f000.
@@ -157,6 +158,12 @@ export function compileDevelopmentAbility(
     const [v1, v2, v3] = fn.values;
     if (fn.series !== 0) {
       blockers.push(`slot ${fn.slot}: unresolved series ${fn.series}`);
+    } else if (fn.type === 15) {
+      try {
+        effects.push(compileDefendEffect(reader, program).effect);
+      } catch (error) {
+        blockers.push(error instanceof Error ? error.message : String(error));
+      }
     } else if (fn.type === 2 && zero(fn.values)) {
       effects.push({ slot: fn.slot, kind: "physical" });
     } else if (fn.type === 3 && v1 === 1 && v2 === 0 && v3 === 0) {
@@ -273,13 +280,19 @@ export function compileDevelopmentAbility(
   }
   const r = program.rules;
   const physicalOnly = effects.length === 1 && effects[0]!.kind === "physical";
+  const defendOnly = effects.length === 1 && effects[0]!.kind === "defend";
   const conditionOnly =
     effects.length === 1 &&
-    ["add-condition", "recover-condition"].includes(effects[0]!.kind);
+    ["add-condition", "recover-condition", "defend"].includes(effects[0]!.kind);
   const magicOnly =
     effects.length === 1 &&
     (effects[0]!.kind === "magic" ||
       (effects[0]!.kind === "recovery" && effects[0]!.calculation === "magic"));
+  // Ordinary white/black magic uses the same source Function1/Function3
+  // calculators as Magitek. Content flag 3 is the Runic targeting selector
+  // (MagicSealSword.ForciblyTarget 0x922500), not a scalar damage flag.
+  // Its behavior is admitted only in the host's no-Runic active-state domain.
+  const ordinaryMagic = magicOnly && [1, 2].includes(r.type_id!);
   for (const key of [
     "attack_count",
     "Impact_status",
@@ -299,19 +312,35 @@ export function compileDevelopmentAbility(
     ? [1, 3]
     : conditionOnly
       ? []
-      : magicOnly || physicalOnly
-        ? [1, 2, 5]
-        : [1];
+      : ordinaryMagic
+        ? [1, 2, 3, 5]
+        : magicOnly || physicalOnly
+          ? [1, 2, 5]
+          : [1];
   if (program.contentFlags.some((id) => !allowedFlags.includes(id)))
     blockers.push(`unresolved content flags=${program.contentFlags.join(",")}`);
   else if (program.contentFlags.length && !magicOnly && !physicalOnly)
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (!(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
+  if (!defendOnly && !ordinaryMagic && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
-  if (!(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
+  if (!defendOnly && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
+  if (ordinaryMagic && int(a.ability_lv) !== 0)
+    blockers.push("unresolved level-specific ability consumption");
+  if (abilityId === 154)
+    blockers.push("unresolved play-time ability cost provider");
+  // CalcControllerProvider.GetMagicDamage 0x3d8de0 suppresses group damage
+  // correction for this .cctor array (0x3db330) and type 623. The scalar host
+  // currently represents that same positive-damage branch only via flag 2.
+  // Real ability 59 already carries it; do not invent a flag for other rows.
+  if (magicOnly &&
+      ([59, 360, 1312, 1330].includes(abilityId) || r.type_id === 623) &&
+      !program.contentFlags.includes(2))
+    blockers.push("unresolved all-target magic correction provider");
+  if (ordinaryMagic && program.contentFlags.includes(3))
+    limitations.push("source flag 3 is Runic targeting; active Runic behavior must remain blocked by the host");
   if (![0, 1].includes(r.reaction_type!))
     blockers.push(`unresolved reaction_type=${r.reaction_type}`);
   if (![0, 1].includes(r.invalid_reflection!))
@@ -350,7 +379,7 @@ export function compileDevelopmentAbility(
     blockers.push("unresolved non-magic element carrier");
   if (elements.length > 8) blockers.push("unreviewed magic element count");
   limitations.push(
-    "only admitted silence/death/dying and ordinary poison battle behaviors; poison row 88, field poison steps and other active condition providers remain blocked; no equipment-added functions, undead or Runic overrides",
+    "only admitted active battle behaviors with their required hosts; poison row 88 and other unknown providers remain blocked; no equipment-added functions, undead, Runic or MP-cost equipment overrides",
   );
   if (physicalOnly)
     limitations.push(
@@ -383,7 +412,7 @@ export function compileDevelopmentAbility(
         magic: magicOnly
           ? {
               accuracy: r.accuracy_rate!,
-              contentFlags: [...program.contentFlags],
+              contentFlags: program.contentFlags.filter((flag) => !ordinaryMagic || flag !== 3),
               elements,
               // GetRecoveryStatus 0x3d9af0 supplies this source-specific override.
               forceDefense:

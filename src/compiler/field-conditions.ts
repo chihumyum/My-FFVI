@@ -17,7 +17,10 @@ export function compileFieldConditionCatalog(
   transportationIds: readonly number[],
 ): { catalog: FieldConditionCatalog; sources: BattleRow[] } {
   const sources: BattleRow[] = [];
-  const behaviors = battle.behaviors.map(
+  // Defend is battle-local until=1 state. It is removed at battle end and has
+  // no admitted field lifecycle; exposing it as a passive field status would
+  // also let a forged checkpoint carry protection into another encounter.
+  const behaviors = battle.behaviors.filter((behavior) => behavior.kind !== "defend").map(
     (behavior): FieldConditionCatalog["behaviors"][number] => {
       const row = reader.row("condition.csv", behavior.id);
       sources.push(row);

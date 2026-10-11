@@ -3,6 +3,9 @@ const $ = (id) => document.getElementById(id);
 const label = (node, text) => {
   if (node.textContent !== text) node.textContent = text;
 };
+// Preserve source markup in content and event records; the text-only battle
+// controls currently display names without the source magic-school icons.
+const battleLabel = (text) => text.replace(/<IC_(?:WMGC|BMGC|IMGC|LMGC|SCR|NIF|SRK|NSRD|KTN|DRAG|BAG)>/g, "");
 /** Web interaction states, deliberately independent of the native UI enum.
  * Their timing roles match the recovered KeyInput waiting/force-wait rules. */
 export function battleMenuWaiting(state) {
@@ -179,6 +182,7 @@ export class BattleView {
           hp = document.createElement("span"),
           meter = document.createElement("progress");
         button.className = "party-row";
+        hp.className = "battle-vitals";
         meter.max = 100;
         button.append(name, hp, meter);
         button.onclick = () => {
@@ -201,7 +205,7 @@ export class BattleView {
             ? ` · ${conditionNames.join("、")}`
             : ""),
       );
-      label(row.hp, `${p.hp} / ${p.maxHp}`);
+      label(row.hp, `HP ${p.hp} / ${p.maxHp}\nMP ${p.mp} / ${p.maxMp}`);
       row.meter.value = p.atb;
       row.meter.setAttribute("aria-label", p.name + " 行动条");
       row.button.disabled = paused || this.specialInput !== null || !readyIds.has(p.id);
@@ -263,11 +267,13 @@ export class BattleView {
             : command.abilityIds
                 .map((id) => {
                   const source = { kind: "ability", id };
+                  const ability = this.content.abilities[id];
+                  const displayName = battleLabel(ability?.name || (command.abilityIds.length === 1 ? command.name : "行动"));
                   return {
                     commandId,
                     source,
                     usable: canUse(source, commandId),
-                    name: this.content.abilities[id]?.name ?? `能力 ${id} · 暂不可用`,
+                    name: displayName + (ability?.cost ? ` · MP ${ability.cost}` : ""),
                   };
                 });
         })
@@ -298,7 +304,7 @@ export class BattleView {
       this.specialInput,
     ]);
     this.publishClock();
-    label($("battle-action"), battle.events.at(-1)?.text ?? "");
+    label($("battle-action"), battleLabel(battle.events.at(-1)?.text ?? ""));
     if (key === this.key) return;
     this.key = key;
     const revision = ++this.revision;
@@ -437,8 +443,10 @@ export class BattleView {
         ).x > x;
       const dying = battle.content.conditions.dying &&
         actor.conditionIds.includes(battle.content.conditions.dying.conditionId);
+      const defending = battle.content.conditions.behaviors.some((behavior) =>
+        behavior.kind === "defend" && actor.conditionIds.includes(behavior.id));
       const appearance = battle.appearanceFrame(actor.id, {
-        key: actor.hp === 0 ? "down" : dying ? aimingRight ? "dyingR00" : "dying" :
+        key: actor.hp === 0 ? "down" : defending ? "ready" : dying ? aimingRight ? "dyingR00" : "dying" :
           aimingRight ? "IdleR00" : "default",
         bodyFrame: 0, armorFrame: 0,
       });

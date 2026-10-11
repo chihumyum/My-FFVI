@@ -187,13 +187,9 @@ export class GameSession {
         if (!content) continue;
         if (content.battleEntry && content.qualificationContext?.mode === "source") {
           try {
-            const entry = projectBattleFieldState(content.battleEntry, {
-              mapId: this.field.content.map.identity?.mapId ?? null,
-              transportationId: this.field.transportationId,
-              // No source save-point or encounter-foot controller is hosted
-              // yet. Relevant unknowns block entry instead of becoming false.
-              isSavePoint: null, beastFieldController: null, footAttributeType: null,
-            }, this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
+            const entry = projectBattleFieldState(content.battleEntry,
+              this.field.battleEntryContext.state,
+              this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
             if (entry.invalidContentIds === null || entry.blockers.length)
               throw new Error(entry.blockers.join("; ") || "Unknown battle field exclusions");
             content = { ...content, qualificationContext: { ...content.qualificationContext,

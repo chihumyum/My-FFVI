@@ -32,7 +32,7 @@
 
 `WorldCatalog` 统一持有来源交通表与宝箱容量；`WorldMapContent` 保存入口 definition、独立入口 blocker 及原脚本 `KeepBadStatusVisual` 信息。世界入口转交这些值给新 FieldGame。不存在从背包推断容量或从当前坐骑推断交通身份的第二套规则。
 
-Web 检查点为 `idle-world-v4`，内层为 `idle-field-v4`。原生队伍 host 的 `location.traveler` 为 null，动态外观仅保存在 `field.partyActors`；独立几何检查仍保存显式 Traveler，二者不能互换。恢复不重放初始化脚本，也不执行原生负 PointIn 恢复。它从源初始 actor inventory 与目标地图提供器重建校验基准，再恢复保存的缓存与媒体。存档不能用自身的伙伴、状态 resident、相机范围、隐藏演员 ID 或交通身份作为可信基准。目标相机偏移重新由源表导出，不允许存档另造偏移。
+Web 检查点为 `idle-world-v5`，内层为 `idle-field-v5`。v23 增加字段入战上下文的 `entrySynchronized`；世界入口的初始化及续段完成后才可保存 true，恢复不重放该过程，详见 [字段入战上下文](field-entry-context.md)。原生队伍 host 的 `location.traveler` 为 null，动态外观仅保存在 `field.partyActors`；独立几何检查仍保存显式 Traveler，二者不能互换。恢复也不执行原生负 PointIn 恢复。它从源初始 actor inventory 与目标地图提供器重建校验基准，再恢复保存的缓存与媒体。存档不能用自身的伙伴、状态 resident、相机范围、隐藏演员 ID 或交通身份作为可信基准。目标相机偏移重新由源表导出，不允许存档另造偏移。
 
 已经进入地图后，当前事件旗标可以仍有 unknown；恢复不得用入口初值补齐。下次真正切图仍重新读取 `ScenarioFlag3[45]`，缺值时阻塞。该区别避免“为了能读档而初始化整个故事旗标库”。
 

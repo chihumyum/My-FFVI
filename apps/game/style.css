@@ -424,6 +424,11 @@ a {
 .party-row.selected {
   border-color: #cfb878;
 }
+.battle-vitals {
+  white-space: pre-line;
+  font-size: 12px;
+  line-height: 1.35;
+}
 .party-row.fallen {
   color: #f99391;
 }

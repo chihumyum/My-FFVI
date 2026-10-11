@@ -23,6 +23,7 @@ export class InventoryView {
               (b) => b.id === id,
             ).name,
         )
+        .filter(Boolean)
         .join("、");
     find("owned-party").textContent = players
       .map(

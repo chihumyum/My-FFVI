@@ -865,6 +865,60 @@
         "docs/battle-appearance.md",
         "build/reports/battle-appearance-check.json"
       ]
+    },
+    {
+      "id": "narshe:source-ability-dictionary-v23",
+      "subject": "narshe",
+      "predicate": "migration.abilityDictionary",
+      "value": "The source contains 1530 ability definitions. v23 compiles their dependency closure independently of ownership, with 260 bounded host plans and explicit blockers for the rest. Character 1 naturally knows abilities 31 and 40; catalogue membership does not grant a skill. Special MP providers, reflection, Runic and unsupported active states remain gated.",
+      "when": {
+        "battleProfile": "narshe-playability-v23"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "ability.csv:31,40",
+        "character_status.csv:1",
+        "docs/battle-ability-content.md",
+        "build/reports/battle-ability-content-check.json"
+      ]
+    },
+    {
+      "id": "narshe:source-defend-v23",
+      "subject": "narshe",
+      "predicate": "migration.defendLifecycle",
+      "value": "Command 2 refers to ability 2, function type15 and condition row1/type1/until1. The source halves qualifying physical damage after defense, clears Defend on admitted ordinary ATB actions but not direct counter actions, and uses Ready posture for living defenders. v23 admits the bounded lifecycle; special action and presentation branches remain unverified.",
+      "when": {
+        "battleProfile": "narshe-playability-v23"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "command.csv:2",
+        "ability.csv:2",
+        "condition.csv:1",
+        "GameAssembly.dll:RVA 0x679920",
+        "docs/defend.md",
+        "build/reports/defend-check.json"
+      ]
+    },
+    {
+      "id": "narshe:source-field-entry-context-v23",
+      "subject": "narshe",
+      "predicate": "migration.fieldEntryContext",
+      "value": "Source field battle exclusions read actual transportation, foot-event save-point membership and the BeastField controller cache. v23 can prove no save point only from all active source groups, and ordinary ground only after explicit map-entry completion. Bootstrap without synchronization evidence stays unknown; attribute grids and real save-point callbacks remain unresolved.",
+      "when": {
+        "battleProfile": "narshe-playability-v23"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x575e50",
+        "GameAssembly.dll:RVA 0x7aabf0",
+        "GameAssembly.dll:RVA 0x2f0180",
+        "docs/field-entry-context.md",
+        "build/reports/field-entry-context-check.json"
+      ]
     }
   ],
   "assets": []

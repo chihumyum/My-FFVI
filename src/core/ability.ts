@@ -12,6 +12,7 @@ import {
 } from "./magic.js";
 import type { TargetRule } from "./battle-targets.js";
 import type { ElementResistances } from "./elements.js";
+import type { DefendEffect } from "./defend.js";
 /** Decoded source dispatch, separate from the bounded playability executor. */
 export type AbilityFunction = {
   slot: number;
@@ -32,6 +33,7 @@ export type AbilityProgram = {
   elements: number[];
 };
 export type AbilityEffect =
+  | DefendEffect
   | { slot: number; kind: "physical" | "magic" }
   | {
       slot: number;
@@ -98,6 +100,8 @@ export function calculateDevelopmentEffects(
     evasion: number;
     magicEvasion: number;
     elementResistances: ElementResistances;
+    /** Derived from the live condition owner by the action host. */
+    conditionTypes?: readonly number[];
   },
   randomInt: (min: number, max: number) => number,
   targetCount = 1,

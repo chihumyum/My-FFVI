@@ -55,7 +55,7 @@ const input = state.battleInventory(lease);
 assert.deepEqual(input.qualification.members.map((m) => [m.id, m.sourceId]), state.battlePlayers(lease).map((p) => [p.id, p.sourceId]));
 const battle = new BattleGame(content, 79, state.battlePlayers(lease), input);
 const players = [];
-const hostPoses = ["default", "down", "dying", "IdleR00", "dyingR00"];
+const hostPoses = ["default", "down", "dying", "IdleR00", "dyingR00", "ready"];
 for (const player of battle.players) {
   assert.ok(player.conditionIds.includes(53));
   assert.equal(player.appearanceState.magitek.conditionId, 53);

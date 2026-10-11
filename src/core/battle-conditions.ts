@@ -1,5 +1,6 @@
 import { ConditionRules, type ConditionCatalog } from "./conditions.js";
 import { accuracyHit } from "./battle-hit.js";
+import { applyDefend, clearDefendOnAdmission } from "./defend.js";
 import {
   advancePoisonClocks,
   reconcilePoisonClocks,
@@ -16,6 +17,7 @@ export type BattleConditionCatalog = {
   hpZeroConditionId: number;
   dying: { conditionId: number; thresholdDivisor: number };
   behaviors: (
+    | { id: number; kind: "defend"; name: string; untilType: 1 }
     | { id: number; kind: "silence"; name: string; untilType: 2 }
     | { id: number; kind: "unable-fight"; name: string; untilType: 3 }
     | { id: number; kind: "dying"; name: string; untilType: 3 }
@@ -82,8 +84,11 @@ export class BattleConditions {
       throw new Error("Duplicate battle condition behavior");
     for (const b of this.behaviors.values()) {
       if (
-        (typeof b.name !== "string" || (!b.name && b.kind !== "magitek")) ||
-        !(b.kind === "silence"
+        (typeof b.name !== "string" || (!b.name && !["magitek", "defend"].includes(b.kind))) ||
+        !(b.kind === "defend"
+          ? b.untilType === 1 && this.definitions.get(b.id)?.type === 1 &&
+            this.definitions.get(b.id)?.overlapped === false
+          : b.kind === "silence"
           ? b.untilType === 2 && this.definitions.get(b.id)?.type === 6
           : b.untilType === 3 &&
             ((b.kind === "unable-fight" &&
@@ -288,6 +293,26 @@ export class BattleConditions {
       removed,
       missed: removed.length === 0,
     };
+  }
+  defend(currentIds: readonly number[], conditionId: number, actorId: string, targetId: string): ConditionChange {
+    this.validateActive(currentIds);
+    if (this.behaviors.get(conditionId)?.kind !== "defend")
+      throw new Error("Unimplemented Defend condition identity");
+    const change = applyDefend({ conditionId, conditionType: 1, untilType: 1 },
+      this.rules, currentIds, actorId, targetId);
+    this.validateActive(change.currentIds);
+    return change;
+  }
+  /** SetActData recovers until=1 after accepting the entire ordinary action
+   * group. Direct reactions do not pass this boundary. This host never creates
+   * a native chained-action group; those providers remain explicit blockers. */
+  admitAtbAction(currentIds: readonly number[], abilities: readonly { id: number; type: number }[]): number[] {
+    this.validateActive(currentIds);
+    const defenses = [...this.behaviors.values()].filter((b) => b.kind === "defend");
+    if (defenses.length > 1) throw new Error("Ambiguous Defend lifecycle identity");
+    if (!defenses.length) return [...currentIds];
+    return clearDefendOnAdmission({ conditionId: defenses[0]!.id, conditionType: 1, untilType: 1 },
+      this.rules, currentIds, { route: "atb", abilities: [...abilities], nativeChain: "empty" }).currentIds;
   }
   battleEnd(currentIds: readonly number[]): number[] {
     this.validateActive(currentIds);

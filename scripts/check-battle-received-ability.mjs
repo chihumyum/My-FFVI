@@ -59,6 +59,15 @@ assert.equal(source.sourceSetHash, exported.sourceSetHash);
 assert.equal(exported.parentSourceSetHash, manifest.sourceSetHash);
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const reader = battleTableIndex(tables, exported.tableSources);
+const monster = tables["monster.csv"].find((r) => r.id === "3");
+assert.equal(monster.script_id, "2");
+assert.equal(monster.initial_condition, "903");
+const initialConditionRows = tables["condition_group.csv"].filter(
+  (row) => row.group_id === monster.initial_condition,
+);
+const initialConditionIds = initialConditionRows.map((row) => Number(row.condition_id));
+assert.deepEqual(initialConditionIds, [93]);
+assert.equal(reader.row("condition.csv", 93).values.condition_type, "19");
 const instructions = [],
   programBlockers = [],
   programs = new Map();
@@ -196,7 +205,9 @@ function sourceHost(missed, parts) {
     );
   assert.ok(content.abilities[1].plan);
   assert.ok(content.abilities[379].plan);
-  assert.equal(content.abilities[40].plan, null);
+  assert.deepEqual(content.abilities[40].plan.effects, [{ slot: 1, kind: "magic" }]);
+  assert.ok(content.abilities[40].program.contentFlags.includes(3));
+  assert.equal(content.abilities[40].plan.magic.contentFlags.includes(3), false);
   content.abilities[1].wait = 0;
   content.commands[900001] = {
     id: 900001,
@@ -210,6 +221,13 @@ function sourceHost(missed, parts) {
   player.abilities.push(1);
   player.commands.push(900001);
   player.physical.accuracy = missed ? 0 : 255;
+  // All Templar action dependencies now compile, but its source initial
+  // condition GROUP 903 contains unsupported active condition 93 (type 19).
+  // The unchanged AI mechanism host must not erase that full-enemy boundary.
+  const withSourceConditions = structuredClone(content);
+  withSourceConditions.enemies[0].conditionIds = [...initialConditionIds];
+  assert.throws(() => new BattleGame(withSourceConditions, 509),
+    /Unimplemented active battle condition: 93/);
   const battle = new BattleGame(content, 509);
   assert.ok(battle.command(player.id, 1, enemy.id, 900001));
   for (const dt of parts) battle.advance(dt);
@@ -255,9 +273,7 @@ for (const missed of [false, true]) {
     replay: true,
   });
 }
-const monster = tables["monster.csv"].find((r) => r.id === "3");
-assert.equal(monster.script_id, "2");
-const unsupported = [3, 40].map((id) => {
+const unsupported = [3].map((id) => {
   const ability = compileDevelopmentAbility(reader, id);
   assert.equal(ability.plan, null);
   return {
@@ -365,14 +381,17 @@ const report = {
       id: 3,
       source: exported.tableSources["monster.csv"],
       rowHash: hash(monster),
-      initialCondition: Number(monster.initial_condition),
+      initialConditionGroup: Number(monster.initial_condition),
+      initialConditionGroupRows: initialConditionRows,
+      initialConditionIds,
+      activeConditionBlocked: true,
     },
   },
   limitations: [
     "26 decoded source branches are instruction coverage, not enemy or region playability",
     "Host uses unchanged Templar AI with explicit donor stats, HP, accuracy and zero wait",
-    "Ability 3 branch is a controlled AI input; source ability 3 and 40 are not executable",
-    "Source monster 3 initial condition 903 is not active-condition support",
+    "Ability 3 branch is a controlled AI input; source ability 3 remains unimplemented while ordinary magic 40 now has a bounded plan",
+    "Source monster 3 initial condition group 903 resolves to condition 93/type19, which the active-condition host still rejects",
     "Final attacks, separate recovery readiness, additional receiver predicates and native dynamic parity remain open",
   ],
 };

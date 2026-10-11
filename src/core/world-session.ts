@@ -24,7 +24,7 @@ type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount"> & {
   transportationId: number | null;
 };
 export type WorldCheckpoint = {
-  kind: "idle-world-v4";
+  kind: "idle-world-v5";
   initialHash: string;
   location: {
     catalogHash: string;
@@ -142,6 +142,7 @@ function worldFieldContent(
     ...(catalog.environment ? { environment: catalog.environment } : {}),
     ...(catalog.treasureInventoryLimits ? { treasureInventoryLimits: catalog.treasureInventoryLimits } : {}),
     entry: {
+      synchronization: { kind: "map-entry" },
       ...(actorEntry ? { partyActors: actorEntry.plan.checkpoint,
         playerVisible: actorEntry.plan.player.visible, cameraOffset: actorEntry.plan.cameraOffset } : {}),
       ...(traveler.transportationId !== null ? { transportationId: traveler.transportationId } : {}),
@@ -215,7 +216,7 @@ export class WorldSession {
   }
   checkpoint(): WorldCheckpoint {
     return {
-      kind: "idle-world-v4",
+      kind: "idle-world-v5",
       initialHash: this.initial.contentHash,
       location: structuredClone(this.location),
       field: this.current.checkpoint(),
@@ -229,7 +230,7 @@ export class WorldSession {
   ): void {
     checkpointKeys(snapshot, "kind,initialHash,location,field");
     if (
-      snapshot.kind !== "idle-world-v4" ||
+      snapshot.kind !== "idle-world-v5" ||
       snapshot.initialHash !== this.initial.contentHash
     )
       throw new Error("World checkpoint source/version mismatch");
@@ -257,7 +258,7 @@ export class WorldSession {
         if (!catalog.transportation || !target.partyEntry)
           throw new Error("Saved map actor source dependencies are unavailable");
         // This is a Web checkpoint reconstruction, not native negative-Point
-        // restoration and not a replay of MapSetup. All admitted v4 entries
+        // restoration and not a replay of MapSetup. All admitted v5 entries
         // used the ordinary single-party branch. Source initial actor inventory
         // supplies immutable identities/riding structure; destination metadata
         // supplies new providers. Saved actors never validate their own origin.
@@ -376,7 +377,7 @@ export class WorldSession {
       owned?.ports ?? {},
     );
     const script = request.continuation || target.initializer;
-    if (script) field.startEvent(script);
+    field.startMapEntry(script || null);
     if (field.stop?.kind === "unsupported") throw new Error(field.stop.message);
     const prepared = { field, request: stop };
     this.prepared.set(prepared, {

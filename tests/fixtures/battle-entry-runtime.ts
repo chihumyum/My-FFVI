@@ -42,7 +42,7 @@ export function battleEntryAppearanceFixture(mounted = true) {
     kind: "source-magitek", conditionId: 53,
     conditions: content.conditions.rules.definitions.map(({ id, type }) => ({ id, type })),
     sizeRules: { mog: 7, magitekOffset: 10, magitekKappa: 18 },
-    aliases: Object.fromEntries([["default", "Idle_00"], ["down", "Down_00"], ["dying", "Dying_00"], ["IdleR00", "IdleR_00"], ["dyingR00", "DyingR_00"]].map(([key, body]) =>
+    aliases: Object.fromEntries([["default", "Idle_00"], ["down", "Down_00"], ["dying", "Dying_00"], ["IdleR00", "IdleR_00"], ["dyingR00", "DyingR_00"], ["ready", "Ready_00"]].map(([key, body]) =>
       [key!, { body: [body!], armor: [key === "IdleR00" || key === "dyingR00" ? "WalkR_01" : "WalkL_01"], textureOffsets: [{ x: 0, y: 0.25 }], positions: [{ x: 0, y: 12 }] }])),
     armorSprites: { WalkL_01: "armor", WalkR_01: "armor-right" },
     armorGeometry: { WalkL_01: { ...shape, width: 40, height: 40 }, WalkR_01: { ...shape, width: 40, height: 40 } },
@@ -53,7 +53,7 @@ export function battleEntryAppearanceFixture(mounted = true) {
     player.conditionIds = mounted ? [53] : [];
     player.appearance = { sourceId: player.sourceId, characterAssetId: player.sourceId + 10, sizeType: 1,
       bodySprites: {}, bodyGeometry: {} };
-    for (const name of ["Idle_00", "Down_00", "Dying_00", "IdleR_00", "DyingR_00"]) {
+    for (const name of ["Idle_00", "Down_00", "Dying_00", "IdleR_00", "DyingR_00", "Ready_00"]) {
       const key = player.id + ":" + name;
       player.appearance.bodySprites[name] = key;
       player.appearance.bodyGeometry[name] = structuredClone(shape);

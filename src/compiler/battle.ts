@@ -16,6 +16,7 @@ import { compilePartyActorCatalog } from "./party-actors.js";
 import { compileTransportationCatalog } from "./transportation.js";
 import { compileBattleEntryCatalog, compileNarsheOwnedConditionCheckpoint } from "./battle-entry.js";
 import { compileBattleAppearance } from "./battle-appearance.js";
+import { compileAbilityProgram } from "./ability.js";
 import { loadCorpus } from "./corpus.js";
 import {
   compileAttackElements,
@@ -384,6 +385,13 @@ export async function compileOpeningBattle(root: string) {
       if (content.type_id === "4" && content.type_value === String(id))
         row("content.csv", content.id!);
   }
+  // The opening encounter list is a regression selection, not an execution
+  // dictionary. Preserve the complete ability reference closure so later
+  // learned skills use the same compiler without expanding scene templates.
+  for (const ability of tables["ability.csv"]!)
+    compileAbilityProgram({ row, group: tableGroup }, tableInteger(ability.id));
+  for (const content of tables["content.csv"]!)
+    if (tableInteger(content.type_id) === 4) row("content.csv", content.id!);
   for (const c of initialParty) {
     const status = row("character_status.csv", c.characterId);
     const memberships = tableGroup(
