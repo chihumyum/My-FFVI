@@ -1,3 +1,16 @@
+import {
+  int32,
+  integerOperation as eventOperation,
+  type Operator,
+} from "./script-integer.js";
+export {
+  int32,
+  isOperator,
+  operators,
+  integerOperation as eventOperation,
+  type Operator,
+} from "./script-integer.js";
+
 /** Source DataStorage semantics. Unknown checkpoint values are kept distinct from initialized zeroes. */
 export const categories = [
   "ScenarioFlag1",
@@ -18,22 +31,8 @@ export const categories = [
 export type Category = (typeof categories)[number];
 export type VariableRef = { category: Category; index: number };
 export type EventValue =
-  { kind: "immediate"; value: number } | { kind: "variable"; ref: VariableRef };
-export const operators = [
-  "←",
-  "＋",
-  "－",
-  "×",
-  "÷",
-  "％",
-  "＝",
-  "≠",
-  "＞",
-  "≧",
-  "＜",
-  "≦",
-] as const;
-export type Operator = (typeof operators)[number];
+  | { kind: "immediate"; value: number }
+  | { kind: "variable"; ref: VariableRef };
 export type EventControlOp =
   | { kind: "jump"; target: number }
   | { kind: "calc"; left: VariableRef; operator: Operator; right: EventValue }
@@ -61,21 +60,8 @@ export type EventStateSnapshot = {
   currentMapId: Value;
 };
 export type ScriptLocals = { labels: string[]; values: number[] | null };
-export function int32(value: unknown): number {
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value < -2147483648 ||
-    value > 2147483647
-  )
-    throw new Error("Expected signed 32-bit event value");
-  return value;
-}
 export function isCategory(name: string): name is Category {
   return (categories as readonly string[]).includes(name);
-}
-export function isOperator(name: string): name is Operator {
-  return (operators as readonly string[]).includes(name);
 }
 export function validVariable(ref: VariableRef): boolean {
   if (
@@ -254,46 +240,6 @@ export class EventState {
             v !== 0;
       });
     return out;
-  }
-}
-/** Internal.Main uses int32 operations; division by zero keeps lhs, modulo by zero returns zero. */
-export function eventOperation(
-  left: number,
-  op: Operator,
-  right: number,
-): number {
-  int32(left);
-  int32(right);
-  switch (op) {
-    case "←":
-      return right;
-    case "＋":
-      return (left + right) | 0;
-    case "－":
-      return (left - right) | 0;
-    case "×":
-      return Math.imul(left, right);
-    case "÷":
-      if (right === 0) return left;
-      if (left === -2147483648 && right === -1)
-        throw new Error("Signed event division overflow");
-      return Math.trunc(left / right) | 0;
-    case "％":
-      if (left === -2147483648 && right === -1)
-        throw new Error("Signed event remainder overflow");
-      return right === 0 ? 0 : (left % right) | 0;
-    case "＝":
-      return Number(left === right);
-    case "≠":
-      return Number(left !== right);
-    case "＞":
-      return Number(left > right);
-    case "≧":
-      return Number(left >= right);
-    case "＜":
-      return Number(left < right);
-    case "≦":
-      return Number(left <= right);
   }
 }
 /** Mutates only the owning task PC and shared event variables. False means this is a host instruction. */

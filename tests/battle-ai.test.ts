@@ -1,3 +1,4 @@
+import { initialEnemyBehavior } from "../src/core/enemy-behavior.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { compileBattleAI } from "../src/compiler/battle-ai.js";
@@ -11,14 +12,200 @@ import {
 import { aiSource, cyclingAI, syntheticAI } from "./fixtures/battle-ai.js";
 
 const context: BattleAIContext = {
+  self: { hp: 100, mp: 10, behavior: initialEnemyBehavior() },
   conditionIds: [],
   players: [{ level: 1 }],
   enemies: [{ level: 2 }],
 };
 
+test("initialization writes 15-cell per-enemy parameters and finite variable loops make progress", () => {
+  const program = syntheticAI([
+    ["VariableAssign", [-7, 0]],
+    ["Nop"],
+    ["ValueCalc", [0, 1], [], ["＋"]],
+    ["IsVariableComparison", [0, 3, 5], [], ["≧"]],
+    ["JumpBattleAI", [1]],
+    ["Nop"],
+    ["VariableAssign", [14, 91]],
+    ["ModeSet", [2]],
+    ["ModeCount"],
+    ["SyncAI"],
+  ]);
+  const initial = startBattleAI(program, context);
+  assert.equal(initial.behavior.variables.length, 15);
+  assert.equal(initial.behavior.variables[0], 3);
+  assert.equal(initial.behavior.variables[14], 91);
+  assert.equal(initial.behavior.mode, 3);
+  assert.equal(initial.visited.filter((pc) => pc === 2).length, 3);
+  assert.equal(initial.state.pc, 9);
+  assert.deepEqual(context.self.behavior, initialEnemyBehavior());
+  initial.behavior.variables[0] = 99;
+  assert.equal(startBattleAI(program, context).behavior.variables[0], 3);
+});
+
+test("variable and mode progress survives turns only when the owner commits it", () => {
+  const program = syntheticAI([
+    ["VariableAssign", [14, 7]],
+    ["ModeSet", [2]],
+    ["SyncAI"],
+    ["StartTable", [0]],
+    ["ValueCalc", [14, 1], [], ["＋"]],
+    ["ModeCount"],
+    ["IsVariableComparison", [14, 9, 10], [], ["≧"]],
+    ["Act", [601]],
+    ["EndTable"],
+    ["JumpBattleAI", [1]],
+    ["Nop"],
+    ["Act", [602]],
+    ["EndTable"],
+    ["JumpBattleAI", [1]],
+  ]);
+  const initial = startBattleAI(program, context);
+  const next = (turn: typeof initial) =>
+    planBattleAITurn(program, turn.state, {
+      ...context,
+      self: { ...context.self, behavior: turn.behavior },
+    });
+  const first = next(initial),
+    second = next(first);
+  assert.equal(first.acts[0]!.abilities[0], 601);
+  assert.equal(second.acts[0]!.abilities[0], 602);
+  assert.equal(first.behavior.mode, 3);
+  assert.equal(second.behavior.mode, 4);
+  assert.equal(second.behavior.variables[14], 9);
+  assert.equal(initial.behavior.variables[14], 7);
+  assert.equal(initial.behavior.mode, 2);
+  assert.deepEqual(next(initial), first);
+});
+
+test("mode predicates use their own register, with signed counter overflow", () => {
+  const ctx = structuredClone(context);
+  ctx.self.behavior.mode = 2147483647;
+  ctx.self.behavior.variables[0] = 2;
+  const program = syntheticAI([
+    ["ModeCount"],
+    ["IsModeSelecting", [-2147483648, 3]],
+    ["UnknownWrongMode"],
+    ["Nop"],
+    ["IsNotModeSelecting", [2, 6]],
+    ["UnknownVariableAlias"],
+    ["Nop"],
+    ["SyncAI"],
+  ]);
+  const initial = startBattleAI(program, ctx);
+  assert.equal(initial.behavior.mode, -2147483648);
+  assert.equal(initial.behavior.variables[0], 2);
+  assert.equal(initial.state.pc, 7);
+});
+
+test("HP and MP branches read current integer resources at exact thresholds", () => {
+  for (const resource of ["hp", "mp"] as const) {
+    const program = syntheticAI([
+      ["Nop"],
+      ["SyncAI"],
+      [resource === "hp" ? "IsCheckHp" : "IsCheckMp", [20, 7], [], ["≦"]],
+      ["StartTable", [0]],
+      ["Act", [601]],
+      ["EndTable"],
+      ["JumpBattleAI", [0]],
+      ["Nop"],
+      ["StartTable", [1]],
+      ["Act", [602]],
+      ["EndTable"],
+      ["JumpBattleAI", [0]],
+    ]);
+    for (const value of [0, 19, 20, 21, 10000]) {
+      const ctx = { ...context, self: { ...context.self, [resource]: value } };
+      const initial = startBattleAI(program, ctx);
+      assert.equal(
+        planBattleAITurn(program, initial.state, ctx).acts[0]!.abilities[0],
+        value <= 20 ? 602 : 601,
+      );
+    }
+    const ctx = {
+      ...context,
+      self: { ...context.self, [resource]: Number.NaN },
+    };
+    assert.throws(
+      () => planBattleAITurn(program, startBattleAI(program, ctx).state, ctx),
+      (e) => e instanceof BattleAIError && e.pc === 2,
+    );
+  }
+});
+
+test("integer operations and comparison result equal to one match the shared script calculator", () => {
+  const program = syntheticAI([
+    ["VariableAssign", [0, 2147483647]],
+    ["ValueCalc", [0, 1], [], ["＋"]],
+    ["ValueCalc", [0, 0], [], ["÷"]],
+    ["ValueCalc", [0, 0], [], ["％"]],
+    ["IsVariableComparison", [0, 2, 8], [], ["＋"]],
+    ["IsVariableComparison", [0, 1, 6], [], ["＋"]],
+    ["Nop"],
+    ["SyncAI"],
+    ["Nop"],
+    ["UnknownTruthyBranch"],
+  ]);
+  const initial = startBattleAI(program, context);
+  assert.equal(initial.state.pc, 7);
+  assert.equal(initial.behavior.variables[0], 0);
+  assert.equal(initial.visited.includes(9), false);
+  const overflow = syntheticAI([
+    ["VariableAssign", [0, -2147483648]],
+    ["ValueCalc", [0, -1], [], ["÷"]],
+    ["SyncAI"],
+  ]);
+  assert.throws(
+    () => startBattleAI(overflow, context),
+    (e) =>
+      e instanceof BattleAIError && e.pc === 1 && /overflow/.test(e.message),
+  );
+  assert.deepEqual(context.self.behavior, initialEnemyBehavior());
+});
+
+test("unknown parameter addresses and malformed arithmetic never acquire implicit defaults", () => {
+  for (const op of [
+    ["VariableAssign", [15, 1]],
+    ["VariableAssign", [0]],
+    ["ValueCalc", [0, 1], [], ["+"]],
+    ["ValueCalc", [0, 1], [], ["＋", "extra"]],
+    ["ModeSet", []],
+    ["ModeCount", [1]],
+    ["IsVariableComparison", [0, 1, 99], [], ["＝"]],
+  ] as Parameters<typeof syntheticAI>[0])
+    assert.throws(
+      () => startBattleAI(syntheticAI([op, ["SyncAI"]]), context),
+      /unsupported AI/,
+    );
+  const ctx = structuredClone(context);
+  ctx.self.behavior.variables.pop();
+  assert.throws(() => startBattleAI(cyclingAI([601]), ctx), /variable bank/);
+});
+
+test("state cycles and unbounded growing loops stop transactionally before hanging a frame", () => {
+  for (const [op, message] of [
+    [["VariableAssign", [0, 1]], /cycle without SyncAI/],
+    [["ValueCalc", [0, 1], [], ["＋"]], /instruction budget/],
+  ] as const) {
+    const program = syntheticAI([
+      ["Nop"],
+      ["SyncAI"],
+      structuredClone(op) as unknown as Parameters<typeof syntheticAI>[0][0],
+      ["JumpBattleAI", [1]],
+    ]);
+    const initial = startBattleAI(program, context);
+    assert.throws(
+      () => planBattleAITurn(program, initial.state, context),
+      message,
+    );
+    assert.deepEqual(context.self.behavior, initialEnemyBehavior());
+    assert.equal(initial.state.pc, 1);
+  }
+});
+
 test("AI suspends at SyncAI and cycles table rows without flattening their distributions", () => {
   const program = cyclingAI([601, 602, 603]);
-  let state = startBattleAI(program, context);
+  let state = startBattleAI(program, context).state;
   assert.equal(state.pc, 1);
   assert.equal(state.status, "waiting");
   const sequence = [];
@@ -34,8 +221,8 @@ test("AI suspends at SyncAI and cycles table rows without flattening their distr
 
 test("AI instances sharing a program retain independent immutable turn state", () => {
   const program = cyclingAI([601, 602]);
-  const first = startBattleAI(program, context),
-    second = startBattleAI(program, context);
+  const first = startBattleAI(program, context).state,
+    second = startBattleAI(program, context).state;
   const next = planBattleAITurn(program, first, context);
   assert.equal(next.state.actTurn, 1);
   assert.equal(first.actTurn, 0);
@@ -66,7 +253,7 @@ test("changing table ID resets the turn while the same table preserves it", () =
   ]);
   let turn = planBattleAITurn(
     program,
-    startBattleAI(program, context),
+    startBattleAI(program, context).state,
     context,
   );
   assert.equal(turn.state.tableId, 11);
@@ -105,7 +292,7 @@ test("level branches use any unit including a fallen player, and preserve factio
     ["EndTable"],
     ["JumpBattleAI", [0]],
   ]);
-  const state = startBattleAI(program, context);
+  const state = startBattleAI(program, context).state;
   const action = (ctx: BattleAIContext) =>
     planBattleAITurn(program, state, ctx).acts[0]!.abilities[0];
   assert.equal(action({ ...context, enemies: [{ level: 99 }] }), 601);
@@ -200,7 +387,7 @@ test("native jumps execute after the label address rather than re-running the la
   ]);
   const result = planBattleAITurn(
     program,
-    startBattleAI(program, context),
+    startBattleAI(program, context).state,
     context,
   );
   assert.equal(result.acts[0]!.abilities[0], 601);
@@ -212,7 +399,7 @@ test("unselected table rows also consume draws in program order", () => {
   const program = cyclingAI([601, 602, 603]);
   const turn = planBattleAITurn(
     program,
-    startBattleAI(program, context),
+    startBattleAI(program, context).state,
     context,
   );
   const visited: number[] = [];
@@ -239,7 +426,7 @@ test("unknown branches stay inspectable and block precisely when reached", () =>
     ["Nop"],
     ["CounterAct", [701]],
   ]);
-  const state = startBattleAI(program, context);
+  const state = startBattleAI(program, context).state;
   assert.equal(program.instructions[8]!.op.kind, "blocked");
   assert.equal(
     planBattleAITurn(program, state, context).acts[0]!.abilities[0],
@@ -256,16 +443,20 @@ test("unknown branches stay inspectable and block precisely when reached", () =>
 test("bad jumps, silent nonzero operands and non-progressing loops cannot be no-ops", () => {
   const invalid = syntheticAI([["SyncAI"], ["JumpBattleAI", [99]]]);
   assert.throws(
-    () => planBattleAITurn(invalid, startBattleAI(invalid, context), context),
+    () =>
+      planBattleAITurn(invalid, startBattleAI(invalid, context).state, context),
     /unsupported AI/,
   );
   const cycle = syntheticAI([["Nop"], ["SyncAI"], ["JumpBattleAI", [1]]]);
   assert.throws(
-    () => planBattleAITurn(cycle, startBattleAI(cycle, context), context),
+    () => planBattleAITurn(cycle, startBattleAI(cycle, context).state, context),
     /cycle without SyncAI/,
   );
   const malformed = syntheticAI([["Nop", [12]], ["SyncAI"]]);
-  assert.throws(() => startBattleAI(malformed, context), /unsupported AI/);
+  assert.throws(
+    () => startBattleAI(malformed, context).state,
+    /unsupported AI/,
+  );
 });
 
 test("messages, invalid weight arity and nonpositive abilities remain explicit blockers", () => {
@@ -285,11 +476,15 @@ test("unknown script flags and corrupt compiled opcodes are explicit stops", () 
   const raw = aiSource([["SyncAI"], ["Exit"]]);
   raw.SystemFlag = { UnreviewedFlag: 0 };
   const unknownFlag = compileBattleAI(raw, null);
-  assert.throws(() => startBattleAI(unknownFlag, context), /script flags/);
+  assert.throws(
+    () => startBattleAI(unknownFlag, context).state,
+    /script flags/,
+  );
   const corrupt = cyclingAI([601]);
   (corrupt.instructions[2]!.op as unknown as { kind: string }).kind = "unknown";
   assert.throws(
-    () => planBattleAITurn(corrupt, startBattleAI(corrupt, context), context),
+    () =>
+      planBattleAITurn(corrupt, startBattleAI(corrupt, context).state, context),
     /unsupported compiled AI/,
   );
 });
@@ -307,7 +502,8 @@ test("compiler binds exact object identity without rounding through JavaScript n
   const program = compileBattleAI(aiSource([["SyncAI"], ["Mystery"]]), source);
   assert.equal(program.source!.objectId, source.objectId);
   assert.throws(
-    () => planBattleAITurn(program, startBattleAI(program, context), context),
+    () =>
+      planBattleAITurn(program, startBattleAI(program, context).state, context),
     (e) =>
       e instanceof BattleAIError &&
       e.source?.sha256 === source.sha256 &&

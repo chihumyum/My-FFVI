@@ -40,7 +40,7 @@ function fixture(): BattleContent {
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v10",
+    profile: "narshe-playability-v11",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -301,13 +301,66 @@ test("enemy AI cycles physical and magic decisions through the shared action que
   assert.ok(battle.players.some((p) => p.hp < p.maxHp));
 });
 
+test("battle owns independent enemy parameters and preflight does not advance their phase", () => {
+  const f = fixture();
+  f.players.forEach((p) => {
+    p.hp = 10000;
+  });
+  f.enemies.forEach((e) => {
+    e.hp = 10000;
+    e.abilities = [13, 10];
+    e.ai = syntheticAI([
+      ["VariableAssign", [14, 5]],
+      ["ModeSet", [1]],
+      ["SyncAI"],
+      ["ValueCalc", [14, 1], [], ["＋"]],
+      ["ModeCount"],
+      ["StartTable", [0]],
+      ["IsVariableComparison", [14, 7, 10], [], ["≧"]],
+      ["Act", [13]],
+      ["EndTable"],
+      ["JumpBattleAI", [1]],
+      ["Nop"],
+      ["Act", [10]],
+      ["EndTable"],
+      ["JumpBattleAI", [1]],
+    ]);
+  });
+  const run = (steps: number[]) => {
+    const battle = new BattleGame(f, 243);
+    assert.equal(battle.enemies[0]!.behavior!.variables[14], 5);
+    assert.equal(battle.enemies[0]!.behavior!.mode, 1);
+    const actions = [];
+    for (let turn = 0; turn < 3; turn++) {
+      battle.enemies[0]!.atb = 100;
+      battle.advance(10);
+      actions.push(battle.action!.ability);
+      for (const dt of steps) battle.advance(dt);
+    }
+    assert.deepEqual(actions, [13, 10, 10]);
+    assert.equal(battle.enemies[0]!.behavior!.variables[14], 8);
+    assert.equal(battle.enemies[0]!.behavior!.mode, 4);
+    assert.equal(battle.enemies[1]!.behavior!.variables[14], 5);
+    assert.equal(battle.enemies[1]!.behavior!.mode, 1);
+    assert.equal(battle.players[0]!.behavior, null);
+    return {
+      units: battle.combatants,
+      events: battle.events,
+      ai: battle.enemyAIState("e1"),
+    };
+  };
+  assert.deepEqual(run([900]), run(Array(90).fill(10)));
+});
+
 test("AI gates all ability dependencies on a reached table before partial execution", () => {
   const f = fixture();
   const enemy = f.enemies[0]!;
   enemy.ai = syntheticAI([
     ["Nop"],
     ["SyncAI"],
-    ["IsLevelCheck", [1, 7, 7]],
+    ["ValueCalc", [0, 1], [], ["＋"]],
+    ["ModeCount"],
+    ["IsLevelCheck", [1, 7, 9]],
     ["StartTable", [0]],
     ["Act", [13]],
     ["EndTable"],
@@ -327,19 +380,31 @@ test("AI gates all ability dependencies on a reached table before partial execut
   const before = battle.enemyAIState("e1");
   assert.throws(
     () => battle.advance(10),
-    /Mnemonics\/10: unimplemented ability 9999/,
+    /Mnemonics\/12: unimplemented ability 9999/,
   );
   assert.deepEqual(battle.enemyAIState("e1"), before);
   assert.equal(battle.action, null);
   assert.equal(battle.enemies[0]!.queued, false);
   assert.equal(battle.players[0]!.hp, f.players[0]!.hp);
+  assert.equal(battle.enemies[0]!.behavior!.variables[0], 0);
+  assert.equal(battle.enemies[0]!.behavior!.mode, 0);
   f.players[1]!.level = 7;
   assert.throws(() => new BattleGame(f, 223), /unimplemented ability 9999/);
 });
 
 test("failed AI target resolution rolls back its random stream, turn and queue", () => {
   const f = fixture();
-  f.enemies[0]!.ai = cyclingAI([13, 10]);
+  f.enemies[0]!.ai = syntheticAI([
+    ["Nop"],
+    ["SyncAI"],
+    ["StartTable", [0]],
+    ["ValueCalc", [0, 1], [], ["＋"]],
+    ["ModeCount"],
+    ["Act", [13]],
+    ["Act", [10]],
+    ["EndTable"],
+    ["JumpBattleAI", [0]],
+  ]);
   f.enemies[0]!.abilities = [13, 10];
   const clean = new BattleGame(structuredClone(f), 227);
   const broken = new BattleGame(f, 227);
@@ -349,11 +414,16 @@ test("failed AI target resolution rolls back its random stream, turn and queue",
   assert.equal(broken.enemyAIState("e1")!.actTurn, 0);
   assert.equal(broken.enemies[0]!.queued, false);
   assert.equal(broken.action, null);
+  assert.equal(broken.enemies[0]!.behavior!.variables[0], 0);
+  assert.equal(broken.enemies[0]!.behavior!.mode, 0);
   f.abilities[13]!.plan!.targeting.modes = ["single"];
   clean.advance(10);
   broken.advance(10);
   assert.deepEqual(broken.action, clean.action);
   assert.deepEqual(broken.enemyAIState("e1"), clean.enemyAIState("e1"));
+  assert.deepEqual(broken.enemies[0]!.behavior, clean.enemies[0]!.behavior);
+  assert.equal(broken.enemies[0]!.behavior!.variables[0], 1);
+  assert.equal(broken.enemies[0]!.behavior!.mode, 1);
   clean.advance(500);
   broken.advance(500);
   assert.deepEqual(broken.action!.results, clean.action!.results);

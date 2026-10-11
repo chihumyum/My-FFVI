@@ -17,6 +17,7 @@ import {
   planBattleAITurn,
   drawBattleAIAbility,
 } from "../dist/src/core/battle-ai.js";
+import { initialEnemyBehavior } from "../dist/src/core/enemy-behavior.js";
 import { BattleGame } from "../dist/src/core/battle.js";
 import { encounterContent } from "../dist/src/core/battle-content.js";
 import { hash } from "../dist/src/compiler/content.js";
@@ -33,7 +34,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v10");
+assert.equal(catalog.common.profile, "narshe-playability-v11");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const assets = Object.values(exported.assets).filter((a) =>
   a.source.assetPath.includes("/MonsterAI/"),
@@ -89,6 +90,7 @@ const rows = assets.map((asset) => {
 });
 assert.equal(rows.length, 430);
 const context = (level = 6, conditionIds = []) => ({
+  self: { hp: 100, mp: 10, behavior: initialEnemyBehavior() },
   players: [{ level }],
   enemies: [{ level: 1 }],
   conditionIds,
@@ -96,7 +98,10 @@ const context = (level = 6, conditionIds = []) => ({
 function trace(name, ctx, count) {
   const program = programs.get(name);
   assert.ok(program);
-  let state = startBattleAI(program, ctx);
+  let initial = startBattleAI(program, ctx);
+  let state = initial.state;
+  ctx = structuredClone(ctx);
+  ctx.self.behavior = initial.behavior;
   const turns = [];
   for (let n = 0; n < count; n++) {
     const turn = planBattleAITurn(program, state, ctx);
@@ -121,8 +126,10 @@ function trace(name, ctx, count) {
       drawPcs,
       chosen,
       nextTurn: turn.state.actTurn,
+      behavior: turn.behavior,
     });
     state = turn.state;
+    ctx.self.behavior = turn.behavior;
   }
   return { source: program.source, turns };
 }
@@ -132,6 +139,23 @@ const traces = {
   loboHigh: trace("sc_ai_019_SilverLobo.json", context(7), 4),
   loboCondition: trace("sc_ai_019_SilverLobo.json", context(7, [12]), 2),
   leafBunny: trace("sc_ai_017_LeafBunny.json", context(), 4),
+  flanMode: trace("sc_ai_047_Flan.json", context(), 4),
+  missileBayBelow: trace(
+    "sc_ai_147_MissileBay.json",
+    {
+      ...context(),
+      self: { ...context().self, hp: 1535 },
+    },
+    4,
+  ),
+  missileBayAt: trace(
+    "sc_ai_147_MissileBay.json",
+    {
+      ...context(),
+      self: { ...context().self, hp: 1536 },
+    },
+    4,
+  ),
 };
 assert.deepEqual(
   traces.guard.turns.map((t) => t.selectedPc),
@@ -162,6 +186,93 @@ assert.deepEqual(
   traces.leafBunny.turns.map((t) => t.selectedPc),
   [4, 5, 4, 5],
 );
+assert.deepEqual(
+  traces.flanMode.turns.map((t) => t.behavior.mode),
+  [1, 2, 3, 4],
+);
+assert.deepEqual(
+  traces.flanMode.turns.map((t) => t.selectedPc),
+  [5, 6, 5, 6],
+);
+assert.deepEqual(
+  traces.missileBayBelow.turns.map((t) => t.selectedPc),
+  [10, 11, 12, 10],
+);
+assert.deepEqual(
+  traces.missileBayAt.turns.map((t) => t.selectedPc),
+  [5, 5, 5, 5],
+);
+
+// Constructed mechanism checkpoints are explicit and do not claim source saves
+// or a playable boss. Keep the original program, source PCs and blocked paths.
+const parameterChecks = [];
+{
+  const program = programs.get("sc_ai_022_LesserLopros.json");
+  const ctx = context();
+  ctx.self.behavior.variables[0] = 2;
+  const initial = startBattleAI(program, ctx);
+  const low = planBattleAITurn(program, initial.state, ctx);
+  assert.equal(low.acts[0].pc, 5);
+  ctx.self.behavior.variables[0] = 3;
+  assert.throws(
+    () => planBattleAITurn(program, initial.state, ctx),
+    (e) =>
+      e instanceof BattleAIError &&
+      e.pc === 12 &&
+      /ActForTarget/.test(e.message),
+  );
+  assert.equal(ctx.self.behavior.variables[0], 3);
+  parameterChecks.push({
+    source: program.source,
+    input: { variable0: [2, 3] },
+    belowSelectedPc: 5,
+    thresholdBlockedPc: 12,
+    liveParametersUnchanged: true,
+  });
+}
+{
+  const program = programs.get("sc_ai_167_SoulSaver.json");
+  const ctx = context();
+  ctx.self.behavior.variables[0] = 1;
+  ctx.self.mp = 2048;
+  const checkpoint = {
+    pc: 20,
+    status: "waiting",
+    tableId: 0,
+    actTurn: 0,
+    turnCounter: 0,
+  };
+  assert.equal(program.instructions[checkpoint.pc].op.kind, "sync");
+  const stage = planBattleAITurn(program, checkpoint, ctx);
+  assert.equal(stage.state.pc, 45);
+  assert.equal(stage.acts.length, 0);
+  ctx.self.behavior = stage.behavior;
+  const next = planBattleAITurn(program, stage.state, ctx);
+  assert.equal(next.acts[0].pc, 62);
+  assert.deepEqual(next.acts[0].abilities, [686]);
+  assert.equal(next.behavior.variables[0], 0);
+  assert.equal(next.state.pc, 1);
+  assert.equal(ctx.self.behavior.variables[0], 1);
+  ctx.self.mp = 2049;
+  assert.throws(
+    () => planBattleAITurn(program, stage.state, ctx),
+    (e) =>
+      e instanceof BattleAIError &&
+      e.pc === 47 &&
+      /IsCheckReceiveCommand/.test(e.message),
+  );
+  parameterChecks.push({
+    source: program.source,
+    constructedCheckpoint: checkpoint,
+    input: { variable0: 1, mp: [2048, 2049] },
+    intermediateSyncPc: 45,
+    lowMpSelectedPc: 62,
+    lowMpOutputVariable0: 0,
+    highMpBlockedPc: 47,
+    abilitiesExecuted: false,
+    liveParametersUnchanged: true,
+  });
+}
 assert.equal(ability(696).plan, null);
 assert.ok(ability(696).blockers.some((s) => s.includes("function type 38")));
 
@@ -171,6 +282,8 @@ for (const name of [
   "sc_ai_037_Siegfried.json",
   "sc_ai_14F_Soldier.json",
   "sc_ai_537_Brachiosaur.json",
+  "sc_ai_16E_thina.json",
+  "sc_ai_157_ShortArm.json",
 ]) {
   const program = programs.get(name);
   const content = structuredClone(encounterContent(catalog, 3));
@@ -206,12 +319,27 @@ for (const name of [
     e.text.startsWith(enemy.name + " ·"),
   );
   assert.ok(actions.length >= 3);
+  const behavior = one.combatants.find((c) => c.id === enemy.id).behavior;
+  if (name === "sc_ai_16E_thina.json") assert.equal(behavior.mode, 1);
+  if (name === "sc_ai_157_ShortArm.json") {
+    const higher = structuredClone(content);
+    higher.enemies[0].hp = 10113;
+    assert.throws(
+      () => new BattleGame(higher, 239),
+      (e) =>
+        e instanceof BattleAIError &&
+        e.pc === 6 &&
+        /CounterAct/.test(e.message),
+    );
+  }
   hostChecks.push({
     source: program.source,
     abilities: enemy.abilities,
     actionCountInRetainedLog: actions.length,
     replay: true,
     ai: one.ai,
+    behavior,
+    controlledHp: enemy.hp,
   });
 }
 // A level branch fails on its concrete dependency, independent of monster ID.
@@ -242,6 +370,7 @@ const report = {
   fullyDecodedNormalPrograms: rows.filter((r) => !r.blockers.length).length,
   rows,
   traces,
+  parameterChecks,
   hostChecks,
   highLevelDependencyGate: true,
   limitations: [
@@ -249,7 +378,9 @@ const report = {
     "host-probes-use-opening-parameters-and-poses-with-source-ai",
     "no-confusion-behavior-from-condition-branch-probe",
     "no-function-38-ability-696-effects",
-    "no-counter-interrupt-variables-loopact-or-boss-event-support",
+    "no-counter-interrupt-loopact-or-full-boss-event-support",
+    "constructed-soulsaver-checkpoint-is-control-flow-only-not-source-save-or-playable-enemy",
+    "shared-ability-and-event-writes-to-enemy-variables-remain-unimplemented",
     "normal-auto-targets-only-ranges-3-and-7-with-development-player-weighting",
     "development-atb-scheduling-and-prng-no-original-parity",
   ],

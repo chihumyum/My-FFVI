@@ -313,7 +313,7 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v10",
+    profile: "narshe-playability-v11",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,

@@ -396,6 +396,29 @@
         "build/reports/ai-browser-check.json#c76e7e7bff2bf499e33219fe4200dce31a37ce0d1d64c7eb5223f5bed801eda7",
         "docs/battle-ai.md"
       ]
+    },
+    {
+      "id": "narshe:development-ai-parameters",
+      "subject": "narshe",
+      "predicate": "migration.enemyBehaviorParameters",
+      "value": "Development v11 adds independently owned 15-cell enemy variables, separate mode, current HP/MP branches and transactional AI initialization/turn decisions. 430 source scripts are diagnosed; 165 fully decoded normal programs are not playable-enemy coverage. Five source AI programs pass controlled-host replay; constructed Soul Saver and Lesser Lopros checkpoints test variable/MP control flow without executing missing abilities. 239 TypeScript and 18 Python tests, existing five encounters, field arithmetic regression and browser opening victory/return pass. LoopAct, reactions/interrupts, ability/event parameter writers, complete scheduling and original parity remain incomplete. No new story region.",
+      "when": {
+        "battleProfile": "narshe-playability-v11"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x4afb70 EnemyCharacterParameter constructor",
+        "GameAssembly.dll:RVA 0x82a260 VariableAssign",
+        "GameAssembly.dll:RVA 0x82a400 VariableCalc",
+        "GameAssembly.dll:RVA 0x827ca0 IsVariableComparison",
+        "GameAssembly.dll:RVA 0x8222b0 IsCheckHp",
+        "GameAssembly.dll:RVA 0x822580 IsCheckMp",
+        "build/reports/ai-state-native-check.json#a5dabc7e6098aed146486aa900f2e3a16216be3da90606feb6c447284f61be50",
+        "build/reports/battle-ai-check.json#f57b9d8604843530353ac3cc06c101bbe3823993ae4709aea8991045b08efb36",
+        "build/reports/ai-state-browser-check.json#4cd164752fd07ec9bcccf49ca876729602d4dbe243a9b938a7065d40c4e734b5",
+        "docs/battle-ai-state.md"
+      ]
     }
   ],
   "assets": []

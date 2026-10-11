@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { enemyVariableCount } from "../core/enemy-behavior.js";
+import { isOperator } from "../core/script-integer.js";
 import type {
   BattleAIProgram,
   BattleAIOp,
@@ -80,12 +82,14 @@ export function compileBattleAI(
       kind: "blocked",
       reason,
     });
-    const form = (used: number[]) =>
+    const form = (used: number[], strings: number[] = []) =>
       i.every((v, n) => v === 0 || used.includes(n)) &&
       r.every((v) => v === 0) &&
-      s.every((v) => v === "");
+      s.every((v, n) => v === "" || strings.includes(n));
     const jump = (target: number | undefined): target is number =>
       target !== undefined && target >= entry && target < end;
+    const variable = (index: number | undefined): index is number =>
+      index !== undefined && index < enemyVariableCount;
     let op: BattleAIOp = blocked(
       `unsupported AI instruction or operands: ${m.mnemonic}`,
     );
@@ -95,11 +99,78 @@ export function compileBattleAI(
         if (m.mnemonic === "SyncAI") op = { kind: "sync" };
         if (m.mnemonic === "Exit") op = { kind: "exit" };
         if (m.mnemonic === "EndTable") op = { kind: "end-table" };
+        if (m.mnemonic === "ModeCount") op = { kind: "mode-count" };
       }
       if (m.mnemonic === "JumpBattleAI" && form([0]) && jump(i[0]))
         op = { kind: "jump", target: i[0] };
       if (m.mnemonic === "StartTable" && form([0]))
         op = { kind: "start-table", tableId: i[0] ?? null };
+      if (
+        m.mnemonic === "VariableAssign" &&
+        form([0, 1]) &&
+        variable(i[0]) &&
+        i[1] !== undefined
+      )
+        op = { kind: "variable-assign", index: i[0], value: i[1] };
+      if (
+        m.mnemonic === "ValueCalc" &&
+        form([0, 1], [0]) &&
+        variable(i[0]) &&
+        i[1] !== undefined &&
+        s[0] !== undefined &&
+        isOperator(s[0])
+      )
+        op = {
+          kind: "variable-calc",
+          index: i[0],
+          value: i[1],
+          operator: s[0],
+        };
+      if (
+        m.mnemonic === "IsVariableComparison" &&
+        form([0, 1, 2], [0]) &&
+        variable(i[0]) &&
+        i[1] !== undefined &&
+        jump(i[2]) &&
+        s[0] !== undefined &&
+        isOperator(s[0])
+      )
+        op = {
+          kind: "variable-branch",
+          index: i[0],
+          value: i[1],
+          operator: s[0],
+          target: i[2],
+        };
+      if (
+        ["IsCheckHp", "IsCheckMp"].includes(m.mnemonic) &&
+        form([0, 1], [0]) &&
+        i[0] !== undefined &&
+        jump(i[1]) &&
+        s[0] !== undefined &&
+        isOperator(s[0])
+      )
+        op = {
+          kind: "resource-branch",
+          resource: m.mnemonic === "IsCheckHp" ? "hp" : "mp",
+          value: i[0],
+          operator: s[0],
+          target: i[1],
+        };
+      if (m.mnemonic === "ModeSet" && form([0]) && i[0] !== undefined)
+        op = { kind: "mode-set", value: i[0] };
+      if (
+        ["IsModeSelecting", "IsNotModeSelecting"].includes(m.mnemonic) &&
+        form([0, 1]) &&
+        i[0] !== undefined &&
+        jump(i[1])
+      )
+        op = {
+          kind: "mode-branch",
+          value: i[0],
+          equal: m.mnemonic === "IsModeSelecting",
+          target: i[1],
+        };
       if (
         m.mnemonic === "IsMyCondition" &&
         form([0, 1]) &&
@@ -140,7 +211,7 @@ export function compileBattleAI(
     return { mnemonic: m.mnemonic, op };
   });
   return {
-    kind: "battle-ai-normal-v1",
+    kind: "battle-ai-normal-v2",
     source,
     entry,
     end,

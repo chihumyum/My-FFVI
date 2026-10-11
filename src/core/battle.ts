@@ -4,6 +4,10 @@ import {
 } from "./ability.js";
 import { atbIncrement } from "./atb.js";
 import {
+  initialEnemyBehavior,
+  type EnemyBehaviorState,
+} from "./enemy-behavior.js";
+import {
   BattleAIError,
   drawBattleAIAbility,
   planBattleAITurn,
@@ -35,6 +39,8 @@ export type Combatant = CombatantDefinition & {
   maxMp: number;
   atb: number;
   queued: boolean;
+  /** Shared enemy parameters; deliberately separate from VM execution state. */
+  behavior: EnemyBehaviorState | null;
 };
 export type BattleAction = {
   actor: string;
@@ -80,7 +86,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v10"
+      content.profile !== "narshe-playability-v11"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -96,6 +102,7 @@ export class BattleGame {
             maxMp: p.mp,
             atb: 0,
             queued: false,
+            behavior: null,
           }))),
       ...content.enemies.map((p) => ({
         ...structuredClone(p),
@@ -103,6 +110,7 @@ export class BattleGame {
         maxMp: p.mp,
         atb: 0,
         queued: false,
+        behavior: initialEnemyBehavior(),
       })),
     ];
     if (
@@ -120,9 +128,13 @@ export class BattleGame {
     }
     for (const c of this.enemies) {
       if (!c.ai) throw new BattleAIError(null, 0, "missing enemy AI program");
-      const state = startBattleAI(c.ai, this.aiContext(c));
-      this.admitAITurn(c, planBattleAITurn(c.ai, state, this.aiContext(c)));
-      this.aiStates.set(c.id, state);
+      const initial = startBattleAI(c.ai, this.aiContext(c));
+      const context = this.aiContext(c);
+      context.self.behavior = initial.behavior;
+      this.admitAITurn(c, planBattleAITurn(c.ai, initial.state, context));
+      // Initialization writes are real; speculative first-turn writes are not.
+      c.behavior = initial.behavior;
+      this.aiStates.set(c.id, initial.state);
     }
     for (const c of this.combatants) {
       const range = content.initialAtb[c.side];
@@ -216,7 +228,9 @@ export class BattleGame {
     return min + Math.floor(this.randomUnit() * (max - min + 1));
   }
   private aiContext(actor: Combatant) {
+    if (!actor.behavior) throw new Error("Missing enemy behavior parameters");
     return {
+      self: { hp: actor.hp, mp: actor.mp, behavior: actor.behavior },
       conditionIds: actor.conditionIds,
       players: this.players,
       enemies: this.enemies,
@@ -314,6 +328,7 @@ export class BattleGame {
         );
       this.enqueue(actor, decision.ability, decision.choice);
       this.aiStates.set(actor.id, turn.state);
+      actor.behavior = turn.behavior;
     } catch (error) {
       this.randomState = previousRandom;
       throw error;
