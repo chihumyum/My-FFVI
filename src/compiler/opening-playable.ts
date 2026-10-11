@@ -16,6 +16,7 @@ import { compileDevelopmentAbility } from "./ability.js";
 import { compileBattleConditionCatalog } from "./conditions.js";
 import { compileBattleCommand } from "./commands.js";
 import { compileBattleAI, battleAIAbilities } from "./battle-ai.js";
+import { compileGameState } from "./game-state.js";
 import {
   compileEquipmentElements,
   compileElementResistances,
@@ -322,7 +323,6 @@ export async function compileOpeningPlayable(
       player: initialAtb("ACCUMULATION_ATB_NORMAL"),
       enemy: initialAtb("ENEMY_ACCUMULATION_ATB_NORMAL"),
     },
-    gil: int(unique("initialize_data.csv", "key_name", "INIT_GIL").value1),
     players,
     abilities,
     commands: { [magitekCommand.id]: magitekCommand },
@@ -347,6 +347,11 @@ export async function compileOpeningPlayable(
       "敌方行动使用来源 AI、独立回合与变量，连续行动整组入队。普通反击按命中结果触发并优先执行，保留原行动条；最终攻击、恢复专用反应、完整自动目标及特殊指令仍未接入，未知依赖会明确停止。",
     ],
   };
-  const result = { kind: "narshe-battle-catalog" as const, common, encounters };
+  const result = {
+    kind: "narshe-battle-catalog" as const,
+    common,
+    encounters,
+    gameState: compileGameState(source, name),
+  };
   return { ...result, contentHash: hash(result) };
 }

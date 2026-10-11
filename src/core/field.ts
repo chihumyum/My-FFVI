@@ -703,8 +703,9 @@ export class FieldGame {
       !!this.content.entry.absentHideTargets?.includes(id)
     );
   }
-  /** Only the session owner calls this after consuming a real battle victory. */
-  finishEncounter(party: number): void {
+  /** Validate the handoff before consuming rewards. The commit only schedules
+   * the continuation; normal simulation, not reward publication, runs its code. */
+  prepareEncounterReturn(party: number): () => void {
     if (
       this.stop?.kind !== "encounter" ||
       this.stop.party !== party ||
@@ -714,9 +715,24 @@ export class FieldGame {
     const continuation = this.stop.continuation;
     if (!this.content.scripts[continuation])
       throw new Error("Missing battle continuation");
-    this.stop = null;
-    this.remainder = 0;
-    this.beginRoot(continuation);
+    const stop = this.stop;
+    const locals = structuredClone(
+      this.content.scriptLocals?.[continuation] ?? null,
+    );
+    new EventState(this.eventState.snapshot()).beginScript(locals);
+    return () => {
+      if (this.stop !== stop) throw new Error("Stale battle continuation");
+      this.eventState.beginScript(locals);
+      this.tasks = [this.task(continuation, 0, "-1001")];
+      this.stop = null;
+      this.remainder = 0;
+    };
+  }
+  /** Isolated field hosts can resume immediately; GameSession uses the prepared
+   * continuation so shared-state publication precedes subsequent event code. */
+  finishEncounter(party: number): void {
+    this.prepareEncounterReturn(party)();
+    this.pump();
   }
   private pump(): void {
     if (this.stop || this.dialogue) return;

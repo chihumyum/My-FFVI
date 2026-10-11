@@ -6,6 +6,7 @@ import type { BattleConditionCatalog } from "./battle-conditions.js";
 import type { ElementResistances } from "./elements.js";
 import type { BattleAIProgram } from "./battle-ai.js";
 import type { BattleReactionRules } from "./battle-reactions.js";
+import type { GameStateContent } from "./game-state.js";
 
 export type BattleCommandDefinition = {
   id: number;
@@ -26,7 +27,6 @@ export type BattleContent = {
   atb: AtbRules;
   reactions: BattleReactionRules;
   initialAtb: { player: [number, number]; enemy: [number, number] };
-  gil: number;
   players: CombatantDefinition[];
   enemies: CombatantDefinition[];
   abilities: Record<string, AbilityDefinition>;
@@ -66,6 +66,7 @@ export type BattleEncounter = Pick<
 export type BattleCatalog = {
   kind: "narshe-battle-catalog";
   contentHash: string;
+  gameState: GameStateContent;
   common: Omit<BattleContent, keyof BattleEncounter | "contentHash">;
   encounters: Record<string, BattleEncounter>;
 };

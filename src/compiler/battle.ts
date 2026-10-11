@@ -389,6 +389,21 @@ export async function compileOpeningBattle(root: string) {
   }
   tableGroup("exp_table.csv", "group_id", 1);
   unique("initialize_data.csv", "key_name", "INIT_GIL");
+  for (const value of tables["initialize_data.csv"]!.filter((r) =>
+    /^INIT_ITEM_\d+$/.test(r.key_name!),
+  )) {
+    if (!/^INIT_ITEM_[1-5]$/.test(value.key_name!))
+      throw new Error("Unreviewed initial item slot");
+    row("initialize_data.csv", value.id!);
+  }
+  // Preserve content identity separately from the item table's identity. Other
+  // content kinds (equipment stock, learned magic, magic stones) are not item stacks.
+  for (const value of tables["content.csv"]!.filter((r) => r.type_id === "1")) {
+    row("content.csv", value.id!);
+    row("item.csv", value.type_value!);
+  }
+  for (const key of ["MAX_GIL", "MAX_ITEM", "MAX_EXP", "MAX_LV"])
+    unique("game_constant_int.csv", "key_name", key);
   unique("game_constant_int.csv", "key_name", "ACCUMULATION_ATB_NORMAL");
   unique("game_constant_int.csv", "key_name", "ENEMY_ACCUMULATION_ATB_NORMAL");
   unique("game_constant_int.csv", "key_name", "RATE_HAVE_NEAR_DEATH");

@@ -1,8 +1,9 @@
 import type { FieldContent } from "../field/types.js";
 import { encounterContent, type BattleCatalog } from "./battle-content.js";
-import { BattleGame, type Combatant } from "./battle.js";
+import { BattleGame } from "./battle.js";
 import { BattleAIError } from "./battle-ai.js";
 import { WorldSession } from "./world-session.js";
+import { GameState, type BattleLease } from "./game-state.js";
 
 /** Owns the encounter handoff and consumes rewards exactly once. No renderer state drives progression. */
 export class GameSession {
@@ -11,9 +12,17 @@ export class GameSession {
     return this.world.field;
   }
   battle: BattleGame | null = null;
-  players: Combatant[] | undefined;
-  gil: number;
-  readonly completedEncounters: number[] = [];
+  readonly state: GameState;
+  get players() {
+    return this.state.partyPlayers();
+  }
+  get gil() {
+    return this.state.gil;
+  }
+  get completedEncounters() {
+    return this.state.completedEncounters;
+  }
+  private battleLease: BattleLease | null = null;
   private encounterSerial = 0;
   private currentSeed = 0;
   private remainder = 0;
@@ -25,7 +34,12 @@ export class GameSession {
     if (field.sourceSetHash !== battleCatalog.common.fieldSourceSetHash)
       throw new Error("Field/battle source mismatch");
     this.world = new WorldSession(field);
-    this.gil = battleCatalog.common.gil;
+    this.state = new GameState(
+      battleCatalog.gameState,
+      battleCatalog.common.players,
+      battleCatalog.contentHash,
+      battleCatalog.common.conditions,
+    );
   }
   advance(ms: number) {
     if (!Number.isFinite(ms) || ms < 0 || ms > 60000)
@@ -48,10 +62,17 @@ export class GameSession {
         if (!content) continue;
         this.currentSeed =
           (this.seed + Math.imul(this.encounterSerial, 0x9e3779b1)) >>> 0;
+        const lease = this.state.openBattle(content.encounterId);
         try {
-          this.battle = new BattleGame(content, this.currentSeed, this.players);
+          this.battle = new BattleGame(
+            content,
+            this.currentSeed,
+            this.state.battlePlayers(lease),
+          );
+          this.battleLease = lease;
           this.encounterSerial++;
         } catch (error) {
+          this.state.cancelBattle(lease);
           if (!(error instanceof BattleAIError)) throw error;
           this.field.stop = {
             kind: "unsupported",
@@ -63,21 +84,28 @@ export class GameSession {
     }
   }
   continueVictory(): boolean {
-    const result = this.battle?.takeVictory();
+    const result = this.battle?.previewVictory();
     if (!result) return false;
-    this.players = result.players;
-    this.gil += result.gil;
-    this.completedEncounters.push(this.battle!.content.encounterId);
-    this.field.finishEncounter(this.battle!.content.encounterId);
+    if (!this.battleLease) throw new Error("Missing battle state ownership");
+    const resume = this.field.prepareEncounterReturn(
+      this.battle!.content.encounterId,
+    );
+    const commit = this.state.prepareVictory(this.battleLease, result);
+    // Synchronous commits: no event code or user callbacks execute between them.
+    commit();
+    resume();
+    this.battle!.takeVictory();
+    this.battleLease = null;
     this.battle = null;
     return true;
   }
   retryBattle(): boolean {
     if (this.battle?.phase !== "defeat") return false;
+    if (!this.battleLease) throw new Error("Missing battle state ownership");
     this.battle = new BattleGame(
       this.battle.content,
       this.currentSeed,
-      this.players,
+      this.state.battlePlayers(this.battleLease),
     );
     return true;
   }

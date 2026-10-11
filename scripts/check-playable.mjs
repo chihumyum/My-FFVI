@@ -87,7 +87,7 @@ for (let n = 0; n < 30 && loss.battle.phase === "active"; n++)
   loss.advance(60000);
 assert.equal(loss.battle.phase, "defeat");
 assert.equal(loss.continueVictory(), false);
-assert.equal(loss.gil, content.common.gil);
+assert.equal(loss.gil, content.gameState.initialGil);
 assert.equal(loss.field.hiddenEntities.size, 0);
 assert.equal(loss.retryBattle(), true);
 assert.equal(loss.battle.phase, "active");

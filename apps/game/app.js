@@ -50,6 +50,44 @@ function pause(value) {
   held.clear();
   $("pause").hidden = !value;
   $("menu-button").textContent = value ? "继续" : "暂停";
+  if (value) {
+    const state = session.state.snapshot();
+    const players = session.battle?.players ?? session.players;
+    text(
+      "owned-party",
+      players
+        .map(
+          (p) =>
+            `${p.name} · Lv ${p.level}\nHP ${p.hp} / ${p.maxHp}　MP ${p.mp} / ${p.maxMp}`,
+        )
+        .join("\n\n"),
+    );
+    text("owned-gil", `${state.gil} Gil`);
+    for (const [id, important] of [
+      ["owned-items", false],
+      ["owned-key-items", true],
+    ]) {
+      const entries = state.items.filter(
+        (i) =>
+          i.count > 0 &&
+          battleContent.gameState.items[i.id].important === important,
+      );
+      text(
+        id,
+        entries
+          .map((i) => {
+            // These six observed item icons have no Web sprite binding yet.
+            // Preserve the source label in content and omit only known icons here.
+            const name = battleContent.gameState.items[i.id].name.replace(
+              /<(?:IC_DRAG|IC_BAG|IC_TENTO|IC_SCR|IC_MCN|IC_IOBJ)>/g,
+              "",
+            );
+            return `${name} × ${i.count}`;
+          })
+          .join("\n") || "无",
+      );
+    }
+  }
   sync();
   if (value) $("resume").focus();
   else focus();

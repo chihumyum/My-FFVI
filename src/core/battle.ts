@@ -410,8 +410,8 @@ export class BattleGame {
   targets(actorId: string, abilityId: number): Combatant[] {
     return this.targetChoices(actorId, abilityId)
       .filter((choice) => choice.selection.kind === "single")
-      .map(
-        (choice) => this.combatants.find((c) => c.id === choice.targetIds[0])!,
+      .map((choice) =>
+        this.combatants.find((c) => c.id === choice.targetIds[0])!,
       );
   }
   command(
@@ -833,13 +833,15 @@ export class BattleGame {
       return;
     }
     if (this.enemies.some((c) => c.hp > 0)) return;
-    this.clearBattleConditions();
-    this.phase = "victory";
-    this.queue = [];
-    this.reactions = [];
+    // Missing growth for a later recipient must not leave an earlier recipient
+    // upgraded, or publish a victory whose reward cannot be collected.
+    const players = this.players.map((c) => ({
+      ...structuredClone(c),
+      conditionIds: this.conditions.battleEnd(c.conditionIds),
+    }));
     const exp = this.enemies.reduce((sum, c) => sum + c.exp, 0),
       gil = this.enemies.reduce((sum, c) => sum + c.gil, 0);
-    const recipients = this.players.filter((c) => c.hp > 0),
+    const recipients = players.filter((c) => c.hp > 0),
       each = Math.trunc(exp / Math.max(1, recipients.length));
     const levels: BattleReward["levels"] = [];
     for (const c of recipients) {
@@ -859,6 +861,14 @@ export class BattleGame {
       c.level = Math.max(c.level, level);
       if (c.level !== from) levels.push({ id: c.id, from, to: c.level });
     }
+    for (const player of players)
+      Object.assign(
+        this.combatants.find((c) => c.id === player.id)!,
+        player,
+      );
+    this.phase = "victory";
+    this.queue = [];
+    this.reactions = [];
     this.reward = {
       exp,
       gil,
@@ -873,9 +883,8 @@ export class BattleGame {
     for (const c of this.players)
       c.conditionIds = this.conditions.battleEnd(c.conditionIds);
   }
-  takeVictory(): { players: Combatant[]; gil: number } | null {
+  previewVictory(): { players: Combatant[]; gil: number } | null {
     if (this.phase !== "victory" || !this.reward || this.collected) return null;
-    this.collected = true;
     return {
       players: structuredClone(this.players).map((c) => ({
         ...c,
@@ -884,5 +893,10 @@ export class BattleGame {
       })),
       gil: this.reward.gil,
     };
+  }
+  takeVictory(): { players: Combatant[]; gil: number } | null {
+    const result = this.previewVictory();
+    if (result) this.collected = true;
+    return result;
   }
 }

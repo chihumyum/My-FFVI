@@ -474,6 +474,30 @@
         "build/reports/counter-opening-browser-check.json#12a6525d06a5624b36a6c5bbce752f0174f7bff8da484ec84e87fdde29b55c91",
         "docs/battle-reactions.md"
       ]
+    },
+    {
+      "id": "narshe:development-owned-game-state",
+      "subject": "narshe",
+      "predicate": "migration.sharedGameState",
+      "value": "Development shared state v1 centralizes opening roster progress, party, six equipment slot identities, ordinary/important item stacks, Gil and occurrence-based victory receipts. Battles borrow isolated entry state and retry from it; complete growth and field-return validation precede reward publication. 271 TypeScript and 18 Python tests, 50 source item identity/quantity checks, existing five encounters and browser opening menus pass. Browser post-battle levels are 3/2/2, HP 63/63/70, Gil 3096 and the initial key item remains one. Fifty stack identities are not fifty usable items. Snapshot roundtrip is an owned-state fragment, not a complete save game; full roster initialization, item use, equipment changes, learning, field inventory events, browser persistence and original parity remain incomplete. No new region or story unlock.",
+      "when": {
+        "battleProfile": "narshe-playability-v13",
+        "gameStateProfile": "game-state-development-v1"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "initialize_data.csv:INIT_PARTY1/2/3,INIT_GIL,INIT_ITEM_1",
+        "content.csv:58 -> item.csv:57",
+        "GameAssembly.dll:RVA 0xaac310 CreateItems",
+        "GameAssembly.dll:RVA 0x8df610 IsImportant",
+        "GameAssembly.dll:RVA 0x7f79a0 AddOwnedItem",
+        "GameAssembly.dll:RVA 0x7f7740 AddGil",
+        "build/reports/game-state-native-check.json#8ba78c1853b557afe2f7a82faae89b1ef1961ce26d8373c3dbd21ed9d0064182",
+        "build/reports/game-state-check.json#1963652a6e266c61706c493b4cede7075b293567b6af8e002e2912011ff48025",
+        "build/reports/game-state-browser-check.json#8ef614a212c9bbb1a66579831e55b970b3386e3e205d4e9582914a78c6e93119",
+        "docs/shared-game-state.md"
+      ]
     }
   ],
   "assets": []
