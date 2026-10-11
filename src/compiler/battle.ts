@@ -195,7 +195,21 @@ export async function compileOpeningBattle(root: string) {
       a.source.assetPath.endsWith("/" + name + ".json"),
     );
     if (assets.length !== 1) throw new Error("Unresolved battle JSON: " + name);
-    return assets[0]!;
+    const asset = assets[0]!;
+    const file = battle.sources.find(
+      (s) =>
+        s.file === asset.source.file ||
+        s.file.endsWith("/" + asset.source.file),
+    )!;
+    return {
+      ...asset,
+      source: {
+        ...asset.source,
+        sha256: file.sha256,
+        sourceSetHash: battle.parentSourceSetHash,
+        battleSourceSetHash: battle.sourceSetHash,
+      },
+    };
   };
   const spritePath = (suffix: string) => {
     const paths = Object.keys(battle.sprites).filter((p) =>

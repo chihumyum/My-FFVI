@@ -1,4 +1,5 @@
 import test from "node:test";
+import { cyclingAI, syntheticAI } from "./fixtures/battle-ai.js";
 import assert from "node:assert/strict";
 import { BattleGame } from "../src/core/battle.js";
 import { compileTargetRule } from "../src/compiler/battle-targets.js";
@@ -33,19 +34,18 @@ function fixture(): BattleContent {
     conditionResistances: {},
     attackElements: [],
     elementResistances: {},
-    ai: [],
+    ai: null,
     placement: null,
     sprites: { idle: "synthetic", mount: null },
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v9",
+    profile: "narshe-playability-v10",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
     encounterId: 1000,
     formation: "normal",
-    maxPartyLevel: null,
     atb: {
       coefficient: 21,
       enemyCoefficient: 12,
@@ -66,7 +66,7 @@ function fixture(): BattleContent {
         exp: 9,
         gil: 7,
         abilities: [13],
-        ai: [{ ability: 13, weight: 1 }],
+        ai: cyclingAI([13]),
       },
       {
         ...structuredClone(unit),
@@ -77,7 +77,7 @@ function fixture(): BattleContent {
         exp: 9,
         gil: 7,
         abilities: [13],
-        ai: [{ ability: 13, weight: 1 }],
+        ai: cyclingAI([13]),
       },
     ],
     conditions: {
@@ -272,6 +272,92 @@ function fixture(): BattleContent {
     limitations: [],
   };
 }
+
+test("enemy AI cycles physical and magic decisions through the shared action queue", () => {
+  const f = fixture();
+  f.players.forEach((p) => {
+    p.hp = 10000;
+  });
+  f.enemies.forEach((e) => {
+    e.hp = 10000;
+    e.sourceId = 712345;
+    e.abilities = [13, 10];
+    e.ai = cyclingAI([13, 10]);
+  });
+  const battle = new BattleGame(f, 221);
+  const sequence: number[] = [];
+  for (let turn = 0; turn < 3; turn++) {
+    battle.enemies[0]!.atb = 100;
+    battle.advance(10);
+    sequence.push(battle.action!.ability);
+    assert.equal(battle.action!.actor, "e1");
+    battle.advance(900);
+    assert.equal(battle.enemies[0]!.atb, 0);
+    assert.equal(battle.enemies[0]!.queued, false);
+  }
+  assert.deepEqual(sequence, [13, 10, 13]);
+  assert.equal(battle.enemyAIState("e1")!.actTurn, 1);
+  assert.equal(battle.enemyAIState("e2")!.actTurn, 0);
+  assert.ok(battle.players.some((p) => p.hp < p.maxHp));
+});
+
+test("AI gates all ability dependencies on a reached table before partial execution", () => {
+  const f = fixture();
+  const enemy = f.enemies[0]!;
+  enemy.ai = syntheticAI([
+    ["Nop"],
+    ["SyncAI"],
+    ["IsLevelCheck", [1, 7, 7]],
+    ["StartTable", [0]],
+    ["Act", [13]],
+    ["EndTable"],
+    ["JumpBattleAI", [0]],
+    ["Nop"],
+    ["StartTable", [1]],
+    ["Act", [13]],
+    ["Act", [9999]],
+    ["EndTable"],
+    ["JumpBattleAI", [0]],
+  ]);
+  enemy.abilities.push(9999);
+  const battle = new BattleGame(f, 223);
+  battle.players[1]!.level = 7;
+  battle.players[1]!.hp = 0;
+  battle.enemies[0]!.atb = 100;
+  const before = battle.enemyAIState("e1");
+  assert.throws(
+    () => battle.advance(10),
+    /Mnemonics\/10: unimplemented ability 9999/,
+  );
+  assert.deepEqual(battle.enemyAIState("e1"), before);
+  assert.equal(battle.action, null);
+  assert.equal(battle.enemies[0]!.queued, false);
+  assert.equal(battle.players[0]!.hp, f.players[0]!.hp);
+  f.players[1]!.level = 7;
+  assert.throws(() => new BattleGame(f, 223), /unimplemented ability 9999/);
+});
+
+test("failed AI target resolution rolls back its random stream, turn and queue", () => {
+  const f = fixture();
+  f.enemies[0]!.ai = cyclingAI([13, 10]);
+  f.enemies[0]!.abilities = [13, 10];
+  const clean = new BattleGame(structuredClone(f), 227);
+  const broken = new BattleGame(f, 227);
+  clean.enemies[0]!.atb = broken.enemies[0]!.atb = 100;
+  f.abilities[13]!.plan!.targeting.modes = [];
+  assert.throws(() => broken.advance(10), /Invalid battle target rule/);
+  assert.equal(broken.enemyAIState("e1")!.actTurn, 0);
+  assert.equal(broken.enemies[0]!.queued, false);
+  assert.equal(broken.action, null);
+  f.abilities[13]!.plan!.targeting.modes = ["single"];
+  clean.advance(10);
+  broken.advance(10);
+  assert.deepEqual(broken.action, clean.action);
+  assert.deepEqual(broken.enemyAIState("e1"), clean.enemyAIState("e1"));
+  clean.advance(500);
+  broken.advance(500);
+  assert.deepEqual(broken.action!.results, clean.action!.results);
+});
 
 test("one group action can damage a weak target and heal an absorbing target with one cost", () => {
   const f = fixture();

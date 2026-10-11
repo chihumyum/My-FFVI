@@ -15,6 +15,7 @@ import type { ParameterValues } from "../core/parameters.js";
 import { compileDevelopmentAbility } from "./ability.js";
 import { compileBattleConditionCatalog } from "./conditions.js";
 import { compileBattleCommand } from "./commands.js";
+import { compileBattleAI, battleAIAbilities } from "./battle-ai.js";
 import {
   compileEquipmentElements,
   compileElementResistances,
@@ -229,7 +230,7 @@ export async function compileOpeningPlayable(
       commands: [magitekCommand.id],
       conditionIds: [],
       conditionResistances: {},
-      ai: [],
+      ai: null,
       placement: null,
       sprites: {
         idle: sprite(`/${c.spriteGroup}/RideL_00.png`),
@@ -255,78 +256,9 @@ export async function compileOpeningPlayable(
         noTemporary,
         parameterLimits,
       ).confirmed;
-      const ops = record(e.ai.data).Mnemonics as {
-        mnemonic: string;
-        operands: { iValues: number[]; rValues: number[] };
-      }[];
-      const guard = [
-        "Nop",
-        "SyncAI",
-        "IsMyCondition",
-        "StartTable",
-        "Act",
-        "EndTable",
-        "JumpBattleAI",
-        "Nop",
-        "StartTable",
-        "Act",
-        "EndTable",
-        "JumpBattleAI",
-        "Nop",
-        "Exit",
-      ];
-      const lobo = [
-        "Nop",
-        "SyncAI",
-        "IsMyCondition",
-        "IsLevelCheck",
-        "StartTable",
-        "Act",
-        "EndTable",
-        "JumpBattleAI",
-        "Nop",
-        "StartTable",
-        "Act",
-        "Act",
-        "EndTable",
-        "JumpBattleAI",
-        "Nop",
-        "StartTable",
-        "Act",
-        "EndTable",
-        "JumpBattleAI",
-        "Nop",
-        "Exit",
-      ];
-      const expected =
-        e.monsterId === 1 ? guard : e.monsterId === 26 ? lobo : [];
-      if (
-        r.initial_condition !== "0" ||
-        ops.map((o) => o.mnemonic).join() !== expected.join() ||
-        ops[2]?.operands.iValues[0] !== 12 ||
-        ops[2]?.operands.iValues[1] !== (e.monsterId === 1 ? 7 : 14)
-      )
-        throw new Error("Enemy AI outside the street profile");
-      if (
-        e.monsterId === 26 &&
-        (ops[3]!.operands.iValues.slice(0, 3).join() !== "1,7,8" ||
-          ops[3]!.operands.iValues.slice(3).some(Boolean))
-      )
-        throw new Error("Unreviewed Silver Lobo level branch");
-      const action = ops[e.monsterId === 1 ? 4 : 5]!.operands;
-      const ai = action.iValues.flatMap((id, n) =>
-        id ? [{ ability: id, weight: action.rValues[n]! }] : [],
-      );
-      if (
-        ai.some(
-          (a) =>
-            abilities[a.ability]?.plan?.effects.length !== 1 ||
-            abilities[a.ability]?.plan?.effects[0]?.kind !== "physical" ||
-            !Number.isFinite(a.weight) ||
-            a.weight <= 0,
-        )
-      )
-        throw new Error("Unsupported Guard action");
+      if (r.initial_condition !== "0")
+        throw new Error("Unimplemented initial enemy conditions");
+      const ai = compileBattleAI(e.ai.data, e.ai.source);
       return {
         id: `enemy:${e.slot}`,
         sourceId: e.monsterId,
@@ -348,7 +280,7 @@ export async function compileOpeningPlayable(
         exp: int(r.exp),
         gil: int(r.gill),
         growthGroup: null,
-        abilities: ai.map((a) => a.ability),
+        abilities: battleAIAbilities(ai),
         commands: [],
         conditionIds: [],
         conditionResistances: {},
@@ -362,7 +294,6 @@ export async function compileOpeningPlayable(
       enemies,
       background: encounter.background,
       formation: encounter.pattern === 3 ? "opposed" : "normal",
-      maxPartyLevel: enemies.some((e) => e.sourceId === 26) ? 6 : null,
     };
   }
   const growth: BattleContent["growth"] = {};
@@ -382,7 +313,7 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v9",
+    profile: "narshe-playability-v10",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,
@@ -412,7 +343,7 @@ export async function compileOpeningPlayable(
       "当前开放三种射线和治愈原力；其余四种魔导、道具、逃跑与通用战斗脚本尚未实现。",
       "掉落尚未结算，库存保持不变；队伍 HP、经验、Gil 只保存在本次页面会话。",
       "站位、夹击队形、骑乘拼接和光束是临时二维表现；原版音效、特效、动画时序尚未接入。",
-      "狼犬只开放全队等级低于 7 的源 AI 分支；高等级分支仍明确停止。",
+      "敌方普通行动使用来源 AI 分支、行动表和独立回合进度；反击、脚本变量及特殊指令尚未接入，执行路径中的未知能力会明确停止。",
     ],
   };
   const result = { kind: "narshe-battle-catalog" as const, common, encounters };

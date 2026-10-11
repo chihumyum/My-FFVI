@@ -376,6 +376,26 @@
         "build/reports/battle-life-check.json#382cce47b8a96f433b19d6cd52ef7b261ac577baa1b93ccbcb05031dae052428",
         "docs/battle-life.md"
       ]
+    },
+    {
+      "id": "narshe:development-source-ai",
+      "subject": "narshe",
+      "predicate": "migration.sourceAI",
+      "value": "Development v10 replaces Guard/Silver Lobo templates with source-addressed normal AI control flow, conditional jumps, action-table cycles and per-enemy state. Normal decisions share the action queue and roll back AI state and RNG on target failure. 430 source scripts have diagnostics; 156 fully decoded normal programs are not playable-enemy coverage. Three additional source AI scripts pass controlled-host replay; existing five encounters and browser opening victory/field return pass. Ability 696, counters, interrupts, variables, full targeting/scheduling and original parity remain incomplete. No new story region.",
+      "when": {
+        "battleProfile": "narshe-playability-v10"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x828fe0 SyncAI",
+        "GameAssembly.dll:RVA 0x81c400 Act",
+        "GameAssembly.dll:RVA 0x8343d0 ForwardStep",
+        "GameAssembly.dll:RVA 0x154b0e0 Enumerable.Sum(float)",
+        "build/reports/battle-ai-check.json#62595d8a8f81059703b0d43816715813512a3402260457cb3e4be91dbdfceb67",
+        "build/reports/ai-browser-check.json#c76e7e7bff2bf499e33219fe4200dce31a37ce0d1d64c7eb5223f5bed801eda7",
+        "docs/battle-ai.md"
+      ]
     }
   ],
   "assets": []

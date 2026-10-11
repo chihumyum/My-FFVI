@@ -3,6 +3,14 @@ import {
   type AbilityEffectResult,
 } from "./ability.js";
 import { atbIncrement } from "./atb.js";
+import {
+  BattleAIError,
+  drawBattleAIAbility,
+  planBattleAITurn,
+  startBattleAI,
+  type BattleAIState,
+  type BattleAITurn,
+} from "./battle-ai.js";
 import { calculateRevivalEffects, revivalEffects } from "./battle-revival.js";
 import { validateElements, validateElementResistances } from "./elements.js";
 import {
@@ -62,6 +70,7 @@ export class BattleGame {
   private remainder = 0;
   private randomState: number;
   private queue: BattleAction[] = [];
+  private aiStates = new Map<string, BattleAIState>();
   private collected = false;
   readonly conditions: BattleConditions;
   constructor(
@@ -71,7 +80,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v9"
+      content.profile !== "narshe-playability-v10"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -108,6 +117,12 @@ export class BattleGame {
     for (const c of this.combatants) {
       validateElements(c.attackElements);
       validateElementResistances(c.elementResistances);
+    }
+    for (const c of this.enemies) {
+      if (!c.ai) throw new BattleAIError(null, 0, "missing enemy AI program");
+      const state = startBattleAI(c.ai, this.aiContext(c));
+      this.admitAITurn(c, planBattleAITurn(c.ai, state, this.aiContext(c)));
+      this.aiStates.set(c.id, state);
     }
     for (const c of this.combatants) {
       const range = content.initialAtb[c.side];
@@ -187,15 +202,122 @@ export class BattleGame {
       )
     );
   }
-  private randomInt(min: number, max: number) {
-    if (!Number.isInteger(min) || !Number.isInteger(max) || min > max)
-      throw new Error("Invalid random range");
+  private randomUnit() {
     let x = this.randomState;
     x ^= x << 13;
     x ^= x >>> 17;
     x ^= x << 5;
     this.randomState = x >>> 0;
-    return min + Math.floor((this.randomState / 0x100000000) * (max - min + 1));
+    return this.randomState / 0x100000000;
+  }
+  private randomInt(min: number, max: number) {
+    if (!Number.isInteger(min) || !Number.isInteger(max) || min > max)
+      throw new Error("Invalid random range");
+    return min + Math.floor(this.randomUnit() * (max - min + 1));
+  }
+  private aiContext(actor: Combatant) {
+    return {
+      conditionIds: actor.conditionIds,
+      players: this.players,
+      enemies: this.enemies,
+    };
+  }
+  enemyAIState(actorId: string): BattleAIState | null {
+    const state = this.aiStates.get(actorId);
+    return state ? { ...state } : null;
+  }
+  private admitAITurn(actor: Combatant, turn: BattleAITurn) {
+    const program = actor.ai!;
+    const fail = (pc: number, reason: string): never => {
+      throw new BattleAIError(program.source, pc, reason);
+    };
+    if (turn.state.status !== "waiting")
+      fail(turn.state.pc, "normal action path does not return to SyncAI");
+    if (turn.acts.filter((a) => a.selected).length !== 1)
+      fail(turn.state.pc, "normal action path must select exactly one action");
+    for (const pc of turn.visited) {
+      const op = program.instructions[pc]!.op;
+      if (op.kind === "condition")
+        this.conditions.validateReferences([op.conditionId]);
+    }
+    for (const act of turn.acts)
+      for (const id of act.abilities) {
+        const ability = this.content.abilities[id];
+        if (!actor.abilities.includes(id) || !ability?.plan)
+          fail(
+            act.pc,
+            `unimplemented ability ${id}: ${ability?.blockers.join("; ") ?? "missing definition"}`,
+          );
+        // Native automatic targets differ from the player's menu defaults. The
+        // reviewed normal path covers random player targeting for ranges 3/7.
+        // Other ranges and special target filters remain explicit capabilities.
+        if (
+          ![3, 7].includes(ability!.program.range) ||
+          ability!.plan!.targeting.life !== "alive"
+        )
+          fail(
+            act.pc,
+            `unimplemented automatic target range for ability ${id}`,
+          );
+        if (
+          !actor.physical &&
+          ability!.plan!.effects.some((e) => e.kind === "physical")
+        )
+          fail(act.pc, `missing physical parameters for ability ${id}`);
+        if (
+          ability!.plan!.targeting.normalFormationOnly &&
+          this.content.formation !== "normal"
+        )
+          fail(act.pc, `unimplemented formation for ability ${id}`);
+      }
+  }
+  private decideEnemyAction(actor: Combatant) {
+    const state = this.aiStates.get(actor.id)!;
+    const turn = planBattleAITurn(actor.ai!, state, this.aiContext(actor));
+    this.admitAITurn(actor, turn);
+    const previousRandom = this.randomState;
+    try {
+      let decision: {
+        ability: AbilityDefinition;
+        choice: TargetChoice;
+      } | null = null;
+      for (const act of turn.acts) {
+        // Native Act draws even for a table row belonging to another turn.
+        const id = drawBattleAIAbility(act, {
+          integer: (min, max) => this.randomInt(min, max),
+          float: (min, max) =>
+            Math.fround(min + this.randomUnit() * (max - min)),
+        });
+        if (!act.selected) continue;
+        const ability = this.content.abilities[id]!;
+        const choices = this.targetChoices(actor.id, id).filter(
+          (choice) =>
+            choice.selection.kind === "single" &&
+            this.players.some((p) => p.id === choice.targetIds[0]),
+        );
+        if (!choices.length)
+          throw new BattleAIError(
+            actor.ai!.source,
+            act.pc,
+            `no admitted automatic target for ability ${id}`,
+          );
+        decision = {
+          ability,
+          choice: choices[this.randomInt(0, choices.length - 1)]!,
+        };
+      }
+      if (!decision)
+        throw new BattleAIError(
+          actor.ai!.source,
+          state.pc,
+          "no normal action decision",
+        );
+      this.enqueue(actor, decision.ability, decision.choice);
+      this.aiStates.set(actor.id, turn.state);
+    } catch (error) {
+      this.randomState = previousRandom;
+      throw error;
+    }
   }
   private log(text: string) {
     this.events.push({ time: this.time, text });
@@ -228,8 +350,8 @@ export class BattleGame {
   targets(actorId: string, abilityId: number): Combatant[] {
     return this.targetChoices(actorId, abilityId)
       .filter((choice) => choice.selection.kind === "single")
-      .map((choice) =>
-        this.combatants.find((c) => c.id === choice.targetIds[0])!,
+      .map(
+        (choice) => this.combatants.find((c) => c.id === choice.targetIds[0])!,
       );
   }
   command(
@@ -328,35 +450,7 @@ export class BattleGame {
       );
       if (c.side === "enemy" && c.atb >= 100) {
         if (!this.players.some((p) => p.hp > 0)) break;
-        const total = c.ai.reduce((sum, a) => sum + a.weight, 0);
-        let roll = this.randomInt(1, total),
-          choice = c.ai.at(-1)!;
-        for (const candidate of c.ai) {
-          roll -= candidate.weight;
-          if (roll <= 0) {
-            choice = candidate;
-            break;
-          }
-        }
-        const ability = this.content.abilities[choice.ability];
-        if (
-          !ability?.plan ||
-          ability.plan.effects.length !== 1 ||
-          ability.plan.effects[0]!.kind !== "physical"
-        )
-          throw new Error("Unsupported enemy AI action");
-        const choices = this.targetChoices(c.id, ability.id).filter(
-          (choice) =>
-            choice.selection.kind === "single" &&
-            this.players.some((p) => p.id === choice.targetIds[0]),
-        );
-        if (!choices.length)
-          throw new Error("Unsupported enemy AI target selection");
-        this.enqueue(
-          c,
-          ability,
-          choices[this.randomInt(0, choices.length - 1)]!,
-        );
+        this.decideEnemyAction(c);
       }
     }
     const index = this.queue.findIndex((a) => a.charge === 0);

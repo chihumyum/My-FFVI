@@ -1,6 +1,7 @@
 import type { FieldContent } from "../field/types.js";
 import { encounterContent, type BattleCatalog } from "./battle-content.js";
 import { BattleGame, type Combatant } from "./battle.js";
+import { BattleAIError } from "./battle-ai.js";
 import { WorldSession } from "./world-session.js";
 
 /** Owns the encounter handoff and consumes rewards exactly once. No renderer state drives progression. */
@@ -45,21 +46,19 @@ export class GameSession {
           this.field.stop.party!,
         );
         if (!content) continue;
-        const levels = this.players ?? content.players;
-        if (
-          content.maxPartyLevel !== null &&
-          levels.some((c) => c.level > content.maxPartyLevel!)
-        ) {
+        this.currentSeed =
+          (this.seed + Math.imul(this.encounterSerial, 0x9e3779b1)) >>> 0;
+        try {
+          this.battle = new BattleGame(content, this.currentSeed, this.players);
+          this.encounterSerial++;
+        } catch (error) {
+          if (!(error instanceof BattleAIError)) throw error;
           this.field.stop = {
             kind: "unsupported",
-            message: "狼犬的高等级行动分支尚未迁移。",
+            message: error.message,
             site: this.field.stop.site,
           };
-          continue;
         }
-        this.currentSeed =
-          (this.seed + Math.imul(this.encounterSerial++, 0x9e3779b1)) >>> 0;
-        this.battle = new BattleGame(content, this.currentSeed, this.players);
       }
     }
   }

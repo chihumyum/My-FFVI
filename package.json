@@ -38,6 +38,7 @@
     "conditions:check": "npm run build && node scripts/check-conditions.mjs",
     "battle-conditions:check": "npm run battle:build && node scripts/check-battle-conditions.mjs",
     "battle-life:check": "npm run battle:build && node scripts/check-battle-life.mjs",
+    "battle-ai:check": "npm run battle:build && node scripts/check-battle-ai.mjs",
     "magic:check": "npm run build && node scripts/check-magic.mjs",
     "physical:check": "npm run build && node scripts/check-physical.mjs",
     "battle-targets:check": "npm run battle:build && node scripts/check-battle-targets.mjs",

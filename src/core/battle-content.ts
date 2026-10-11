@@ -4,6 +4,7 @@ import type { ParameterValues } from "./parameters.js";
 import type { AbilityProgram, DevelopmentAbilityPlan } from "./ability.js";
 import type { BattleConditionCatalog } from "./battle-conditions.js";
 import type { ElementResistances } from "./elements.js";
+import type { BattleAIProgram } from "./battle-ai.js";
 
 export type BattleCommandDefinition = {
   id: number;
@@ -15,13 +16,12 @@ export type BattleCommandDefinition = {
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "narshe-playability-v9";
+  profile: "narshe-playability-v10";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;
   encounterId: number;
   formation: "normal" | "opposed";
-  maxPartyLevel: number | null;
   atb: AtbRules;
   initialAtb: { player: [number, number]; enemy: [number, number] };
   gil: number;
@@ -52,14 +52,14 @@ export type CombatantDefinition = ParameterValues & {
   commands: number[];
   conditionIds: number[];
   conditionResistances: Record<string, number>;
-  ai: { ability: number; weight: number }[];
+  ai: BattleAIProgram | null;
   placement: { x: number; y: number; group: number } | null;
   sprites: { idle: string; mount: string | null };
 };
 
 export type BattleEncounter = Pick<
   BattleContent,
-  "encounterId" | "enemies" | "background" | "formation" | "maxPartyLevel"
+  "encounterId" | "enemies" | "background" | "formation"
 >;
 export type BattleCatalog = {
   kind: "narshe-battle-catalog";
