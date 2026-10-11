@@ -1,3 +1,4 @@
+import { battleAtbSpeed } from "../src/core/battle-preferences.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { BattleGame } from "../src/core/battle.js";
@@ -48,15 +49,15 @@ test("live Haste and Slow IDs drive ATB percentages while WAIT gates both ATB an
     const player = battle.players[0]!;
     battle.advance(10);
     const expected = atbIncrement(content.atb, { agility: player.agility, weight: player.weight,
-      enemy: false, speedPercent: percent, battleSpeed: content.timing.atbSpeed, seconds: 0.01 });
+      enemy: false, speedPercent: percent, battleSpeed: battleAtbSpeed(content.timing.speedIndex), seconds: 0.01 });
     assert.equal(player.atb, expected);
     assert.deepEqual(battle.slowClockState("a"), id === 125 ? [{ conditionId: 125, elapsedSeconds: frame }] : []);
     const clock = battle.slowClockState("a"), gauge = player.atb;
-    battle.setPreferences({ mode: "wait" }); battle.setClockInput({ ...running, uiWaiting: true });
+    battle.setPreferences({ mode: "wait", speedIndex: 2 }); battle.setClockInput({ ...running, uiWaiting: true });
     battle.advance(200);
     assert.equal(player.atb, gauge); assert.deepEqual(battle.slowClockState("a"), clock);
     assert.deepEqual(battle.timingState.gate, { simulation: true, progress: false, conditions: false });
-    battle.setPreferences({ mode: "active" }); battle.advance(10);
+    battle.setPreferences({ mode: "active", speedIndex: 2 }); battle.advance(10);
     assert.ok(player.atb > gauge);
     if (id === 125) assert.equal(battle.slowClockState("a")[0]!.elapsedSeconds, accumulated(2));
   }

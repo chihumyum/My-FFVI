@@ -67,8 +67,12 @@ const conditions = new FieldConditions(field.catalog);
 const battleConditions = new BattleConditions(battle.catalog);
 assert.deepEqual(
   field.catalog.behaviors.map((b) => b.id),
-  [4, 5, 6, 10, 53, 100],
+  [4, 5, 6, 9, 10, 53, 100],
 );
+assert.deepEqual(field.catalog.behaviors.find((b) => b.id === 9), {
+  id: 9,
+  kind: "none",
+});
 assert.deepEqual(
   field.catalog.behaviors.find((b) => b.id === 10),
   { id: 10, kind: "poison", hpDivisor: 32, soundId: 5 },
@@ -150,6 +154,15 @@ stepCase(
   null,
 );
 stepCase("Magitek source condition has no step damage or sound", member(160, 160, [53]), 160, [53], 0, null);
+const blindWalk = stepCase(
+  "ordinary Blind preserves HP and status without step damage or sound",
+  member(1, 160, [9]),
+  1,
+  [9],
+  0,
+  null,
+);
+assert.deepEqual(blindWalk.damage, []);
 for (const { id, type } of field.catalog.transportations.filter(
   (t) => t.type !== 1,
 )) {

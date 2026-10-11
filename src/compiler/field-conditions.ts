@@ -6,6 +6,7 @@ import {
 import type { BattleRow } from "./battle.js";
 import { hasMagitekBehavior, hasPoisonBehavior, type ConditionReader } from "./conditions.js";
 import { tableInteger as int } from "./table.js";
+import { hasBlindBehavior } from "./condition-blind.js";
 
 /** Compile only independently admitted active conditions. Decoding the generic
  * condition damage dispatcher is not support for unknown status providers. */
@@ -42,6 +43,8 @@ export function compileFieldConditionCatalog(
         throw new Error("Unresolved active field condition provider");
       if (behavior.kind === "magitek" && !hasMagitekBehavior(row))
         throw new Error("Unresolved field Magitek condition provider");
+      if (behavior.kind === "blind" && !hasBlindBehavior(row))
+        throw new Error("Unresolved field Blind condition provider");
       return { id: behavior.id, kind: "none" };
     },
   );

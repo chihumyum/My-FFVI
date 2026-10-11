@@ -17,6 +17,7 @@ import { hash } from "../dist/src/compiler/content.js";
 import { BattleGame } from "../dist/src/core/battle.js";
 import { controlledBattleContent as encounterContent } from "./battle-probe-context.mjs";
 import { calculateDevelopmentEffects } from "../dist/src/core/ability.js";
+import { BattleConditions } from "../dist/src/core/battle-conditions.js";
 import { battleTargetChoices } from "../dist/src/core/battle-targets.js";
 
 const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
@@ -30,7 +31,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v25");
+assert.equal(catalog.common.profile, "narshe-playability-v26");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const base = encounterContent(catalog, 3);
 const inventory = tables["ability.csv"].map((row) => {
@@ -116,6 +117,7 @@ assert.equal(
 );
 // Relation is actor-relative even when this ability belongs to an enemy.
 const enemy = content.enemies[0];
+const conditions = new BattleConditions(content.conditions);
 assert.deepEqual(
   battleTargetChoices(
     ability.plan.targeting,
@@ -130,8 +132,8 @@ const enemyEffects = content.players.map((target) =>
   calculateDevelopmentEffects(
     ability.plan,
     ability.power,
-    enemy,
-    target,
+    { ...enemy, conditionTypes: conditions.types(enemy.conditionIds) },
+    { ...target, conditionTypes: conditions.types(target.conditionIds) },
     (min) => min,
     content.players.length,
     { actor: "front", target: "front", ignoreActorPenalty: false, ignoreTargetPenalty: false },

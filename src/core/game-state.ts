@@ -476,12 +476,9 @@ export class GameState {
     distinct(p.conditionIds);
     p.conditionIds.forEach((id) => integer(id, 0x7fffffff, 1));
     this.conditions.validateActive(p.conditionIds);
-    if ((p.hp === 0) !== this.conditions.isUnableFight(p.conditionIds))
-      throw new Error("Owned HP/death state mismatch");
-    // Source death settlement erases ordinary poison. Restores must reject the
-    // conflicting stable state rather than publishing an incurable field block.
-    if (p.hp === 0 && this.conditions.poisonIds(p.conditionIds).length)
-      throw new Error("Owned death/poison state mismatch");
+    // Validate the actual death row's erase rules, including newly admitted
+    // persistent conditions. A restore must not repair an unreachable state.
+    this.conditions.validateStableLife(p.hp, p.conditionIds);
     if (
       !this.content.equipmentSystem &&
       (p.equipment.length !== 6 ||

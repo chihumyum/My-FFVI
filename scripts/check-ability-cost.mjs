@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { exportedOrdinaryWeaponEffects } from './lib/ordinary-weapon-source.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url)), args = process.argv.slice(2);
 assert.ok(args.every((arg, i) => i % 2 ? !!arg : ['--dist', '--catalog'].includes(arg)),
   'Usage: check-ability-cost.mjs [--dist dist] [--catalog build/game/opening-playable.json]');
@@ -22,6 +23,9 @@ const [
 const imported = await readSnapshot(resolve(root, 'build/import'));
 const project = JSON.parse(snapshotFile(imported, 'project.json'));
 const source = await loadSystemSource(root, project.sourceSetHash);
+const { compileOrdinaryWeaponEffects } = await load('compiler/ordinary-weapon');
+const battleExport = JSON.parse(snapshotFile(await readSnapshot(resolve(root, 'build/battle')), 'battle.json'));
+const weaponEffects = exportedOrdinaryWeaponEffects(battleExport, source.reader, compileOrdinaryWeaponEffects).catalog;
 const published = JSON.parse(await readFile(resolve(root, option('--catalog', 'build/game/opening-playable.json')), 'utf8'));
 const { contentHash, ...input } = published; assert.equal(hash(input), contentHash);
 const originalPublished = structuredClone(published), system = published.gameState.equipmentSystem;
@@ -34,7 +38,7 @@ const characterIds = Object.values(published.gameState.characterInitializations)
 const names = new Map(equipmentIds.map((id) => [raw('content.csv', id).mes_id_name, system.catalog.definitions[id].name]));
 const decoded = compileEquipmentCatalog(source.reader, equipmentIds, characterIds, (key) => {
   assert.ok(names.has(key)); return names.get(key);
-}, Object.fromEntries(characterIds.map((id) => [id, { hasTwoSwordStyle: false, hasTwoHand: false, equipAnyJob: false }])));
+}, Object.fromEntries(characterIds.map((id) => [id, { hasTwoSwordStyle: false, hasTwoHand: false, equipAnyJob: false }])), weaponEffects);
 assert.deepEqual(system.catalog, decoded.catalog, 'Published equipment catalog must be rebuilt with the complete MP provider');
 const sourceCases = [];
 for (const id of [304, 305]) {

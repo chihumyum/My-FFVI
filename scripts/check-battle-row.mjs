@@ -68,7 +68,7 @@ for (const player of players) {
     const rows = projectPhysicalRows(catalog, { abilityId: 1,
       actor: { side: "player", row: actor, equipment: player.equipment, conditionTypes: [607] }, targetRow: target });
     const input = { rows, power: 0, rules: { normalAttack: true, multiplyPercent: null, contentFlags: [] },
-      actor: { side: "player", level: 10, attack: 40, strength: 30, accuracy: 100, criticalRate: 3, attackElements: [] },
+      actor: { side: "player", level: 10, attack: 40, strength: 30, accuracy: 100, criticalRate: 3, attackElements: [], conditionTypes: [607] },
       target: { side: "enemy", defense: 64, evasion: 0, elementResistances: {}, conditionTypes: [] }, targetCount: 1 };
     const draws = [31, 0, 99], result = calculatePhysical(input, () => draws.shift());
     const expected = actor === "front" ? (target === "front" ? 73 : 36) : (target === "front" ? 36 : 18);
@@ -83,14 +83,14 @@ const report = {
   abilities: catalog.abilities.length, equipment: catalog.equipment.length, metadataProbes, providerProbes, damageProbes,
   runtimeProbes, players, rangedEquipment, runtime: [],
   originalGameExecuted: false, semanticsVerified: false,
-  blockers: ["ranged-equipment-and-dual-wield-admission", "machine-physical-item-provider", "Jump-and-special-action-execution",
+  blockers: ["special-ranged-equipment-and-dual-wield-admission", "machine-physical-item-provider", "Jump-and-special-action-execution",
     "change-row-command", "back-pincer-side-formations", "original-game-dynamic-oracle"],
 };
 if (!sourceOnly) {
   const published = JSON.parse(await readFile(resolve(root, option("--catalog", "build/game/opening-playable.json")), "utf8"));
   const source = JSON.parse(await readFile(root + "build/game/opening-battle.json", "utf8"));
   for (const document of [source, published]) { const { contentHash, ...body } = document; assert.equal(hash(body), contentHash); }
-  assert.equal(published.common.profile, "narshe-playability-v25");
+  assert.equal(published.common.profile, "narshe-playability-v26");
   assert.equal(published.common.sourceContentHash, source.contentHash);
   assert.equal(source.nativeProfile.sha256, native.nativeSha256);
   assert.deepEqual(published.common.battleRows, catalog);
@@ -98,8 +98,21 @@ if (!sourceOnly) {
     const table = row.assetPath.split("/").at(-1);
     assert.deepEqual(source.tables[table][row.rowId].source, row);
   }
-  for (const id of rangedEquipment)
-    assert.ok(published.gameState.equipmentSystem.catalog.definitions[id].blockers.some((text) => text.includes("back_flag=")));
+  const rangedDefinitions = rangedEquipment.map((id) => published.gameState.equipmentSystem.catalog.definitions[id]);
+  const ordinary = rangedDefinitions.filter((item) => !item.blockers.length);
+  assert.deepEqual(ordinary.map((item) => item.id), [159, 160, 161, 162, 163, 164, 165, 166, 171, 172]);
+  for (const item of ordinary) {
+    assert.equal(item.ordinaryWeapon.backFlag, 1);
+    assert.equal(item.ordinaryWeapon.contentId, item.id);
+    assert.equal(item.ordinaryWeapon.weaponId, item.equipmentId);
+  }
+  const withoutJob = ordinary.filter((item) => !item.jobIds.length);
+  assert.deepEqual(withoutJob.map((item) => item.id), [159, 160, 161]);
+  const blocked = rangedDefinitions.filter((item) => item.blockers.length);
+  assert.equal(blocked.length, 8);
+  assert.ok(blocked.every((item) => item.ordinaryWeapon === null));
+  report.rangedAdmission = { ordinary: ordinary.length, equippable: ordinary.length - withoutJob.length,
+    withoutJob: withoutJob.length, blocked: blocked.length };
   const content = encounterContent(published, Number(Object.keys(published.encounters)[0]));
   const exclusions = projectBattleFieldState(content.battleEntry,
     { mapId: 3, transportationId: 6, isSavePoint: null, beastFieldController: null, footAttributeType: null },
@@ -148,5 +161,6 @@ if (!sourceOnly) {
 await mkdir(root + "build/reports", { recursive: true });
 await writeFile(output, JSON.stringify(report, null, 2) + "\n");
 console.log(JSON.stringify({ sourceOnly, abilities: catalog.abilities.length, equipment: catalog.equipment.length,
-  metadataProbes, providerProbes, damageProbes, runtimeProbes, rangedEquipmentStillBlocked: rangedEquipment.length,
+  metadataProbes, providerProbes, damageProbes, runtimeProbes, rangedEquipmentMetadata: rangedEquipment.length,
+  ...(report.rangedAdmission ? { rangedAdmission: report.rangedAdmission } : {}),
   blockers: report.blockers.length, reportSha256: hash(report), originalGameExecuted: false }, null, 2));

@@ -81,6 +81,7 @@ const physical = (): PhysicalInput => ({
     accuracy: 255,
     criticalRate: 0,
     attackElements: [1],
+    conditionTypes: [],
   },
   target: {
     side: "enemy",

@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { compileOwnedCharacterInitialization } from "../src/compiler/owned-character.js";
+import { fixtureWeaponEffects } from "./fixtures/equipment.js";
 import { createOwnedCharacter, validateOwnedCharacterAbilities } from "../src/core/owned-character.js";
 import { ownedCharacterFixture } from "./fixtures/owned-character.js";
 
 const compile = (f = ownedCharacterFixture()) =>
-  compileOwnedCharacterInitialization(f.reader(), f.tables, 2, (key) => key);
+  compileOwnedCharacterInitialization(f.reader(), f.tables, 2, (key) => key, fixtureWeaponEffects());
 const request = () => ({ id: "owner:new", ownedId: 4, releasedJobIds: [1, 12], learnedAbilityIds: [999, 31] });
 
 test("initial owned, learned, command-visible and acquisition order retain distinct native meanings", () => {

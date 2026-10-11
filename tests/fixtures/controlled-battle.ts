@@ -23,7 +23,7 @@ export function controlledRowCatalog(content: Pick<BattleContent, "abilities">, 
  * inventory negative cases. They must supply their own explicit fixture data. */
 export class ControlledBattleGame extends SourceBattleGame {
   constructor(...args: ConstructorParameters<typeof SourceBattleGame>) {
-    const [content, seed, players, givenInventory, projectProgression] = args;
+    const [content, seed, players, givenInventory, projectProgression, preferences] = args;
     if (content.qualificationContext?.mode === "source") {
       super(...args);
       return;
@@ -45,6 +45,6 @@ export class ControlledBattleGame extends SourceBattleGame {
     // Match explicitly authored abilities that a test may have added after
     // fixture creation. Do not touch an existing source-mode catalog above.
     content.battleRows = controlledRowCatalog(content, equipment);
-    super(content, seed, players, inventory, projectProgression);
+    super(content, seed, players, inventory, projectProgression, preferences);
   }
 }

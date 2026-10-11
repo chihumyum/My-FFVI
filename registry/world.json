@@ -9,7 +9,7 @@
         "炭坑都市纳尔谢"
       ],
       "questions": [
-        "开场开发入口已建立；继续恢复完整初始化、后续实体组与重返条件。",
+        "真正新游戏候选已恢复；继续补空装备所有权、序章字段宿主及后续剧情演化。",
         "建立同一地点在不同世界阶段、剧情标记和局部状态下的变体条件。",
         "确认 Wait 时钟与 SysCall 选择器，并对已恢复的碰撞进行原版运行对照。"
       ]
@@ -1028,6 +1028,75 @@
         "GameAssembly.dll:RVA 0x6a0f30",
         "GameAssembly.dll:RVA 0x2cd030",
         "docs/shops.md"
+      ]
+    },
+    {
+      "id": "narshe:source-battle-speed-settings-v26",
+      "subject": "narshe",
+      "predicate": "migration.battleSpeedSettings",
+      "value": "Source config indices 0..4 map to ATB speeds 0.5,0.75,1,1.5,2; default index2. The source applies speed before battle startup. Web session v3 persists the mode and index, while live changes preserve cached charge and poison thresholds. Static source and Web probes are separate from original runtime timing parity.",
+      "when": {
+        "battleProfile": "narshe-playability-v26"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x7643b0",
+        "GameAssembly.dll:RVA 0x779750",
+        "GameAssembly.dll:RVA 0x462800",
+        "docs/battle-speed-settings.md"
+      ]
+    },
+    {
+      "id": "narshe:source-condition-blind-v26",
+      "subject": "narshe",
+      "predicate": "migration.conditionBlind",
+      "value": "Ordinary row9 persists across battles, is erased by the actual death conflict rules and is removable by admitted items. Blind halves physical attacker accuracy after the upper cap; target plus/minus type arrays also affect physical and magic accuracy with distinct RNG order. Special row89 and native effect presentation remain blocked. Twelve bounded ability plans are definitions, not acquired skills.",
+      "when": {
+        "battleProfile": "narshe-playability-v26"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "condition.csv:9,89",
+        "GameAssembly.dll:RVA 0xa97b20",
+        "GameAssembly.dll:RVA 0xa94480",
+        "GameAssembly.dll:RVA 0xaa3950",
+        "docs/condition-blind.md"
+      ]
+    },
+    {
+      "id": "narshe:source-ordinary-weapons-v26",
+      "subject": "narshe",
+      "predicate": "migration.ordinaryWeapons",
+      "value": "The source-bound extra-ability weapon list contains 19 records and is mandatory independently of weapon.csv. Ordinary ranged metadata admits ten additional descriptors, seven with jobs and three without equip rights. Native special weapon11/30 remain blocked despite process=None. The six-slot battle lease is cross-checked with row metadata; no story acquisition is implied.",
+      "when": {
+        "battleProfile": "narshe-playability-v26"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "battle_extra_data.json:add_ability_weapon",
+        "weapon.csv:11,30,70,71,72,73,74,79,80",
+        "GameAssembly.dll:RVA 0x500200",
+        "docs/equipment-ordinary-weapons.md"
+      ]
+    },
+    {
+      "id": "narshe:source-new-game-candidate-v26",
+      "subject": "narshe",
+      "predicate": "migration.newGameCandidate",
+      "value": "Fresh source initialization clears event banks and builds initial owners, inventory and transportation before map609/entrance1/script1. It does not start with the Narshe checkpoint Magitek state or transport6. Empty equipment quantities are retained separately in the candidate. Publication remains blocked until their ownership lifecycle and the source field host are implemented.",
+      "when": {
+        "battleProfile": "narshe-playability-v26"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "initialize_data.csv:INT_START_MAP_ID,INT_MAP_POINTIN",
+        "GameAssembly.dll:RVA 0xaae860",
+        "GameAssembly.dll:RVA 0xaac310",
+        "docs/new-game.md"
       ]
     }
   ],

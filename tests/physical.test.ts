@@ -23,6 +23,7 @@ function input(): PhysicalInput {
       side: "player",
       level: 10,
       attackElements: [],
+      conditionTypes: [],
       attack: 40,
       strength: 30,
       accuracy: 100,

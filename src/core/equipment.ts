@@ -10,6 +10,11 @@ import {
 } from "./physical-parameters.js";
 import type { PhysicalParameters } from "./physical.js";
 import type { OwnedAbility } from "./owned-character.js";
+import { validateBattleRowCatalog, type BattleRowCatalog } from "./battle-row.js";
+import {
+  validateOrdinaryWeaponEffects, validateOrdinaryWeaponEffectsAdmission, validateOrdinaryWeaponRow,
+  type OrdinaryWeapon, type OrdinaryWeaponEffectsCatalog,
+} from "./ordinary-weapon.js";
 import {
   mergeElementResistances,
   validateElements,
@@ -39,6 +44,9 @@ export type EquipmentDefinition = {
   criticalRate: number;
   attackElements: number[];
   elementResistances: ElementResistances;
+  /** Explicit action provider, including bare hands. Armor and unknown weapon
+   * effects have null; a missing weapon provider is never ordinary by default. */
+  ordinaryWeapon: OrdinaryWeapon | null;
   abilityCost?: EquipmentAbilityCost;
   /** An identity may be stored before all its effects are executable. */
   blockers: string[];
@@ -60,6 +68,7 @@ export type EquipmentCatalog = {
   limit: number;
   definitions: Record<string, EquipmentDefinition>;
   characters: Record<string, EquipmentCharacter>;
+  ordinaryWeaponEffects: OrdinaryWeaponEffectsCatalog;
 };
 export type EquipmentLoadout = {
   id: string;
@@ -102,7 +111,7 @@ function character(catalog: EquipmentCatalog, sourceId: number) {
     throw new Error("Unimplemented equipment character provider");
   return result;
 }
-function executable(item: EquipmentDefinition) {
+function executable(catalog: EquipmentCatalog, item: EquipmentDefinition) {
   if (item.blockers.length || !item.parameter)
     throw new Error("Unimplemented equipment effects: " + item.id);
   if (
@@ -111,9 +120,34 @@ function executable(item: EquipmentDefinition) {
     item.parameter.kind !== item.kind
   )
     throw new Error("Invalid equipment definition");
+  if (item.kind === "weapon") {
+    validateOrdinaryWeaponEffectsAdmission(item.ordinaryWeapon!, catalog.ordinaryWeaponEffects);
+    if (item.ordinaryWeapon!.contentId !== item.id || item.ordinaryWeapon!.weaponId !== item.equipmentId ||
+        (item.ordinaryWeapon!.typeId === 2) !== item.empty)
+      throw new Error("Ordinary weapon equipment identity mismatch");
+  } else if (item.ordinaryWeapon !== null) {
+    throw new Error("Armor cannot have an ordinary weapon provider");
+  }
   for (const n of [item.strength, item.accuracy, item.criticalRate])
     integer(n, -0x80000000);
   if (item.abilityCost) validateAbilityCost(item);
+}
+
+/** Validate the frozen leased loadout against the action's row catalog before
+ * row projection. Neither catalog can silently override the other. */
+export function validateEquipmentBattleRows(
+  catalog: EquipmentCatalog,
+  loadout: EquipmentLoadout,
+  rows: BattleRowCatalog,
+): void {
+  validateLoadout(catalog, loadout);
+  validateBattleRowCatalog(rows);
+  for (const id of loadout.equipment) {
+    const item = definition(catalog, id);
+    const row = rows.equipment.find((entry) => entry.contentId === id);
+    if (item.kind === "weapon") validateOrdinaryWeaponRow(item.ordinaryWeapon!, row);
+    else if (!row || row.weapon !== null) throw new Error("Armor and battle row provider mismatch");
+  }
 }
 
 function validateAbilityCost(item: EquipmentDefinition): EquipmentAbilityCost {
@@ -149,7 +183,7 @@ function validateLoadout(catalog: EquipmentCatalog, loadout: EquipmentLoadout) {
     throw new Error("Invalid equipment loadout");
   const pieces = loadout.equipment.map((id, i) => {
     const item = definition(catalog, id);
-    executable(item);
+    executable(catalog, item);
     if (!equipmentSlotAllowed(item, i + 1, owner))
       throw new Error("Equipment slot mismatch");
     if (!item.empty && !item.jobIds.includes(owner.jobId))
@@ -276,6 +310,7 @@ export function validateEquipmentState(
 ) {
   if (catalog.kind !== "equipment-development-v1")
     throw new Error("Unsupported equipment catalog");
+  validateOrdinaryWeaponEffects(catalog.ordinaryWeaponEffects);
   integer(catalog.limit, 1);
   const counts = new Map<number, number>();
   for (const stack of stock) {
@@ -319,7 +354,7 @@ export function previewEquipmentChange(
   if (!target) throw new Error("Unknown equipment owner");
   const owner = character(catalog, target.sourceId);
   const incoming = definition(catalog, contentId);
-  executable(incoming);
+  executable(catalog, incoming);
   if (owner.accessoriesOnly && slot < 5)
     throw new Error("Equipment slot is fixed for this character");
   if (!equipmentSlotAllowed(incoming, slot, owner))
@@ -414,7 +449,7 @@ export function projectEquipmentParameters(
     throw new Error("Unimplemented physical equipment provider");
   const pieces = slots.map((id) => {
     const item = definition(catalog, id);
-    executable(item);
+    executable(catalog, item);
     validateElements(item.attackElements);
     validateElementResistances(item.elementResistances);
     return item;

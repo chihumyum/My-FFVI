@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
+import { exportedOrdinaryWeaponEffects } from "./lib/ordinary-weapon-source.mjs";
 const root = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const outDirFlag = process.argv.includes("--compiled-dir") ? "--compiled-dir" : "--dist";
 const outDirIndex = process.argv.indexOf(outDirFlag);
@@ -12,6 +13,7 @@ const module = (path) => import(pathToFileURL(resolve(root, outDir, "src", path 
 const { readSnapshot, snapshotFile } = await module("compiler/integrity");
 const { battleTableIndex } = await module("compiler/battle");
 const { compileEquipmentCatalog, compileEquipmentParameterContext } = await module("compiler/equipment");
+const { compileOrdinaryWeaponEffects } = await module("compiler/ordinary-weapon");
 const { equipmentSlotAllowed, previewEquipmentChange, projectEquipmentParameters } = await module("core/equipment");
 const { GameState } = await module("core/game-state");
 const { hash } = await module("compiler/content");
@@ -22,6 +24,7 @@ const battle = JSON.parse(
 );
 const tables = JSON.parse(snapshotFile(imported, "tables.json"));
 const reader = battleTableIndex(tables, battle.tableSources);
+const weaponEffects = exportedOrdinaryWeaponEffects(battle, reader, compileOrdinaryWeaponEffects).catalog;
 const catalogIndex = process.argv.indexOf("--catalog");
 const catalogPath = catalogIndex < 0 ? "build/game/opening-playable.json" : process.argv[catalogIndex + 1];
 if (!catalogPath || catalogPath.startsWith("--")) throw new Error("Missing catalog path");
@@ -56,6 +59,7 @@ const decoded = compileEquipmentCatalog(
     return names.get(key);
   },
   providers,
+  weaponEffects,
 );
 assert.equal(contentIds.length, 223);
 assert.deepEqual(system.catalog, decoded.catalog);

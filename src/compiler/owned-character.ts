@@ -4,6 +4,7 @@ import { compileEquipmentCatalog, compileEquipmentParameterContext } from "./equ
 import { confirmPlayerParameters, parameterNames, type ParameterValues } from "../core/parameters.js";
 import { initialEquipmentStock, projectEquipmentParameters } from "../core/equipment.js";
 import { createOwnedCharacter, type OwnedCharacterAbilities, type OwnedCharacterInitializationTemplate } from "../core/owned-character.js";
+import type { OrdinaryWeaponEffectsCatalog } from "../core/ordinary-weapon.js";
 
 type Tables = Record<string, Record<string, string>[]>;
 type Reader = {
@@ -41,6 +42,7 @@ export function compileOwnedCharacterInitialization(
   tables: Tables,
   sourceId: number,
   name: (key: string) => string,
+  ordinaryWeaponEffects: OrdinaryWeaponEffectsCatalog,
 ): { template: OwnedCharacterInitializationTemplate; sources: BattleRow["source"][] } {
   const sources: BattleRow["source"][] = [];
   const row = (table: string, id: string | number) => {
@@ -153,7 +155,7 @@ export function compileOwnedCharacterInitialization(
     .filter((c) => int(row(int(c.type_id) === 2 ? "weapon.csv" : "armor.csv", c.type_value!).type_id) === 2)
     .map((c) => int(c.id));
   const compiledEquipment = compileEquipmentCatalog(reader, [...new Set([...equipment, ...emptyIds])], [sourceId], name,
-    { [sourceId]: { hasTwoSwordStyle: false, hasTwoHand: false, equipAnyJob: false } });
+    { [sourceId]: { hasTwoSwordStyle: false, hasTwoHand: false, equipAnyJob: false } }, ordinaryWeaponEffects);
   sources.push(...compiledEquipment.sources);
   // Constructor-created additional/correction/temporary blocks start at zero.
   // The guards above establish zero passive and no condition/equipment provider.

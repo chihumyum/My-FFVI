@@ -22,7 +22,7 @@ import {
 } from "./checkpoint-validation.js";
 
 export type GameCheckpoint = {
-  formatVersion: 2;
+  formatVersion: 3;
   kind: "game-checkpoint";
   sourceSetHash: string;
   battleCatalogHash: string;
@@ -62,9 +62,7 @@ export class GameSession {
     readonly seed = 20261010,
   ) {
     checkpointInteger(seed, 0, 0xffffffff);
-    this.currentBattlePreferences = parseBattlePreferences({
-      mode: battleCatalog.common.timing.mode,
-    });
+    this.currentBattlePreferences = parseBattlePreferences(battleCatalog.common.timing);
     if (field.sourceSetHash !== battleCatalog.common.fieldSourceSetHash)
       throw new Error("Field/battle source mismatch");
     this.state = new GameState(
@@ -146,7 +144,7 @@ export class GameSession {
     if (!this.checkpointReady)
       throw new Error("Cannot save during battle, movement or an event");
     return {
-      formatVersion: 2,
+      formatVersion: 3,
       kind: "game-checkpoint",
       sourceSetHash: this.field.content.parentSourceSetHash,
       battleCatalogHash: this.battleCatalog.contentHash,
@@ -170,7 +168,7 @@ export class GameSession {
       "formatVersion,kind,sourceSetHash,battleCatalogHash,seed,encounterSerial,remainder,battlePreferences,owned,world",
     );
     if (
-      s.formatVersion !== 2 ||
+      s.formatVersion !== 3 ||
       s.kind !== "game-checkpoint" ||
       s.sourceSetHash !== initial.parentSourceSetHash ||
       s.battleCatalogHash !== battle.contentHash
@@ -247,8 +245,8 @@ export class GameSession {
             this.state.battlePlayers(lease),
             this.state.battleInventory(lease),
             this.state.battleProgression(lease, content.experience),
+            this.currentBattlePreferences,
           );
-          this.battle.setPreferences(this.currentBattlePreferences);
           this.battleLease = lease;
           this.encounterSerial++;
         } catch (error) {
@@ -287,8 +285,8 @@ export class GameSession {
       this.state.battlePlayers(this.battleLease),
       this.state.battleInventory(this.battleLease),
       this.state.battleProgression(this.battleLease, this.battle.content.experience),
+      this.currentBattlePreferences,
     );
-    this.battle.setPreferences(this.currentBattlePreferences);
     return true;
   }
 }

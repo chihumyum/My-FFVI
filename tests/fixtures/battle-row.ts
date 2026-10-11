@@ -40,7 +40,7 @@ export function rowPhysicalInput(): PhysicalInput {
     rules: { normalAttack: true, multiplyPercent: null, contentFlags: [] },
     rows: { actor: "front", target: "front", ignoreActorPenalty: false, ignoreTargetPenalty: false },
     power: 0,
-    actor: { side: "player", level: 10, attackElements: [], attack: 40, strength: 30, accuracy: 100, criticalRate: 3 },
+    actor: { side: "player", level: 10, attackElements: [], conditionTypes: [], attack: 40, strength: 30, accuracy: 100, criticalRate: 3 },
     target: { side: "enemy", defense: 64, evasion: 0, elementResistances: {} },
     targetCount: 1,
   };

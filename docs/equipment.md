@@ -1,6 +1,6 @@
 # 装备持有、资格与换装
 
-2026-10-12。此模块只推进原版 Web 迁移，承接 [共享状态](shared-game-state.md)、[属性确认](character-parameters.md) 和 [核心系统门槛](core-mechanics.md)。普通装备的持有、六槽资格、卸装与跨角色转移已经接入共用状态；v16 补入耐力和来源事件取得，v24 补入两种 MP 饰品及其逐份被动持有记录，普通战斗掉落复用同一库存事务。其他装备被动、双持和商店仍未完成。当前汇总见 [系统批次 v24](systems-v24.md)，本页原有原生方法和历史回执保留各自范围。
+2026-10-12。此模块只推进原版 Web 迁移，承接 [共享状态](shared-game-state.md)、[属性确认](character-parameters.md) 和 [核心系统门槛](core-mechanics.md)。普通装备的持有、六槽资格、卸装与跨角色转移已经接入共用状态；v16 补入耐力和来源事件取得，v24 补入两种 MP 饰品及其逐份被动持有记录，普通战斗掉落复用同一库存事务。v25 接入普通商店和前后排，v26 将 [普通远程武器](equipment-ordinary-weapons.md) 接通换装、存档与战斗行位提供器，并收紧两个原先遗漏的专属武器公式。其他装备被动、双持和特殊商店仍未完成。本页原有原生方法和历史回执保留各自范围。
 
 ## 状态所有权
 
@@ -30,12 +30,12 @@
 
 ## 模块与集成契约
 
-- `src/compiler/equipment.ts` 编译内容身份、parts/job 资格、直接数值、攻击元素和防御属性；所有引用沿用 battle table reader 的文件、Unity 对象与行身份。完整来源表保持 223 个装备身份，未支持身份仍可被识别和计数，但不能装备。
+- `src/compiler/equipment.ts` 编译内容身份、parts/job 资格、直接数值、攻击元素和防御属性；所有引用沿用 battle table reader 的文件、Unity 对象与行身份。完整来源表保持 223 个装备身份，未支持身份仍可被识别和计数，但不能装备。v26 要求显式传入 `OrdinaryWeaponEffectsCatalog`，以来源 `BattleExtraDesc.add_ability_weapon` 证明当前武器没有独立追加动作，不能仅凭 CSV 的 `process_prog=None` 判断普通武器。
 - `src/core/equipment.ts` 实现完整状态校验、库存投影、纯换装事务、普通动作选手和装备属性投影，不依赖 DOM、编译器或原生研究工具。
 - `src/core/inventory-ownership.ts` 只投影装备取得/移除后的总库存；发布仍经 `GameState` 事务，字段、菜单与战斗不保留另一份所有权。
 - `GameStateContent.equipmentSystem` 保存 catalog、按玩家身份索引的原始参数 contexts、参数上限和现有固定增量成长表。`GameState` 是装备与库存唯一可写所有者；菜单显示资格预览，renderer 不推导或修改属性。
 - 快照保存六槽和装备总数，读取时重新验证资格、各角色占用总量以及 HP/MP 上限。不能通过一个校验和正确、但库存不足或上限伪造的快照进入运行时。
-- `battleProgression` 从来源初始等级到目标等级逐级累加当前开发规则的 HP/MP 增量，再与当下装备一同重算。不能从已限幅的 maxHP/maxMP 反推成长。换装和升级后 clamp 当前 HP/MP，按新最大 HP 重新判断濒死。
+- `battleProgression` 使用 [来源成长提供器](character-growth.md) 的追加经验与未截断参数，再与当下装备一同重算。不能从已限幅的 maxHP/maxMP 反推成长。换装和升级后 clamp 当前 HP/MP，按新最大 HP 重新判断濒死。
 
 核心导出契约：
 
@@ -45,17 +45,18 @@ equipmentAvailability(catalog, fullRoster, totalStock)
 previewEquipmentChange(catalog, fullRoster, totalStock, playerId, slot, contentId)
 equipmentAttackArm(catalog, sourceCharacterId, slots): 1 | 2
 projectEquipmentParameters(catalog, slots, rawContext, { parameters, physical })
+validateEquipmentBattleRows(catalog, frozenLoadout, battleRowCatalog)
 ```
 
-最后一项返回十一项参数（含耐力）、两只手各自的物理参数/攻击元素以及六槽合并的元素抗性。动作选择层使用已恢复的 arm 选择对应投影，不把另一只手的攻击覆盖到选中武器上。当前调用限定为没有动作级特殊覆盖的普通配置。
+参数投影返回十一项参数（含耐力）、两只手各自的物理参数/攻击元素以及六槽合并的元素抗性。动作选择层使用已恢复的 arm 选择对应投影，不把另一只手的攻击覆盖到选中武器上。行位校验使用战斗 lease 冻结的真实六槽，将普通武器描述符与独立 row catalog 的 content/type/backFlag 逐项对齐。当前调用限定为没有动作级特殊覆盖的普通配置。
 
 编译器导出 `compileEquipment`、`compileEquipmentCharacter`、`compileEquipmentCatalog` 和 `compileEquipmentParameterContext`。参数 context 编译保留未截断的 additional/correction/temporary/passive 输入，并移除初始装备的贡献；随后任何换装重新投影都使用当前六槽。编译缺失行、无效资格标志或不唯一的默认空位时直接失败。
 
 ## 明确阻塞的内容
 
-当前完整来源保持 223 个装备身份，121 个在当前数值/效果子集内可执行，其中包含 5 个空位身份和 v24 新准入的两种 MP 饰品；102 个带明确 blocker。这是系统准入清单，不代表全部装备能被开场角色穿戴、能在当前剧情获得，或已通过原版实玩一致性。
+当前完整来源保持 223 个装备身份，129 个在当前数值/效果子集内准入，其中包含 5 个空位身份、v24 的两种 MP 饰品及 3 个没有任何职业装备资格的投掷用身份；94 个带明确 blocker。18 个 `back_flag=1` 身份中，10 个已确认普通动作描述符，其中 7 个有装备职业资格，另 8 个仍有专属效果缺口。这是系统准入清单，不代表全部装备能被开场角色穿戴、能在当前剧情获得，或已通过原版实玩一致性。
 
-阻塞包括未知 process、穿戴 condition/function、触发能力、未恢复的追加状态、特殊攻击属性组/种族作用、双手/背面分支和特殊抗性。装备 vitality 已进入共用属性模型，v15 因耐力缺口阻塞的 13 件装备因此获得本批普通数值准入；intelligence/spirit/ability_disturbed_rate 等未恢复的非零贡献仍阻塞，不能默默丢掉。
+阻塞包括未知 process、穿戴 condition/function、触发能力、未恢复的追加状态/动作、特殊攻击属性组/种族作用、双手和特殊抗性。content 103/122 虽然 `process_prog=None`，仍分别命中原生 Weapon.Id 11/30 的专属伤害分支，v26 明确拒绝；不能把它们当作普通武器。装备 vitality 已进入共用属性模型，v15 因耐力缺口阻塞的 13 件装备在 v16 获得普通数值准入；intelligence/spirit/ability_disturbed_rate 等未恢复的非零贡献仍阻塞，不能默默丢掉。
 
 未开放的能力路径包括双持、双手、无视职业资格、自动最强装备、特殊武器提供器、第二武器动作和 `UseArmType` 覆盖。元素、攻击和数值投影不授予投掷、装备作道具、魔法反射或其他动作支持；那些动作必须由自己的能力计划准入。三组编队与名册分开保存，停用与离队的装备占用按已恢复的名册生命周期处理，不能把当前活动队伍当成全部占用者。其他未恢复角色提供器和剧情生命周期仍阻塞，不能把普通完整名册的规则自动推广成全剧情语义。
 
@@ -91,7 +92,9 @@ node scripts/check-equipment.mjs
 
 `check-equipment.mjs` 读取最终 `build/game/opening-playable.json`，校验内容摘要，并与受 manifest 约束的完整来源表重新编译结果比较。它以实际 GameState 检查开场 18 个槽位卸装/复装、真实已有装备的转移、跨手物理参数、两级成长重算、快照往返与篡改拒绝。其余可执行装备只在隔离的受控副本 preview 中验证资格与事务，正式开场从不获得这些副本。完整输入、来源身份、阻塞项和结果保存在 ignored `build/reports/equipment-check.json`。
 
-当前来源资格检查为 223 个身份、119 个可执行/104 个阻塞、459 个受控 preview。来源库存链另外准入 134/173 处指令并执行 462 组边界输入；17 条装备取得/保存/战斗参数链中有 6 条在当前受控队伍实际换装。这不是向正式开场批量发装备，也不证明对应剧情可达。最终目录摘要和整体验证统一由 [系统批次 v16](systems-v16.md) 记录。
+v26 来源资格检查为 223 个身份、129 个准入/94 个阻塞、493 个受控 preview、18 个开场卸装/复装槽位。普通远程新增 32 组角色/武器/手槽的换装与存档检查、128 场真实共享状态 lease 的受控战斗，详见 [普通武器验收](equipment-ordinary-weapons.md)。这些临时副本只存在于检查进程，正式开场库存没有变化。
+
+v16 历史来源资格检查为 223 个身份、119 个可执行/104 个阻塞、459 个受控 preview。该次来源库存链另外准入 134/173 处指令并执行 462 组边界输入；17 条装备取得/保存/战斗参数链中有 6 条在受控队伍实际换装。其历史目录摘要和整体验证由 [系统批次 v16](systems-v16.md) 记录，不能视作当前 v26 计数。
 
 保留 v15 历史来源结果：223 个身份、106 个可执行/117 个阻塞、423 个受控资格 preview、18 个开场槽位和两类真实副本转移。当次报告内容摘要为 `bda51750882883edfe87429d8a19b927842e35068cb7861f477af153367cae8b`，不能将此旧摘要绑定到 v16 目录。
 

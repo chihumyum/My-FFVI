@@ -6,6 +6,7 @@ import { characterGrowthFixture } from "./fixtures/character-growth.js";
 import { fixture } from "./fixtures/battle-content.js";
 import { fixtureParty } from "./fixtures/party.js";
 import { itemFixture } from "./fixtures/items.js";
+import { fixtureWeaponEffects } from "./fixtures/equipment.js";
 
 /** Synthetic owners use two distinct source IDs with the same numerical plan.
  * No real game resource or region is needed to prove transaction semantics. */
@@ -19,7 +20,7 @@ function setup(missingJoinGrowth = false) {
   joining.equipmentCharacter.sourceId = 3;
   const gear = compileEquipmentCatalog(f.reader(), f.tables["content.csv"]!
     .filter((r) => ["2", "3"].includes(r.type_id!)).map((r) => Number(r.id)),
-    [2], (key) => key, { 2: { hasTwoSwordStyle: false, hasTwoHand: false, equipAnyJob: false } }).catalog;
+    [2], (key) => key, { 2: { hasTwoSwordStyle: false, hasTwoHand: false, equipAnyJob: false } }, fixtureWeaponEffects()).catalog;
   gear.characters[3] = structuredClone(joining.equipmentCharacter);
   const player = { ...battle.players[0]!, ...original.confirmed, id: "first", sourceId: 2,
     name: original.initial.name, level: original.initial.level, exp: original.initial.exp,

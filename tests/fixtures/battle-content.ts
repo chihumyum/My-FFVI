@@ -40,7 +40,7 @@ export function fixture(): BattleContent {
   };
   const content: BattleContent = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v25",
+    profile: "narshe-playability-v26",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -53,7 +53,7 @@ export function fixture(): BattleContent {
       maxHighSpeed: 50,
       maxLowSpeed: 50,
     },
-    timing: { mode: "active", atbSpeed: 1 },
+    timing: { mode: "active", speedIndex: 2 },
     reactions: { counterLimit: 1, excludedAbilityIds: [] },
     drops: null,
     initialAtb: { player: [100, 100], enemy: [0, 0] },

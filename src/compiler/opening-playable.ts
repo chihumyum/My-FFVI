@@ -189,6 +189,7 @@ export async function compileOpeningPlayable(
   }, {
     tables: Object.fromEntries(Object.keys(source.tables).map((table) => [table, rows(table)])),
     initializations: source.ownedInitializations, characterMedia: source.characterMedia,
+    ordinaryWeaponEffects: source.ordinaryWeaponEffects.catalog,
     sprites: source.sprites, name,
   });
   if (ordinary.blockers.length) throw new Error("Ordinary player template compilation failed: " + JSON.stringify(ordinary.blockers));
@@ -294,11 +295,11 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v25",
+    profile: "narshe-playability-v26",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,
-    timing: { mode: "active", atbSpeed: 1 },
+    timing: { mode: "active", speedIndex: 2 },
     battleAbilities,
     battleEntry: structuredClone(source.entryProviders.catalog),
     battleAppearance: structuredClone(source.battleAppearance.catalog),
@@ -389,6 +390,7 @@ export async function compileOpeningPlayable(
           equipAnyJob: t.equipmentCharacter.equipAnyJob },
       ]),
     ),
+    source.ordinaryWeaponEffects.catalog,
   ).catalog;
   gameState.equipmentSystem = {
     catalog: equipment,

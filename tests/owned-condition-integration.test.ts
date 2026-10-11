@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { GameState, type GameStateContent } from "../src/core/game-state.js";
 import { compileOwnedCharacterInitialization } from "../src/compiler/owned-character.js";
+import { fixtureWeaponEffects } from "./fixtures/equipment.js";
 import { ownedCharacterFixture } from "./fixtures/owned-character.js";
 import { magitekRowId, ownedConditionGameFixture } from "./fixtures/owned-condition.js";
 import { fixtureParty } from "./fixtures/party.js";
@@ -101,7 +102,7 @@ test("battle inventory qualification snapshots enabled whole-roster occupancy an
 
 function sourceInitializationSetup() {
   const f = ownedCharacterFixture();
-  const { template } = compileOwnedCharacterInitialization(f.reader(), f.tables, 2, (key) => key);
+  const { template } = compileOwnedCharacterInitialization(f.reader(), f.tables, 2, (key) => key, fixtureWeaponEffects());
   const fixture = ownedConditionGameFixture(), conditions = fixture.catalog.common.conditions;
   const player = { ...fixture.catalog.common.players[0]!, ...template.confirmed, id: "initial", sourceId: 2,
     hp: template.initial.hp, mp: template.initial.mp, level: template.initial.level,

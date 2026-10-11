@@ -133,7 +133,7 @@ test("restore rejects a dead poisoned owner without publishing a state that cann
   const invalid = structuredClone(before);
   invalid.roster[0]!.hp = 0;
   invalid.roster[0]!.conditionIds = [305, 310];
-  assert.throws(() => game.state.restore(invalid), /death.*poison/i);
+  assert.throws(() => game.state.restore(invalid), /death\/condition/i);
   assert.deepEqual(game.state.snapshot(), before);
   assert.equal(game.useMenuItem(30, "a"), true);
   assert.equal(game.field.movementBlocker, null);

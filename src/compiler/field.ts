@@ -19,6 +19,7 @@ import { loadSystemSource } from "./system-source.js";
 import { compileTransportationCatalog, compileNarsheTransportationCheckpoint } from "./transportation.js";
 import { compilePartyActorCatalog, compileNarshePartyActorCheckpoint } from "./party-actors.js";
 import { compileOwnedCharacterInitialization } from "./owned-character.js";
+import { compileOrdinaryWeaponEffects } from "./ordinary-weapon.js";
 import { compileInitialPartyState } from "./party.js";
 import { compileFieldEntryContext } from "./field-entry-context.js";
 import { activePartyMembers } from "../core/party.js";
@@ -659,10 +660,13 @@ export async function compileField(root: string): Promise<FieldContent> {
   const miscSources = systemSource.assets.filter((a) => a.source.assetPath.endsWith("/serial_misc_assets.json"));
   if (miscSources.length !== 1) throw new Error("Missing or ambiguous party appearance source settings");
   const partyCatalog = compilePartyActorCatalog(systemSource.tables, miscSources[0]!.data).catalog;
+  const extraSources = systemSource.assets.filter((a) => a.source.assetPath.endsWith("/battle_extra_data.json"));
+  if (extraSources.length !== 1) throw new Error("Missing or ambiguous weapon additional-ability source");
+  const weaponEffects = compileOrdinaryWeaponEffects(systemSource.reader, extraSources[0]!.data).catalog;
   const initialOwners = systemSource.tables["initialize_data.csv"]!
     .filter((r) => /^INIT_PARTY_\d+$/.test(r.key_name!)).map((r) => {
       const template = compileOwnedCharacterInitialization(systemSource.reader, systemSource.tables,
-        tableId(r.value1), (key) => key).template;
+        tableId(r.value1), (key) => key, weaponEffects).template;
       return { id: `player:${template.initial.sourceId}`, ...template.initial, enabled: true };
     });
   const initialParty = compileInitialPartyState(systemSource.tables, initialOwners).state;

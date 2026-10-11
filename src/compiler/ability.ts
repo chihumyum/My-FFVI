@@ -19,6 +19,7 @@ import { compileAttackElements } from "./elements.js";
 import { compileDefendEffect } from "./defend.js";
 import { hasProtectionBehavior } from "./protection.js";
 import { hasSpeedBehavior } from "./condition-speed.js";
+import { hasBlindBehavior } from "./condition-blind.js";
 
 type Reader = ConditionReader;
 /** SerialBattleUtility 0x85e170; type and ID arrays recovered from 0x85f000.
@@ -177,7 +178,8 @@ export function compileDevelopmentAbility(
       (hasSilenceBehavior(reader.row("condition.csv", v1)) ||
         hasPoisonBehavior(reader.row("condition.csv", v1)) ||
         hasProtectionBehavior(reader.row("condition.csv", v1)) ||
-        hasSpeedBehavior(reader.row("condition.csv", v1)))
+        hasSpeedBehavior(reader.row("condition.csv", v1)) ||
+        hasBlindBehavior(reader.row("condition.csv", v1)))
     ) {
       effects.push({
         slot: fn.slot,

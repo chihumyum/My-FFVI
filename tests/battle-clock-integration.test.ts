@@ -11,9 +11,9 @@ const running = {
   uiWaiting: false,
   forceWaiting: false,
 };
-function setup(mode: "active" | "wait" = "active", atbSpeed = 1) {
+function setup(mode: "active" | "wait" = "active", speedIndex = 2) {
   const content = fixture();
-  content.timing = { mode, atbSpeed };
+  content.timing = { mode, speedIndex };
   content.enemies.forEach((e) => {
     e.hp = 9999;
   });
@@ -35,7 +35,7 @@ test("other gauges and queued chanting continue during action presentation", () 
 });
 
 test("chanting stores fractional seconds and can become ready behind an executing action", () => {
-  const { content, battle } = setup("active", 2);
+  const { content, battle } = setup("active", 4);
   content.abilities[11]!.wait = 1;
   battle.command("a", 10, "e1");
   battle.command("b", 11, "b");

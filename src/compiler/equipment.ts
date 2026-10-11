@@ -22,6 +22,8 @@ import type {
 } from "../core/equipment.js";
 import type { PhysicalParameters } from "../core/physical.js";
 import { compileEquipmentAbilityCost } from "./ability-cost.js";
+import { compileOrdinaryWeapon } from "./ordinary-weapon.js";
+import { validateOrdinaryWeaponEffects, type OrdinaryWeaponEffectsCatalog } from "../core/ordinary-weapon.js";
 
 type Reader = {
   row(table: string, id: string | number): BattleRow;
@@ -34,7 +36,9 @@ export function compileEquipment(
   reader: Reader,
   contentId: number,
   name: string,
+  effects: OrdinaryWeaponEffectsCatalog,
 ) {
+  validateOrdinaryWeaponEffects(effects);
   const content = reader.row("content.csv", contentId);
   const kind =
     content.values.type_id === "2"
@@ -70,9 +74,14 @@ export function compileEquipment(
     const value = int(r[column]);
     if (value) blockers.push(`${kind}:${r.id} ${column}=${value}`);
   };
-  if (![1, 2].includes(int(r.type_id)))
+  const ordinary = kind === "weapon" ? compileOrdinaryWeapon(reader, contentId, effects) : null;
+  if (ordinary) {
+    blockers.push(...ordinary.blockers);
+    sources.push(...ordinary.sources);
+  }
+  if (kind === "armor" && ![1, 2].includes(int(r.type_id)))
     blockers.push(`${kind}:${r.id} type_id=${r.type_id}`);
-  if (r.process_prog !== "None")
+  if (kind === "armor" && r.process_prog !== "None")
     blockers.push(`${kind}:${r.id} process_prog=${r.process_prog}`);
   for (const column of [
     "wear_condition_group_id",
@@ -82,16 +91,7 @@ export function compileEquipment(
     "intelligence",
     "spirit",
     "ability_disturbed_rate",
-    ...(kind === "weapon"
-      ? [
-          "attribute_group_id",
-          "weak_attribute",
-          "effective_species",
-          "two_handed_flag",
-          "back_flag",
-          "additional_condition_group_id",
-        ]
-      : ["resistance_species", "resistance_condition"]),
+    ...(kind === "armor" ? ["resistance_species", "resistance_condition"] : []),
   ])
     requireZero(column);
   const attack =
@@ -136,6 +136,7 @@ export function compileEquipment(
     criticalRate: kind === "weapon" ? int(r.critical_rate) : 0,
     attackElements: attack.elements,
     elementResistances: resistance.resistances,
+    ordinaryWeapon: ordinary?.provider ?? null,
     ...(abilityCost ? { abilityCost } : {}),
     blockers,
   };
@@ -198,7 +199,9 @@ export function compileEquipmentCatalog(
     string,
     Pick<EquipmentCharacter, "hasTwoSwordStyle" | "hasTwoHand" | "equipAnyJob">
   >,
+  effects: OrdinaryWeaponEffectsCatalog,
 ) {
+  validateOrdinaryWeaponEffects(effects);
   const sources: BattleRow["source"][] = [];
   const definitions: EquipmentCatalog["definitions"] = {};
   for (const id of contentIds) {
@@ -209,6 +212,7 @@ export function compileEquipmentCatalog(
       reader,
       id,
       name(row.values.mes_id_name!),
+      effects,
     );
     definitions[id] = compiled.definition;
     sources.push(...compiled.sources);
@@ -235,6 +239,7 @@ export function compileEquipmentCatalog(
     limit: int(limit.values.value1),
     definitions,
     characters,
+    ordinaryWeaponEffects: structuredClone(effects),
   };
   return { catalog, sources };
 }

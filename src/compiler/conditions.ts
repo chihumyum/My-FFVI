@@ -4,6 +4,7 @@ import type { BattleConditionCatalog } from "../core/battle-conditions.js";
 import { hasDefendBehavior } from "./defend.js";
 import { compileProtectionBehavior } from "./protection.js";
 import { compileSpeedBehavior } from "./condition-speed.js";
+import { compileBlindBehavior, compileBlindPresentation } from "./condition-blind.js";
 import {
   ConditionRules,
   type ConditionCatalog,
@@ -150,6 +151,7 @@ export function compileBattleConditionCatalog(
   name: (key: string) => string,
 ) {
   const result = compileConditionCatalog(reader, ids);
+  const presentationSources: BattleRow[] = [];
   const dying = result.catalog.definitions.filter((d) => d.type === 4);
   const threshold = reader.unique(
     "game_constant_int.csv",
@@ -178,6 +180,11 @@ export function compileBattleConditionCatalog(
         if (protection) return [protection];
         const speed = compileSpeedBehavior(row, name);
         if (speed) return [speed];
+        const blind = compileBlindBehavior(row, name);
+        if (blind) {
+          presentationSources.push(...compileBlindPresentation(reader, blind));
+          return [blind];
+        }
         return hasDefendBehavior(row)
           ? [{ id: d.id, kind: "defend", untilType: 1,
               name: row.values.mes_id_name === "None" ? "" : name(row.values.mes_id_name!) }]
@@ -225,7 +232,7 @@ export function compileBattleConditionCatalog(
       },
     ),
   };
-  return { catalog, sources: [...result.sources, threshold] };
+  return { catalog, sources: [...result.sources, threshold, ...presentationSources] };
 }
 
 /** Supply the complete condition master ID list from this source snapshot.

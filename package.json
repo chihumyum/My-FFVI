@@ -82,7 +82,11 @@
     "battle-rewards:check": "npm run battle:build && node scripts/check-battle-rewards-native.mjs && node scripts/check-battle-rewards.mjs",
     "battle-row:check": "npm run battle:build && node scripts/check-battle-row-native.mjs && node scripts/check-battle-row.mjs",
     "condition-speed:check": "npm run battle:build && node scripts/check-condition-speed-native.mjs && node scripts/check-condition-speed.mjs",
-    "shop:check": "npm run battle:build && node scripts/check-shop-native.mjs && node scripts/check-shop.mjs && node scripts/check-shop-menu.mjs"
+    "shop:check": "npm run battle:build && node scripts/check-shop-native.mjs && node scripts/check-shop.mjs && node scripts/check-shop-menu.mjs",
+    "battle-speed-settings:check": "npm run battle:build && node scripts/check-battle-speed-settings-native.mjs && node scripts/check-battle-speed-settings.mjs",
+    "condition-blind:check": "npm run battle:build && node scripts/check-condition-blind.mjs",
+    "ordinary-weapon:check": "npm run battle:build && node scripts/check-ordinary-weapon-native.mjs && node scripts/check-ordinary-weapon.mjs",
+    "new-game:check": "npm run build && node scripts/check-new-game.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

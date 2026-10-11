@@ -10,6 +10,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const args = process.argv.slice(2), sourceOnly = args.includes('--source-only');
 const option = (key, fallback) => args.includes(key) ? args[args.indexOf(key) + 1] : fallback;
 const load = (name) => import(pathToFileURL(resolve(root, option('--dist', 'dist'), 'src', name + '.js')));
+const { battleAtbSpeed } = await load('core/battle-preferences');
 const outputPath = root + `build/reports/condition-speed-${sourceOnly ? 'source-' : ''}check.json`;
 await mkdir(root + 'build/reports', { recursive: true }); await rm(outputPath, { force: true });
 execFileSync(process.execPath, [root + 'scripts/check-condition-speed-native.mjs'], { cwd: root, stdio: 'pipe' });
@@ -163,7 +164,7 @@ if (!sourceOnly) {
   const published = JSON.parse(await readFile(resolve(root, option('--catalog', 'build/game/opening-playable.json')), 'utf8'));
   const originalPublished = structuredClone(published);
   for (const value of [source, published]) { const { contentHash, ...rest } = value; assert.equal(contentHash, hash(rest)); }
-  assert.equal(published.common.profile, 'narshe-playability-v25');
+  assert.equal(published.common.profile, 'narshe-playability-v26');
   assert.equal(published.common.sourceContentHash, source.contentHash);
   assert.equal(source.nativeProfile.sha256, native.nativeSha256);
   for (const d of definitions) {
@@ -186,12 +187,12 @@ if (!sourceOnly) {
       sum + Number(raw('condition.csv', id).rate_value1) * (raw('condition.csv', id).condition_type === '15' ? 1 : -1), 0);
     battle.advance(10);
     assert.equal(actor.atb, atbIncrement(expected.rules, { agility: actor.agility, weight: actor.weight, enemy: false,
-      speedPercent: sourcePercent, battleSpeed: published.common.timing.atbSpeed, seconds: 0.01 }));
+      speedPercent: sourcePercent, battleSpeed: battleAtbSpeed(published.common.timing.speedIndex), seconds: 0.01 }));
     assert.deepEqual(battle.slowClockState(actor.id), ids.includes(25) ? [{ conditionId: 25, elapsedSeconds: Math.fround(0.01) }] : []);
     const poison = battle.conditionClockState(actor.id);
     if (ids.includes(10)) assert.equal(poison[0].thresholdSeconds, ids.includes(21) ? 4 : 16);
     const gauge = actor.atb, slow = battle.slowClockState(actor.id);
-    battle.setPreferences({ mode: 'wait' });
+    battle.setPreferences({ mode: 'wait', speedIndex: 2 });
     battle.setClockInput({ paused: false, helpPaused: false, progressEnabled: true, uiWaiting: true, forceWaiting: false });
     battle.advance(200);
     assert.equal(actor.atb, gauge); assert.deepEqual(battle.slowClockState(actor.id), slow); assert.deepEqual(battle.conditionClockState(actor.id), poison);

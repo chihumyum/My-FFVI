@@ -59,6 +59,7 @@ const name = (key) => {
   return value;
 };
 const input = { tables: corpus.tables, initializations: source.ownedInitializations,
+  ordinaryWeaponEffects: source.ordinaryWeaponEffects.catalog,
   characterMedia: source.characterMedia, sprites: source.sprites, name };
 const reader = () => battleTableIndex(corpus.tables, exported.tableSources);
 const before = hash({ initializations: input.initializations, media: input.characterMedia, sprites: input.sprites });

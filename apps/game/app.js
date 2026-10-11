@@ -66,6 +66,7 @@ function pause(value) {
   $("menu-button").textContent = value ? "继续" : "暂停";
   if (value) {
     $("battle-mode").value = session.battlePreferences.mode;
+    $("battle-speed").value = String(session.battlePreferences.speedIndex);
     syncSaveControls();
     inventoryView.reset();
     inventoryView.render(session);
@@ -255,7 +256,11 @@ $("retry").onclick = reset;
 $("resume").onclick = () => pause(false);
 $("menu-button").onclick = () => pause(!paused);
 $("battle-mode").onchange = () => {
-  session.setBattlePreferences({ mode: $("battle-mode").value });
+  session.setBattlePreferences({ ...session.battlePreferences, mode: $("battle-mode").value });
+  sync();
+};
+$("battle-speed").onchange = () => {
+  session.setBattlePreferences({ ...session.battlePreferences, speedIndex: Number($("battle-speed").value) });
   sync();
 };
 $("save-game").onclick = saveGame;

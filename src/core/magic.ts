@@ -1,6 +1,6 @@
 import {
   drawBattleRandom,
-  accuracyHit,
+  magicAccuracyHit,
   type BattleRandom,
 } from "./battle-hit.js";
 import {
@@ -35,7 +35,7 @@ export type MagicInput = {
 };
 
 /** Scalar FF6 MagicExecution 0xa94480, fixType=0. The caller must establish
- * explicit affinities, only Shell type 412 as a modifying condition, no accessories/critical magic,
+ * explicit affinities, admitted target hit modifiers and Shell type 412, no accessories/critical magic,
  * weapon/scroll carrier, counter-stat substitution or provider overrides.
  * Silence does not modify this arithmetic. This is not a complete spell action.
  */
@@ -99,9 +99,10 @@ export function calculateMagic(input: MagicInput, random: BattleRandom) {
   const base = validateMagic(input);
   const { rules, target, actor, recovery, targetCount } = input;
   if (
-    !accuracyHit(
+    !magicAccuracyHit(
       rules.contentFlags.includes(1) ? 255 : rules.accuracy,
       target.magicEvasion,
+      target.conditionTypes ?? [],
       random,
     )
   )

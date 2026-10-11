@@ -1,7 +1,7 @@
 import type { AbilityEffectResult } from "./ability.js";
 import type { ParameterValues } from "./parameters.js";
 import { projectAbilityCost, type AbilityCostOwner, type AbilityCostProjection } from "./ability-cost.js";
-import { equipmentAbilityCostProviders, equipmentOwnedAbilities, validateEquipmentAbilityOwnership } from "./equipment.js";
+import { equipmentAbilityCostProviders, equipmentOwnedAbilities, validateEquipmentAbilityOwnership, validateEquipmentBattleRows } from "./equipment.js";
 import type { OwnedAbility } from "./owned-character.js";
 import { projectBattleDrops, validateBattleDropCatalog, type BattleDropPlan, type BattleDropGrant } from "./battle-rewards.js";
 import { projectBattleAbilities, type BattleAbilityProjection } from "./battle-abilities.js";
@@ -27,6 +27,7 @@ import {
   type BattleClockInput,
 } from "./battle-timing.js";
 import {
+  battleAtbSpeed,
   parseBattlePreferences,
   type BattlePreferences,
 } from "./battle-preferences.js";
@@ -167,23 +168,19 @@ export class BattleGame {
       amount: number,
       observedAbilityIds: readonly number[],
     ) => BattleStatProjection & { level: number; exp: number },
+    initialPreferences?: BattlePreferences,
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v25"
+      content.profile !== "narshe-playability-v26"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
       throw new Error("Invalid battle seed");
     this.randomState = seed || 1;
-    if (
-      !content.timing ||
-      !["active", "wait"].includes(content.timing.mode) ||
-      !Number.isFinite(Math.fround(content.timing.atbSpeed)) ||
-      content.timing.atbSpeed <= 0
-    )
-      throw new Error("Missing battle timing settings");
-    this.currentPreferences = parseBattlePreferences({ mode: content.timing.mode });
+    this.currentPreferences = parseBattlePreferences(content.timing);
+    if (initialPreferences !== undefined)
+      this.currentPreferences = parseBattlePreferences(initialPreferences);
     this.items = structuredClone(inventory.definitions);
     validateItemStacks(inventory.stacks, this.items, inventory.limit);
     this.stock = structuredClone(inventory.stacks);
@@ -286,7 +283,7 @@ export class BattleGame {
         this.conditions.reconcilePoisonState(
           c.conditionIds,
           [],
-          content.timing.atbSpeed,
+          this.atbSpeed,
         ),
       );
       this.slowStates.set(c.id, this.conditions.reconcileSlowState(c.conditionIds, []));
@@ -473,12 +470,16 @@ export class BattleGame {
   setPreferences(preferences: BattlePreferences): void {
     this.currentPreferences = parseBattlePreferences(preferences);
   }
+  private get atbSpeed(): number {
+    return battleAtbSpeed(this.currentPreferences.speedIndex);
+  }
   /** Copies of the effective settings/host inputs for UI, diagnostics and replay.
    * Source content remains unchanged when a player switches battle mode. */
   get timingState() {
     return {
       mode: this.currentPreferences.mode,
-      atbSpeed: this.content.timing.atbSpeed,
+      speedIndex: this.currentPreferences.speedIndex,
+      atbSpeed: this.atbSpeed,
       input: { ...this.clockInput },
       gate: this.clockGate(),
     };
@@ -606,7 +607,7 @@ export class BattleGame {
         command: this.content.commands[commandId]!,
         agility: actor.agility,
         conditionTypes: this.conditions.types(actor.conditionIds),
-        atbSpeed: this.content.timing.atbSpeed,
+        atbSpeed: this.atbSpeed,
       }),
       elapsed: 0,
       resolved: false,
@@ -707,6 +708,8 @@ export class BattleGame {
       ? this.inventoryQualification?.members.find((member) => member.id === actor.id) : null;
     if (actor.side === "player" && (!loadout || loadout.sourceId !== actor.sourceId))
       throw new Error("Missing physical row player equipment provider");
+    if (loadout)
+      validateEquipmentBattleRows(this.inventoryQualification!.equipmentCatalog, loadout, this.content.battleRows);
     return projectPhysicalRows(this.content.battleRows, { abilityId,
       actor: { side: actor.side, row: actor.row, equipment: loadout?.equipment ?? null,
         conditionTypes: this.conditions.types(actor.conditionIds) }, targetRow: target.row });
@@ -1035,7 +1038,7 @@ export class BattleGame {
                 commandId === null ? null : this.content.commands[commandId]!,
               agility: actor.agility,
               conditionTypes: this.conditions.types(actor.conditionIds),
-              atbSpeed: this.content.timing.atbSpeed,
+              atbSpeed: this.atbSpeed,
             }),
       elapsed: 0,
       resolved: false,
@@ -1139,7 +1142,7 @@ export class BattleGame {
         pending.charge = advanceChanting(
           pending.charge,
           0.01,
-          this.content.timing.atbSpeed,
+          this.atbSpeed,
         );
       for (const c of this.combatants) {
         if (c.hp <= 0 || c.queued) continue;
@@ -1151,7 +1154,7 @@ export class BattleGame {
                 weight: c.weight,
                 enemy: c.side === "enemy",
                 speedPercent: this.conditions.speedPercent(c.conditionIds),
-                battleSpeed: this.content.timing.atbSpeed,
+                battleSpeed: this.atbSpeed,
                 seconds: 0.01,
               }),
           );
@@ -1206,7 +1209,7 @@ export class BattleGame {
         maxHp: actor.maxHp,
         elementResistances: actor.elementResistances,
         seconds,
-        atbSpeed: this.content.timing.atbSpeed,
+        atbSpeed: this.atbSpeed,
         // Time-stop types remain outside the active condition capability set.
         isTimeStopped: false,
       });
@@ -1224,7 +1227,7 @@ export class BattleGame {
       const state = this.conditions.reconcilePoisonState(
         life.conditionIds,
         result.state,
-        this.content.timing.atbSpeed,
+        this.atbSpeed,
       );
       const slow = this.conditions.reconcileSlowState(life.conditionIds,
         this.conditions.advanceSlow(actor.conditionIds, this.slowStates.get(actor.id)!, seconds));
@@ -1432,7 +1435,7 @@ export class BattleGame {
           state: this.conditions.reconcilePoisonState(
             entry.state.conditionIds,
             previous,
-            this.content.timing.atbSpeed,
+            this.atbSpeed,
           ),
           slow: this.conditions.reconcileSlowState(entry.state.conditionIds,
             this.slowStates.get(entry.target.id)!.filter((clock) => !removed.includes(clock.conditionId))),

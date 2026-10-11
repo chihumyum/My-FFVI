@@ -1,6 +1,7 @@
 import {
   drawBattleRandom,
   accuracyHit,
+  targetConditionAccuracy,
   type BattleRandom,
 } from "./battle-hit.js";
 import {
@@ -11,6 +12,7 @@ import {
 } from "./elements.js";
 import { physicalProtectionDamage, physicalProtectionType } from "./protection.js";
 import { validatePhysicalRows, type PhysicalRowContext } from "./battle-row.js";
+import { physicalAccuracyWithBlind } from "./condition-blind.js";
 
 export type PhysicalRules = {
   normalAttack: boolean;
@@ -34,6 +36,8 @@ export type PhysicalInput = {
     side: "player" | "enemy";
     level: number;
     attackElements: number[];
+    /** Required live condition types. Unknown actor state is not an empty list. */
+    conditionTypes: readonly number[];
   };
   target: {
     side: "player" | "enemy";
@@ -62,7 +66,7 @@ function baseDamage(input: PhysicalInput, enemyDraw: number) {
 }
 
 /** PhysicalExecution 0xa97b20, explicit rows and affinities, correction=1,
- * Defend type 1 and Proteus type 19 only; no other numerical conditions, accessory/weapon procs,
+ * Defend type 1, Blind type 9 and Proteus type 19; no other numerical conditions, accessory/weapon procs,
  * species, counters or copies.
  * The compiler/profile must establish that context. Silence is allowed.
  */
@@ -73,6 +77,7 @@ export function validatePhysical(input: PhysicalInput): void {
   validatePhysicalRows(input.rows);
   validateElements(actor.attackElements);
   validateElementResistances(target.elementResistances);
+  physicalAccuracyWithBlind(actor.accuracy, actor.conditionTypes, rules.contentFlags.includes(1));
   if (target.conditionTypes !== undefined &&
       (!Array.isArray(target.conditionTypes) || target.conditionTypes.some((type) =>
         !Number.isInteger(type) || type < 0 || type > 0x7fffffff)))
@@ -147,7 +152,10 @@ export function calculatePhysical(input: PhysicalInput, random: BattleRandom) {
   // Physical variance precedes hit; a miss skips defense and the critical draw.
   if (
     !accuracyHit(
-      rules.contentFlags.includes(1) ? 255 : actor.accuracy,
+      targetConditionAccuracy(
+        physicalAccuracyWithBlind(actor.accuracy, actor.conditionTypes, rules.contentFlags.includes(1)),
+        target.conditionTypes ?? [],
+      ),
       target.evasion,
       random,
     )

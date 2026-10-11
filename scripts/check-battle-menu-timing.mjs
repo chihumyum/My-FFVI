@@ -92,7 +92,7 @@ function setup(mode = "wait") {
   content.players[0].conditionIds = [310];
   const inventory = { definitions: { 10: itemFixture() }, stacks: [{ id: 10, count: 1 }], limit: 99 };
   const battle = new BattleGame(content, 71, undefined, inventory);
-  battle.setPreferences({ mode });
+  battle.setPreferences({ mode, speedIndex: 2 });
   battle.players[0].hp = 40;
   battle.players[1].hp = 40;
   const canvas = new Element("canvas");
@@ -207,10 +207,10 @@ for (const mode of ["wait", "active"]) {
   const { battle, view, click } = setup();
   click("Skills");
   const before = battle.enemies[0].atb;
-  battle.setPreferences({ mode: "active" });
+  battle.setPreferences({ mode: "active", speedIndex: 2 });
   battle.advance(100);
   assert.ok(battle.enemies[0].atb > before);
-  battle.setPreferences({ mode: "wait" });
+  battle.setPreferences({ mode: "wait", speedIndex: 2 });
   const now = battle.enemies[0].atb;
   battle.advance(100);
   assert.equal(battle.enemies[0].atb, now);
@@ -281,7 +281,7 @@ for (const special of ["special-input", "slot"]) {
   assert.equal(view.menuState, "none");
   assert.equal(document.getElementById("battle-menu").attributes.get("data-menu-state"), "none");
   const retry = new BattleGame(content, 71, undefined, inventory);
-  retry.setPreferences({ mode: "wait" });
+  retry.setPreferences({ mode: "wait", speedIndex: 2 });
   view.sync(retry, false);
   assert.equal(view.menuState, "command");
   assert.equal(retry.timingState.input.forceWaiting, false);
@@ -332,6 +332,6 @@ const runtimeHashes = Object.fromEntries(await Promise.all(runtimeFiles.map(asyn
   [file, createHash("sha256").update(await readFile(resolve(runtime, file))).digest("hex")])));
 const report = { lane: "controlled-battle-menu-timing", scenarios: checked.length,
   checked, native, sourceHashes, runtimeHashes, originalOrBrowserExecution: false,
-  limitations: ["special-input/slot hooks do not enable unsupported ability providers", "speed slots are not exposed", "original runtime and browser acceptance are separate"] };
+  limitations: ["special-input/slot hooks do not enable unsupported ability providers", "speed settings are checked in their separate system lane", "original runtime and browser acceptance are separate"] };
 await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n");
 console.log(JSON.stringify({ scenarios: checked.length, nativeMethods: native.methods.length, checked }, null, 2));

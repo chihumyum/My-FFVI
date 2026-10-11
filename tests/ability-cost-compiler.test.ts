@@ -4,11 +4,12 @@ import { compileEquipmentAbilityCost } from "../src/compiler/ability-cost.js";
 import { compileEquipment } from "../src/compiler/equipment.js";
 import { compileParameterEquipment } from "../src/compiler/parameters.js";
 import { abilityCostCompilerFixture } from "./fixtures/ability-cost.js";
+import { fixtureWeaponEffects } from "./fixtures/equipment.js";
 
 test("compiler binds content -> armor -> AddEquipAbility -> passive -> menu reduction and all sources", () => {
   const { reader } = abilityCostCompilerFixture();
   for (const [id, modifier, abilityId, contentId] of [[304, "half", 291, 1491], [305, "one", 292, 1492]] as const) {
-    const compiled = compileEquipment(reader(), id, "Synthetic");
+    const compiled = compileEquipment(reader(), id, "Synthetic", fixtureWeaponEffects());
     assert.deepEqual(compiled.definition.abilityCost, { kind: "equipment-mp-cost", modifier,
       ability: { abilityId, contentId, skillLevel: 0 } });
     assert.deepEqual(compiled.definition.blockers, []);
@@ -38,7 +39,7 @@ test("unresolved wear conditions, extra functions and altered passive behavior r
     tables[table]!.find((r) => r.id === String(id))![key] = value;
     const before = structuredClone(tables);
     assert.throws(() => compileEquipmentAbilityCost(reader(), 304), /Unresolved/);
-    const result = compileEquipment(reader(), 304, "Synthetic");
+    const result = compileEquipment(reader(), 304, "Synthetic", fixtureWeaponEffects());
     assert.ok(result.definition.blockers.length);
     assert.equal(result.definition.parameter, null);
     assert.throws(() => compileParameterEquipment(reader(), [{ slot: 5, contentId: 304 }]), /Unresolved/);
@@ -50,7 +51,7 @@ test("same menu function on a different content identity does not inherit hardco
   const { tables, reader } = abilityCostCompilerFixture();
   tables["content.csv"]!.push({ ...tables["content.csv"]![0]!, id: "900" });
   assert.throws(() => compileEquipmentAbilityCost(reader(), 900), /content: 900/);
-  const result = compileEquipment(reader(), 900, "Synthetic");
+  const result = compileEquipment(reader(), 900, "Synthetic", fixtureWeaponEffects());
   assert.ok(result.definition.blockers.some((b) => b.includes("wear_function_group_id=236")));
   assert.equal(result.definition.abilityCost, undefined);
 });

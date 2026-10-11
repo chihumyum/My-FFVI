@@ -1,5 +1,6 @@
 import { ownedCharacterFixture } from "./owned-character.js";
 import { compileOwnedCharacterInitialization } from "../../src/compiler/owned-character.js";
+import { fixtureWeaponEffects } from "./equipment.js";
 import { compileCharacterGrowth } from "../../src/compiler/character-growth.js";
 import { createOwnedCharacter } from "../../src/core/owned-character.js";
 import { initialCharacterGrowth, type CharacterGrowthMember, type CharacterGrowthProgress } from "../../src/core/character-growth.js";
@@ -31,7 +32,7 @@ export function characterGrowthFixture() {
     row({ id: 16, type_id: 4, job_id: 0, value1: 207, value2: 1, content_id: 602 }),
   ];
   const compile = () => {
-    const initialization = compileOwnedCharacterInitialization(fixture.reader(), tables, 2, (key) => key);
+    const initialization = compileOwnedCharacterInitialization(fixture.reader(), tables, 2, (key) => key, fixtureWeaponEffects());
     return { ...compileCharacterGrowth(fixture.reader(), tables, initialization.template), template: initialization.template };
   };
   const compiled = compile();

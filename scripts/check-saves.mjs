@@ -199,7 +199,7 @@ for (const entry of prior.runs.filter((r) => r.result === "idle")) {
 const report = {
   formatVersion: 1,
   kind: "source-checkpoint-check",
-  profile: "game-checkpoint-v2",
+  profile: "game-checkpoint-v3",
   sourceSetHash: field.parentSourceSetHash,
   bootstrapHash: field.contentHash,
   battleCatalogHash: battle.contentHash,

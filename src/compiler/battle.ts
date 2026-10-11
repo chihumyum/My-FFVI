@@ -20,6 +20,7 @@ import { compileAbilityProgram } from "./ability.js";
 import { compileEquipmentAbilityCost } from "./ability-cost.js";
 import { compileBattleRowCatalog } from "./battle-row.js";
 import { compileShopCatalog } from "./shop.js";
+import { compileOrdinaryWeaponEffects } from "./ordinary-weapon.js";
 import { loadCorpus } from "./corpus.js";
 import {
   compileAttackElements,
@@ -338,6 +339,13 @@ export async function compileOpeningBattle(root: string) {
   for (const condition of tables["condition.csv"]!) {
     const soundId = tableInteger(condition.field_se_asset_id);
     if (soundId > 0) row("se_asset.csv", soundId);
+    if (tableInteger(condition.condition_type) === 9 && tableInteger(condition.battle_effect_asset_id) > 0) {
+      const effect = row("battle_effect_asset.csv", condition.battle_effect_asset_id!);
+      for (const key of ["se_asset_id", "se_asset_id_2", "critical_se_asset_id"]) {
+        const id = tableInteger(effect.values[key]);
+        if (id > 0) row("se_asset.csv", id);
+      }
+    }
   }
   for (const condition of tables["condition_group.csv"]!)
     row("condition_group.csv", condition.id!);
@@ -524,6 +532,11 @@ export async function compileOpeningBattle(root: string) {
     maxLowSpeed: constant("MAX_LOW_SPEED"),
   };
   const reactionSource = json("serial_misc_assets");
+  const extraSource = json("battle_extra_data");
+  const ordinaryWeaponEffects = {
+    ...compileOrdinaryWeaponEffects({ row }, extraSource.data),
+    source: extraSource.source,
+  };
   const misc = z.record(z.string(), z.unknown()).parse(reactionSource.data);
   const excluded = misc.not_counter_ability_id;
   if (
@@ -554,6 +567,7 @@ export async function compileOpeningBattle(root: string) {
     try {
       ownedInitializations[sourceId] = compileOwnedCharacterInitialization(
         { row, matching, group: tableGroup, unique }, tables, sourceId, (key) => key,
+        ordinaryWeaponEffects.catalog,
       ).template;
     } catch (error) {
       if (initialParty.some((p) => p.characterId === sourceId)) throw error;
@@ -606,6 +620,7 @@ export async function compileOpeningBattle(root: string) {
     encounters,
     initialParty,
     characterMedia,
+    ordinaryWeaponEffects,
     ownedInitializations,
     ownedInitializationBlockers,
     characterGrowth,

@@ -6,6 +6,7 @@ import { compileEquipmentCatalog } from "./equipment.js";
 import { equipmentAttackArm, projectEquipmentParameters } from "../core/equipment.js";
 import type { OwnedCharacterInitializationTemplate } from "../core/owned-character.js";
 import type { CombatantDefinition } from "../core/battle-content.js";
+import type { OrdinaryWeaponEffectsCatalog } from "../core/ordinary-weapon.js";
 
 type Source = Omit<BattleRow["source"], "rowId">;
 type Reader = Parameters<typeof compileOwnedCharacterInitialization>[0];
@@ -23,6 +24,7 @@ export type PlayerBattleSprite = {
 };
 export type PlayerBattleInput = {
   tables: Tables;
+  ordinaryWeaponEffects: OrdinaryWeaponEffectsCatalog;
   initializations: Record<string, OwnedCharacterInitializationTemplate>;
   characterMedia: Record<string, {
     characterId: number;
@@ -111,7 +113,7 @@ export function compilePlayerBattleDefinitions(
       if (!published) throw new Error("Missing source owned initialization: " + sourceId);
       // Re-establish the actual initializer dependencies. A copied or altered
       // template cannot supply invented passives, level, current HP or skills.
-      const { template } = compileOwnedCharacterInitialization(tracked, input.tables, sourceId, input.name);
+      const { template } = compileOwnedCharacterInitialization(tracked, input.tables, sourceId, input.name, input.ordinaryWeaponEffects);
       // The source inspection package retains the localization key as its
       // display value; the playable package resolves that same key. Neither
       // form changes source initialization, and runtime custom names are not
@@ -130,7 +132,7 @@ export function compilePlayerBattleDefinitions(
           hasTwoSwordStyle: owner.hasTwoSwordStyle,
           hasTwoHand: owner.hasTwoHand,
           equipAnyJob: owner.equipAnyJob,
-        } }).catalog;
+        } }, input.ordinaryWeaponEffects).catalog;
       const projection = projectEquipmentParameters(equipment, template.initial.equipment,
         template.parameterContext, template.limits);
       if (canonical(projection.parameters) !== canonical(template.confirmed))

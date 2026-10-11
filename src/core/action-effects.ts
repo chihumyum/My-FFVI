@@ -102,7 +102,7 @@ export function projectActionTarget(
     effects = calculateDevelopmentEffects(
       plan,
       power,
-      actor,
+      { ...actor, conditionTypes: conditions.types(actor.conditionIds) },
       { ...target, conditionTypes: conditions.types(target.conditionIds) },
       random,
       targetCount,

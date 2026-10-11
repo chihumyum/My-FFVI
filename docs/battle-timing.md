@@ -4,6 +4,8 @@
 
 所有原生依据绑定本地 GameAssembly SHA-256 `1a7e12c90c6a734e17dda507dd6ab7555090dff6a1e96f3473a90c29916ca6dc`。本页的结论来自原始 PE、该构建的 IL2CPP 类型和静态反编译；自动检查不是原版动态一致性验收。
 
+v26 另接来源五档速度、入战初始化和持久设置，见 [战斗速度设置](battle-speed-settings.md)。下文公式中的 ATBSpeed 读取当前会话配置，已有蓄力与毒周期阈值保留各自缓存。
+
 ## 蓄力
 
 `GetChantingTime 0x6765d0` 完整控制流已经恢复：

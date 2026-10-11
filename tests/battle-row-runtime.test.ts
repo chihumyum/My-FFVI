@@ -92,7 +92,7 @@ test("native enemy Front rule holds for both construction and a live target", ()
 });
 
 test("shared numerical physical projection requires explicit row context before RNG; nonphysical does not", () => {
-  const { content } = sourceFixture(), actor = content.players[0]!, target = content.enemies[0]!;
+  const { content } = sourceFixture(), actor = { ...content.players[0]!, conditionTypes: [] }, target = content.enemies[0]!;
   const physical = content.abilities[13]!;
   assert.throws(() => calculateDevelopmentEffects(physical.plan!, physical.power, actor, target,
     () => assert.fail("Unknown row consumed RNG")), /physical row context/);

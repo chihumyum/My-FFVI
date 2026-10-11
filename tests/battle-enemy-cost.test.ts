@@ -145,7 +145,24 @@ test("unknown hand eligibility preserves confirmed duplicate relic records and i
   assert.equal(battle.canUseItem("a", 10001, 3), true);
   assert.equal(battle.abilityCost("a", 10)!.mp, 0);
   assert.equal(battle.abilityCost("a", 11), null);
-  assert.equal(battle.canUse("a", 13, 1), true);
+  // A known zero fee does not establish the physical weapon/hand provider.
+  // Preserve independent nonphysical and item execution under the same owner.
+  assert.equal(battle.canUse("a", 13, 1), false);
+  assert.equal(battle.command("a", 13, "e1", 1), false);
+  assert.equal(battle.pendingActions.length, 0);
+  assert.equal(battle.canUse("a", 10, 7), true);
+  battle.combatants.forEach((unit) => { unit.atb = 0; }); battle.players[0]!.atb = 100;
+  assert.equal(battle.command("a", 10, "e1", 7), true);
+  battle.advance(410);
+  assert.equal(battle.action?.resolved, true);
+  assert.ok(battle.action!.results.length > 0);
+  const itemBattle = new SourceBattleGame(content, 1753, undefined, inventory);
+  itemBattle.combatants.forEach((unit) => { unit.atb = 0; }); itemBattle.players[0]!.atb = 100;
+  itemBattle.players[0]!.hp = 5;
+  assert.equal(itemBattle.commandItem("a", 10001, { kind: "single", id: "a" }, 3), true);
+  itemBattle.advance(410);
+  assert.ok(itemBattle.players[0]!.hp > 5);
+  assert.equal(itemBattle.inventory[0]!.count, 0);
   assert.deepEqual({ content, inventory }, before);
   const malformed = structuredClone(content);
   malformed.players[0]!.ownedAbilities!.abilities.owned.pop();

@@ -21,18 +21,20 @@ function win(game: GameSession) {
 test("battle preferences survive save, next encounter and retry without changing source content", () => {
   const f = checkpointFixture();
   const original = structuredClone(f.battle);
-  f.game.setBattlePreferences({ mode: "wait" });
+  f.game.setBattlePreferences({ mode: "wait", speedIndex: 4 });
   const copy = GameSession.restore(f.game.checkpoint(), f.field, f.battle);
-  assert.deepEqual(copy.battlePreferences, { mode: "wait" });
+  assert.deepEqual(copy.battlePreferences, { mode: "wait", speedIndex: 4 });
   const exposed = copy.battlePreferences;
   exposed.mode = "active";
   assert.equal(copy.battlePreferences.mode, "wait");
   copy.field.startEvent("fight");
   copy.advance(10);
   assert.equal(copy.battle!.preferences.mode, "wait");
-  copy.setBattlePreferences({ mode: "active" });
+  assert.equal(copy.battle!.timingState.atbSpeed, 2);
+  copy.setBattlePreferences({ mode: "active", speedIndex: 0 });
   assert.equal(copy.battle!.preferences.mode, "active");
-  assert.throws(() => copy.setBattlePreferences({ mode: "bad" as "active" }));
+  assert.equal(copy.battle!.timingState.atbSpeed, 0.5);
+  assert.throws(() => copy.setBattlePreferences({ mode: "bad" as "active", speedIndex: 2 }));
   assert.equal(copy.battlePreferences.mode, "active");
   for (const member of copy.battle!.players) {
     member.hp = 0;
@@ -42,6 +44,7 @@ test("battle preferences survive save, next encounter and retry without changing
   assert.equal(copy.battle!.phase, "defeat");
   assert.equal(copy.retryBattle(), true);
   assert.equal(copy.battle!.preferences.mode, "active");
+  assert.equal(copy.battle!.preferences.speedIndex, 0);
   assert.deepEqual(f.battle, original);
 });
 
@@ -55,7 +58,7 @@ test("checkpoint rejects unknown preferences and the previous schema before chan
     assert.deepEqual(f.game.checkpoint(), valid);
   }
   const old = structuredClone(valid);
-  Object.assign(old, { formatVersion: 1 });
+  Object.assign(old, { formatVersion: 2 });
   assert.throws(() => GameSession.restore(old, f.field, f.battle), /version mismatch/);
 });
 
@@ -185,7 +188,7 @@ test("invalid checkpoint identities, actors, audio, triggers and versions reject
       s.battleCatalogHash = "wrong";
     },
     (s) => {
-      Object.assign(s, { formatVersion: 3 });
+      Object.assign(s, { formatVersion: 4 });
     },
     (s) => {
       s.encounterSerial = 1;

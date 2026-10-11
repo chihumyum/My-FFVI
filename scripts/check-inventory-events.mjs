@@ -11,6 +11,7 @@ import { hash } from "../dist/src/compiler/content.js";
 import { EventState } from "../dist/src/core/event-state.js";
 import { FieldGame } from "../dist/src/core/field.js";
 import { GameState } from "../dist/src/core/game-state.js";
+import { equipmentSlotAllowed } from "../dist/src/core/equipment.js";
 import { GameSession } from "../dist/src/core/game-session.js";
 import {
   decodeSavedGame,
@@ -236,8 +237,9 @@ for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
     if (equipment) equipmentSites.push({ site, raw, op, content });
   }
 }
-// Source acquisition through the shared session, then a real supported swap,
-// portable save/restore and battle projection. None changes the game bootstrap.
+// Source acquisition through the shared session, then a supported swap or an
+// atomic wear refusal, portable save/restore and battle projection. No invented
+// acquisition sites are added to force a physical-weapon example.
 for (const { site, raw, op, content } of equipmentSites) {
   const id = raw.operands.iValues[0];
   const definition = equipmentSystem.catalog.definitions[id];
@@ -265,7 +267,24 @@ for (const { site, raw, op, content } of equipmentSites) {
     ),
   );
   const selected = choices[0];
-  if (definition.blockers.length) assert.equal(choices.length, 0);
+  let wearRejection = null;
+  if (definition.blockers.length) {
+    assert.equal(choices.length, 0);
+    const candidate = game.state.snapshot().roster.flatMap((player) => {
+      const owner = equipmentSystem.catalog.characters[player.sourceId];
+      return [1, 2, 3, 4, 5, 6].filter((slot) => definition.jobIds.includes(owner.jobId) &&
+        equipmentSlotAllowed(definition, slot, owner) && (!owner.accessoriesOnly || slot >= 5))
+        .map((slot) => ({ playerId: player.id, slot }));
+    })[0];
+    assert.ok(candidate, "source grant needs a slot/job-qualified wear refusal probe");
+    const unchanged = game.state.snapshot();
+    assert.throws(() => game.changeEquipment(candidate.playerId, candidate.slot, id), (error) => {
+      assert.match(error.message, /Unimplemented equipment effects/);
+      wearRejection = { ...candidate, reason: error.message, blockers: [...definition.blockers] };
+      return true;
+    });
+    assert.deepEqual(game.state.snapshot(), unchanged);
+  }
   let expected = null;
   if (selected) {
     const stock = game.state.snapshot().equipmentStock;
@@ -361,11 +380,13 @@ for (const { site, raw, op, content } of equipmentSites) {
     site,
     id,
     equipmentId: definition.equipmentId,
+    equipmentKind: definition.kind,
     obtained: raw.operands.iValues[1],
     selected: selected
       ? { playerId: selected.player.id, slot: selected.slot }
       : null,
     wearBlockers: definition.blockers,
+    wearRejection,
     expected,
     after: hash(restored.state.snapshot()),
     portableSave: hash(saved),
@@ -381,7 +402,18 @@ assert.equal(
   new Set(equipmentSites.map((x) => x.raw.operands.iValues[0])).size,
   14,
 );
-assert.ok(equipmentChains.some((x) => x.expected?.attack > 0));
+const weaponChains = equipmentChains.filter((chain) => chain.equipmentKind === "weapon");
+assert.deepEqual(weaponChains.map((chain) => chain.id).sort((a, b) => a - b), [103, 121, 127]);
+assert.ok(weaponChains.every((chain) => chain.selected === null && chain.wearRejection !== null));
+// The only formerly ordinary weapon in these actual grant sites is Weapon.Id
+// 11. Native GetFightStatus has a special formula despite process=None; the new
+// ordinary ranged source IDs do not occur in this instruction survey.
+assert.equal(corpus.tables["weapon.csv"].find((row) => row.id === "11").process_prog, "None");
+assert.ok(weaponChains.find((chain) => chain.id === 103).wearBlockers.includes("weapon:11 special physical weapon provider=11"));
+for (const id of [121, 127]) assert.ok(weaponChains.find((chain) => chain.id === id)
+  .wearBlockers.some((reason) => reason.includes("additional ability provider=")));
+assert.equal(equipmentChains.filter((chain) => chain.selected).length, 6);
+assert.ok(equipmentChains.filter((chain) => chain.selected).every((chain) => chain.equipmentKind === "armor"));
 const scripts = corpus.assets.filter((a) => a.kind === "script");
 const selectors = [
   ...new Set(
@@ -429,6 +461,8 @@ const report = {
     ).size,
     equipmentChains: equipmentChains.length,
     equipmentSwaps: equipmentChains.filter((x) => x.selected).length,
+    equipmentWearRejections: equipmentChains.filter((x) => x.wearRejection).length,
+    weaponGrantSites: weaponChains.length,
   },
   entries,
   checks,

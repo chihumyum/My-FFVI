@@ -15,6 +15,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [v26 战斗速度、失明、普通远程武器与新游戏候选](docs/systems-v26.md)
 - [v25 前后排、速度状态与普通商店](docs/systems-v25.md)
 - [v24 防护、装备 MP 费用与普通掉落](docs/systems-v24.md)
 - [v23 完整技能目录、普通魔法、防御与字段入战](docs/systems-v23.md)

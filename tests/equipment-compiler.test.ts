@@ -8,7 +8,7 @@ import {
 } from "../src/compiler/equipment.js";
 import { parameterLimitKeys } from "../src/compiler/parameters.js";
 import { physicalLimitKeys } from "../src/compiler/physical-parameters.js";
-import { equipmentLimits } from "./fixtures/equipment.js";
+import { equipmentLimits, fixtureWeaponEffects } from "./fixtures/equipment.js";
 
 function fixture() {
   const row = (values: Record<string, number | string>) =>
@@ -173,6 +173,7 @@ function fixture() {
       [1, 14],
       (k) => k,
       { 1: providers, 14: providers },
+      fixtureWeaponEffects(),
     );
   return { tables, reader, compile, source, providers };
 }
@@ -231,7 +232,7 @@ test("unknown effects preserve inventory identity but missing references, ambigu
     weapon = f.tables["weapon.csv"]![1]!;
   weapon.process_prog = "unreviewed";
   weapon.wear_function_group_id = "47";
-  const blocked = compileEquipment(f.reader(), 101, "Synthetic").definition;
+  const blocked = compileEquipment(f.reader(), 101, "Synthetic", fixtureWeaponEffects()).definition;
   assert.equal(blocked.id, 101);
   assert.equal(blocked.parameter, null);
   assert.ok(
@@ -242,7 +243,7 @@ test("unknown effects preserve inventory identity but missing references, ambigu
   );
   weapon.intelligence = "2";
   assert.ok(
-    compileEquipment(f.reader(), 101, "Synthetic").definition.blockers.some(
+    compileEquipment(f.reader(), 101, "Synthetic", fixtureWeaponEffects()).definition.blockers.some(
       (b) => b.includes("intelligence=2"),
     ),
   );

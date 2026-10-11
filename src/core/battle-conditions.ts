@@ -1,6 +1,7 @@
 import { ConditionRules, type ConditionCatalog } from "./conditions.js";
 import { accuracyHit } from "./battle-hit.js";
 import { applyDefend, clearDefendOnAdmission } from "./defend.js";
+import { blindConditionType, validateBlindBehavior, type BlindBehavior } from "./condition-blind.js";
 import {
   magicProtectionType,
   physicalProtectionType,
@@ -37,6 +38,7 @@ export type BattleConditionCatalog = {
     | { id: number; kind: "silence"; name: string; untilType: 2 }
     | ProtectionBehavior
     | SpeedBehavior
+    | BlindBehavior
     | { id: number; kind: "unable-fight"; name: string; untilType: 3 }
     | { id: number; kind: "dying"; name: string; untilType: 3 }
     /** No timer or numeric modifier; a battle appearance host must execute
@@ -102,6 +104,7 @@ export class BattleConditions {
       throw new Error("Duplicate battle condition behavior");
     for (const b of this.behaviors.values()) {
       if (b.kind === "haste" || b.kind === "slow") validateSpeedBehavior(b);
+      if (b.kind === "blind") validateBlindBehavior(b);
       if (
         (typeof b.name !== "string" || (!b.name && !["magitek", "defend"].includes(b.kind))) ||
         !(b.kind === "defend"
@@ -119,6 +122,8 @@ export class BattleConditions {
             ((b.kind === "unable-fight" &&
               this.definitions.get(b.id)?.type === 5) ||
               (b.kind === "dying" && this.definitions.get(b.id)?.type === 4) ||
+              (b.kind === "blind" && this.definitions.get(b.id)?.type === blindConditionType &&
+                this.definitions.get(b.id)?.overlapped === false) ||
               (b.kind === "magitek" &&
                 this.definitions.get(b.id)?.type === 607 &&
                 this.definitions.get(b.id)?.overlapped === false) ||
@@ -167,6 +172,22 @@ export class BattleConditions {
   isUnableFight(ids: readonly number[]) {
     this.validateActive(ids);
     return ids.some((id) => this.behaviors.get(id)!.kind === "unable-fight");
+  }
+  /** Stable owned/checkpoint state must already contain the result of its
+   * actual death identity's conflict pass. Do not silently repair saves or
+   * replace alternate death rows with the HP controller's default identity. */
+  validateStableLife(hp: number, ids: readonly number[]): void {
+    if (!Number.isInteger(hp) || hp < 0 || hp > 0x7fffffff)
+      throw new Error("Invalid life HP");
+    this.validateActive(ids);
+    const deaths = ids.filter((id) => this.behaviors.get(id)!.kind === "unable-fight");
+    if ((hp === 0) !== (deaths.length > 0))
+      throw new Error("Owned HP/death state mismatch");
+    for (const incomingId of deaths) {
+      const result = this.rules.resolveConflict({ currentIds: [...ids], equipmentIds: [], incomingId });
+      if (result.currentIds.length !== ids.length || result.currentIds.some((id, n) => id !== ids[n]))
+        throw new Error("Owned death/condition state mismatch");
+    }
   }
   types(ids: readonly number[]): number[] {
     this.validateActive(ids);

@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { exportedOrdinaryWeaponEffects } from "./lib/ordinary-weapon-source.mjs";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const outDir = process.argv.includes("--dist") ? process.argv[process.argv.indexOf("--dist") + 1] : "dist";
 const module = (path) => import(new URL(`${outDir}/src/${path}.js`, "file://" + root));
@@ -9,6 +10,7 @@ const { loadCorpus } = await module("compiler/corpus");
 const { battleTableIndex } = await module("compiler/battle");
 const { readSnapshot, snapshotFile } = await module("compiler/integrity");
 const { compileOwnedCharacterInitialization } = await module("compiler/owned-character");
+const { compileOrdinaryWeaponEffects } = await module("compiler/ordinary-weapon");
 const { compileCharacterGrowth } = await module("compiler/character-growth");
 const { createOwnedCharacter } = await module("core/owned-character");
 const { initialCharacterGrowth, growCharacter, expectedOwnedGrowth, validateCharacterGrowth, validateObservedLearning, firstJoinLevelAdjustments } = await module("core/character-growth");
@@ -34,12 +36,13 @@ const name = (key) => {
   return text;
 };
 const reader = () => battleTableIndex(corpus.tables, battle.tableSources);
+const weaponEffects = exportedOrdinaryWeaponEffects(battle, reader(), compileOrdinaryWeaponEffects).catalog;
 const decoded = [], blocked = [], templates = new Map(), plans = new Map();
 for (const character of corpus.tables["character_status.csv"]) {
   const sourceId = Number(character.id);
   let stage = "initialization";
   try {
-    const { template } = compileOwnedCharacterInitialization(reader(), corpus.tables, sourceId, name);
+    const { template } = compileOwnedCharacterInitialization(reader(), corpus.tables, sourceId, name, weaponEffects);
     stage = "growth";
     const { plan, sources } = compileCharacterGrowth(reader(), corpus.tables, template);
     templates.set(sourceId, template); plans.set(sourceId, plan);

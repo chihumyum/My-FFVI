@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { compilePlayerBattleDefinitions, type PlayerBattleInput } from "../src/compiler/player-battle.js";
 import { compileOwnedCharacterInitialization } from "../src/compiler/owned-character.js";
+import { fixtureWeaponEffects } from "./fixtures/equipment.js";
 import { ownedCharacterFixture } from "./fixtures/owned-character.js";
 
 function fixture() {
@@ -14,7 +15,8 @@ function fixture() {
     serializedFile: "synthetic", objectId: "-9223372036854775808" };
   const input = (): PlayerBattleInput => ({
     tables: f.tables,
-    initializations: { 2: compileOwnedCharacterInitialization(f.reader(), f.tables, 2, (key) => key).template },
+    initializations: { 2: compileOwnedCharacterInitialization(f.reader(), f.tables, 2, (key) => key, fixtureWeaponEffects()).template },
+    ordinaryWeaponEffects: fixtureWeaponEffects(),
     characterMedia: { 2: { characterId: 2, spriteGroup: "bc_synthetic_owner",
       source: f.reader().row("character_asset.csv", 2).source } },
     sprites: { [key]: { source: spriteSource, name: "Idle_00", file: `sprites/${"a".repeat(64)}.png`,

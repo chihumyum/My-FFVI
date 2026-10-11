@@ -8,6 +8,12 @@ import type {
   ParameterValues,
 } from "../../src/core/parameters.js";
 import type { PhysicalLimits } from "../../src/core/physical-parameters.js";
+import type { OrdinaryWeaponEffectsCatalog } from "../../src/core/ordinary-weapon.js";
+
+/** Explicit authored fixture: none of its weapons has an additional attack. */
+export function fixtureWeaponEffects(): OrdinaryWeaponEffectsCatalog {
+  return { kind: "ordinary-weapon-effects-v1", additionalAbilities: [] };
+}
 
 export const equipmentZero: ParameterValues = {
   hp: 0,
@@ -109,6 +115,10 @@ export function equipmentCatalog(): EquipmentCatalog {
     criticalRate: kind === "weapon" ? 3 : 0,
     attackElements: [],
     elementResistances: {},
+    ordinaryWeapon: kind === "weapon" ? {
+      kind: "ordinary-weapon-v1", contentId: id, weaponId: id + 1000,
+      typeId: empty ? 2 : 1, backFlag: 0,
+    } : null,
     blockers: [],
   });
   const hand = [true, true, false, false, false, false];
@@ -133,6 +143,7 @@ export function equipmentCatalog(): EquipmentCatalog {
   return {
     kind: "equipment-development-v1",
     limit: 99,
+    ordinaryWeaponEffects: fixtureWeaponEffects(),
     definitions: Object.fromEntries(pieces.map((p) => [p.id, p])),
     characters: {
       1: {

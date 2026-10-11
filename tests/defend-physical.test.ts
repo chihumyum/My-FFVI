@@ -6,7 +6,7 @@ import { calculateMagic, type MagicInput } from "../src/core/magic.js";
 const input = (): PhysicalInput => ({
   rows: { actor: "front", target: "front", ignoreActorPenalty: false, ignoreTargetPenalty: false },
   rules: { normalAttack: true, multiplyPercent: null, contentFlags: [] }, power: 0,
-  actor: { side: "player", level: 10, attackElements: [], attack: 40, strength: 30, accuracy: 100, criticalRate: 3 },
+  actor: { side: "player", level: 10, attackElements: [], conditionTypes: [], attack: 40, strength: 30, accuracy: 100, criticalRate: 3 },
   target: { side: "enemy", defense: 64, evasion: 0, elementResistances: {}, conditionTypes: [1] }, targetCount: 1,
 });
 function run(value: PhysicalInput, draws = [31, 0, 99]) {

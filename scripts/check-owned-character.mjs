@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
+import { exportedOrdinaryWeaponEffects } from "./lib/ordinary-weapon-source.mjs";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const outDirFlag = process.argv.includes("--compiled-dir") ? "--compiled-dir" : "--dist";
 const outDirIndex = process.argv.indexOf(outDirFlag);
@@ -15,6 +16,7 @@ const { battleTableIndex } = await module("compiler/battle");
 const { battleDefinitionBlocker } = await module("core/battle-content");
 const { compileOwnedCharacterInitialization } = await module("compiler/owned-character");
 const { compileEquipmentCatalog } = await module("compiler/equipment");
+const { compileOrdinaryWeaponEffects } = await module("compiler/ordinary-weapon");
 const { compileRosterLifecycleEvent } = await module("compiler/roster");
 const { createOwnedCharacter, validateOwnedCharacterAbilities } = await module("core/owned-character");
 const { prepareRosterLifecycle } = await module("core/roster");
@@ -40,11 +42,12 @@ const name = (key) => {
   return value;
 };
 const reader = () => battleTableIndex(corpus.tables, battle.tableSources);
+const weaponEffects = exportedOrdinaryWeaponEffects(battle, reader(), compileOrdinaryWeaponEffects).catalog;
 const templates = new Map(), decoded = [], blocked = [];
 for (const row of corpus.tables["character_status.csv"]) {
   const sourceId = Number(row.id);
   try {
-    const { template, sources } = compileOwnedCharacterInitialization(reader(), corpus.tables, sourceId, name);
+    const { template, sources } = compileOwnedCharacterInitialization(reader(), corpus.tables, sourceId, name, weaponEffects);
     templates.set(sourceId, template);
     decoded.push({ sourceId, level: template.initial.level, hp: template.initial.hp, maxHp: template.initial.maxHp, mp: template.initial.mp,
       maxMp: template.initial.maxMp, commandIds: template.initial.abilities.commandIds,
@@ -119,7 +122,7 @@ for (const [label, mutate] of Object.entries(mutations)) {
 const sourceIds = [1, 2, 31, 32];
 const gearIds = corpus.tables["content.csv"].filter((r) => ["2", "3"].includes(r.type_id)).map((r) => Number(r.id));
 const equipment = compileEquipmentCatalog(reader(), gearIds, sourceIds, name,
-  Object.fromEntries(sourceIds.map((id) => [id, { hasTwoSwordStyle: false, hasTwoHand: false, equipAnyJob: false }]))).catalog;
+  Object.fromEntries(sourceIds.map((id) => [id, { hasTwoSwordStyle: false, hasTwoHand: false, equipAnyJob: false }])), weaponEffects).catalog;
 const lifecycle = { roster: initial.roster, party: initial.party, equipmentStock: initial.equipmentStock, releasedJobIds: initial.releasedJobIds };
 const original = structuredClone(lifecycle);
 let sideEffects;

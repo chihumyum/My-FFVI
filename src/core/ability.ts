@@ -94,6 +94,8 @@ export function calculateDevelopmentEffects(
     magic: number;
     physical?: PhysicalParameters | null;
     attackElements: number[];
+    /** Required for physical plans; the action host supplies live types. */
+    conditionTypes?: readonly number[];
   },
   target: MagicParticipant & {
     defense: number;
@@ -130,6 +132,7 @@ export function calculateDevelopmentEffects(
     if (!plan.physical || !actor.physical)
       throw new Error("Missing physical calculation inputs");
     if (!physicalRows) throw new Error("Missing physical row context");
+    if (!actor.conditionTypes) throw new Error("Missing physical actor condition types");
     return {
       rules: plan.physical,
       rows: physicalRows,
@@ -139,6 +142,7 @@ export function calculateDevelopmentEffects(
         side: actor.side,
         level: actor.level,
         attackElements: actor.attackElements,
+        conditionTypes: actor.conditionTypes,
       },
       target,
       targetCount,
