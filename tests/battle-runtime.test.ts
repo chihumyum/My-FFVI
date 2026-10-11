@@ -31,13 +31,15 @@ function fixture(): BattleContent {
     commands: [100],
     conditionIds: [],
     conditionResistances: {},
+    attackElements: [],
+    elementResistances: {},
     ai: [],
     placement: null,
     sprites: { idle: "synthetic", mount: null },
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v7",
+    profile: "narshe-playability-v8",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -101,6 +103,7 @@ function fixture(): BattleContent {
           process: { key: "None", values: [0, 0, 0] },
           range: 3,
           rules: {},
+          elements: [],
           forbiddenConditionIds: [],
           contentFlags: [],
         },
@@ -114,7 +117,12 @@ function fixture(): BattleContent {
             normalFormationOnly: false,
           },
           physical: null,
-          magic: { accuracy: 100, contentFlags: [1], forceDefense: false },
+          magic: {
+            accuracy: 100,
+            contentFlags: [1],
+            elements: [],
+            forceDefense: false,
+          },
         },
         blockers: [],
         limitations: [],
@@ -136,6 +144,7 @@ function fixture(): BattleContent {
           process: { key: "None", values: [0, 0, 0] },
           range: 1,
           rules: {},
+          elements: [],
           forbiddenConditionIds: [],
           contentFlags: [],
         },
@@ -151,7 +160,12 @@ function fixture(): BattleContent {
             normalFormationOnly: false,
           },
           physical: null,
-          magic: { accuracy: 100, contentFlags: [1], forceDefense: false },
+          magic: {
+            accuracy: 100,
+            contentFlags: [1],
+            elements: [],
+            forceDefense: false,
+          },
         },
         blockers: [],
         limitations: [],
@@ -179,6 +193,7 @@ function fixture(): BattleContent {
           process: { key: "None", values: [0, 0, 0] },
           range: 3,
           rules: {},
+          elements: [],
           forbiddenConditionIds: [],
           contentFlags: [],
         },
@@ -203,6 +218,7 @@ function fixture(): BattleContent {
           process: { key: "None", values: [0, 0, 0] },
           range: 7,
           rules: {},
+          elements: [],
           forbiddenConditionIds: [],
           contentFlags: [],
         },
@@ -237,6 +253,74 @@ function fixture(): BattleContent {
     limitations: [],
   };
 }
+
+test("one group action can damage a weak target and heal an absorbing target with one cost", () => {
+  const f = fixture();
+  const ability = f.abilities[10]!;
+  ability.plan!.magic!.elements = [1];
+  ability.plan!.targeting = compileTargetRule(4, 1)!;
+  ability.cost = 2;
+  f.enemies.forEach((e) => {
+    e.hp = 1000;
+    e.agility = 0;
+  });
+  f.enemies[0]!.elementResistances = { 1: 1 };
+  f.enemies[1]!.elementResistances = { 1: 4 };
+  const run = (parts: number[]) => {
+    const battle = new BattleGame(f, 71);
+    battle.enemies[1]!.hp = 300;
+    assert.equal(
+      battle.command("a", 10, { kind: "side", side: "enemy" }),
+      true,
+    );
+    for (const dt of parts) battle.advance(dt);
+    const results = battle.action!.results;
+    assert.equal(results.length, 2);
+    assert.equal(battle.players[0]!.mp, 6);
+    assert.ok(battle.enemies[0]!.hp < 1000);
+    assert.ok(battle.enemies[1]!.hp > 300);
+    assert.equal(results[0]!.effects[0]!.recovery, false);
+    assert.equal(results[1]!.effects[0]!.recovery, true);
+    const before = structuredClone(battle.combatants);
+    battle.advance(100);
+    assert.deepEqual(
+      battle.combatants.map((c) => [c.hp, c.mp]),
+      before.map((c) => [c.hp, c.mp]),
+    );
+    return { results, units: battle.combatants, events: battle.events };
+  };
+  assert.deepEqual(run([500]), run(Array(50).fill(10)));
+});
+
+test("a later target with unknown affinity cannot partially commit earlier damage or consume MP/RNG", () => {
+  const f = fixture();
+  f.abilities[10]!.plan!.targeting = compileTargetRule(4, 1)!;
+  f.abilities[10]!.plan!.magic!.elements = [1];
+  f.abilities[10]!.cost = 2;
+  f.enemies.forEach((e) => {
+    e.hp = 1000;
+    e.agility = 0;
+  });
+  const battle = new BattleGame(f, 71);
+  battle.command("a", 10, { kind: "side", side: "enemy" });
+  battle.advance(10);
+  const before = structuredClone(battle.combatants);
+  const random = (battle as unknown as { randomState: number }).randomState;
+  const events = structuredClone(battle.events);
+  battle.enemies[1]!.elementResistances = { 1: 402 } as never;
+  assert.throws(() => battle.advance(500), /Unimplemented elemental/);
+  assert.deepEqual(
+    battle.combatants.map((c) => [c.hp, c.mp]),
+    before.map((c) => [c.hp, c.mp]),
+  );
+  assert.equal(
+    (battle as unknown as { randomState: number }).randomState,
+    random,
+  );
+  assert.deepEqual(battle.events, events);
+  assert.equal(battle.action!.resolved, false);
+  assert.deepEqual(battle.action!.results, []);
+});
 function conditionFixture() {
   const f = fixture();
   f.conditions = {
@@ -357,6 +441,7 @@ test("magic misses spend MP once and replay with the same later random choices",
   f.abilities[10]!.plan!.magic = {
     accuracy: 100,
     contentFlags: [],
+    elements: [],
     forceDefense: false,
   };
   for (const e of f.enemies) e.magicEvasion = 128;

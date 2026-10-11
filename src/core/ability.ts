@@ -1,16 +1,17 @@
 import {
-  calculateNeutralPhysical,
-  validateNeutralPhysical,
+  calculatePhysical,
+  validatePhysical,
   type PhysicalRules,
   type PhysicalParameters,
 } from "./physical.js";
 import {
-  calculateNeutralMagic,
-  validateNeutralMagic,
+  calculateMagic,
+  validateMagic,
   type MagicRules,
   type MagicParticipant,
 } from "./magic.js";
 import type { TargetRule } from "./battle-targets.js";
+import type { ElementResistances } from "./elements.js";
 /** Decoded source dispatch, separate from the bounded playability executor. */
 export type AbilityFunction = {
   slot: number;
@@ -28,6 +29,7 @@ export type AbilityProgram = {
   rules: Record<string, number>;
   forbiddenConditionIds: number[];
   contentFlags: number[];
+  elements: number[];
 };
 export type AbilityEffect =
   | { slot: number; kind: "physical" | "magic" }
@@ -58,6 +60,7 @@ export type NumericalEffectResult = {
   amount: number;
   missed: boolean;
   critical?: boolean;
+  nullified?: boolean;
 };
 export type AbilityEffectResult =
   | NumericalEffectResult
@@ -81,12 +84,14 @@ export function calculateDevelopmentEffects(
     attack: number;
     magic: number;
     physical?: PhysicalParameters | null;
+    attackElements: number[];
   },
   target: MagicParticipant & {
     defense: number;
     magicDefense: number;
     evasion: number;
     magicEvasion: number;
+    elementResistances: ElementResistances;
   },
   randomInt: (min: number, max: number) => number,
   targetCount = 1,
@@ -115,13 +120,18 @@ export function calculateDevelopmentEffects(
     return {
       rules: plan.physical,
       power,
-      actor: { ...actor.physical, side: actor.side, level: actor.level },
+      actor: {
+        ...actor.physical,
+        side: actor.side,
+        level: actor.level,
+        attackElements: actor.attackElements,
+      },
       target,
       targetCount,
     };
   };
   if (plan.effects.some((e) => e.kind === "physical"))
-    validateNeutralPhysical(physicalInput());
+    validatePhysical(physicalInput());
   const needsMagic = plan.effects.some(
     (e) =>
       e.kind === "magic" ||
@@ -134,7 +144,7 @@ export function calculateDevelopmentEffects(
         effect.kind === "magic" ||
         (effect.kind === "recovery" && effect.calculation === "magic")
       )
-        validateNeutralMagic({
+        validateMagic({
           rules: plan.magic,
           power,
           actor,
@@ -146,17 +156,19 @@ export function calculateDevelopmentEffects(
   return plan.effects.map((effect): NumericalEffectResult => {
     let amount: number;
     if (effect.kind === "physical") {
+      const result = calculatePhysical(physicalInput(), randomInt);
       return {
         slot: effect.slot,
         resource: "hp",
-        recovery: false,
-        ...calculateNeutralPhysical(physicalInput(), randomInt),
+        ...result,
+        recovery: result.amount < 0,
+        amount: Math.abs(result.amount),
       };
     } else if (effect.kind === "recovery" && effect.calculation === "fixed") {
       // GetFixedRecoveryStatus 0x3D8660, ability (not item) branch, no conditions.
       amount = power;
     } else {
-      const result = calculateNeutralMagic(
+      const result = calculateMagic(
         {
           rules: plan.magic!,
           power,
@@ -170,8 +182,9 @@ export function calculateDevelopmentEffects(
       return {
         slot: effect.slot,
         resource: effect.kind === "recovery" ? effect.resource : "hp",
-        recovery: effect.kind === "recovery",
         ...result,
+        recovery: (effect.kind === "recovery") !== result.amount < 0,
+        amount: Math.abs(result.amount),
       };
     }
     return {

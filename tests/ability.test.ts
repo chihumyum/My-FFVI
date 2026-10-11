@@ -124,7 +124,6 @@ test("unknown scope, selector, condition, series and parameter values never inhe
     ["battle_renge_id", "13"],
     ["accuracy_rate", "128"],
     ["content_flag_group_id", "11"],
-    ["attribute_group_id", "999"],
     ["attack_count", "3"],
   ]) {
     const f = fixture();
@@ -140,6 +139,9 @@ test("unknown scope, selector, condition, series and parameter values never inhe
 });
 test("broken references and malformed integers fail instead of producing partial programs", () => {
   const f = fixture();
+  f.ability.attribute_group_id = "999";
+  assert.throws(() => f.compile(), /Missing source table: attribute_group/);
+  f.ability.attribute_group_id = "0";
   f.group.function3_id = "700";
   assert.throws(() => f.compile(), /Unresolved/);
   f.group.function3_id = "801";
@@ -167,6 +169,7 @@ test("magic rules depend on referenced flags, not magic group numbers or a fixed
   assert.deepEqual(a.plan!.magic, {
     accuracy: 150,
     contentFlags: [5],
+    elements: [],
     forceDefense: false,
   });
   assert.deepEqual(a.program.contentFlags, [5]);
@@ -180,12 +183,13 @@ test("fixed HP and MP effects need neither a magic formula nor a random draw", (
   const results = calculateDevelopmentEffects(
     a.plan!,
     a.power,
-    { level: 99, attack: 999, magic: 999, side: "player" },
+    { level: 99, attack: 999, magic: 999, attackElements: [], side: "player" },
     {
       defense: 255,
       magicDefense: 255,
       evasion: 100,
       magicEvasion: 0,
+      elementResistances: {},
       side: "player",
     },
     () => assert.fail("Fixed recovery must not draw randomness"),
@@ -236,15 +240,21 @@ test("the whole effect plan is preflighted before any RNG or partial calculation
             normalFormationOnly: false,
           },
           physical: null,
-          magic: { accuracy: 100, contentFlags: [], forceDefense: false },
+          magic: {
+            accuracy: 100,
+            contentFlags: [],
+            elements: [],
+            forceDefense: false,
+          },
         },
         40,
-        { level: 5, attack: 30, magic: 20, side: "player" },
+        { level: 5, attack: 30, magic: 20, attackElements: [], side: "player" },
         {
           defense: 0,
           magicDefense: 0,
           evasion: 0,
           magicEvasion: 0,
+          elementResistances: {},
           side: "enemy",
         },
         () => {

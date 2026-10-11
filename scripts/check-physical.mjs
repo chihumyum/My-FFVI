@@ -13,7 +13,7 @@ import {
   compilePlayerPhysical,
   compileEnemyPhysical,
 } from "../dist/src/compiler/physical-parameters.js";
-import { calculateNeutralPhysical } from "../dist/src/core/physical.js";
+import { calculatePhysical } from "../dist/src/core/physical.js";
 import { BattleGame } from "../dist/src/core/battle.js";
 import { encounterContent } from "../dist/src/core/battle-content.js";
 import { hash } from "../dist/src/compiler/content.js";
@@ -28,7 +28,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v7");
+assert.equal(catalog.common.profile, "narshe-playability-v8");
 const limits = compilePhysicalLimits(reader);
 const zero = { attack: 0, strength: 0, accuracy: 0, criticalRate: 0 };
 const players = tables["character_status.csv"].flatMap((row) =>
@@ -106,16 +106,18 @@ for (const row of tables["ability.csv"]) {
               : enemies.find((e) => e.monsterId === 1).confirmed),
             side,
             level: 10,
+            attackElements: [],
           },
           target: {
             side: side === "player" ? "enemy" : "player",
             defense: 64,
             evasion,
+            elementResistances: {},
           },
           targetCount: 1,
         };
         const ranges = [];
-        const result = calculateNeutralPhysical(input, (min, max) => {
+        const result = calculatePhysical(input, (min, max) => {
           ranges.push([min, max]);
           return max === 255 ? hitDraw : 0;
         });

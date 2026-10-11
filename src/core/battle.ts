@@ -3,6 +3,7 @@ import {
   type AbilityEffectResult,
 } from "./ability.js";
 import { atbIncrement } from "./atb.js";
+import { validateElements, validateElementResistances } from "./elements.js";
 import {
   battleTargetChoices,
   resolveBattleTargets,
@@ -69,7 +70,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v7"
+      content.profile !== "narshe-playability-v8"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -103,6 +104,10 @@ export class BattleGame {
       this.conditions.validateReferences(ability.program.forbiddenConditionIds);
     for (const command of Object.values(content.commands))
       this.conditions.validateReferences(command.forbiddenConditionIds);
+    for (const c of this.combatants) {
+      validateElements(c.attackElements);
+      validateElementResistances(c.elementResistances);
+    }
     for (const c of this.combatants) {
       const range = content.initialAtb[c.side];
       c.atb = this.randomInt(range[0], range[1]);
@@ -467,6 +472,8 @@ export class BattleGame {
                 ? `${target.name} 的状态未改变。`
                 : `${target.name} 闪避了攻击。`,
             );
+          } else if (effect.resource !== "condition" && effect.nullified) {
+            messages.push(`${target.name} · 无效。`);
           } else if (effect.resource === "condition") {
             for (const id of effect.added)
               messages.push(`${target.name} 陷入${this.conditions.name(id)}。`);

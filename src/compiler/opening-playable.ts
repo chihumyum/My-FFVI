@@ -15,6 +15,10 @@ import type { ParameterValues } from "../core/parameters.js";
 import { compileDevelopmentAbility } from "./ability.js";
 import { compileBattleConditionCatalog } from "./conditions.js";
 import { compileBattleCommand } from "./commands.js";
+import {
+  compileEquipmentElements,
+  compileElementResistances,
+} from "./elements.js";
 import type {
   BattleContent,
   BattleCatalog,
@@ -160,13 +164,13 @@ export async function compileOpeningPlayable(
         "trigger_ability_id",
         ...(equipment.type_id === "2"
           ? [
-              "attribute_id",
               "attribute_group_id",
+              "weak_attribute",
               "effective_species",
               "two_handed_flag",
               "back_flag",
             ]
-          : ["resistance_attribute", "resistance_species"]),
+          : ["resistance_species"]),
         equipment.type_id === "2"
           ? "additional_condition_group_id"
           : "resistance_condition",
@@ -190,12 +194,20 @@ export async function compileOpeningPlayable(
     const memberships = rows("ability_random_group.csv").filter(
       (m) => m.group_id === r.ability_random_group_id,
     );
+    const equipmentElements = compileEquipmentElements(
+      parameterReader,
+      Array.from({ length: 6 }, (_, n) => int(r[`content_id${n + 1}`])),
+      1,
+    );
     return {
       id: `player:${c.characterId}`,
       sourceId: c.characterId,
       name: name(r.mes_id_name!),
       side: "player",
       level: int(r.lv),
+      // This checkpoint has no base/temporary element grants or resistance overrides.
+      attackElements: equipmentElements.attackElements,
+      elementResistances: equipmentElements.resistances,
       physical: compilePlayerPhysical(
         parameterReader,
         c.characterId,
@@ -321,6 +333,11 @@ export async function compileOpeningPlayable(
         name: name(r.mes_id_name!),
         side: "enemy",
         level: int(r.lv),
+        attackElements: [], // attack_attribute=0 was checked above.
+        elementResistances: compileElementResistances(
+          parameterReader,
+          int(r.resistance_attribute),
+        ).resistances,
         physical: compileEnemyPhysical(
           parameterReader,
           e.monsterId,
@@ -365,7 +382,7 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v7",
+    profile: "narshe-playability-v8",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,

@@ -1,9 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  calculateNeutralPhysical,
-  type NeutralPhysicalInput,
-} from "../src/core/physical.js";
+import { calculatePhysical, type PhysicalInput } from "../src/core/physical.js";
 import {
   confirmPlayerPhysical,
   confirmEnemyPhysical,
@@ -17,26 +14,27 @@ import {
 } from "../src/compiler/physical-parameters.js";
 import { battleTableIndex } from "../src/compiler/battle.js";
 
-function input(): NeutralPhysicalInput {
+function input(): PhysicalInput {
   return {
     rules: { normalAttack: true, multiplyPercent: null, contentFlags: [] },
     power: 0,
     actor: {
       side: "player",
       level: 10,
+      attackElements: [],
       attack: 40,
       strength: 30,
       accuracy: 100,
       criticalRate: 3,
     },
-    target: { side: "enemy", defense: 64, evasion: 0 },
+    target: { side: "enemy", defense: 64, evasion: 0, elementResistances: {} },
     targetCount: 1,
   };
 }
-function run(i: NeutralPhysicalInput, values: number[]) {
+function run(i: PhysicalInput, values: number[]) {
   const draws = [...values],
     ranges: number[][] = [];
-  const result = calculateNeutralPhysical(i, (min, max) => {
+  const result = calculatePhysical(i, (min, max) => {
     ranges.push([min, max]);
     assert.ok(draws.length, "Unexpected draw");
     return draws.shift()!;
@@ -181,9 +179,7 @@ test("invalid physical values, flags and overflow fail before the first random d
   for (const i of invalid)
     assert.throws(
       () =>
-        calculateNeutralPhysical(i, () =>
-          assert.fail("Invalid input consumed RNG"),
-        ),
+        calculatePhysical(i, () => assert.fail("Invalid input consumed RNG")),
       /Invalid|Unimplemented|outside/,
     );
   assert.throws(() => run(input(), [32]), /Invalid battle random draw/);

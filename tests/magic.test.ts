@@ -1,25 +1,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  calculateNeutralMagic,
-  type NeutralMagicInput,
-} from "../src/core/magic.js";
+import { calculateMagic, type MagicInput } from "../src/core/magic.js";
 import { calculateDevelopmentEffects } from "../src/core/ability.js";
 import { compileContentFlags } from "../src/compiler/content-flags.js";
 import { battleTableIndex } from "../src/compiler/battle.js";
 
-const input = (): NeutralMagicInput => ({
-  rules: { accuracy: 100, contentFlags: [], forceDefense: false },
+const input = (): MagicInput => ({
+  rules: { accuracy: 100, contentFlags: [], elements: [], forceDefense: false },
   power: 30,
   actor: { side: "player", level: 10, magic: 20 },
-  target: { side: "enemy", magicDefense: 64, magicEvasion: 0 },
+  target: {
+    side: "enemy",
+    magicDefense: 64,
+    magicEvasion: 0,
+    elementResistances: {},
+  },
   recovery: false,
   targetCount: 1,
 });
-function run(value: NeutralMagicInput, draws: number[]) {
+function run(value: MagicInput, draws: number[]) {
   const ranges: number[][] = [];
   const remaining = [...draws];
-  const result = calculateNeutralMagic(value, (min, max) => {
+  const result = calculateMagic(value, (min, max) => {
     ranges.push([min, max]);
     assert.ok(remaining.length, "Unexpected random draw");
     return remaining.shift()!;
@@ -119,10 +121,7 @@ test("unknown flags, invalid values and unsupported overflow stop before random 
   ];
   for (const i of invalid)
     assert.throws(
-      () =>
-        calculateNeutralMagic(i, () =>
-          assert.fail("Invalid input consumed RNG"),
-        ),
+      () => calculateMagic(i, () => assert.fail("Invalid input consumed RNG")),
       /Invalid|Unimplemented|outside/,
     );
   assert.throws(() => run(input(), [256]), /Invalid battle random draw/);
@@ -145,7 +144,7 @@ test("numerical effect adapter passes an actual miss through instead of spending
       magic: i.rules,
     },
     i.power,
-    { ...i.actor, attack: 20 },
+    { ...i.actor, attack: 20, attackElements: [] },
     { ...i.target, defense: 0, evasion: 0 },
     (min, max) => {
       assert.deepEqual([min, max], [0, 255]);

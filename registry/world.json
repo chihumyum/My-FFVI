@@ -4,7 +4,10 @@
     {
       "id": "narshe",
       "name": "纳尔谢",
-      "aliases": ["Narshe", "炭坑都市纳尔谢"],
+      "aliases": [
+        "Narshe",
+        "炭坑都市纳尔谢"
+      ],
       "questions": [
         "开场开发入口已建立；继续恢复完整初始化、后续实体组与重返条件。",
         "建立同一地点在不同世界阶段、剧情标记和局部状态下的变体条件。",
@@ -14,7 +17,9 @@
     {
       "id": "opera",
       "name": "歌剧院",
-      "aliases": ["Opera House"],
+      "aliases": [
+        "Opera House"
+      ],
       "questions": [
         "将区域地图、演出资源包、Timeline 根与实际事件触发对应。",
         "选择一个短镜头并补齐外部模型、动画、材质与音频引用。",
@@ -201,7 +206,9 @@
       },
       "status": "observed",
       "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
-      "evidence": ["Map_20010/sc_e_0002.json:/Mnemonics/5"]
+      "evidence": [
+        "Map_20010/sc_e_0002.json:/Mnemonics/5"
+      ]
     },
     {
       "id": "narshe:field-armor-resource",
@@ -211,7 +218,10 @@
       "when": {},
       "status": "observed",
       "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
-      "evidence": ["field_character_asset.csv:38", "docs/web-field.md"]
+      "evidence": [
+        "field_character_asset.csv:38",
+        "docs/web-field.md"
+      ]
     },
     {
       "id": "narshe:opening-magitek-membership",
@@ -320,6 +330,27 @@
         "ability.csv:345",
         "build/reports/battle-target-check.json#57d3537c3bdd7585e71a812f6c8d50b8d395caf4a4d8a3a64dccc83b02b65b60",
         "docs/battle-targets.md"
+      ]
+    },
+    {
+      "id": "narshe:development-elemental-affinities",
+      "subject": "narshe",
+      "predicate": "migration.elementalAffinities",
+      "value": "Development v8 uses explicit elemental inputs, physical priority and ordered magic calculations, separate immune results and signed absorption. Monster 26 fire weakness is projected into the existing opening catalog. Source fire beam 218 passes controlled browser immunity and absorption with HP 2000 to 2181. Unknown carriers 743/754/757 and conflicting resistance groups 81/125 remain blocked. Full statuses, dynamic affinities, equipment lifecycle, AI, saves and original parity remain incomplete.",
+      "when": {
+        "battleProfile": "narshe-playability-v8"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0xa93a40 DamageAppliedResistanceAttribute",
+        "GameAssembly.dll:RVA 0xa97b20 PhysicalExecution",
+        "GameAssembly.dll:RVA 0x4e7500 MargedResistanceAttribute",
+        "monster.csv:26",
+        "attribute_group.csv:102",
+        "ability.csv:218",
+        "build/reports/element-check.json#1c8417dbd327e8f3908e39bb686ade792555c5fbb184ec9b2331e83cf8dba500",
+        "docs/elemental-affinities.md"
       ]
     }
   ],

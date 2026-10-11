@@ -3,32 +3,48 @@ import {
   accuracyHit,
   type BattleRandom,
 } from "./battle-hit.js";
+import {
+  magicElementDamage,
+  validateElements,
+  validateElementResistances,
+  type ElementResistances,
+} from "./elements.js";
 
 export type MagicRules = {
   accuracy: number;
   /** Source content_flag_id values, never content_flag_group_id. */
   contentFlags: number[];
   forceDefense: boolean;
+  elements: number[];
 };
 export type MagicParticipant = { side: "player" | "enemy" };
-export type NeutralMagicInput = {
+export type MagicInput = {
   rules: MagicRules;
   power: number;
   actor: MagicParticipant & { level: number; magic: number };
-  target: MagicParticipant & { magicDefense: number; magicEvasion: number };
+  target: MagicParticipant & {
+    magicDefense: number;
+    magicEvasion: number;
+    elementResistances: ElementResistances;
+  };
   recovery: boolean;
   targetCount: number;
 };
 
 /** Scalar FF6 MagicExecution 0xa94480, fixType=0. The caller must establish
- * neutral affinities, no modifying conditions/accessories, no critical magic,
+ * explicit affinities, no modifying conditions/accessories, no critical magic,
  * weapon/scroll carrier, counter-stat substitution or provider overrides.
  * Silence does not modify this arithmetic. This is not a complete spell action.
  */
-export function validateNeutralMagic(input: NeutralMagicInput): number {
+export function validateMagic(input: MagicInput): number {
   const { rules, actor, target, power, recovery, targetCount } = input;
   if (!rules || !Array.isArray(rules.contentFlags))
     throw new Error("Missing magic calculation rules");
+  validateElements(rules.elements);
+  validateElementResistances(target.elementResistances);
+  // Bound repeated weakness multiplication even for synthetic malformed carriers.
+  if (rules.elements.length > 8)
+    throw new Error("Unreviewed magic element count");
   for (const value of [
     power,
     actor.level,
@@ -50,7 +66,7 @@ export function validateNeutralMagic(input: NeutralMagicInput): number {
     throw new Error("Invalid magic calculation context");
   if (rules.contentFlags.some((id) => ![1, 2, 5].includes(id)))
     throw new Error("Unimplemented magic content flag");
-  // This neutral branch represents nonnegative damage/recovery. Reject native
+  // The base arithmetic represents nonnegative damage/recovery. Reject native
   // overflow inputs before RNG rather than accidentally treating them as healing.
   const product = actor.level * actor.magic * power;
   const scaled =
@@ -72,11 +88,8 @@ export function validateNeutralMagic(input: NeutralMagicInput): number {
   return Math.min(65535, Math.trunc(Math.trunc(scaled) / 32) + power * 4);
 }
 
-export function calculateNeutralMagic(
-  input: NeutralMagicInput,
-  random: BattleRandom,
-) {
-  const base = validateNeutralMagic(input);
+export function calculateMagic(input: MagicInput, random: BattleRandom) {
+  const base = validateMagic(input);
   const { rules, target, actor, recovery, targetCount } = input;
   if (
     !accuracyHit(
@@ -95,10 +108,20 @@ export function calculateNeutralMagic(
     : Math.trunc(((255 - target.magicDefense) * varied) / 256) + 1;
   if (!recovery && actor.side === "player" && target.side === "player")
     amount = Math.trunc(amount * 0.5);
+  const elemental = magicElementDamage(
+    amount,
+    rules.elements,
+    target.elementResistances,
+  );
+  if (elemental.nullified) return { amount: 0, missed: false, nullified: true };
+  amount = elemental.damage;
   amount = Math.min(amount, 65535);
   if (rules.contentFlags.includes(2) && amount > 0)
     amount = Math.max(amount, 1);
   else if (targetCount > 1 && amount > 0)
     amount = Math.max(Math.trunc(amount * 0.5), 1);
+  else if (targetCount > 1 && amount < 0)
+    amount = Math.min(Math.trunc(amount * 0.5), -1);
+  // Native only caps positive magic here. Resource application clamps to max HP/MP.
   return { amount: Math.min(amount, 9999), missed: false };
 }

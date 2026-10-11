@@ -8,6 +8,10 @@ import { tableInteger } from "./table.js";
 import { physicalLimitKeys } from "./physical-parameters.js";
 import { parameterLimitKeys } from "./parameters.js";
 import { compileConditionCatalog } from "./conditions.js";
+import {
+  compileAttackElements,
+  compileElementResistances,
+} from "./elements.js";
 export { tableInteger } from "./table.js";
 
 const Source = z.object({
@@ -223,10 +227,9 @@ export async function compileOpeningBattle(root: string) {
         ),
         ai: json(ai.values.script_name!),
       });
-      tableGroup(
-        "attribute_group.csv",
-        "group_id",
-        monster.values.resistance_attribute!,
+      compileElementResistances(
+        { row, group: tableGroup },
+        tableInteger(monster.values.resistance_attribute),
       );
     }
     const patterns = Array.from({ length: 5 }, (_, n) => n + 1).filter((n) =>
@@ -315,6 +318,11 @@ export async function compileOpeningBattle(root: string) {
   }
   for (const id of [...abilityIds].sort((a, b) => a - b)) {
     const ability = row("ability.csv", id);
+    compileAttackElements(
+      { row, group: tableGroup },
+      tableInteger(ability.values.attribute_id),
+      tableInteger(ability.values.attribute_group_id),
+    );
     tableGroup(
       "content_flag_group.csv",
       "group_id",
@@ -346,7 +354,18 @@ export async function compileOpeningBattle(root: string) {
         content.values.type_id!
       ];
       if (!table) throw new Error("Unsupported opening equipment type");
-      row(table, content.values.type_value!);
+      const item = row(table, content.values.type_value!);
+      if (table === "armor.csv")
+        compileElementResistances(
+          { row, group: tableGroup },
+          tableInteger(item.values.resistance_attribute),
+        );
+      else
+        compileAttackElements(
+          { row, group: tableGroup },
+          tableInteger(item.values.attribute_id),
+          tableInteger(item.values.attribute_group_id),
+        );
     }
     tableGroup(
       "growth_curve.csv",

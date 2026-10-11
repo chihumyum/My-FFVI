@@ -3,6 +3,12 @@ import {
   accuracyHit,
   type BattleRandom,
 } from "./battle-hit.js";
+import {
+  physicalElementDamage,
+  validateElements,
+  validateElementResistances,
+  type ElementResistances,
+} from "./elements.js";
 
 export type PhysicalRules = {
   normalAttack: boolean;
@@ -18,15 +24,24 @@ export type PhysicalParameters = {
   accuracy: number;
   criticalRate: number;
 };
-export type NeutralPhysicalInput = {
+export type PhysicalInput = {
   rules: PhysicalRules;
   power: number;
-  actor: PhysicalParameters & { side: "player" | "enemy"; level: number };
-  target: { side: "player" | "enemy"; defense: number; evasion: number };
+  actor: PhysicalParameters & {
+    side: "player" | "enemy";
+    level: number;
+    attackElements: number[];
+  };
+  target: {
+    side: "player" | "enemy";
+    defense: number;
+    evasion: number;
+    elementResistances: ElementResistances;
+  };
   targetCount: number;
 };
 const f = Math.fround;
-function baseDamage(input: NeutralPhysicalInput, enemyDraw: number) {
+function baseDamage(input: PhysicalInput, enemyDraw: number) {
   const { actor, rules } = input;
   const power =
     input.power +
@@ -41,14 +56,16 @@ function baseDamage(input: NeutralPhysicalInput, enemyDraw: number) {
   return Math.trunc(f(f(scaled % 65536) + f(power)));
 }
 
-/** PhysicalExecution 0xa97b20, front rows, neutral affinities, correction=1,
+/** PhysicalExecution 0xa97b20, front rows, explicit affinities, correction=1,
  * no numerical conditions, accessory/weapon procs, species, counters or copies.
  * The compiler/profile must establish that context. Silence is allowed.
  */
-export function validateNeutralPhysical(input: NeutralPhysicalInput): void {
+export function validatePhysical(input: PhysicalInput): void {
   const { actor, target, rules, power, targetCount } = input;
   if (!rules || !Array.isArray(rules.contentFlags))
     throw new Error("Missing physical calculation rules");
+  validateElements(actor.attackElements);
+  validateElementResistances(target.elementResistances);
   for (const value of [
     power,
     actor.level,
@@ -75,8 +92,8 @@ export function validateNeutralPhysical(input: NeutralPhysicalInput): void {
     throw new Error("Invalid physical calculation context");
   if (rules.contentFlags.some((id) => ![1, 2, 5].includes(id)))
     throw new Error("Unimplemented physical content flag");
-  // Reject overflow before any draws. This lane only represents nonnegative
-  // damage; native signed-overflow/healing and special weapons need other lanes.
+  // Reject overflow before any draws. The base must stay nonnegative;
+  // absorption changes the sign later. Native overflow and special weapons are blocked.
   const rawPower = power + actor.attack;
   const upper = baseDamage(input, 7);
   const product = upper * (rules.multiplyPercent ?? 100);
@@ -97,11 +114,8 @@ export function validateNeutralPhysical(input: NeutralPhysicalInput): void {
     throw new Error("Physical arithmetic outside supported nonnegative range");
 }
 
-export function calculateNeutralPhysical(
-  input: NeutralPhysicalInput,
-  random: BattleRandom,
-) {
-  validateNeutralPhysical(input);
+export function calculatePhysical(input: PhysicalInput, random: BattleRandom) {
+  validatePhysical(input);
   const { actor, target, rules, targetCount } = input;
   let base = baseDamage(
     input,
@@ -130,10 +144,23 @@ export function calculateNeutralPhysical(
   // Native consumes this even when the confirmed rate is zero.
   const critical = drawBattleRandom(random, 0, 99) < actor.criticalRate;
   if (critical) amount *= 2;
+  const elemental = physicalElementDamage(
+    amount,
+    actor.side === "enemy" || rules.normalAttack ? actor.attackElements : [],
+    target.elementResistances,
+  );
+  if (elemental.nullified)
+    return { amount: 0, missed: false, critical, nullified: true };
+  amount = elemental.damage;
   amount = Math.trunc(f(amount)); // attackPointCorrection=1 still converts to float32.
   if (rules.contentFlags.includes(2) && amount > 0)
     amount = Math.max(1, amount);
   else if (targetCount > 1 && amount > 0)
     amount = Math.max(1, Math.trunc(amount * 0.5));
-  return { amount: Math.min(9999, amount), missed: false, critical };
+  // Unlike magic, absorbed physical damage is not halved for multiple targets.
+  return {
+    amount: Math.max(-9999, Math.min(9999, amount)),
+    missed: false,
+    critical,
+  };
 }

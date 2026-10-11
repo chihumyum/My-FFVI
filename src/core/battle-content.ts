@@ -3,6 +3,7 @@ import type { AtbRules } from "./atb.js";
 import type { ParameterValues } from "./parameters.js";
 import type { AbilityProgram, DevelopmentAbilityPlan } from "./ability.js";
 import type { BattleConditionCatalog } from "./battle-conditions.js";
+import type { ElementResistances } from "./elements.js";
 
 export type BattleCommandDefinition = {
   id: number;
@@ -14,7 +15,7 @@ export type BattleCommandDefinition = {
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "narshe-playability-v7";
+  profile: "narshe-playability-v8";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;
@@ -42,6 +43,8 @@ export type CombatantDefinition = ParameterValues & {
   side: "player" | "enemy";
   level: number;
   physical: PhysicalParameters | null;
+  attackElements: number[];
+  elementResistances: ElementResistances;
   exp: number;
   gil: number;
   growthGroup: string | null;

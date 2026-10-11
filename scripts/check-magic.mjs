@@ -7,7 +7,7 @@ import {
   compileAbilityProgram,
   compileDevelopmentAbility,
 } from "../dist/src/compiler/ability.js";
-import { calculateNeutralMagic } from "../dist/src/core/magic.js";
+import { calculateMagic } from "../dist/src/core/magic.js";
 import { hash } from "../dist/src/compiler/content.js";
 import { BattleGame } from "../dist/src/core/battle.js";
 import { encounterContent } from "../dist/src/core/battle-content.js";
@@ -25,7 +25,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v7");
+assert.equal(catalog.common.profile, "narshe-playability-v8");
 const candidates = [];
 for (const row of tables["ability.csv"]) {
   const decoded = compileAbilityProgram(reader, Number(row.id));
@@ -52,16 +52,22 @@ for (const row of tables["ability.csv"]) {
           rules: {
             accuracy: p.rules.accuracy_rate,
             contentFlags: p.contentFlags,
+            elements: [],
             forceDefense: false,
           },
           power: Number(row.standard_value),
           actor: { side, level: 10, magic: 20 },
-          target: { side: "enemy", magicDefense: 64, magicEvasion },
+          target: {
+            side: "enemy",
+            magicDefense: 64,
+            magicEvasion,
+            elementResistances: {},
+          },
           recovery: false,
           targetCount: 1,
         };
         const ranges = [];
-        const result = calculateNeutralMagic(input, (min, max) => {
+        const result = calculateMagic(input, (min, max) => {
           ranges.push([min, max]);
           return max === 255 ? draw : 0;
         });

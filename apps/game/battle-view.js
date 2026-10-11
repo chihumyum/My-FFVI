@@ -357,13 +357,15 @@ export class BattleView {
             c.fillStyle = effect.recovery ? "#80ffa7" : "white";
             const text = effect.missed
                 ? "MISS"
-                : effect.resource === "condition"
-                  ? effect.recovery
-                    ? "状态解除"
-                    : effect.added
-                        .map((id) => battle.conditions.name(id))
-                        .join("、")
-                  : `${effect.amount}${effect.resource === "mp" ? " MP" : ""}`,
+                : effect.nullified
+                  ? "无效"
+                  : effect.resource === "condition"
+                    ? effect.recovery
+                      ? "状态解除"
+                      : effect.added
+                          .map((id) => battle.conditions.name(id))
+                          .join("、")
+                    : `${effect.amount}${effect.resource === "mp" ? " MP" : ""}`,
               y = to.y - 48 - (a.elapsed - 400) / 35 - index * 18;
             c.strokeText(text, to.x, y);
             c.fillText(text, to.x, y);

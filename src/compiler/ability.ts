@@ -13,6 +13,7 @@ import type {
 import type { AbilityDefinition } from "../core/battle-content.js";
 import { compileContentFlags } from "./content-flags.js";
 import { compileTargetRule } from "./battle-targets.js";
+import { compileAttackElements } from "./elements.js";
 
 type Reader = ConditionReader;
 /** SerialBattleUtility 0x85e170; type and ID arrays recovered from 0x85f000.
@@ -99,6 +100,7 @@ export function compileAbilityProgram(reader: Reader, abilityId: number) {
     rules: Object.fromEntries(ruleColumns.map((key) => [key, int(a[key])])),
     forbiddenConditionIds: [],
     contentFlags: [],
+    elements: [],
   };
   const forbidden = compileConditionGroup(
     reader,
@@ -115,6 +117,13 @@ export function compileAbilityProgram(reader: Reader, abilityId: number) {
   );
   program.contentFlags = flags.ids;
   sources.push(...flags.sources);
+  const elements = compileAttackElements(
+    reader,
+    int(a.attribute_id),
+    program.rules.attribute_group_id!,
+  );
+  program.elements = elements.elements;
+  sources.push(...elements.sources);
   return { program, sources };
 }
 
@@ -223,7 +232,6 @@ export function compileDevelopmentAbility(
     (effects[0]!.kind === "magic" ||
       (effects[0]!.kind === "recovery" && effects[0]!.calculation === "magic"));
   for (const key of [
-    "attribute_group_id",
     "attack_count",
     "Impact_status",
     "invalid_boss",
@@ -273,16 +281,18 @@ export function compileDevelopmentAbility(
     attribute = int(a.attribute_id);
   if ([power, cost, wait, attribute].some((v) => v < 0))
     blockers.push("negative ability value");
-  if (attribute)
-    limitations.push(
-      `attribute ${attribute}: neutral-affinity development state required`,
-    );
+  const elements = program.elements;
+  if (r.attribute_group_id && elements.length > 1)
+    blockers.push("unreviewed source element group enumeration");
+  if (!magicOnly && (attribute || r.attribute_group_id))
+    blockers.push("unresolved non-magic element carrier");
+  if (elements.length > 8) blockers.push("unreviewed magic element count");
   limitations.push(
     "only admitted silence behavior; no equipment-added functions, undead or Runic overrides",
   );
   if (physicalOnly)
     limitations.push(
-      "front rows, neutral affinities, selected single arm; no physical status/accessory/weapon modifiers",
+      "front rows, selected single arm; no species, physical status/accessory/weapon modifiers",
     );
   if (conditionOnly && attribute !== 0)
     blockers.push("unresolved condition attribute");
@@ -290,7 +300,7 @@ export function compileDevelopmentAbility(
     blockers.push("unresolved native condition ability override");
   if (magicOnly)
     limitations.push(
-      "reviewed neutral magic arithmetic; no accessory, critical, counter-stat or weapon modifiers",
+      "reviewed magic and elemental arithmetic; no accessory, critical, counter-stat or weapon modifiers",
     );
   const plan: DevelopmentAbilityPlan | null = blockers.length
     ? null
@@ -308,6 +318,7 @@ export function compileDevelopmentAbility(
           ? {
               accuracy: r.accuracy_rate!,
               contentFlags: [...program.contentFlags],
+              elements,
               // GetRecoveryStatus 0x3d9af0 supplies this source-specific override.
               forceDefense:
                 effects[0]!.kind === "recovery" && abilityId === 210,
