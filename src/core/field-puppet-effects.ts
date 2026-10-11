@@ -1,6 +1,7 @@
 import { ActorAnimation } from "./actor-animation.js";
 import type { Direction } from "../field/types.js";
 import type { FieldPuppetActorEffect } from "./field-puppet-actors.js";
+import { validateFieldActorViewProjection, type FieldActorViewProjection } from "./field-actor-view.js";
 
 export type FieldPuppetPosition = { x: number; y: number; z: number };
 /** A detached read/write projection of the existing field actors. It is never
@@ -11,7 +12,8 @@ export type FieldPuppetHostActor = {
   position: FieldPuppetPosition;
   /** Native Unity layer, not a Web map-layer array index. */
   layer: number;
-  direction: Direction;
+  /** Null preserves a freshly constructed native (0,0) direction vector. */
+  direction: Direction | null;
   animation: ActorAnimation | null;
   visible: boolean;
   fadeAlpha: number;
@@ -22,10 +24,10 @@ export type FieldPuppetHostActor = {
   rideOnEntity: "absent" | "idle" | "riding" | "unknown";
   bodyOpaque: boolean;
   shadowVisible: boolean;
-  /** Evidence that this instance already has the source map's material inputs.
-   * Reapplying those same inputs is idempotent; changing map/layer is not yet
-   * implemented by this bounded adapter and must not discard shader effects. */
-  viewBinding: { map: string; layer: number } | null;
+  /** Native material inputs on the existing actor. Legacy bindings only admit
+   * an idempotent reapply; new map/layer bindings require the explicit ordinary
+   * material projection. Renderer parity is a separate capability. */
+  viewBinding: { map: string; layer: number; properties?: FieldActorViewProjection } | null;
   transparentTextures: { first: string | null; second: string | null };
 };
 export type FieldPuppetHostSnapshot = {
@@ -42,6 +44,9 @@ export type FieldPuppetHostProviders = {
   footAttribute(position: Readonly<FieldPuppetPosition>): number | null;
   upperTexture: string | null | "unknown";
   ceilTexture: string | null | "unknown";
+  /** A compiled ordinary source provider may prepare a new layer binding.
+   * Undefined retains the older same-binding-only capability. */
+  applyViewProperties?(layer: number): FieldActorViewProjection | null;
 };
 
 /** Existing FieldGame collision owners expose this detached projection; it is
@@ -106,7 +111,7 @@ export function projectFieldPuppetActorEffects(
     actors: snapshot.actors.map((a) => {
       if (!a || !a.id || ids.has(a.id)) throw new Error("Invalid source puppet effect actor identity");
       ids.add(a.id); position(a.position); integer(a.layer);
-      if (!["up", "right", "down", "left"].includes(a.direction) ||
+      if ((a.direction !== null && !["up", "right", "down", "left"].includes(a.direction)) ||
           [a.character, a.visible, a.moving, a.riding, a.bodyOpaque, a.shadowVisible].some((v) => typeof v !== "boolean") ||
           !["absent", "unknown"].includes(a.childEntityObject) ||
           !["absent", "idle", "riding", "unknown"].includes(a.rideOnEntity) ||
@@ -116,10 +121,11 @@ export function projectFieldPuppetActorEffects(
       if (a.animation !== null && !(a.animation instanceof ActorAnimation)) throw new Error("Unbound source actor animation");
       if (a.viewBinding !== null && (!a.viewBinding || typeof a.viewBinding.map !== "string" || !a.viewBinding.map ||
           !Number.isInteger(a.viewBinding.layer))) throw new Error("Unbound source actor shader properties");
+      if (a.viewBinding?.properties) validateFieldActorViewProjection(a.viewBinding.properties, a.viewBinding.map, a.viewBinding.layer);
       if (!a.transparentTextures) throw new Error("Unknown source actor transparent texture state");
       texture(a.transparentTextures.first); texture(a.transparentTextures.second);
       return { ...a, position: { ...a.position }, animation: a.animation?.clone() ?? null,
-        viewBinding: a.viewBinding && { ...a.viewBinding }, transparentTextures: { ...a.transparentTextures } };
+        viewBinding: a.viewBinding && structuredClone(a.viewBinding), transparentTextures: { ...a.transparentTextures } };
     }),
     camera: snapshot.camera && { ...snapshot.camera, position: { ...snapshot.camera.position } },
   };
@@ -151,7 +157,9 @@ export function projectFieldPuppetActorEffects(
       }
       case "copy-layer": target.layer = actor(effect.from).layer; break;
       case "look": {
-        target.direction = actor(effect.from).direction;
+        const direction = actor(effect.from).direction;
+        if (direction === null) throw new Error("Source puppet zero-direction look provider is unresolved");
+        target.direction = direction;
         if (!target.animation) throw new Error("Missing source puppet look animation media");
         target.animation.look(target.direction); break;
       }
@@ -164,6 +172,16 @@ export function projectFieldPuppetActorEffects(
         if (target.childEntityObject !== "absent") throw new Error("Source puppet child visibility propagation is unresolved");
         target.visible = effect.kind === "show"; target.fadeAlpha = target.visible ? 1 : 0; break;
       case "apply-view-properties":
+        if (target.character && providers.applyViewProperties) {
+          const properties = providers.applyViewProperties(target.layer);
+          if (properties === null) {
+            if (target.layer >= 9 && target.layer <= 12) throw new Error("Missing source actor material projection");
+          } else {
+            validateFieldActorViewProjection(properties, providers.mapRenderContext, target.layer);
+            target.viewBinding = { map: providers.mapRenderContext, layer: target.layer, properties: structuredClone(properties) };
+          }
+          break;
+        }
         if (target.character && (target.viewBinding?.map !== providers.mapRenderContext || target.viewBinding.layer !== target.layer))
           throw new Error("Source map/layer shader projection has not been bound to this actor");
         break;

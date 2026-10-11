@@ -228,8 +228,15 @@ export class Renderer {
             ),
       );
     // Source camera offsets are pixels with positive Y pointing upward.
-    const cx = camera(p.x + game.cameraOffset.x / 16, range.x, range.width, w),
-      cy = camera(p.y - game.cameraOffset.y / 16, range.y, range.height, h);
+    const sourceCamera = game.cameraProjection({ aspect: w / h, orthographicSize: h / 2,
+      isClamp: true, effectOffset: { x: 0, y: 0 } });
+    // CameraFollowing's sprite/entity tracking input is retained separately in
+    // sourceCamera.renderCell. This full-map Canvas renderer needs no moving
+    // Unity mesh cache; clipping uses the actual, already clamped camera root.
+    const cx = sourceCamera ? Math.round((sourceCamera.cameraCell.x + 0.5) * 16 - w / 2)
+      : camera(p.x + game.cameraOffset.x / 16, range.x, range.width, w),
+      cy = sourceCamera ? Math.round((sourceCamera.cameraCell.y + 0.5) * 16 - h / 2)
+      : camera(p.y - game.cameraOffset.y / 16, range.y, range.height, h);
     c.imageSmoothingEnabled = false;
     c.fillStyle = "#09111b";
     c.fillRect(0, 0, w, h);

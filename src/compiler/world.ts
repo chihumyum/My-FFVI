@@ -8,6 +8,8 @@ import { bindTileAnimationRegions } from "./tile-animation.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { decodeFieldOp, decodeScriptLocals, decodeConditionVisualFlag } from "./field.js";
 import { compilePlayerVisibilityFactory } from "./player-visibility.js";
+import { compileFieldCameraHostDefinition } from "./field-camera-host.js";
+import { compileFieldPuppetScriptContext } from "./field-puppet-actors.js";
 import { missingFieldPoses } from "../core/character-media.js";
 import { fieldCollisionRange } from "../core/collision.js";
 import { tableId } from "./table-id.js";
@@ -188,6 +190,10 @@ export async function compileWorld(root: string) {
   }
   const byId = new Map(corpus.assets.map((a) => [a.id, a])),
     packageMedia = record(media.packages);
+  const sourceFiles = array(corpus.manifest.sources).map(record)
+    .map((s) => ({ file: text(s.file), sha256: text(s.sha256) }));
+  const miscAssets = systemSource.assets.filter((asset) => asset.source.assetPath.endsWith("/serial_misc_assets.json"));
+  if (miscAssets.length !== 1) throw new Error("Missing source puppet settings");
   const maps: WorldMapContent[] = [];
   for (const binding of bindMapPackages(corpus.assets, corpus.tables)) {
     const source = byId.get(binding.packageId ?? "")?.source ?? {
@@ -208,6 +214,8 @@ export async function compileWorld(root: string) {
     let map: WorldMapContent["map"] = null;
     let partyEntry: WorldMapContent["partyEntry"];
     const partyEntryBlockers: ContentIssue[] = [];
+    let cameraHost: WorldMapContent["cameraHost"];
+    const cameraHostBlockers: ContentIssue[] = [];
     try {
       const tile = byId.get(binding.tilemap ?? ""),
         collision = byId.get(binding.collision ?? "");
@@ -259,6 +267,14 @@ export async function compileWorld(root: string) {
         blockers.push({ reason: "Missing default entity group", source });
       const defaultGroup = byId.get(binding.groups.entity_default ?? "");
       try {
+        if (!defaultGroup) throw new Error("Missing source camera default entity set");
+        cameraHost = compileFieldCameraHostDefinition(sourceFiles, tile.data, defaultGroup.data,
+          { mapViewType: 0, loopType: tableId(mapRow.loop_type) });
+      } catch (error) {
+        cameraHostBlockers.push({ reason: error instanceof Error ? error.message : String(error),
+          source: defaultGroup?.source ?? source });
+      }
+      try {
         if (!defaultGroup || !groups.entity_default)
           throw new Error("Missing source map party default group");
         partyEntry = compileMapPartyEntry(corpus.tables, Number(binding.id), geometry,
@@ -275,7 +291,8 @@ export async function compileWorld(root: string) {
     }
     const scripts: WorldMapContent["scripts"] = {},
       scriptLocals: WorldMapContent["scriptLocals"] = {},
-      scriptSystemFlags: NonNullable<WorldMapContent["scriptSystemFlags"]> = {};
+      scriptSystemFlags: NonNullable<WorldMapContent["scriptSystemFlags"]> = {},
+      scriptPuppetContexts: NonNullable<WorldMapContent["scriptPuppetContexts"]> = {};
     const aliases = { ...binding.residentScripts, ...binding.scriptAliases };
     for (const [name, id] of Object.entries(aliases)) {
       if (!id) continue;
@@ -284,6 +301,10 @@ export async function compileWorld(root: string) {
         const data = record(asset.data);
         scriptLocals[name] = decodeScriptLocals(data);
         scriptSystemFlags[name] = decodeConditionVisualFlag(data);
+        // Missing lifecycle flags do not prevent independent decoding, and
+        // they never grant a formal source actor host.
+        try { scriptPuppetContexts[name] = compileFieldPuppetScriptContext(data, miscAssets[0]!.data); }
+        catch { scriptPuppetContexts[name] = null; }
         scripts[name] = array(data.Mnemonics).map((raw, index): Op => {
           const site = {
             script: name,
@@ -314,6 +335,7 @@ export async function compileWorld(root: string) {
         ];
         scriptLocals[name] = null;
         scriptSystemFlags[name] = null;
+        scriptPuppetContexts[name] = null;
       }
     }
     for (const group of Object.values(groups))
@@ -344,9 +366,12 @@ export async function compileWorld(root: string) {
       map,
       ...(partyEntry ? { partyEntry } : {}),
       partyEntryBlockers,
+      ...(cameraHost ? { cameraHost } : {}),
+      cameraHostBlockers,
       scripts,
       scriptLocals,
       scriptSystemFlags,
+      scriptPuppetContexts,
       initializer: binding.initializer ? binding.initializerName : null,
       characterAssets: [
         ...new Set(

@@ -53,7 +53,7 @@ const plan = createNewGame(initialization.definition);
 const catalog = JSON.parse(await readFile(root + "build/game/opening-playable.json", "utf8"));
 const { contentHash, ...content } = catalog;
 assert.equal(hash(content), contentHash);
-assert.equal(catalog.common.profile, "narshe-playability-v29");
+assert.equal(catalog.common.profile, "narshe-playability-v30");
 const system = catalog.gameState.equipmentSystem;
 assert.ok(system);
 const emptyIds = [93, 197, 198, 199, 200];

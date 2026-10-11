@@ -20,6 +20,7 @@ import { compileAudioReadinessInstruction } from "./audio-readiness.js";
 import { compilePlayerVisibilityInstruction, compilePlayerVisibilityFactory, playerVisibilityMnemonics } from "./player-visibility.js";
 import { compileFieldTaskControlInstruction, fieldTaskControlMnemonics } from "./field-task-control.js";
 import { compileFieldFadeInstruction } from "./field-fade.js";
+import { compileFieldCameraInstruction, compileFieldCameraMotionInstruction, fieldCameraSelectors } from "./field-camera.js";
 import { DEVELOPMENT_TRANSPARENT_FADE } from "../core/field-fade.js";
 import { loadSystemSource } from "./system-source.js";
 import { compileTransportationCatalog, compileNarsheTransportationCheckpoint } from "./transportation.js";
@@ -137,6 +138,14 @@ export function decodeFieldOp(
   }
   if (name === "SysCall" && sourcePresentationSelectors.some((selector) => selector === s[0])) {
     try { return { ...site, ...compileSourcePresentationInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "SysCall" && fieldCameraSelectors.some((selector) => selector === s[0])) {
+    try { return { ...site, ...compileFieldCameraInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "Lerp") {
+    try { return { ...site, ...compileFieldCameraMotionInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if (
@@ -345,8 +354,15 @@ export function decodeFieldOp(
     form([0, 1, 2], [], [0]) &&
     [0, 3].includes(i[2]!) &&
     ["", "Default", "WalkL"].includes(s[0]!)
-  )
-    return { ...site, kind: "position", x: i[0]!, y: i[1]!, animation: s[0]! };
+  ) {
+    let cameraCommand: Extract<Op, { kind: "position" }>["cameraCommand"];
+    try {
+      const motion = compileFieldCameraMotionInstruction(raw).command;
+      if (motion.kind === "set-position") cameraCommand = motion;
+    } catch { /* Ordinary actor admission does not grant camera admission. */ }
+    return { ...site, kind: "position", x: i[0]!, y: i[1]!, animation: s[0]!,
+      ...(cameraCommand ? { cameraCommand } : {}) };
+  }
   if (
     name === "Move" &&
     form([0, 1, 2]) &&

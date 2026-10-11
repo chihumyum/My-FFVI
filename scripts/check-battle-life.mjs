@@ -29,7 +29,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v29");
+assert.equal(catalog.common.profile, "narshe-playability-v30");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const conditions = compileBattleConditionCatalog(
   reader,

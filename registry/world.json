@@ -9,7 +9,7 @@
         "炭坑都市纳尔谢"
       ],
       "questions": [
-        "来源新游戏共享状态已接通；继续绑定正式隐藏演员/相机、真实视觉 offset 与回调、标题到字段的渐变初态和叙述消息。共享调度及受控生命周期已实现，不代表完整序章已可玩。",
+        "来源摄像机已接共用字段宿主；演员工厂与标题到字段交接协议已有独立能力。继续装配正式 fresh GameSession、完整演员状态与交通所有者、叙述消息、入战返回及对应保存；现有纳尔谢开发检查点仍不是完整序章。",
         "建立同一地点在不同世界阶段、剧情标记和局部状态下的变体条件。",
         "确认 Wait 时钟与 SysCall 选择器，并对已恢复的碰撞进行原版运行对照。"
       ]
@@ -1263,6 +1263,52 @@
       "evidence": [
         "GameAssembly.dll:RVA 0x2d9b50,0x2d2a10,0x2fe6c0,0xb277c0",
         "docs/field-camera.md"
+      ]
+    },
+    {
+      "id": "narshe:field-camera-v30",
+      "subject": "narshe",
+      "predicate": "migration.fieldCamera",
+      "value": "FieldGame owns camera target/dummy state and reads the actual player live. SetPos/Lerp use global puppet slots with task-local progress. Zero-duration Ready Show/Hide preserve dummy active/fade state in camera v2; native GameObject initial activeSelf remains unknown until an explicit effect. Conditional normal-view capability, map forks, stable field/world v8 restoration and Canvas camera-root projection are implemented. Development entry does not acquire native actor lifecycle automatically; full new-game and original dynamic parity remain incomplete.",
+      "when": {
+        "battleProfile": "narshe-playability-v30"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x2d9b50,0x2d2a10,0x387250,0xe0fe40,0xe0dee0,0xe103a0,0xe1f7d0",
+        "docs/field-camera-host.md",
+        "docs/systems-v30.md"
+      ]
+    },
+    {
+      "id": "narshe:actor-factory-v30",
+      "subject": "narshe",
+      "predicate": "migration.fieldActorFactory",
+      "value": "Source-bound factories preserve separate actual-player, four puppet, three other-party and resident pools, raw off-map transforms, zero directions and independent charaZOffset. Ordinary map material inputs are explicit projections rather than omitted effects. This standalone preparation is not a published fresh GameSession or complete Canvas shader reproduction.",
+      "when": {
+        "battleProfile": "narshe-playability-v30"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x309d10,0x309f50,0x87a930,0x8b69d0,0x439720,0x448730,0x43aca0",
+        "docs/field-actor-factory.md"
+      ]
+    },
+    {
+      "id": "narshe:new-game-field-entry-v30",
+      "subject": "narshe",
+      "predicate": "migration.newGameFieldEntry",
+      "value": "Ordinary source title-to-field protocol forks the actual global fade, keeps resource-loading and scene activation waits separate, and requires explicit first-map preparation acknowledgements. The reserved opening script bypasses normal-map fallback setup on successful start. Source-bound two-instruction FieldGame probes do not publish or prove the complete new-game session.",
+      "when": {
+        "battleProfile": "narshe-playability-v30"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x38eeb0,0x155fc10,0x2e37a0,0x2e39a0,0x2e3d30,0x2e6fe0",
+        "docs/new-game-field-entry.md"
       ]
     }
   ],

@@ -295,7 +295,7 @@ check("published source initializer creates shared ownership without checkpoint 
   const published = JSON.parse(publishedBytes);
   const { contentHash, ...body } = published;
   assert.equal(contentHash, hash(body));
-  assert.equal(published.common.profile, "narshe-playability-v29");
+  assert.equal(published.common.profile, "narshe-playability-v30");
   assert.equal(hash(published.gameState.sourceNewGame), hash(definition));
   const fresh = GameState.createNewGame(published.gameState, published.common.players,
     published.contentHash, published.common.conditions);

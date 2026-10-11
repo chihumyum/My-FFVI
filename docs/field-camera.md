@@ -1,6 +1,6 @@
 # 字段摄像机与 source actor 0
 
-v29 增加独立摄像机状态投影模块，尚未接入 FieldGame / renderer。source actor `0` 是 `FieldController.scrollDummy`，不是实际玩家、`-1001` puppet、NPC 或碰撞实体。模块将原生坐标、视觉偏移、目标与指令局部进度分开保存，后续字段宿主负责调度与 renderer 消费。原版未执行，以下是同一 DLL 的静态来源证据和受控逻辑测试。
+v29 增加独立摄像机状态投影模块，v30 通过 [字段摄像机宿主](field-camera-host.md) 接入 FieldGame / renderer。source actor `0` 是 `FieldController.scrollDummy`，不是实际玩家、`-1001` puppet、NPC 或碰撞实体。纯模块将原生坐标、视觉偏移、目标与指令局部进度分开保存；字段宿主负责唯一状态所有权、来源准入和调度，renderer 消费投影。原版未执行，以下是同一 DLL 的静态来源证据和受控逻辑测试。
 
 ## 来源身份与生命周期
 
@@ -16,7 +16,7 @@ v29 增加独立摄像机状态投影模块，尚未接入 FieldGame / renderer�
 
 `ChangeCameraTarget` 在发布后调用新目标已有的 MoveCallback，并刷新 CameraFollowing；这是 MoveCallback，不能替换为移动完成回调或毒伤步点。纯投影返回 `resetDummyMovement` 与 `notifyMove`，宿主须按已恢复能力处理。`SetupMoveCallbackEntity 0x387210` 本身只改 TargetEntity，没有新注册回调。
 
-CameraFollowing 使用 root Transform.position 作为 camera 的位置输入，以 GetEntityPosition 作为地图渲染跟踪输入。Chara 的后者包含 offsetObject.localPosition；dummy 则加自己保存的 entityOffset。`projectFieldCamera` 分别返回两者叠加 mapScrollOffset 后的未裁剪坐标，不把视觉偏移写回玩家逻辑位置。原生 viewport、循环、效果偏移和全部裁剪细节不在本模块的准确性声明中。
+CameraFollowing 使用 root Transform.position 作为 camera 的位置输入，以 GetEntityPosition 作为地图渲染跟踪输入。Chara 的后者包含 offsetObject.localPosition；dummy 则加自己保存的 entityOffset。`projectFieldCamera` 分别返回两者叠加 mapScrollOffset 后的未裁剪坐标，不把视觉偏移写回玩家逻辑位置。原生 viewport、循环、效果偏移和裁剪不属于本纯模块；v30 的 host 在其外层实现已经恢复的普通视图规则，限制见宿主文档。
 
 ## 坐标、层与运动
 
@@ -43,10 +43,10 @@ y = (height * 0.5 - 1 - cellY) * 16 + 8
 模块位于 `src/core/field-camera.ts`、`src/compiler/field-camera.ts`。字段宿主将当前实际 player 的 cell、已知逻辑层、方向与真实视觉 offset 投影为 `FieldCameraActor`，然后消费 `projectFieldCameraTarget`。新事件成功启动使用 dummy，源 End 对应分支恢复 player；普通 Call 不重新初始化摄像机。
 
 ```sh
-npx tsc --outDir build/v29-visibility-dist
-node --test build/v29-visibility-dist/tests/field-camera.test.js build/v29-visibility-dist/tests/field-camera-motion.test.js
+npx tsc --outDir build/v30-camera-dist
+node --test build/v30-camera-dist/tests/field-camera.test.js build/v30-camera-dist/tests/field-camera-motion.test.js
 node scripts/check-field-camera-native.mjs
-node scripts/check-field-camera.mjs --compiled-dir build/v29-visibility-dist
+node scripts/check-field-camera.mjs --compiled-dir build/v30-camera-dist
 ```
 
-21 项专用测试覆盖 factory、target 切换、旧 dummy 目标、实际 player 跟踪、float32、坏依赖原子拒绝、严格存档、源 Start/End、解码边界、mapRange first-match / offset、负轴保持、首帧等待、零/负 duration、弧线和中途恢复。原生检查绑定 24 个已导出方法与 12 个完整原始机器码范围。来源检查编译 34 个 selector、执行 68 次双初态 target 变化，并把 `sc_e_0001` 两个运动指令与真实地图范围绑定，完成 6 个时间点及中途 JSON 恢复。来源脚本位置和纯模块执行不是可玩地图数量，也不证明完整序章已贯通；最终 FieldGame / WorldSession / 浏览器结论由共享集成验收独立给出。
+22 项专用测试覆盖 factory、target 切换、旧 dummy 目标、实际 player 跟踪、float32、坏依赖原子拒绝、v2 严格存档和零时长显隐、源 Start/End、解码边界、mapRange first-match / offset、负轴保持、首帧等待、零/负 duration、弧线和中途恢复。原生检查绑定 24 个已导出方法与 12 个完整原始机器码范围；v30 显隐和宿主证据另由宿主检查器绑定。来源检查编译 34 个 selector、执行 68 次双初态 target 变化，并把 `sc_e_0001` 两个运动指令与真实地图范围绑定，完成 6 个时间点及中途 JSON 恢复。来源脚本位置和纯模块执行不是可玩地图数量，也不证明完整序章已贯通；最终 FieldGame / WorldSession / 浏览器结论由共享集成验收独立给出。

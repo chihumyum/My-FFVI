@@ -76,7 +76,7 @@ if (!sourceOnly) {
   for (const document of [source, published]) {
     const { contentHash, ...input } = document; assert.equal(hash(input), contentHash);
   }
-  assert.equal(published.common.profile, "narshe-playability-v29");
+  assert.equal(published.common.profile, "narshe-playability-v30");
   assert.equal(published.common.sourceContentHash, source.contentHash);
   assert.equal(source.nativeProfile.sha256, native.nativeSha256);
   assert.equal(published.common.qualificationContext.mode, "source");

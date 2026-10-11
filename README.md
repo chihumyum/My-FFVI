@@ -17,7 +17,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
-- [v29 任务调度、渐变与演员宿主边界](docs/systems-v29.md)
+- [v30 摄像机、来源演员工厂与新游戏交接](docs/systems-v30.md)
 - [字段渐变](docs/field-fade.md)、[演员宿主](docs/field-puppet-actors.md)、[摄像机投影](docs/field-camera.md)
 - [v28 音频等待与玩家显隐](docs/systems-v28.md)
 - [v27 空装备所有权、新游戏共享状态与序章宿主边界](docs/systems-v27.md)

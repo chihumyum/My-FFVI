@@ -17,6 +17,8 @@ import type { PlayerVisibilityOp, PlayerVisibilityFactory } from "../core/player
 import type { FieldTaskControlOp } from "../core/field-task-control.js";
 import type { FieldFadeOp, FieldFadeInitial } from "../core/field-fade.js";
 import type { FieldPuppetScriptContext } from "../core/field-puppet-actors.js";
+import type { FieldCameraOp, FieldCameraMotionOp, FieldCameraSetPosition } from "../core/field-camera.js";
+import type { FieldCameraHostDefinition } from "../core/field-camera-host.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -154,6 +156,8 @@ export type Op = Site &
     | PlayerVisibilityOp
     | FieldTaskControlOp
     | FieldFadeOp
+    | FieldCameraOp
+    | FieldCameraMotionOp
     | { kind: "entities"; group: string }
     | { kind: "change-map"; request: MapRequest }
     | { kind: "ride"; actor: string; vehicle: 6 }
@@ -178,7 +182,9 @@ export type Op = Site &
     | { kind: "call"; target: number }
     | { kind: "wait"; seconds: number }
     | { kind: "puppet"; slot: number; actor: string; target: number }
-    | { kind: "position"; x: number; y: number; animation: string }
+    | { kind: "position"; x: number; y: number; animation: string;
+        /** Independent source admission when the runtime binding is dummy 0. */
+        cameraCommand?: FieldCameraSetPosition }
     | {
         kind: "move";
         direction: Direction;
@@ -244,6 +250,8 @@ export type FieldContent = {
   environment?: AudioMedia;
   treasureInventoryLimits?: TreasureInventoryLimits;
   playerFactory?: PlayerVisibilityFactory;
+  /** Content-bound native camera factory and current map providers. */
+  cameraHost?: FieldCameraHostDefinition;
   scripts: Record<string, Op[]>;
   scriptLocals?: Record<string, ScriptLocals | null>;
   /** Integrator.Execute reads this per source Format; absence is unknown. */

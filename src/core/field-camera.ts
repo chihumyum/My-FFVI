@@ -13,7 +13,7 @@ export type FieldCameraActor = {
   direction: Direction;
 };
 export type FieldCameraState = {
-  kind: "field-camera-v1";
+  kind: "field-camera-v2";
   target: "player" | "dummy" | null;
   /** The source dummy has no sprite, collider or ordinary field actor identity. */
   dummy: {
@@ -22,6 +22,14 @@ export type FieldCameraState = {
     layer: number;
     /** null is its fresh constructor's zero direction, before entity Init. */
     direction: Direction | null;
+    /** Native entity state, even though this dummy has no sprite. null retains
+     * an unobserved GameObject activeSelf until source Show/Hide sets it. */
+    visibility: {
+      activeSelf: boolean | null;
+      fadeAlpha: 0 | 1;
+      /** Only constructor/zero-duration Show/Hide are admitted. */
+      currentFadeStatus: 0;
+    };
   };
 };
 export type FieldCameraCommand = { target: "player" | "dummy" };
@@ -55,19 +63,35 @@ function actor(value: FieldCameraActor): void {
 }
 export function validateFieldCameraState(state: FieldCameraState): void {
   checkpointKeys(state, "kind,target,dummy");
-  if (state.kind !== "field-camera-v1" || ![null, "player", "dummy"].includes(state.target))
+  if (state.kind !== "field-camera-v2" || ![null, "player", "dummy"].includes(state.target))
     throw new Error("Unknown field camera state");
-  checkpointKeys(state.dummy, "position,entityOffset,layer,direction");
+  checkpointKeys(state.dummy, "position,entityOffset,layer,direction,visibility");
   position(state.dummy.position); point(state.dummy.entityOffset);
   checkpointInteger(state.dummy.layer, 0, 31);
   if (state.dummy.direction !== null && !directions.includes(state.dummy.direction))
     throw new Error("Unknown field camera dummy direction");
+  const visibility = state.dummy.visibility;
+  checkpointKeys(visibility, "activeSelf,fadeAlpha,currentFadeStatus");
+  if (![null, true, false].includes(visibility.activeSelf) || visibility.currentFadeStatus !== 0 ||
+      visibility.fadeAlpha !== (visibility.activeSelf === true ? 1 : 0))
+    throw new Error("Unsupported field camera dummy visibility/fade state");
 }
 /** MapManager.CreateScrollDummtEntity creates a separate GameObject at these
  * exact source coordinates; AddComponent runs its zero-initialized constructor. */
 export function createFieldCameraState(): FieldCameraState {
-  return { kind: "field-camera-v1", target: null,
-    dummy: { position: { x: 30000, y: 1000, z: -1000 }, entityOffset: { x: 0, y: 0 }, layer: 0, direction: null } };
+  return { kind: "field-camera-v2", target: null,
+    dummy: { position: { x: 30000, y: 1000, z: -1000 }, entityOffset: { x: 0, y: 0 }, layer: 0, direction: null,
+      visibility: { activeSelf: null, fadeAlpha: 0, currentFadeStatus: 0 } } };
+}
+/** FieldEntity.Show/Hide(0) set alpha and clear an active fade before setting
+ * GameObject activeSelf. The fresh dummy has no shadow or ChildEntityObject;
+ * its inherited UpdateFadeRenderer therefore has no material/child effect. */
+export function projectFieldCameraVisibility(state: FieldCameraState, visible: boolean): FieldCameraState {
+  validateFieldCameraState(state);
+  if (typeof visible !== "boolean") throw new Error("Unknown camera visibility request");
+  const candidate = structuredClone(state);
+  candidate.dummy.visibility = { activeSelf: visible, fadeAlpha: visible ? 1 : 0, currentFadeStatus: 0 };
+  return candidate;
 }
 /** Integrator.InitCameraDummy copies the actual player's local transform and
  * layer. Factory-created player/dummy share a parent, so world positions also
@@ -104,6 +128,7 @@ export function projectFieldCameraTarget(state: FieldCameraState, command: Field
       y: f(f(previous.entityPosition.y) - f(previous.position.y)),
     };
     candidate.dummy = {
+      ...candidate.dummy,
       // Preserve the native subtraction order, including float32 cancellation.
       position: { x: f(f(previous.entityPosition.x) - offset.x),
         y: f(f(previous.entityPosition.y) - offset.y), z: f(previous.layerZ) },

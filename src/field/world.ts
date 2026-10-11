@@ -21,6 +21,9 @@ export type WorldMapContent = {
   scripts: Record<string, Op[]>;
   scriptLocals: Record<string, ScriptLocals | null>;
   scriptSystemFlags?: FieldContent["scriptSystemFlags"];
+  scriptPuppetContexts?: FieldContent["scriptPuppetContexts"];
+  cameraHost?: FieldContent["cameraHost"];
+  cameraHostBlockers?: ContentIssue[];
   initializer: string | null;
   characterAssets: string[];
   blockers: ContentIssue[];

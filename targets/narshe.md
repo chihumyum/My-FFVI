@@ -1,6 +1,6 @@
 # 纳尔谢首批目标
 
-当前系统批次为 `narshe-playability-v29`：共用事件执行器采用全局 32 个 puppet 槽和逐任务 clock；有符号淡入淡出接入唯一渐变状态、跨图候选及稳定存档。玩家工厂按 DLL 和 prefab 来源绑定；完整 puppet 生命周期经显式端口验证，正式 GameSession 的原生演员/相机宿主仍待接线。摄像机目前为独立纯投影，完整新游戏与全游戏迁移未完成，HD-2D 后置。当前 owned v7、field/world v7、session v3；证据和限制见 [v29 系统集成](../docs/systems-v29.md)。
+当前系统批次为 `narshe-playability-v30`：摄像机宿主接入共用事件执行器、切图候选和稳定存档，玩家坐标实时读取，插值进度由各任务独占。来源演员工厂与标题到字段交接协议已独立实现，正式 fresh GameSession 仍待装配；现有纳尔谢开发入口保持明确边界。当前 owned v7、field/world v8、session v3。完整新游戏与全游戏迁移未完成，HD-2D 后置；证据和限制见 [v30 系统集成](../docs/systems-v30.md)。
 
 当前目标是原版开场的一小段 Web 可玩流程。实际开场所用地图和状态必须经原版确认。HD-2D 调查和重制等待全游戏 Web 迁移放行。
 

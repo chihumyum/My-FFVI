@@ -94,7 +94,10 @@
     "field-task-control:check": "npm run build && node scripts/check-field-task-control.mjs",
     "field-fade:check": "npm run build && node scripts/check-field-fade.mjs",
     "field-camera:check": "npm run build && node scripts/check-field-camera.mjs",
-    "field-puppet-actors:check": "npm run build && node scripts/check-field-puppet-actors.mjs"
+    "field-puppet-actors:check": "npm run build && node scripts/check-field-puppet-actors.mjs",
+    "field-camera-host:check": "npm run build && node scripts/check-field-camera-host.mjs && node scripts/check-field-camera-ui.mjs",
+    "field-actor-factory:check": "npm run build && node scripts/check-field-actor-factory.mjs",
+    "new-game-field-entry:check": "npm run build && node scripts/check-new-game-field-entry.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

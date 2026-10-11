@@ -38,6 +38,8 @@ import { StaticAudioState, type AudioSnapshot } from "./static-audio.js";
 import { audioReadinessTrack, pollAudioReadiness, type AudioReadinessPort } from "./audio-readiness.js";
 import { projectPlayerVisibility } from "./player-visibility.js";
 import { FieldFadeState, type FieldFadeSnapshot } from "./field-fade.js";
+import { FieldCameraHost, type FieldCameraViewport } from "./field-camera-host.js";
+import type { FieldCameraState, FieldCameraLerp, FieldCameraLerpProgress } from "./field-camera.js";
 import { projectFieldPuppetInitialization, projectFieldPuppetActorEntry, resolveFieldPuppetActor,
   fieldPuppetAssignments, type FieldPuppetActorsPort, type FieldPuppetScriptContext } from "./field-puppet-actors.js";
 import {
@@ -108,7 +110,7 @@ export type Actor = Point & {
   animation: ActorAnimation | null;
 };
 export type FieldCheckpoint = {
-  kind: "idle-field-v7";
+  kind: "idle-field-v8";
   contentHash: string;
   time: number;
   remainder: number;
@@ -129,6 +131,7 @@ export type FieldCheckpoint = {
   bgm: AudioSnapshot;
   environment: AudioSnapshot;
   fade: FieldFadeSnapshot | null;
+  camera: FieldCameraState | null;
 };
 type Task = {
   id: number;
@@ -145,6 +148,8 @@ type Task = {
   lastClock: number;
   puppetWait: Extract<Op, { kind: "exec-puppets" | "finish-puppets" }> | null;
   fadeWait: Extract<Op, { kind: "field-fade" }> | null;
+  cameraLerp: { op: Extract<Op, { kind: "field-camera-motion" }>; command: FieldCameraLerp;
+    progress: FieldCameraLerpProgress } | null;
   remaining: number;
   move: Extract<Op, { kind: "move" }> | null;
   animationWait: boolean;
@@ -200,6 +205,30 @@ export class FieldGame {
   }
   readonly transportationId: number | null;
   readonly cameraOffset: Readonly<Point>;
+  private readonly camera: FieldCameraHost | null;
+  private cameraEventActive = false;
+  readonly cameraActorId = "native:camera";
+  get cameraSnapshot(): FieldCameraState | null { return this.camera?.snapshot() ?? null; }
+  cameraProjection(viewport: FieldCameraViewport) { return this.camera?.projection(viewport) ?? null; }
+  /** MapSetup selects the actual player after PointIn and party placement.
+   * The constructor and checkpoint restoration do not replay that lifecycle. */
+  initializeMapCamera(): void {
+    if (!this.camera) return;
+    if (this.tasks.some((task) => !task.done)) throw new Error("Cannot initialize map camera during an event");
+    this.camera.prepareSelect({ target: "player" }).commit();
+  }
+  private cameraPorts() {
+    return {
+      readPlayer: () => {
+        const p = this.player, m = p.motion;
+        const ratio = m ? Math.min(1, m.elapsed / m.duration) : 0;
+        return { cell: m ? { x: m.from.x + (m.to.x - m.from.x) * ratio,
+          y: m.from.y + (m.to.y - m.from.y) * ratio } : { x: p.x, y: p.y },
+          logicalLayer: p.layer, direction: p.direction };
+      },
+      readScrollOffset: () => ({ ...this.cameraOffset }),
+    };
+  }
   private readonly partyActors: FieldPartyActors | null;
   private readonly playerVisibilityChild: "absent" | "unresolved";
   readonly tileAnimations: TileAnimationState;
@@ -283,6 +312,7 @@ export class FieldGame {
     readonly environment: StaticAudioState = new StaticAudioState(),
     readonly options: FieldGameOptions = {},
     readonly fader: FieldFadeState = new FieldFadeState(content.entry.fade ?? null),
+    cameraState?: FieldCameraState,
   ) {
     cloneSourcePresentationContext(options.sourcePresentation?.context() ?? null);
     if (options.playerVisibility !== undefined) {
@@ -350,6 +380,10 @@ export class FieldGame {
       if (media.asset !== this.player.asset || media.mount !== (this.player.mount || null))
         throw new Error("Field entry does not match source player appearance");
     }
+    if (cameraState && !content.cameraHost) throw new Error("Saved camera cannot grant an unbound camera host");
+    if (content.cameraHost && this.entityList.some((entity) => entity.kind === 15))
+      throw new Error("Camera ChangeOffset trigger provider is unresolved");
+    this.camera = content.cameraHost ? new FieldCameraHost(content.cameraHost, this.cameraPorts(), cameraState) : null;
     const treasures = this.prepareTreasureInitialization(this.entityList);
     this.tileAnimations.register(this.entityList);
     this.initializeTreasures(treasures);
@@ -396,6 +430,8 @@ export class FieldGame {
       throw new Error(`重复实体组激活尚未恢复：${name}`);
     if (group.blockers.length)
       throw new Error(`${name}：${group.blockers[0]!.reason}`);
+    if (this.camera && group.entities.some((entity) => entity.kind === 15))
+      throw new Error("Camera ChangeOffset trigger provider is unresolved");
     if (group.entities.some((e) => e.kind === 18))
       requireMinimapMedia(group.entities, this.content.minimap);
     const ids = new Set(this.entityList.map((e) => e.id));
@@ -633,7 +669,7 @@ export class FieldGame {
     if (!this.checkpointReady)
       throw new Error("Cannot save during field movement or an event");
     return {
-      kind: "idle-field-v7",
+      kind: "idle-field-v8",
       contentHash: this.content.contentHash,
       time: this.time,
       remainder: this.remainder,
@@ -657,6 +693,7 @@ export class FieldGame {
       bgm: this.bgm.snapshot(),
       environment: this.environment.snapshot(),
       fade: this.fader.snapshot(),
+      camera: this.cameraSnapshot,
     };
   }
   /** Rebuild dependencies from trusted content without replaying initialization or triggers. */
@@ -670,9 +707,9 @@ export class FieldGame {
     const s = structuredClone(raw);
     checkpointKeys(
       s,
-      "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,fade",
+      "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,fade,camera",
     );
-    if (s.kind !== "idle-field-v7" || s.contentHash !== content.contentHash ||
+    if (s.kind !== "idle-field-v8" || s.contentHash !== content.contentHash ||
       s.transportationId !== (content.entry.transportationId ?? null))
       throw new Error("Field checkpoint source/version mismatch");
     const presentation = sourcePresentationCheckpoint(options.sourcePresentation?.context() ?? null);
@@ -688,6 +725,8 @@ export class FieldGame {
     if (s.remainder >= 10) throw new Error("Invalid field remainder");
     if ((s.fade !== null) !== (content.entry.fade !== undefined))
       throw new Error("Field checkpoint cannot grant a missing fade host");
+    if ((s.camera !== null) !== (content.cameraHost !== undefined))
+      throw new Error("Field checkpoint cannot grant or discard a camera host");
     const next = new FieldGame(
       content,
       new EventState(s.eventState),
@@ -695,6 +734,7 @@ export class FieldGame {
       StaticAudioState.restore(s.environment, content.environment),
       options,
       FieldFadeState.restore(s.fade),
+      s.camera ?? undefined,
     );
     checkpointIds(s.activeGroups);
     const initial = [...next.activeGroups];
@@ -710,7 +750,7 @@ export class FieldGame {
       Object.assign(next.player, media);
     } else if (s.partyActors !== null) throw new Error("Unbound saved party appearances");
     checkpointIds(s.hiddenEntities);
-    if (s.hiddenEntities.some((id) => !next.hasEntity(id)))
+    if (s.hiddenEntities.some((id) => !next.hasEntity(id) || (next.camera && id === next.cameraActorId)))
       throw new Error("Unknown hidden saved entity");
     checkpointIds(s.openedTreasures);
     if (s.openedTreasures.some((id) => !next.entities.some((e) => e.id === id && e.treasure)))
@@ -1352,16 +1392,38 @@ export class FieldGame {
   /** Source host effects and all native bindings are prepared before locals or
    * tasks change. The port publishes back into this field's actor owners. */
   private preparePuppetStart(name: string): () => void {
-    if (!this.content.scriptPuppetContexts && !this.options.puppetActors)
-      return () => { this.puppetLifecycle = null; };
+    if (!this.content.scriptPuppetContexts && !this.options.puppetActors) {
+      const camera = this.prepareCameraEvent("start", false);
+      return () => { camera(); this.puppetLifecycle = null; };
+    }
     const script = this.content.scriptPuppetContexts?.[name], port = this.options.puppetActors;
     if (!script || !port) throw new Error("Source puppet lifecycle host or script context is unavailable");
     const plan = projectFieldPuppetInitialization({ phase: "start", script, ...port.read() });
+    const camera = this.prepareCameraEvent("start", this.separateCameraInitialization(plan));
     const publish = port.prepare(plan);
     if (typeof publish !== "function") throw new Error("Invalid source puppet actor transaction");
     const next = { script: structuredClone(script), leaderId: plan.leaderId,
       assignments: plan.assignments ?? fieldPuppetAssignments(), finished: false };
-    return () => { publish(); this.puppetLifecycle = next; };
+    return () => { publish(); camera(); this.puppetLifecycle = next; };
+  }
+  /** InitCameraDummy belongs to the single camera owner. The ordinary actor
+   * transaction must not publish a second copy of the dummy. */
+  private separateCameraInitialization(plan: { effects: import("./field-puppet-actors.js").FieldPuppetActorEffect[] }): boolean {
+    if (!this.camera) return false;
+    const initializers = plan.effects.filter((effect) => effect.kind === "init-camera-dummy");
+    if (initializers.length > 1 || initializers.some((effect) =>
+        effect.actor !== this.cameraActorId || effect.player !== this.player.id))
+      throw new Error("Source actor lifecycle is not bound to the field camera owner");
+    plan.effects = plan.effects.filter((effect) => effect.kind !== "init-camera-dummy");
+    return initializers.length === 1;
+  }
+  private prepareCameraEvent(phase: "start" | "finish", initialize: boolean): () => void {
+    if (!this.camera) return () => {};
+    const draft = this.camera.fork(this.content.cameraHost!, this.cameraPorts());
+    if (initialize) draft.prepareInitializeDummy().commit();
+    draft.prepareSelect({ target: phase === "start" ? "dummy" : "player" }).commit();
+    const transaction = this.camera.prepareState(draft.snapshot());
+    return () => { transaction.commit(); this.cameraEventActive = phase === "start"; };
   }
   private task(script: string, pc: number, actor: string): Task {
     return {
@@ -1378,6 +1440,7 @@ export class FieldGame {
       lastClock: -1,
       puppetWait: null,
       fadeWait: null,
+      cameraLerp: null,
       remaining: 0,
       move: null,
       animationWait: false,
@@ -1390,6 +1453,7 @@ export class FieldGame {
   private hasEntity(id: string): boolean {
     return (
       !!this.actors[id] ||
+      (!!this.camera && id === this.cameraActorId) ||
       this.entityList.some((e) => e.id === id) ||
       !!this.content.entry.absentHideTargets?.includes(id)
     );
@@ -1478,14 +1542,22 @@ export class FieldGame {
         try {
           const port = this.options.puppetActors!;
           const plan = projectFieldPuppetInitialization({ phase: "finish", script: this.puppetLifecycle.script, ...port.read() });
+          const camera = this.prepareCameraEvent("finish", this.separateCameraInitialization(plan));
           const publish = port.prepare(plan);
           if (typeof publish !== "function") throw new Error("Invalid source puppet actor transaction");
           publish();
+          camera();
           this.puppetLifecycle.finished = true;
         } catch (error) {
           this.block(error instanceof Error ? error.message : String(error));
           return;
         }
+      }
+      if (this.cameraEventActive) {
+        // Ordinary source Exit leaves Integrator.endCondition=0; other exit
+        // mechanisms (map/battle) stop separately and retain their target.
+        try { this.prepareCameraEvent("finish", false)(); }
+        catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       }
       // Ready cores get this frame before main termination cancels their next
       // clock. Awake entries never start merely because main has ended.
@@ -1536,6 +1608,18 @@ export class FieldGame {
           } catch (error) {
             this.block(error instanceof Error ? error.message : String(error), t.fadeWait);
             return;
+          }
+        }
+        if (t.cameraLerp) {
+          const motion = t.cameraLerp;
+          try {
+            if (!this.camera || t.actor !== this.cameraActorId) throw new Error("Camera motion lost its source actor binding");
+            const next = this.camera.prepareLerp(motion.command, motion.progress, this.time / 1000);
+            next.commit(); motion.progress = next.progress;
+            if (next.flow === "wait") return;
+            t.cameraLerp = null;
+          } catch (error) {
+            this.block(error instanceof Error ? error.message : String(error), motion.op); return;
           }
         }
         if (t.audioWait) {
@@ -1834,7 +1918,8 @@ export class FieldGame {
                 instructions: this.content.scripts[t.script]! });
               const publish = plan ? host!.prepare(plan) : () => {};
               if (typeof publish !== "function") throw new Error("Invalid source puppet actor transaction");
-              const child = this.task(t.script, entry.pc, plan?.actor ?? entry.actor);
+              const child = this.task(t.script, entry.pc, plan?.actor ??
+                (this.camera && entry.actor === "0" ? this.cameraActorId : entry.actor));
               child.sourceEntityId = plan?.entityId ?? null;
               child.range = entry.range;
               child.slot = entry.slot;
@@ -1875,19 +1960,26 @@ export class FieldGame {
                 return { child, actor, plan: projectFieldPuppetReady(binding) };
               });
               const host = this.options.puppetActors;
+              // Ready's Show(0) also writes the sprite-less dummy's active and
+              // fade state. Prepare it with the single camera owner, before
+              // publishing any actor, collision or task changes.
+              const cameraShow = this.camera && ready.some((r) => r.plan.showActor && r.actor === this.cameraActorId)
+                ? this.camera.prepareVisibility(true) : null;
               const publish = host && this.puppetLifecycle ? host.prepare({ leaderId: null,
                 assignments: result.clearAssignments ? fieldPuppetAssignments() : null,
-                effects: ready.filter((r) => r.plan.showActor).map((r) => ({ kind: "show", actor: r.actor })) }) : () => {};
+                effects: ready.filter((r) => r.plan.showActor && !(this.camera && r.actor === this.cameraActorId))
+                  .map((r) => ({ kind: "show", actor: r.actor })) }) : () => {};
               if (typeof publish !== "function") throw new Error("Invalid source puppet Ready transaction");
               const publishCollision = this.preparePuppetCollision(result.collisionEnabled);
               publish();
+              cameraShow?.commit();
               publishCollision();
               if (result.clearAssignments && this.puppetLifecycle) this.puppetLifecycle.assignments = fieldPuppetAssignments();
               for (const { child, actor, plan } of ready) {
                 child.done = plan.status === "sleep";
                 child.state = "ready";
                 child.actor = actor;
-                if (plan.showActor) this.hiddenEntities.delete(actor);
+                if (plan.showActor && !(this.camera && actor === this.cameraActorId)) this.hiddenEntities.delete(actor);
               }
               if (result.flow === "wait") {
                 t.puppetWait = command;
@@ -1899,6 +1991,13 @@ export class FieldGame {
             }
             break;
           case "position":
+            if (this.camera && t.actor === this.cameraActorId) {
+              try {
+                if (!op.cameraCommand) throw new Error("Source camera SetPos operand shape is not admitted");
+                this.camera.prepareSetPosition(op.cameraCommand).commit();
+              } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+              break;
+            }
             if (!actor) {
               this.block("非角色实体不能定位", op);
               return;
@@ -1928,6 +2027,26 @@ export class FieldGame {
             // The mounted development renderer still derives its pose from facing.
             if (!actor.animation && op.animation === "WalkL")
               actor.direction = "left";
+            break;
+          case "field-camera":
+            try {
+              if (!this.camera) throw new Error("Source field camera host is unavailable");
+              this.camera.prepareSelect(op.command).commit();
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
+          case "field-camera-motion":
+            try {
+              if (!this.camera || t.actor !== this.cameraActorId)
+                throw new Error("Source motion is only admitted for camera dummy 0");
+              if (op.command.kind === "set-position") this.camera.prepareSetPosition(op.command).commit();
+              else {
+                const next = this.camera.prepareLerp(op.command, null, this.time / 1000);
+                next.commit();
+                if (next.flow === "wait") {
+                  t.cameraLerp = { op, command: op.command, progress: next.progress }; return;
+                }
+              }
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
           case "move":
             t.move = op;
@@ -1966,6 +2085,11 @@ export class FieldGame {
             }
             break;
           case "hide":
+            if (this.camera && t.actor === this.cameraActorId) {
+              try { this.camera.prepareVisibility(false).commit(); }
+              catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+              break;
+            }
             if (this.tileAnimations.has(t.actor)) {
               this.block(
                 "Tile animation visibility lifecycle is not implemented",

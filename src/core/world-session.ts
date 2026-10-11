@@ -24,7 +24,7 @@ type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount"> & {
   transportationId: number | null;
 };
 export type WorldCheckpoint = {
-  kind: "idle-world-v7";
+  kind: "idle-world-v8";
   initialHash: string;
   location: {
     catalogHash: string;
@@ -46,6 +46,7 @@ function worldFieldContent(
   parentSourceSetHash: string,
   actorEntry?: { plan: MapPartyEntryPlan; assets: string[] },
   fade?: FieldContent["entry"]["fade"],
+  sourceCamera = false,
 ): FieldContent {
   const indexed = catalog.maps[String(request.mapId)];
   if (
@@ -138,6 +139,10 @@ function worldFieldContent(
     scriptLocals: target.scriptLocals,
     ...(target.scriptSystemFlags ? { scriptSystemFlags: target.scriptSystemFlags } : {}),
     characters,
+    // The package describes conditional normal-view capability. Geometry-only
+    // previews cannot acquire a native camera lifecycle just by loading it.
+    ...(sourceCamera && target.cameraHost ? { cameraHost: target.cameraHost } : {}),
+    ...(sourceCamera && target.scriptPuppetContexts ? { scriptPuppetContexts: target.scriptPuppetContexts } : {}),
     ...(catalog.playerFactory ? { playerFactory: structuredClone(catalog.playerFactory) } : {}),
     ...(catalog.minimap ? { minimap: catalog.minimap } : {}),
     ...(catalog.bgm ? { bgm: catalog.bgm } : {}),
@@ -184,6 +189,7 @@ type Ownership = {
   actors: string;
   presentation: string;
   fade: string;
+  camera: string;
   publishPresentation(): void;
   catalogHash: string;
   owned?: { commit(): boolean };
@@ -222,7 +228,7 @@ export class WorldSession {
   }
   checkpoint(): WorldCheckpoint {
     return {
-      kind: "idle-world-v7",
+      kind: "idle-world-v8",
       initialHash: this.initial.contentHash,
       location: structuredClone(this.location),
       field: this.current.checkpoint(),
@@ -236,7 +242,7 @@ export class WorldSession {
   ): void {
     checkpointKeys(snapshot, "kind,initialHash,location,field");
     if (
-      snapshot.kind !== "idle-world-v7" ||
+      snapshot.kind !== "idle-world-v8" ||
       snapshot.initialHash !== this.initial.contentHash
     )
       throw new Error("World checkpoint source/version mismatch");
@@ -296,6 +302,7 @@ export class WorldSession {
         this.initial.parentSourceSetHash,
         actorEntry,
         this.initial.entry.fade,
+        this.initial.cameraHost !== undefined,
       );
     }
     const next = FieldGame.restore(
@@ -391,7 +398,9 @@ export class WorldSession {
       { asset: actorEntry?.plan.player.asset ?? from.player.asset,
         mount: actorEntry?.plan.player.mount ?? from.player.mount ?? "",
         transportationId: actorEntry?.plan.checkpoint.context.currentTransport?.id ?? from.transportationId },
-      from.content.parentSourceSetHash, actorEntry, this.initial.entry.fade);
+      from.content.parentSourceSetHash, actorEntry, this.initial.entry.fade, from.cameraSnapshot !== null);
+    if (from.cameraSnapshot && !content.cameraHost)
+      throw new Error(target.cameraHostBlockers?.[0]?.reason ?? "Destination native camera host is unavailable");
     const field = new FieldGame(
       content,
       state,
@@ -401,7 +410,9 @@ export class WorldSession {
         ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}),
         ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
       from.fader.fork(),
+      from.cameraSnapshot ?? undefined,
     );
+    field.initializeMapCamera();
     const script = request.continuation || target.initializer;
     field.startMapEntry(script || null);
     if (field.stop?.kind === "unsupported") throw new Error(field.stop.message);
@@ -416,6 +427,7 @@ export class WorldSession {
       actors: this.actorState(from),
       presentation: canonical(presentation),
       fade: canonical(from.fader.snapshot()),
+      camera: canonical(from.cameraSnapshot),
       publishPresentation: () => { presentationPublished = true; },
       catalogHash: catalog.contentHash,
       ...(owned ? { owned } : {}),
@@ -435,7 +447,8 @@ export class WorldSession {
       ownership.environment !== canonical(this.current.environment.snapshot()) ||
       ownership.actors !== this.actorState(this.current) ||
       ownership.presentation !== canonical(this.current.sourcePresentationContext) ||
-      ownership.fade !== canonical(this.current.fader.snapshot())
+      ownership.fade !== canonical(this.current.fader.snapshot()) ||
+      ownership.camera !== canonical(this.current.cameraSnapshot)
     )
       return false;
     if (ownership.owned && !ownership.owned.commit()) return false;
