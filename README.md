@@ -16,6 +16,7 @@
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
 - [共享角色、库存与奖励状态](docs/shared-game-state.md)
+- [稳定检查点与浏览器存读档](docs/checkpoint-saves.md)
 - [普通反击与优先队列](docs/battle-reactions.md)
 - [连续行动、队列与回合释放](docs/battle-action-groups.md)
 - [角色与敌人数值确认](docs/character-parameters.md)
@@ -67,7 +68,7 @@ npm run check
 npm run dev
 ```
 
-Web 片段为 `http://127.0.0.1:4173/game/`，方向键/WASD 移动，空格/Enter 确认，Esc 暂停。当前从行军后开发检查点开始，首战已浏览器实玩；街道后续遭遇已通过内核回归。通用地图加载与切图请求已接入，完整相连地图流程和存读档尚未完成。按用户要求先推进可玩实现，正式一致性对照后置。
+Web 片段为 `http://127.0.0.1:4173/game/`，方向键/WASD 移动，空格/Enter 确认，Esc 暂停。当前从行军后开发检查点开始，首战已浏览器实玩；街道后续遭遇已通过内核回归。地图空闲时可在暂停菜单保存，刷新后从标题页继续，并保留上一份进度。通用地图加载已接入，完整相连地图流程、活动事件/战斗保存、版本迁移与原版保存规则仍待做。按用户要求先推进可玩系统，正式一致性对照后置。
 
 全量地图包与媒体构建：
 
@@ -79,6 +80,7 @@ Web 片段为 `http://127.0.0.1:4173/game/`，方向键/WASD 移动，空格/Ent
 .venv/bin/python tools/source_adapter/export_environment.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 npm run world:build
 npm run world:check
+npm run save:check
 npm run minimap:check
 npm run bgm:check
 npm run environment:check

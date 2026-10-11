@@ -255,6 +255,16 @@ a {
   margin: 0 0 16px;
   line-height: 1.6;
 }
+.save-controls button {
+  padding: 8px 12px;
+  margin: 4px;
+  font-size: 13px;
+}
+#save-status,
+#save-info {
+  font-size: 12px;
+  color: #a4bfcd;
+}
 @media (max-width: 700px) {
   #owned-state {
     grid-template-columns: 1fr;

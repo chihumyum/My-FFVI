@@ -1,4 +1,19 @@
 import type { FieldEntity, TileLayer, Tileset } from "../field/types.js";
+import {
+  checkpointKeys,
+  checkpointInteger,
+  checkpointNumber,
+  checkpointSameIds,
+  checkpointRecord,
+} from "./checkpoint-validation.js";
+
+export type TileCheckpoint = {
+  cells: Record<
+    string,
+    Pick<Cell, "elapsed" | "count" | "loop" | "scale" | "permitted">
+  >;
+  regions: Record<string, boolean>;
+};
 
 type Cell = {
   tile: number;
@@ -225,5 +240,50 @@ export class TileAnimationState {
         ]),
       ),
     };
+  }
+  checkpoint(): TileCheckpoint {
+    return {
+      cells: Object.fromEntries(
+        [...this.cells].map(([k, c]) => [
+          k,
+          {
+            elapsed: c.elapsed,
+            count: c.count,
+            loop: c.loop,
+            scale: c.scale,
+            permitted: c.permitted,
+          },
+        ]),
+      ),
+      regions: Object.fromEntries(
+        [...this.regions].map(([id, r]) => [id, r.playing]),
+      ),
+    };
+  }
+  restoreCheckpoint(snapshot: TileCheckpoint): void {
+    checkpointKeys(snapshot, "cells,regions");
+    checkpointRecord(snapshot.cells);
+    checkpointRecord(snapshot.regions);
+    checkpointSameIds(Object.keys(snapshot.cells), [...this.cells.keys()]);
+    checkpointSameIds(Object.keys(snapshot.regions), [...this.regions.keys()]);
+    for (const cell of Object.values(snapshot.cells)) {
+      checkpointKeys(cell, "elapsed,count,loop,scale,permitted");
+      checkpointNumber(cell.elapsed);
+      checkpointInteger(cell.count);
+      checkpointNumber(cell.scale, Number.MIN_VALUE);
+      if (
+        f(cell.elapsed) !== cell.elapsed ||
+        f(cell.scale) !== cell.scale ||
+        typeof cell.loop !== "boolean" ||
+        typeof cell.permitted !== "boolean"
+      )
+        throw new Error("Invalid tile animation checkpoint");
+    }
+    if (Object.values(snapshot.regions).some((v) => typeof v !== "boolean"))
+      throw new Error("Invalid tile region checkpoint");
+    for (const [key, cell] of Object.entries(snapshot.cells))
+      Object.assign(this.cells.get(key)!, cell);
+    for (const [key, playing] of Object.entries(snapshot.regions))
+      this.regions.get(key)!.playing = playing;
   }
 }

@@ -71,6 +71,8 @@
               当前开放开场行军后的短片段：探索矿镇、与守卫交战，再继续前行。首战规则和表现仍在迁移中。
             </p>
             <button id="start" disabled>正在载入…</button>
+            <button id="load-start" hidden>继续上次进度</button>
+            <p id="save-info" role="status"></p>
             <p id="load-error" role="alert" hidden></p>
           </div>
         </section>
@@ -92,6 +94,12 @@
                 <p id="owned-key-items"></p>
               </div>
             </section>
+            <div class="save-controls">
+              <button id="save-game">保存进度</button>
+              <button id="load-game" disabled>读取进度</button>
+              <button id="load-previous" disabled>读取上一份</button>
+            </div>
+            <p id="save-status" role="status"></p>
             <details>
               <summary>当前迁移范围</summary>
               <ul id="limitations"></ul>

@@ -7,12 +7,30 @@ import type {
   Site,
   MapRequest,
 } from "../field/types.js";
-import { EventState, executeEventControl } from "./event-state.js";
+import {
+  EventState,
+  executeEventControl,
+  type EventStateSnapshot,
+} from "./event-state.js";
 import { requireMinimapMedia } from "./minimap.js";
-import { StaticAudioState } from "./static-audio.js";
-import { TileAnimationState } from "./tile-animation.js";
-import { OpenTriggerState } from "./open-trigger.js";
-import { ActorAnimation, FIELD_POSE } from "./actor-animation.js";
+import { StaticAudioState, type AudioSnapshot } from "./static-audio.js";
+import { TileAnimationState, type TileCheckpoint } from "./tile-animation.js";
+import {
+  OpenTriggerState,
+  type OpenTriggerCheckpoint,
+} from "./open-trigger.js";
+import {
+  ActorAnimation,
+  FIELD_POSE,
+  type ActorPlayback,
+} from "./actor-animation.js";
+import {
+  checkpointKeys,
+  checkpointNumber,
+  checkpointInteger,
+  checkpointIds,
+  checkpointSameIds,
+} from "./checkpoint-validation.js";
 import {
   buildCollisionMapping,
   collisionMask,
@@ -57,6 +75,23 @@ export type Actor = Point & {
   motion: Motion | null;
   steps: number;
   animation: ActorAnimation | null;
+};
+export type FieldCheckpoint = {
+  kind: "idle-field-v1";
+  contentHash: string;
+  time: number;
+  remainder: number;
+  nextTask: number;
+  eventState: EventStateSnapshot;
+  activeGroups: string[];
+  hiddenEntities: string[];
+  actors: (Omit<Actor, "motion" | "animation"> & {
+    animation: ActorPlayback | null;
+  })[];
+  tiles: TileCheckpoint;
+  doors: OpenTriggerCheckpoint;
+  bgm: AudioSnapshot;
+  environment: AudioSnapshot;
 };
 type Task = {
   id: number;
@@ -244,6 +279,102 @@ export class FieldGame {
       this.openTriggers.busy ||
       (this.interaction?.waitUntil ?? 0) > this.time
     );
+  }
+  get checkpointReady(): boolean {
+    return (
+      !this.busy &&
+      !this.fade &&
+      !this.interaction &&
+      Object.values(this.actors).every((a) => a.motion === null)
+    );
+  }
+  checkpoint(): FieldCheckpoint {
+    if (!this.checkpointReady)
+      throw new Error("Cannot save during field movement or an event");
+    return {
+      kind: "idle-field-v1",
+      contentHash: this.content.contentHash,
+      time: this.time,
+      remainder: this.remainder,
+      nextTask: this.nextTask,
+      eventState: this.eventState.snapshot(),
+      activeGroups: [...this.activeGroups],
+      hiddenEntities: [...this.hiddenEntities],
+      actors: Object.values(this.actors).map(
+        ({ motion: _, animation, ...actor }) => ({
+          ...actor,
+          animation: animation?.snapshot() ?? null,
+        }),
+      ),
+      tiles: this.tileAnimations.checkpoint(),
+      doors: this.openTriggers.checkpoint(),
+      bgm: this.bgm.snapshot(),
+      environment: this.environment.snapshot(),
+    };
+  }
+  /** Rebuild dependencies from trusted content without replaying initialization or triggers. */
+  static restore(content: FieldContent, raw: FieldCheckpoint): FieldGame {
+    const s = structuredClone(raw);
+    checkpointKeys(
+      s,
+      "kind,contentHash,time,remainder,nextTask,eventState,activeGroups,hiddenEntities,actors,tiles,doors,bgm,environment",
+    );
+    if (s.kind !== "idle-field-v1" || s.contentHash !== content.contentHash)
+      throw new Error("Field checkpoint source/version mismatch");
+    checkpointNumber(s.time);
+    checkpointNumber(s.remainder, 0, 10);
+    checkpointInteger(s.nextTask, 1);
+    if (s.remainder >= 10) throw new Error("Invalid field remainder");
+    const next = new FieldGame(
+      content,
+      new EventState(s.eventState),
+      StaticAudioState.restore(s.bgm, content.bgm),
+      StaticAudioState.restore(s.environment, content.environment),
+    );
+    checkpointIds(s.activeGroups);
+    const initial = [...next.activeGroups];
+    if (initial.some((id, n) => s.activeGroups[n] !== id))
+      throw new Error("Initial field groups changed in checkpoint");
+    for (const id of s.activeGroups.slice(initial.length))
+      next.activateGroup(id);
+    checkpointIds(s.hiddenEntities);
+    if (s.hiddenEntities.some((id) => !next.hasEntity(id)))
+      throw new Error("Unknown hidden saved entity");
+    if (!Array.isArray(s.actors)) throw new Error("Missing saved actors");
+    checkpointSameIds(
+      s.actors.map((a) => a.id),
+      Object.keys(next.actors),
+    );
+    for (const a of s.actors) {
+      checkpointKeys(a, "id,x,y,layer,direction,asset,mount,steps,animation");
+      const actor = next.actors[a.id]!;
+      checkpointInteger(a.steps);
+      checkpointInteger(a.x, -0x80000000, 0x7fffffff);
+      checkpointInteger(a.y, -0x80000000, 0x7fffffff);
+      checkpointInteger(a.layer, -0x80000000, 0x7fffffff);
+      if (
+        typeof a.direction !== "string" ||
+        !Object.hasOwn(DELTA, a.direction) ||
+        a.asset !== actor.asset ||
+        (a.mount !== actor.mount && a.mount !== content.entry.player.mount) ||
+        (a.id === "-1001"
+          ? !content.map.collisions[a.layer]
+          : a.layer !== actor.layer)
+      )
+        throw new Error("Invalid saved actor identity, layer or pose");
+      const animation = next.initialAnimation(a.asset, a.direction, a.mount);
+      if (!!animation !== (a.animation !== null))
+        throw new Error("Saved actor animation dependency changed");
+      if (animation) animation.restore(a.animation);
+      Object.assign(actor, a, { animation, motion: null });
+    }
+    s.hiddenEntities.forEach((id) => next.hiddenEntities.add(id));
+    next.tileAnimations.restoreCheckpoint(s.tiles);
+    next.openTriggers.restoreCheckpoint(s.doors, next.entities);
+    next.time = s.time;
+    next.remainder = s.remainder;
+    next.nextTask = s.nextTask;
+    return next;
   }
   private block(message: string, site: Site | null = null) {
     this.stop = { kind: "unsupported", message, site };

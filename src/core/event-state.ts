@@ -1,3 +1,4 @@
+import { checkpointKeys } from "./checkpoint-validation.js";
 import {
   int32,
   integerOperation as eventOperation,
@@ -31,8 +32,7 @@ export const categories = [
 export type Category = (typeof categories)[number];
 export type VariableRef = { category: Category; index: number };
 export type EventValue =
-  | { kind: "immediate"; value: number }
-  | { kind: "variable"; ref: VariableRef };
+  { kind: "immediate"; value: number } | { kind: "variable"; ref: VariableRef };
 export type EventControlOp =
   | { kind: "jump"; target: number }
   | { kind: "calc"; left: VariableRef; operator: Operator; right: EventValue }
@@ -96,6 +96,10 @@ function blank(value: Value): EventStateSnapshot {
   };
 }
 function validateSnapshot(raw: EventStateSnapshot): EventStateSnapshot {
+  checkpointKeys(
+    raw,
+    "formatVersion,kind,scenario,treasure,global,area,map,script,scriptLabels,selected,itemSelected,currentMapId",
+  );
   if (raw?.formatVersion !== 1 || raw.kind !== "event-variables")
     throw new Error("Unsupported event-state snapshot");
   const check = (v: unknown, bit = false) => {

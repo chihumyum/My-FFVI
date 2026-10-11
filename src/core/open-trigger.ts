@@ -1,5 +1,12 @@
 import type { Direction, FieldEntity, Point } from "../field/types.js";
 import type { TileAnimationState } from "./tile-animation.js";
+import {
+  checkpointIds,
+  checkpointKeys,
+  checkpointSameIds,
+} from "./checkpoint-validation.js";
+
+export type OpenTriggerCheckpoint = { opened: string[] };
 
 const DIRECTION_BIT: Record<Direction, number> = {
   up: 1,
@@ -108,5 +115,27 @@ export class OpenTriggerState {
       inactive: [...this.inactive],
       pending: this.pending ? { ...this.pending } : null,
     };
+  }
+  checkpoint(): OpenTriggerCheckpoint {
+    if (this.pending) throw new Error("Cannot save a door while opening");
+    checkpointSameIds([...this.hit], [...this.inactive]);
+    return { opened: [...this.inactive] };
+  }
+  restoreCheckpoint(
+    snapshot: OpenTriggerCheckpoint,
+    entities: readonly FieldEntity[],
+  ): void {
+    checkpointKeys(snapshot, "opened");
+    checkpointIds(snapshot.opened);
+    const known = new Set(
+      entities.filter((e) => e.kind === 8).map((e) => e.id),
+    );
+    if (snapshot.opened.some((id) => !known.has(id)))
+      throw new Error("Unknown saved door");
+    if ([...this.inactive].some((id) => !snapshot.opened.includes(id)))
+      throw new Error("Saved door contradicts its entry state");
+    this.hit = new Set(snapshot.opened);
+    this.inactive = new Set(snapshot.opened);
+    this.pending = null;
   }
 }

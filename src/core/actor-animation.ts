@@ -1,4 +1,9 @@
 import type { Animation, Character, Direction, Frame } from "../field/types.js";
+import {
+  checkpointKeys,
+  checkpointInteger,
+  checkpointNumber,
+} from "./checkpoint-validation.js";
 
 export const FIELD_POSE: Record<Direction, string> = {
   up: "WalkB",
@@ -6,7 +11,7 @@ export const FIELD_POSE: Record<Direction, string> = {
   down: "Default",
   left: "WalkL",
 };
-type Playback = {
+export type ActorPlayback = {
   key: string;
   mode: number;
   elapsed: number;
@@ -22,7 +27,7 @@ const clamp = (n: number) => Math.max(0, Math.min(1, n));
  * No renderer, shared mutable animation asset, or wall-clock dependency.
  */
 export class ActorAnimation {
-  private state: Playback | null = null;
+  private state: ActorPlayback | null = null;
   constructor(readonly character: Character) {}
 
   clone(): ActorAnimation {
@@ -30,8 +35,31 @@ export class ActorAnimation {
     copy.state = this.state && { ...this.state };
     return copy;
   }
-  snapshot(): Readonly<Playback> | null {
+  snapshot(): Readonly<ActorPlayback> | null {
     return this.state && { ...this.state };
+  }
+  restore(snapshot: ActorPlayback | null): void {
+    if (snapshot === null) {
+      this.state = null;
+      return;
+    }
+    checkpointKeys(snapshot, "key,mode,elapsed,duration,flip,playing,loops");
+    if (typeof snapshot.key !== "string")
+      throw new Error("Invalid saved actor animation key");
+    this.chain(snapshot.key);
+    this.animation(snapshot.key);
+    checkpointInteger(snapshot.loops);
+    checkpointNumber(snapshot.elapsed);
+    checkpointNumber(snapshot.duration, Number.MIN_VALUE);
+    if (
+      ![0, 1, 3].includes(snapshot.mode) ||
+      typeof snapshot.flip !== "boolean" ||
+      typeof snapshot.playing !== "boolean" ||
+      f(snapshot.duration) !== snapshot.duration ||
+      f(snapshot.elapsed) !== snapshot.elapsed
+    )
+      throw new Error("Invalid actor animation checkpoint");
+    this.state = { ...snapshot };
   }
   get playing(): boolean {
     return this.state?.playing ?? false;

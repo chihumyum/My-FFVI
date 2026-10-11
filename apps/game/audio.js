@@ -10,7 +10,7 @@ export class AudioOutput {
     this.muted = false;
     this.running = false;
   }
-  async unlock() {
+  initialize() {
     if (!this.context) {
       this.context = new AudioContext();
       this.master = this.context.createGain();
@@ -21,6 +21,9 @@ export class AudioOutput {
       this.master.connect(this.analyser);
       this.analyser.connect(this.context.destination);
     }
+  }
+  async unlock() {
+    this.initialize();
     this.running = true;
     await this.context.resume();
   }

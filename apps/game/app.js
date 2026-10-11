@@ -1,5 +1,6 @@
 import { GameSession } from "/runtime/core/game-session.js";
 import { verifyContent } from "/runtime/core/content-integrity.js";
+import { CheckpointStorage } from "/runtime/core/saved-game.js";
 import { Renderer } from "./renderer.js";
 import { BattleView } from "./battle-view.js";
 import { AudioOutput, audioProjection } from "./audio.js";
@@ -21,6 +22,10 @@ let content,
   lastMinimapFrame = 0,
   last = 0,
   failed = false;
+let checkpointBusy = false,
+  hasSave = false,
+  hasPreviousSave = false;
+const checkpointStorage = () => new CheckpointStorage(localStorage);
 const images = new Map(),
   loading = new WeakSet();
 const audio = new AudioOutput();
@@ -44,13 +49,16 @@ const held = new Map(),
   };
 const focus = () => canvas.focus();
 function pause(value) {
+  if (checkpointBusy) return;
   if (!started || (game.stop && !session.battle)) return;
   paused = value;
+  if (!value) audio.unlock().catch(failure);
   mapOpen = false;
   held.clear();
   $("pause").hidden = !value;
   $("menu-button").textContent = value ? "继续" : "暂停";
   if (value) {
+    syncSaveControls();
     const state = session.state.snapshot();
     const players = session.battle?.players ?? session.players;
     text(
@@ -112,6 +120,7 @@ function setupMapViews(next) {
   lastMinimapFrame = 0;
 }
 function reset() {
+  if (checkpointBusy) return;
   audio.reset();
   audio.unlock().catch(failure);
   session = new GameSession(content, battleContent);
@@ -257,6 +266,10 @@ $("restart").onclick = reset;
 $("retry").onclick = reset;
 $("resume").onclick = () => pause(false);
 $("menu-button").onclick = () => pause(!paused);
+$("save-game").onclick = saveGame;
+$("load-game").onclick = () => loadGame(false);
+$("load-start").onclick = () => loadGame(false);
+$("load-previous").onclick = () => loadGame(true);
 $("sound-button").onclick = () => {
   audio.mute();
   $("sound-button").textContent = audio.muted ? "声音关" : "声音开";
@@ -276,7 +289,14 @@ function frame(now) {
     const dt = last ? Math.min(50, now - last) : 0;
     last = now;
     const ready = started && audio.ready(audioProjection(game));
-    if (started && !paused && !mapOpen && !document.hidden && ready) {
+    if (
+      started &&
+      !paused &&
+      !checkpointBusy &&
+      !mapOpen &&
+      !document.hidden &&
+      ready
+    ) {
       if (!session.battle && held.size) game.move([...held.values()].at(-1));
       session.advance(dt);
       if (game.stop?.kind === "map-transition" && !loading.has(game.stop))
@@ -289,6 +309,7 @@ function frame(now) {
       projection,
       audioReady &&
         !failed &&
+        !checkpointBusy &&
         !paused &&
         !mapOpen &&
         !document.hidden &&
@@ -397,6 +418,7 @@ async function init() {
     );
   }
   $("start").disabled = false;
+  await refreshSaveInfo();
   text("start", preview ? "进入地图预览" : "进入纳尔谢");
   text("status", "地图与战斗已载入 · 本地开发预览");
   requestAnimationFrame(frame);
@@ -430,12 +452,7 @@ async function loadMap(owner) {
   loading.add(request);
   held.clear();
   try {
-    catalogPromise ??= fetch("/world/catalog.json").then(async (response) => {
-      if (!response.ok)
-        throw new Error("地图目录尚未生成，请运行 npm run world:build。");
-      return verifyContent(await response.json());
-    });
-    const catalog = await catalogPromise;
+    const catalog = await worldCatalog();
     const indexed = catalog.maps[String(request.request.mapId)];
     if (!indexed) throw new Error("来源地图目录中没有此地图。");
     const response = await fetch(indexed.url);
@@ -478,6 +495,144 @@ async function loadMap(owner) {
     catalogPromise = undefined;
     owner.world.fail(request, String(error.message ?? error));
     sync();
+  }
+}
+function worldCatalog() {
+  catalogPromise ??= fetch("/world/catalog.json").then(async (response) => {
+    if (!response.ok)
+      throw new Error("地图目录尚未生成，请运行 npm run world:build。");
+    return verifyContent(await response.json());
+  });
+  return catalogPromise;
+}
+function syncSaveControls() {
+  $("save-game").disabled =
+    failed || checkpointBusy || !session?.checkpointReady;
+  $("load-game").disabled = failed || checkpointBusy || !hasSave;
+  $("load-start").disabled = failed || checkpointBusy || !hasSave;
+  $("load-previous").disabled = failed || checkpointBusy || !hasPreviousSave;
+  for (const id of ["resume", "restart", "start"])
+    $(id).disabled = failed || checkpointBusy;
+  $("save-game").title = session?.checkpointReady
+    ? "保存到这台设备的浏览器"
+    : "移动、事件或战斗结束后才能保存";
+}
+async function refreshSaveInfo() {
+  try {
+    const saved = await checkpointStorage().load();
+    hasSave = saved !== null;
+    text(
+      "save-info",
+      saved ? `本地进度 · ${new Date(saved.savedAt).toLocaleString()}` : "",
+    );
+  } catch {
+    hasSave = true;
+    text("save-info", "本地进度暂时无法读取，原数据仍保留。");
+  }
+  try {
+    hasPreviousSave = (await checkpointStorage().load(true)) !== null;
+  } catch {
+    hasPreviousSave = false;
+  }
+  $("load-start").hidden = !hasSave;
+  syncSaveControls();
+}
+async function saveGame() {
+  if (checkpointBusy || !session.checkpointReady) return;
+  checkpointBusy = true;
+  syncSaveControls();
+  try {
+    await checkpointStorage().save(session.checkpoint(), Date.now());
+    await refreshSaveInfo();
+    text("save-status", "进度已保存在此浏览器，刷新后可继续。");
+  } catch (error) {
+    text("save-status", `保存失败，原存档未替换：${error.message ?? error}`);
+  } finally {
+    checkpointBusy = false;
+    syncSaveControls();
+  }
+}
+async function loadGame(previous) {
+  if (checkpointBusy) return;
+  const owner = session;
+  checkpointBusy = true;
+  syncSaveControls();
+  text(started ? "save-status" : "save-info", "正在读取进度…");
+  try {
+    // Create decoding resources during the click, without resuming a paused audio clock.
+    // Playback resumes through the user's Continue action after the candidate is published.
+    audio.initialize();
+    const saved = await checkpointStorage().load(previous);
+    if (!saved) throw new Error("尚无此本地进度。");
+    let world;
+    const location = saved.checkpoint?.world?.location;
+    if (location !== null && location !== undefined) {
+      if (
+        !Number.isInteger(location.mapId) ||
+        location.mapId <= 0 ||
+        location.mapId > 2147483647
+      )
+        throw new Error("存档中的地图身份无效。");
+      const catalog = await worldCatalog();
+      const indexed = catalog.maps[String(location.mapId)];
+      if (location.catalogHash !== catalog.contentHash || !indexed)
+        throw new Error("存档与当前地图资源版本不匹配。");
+      const response = await fetch(indexed.url);
+      if (!response.ok) throw new Error("存档所需地图载入失败。");
+      world = {
+        catalog,
+        map: await verifyContent(await response.json(), indexed.contentHash),
+      };
+    }
+    const candidate = GameSession.restore(
+      saved.checkpoint,
+      content,
+      battleContent,
+      world,
+    );
+    const next = candidate.field.content;
+    await audio.prepare(audioProjection(candidate.field));
+    await loadImages(
+      new Set([
+        ...Object.values(next.map.textures),
+        ...Object.values(next.characters).flatMap((c) =>
+          Object.values(c.sprites).map((s) => s.file),
+        ),
+        ...Object.values(next.minimap?.icons ?? {}).map((s) => s.file),
+      ]),
+    );
+    const nextRenderer = new Renderer(canvas, next, images);
+    if (session !== owner) return;
+    audio.reset();
+    session = candidate;
+    game = candidate.field;
+    renderer = nextRenderer;
+    setupMapViews(next);
+    started = true;
+    held.clear();
+    last = 0;
+    for (const id of ["welcome", "stop", "dialogue"]) $(id).hidden = true;
+    battleView.hide();
+    canvas.setAttribute(
+      "aria-label",
+      `${next.map.id} 游戏画面。方向键移动，空格确认，Escape 暂停。`,
+    );
+    showLimitations();
+    checkpointBusy = false;
+    pause(true);
+    text(
+      "save-status",
+      previous ? "已读取上一份进度，点击继续。" : "进度已读取，点击继续。",
+    );
+  } catch (error) {
+    catalogPromise = undefined;
+    text(
+      started ? "save-status" : "save-info",
+      `读取失败，当前游戏和存档仍保留：${error.message ?? error}`,
+    );
+  } finally {
+    checkpointBusy = false;
+    syncSaveControls();
   }
 }
 init().catch(failure);

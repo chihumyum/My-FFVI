@@ -1,4 +1,9 @@
 import type { Evidence } from "../field/types.js";
+import {
+  checkpointKeys,
+  checkpointInteger,
+  checkpointNumber,
+} from "./checkpoint-validation.js";
 
 export type AudioTrack = {
   file: string;
@@ -77,6 +82,51 @@ export class StaticAudioState {
   }
   snapshot(): AudioSnapshot {
     return structuredClone(this.value);
+  }
+  static restore(
+    snapshot: AudioSnapshot,
+    media?: AudioMedia,
+  ): StaticAudioState {
+    checkpointKeys(snapshot, "time,nextId,channels,voices");
+    checkpointNumber(snapshot.time);
+    checkpointInteger(snapshot.nextId, 1);
+    if (
+      !Array.isArray(snapshot.channels) ||
+      snapshot.channels.length !== 2 ||
+      !Array.isArray(snapshot.voices)
+    )
+      throw new Error("Invalid audio checkpoint");
+    const ids = new Set<number>();
+    for (const voice of snapshot.voices) {
+      checkpointKeys(voice, "id,track,started,seek,fadeIn,stop");
+      checkpointInteger(voice.id, 1, snapshot.nextId - 1);
+      checkpointInteger(voice.track, 0, 0x7fffffff);
+      const track = media?.tracks[voice.track];
+      if (!track || ids.has(voice.id))
+        throw new Error("Missing or duplicate saved audio dependency");
+      ids.add(voice.id);
+      checkpointNumber(voice.started, 0, snapshot.time);
+      checkpointNumber(voice.seek);
+      checkpointNumber(voice.fadeIn);
+      if (voice.seek >= track.frames / track.sampleRate)
+        throw new Error("Invalid saved audio position");
+      if (voice.stop !== null) {
+        checkpointKeys(voice.stop, "at,duration,gain");
+        checkpointNumber(voice.stop.at, voice.started, snapshot.time);
+        checkpointNumber(voice.stop.duration);
+        checkpointNumber(voice.stop.gain);
+      }
+    }
+    for (const id of snapshot.channels) {
+      if (id === null) continue;
+      checkpointInteger(id, 1);
+      if (!snapshot.voices.some((v) => v.id === id && v.stop === null))
+        throw new Error("Missing saved audio channel voice");
+    }
+    const channels = snapshot.channels.filter((id) => id !== null);
+    if (new Set(channels).size !== channels.length)
+      throw new Error("Aliased saved audio channels");
+    return new StaticAudioState(snapshot);
   }
   get time() {
     return this.value.time;

@@ -2,8 +2,30 @@ import type { FieldContent } from "../field/types.js";
 import { encounterContent, type BattleCatalog } from "./battle-content.js";
 import { BattleGame } from "./battle.js";
 import { BattleAIError } from "./battle-ai.js";
-import { WorldSession } from "./world-session.js";
-import { GameState, type BattleLease } from "./game-state.js";
+import { WorldSession, type WorldCheckpoint } from "./world-session.js";
+import {
+  GameState,
+  type BattleLease,
+  type GameStateSnapshot,
+} from "./game-state.js";
+import type { WorldCatalog, WorldMapContent } from "../field/world.js";
+import {
+  checkpointKeys,
+  checkpointInteger,
+  checkpointNumber,
+} from "./checkpoint-validation.js";
+
+export type GameCheckpoint = {
+  formatVersion: 1;
+  kind: "game-checkpoint";
+  sourceSetHash: string;
+  battleCatalogHash: string;
+  seed: number;
+  encounterSerial: number;
+  remainder: number;
+  owned: GameStateSnapshot;
+  world: WorldCheckpoint;
+};
 
 /** Owns the encounter handoff and consumes rewards exactly once. No renderer state drives progression. */
 export class GameSession {
@@ -31,6 +53,7 @@ export class GameSession {
     readonly battleCatalog: BattleCatalog,
     readonly seed = 20261010,
   ) {
+    checkpointInteger(seed, 0, 0xffffffff);
     if (field.sourceSetHash !== battleCatalog.common.fieldSourceSetHash)
       throw new Error("Field/battle source mismatch");
     this.world = new WorldSession(field);
@@ -40,6 +63,60 @@ export class GameSession {
       battleCatalog.contentHash,
       battleCatalog.common.conditions,
     );
+  }
+  get checkpointReady(): boolean {
+    return (
+      !this.battle &&
+      !this.battleLease &&
+      !this.state.inBattle &&
+      this.field.checkpointReady
+    );
+  }
+  checkpoint(): GameCheckpoint {
+    if (!this.checkpointReady)
+      throw new Error("Cannot save during battle, movement or an event");
+    return {
+      formatVersion: 1,
+      kind: "game-checkpoint",
+      sourceSetHash: this.field.content.parentSourceSetHash,
+      battleCatalogHash: this.battleCatalog.contentHash,
+      seed: this.seed,
+      encounterSerial: this.encounterSerial,
+      remainder: this.remainder,
+      owned: this.state.snapshot(),
+      world: this.world.checkpoint(),
+    };
+  }
+  static restore(
+    raw: GameCheckpoint,
+    initial: FieldContent,
+    battle: BattleCatalog,
+    world?: { catalog: WorldCatalog; map: WorldMapContent },
+  ): GameSession {
+    const s = structuredClone(raw);
+    checkpointKeys(
+      s,
+      "formatVersion,kind,sourceSetHash,battleCatalogHash,seed,encounterSerial,remainder,owned,world",
+    );
+    if (
+      s.formatVersion !== 1 ||
+      s.kind !== "game-checkpoint" ||
+      s.sourceSetHash !== initial.parentSourceSetHash ||
+      s.battleCatalogHash !== battle.contentHash
+    )
+      throw new Error("Game checkpoint source/version mismatch");
+    checkpointInteger(s.seed, 0, 0xffffffff);
+    checkpointInteger(s.encounterSerial);
+    checkpointNumber(s.remainder, 0, 10);
+    if (s.remainder >= 10) throw new Error("Invalid session remainder");
+    const next = new GameSession(initial, battle, s.seed);
+    next.state.restore(s.owned);
+    if (s.encounterSerial !== s.owned.completedBattles.length)
+      throw new Error("Saved encounter sequence disagrees with rewards");
+    next.world.restore(s.world, world?.catalog, world?.map);
+    next.encounterSerial = s.encounterSerial;
+    next.remainder = s.remainder;
+    return next;
   }
   advance(ms: number) {
     if (!Number.isFinite(ms) || ms < 0 || ms > 60000)

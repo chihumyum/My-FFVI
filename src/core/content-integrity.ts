@@ -1,5 +1,12 @@
 import { canonical } from "./canonical.js";
 
+export async function contentDigest(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(canonical(value));
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+    .map((v) => v.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 /** Verify the payload itself, not just a claimed digest copied into its header. */
 export async function verifyContent<T extends { contentHash: string }>(
   value: T,
@@ -11,12 +18,7 @@ export async function verifyContent<T extends { contentHash: string }>(
     (expected !== undefined && expected !== contentHash)
   )
     throw new Error("Content identity mismatch");
-  const bytes = new TextEncoder().encode(canonical(payload));
-  const digest = [
-    ...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
-  ]
-    .map((v) => v.toString(16).padStart(2, "0"))
-    .join("");
+  const digest = await contentDigest(payload);
   if (digest !== contentHash) throw new Error("Content payload changed");
   return value;
 }
