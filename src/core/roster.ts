@@ -12,6 +12,8 @@ import {
   type PartyPosition,
   type PartyRow,
   type PartyState,
+  type PartyAppearanceCandidate,
+  type PreparePartyPresentation,
 } from "./party.js";
 import { int32 } from "./script-integer.js";
 
@@ -100,6 +102,7 @@ export type RosterLifecycleEventOp = {
 export type RosterLifecycleTransaction = {
   readonly activeMembers: ActivePartyMember[];
   readonly refreshActors: boolean;
+  readonly appearance?: PartyAppearanceCandidate;
   commit(): void;
 };
 export interface FieldRosterPort {
@@ -436,7 +439,7 @@ export function prepareRosterLifecycle<T extends RosterMember>(
 export function executeRosterLifecycleEvent(
   op: RosterLifecycleEventOp,
   port: FieldRosterPort | undefined,
-  preparePresentation?: (members: ActivePartyMember[]) => () => void,
+  preparePresentation?: PreparePartyPresentation,
 ): void {
   if (!port) throw new Error("Field roster state is unavailable");
   if (op.kind !== "roster") throw new Error("Invalid roster event");
@@ -445,11 +448,16 @@ export function executeRosterLifecycleEvent(
   if (transaction.refreshActors !== op.command.refreshActors)
     throw new Error("Roster refresh transaction contract changed");
   let publishPresentation: (() => void) | undefined;
-  if (transaction.refreshActors) {
+  // FullRecovery ends in RemoveCondition(type=0), which requests
+  // ChangeAssetPartyCharacter(false) even for an empty condition list. The
+  // explicit ChangeAssetPartyCharacter(true), when requested, occurs afterward.
+  if (transaction.refreshActors || (op.command.kind === "join" && op.command.recovery)) {
     if (!preparePresentation)
       throw new Error("Roster actor refresh is unavailable");
     publishPresentation = preparePresentation(
       structuredClone(transaction.activeMembers),
+      structuredClone(transaction.appearance),
+      transaction.refreshActors,
     );
     if (typeof publishPresentation !== "function")
       throw new Error("Invalid roster presentation transaction");

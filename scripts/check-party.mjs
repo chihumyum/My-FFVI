@@ -2,24 +2,30 @@
 // story reachability nor actor rendering/native execution parity.
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { loadCorpus } from "../dist/src/compiler/corpus.js";
-import { compileOpeningBattle } from "../dist/src/compiler/battle.js";
-import { compileOpeningPlayable } from "../dist/src/compiler/opening-playable.js";
-import { compileInitialPartyState } from "../dist/src/compiler/party.js";
-import { decodeFieldOp } from "../dist/src/compiler/field.js";
-import { hash } from "../dist/src/compiler/content.js";
-import { EventState } from "../dist/src/core/event-state.js";
-import { FieldGame } from "../dist/src/core/field.js";
-import { GameState } from "../dist/src/core/game-state.js";
-import {
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolve } from "node:path";
+const root = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
+const outDirFlag = process.argv.includes("--compiled-dir") ? "--compiled-dir" : "--dist";
+const outDirIndex = process.argv.indexOf(outDirFlag);
+const outDir = outDirIndex < 0 ? "dist" : process.argv[outDirIndex + 1];
+if (!outDir || outDir.startsWith("--")) throw new Error("Missing compiled output directory");
+const module = (path) => import(pathToFileURL(resolve(root, outDir, "src", path + ".js")).href);
+const { loadCorpus } = await module("compiler/corpus");
+const { compileOpeningBattle } = await module("compiler/battle");
+const { compileOpeningPlayable } = await module("compiler/opening-playable");
+const { compileInitialPartyState } = await module("compiler/party");
+const { decodeFieldOp } = await module("compiler/field");
+const { hash } = await module("compiler/content");
+const { EventState } = await module("core/event-state");
+const { FieldGame } = await module("core/field");
+const { GameState } = await module("core/game-state");
+const {
   activePartyMembers,
   emptyPartyState,
   executePartyEvent,
   previewPartyCommand,
-} from "../dist/src/core/party.js";
+} = await module("core/party");
 
-const root = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const corpus = await loadCorpus(root);
 const native = JSON.parse(
   await readFile(root + "/build/reports/party-native-check.json", "utf8"),
@@ -44,7 +50,8 @@ const make = () =>
     catalog.common.conditions,
   );
 const initial = make().snapshot();
-assert.equal(initial.formatVersion, 5);
+assert.equal(initial.formatVersion, 6);
+assert.equal(Object.keys(catalog.gameState.characterInitializations).length, 18);
 assert.deepEqual(
   initial.roster.map((p) => [p.sourceId, p.enabled]),
   [
@@ -302,6 +309,32 @@ assert.equal(
   entries.filter((e) => e.mnemonic === "ChangePartySlot").length,
   104,
 );
+// Reuse one actual source organization instruction after source 2 is acquired
+// through the shared roster port. The callback remains an isolated renderer stub.
+const dynamicEntry = entries.find((entry) => entry.instruction.command.kind === "organize-slot" &&
+  entry.instruction.command.members.includes(2) && entry.instruction.command.members.every((id) =>
+    id === null || [1, 2, 31, 32].includes(id)));
+assert.ok(dynamicEntry, "Missing a source party organization for the controlled new owner");
+const dynamicOwnerState = make();
+dynamicOwnerState.fieldRoster.prepare({ kind: "join", sourceId: 2, position: null, row: "front",
+  refreshActors: false, recovery: false, refitEquipment: false }).commit();
+const dynamicBefore = dynamicOwnerState.snapshot();
+assert.equal(dynamicBefore.roster.find((p) => p.sourceId === 2).ownedId, 4);
+let dynamicPresented;
+executePartyEvent(dynamicEntry.instruction, dynamicOwnerState.fieldParty, (members) => {
+  assert.deepEqual(dynamicOwnerState.snapshot(), dynamicBefore);
+  return () => { dynamicPresented = structuredClone(members); };
+});
+const dynamicAfter = dynamicOwnerState.snapshot();
+assert.deepEqual({ ...dynamicAfter, party: dynamicBefore.party }, dynamicBefore);
+assert.deepEqual(dynamicPresented, activePartyMembers(dynamicAfter.party));
+assert.ok(dynamicAfter.party.slots[dynamicEntry.instruction.command.slot].some((cell) => cell.id === "player:2"));
+const dynamicRestored = make();
+dynamicRestored.restore(JSON.parse(JSON.stringify(dynamicAfter)));
+assert.deepEqual(dynamicRestored.snapshot(), dynamicAfter);
+const dynamicOwnerCheck = { site: dynamicEntry.site, command: dynamicEntry.instruction.command,
+  ownedId: 4, activeMembers: dynamicPresented, ownedHash: hash(dynamicAfter),
+  kind: "source-organization-after-controlled-join-callback-only-no-rendering" };
 const report = {
   lane: "source-party-controlled-states",
   sourceSetHash: corpus.sourceSetHash,
@@ -317,6 +350,7 @@ const report = {
     unownedRosterBlockers: rosterBlockers.length,
     lifecycleSelectorsBlocked: lifecycleBlockers.length,
     lifecycleSelectorsDecoded: lifecycleDecoded.length,
+    dynamicOwnerOrganizations: 1,
   },
   entries,
   pureChecks,
@@ -326,10 +360,11 @@ const report = {
   rosterBlockers,
   lifecycleBlockers,
   lifecycleDecoded,
+  dynamicOwnerCheck,
   doesNotEstablish: [
     "story-reachability",
-    "additional-owned-characters",
-    "join-or-departure",
+    "all-additional-owned-characters",
+    "story-join-or-departure",
     "actor-refresh-rendering",
     "original-game-execution",
     "full-game-parity",

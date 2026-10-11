@@ -19,11 +19,11 @@ const catalog = await read("build/world/catalog.json");
 const prior = await read("build/reports/world-check.json");
 assert.equal(prior.catalogHash, catalog.contentHash);
 assert.equal(prior.bootstrapHash, field.contentHash);
-async function restore(game, world) {
+async function restore(game, world, bootstrap = field, definitions = battle) {
   const checkpoint = game.checkpoint();
   const file = await encodeSavedGame(checkpoint, 0);
   const saved = await decodeSavedGame(file);
-  const restored = GameSession.restore(saved.checkpoint, field, battle, world);
+  const restored = GameSession.restore(saved.checkpoint, bootstrap, definitions, world);
   assert.deepEqual(restored.checkpoint(), checkpoint);
   assert.equal(
     restored.continueVictory(),
@@ -94,10 +94,28 @@ assert.deepEqual(
 );
 
 const runs = [];
+// Full native party MapSetup remains a formal game gate. Keep the independent
+// geometry/checkpoint mechanism probe explicit instead of discarding that host
+// silently while calling it a migrated game transition.
+const geometryField = structuredClone(field), geometryBattle = structuredClone(battle);
+delete geometryField.entry.partyActors;
+delete geometryBattle.gameState.partyActors;
+for (const content of [geometryField, geometryBattle]) {
+  const { contentHash: _, ...payload } = content;
+  content.contentHash = await contentDigest(payload);
+}
+let formalMapBoundaryChecked = false;
 for (const entry of prior.runs.filter((r) => r.result === "idle")) {
   const map = await read(`build/world/maps/${entry.mapId}.json`);
   assert.equal(map.contentHash, entry.contentHash);
-  const game = new GameSession(field, battle);
+  if (!formalMapBoundaryChecked) {
+    const formal = new GameSession(field, battle), owned = formal.state.snapshot();
+    formal.field.previewMap(entry.mapId, entry.entrance);
+    assert.throws(() => formal.world.prepare(catalog, map), /队伍演员初始化/);
+    assert.deepEqual(formal.state.snapshot(), owned);
+    formalMapBoundaryChecked = true;
+  }
+  const game = new GameSession(geometryField, geometryBattle);
   game.field.previewMap(entry.mapId, entry.entrance);
   assert.equal(game.world.commit(game.world.prepare(catalog, map)), true);
   assert.equal(
@@ -105,7 +123,7 @@ for (const entry of prior.runs.filter((r) => r.result === "idle")) {
     true,
     `Existing idle entrance ${entry.mapId}/${entry.entrance}`,
   );
-  const copy = await restore(game, { catalog, map });
+  const copy = await restore(game, { catalog, map }, geometryField, geometryBattle);
   game.advance(500);
   for (const dt of [47, 153, 300]) copy.advance(dt);
   assert.deepEqual(copy.checkpoint(), game.checkpoint());
@@ -131,10 +149,14 @@ const report = {
     result: "pass",
   },
   runs,
+  worldMechanismProfile: { bootstrapHash: geometryField.contentHash,
+    battleCatalogHash: geometryBattle.contentHash, nativePartyLifecycle: false,
+    formalMapBoundaryChecked },
   lane: "source-backed-implementation",
   limitations: [
     "Idle map checkpoints only; no active event or battle continuation save.",
     "Existing development entrances are mechanism probes, not new playable maps or story reachability.",
+    "Formal native-party map transitions remain blocked; the separate geometry probe explicitly omits that host.",
     "Does not establish original-game save format, save permission, parity or browser storage behavior.",
   ],
 };

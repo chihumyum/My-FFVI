@@ -77,6 +77,7 @@ export class GameSession {
         party: this.state.fieldParty,
         roster: this.state.fieldRoster,
         ...(battleCatalog.gameState.fieldConditions ? { fieldSteps: this.state.fieldSteps } : {}),
+        ...(this.state.fieldPartyAppearance ? { partyAppearance: this.state.fieldPartyAppearance } : {}),
         movementBlocker: (transportationId, manual) => this.state.fieldMoveBlocker(transportationId, manual),
       },
       prepare: () => this.state.prepareFieldState(),
@@ -190,7 +191,7 @@ export class GameSession {
             this.currentSeed,
             this.state.battlePlayers(lease),
             this.state.battleInventory(lease),
-            this.state.battleProgression(lease),
+            this.state.battleProgression(lease, content.experience),
           );
           this.battle.setPreferences(this.currentBattlePreferences);
           this.battleLease = lease;
@@ -231,7 +232,7 @@ export class GameSession {
       this.currentSeed,
       this.state.battlePlayers(this.battleLease),
       this.state.battleInventory(this.battleLease),
-      this.state.battleProgression(this.battleLease),
+      this.state.battleProgression(this.battleLease, this.battle.content.experience),
     );
     this.battle.setPreferences(this.currentBattlePreferences);
     return true;

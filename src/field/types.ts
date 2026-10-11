@@ -5,6 +5,8 @@ import type { AudioMedia } from "../core/static-audio.js";
 import type { InventoryEventOp } from "../core/inventory-event.js";
 import type { PartyEventOp } from "../core/party.js";
 import type { RosterLifecycleEventOp } from "../core/roster.js";
+import type { FieldPartyActorCheckpoint } from "../core/field-party-actors.js";
+import type { PartyActorContext } from "../core/party-actors.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -200,6 +202,7 @@ export type FieldContent = {
     entities: FieldEntity[];
     groups?: Record<string, EntityGroup>;
     initialGroups?: string[];
+    partyActorCamera?: PartyActorContext["camera"];
     source: Evidence;
   };
   characters: Record<string, Character>;
@@ -208,9 +211,12 @@ export type FieldContent = {
   environment?: AudioMedia;
   scripts: Record<string, Op[]>;
   scriptLocals?: Record<string, ScriptLocals | null>;
+  /** Integrator.Execute reads this per source Format; absence is unknown. */
+  scriptSystemFlags?: Record<string, { keepBadStatusVisual: boolean } | null>;
   entry: {
     /** Current TransportationInfo identity. Rider artwork is independent. */
     transportationId?: number;
+    partyActors?: FieldPartyActorCheckpoint;
     player: Point & {
       direction: Direction;
       layer: number;

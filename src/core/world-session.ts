@@ -22,7 +22,7 @@ type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount"> & {
   transportationId: number | null;
 };
 export type WorldCheckpoint = {
-  kind: "idle-world-v2";
+  kind: "idle-world-v3";
   initialHash: string;
   location: {
     catalogHash: string;
@@ -195,7 +195,7 @@ export class WorldSession {
   }
   checkpoint(): WorldCheckpoint {
     return {
-      kind: "idle-world-v2",
+      kind: "idle-world-v3",
       initialHash: this.initial.contentHash,
       location: structuredClone(this.location),
       field: this.current.checkpoint(),
@@ -209,13 +209,15 @@ export class WorldSession {
   ): void {
     checkpointKeys(snapshot, "kind,initialHash,location,field");
     if (
-      snapshot.kind !== "idle-world-v2" ||
+      snapshot.kind !== "idle-world-v3" ||
       snapshot.initialHash !== this.initial.contentHash
     )
       throw new Error("World checkpoint source/version mismatch");
     let content = this.initial;
     const loc = snapshot.location;
     if (loc !== null) {
+      if (this.initial.entry.partyActors && this.owned?.current.partyAppearance)
+        throw new Error("跨地图的队伍演员初始化尚未迁移");
       checkpointKeys(loc, "catalogHash,mapId,entrance,traveler");
       checkpointKeys(loc.traveler, "asset,mount,transportationId");
       if (loc.traveler.transportationId !== null)
@@ -258,6 +260,11 @@ export class WorldSession {
       stop = from.stop;
     if (stop?.kind !== "map-transition")
       throw new Error("No pending map transition");
+    // MapSetup also owns transport view, companion setup, party restoration and
+    // native entity visibility. Copying the checkpoint actors would skip those
+    // steps. The independent geometry viewer remains available without this host.
+    if (from.partyActorCheckpoint)
+      throw new Error("跨地图的队伍演员初始化尚未迁移");
     const request = stop.request,
       identity = from.content.map.identity;
     if (!identity) throw new Error("Unknown previous map/area identity");

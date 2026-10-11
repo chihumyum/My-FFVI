@@ -1,6 +1,6 @@
-import type { CombatantDefinition } from "./battle-content.js";
+import type { CombatantDefinition, BattleContent } from "./battle-content.js";
 import type { Combatant, BattleStatProjection } from "./battle.js";
-import { projectActionTarget } from "./action-effects.js";
+import { projectActionTarget, type ActionParticipant } from "./action-effects.js";
 import type {
   FieldInventoryCommand,
   FieldInventoryPort,
@@ -23,6 +23,7 @@ import {
   type PartyCommand,
   type FieldPartyPort,
   type PartyEventTransaction,
+  type PartyAppearanceCandidate,
 } from "./party.js";
 import {
   equipmentAvailability,
@@ -57,8 +58,20 @@ import {
   validateOwnedCharacterAbilities,
   type OwnedCharacterAbilities,
   type OwnedCharacterInitializationTemplate,
+  type InitializedOwnedCharacter,
 } from "./owned-character.js";
 import { canonical } from "./canonical.js";
+import { recoverJoinedCharacter } from "./character-recovery.js";
+import type { PartyActorCatalog, PartyActorMember } from "./party-actors.js";
+import {
+  growCharacter,
+  initialCharacterGrowth,
+  validateCharacterGrowth,
+  validateObservedLearning,
+  type CharacterGrowthPlan,
+  type CharacterGrowthProgress,
+  type CharacterGrowthRequest,
+} from "./character-growth.js";
 
 export type GameStateContent = {
   kind: "game-state-development-v1";
@@ -74,6 +87,8 @@ export type GameStateContent = {
   initialParty: PartyState;
   fieldConditions?: FieldConditionCatalog;
   characterInitializations?: Record<string, OwnedCharacterInitializationTemplate>;
+  characterGrowth?: Record<string, CharacterGrowthPlan>;
+  partyActors?: PartyActorCatalog;
   rosterLifecycle: {
     initial: Record<
       string,
@@ -109,9 +124,11 @@ export type OwnedCharacter = RosterMember & {
   conditionIds: number[];
   /** Null only in logic fixtures that have no source initialization provider. */
   abilities: OwnedCharacterAbilities | null;
+  /** Additional values are durable source state; capped maxima are projections. */
+  growth: CharacterGrowthProgress | null;
 };
 export type GameStateSnapshot = {
-  formatVersion: 5;
+  formatVersion: 6;
   kind: "owned-game-state";
   catalogHash: string;
   roster: OwnedCharacter[];
@@ -159,7 +176,6 @@ export class GameState {
   private revision = 0;
   private readonly conditions: BattleConditions;
   private readonly fieldConditions: FieldConditions | null;
-  private readonly initialLearnedAbilityIds: number[];
   readonly fieldSteps: FieldConditionPort = {
     prepareStep: (transportationId) => this.prepareFieldStep(transportationId),
   };
@@ -208,12 +224,11 @@ export class GameState {
       integer(item.itemId, 0x7fffffff, 1);
       this.conditions.validateReferences(item.forbiddenConditionIds);
     }
-    const initializedAbilities = new Map<string, OwnedCharacterAbilities>();
+    const initializedMembers = new Map<string, InitializedOwnedCharacter>();
     const learnedAbilityIds: number[] = [];
     const characterNames: Record<string, string> = {};
     if (content.characterInitializations) {
-      if (Object.keys(content.characterInitializations).length !== players.length)
-        throw new Error("Missing initial character template");
+      distinct(Object.values(content.characterInitializations).map((t) => t.initial.sourceId));
       for (const player of players) {
         const template = content.characterInitializations[player.id];
         if (!template || template.initial.sourceId !== player.sourceId)
@@ -224,19 +239,18 @@ export class GameState {
           releasedJobIds: content.rosterLifecycle.releasedJobIds,
           learnedAbilityIds,
         });
-        initializedAbilities.set(player.id, initialized.member.abilities);
+        initializedMembers.set(player.id, initialized.member);
         learnedAbilityIds.push(...initialized.learnedAbilityIdsToAppend);
         if (initialized.nameBinding) {
           const key = initialized.nameBinding.key;
           if (Object.hasOwn(characterNames, key))
             throw new Error("Duplicate initial character name binding");
-          characterNames[key] = player.name;
+          characterNames[key] = initialized.member.name;
         }
       }
     }
-    this.initialLearnedAbilityIds = [...learnedAbilityIds];
     this.data = {
-      formatVersion: 5,
+      formatVersion: 6,
       kind: "owned-game-state",
       catalogHash,
       roster: players.map((p) => ({
@@ -252,8 +266,10 @@ export class GameState {
         maxHp: p.hp,
         maxMp: p.mp,
         conditionIds: [...p.conditionIds],
-        abilities: structuredClone(initializedAbilities.get(p.id) ?? null),
+        abilities: null,
         equipment: [...(content.equipment[p.id] ?? [])],
+        ...structuredClone(initializedMembers.get(p.id) ?? {}),
+        growth: content.characterGrowth?.[p.id] ? initialCharacterGrowth() : null,
       })),
       party: structuredClone(content.initialParty),
       gil: content.initialGil,
@@ -279,7 +295,7 @@ export class GameState {
     );
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== 5 ||
+      data.formatVersion !== 6 ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -299,7 +315,12 @@ export class GameState {
         throw new Error("Unknown released job");
     for (const p of data.roster)
       this.validateOwnedMember(p, data.roster.length);
-    if (canonical(data.learnedAbilityIds) !== canonical(this.initialLearnedAbilityIds))
+    // AddFromMaster contributes its initial owned identities (including skill 0)
+    // in acquisition order. Ordinary StatusUp learning does not add to history.
+    const learnedAbilityIds = [...new Set([...data.roster]
+      .sort((a, b) => a.ownedId - b.ownedId)
+      .flatMap((p) => this.content.characterInitializations?.[p.id]?.initial.abilities.owned.map((a) => a.abilityId) ?? []))];
+    if (canonical(data.learnedAbilityIds) !== canonical(learnedAbilityIds))
       throw new Error("Unimplemented learned ability history change");
     const names = Object.fromEntries(data.roster.flatMap((p) => {
       const template = this.content.characterInitializations?.[p.id];
@@ -307,7 +328,7 @@ export class GameState {
     }));
     if (canonical(data.characterNames) !== canonical(names))
       throw new Error("Owned character name binding mismatch");
-    if (data.roster.length !== this.definitions.size)
+    if ([...this.definitions.keys()].some((id) => !data.roster.some((p) => p.id === id)))
       throw new Error("Missing roster member");
     if (this.content.equipmentSystem)
       validateRosterLifecycle(
@@ -338,39 +359,43 @@ export class GameState {
     const limits = this.content.limits;
     keys(
       p,
-      "id,sourceId,name,enabled,level,exp,hp,mp,maxHp,maxMp,conditionIds,equipment,ownedId,jobId,additionalLevel,magicStoneId,ownedJobs,abilities",
+      "id,sourceId,name,enabled,level,exp,hp,mp,maxHp,maxMp,conditionIds,equipment,ownedId,jobId,additionalLevel,magicStoneId,ownedJobs,abilities,growth",
     );
     const definition = this.definitions.get(p.id);
+    const template = this.content.characterInitializations?.[p.id];
     if (
-      !definition ||
-      definition.side !== "player" ||
-      definition.sourceId !== p.sourceId ||
+      (!definition && !template) ||
+      (definition && (definition.side !== "player" || definition.sourceId !== p.sourceId)) ||
+      (template && template.initial.sourceId !== p.sourceId) ||
       typeof p.name !== "string"
     )
       throw new Error("Unknown roster identity");
     if (typeof p.enabled !== "boolean")
       throw new Error("Invalid roster availability");
-    const template = this.content.characterInitializations?.[p.id];
+    const growthPlan = this.content.characterGrowth?.[p.id];
     if (template) {
       if (!p.abilities) throw new Error("Missing owned abilities");
       validateOwnedCharacterAbilities(p.abilities);
-      if (canonical(p.abilities) !== canonical(template.initial.abilities))
+      if (growthPlan) {
+        if (!p.growth) throw new Error("Missing owned character growth");
+        validateCharacterGrowth(growthPlan, { ...p, abilities: p.abilities }, p.growth);
+      } else if (canonical(p.abilities) !== canonical(template.initial.abilities))
         throw new Error("Unimplemented owned ability learning change");
     } else if (p.abilities !== null) throw new Error("Unbound owned ability state");
+    if (!growthPlan && p.growth !== null) throw new Error("Unbound owned growth state");
     if (!this.content.equipmentSystem && !p.enabled)
       throw new Error("Unimplemented disabled roster equipment ownership");
     const lifecycle = this.content.rosterLifecycle.initial[p.id];
     if (
-      !lifecycle ||
-      p.ownedId !== lifecycle.ownedId ||
-      p.jobId !== lifecycle.jobId
+      (lifecycle ? p.ownedId !== lifecycle.ownedId : p.ownedId <= this.definitions.size) ||
+      p.jobId !== (template?.initial.jobId ?? lifecycle?.jobId)
     )
       throw new Error("Unimplemented roster identity/job change");
     integer(p.ownedId, rosterSize, 1);
     integer(p.additionalLevel, limits.level, 1);
     if (
       p.additionalLevel !==
-      lifecycle.additionalLevel + p.level - definition.level
+      (template ? p.level : lifecycle!.additionalLevel + p.level - definition!.level)
     )
       throw new Error("Owned level disagrees with source additional level");
     if (p.magicStoneId !== 0)
@@ -536,6 +561,7 @@ export class GameState {
       next,
       activeMembers: preview.activeMembers,
       refreshActors: preview.refreshActors,
+      appearance: this.projectPartyAppearance(next),
     };
   }
   private preparePartyEvent(command: PartyCommand): PartyEventTransaction {
@@ -554,13 +580,30 @@ export class GameState {
     };
   }
   private projectRosterEvent(data: GameStateSnapshot, command: RosterCommand) {
+    const next = structuredClone(data);
+    let candidateRosterSize = next.roster.length;
     const preview = prepareRosterLifecycle(
-      this.rosterState(data),
+      this.rosterState(next),
       command,
       this.rosterCatalog(),
       {
         validateMember: (member) =>
-          this.validateOwnedMember(member, data.roster.length),
+          this.validateOwnedMember(member, candidateRosterSize),
+        initialize: ({ sourceId, ownedId, releasedJobIds }) => {
+          const entry = Object.entries(this.content.characterInitializations ?? {})
+            .find(([, template]) => template.initial.sourceId === sourceId);
+          if (!entry) throw new Error("Unimplemented source character initialization: " + sourceId);
+          const [id, template] = entry;
+          const initialized = createOwnedCharacter(template, {
+            id, ownedId, releasedJobIds, learnedAbilityIds: next.learnedAbilityIds,
+          });
+          next.learnedAbilityIds.push(...initialized.learnedAbilityIdsToAppend);
+          if (initialized.nameBinding)
+            next.characterNames[initialized.nameBinding.key] = initialized.nameBinding.value;
+          candidateRosterSize++;
+          return { ...initialized.member,
+            growth: this.content.characterGrowth?.[id] ? initialCharacterGrowth() : null };
+        },
         projectEquipment: (member) => {
           const projected = this.projectOwnedParameters(member);
           member.maxHp = projected.maxHp;
@@ -574,16 +617,18 @@ export class GameState {
           );
           return member;
         },
-        // AddFromMaster, CorrectLevel learning/growth and FullRecovery remain
-        // absent providers until their complete source effects are available.
+        correctLevel: (member, targetLevel) => this.projectGrowth(member,
+          { kind: "correct-level", targetLevel }),
+        recover: (member) => recoverJoinedCharacter(member, this.conditions),
       },
     );
-    const next = { ...structuredClone(data), ...preview.state };
+    Object.assign(next, preview.state);
     this.validate(next);
     return {
       next,
       activeMembers: preview.activeMembers,
       refreshActors: preview.refreshActors,
+      appearance: this.projectPartyAppearance(next),
     };
   }
   private prepareRosterEvent(
@@ -611,6 +656,7 @@ export class GameState {
       party: FieldPartyPort;
       roster: FieldRosterPort;
       fieldSteps?: FieldConditionPort;
+      partyAppearance?: { catalog: PartyActorCatalog; current(): PartyAppearanceCandidate };
       movementBlocker: (transportationId: number | null, manual: boolean) => string | null;
     };
     commit(): boolean;
@@ -696,6 +742,10 @@ export class GameState {
         party,
         roster,
         ...(this.fieldConditions ? { fieldSteps } : {}),
+        ...(this.content.partyActors ? { partyAppearance: {
+          catalog: this.content.partyActors,
+          current: () => this.projectPartyAppearance(published ? this.data : data),
+        } } : {}),
         movementBlocker: (transportationId, manual) =>
           this.movementBlocker(published ? this.data : data, transportationId, manual),
       },
@@ -712,6 +762,19 @@ export class GameState {
   }
   get activeParty() {
     return activePartyMembers(this.data.party);
+  }
+  private projectPartyAppearance(data: GameStateSnapshot): PartyAppearanceCandidate {
+    const parties = data.party.slots.map((slot) => slot.flatMap((cell, index): PartyActorMember[] => {
+      if (cell.id === null) return [];
+      const p = data.roster.find((p) => p.id === cell.id)!;
+      return [{ id: p.id, sourceId: p.sourceId, jobId: p.jobId, index: index as 0 | 1 | 2 | 3,
+        row: cell.row, enabled: p.enabled, conditionIds: [...p.conditionIds] }];
+    }));
+    return { parties, activeMembers: structuredClone(parties[data.party.selectedSlot]!) };
+  }
+  get fieldPartyAppearance() {
+    return this.content.partyActors ? { catalog: this.content.partyActors,
+      current: () => this.projectPartyAppearance(this.data) } : undefined;
   }
   private projectFieldStep(data: GameStateSnapshot, transportationId: number) {
     if (!this.fieldConditions)
@@ -773,11 +836,15 @@ export class GameState {
     if (!members.length) return "当前编队没有成员，无法开始战斗";
     if (members.some((member) => member.row !== "front"))
       return "后排战斗规则尚未迁移";
+    const missing = members.find(({ id }) => !this.definitions.has(id));
+    if (missing) return "角色的战斗动作与表现尚未迁移：" + this.data.roster.find((p) => p.id === missing.id)!.name;
     return null;
   }
   partyPlayers(): Combatant[] {
     return this.activeParty.map(({ id }) => {
       const p = this.data.roster.find((p) => p.id === id)!;
+      const definition = this.definitions.get(id);
+      if (!definition) throw new Error("Unimplemented owned character battle definition: " + id);
       const {
         equipment: _,
         enabled: _enabled,
@@ -787,10 +854,11 @@ export class GameState {
         magicStoneId: _magicStone,
         ownedJobs: _jobs,
         abilities: _abilities,
+        growth: _growth,
         ...progress
       } = p;
       return {
-        ...structuredClone(this.definitions.get(id)!),
+        ...structuredClone(definition),
         ...structuredClone(progress),
         ...(this.content.equipmentSystem ? this.projectOwnedParameters(p) : {}),
         atb: 0,
@@ -800,22 +868,27 @@ export class GameState {
     });
   }
   private projectOwnedParameters(
-    p: Pick<OwnedCharacter, "id" | "sourceId" | "level" | "equipment">,
+    p: Pick<OwnedCharacter, "id" | "sourceId" | "level" | "equipment" | "growth">,
   ): BattleStatProjection {
     const system = this.content.equipmentSystem;
     if (!system) throw new Error("Equipment system is unavailable");
     const definition = this.definitions.get(p.id),
       original = system.contexts[p.id];
     if (
-      !definition ||
-      definition.sourceId !== p.sourceId ||
       !original ||
-      p.level < definition.level
+      (definition && definition.sourceId !== p.sourceId)
     )
       throw new Error("Unresolved equipment growth origin");
     const context = structuredClone(original);
-    for (let level = definition.level + 1; level <= p.level; level++) {
-      const matches = system.growth[definition.growthGroup!]?.filter(
+    if (p.growth) {
+      for (const key of ["hp", "mp", "magic", "vitality", "agility"] as const)
+        context.parameters.additional[key] += p.growth.additional[key];
+      context.physical.strength.additional += p.growth.additional.strength;
+    } else if (this.content.characterInitializations?.[p.id]) {
+      if (p.level !== this.content.characterInitializations[p.id]!.initial.level)
+        throw new Error("Missing source character growth plan");
+    } else for (let level = definition!.level + 1; level <= p.level; level++) {
+      const matches = system.growth[definition!.growthGroup!]?.filter(
         (g) => g.level === level,
       );
       if (matches?.length !== 1)
@@ -839,6 +912,26 @@ export class GameState {
       attackElements: projected.attackElementsByArm[arm],
       elementResistances: projected.elementResistances,
     };
+  }
+  private projectGrowth(member: OwnedCharacter, request: CharacterGrowthRequest): OwnedCharacter {
+    const plan = this.content.characterGrowth?.[member.id];
+    if (!plan || !member.growth || !member.abilities)
+      throw new Error("Unimplemented source character growth: " + member.id);
+    const result = growCharacter(plan, { ...member, abilities: member.abilities }, member.growth,
+      request, (candidate, growth) => this.projectOwnedParameters({ ...candidate, growth }));
+    const next: OwnedCharacter = { ...result.member, growth: result.progress };
+    next.conditionIds = this.conditions.updateDying(next.hp, next.maxHp, next.conditionIds);
+    return next;
+  }
+  private menuParticipant(member: OwnedCharacter): ActionParticipant {
+    const definition = this.definitions.get(member.id);
+    if (!this.content.equipmentSystem && !definition)
+      throw new Error("Missing owned parameter projection");
+    const parameters = this.content.equipmentSystem ? this.projectOwnedParameters(member) : definition!;
+    return { ...parameters, id: member.id, side: "player", level: member.level,
+      hp: member.hp, mp: member.mp, maxHp: member.maxHp, maxMp: member.maxMp,
+      conditionIds: [...member.conditionIds],
+      ...(definition ? { conditionResistances: definition.conditionResistances } : {}) };
   }
   get equipmentInventory() {
     const system = this.content.equipmentSystem;
@@ -908,7 +1001,9 @@ export class GameState {
   private previewItem(id: number, targetId: string) {
     this.requireIdle();
     const item = this.content.items[id];
-    const target = this.partyPlayers().find((p) => p.id === targetId);
+    const owned = this.activeParty.some((p) => p.id === targetId)
+      ? this.data.roster.find((p) => p.id === targetId) : undefined;
+    const target = owned ? this.menuParticipant(owned) : undefined;
     if (
       !item ||
       item.important ||
@@ -1021,15 +1116,37 @@ export class GameState {
   }
   battleProgression(
     lease: BattleLease,
-  ): ((player: Combatant) => BattleStatProjection) | undefined {
+    fixtureExperience: BattleContent["experience"] = [],
+  ): ((player: Combatant, amount: number, observedAbilityIds: readonly number[]) => BattleStatProjection & { level: number; exp: number }) | undefined {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     if (!this.content.equipmentSystem) return undefined;
-    return (player) => {
+    return (player, amount, observedAbilityIds) => {
       if (this.active?.lease !== lease) throw new Error("Stale battle lease");
       const owned = this.data.roster.find((p) => p.id === player.id);
       if (!owned || owned.sourceId !== player.sourceId)
         throw new Error("Battle roster identity changed");
-      return this.projectOwnedParameters({ ...owned, level: player.level });
+      integer(amount, this.content.limits.exp);
+      if (owned.growth) {
+        // IsGetExp excludes condition types 5/3/608. Only death (5) is
+        // currently admitted, with HP/condition consistency checked by core.
+        if (player.hp === 0) {
+          if (amount !== 0 || !owned.abilities) throw new Error("Invalid nonrecipient experience award");
+          validateObservedLearning(this.content.characterGrowth![owned.id]!,
+            { abilities: owned.abilities }, observedAbilityIds);
+          return { ...this.projectOwnedParameters(owned), level: owned.level, exp: owned.exp };
+        }
+        const next = this.projectGrowth({ ...owned, hp: player.hp, mp: player.mp,
+          conditionIds: [...player.conditionIds] }, { kind: "add-experience", amount, context: "battle", observedAbilityIds: [...observedAbilityIds] });
+        return { ...this.projectOwnedParameters(next), level: next.level, exp: next.exp };
+      }
+      // Only synthetic profiles without source initialization use this legacy
+      // numerical fixture curve. Source owners require a recovered growth plan.
+      if (this.content.characterInitializations?.[owned.id])
+        throw new Error("Missing source character growth plan");
+      if (!fixtureExperience.length) throw new Error("Missing fixture experience curve");
+      const exp = Math.min(this.content.limits.exp, owned.exp + amount);
+      const level = Math.max(owned.level, fixtureExperience.filter((r) => r.exp <= exp).at(-1)?.level ?? owned.level);
+      return { ...this.projectOwnedParameters({ ...owned, level }), level, exp };
     };
   }
   cancelBattle(lease: BattleLease): void {
@@ -1038,7 +1155,8 @@ export class GameState {
   }
   prepareVictory(
     lease: BattleLease,
-    result: { players: Combatant[]; gil: number; consumedItems: ItemStack[] },
+    result: { players: Combatant[]; gil: number; consumedItems: ItemStack[];
+      awardedExperience?: { id: string; amount: number }[]; observedAbilityIds?: number[] },
   ): () => void {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     const next = this.snapshot(),
@@ -1066,10 +1184,42 @@ export class GameState {
       result.players.some((p, n) => p.id !== party[n]!.id)
     )
       throw new Error("Battle party identity changed");
+    if (result.awardedExperience) {
+      distinct(result.awardedExperience.map((award) => award.id));
+      for (const award of result.awardedExperience) {
+        keys(award, "id,amount");
+        integer(award.amount, this.content.limits.exp);
+      }
+      if (result.awardedExperience.length !== party.length ||
+        result.awardedExperience.some((award) => !party.some((p) => p.id === award.id)))
+        throw new Error("Battle experience identity changed");
+    }
     for (const player of result.players) {
       const target = next.roster.find((p) => p.id === player.id)!;
       if (player.side !== "player" || player.sourceId !== target.sourceId)
         throw new Error("Battle roster identity changed");
+      if (target.growth) {
+        const award = result.awardedExperience?.find((award) => award.id === player.id);
+        if (!award) throw new Error("Missing source experience award");
+        if (!Array.isArray(result.observedAbilityIds)) throw new Error("Missing battle ability observations");
+        distinct(result.observedAbilityIds);
+        result.observedAbilityIds.forEach((id) => integer(id, 0x7fffffff, 1));
+        const resources = { ...target, hp: player.hp, mp: player.mp, conditionIds: [...player.conditionIds] };
+        let projected: OwnedCharacter;
+        if (player.hp === 0) {
+          if (award.amount !== 0 || !target.abilities) throw new Error("Invalid nonrecipient experience award");
+          validateObservedLearning(this.content.characterGrowth![target.id]!,
+            { abilities: target.abilities }, result.observedAbilityIds);
+          projected = resources;
+        } else projected = this.projectGrowth(resources, { kind: "add-experience", amount: award.amount,
+          context: "battle", observedAbilityIds: result.observedAbilityIds });
+        for (const key of ["level", "exp", "maxHp", "maxMp", "hp", "mp"] as const)
+          if (projected[key] !== player[key]) throw new Error("Battle source growth projection mismatch");
+        if (canonical(projected.conditionIds) !== canonical(player.conditionIds))
+          throw new Error("Battle source growth condition mismatch");
+        Object.assign(target, projected);
+        continue;
+      }
       Object.assign(target, {
         hp: player.hp,
         mp: player.mp,

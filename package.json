@@ -60,7 +60,11 @@
     "inventory-ownership:check": "npm run inventory-events:check",
     "field-conditions:check": "npm run battle:build && node scripts/check-field-conditions-native.mjs && node scripts/check-field-conditions.mjs",
     "owned-character:check": "npm run battle:build && node scripts/check-owned-character-native.mjs && node scripts/check-owned-character.mjs",
-    "battle-menu-timing:check": "npm run battle:build && node scripts/check-battle-menu-timing.mjs"
+    "battle-menu-timing:check": "npm run battle:build && node scripts/check-battle-menu-timing.mjs",
+    "character-growth:check": "npm run battle:build && node scripts/check-character-growth-native.mjs && node scripts/check-character-growth.mjs",
+    "party-actors:check": "npm run battle:build && node scripts/check-party-actors-native.mjs && node scripts/check-party-actors.mjs",
+    "transportation:check": "npm run build && node scripts/check-transportation-native.mjs && node scripts/check-transportation.mjs",
+    "systems:check": "npm run game:build && npm run battle:build && node scripts/check-system-integration.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

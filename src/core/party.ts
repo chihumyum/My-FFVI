@@ -1,5 +1,6 @@
 import { checkpointKeys } from "./checkpoint-validation.js";
 import { int32 } from "./script-integer.js";
+import type { PartyActorMember } from "./party-actors.js";
 
 export type PartySlotIndex = 0 | 1 | 2;
 export type PartyPosition = 0 | 1 | 2 | 3;
@@ -51,8 +52,14 @@ export type PartyPreview = {
 export type PartyEventTransaction = {
   readonly activeMembers: ActivePartyMember[];
   readonly refreshActors: boolean;
+  readonly appearance?: PartyAppearanceCandidate;
   /** Reject stale/repeated publication, and publish the prepared state exactly once. */
   commit(): void;
+};
+/** Detached owned identities from the same transaction as the slot mutation. */
+export type PartyAppearanceCandidate = {
+  activeMembers: PartyActorMember[];
+  parties: PartyActorMember[][];
 };
 export interface FieldPartyPort {
   /**
@@ -65,6 +72,8 @@ export interface FieldPartyPort {
 /** Preparation may fail; the returned publication must be synchronous and non-failing. */
 export type PreparePartyPresentation = (
   members: ActivePartyMember[],
+  appearance?: PartyAppearanceCandidate,
+  setDummy?: boolean,
 ) => () => void;
 
 function slotIndex(value: number): PartySlotIndex {
@@ -232,6 +241,7 @@ export function executePartyEvent(
       throw new Error("Party actor refresh is unavailable");
     publishPresentation = preparePresentation(
       structuredClone(transaction.activeMembers),
+      structuredClone(transaction.appearance),
     );
     if (typeof publishPresentation !== "function")
       throw new Error("Invalid party presentation transaction");

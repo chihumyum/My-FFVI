@@ -9,6 +9,11 @@ import { physicalLimitKeys } from "./physical-parameters.js";
 import { parameterLimitKeys } from "./parameters.js";
 import { compileConditionCatalog } from "./conditions.js";
 import { compileOwnedCharacterInitialization } from "./owned-character.js";
+import type { OwnedCharacterInitializationTemplate } from "../core/owned-character.js";
+import { compileCharacterGrowth } from "./character-growth.js";
+import type { CharacterGrowthPlan } from "../core/character-growth.js";
+import { compilePartyActorCatalog } from "./party-actors.js";
+import { compileTransportationCatalog } from "./transportation.js";
 import {
   compileAttackElements,
   compileElementResistances,
@@ -497,12 +502,38 @@ export async function compileOpeningBattle(root: string) {
     counterLimit: 1 as const,
     excludedAbilityIds: excluded as number[],
   };
-  const ownedInitializations = Object.fromEntries(initialParty.map((p) => [
-    p.characterId,
-    compileOwnedCharacterInitialization(
-      { row, matching, group: tableGroup, unique }, tables, p.characterId, (key) => key,
-    ).template,
-  ]));
+  const partyActors = compilePartyActorCatalog(tables, reactionSource.data);
+  for (const dependency of partyActors.dependencies) row(dependency.table, dependency.id);
+  const transportations = compileTransportationCatalog({ row, unique },
+    (tables["transportation.csv"] ?? []).map((r) => tableInteger(r.id))).catalog;
+  // Availability of a template does not grant the character or admit their
+  // battle actions. The same source registry serves any later AddFromMaster.
+  const ownedInitializations: Record<string, OwnedCharacterInitializationTemplate> = {};
+  const ownedInitializationBlockers: { sourceId: number; reason: string }[] = [];
+  for (const character of tables["character_status.csv"] ?? []) {
+    const sourceId = tableInteger(character.id);
+    try {
+      ownedInitializations[sourceId] = compileOwnedCharacterInitialization(
+        { row, matching, group: tableGroup, unique }, tables, sourceId, (key) => key,
+      ).template;
+    } catch (error) {
+      if (initialParty.some((p) => p.characterId === sourceId)) throw error;
+      ownedInitializationBlockers.push({ sourceId,
+        reason: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  const characterGrowth: Record<string, CharacterGrowthPlan> = {};
+  const characterGrowthBlockers: { sourceId: number; reason: string }[] = [];
+  for (const template of Object.values(ownedInitializations)) {
+    const sourceId = template.initial.sourceId;
+    try {
+      characterGrowth[sourceId] = compileCharacterGrowth({ row, unique }, tables, template).plan;
+    } catch (error) {
+      if (initialParty.some((p) => p.characterId === sourceId)) throw error;
+      characterGrowthBlockers.push({ sourceId,
+        reason: error instanceof Error ? error.message : String(error) });
+    }
+  }
   const result = {
     formatVersion: 1 as const,
     kind: "battle-source-data" as const,
@@ -516,6 +547,11 @@ export async function compileOpeningBattle(root: string) {
     encounters,
     initialParty,
     ownedInitializations,
+    ownedInitializationBlockers,
+    characterGrowth,
+    characterGrowthBlockers,
+    partyActors: partyActors.catalog,
+    transportations,
     magitekAbilityIds: magitek.map((a) => tableInteger(a.values.id)),
     battleAbilityIds: [...abilityIds].sort((a, b) => a - b),
     atb,

@@ -48,7 +48,7 @@ async function readCandidate(path) {
 const tables = JSON.parse(snapshotFile(importFiles, "tables.json"));
 const manifest = JSON.parse(snapshotFile(importFiles, "project.json"));
 const battleExport = JSON.parse(snapshotFile(battleFiles, "battle.json"));
-assert.equal(catalog.common.profile, "narshe-playability-v18");
+assert.equal(catalog.common.profile, "narshe-playability-v19");
 assert.equal(source.parentSourceSetHash, manifest.sourceSetHash);
 assert.equal(source.sourceSetHash, battleExport.sourceSetHash);
 assert.equal(battleExport.parentSourceSetHash, manifest.sourceSetHash);
@@ -240,6 +240,13 @@ function boundaryCatalog(maxHp) {
         "Boundary requires no extra HP provider",
       );
     context.parameters.base.hp = maxHp;
+    const template = candidate.gameState.characterInitializations?.[player.id];
+    if (template) {
+      template.parameterContext.parameters.base.hp = maxHp;
+      template.initial.hp = maxHp;
+      template.initial.maxHp = maxHp;
+      template.confirmed.hp = maxHp;
+    }
   }
   const { contentHash: _, ...payload } = candidate;
   candidate.contentHash = hash(payload);

@@ -1,30 +1,31 @@
 // Local source tests never grant equipment to the published game bootstrap.
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
-import { readSnapshot, snapshotFile } from "../dist/src/compiler/integrity.js";
-import { battleTableIndex } from "../dist/src/compiler/battle.js";
-import {
-  compileEquipmentCatalog,
-  compileEquipmentParameterContext,
-} from "../dist/src/compiler/equipment.js";
-import {
-  equipmentSlotAllowed,
-  previewEquipmentChange,
-  projectEquipmentParameters,
-} from "../dist/src/core/equipment.js";
-import { GameState } from "../dist/src/core/game-state.js";
-import { hash } from "../dist/src/compiler/content.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolve } from "node:path";
+const root = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
+const outDirFlag = process.argv.includes("--compiled-dir") ? "--compiled-dir" : "--dist";
+const outDirIndex = process.argv.indexOf(outDirFlag);
+const outDir = outDirIndex < 0 ? "dist" : process.argv[outDirIndex + 1];
+if (!outDir || outDir.startsWith("--")) throw new Error("Missing compiled output directory");
+const module = (path) => import(pathToFileURL(resolve(root, outDir, "src", path + ".js")).href);
+const { readSnapshot, snapshotFile } = await module("compiler/integrity");
+const { battleTableIndex } = await module("compiler/battle");
+const { compileEquipmentCatalog, compileEquipmentParameterContext } = await module("compiler/equipment");
+const { equipmentSlotAllowed, previewEquipmentChange, projectEquipmentParameters } = await module("core/equipment");
+const { GameState } = await module("core/game-state");
+const { hash } = await module("compiler/content");
 
-const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const imported = await readSnapshot(root + "/build/import");
 const battle = JSON.parse(
   snapshotFile(await readSnapshot(root + "/build/battle"), "battle.json"),
 );
 const tables = JSON.parse(snapshotFile(imported, "tables.json"));
 const reader = battleTableIndex(tables, battle.tableSources);
-const catalog = JSON.parse(
-  await readFile(root + "/build/game/opening-playable.json", "utf8"),
-);
+const catalogIndex = process.argv.indexOf("--catalog");
+const catalogPath = catalogIndex < 0 ? "build/game/opening-playable.json" : process.argv[catalogIndex + 1];
+if (!catalogPath || catalogPath.startsWith("--")) throw new Error("Missing catalog path");
+const catalog = JSON.parse(await readFile(resolve(root, catalogPath), "utf8"));
 const { contentHash, ...catalogInput } = catalog;
 assert.equal(hash(catalogInput), contentHash);
 const system = catalog.gameState.equipmentSystem;
@@ -32,7 +33,8 @@ assert.ok(system);
 const contentIds = tables["content.csv"]
   .filter((r) => ["2", "3"].includes(r.type_id))
   .map((r) => Number(r.id));
-const characterIds = catalog.common.players.map((p) => p.sourceId);
+const characterIds = Object.values(catalog.gameState.characterInitializations).map((t) => t.initial.sourceId);
+assert.equal(characterIds.length, 18);
 const providers = Object.fromEntries(
   characterIds.map((id) => [
     id,
@@ -102,6 +104,7 @@ const make = () =>
   );
 const owned = make(),
   initial = owned.snapshot();
+assert.equal(initial.formatVersion, 6);
 assert.deepEqual(initial.equipmentStock, [
   { id: 95, count: 1 },
   { id: 104, count: 2 },
@@ -174,9 +177,17 @@ const lease = owned.openBattle(3),
   beforeBattle = owned.snapshot();
 assert.throws(() => owned.changeEquipment("player:1", 1, 93), /reserved/);
 assert.deepEqual(owned.snapshot(), beforeBattle);
-const grown = owned.battlePlayers(lease)[0];
-grown.level += 2;
-const growthProjection = owned.battleProgression(lease)(grown);
+const battlePlayers = owned.battlePlayers(lease);
+const grown = battlePlayers[0];
+const growthPlan = catalog.gameState.characterGrowth[grown.id];
+const targetLevel = grown.level + 2;
+const awarded = growthPlan.experience.find((row) => row.level === targetLevel).totalExp - grown.exp;
+assert.ok(awarded > 0);
+const progression = owned.battleProgression(lease);
+const growthProjection = progression(grown, awarded, []);
+Object.assign(grown, growthProjection);
+for (const player of battlePlayers.slice(1)) Object.assign(player, progression(player, 0, []));
+assert.equal(grown.level, targetLevel);
 const growthGroup = catalog.common.players[0].growthGroup;
 const increments = system.growth[growthGroup].filter(
   (g) => g.level > initial.roster[0].level && g.level <= grown.level,
@@ -190,18 +201,39 @@ assert.equal(
   growthProjection.maxMp,
   initial.roster[0].maxMp + increments.reduce((n, g) => n + g.mp, 0),
 );
-owned.cancelBattle(lease);
+assert.deepEqual(owned.snapshot(), beforeBattle, "growth projection must not mutate the owner");
+const result = {
+  players: battlePlayers,
+  gil: 0,
+  consumedItems: [],
+  awardedExperience: battlePlayers.map((player) => ({ id: player.id, amount: player.id === grown.id ? awarded : 0 })),
+  observedAbilityIds: [],
+};
+const { awardedExperience, ...withoutAwards } = result;
+assert.throws(() => owned.prepareVictory(lease, withoutAwards), /experience award/);
+const { observedAbilityIds, ...withoutObservations } = result;
+assert.throws(() => owned.prepareVictory(lease, withoutObservations), /ability observations/);
+const wrongGrowth = structuredClone(result);
+wrongGrowth.players[0].level++;
+assert.throws(() => owned.prepareVictory(lease, wrongGrowth), /growth projection/);
+assert.deepEqual(owned.snapshot(), beforeBattle);
+const commitVictory = owned.prepareVictory(lease, result);
+assert.deepEqual(owned.snapshot(), beforeBattle, "victory preparation keeps EXP, gear and receipts private");
+commitVictory();
 const grownSave = owned.snapshot();
-Object.assign(grownSave.roster[0], {
-  additionalLevel:
-    grownSave.roster[0].additionalLevel +
-    grown.level -
-    grownSave.roster[0].level,
-  level: grown.level,
-  maxHp: growthProjection.maxHp,
-  maxMp: growthProjection.maxMp,
-});
-owned.restore(grownSave);
+assert.equal(grownSave.roster[0].growth.additionalExp, beforeBattle.roster[0].growth.additionalExp + awarded);
+assert.equal(grownSave.roster[0].level, targetLevel);
+assert.equal(grownSave.roster[0].exp, grown.exp);
+assert.equal(grownSave.roster[0].hp, beforeBattle.roster[0].hp);
+assert.equal(grownSave.roster[0].mp, beforeBattle.roster[0].mp);
+assert.deepEqual(grownSave.equipmentStock, beforeBattle.equipmentStock);
+assert.deepEqual(grownSave.learnedAbilityIds, beforeBattle.learnedAbilityIds);
+assert.deepEqual(grownSave.completedBattles, [...beforeBattle.completedBattles, { ...lease }]);
+assert.throws(commitVictory, /Stale victory/);
+assert.deepEqual(owned.snapshot(), grownSave, "a repeated reward cannot award EXP twice");
+restored.restore(JSON.parse(JSON.stringify(grownSave)));
+assert.deepEqual(restored.snapshot(), grownSave);
+assert.deepEqual(restored.partyPlayers(), owned.partyPlayers());
 owned.changeEquipment("player:1", 1, 93);
 owned.changeEquipment("player:1", 1, 104);
 assert.deepEqual(owned.snapshot(), grownSave);
@@ -271,6 +303,9 @@ const report = {
   slotChecks,
   transferred,
   growthProjection,
+  growthTransaction: { awardedExperience, observedAbilityIds, levels: 2, after: grownSave,
+    prepareAtomic: true, rejectedUnboundAwards: true, rejectedUnboundObservations: true,
+    duplicateCommitRejected: true, restoredEquipmentProjection: true },
   controlledPreviews,
   blocked: definitions
     .filter((d) => d.blockers.length)

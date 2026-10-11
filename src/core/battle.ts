@@ -116,6 +116,7 @@ export class BattleGame {
   readonly items: Record<string, ItemDefinition>;
   private stock: ItemStack[];
   private consumedItems: ItemStack[] = [];
+  private observedAbilityIds: number[] = [];
   constructor(
     readonly content: BattleContent,
     seed: number,
@@ -123,11 +124,13 @@ export class BattleGame {
     inventory: BattleInventory = { definitions: {}, stacks: [], limit: 99 },
     private readonly projectProgression?: (
       player: Combatant,
-    ) => BattleStatProjection,
+      amount: number,
+      observedAbilityIds: readonly number[],
+    ) => BattleStatProjection & { level: number; exp: number },
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v18"
+      content.profile !== "narshe-playability-v19"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -758,6 +761,7 @@ export class BattleGame {
       poison: structuredClone(this.poisonStates),
       stock: structuredClone(this.stock),
       consumedItems: structuredClone(this.consumedItems),
+      observedAbilityIds: [...this.observedAbilityIds],
       events: [...this.events],
       time: this.time,
       random: this.randomState,
@@ -776,6 +780,7 @@ export class BattleGame {
       this.poisonStates = before.poison;
       this.stock = before.stock;
       this.consumedItems = before.consumedItems;
+      this.observedAbilityIds = before.observedAbilityIds;
       this.events.splice(0, this.events.length, ...before.events);
       this.time = before.time;
       this.randomState = before.random;
@@ -1099,7 +1104,8 @@ export class BattleGame {
         const used = this.consumedItems.find((i) => i.id === action.source.id);
         if (used) used.count++;
         else this.consumedItems.push({ id: action.source.id, count: 1 });
-      }
+      } else if (!this.observedAbilityIds.includes(action.source.id))
+        this.observedAbilityIds.push(action.source.id);
       actor.mp -= ability.cost;
       for (const next of poison) this.poisonStates.set(next.id, next.state);
       for (const entry of staged) {
@@ -1163,26 +1169,23 @@ export class BattleGame {
       each = Math.trunc(exp / Math.max(1, recipients.length));
     const levels: BattleReward["levels"] = [];
     for (const c of recipients) {
-      c.exp += each;
-      const from = c.level,
-        level =
+      const from = c.level;
+      if (this.projectProgression) {
+        Object.assign(c, this.projectProgression(structuredClone(c), each, [...this.observedAbilityIds]));
+        c.hp = Math.min(c.hp, c.maxHp);
+        c.mp = Math.min(c.mp, c.maxMp);
+      } else {
+        c.exp += each;
+        const level =
           this.content.experience.filter((l) => l.exp <= c.exp).at(-1)?.level ??
           c.level;
-      for (let next = c.level + 1; next <= level; next++) {
-        const growth = this.content.growth[c.growthGroup!]?.find(
-          (g) => g.level === next,
-        );
-        if (!growth) throw new Error("Missing level growth dependency");
-        if (!this.projectProgression) {
+        for (let next = c.level + 1; next <= level; next++) {
+          const growth = this.content.growth[c.growthGroup!]?.find((g) => g.level === next);
+          if (!growth) throw new Error("Missing level growth dependency");
           c.maxHp = Math.min(9999, c.maxHp + growth.hp);
           c.maxMp = Math.min(999, c.maxMp + growth.mp);
         }
-      }
-      c.level = Math.max(c.level, level);
-      if (this.projectProgression) {
-        Object.assign(c, this.projectProgression(structuredClone(c)));
-        c.hp = Math.min(c.hp, c.maxHp);
-        c.mp = Math.min(c.mp, c.maxMp);
+        c.level = Math.max(c.level, level);
       }
       c.conditionIds = this.conditions.updateDying(
         c.hp,
@@ -1191,6 +1194,10 @@ export class BattleGame {
       );
       if (c.level !== from) levels.push({ id: c.id, from, to: c.level });
     }
+    // Native nonrecipients still run observation learning, independently of
+    // StatusUp. The owned provider preserves their existing growth exactly.
+    if (this.projectProgression) for (const c of players.filter((p) => p.hp === 0))
+      Object.assign(c, this.projectProgression(structuredClone(c), 0, [...this.observedAbilityIds]));
     for (const player of players)
       Object.assign(
         this.combatants.find((c) => c.id === player.id)!,
@@ -1219,6 +1226,8 @@ export class BattleGame {
     players: Combatant[];
     gil: number;
     consumedItems: ItemStack[];
+    awardedExperience: { id: string; amount: number }[];
+    observedAbilityIds: number[];
   } | null {
     if (this.phase !== "victory" || !this.reward || this.collected) return null;
     return {
@@ -1228,6 +1237,9 @@ export class BattleGame {
         queued: false,
       })),
       gil: this.reward.gil,
+      observedAbilityIds: [...this.observedAbilityIds],
+      awardedExperience: this.players.map((p) => ({ id: p.id,
+        amount: this.reward!.recipients.includes(p.id) ? this.reward!.each : 0 })),
       consumedItems: structuredClone(this.consumedItems).sort(
         (a, b) => a.id - b.id,
       ),
@@ -1237,6 +1249,8 @@ export class BattleGame {
     players: Combatant[];
     gil: number;
     consumedItems: ItemStack[];
+    awardedExperience: { id: string; amount: number }[];
+    observedAbilityIds: number[];
   } | null {
     const result = this.previewVictory();
     if (result) this.collected = true;

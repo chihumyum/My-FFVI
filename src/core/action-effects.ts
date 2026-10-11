@@ -5,15 +5,28 @@ import {
 } from "./ability.js";
 import { calculateRevivalEffects, revivalEffects } from "./battle-revival.js";
 import type { BattleConditions } from "./battle-conditions.js";
-import type { Combatant } from "./battle.js";
+
+/** Effects need numerical and condition state, not a battle renderer, command
+ * queue or encounter definition. Owned characters can use menu items before a
+ * battle presentation has been admitted for them. */
+export type ActionParticipant = Parameters<typeof calculateDevelopmentEffects>[2] &
+  Parameters<typeof calculateDevelopmentEffects>[3] & {
+    id: string;
+    hp: number;
+    mp: number;
+    maxHp: number;
+    maxMp: number;
+    conditionIds: number[];
+    conditionResistances?: Record<string, number>;
+  };
 
 /** A pure target projection shared by battle and owned-state item use. The
  * caller admits targets/cost, stages every target, then commits the whole action. */
 export function projectActionTarget(
   plan: DevelopmentAbilityPlan,
   power: number,
-  actor: Combatant,
-  target: Combatant,
+  actor: ActionParticipant,
+  target: ActionParticipant,
   conditions: BattleConditions,
   random: (min: number, max: number) => number,
   targetCount: number,
@@ -50,11 +63,13 @@ export function projectActionTarget(
     first &&
     (first.kind === "add-condition" || first.kind === "recover-condition")
   ) {
+    if (first.kind === "add-condition" && !target.conditionResistances)
+      throw new Error("Missing action target condition resistances");
     const change =
       first.kind === "add-condition"
         ? conditions.add(
             target.conditionIds,
-            target.conditionResistances,
+            target.conditionResistances!,
             first.conditionId,
             {
               accuracy: first.accuracy,

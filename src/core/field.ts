@@ -16,7 +16,10 @@ import {
   executeInventoryEvent,
   type FieldInventoryPort,
 } from "./inventory-event.js";
-import { executePartyEvent, type FieldPartyPort } from "./party.js";
+import { executePartyEvent, type FieldPartyPort, type PartyAppearanceCandidate } from "./party.js";
+import type { PartyActorCatalog } from "./party-actors.js";
+import { FieldPartyActors, type FieldPartyActorCheckpoint } from "./field-party-actors.js";
+import { missingFieldPoses } from "./character-media.js";
 import { executeRosterLifecycleEvent, type FieldRosterPort } from "./roster.js";
 import type { FieldConditionPort } from "./field-conditions.js";
 import { requireMinimapMedia } from "./minimap.js";
@@ -84,12 +87,13 @@ export type Actor = Point & {
   animation: ActorAnimation | null;
 };
 export type FieldCheckpoint = {
-  kind: "idle-field-v2";
+  kind: "idle-field-v3";
   contentHash: string;
   time: number;
   remainder: number;
   nextTask: number;
   transportationId: number | null;
+  partyActors: FieldPartyActorCheckpoint | null;
   eventState: EventStateSnapshot;
   activeGroups: string[];
   hiddenEntities: string[];
@@ -141,6 +145,7 @@ export type FieldGameOptions = {
   party?: FieldPartyPort;
   roster?: FieldRosterPort;
   fieldSteps?: FieldConditionPort;
+  partyAppearance?: { catalog: PartyActorCatalog; current(): PartyAppearanceCandidate };
   /** Read the current owned-state draft; unsupported step effects must not disappear. */
   movementBlocker?: (transportationId: number | null, manual: boolean) => string | null;
 };
@@ -148,6 +153,7 @@ const contains = (e: FieldEntity, p: Point) =>
   p.x >= e.x && p.x < e.x + e.width && p.y >= e.y && p.y < e.y + e.height;
 export class FieldGame {
   readonly transportationId: number | null;
+  private readonly partyActors: FieldPartyActors | null;
   readonly tileAnimations: TileAnimationState;
   readonly openTriggers: OpenTriggerState;
   readonly collisionRange: CollisionRange;
@@ -230,6 +236,13 @@ export class FieldGame {
       animation: this.initialAnimation(p.asset, p.direction, p.mount),
     };
     Object.assign(this.actors, this.createActors(this.entityList));
+    this.partyActors = content.entry.partyActors && options.partyAppearance
+      ? new FieldPartyActors(options.partyAppearance.catalog, content.entry.partyActors, this.transportationId) : null;
+    if (this.partyActors) {
+      const media = this.partyActors.playerMedia();
+      if (media.asset !== this.player.asset || media.mount !== (this.player.mount || null))
+        throw new Error("Field entry does not match source player appearance");
+    }
     this.tileAnimations.register(this.entityList);
     this.openTriggers.initialize(this.entityList, this.player);
   }
@@ -293,6 +306,25 @@ export class FieldGame {
   get player(): Actor {
     return this.actors["-1001"]!;
   }
+  get partyActorCheckpoint(): FieldPartyActorCheckpoint | null {
+    return this.partyActors?.checkpoint() ?? null;
+  }
+  private requirePlayerMedia(asset: string, mount: string | null): void {
+    for (const [id, riding] of [[asset, !!mount], ...(mount ? [[mount, false]] : [])] as [string, boolean][]) {
+      const missing = missingFieldPoses(this.content.characters[id], riding);
+      if (missing.length) throw new Error(`Missing party appearance media ${id}/${missing.join(",")}`);
+    }
+  }
+  private preparePartyAppearance(appearance: PartyAppearanceCandidate | undefined, setDummy = true): () => void {
+    if (!this.partyActors || !appearance) throw new Error("Party actor refresh is unavailable");
+    return this.partyActors.prepare(appearance, ({ asset, mount }) => {
+      const actor = this.player;
+      if (actor.motion) throw new Error("Party appearance refresh during player movement is not supported");
+      this.requirePlayerMedia(asset, mount);
+      const animation = this.initialAnimation(asset, actor.direction, mount);
+      return () => { Object.assign(actor, { asset, mount, animation }); };
+    }, setDummy);
+  }
   get busy(): boolean {
     return (
       this.tasks.some((t) => !t.done) ||
@@ -314,12 +346,13 @@ export class FieldGame {
     if (!this.checkpointReady)
       throw new Error("Cannot save during field movement or an event");
     return {
-      kind: "idle-field-v2",
+      kind: "idle-field-v3",
       contentHash: this.content.contentHash,
       time: this.time,
       remainder: this.remainder,
       nextTask: this.nextTask,
       transportationId: this.transportationId,
+      partyActors: this.partyActorCheckpoint,
       eventState: this.eventState.snapshot(),
       activeGroups: [...this.activeGroups],
       hiddenEntities: [...this.hiddenEntities],
@@ -344,9 +377,9 @@ export class FieldGame {
     const s = structuredClone(raw);
     checkpointKeys(
       s,
-      "kind,contentHash,time,remainder,nextTask,transportationId,eventState,activeGroups,hiddenEntities,actors,tiles,doors,bgm,environment",
+      "kind,contentHash,time,remainder,nextTask,transportationId,partyActors,eventState,activeGroups,hiddenEntities,actors,tiles,doors,bgm,environment",
     );
-    if (s.kind !== "idle-field-v2" || s.contentHash !== content.contentHash ||
+    if (s.kind !== "idle-field-v3" || s.contentHash !== content.contentHash ||
       s.transportationId !== (content.entry.transportationId ?? null))
       throw new Error("Field checkpoint source/version mismatch");
     checkpointNumber(s.time);
@@ -366,6 +399,13 @@ export class FieldGame {
       throw new Error("Initial field groups changed in checkpoint");
     for (const id of s.activeGroups.slice(initial.length))
       next.activateGroup(id);
+    if (next.partyActors) {
+      if (!s.partyActors) throw new Error("Missing saved party appearances");
+      next.partyActors.restore(s.partyActors);
+      const media = next.partyActors.playerMedia();
+      next.requirePlayerMedia(media.asset, media.mount);
+      Object.assign(next.player, media);
+    } else if (s.partyActors !== null) throw new Error("Unbound saved party appearances");
     checkpointIds(s.hiddenEntities);
     if (s.hiddenEntities.some((id) => !next.hasEntity(id)))
       throw new Error("Unknown hidden saved entity");
@@ -1015,7 +1055,14 @@ export class FieldGame {
         switch (op.kind) {
           case "roster":
             try {
-              executeRosterLifecycleEvent(op, this.options.roster);
+              // AffectLeaderWithCondition returns immediately only when this
+              // source Format explicitly disables KeepBadStatusVisual. Its
+              // other branch needs an additional native entity handoff.
+              if (op.command.kind === "join" && op.command.recovery &&
+                  this.content.scriptSystemFlags?.[t.script]?.keepBadStatusVisual !== false)
+                throw new Error("Roster recovery condition-visual context is unavailable");
+              executeRosterLifecycleEvent(op, this.options.roster,
+                (_members, appearance, setDummy) => this.preparePartyAppearance(appearance, setDummy));
             } catch (error) {
               this.block(
                 error instanceof Error ? error.message : String(error),
@@ -1026,7 +1073,8 @@ export class FieldGame {
             break;
           case "party":
             try {
-              executePartyEvent(op, this.options.party);
+              executePartyEvent(op, this.options.party,
+                (_members, appearance, setDummy) => this.preparePartyAppearance(appearance, setDummy));
             } catch (error) {
               this.block(
                 error instanceof Error ? error.message : String(error),

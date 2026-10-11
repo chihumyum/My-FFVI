@@ -706,7 +706,7 @@
       "id": "narshe:source-poison-transport-identity",
       "subject": "narshe",
       "predicate": "source.fieldPoisonTransportation",
-      "value": "Field MoveEndAction runs condition damage only for current transport type 1. RideVehicleNPC changes rider presentation without proving currentTransport identity; the Magitek mount and operand 6 must not infer transport 6 or poison immunity. Source ordinary condition row 10 uses maxHP/32 integer damage, keeps living HP at least 1, and executes before destination events. The opening transport selection remains unknown.",
+      "value": "Field MoveEndAction runs condition damage only for current transport type 1. RideVehicleNPC changes rider presentation without proving currentTransport identity; the Magitek mount and operand 6 must not infer transport 6 or poison immunity. Source ordinary condition row 10 uses maxHP/32 integer damage, keeps living HP at least 1, and executes before destination events. The opening development checkpoint is now independently bound to transport 6/type 12 by the actual 609 -> 572 -> 3 prelude, so it skips ordinary poison steps. The earlier unresolved selection has been closed by additional source evidence, not by the mount image.",
       "when": {
         "conditionId": 10
       },
@@ -716,7 +716,27 @@
         "GameAssembly.dll:RVA 0x7da810 MoveEndAction; 0x407ff0 GetPoisonDamageValue; 0x337810 SubtractionHp; 0x2cb0c0 RideVehicleNPC",
         "condition.csv:10.damage_number",
         "transportation.csv:type_id",
-        "docs/field-conditions.md"
+        "docs/field-conditions.md",
+        "docs/transportation.md"
+      ]
+    },
+    {
+      "id": "narshe:development-owned-systems-v19",
+      "subject": "narshe",
+      "predicate": "implementation.systems.v19",
+      "value": "Development v19 integrates 18 ordinary source owner/growth templates, source CorrectLevel additional experience, natural level learning, candidate-owned party appearance and checkpoint actor identities. Actual initial owners remain 1/31/32; controlled owner 2 joins at level5/EXP400/HP48-max102 without auto-healing and cannot battle without its definition. Source prelude 609/572/3 binds transport6/type12 and nested actor outer38/riders1,31,31. FullRecovery implies setDummy=false refresh; only explicit current-script KeepBadStatusVisual=0 bypasses another native entity handoff. Missing media and invalid checkpoints fail atomically. Owned v6, field/world v3 and session v2 preserve these boundaries. 526 TS and18 Python tests,30 source groups/39 commands,11 controlled integration scenarios,5 existing encounters/40 restores pass. 131 world entrances are a separate geometry-only mechanism with native-party host explicitly omitted; formal actor map initialization remains blocked. Browser latest opening move/pause/equipment/save availability pass without writing user saves. No story expansion, HD2D or full migration acceptance; static native evidence is not dynamic parity.",
+      "when": {
+        "battleProfile": "narshe-playability-v19"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "docs/systems-v19.md",
+        "docs/character-growth.md",
+        "docs/party-actors.md",
+        "docs/transportation.md",
+        "build/reports/systems-v19-validation.json",
+        "scripts/check-system-integration.mjs"
       ]
     }
   ],

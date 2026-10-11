@@ -12,6 +12,12 @@ import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
 import { bindTileAnimationRegions } from "./tile-animation.js";
 import { compileInventoryEvent } from "./inventory-event.js";
 import { compilePartyEvent } from "./party.js";
+import { loadSystemSource } from "./system-source.js";
+import { compileTransportationCatalog, compileNarsheTransportationCheckpoint } from "./transportation.js";
+import { compilePartyActorCatalog, compileNarshePartyActorCheckpoint } from "./party-actors.js";
+import { compileOwnedCharacterInitialization } from "./owned-character.js";
+import { compileInitialPartyState } from "./party.js";
+import { activePartyMembers } from "../core/party.js";
 import {
   compileRosterLifecycleEvent,
   rosterLifecycleSelectors,
@@ -62,6 +68,17 @@ export function decodeScriptLocals(raw: unknown): ScriptLocals | null {
         ? null
         : list(data.ScriptLocalValue).map(int32),
   };
+}
+
+/** Only the visual-preservation flag is consumed by the admitted recovery path.
+ * Other Format flags remain separate capabilities, never inferred defaults. */
+export function decodeConditionVisualFlag(raw: unknown): { keepBadStatusVisual: boolean } | null {
+  const flags = record(raw).SystemFlag;
+  if (flags == null) return null;
+  const value = record(flags).KeepBadStatusVisual;
+  if (value === undefined) return null;
+  if (value !== 0 && value !== 1) throw new Error("Unresolved source KeepBadStatusVisual flag");
+  return { keepBadStatusVisual: value === 1 };
 }
 
 /** Unsupported parameter forms survive as executable stops, never no-ops. */
@@ -559,6 +576,7 @@ export async function compileField(root: string): Promise<FieldContent> {
     throw new Error("Ambiguous active entity identity");
   const scripts: Record<string, Op[]> = {};
   const scriptLocals: Record<string, ScriptLocals | null> = {};
+  const scriptSystemFlags: NonNullable<FieldContent["scriptSystemFlags"]> = {};
   for (const [path, a] of Object.entries(assets)) {
     const d = record(a.data);
     if (!Array.isArray(d.Mnemonics)) continue;
@@ -567,6 +585,7 @@ export async function compileField(root: string): Promise<FieldContent> {
       .at(-1)!
       .replace(/\.json$/, "");
     scriptLocals[name] = decodeScriptLocals(d);
+    scriptSystemFlags[name] = decodeConditionVisualFlag(d);
     scripts[name] = d.Mnemonics.map((m, index) =>
       decodeFieldOp(
         m,
@@ -616,6 +635,26 @@ export async function compileField(root: string): Promise<FieldContent> {
     .map(record)
     .filter((row) => row.map_name === project.narshe.mapName);
   if (mapRows.length !== 1) throw new Error("Ambiguous opening map identity");
+  const systemSource = await loadSystemSource(root, project.sourceSetHash);
+  const transportationCatalog = compileTransportationCatalog(systemSource.reader,
+    systemSource.tables["transportation.csv"]!.map((r) => tableId(r.id))).catalog;
+  const transportation = compileNarsheTransportationCheckpoint(transportationCatalog, systemSource.assets);
+  const miscSources = systemSource.assets.filter((a) => a.source.assetPath.endsWith("/serial_misc_assets.json"));
+  if (miscSources.length !== 1) throw new Error("Missing or ambiguous party appearance source settings");
+  const partyCatalog = compilePartyActorCatalog(systemSource.tables, miscSources[0]!.data).catalog;
+  const initialOwners = systemSource.tables["initialize_data.csv"]!
+    .filter((r) => /^INIT_PARTY_\d+$/.test(r.key_name!)).map((r) => {
+      const template = compileOwnedCharacterInitialization(systemSource.reader, systemSource.tables,
+        tableId(r.value1), (key) => key).template;
+      return { id: `player:${template.initial.sourceId}`, ...template.initial, enabled: true };
+    });
+  const initialParty = compileInitialPartyState(systemSource.tables, initialOwners).state;
+  const partyCheckpoint = compileNarshePartyActorCheckpoint(partyCatalog, systemSource.assets,
+    activePartyMembers(initialParty).map((member) => {
+      const owner = initialOwners.find((p) => p.id === member.id)!;
+      return { ...member, sourceId: owner.sourceId, jobId: owner.jobId,
+        enabled: owner.enabled, conditionIds: [...owner.conditionIds] };
+    }));
   const result: Omit<FieldContent, "contentHash"> = {
     formatVersion: 1,
     kind: "field-development",
@@ -637,6 +676,7 @@ export async function compileField(root: string): Promise<FieldContent> {
       entities,
       groups,
       initialGroups: activeGroups,
+      partyActorCamera: partyCheckpoint.context.camera,
       source: asset("tilemap").source,
     },
     characters: chars,
@@ -649,8 +689,12 @@ export async function compileField(root: string): Promise<FieldContent> {
     ),
     scripts,
     scriptLocals,
+    scriptSystemFlags,
     entry: {
       absentHideTargets,
+      transportationId: transportation.identity.id,
+      partyActors: { kind: "field-party-actors-v1", context: partyCheckpoint.context,
+        playerAssetCacheId: partyCheckpoint.playerAssetCacheId },
       player: {
         x: 38,
         y: 49,
@@ -659,10 +703,11 @@ export async function compileField(root: string): Promise<FieldContent> {
         asset: "mo_ff6_p001",
         mount: "mo_ff6_v006_c00",
       },
-      evidence: [29, 47, 63, 116].map((i) => ({
+      evidence: [...transportation.scripts.map((s) => s.source),
+        ...partyCheckpoint.sourceProof.entityGroups.map((s) => s.source), ...[29, 47, 63, 116].map((i) => ({
         ...asset("sc_e_0001_5").source,
         pointer: `/Mnemonics/${i}`,
-      })),
+      }))],
       description: "开场行军之后的开发入口；开场影片和完整初始化尚未接入。",
     },
     limitations: [

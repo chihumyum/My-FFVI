@@ -1,24 +1,31 @@
-// Real selectors on the existing opening owners; callback probes are not rendered gameplay.
+// Real selectors on controlled shared ownership; callback probes are not rendered gameplay.
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { loadCorpus } from "../dist/src/compiler/corpus.js";
-import { compileOpeningBattle } from "../dist/src/compiler/battle.js";
-import { compileOpeningPlayable } from "../dist/src/compiler/opening-playable.js";
-import {
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolve } from "node:path";
+const root = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
+const outDirFlag = process.argv.includes("--compiled-dir") ? "--compiled-dir" : "--dist";
+const outDirIndex = process.argv.indexOf(outDirFlag);
+const outDir = outDirIndex < 0 ? "dist" : process.argv[outDirIndex + 1];
+if (!outDir || outDir.startsWith("--")) throw new Error("Missing compiled output directory");
+const module = (path) => import(pathToFileURL(resolve(root, outDir, "src", path + ".js")).href);
+const { loadCorpus } = await module("compiler/corpus");
+const { compileOpeningBattle } = await module("compiler/battle");
+const { compileOpeningPlayable } = await module("compiler/opening-playable");
+const {
   compileInitialRosterLifecycle,
   compileRosterLifecycleEvent,
   rosterLifecycleSelectors,
-} from "../dist/src/compiler/roster.js";
-import { decodeFieldOp } from "../dist/src/compiler/field.js";
-import { hash } from "../dist/src/compiler/content.js";
-import { EventState } from "../dist/src/core/event-state.js";
-import { FieldGame } from "../dist/src/core/field.js";
-import { GameState } from "../dist/src/core/game-state.js";
-import { executeRosterLifecycleEvent } from "../dist/src/core/roster.js";
-import { activePartyMembers } from "../dist/src/core/party.js";
+} = await module("compiler/roster");
+const { decodeFieldOp } = await module("compiler/field");
+const { hash } = await module("compiler/content");
+const { EventState } = await module("core/event-state");
+const { FieldGame } = await module("core/field");
+const { GameState } = await module("core/game-state");
+const { executeRosterLifecycleEvent } = await module("core/roster");
+const { activePartyMembers } = await module("core/party");
+const { firstJoinLevelAdjustments } = await module("core/character-growth");
 
-const root = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const corpus = await loadCorpus(root);
 const native = JSON.parse(
   await readFile(
@@ -46,12 +53,15 @@ const make = () =>
     catalog.common.conditions,
   );
 const initial = make().snapshot();
-assert.equal(initial.formatVersion, 5);
+assert.equal(initial.formatVersion, 6);
 const { dependencies, ...initialMetadata } = compileInitialRosterLifecycle(
   corpus.tables,
   initial.roster,
 );
-assert.deepEqual(catalog.gameState.rosterLifecycle, initialMetadata);
+const { firstJoinLevelAdjustments: compiledAdjustments, ...publishedInitialMetadata } = catalog.gameState.rosterLifecycle;
+assert.deepEqual(publishedInitialMetadata, initialMetadata);
+assert.deepEqual(compiledAdjustments, firstJoinLevelAdjustments);
+assert.equal(Object.keys(catalog.gameState.characterInitializations).length, 18);
 assert.deepEqual(initial.releasedJobIds, [1]);
 assert.deepEqual(
   initial.roster.map((r) => [
@@ -119,6 +129,7 @@ const decoded = [],
   blockedSelectors = [],
   actualHostBlockers = [],
   controlledPublications = [],
+  dynamicOwnedPublications = [],
   missingOwnedProviders = [];
 for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
   for (const [index, raw] of asset.data.Mnemonics.entries()) {
@@ -163,11 +174,13 @@ for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
     const member = before.roster.find(
       (m) => m.sourceId === op.command.sourceId,
     );
-    if (!member) {
+    const template = Object.values(catalog.gameState.characterInitializations)
+      .find((t) => t.initial.sourceId === op.command.sourceId);
+    if (!member && (op.command.kind === "secede" || !template)) {
       assert.throws(
         () =>
           executeRosterLifecycleEvent(op, owned.fieldRoster, () => () => {}),
-        /owned-character initialization|unowned character/,
+        /character initialization|unowned character/,
       );
       assert.deepEqual(owned.snapshot(), before);
       missingOwnedProviders.push({
@@ -189,10 +202,10 @@ for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
       };
     });
     const after = owned.snapshot(),
-      target = after.roster.find((m) => m.id === member.id);
+      target = after.roster.find((m) => m.sourceId === op.command.sourceId);
     assert.deepEqual(presented, activePartyMembers(after.party));
     assert.deepEqual(
-      after.roster.map((m) => [m.id, m.sourceId, m.ownedId]),
+      after.roster.slice(0, before.roster.length).map((m) => [m.id, m.sourceId, m.ownedId]),
       before.roster.map((m) => [m.id, m.sourceId, m.ownedId]),
     );
     assert.deepEqual(after.items, before.items);
@@ -228,11 +241,32 @@ for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
       assert.equal(after.releasedJobIds.includes(member.jobId), false);
     } else {
       assert.equal(target.enabled, true);
-      assert.deepEqual(after.party, before.party);
-      assert.deepEqual(after.equipmentStock, before.equipmentStock);
-      assert.ok(after.releasedJobIds.includes(member.jobId));
+      if (member) {
+        assert.equal(after.roster.length, before.roster.length);
+        assert.deepEqual(after.party, before.party);
+        assert.deepEqual(after.equipmentStock, before.equipmentStock);
+      } else {
+        assert.equal(target.sourceId, 2);
+        assert.equal(target.ownedId, 4);
+        assert.equal(target.level, 5);
+        assert.equal(target.exp, 400);
+        assert.equal(target.hp, template.initial.hp);
+        assert.equal(target.mp, template.initial.mp);
+        assert.equal(after.roster.length, before.roster.length + 1);
+        assert.deepEqual(after.party.slots[0][3], { id: target.id, row: "front" });
+        assert.deepEqual(after.learnedAbilityIds, [...before.learnedAbilityIds, 229]);
+        assert.deepEqual(after.characterNames, { ...before.characterNames, ROCK: target.name });
+        for (const stack of after.equipmentStock) {
+          const extra = template.initial.equipment.filter((id) =>
+            id === stack.id && !catalog.gameState.equipmentSystem.catalog.definitions[id].empty).length;
+          assert.equal(stack.count, (before.equipmentStock.find((s) => s.id === stack.id)?.count ?? 0) + extra);
+        }
+        dynamicOwnedPublications.push({ site, selector, sourceId: target.sourceId, ownedId: target.ownedId,
+          level: target.level, hp: target.hp, maxHp: target.maxHp, ownedHash: hash(after) });
+      }
+      assert.ok(after.releasedJobIds.includes(target.jobId));
       for (const owner of after.roster)
-        assert.ok(owner.ownedJobs.some((j) => j.id === member.jobId));
+        assert.ok(owner.ownedJobs.some((j) => j.id === target.jobId));
     }
     const restored = make();
     restored.restore(JSON.parse(JSON.stringify(after)));
@@ -249,30 +283,35 @@ for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
 assert.equal(decoded.length, 19);
 assert.equal(blockedSelectors.length, 103);
 assert.equal(actualHostBlockers.length, 19);
-assert.equal(controlledPublications.length, 10);
-assert.equal(missingOwnedProviders.length, 9);
+assert.equal(controlledPublications.length + missingOwnedProviders.length, decoded.length);
+assert.equal(controlledPublications.length, 18);
+assert.equal(dynamicOwnedPublications.length, 8);
+assert.equal(missingOwnedProviders.length, 1);
 const report = {
   lane: "source-roster-lifecycle-controlled-ownership",
   sourceSetHash: corpus.sourceSetHash,
   catalogHash: catalog.contentHash,
   nativeReportHash: hash(native),
   initialMetadata,
+  firstJoinLevelAdjustments: compiledAdjustments,
   dependencies,
   summary: {
     decodedSourceInstructions: decoded.length,
     blockedSourceInstructions: blockedSelectors.length,
     actualFieldHostBlockers: actualHostBlockers.length,
     controlledCallbackPublications: controlledPublications.length,
+    controlledNewOwnerPublications: dynamicOwnedPublications.length,
     missingOwnedProviders: missingOwnedProviders.length,
   },
   decoded,
   blockedSelectors,
   actualHostBlockers,
   controlledPublications,
+  dynamicOwnedPublications,
   missingOwnedProviders,
   doesNotEstablish: [
     "complete-new-owned-initialization",
-    "source-growth-and-learning",
+    "all-source-growth-and-learning-providers",
     "rendered-actor-refresh",
     "story-reachability",
     "original-game-execution",
