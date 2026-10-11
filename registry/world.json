@@ -302,6 +302,25 @@
         "build/reports/physical-check.json#6242d078dd85e466d1db4412874f1887cf58900abbb9572f2c8d6e139806f39c",
         "docs/physical-calculation.md"
       ]
+    },
+    {
+      "id": "narshe:development-multi-target-actions",
+      "subject": "narshe",
+      "predicate": "migration.multiTargetActions",
+      "value": "Development v7 shares typed single/side/all requests, impact-time target selection, per-target effects, one action cost and rollback of numerical state and RNG on a later target failure. Source ability 345 passes controlled one/two-target actions and browser UI with independent 41/46 damage. Position groups, death/revival eligibility, reflection, confusion, full AI and original parity remain incomplete. No new story command or region is unlocked.",
+      "when": {
+        "battleProfile": "narshe-playability-v7"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x3d58c0 BattleTargetSelectUtility",
+        "GameAssembly.dll:RVA 0x8fde20 ExtractTarget",
+        "GameAssembly.dll:RVA 0x3da4d0 GetTargetNum",
+        "ability.csv:345",
+        "build/reports/battle-target-check.json#57d3537c3bdd7585e71a812f6c8d50b8d395caf4a4d8a3a64dccc83b02b65b60",
+        "docs/battle-targets.md"
+      ]
     }
   ],
   "assets": []

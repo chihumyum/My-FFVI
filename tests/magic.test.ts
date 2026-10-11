@@ -134,7 +134,13 @@ test("numerical effect adapter passes an actual miss through instead of spending
   const effects = calculateDevelopmentEffects(
     {
       effects: [{ slot: 3, kind: "magic" }],
-      target: "enemy",
+      targeting: {
+        relation: "enemy",
+        modes: ["single"],
+        defaultMode: "single",
+        defaultRelation: "enemy",
+        normalFormationOnly: false,
+      },
       physical: null,
       magic: i.rules,
     },

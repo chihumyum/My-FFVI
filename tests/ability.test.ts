@@ -104,7 +104,7 @@ test("dispatch follows type references and preserves third slot after an empty s
     { slot: 1, kind: "recovery", resource: "hp", calculation: "fixed" },
     { slot: 3, kind: "recovery", resource: "mp", calculation: "fixed" },
   ]);
-  assert.equal(plan.target, "either");
+  assert.equal(plan.targeting.relation, "either");
 });
 test("a supported first effect cannot hide an unknown later function or process", () => {
   const f = fixture();
@@ -121,7 +121,7 @@ test("a supported first effect cannot hide an unknown later function or process"
 });
 test("unknown scope, selector, condition, series and parameter values never inherit support", () => {
   for (const [column, value] of [
-    ["battle_renge_id", "6"],
+    ["battle_renge_id", "13"],
     ["accuracy_rate", "128"],
     ["content_flag_group_id", "11"],
     ["attribute_group_id", "999"],
@@ -228,7 +228,13 @@ test("the whole effect plan is preflighted before any RNG or partial calculation
             { slot: 1, kind: "magic" },
             { slot: 2, kind: "physical" },
           ],
-          target: "enemy",
+          targeting: {
+            relation: "enemy",
+            modes: ["single"],
+            defaultMode: "single",
+            defaultRelation: "enemy",
+            normalFormationOnly: false,
+          },
           physical: null,
           magic: { accuracy: 100, contentFlags: [], forceDefense: false },
         },

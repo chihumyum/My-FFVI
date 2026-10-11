@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { BattleGame } from "../src/core/battle.js";
+import { compileTargetRule } from "../src/compiler/battle-targets.js";
 import type {
   BattleContent,
   CombatantDefinition,
@@ -36,7 +37,7 @@ function fixture(): BattleContent {
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v6",
+    profile: "narshe-playability-v7",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -105,7 +106,13 @@ function fixture(): BattleContent {
         },
         plan: {
           effects: [{ slot: 1, kind: "magic" }],
-          target: "enemy",
+          targeting: {
+            relation: "enemy",
+            modes: ["single"],
+            defaultMode: "single",
+            defaultRelation: "enemy",
+            normalFormationOnly: false,
+          },
           physical: null,
           magic: { accuracy: 100, contentFlags: [1], forceDefense: false },
         },
@@ -136,7 +143,13 @@ function fixture(): BattleContent {
           effects: [
             { slot: 1, kind: "recovery", resource: "hp", calculation: "magic" },
           ],
-          target: "ally",
+          targeting: {
+            relation: "ally",
+            modes: ["single"],
+            defaultMode: "single",
+            defaultRelation: "ally",
+            normalFormationOnly: false,
+          },
           physical: null,
           magic: { accuracy: 100, contentFlags: [1], forceDefense: false },
         },
@@ -195,7 +208,13 @@ function fixture(): BattleContent {
         },
         plan: {
           effects: [{ slot: 1, kind: "physical" }],
-          target: "either",
+          targeting: {
+            relation: "either",
+            modes: ["single"],
+            defaultMode: "single",
+            defaultRelation: "enemy",
+            normalFormationOnly: false,
+          },
           physical: {
             normalAttack: true,
             multiplyPercent: null,
@@ -249,7 +268,13 @@ function conditionFixture() {
     name: "Recover",
     wait: 0,
     plan: {
-      target: "either",
+      targeting: {
+        relation: "either",
+        modes: ["single"],
+        defaultMode: "single",
+        defaultRelation: "enemy",
+        normalFormationOnly: false,
+      },
       physical: null,
       magic: null,
       effects: [{ slot: 1, kind: "recover-condition", conditionIds: [301] }],
@@ -261,7 +286,13 @@ function conditionFixture() {
     name: "Silence",
     wait: 0,
     plan: {
-      target: "either",
+      targeting: {
+        relation: "either",
+        modes: ["single"],
+        defaultMode: "single",
+        defaultRelation: "enemy",
+        normalFormationOnly: false,
+      },
       physical: null,
       magic: null,
       effects: [
@@ -408,7 +439,7 @@ test("the selected command stays attached to an action and is checked again at r
   assert.equal(b.action?.commandId, 102);
   b.players[0]!.conditionIds = [301];
   b.advance(500);
-  assert.deepEqual(b.action?.effects, []);
+  assert.deepEqual(b.action?.results, []);
   assert.equal(b.enemies[0]!.hp, 10);
 });
 test("unknown active states and compound status plans never partially spend MP or apply effects", () => {
@@ -438,7 +469,13 @@ test("compound recovery commits both resources once and consumes one action cost
   const a = f.abilities[11]!;
   a.power = 50;
   a.plan = {
-    target: "self",
+    targeting: {
+      relation: "self",
+      modes: ["single"],
+      defaultMode: "single",
+      defaultRelation: "ally",
+      normalFormationOnly: false,
+    },
     physical: null,
     magic: null,
     effects: [
@@ -529,4 +566,165 @@ test("enemy actions can defeat the party; defeat never grants victory or rewards
   assert.equal(b.reward, null);
   assert.equal(b.takeVictory(), null);
   assert.ok(b.players.every((p) => p.hp === 0));
+});
+
+test("group actions reselect living members at impact, and one remaining target gets full damage", () => {
+  const f = fixture();
+  f.abilities[10]!.plan!.targeting = compileTargetRule(6, 3)!;
+  f.abilities[10]!.cost = 2;
+  for (const enemy of f.enemies) enemy.hp = 2000;
+  const run = (group: boolean, parts: number[]) => {
+    const b = new BattleGame(f, 71);
+    assert.equal(
+      b.command("a", 10, group ? { kind: "side", side: "enemy" } : "e1"),
+      true,
+    );
+    b.advance(10);
+    b.enemies[1]!.hp = 0; // Target disappears after selection, before impact.
+    for (const part of parts) b.advance(part);
+    assert.deepEqual(b.action!.targetIds, ["e1"]);
+    assert.equal(b.players[0]!.mp, 6);
+    assert.equal(b.enemies[1]!.hp, 0);
+    return b;
+  };
+  const all = run(true, [400]);
+  assert.deepEqual(all.action!.results, run(false, [400]).action!.results);
+  assert.deepEqual(all.combatants, run(true, Array(40).fill(10)).combatants);
+  assert.deepEqual(all.action!.selection, { kind: "side", side: "enemy" });
+});
+
+test("multi-target numerical actions use the staged count and cannot bypass scope restrictions", () => {
+  const f = fixture();
+  f.abilities[10]!.plan!.targeting = compileTargetRule(4, 3)!;
+  f.abilities[10]!.cost = 2;
+  for (const enemy of f.enemies) enemy.hp = 2000;
+  const run = (parts: number[]) => {
+    const b = new BattleGame(f, 31);
+    assert.equal(b.command("a", 10, "e1"), false); // All-only is not a single attack.
+    assert.equal(b.command("a", 10, { kind: "side", side: "player" }), false);
+    const selection = { kind: "side" as const, side: "enemy" as const };
+    assert.equal(b.command("a", 10, selection), true);
+    assert.equal(b.command("a", 10, selection), false);
+    for (const part of parts) b.advance(part);
+    assert.equal(b.players[0]!.mp, 6);
+    assert.deepEqual(
+      b.action!.results.map((r) => r.target),
+      ["e1", "e2"],
+    );
+    for (const result of b.action!.results) {
+      const effect = result.effects[0]!;
+      assert.equal(effect.resource, "hp");
+      if (effect.resource === "hp")
+        assert.ok(effect.amount > 40 && effect.amount < 80);
+    }
+    return b;
+  };
+  assert.deepEqual(run([500]).combatants, run(Array(50).fill(10)).combatants);
+});
+
+test("a later target failure rolls back every result, resource and random draw", () => {
+  const f = fixture();
+  f.abilities[10]!.plan!.targeting = compileTargetRule(4, 3)!;
+  f.abilities[10]!.cost = 2;
+  for (const enemy of f.enemies) enemy.hp = 2000;
+  const setup = () => {
+    const b = new BattleGame(f, 9);
+    assert.equal(b.command("a", 10, { kind: "side", side: "enemy" }), true);
+    b.advance(10);
+    return b;
+  };
+  const b = setup();
+  const before = b.combatants.map((c) => ({
+    id: c.id,
+    hp: c.hp,
+    mp: c.mp,
+    conditionIds: c.conditionIds,
+  }));
+  const events = structuredClone(b.events);
+  b.enemies[1]!.magicDefense = 256;
+  assert.throws(() => b.advance(400), /outside supported/);
+  assert.deepEqual(
+    b.combatants.map((c) => ({
+      id: c.id,
+      hp: c.hp,
+      mp: c.mp,
+      conditionIds: c.conditionIds,
+    })),
+    before,
+  );
+  assert.deepEqual(b.events, events);
+  assert.deepEqual(b.action!.results, []);
+  assert.equal(b.action!.resolved, false);
+  b.enemies[1]!.magicDefense = 30;
+  b.advance(10);
+  const control = setup();
+  control.advance(410);
+  assert.deepEqual(b.action!.results, control.action!.results);
+  assert.deepEqual(b.combatants, control.combatants);
+});
+
+test("all-party compound recovery applies cost once before self MP recovery", () => {
+  const f = fixture();
+  const a = f.abilities[11]!;
+  a.power = 50;
+  a.plan = {
+    targeting: compileTargetRule(2, 1)!,
+    physical: null,
+    magic: null,
+    effects: [
+      { slot: 1, kind: "recovery", resource: "hp", calculation: "fixed" },
+      { slot: 3, kind: "recovery", resource: "mp", calculation: "fixed" },
+    ],
+  };
+  const b = new BattleGame(f, 1);
+  for (const player of b.players) {
+    player.hp = 1;
+    player.maxMp = 100;
+  }
+  assert.equal(b.command("a", 11, { kind: "side", side: "player" }), true);
+  b.advance(500);
+  assert.deepEqual(
+    b.players.map((p) => [p.hp, p.mp]),
+    [
+      [51, 56],
+      [51, 58],
+    ],
+  );
+  assert.equal(b.action!.results.length, 2);
+  b.advance(390);
+  assert.deepEqual(
+    b.players.map((p) => [p.hp, p.mp]),
+    [
+      [51, 56],
+      [51, 58],
+    ],
+  );
+});
+
+test("group status effects keep individual resistance and recover individual identities", () => {
+  const f = conditionFixture();
+  f.abilities[15]!.plan!.targeting = compileTargetRule(4, 5)!;
+  f.abilities[14]!.plan!.targeting = compileTargetRule(4, 1)!;
+  f.enemies[1]!.conditionResistances = { 301: 1 };
+  const b = new BattleGame(f, 19);
+  assert.equal(b.command("a", 15, { kind: "side", side: "enemy" }, 101), true);
+  b.advance(500);
+  assert.deepEqual(
+    b.enemies.map((e) => e.conditionIds),
+    [[301], []],
+  );
+  assert.deepEqual(
+    b.action!.results.map((r) => r.effects[0]!.missed),
+    [false, true],
+  );
+  assert.equal(b.players[0]!.mp, 6);
+  b.advance(410);
+  b.players[0]!.atb = 100;
+  assert.equal(b.command("a", 14, { kind: "side", side: "enemy" }, 101), true);
+  b.advance(500);
+  assert.deepEqual(
+    b.enemies.map((e) => e.conditionIds),
+    [[], []],
+  );
+  assert.equal(b.players[0]!.mp, 4);
 });

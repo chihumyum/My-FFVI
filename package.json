@@ -39,6 +39,7 @@
     "battle-conditions:check": "npm run battle:build && node scripts/check-battle-conditions.mjs",
     "magic:check": "npm run build && node scripts/check-magic.mjs",
     "physical:check": "npm run build && node scripts/check-physical.mjs",
+    "battle-targets:check": "npm run battle:build && node scripts/check-battle-targets.mjs",
     "playable:check": "npm run game:build && npm run battle:build && node scripts/check-playable.mjs"
   },
   "dependencies": {

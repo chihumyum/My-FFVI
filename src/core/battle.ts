@@ -4,6 +4,13 @@ import {
 } from "./ability.js";
 import { atbIncrement } from "./atb.js";
 import {
+  battleTargetChoices,
+  resolveBattleTargets,
+  sameTargetSelection,
+  type TargetChoice,
+  type TargetSelection,
+} from "./battle-targets.js";
+import {
   BattleConditions,
   conditionsAllowAction,
 } from "./battle-conditions.js";
@@ -21,13 +28,14 @@ export type Combatant = CombatantDefinition & {
 };
 export type BattleAction = {
   actor: string;
-  target: string;
+  selection: TargetSelection;
+  targetIds: string[];
   ability: number;
   commandId: number | null;
   charge: number;
   elapsed: number;
   resolved: boolean;
-  effects: AbilityEffectResult[];
+  results: { target: string; effects: AbilityEffectResult[] }[];
 };
 export type BattleReward = {
   exp: number;
@@ -61,7 +69,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v6"
+      content.profile !== "narshe-playability-v7"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -149,7 +157,9 @@ export class BattleGame {
       !ability?.plan ||
       !actor.abilities.includes(abilityId) ||
       actor.hp <= 0 ||
-      actor.mp < ability.cost
+      actor.mp < ability.cost ||
+      (ability.plan.targeting.normalFormationOnly &&
+        this.content.formation !== "normal")
     )
       return false;
     this.conditions.validateActive(actor.conditionIds);
@@ -183,7 +193,7 @@ export class BattleGame {
     this.events.push({ time: this.time, text });
     if (this.events.length > 80) this.events.shift();
   }
-  targets(actorId: string, abilityId: number): Combatant[] {
+  targetChoices(actorId: string, abilityId: number): TargetChoice[] {
     const actor = this.combatants.find((c) => c.id === actorId),
       ability = this.content.abilities[abilityId];
     if (
@@ -198,22 +208,26 @@ export class BattleGame {
       ability.plan.effects.some((e) => e.kind === "physical")
     )
       return [];
-    const target = ability.plan.target;
-    return this.combatants.filter(
-      (t) =>
-        t.hp > 0 &&
-        (target === "self"
-          ? t.id === actor.id
-          : target === "either" ||
-            (target === "ally"
-              ? t.side === actor.side
-              : t.side !== actor.side)),
+    return battleTargetChoices(
+      ability.plan.targeting,
+      actor,
+      this.combatants,
+      this.content.formation,
     );
+  }
+  /** Single-unit candidates for existing callers. Group requests must use an
+   * explicit selection so a one-member group never silently becomes single. */
+  targets(actorId: string, abilityId: number): Combatant[] {
+    return this.targetChoices(actorId, abilityId)
+      .filter((choice) => choice.selection.kind === "single")
+      .map(
+        (choice) => this.combatants.find((c) => c.id === choice.targetIds[0])!,
+      );
   }
   command(
     actorId: string,
     abilityId: number,
-    targetId: string,
+    target: string | TargetSelection,
     commandId?: number | null,
   ): boolean {
     if (this.phase !== "active") return false;
@@ -223,14 +237,19 @@ export class BattleGame {
       !actor ||
       !ability ||
       !ability.plan ||
-      !this.canUse(actorId, abilityId, commandId) ||
-      !this.targets(actorId, abilityId).some((t) => t.id === targetId)
+      !this.canUse(actorId, abilityId, commandId)
     )
       return false;
+    const selection: TargetSelection =
+      typeof target === "string" ? { kind: "single", id: target } : target;
+    const choice = this.targetChoices(actorId, abilityId).find((c) =>
+      sameTargetSelection(c.selection, selection),
+    );
+    if (!choice) return false;
     this.enqueue(
       actor,
       ability,
-      targetId,
+      choice,
       this.actionCommand(actor, abilityId, commandId)!,
     );
     return true;
@@ -238,13 +257,14 @@ export class BattleGame {
   private enqueue(
     actor: Combatant,
     ability: AbilityDefinition,
-    target: string,
+    choice: TargetChoice,
     commandId: number | null = null,
   ) {
     actor.queued = true;
     this.queue.push({
       actor: actor.id,
-      target,
+      selection: structuredClone(choice.selection),
+      targetIds: [...choice.targetIds],
       ability: ability.id,
       commandId,
       charge:
@@ -253,7 +273,7 @@ export class BattleGame {
           : 0,
       elapsed: 0,
       resolved: false,
-      effects: [],
+      results: [],
     });
   }
   advance(ms: number) {
@@ -299,8 +319,7 @@ export class BattleGame {
           }),
       );
       if (c.side === "enemy" && c.atb >= 100) {
-        const targets = this.players.filter((p) => p.hp > 0);
-        if (!targets.length) break;
+        if (!this.players.some((p) => p.hp > 0)) break;
         const total = c.ai.reduce((sum, a) => sum + a.weight, 0);
         let roll = this.randomInt(1, total),
           choice = c.ai.at(-1)!;
@@ -318,10 +337,17 @@ export class BattleGame {
           ability.plan.effects[0]!.kind !== "physical"
         )
           throw new Error("Unsupported enemy AI action");
+        const choices = this.targetChoices(c.id, ability.id).filter(
+          (choice) =>
+            choice.selection.kind === "single" &&
+            this.players.some((p) => p.id === choice.targetIds[0]),
+        );
+        if (!choices.length)
+          throw new Error("Unsupported enemy AI target selection");
         this.enqueue(
           c,
           ability,
-          targets[this.randomInt(0, targets.length - 1)]!.id,
+          choices[this.randomInt(0, choices.length - 1)]!,
         );
       }
     }
@@ -335,17 +361,20 @@ export class BattleGame {
         this.log(`${actor.name} 的行动已失效。`);
         return;
       }
-      const targets = this.targets(actor.id, action.ability);
-      if (!targets.some((t) => t.id === action.target)) {
-        // Revalidate at execution. Dead enemies never absorb another queued attack.
-        if (!targets.length) {
-          actor.queued = false;
-          actor.atb = 0;
-          this.checkOutcome();
-          return;
-        }
-        action.target = targets[0]!.id;
+      const choice = resolveBattleTargets(
+        action.selection,
+        this.targetChoices(actor.id, action.ability),
+        this.combatants,
+        (min, max) => this.randomInt(min, max),
+      );
+      if (!choice) {
+        actor.queued = false;
+        actor.atb = 0;
+        this.checkOutcome();
+        return;
       }
+      action.selection = choice.selection;
+      action.targetIds = choice.targetIds;
       this.action = action;
       this.log(
         `${actor.name} · ${this.content.abilities[action.ability]!.name}`,
@@ -354,94 +383,132 @@ export class BattleGame {
     this.checkOutcome();
   }
   private resolve(action: BattleAction) {
-    const actor = this.combatants.find((c) => c.id === action.actor)!,
-      target = this.combatants.find((c) => c.id === action.target)!;
+    const actor = this.combatants.find((c) => c.id === action.actor)!;
     const ability = this.content.abilities[action.ability]!;
     if (action.resolved) return;
     if (!ability.plan) throw new Error("Unimplemented ability cannot execute");
-    if (
-      !this.canUse(actor.id, ability.id, action.commandId) ||
-      target.hp <= 0
-    ) {
+    if (!this.canUse(actor.id, ability.id, action.commandId)) {
       action.resolved = true;
       return;
     }
-    this.conditions.validateActive(target.conditionIds);
-    const first = ability.plan.effects[0];
-    let nextConditions = [...target.conditionIds];
-    let effects: AbilityEffectResult[];
-    if (
-      ability.plan.effects.length === 1 &&
-      first &&
-      (first.kind === "add-condition" || first.kind === "recover-condition")
-    ) {
-      const change =
-        first.kind === "add-condition"
-          ? this.conditions.add(
-              target.conditionIds,
-              target.conditionResistances,
-              first.conditionId,
-              {
-                accuracy: first.accuracy,
-                magicEvasion: target.magicEvasion,
-                fixed: first.fixedHit,
-              },
-              (min, max) => this.randomInt(min, max),
-            )
-          : this.conditions.recover(target.conditionIds, first.conditionIds);
-      nextConditions = change.currentIds;
-      effects = [
-        {
-          slot: first.slot,
-          resource: "condition",
-          recovery: first.kind === "recover-condition",
-          added: change.added,
-          removed: change.removed,
-          missed: change.missed,
-        },
-      ];
-    } else
-      effects = calculateDevelopmentEffects(
-        ability.plan,
-        ability.power,
-        actor,
-        target,
+    const randomBefore = this.randomState;
+    try {
+      const choice = resolveBattleTargets(
+        action.selection,
+        this.targetChoices(actor.id, ability.id),
+        this.combatants,
         (min, max) => this.randomInt(min, max),
       );
-    // All effects were preflighted and computed. Commit cost once, then source order.
-    actor.mp -= ability.cost;
-    target.conditionIds = nextConditions;
-    for (const effect of effects) {
-      if (effect.missed) {
-        this.log(
-          effect.resource === "condition"
-            ? `${target.name} 的状态未改变。`
-            : `${target.name} 闪避了攻击。`,
-        );
-        continue;
+      if (!choice) {
+        action.targetIds = [];
+        action.resolved = true;
+        return;
       }
-      if (effect.resource === "condition") {
-        for (const id of effect.added)
-          this.log(`${target.name} 陷入${this.conditions.name(id)}。`);
-        for (const id of effect.removed)
-          this.log(`${target.name} 的${this.conditions.name(id)}已解除。`);
-        continue;
+      const first = ability.plan.effects[0];
+      const staged = choice.targetIds.map((id) => {
+        const target = this.combatants.find((c) => c.id === id)!;
+        this.conditions.validateActive(target.conditionIds);
+        let conditionIds = [...target.conditionIds];
+        let effects: AbilityEffectResult[];
+        if (
+          ability.plan!.effects.length === 1 &&
+          first &&
+          (first.kind === "add-condition" || first.kind === "recover-condition")
+        ) {
+          const change =
+            first.kind === "add-condition"
+              ? this.conditions.add(
+                  target.conditionIds,
+                  target.conditionResistances,
+                  first.conditionId,
+                  {
+                    accuracy: first.accuracy,
+                    magicEvasion: target.magicEvasion,
+                    fixed: first.fixedHit,
+                  },
+                  (min, max) => this.randomInt(min, max),
+                )
+              : this.conditions.recover(
+                  target.conditionIds,
+                  first.conditionIds,
+                );
+          conditionIds = change.currentIds;
+          effects = [
+            {
+              slot: first.slot,
+              resource: "condition",
+              recovery: first.kind === "recover-condition",
+              added: change.added,
+              removed: change.removed,
+              missed: change.missed,
+            },
+          ];
+        } else {
+          effects = calculateDevelopmentEffects(
+            ability.plan!,
+            ability.power,
+            actor,
+            target,
+            (min, max) => this.randomInt(min, max),
+            choice.targetIds.length,
+          );
+        }
+        // Include the one action cost before any MP recovery to the actor.
+        const state = {
+          hp: target.hp,
+          mp: target.mp - (target === actor ? ability.cost : 0),
+          conditionIds,
+        };
+        const messages: string[] = [];
+        for (const effect of effects) {
+          if (effect.missed) {
+            messages.push(
+              effect.resource === "condition"
+                ? `${target.name} 的状态未改变。`
+                : `${target.name} 闪避了攻击。`,
+            );
+          } else if (effect.resource === "condition") {
+            for (const id of effect.added)
+              messages.push(`${target.name} 陷入${this.conditions.name(id)}。`);
+            for (const id of effect.removed)
+              messages.push(
+                `${target.name} 的${this.conditions.name(id)}已解除。`,
+              );
+          } else {
+            const resource = effect.resource;
+            state[resource] = effect.recovery
+              ? Math.min(
+                  resource === "hp" ? target.maxHp : target.maxMp,
+                  state[resource] + effect.amount,
+                )
+              : Math.max(0, state[resource] - effect.amount);
+            messages.push(
+              effect.recovery
+                ? `${target.name} 恢复 ${effect.amount} ${resource.toUpperCase()}。`
+                : `${target.name} 受到 ${effect.amount} 点伤害。`,
+            );
+          }
+        }
+        return { target, state, effects, messages };
+      });
+      // One transaction: no HP, MP, conditions, results or logs change until
+      // every target succeeds. The owned random stream also rolls back on error.
+      actor.mp -= ability.cost;
+      for (const entry of staged) {
+        Object.assign(entry.target, entry.state);
+        for (const message of entry.messages) this.log(message);
       }
-      const resource = effect.resource;
-      target[resource] = effect.recovery
-        ? Math.min(
-            resource === "hp" ? target.maxHp : target.maxMp,
-            target[resource] + effect.amount,
-          )
-        : Math.max(0, target[resource] - effect.amount);
-      this.log(
-        effect.recovery
-          ? `${target.name} 恢复 ${effect.amount} ${resource.toUpperCase()}。`
-          : `${target.name} 受到 ${effect.amount} 点伤害。`,
-      );
+      action.selection = choice.selection;
+      action.targetIds = choice.targetIds;
+      action.results = staged.map((entry) => ({
+        target: entry.target.id,
+        effects: entry.effects,
+      }));
+      action.resolved = true;
+    } catch (error) {
+      this.randomState = randomBefore;
+      throw error;
     }
-    action.effects = effects;
-    action.resolved = true;
   }
 
   private checkOutcome() {

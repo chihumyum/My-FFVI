@@ -12,6 +12,7 @@ import type {
 } from "../core/ability.js";
 import type { AbilityDefinition } from "../core/battle-content.js";
 import { compileContentFlags } from "./content-flags.js";
+import { compileTargetRule } from "./battle-targets.js";
 
 type Reader = ConditionReader;
 /** SerialBattleUtility 0x85e170; type and ID arrays recovered from 0x85f000.
@@ -260,10 +261,12 @@ export function compileDevelopmentAbility(
     limitations.push(
       "reflection unavailable: no-reflect development state required",
     );
-  const target = ({ 1: "ally", 3: "enemy", 5: "self", 7: "either" } as const)[
-    program.range as 1 | 3 | 5 | 7
-  ];
-  if (!target) blockers.push(`unresolved battle range ${program.range}`);
+  const targeting = compileTargetRule(program.range, r.system_id!);
+  if (!targeting) blockers.push(`unresolved battle range ${program.range}`);
+  if (targeting?.normalFormationOnly)
+    limitations.push(
+      "selectable side scope requires normal formation; position groups remain blocked",
+    );
   const power = int(a.standard_value),
     cost = int(a.use_value),
     wait = int(a.ability_wait),
@@ -287,13 +290,13 @@ export function compileDevelopmentAbility(
     blockers.push("unresolved native condition ability override");
   if (magicOnly)
     limitations.push(
-      "reviewed neutral magic arithmetic; no accessory, critical, counter-stat or weapon modifiers; single-target action only",
+      "reviewed neutral magic arithmetic; no accessory, critical, counter-stat or weapon modifiers",
     );
   const plan: DevelopmentAbilityPlan | null = blockers.length
     ? null
     : {
         effects,
-        target: target!,
+        targeting: targeting!,
         physical: physicalOnly
           ? {
               normalAttack: isSourceNormalAttack(abilityId, r.type_id!),

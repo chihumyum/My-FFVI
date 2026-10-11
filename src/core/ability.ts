@@ -10,6 +10,7 @@ import {
   type MagicRules,
   type MagicParticipant,
 } from "./magic.js";
+import type { TargetRule } from "./battle-targets.js";
 /** Decoded source dispatch, separate from the bounded playability executor. */
 export type AbilityFunction = {
   slot: number;
@@ -46,7 +47,7 @@ export type AbilityEffect =
     };
 export type DevelopmentAbilityPlan = {
   effects: AbilityEffect[];
-  target: "ally" | "enemy" | "self" | "either";
+  targeting: TargetRule;
   physical: PhysicalRules | null;
   magic: MagicRules | null;
 };
@@ -88,7 +89,16 @@ export function calculateDevelopmentEffects(
     magicEvasion: number;
   },
   randomInt: (min: number, max: number) => number,
+  targetCount = 1,
 ): NumericalEffectResult[] {
+  if (
+    !Number.isInteger(targetCount) ||
+    targetCount < 1 ||
+    !Number.isInteger(power) ||
+    power < 0 ||
+    power > 0x7fffffff
+  )
+    throw new Error("Invalid ability calculation input");
   // Preflight every effect before consuming even the first random value.
   for (const effect of plan.effects) {
     if (
@@ -107,7 +117,7 @@ export function calculateDevelopmentEffects(
       power,
       actor: { ...actor.physical, side: actor.side, level: actor.level },
       target,
-      targetCount: 1,
+      targetCount,
     };
   };
   if (plan.effects.some((e) => e.kind === "physical"))
@@ -130,7 +140,7 @@ export function calculateDevelopmentEffects(
           actor,
           target,
           recovery: effect.kind === "recovery",
-          targetCount: 1,
+          targetCount,
         });
   }
   return plan.effects.map((effect): NumericalEffectResult => {
@@ -153,7 +163,7 @@ export function calculateDevelopmentEffects(
           actor,
           target,
           recovery: effect.kind === "recovery",
-          targetCount: 1,
+          targetCount,
         },
         randomInt,
       );

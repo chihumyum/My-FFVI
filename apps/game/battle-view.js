@@ -160,7 +160,7 @@ export class BattleView {
     }
     const targets =
       actor && this.ability !== null
-        ? battle.targets(actor.id, this.ability)
+        ? battle.targetChoices(actor.id, this.ability)
         : [];
     const key = JSON.stringify([
       this.selected,
@@ -168,7 +168,7 @@ export class BattleView {
       this.commandId,
       options,
       battle.ready.map((p) => p.id),
-      targets.map((t) => t.id),
+      targets,
     ]);
     label($("battle-action"), battle.events.at(-1)?.text ?? "");
     if (key === this.key) return;
@@ -211,11 +211,20 @@ export class BattleView {
         if (!a.plan) button.title = "此能力尚未接入";
       }
     else {
-      for (const t of targets) {
-        const ordinal =
-          t.side === "enemy" ? ` ${battle.enemies.indexOf(t) + 1}` : "";
-        add(t.name + ordinal, false, () => {
-          if (battle.command(actor.id, this.ability, t.id, this.commandId)) {
+      for (const choice of targets) {
+        const selection = choice.selection;
+        const t = battle.combatants.find((c) => c.id === choice.targetIds[0]);
+        const text =
+          selection.kind === "all"
+            ? `敌我全体（${choice.targetIds.length}）`
+            : selection.kind === "side"
+              ? `${selection.side === "player" ? "我方" : "敌方"}全体（${choice.targetIds.length}）`
+              : t.name +
+                (t.side === "enemy" ? ` ${battle.enemies.indexOf(t) + 1}` : "");
+        add(text, false, () => {
+          if (
+            battle.command(actor.id, this.ability, selection, this.commandId)
+          ) {
             this.ability = null;
             this.selected = null;
             this.key = "";
@@ -268,8 +277,9 @@ export class BattleView {
       const aimingRight =
         actor.side === "player" &&
         a?.actor === actor.id &&
+        a.targetIds.length > 0 &&
         this.position(
-          battle.combatants.find((t) => t.id === a.target),
+          battle.combatants.find((t) => t.id === a.targetIds[0]),
           battle,
         ).x > x;
       if (rightSide || aimingRight) {
@@ -307,53 +317,57 @@ export class BattleView {
     }
     if (a) {
       const from = this.position(
-          battle.combatants.find((p) => p.id === a.actor),
-          battle,
-        ),
-        to = this.position(
-          battle.combatants.find((p) => p.id === a.target),
+        battle.combatants.find((p) => p.id === a.actor),
+        battle,
+      );
+      const ability = this.content.abilities[a.ability];
+      for (const id of a.targetIds) {
+        const to = this.position(
+          battle.combatants.find((p) => p.id === id),
           battle,
         );
-      const ability = this.content.abilities[a.ability];
-      if (a.elapsed > 150 && a.elapsed < 500) {
-        c.save();
-        c.globalAlpha = Math.sin(((a.elapsed - 150) / 350) * Math.PI);
-        c.strokeStyle =
-          ability.presentation === "heal"
-            ? "#6cf2a6"
-            : ({ 1: "#ff884b", 2: "#89dcff", 3: "#ffff8c" }[
-                ability.attribute
-              ] ?? "#fff");
-        c.lineWidth = ability.presentation === "physical" ? 1 : 5;
-        c.beginPath();
-        if (ability.presentation === "heal")
-          c.arc(to.x, to.y - 24, 22, 0, Math.PI * 2);
-        else {
-          c.moveTo(from.x - 14, from.y - 24);
-          c.lineTo(to.x, to.y - 24);
+        if (a.elapsed > 150 && a.elapsed < 500) {
+          c.save();
+          c.globalAlpha = Math.sin(((a.elapsed - 150) / 350) * Math.PI);
+          c.strokeStyle =
+            ability.presentation === "heal"
+              ? "#6cf2a6"
+              : ({ 1: "#ff884b", 2: "#89dcff", 3: "#ffff8c" }[
+                  ability.attribute
+                ] ?? "#fff");
+          c.lineWidth = ability.presentation === "physical" ? 1 : 5;
+          c.beginPath();
+          if (ability.presentation === "heal")
+            c.arc(to.x, to.y - 24, 22, 0, Math.PI * 2);
+          else {
+            c.moveTo(from.x - 14, from.y - 24);
+            c.lineTo(to.x, to.y - 24);
+          }
+          c.stroke();
+          c.restore();
         }
-        c.stroke();
-        c.restore();
-      }
-      if (a.resolved) {
-        c.font = "bold 15px monospace";
-        c.textAlign = "center";
-        c.lineWidth = 3;
-        c.strokeStyle = "#101426";
-        for (const [index, effect] of a.effects.entries()) {
-          c.fillStyle = effect.recovery ? "#80ffa7" : "white";
-          const text = effect.missed
-              ? "MISS"
-              : effect.resource === "condition"
-                ? effect.recovery
-                  ? "状态解除"
-                  : effect.added
-                      .map((id) => battle.conditions.name(id))
-                      .join("、")
-                : `${effect.amount}${effect.resource === "mp" ? " MP" : ""}`,
-            y = to.y - 48 - (a.elapsed - 400) / 35 - index * 18;
-          c.strokeText(text, to.x, y);
-          c.fillText(text, to.x, y);
+        if (a.resolved) {
+          c.font = "bold 15px monospace";
+          c.textAlign = "center";
+          c.lineWidth = 3;
+          c.strokeStyle = "#101426";
+          const effects =
+            a.results.find((result) => result.target === id)?.effects ?? [];
+          for (const [index, effect] of effects.entries()) {
+            c.fillStyle = effect.recovery ? "#80ffa7" : "white";
+            const text = effect.missed
+                ? "MISS"
+                : effect.resource === "condition"
+                  ? effect.recovery
+                    ? "状态解除"
+                    : effect.added
+                        .map((id) => battle.conditions.name(id))
+                        .join("、")
+                  : `${effect.amount}${effect.resource === "mp" ? " MP" : ""}`,
+              y = to.y - 48 - (a.elapsed - 400) / 35 - index * 18;
+            c.strokeText(text, to.x, y);
+            c.fillText(text, to.x, y);
+          }
         }
       }
     }
