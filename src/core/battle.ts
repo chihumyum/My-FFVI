@@ -9,7 +9,7 @@ import {
 } from "./enemy-behavior.js";
 import {
   BattleAIError,
-  drawBattleAIAbility,
+  selectBattleAIAbilities,
   planBattleAITurn,
   startBattleAI,
   type BattleAIState,
@@ -43,6 +43,7 @@ export type Combatant = CombatantDefinition & {
   behavior: EnemyBehaviorState | null;
 };
 export type BattleAction = {
+  kind: "normal" | "loop";
   actor: string;
   selection: TargetSelection;
   targetIds: string[];
@@ -86,7 +87,7 @@ export class BattleGame {
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v11"
+      content.profile !== "narshe-playability-v12"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
@@ -230,7 +231,12 @@ export class BattleGame {
   private aiContext(actor: Combatant) {
     if (!actor.behavior) throw new Error("Missing enemy behavior parameters");
     return {
-      self: { hp: actor.hp, mp: actor.mp, behavior: actor.behavior },
+      self: {
+        hp: actor.hp,
+        mp: actor.mp,
+        monsterId: actor.sourceId,
+        behavior: actor.behavior,
+      },
       conditionIds: actor.conditionIds,
       players: this.players,
       enemies: this.enemies,
@@ -240,6 +246,10 @@ export class BattleGame {
     const state = this.aiStates.get(actorId);
     return state ? { ...state } : null;
   }
+  /** Inspection/replay callers cannot mutate the live queue or its selections. */
+  get pendingActions(): readonly BattleAction[] {
+    return structuredClone(this.queue);
+  }
   private admitAITurn(actor: Combatant, turn: BattleAITurn) {
     const program = actor.ai!;
     const fail = (pc: number, reason: string): never => {
@@ -248,13 +258,22 @@ export class BattleGame {
     if (turn.state.status !== "waiting")
       fail(turn.state.pc, "normal action path does not return to SyncAI");
     if (turn.acts.filter((a) => a.selected).length !== 1)
-      fail(turn.state.pc, "normal action path must select exactly one action");
+      fail(
+        turn.state.pc,
+        "normal action path must select exactly one table row",
+      );
     for (const pc of turn.visited) {
       const op = program.instructions[pc]!.op;
       if (op.kind === "condition")
         this.conditions.validateReferences([op.conditionId]);
     }
-    for (const act of turn.acts)
+    for (const act of turn.acts) {
+      if (act.kind === "loop-act") {
+        const count = act.counts.reduce((sum, n) => sum + Math.max(0, n), 0);
+        if (count > 1000) fail(act.pc, "AI loop exceeded host action budget");
+        if (act.selected && count === 0)
+          fail(act.pc, "empty loop action decision");
+      }
       for (const id of act.abilities) {
         const ability = this.content.abilities[id];
         if (!actor.abilities.includes(id) || !ability?.plan)
@@ -284,6 +303,7 @@ export class BattleGame {
         )
           fail(act.pc, `unimplemented formation for ability ${id}`);
       }
+    }
   }
   private decideEnemyAction(actor: Combatant) {
     const state = this.aiStates.get(actor.id)!;
@@ -291,42 +311,47 @@ export class BattleGame {
     this.admitAITurn(actor, turn);
     const previousRandom = this.randomState;
     try {
-      let decision: {
-        ability: AbilityDefinition;
-        choice: TargetChoice;
-      } | null = null;
+      const decisions: BattleAction[] = [];
       for (const act of turn.acts) {
-        // Native Act draws even for a table row belonging to another turn.
-        const id = drawBattleAIAbility(act, {
+        const ids = selectBattleAIAbilities(act, {
           integer: (min, max) => this.randomInt(min, max),
           float: (min, max) =>
             Math.fround(min + this.randomUnit() * (max - min)),
         });
-        if (!act.selected) continue;
-        const ability = this.content.abilities[id]!;
-        const choices = this.targetChoices(actor.id, id).filter(
-          (choice) =>
-            choice.selection.kind === "single" &&
-            this.players.some((p) => p.id === choice.targetIds[0]),
-        );
-        if (!choices.length)
-          throw new BattleAIError(
-            actor.ai!.source,
-            act.pc,
-            `no admitted automatic target for ability ${id}`,
+        for (const id of ids) {
+          const ability = this.content.abilities[id]!;
+          const choices = this.targetChoices(actor.id, id).filter(
+            (choice) =>
+              choice.selection.kind === "single" &&
+              this.players.some((p) => p.id === choice.targetIds[0]),
           );
-        decision = {
-          ability,
-          choice: choices[this.randomInt(0, choices.length - 1)]!,
-        };
+          if (!choices.length)
+            throw new BattleAIError(
+              actor.ai!.source,
+              act.pc,
+              `no admitted automatic target for ability ${id}`,
+            );
+          decisions.push(
+            this.createAction(
+              actor,
+              ability,
+              choices[this.randomInt(0, choices.length - 1)]!,
+              null,
+              act.kind === "loop-act" ? "loop" : "normal",
+            ),
+          );
+        }
       }
-      if (!decision)
+      if (!decisions.length)
         throw new BattleAIError(
           actor.ai!.source,
           state.pc,
           "no normal action decision",
         );
-      this.enqueue(actor, decision.ability, decision.choice);
+      // Commit the whole group only after every target has been selected. A
+      // later failure cannot leave half a LoopAct in the live queue.
+      this.queue.push(...decisions);
+      actor.queued = true;
       this.aiStates.set(actor.id, turn.state);
       actor.behavior = turn.behavior;
     } catch (error) {
@@ -391,22 +416,25 @@ export class BattleGame {
       sameTargetSelection(c.selection, selection),
     );
     if (!choice) return false;
-    this.enqueue(
+    const action = this.createAction(
       actor,
       ability,
       choice,
       this.actionCommand(actor, abilityId, commandId)!,
     );
+    this.queue.push(action);
+    actor.queued = true;
     return true;
   }
-  private enqueue(
+  private createAction(
     actor: Combatant,
     ability: AbilityDefinition,
     choice: TargetChoice,
     commandId: number | null = null,
-  ) {
-    actor.queued = true;
-    this.queue.push({
+    kind: BattleAction["kind"] = "normal",
+  ): BattleAction {
+    return {
+      kind,
       actor: actor.id,
       selection: structuredClone(choice.selection),
       targetIds: [...choice.targetIds],
@@ -419,7 +447,13 @@ export class BattleGame {
       elapsed: 0,
       resolved: false,
       results: [],
-    });
+    };
+  }
+  private finishActorAction(actor: Combatant) {
+    // Native ActExectionEndDelegate keeps the gauge while normal/Loop actions
+    // remain in chanting or execution stacks. One LoopAct is one table turn.
+    actor.queued = this.queue.some((pending) => pending.actor === actor.id);
+    if (!actor.queued) actor.atb = 0;
   }
   advance(ms: number) {
     if (!Number.isFinite(ms) || ms < 0 || ms > 60000)
@@ -440,9 +474,8 @@ export class BattleGame {
         this.resolve(this.action);
       if (this.action.elapsed >= 900) {
         const actor = this.combatants.find((c) => c.id === this.action!.actor)!;
-        actor.atb = 0;
-        actor.queued = false;
         this.action = null;
+        this.finishActorAction(actor);
         this.checkOutcome();
       }
       return;
@@ -473,8 +506,7 @@ export class BattleGame {
       const action = this.queue.splice(index, 1)[0]!,
         actor = this.combatants.find((c) => c.id === action.actor)!;
       if (!this.canUse(actor.id, action.ability, action.commandId)) {
-        actor.queued = false;
-        actor.atb = 0;
+        this.finishActorAction(actor);
         this.log(`${actor.name} 的行动已失效。`);
         return;
       }
@@ -485,8 +517,7 @@ export class BattleGame {
         (min, max) => this.randomInt(min, max),
       );
       if (!choice) {
-        actor.queued = false;
-        actor.atb = 0;
+        this.finishActorAction(actor);
         this.checkOutcome();
         return;
       }

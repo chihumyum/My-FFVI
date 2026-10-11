@@ -40,7 +40,7 @@ function fixture(): BattleContent {
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v11",
+    profile: "narshe-playability-v12",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -299,6 +299,242 @@ test("enemy AI cycles physical and magic decisions through the shared action que
   assert.equal(battle.enemyAIState("e1")!.actTurn, 1);
   assert.equal(battle.enemyAIState("e2")!.actTurn, 0);
   assert.ok(battle.players.some((p) => p.hp < p.maxHp));
+});
+
+test("a loop submits in source order and releases its gauge only after the last queued action", () => {
+  const f = fixture();
+  f.players.forEach((p) => {
+    p.hp = 10000;
+  });
+  const e = f.enemies[0]!;
+  e.abilities = [13, 10];
+  e.ai = syntheticAI([
+    ["Nop"],
+    ["SyncAI"],
+    ["StartTable", [0]],
+    ["LoopAct", [13, 10], [1, 2]],
+    ["Act", [13]],
+    ["EndTable"],
+    ["JumpBattleAI", [0]],
+  ]);
+  const b = new BattleGame(f, 281);
+  b.enemies.forEach((p) => {
+    p.atb = 100;
+  });
+  b.advance(10);
+  assert.equal(b.action!.ability, 13);
+  assert.equal(b.action!.kind, "loop");
+  assert.deepEqual(
+    b.pendingActions.map((a) => [a.actor, a.ability]),
+    [
+      ["e1", 10],
+      ["e1", 10],
+      ["e2", 13],
+    ],
+  );
+  const copied = b.pendingActions;
+  copied[0]!.targetIds.length = 0;
+  assert.equal(b.pendingActions[0]!.targetIds.length, 1);
+  b.advance(900);
+  assert.equal(b.enemies[0]!.atb, 100);
+  assert.equal(b.enemies[0]!.queued, true);
+  for (let i = 0; i < 2; i++) {
+    b.advance(10);
+    assert.equal(b.action!.ability, 10);
+    assert.equal(b.action!.actor, "e1");
+    b.advance(900);
+  }
+  assert.equal(b.enemies[0]!.atb, 0);
+  assert.equal(b.enemies[0]!.queued, false);
+  assert.equal(b.enemies[0]!.mp, e.mp - 2 * f.abilities[10]!.cost);
+  assert.equal(b.enemyAIState("e1")!.actTurn, 1);
+  b.advance(10);
+  assert.equal(b.action!.actor, "e2");
+  assert.equal(b.action!.kind, "normal");
+});
+
+test("an unaffordable loop member does not release the gauge or cancel a later affordable action", () => {
+  const f = fixture();
+  f.players.forEach((p) => {
+    p.hp = 10000;
+  });
+  f.abilities[10]!.cost = 5;
+  f.enemies[0]!.abilities = [10, 13];
+  f.enemies[0]!.ai = syntheticAI([
+    ["Nop"],
+    ["SyncAI"],
+    ["StartTable", [0]],
+    ["LoopAct", [10, 13], [2, 1]],
+    ["EndTable"],
+    ["JumpBattleAI", [0]],
+  ]);
+  const b = new BattleGame(f, 283);
+  b.enemies[0]!.atb = 100;
+  b.advance(910);
+  assert.equal(b.enemies[0]!.mp, 3);
+  b.advance(10);
+  assert.equal(b.action, null);
+  assert.equal(b.enemies[0]!.queued, true);
+  assert.equal(b.enemies[0]!.atb, 100);
+  assert.deepEqual(
+    b.pendingActions.map((a) => a.ability),
+    [13],
+  );
+  b.advance(10);
+  assert.equal(b.action!.ability, 13);
+  b.advance(900);
+  assert.equal(b.enemies[0]!.queued, false);
+  assert.equal(b.enemies[0]!.atb, 0);
+  assert.equal(b.enemies[0]!.mp, 3);
+});
+
+test("death between loop members removes the remaining group without charging it", () => {
+  const f = fixture();
+  f.players.forEach((p) => {
+    p.hp = 10000;
+  });
+  f.abilities[10]!.wait = 0.04; // 20 ms: ready immediately after the first enemy action.
+  f.enemies[0]!.ai = syntheticAI([
+    ["Nop"],
+    ["SyncAI"],
+    ["StartTable", [0]],
+    ["LoopAct", [13], [3]],
+    ["EndTable"],
+    ["JumpBattleAI", [0]],
+  ]);
+  const b = new BattleGame(f, 293);
+  assert.equal(b.command("a", 10, "e1"), true);
+  b.enemies[0]!.atb = 100;
+  b.advance(10);
+  assert.equal(b.action!.actor, "e1");
+  b.advance(900);
+  assert.equal(b.pendingActions.filter((a) => a.actor === "e1").length, 2);
+  b.advance(10);
+  assert.equal(b.action!.actor, "a");
+  b.advance(400);
+  assert.equal(b.enemies[0]!.hp, 0);
+  assert.equal(b.enemies[0]!.queued, false);
+  assert.equal(b.enemies[0]!.atb, 0);
+  assert.equal(
+    b.pendingActions.some((a) => a.actor === "e1"),
+    false,
+  );
+  b.advance(500);
+  assert.equal(b.phase, "active");
+});
+
+test("a later target failure rolls back the entire loop, its controller counters and RNG", () => {
+  const f = fixture();
+  f.enemies[0]!.sourceId = 0x113;
+  f.enemies[0]!.abilities = [13, 10];
+  f.enemies[0]!.ai = syntheticAI([
+    ["Nop"],
+    ["SyncAI"],
+    ["StartTable", [0]],
+    ["ValueCalc", [0, 1], [], ["＋"]],
+    ["LoopAct", [13, 10], [2, 1]],
+    ["EndTable"],
+    ["JumpBattleAI", [0]],
+  ]);
+  const clean = new BattleGame(structuredClone(f), 307);
+  const broken = new BattleGame(f, 307);
+  clean.enemies[0]!.atb = broken.enemies[0]!.atb = 100;
+  const initial = broken.enemyAIState("e1");
+  f.abilities[10]!.plan!.targeting.modes = [];
+  assert.throws(() => broken.advance(10), /Invalid battle target rule/);
+  assert.deepEqual(broken.pendingActions, []);
+  assert.equal(broken.enemies[0]!.queued, false);
+  assert.equal(broken.enemies[0]!.behavior!.variables[0], 0);
+  assert.deepEqual(broken.enemyAIState("e1"), initial);
+  f.abilities[10]!.plan!.targeting.modes = ["single"];
+  clean.advance(10);
+  broken.advance(10);
+  assert.deepEqual(broken.action, clean.action);
+  assert.deepEqual(broken.pendingActions, clean.pendingActions);
+  assert.deepEqual(broken.enemyAIState("e1"), clean.enemyAIState("e1"));
+  assert.equal(broken.enemyAIState("e1")!.advancedActCount, 6);
+  clean.advance(500);
+  broken.advance(500);
+  assert.deepEqual(broken.action!.results, clean.action!.results);
+});
+
+test("queued loop targets are revalidated after an earlier hit defeats their target", () => {
+  const f = fixture();
+  f.players.forEach((p) => {
+    p.hp = 10000;
+  });
+  f.enemies[0]!.ai = syntheticAI([
+    ["Nop"],
+    ["SyncAI"],
+    ["StartTable", [0]],
+    ["LoopAct", [13], [3]],
+    ["EndTable"],
+    ["JumpBattleAI", [0]],
+  ]);
+  const b = new BattleGame(f, 281);
+  b.enemies[0]!.atb = 100;
+  b.advance(10);
+  const doomed = b.action!.targetIds[0]!;
+  b.players.find((p) => p.id === doomed)!.hp = 1;
+  assert.ok(b.pendingActions.some((a) => a.targetIds[0] === doomed));
+  b.advance(900);
+  assert.equal(b.players.find((p) => p.id === doomed)!.hp, 0);
+  for (let i = 0; i < 2; i++) {
+    b.advance(10);
+    assert.equal(b.action!.kind, "loop");
+    assert.notEqual(b.action!.targetIds[0], doomed);
+    b.advance(900);
+  }
+  assert.equal(b.phase, "active");
+  assert.equal(b.enemies[0]!.queued, false);
+});
+
+test("empty loops and enormous groups fail admission before committing a turn", () => {
+  for (const count of [0, -1, 1001]) {
+    const f = fixture();
+    f.enemies[0]!.ai = syntheticAI([
+      ["Nop"],
+      ["SyncAI"],
+      ["StartTable", [0]],
+      ["LoopAct", [13], [count]],
+      ["EndTable"],
+      ["JumpBattleAI", [0]],
+    ]);
+    assert.throws(
+      () => new BattleGame(f, 311),
+      /empty loop|host action budget/,
+    );
+  }
+});
+
+test("loop queues and turns replay identically across frame partitions", () => {
+  const f = fixture();
+  f.players.forEach((p) => {
+    p.hp = 100000;
+  });
+  f.enemies.forEach((e) => {
+    e.ai = syntheticAI([
+      ["Nop"],
+      ["SyncAI"],
+      ["StartTable", [0]],
+      ["LoopAct", [13], [3]],
+      ["Act", [13]],
+      ["EndTable"],
+      ["JumpBattleAI", [0]],
+    ]);
+  });
+  const run = (parts: number[]) => {
+    const b = new BattleGame(f, 313);
+    for (const dt of parts) b.advance(dt);
+    return {
+      units: b.combatants,
+      events: b.events,
+      action: b.action,
+      pending: b.pendingActions,
+      states: b.enemies.map((e) => b.enemyAIState(e.id)),
+    };
+  };
+  assert.deepEqual(run([60000]), run(Array(6000).fill(10)));
 });
 
 test("battle owns independent enemy parameters and preflight does not advance their phase", () => {

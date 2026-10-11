@@ -16,6 +16,7 @@ import {
   startBattleAI,
   planBattleAITurn,
   drawBattleAIAbility,
+  selectBattleAIAbilities,
 } from "../dist/src/core/battle-ai.js";
 import { initialEnemyBehavior } from "../dist/src/core/enemy-behavior.js";
 import { BattleGame } from "../dist/src/core/battle.js";
@@ -34,7 +35,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v11");
+assert.equal(catalog.common.profile, "narshe-playability-v12");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const assets = Object.values(exported.assets).filter((a) =>
   a.source.assetPath.includes("/MonsterAI/"),
@@ -90,7 +91,7 @@ const rows = assets.map((asset) => {
 });
 assert.equal(rows.length, 430);
 const context = (level = 6, conditionIds = []) => ({
-  self: { hp: 100, mp: 10, behavior: initialEnemyBehavior() },
+  self: { hp: 100, mp: 10, monsterId: 1, behavior: initialEnemyBehavior() },
   players: [{ level }],
   enemies: [{ level: 1 }],
   conditionIds,
@@ -241,6 +242,8 @@ const parameterChecks = [];
     tableId: 0,
     actTurn: 0,
     turnCounter: 0,
+    advancedActCount: 0,
+    guardianActIsDadaluma: true,
   };
   assert.equal(program.instructions[checkpoint.pc].op.kind, "sync");
   const stage = planBattleAITurn(program, checkpoint, ctx);
@@ -275,6 +278,128 @@ const parameterChecks = [];
 }
 assert.equal(ability(696).plan, null);
 assert.ok(ability(696).blockers.some((s) => s.includes("function type 38")));
+
+// Check every supplied LoopAct instruction independently of unsupported nearby
+// triggers. This does not turn those complete enemy scripts into runnable AI.
+const loopInstructions = [];
+for (const asset of assets) {
+  const program = programs.get(asset.source.assetPath.split("/").at(-1));
+  if (!program) continue;
+  for (const [pc, raw] of asset.data.Mnemonics.entries()) {
+    if (raw.mnemonic !== "LoopAct") continue;
+    const op = program.instructions[pc].op;
+    assert.equal(op.kind, "loop-act");
+    const random = {
+      integer: () => {
+        throw new Error("LoopAct must not draw an ability");
+      },
+      float: () => {
+        throw new Error("LoopAct must not draw an ability");
+      },
+    };
+    const expected = raw.operands.iValues.flatMap((id, index) =>
+      Array(Math.trunc(raw.operands.rValues[index])).fill(id),
+    );
+    assert.deepEqual(
+      selectBattleAIAbilities({ ...op, pc, selected: true }, random),
+      expected,
+    );
+    assert.deepEqual(
+      selectBattleAIAbilities({ ...op, pc, selected: false }, random),
+      [],
+    );
+    loopInstructions.push({
+      source: program.source,
+      pc,
+      abilities: op.abilities,
+      counts: op.counts,
+      expanded: expected,
+    });
+  }
+}
+assert.equal(loopInstructions.length, 97);
+
+// Only the source instruction and its ability definitions are imported here.
+// The surrounding normal table is an explicitly synthetic mechanism harness;
+// unimplemented CounterActReceiveCommand/other source triggers remain blocked.
+const loopHostChecks = [];
+for (const [name, pc, expected] of [
+  ["sc_ai_058_Devoahan.json", 9, [462, 1, 1]],
+  ["sc_ai_0C8_Aspidochelon.json", 10, [574, 1, 1]],
+]) {
+  const original = programs.get(name);
+  const content = structuredClone(encounterContent(catalog, 3));
+  content.enemies = [content.enemies[0]];
+  const enemy = content.enemies[0];
+  enemy.ai = {
+    kind: "battle-ai-normal-v3",
+    source: null,
+    entry: 0,
+    end: 6,
+    blockers: [],
+    instructions: [
+      { mnemonic: "Nop", op: { kind: "nop" } },
+      { mnemonic: "SyncAI", op: { kind: "sync" } },
+      { mnemonic: "StartTable", op: { kind: "start-table", tableId: 0 } },
+      structuredClone(original.instructions[pc]),
+      { mnemonic: "EndTable", op: { kind: "end-table" } },
+      { mnemonic: "JumpBattleAI", op: { kind: "jump", target: 0 } },
+    ],
+  };
+  enemy.abilities = battleAIAbilities(enemy.ai);
+  enemy.name = "连续行动机制检查";
+  enemy.hp = enemy.mp = 10000;
+  content.players.forEach((p) => {
+    p.hp = 10000;
+  });
+  content.initialAtb = { player: [0, 0], enemy: [100, 100] };
+  for (const id of enemy.abilities) content.abilities[id] = ability(id);
+  const b = new BattleGame(content, 317);
+  const actions = [];
+  for (let i = 0; i < expected.length; i++) {
+    b.advance(10);
+    assert.equal(b.action.kind, "loop");
+    assert.equal(b.action.ability, expected[i]);
+    assert.equal(b.enemyAIState(enemy.id).actTurn, 0);
+    b.advance(400);
+    assert.ok(b.action.resolved);
+    actions.push(structuredClone(b.action));
+    b.advance(500);
+    assert.equal(b.enemies[0].queued, i < expected.length - 1);
+    assert.equal(b.enemies[0].atb, i < expected.length - 1 ? 100 : 0);
+  }
+  assert.deepEqual(b.pendingActions, []);
+  const run = (parts) => {
+    const battle = new BattleGame(content, 317);
+    for (const dt of parts) battle.advance(dt);
+    return {
+      units: battle.combatants,
+      events: battle.events,
+      action: battle.action,
+      pending: battle.pendingActions,
+      ai: battle.enemyAIState(enemy.id),
+    };
+  };
+  assert.deepEqual(run([60000]), run(Array(6000).fill(10)));
+  // The original complete program is still gated, rather than ignoring triggers.
+  const full = structuredClone(content);
+  full.enemies[0].ai = original;
+  full.enemies[0].abilities = battleAIAbilities(original);
+  assert.throws(() => new BattleGame(full, 317), /unsupported AI instruction/);
+  loopHostChecks.push({
+    source: original.source,
+    sourcePc: pc,
+    syntheticSurroundingTable: true,
+    actions,
+    framePartitionReplay: true,
+    originalProgramStillBlocked: true,
+  });
+  if (loopHostChecks.length === 1)
+    await writeFile(
+      root + "/build/reports/loop-probe.json",
+      JSON.stringify(content, null, 2) + "\n",
+    );
+}
 
 // Same host parameters/poses deliberately isolate AI from enemy asset/stat migration.
 const hostChecks = [];
@@ -371,6 +496,8 @@ const report = {
   rows,
   traces,
   parameterChecks,
+  loopInstructions,
+  loopHostChecks,
   hostChecks,
   highLevelDependencyGate: true,
   limitations: [
@@ -378,7 +505,10 @@ const report = {
     "host-probes-use-opening-parameters-and-poses-with-source-ai",
     "no-confusion-behavior-from-condition-branch-probe",
     "no-function-38-ability-696-effects",
-    "no-counter-interrupt-loopact-or-full-boss-event-support",
+    "no-counter-interrupt-or-full-boss-event-support",
+    "loop-ability-effects-and-auto-targets-must-pass-existing-admission",
+    "loop-host-probes-import-source-instructions-into-explicit-synthetic-normal-tables",
+    "advanced-counter-query-triggers-and-ability-6-gauge-exception-remain-gated",
     "constructed-soulsaver-checkpoint-is-control-flow-only-not-source-save-or-playable-enemy",
     "shared-ability-and-event-writes-to-enemy-variables-remain-unimplemented",
     "normal-auto-targets-only-ranges-3-and-7-with-development-player-weighting",
@@ -395,6 +525,8 @@ console.log(
     scripts: rows.length,
     decoded: report.fullyDecodedNormalPrograms,
     hostChecks: hostChecks.length,
+    loopInstructions: loopInstructions.length,
+    loopHostChecks: loopHostChecks.length,
     contentHash: report.contentHash,
   }),
 );

@@ -419,6 +419,32 @@
         "build/reports/ai-state-browser-check.json#4cd164752fd07ec9bcccf49ca876729602d4dbe243a9b938a7065d40c4e734b5",
         "docs/battle-ai-state.md"
       ]
+    },
+    {
+      "id": "narshe:development-action-groups",
+      "subject": "narshe",
+      "predicate": "migration.loopActionGroups",
+      "value": "Development v12 adds source LoopAct repeats as one action-table turn, atomic group admission, per-action cost/target rechecks and gauge release after the last pending normal action. All 97 source LoopAct instructions pass isolated decoding/selection checks; two original instructions run in explicitly synthetic normal tables and replay across frame partitions. Their full enemy programs remain blocked on unimplemented triggers. 249 TypeScript and 18 Python tests and the existing five encounters pass. Browser controlled actions 462,1,1 retain ATB 100 after the first two actions and release it after the third. Browser opening victory, field return and movement also pass. Counter/final triggers, complete scheduling, dynamic abilities, global party/inventory/save and original parity remain incomplete. No new region or story unlock.",
+      "when": {
+        "battleProfile": "narshe-playability-v12"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x828410 LoopAct",
+        "GameAssembly.dll:RVA 0x15b8740 SetActAbilityLoopAttack",
+        "GameAssembly.dll:RVA 0x15ace70 SetBattleActData",
+        "GameAssembly.dll:RVA 0x15aa590 InitPrepareState",
+        "GameAssembly.dll:RVA 0x6773f0 ActExectionEndDelegate",
+        "GameAssembly.dll:RVA 0x678de0 IsStack",
+        "GameAssembly.dll:RVA 0x15ba220 ActSelectEnemy constructor",
+        "GameAssembly.dll:RVA 0x15b8ff0 AddAdvancedActCounter",
+        "build/reports/ai-loop-native-check.json#705a55c1b0c6cc226393365f7224d46531962d59b7ade9d57d7c5b89144e170e",
+        "build/reports/battle-ai-check.json#9b28fb46186142aa7d046a302f296a846355cc886027f3b8cd8cb087860298de",
+        "build/reports/loop-browser-check.json#517b83c1db9bf9a384f02990bb02171d6f6a20fc66d591b0cc75b847679bd90c",
+        "build/reports/loop-opening-browser-check.json#f55e50188f9590030b48cd498005fff5a451cd18a9e9ab3cec7dc2de139c9aa5",
+        "docs/battle-action-groups.md"
+      ]
     }
   ],
   "assets": []

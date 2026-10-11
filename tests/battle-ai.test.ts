@@ -5,6 +5,7 @@ import { compileBattleAI } from "../src/compiler/battle-ai.js";
 import {
   BattleAIError,
   drawBattleAIAbility,
+  selectBattleAIAbilities,
   planBattleAITurn,
   startBattleAI,
   type BattleAIContext,
@@ -12,7 +13,7 @@ import {
 import { aiSource, cyclingAI, syntheticAI } from "./fixtures/battle-ai.js";
 
 const context: BattleAIContext = {
-  self: { hp: 100, mp: 10, behavior: initialEnemyBehavior() },
+  self: { hp: 100, mp: 10, monsterId: 1, behavior: initialEnemyBehavior() },
   conditionIds: [],
   players: [{ level: 1 }],
   enemies: [{ level: 2 }],
@@ -234,6 +235,125 @@ test("AI instances sharing a program retain independent immutable turn state", (
   );
 });
 
+test("LoopAct expands ordered repeats as one table row without drawing a lottery", () => {
+  const program = syntheticAI([
+    ["Nop"],
+    ["SyncAI"],
+    ["StartTable", [0]],
+    ["LoopAct", [602, 601], [1.9, 2.9]],
+    ["Act", [603], [100]],
+    ["EndTable"],
+    ["JumpBattleAI", [0]],
+  ]);
+  const initial = startBattleAI(program, context);
+  const first = planBattleAITurn(program, initial.state, context);
+  assert.equal(first.state.actTurn, 1);
+  assert.equal(first.state.turnCounter, 2);
+  let draws = 0;
+  const random = {
+    integer: () => {
+      draws++;
+      return 0;
+    },
+    float: () => {
+      draws++;
+      return 0;
+    },
+  };
+  assert.deepEqual(
+    first.acts.flatMap((act) => selectBattleAIAbilities(act, random)),
+    [602, 601, 601],
+  );
+  assert.equal(draws, 1); // Unselected Act still draws; LoopAct never does.
+  const second = planBattleAITurn(program, first.state, context);
+  assert.deepEqual(
+    second.acts.flatMap((act) => selectBattleAIAbilities(act, random)),
+    [603],
+  );
+  assert.equal(draws, 2);
+  assert.equal(second.state.actTurn, 0);
+  assert.equal(initial.state.advancedActCount, 0);
+  assert.equal(initial.state.guardianActIsDadaluma, true);
+  assert.equal(second.state.advancedActCount, 0);
+});
+
+test("LoopAct preserves this build's source monster accounting without mutating committed state", () => {
+  const program = syntheticAI([
+    ["Nop"],
+    ["SyncAI"],
+    ["StartTable", [0]],
+    ["LoopAct", [601, 602], [2, 1]],
+    ["EndTable"],
+    ["JumpBattleAI", [0]],
+  ]);
+  const ctx = { ...context, self: { ...context.self, monsterId: 0x113 } };
+  const initial = startBattleAI(program, ctx);
+  const first = planBattleAITurn(program, initial.state, ctx);
+  assert.equal(first.state.advancedActCount, 6);
+  assert.equal(first.state.guardianActIsDadaluma, false);
+  const second = planBattleAITurn(program, first.state, ctx);
+  assert.equal(second.state.advancedActCount, 9);
+  assert.equal(second.state.guardianActIsDadaluma, true);
+  assert.equal(initial.state.advancedActCount, 0);
+  assert.deepEqual(planBattleAITurn(program, initial.state, ctx), first);
+  assert.throws(
+    () =>
+      planBattleAITurn(program, initial.state, {
+        ...ctx,
+        self: { ...ctx.self, monsterId: 0 },
+      }),
+    /Mnemonics\/3: invalid source monster identity/,
+  );
+});
+
+test("loop operand ambiguity and unbounded expansion remain explicit failures", () => {
+  for (const [ids, counts, messages] of [
+    [[601, 601], [1, 2], []],
+    [[601, 602], [1], []],
+    [[601], [2147483648], []],
+    [[0], [1], []],
+    [[601], [1], ["unmigrated message"]],
+  ] as [number[], number[], string[]][]) {
+    const program = syntheticAI([["LoopAct", ids, counts, messages]]);
+    assert.equal(program.instructions[0]!.op.kind, "blocked");
+  }
+  const noRandom = {
+    integer: () => {
+      throw new Error("random");
+    },
+    float: () => {
+      throw new Error("random");
+    },
+  };
+  assert.deepEqual(
+    selectBattleAIAbilities(
+      {
+        kind: "loop-act",
+        pc: 3,
+        selected: true,
+        abilities: [601, 602, 603],
+        counts: [0, -2, 1],
+      },
+      noRandom,
+    ),
+    [603],
+  );
+  assert.throws(
+    () =>
+      selectBattleAIAbilities(
+        {
+          kind: "loop-act",
+          pc: 3,
+          selected: true,
+          abilities: [601],
+          counts: [2147483647],
+        },
+        noRandom,
+      ),
+    /host action budget/,
+  );
+});
+
 test("changing table ID resets the turn while the same table preserves it", () => {
   const program = syntheticAI([
     ["Nop"],
@@ -404,7 +524,7 @@ test("unselected table rows also consume draws in program order", () => {
   );
   const visited: number[] = [];
   for (const act of turn.acts)
-    drawBattleAIAbility(act, {
+    selectBattleAIAbilities(act, {
       integer: () => 0,
       float: () => {
         visited.push(act.pc);

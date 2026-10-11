@@ -2,6 +2,8 @@
 
 2026-10-11，`narshe-playability-v11` / `battle-ai-normal-v2`。在 v10 普通行动 VM 上接入逐敌变量、阶段编号和当前 HP/MP 条件。参数由战斗角色拥有，VM 每次返回暂存结果；初始化、就绪决策、预检查和失败回滚各自有明确边界。当前继续搭建共用系统，未填充新地区，未开展 HD-2D。
 
+后续 v12 已接入连续行动与队列释放；见 [连续行动](battle-action-groups.md)。以下保留 v11 的检查与当时边界。
+
 ## 来源语义
 
 完整来源集 `6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965`，战斗子集 `42705316cd47f43c9b91d6cab6469a632c967716420c559b409b9dbfad8a3503`。DLL SHA-256 `1a7e12c90c6a734e17dda507dd6ab7555090dff6a1e96f3473a90c29916ca6dc`，metadata SHA-256 `9b426d617a022020feee61cdfc19b16ce1a51c07542fe1dd59169e12f35a3e45`。每份 AI 保留原始对象身份、文件摘要和来源指令 PC。

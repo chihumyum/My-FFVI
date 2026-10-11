@@ -42,10 +42,11 @@ export type BattleAIOp =
   | { kind: "mode-branch"; value: number; equal: boolean; target: number }
   | { kind: "start-table"; tableId: number | null }
   | { kind: "act"; abilities: number[]; weights: number[] }
+  | { kind: "loop-act"; abilities: number[]; counts: number[] }
   | { kind: "blocked"; reason: string };
 export type BattleAIInstruction = { mnemonic: string; op: BattleAIOp };
 export type BattleAIProgram = {
-  kind: "battle-ai-normal-v2";
+  kind: "battle-ai-normal-v3";
   source: BattleAISource | null;
   entry: number;
   end: number;
@@ -58,9 +59,17 @@ export type BattleAIState = {
   tableId: number;
   actTurn: number;
   turnCounter: number;
+  /** Native action-controller accounting, separate from the action-table row. */
+  advancedActCount: number;
+  guardianActIsDadaluma: boolean;
 };
 export type BattleAIContext = {
-  self: { hp: number; mp: number; behavior: EnemyBehaviorState };
+  self: {
+    hp: number;
+    mp: number;
+    monsterId: number;
+    behavior: EnemyBehaviorState;
+  };
   conditionIds: readonly number[];
   /** Native IsLevelCheck includes fallen units. */
   players: readonly { level: number }[];
@@ -68,10 +77,11 @@ export type BattleAIContext = {
 };
 export type BattleAIAct = {
   pc: number;
-  abilities: number[];
-  weights: number[];
   selected: boolean;
-};
+} & (
+  | { kind: "act"; abilities: number[]; weights: number[] }
+  | { kind: "loop-act"; abilities: number[]; counts: number[] }
+);
 export type BattleAITurn = {
   state: BattleAIState;
   behavior: EnemyBehaviorState;
@@ -114,6 +124,9 @@ function route(
     }
   };
   const behavior = guarded(() => copyEnemyBehavior(context.self.behavior));
+  guarded(() => int32(state.advancedActCount));
+  if (typeof state.guardianActIsDadaluma !== "boolean")
+    fail("invalid action-controller loop state");
   const variableIndex = (index: number) => {
     guarded(() => int32(index));
     // Native operands <= 0 address the first cell, not a field variable bank.
@@ -122,7 +135,7 @@ function route(
   };
   const calculate = (left: number, operator: Operator, right: number) =>
     guarded(() => integerOperation(left, operator, right));
-  if (program.kind !== "battle-ai-normal-v2") fail("unsupported AI format");
+  if (program.kind !== "battle-ai-normal-v3") fail("unsupported AI format");
   if (program.blockers.length) fail(program.blockers.join("; "));
   if (
     !Number.isInteger(program.entry) ||
@@ -154,6 +167,8 @@ function route(
       state.tableId,
       state.actTurn,
       state.turnCounter,
+      state.advancedActCount,
+      state.guardianActIsDadaluma,
       behavior.mode,
       behavior.variables,
     ]);
@@ -247,11 +262,41 @@ function route(
       case "act":
         if (normalReady) {
           acts.push({
+            kind: "act",
             pc: state.pc,
             abilities: [...op.abilities],
             weights: [...op.weights],
             selected: state.actTurn === state.turnCounter,
           });
+          state.turnCounter++;
+        }
+        break;
+      case "loop-act":
+        if (normalReady) {
+          guarded(() => validateBattleAILoop(op));
+          const selected = state.actTurn === state.turnCounter;
+          acts.push({
+            kind: "loop-act",
+            pc: state.pc,
+            abilities: [...op.abilities],
+            counts: [...op.counts],
+            selected,
+          });
+          if (selected) {
+            const id = guarded(() => int32(context.self.monsterId));
+            if (id <= 0) fail("invalid source monster identity for LoopAct");
+            const count = op.counts.reduce((sum, n) => (sum + n) | 0, 0);
+            // FF6 AddAdvancedActCounter: the constructor starts this flag true.
+            // 0x113 is a source monster rule, not an encounter/template ID.
+            if (!state.guardianActIsDadaluma) {
+              state.advancedActCount = (state.advancedActCount + count) | 0;
+              state.guardianActIsDadaluma = true;
+            } else if (id === 0x113) {
+              state.advancedActCount =
+                (state.advancedActCount + Math.imul(count, 2)) | 0;
+              state.guardianActIsDadaluma = false;
+            }
+          }
           state.turnCounter++;
         }
         break;
@@ -281,6 +326,8 @@ export function startBattleAI(
       tableId: 0,
       actTurn: 0,
       turnCounter: 0,
+      advancedActCount: 0,
+      guardianActIsDadaluma: true,
     },
     context,
     false,
@@ -299,7 +346,9 @@ export type BattleAIRandom = {
   /** Native float Range admits both endpoints. RNG algorithm remains host-owned. */
   float: (minimum: number, maximum: number) => number;
 };
-export function drawBattleAIAbility(act: BattleAIAct, random: BattleAIRandom) {
+export function drawBattleAIAbility<
+  T extends { abilities: number[]; weights: number[] },
+>(act: T, random: BattleAIRandom) {
   if (
     !act.abilities.length ||
     act.abilities.some((id) => !Number.isInteger(id) || id <= 0)
@@ -330,4 +379,39 @@ export function drawBattleAIAbility(act: BattleAIAct, random: BattleAIRandom) {
     if (remaining < 0) return act.abilities[index]!;
   }
   return act.abilities.at(-1)!;
+}
+
+/** The importer admits paired int32 repeat counts. No probability draw belongs
+ * to LoopAct, including an unselected row. Expansion is separately host-bounded. */
+function validateBattleAILoop(act: { abilities: number[]; counts: number[] }) {
+  if (
+    !act.abilities.length ||
+    act.abilities.length !== act.counts.length ||
+    new Set(act.abilities).size !== act.abilities.length ||
+    act.abilities.some(
+      (id) => !Number.isInteger(id) || id <= 0 || id > 0x7fffffff,
+    ) ||
+    act.counts.some(
+      (n) => !Number.isInteger(n) || n < -0x80000000 || n > 0x7fffffff,
+    )
+  )
+    throw new Error("Invalid AI loop operands");
+}
+
+export function selectBattleAIAbilities(
+  act: BattleAIAct,
+  random: BattleAIRandom,
+): number[] {
+  if (act.kind === "act") {
+    // Native Act consumes its draw even when another table row is selected.
+    const id = drawBattleAIAbility(act, random);
+    return act.selected ? [id] : [];
+  }
+  validateBattleAILoop(act);
+  if (!act.selected) return [];
+  const total = act.counts.reduce((sum, n) => sum + Math.max(0, n), 0);
+  if (total > 1000) throw new Error("AI loop exceeded host action budget");
+  return act.abilities.flatMap(
+    (id, index) => Array(Math.max(0, act.counts[index]!)).fill(id) as number[],
+  );
 }

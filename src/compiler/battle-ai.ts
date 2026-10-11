@@ -207,11 +207,23 @@ export function compileBattleAI(
             r.some((w) => Math.fround(w) > 0)))
       )
         op = { kind: "act", abilities: i, weights: r };
+      if (
+        m.mnemonic === "LoopAct" &&
+        i.length &&
+        i.every((id) => id > 0) &&
+        new Set(i).size === i.length &&
+        r.length === i.length &&
+        r.every(
+          (n) => Math.trunc(n) >= -0x80000000 && Math.trunc(n) <= 0x7fffffff,
+        ) &&
+        s.every((value) => value === "")
+      )
+        op = { kind: "loop-act", abilities: i, counts: r.map(Math.trunc) };
     }
     return { mnemonic: m.mnemonic, op };
   });
   return {
-    kind: "battle-ai-normal-v2",
+    kind: "battle-ai-normal-v3",
     source,
     entry,
     end,
@@ -224,7 +236,7 @@ export function battleAIAbilities(program: BattleAIProgram): number[] {
   return [
     ...new Set(
       program.instructions.flatMap(({ op }) =>
-        op.kind === "act" ? op.abilities : [],
+        op.kind === "act" || op.kind === "loop-act" ? op.abilities : [],
       ),
     ),
   ];
