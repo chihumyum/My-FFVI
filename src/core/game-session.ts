@@ -72,6 +72,10 @@ export class GameSession {
       this.field.checkpointReady
     );
   }
+  useMenuItem(id: number, targetId: string): boolean {
+    if (!this.checkpointReady) return false;
+    return this.state.useMenuItem(id, targetId);
+  }
   checkpoint(): GameCheckpoint {
     if (!this.checkpointReady)
       throw new Error("Cannot save during battle, movement or an event");
@@ -145,6 +149,7 @@ export class GameSession {
             content,
             this.currentSeed,
             this.state.battlePlayers(lease),
+            this.state.battleInventory(lease),
           );
           this.battleLease = lease;
           this.encounterSerial++;
@@ -183,6 +188,7 @@ export class GameSession {
       this.battle.content,
       this.currentSeed,
       this.state.battlePlayers(this.battleLease),
+      this.state.battleInventory(this.battleLease),
     );
     return true;
   }

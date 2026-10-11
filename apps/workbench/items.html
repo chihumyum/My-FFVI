@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>道具系统受控检查</title>
+    <link rel="stylesheet" href="/game/style.css" />
+    <link rel="stylesheet" href="./items.css" />
+  </head>
+  <body>
+    <h1>道具系统受控检查</h1>
+    <p>
+      使用来源道具与正式菜单/战斗组件。受伤值、药品和行动条为测试输入，不表示剧情获得，也不写入正式存档。
+    </p>
+    <button id="reset-fixture">重置受控输入</button
+    ><button id="start-battle">进入受控战斗</button
+    ><button id="step-battle">推进战斗 410 毫秒</button
+    ><button id="finish-battle">结束当前动作</button
+    ><button id="win-fixture">完成受控胜利</button
+    ><button id="save-fixture">记录检查点</button
+    ><button id="load-fixture">恢复检查点</button>
+    <p id="receipt" role="status">载入…</p>
+    <main>
+      <section id="inventory-panel">
+        <div id="owned-state">
+          <h2>队伍与库存</h2>
+          <p id="owned-party"></p>
+          <p id="owned-gil"></p>
+          <h3>道具</h3>
+          <div id="owned-items"></div>
+          <h3>重要物品</h3>
+          <p id="owned-key-items"></p>
+        </div>
+        <div id="item-targets" hidden></div>
+        <p id="item-status" role="status"></p>
+      </section>
+      <section>
+        <canvas
+          id="game"
+          width="512"
+          height="288"
+          tabindex="0"
+          aria-label="受控战斗画面"
+        ></canvas>
+        <section id="battle-ui" hidden aria-label="战斗操作">
+          <p id="battle-action" role="status"></p>
+          <div id="battle-menu"></div>
+          <div id="party"></div>
+        </section>
+        <section id="battle-result" hidden>
+          <h2 id="battle-result-title"></h2>
+          <p id="battle-result-text"></p>
+          <p id="battle-levels"></p>
+          <button id="battle-return">返回菜单</button
+          ><button id="battle-retry">重试</button>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="./items.js"></script>
+  </body>
+</html>

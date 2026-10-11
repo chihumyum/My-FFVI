@@ -1,3 +1,4 @@
+import { itemName } from "./inventory-view.js";
 const $ = (id) => document.getElementById(id);
 const label = (node, text) => {
   if (node.textContent !== text) node.textContent = text;
@@ -9,7 +10,7 @@ export class BattleView {
     this.content = content;
     this.images = images;
     this.selected = null;
-    this.ability = null;
+    this.actionSource = null;
     this.commandId = null;
     this.key = "";
     this.instance = null;
@@ -28,7 +29,7 @@ export class BattleView {
       button.append(name, hp, meter);
       button.onclick = () => {
         this.selected = p.id;
-        this.ability = null;
+        this.actionSource = null;
         this.key = "";
       };
       $("party").append(button);
@@ -40,8 +41,8 @@ export class BattleView {
     $("battle-result").hidden = true;
   }
   back() {
-    if (this.ability !== null) {
-      this.ability = null;
+    if (this.actionSource !== null) {
+      this.actionSource = null;
       this.commandId = null;
       this.key = "";
       return true;
@@ -87,7 +88,7 @@ export class BattleView {
       this.content = battle.content;
       this.instance = battle;
       this.selected = null;
-      this.ability = null;
+      this.actionSource = null;
       this.key = "";
     }
     $("battle-ui").hidden = paused || battle.phase !== "active";
@@ -136,35 +137,58 @@ export class BattleView {
     }
     if (!battle.ready.some((p) => p.id === this.selected)) {
       this.selected = battle.ready[0]?.id ?? null;
-      this.ability = null;
+      this.actionSource = null;
     }
     const actor = battle.ready.find((p) => p.id === this.selected);
+    const canUse = (source, commandId) =>
+      source.kind === "ability"
+        ? battle.canUse(actor.id, source.id, commandId)
+        : battle.canUseItem(actor.id, source.id, commandId);
     const options = actor
-      ? actor.commands.flatMap((commandId) =>
-          this.content.commands[commandId].abilityIds
-            .filter((id) => actor.abilities.includes(id))
-            .map((abilityId) => ({
-              commandId,
-              abilityId,
-              usable: battle.canUse(actor.id, abilityId, commandId),
-            })),
-        )
+      ? actor.commands.flatMap((commandId) => {
+          const command = this.content.commands[commandId];
+          return command.kind === "item"
+            ? battle.inventory
+                .filter((i) => i.count > 0 && !battle.items[i.id].important)
+                .map((i) => {
+                  const source = { kind: "item", id: i.id };
+                  return {
+                    commandId,
+                    source,
+                    usable: canUse(source, commandId),
+                    name: `${itemName(battle.items[i.id])} × ${i.available}`,
+                  };
+                })
+            : command.abilityIds
+                .filter((id) => actor.abilities.includes(id))
+                .map((id) => {
+                  const source = { kind: "ability", id };
+                  return {
+                    commandId,
+                    source,
+                    usable: canUse(source, commandId),
+                    name: this.content.abilities[id].name,
+                  };
+                });
+        })
       : [];
     if (
       actor &&
-      this.ability !== null &&
-      !battle.canUse(actor.id, this.ability, this.commandId)
+      this.actionSource !== null &&
+      !canUse(this.actionSource, this.commandId)
     ) {
-      this.ability = null;
+      this.actionSource = null;
       this.commandId = null;
     }
     const targets =
-      actor && this.ability !== null
-        ? battle.targetChoices(actor.id, this.ability)
+      actor && this.actionSource !== null
+        ? this.actionSource.kind === "item"
+          ? battle.itemTargetChoices(actor.id, this.actionSource.id)
+          : battle.targetChoices(actor.id, this.actionSource.id)
         : [];
     const key = JSON.stringify([
       this.selected,
-      this.ability,
+      this.actionSource,
       this.commandId,
       options,
       battle.ready.map((p) => p.id),
@@ -178,7 +202,7 @@ export class BattleView {
     menu.replaceChildren();
     const title = document.createElement("strong");
     title.textContent = actor
-      ? `${actor.name} · ${this.ability === null ? (actor.commands.length === 1 ? this.content.commands[actor.commands[0]].name : "行动") : "选择目标"}`
+      ? `${actor.name} · ${this.actionSource === null ? (actor.commands.length === 1 ? this.content.commands[actor.commands[0]].name : "行动") : "选择目标"}`
       : "等待行动条…";
     menu.append(title);
     if (!actor) return;
@@ -193,22 +217,20 @@ export class BattleView {
       choices.append(b);
       return b;
     };
-    if (this.ability === null)
-      for (const { abilityId: id, commandId, usable } of options) {
-        const a = this.content.abilities[id];
-        const button = add(
+    if (this.actionSource === null)
+      for (const { source, commandId, usable, name } of options) {
+        add(
           actor.commands.length === 1
-            ? a.name
-            : `${this.content.commands[commandId].name} · ${a.name}`,
+            ? name
+            : `${this.content.commands[commandId].name} · ${name}`,
           !usable,
           () => {
-            this.ability = id;
+            this.actionSource = source;
             this.commandId = commandId;
             this.key = "";
             this.sync(battle, false);
           },
         );
-        if (!a.plan) button.title = "此能力尚未接入";
       }
     else {
       for (const choice of targets) {
@@ -220,13 +242,27 @@ export class BattleView {
             : selection.kind === "side"
               ? `${selection.side === "player" ? "我方" : "敌方"}全体（${choice.targetIds.length}）`
               : t.name +
-                (t.side === "enemy" ? ` ${battle.enemies.indexOf(t) + 1}` : "") +
+                (t.side === "enemy"
+                  ? ` ${battle.enemies.indexOf(t) + 1}`
+                  : "") +
                 (t.hp === 0 ? " · 战斗不能" : "");
         add(text, false, () => {
           if (
-            battle.command(actor.id, this.ability, selection, this.commandId)
+            this.actionSource.kind === "item"
+              ? battle.commandItem(
+                  actor.id,
+                  this.actionSource.id,
+                  selection,
+                  this.commandId,
+                )
+              : battle.command(
+                  actor.id,
+                  this.actionSource.id,
+                  selection,
+                  this.commandId,
+                )
           ) {
-            this.ability = null;
+            this.actionSource = null;
             this.selected = null;
             this.key = "";
             this.canvas.focus();
@@ -321,7 +357,7 @@ export class BattleView {
         battle.combatants.find((p) => p.id === a.actor),
         battle,
       );
-      const ability = this.content.abilities[a.ability];
+      const ability = battle.actionDefinition(a);
       for (const id of a.targetIds) {
         const to = this.position(
           battle.combatants.find((p) => p.id === id),

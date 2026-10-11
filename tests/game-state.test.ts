@@ -1,3 +1,4 @@
+import { itemFixture } from "./fixtures/items.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { GameState, type GameStateContent } from "../src/core/game-state.js";
@@ -12,8 +13,8 @@ const content: GameStateContent = {
   limits: { gil: 1000, item: 99, hp: 9999, mp: 999, level: 99, exp: 15000000 },
   initialGil: 90,
   items: {
-    10: { id: 10, itemId: 1, name: "Synthetic potion", important: false },
-    20: { id: 20, itemId: 2, name: "Synthetic key", important: true },
+    10: itemFixture(10),
+    20: { ...itemFixture(20, true), itemId: 2 },
   },
   initialItems: [{ id: 20, count: 1 }],
   equipment: { a: [1, 2, 3, 4, 5, 5], b: [1, 2, 3, 4, 5, 5] },
@@ -239,12 +240,16 @@ test("victory validates the whole roster then publishes once, preserving invento
   players[0]!.exp = 40;
   players[1]!.mp = -1;
   assert.throws(
-    () => s.prepareVictory(lease, { players, gil: 100 }),
+    () => s.prepareVictory(lease, { players, gil: 100, consumedItems: [] }),
     /integer/,
   );
   assert.deepEqual(s.snapshot(), before);
   players[1]!.mp = 0;
-  const commit = s.prepareVictory(lease, { players, gil: 2000 });
+  const commit = s.prepareVictory(lease, {
+    players,
+    gil: 2000,
+    consumedItems: [],
+  });
   players[0]!.hp = 1;
   assert.deepEqual(s.snapshot(), before);
   commit();
@@ -257,7 +262,10 @@ test("victory validates the whole roster then publishes once, preserving invento
     before.roster[0]!.equipment,
   );
   assert.throws(commit, /Stale/);
-  assert.throws(() => s.prepareVictory(lease, { players, gil: 1 }), /Stale/);
+  assert.throws(
+    () => s.prepareVictory(lease, { players, gil: 1, consumedItems: [] }),
+    /Stale/,
+  );
   assert.deepEqual(s.completedEncounters, [1000]);
 });
 test("shared-state restore rejects incompatible, incomplete, extra and inconsistent data before mutation", () => {

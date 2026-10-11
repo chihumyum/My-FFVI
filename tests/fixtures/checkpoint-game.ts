@@ -1,3 +1,4 @@
+import { itemFixture } from "./items.js";
 import type {
   Character,
   FieldContent,
@@ -196,7 +197,7 @@ export function checkpointFixture() {
         exp: 15000000,
       },
       items: {
-        10: { id: 10, itemId: 1, name: "Synthetic item", important: false },
+        10: itemFixture(10),
       },
       initialItems: [],
       equipment: { a: [1, 2, 3, 4, 5, 5], b: [1, 2, 3, 4, 5, 5] },

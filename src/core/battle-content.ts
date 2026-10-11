@@ -11,6 +11,7 @@ import type { GameStateContent } from "./game-state.js";
 export type BattleCommandDefinition = {
   id: number;
   name: string;
+  kind: "ability" | "item";
   abilityIds: number[];
   forbiddenConditionIds: number[];
 };
@@ -18,7 +19,7 @@ export type BattleCommandDefinition = {
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
   kind: "opening-battle-development";
-  profile: "narshe-playability-v13";
+  profile: "narshe-playability-v14";
   contentHash: string;
   sourceContentHash: string;
   fieldSourceSetHash: string;

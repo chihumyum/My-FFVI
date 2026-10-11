@@ -28,7 +28,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v13");
+assert.equal(catalog.common.profile, "narshe-playability-v14");
 const limits = compilePhysicalLimits(reader);
 const zero = { attack: 0, strength: 0, accuracy: 0, criticalRate: 0 };
 const players = tables["character_status.csv"].flatMap((row) =>
@@ -154,6 +154,7 @@ for (const abilityId of [1, 399]) {
     content.commands[900001] = {
       id: 900001,
       name: "Controlled",
+      kind: "ability",
       abilityIds: [abilityId],
       forbiddenConditionIds: [],
     };

@@ -28,7 +28,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v13");
+assert.equal(catalog.common.profile, "narshe-playability-v14");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const conditions = compileBattleConditionCatalog(
   reader,
@@ -84,6 +84,7 @@ function fixture(id, deathId = 5, hp = 80) {
   content.commands[9000] = {
     id: 9000,
     name: "机制检查",
+    kind: "ability",
     abilityIds: [id],
     forbiddenConditionIds: [],
   };

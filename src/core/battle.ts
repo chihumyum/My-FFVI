@@ -1,7 +1,4 @@
-import {
-  calculateDevelopmentEffects,
-  type AbilityEffectResult,
-} from "./ability.js";
+import type { AbilityEffectResult } from "./ability.js";
 import { atbIncrement } from "./atb.js";
 import {
   initialEnemyBehavior,
@@ -17,7 +14,13 @@ import {
   type BattleAITurn,
 } from "./battle-ai.js";
 import { battleReaction, validateReactionRules } from "./battle-reactions.js";
-import { calculateRevivalEffects, revivalEffects } from "./battle-revival.js";
+import { projectActionTarget } from "./action-effects.js";
+import {
+  validateItemStacks,
+  type BattleInventory,
+  type ItemDefinition,
+  type ItemStack,
+} from "./items.js";
 import { validateElements, validateElementResistances } from "./elements.js";
 import {
   battleTargetChoices,
@@ -49,7 +52,7 @@ export type BattleAction = {
   actor: string;
   selection: TargetSelection;
   targetIds: string[];
-  ability: number;
+  source: { kind: "ability"; id: number } | { kind: "item"; id: number };
   commandId: number | null;
   charge: number;
   elapsed: number;
@@ -83,19 +86,26 @@ export class BattleGame {
   private aiStates = new Map<string, BattleAIState>();
   private collected = false;
   readonly conditions: BattleConditions;
+  readonly items: Record<string, ItemDefinition>;
+  private stock: ItemStack[];
+  private consumedItems: ItemStack[] = [];
   constructor(
     readonly content: BattleContent,
     seed: number,
     players?: Combatant[],
+    inventory: BattleInventory = { definitions: {}, stacks: [], limit: 99 },
   ) {
     if (
       content.kind !== "opening-battle-development" ||
-      content.profile !== "narshe-playability-v13"
+      content.profile !== "narshe-playability-v14"
     )
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
       throw new Error("Invalid battle seed");
     this.randomState = seed || 1;
+    this.items = structuredClone(inventory.definitions);
+    validateItemStacks(inventory.stacks, this.items, inventory.limit);
+    this.stock = structuredClone(inventory.stacks);
     validateReactionRules(content.reactions);
     this.conditions = new BattleConditions(content.conditions);
     this.combatants = [
@@ -127,6 +137,8 @@ export class BattleGame {
       this.conditions.validateReferences(ability.program.forbiddenConditionIds);
     for (const command of Object.values(content.commands))
       this.conditions.validateReferences(command.forbiddenConditionIds);
+    for (const item of Object.values(this.items))
+      this.conditions.validateReferences(item.forbiddenConditionIds);
     for (const c of this.combatants) {
       validateElements(c.attackElements);
       validateElementResistances(c.elementResistances);
@@ -159,6 +171,134 @@ export class BattleGame {
   get ready() {
     return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued);
   }
+  get inventory() {
+    return this.stock.map((i) => ({
+      ...i,
+      available: this.availableItemCount(i.id),
+    }));
+  }
+  private availableItemCount(id: number, except?: BattleAction) {
+    const reserved = [
+      ...this.queue,
+      ...this.reactions,
+      ...(this.action ? [this.action] : []),
+    ].filter(
+      (a) =>
+        a !== except &&
+        !a.resolved &&
+        a.source.kind === "item" &&
+        a.source.id === id,
+    ).length;
+    return (this.stock.find((i) => i.id === id)?.count ?? 0) - reserved;
+  }
+  canUseItem(actorId: string, itemId: number, commandId: number): boolean {
+    return this.itemAllowed(actorId, itemId, commandId);
+  }
+  private itemAllowed(
+    actorId: string,
+    itemId: number,
+    commandId: number,
+    except?: BattleAction,
+  ): boolean {
+    const actor = this.players.find((c) => c.id === actorId),
+      item = this.items[itemId],
+      command = this.content.commands[commandId];
+    if (
+      !actor ||
+      actor.hp <= 0 ||
+      !item ||
+      item.important ||
+      !item.uses.battle.plan ||
+      !actor.commands.includes(commandId) ||
+      command?.kind !== "item" ||
+      this.availableItemCount(itemId, except) < 1
+    )
+      return false;
+    this.conditions.validateActive(actor.conditionIds);
+    return conditionsAllowAction(
+      actor.conditionIds,
+      item.forbiddenConditionIds,
+      command.forbiddenConditionIds,
+    );
+  }
+  itemTargetChoices(actorId: string, itemId: number): TargetChoice[] {
+    const actor = this.players.find((c) => c.id === actorId),
+      item = this.items[itemId];
+    if (!actor || !item?.uses.battle.plan || item.important) return [];
+    // Enemy-target item reactions still need their own received-item provider.
+    // Keep the source range intact; this bounded host admits player targets only.
+    return battleTargetChoices(
+      item.uses.battle.plan.targeting,
+      actor,
+      this.combatants,
+      this.content.formation,
+    ).filter((choice) =>
+      choice.targetIds.every((id) => this.players.some((p) => p.id === id)),
+    );
+  }
+  commandItem(
+    actorId: string,
+    itemId: number,
+    selection: TargetSelection,
+    commandId: number,
+  ): boolean {
+    const actor = this.ready.find((c) => c.id === actorId);
+    if (
+      this.phase !== "active" ||
+      !actor ||
+      !this.canUseItem(actorId, itemId, commandId)
+    )
+      return false;
+    const choice = this.itemTargetChoices(actorId, itemId).find((c) =>
+      sameTargetSelection(c.selection, selection),
+    );
+    if (!choice) return false;
+    this.queue.push({
+      kind: "normal",
+      actor: actorId,
+      source: { kind: "item", id: itemId },
+      selection: structuredClone(choice.selection),
+      targetIds: [...choice.targetIds],
+      commandId,
+      // Ordinary item command 3 has command_wait=0; the profile's presentation
+      // timing remains the same provisional 400/900 ms used by abilities.
+      charge: 0,
+      elapsed: 0,
+      resolved: false,
+      results: [],
+    });
+    actor.queued = true;
+    return true;
+  }
+  actionDefinition(action: BattleAction) {
+    if (action.source.kind === "ability")
+      return this.content.abilities[action.source.id]!;
+    const item = this.items[action.source.id]!,
+      use = item.uses.battle;
+    return {
+      name: item.name,
+      plan: use.plan,
+      power: item.power,
+      cost: 0,
+      presentation: "heal",
+      attribute: 0,
+      program: {
+        functions: use.program.functions,
+        rules: { system_id: item.systemId },
+      },
+    };
+  }
+  private canUseAction(action: BattleAction) {
+    return action.source.kind === "ability"
+      ? this.canUse(action.actor, action.source.id, action.commandId)
+      : action.commandId !== null &&
+          this.itemAllowed(
+            action.actor,
+            action.source.id,
+            action.commandId,
+            action,
+          );
+  }
   private validateConditionState() {
     for (const c of this.combatants) {
       this.conditions.validateActive(c.conditionIds);
@@ -176,8 +316,10 @@ export class BattleGame {
     requested?: number | null,
   ) {
     if (actor.side === "enemy") return requested == null ? null : undefined;
-    const choices = actor.commands.filter((id) =>
-      this.content.commands[id]?.abilityIds.includes(abilityId),
+    const choices = actor.commands.filter(
+      (id) =>
+        this.content.commands[id]?.kind === "ability" &&
+        this.content.commands[id]?.abilityIds.includes(abilityId),
     );
     if (requested === undefined)
       return choices.length === 1 ? choices[0] : undefined;
@@ -458,7 +600,7 @@ export class BattleGame {
       actor: actor.id,
       selection: structuredClone(choice.selection),
       targetIds: [...choice.targetIds],
-      ability: ability.id,
+      source: { kind: "ability", id: ability.id },
       commandId,
       charge:
         actor.side === "player"
@@ -532,7 +674,7 @@ export class BattleGame {
     if (index >= 0) {
       const action = queue.splice(index, 1)[0]!,
         actor = this.combatants.find((c) => c.id === action.actor)!;
-      if (!this.canUse(actor.id, action.ability, action.commandId)) {
+      if (!this.canUseAction(action)) {
         this.finishActorAction(actor, action.kind);
         this.log(`${actor.name} 的行动已失效。`);
         return;
@@ -551,9 +693,7 @@ export class BattleGame {
       action.selection = choice.selection;
       action.targetIds = choice.targetIds;
       this.action = action;
-      this.log(
-        `${actor.name} · ${this.content.abilities[action.ability]!.name}`,
-      );
+      this.log(`${actor.name} · ${this.actionDefinition(action).name}`);
     }
     this.checkOutcome();
   }
@@ -572,24 +712,28 @@ export class BattleGame {
   private actionTargetChoices(action: BattleAction) {
     return action.kind === "counter"
       ? this.counterTargetChoices(this.combatants)
-      : this.targetChoices(action.actor, action.ability);
+      : action.source.kind === "item"
+        ? this.itemTargetChoices(action.actor, action.source.id)
+        : this.targetChoices(action.actor, action.source.id);
   }
   private planReactions(
     action: BattleAction,
     units: readonly Combatant[],
     results: readonly { target: string; effects: AbilityEffectResult[] }[],
   ) {
-    const ability = this.content.abilities[action.ability]!;
+    const ability = this.actionDefinition(action);
     const updates: { actor: string; turn: BattleAITurn }[] = [];
     const decisions: BattleAction[] = [];
     for (const result of results) {
       const actor = units.find((c) => c.id === result.target)!;
       if (actor.side !== "enemy") continue;
+      if (action.source.kind === "item")
+        throw new Error("Unimplemented enemy item reaction");
       const reaction = battleReaction(this.content.reactions, {
         actor: action.actor,
         target: actor.id,
         isCounter: action.kind === "counter",
-        abilityId: ability.id,
+        abilityId: action.source.id,
         systemId: ability.program.rules.system_id!,
         primarySlot: ability.program.functions[0]?.slot ?? -1,
         effects: result.effects,
@@ -634,10 +778,10 @@ export class BattleGame {
   }
   private resolve(action: BattleAction) {
     const actor = this.combatants.find((c) => c.id === action.actor)!;
-    const ability = this.content.abilities[action.ability]!;
+    const ability = this.actionDefinition(action);
     if (action.resolved) return;
     if (!ability.plan) throw new Error("Unimplemented ability cannot execute");
-    if (!this.canUse(actor.id, ability.id, action.commandId)) {
+    if (!this.canUseAction(action)) {
       action.resolved = true;
       return;
     }
@@ -654,67 +798,18 @@ export class BattleGame {
         action.resolved = true;
         return;
       }
-      const first = ability.plan.effects[0];
       const staged = choice.targetIds.map((id) => {
         const target = this.combatants.find((c) => c.id === id)!;
-        this.conditions.validateActive(target.conditionIds);
-        let conditionIds = [...target.conditionIds];
-        let effects: AbilityEffectResult[];
-        if (revivalEffects(ability.plan!)) {
-          ({ effects, conditionIds } = calculateRevivalEffects(
-            ability.plan!,
-            this.conditions,
-            target,
-          ));
-        } else if (
-          ability.plan!.effects.length === 1 &&
-          first &&
-          (first.kind === "add-condition" || first.kind === "recover-condition")
-        ) {
-          const change =
-            first.kind === "add-condition"
-              ? this.conditions.add(
-                  target.conditionIds,
-                  target.conditionResistances,
-                  first.conditionId,
-                  {
-                    accuracy: first.accuracy,
-                    magicEvasion: target.magicEvasion,
-                    fixed: first.fixedHit,
-                  },
-                  (min, max) => this.randomInt(min, max),
-                )
-              : this.conditions.recover(
-                  target.conditionIds,
-                  first.conditionIds,
-                );
-          conditionIds = change.currentIds;
-          effects = [
-            {
-              slot: first.slot,
-              resource: "condition",
-              recovery: first.kind === "recover-condition",
-              added: change.added,
-              removed: change.removed,
-              missed: change.missed,
-            },
-          ];
-        } else {
-          effects = calculateDevelopmentEffects(
-            ability.plan!,
-            ability.power,
-            actor,
-            target,
-            (min, max) => this.randomInt(min, max),
-            choice.targetIds.length,
-          );
-        }
-        // Include the one action cost before any MP recovery to the actor.
-        const state = {
-          hp: target.hp,
-          mp: target.mp - (target === actor ? ability.cost : 0),
-          conditionIds,
-        };
+        const { state, effects } = projectActionTarget(
+          ability.plan!,
+          ability.power,
+          actor,
+          target,
+          this.conditions,
+          (min, max) => this.randomInt(min, max),
+          choice.targetIds.length,
+          ability.cost,
+        );
         const messages: string[] = [];
         for (const effect of effects) {
           if (effect.missed) {
@@ -736,18 +831,6 @@ export class BattleGame {
               );
           } else {
             const resource = effect.resource;
-            state[resource] = effect.recovery
-              ? Math.min(
-                  resource === "hp" ? target.maxHp : target.maxMp,
-                  state[resource] + effect.amount,
-                )
-              : Math.max(0, state[resource] - effect.amount);
-            if (resource === "hp")
-              state.conditionIds = this.conditions.updateDying(
-                state.hp,
-                target.maxHp,
-                state.conditionIds,
-              );
             messages.push(
               effect.recovery
                 ? `${target.name} 恢复 ${effect.amount} ${resource.toUpperCase()}。`
@@ -755,14 +838,6 @@ export class BattleGame {
             );
           }
         }
-        Object.assign(
-          state,
-          this.conditions.settleLife(
-            state.hp,
-            state.conditionIds,
-            this.conditions.isUnableFight(target.conditionIds),
-          ),
-        );
         if (target.hp > 0 && state.hp === 0)
           messages.push(`${target.name} 倒下了。`);
         else if (target.hp === 0 && state.hp > 0)
@@ -783,6 +858,12 @@ export class BattleGame {
       const reactions = this.planReactions(action, projected, results);
       // One transaction includes effects, enemy parameters, AI PCs, both queues,
       // result/log publication and the owned random stream.
+      if (action.source.kind === "item") {
+        this.stock.find((i) => i.id === action.source.id)!.count--;
+        const used = this.consumedItems.find((i) => i.id === action.source.id);
+        if (used) used.count++;
+        else this.consumedItems.push({ id: action.source.id, count: 1 });
+      }
       actor.mp -= ability.cost;
       for (const entry of staged) {
         const lifeChanged = (entry.target.hp === 0) !== (entry.state.hp === 0);
@@ -883,7 +964,11 @@ export class BattleGame {
     for (const c of this.players)
       c.conditionIds = this.conditions.battleEnd(c.conditionIds);
   }
-  previewVictory(): { players: Combatant[]; gil: number } | null {
+  previewVictory(): {
+    players: Combatant[];
+    gil: number;
+    consumedItems: ItemStack[];
+  } | null {
     if (this.phase !== "victory" || !this.reward || this.collected) return null;
     return {
       players: structuredClone(this.players).map((c) => ({
@@ -892,9 +977,16 @@ export class BattleGame {
         queued: false,
       })),
       gil: this.reward.gil,
+      consumedItems: structuredClone(this.consumedItems).sort(
+        (a, b) => a.id - b.id,
+      ),
     };
   }
-  takeVictory(): { players: Combatant[]; gil: number } | null {
+  takeVictory(): {
+    players: Combatant[];
+    gil: number;
+    consumedItems: ItemStack[];
+  } | null {
     const result = this.previewVictory();
     if (result) this.collected = true;
     return result;

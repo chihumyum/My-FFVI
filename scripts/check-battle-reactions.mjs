@@ -28,7 +28,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v13");
+assert.equal(catalog.common.profile, "narshe-playability-v14");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 assert.deepEqual(catalog.common.reactions, {
   counterLimit: 1,
@@ -145,6 +145,7 @@ for (const [name, pc, expected] of [
   content.commands[900001] = {
     id: 900001,
     name: "机制检查普通攻击",
+    kind: "ability",
     abilityIds: [1],
     forbiddenConditionIds: [],
   };
@@ -160,7 +161,7 @@ for (const [name, pc, expected] of [
   b.advance(400);
   const trigger = structuredClone(b.action);
   assert.equal(b.pendingActions[0].kind, "counter");
-  assert.equal(b.pendingActions[0].ability, expected);
+  assert.equal(b.pendingActions[0].source.id, expected);
   assert.deepEqual(b.pendingActions[0].targetIds, [attacker]);
   assert.equal(b.enemies[0].atb, 100);
   b.advance(510);

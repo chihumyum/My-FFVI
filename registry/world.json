@@ -520,6 +520,38 @@
         "build/reports/save-browser-check.json#48d78872b650f5a5a441417a5d11e4eaa00189f92f8474b640f30fb43613edc5",
         "docs/checkpoint-saves.md"
       ]
+    },
+    {
+      "id": "narshe:development-item-actions",
+      "subject": "narshe",
+      "predicate": "migration.itemActions",
+      "value": "Development v14 connects ordinary fixed HP/MP recovery items across the menu, battle, shared inventory and idle checkpoints. Content IDs remain distinct from item and ability row IDs; menu/battle function groups compile independently. Eight menu and nine battle item plans are admitted, limited to living players. Fifty identities in two contexts are decoded, not fifty usable items. Shared effect projections, stock reservations, one consumption per action, entry-state retry and atomic victory receipts are implemented. 286 TypeScript and 18 Python tests, 17 source-backed controlled item probes, the existing five encounters and 40 checkpoint restores pass. Browser controlled menu recovery, last-item reservation, party recovery, victory return and in-memory checkpoint restore pass; the normal opening browser battle/field/menu also passes, retaining the sole initial key item. No test items were granted to the normal game, and the old version save was rejected but preserved. Revive/condition cure and special items, enemy item reactions, equipment changes, event inventory writes, full initialization and native timing/random parity remain incomplete. No new region, story unlock or HD-2D work.",
+      "when": {
+        "battleProfile": "narshe-playability-v14",
+        "gameStateProfile": "game-state-development-v1",
+        "saveProfile": "game-checkpoint-v1"
+      },
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "content.csv -> item.csv:menu_function_group_id/battle_function_group_id",
+        "command.csv:3; character_status.csv:command_id1..6",
+        "GameAssembly.dll:RVA 0x7fae40 IsUseFunction",
+        "GameAssembly.dll:RVA 0x7fb670 IsUseRecoveryParameter",
+        "GameAssembly.dll:RVA 0x7fe5e0 UseFunction",
+        "GameAssembly.dll:RVA 0x3d8660/0x157aed0 GetFixedRecoveryStatus",
+        "GameAssembly.dll:RVA 0x15a9340 FixedItemUse",
+        "src/compiler/items.ts:compileItem",
+        "src/core/action-effects.ts:projectActionTarget",
+        "src/core/game-state.ts:useMenuItem/prepareVictory",
+        "src/core/battle.ts:commandItem",
+        "build/reports/items-native-check.json#d575b0a67282c5c724344c0fb658831e9323a96ad1b5a1aac7498fe6a62dd14d",
+        "build/reports/items-check.json#2c6a10a095a5ff3285776abb716037b59a5cc0b761e4662cc737e70ecd4c24cd",
+        "build/reports/items-browser-check.json#852d5f0f52f4d709ec898171aeaf311ec0baf22151b52ac03b123062ce360a19",
+        "build/reports/items-opening-browser-check.json#a46c6a13f9770c00cd765c1587176434a6f78fcac28712e4992f6a77ee590ef4",
+        "build/reports/save-check.json#6e01339c52acf35d40f4d3b04bf87afcab902f9830a6cef96422f2e6717228c8",
+        "docs/item-actions.md"
+      ]
     }
   ],
   "assets": []

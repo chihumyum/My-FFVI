@@ -1,5 +1,12 @@
 import type { CombatantDefinition } from "./battle-content.js";
 import type { Combatant } from "./battle.js";
+import { projectActionTarget } from "./action-effects.js";
+import {
+  validateItemStacks,
+  type ItemDefinition,
+  type ItemStack,
+  type BattleInventory,
+} from "./items.js";
 import {
   BattleConditions,
   type BattleConditionCatalog,
@@ -17,10 +24,7 @@ export type GameStateContent = {
   };
   initialGil: number;
   /** Ordinary/important item stacks only; equipment stock and magic stones remain separate capabilities. */
-  items: Record<
-    string,
-    { id: number; itemId: number; name: string; important: boolean }
-  >;
+  items: Record<string, ItemDefinition>;
   initialItems: { id: number; count: number }[];
   equipment: Record<string, number[]>;
 };
@@ -74,7 +78,11 @@ export class GameState {
   private readonly content: GameStateContent;
   private readonly definitions: Map<string, CombatantDefinition>;
   private data: GameStateSnapshot;
-  private active: { lease: BattleLease; players: Combatant[] } | null = null;
+  private active: {
+    lease: BattleLease;
+    players: Combatant[];
+    items: ItemStack[];
+  } | null = null;
   private revision = 0;
   private readonly conditions: BattleConditions;
   constructor(
@@ -106,6 +114,7 @@ export class GameState {
       )
         throw new Error("Invalid item identity");
       integer(item.itemId, 0x7fffffff, 1);
+      this.conditions.validateReferences(item.forbiddenConditionIds);
     }
     this.data = {
       formatVersion: 1,
@@ -238,6 +247,58 @@ export class GameState {
       };
     });
   }
+  private previewItem(id: number, targetId: string) {
+    this.requireIdle();
+    const item = this.content.items[id];
+    const target = this.partyPlayers().find((p) => p.id === targetId);
+    if (
+      !item ||
+      item.important ||
+      !item.uses.menu.plan ||
+      !this.data.items.some((i) => i.id === id && i.count > 0) ||
+      !target ||
+      target.hp <= 0 ||
+      target.conditionIds.some((c) => item.forbiddenConditionIds.includes(c))
+    )
+      return null;
+    const projection = projectActionTarget(
+      item.uses.menu.plan,
+      item.power,
+      target,
+      target,
+      this.conditions,
+      () => {
+        throw new Error("Unimplemented menu item randomness");
+      },
+      1,
+    );
+    return projection.state.hp !== target.hp ||
+      projection.state.mp !== target.mp
+      ? projection
+      : null;
+  }
+  menuItemTargets(id: number): string[] {
+    if (this.active) return [];
+    return this.data.party.filter(
+      (target) => this.previewItem(id, target) !== null,
+    );
+  }
+  /** Menu eligibility and effects are projected again at confirmation. No effect
+   * means no consumption; stock and the entire character projection commit once. */
+  useMenuItem(id: number, targetId: string): boolean {
+    const projected = this.previewItem(id, targetId);
+    if (!projected) return false;
+    const next = this.snapshot();
+    Object.assign(
+      next.roster.find((p) => p.id === targetId)!,
+      projected.state,
+    );
+    next.items.find((i) => i.id === id)!.count--;
+    this.validate(next);
+    this.data = next;
+    this.revision++;
+    return true;
+  }
   /** Commands validate affordability before consuming; this is not a raw event RemoveOwnedItem emulation. */
   changeItems(
     changes: readonly { id: number; count: number }[],
@@ -276,12 +337,24 @@ export class GameState {
       serial: this.data.completedBattles.length,
       encounterId,
     });
-    this.active = { lease, players: this.partyPlayers() };
+    this.active = {
+      lease,
+      players: this.partyPlayers(),
+      items: structuredClone(this.data.items),
+    };
     return lease;
   }
   battlePlayers(lease: BattleLease): Combatant[] {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     return structuredClone(this.active.players);
+  }
+  battleInventory(lease: BattleLease): BattleInventory {
+    if (this.active?.lease !== lease) throw new Error("Stale battle lease");
+    return structuredClone({
+      definitions: this.content.items,
+      stacks: this.active.items,
+      limit: this.content.limits.item,
+    });
   }
   cancelBattle(lease: BattleLease): void {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
@@ -289,12 +362,28 @@ export class GameState {
   }
   prepareVictory(
     lease: BattleLease,
-    result: { players: Combatant[]; gil: number },
+    result: { players: Combatant[]; gil: number; consumedItems: ItemStack[] },
   ): () => void {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     const next = this.snapshot(),
       revision = this.revision;
     integer(result.gil, 0x7fffffff);
+    validateItemStacks(
+      result.consumedItems,
+      this.content.items,
+      this.content.limits.item,
+    );
+    for (const used of result.consumedItems) {
+      const stock = next.items.find((i) => i.id === used.id);
+      if (
+        !stock ||
+        stock.count < used.count ||
+        this.content.items[used.id]!.important ||
+        !this.content.items[used.id]!.uses.battle.plan
+      )
+        throw new Error("Invalid battle inventory consumption");
+      stock.count -= used.count;
+    }
     if (
       result.players.length !== next.party.length ||
       result.players.some((p, n) => p.id !== next.party[n])

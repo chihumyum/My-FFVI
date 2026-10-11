@@ -171,7 +171,8 @@ export function calculateDevelopmentEffects(
         amount: Math.abs(result.amount),
       };
     } else if (effect.kind === "recovery" && effect.calculation === "fixed") {
-      // GetFixedRecoveryStatus 0x3D8660, ability (not item) branch, no conditions.
+      // GetFixedRecoveryStatus 0x3d8660/0x157aed0: both ability and ordinary
+      // item read their own StandardValue. Carrier admission is done upstream.
       amount = power;
     } else {
       const result = calculateMagic(

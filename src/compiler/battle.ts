@@ -299,6 +299,7 @@ export async function compileOpeningBattle(root: string) {
   )
     throw new Error("Missing or ambiguous initial party slots");
   const command = row("command.csv", 26);
+  row("command.csv", 3);
   // A shared condition library, not proof that every behavior is executable.
   compileConditionCatalog(
     { row, group: tableGroup },
@@ -400,7 +401,16 @@ export async function compileOpeningBattle(root: string) {
   // content kinds (equipment stock, learned magic, magic stones) are not item stacks.
   for (const value of tables["content.csv"]!.filter((r) => r.type_id === "1")) {
     row("content.csv", value.id!);
-    row("item.csv", value.type_value!);
+    const item = row("item.csv", value.type_value!);
+    for (const context of ["menu", "battle"]) {
+      const id = tableInteger(item.values[`${context}_function_group_id`]);
+      if (!id) continue;
+      const group = row("function_group.csv", id);
+      for (let slot = 1; slot <= 3; slot++) {
+        const fn = tableInteger(group.values[`function${slot}_id`]);
+        if (fn) row("function.csv", fn);
+      }
+    }
   }
   for (const key of ["MAX_GIL", "MAX_ITEM", "MAX_EXP", "MAX_LV"])
     unique("game_constant_int.csv", "key_name", key);

@@ -255,6 +255,17 @@ a {
   margin: 0 0 16px;
   line-height: 1.6;
 }
+#owned-items button,
+#item-targets button {
+  display: block;
+  padding: 8px;
+  margin: 4px 0;
+  font-size: 13px;
+  text-align: left;
+}
+#item-status {
+  font-size: 13px;
+}
 .save-controls button {
   padding: 8px 12px;
   margin: 4px;

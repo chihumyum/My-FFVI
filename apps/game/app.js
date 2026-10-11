@@ -1,3 +1,4 @@
+import { InventoryView } from "./inventory-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
 import { verifyContent } from "/runtime/core/content-integrity.js";
 import { CheckpointStorage } from "/runtime/core/saved-game.js";
@@ -16,6 +17,7 @@ let content,
   overviewRenderer,
   catalogPromise,
   battleView,
+  inventoryView,
   started = false,
   paused = false,
   mapOpen = false,
@@ -59,42 +61,8 @@ function pause(value) {
   $("menu-button").textContent = value ? "继续" : "暂停";
   if (value) {
     syncSaveControls();
-    const state = session.state.snapshot();
-    const players = session.battle?.players ?? session.players;
-    text(
-      "owned-party",
-      players
-        .map(
-          (p) =>
-            `${p.name} · Lv ${p.level}\nHP ${p.hp} / ${p.maxHp}　MP ${p.mp} / ${p.maxMp}`,
-        )
-        .join("\n\n"),
-    );
-    text("owned-gil", `${state.gil} Gil`);
-    for (const [id, important] of [
-      ["owned-items", false],
-      ["owned-key-items", true],
-    ]) {
-      const entries = state.items.filter(
-        (i) =>
-          i.count > 0 &&
-          battleContent.gameState.items[i.id].important === important,
-      );
-      text(
-        id,
-        entries
-          .map((i) => {
-            // These six observed item icons have no Web sprite binding yet.
-            // Preserve the source label in content and omit only known icons here.
-            const name = battleContent.gameState.items[i.id].name.replace(
-              /<(?:IC_DRAG|IC_BAG|IC_TENTO|IC_SCR|IC_MCN|IC_IOBJ)>/g,
-              "",
-            );
-            return `${name} × ${i.count}`;
-          })
-          .join("\n") || "无",
-      );
-    }
+    inventoryView.reset();
+    inventoryView.render(session);
   }
   sync();
   if (value) $("resume").focus();
@@ -405,6 +373,11 @@ async function init() {
       }
     },
   );
+  inventoryView = new InventoryView(
+    $("pause"),
+    battleContent.gameState.items,
+    syncSaveControls,
+  );
   showLimitations();
   if (preview) {
     text("welcome-title", "地图开发预览");
@@ -626,10 +599,13 @@ async function loadGame(previous) {
     );
   } catch (error) {
     catalogPromise = undefined;
-    text(
-      started ? "save-status" : "save-info",
-      `读取失败，当前游戏和存档仍保留：${error.message ?? error}`,
-    );
+    const reason =
+      /source\/version mismatch|source identity|Content identity mismatch/i.test(
+        error.message ?? "",
+      )
+        ? "这份存档与当前游戏内容版本不同，暂时无法读取。原存档已保留。"
+        : `读取失败，当前游戏和存档仍保留：${error.message ?? error}`;
+    text(started ? "save-status" : "save-info", reason);
   } finally {
     checkpointBusy = false;
     syncSaveControls();

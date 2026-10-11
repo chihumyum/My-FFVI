@@ -52,13 +52,8 @@ const ruleColumns = [
   "reaction_type",
 ] as const;
 
-/** Follow all three slots by function.type_id, never by ability/function row ID.
- * Unknown types remain data. Missing/ambiguous references remain hard errors. */
-export function compileAbilityProgram(reader: Reader, abilityId: number) {
-  const ability = reader.row("ability.csv", abilityId);
-  const a = ability.values;
-  const groupId = int(a.battle_function_group_id);
-  const sources = [ability];
+export function compileFunctionGroup(reader: Reader, groupId: number) {
+  const sources: ReturnType<Reader["row"]>[] = [];
   const functions: AbilityFunction[] = [];
   if (groupId !== 0) {
     const group = reader.row("function_group.csv", groupId);
@@ -88,6 +83,18 @@ export function compileAbilityProgram(reader: Reader, abilityId: number) {
       });
     }
   }
+  return { functions, sources };
+}
+
+/** Follow all three slots by function.type_id, never by ability/function row ID.
+ * Unknown types remain data. Missing/ambiguous references remain hard errors. */
+export function compileAbilityProgram(reader: Reader, abilityId: number) {
+  const ability = reader.row("ability.csv", abilityId);
+  const a = ability.values;
+  const groupId = int(a.battle_function_group_id);
+  const decoded = compileFunctionGroup(reader, groupId);
+  const sources = [ability, ...decoded.sources];
+  const functions = decoded.functions;
   if (!a.process_prog) throw new Error("Missing ability process key");
   const program: AbilityProgram = {
     abilityId,

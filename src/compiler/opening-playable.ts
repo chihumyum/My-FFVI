@@ -104,6 +104,20 @@ export async function compileOpeningPlayable(
     26,
     name,
   ).command;
+  const itemCommand = compileBattleCommand(parameterReader, 3, name).command;
+  if (itemCommand.kind !== "item")
+    throw new Error("Unexpected source item command");
+  if (itemCommand.kind === "item")
+    for (const [key, expected] of Object.entries({
+      command_type: 1,
+      command_wait: 0,
+      consume_type: 0,
+      number_select: 1,
+      release_type: 0,
+      auto_execution_ability_id: 0,
+    }))
+      if (int(row("command.csv", itemCommand.id)[key]) !== expected)
+        throw new Error(`Unimplemented item command ${key}`);
   const physicalLimits = compilePhysicalLimits(parameterReader).values;
   const noPhysicalTemporary = {
     attack: 0,
@@ -228,7 +242,14 @@ export async function compileOpeningPlayable(
       abilities: source.magitekAbilityIds.filter((id) =>
         memberships.some((m) => int(m.ability_id) === id),
       ),
-      commands: [magitekCommand.id],
+      commands: [
+        magitekCommand.id,
+        ...([1, 2, 3, 4, 5, 6].some(
+          (n) => int(r[`command_id${n}`]) === itemCommand.id,
+        )
+          ? [itemCommand.id]
+          : []),
+      ],
       conditionIds: [],
       conditionResistances: {},
       ai: null,
@@ -314,7 +335,7 @@ export async function compileOpeningPlayable(
   }
   const common: BattleCatalog["common"] = {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v13",
+    profile: "narshe-playability-v14",
     sourceContentHash: source.contentHash,
     fieldSourceSetHash: String(field.sourceSetHash),
     atb: source.atb,
@@ -325,7 +346,10 @@ export async function compileOpeningPlayable(
     },
     players,
     abilities,
-    commands: { [magitekCommand.id]: magitekCommand },
+    commands: {
+      [magitekCommand.id]: magitekCommand,
+      [itemCommand.id]: itemCommand,
+    },
     conditions,
     growth,
     experience: rows("exp_table.csv")
@@ -341,8 +365,8 @@ export async function compileOpeningPlayable(
       "纳尔谢街道可玩开发规则；未经原版一致性验收，不代表完整战斗系统。",
       "初始能力解锁、命中/伤害分支、蓄力/排队、经验成长采用已记录的临时规则。",
       "初始数值使用分阶段属性确认；成长追加、Correction、临时与被动输入仍按开场检查点显式给零，未恢复通用状态/装备能力。",
-      "当前开放三种射线和治愈原力；其余四种魔导、道具、逃跑与通用战斗脚本尚未实现。",
-      "掉落尚未结算，库存保持不变；队伍 HP、经验、Gil 只保存在本次页面会话。",
+      "当前开放三种射线和治愈原力，以及来源普通 HP/MP 恢复道具；道具目前限我方目标。其余魔导、复活/特殊道具、逃跑与完整战斗脚本尚未实现。",
+      "角色、库存与奖励由共享状态保存，可在稳定地图检查点保存/读取。掉落、商店、剧情物品授予和换装尚未接入；开场没有额外发放测试药品。",
       "站位、夹击队形、骑乘拼接和光束是临时二维表现；原版音效、特效、动画时序尚未接入。",
       "敌方行动使用来源 AI、独立回合与变量，连续行动整组入队。普通反击按命中结果触发并优先执行，保留原行动条；最终攻击、恢复专用反应、完整自动目标及特殊指令仍未接入，未知依赖会明确停止。",
     ],

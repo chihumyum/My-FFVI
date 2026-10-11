@@ -1,6 +1,7 @@
 import type { GameStateContent } from "../core/game-state.js";
 import type { compileOpeningBattle } from "./battle.js";
 import { tableInteger as int } from "./table.js";
+import { compileItem } from "./items.js";
 
 /** Explicit opening bootstrap. It does not initialize unknown plot flags or
  * extend item stacks to the equipment-count/magic-stone ownership providers. */
@@ -17,16 +18,27 @@ export function compileGameState(
     return int(values[0]!.value1);
   };
   const items: GameStateContent["items"] = {};
+  const reader = {
+    row: (table: string, id: string | number) => {
+      const r = source.tables[table]?.[String(id)];
+      if (!r) throw new Error(`Missing item dependency ${table}:${id}`);
+      return r;
+    },
+    group: (table: string, key: string, value: string | number) => {
+      if (String(value) === "0") return [];
+      const found = Object.values(source.tables[table] ?? {}).filter(
+        (r) => r.values[key] === String(value),
+      );
+      if (!found.length)
+        throw new Error(`Missing item group ${table}:${value}`);
+      return found;
+    },
+  };
   for (const content of rows("content.csv").filter((c) => c.type_id === "1")) {
     const item = source.tables["item.csv"]?.[content.type_value!]?.values;
     if (!item) throw new Error("Missing source item: " + content.type_value);
     const id = int(content.id);
-    items[id] = {
-      id,
-      itemId: int(item.id),
-      name: name(content.mes_id_name!),
-      important: int(item.type_id) === 2,
-    };
+    items[id] = compileItem(reader, id, name(content.mes_id_name!)).definition;
   }
   const initialItems = rows("initialize_data.csv")
     .filter((r) => /^INIT_ITEM_[1-5]$/.test(r.key_name!))

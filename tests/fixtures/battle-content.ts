@@ -37,7 +37,7 @@ export function fixture(): BattleContent {
   };
   return {
     kind: "opening-battle-development",
-    profile: "narshe-playability-v13",
+    profile: "narshe-playability-v14",
     contentHash: "synthetic",
     sourceContentHash: "synthetic",
     fieldSourceSetHash: "synthetic",
@@ -98,6 +98,7 @@ export function fixture(): BattleContent {
       100: {
         id: 100,
         name: "Synthetic command",
+        kind: "ability",
         abilityIds: [10, 11, 12],
         forbiddenConditionIds: [],
       },

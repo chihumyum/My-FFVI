@@ -22,6 +22,13 @@ export function compileBattleCommand(
   const command: BattleCommandDefinition = {
     id: int(v.id),
     name: name(v.mes_id_name!),
+    kind:
+      int(v.ability_group_id) === 0 &&
+      direct === 0 &&
+      v.execution_type === "2" &&
+      v.list_type === "1"
+        ? "item"
+        : "ability",
     abilityIds: [...new Set(members.map((r) => int(r.values.id)))],
     forbiddenConditionIds: group.ids,
   };

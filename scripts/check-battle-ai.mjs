@@ -35,7 +35,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v13");
+assert.equal(catalog.common.profile, "narshe-playability-v14");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const assets = Object.values(exported.assets).filter((a) =>
   a.source.assetPath.includes("/MonsterAI/"),
@@ -359,7 +359,7 @@ for (const [name, pc, expected] of [
   for (let i = 0; i < expected.length; i++) {
     b.advance(10);
     assert.equal(b.action.kind, "loop");
-    assert.equal(b.action.ability, expected[i]);
+    assert.equal(b.action.source.id, expected[i]);
     assert.equal(b.enemyAIState(enemy.id).actTurn, 0);
     b.advance(400);
     assert.ok(b.action.resolved);

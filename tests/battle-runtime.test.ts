@@ -91,7 +91,7 @@ test("reaction branches see post-action HP and leave a partially filled gauge in
   b.advance(400);
   assert.ok(b.enemies[0]!.hp < 1999);
   assert.equal(b.pendingActions[0]!.kind, "counter");
-  assert.equal(b.pendingActions[0]!.ability, 10);
+  assert.equal(b.pendingActions[0]!.source.id, 10);
   b.advance(1410);
   assert.equal(b.enemies[0]!.atb, gauge);
   assert.equal(b.enemies[0]!.queued, false);
@@ -145,7 +145,7 @@ test("a counter may target a friendly attacker and cannot recursively trigger th
   b.command("a", 10, "e2");
   b.advance(10);
   b.action!.actor = "e1";
-  b.action!.ability = 13;
+  b.action!.source.id = 13;
   b.action!.commandId = null;
   b.advance(400);
   assert.equal(b.pendingActions[0]!.actor, "e2");
@@ -250,7 +250,7 @@ test("enemy AI cycles physical and magic decisions through the shared action que
   for (let turn = 0; turn < 3; turn++) {
     battle.enemies[0]!.atb = 100;
     battle.advance(10);
-    sequence.push(battle.action!.ability);
+    sequence.push(battle.action!.source.id);
     assert.equal(battle.action!.actor, "e1");
     battle.advance(900);
     assert.equal(battle.enemies[0]!.atb, 0);
@@ -283,10 +283,10 @@ test("a loop submits in source order and releases its gauge only after the last 
     p.atb = 100;
   });
   b.advance(10);
-  assert.equal(b.action!.ability, 13);
+  assert.equal(b.action!.source.id, 13);
   assert.equal(b.action!.kind, "loop");
   assert.deepEqual(
-    b.pendingActions.map((a) => [a.actor, a.ability]),
+    b.pendingActions.map((a) => [a.actor, a.source.id]),
     [
       ["e1", 10],
       ["e1", 10],
@@ -301,7 +301,7 @@ test("a loop submits in source order and releases its gauge only after the last 
   assert.equal(b.enemies[0]!.queued, true);
   for (let i = 0; i < 2; i++) {
     b.advance(10);
-    assert.equal(b.action!.ability, 10);
+    assert.equal(b.action!.source.id, 10);
     assert.equal(b.action!.actor, "e1");
     b.advance(900);
   }
@@ -338,11 +338,11 @@ test("an unaffordable loop member does not release the gauge or cancel a later a
   assert.equal(b.enemies[0]!.queued, true);
   assert.equal(b.enemies[0]!.atb, 100);
   assert.deepEqual(
-    b.pendingActions.map((a) => a.ability),
+    b.pendingActions.map((a) => a.source.id),
     [13],
   );
   b.advance(10);
-  assert.equal(b.action!.ability, 13);
+  assert.equal(b.action!.source.id, 13);
   b.advance(900);
   assert.equal(b.enemies[0]!.queued, false);
   assert.equal(b.enemies[0]!.atb, 0);
@@ -531,7 +531,7 @@ test("battle owns independent enemy parameters and preflight does not advance th
     for (let turn = 0; turn < 3; turn++) {
       battle.enemies[0]!.atb = 100;
       battle.advance(10);
-      actions.push(battle.action!.ability);
+      actions.push(battle.action!.source.id);
       for (const dt of steps) battle.advance(dt);
     }
     assert.deepEqual(actions, [13, 10, 10]);
@@ -718,6 +718,7 @@ function conditionFixture() {
   f.commands[101] = {
     id: 101,
     name: "Status",
+    kind: "ability",
     abilityIds: [14, 15],
     forbiddenConditionIds: [],
   };
@@ -887,6 +888,7 @@ test("the selected command stays attached to an action and is checked again at r
   f.commands[102] = {
     id: 102,
     name: "Alternative",
+    kind: "ability",
     abilityIds: [10],
     forbiddenConditionIds: [],
   };

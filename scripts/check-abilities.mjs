@@ -81,6 +81,7 @@ for (const id of [760, 761, 764, 765, 766, 1288]) {
     content.commands[900001] = {
       id: 900001,
       name: "Controlled",
+      kind: "ability",
       abilityIds: [id],
       forbiddenConditionIds: [],
     };

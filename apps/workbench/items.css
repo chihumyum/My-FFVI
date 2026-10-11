@@ -1,0 +1,51 @@
+body {
+  display: block;
+  overflow: auto;
+  padding: 24px;
+  background: #101522;
+  color: #ecf0f7;
+  font: 15px system-ui;
+}
+main {
+  display: grid;
+  grid-template-columns: minmax(300px, 440px) minmax(420px, 1fr);
+  gap: 24px;
+}
+section {
+  min-width: 0;
+}
+canvas {
+  width: 100%;
+  max-width: 720px;
+  height: auto;
+  image-rendering: pixelated;
+}
+#battle-ui {
+  position: static;
+  background: #172136;
+  padding: 12px;
+}
+#battle-menu {
+  position: static;
+}
+#party {
+  position: static;
+}
+#owned-state {
+  display: block;
+}
+button {
+  padding: 8px 12px;
+  margin: 4px;
+}
+#receipt {
+  white-space: pre-wrap;
+}
+h1 {
+  font-size: 24px;
+}
+@media (max-width: 850px) {
+  main {
+    display: block;
+  }
+}
