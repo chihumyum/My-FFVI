@@ -2,7 +2,7 @@
 
 2026-10-12。结论：尚未摸清或迁移完整核心机制。地图和字段事件已有共用实现，战斗仍是开场开发子集。地图包、空闲入口和孤立脚本的数量不能代表战斗、角色、物品或保存系统的完成度。原版一致性对照按用户指示后置，HD-2D 不进入当前工作。
 
-当前系统批次为 `narshe-playability-v35`：普通切图已接入单一共享效果管理器与可取消的候选事务，队伍/库存和效果在联合提交时发布；全局分配计数跨地图保留。已恢复匹配 UnityPlayer 的随机、时钟与常量发射子核，并接入效果板双 pass 的共用颜色/深度合成。Noise、Cone、预热、运动积分及真实粒子几何/色空间仍未完成，5 个实际发射器保持阻塞，来源开场尚未通过 609→3。菜单操作与粒子存档条件已分离；owned v8、field/world v9、session v4 保持。完整系统闭环和全游戏迁移未完成，HD-2D 后置；见 [v35 系统集成](systems-v35.md)。
+当前系统批次为 v36：已恢复来源粒子的启动/预热/调度与容量、Initial/Cone 出生、Noise/运动和 billboard/RT 独立提供器。完整共享粒子宿主、最终颜色/大小、死亡排列与来源投影仍需接线，5 个完整发射器保持阻塞，来源开场尚未通过 609→3。公开可玩 profile 保持 `narshe-playability-v35`，owned v8、field/world v9、session v4 不变。完整系统闭环和全游戏迁移未完成，HD-2D 后置；见 [v36 系统集成](systems-v36.md)。
 
 ## 当前证据与缺口
 
@@ -19,9 +19,9 @@
 | 队伍、库存与菜单 | v19 将普通新 owner、来源成长/自然学习与同图演员刷新接入事务；enabled 名册才登记装备，19 条来源 selector 解码、103 条未解码。`GameState` 统一拥有开场三人进度、三组四格编队、六槽装备、装备总数、普通/重要物品、Gil 与领奖记录。v16 编队保存空位/前后排，活动成员从所选组派生；196 条来源指令中 45 条通过实际字段执行，151 条外观刷新路径明确阻塞，见 [编队](party.md)。v15 普通恢复、玩家复活和已支持状态解除用于菜单/战斗，库存与字段和检查点共享；菜单 14 个/战斗 16 个道具 plan，固定恢复 17 组来源输入。预订、一次扣量、失败重试与胜利提交共用库存；装备菜单只展示真实可用选项并预览参数，见 [道具动作](item-actions.md)、[装备系统](equipment.md)、[共享状态](shared-game-state.md) | 18 条普通初始化/成长模板可用但不授予角色；新 owner 的完整战斗入口、其他学习、未覆盖的事件/跨图初始化分支、companion/同图镜头变更/条件碰撞、其他道具和活动状态、敌方道具目标与反应、宝箱/商店/掉落/偷取的完整取得流程、魔石事件、能力学习；14/16 是编译计划数，受当前状态和资格限制，不能全计为可实用道具 |
 | 存读档 | `game-checkpoint-v4` 保存共享状态、可信入口 origin、剧情变量、地图和战斗偏好；owned v8 保留名册、三组编队、六槽、能力/历史/姓名和来源初值；field/world v9 新增唯一原生演员、碰撞、更新 mask、相机偏移和已完成脚本上下文。恢复重验来源与媒体，不重跑工厂、NPC Init/Look/Cue、剧情或发奖；详见 [检查点存档](checkpoint-saves.md)、[原生稳定保存](field-native-checkpoint.md) | 仅稳定地图；活动事件/战斗、骑乘、FX、未绑定旧材质、旧格式迁移、原版保存许可/格式与其他浏览器仍待做；当前来源开场的活动切图不能保存 |
 
-盘点依据是当前 `src/core/battle-content.ts`、`battle.ts`、`game-state.ts`、`game-session.ts` 及其编译器，而不是解析计数。`BattleContent` 仍明确限制为 `opening-battle-development` / `narshe-playability-v34`，能力和道具保留来源函数列表与独立受限执行 plan；道具菜单/战斗分别编译，行动保留载体身份，presentation 不参与逻辑分派。完整战斗的状态、命中和调度覆盖尚未形成。详见 [战斗研究](battle-migration.md)、[开发规则](battle-playability.md)。
+盘点依据是当前 `src/core/battle-content.ts`、`battle.ts`、`game-state.ts`、`game-session.ts` 及其编译器，而不是解析计数。`BattleContent` 仍明确限制为 `opening-battle-development` / `narshe-playability-v35`，能力和道具保留来源函数列表与独立受限执行 plan；道具菜单/战斗分别编译，行动保留载体身份，presentation 不参与逻辑分派。完整战斗的状态、命中和调度覆盖尚未形成。详见 [战斗研究](battle-migration.md)、[开发规则](battle-playability.md)。
 
-v34 当前结果见 [本批系统集成](systems-v34.md)，v33 历史证据见 [前一批系统集成](systems-v33.md)。普通成长见 [成长与恢复](character-growth.md)，同图演员刷新与交通见 [队伍演员](party-actors.md)、[交通](transportation.md)。普通初始化和地图毒伤详见 [角色初始化](owned-character.md)、[地图步行状态](field-conditions.md)。原生文件和方法区间摘要核验继续标为 `semanticsVerified=false`，不替代动态语义或全流程可达性；所有系统门禁仍保持未完成。
+v36 提供器与验证见 [本批系统集成](systems-v36.md)，公开可玩 profile 的 v35 结果见 [前一批系统集成](systems-v35.md)。普通成长见 [成长与恢复](character-growth.md)，同图演员刷新与交通见 [队伍演员](party-actors.md)、[交通](transportation.md)。普通初始化和地图毒伤详见 [角色初始化](owned-character.md)、[地图步行状态](field-conditions.md)。原生文件和方法区间摘要核验继续标为 `semanticsVerified=false`，不替代动态语义或全流程可达性；所有系统门禁仍保持未完成。
 
 ## 系统闭环检查
 

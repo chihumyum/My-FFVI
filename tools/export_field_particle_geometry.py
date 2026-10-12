@@ -1,4 +1,4 @@
-"""Export the exact field particle board material and its two shader passes.
+"""Export the field particle entity transform, board material and shader passes.
 
 This dependency export neither generates billboards nor admits a particle
 emitter. Original shader bytes are written only below the ignored output path.
@@ -66,6 +66,26 @@ def export_geometry(source: Path, output: Path):
     component, tree = components[0]
     game_object = resolve(component, tree['m_GameObject'], 'GameObject')
     component_path = paths.get((game_object.assets_file.name, str(game_object.path_id)))
+    if component_path is None:
+        raise ValueError('Unbound field particle entity prefab')
+    game_tree = game_object.read_typetree()
+    transforms = []
+    for entry in game_tree['m_Component']:
+        pointer = entry['component']
+        cab = game_object.assets_file.name
+        if pointer['m_FileID']:
+            cab = game_object.assets_file.externals[pointer['m_FileID'] - 1].path.split('/')[-1]
+        if cab not in assets:
+            raise ValueError('Unbound particle entity component')
+        candidate = assets[cab][0].objects[pointer['m_PathID']]
+        if candidate.type.name == 'Transform':
+            transforms.append(candidate)
+    if len(transforms) != 1:
+        raise ValueError('Ambiguous field particle entity transform')
+    transform = transforms[0]
+    transform_tree = transform.read_typetree()
+    if resolve(transform, transform_tree['m_GameObject'], 'GameObject') != game_object:
+        raise ValueError('Particle entity transform has another GameObject')
     material = resolve(component, tree['originalEffectMaterial'], 'Material')
     mat = material.read_typetree()
     shader = resolve(material, mat['m_Shader'], 'Shader')
@@ -94,11 +114,15 @@ def export_geometry(source: Path, output: Path):
     for item in sources:
         if digest(source / item['file']) != item['sha256']:
             raise ValueError('Field board source changed during export')
-    result = {'formatVersion': 1, 'adapterVersion': 'field-particle-geometry-0.1.0',
+    result = {'formatVersion': 1, 'adapterVersion': 'field-particle-geometry-0.2.0',
         'parentSourceSetHash': corpus['sourceSetHash'], 'sources': sources,
         'sourceSetHash': hashlib.sha256(canonical(sources).encode()).hexdigest(),
         'particleEntity': {'source': reference(component, component_path), 'data': preserve_ids(tree),
-            'externals': [x.path for x in component.assets_file.externals]},
+            'externals': [x.path for x in component.assets_file.externals],
+            'gameObject': {'source': reference(game_object, component_path), 'data': preserve_ids(game_tree),
+                'externals': [x.path for x in game_object.assets_file.externals]},
+            'transform': {'source': reference(transform, component_path), 'data': preserve_ids(transform_tree),
+                'externals': [x.path for x in transform.assets_file.externals]}},
         'material': {'source': reference(material), 'data': preserve_ids(mat),
             'externals': [x.path for x in material.assets_file.externals]},
         'shader': {'source': reference(shader), 'name': shader_tree['m_ParsedForm']['m_Name'], 'passes': passes}}

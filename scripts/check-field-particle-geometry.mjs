@@ -170,8 +170,8 @@ for (const sample of [[0, 0, 0, 1], [1 / 255, 0, 0, 1], [0.125, 0.7, 0.33, 1], [
 const report = { formatVersion: 1, lane: "source-particle-geometry-and-board-material", status: "pass", checks,
   sourceSetHash: boardRaw.sourceSetHash, geometries, material, vertexProbes, fragmentProbes, discarded,
   admittedParticleGenerators: 0, nativeGPUExecuted: false, originalGameExecuted: false, browserExecuted: false,
-  limitations: ["Vertex inputs/matrices are controlled; actual Unity billboard expansion and draw-order closure remain unavailable.",
-    "Real particle RT is requested sRGB with depthBits=0; no qualified color-encoding/raster provider is installed.",
+  limitations: ["This descriptor/board check uses controlled vertex inputs and matrices; qualified engine geometry is independently checked by check-field-particle-geometry-rendering.mjs.",
+    "No live emitter provider is installed; source root transform and camera/GfxDevice GPU projection remain explicit dependencies.",
     "The source board fragment/vertex programs are independently interpreted, not native GPU parity measurements."] };
 await mkdir(resolve(root, "build/reports"), { recursive: true });
 await writeFile(resolve(root, "build/reports/field-particle-geometry-check.json"), JSON.stringify(report, null, 2) + "\n");

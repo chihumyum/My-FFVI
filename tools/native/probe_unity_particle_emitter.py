@@ -41,7 +41,9 @@ class Engine:
     def read(self, address, fmt):
         return list(struct.unpack('<' + fmt, self.uc.mem_read(address, struct.calcsize('<' + fmt))))
 
-    def call(self, rva, integers=(), floats=None, stack=()):
+    def call(self, rva, integers=(), floats=None, stack=(), *, instruction_budget=100000):
+        if not isinstance(instruction_budget, int) or not 1 <= instruction_budget <= 2000000:
+            raise ValueError('Invalid isolated native instruction budget')
         sp = STACK + 0x8008
         self.write(sp, 'Q', STOP)
         self.uc.reg_write(UC_X86_REG_RSP, sp)
@@ -52,7 +54,7 @@ class Engine:
             reg = [UC_X86_REG_XMM0, UC_X86_REG_XMM1, UC_X86_REG_XMM2, UC_X86_REG_XMM3][index]
             self.uc.reg_write(reg, struct.unpack('<I', struct.pack('<f', value))[0])
         for i, (fmt, value) in enumerate(stack): self.write(sp + 0x28 + i * 8, fmt, value)
-        self.uc.emu_start(self.base + rva, STOP, count=100000)
+        self.uc.emu_start(self.base + rva, STOP, count=instruction_budget)
         if self.uc.reg_read(UC_X86_REG_RIP) != STOP:
             raise RuntimeError('Native instruction probe did not complete within its budget')
         return self.uc.reg_read(UC_X86_REG_RAX)

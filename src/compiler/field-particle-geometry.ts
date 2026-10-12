@@ -1,9 +1,10 @@
 import { record } from "./content.js";
 import { compileFieldEffectMedia } from "./field-effects.js";
-import { compileFieldParticleMaterial } from "./field-particles.js";
+import { compileFieldParticleMaterial, compileFieldParticleModules } from "./field-particles.js";
 import { FIELD_EFFECT_BOARD_PROGRAMS, FIELD_PARTICLE_VERTEX, FIELD_PARTICLE_GEOMETRY_REQUIREMENTS, fieldEffectBoardSources,
-  validateFieldEffectBoardMaterial, validateFieldParticleGeometry,
-  type FieldEffectBoardMaterial, type FieldParticleGeometry, type FieldParticleSource, type ParticleTransform, type ParticleVector } from "../core/field-particle-geometry.js";
+  validateFieldEffectBoardMaterial, validateFieldParticleGeometry, validateFieldParticleRendering,
+  type FieldEffectBoardMaterial, type FieldParticleGeometry, type FieldParticleRendering,
+  type FieldParticleSource, type ParticleTransform, type ParticleVector } from "../core/field-particle-geometry.js";
 
 const array = (v: unknown): unknown[] => { if (!Array.isArray(v)) throw new Error("Missing particle geometry array"); return v; };
 const number = (v: unknown): number => { if (typeof v !== "number" || !Number.isFinite(v)) throw new Error("Invalid particle geometry number"); return v; };
@@ -81,6 +82,51 @@ export function compileFieldParticleGeometry(assetGroup: string, raw: unknown, d
   }
   if (result.vertexSha256 !== FIELD_PARTICLE_VERTEX) throw new Error("Unrecovered source particle vertex program");
   validateFieldParticleGeometry(result); return result;
+}
+
+/** Qualifies the recovered ordinary engine template and target format. A
+ * live effectRoot transform and live particle state remain explicit inputs;
+ * this does not qualify an emitter's birth, Noise or lifetime owner. */
+export function compileFieldParticleRendering(assetGroup: string, raw: unknown, dependencies: unknown,
+  geometryExport: unknown): FieldParticleRendering {
+  const geometry = compileFieldParticleGeometry(assetGroup, raw, dependencies);
+  compileFieldParticleModules(assetGroup, raw);
+  const input = record(raw), all = array(input.objects).map(record), hierarchy = new Set(array(input.hierarchyIds).map(id));
+  const particles = all.filter((o) => o.type === "ParticleSystem" && hierarchy.has(id(record(o.source).objectId)));
+  if (particles.length !== 1) throw new Error("Unbound particle render branch");
+  const p = record(particles[0]!.data);
+  if (record(p.InitialModule).rotation3D !== false || record(p.InitialModule).size3D !== false || record(p.UVModule).enabled !== false)
+    throw new Error("Unrecovered particle geometry template inputs");
+  const exported = record(geometryExport), dependenciesRoot = record(dependencies);
+  if (exported.parentSourceSetHash !== dependenciesRoot.parentSourceSetHash ||
+      typeof exported.parentSourceSetHash !== "string") throw new Error("Foreign particle entity dependency snapshot");
+  compileFieldEffectBoardMaterial(geometryExport);
+  const entity = record(exported.particleEntity), go = record(entity.gameObject), transform = record(entity.transform);
+  const ed = record(entity.data), gd = record(go.data), td = record(transform.data);
+  const entitySource = source(entity.source), goSource = source(go.source), transformSource = source(transform.source);
+  const ptr = (objectId: string) => ({ m_FileID: 0, m_PathID: objectId });
+  exact(ed.m_GameObject, ptr(goSource.objectId), "Particle entity GameObject binding mismatch");
+  exact(td.m_GameObject, ptr(goSource.objectId), "Particle Transform GameObject binding mismatch");
+  exact(td.m_Father, ptr("0"), "Particle entity prefab has an unresolved parent");
+  exact(td.m_Children, [], "Unexpected particle entity prefab child");
+  exact(array(gd.m_Component).map((c) => record(c).component), [ptr(transformSource.objectId), ptr(entitySource.objectId)],
+    "Unrecovered particle entity components");
+  if (gd.m_IsActive !== true || gd.m_Layer !== 0) throw new Error("Unrecovered particle entity activation/layer");
+  const manifest = array(exported.sources).map(record);
+  for (const s of [entitySource, goSource, transformSource])
+    if (manifest.filter((entry) => entry.file === s.file && entry.sha256 === s.sha256).length !== 1)
+      throw new Error("Unbound particle entity source manifest");
+  const settings = record(dependenciesRoot.settings), ss = record(settings.source), q = record(td.m_LocalRotation);
+  if (settings.type !== "PlayerSettings" || settings.activeColorSpace !== 0) throw new Error("Unrecovered active particle color space");
+  const result: FieldParticleRendering = { kind: "source-field-particle-rendering-v1", geometry,
+    engine: "unity-2019.4.20f1-generate-0-0-0-0",
+    colorSpace: { active: 0, source: { file: String(ss.file), serializedFile: String(ss.serializedFile),
+      objectId: id(ss.objectId), sha256: String(ss.sha256) } },
+    entity: { source: entitySource, gameObject: goSource, transform: transformSource, parent: null,
+      local: { position: vector(td.m_LocalPosition), rotation: { ...vector(q), w: number(q.w) }, scale: vector(td.m_LocalScale) } },
+    material: compileFieldParticleMaterial(assetGroup, dependencies),
+    target: { graphicsFormat: 8, encoding: "rgba8-unorm", depthAttachment: null, samples: 1 } };
+  validateFieldParticleRendering(result); return result;
 }
 
 /** Locks the particle entity→original material→shader chain, plus the exact

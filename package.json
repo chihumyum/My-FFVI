@@ -116,6 +116,10 @@
     "field-effect-map:check": "npm run build && node scripts/check-field-effect-map-native.mjs",
     "field-menu-ready:check": "npm run build && node scripts/check-field-menu-ready-ui.mjs",
     "field-particle-emitter:check": "npm run build && node scripts/check-field-particle-emitter-native.mjs && node scripts/check-field-particle-emitter.mjs",
+    "field-particle-lifecycle:check": "npm run build && node scripts/check-field-particle-lifecycle-native.mjs && node scripts/check-field-particle-lifecycle.mjs",
+    "field-particle-birth:check": "npm run build && node scripts/check-field-particle-birth-native.mjs && node scripts/check-field-particle-birth.mjs",
+    "field-particle-motion:check": "npm run build && node scripts/check-field-particle-motion-native.mjs && node scripts/check-field-particle-motion.mjs",
+    "field-particle-rendering:check": "npm run build && node scripts/check-field-particle-geometry-native.mjs && node scripts/check-field-particle-geometry-rendering.mjs",
     "field-particle-geometry:check": "npm run build && node scripts/check-field-particle-geometry-native.mjs && node scripts/check-field-particle-geometry.mjs && node scripts/check-field-particle-geometry-ui.mjs"
   },
   "dependencies": {

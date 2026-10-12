@@ -1,5 +1,7 @@
 # Field particle geometry and board composition
 
+The v36 geometry and RT provider is documented in [Source particle rendering](field-particle-rendering.md). It now translates the ordinary 5,825-byte engine template and qualifies Gamma RGBA8 storage with no depth attachment. The sections below retain the v35 interface and acceptance record; their missing geometry/format dependencies are resolved only through the new qualified provider. Live particles, effectRoot and the GPU camera projection are still required, and no real emitter is admitted.
+
 v35 separates the particle camera/geometry providers from the board that displays their render texture. The five supplied EffectPrefab graphs now compile to strict source-bound renderer/camera definitions. The particle and board vertex programs, both board fragment passes, and board blending/depth queues have executable CPU translations. The real particle render-texture provider remains unavailable. This work does not admit map 3 particles or establish original-game pixel equivalence.
 
 `Renderer` accepts an optional fourth argument, `effectProvider`. An effect scene without it still fails before touching the visible Canvas. The provider must prepare explicit sampled RT frames, the active-board draw order, and the bound material. Board passes then share the existing ordinary field color, depth and stencil attachments. They never use a Canvas overlay or create another actor owner.

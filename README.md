@@ -17,6 +17,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [v36 来源粒子启动、出生、运动与渲染提供器](docs/systems-v36.md)
 - [v35 共享效果事务、来源粒子引擎子核与板合成](docs/systems-v35.md)
 - [v34 原生演员保存、普通图层与粒子模块](docs/systems-v34.md)
 - [v32 原生外观事务、常驻演员切图与独立脚下属性](docs/systems-v32.md)
@@ -146,7 +147,7 @@ npm run objects:check
 `doors:check` 对来源门的方向限制、关联图块动画、完成后通行和入口开门状态执行隔离检查。共用 OpenTrigger 已接入地图运行时，门批次记录了 418 个来源门通过、122 个空闲入口；最新结果见当前进度，完整地图剧情仍未迁移，详见 [接触开门批次](docs/open-trigger.md)。
 `world:build` 将全量地图、角色媒体和脚本编译成通用目录与地图包；`world:check` 整批尝试依赖已闭合的默认入口，保留每个失败原因。静态地图数、入口加载数与浏览器实玩分别记录。
 
-完成来源媒体准备后，`npm run new-game:build` 构建绑定同一来源的新游戏包，标题页的“从头开始（开发中）”进入真实新游戏状态。目前可执行首段字幕、镜头、淡出与来源 condition607，随后发出 609→3 的切图请求；目标地图仍因粒子生命周期与非空上层合成缺口停止，不代表完整开场。`npm run source-new-game:check` 重放这个受控系统链并记录第一个阻塞，`npm run field-background:check` 与 `npm run source-message:check` 分别检查共享背景和字幕能力。
+完成来源媒体准备后，`npm run new-game:build` 构建绑定同一来源的新游戏包，标题页的“从头开始（开发中）”进入真实新游戏状态。目前可执行首段字幕、镜头、淡出与来源 condition607，随后发出 609→3 的切图请求；目标地图仍因完整粒子宿主缺口停止，不代表完整开场。`npm run source-new-game:check` 重放这个受控系统链并记录第一个阻塞，`npm run field-background:check` 与 `npm run source-message:check` 分别检查共享背景和字幕能力。
 `objects:check` 和 `npc:check` 共用来源交互检查器，分别检查调查点/隐形碰撞物与 NPC 的原始动作和脚本；孤立动作不等于完整地图剧情，见 [调查点批次](docs/map-object.md)。
 工作台为 `http://127.0.0.1:4173`，展示真实纳尔谢图层、原始碰撞数据、剧情知识缺口、歌剧时间线与验收状态。它只用于检查；不宣称恢复了游戏规则。
 
@@ -161,4 +162,4 @@ npm run accept -- narshe
 
 `knowledge` 接受可选的 `--state '<JSON 上下文>'`。查询时只提供已有证据的状态值；没有证据就省略对应键。状态字符串只是上下文输入，不会自动建立它与原版剧情 flag 的映射。
 
-当前系统交付：[v34 集成说明](docs/systems-v34.md)。新增原生演员稳定存读档与粒子公共模块检查：`npm run field-native-checkpoint:check`、`npm run field-particles:check`；普通非空 Upper/Ceil 和效果生命周期继续由 `npm run field-native-composition:check`、`npm run field-effects:check` 验证。需要先完成模块文档中的本地来源导入与世界构建。真实开场仍受粒子/切图资源依赖阻塞。GitHub 仅追踪工具、源码、说明与合成夹具，原始游戏资源、提取文案、原生反编译与生成产物留在忽略目录。
+当前系统交付：[v36 集成说明](docs/systems-v36.md)。来源粒子的启动、出生、运动和几何/RT 提供器分别由 `npm run field-particle-lifecycle:check`、`npm run field-particle-birth:check`、`npm run field-particle-motion:check`、`npm run field-particle-rendering:check` 验证。需要先完成模块文档中的本地来源导入。公开可玩 profile 仍为 v35，完整粒子宿主尚未接通，真实开场的 609→3 仍阻塞。GitHub 仅追踪工具、源码、说明与合成夹具，原始游戏资源、提取文案、原生反编译与生成产物留在忽略目录。

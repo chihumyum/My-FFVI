@@ -9,7 +9,7 @@
         "炭坑都市纳尔谢"
       ],
       "questions": [
-        "共享跨图FX事务、原生演员稳定保存和普通字段合成已接入。继续闭合粒子Noise/Cone/预热/运动积分、真实billboard与RT色空间，再接源开场切图、交通/骑乘和入战返回。精确UnityPlayer随机/时钟/发射子核已验证，但5个完整来源发射器仍阻塞；开发检查点不等于完整序章。",
+        "共享跨图FX事务和来源粒子启动、出生、Noise/运动、billboard/RT子核已恢复。继续装配同一粒子数组拥有者、来源死亡排列、最终颜色/大小、实际effectRoot与GPU投影，再贯通开场切图、交通/骑乘和入战返回。5个完整发射器仍阻塞，独立子核和开发检查点不等于完整序章。",
         "建立同一地点在不同世界阶段、剧情标记和局部状态下的变体条件。",
         "确认 Wait 时钟与 SysCall 选择器，并对已恢复的碰撞进行原版运行对照。"
       ]
@@ -1556,6 +1556,70 @@
       "evidence": [
         "docs/systems-v35.md",
         "docs/field-particle-geometry.md"
+      ]
+    },
+    {
+      "id": "narshe:particle-lifecycle-v36",
+      "subject": "narshe",
+      "when": {
+        "kernelBatch": "systems-v36"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "predicate": "source.unity.particleLifecycle",
+      "value": "Stopped looping prewarmed Play resets seeds three times through Play/Simulate(restart)/nested Play(false). Fixed and variable substeps preserve source float32 accumulator order. Birth timing clamps its fraction to 1e-6, including masked burst particles. Complete host state and array commits remain separate.",
+      "evidence": [
+        "docs/field-particle-lifecycle.md",
+        "docs/systems-v36.md",
+        "UnityPlayer.dll:CodeView 4420B376-89DD-4CFE-AEC8-2300F4A999D2 age 1"
+      ]
+    },
+    {
+      "id": "narshe:particle-birth-v36",
+      "subject": "narshe",
+      "when": {
+        "kernelBatch": "systems-v36"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "predicate": "source.unity.particleBirth",
+      "value": "Initial and full-thickness Cone execute four-lane batches with padded RNG consumption before start-speed application. Shape transforms remain local. Five source graphs qualify this birth stage, not complete emitter instances.",
+      "evidence": [
+        "docs/field-particle-birth.md",
+        "docs/systems-v36.md",
+        "UnityPlayer.dll:CodeView 4420B376-89DD-4CFE-AEC8-2300F4A999D2 age 1"
+      ]
+    },
+    {
+      "id": "narshe:particle-motion-v36",
+      "subject": "narshe",
+      "when": {
+        "kernelBatch": "systems-v36"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "predicate": "source.unity.particleMotion",
+      "value": "Noise adds animated velocity; ordinary gravity, source slow velocity curves and seeded angular rates feed age/position/rotation integration. Noise scroll is owned once per system update with existing particles. Source death array order and complete host admission remain separate.",
+      "evidence": [
+        "docs/field-particle-motion.md",
+        "docs/systems-v36.md",
+        "UnityPlayer.dll:CodeView 4420B376-89DD-4CFE-AEC8-2300F4A999D2 age 1"
+      ]
+    },
+    {
+      "id": "narshe:particle-rendering-v36",
+      "subject": "narshe",
+      "when": {
+        "kernelBatch": "systems-v36"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "predicate": "source.unity.particleRendering",
+      "value": "Source billboard expansion preserves live array order and Color32. Gamma PlayerSettings select GraphicsFormat8 UNorm for the requested sRGB ARGB32 target; depthBits0 has no depth attachment. Actual root transform and GPU view-projection are required explicit host inputs.",
+      "evidence": [
+        "docs/field-particle-rendering.md",
+        "docs/systems-v36.md",
+        "UnityPlayer.dll:CodeView 4420B376-89DD-4CFE-AEC8-2300F4A999D2 age 1"
       ]
     }
   ],

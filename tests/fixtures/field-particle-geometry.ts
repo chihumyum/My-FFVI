@@ -1,5 +1,6 @@
 import { FIELD_EFFECT_BOARD_PROGRAMS, FIELD_PARTICLE_VERTEX, FIELD_PARTICLE_GEOMETRY_REQUIREMENTS,
-  fieldEffectBoardSources, type FieldEffectBoardMaterial, type FieldParticleGeometry } from "../../src/core/field-particle-geometry.js";
+  fieldEffectBoardSources, type FieldEffectBoardMaterial, type FieldParticleGeometry, type FieldParticleRendering } from "../../src/core/field-particle-geometry.js";
+import { particleMaterial } from "./field-particles.js";
 
 export function effectBoardMaterial(): FieldEffectBoardMaterial {
   return { kind: "source-field-effect-board-material-v1", sources: fieldEffectBoardSources(),
@@ -23,6 +24,21 @@ export function particleGeometry(): FieldParticleGeometry {
       clear: [0, 0, 0, 0], mask: 16384 },
     target: { width: 32, height: 32, filterMode: 0, wrapMode: 1, requestedColorFormat: 0, requestedSRGB: true, depthBits: 0, msaaSamples: 1 },
     vertexSha256: FIELD_PARTICLE_VERTEX, requirements: [...FIELD_PARTICLE_GEOMETRY_REQUIREMENTS] };
+}
+/** Controlled values with recovered program identities; no game texture or
+ * actual emitter state is part of this redistributable fixture. */
+export function particleRendering(): FieldParticleRendering {
+  const source = fieldEffectBoardSources()[0]!, material = particleMaterial();
+  material.vertexSha256 = FIELD_PARTICLE_VERTEX;
+  material.fragmentSha256 = "75c814aca4b802512f88f5c9c6ea4cef7d925c3cb4c5d39fd59e55e8490754ff";
+  return { kind: "source-field-particle-rendering-v1", geometry: particleGeometry(),
+    engine: "unity-2019.4.20f1-generate-0-0-0-0", material,
+    colorSpace: { active: 0, source: { file: "FINAL FANTASY VI_Data/globalgamemanagers", serializedFile: "globalgamemanagers",
+      objectId: "1", sha256: "bc33b3eaaab47d14fbbf792f5bcc664c7e2f4787376449306739bce658dc7881" } },
+    entity: { source, gameObject: { ...source, objectId: "4232085036942990611" },
+      transform: { ...source, objectId: "-8226728852999962409" }, parent: null,
+      local: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, scale: { x: 1, y: 1, z: 1 } } },
+    target: { graphicsFormat: 8, encoding: "rgba8-unorm", depthAttachment: null, samples: 1 } };
 }
 /** Redistributable shape fixture. It includes identity metadata, no game media. */
 export function effectBoardMaterialExport() {

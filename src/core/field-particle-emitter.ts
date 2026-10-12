@@ -126,7 +126,10 @@ export function emitParticleInterval(
 ): ParticleEmissionResult {
   validateParticleEmissionPlan(plan);
   const duration = finite(plan.duration), previous = Math.max(0, finite(input.previousTime)), current = Math.max(0, finite(input.currentTime));
-  if (previous > duration || current > duration) throw new Error("Particle emission times require a source clock interval");
+  // Update1Incremental nudges the old clock by 1e-6 for a duration-sized
+  // catch-up step, so an exact loop still emits. This is a source interval,
+  // not permission for an arbitrary out-of-range caller time.
+  if (previous > f(duration + f(0.000001)) || current > duration) throw new Error("Particle emission times require a source clock interval");
   const fraction = finite(prior.fractionalCount);
   if (fraction < 0 || fraction >= 1 || finite(prior.spacing) < 0) throw new Error("Invalid native particle emission accumulation");
   // Source advances the continuous-rate sample unconditionally, even for a

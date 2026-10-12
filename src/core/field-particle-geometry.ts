@@ -1,4 +1,6 @@
 import type { FieldActorViewSource } from "./field-actor-view.js";
+import { sampleFieldParticleTexture, shadeFieldParticle,
+  type FieldParticleMaterial, type FieldParticleTexture } from "./field-particles.js";
 export type FieldParticleSource = FieldActorViewSource & { serializedFile: string };
 
 export type ParticleVector = { x: number; y: number; z: number };
@@ -42,6 +44,33 @@ export const FIELD_PARTICLE_GEOMETRY_REQUIREMENTS = [
   "Particle geometry draw order",
   "Source GPU view-projection and render-target color encoding",
 ] as const;
+
+export type FieldParticleRendering = {
+  kind: "source-field-particle-rendering-v1";
+  geometry: FieldParticleGeometry;
+  engine: "unity-2019.4.20f1-generate-0-0-0-0";
+  colorSpace: { active: 0; source: { file: string; serializedFile: string; objectId: string; sha256: string } };
+  entity: { source: FieldParticleSource; gameObject: FieldParticleSource; transform: FieldParticleSource;
+    local: ParticleTransform; parent: null };
+  material: FieldParticleMaterial;
+  target: { graphicsFormat: 8; encoding: "rgba8-unorm"; depthAttachment: null; samples: 1 };
+};
+/** Live SoA order is retained. Color is the RenderJob's final Color32, not
+ * ParticleSystemParticles' seed buffer. Rotation is already in radians. */
+export type FieldParticleRenderParticle = {
+  position: ParticleVector; size: number; rotation: number; color32: number; normalizedAge: number;
+};
+export type FieldParticleRenderVertex = { position: ParticleVector; uv: readonly [number, number]; color: ParticleColor };
+export type FieldParticleRenderQuad = { particleIndex: number; vertices: readonly [FieldParticleRenderVertex,
+  FieldParticleRenderVertex, FieldParticleRenderVertex, FieldParticleRenderVertex] };
+export type FieldParticleGeometryProjection = {
+  quads: FieldParticleRenderQuad[]; cameraPosition: ParticleVector;
+  triangles: readonly [0, 1, 2, 0, 2, 3];
+};
+export type FieldParticleSampledTarget = {
+  kind: "field-effect-sampled-rt-v1"; assetGroup: string; cameraId: string; width: number; height: number;
+  sampleEncoding: "rgba8-unorm"; rowOrder: "top-to-bottom"; data: Uint8ClampedArray;
+};
 export function fieldEffectBoardSources(): FieldParticleSource[] {
   const prefix = "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/";
   const chara = { file: prefix + "chara_field_assets_all_9e395e2f928b4e4c1168ce78cb733ac7.bundle",
@@ -94,6 +123,214 @@ export function validateFieldParticleGeometry(g: FieldParticleGeometry): void {
 export function assertFieldParticleGeometryExecutable(g: FieldParticleGeometry): void {
   validateFieldParticleGeometry(g);
   if (g.requirements.length) throw new Error("Native particle geometry unavailable: " + g.requirements.join("; "));
+}
+
+const settingSource = { file: "FINAL FANTASY VI_Data/globalgamemanagers", serializedFile: "globalgamemanagers",
+  objectId: "1", sha256: "bc33b3eaaab47d14fbbf792f5bcc664c7e2f4787376449306739bce658dc7881" };
+function unitTransform(t: ParticleTransform, rotateZ: boolean): void {
+  if (!t) throw new Error("Missing source particle parent transform");
+  vector(t.position); vector(t.rotation); vector(t.scale); finite(t.rotation.w);
+  if (t.scale.x !== 1 || t.scale.y !== 1 || t.scale.z !== 1 || t.rotation.x !== 0 || t.rotation.y !== 0 ||
+      (!rotateZ && (t.rotation.z !== 0 || t.rotation.w !== 1)) ||
+      Math.abs(f(f(t.rotation.z * t.rotation.z) + f(t.rotation.w * t.rotation.w)) - 1) > 1e-6)
+    throw new Error("Unrecovered particle transform scale/rotation");
+}
+export function validateFieldParticleRendering(d: FieldParticleRendering): void {
+  if (d?.kind !== "source-field-particle-rendering-v1" || d.engine !== "unity-2019.4.20f1-generate-0-0-0-0")
+    throw new Error("Missing source particle rendering provider");
+  validateFieldParticleGeometry(d.geometry);
+  if (d.colorSpace?.active !== 0 || Object.entries(settingSource).some(([k, v]) =>
+      (d.colorSpace.source as unknown as Record<string, unknown>)?.[k] !== v)) throw new Error("Unbound particle Gamma settings");
+  if (d.target?.graphicsFormat !== 8 || d.target.encoding !== "rgba8-unorm" || d.target.depthAttachment !== null || d.target.samples !== 1)
+    throw new Error("Unrecovered particle target storage/depth");
+  const e = d.entity, expected = fieldEffectBoardSources()[0]!;
+  if (!e || e.parent !== null) throw new Error("Unbound source particle entity prefab");
+  for (const [s, objectId] of [[e.source, expected.objectId], [e.gameObject, "4232085036942990611"],
+    [e.transform, "-8226728852999962409"]] as const) {
+    identity(s);
+    for (const key of ["file", "assetPath", "serializedFile", "sha256"] as const)
+      if (s[key] !== expected[key]) throw new Error("Foreign particle entity transform source");
+    if (s.objectId !== objectId) throw new Error("Foreign particle entity object identity");
+  }
+  unitTransform(e.local, false);
+  if (e.local.position.x || e.local.position.y || e.local.position.z) throw new Error("Unrecovered particle prefab position");
+  d.geometry.emitter.transforms.forEach((t) => unitTransform(t, true));
+  d.geometry.camera.transforms.forEach((t) => unitTransform(t, false));
+  for (const chain of [d.geometry.emitter.transforms, d.geometry.camera.transforms])
+    for (const t of chain.slice(0, -1))
+      if (t.position.x || t.position.y || t.position.z || t.rotation.z || t.rotation.w !== 1)
+        throw new Error("Unrecovered particle ancestor matrix composition");
+  const m = d.material;
+  if (m?.kind !== "field-particle-material-v1" || m.colorSpace !== "gamma" || m.vertexSha256 !== FIELD_PARTICLE_VERTEX ||
+      m.fragmentSha256 !== "75c814aca4b802512f88f5c9c6ea4cef7d925c3cb4c5d39fd59e55e8490754ff" ||
+      JSON.stringify(m.blend) !== JSON.stringify({ source: 1, destination: 10, depthWrite: false, depthTest: 4, colorMask: 15, cull: 0 }))
+    throw new Error("Unbound source particle material program");
+}
+
+/** Source SIMD cosine/sine approximation, including cvtps2dq nearest-even.
+ * Math.sin/cos and remainder-based wrapping are observably different. */
+export function sourceFieldParticleSinCos(radians: number): { sin: number; cos: number } {
+  const turns = f(finite(radians) * f(0.15915493667125702));
+  // cvtps2dq is only defined in this translated branch for finite int32 input.
+  if (Math.abs(turns) >= 0x7fffffff) throw new Error("Particle rotation exceeds source SIMD integer domain");
+  const polynomial = (x: number) => {
+    const u = f(0.25 - Math.abs(f(x - roundEven(x)))), u2 = f(u * u), u4 = f(u2 * u2);
+    let y = f(f(f(-76.56861877441406 * u2) + f(81.60182189941406)) * u4);
+    y = f(y + f(f(-41.34165954589844 * u2) + f(6.283185005187988)));
+    y = f(y + f(f(u4 * u4) * f(39.65703201293945)));
+    return f(y * u);
+  };
+  return { cos: polynomial(turns), sin: polynomial(f(turns - 0.25)) };
+}
+
+/** Matrix4x4.SetTRS/QuaternionToMatrix ordinary Z-rotation branch. The
+ * serialized quaternion is used as-is; it is never converted via Euler angles. */
+function transformPoint(v: ParticleVector, t: ParticleTransform): ParticleVector {
+  const z2 = f(t.rotation.z + t.rotation.z), zz = f(t.rotation.z * z2), wz = f(t.rotation.w * z2);
+  const diagonal = f(1 - zz);
+  // d5cc79..d5cc7f adds translation to Z, then Y, then X. Reassociating
+  // translation to the end changes real rotated emitter coordinates by 1 ULP.
+  return { x: f(f(v.x * diagonal) + f(f(v.y * -wz) + t.position.x)),
+    y: f(f(v.x * wz) + f(f(v.y * diagonal) + t.position.y)), z: f(v.z + t.position.z) };
+}
+function transformChain(v: ParticleVector, chain: readonly ParticleTransform[], parent: ParticleTransform): ParticleVector {
+  // All admitted ancestors are identity and the explicit root has unit basis.
+  // Fold its translation into the source matrix before transforming the point.
+  const local = chain.at(-1)!;
+  return transformPoint(v, { ...local, position: { x: f(parent.position.x + local.position.x),
+    y: f(parent.position.y + local.position.y), z: f(parent.position.z + local.position.z) } });
+}
+export function projectSourceFieldParticleGeometry(definition: FieldParticleRendering,
+  particles: readonly FieldParticleRenderParticle[], parentTransform: ParticleTransform): FieldParticleGeometryProjection {
+  validateFieldParticleRendering(definition); unitTransform(parentTransform, false);
+  if (!Array.isArray(particles) || particles.length > 65536) throw new Error("Invalid source particle geometry input");
+  const g = definition.geometry, cameraPosition = transformChain({ x: 0, y: 0, z: 0 }, g.camera.transforms, parentTransform);
+  vector(cameraPosition);
+  const maximum = f(f(g.camera.orthographicSize * 2) * g.renderer.maxSize);
+  const quads = particles.map((p, particleIndex): FieldParticleRenderQuad => {
+    vector(p.position); finite(p.size); finite(p.rotation); finite(p.normalizedAge);
+    if (p.size < 0 || p.normalizedAge < 0 || !Number.isSafeInteger(p.color32) || p.color32 < 0 || p.color32 > 0xffffffff)
+      throw new Error("Invalid source particle render state");
+    const center = transformChain(p.position, g.emitter.transforms, parentTransform);
+    vector(center);
+    const safeSize = Math.max(f(p.size), f(1e-6));
+    const factor = f(f(Math.min(f(safeSize * 0.5), f(maximum * 0.5))) / safeSize);
+    const half = p.normalizedAge < 100 ? f(f(p.size) * factor) : 0;
+    const { sin, cos } = sourceFieldParticleSinCos(p.rotation), sh = f(sin * half), ch = f(cos * half);
+    const a = { x: f(sh - ch), y: f(sh + ch) }, b = { x: f(sh + ch), y: f(ch - sh) };
+    const rgba = [0, 8, 16, 24].map((shift) => f(((p.color32 >>> shift) & 255) / 255)) as [number, number, number, number];
+    const v = (offset: typeof a, sign: 1 | -1, uv: readonly [number, number]): FieldParticleRenderVertex => {
+      const position = { x: f(center.x + f(offset.x * sign)), y: f(center.y + f(offset.y * sign)), z: center.z };
+      vector(position); return { position, uv, color: [...rgba] };
+    };
+    return { particleIndex, vertices: [v(a, 1, [0, 1]), v(b, 1, [1, 1]), v(a, -1, [1, 0]), v(b, -1, [0, 0])] };
+  });
+  return { quads, cameraPosition, triangles: [0, 1, 2, 0, 2, 3] };
+}
+
+export type FieldParticleRasterProjection = {
+  /** This matrix must come from the source camera/GfxDevice host. The prefab's
+   * orthographic size does not by itself prove the GPU Y/depth conversion. */
+  kind: "source-d3d11-particle-view-projection"; matrix: ParticleMatrix;
+};
+const identityMatrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] as const;
+const clampUnit = (n: number) => Math.max(0, Math.min(1, n));
+function roundEven(n: number): number {
+  const floor = Math.floor(n), remainder = n - floor;
+  return remainder < 0.5 || (remainder === 0.5 && floor % 2 === 0) ? floor : floor + 1;
+}
+/** UNorm blending clamps source BEFORE blending, then clamps/quantizes each
+ * completed fragment. It does not apply sRGB conversion in this Gamma build. */
+export function blendSourceFieldParticleTarget(source: ParticleColor, destination: readonly number[]): readonly number[] {
+  if (!Array.isArray(source) || source.length !== 4 || source.some((n) => !Number.isFinite(n)) ||
+      destination.length !== 4 || destination.some((n) => !Number.isInteger(n) || n < 0 || n > 255))
+    throw new Error("Invalid particle target fragment/storage");
+  const src = source.map((n) => f(clampUnit(n))), inverse = f(1 - src[3]!);
+  return src.map((n, i) => Math.floor(f(clampUnit(f(n + f(f(destination[i]! / 255) * inverse)))) * 255 + 0.5));
+}
+/** CPU execution of the admitted single-sample pipeline. D3D raster coverage
+ * uses 8 subpixel bits and top-left ownership; UNorm conversion uses a valid
+ * round-to-nearest implementation. This is not a native-GPU bitwise oracle.
+ * The GPU projection is deliberately required rather than inferred from the
+ * prefab camera, whose GfxDevice conversion is a separate host dependency. */
+export function renderSourceFieldParticleTarget(input: {
+  definition: FieldParticleRendering; particles: readonly FieldParticleRenderParticle[]; parentTransform: ParticleTransform;
+  projection: FieldParticleRasterProjection; textures: ReadonlyMap<string, FieldParticleTexture>;
+  engineSeconds: number; elapsedSeconds: number;
+}): FieldParticleSampledTarget {
+  const { definition, projection } = input, staged = projectSourceFieldParticleGeometry(definition, input.particles, input.parentTransform);
+  if (projection?.kind !== "source-d3d11-particle-view-projection") throw new Error("Missing source particle GPU projection host");
+  matrix(projection.matrix);
+  if (projection.matrix[3] !== 0 || projection.matrix[7] !== 0 || projection.matrix[11] !== 0 || projection.matrix[15] !== 1)
+    throw new Error("Unrecovered nonorthographic particle GPU projection");
+  finite(input.engineSeconds); finite(input.elapsedSeconds);
+  const material = definition.material, g = definition.geometry, { width, height } = g.target;
+  const textures = new Map<string, FieldParticleTexture>();
+  for (const key of Object.values(material.textures)) {
+    const texture = input.textures?.get(key); if (!texture) throw new Error("Missing source particle texture " + key);
+    sampleFieldParticleTexture(texture, 0, 0); textures.set(key, texture);
+  }
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let n = 0; n < data.length; n++) data[n] = Math.floor(g.camera.clear[n % 4]! * 255 + 0.5);
+  type Vertex = { clip: [number, number, number, number]; uv: [number, number]; color: ParticleColor };
+  const interpolate = (a: Vertex, b: Vertex, t: number): Vertex => ({
+    clip: a.clip.map((v, i) => f(v + f(f(b.clip[i]! - v) * t))) as Vertex["clip"],
+    uv: a.uv.map((v, i) => f(v + f(f(b.uv[i]! - v) * t))) as Vertex["uv"],
+    color: a.color.map((v, i) => f(v + f(f(b.color[i]! - v) * t))) as [number, number, number, number] });
+  const planes = [(v: Vertex) => f(v.clip[0] + v.clip[3]), (v: Vertex) => f(v.clip[3] - v.clip[0]),
+    (v: Vertex) => f(v.clip[1] + v.clip[3]), (v: Vertex) => f(v.clip[3] - v.clip[1]),
+    (v: Vertex) => v.clip[2], (v: Vertex) => f(v.clip[3] - v.clip[2])];
+  const raster = (raw: readonly [Vertex, Vertex, Vertex]) => {
+    const pixel = (v: Vertex) => ({ x: roundEven(f(f(v.clip[0] + 1) * f(width / 2)) * 256),
+      y: roundEven(f(f(1 - v.clip[1]) * f(height / 2)) * 256), vertex: v });
+    let [a, b, c] = raw.map(pixel) as [ReturnType<typeof pixel>, ReturnType<typeof pixel>, ReturnType<typeof pixel>];
+    const edge = (p: typeof a, q: typeof a, x: number, y: number) => (q.x - p.x) * (y - p.y) - (q.y - p.y) * (x - p.x);
+    let area = edge(a, b, c.x, c.y); if (area === 0) return;
+    if (area < 0) { [b, c] = [c, b]; area = -area; }
+    const topLeft = (p: typeof a, q: typeof a) => q.y < p.y || (q.y === p.y && q.x > p.x);
+    const minX = Math.max(0, Math.ceil((Math.min(a.x, b.x, c.x) - 128) / 256));
+    const maxX = Math.min(width - 1, Math.floor((Math.max(a.x, b.x, c.x) - 128) / 256));
+    const minY = Math.max(0, Math.ceil((Math.min(a.y, b.y, c.y) - 128) / 256));
+    const maxY = Math.min(height - 1, Math.floor((Math.max(a.y, b.y, c.y) - 128) / 256));
+    for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
+      const sx = x * 256 + 128, sy = y * 256 + 128;
+      const ea = edge(b, c, sx, sy), eb = edge(c, a, sx, sy), ec = edge(a, b, sx, sy);
+      if (ea < 0 || eb < 0 || ec < 0 || (ea === 0 && !topLeft(b, c)) ||
+          (eb === 0 && !topLeft(c, a)) || (ec === 0 && !topLeft(a, b))) continue;
+      const attribute = (values: readonly number[]) => f((ea * values[0]! + eb * values[1]! + ec * values[2]!) / area);
+      const colors = [0, 1, 2, 3].map((i) => attribute([a.vertex.color[i]!, b.vertex.color[i]!, c.vertex.color[i]!]));
+      const fragment = shadeFieldParticle(material, { uv: [0, 1].map((i) =>
+        attribute([a.vertex.uv[i]!, b.vertex.uv[i]!, c.vertex.uv[i]!])) as [number, number],
+        color: { r: colors[0]!, g: colors[1]!, b: colors[2]!, a: colors[3]! },
+        engineSeconds: input.engineSeconds, elapsedSeconds: input.elapsedSeconds },
+        (key, u, v) => sampleFieldParticleTexture(textures.get(key)!, u, v));
+      if (!fragment) continue;
+      // GPU storage is top-origin. The public sampled frame is normalized to
+      // Unity texture UV: first row is V=1. Do not flip its board UV again.
+      const at = ((height - 1 - y) * width + x) * 4;
+      const result = blendSourceFieldParticleTarget([fragment.r, fragment.g, fragment.b, fragment.a], Array.from(data.subarray(at, at + 4)));
+      data.set(result, at);
+    }
+  };
+  for (const quad of staged.quads) {
+    const vertices = quad.vertices.map((v) => transformFieldParticleVertex({ ...v, objectToWorld: identityMatrix,
+      viewProjection: projection.matrix }));
+    for (let start = 0; start < staged.triangles.length; start += 3) {
+      let polygon: Vertex[] = staged.triangles.slice(start, start + 3).map((i) => vertices[i]!);
+      for (const distance of planes) {
+        const result: Vertex[] = [];
+        for (let i = 0; i < polygon.length; i++) {
+          const a = polygon[i]!, b = polygon[(i + 1) % polygon.length]!, da = distance(a), db = distance(b);
+          if (da >= 0) result.push(a);
+          if ((da >= 0) !== (db >= 0)) result.push(interpolate(a, b, f(da / f(da - db))));
+        }
+        polygon = result;
+      }
+      for (let n = 1; n + 1 < polygon.length; n++) raster([polygon[0]!, polygon[n]!, polygon[n + 1]!]);
+    }
+  }
+  return { kind: "field-effect-sampled-rt-v1", assetGroup: g.assetGroup, cameraId: g.camera.id, width, height,
+    sampleEncoding: "rgba8-unorm", rowOrder: "top-to-bottom", data };
 }
 
 /** Exact instruction order of particle vertex285 (also board vertex0 after

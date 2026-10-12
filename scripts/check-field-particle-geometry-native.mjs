@@ -16,7 +16,7 @@ for (const [path, digest] of [["build/runtime/game/GameAssembly.dll", source.nat
   const bytes = await readFile(resolve(root, path)); check(() => assert.equal(sha(bytes), digest));
 }
 const managedMethods = [], code = new Map();
-for (const [batch, addresses] of Object.entries({ "v33-field-effect-lifecycle": [0xe0c570, 0x87dc90], "v31-field-background-layout": [0x43b490] })) {
+for (const [batch, addresses] of Object.entries({ "v33-field-effect-lifecycle": [0xe0c570, 0x87dc90, 0x574910], "v31-field-background-layout": [0x43b490] })) {
   const receipt = await json("build/native/" + batch + "/complete.json");
   for (const [key, digest] of Object.entries(source)) check(() => assert.equal(receipt[key], digest));
   check(() => assert.equal(receipt.status, "complete")); check(() => assert.equal(receipt.semanticsVerified, false));
@@ -51,6 +51,7 @@ check(() => assert.match(asm.get(0x1019390), /mov ecx, dword ptr \[rcx \+ 0x14\]
 check(() => assert.match(code.get(0xe0c570), /get_orthographicSize[\s\S]*set_cullingMask\(pUVar25,0x4000/));
 check(() => assert.match(code.get(0x87dc90), /iVar10 = 0x995;[\s\S]*iVar10 = 0x99c;[\s\S]*set_renderQueue\(material,0x99a/));
 check(() => assert.match(code.get(0x43b490), /0xa00000005[\s\S]*0x100000001/));
+check(() => assert.match(code.get(0x574910), /Instantiate_GameObject[\s\S]*FieldEffectParticleEntity__Init[\s\S]*Transform__SetParent[\s\S]*Transform__set_localPosition/));
 
 const dll = "build/runtime/game/UnityPlayer.dll", pdb = "build/native/unity-player-symbols/UnityPlayer_Win64_il2cpp_x64.pdb";
 const nativeSha256 = "7930dbf028be9e3d146a92dc756a166f10cada81f433c49b8fb4eb6767ae9845",
@@ -59,7 +60,13 @@ const dllBytes = await readFile(resolve(root, dll)), pdbBytes = await readFile(r
 check(() => assert.equal(sha(dllBytes), nativeSha256)); check(() => assert.equal(sha(pdbBytes), pdbSha256));
 const engineMethods = [];
 for (const [batch, addresses] of Object.entries({ "v35-unity-particle-seeds": [0xd7aaf0, 0xd7c9f0, 0xd7c720],
-  "v35-unity-particle-emission": [0xd7ecc0, 0xd88f50, 0xd5bfd0] })) {
+  "v35-unity-particle-emission": [0xd7ecc0, 0xd88f50, 0xd5bfd0],
+  "v36-unity-particle-geometry": [0xd64170, 0xd5dea0, 0xd7bb40, 0xd7b820, 0xd7b1d0, 0xd88830, 0xd883a0],
+  "v36-unity-particle-target": [0xd89590, 0x690340, 0x88e540, 0x88e500, 0x669140, 0x7608d0, 0x66fc20, 0x682b40, 0x682140],
+  "v36-unity-particle-draw": [0xd81c40, 0xd858f0, 0x6063e0],
+  "v36-unity-particle-viewport": [0x5ec4c0, 0x5f3170, 0x4660f0, 0x458880],
+  "v36-unity-particle-transforms": [0x758760, 0x7599d0],
+  "v36-unity-particle-projection": [0x66d3e0, 0x5f4740] })) {
   const base = "build/native/" + batch, receipt = await json(base + "/complete.json"), inspectionBytes = await readFile(resolve(root, base, "inspection.json"));
   const inspection = JSON.parse(inspectionBytes);
   check(() => assert.equal(receipt.status, "complete")); check(() => assert.equal(receipt.semanticsVerified, false));
@@ -69,6 +76,7 @@ for (const [batch, addresses] of Object.entries({ "v35-unity-particle-seeds": [0
   for (const address of addresses) {
     const method = receipt.methods.find((m) => Number(m.rva) === address); assert.ok(method);
     const text = await readFile(resolve(root, base, method.file)); check(() => assert.equal(sha(text), method.decompiledSha256));
+    code.set(address, text.toString());
     engineMethods.push({ batch, ...method });
   }
 }
@@ -85,13 +93,32 @@ for (const method of engineMethods) {
 const generator = inspected.methods.find((m) => m.rva === "0xd5bfd0");
 check(() => assert.deepEqual(generator.aliases, ["GenerateParticleGeometry<0,0,0,0>"]));
 check(() => assert.equal(generator.size, 5825)); check(() => assert.equal(generator.boundary, "pdb-procedure-length"));
+const engineRawPython = `import json,hashlib,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from tools.native.inspect_pe import PEImage
+from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+pe=PEImage((Path(sys.argv[1])/'build/runtime/game/UnityPlayer.dll').read_bytes())
+cs=Cs(CS_ARCH_X86,CS_MODE_64)
+out=[]
+for a,b in [(0x78920,0x78935),(0xd5def1,0xd5df6f)]:
+ data=pe.read(a,b-a)[2]
+ out.append({'rva':hex(a),'endRva':hex(b),'sha256':hashlib.sha256(data).hexdigest(),
+ 'instructions':[{'rva':hex(i.address-0x180000000),'instruction':i.mnemonic+' '+i.op_str} for i in cs.disasm(data,0x180000000+a)]})
+print(json.dumps(out))`;
+const engineRaw = JSON.parse(execFileSync(resolve(root, ".venv/bin/python"), ["-c", engineRawPython, root], { encoding: "utf8" }));
+const engineAsm = new Map(engineRaw.map((r) => [Number(r.rva), r.instructions.map((i) => i.instruction).join("\n")]));
+check(() => assert.match(engineAsm.get(0x78920), /rsqrtps[\s\S]*divps[\s\S]*movaps/));
+check(() => assert.match(engineAsm.get(0xd5def1), /cvtps2dq xmm0, xmm2[\s\S]*cvtdq2ps[\s\S]*cvtps2dq xmm0, xmm11/));
+check(() => assert.match(code.get(0x4660f0), /\(uVar1 & 0x1140\) != 0x100[\s\S]*if \(iVar2 != 0\)[\s\S]*if \(bVar5\)/));
 const report = { formatVersion: 1, lane: "exact-local-particle-geometry-static-binding", status: "pass", checks,
-  source, managedMethods, rawDescriptorRanges: raw.raw, engine: { nativeSha256, pdbSha256, inspectionPath, methods: engineMethods },
+  source, managedMethods, rawDescriptorRanges: raw.raw, engine: { nativeSha256, pdbSha256, inspectionPath, methods: engineMethods, raw: engineRaw },
   semanticsVerified: false, originalGameExecuted: false, admittedParticleGenerators: 0,
-  limitations: ["Six exact UnityPlayer geometry methods are bound, but SIMD billboard expansion/job inputs are not yet implemented.",
-    "The real RT requests sRGB and depthBits=0. Existing ordinary-field depth attachments do not prove that particle RT has depth.",
+  limitations: ["The qualified geometry/RT CPU provider is checked separately against executed source instructions; the complete live emitter is not admitted.",
+    "Gamma PlayerSettings select GraphicsFormat 8 even when sRGB is requested; depthBits=0 creates no depth attachment in this path.",
+    "The live effectRoot transform and camera/GfxDevice GPU projection remain explicit host inputs.",
     "Static decompilation receipts and instruction assertions do not establish native GPU raster/color-encoding equivalence."] };
 await mkdir(resolve(root, "build/reports"), { recursive: true });
 await writeFile(resolve(root, "build/reports/field-particle-geometry-native-check.json"), JSON.stringify(report, null, 2) + "\n");
-console.log(JSON.stringify({ status: "pass", checks, managedMethods: managedMethods.length, rawRanges: raw.raw.length,
+console.log(JSON.stringify({ status: "pass", checks, managedMethods: managedMethods.length, rawRanges: raw.raw.length, engineRawRanges: engineRaw.length,
   engineMethods: engineMethods.length, semanticsVerified: false, admittedParticleGenerators: 0 }));

@@ -1,5 +1,7 @@
 # Source Unity particle emission kernels
 
+The v36 follow-up adds [lifecycle and birth timing](field-particle-lifecycle.md), [Initial/Cone birth](field-particle-birth.md), [motion](field-particle-motion.md) and [rendering providers](field-particle-rendering.md). The description and verification counts below preserve the v35 emission-kernel scope; complete emitter admission still requires their shared host.
+
 v35 implements the exact local engine's random streams, seed reset subset, constant emission/burst accumulation and particle-system clock. The five actual EffectPrefabs can use these kernels with explicit input state. They still cannot run as complete emitters: Cone sampling, Noise, birth/capacity order, motion, prewarm scheduling and particle geometry remain separate requirements. No smoke substitute or source admission gate was added.
 
 The verification lanes are distinct. Source DLL/PDB binding and isolated x64 instruction emulation have passed. The instruction probes execute selected DLL functions in Unicorn with controlled memory; they do not start Windows, Unity, the game or a browser. All reports retain `semanticsVerified: false`.
