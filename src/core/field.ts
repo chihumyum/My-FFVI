@@ -32,6 +32,8 @@ import { FieldEffects, FIELD_EFFECT_PARTICLE_UPDATE_ATTRIBUTE, fieldEffectAnimat
   projectFieldEffectPlacement, type FieldEffectRuntimeHost, type FieldEffectState,
   type FieldEffectPrepared, type FieldEffectOperation } from "./field-effects.js";
 import type { FieldActorFactoryCandidate, FieldActorFactoryBindings, FieldActorFactoryCatalog } from "./field-actor-factory.js";
+import { captureFieldNativeCheckpoint, restoreFieldNativeCheckpoint,
+  type FieldNativeCheckpoint, type FieldNativeCheckpointContext } from "./field-native-checkpoint.js";
 import { prepareFieldNativeNpcGroup, fieldNativeNpcRetirement, fieldNativeNpcStandbyPosition, fieldNativeNpcSelectorBinding } from "./field-native-npc.js";
 import { projectFieldPuppetCollision, type FieldPuppetCollisionState, type FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import type { FieldPuppetActorCatalog, FieldPuppetControlContext } from "./field-puppet-actors.js";
@@ -126,7 +128,7 @@ export type Actor = Point & {
 };
 type PlacedActor = Actor & { layer: number; direction: Direction; asset: string };
 export type FieldCheckpoint = {
-  kind: "idle-field-v8";
+  kind: "idle-field-v9";
   contentHash: string;
   time: number;
   remainder: number;
@@ -148,6 +150,22 @@ export type FieldCheckpoint = {
   environment: AudioSnapshot;
   fade: FieldFadeSnapshot | null;
   camera: FieldCameraState | null;
+  native: {
+    actors: FieldNativeCheckpoint;
+    collision: FieldPuppetCollisionState;
+    updateMask: number;
+    cameraOffset: Point;
+    completedScript: { name: string; leaderId: number | null; assignments: boolean[] } | null;
+  } | null;
+};
+/** Trusted source packages reconstruct this capability. Nothing in a saved
+ * actor payload can supply prefab, script-control, material or media authority. */
+export type FieldNativeRestoreDependencies = {
+  factory: FieldActorFactoryCatalog;
+  catalog: FieldPuppetActorCatalog;
+  animationKeys: FieldNativeAnimationKeys;
+  controlContext: FieldPuppetControlContext;
+  providers(field: FieldGame): () => FieldPuppetHostProviders;
 };
 type Task = {
   id: number;
@@ -337,13 +355,21 @@ export class FieldGame {
     if (!player || player.x !== this.player.x || player.y !== this.player.y ||
         player.layer !== this.player.layer || player.direction !== this.player.direction || player.asset !== this.player.asset)
       throw new Error("Native factory player disagrees with prepared PointIn");
-    const bindings = structuredClone(candidate.bindings), puppetCatalog = structuredClone(catalog);
     const lifecycle = mapLifecycle ? structuredClone(mapLifecycle) : null;
     const groups = new Set(this.entityList.filter((entity) => [6, 17].includes(entity.kind)).map((entity) => entity.nativeNpc?.group));
     for (const group of groups) {
       const entities = this.entityList.filter((entity) => [6, 17].includes(entity.kind) && entity.nativeNpc?.group === group);
       projected.push(...this.prepareNativeNpcActors(entities, group, projected.map((actor) => actor.id), lifecycle, providers()));
     }
+    this.publishNativeActors(projected, candidate.bindings, catalog, providers, controlContext, animationKeys, lifecycle);
+  }
+  /** Publication common to first creation and validated Web restore. Restore
+   * supplies reconstructed actors directly and never runs NPC/factory Init. */
+  private publishNativeActors(projected: NativeFieldActor[], sourceBindings: FieldActorFactoryBindings,
+    catalog: FieldPuppetActorCatalog, providers: () => FieldPuppetHostProviders,
+    controlContext: FieldPuppetControlContext, animationKeys: FieldNativeAnimationKeys | undefined,
+    lifecycle: NonNullable<FieldGame["nativeRuntime"]>["mapLifecycle"]): void {
+    const bindings = structuredClone(sourceBindings), puppetCatalog = structuredClone(catalog);
     const detachedActors = Object.fromEntries(projected.map((actor) => [actor.id, actor]));
     let published = false;
     const port = createNativeFieldPuppetActorsPort({
@@ -417,7 +443,7 @@ export class FieldGame {
   stop: Stop | null = null;
   time = 0;
   private tasks: Task[] = [];
-  private puppetLifecycle: { script: FieldPuppetScriptContext; leaderId: number | null;
+  private puppetLifecycle: { name: string; script: FieldPuppetScriptContext; leaderId: number | null;
     assignments: boolean[]; finished: boolean } | null = null;
   private remainder = 0;
   private nextTask = 1;
@@ -464,6 +490,7 @@ export class FieldGame {
     readonly options: FieldGameOptions = {},
     readonly fader: FieldFadeState = new FieldFadeState(content.entry.fade ?? null),
     cameraState?: FieldCameraState,
+    restoringNative = false,
   ) {
     cloneSourcePresentationContext(options.sourcePresentation?.context() ?? null);
     if (options.playerVisibility !== undefined) {
@@ -518,7 +545,7 @@ export class FieldGame {
       id: "-1001",
       motion: null,
       steps: 0,
-      animation: this.initialAnimation(p.asset, p.direction, p.mount),
+      animation: restoringNative ? null : this.initialAnimation(p.asset, p.direction, p.mount),
     };
     if (content.entry.playerVisible !== undefined && typeof content.entry.playerVisible !== "boolean")
       throw new Error("Unknown field entry player visibility");
@@ -535,7 +562,7 @@ export class FieldGame {
     if (content.cameraHost && this.entityList.some((entity) => entity.kind === 15))
       throw new Error("Camera ChangeOffset trigger provider is unresolved");
     this.camera = content.cameraHost ? new FieldCameraHost(content.cameraHost, this.cameraPorts(), cameraState) : null;
-    const treasures = this.prepareTreasureInitialization(this.entityList);
+    const treasures = restoringNative ? [] : this.prepareTreasureInitialization(this.entityList);
     this.tileAnimations.register(this.entityList);
     this.initializeTreasures(treasures);
     this.openTriggers.initialize(this.entityList, this.player);
@@ -901,9 +928,9 @@ export class FieldGame {
   }
   get checkpointReady(): boolean {
     return (
-      // The source actor host also owns native camera/collision/hidden puppet
-      // state. Stable saves remain blocked until that owner has a bound codec.
-      !this.options.puppetActors &&
+      (!this.options.puppetActors || !!(this.nativeActorBindings && this.nativeRuntime?.mapLifecycle &&
+        this.nativeRuntime.animationKeys && this.nativeActorProviders && this.partyActors && this.camera)) &&
+      !this.cameraEventActive && (!this.puppetLifecycle || this.puppetLifecycle.finished) &&
       !this.effects &&
       this.sourcePresentationContext?.advertisementOpeningFader !== "present" &&
       this.synchronizedEntry !== false &&
@@ -916,11 +943,41 @@ export class FieldGame {
   get sourcePresentationContext(): SourcePresentationContext | null {
     return cloneSourcePresentationContext(this.options.sourcePresentation?.context() ?? null);
   }
+  private nativeCheckpointContext(bindings: FieldActorFactoryBindings, factory: FieldActorFactoryCatalog,
+    providers: FieldPuppetHostProviders): FieldNativeCheckpointContext {
+    if (!this.partyActors || !this.options.partyAppearance || !this.content.cameraHost)
+      throw new Error("Native checkpoint requires bound party, media and camera owners");
+    const npcs = this.entityList.filter((entity) => [6, 17].includes(entity.kind)).map((entity) => {
+      const npc = entity.nativeNpc;
+      if (entity.nativeNpcBlockers?.length || !npc || npc.entityId !== entity.id ||
+          npc.objectType !== entity.kind || npc.asset.asset !== entity.asset || npc.geometry.layer !== entity.layer ||
+          canonical(npc.source) !== canonical(entity.source) || !this.activeGroups.has(npc.group))
+        throw new Error("Native checkpoint NPC is not bound to an active source group");
+      return npc;
+    });
+    return { mapRange: this.content.cameraHost.mapRange, bindings, factory,
+      partyCatalog: this.options.partyAppearance.catalog, partyCheckpoint: this.partyActors.checkpoint(),
+      characters: this.content.characters, npcs, providers };
+  }
+  private nativeCheckpoint(): FieldCheckpoint["native"] {
+    if (!this.nativeActorBindings) return null;
+    if (!this.nativeRuntime?.mapLifecycle || !this.nativeActorProviders || !this.nativeRuntime.animationKeys)
+      throw new Error("Native actor checkpoint source capabilities are incomplete");
+    const lifecycle = this.puppetLifecycle;
+    if (lifecycle && (!lifecycle.finished ||
+        canonical(lifecycle.script) !== canonical(this.content.scriptPuppetContexts?.[lifecycle.name])))
+      throw new Error("Native script lifecycle is not stably bound to its source");
+    return { actors: captureFieldNativeCheckpoint(this.actors, this.nativeCheckpointContext(
+      this.nativeActorBindings, this.nativeRuntime.mapLifecycle.factory, this.nativeActorProviders())),
+      collision: { ...this.collisionSwitches }, updateMask: this.entityUpdateMask,
+      cameraOffset: { ...this.cameraOffset }, completedScript: lifecycle && {
+        name: lifecycle.name, leaderId: lifecycle.leaderId, assignments: [...lifecycle.assignments] } };
+  }
   checkpoint(): FieldCheckpoint {
     if (!this.checkpointReady)
       throw new Error("Cannot save during field movement or an event");
     return {
-      kind: "idle-field-v8",
+      kind: "idle-field-v9",
       contentHash: this.content.contentHash,
       time: this.time,
       remainder: this.remainder,
@@ -933,7 +990,7 @@ export class FieldGame {
       activeGroups: [...this.activeGroups],
       hiddenEntities: [...this.hiddenEntities],
       openedTreasures: [...this.openedTreasures],
-      actors: Object.values(this.actors).map(({ motion: _, animation, native, ...actor }) => {
+      actors: this.nativeActorBindings ? [] : Object.values(this.actors).map(({ motion: _, animation, native, ...actor }) => {
         if (native || actor.layer === null || actor.direction === null || actor.asset === null)
           throw new Error("Native actors require their own stable field codec");
         return { ...actor, layer: actor.layer, direction: actor.direction, asset: actor.asset,
@@ -945,6 +1002,7 @@ export class FieldGame {
       environment: this.environment.snapshot(),
       fade: this.fader.snapshot(),
       camera: this.cameraSnapshot,
+      native: this.nativeCheckpoint(),
     };
   }
   /** Rebuild dependencies from trusted content without replaying initialization or triggers. */
@@ -952,6 +1010,7 @@ export class FieldGame {
     content: FieldContent,
     raw: FieldCheckpoint,
     options: FieldGameOptions = {},
+    native?: FieldNativeRestoreDependencies,
   ): FieldGame {
     if (options.puppetActors)
       throw new Error("Source puppet host checkpoints require a bound actor/camera/collision codec");
@@ -961,9 +1020,9 @@ export class FieldGame {
     const s = structuredClone(raw);
     checkpointKeys(
       s,
-      "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,fade,camera",
+      "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,fade,camera,native",
     );
-    if (s.kind !== "idle-field-v8" || s.contentHash !== content.contentHash ||
+    if (s.kind !== "idle-field-v9" || s.contentHash !== content.contentHash ||
       s.transportationId !== (content.entry.transportationId ?? null))
       throw new Error("Field checkpoint source/version mismatch");
     const presentation = sourcePresentationCheckpoint(options.sourcePresentation?.context() ?? null);
@@ -981,21 +1040,26 @@ export class FieldGame {
       throw new Error("Field checkpoint cannot grant a missing fade host");
     if ((s.camera !== null) !== (content.cameraHost !== undefined))
       throw new Error("Field checkpoint cannot grant or discard a camera host");
+    if ((s.native !== null) !== (native !== undefined) || options.nativeActorPreparation && !native)
+      throw new Error("Field checkpoint native source dependencies are unavailable or changed");
     const next = new FieldGame(
       content,
       new EventState(s.eventState),
       StaticAudioState.restore(s.bgm, content.bgm),
       StaticAudioState.restore(s.environment, content.environment),
-      options,
+      { ...options, ...(native ? { nativeActorPreparation: true } : {}) },
       FieldFadeState.restore(s.fade),
       s.camera ?? undefined,
+      native !== undefined,
     );
     checkpointIds(s.activeGroups);
     const initial = [...next.activeGroups];
     if (initial.some((id, n) => s.activeGroups[n] !== id))
       throw new Error("Initial field groups changed in checkpoint");
-    for (const id of s.activeGroups.slice(initial.length))
-      next.activateGroup(id);
+    for (const id of s.activeGroups.slice(initial.length)) {
+      if (native) next.restoreNativeGroup(id);
+      else next.activateGroup(id);
+    }
     if (next.partyActors) {
       if (!s.partyActors) throw new Error("Missing saved party appearances");
       next.partyActors.restore(s.partyActors);
@@ -1003,8 +1067,9 @@ export class FieldGame {
       next.requirePlayerMedia(media.asset, media.mount);
       Object.assign(next.player, media);
     } else if (s.partyActors !== null) throw new Error("Unbound saved party appearances");
+    if (native) next.restoreNativeOwner(s.native!, native);
     checkpointIds(s.hiddenEntities);
-    if (s.hiddenEntities.some((id) => !next.hasEntity(id) || (next.camera && id === next.cameraActorId)))
+    if (s.hiddenEntities.some((id) => !next.hasEntity(id) || (next.camera && id === next.cameraActorId) || next.actors[id]?.native))
       throw new Error("Unknown hidden saved entity");
     checkpointIds(s.openedTreasures);
     if (s.openedTreasures.some((id) => !next.entities.some((e) => e.id === id && e.treasure)))
@@ -1015,7 +1080,8 @@ export class FieldGame {
         throw new Error("Opened pickup treasure is still visible");
     }
     if (!Array.isArray(s.actors)) throw new Error("Missing saved actors");
-    checkpointSameIds(
+    if (native && s.actors.length) throw new Error("Duplicate native actor ownership in checkpoint");
+    if (!native) checkpointSameIds(
       s.actors.map((a) => a.id),
       Object.keys(next.actors),
     );
@@ -1052,7 +1118,67 @@ export class FieldGame {
     next.remainder = s.remainder;
     next.nextTask = s.nextTask;
     next.synchronizedEntry = s.entrySynchronized;
+    next.entryTaskStarted = s.entrySynchronized === true;
     return next;
+  }
+  /** Re-register immutable group definitions for their saved ordering only.
+   * NPC playback/positions, treasure state and tile state come from codecs;
+   * ActivateGroup/Init/Look and source event callbacks must not run here. */
+  private restoreNativeGroup(name: string): void {
+    const group = this.content.map.groups?.[name];
+    if (!group || this.activeGroups.has(name) || group.blockers.length)
+      throw new Error("Unknown or blocked saved native entity group");
+    if (group.entities.some((entity) => entity.kind === 11 || entity.kind === 15))
+      throw new Error("Saved native group has unresolved effect/camera lifecycle");
+    if (group.entities.some((entity) => entity.kind === 18)) requireMinimapMedia(group.entities, this.content.minimap);
+    const ids = new Set([this.player.id, ...this.entityList.map((entity) => entity.id)]);
+    for (const entity of group.entities) {
+      if (ids.has(entity.id)) throw new Error("Saved native entity identity collision");
+      ids.add(entity.id);
+    }
+    this.tileAnimations.register(group.entities);
+    this.entityList.push(...group.entities);
+    this.activeGroups.add(name);
+    this.currentProperties = [...this.defaultProperties, ...group.entities];
+  }
+  private restoreNativeOwner(saved: NonNullable<FieldCheckpoint["native"]>, source: FieldNativeRestoreDependencies): void {
+    checkpointKeys(saved, "actors,collision,updateMask,cameraOffset,completedScript");
+    checkpointKeys(saved.collision, "mapColliders,entityCollision,interactiveObservation");
+    if (canonical(saved.collision) !== canonical(projectFieldPuppetCollision(saved.collision.mapColliders)))
+      throw new Error("Saved native collision switches disagree");
+    if (saved.updateMask !== 3 && saved.updateMask !== 9) throw new Error("Unknown saved entity update mask");
+    checkpointKeys(saved.cameraOffset, "x,y");
+    for (const value of Object.values(saved.cameraOffset))
+      if (!Number.isFinite(value) || Math.fround(value) !== value) throw new Error("Invalid saved native camera offset");
+    const origin = this.content.entry.partyActors?.context;
+    if (!origin || !this.camera || !this.partyActors || !Array.isArray(origin.conditionResidents))
+      throw new Error("Missing native checkpoint immutable source identities");
+    const bindings: FieldActorFactoryBindings = { player: origin.player.id,
+      partyPuppets: origin.puppets.map((p) => p!.id), otherParties: origin.multiParty.map((p) => p.actor!.id),
+      residents: origin.conditionResidents.map((r) => ({ assetId: r.characterId, actor: `native:resident:${r.characterId}` })) };
+    let lifecycle: FieldGame["puppetLifecycle"] = null;
+    if (saved.completedScript !== null) {
+      const s = saved.completedScript;
+      checkpointKeys(s, "name,leaderId,assignments");
+      const script = this.content.scriptPuppetContexts?.[s.name];
+      if (typeof s.name !== "string" || !script || !this.content.scripts[s.name] ||
+          !Array.isArray(s.assignments) || s.assignments.length !== 5 || s.assignments.some((v) => typeof v !== "boolean"))
+        throw new Error("Unbound saved completed puppet lifecycle");
+      if (s.leaderId !== null) checkpointInteger(s.leaderId, -1004, -1001);
+      if (script.skipInitialize !== (s.leaderId === null))
+        throw new Error("Saved puppet leader does not match its source lifecycle");
+      lifecycle = { name: s.name, script: structuredClone(script), leaderId: s.leaderId,
+        assignments: [...s.assignments], finished: true };
+    }
+    const providers = source.providers(this);
+    const actors = restoreFieldNativeCheckpoint(saved.actors,
+      this.nativeCheckpointContext(bindings, source.factory, providers()));
+    this.publishNativeActors(actors, bindings, source.catalog, providers, source.controlContext,
+      source.animationKeys, { factory: structuredClone(source.factory) });
+    this.collisionSwitches = { ...saved.collision };
+    this.entityUpdateMask = saved.updateMask;
+    this.mapScrollOffset = Object.freeze({ ...saved.cameraOffset });
+    this.puppetLifecycle = lifecycle;
   }
   private block(message: string, site: Site | null = null) {
     this.stop = { kind: "unsupported", message, site };
@@ -1684,7 +1810,7 @@ export class FieldGame {
     const camera = this.prepareCameraEvent("start", this.separateCameraInitialization(plan));
     const publish = port.prepare(plan);
     if (typeof publish !== "function") throw new Error("Invalid source puppet actor transaction");
-    const next = { script: structuredClone(script), leaderId: plan.leaderId,
+    const next = { name, script: structuredClone(script), leaderId: plan.leaderId,
       assignments: plan.assignments ?? fieldPuppetAssignments(), finished: false };
     return () => { publish(); camera(); this.puppetLifecycle = next; };
   }

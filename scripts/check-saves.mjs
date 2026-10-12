@@ -1,16 +1,16 @@
 // Existing source fixtures exercise the shared checkpoint boundary, not additional playable regions.
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
-import { GameSession } from "../dist/src/core/game-session.js";
-import {
-  encodeSavedGame,
-  decodeSavedGame,
-} from "../dist/src/core/saved-game.js";
-import {
-  verifyContent,
-  contentDigest,
-} from "../dist/src/core/content-integrity.js";
+import { resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 const root = new URL("..", import.meta.url);
+const args = process.argv.slice(2);
+assert.ok(args.length === 0 || args.length === 2 && args[0] === "--compiled-dir", "Use --compiled-dir <directory>");
+const compiled = resolve(fileURLToPath(root), args[1] ?? "dist");
+const module = (name) => import(pathToFileURL(resolve(compiled, "src/core", name + ".js")).href);
+const { GameSession } = await module("game-session");
+const { encodeSavedGame, decodeSavedGame } = await module("saved-game");
+const { verifyContent, contentDigest } = await module("content-integrity");
 const read = async (path) =>
   verifyContent(JSON.parse(await readFile(new URL(path, root), "utf8")));
 const field = await read("build/game/narshe.json");
@@ -199,7 +199,7 @@ for (const entry of prior.runs.filter((r) => r.result === "idle")) {
 const report = {
   formatVersion: 1,
   kind: "source-checkpoint-check",
-  profile: "game-checkpoint-v3",
+  profile: "game-checkpoint-v4",
   sourceSetHash: field.parentSourceSetHash,
   bootstrapHash: field.contentHash,
   battleCatalogHash: battle.contentHash,

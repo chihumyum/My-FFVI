@@ -141,7 +141,7 @@ test("a source owned snapshot cannot acquire the development field codec through
   const forged = structuredClone(original);
   forged.owned = GameState.createNewGame(f.battle.gameState, f.battle.common.players,
     f.battle.contentHash, f.battle.common.conditions).snapshot();
-  assert.throws(() => GameSession.restore(forged, field, f.battle), /Source new-game restore requires the native actor\/world checkpoint codec/);
+  assert.throws(() => GameSession.restore(forged, field, f.battle), /Checkpoint initialization origin mismatch/);
   assert.deepEqual(development.checkpoint(), original);
 });
 
@@ -174,14 +174,15 @@ test("source PointIn placement does not invent collision data or grant legacy en
   assert.deepEqual(game.state.snapshot(), before);
 });
 
-test("fresh actors retain stable-save and missing map-dependency gates after a completed reserved script", () => {
+test("fresh actors gain stable Web saves but retain missing map-dependency gates after a completed reserved script", () => {
   const { f, entry, fade } = title();
   const game = GameSession.prepareNewGame(f.content, f.world, f.map, f.battle, fade, f.presentation);
   const launch = entry.prepareLaunch(fade, game.newGamePreparation(true));
   game.launchNewGame(launch.launch); launch.commit(); game.advance(10);
   assert.equal(game.field.busy, false); assert.equal(game.field.entrySynchronized, true);
-  assert.equal(game.checkpointReady, false);
-  assert.throws(() => game.checkpoint(), /Cannot save/);
+  assert.equal(game.checkpointReady, true);
+  const saved = game.checkpoint();
+  assert.equal(saved.origin.kind, "source-new-game");
   const before = game.state.snapshot(), player = game.field.player, oldField = game.field;
   game.field.previewMap(f.map.mapId, f.content.entry.entrance);
   assert.throws(() => game.world.prepare(f.world, f.map), /Missing source map actor entry/);
@@ -268,7 +269,7 @@ test("ordinary native map handoff stages persistent residents and rejects a stal
       assert.equal(game.field.stop, null); assert.equal(game.field.entrySynchronized, true);
       assert.equal(game.field.cameraSnapshot!.target, "player");
       assert.deepEqual(game.field.actors[resident.id]!.native!.entity.position, { x: 96, y: 120, z: 349 });
-      assert.equal(game.checkpointReady, false, "map handoff does not grant the missing native save codec");
+      assert.equal(game.checkpointReady, true, "stable native maps have a separately validated Web codec");
     }
   }
 });

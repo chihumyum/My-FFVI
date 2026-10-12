@@ -74,7 +74,7 @@ try {
     assert.equal(world.parentSourceSetHash, content.parentSourceSetHash);
     assert.equal(map.parentSourceSetHash, content.parentSourceSetHash);
     assert.equal(map.mapId, 609); assert.equal(content.entry.entrance, 1);
-    assert.equal(battle.common.profile, "narshe-playability-v33");
+    assert.equal(battle.common.profile, "narshe-playability-v34");
     assert.equal(content.entry.reservedScript.name, "sc_e_0001");
     assert.equal(map.scriptPuppetContexts[content.entry.reservedScript.name].scriptHash,
       content.entry.reservedScript.contentHash);
@@ -291,7 +291,7 @@ try {
   report.destination = { requested: structuredClone(game.field.stop.request), contentHash: destination.contentHash,
     prepared: false, published: false, failure: transitionFailure,
     nativeFoot: destination.nativeFoot, actorViewBlockers: destination.actorViewBlockers };
-  check("the running source host preserves actor identities and the unsupported native save boundary", () => {
+  check("the running source host preserves actor identities and blocks saves during a pending map transition", () => {
     for (const entry of identities) {
       assert.equal(game.field.actors[entry.id], entry.actor);
       assert.equal(game.field.actors[entry.id].native.entity, entry.entity);

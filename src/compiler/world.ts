@@ -12,7 +12,7 @@ import { compilePlayerVisibilityFactory } from "./player-visibility.js";
 import { compileFieldCameraHostDefinition } from "./field-camera-host.js";
 import { compileFieldActorView } from "./field-actor-view.js";
 import { compileFieldNativeNpcStandby } from "./field-native-npc.js";
-import { compileFieldNativeComposition } from "./field-native-composition.js";
+import { compileFieldNativeComposition, loadFieldCompositionRenderHost } from "./field-native-composition.js";
 import { compileFieldNativeAnimationKeys } from "./field-native-appearance.js";
 import { compilePartyActorCatalog } from "./party-actors.js";
 import { compileFieldNativeFoot } from "./field-native-foot.js";
@@ -200,6 +200,7 @@ export async function compileWorld(root: string) {
     packageMedia = record(media.packages);
   const sourceFiles = array(corpus.manifest.sources).map(record)
     .map((s) => ({ file: text(s.file), sha256: text(s.sha256) }));
+  const compositionRenderHost = await loadFieldCompositionRenderHost(root, sourceFiles);
   const miscAssets = systemSource.assets.filter((asset) => asset.source.assetPath.endsWith("/serial_misc_assets.json"));
   if (miscAssets.length !== 1) throw new Error("Missing source puppet settings");
   const nativeAnimationKeys = compileFieldNativeAnimationKeys(
@@ -330,7 +331,7 @@ export async function compileWorld(root: string) {
           partyEntry.mapRange);
         try {
           map.nativeComposition = compileFieldNativeComposition(sourceFiles, actorView,
-            { data: tile.data, source: { ...tile.source, objectId: tile.source.objectId } });
+            { data: tile.data, source: { ...tile.source, objectId: tile.source.objectId } }, compositionRenderHost);
         } catch (error) { nativeCompositionBlockers.push({ reason: error instanceof Error ? error.message : String(error), source }); }
       } catch (error) {
         actorViewBlockers.push({ reason: error instanceof Error ? error.message : String(error), source });

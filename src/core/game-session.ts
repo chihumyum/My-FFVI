@@ -21,8 +21,8 @@ import { canonical } from "./canonical.js";
 import { prepareSourceNewGameField, installSourceNewGameActors, validateSourceNewGameLaunch,
   type SourceNewGameContent } from "./source-new-game.js";
 import type { NewGameFieldLaunch, NewGameFieldPreparation } from "./new-game-field-entry.js";
-import type { FieldFadeState } from "./field-fade.js";
-import { cloneSourcePresentationContext, type SourcePresentationContext } from "./source-presentation.js";
+import { FieldFadeState } from "./field-fade.js";
+import { cloneSourcePresentationContext, createSourcePresentationContext, type SourcePresentationContext } from "./source-presentation.js";
 import {
   checkpointKeys,
   checkpointInteger,
@@ -30,10 +30,11 @@ import {
 } from "./checkpoint-validation.js";
 
 export type GameCheckpoint = {
-  formatVersion: 3;
+  formatVersion: 4;
   kind: "game-checkpoint";
   sourceSetHash: string;
   battleCatalogHash: string;
+  origin: { kind: "development-checkpoint" } | { kind: "source-new-game"; sourceContentHash: string };
   seed: number;
   encounterSerial: number;
   remainder: number;
@@ -44,7 +45,9 @@ export type GameCheckpoint = {
 /** External observations are rebound by the host on load, never trusted from saves. */
 export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost };
 type FreshSession = { content: SourceNewGameContent; state: GameState; events: EventState;
-  map: WorldMapContent; fade: FieldFadeState; presentation: SourcePresentationContext };
+  map: WorldMapContent; fade: FieldFadeState; presentation: SourcePresentationContext; restoring?: true };
+export type GameRestoreWorld = { catalog: WorldCatalog; map: WorldMapContent;
+  source?: { content: SourceNewGameContent; initialMap: WorldMapContent } };
 
 /** Owns the encounter handoff and consumes rewards exactly once. No renderer state drives progression. */
 export class GameSession {
@@ -149,10 +152,10 @@ export class GameSession {
       },
       prepare: () => this.state.prepareFieldState(),
       nativeState: () => this.state.nativeState,
-    }, fresh?.fade);
+    }, fresh?.fade, fresh?.restoring === true);
     if (fresh) {
-      installSourceNewGameActors(this.field, fresh.content, this.state, fresh.map);
-      this.freshEntry = { content: fresh.content, launched: false };
+      if (!fresh.restoring) installSourceNewGameActors(this.field, fresh.content, this.state, fresh.map);
+      this.freshEntry = { content: fresh.content, launched: fresh.restoring === true };
     }
   }
   get battlePreferences(): BattlePreferences {
@@ -168,6 +171,7 @@ export class GameSession {
       !this.battle &&
       !this.battleLease &&
       !this.state.inBattle &&
+      (!this.freshEntry || this.freshEntry.launched) &&
       this.field.checkpointReady
     );
   }
@@ -205,10 +209,12 @@ export class GameSession {
     if (!this.checkpointReady)
       throw new Error("Cannot save during battle, movement or an event");
     return {
-      formatVersion: 3,
+      formatVersion: 4,
       kind: "game-checkpoint",
       sourceSetHash: this.field.content.parentSourceSetHash,
       battleCatalogHash: this.battleCatalog.contentHash,
+      origin: this.freshEntry ? { kind: "source-new-game", sourceContentHash: this.freshEntry.content.contentHash }
+        : { kind: "development-checkpoint" },
       seed: this.seed,
       encounterSerial: this.encounterSerial,
       remainder: this.remainder,
@@ -221,16 +227,16 @@ export class GameSession {
     raw: GameCheckpoint,
     initial: FieldContent,
     battle: BattleCatalog,
-    world?: { catalog: WorldCatalog; map: WorldMapContent },
+    world?: GameRestoreWorld,
     runtime: GameSessionRuntime = {},
   ): GameSession {
     const s = structuredClone(raw);
     checkpointKeys(
       s,
-      "formatVersion,kind,sourceSetHash,battleCatalogHash,seed,encounterSerial,remainder,battlePreferences,owned,world",
+      "formatVersion,kind,sourceSetHash,battleCatalogHash,origin,seed,encounterSerial,remainder,battlePreferences,owned,world",
     );
     if (
-      s.formatVersion !== 3 ||
+      s.formatVersion !== 4 ||
       s.kind !== "game-checkpoint" ||
       s.sourceSetHash !== initial.parentSourceSetHash ||
       s.battleCatalogHash !== battle.contentHash
@@ -240,14 +246,34 @@ export class GameSession {
     checkpointInteger(s.encounterSerial);
     checkpointNumber(s.remainder, 0, 10);
     if (s.remainder >= 10) throw new Error("Invalid session remainder");
-    const next = new GameSession(initial, battle, s.seed, runtime);
+    let next: GameSession;
+    if (s.origin?.kind === "source-new-game") {
+      checkpointKeys(s.origin, "kind,sourceContentHash");
+      const source = world?.source;
+      if (!source || !world || source.content.contentHash !== s.origin.sourceContentHash ||
+          source.content.parentSourceSetHash !== s.sourceSetHash || s.owned.initialization !== "source-new-game")
+        throw new Error("Source new-game restore requires trusted native actor/world checkpoint dependencies");
+      if (s.world.field.fade === null) throw new Error("Source new-game checkpoint cannot discard the title fade host");
+      const state = GameState.createNewGame(battle.gameState, battle.common.players, battle.contentHash, battle.common.conditions);
+      const fade = FieldFadeState.restore(s.world.field.fade);
+      // The pristine initializer proves the route and immutable actor inventory.
+      // It is a private data projection only: no event, factory or Look is run.
+      const prepared = prepareSourceNewGameField(source.content, world.catalog, source.initialMap, battle, state, fade.projection ?? undefined);
+      const presentation = createSourcePresentationContext({ kind: "title-new-game",
+        titleCleanupComplete: true, openingCallbackStarted: false });
+      next = new GameSession(prepared.field, battle, s.seed, runtime, { content: source.content, state,
+        events: new EventState(s.world.field.eventState), map: source.initialMap, fade, presentation, restoring: true });
+    } else {
+      checkpointKeys(s.origin, "kind");
+      if (s.origin.kind !== "development-checkpoint" || s.owned.initialization !== "development-checkpoint")
+        throw new Error("Checkpoint initialization origin mismatch");
+      next = new GameSession(initial, battle, s.seed, runtime);
+    }
     next.setBattlePreferences(s.battlePreferences);
     next.state.restore(s.owned);
-    if (next.state.initialization !== "development-checkpoint")
-      throw new Error("Source new-game restore requires the native actor/world checkpoint codec");
     if (s.encounterSerial !== s.owned.completedBattles.length)
       throw new Error("Saved encounter sequence disagrees with rewards");
-    next.world.restore(s.world, world?.catalog, world?.map);
+    next.world.restore(s.world, world?.catalog, world?.map, s.origin.kind === "source-new-game" ? world!.source : undefined);
     next.encounterSerial = s.encounterSerial;
     next.remainder = s.remainder;
     return next;

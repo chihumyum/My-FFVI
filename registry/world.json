@@ -9,7 +9,7 @@
         "炭坑都市纳尔谢"
       ],
       "questions": [
-        "来源 fresh GameSession、原生演员、镜头、普通字幕和整批外观事务已接通；继续完成通用地图实体、原生地图局部 NPC、上层合成、交通切换、入战返回和稳定原生保存。原始开场已请求609→3，目标地图依赖仍明确阻塞；开发检查点不等于完整序章。",
+        "来源 fresh GameSession、原生演员、普通字幕、非空 Upper/Ceil 合成与稳定原生演员保存已接通。继续补齐粒子 Noise/RNG/预热/发射积分、跨图共享效果池事务、交通与骑乘、入战返回；实际开场仍停在609→3目的地图FX分配，开发检查点不等于完整序章。",
         "建立同一地点在不同世界阶段、剧情标记和局部状态下的变体条件。",
         "确认 Wait 时钟与 SysCall 选择器，并对已恢复的碰撞进行原版运行对照。"
       ]
@@ -1446,6 +1446,69 @@
       "evidence": [
         "docs/field-native-composition.md",
         "docs/systems-v33.md"
+      ]
+    },
+    {
+      "id": "narshe:native-checkpoint-v34",
+      "subject": "narshe",
+      "when": {
+        "battleProfile": "narshe-playability-v34"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "predicate": "migration.nativeCheckpoint",
+      "value": "Stable native actors are saved once in field/world v9 and game v4. Trusted source packages rebuild identity and providers; restore does not rerun factory, NPC Init, Look, Cue or story. Active events, riding, FX and unbound retained material contexts remain gated.",
+      "evidence": [
+        "docs/field-native-checkpoint.md",
+        "docs/systems-v34.md"
+      ]
+    },
+    {
+      "id": "narshe:native-composition-v34",
+      "subject": "narshe",
+      "when": {
+        "battleProfile": "narshe-playability-v34"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "predicate": "migration.nativeComposition",
+      "value": "Ordinary nonempty Upper/Ceil targets use the source gamma RGBA8 320x180 Point framebuffer and independent per-frame clears before actor sampling. This bounded 16:9 material path does not establish full visual parity, riding, particles or other aspect ratios.",
+      "evidence": [
+        "docs/field-native-composition.md",
+        "GameAssembly.dll:RVA 0x2dbcc0,0x4b4770,0x4b4a50",
+        "docs/systems-v34.md"
+      ]
+    },
+    {
+      "id": "narshe:particle-kernel-v34",
+      "subject": "narshe",
+      "when": {
+        "battleProfile": "narshe-playability-v34"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "predicate": "migration.fieldParticles",
+      "value": "The selected LastEffectMaster fragment program and three source textures have a bounded CPU evaluator with independent DXBC comparison. Five source emitter module graphs remain not executable because Noise, automatic RNG, prewarm, shape and emission integration are not recovered.",
+      "evidence": [
+        "docs/field-particles.md",
+        "docs/systems-v34.md"
+      ]
+    },
+    {
+      "id": "narshe:shared-effects-v34",
+      "subject": "narshe",
+      "when": {
+        "battleProfile": "narshe-playability-v34"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "predicate": "migration.fieldEffectLifetime",
+      "value": "MapManager copy construction shares FieldEffectInstanceManager at +0x198. ReleaseAlreadyLoadPrefabs removes loaded-prefab and shared lookup entries but preserves referenced live players and global allocation counters. Per-map pool recreation is invalid; cross-map joint transactions remain unimplemented.",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x312160 bytes 0x312560-0x312576",
+        "GameAssembly.dll:RVA 0x575150,0x303710",
+        "docs/field-effects.md",
+        "docs/systems-v34.md"
       ]
     }
   ],

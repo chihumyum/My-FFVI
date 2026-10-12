@@ -25,7 +25,7 @@ The receipts are in `build/native/v33-field-effect-lifecycle`, `v33-field-effect
 
 ## Ownership and transaction contract
 
-`FieldEffectState` holds boards, shared particle players, camera IDs, reference counts and registration order. The current scene has exactly one such owner. Neither `actors` nor `hiddenEntities` stores a second effect copy.
+`FieldEffectState` holds boards, shared particle players, camera IDs, reference counts and registration order. The admitted standalone field has exactly one such owner. Neither `actors` nor `hiddenEntities` stores a second effect copy. Native evidence shows that the source manager itself is shared across MapManager copies; its lifetime is longer than one map. The current standalone owner is therefore not yet a complete cross-map host.
 
 `projectFieldEffects(state, catalog, operations)` builds one disposable candidate for an ordered operation list. `FieldEffects.prepare(operations)` obtains a host transaction and returns `{ state, validate, commit }`. Preparing or rejecting a stale candidate does not change the logical owner. A host must prepare its material, texture and particle changes without publishing; its commit installs prepared state and must not fail.
 
@@ -47,6 +47,15 @@ Each effect transaction is atomic. **The whole FieldGame frame is not an all-own
 - Position input uses raw source pixel geometry and native mapRange, not normalized legacy collision coordinates. Layer 0–3 maps to native 9–12 with Z 349/249/149/49. The source top boundary is exclusive; out-of-range placement needs the bound standby transform. Unsupported overflow is rejected. Front/zOffset modifies local mesh depth and is not applied twice to the entity transform.
 - Mesh generation preserves native signed remainder, odd strip counts, and zero-area tail strips. UVs and render queues remain source parameters; sorting, clamping or flattening them would change composition.
 - Last release removes the live player and reference-count entry but leaves the source shared dictionary entry. Reuse of a dangling shared entry is explicitly rejected. The runtime does not invent cache deletion or a replacement camera.
+- `ReleaseAlreadyLoadPrefabs` (`575150`) separately removes the named loaded-prefab and shared-player lookup entries. It does not destroy still-referenced players or reset `instanceCount`/`nextParticlePositionY`. The `release-prefab` operation and host event stage both cache changes in one publication. A later allocation receives a new camera identity and continues the global placement sequence. This primitive does not authorize an arbitrary map teardown.
+
+## Shared manager lifetime (v34)
+
+The actual DLL instructions in MapManager's copy constructor (`312160`, copy at `312560`) copy the pointer at offset `0x198`. `InitInsitance` (`30c5e0`, allocation at `30c809`) constructs that manager, while `DestroyInsitance` (`30aeb0`) invokes its full Destroy and clears the pointer. A destination map must not instantiate a fresh pool or reset counters on every transition.
+
+`ClearMapAsset` (`303710`) enumerates the recorded particle asset groups, calls `ReleaseAlreadyLoadPrefabs`, destroys the corresponding resource groups and clears the list. This is distinct from a board's final Release (`575200`). The native checker binds the full file digests, 12 additional method receipts, the copy/allocation instruction bytes, and the two dictionary removals. The earlier decompiler output truncates some methods at a write barrier, so the actual DLL bytes are required for the pointer-copy claim.
+
+The future WorldSession integration needs one shared pool, map-scoped board leases, candidate preparation with no external publication, and asset cleanup following the source unload order. A per-map pool and unconditional cache reset were rejected during investigation. Cross-map allocation/retirement remains gated until that joint lifecycle and a real particle host exist.
 
 ## Real Map3 diagnosis
 
@@ -66,7 +75,7 @@ Its 24 event groups have no kind 11 boards. All default boards lie in `CeilObjec
 
 Each bundle also contains its original named prefab. The runtime loads **`Prefabs/EffectPrefab`**, so counting every ParticleSystem in the bundle would double the actual emitter count. The exporter follows that exact GameObject/Transform graph, records external files and keeps every Unity path ID as a decimal string. Render texture dimensions are truncated float32 `(orthographicSize * 2)`, not copied from the serialized placeholder texture.
 
-The five actual runtime emitters require NoiseModule, automatic random seeds, prewarm and other enabled Unity modules. Material, shader and texture dependencies are preserved with exact local/external pointers. `compileFieldEffectMedia` reports these dependencies; it never clears them after successfully parsing a prefab. Actual objects therefore fail runtime admission before either an owner change or renderer preparation.
+The five actual runtime emitters require NoiseModule, automatic random seeds, prewarm and other enabled Unity modules. Material, shader and texture dependencies are preserved with exact local/external pointers. v34 adds bounded module evaluation and the exact selected material program, documented in [particle modules and materials](field-particles.md); this does not implement emitter execution. `compileFieldEffectMedia` retains its runtime blockers. Actual objects therefore fail runtime admission before either an owner change or renderer preparation.
 
 Ignored diagnostics:
 
@@ -93,4 +102,4 @@ node scripts/check-field-effects.mjs --compiled-dir build/v33-entity-dist
 node scripts/check-field-effects-ui.mjs --compiled-dir build/v33-entity-dist
 ```
 
-The focused suite has 15 pure/compiler tests and 7 FieldGame/WorldSession integration tests. It covers source geometry, independent activity and alpha, shared references, ordered setup, loop observations, provider failure/staleness, real-decoder board dispatch, duplicate-owner prevention and map/save refusal. The native checker covers 27 receipt-backed methods, 12 raw bindings and 20 semantic bindings. The source checker has 22 assertions across 15 real boards and 5 real prefabs, with zero source prefabs admitted and zero renderer prepares. UI checking has 15 controlled assertions and three draw calls. These lanes do not count as playable Map3 coverage or original-game comparison.
+The focused suite has 18 pure/compiler tests and 7 FieldGame/WorldSession integration tests. It covers source geometry, independent activity and alpha, shared references, ordered setup, loop observations, provider failure/staleness, separate prefab release, real-decoder board dispatch, duplicate-owner prevention and map/save refusal. The native checker covers 39 receipt-backed methods, 12 raw bindings and 23 semantic bindings, plus the MapManager copy/allocation byte checks. The source checker has 22 assertions across 15 real boards and 5 real prefabs, with zero source prefabs admitted and zero renderer prepares. UI checking has 15 controlled assertions and three draw calls. These lanes do not count as playable Map3 coverage or original-game comparison.

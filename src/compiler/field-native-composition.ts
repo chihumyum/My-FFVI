@@ -1,8 +1,11 @@
 import { hash, record } from "./content.js";
+import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import type { FieldActorViewDefinition, FieldActorViewSource } from "../core/field-actor-view.js";
 import { validateFieldActorView } from "../core/field-actor-view.js";
 import { FIELD_COMPOSITION_LAYERS, fieldCompositionTexture, validateFieldNativeComposition,
-  type FieldCompositionLayer, type FieldNativeCompositionDefinition } from "../core/field-native-composition.js";
+  ordinaryFieldCompositionRenderHost, validateFieldCompositionRenderHost,
+  type FieldCompositionRenderHost, type FieldCompositionLayer, type FieldNativeCompositionDefinition } from "../core/field-native-composition.js";
 import { compileFieldActorFactory } from "./field-actor-factory.js";
 
 export type { FieldNativeCompositionDefinition } from "../core/field-native-composition.js";
@@ -21,12 +24,28 @@ const inputs = [
     assetPath: "Assets/GameAssets/Common/Res/Shaders/MapTransparentTileShader.shader", objectId: "-1156586477086012646" },
 ];
 
+/** The corpus contains bundles but not boot-scene Camera objects. Load that
+ * independent, byte-verified source explicitly rather than inferring cameras
+ * 23/24 from a null target in a reduced world artifact. */
+export async function loadFieldCompositionRenderHost(root: string, sources: readonly { file: string; sha256: string }[]): Promise<FieldCompositionRenderHost> {
+  compileFieldActorFactory(sources);
+  const host = ordinaryFieldCompositionRenderHost();
+  for (const source of new Map(host.sources.map((s) => [s.file, s])).values()) {
+    const bytes = await readFile(root + "/build/runtime/game/" + source.file);
+    if (createHash("sha256").update(bytes).digest("hex") !== source.sha256)
+      throw new Error("Foreign source field render-target camera or color-space inputs");
+  }
+  return host;
+}
+
 /** Ordinary map material qualification is supplied by compileFieldActorView.
  * This additional capability retains layer PRESENCE: even an empty Upper layer
  * enables its source camera and has a valid (clear) pre-render texture. */
 export function compileFieldNativeComposition(sources: readonly { file: string; sha256: string }[],
-  view: FieldActorViewDefinition, tilemap: { source: FieldActorViewSource; data: unknown }): FieldNativeCompositionDefinition {
+  view: FieldActorViewDefinition, tilemap: { source: FieldActorViewSource; data: unknown },
+  renderHost?: FieldCompositionRenderHost): FieldNativeCompositionDefinition {
   compileFieldActorFactory(sources); validateFieldActorView(view);
+  if (renderHost) validateFieldCompositionRenderHost(renderHost);
   for (const expected of inputs) {
     const matches = sources.filter((s) => s.file === expected.file);
     if (matches.length !== 1 || matches[0]!.sha256 !== expected.sha256)
@@ -53,7 +72,7 @@ export function compileFieldNativeComposition(sources: readonly { file: string; 
           layer.data.some((n) => !Number.isSafeInteger(n) || n < 0 || n > 0xffffffff))
         throw new Error("Missing complete pre-render source tile data");
       renderTargets[layer.name === "UpperLayer" ? "upper" : "ceil"] = layer.data.some((n) => (Number(n) & 0x0fffffff) !== 0)
-        ? "unresolved" : "clear-only";
+        ? renderHost ? "source-rendered" : "unresolved" : "clear-only";
     }
   }
   const result: FieldNativeCompositionDefinition = {
@@ -62,6 +81,7 @@ export function compileFieldNativeComposition(sources: readonly { file: string; 
     upperTexture: layers.includes("UpperLayer") ? fieldCompositionTexture(view.contextId, "UpperLayer") : null,
     ceilTexture: layers.includes("CeilLayer") ? fieldCompositionTexture(view.contextId, "CeilLayer") : null,
     renderTargets,
+    ...(renderHost ? { renderHost: structuredClone(renderHost) } : {}),
   };
   validateFieldNativeComposition(result, view);
   return result;

@@ -188,7 +188,7 @@ test("invalid checkpoint identities, actors, audio, triggers and versions reject
       s.battleCatalogHash = "wrong";
     },
     (s) => {
-      Object.assign(s, { formatVersion: 4 });
+      Object.assign(s, { formatVersion: 3 });
     },
     (s) => {
       s.encounterSerial = 1;

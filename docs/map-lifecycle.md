@@ -46,6 +46,8 @@
 
 ## 批量检查
 
+v34 补充了效果资源的所有权证据：MapManager 复制构造共享同一个 `FieldEffectInstanceManager`，每次切图重建播放器池会重置原版持续累加的 camera ID 与离屏位置。板引用最后释放与资产缓存卸载是不同操作；新 `release-prefab` 原语只清理 lookup，不销毁仍被引用的播放器。WorldSession 的效果分配/退休门禁继续保留，下一步需要共同准备、提交和回收共享池，见 [效果板生命周期](field-effects.md#shared-manager-lifetime-v34)。原生演员稳定保存和普通非空 Upper/Ceil 合成已分别接入，不代替这条资源事务。
+
 ```sh
 npm run maps:check
 npm run corpus:plan

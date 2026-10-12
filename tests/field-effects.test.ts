@@ -124,6 +124,47 @@ test("last release removes live owner but preserves native shared tombstone; dup
   assert.throws(() => projectFieldEffects(empty, effectCatalog(), [{ kind: "destroy", id: "b" }]), /Unknown/);
 });
 
+test("asset unload removes a released shared entry without resetting global allocation order", () => {
+  const retired = project([create("old"), { kind: "destroy", id: "old" }]).after;
+  const released = projectFieldEffects(retired, effectCatalog(), [{ kind: "release-prefab", assetGroup: "controlled_effect" }]);
+  assert.deepEqual(released.after.shared, {});
+  assert.equal(released.after.instanceCount, retired.instanceCount);
+  assert.equal(released.after.nextParticlePositionY, retired.nextParticlePositionY);
+  assert.deepEqual(released.events, [{ kind: "release-prefab", assetGroup: "controlled_effect" }]);
+  const recreated = projectFieldEffects(released.after, effectCatalog(), [create("new")]).after;
+  assert.equal(recreated.players[0]!.cameraId, 2);
+  assert.equal(recreated.players[0]!.positionY, 148);
+  assert.deepEqual(recreated.shared, { controlled_effect: 2 });
+  assert.deepEqual(projectFieldEffects(released.after, effectCatalog(),
+    [{ kind: "release-prefab", assetGroup: "controlled_effect" }]).after, released.after);
+});
+
+test("prefab release preserves referenced live players while subsequent boards obtain a new shared instance", () => {
+  const live = project([create("old"), setup(["old"])]).after;
+  const released = projectFieldEffects(live, effectCatalog(), [{ kind: "release-prefab", assetGroup: "controlled_effect" }]).after;
+  assert.deepEqual(released.players, live.players); assert.deepEqual(released.boards, live.boards);
+  assert.deepEqual(released.registeredCameraIds, live.registeredCameraIds);
+  const next = projectFieldEffects(released, effectCatalog(), [create("new"), { kind: "destroy", id: "old" }]).after;
+  assert.deepEqual(next.players.map((p) => [p.cameraId, p.references]), [[2, 1]]);
+  assert.deepEqual(next.shared, { controlled_effect: 2 });
+  assert.throws(() => projectFieldEffects(live, effectCatalog(), [{ kind: "release-prefab", assetGroup: "unknown" }]), /media/);
+});
+
+test("failed prefab cache publication preserves logical sharing and the host cache", () => {
+  let fail = false, loaded = true;
+  const owner = new FieldEffects(effectCatalog(), { prepare: (plan) => ({
+    validate: () => { if (fail) throw new Error("asset cache changed"); },
+    commit: () => { if (plan.events.some((event) => event.kind === "release-prefab")) loaded = false; },
+  }) });
+  owner.prepare([create("a")]).commit(); const before = owner.snapshot();
+  const release = owner.prepare([{ kind: "release-prefab", assetGroup: "controlled_effect" }]);
+  fail = true; assert.throws(() => release.commit(), /asset cache changed/);
+  assert.deepEqual(owner.snapshot(), before); assert.equal(loaded, true);
+  fail = false; owner.prepare([{ kind: "release-prefab", assetGroup: "controlled_effect" }]).commit();
+  assert.deepEqual(owner.snapshot().shared, {}); assert.equal(loaded, false);
+  assert.deepEqual(owner.snapshot().players, before.players);
+});
+
 test("native playback clock accumulates f32 across restarts; positive loops await non-looping particles", () => {
   const base = project([create("a"), setup(["a"]), { kind: "play", id: "a", loopLimit: 2 }], false).after;
   const tick = (playing: boolean): FieldEffectOperation => ({ kind: "tick", deltaSeconds: .1,

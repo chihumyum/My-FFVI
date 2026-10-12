@@ -38,7 +38,7 @@ try {
     assert.equal(original.length, entry.bytes); assert.equal(sha(original), entry.sha256);
   }
   const nativeBytes = await readFile(resolve(root, "build/reports/field-effects-native-check.json")), native = JSON.parse(nativeBytes);
-  assert.equal(native.semanticsVerified, false); assert.equal(native.methods.length, 27); assert.equal(native.rawBindings.length, 12);
+  assert.equal(native.semanticsVerified, false); assert.equal(native.methods.length, 39); assert.equal(native.rawBindings.length, 12);
   assert.ok(corpus.manifest.sources.some((entry) => entry.file === "GameAssembly.dll" && entry.sha256 === native.nativeSha256));
   report.native = { file: "build/reports/field-effects-native-check.json", sha256: sha(nativeBytes),
     nativeSha256: native.nativeSha256, methods: native.methods.length, rawBindings: native.rawBindings.length };

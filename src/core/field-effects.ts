@@ -47,6 +47,9 @@ export type FieldEffectObservation = { cameraId: number; particlePlaying: boolea
 export type FieldEffectOperation =
   | { kind: "create"; id: string; definition: FieldEffectBoardDefinition; position: FieldEffectPoint }
   | { kind: "destroy"; id: string }
+  /** Asset unloading clears prefab/shared lookup caches, not live players or
+   * allocation counters (ReleaseAlreadyLoadPrefabs 575150). */
+  | { kind: "release-prefab"; assetGroup: string }
   /** MapModel group enable changes GameObject.activeSelf without Show/Hide. */
   | { kind: "active"; id: string; active: boolean }
   | { kind: "visibility"; id: string; visible: boolean; duration: number }
@@ -56,6 +59,7 @@ export type FieldEffectOperation =
   | { kind: "tick"; deltaSeconds: number; observations: FieldEffectObservation[] };
 export type FieldEffectEvent =
   | { kind: "create-player" | "destroy-player" | "clear-render-texture" | "restart" | "stop" | "show-player" | "hide-player"; cameraId: number }
+  | { kind: "release-prefab"; assetGroup: string }
   | { kind: "register" | "unregister"; cameraIds: number[] }
   | { kind: "elapsed"; cameraId: number; seconds: number };
 export type FieldEffectPlan = { before: FieldEffectState; after: FieldEffectState; events: FieldEffectEvent[] };
@@ -288,6 +292,13 @@ export function projectFieldEffects(state: FieldEffectState, catalog: FieldEffec
           events.push({ kind: "destroy-player", cameraId: b.cameraId });
         }
         break;
+      }
+      case "release-prefab": {
+        // The host owns alreadyLoadPrefabList. Both caches are released in the
+        // same prepared publication; old board references remain valid.
+        media(catalog, op.assetGroup, false);
+        delete next.shared[op.assetGroup];
+        events.push({ kind: "release-prefab", assetGroup: op.assetGroup }); break;
       }
       case "active": {
         if (typeof op.active !== "boolean") throw new Error("Unknown field effect group activity");

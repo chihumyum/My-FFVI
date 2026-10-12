@@ -22,6 +22,9 @@ const groups = {
   "minimap": [0x9f2700], "open-trigger": [0x9f2c60],
   "v19-transport-lifecycle": [0x2e3d30], "map-lifecycle": [0x2ed6f0, 0x352d90],
   "v33-field-pools-targets": [0x308cf0, 0x3083c0],
+  "v34-field-effect-map-lifecycle": [0x575030, 0x574c80, 0x5759b0],
+  "v34-map-manager-effect-lifecycle": [0x312140, 0x312160, 0x30c5e0, 0x30aeb0, 0x3041d0, 0x303450, 0x30e2a0],
+  "v34-field-effect-map-release": [0x575150, 0x303710],
 };
 const methods = [], code = new Map();
 for (const [batch, addresses] of Object.entries(groups)) {
@@ -89,6 +92,16 @@ assert.equal(0x311ae4 + bytes.get(0x311ad0).readInt32LE(16), 0x575400);
 assert.equal(hex(0x9eb2f0), "b82a000000c3");
 assert.equal(hex(0x3750c0), "b802000000c3");
 assert.ok(hex(0x87f760).includes("b904000000"), "Board IsPlayingAnim invokes IEffectPlayer slot4 IsPlayingEffect");
+// MapManager's copy constructor shares the manager at +0x198. The decompiler
+// stops at an earlier write barrier, so bind these actual DLL instructions.
+assert.equal(bytes.get(0x312160).subarray(0x400, 0x411).toString("hex"),
+  "488b9398010000488d8f98010000488911");
+assert.equal(bytes.get(0x312160)[0x411], 0xe8);
+assert.equal(0x312576 + bytes.get(0x312160).readInt32LE(0x412), 0x19d260);
+assert.equal(bytes.get(0x30c5e0)[0x229], 0xe8);
+assert.equal(0x30c80e + bytes.get(0x30c5e0).readInt32LE(0x22a), 0x5759b0);
+assert.equal(bytes.get(0x30c5e0).subarray(0x22e, 0x23b).toString("hex"),
+  "488d8f98010000488bd3488919");
 const bindings = [
   [0x305420, /case 0xb:[\s\S]*PropertyEffectEntity___ctor[\s\S]*fieldEffectInstanceManager[\s\S]*effectBoardEntityPrefab[\s\S]*CreateOutOfRangeMapPosition/,
     "Kind11 constructs effect boards using a separately created shared effect player."],
@@ -130,9 +143,17 @@ const bindings = [
     "Within each group native creation retains the group-data array and property-array order."],
   [0x2c4800, /iVar13 == 0[\s\S]*set_i1[\s\S]*iVar13 < 0[\s\S]*elementNames = 1[\s\S]*set_i0/,
     "The admitted script count 0/1 invokes mode0; negative count invokes mode1 and advances without waiting."],
+  [0x575150, /alreadyLoadPrefabList[\s\S]*ContainsKey[\s\S]*Remove[\s\S]*shareEffectParticleEntityList[\s\S]*ContainsKey[\s\S]*Remove/,
+    "Asset release separately removes prefab and shared lookup entries."],
+  [0x303710, /particleAssetList[\s\S]*GetEnumerator[\s\S]*fieldEffectInstanceManager[\s\S]*ReleaseAlreadyLoadPrefabs[\s\S]*DestroyGroupAsset[\s\S]*particleAssetList[\s\S]*Clear/,
+    "ClearMapAsset releases recorded particle groups before clearing their asset list."],
+  [0x30aeb0, /fieldEffectInstanceManager[\s\S]*FieldEffectInstanceManager__Destroy[\s\S]*fieldEffectInstanceManager = .*0x0/,
+    "DestroyInsitance destroys the shared manager, unlike ordinary map retirement."],
 ];
 for (const [rva, pattern, meaning] of bindings) assert.match(code.get(rva), pattern, meaning);
 assert.doesNotMatch(code.get(0x575200), /shareEffectParticleEntityList/, "Do not invent shared-cache deletion on last release");
+assert.doesNotMatch(code.get(0x575150), /createdParticle|instanceCount|nextParticlePositionY|__Destroy/,
+  "Prefab release does not destroy referenced players or restart global allocation");
 assert.doesNotMatch(code.get(0xe0cc60), /elapsedSec/, "Play does not reset shader elapsed time");
 assert.doesNotMatch(code.get(0x87f570) + code.get(0x87dc00), /PlayEffect|StopEffect/, "Board visibility is separate from playback");
 const string = (address, value) => assert.ok(symbols.ScriptString.some((item) => item.Address === address && item.Value === value));
@@ -141,6 +162,7 @@ const dump = await readFile(resolve(root, "build/native/il2cpp/dump.cs"), "utf8"
 assert.match(dump, /EffectEntity = 11;/); assert.match(dump, /private bool <play_on_awake>k__BackingField; \/\/ 0x70/);
 assert.match(dump, /private int <zoffset>k__BackingField; \/\/ 0x134/);
 assert.match(dump, /public const int Field = 2;[\s\S]*public const int Message = 8;[\s\S]*public const int FieldReady = 32;/);
+assert.match(dump, /FieldEffectInstanceManager fieldEffectInstanceManager; \/\/ 0x198/);
 const report = { formatVersion: 1, lane: "static-native-field-effect-lifecycle", nativeSha256, symbolsSha256, headerSha256,
   semanticsVerified: false, originalGameExecuted: false, methods, ranges: readRanges,
   bindings: bindings.map(([, , meaning]) => meaning), rawBindings: raw.map(([rva, size, symbol]) => ({ rva, size, symbol })),

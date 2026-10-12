@@ -4,7 +4,8 @@ import { fieldFadeOverlay } from "/runtime/core/field-fade.js";
 import { projectFieldBackground } from "/runtime/core/field-background.js";
 import { assertFieldCompositionRenderTargets, composeFieldNativePixels,
   fieldCompositionActorDepth, fieldCompositionTileDepth, fieldCompositionActorTextures,
-  validateFieldNativeComposition } from "/runtime/core/field-native-composition.js";
+  validateFieldNativeComposition, prepareFieldCompositionTargets,
+  scaleFieldCompositionPixels } from "/runtime/core/field-native-composition.js";
 import { projectFieldActorView, validateFieldActorViewProjection } from "/runtime/core/field-actor-view.js";
 import { canonical } from "/runtime/core/canonical.js";
 export class Renderer {
@@ -116,7 +117,7 @@ export class Renderer {
           const set = this.sets.find((s) => s.firstgid <= gid);
           if (!set || set.tilewidth !== 16 || set.tileheight !== 16) throw new Error("未恢复的原生图块尺寸");
           const n = gid - set.firstgid, image = this.compositionPixels(m.textures[set.image]);
-          tiles.push({ image, source: { x: (n % set.columns) * (16 + (set.spacing ?? 0)) + (set.margin ?? 0),
+          tiles.push({ image, layer: layer.name, source: { x: (n % set.columns) * (16 + (set.spacing ?? 0)) + (set.margin ?? 0),
             y: Math.floor(n / set.columns) * (16 + (set.spacing ?? 0)) + (set.margin ?? 0), width: 16, height: 16 },
             destination: { x: x * 16 - cx, y: y * 16 - cy, width: 16, height: 16 },
             flipX: !!(raw & 0x80000000), flipY: !!(raw & 0x40000000), diagonal: !!(raw & 0x20000000),
@@ -125,6 +126,10 @@ export class Renderer {
         }
       }
     }
+    const targets = definition.renderHost ? prepareFieldCompositionTargets(definition, { width, height, tiles })
+      : { upper: null, ceil: null };
+    const sampleTarget = (name) => name === null ? null : name === definition.upperTexture ? targets.upper
+      : name === definition.ceilTexture ? targets.ceil : (() => { throw new Error("未绑定的原生预渲染纹理"); })();
     for (const actor of actors) {
       if (!actor.native) throw new Error("原生材质视口混入未绑定演员");
       const entity = actor.native.entity, frame = actor.animation?.frame();
@@ -154,9 +159,7 @@ export class Renderer {
         depth: fieldCompositionActorDepth({ position: { y: (range.height * 0.5 - 0.5 - (point.y - range.y)) * 16,
           z: entity.position.z }, frameY: frame.y, cameraY: sourceCamera.cameraPosition.y,
           clampTileSubY: sourceCamera.clampTileSubY, charaZOffset: actor.native.charaZOffset }),
-        // Only absent/clear-only targets pass the qualification above. Their
-        // alpha is zero independently of allocation size and point sampling.
-        first: null, second: null });
+        first: sampleTarget(textures.first), second: sampleTarget(textures.second) });
     }
     const canvas = this.compositionCanvas(width, height), context = canvas.getContext("2d", { willReadFrequently: true });
     this.background(context, sourceCamera, width, height);
@@ -343,6 +346,10 @@ export class Renderer {
       w = this.canvas.width,
       h = this.canvas.height,
       range = game.collisionRange;
+    const nativeHost = Object.values(game.actors).some((actor) => actor.native) ? m.nativeComposition?.renderHost : undefined;
+    if (nativeHost && w * nativeHost.height !== h * nativeHost.width)
+      throw new Error("来源字段相机尚未恢复当前宽高比或信箱边界");
+    const viewportWidth = nativeHost?.width ?? w, viewportHeight = nativeHost?.height ?? h;
     const camera = (position, start, length, viewport) =>
       Math.round(
         length * 16 <= viewport
@@ -356,21 +363,25 @@ export class Renderer {
             ),
       );
     // Source camera offsets are pixels with positive Y pointing upward.
-    const sourceCamera = game.cameraProjection({ aspect: w / h, orthographicSize: h / 2,
+    const sourceCamera = game.cameraProjection({ aspect: viewportWidth / viewportHeight,
+      orthographicSize: nativeHost?.orthographicSize ?? h / 2,
       isClamp: true, effectOffset: { x: 0, y: 0 } });
     // CameraFollowing's sprite/entity tracking input is retained separately in
     // sourceCamera.renderCell. This full-map Canvas renderer needs no moving
     // Unity mesh cache; clipping uses the actual, already clamped camera root.
-    const cx = sourceCamera ? Math.round((sourceCamera.cameraCell.x + 0.5) * 16 - w / 2)
-      : camera(p.x + game.cameraOffset.x / 16, range.x, range.width, w),
-      cy = sourceCamera ? Math.round((sourceCamera.cameraCell.y + 0.5) * 16 - h / 2)
-      : camera(p.y - game.cameraOffset.y / 16, range.y, range.height, h);
+    const cx = sourceCamera ? Math.round((sourceCamera.cameraCell.x + 0.5) * 16 - viewportWidth / 2)
+      : camera(p.x + game.cameraOffset.x / 16, range.x, range.width, viewportWidth),
+      cy = sourceCamera ? Math.round((sourceCamera.cameraCell.y + 0.5) * 16 - viewportHeight / 2)
+      : camera(p.y - game.cameraOffset.y / 16, range.y, range.height, viewportHeight);
     const actors = Object.values(game.actors)
       .filter((a) => game.isEntityVisible(a.id) && a.x >= 0 && a.x < m.width && a.y >= 0 && a.y < m.height)
       .sort((a, b) => this.point(a).y - this.point(b).y || a.id.localeCompare(b.id));
-    const native = this.prepareNativeComposition(game, actors, sourceCamera, cx, cy, w, h);
+    const native = this.prepareNativeComposition(game, actors, sourceCamera, cx, cy, viewportWidth, viewportHeight);
     c.imageSmoothingEnabled = false;
-    if (native) c.putImageData(native, 0, 0);
+    if (native) {
+      const scaled = scaleFieldCompositionPixels(native, w, h), frame = c.createImageData(w, h);
+      frame.data.set(scaled.data); c.putImageData(frame, 0, 0);
+    }
     else this.background(c, sourceCamera, w, h);
     const drawActors = (layer) => {
       for (const a of actors) if (a.layer === layer) this.actor(a, cx, cy);

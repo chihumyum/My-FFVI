@@ -110,7 +110,9 @@
     "field-native-foot:check": "npm run build && node scripts/check-field-native-foot-native.mjs && node scripts/check-field-native-foot.mjs",
     "field-effects:check": "npm run build && node scripts/check-field-effects-native.mjs && node scripts/check-field-effects.mjs && node scripts/check-field-effects-ui.mjs",
     "field-native-npc:check": "npm run build && node scripts/check-field-native-npc-native.mjs && node scripts/check-field-native-npc.mjs",
-    "field-native-composition:check": "npm run build && node scripts/check-field-native-composition-native.mjs && node scripts/check-field-native-composition.mjs && node scripts/check-field-native-composition-ui.mjs"
+    "field-native-composition:check": "npm run build && node scripts/check-field-native-composition-native.mjs && node scripts/check-field-native-composition.mjs && node scripts/check-field-native-composition-ui.mjs",
+    "field-native-checkpoint:check": "npm run build && node scripts/check-field-native-checkpoint.mjs",
+    "field-particles:check": "npm run build && node scripts/check-field-particles.mjs && node scripts/check-field-particles-ui.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

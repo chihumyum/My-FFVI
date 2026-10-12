@@ -6,6 +6,7 @@ import {
   type MapTransitionStop,
   type FieldCheckpoint,
   type FieldGameOptions,
+  type FieldNativeRestoreDependencies,
 } from "./field.js";
 import { missingFieldPoses } from "./character-media.js";
 import { canonical } from "./canonical.js";
@@ -19,6 +20,7 @@ import type { FieldFadeState } from "./field-fade.js";
 import type { SourceNativeState } from "./source-native-state.js";
 import { prepareSourceNativeMap } from "./source-native-map.js";
 import { prepareNativeFieldProviders } from "./field-native-providers.js";
+import type { SourceNewGameContent } from "./source-new-game.js";
 export type WorldStateOwner = {
   current: FieldGameOptions;
   prepare(): { ports: FieldGameOptions; commit(): boolean };
@@ -29,7 +31,7 @@ type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount"> & {
   transportationId: number | null;
 };
 export type WorldCheckpoint = {
-  kind: "idle-world-v8";
+  kind: "idle-world-v9";
   initialHash: string;
   location: {
     catalogHash: string;
@@ -228,6 +230,7 @@ export class WorldSession {
     state = new EventState(),
     private readonly owned?: WorldStateOwner,
     initialFade?: FieldFadeState,
+    restoringNative = false,
   ) {
     this.current = new FieldGame(
       initial,
@@ -236,6 +239,8 @@ export class WorldSession {
       undefined,
       { ...(owned?.current ?? {}), ...(initial.playerFactory ? { playerVisibility: initial.playerFactory.capability } : {}) },
       initialFade,
+      undefined,
+      restoringNative,
     );
   }
   get field(): FieldGame {
@@ -243,7 +248,7 @@ export class WorldSession {
   }
   checkpoint(): WorldCheckpoint {
     return {
-      kind: "idle-world-v8",
+      kind: "idle-world-v9",
       initialHash: this.initial.contentHash,
       location: structuredClone(this.location),
       field: this.current.checkpoint(),
@@ -254,15 +259,21 @@ export class WorldSession {
     snapshot: WorldCheckpoint,
     catalog?: WorldCatalog,
     target?: WorldMapContent,
+    native?: { content: SourceNewGameContent; initialMap: WorldMapContent },
   ): void {
     checkpointKeys(snapshot, "kind,initialHash,location,field");
     if (
-      snapshot.kind !== "idle-world-v8" ||
+      snapshot.kind !== "idle-world-v9" ||
       snapshot.initialHash !== this.initial.contentHash
     )
       throw new Error("World checkpoint source/version mismatch");
     let content = this.initial;
     const loc = snapshot.location;
+    if (native && (!catalog || native.content.contentHash !== this.initial.contentHash ||
+        native.content.worldCatalogHash !== catalog.contentHash || native.content.mapContentHash !== native.initialMap.contentHash ||
+        native.initialMap.mapId !== native.content.entry.mapId ||
+        catalog.maps[String(native.initialMap.mapId)]?.contentHash !== native.initialMap.contentHash))
+      throw new Error("Saved native initial world dependencies are unavailable or changed");
     if (loc !== null) {
       checkpointKeys(loc, "catalogHash,mapId,entrance,traveler");
       checkpointInteger(loc.mapId, 1, 0x7fffffff);
@@ -320,10 +331,21 @@ export class WorldSession {
         this.initial.cameraHost !== undefined,
       );
     }
+    let nativeDependencies: FieldNativeRestoreDependencies | undefined;
+    if (native) {
+      const map = loc === null ? native.initialMap : target;
+      if (!map?.actorView || map.actorViewBlockers?.length || map.nativeFootBlockers?.length ||
+          !catalog?.nativeAnimationKeys || canonical(catalog.nativeAnimationKeys) !== canonical(native.content.animationKeys))
+        throw new Error("Saved native map view/foot/animation source dependencies are unavailable");
+      nativeDependencies = { factory: native.content.factory, catalog: native.content.puppetCatalog,
+        animationKeys: native.content.animationKeys, controlContext: { worldMapScript: false, callback: "absent" },
+        providers: (field) => prepareNativeFieldProviders(field, map.actorView!, map.nativeFoot) };
+    }
     const next = FieldGame.restore(
       content,
       snapshot.field,
       { ...(this.owned?.current ?? {}), ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}) },
+      nativeDependencies,
     );
     this.current = next;
     this.location = structuredClone(loc);

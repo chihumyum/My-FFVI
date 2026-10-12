@@ -666,6 +666,22 @@ async function loadGame(previous) {
     if (!saved) throw new Error("尚无此本地进度。");
     let world;
     const location = saved.checkpoint?.world?.location;
+    // Origin is a selector for independently verified published packages, never
+    // a source capability embedded in the save. The initial map is needed even
+    // when the current location is a later map.
+    if (saved.checkpoint?.origin?.kind === "source-new-game") {
+      const response = await fetch("/game/new-game.json");
+      if (!response.ok) throw new Error("原始新游戏来源入口尚未生成。");
+      const source = await verifyContent(await response.json(), saved.checkpoint.origin.sourceContentHash);
+      const catalog = await worldCatalog();
+      const indexed = catalog.maps[String(source.entry.mapId)];
+      if (source.worldCatalogHash !== catalog.contentHash || indexed?.contentHash !== source.mapContentHash)
+        throw new Error("存档与当前原始入口资源版本不匹配。");
+      const initialResponse = await fetch(indexed.url);
+      if (!initialResponse.ok) throw new Error("原始入口地图载入失败。");
+      const initialMap = await verifyContent(await initialResponse.json(), indexed.contentHash);
+      world = { catalog, map: initialMap, source: { content: source, initialMap } };
+    }
     if (location !== null && location !== undefined) {
       if (
         !Number.isInteger(location.mapId) ||
@@ -673,13 +689,14 @@ async function loadGame(previous) {
         location.mapId > 2147483647
       )
         throw new Error("存档中的地图身份无效。");
-      const catalog = await worldCatalog();
+      const catalog = world?.catalog ?? await worldCatalog();
       const indexed = catalog.maps[String(location.mapId)];
       if (location.catalogHash !== catalog.contentHash || !indexed)
         throw new Error("存档与当前地图资源版本不匹配。");
       const response = await fetch(indexed.url);
       if (!response.ok) throw new Error("存档所需地图载入失败。");
       world = {
+        ...world,
         catalog,
         map: await verifyContent(await response.json(), indexed.contentHash),
       };

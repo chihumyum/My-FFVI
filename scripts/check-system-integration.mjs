@@ -16,7 +16,7 @@ for (const content of [field, battle]) {
   const { contentHash, ...input } = content;
   assert.equal(contentHash, hash(input));
 }
-assert.equal(battle.common.profile, "narshe-playability-v33");
+assert.equal(battle.common.profile, "narshe-playability-v34");
 assert.equal(battle.common.qualificationContext.mode, "source");
 assert.equal(battle.common.qualificationContext.conditionContext, "current");
 assert.equal(field.entry.transportationId, 6);

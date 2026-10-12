@@ -4,6 +4,38 @@ import { validateFieldActorView } from "./field-actor-view.js";
 
 export type FieldCompositionColor = readonly [number, number, number, number];
 export type FieldCompositionLayer = "BottomLayer" | "GroundLayer" | "UpperLayer" | "CeilLayer";
+/** Same-build ordinary 16:9 FieldMain target. These are source inputs, not
+ * inferred from Canvas dimensions or from an actor's texture attachments. */
+export type FieldCompositionRenderHost = {
+  kind: "source-normal-field-targets-v1";
+  sources: FieldActorViewSource[];
+  sourceHeight: 1080; fieldDivisor: 6; aspect: readonly [16, 9];
+  width: 320; height: 180; graphicsFormat: 8; depthBits: 24; filterMode: 0;
+  orthographicSize: 90; viewport: readonly [0, 0, 1, 1];
+  cameraZ: -50; near: number; far: 300;
+  clear: FieldCompositionColor;
+  masks: readonly [16777216, 33554432];
+};
+const bootFile = "FINAL FANTASY VI_Data/level0";
+const bootHash = "986e706d7e762c652ac73cacfbb399b1eb69c37ad57d31a8165df0516e07c170";
+/** Fixed values are admitted only after the compiler verifies the original
+ * scene and native source. Exported for redistributable synthetic tests too. */
+export function ordinaryFieldCompositionRenderHost(): FieldCompositionRenderHost {
+  return { kind: "source-normal-field-targets-v1",
+    sources: [...["305", "150", "170", "165", "160", "142", "124", "145", "108"].map((objectId) => ({ file: bootFile,
+      assetPath: "level0", serializedFile: "level0", objectId, sha256: bootHash })),
+      { file: "FINAL FANTASY VI_Data/globalgamemanagers", assetPath: "globalgamemanagers",
+        serializedFile: "globalgamemanagers", objectId: "1",
+        sha256: "bc33b3eaaab47d14fbbf792f5bcc664c7e2f4787376449306739bce658dc7881" }],
+    sourceHeight: 1080, fieldDivisor: 6, aspect: [16, 9], width: 320, height: 180,
+    graphicsFormat: 8, depthBits: 24, filterMode: 0, orthographicSize: 90,
+    viewport: [0, 0, 1, 1], cameraZ: -50, near: Math.fround(0.3), far: 300,
+    clear: [Math.fround(24 / 255), Math.fround(24 / 255), Math.fround(24 / 255), 0], masks: [16777216, 33554432] };
+}
+export function validateFieldCompositionRenderHost(value: FieldCompositionRenderHost): void {
+  if (canonical(value) !== canonical(ordinaryFieldCompositionRenderHost()))
+    throw new Error("Unknown source field render-target provider");
+}
 /** Content capability, not an actor/texture owner. The texture names identify
  * this map's two per-frame pre-render targets; they are not image filenames. */
 export type FieldNativeCompositionDefinition = {
@@ -14,10 +46,10 @@ export type FieldNativeCompositionDefinition = {
   layers: FieldCompositionLayer[];
   upperTexture: string | null;
   ceilTexture: string | null;
-  /** A pixel formula is not a render-target allocator. Empty present layers
-   * are provably clear (alpha zero) at every sample; nonempty targets need the
-   * separate source camera/RT host, which is not yet admitted. */
-  renderTargets: { upper: "disabled" | "clear-only" | "unresolved"; ceil: "disabled" | "clear-only" | "unresolved" };
+  renderHost?: FieldCompositionRenderHost;
+  /** An absent allocator never becomes ready from fragment formulas alone. */
+  renderTargets: { upper: "disabled" | "clear-only" | "unresolved" | "source-rendered";
+    ceil: "disabled" | "clear-only" | "unresolved" | "source-rendered" };
 };
 
 export const FIELD_COMPOSITION_LAYERS = ["BottomLayer", "GroundLayer", "UpperLayer", "CeilLayer"] as const;
@@ -51,9 +83,11 @@ export function validateFieldNativeComposition(definition: FieldNativeCompositio
     ? fieldCompositionTexture(definition.contextId, layer) : null;
   if (definition.upperTexture !== expected("UpperLayer") || definition.ceilTexture !== expected("CeilLayer"))
     throw new Error("Unbound field pre-render target");
+  if (definition.renderHost !== undefined) validateFieldCompositionRenderHost(definition.renderHost);
   for (const [name, texture] of [["upper", definition.upperTexture], ["ceil", definition.ceilTexture]] as const) {
     const status = definition.renderTargets?.[name];
-    if (!["disabled", "clear-only", "unresolved"].includes(status) || (status === "disabled") !== (texture === null))
+    if (!["disabled", "clear-only", "unresolved", "source-rendered"].includes(status) || (status === "disabled") !== (texture === null) ||
+        (status === "source-rendered" && !definition.renderHost))
       throw new Error("Unknown field pre-render target qualification");
   }
   if (view !== undefined) {
@@ -173,6 +207,7 @@ export type FieldCompositionQuad = {
   destination: { x: number; y: number; width: number; height: number };
   flipX: boolean; flipY: boolean; diagonal: boolean; depth: number;
 };
+export type FieldCompositionLayerQuad = FieldCompositionQuad & { layer: FieldCompositionLayer };
 export type FieldCompositionActorQuad = FieldCompositionQuad & {
   alpha: number; first: FieldCompositionPixels | null; second: FieldCompositionPixels | null;
 };
@@ -205,6 +240,60 @@ function screenSample(image: FieldCompositionPixels | null, x: number, y: number
   return readPixel(image, Math.min(image.width - 1, Math.floor((x + 0.5) * image.width / width)),
     Math.min(image.height - 1, Math.floor((y + 0.5) * image.height / height)));
 }
+/** FieldController.Initialize copies the normal FieldTileMap target into two
+ * separate RTs. Their source cameras clear every enabled frame, cull only
+ * transparent Upper/Ceil mesh layers 24/25, and do not include opaque meshes.
+ * Rebuilding transient pixels means an old map/frame cannot leak into a new RT. */
+export function prepareFieldCompositionTargets(definition: FieldNativeCompositionDefinition, input: {
+  width: number; height: number; tiles: readonly FieldCompositionLayerQuad[];
+}): { upper: FieldCompositionPixels | null; ceil: FieldCompositionPixels | null } {
+  assertFieldCompositionRenderTargets(definition);
+  const host = definition.renderHost;
+  if (!host) throw new Error("Missing source field render-target allocator");
+  if (input.width !== host.width || input.height !== host.height)
+    throw new Error("Field pre-render viewport differs from the source target");
+  for (const tile of input.tiles) {
+    quad(tile);
+    if (!definition.layers.includes(tile.layer)) throw new Error("Unbound pre-render tile layer");
+  }
+  const render = (layer: "UpperLayer" | "CeilLayer", status: "upper" | "ceil"): FieldCompositionPixels | null => {
+    if (definition.renderTargets[status] === "disabled") return null;
+    const output: FieldCompositionPixels = { width: input.width, height: input.height,
+      data: new Uint8ClampedArray(input.width * input.height * 4) };
+    for (let i = 0; i < input.width * input.height; i++) writePixel(output, i, host.clear);
+    for (const q of input.tiles) {
+      if (q.layer !== layer || q.depth < f(host.cameraZ + host.near) || q.depth > f(host.cameraZ + host.far)) continue;
+      const d = q.destination, s = q.source;
+      for (let y = Math.max(0, Math.ceil(d.y - 0.5)); y < Math.min(input.height, Math.ceil(d.y + d.height - 0.5)); y++) {
+        for (let x = Math.max(0, Math.ceil(d.x - 0.5)); x < Math.min(input.width, Math.ceil(d.x + d.width - 0.5)); x++) {
+          let u = (x + 0.5 - d.x) / d.width, v = (y + 0.5 - d.y) / d.height;
+          if (q.diagonal) [u, v] = [q.flipY ? 1 - v : v, q.flipX ? 1 - u : u];
+          else { if (q.flipX) u = 1 - u; if (q.flipY) v = 1 - v; }
+          const sample = readPixel(q.image, s.x + Math.min(s.width - 1, Math.floor(u * s.width)),
+            s.y + Math.min(s.height - 1, Math.floor(v * s.height)));
+          const fragment = fieldTileFragment(sample, "transparent");
+          if (fragment !== null) writePixel(output, y * input.width + x,
+            blendFieldTransparent(fragment, readPixel(output, x, y)));
+        }
+      }
+    }
+    return output;
+  };
+  return { upper: render("UpperLayer", "upper"), ceil: render("CeilLayer", "ceil") };
+}
+
+/** The Web display is a separate point-resampled presentation surface. It is
+ * never fed back as the source camera viewport, and never blends RGBA twice. */
+export function scaleFieldCompositionPixels(input: FieldCompositionPixels, width: number, height: number): FieldCompositionPixels {
+  pixels(input);
+  const result = { width, height, data: new Uint8ClampedArray(width * height * 4) }; pixels(result);
+  if (width * input.height !== height * input.width) throw new Error("Source field aspect/letterbox provider is unresolved");
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const source = (Math.floor((y + 0.5) * input.height / height) * input.width + Math.floor((x + 0.5) * input.width / width)) * 4;
+    result.data.set(input.data.subarray(source, source + 4), (y * width + x) * 4);
+  }
+  return result;
+}
 /** Executable ordinary material passes. Caller supplies already prepared RT
  * samples; this function cannot turn an unresolved map into a ready RT host.
  * Actual queues: opaque 2450, body 2455, transparent 2456, head material 2457.
@@ -236,7 +325,7 @@ export function composeFieldNativePixels(input: {
   const depths = new Float64Array(input.width * input.height); depths.fill(Infinity);
   const render = (q: FieldCompositionQuad, pass: "opaque" | "transparent" | "body" | "head") => {
     // CameraTileMap source near/far relative to world z=-50.
-    if (q.depth < -49.7 || q.depth > 950) return;
+    if (q.depth < f(-50 + f(0.3)) || q.depth > 950) return;
     const d = q.destination, s = q.source;
     for (let y = Math.max(0, Math.ceil(d.y - 0.5)); y < Math.min(input.height, Math.ceil(d.y + d.height - 0.5)); y++) {
       for (let x = Math.max(0, Math.ceil(d.x - 0.5)); x < Math.min(input.width, Math.ceil(d.x + d.width - 0.5)); x++) {

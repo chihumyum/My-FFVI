@@ -199,14 +199,22 @@ check("unknown foot, missing media and active movement reject without partial pu
   assert.equal(JSON.stringify(serial(prior)), before);
 });
 let productionProviderBlocker = null;
-check("actual destination provider admits source raw foot while retaining its upper-layer composition blocker", () => {
+check("actual destination provider binds source raw foot and the newly published nonempty render targets", () => {
   const field = { content: { cameraHost: destination.map.cameraHost, map: destination.map.map }, partyActorCheckpoint: plan.checkpoint };
-  try { prepareNativeFieldProviders(field, destination.view, destination.map.nativeFoot); } catch (error) { productionProviderBlocker = error.message; }
+  const bound = prepareNativeFieldProviders(field, destination.view, destination.map.nativeFoot)();
   assert.equal(destination.foot.basis, "default-monster-set");
   assert.equal(destination.nativeFoot.basis, "package-attribute-absent");
   assert.equal(readFieldNativeFoot(destination.map.nativeFoot, { x: 10, y: -20, z: 200 }), 0);
   assert.ok(destination.map.map.layers.some((layer) => ["UpperLayer", "CeilLayer"].includes(layer.name) && layer.data.some((id) => id !== 0)));
-  assert.match(productionProviderBlocker, /nonempty Upper\/Ceil render-target allocation and sampling are unresolved/);
+  assert.equal(bound.composition.renderHost.width, 320); assert.equal(bound.composition.renderHost.height, 180);
+  assert.equal(bound.upperTexture, `native-field-rt:${destination.view.contextId}:UpperLayer`);
+  assert.equal(bound.ceilTexture, `native-field-rt:${destination.view.contextId}:CeilLayer`);
+  assert.deepEqual(bound.composition.renderTargets, { upper: "source-rendered", ceil: "source-rendered" });
+});
+check("nonempty destination layers cannot discard their source composition provider", () => {
+  const map = structuredClone(destination.map.map); delete map.nativeComposition;
+  const field = { content: { cameraHost: destination.map.cameraHost, map }, partyActorCheckpoint: plan.checkpoint };
+  assert.throws(() => prepareNativeFieldProviders(field, destination.view, destination.map.nativeFoot), /upper\/ceiling composition is unresolved/);
 });
 check("missing or another-map native foot cannot inherit the encounter default-monster-set result", () => {
   const field = { content: { cameraHost: destination.map.cameraHost, map: destination.map.map }, partyActorCheckpoint: plan.checkpoint };
@@ -225,8 +233,8 @@ const report = { kind: "source-native-map-source", sourceSetHash: corpus.sourceS
   controlledInputs: ["Resident and puppet poses/playback are controlled mutations on genuine source-created actors",
     "Destination upper/ceiling RTs=null test the pure candidate; they are not production render providers for map3",
     "Condition607 case projects a source-valid party candidate without executing or mutating the story/owned state"],
-  remaining: ["Production source map3 upper/ceiling render composition", "Map-local NPC/controller lifecycle",
-    "Mounted/retained-rider, companion, active motion and stable native actor save codecs"] };
+  remaining: ["Production source map3 particle and shared-pool map lifecycle", "Full map-local NPC controller lifecycle",
+    "Mounted/retained-rider, companion and active motion; stable Web saves are checked separately"] };
 await writeFile(output, JSON.stringify(report, null, 2) + "\n");
 console.log(JSON.stringify({ result: "pass", ...report.counts, productionProviderBlocker,
   formalMapPublished: false, originalGameExecuted: false }));

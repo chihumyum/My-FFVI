@@ -214,7 +214,7 @@ test("Field checkpoints distinguish null, unknown and absent by trusted context 
     const options: FieldGameOptions = context ? { sourcePresentation: { context: () => context } } : {};
     const field = new FieldGame(f.content, new EventState(), undefined, undefined, options);
     const saved = field.checkpoint();
-    assert.equal(saved.kind, "idle-field-v8");
+    assert.equal(saved.kind, "idle-field-v9");
     assert.deepEqual(saved.sourcePresentation, context);
     assert.deepEqual(FieldGame.restore(f.content, saved, options).checkpoint(), saved);
     for (const changed of contexts) {
@@ -363,7 +363,7 @@ test("published maps read current presentation context and world restore does no
   assert.equal(prepared.field.eventState.read(mapFlag), 0, "PointIn cleared the old map; absence did not write one");
   assert.equal(world.commit(prepared), true);
   const saved = world.checkpoint();
-  assert.equal(saved.kind, "idle-world-v8");
+  assert.equal(saved.kind, "idle-world-v9");
   const restored = new WorldSession(f.content, new EventState(), h.owner);
   restored.restore(saved, f.catalog, f.target);
   assert.deepEqual(restored.checkpoint(), saved);

@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fieldCharacterFragment, fieldTileFragment, blendFieldTransparent, fieldCompositionActorTextures,
   assertFieldCompositionRenderTargets, composeFieldNativePixels, fieldCompositionActorDepth, fieldCompositionTileDepth, fieldCompositionRound,
-  validateFieldNativeComposition, type FieldCompositionColor, type FieldCompositionActorQuad, type FieldCompositionQuad } from "../src/core/field-native-composition.js";
+  validateFieldNativeComposition, ordinaryFieldCompositionRenderHost, prepareFieldCompositionTargets, scaleFieldCompositionPixels,
+  type FieldCompositionColor, type FieldCompositionActorQuad, type FieldCompositionQuad, type FieldCompositionLayerQuad } from "../src/core/field-native-composition.js";
 import { compileFieldNativeComposition } from "../src/compiler/field-native-composition.js";
 import { compileFieldActorView } from "../src/compiler/field-actor-view.js";
 import { fieldActorFactoryFixture } from "./fixtures/field-actor-factory.js";
@@ -132,4 +133,80 @@ test("foreign map/shader and fabricated render targets fail ordinary composition
   assert.throws(() => validateFieldNativeComposition({ ...f.definition, upperTexture: "arbitrary.png" }), /pre-render target/);
   assert.throws(() => fieldCharacterFragment({ sample: red, vertexAlpha: Number.NaN,
     normalizedV: 1, part: "head", first: null, second: null }), /shader input/);
+});
+
+function targetFixture() {
+  const f = fixture(), changed = structuredClone(f.tilemap);
+  for (const layer of changed.data.layers[0]!.layers.slice(1)) Object.assign(layer, { data: [1, ...Array(319).fill(0)] });
+  const view = compileFieldActorView(f.sources, changed, f.mapPackage, f.map.mapRange);
+  const definition = compileFieldNativeComposition(f.sources, view, changed, ordinaryFieldCompositionRenderHost());
+  return definition;
+}
+function targetTile(bytes: number[], layer: FieldCompositionLayerQuad["layer"] = "UpperLayer", depth = 150): FieldCompositionLayerQuad {
+  return { ...quad(bytes, depth), layer };
+}
+function pixelAt(image: { data: Uint8ClampedArray; width: number }, x: number, y: number) {
+  return [...image.data.slice((y * image.width + x) * 4, (y * image.width + x) * 4 + 4)];
+}
+test("source allocator binds nonempty upper/ceil, strict camera descriptor and fixed source viewport", () => {
+  const d = targetFixture();
+  assert.deepEqual(d.renderTargets, { upper: "source-rendered", ceil: "source-rendered" });
+  assertFieldCompositionRenderTargets(d);
+  const foreign = structuredClone(d); Object.assign(foreign.renderHost!, { width: 1920 });
+  assert.throws(() => validateFieldNativeComposition(foreign), /render-target provider/);
+  assert.throws(() => prepareFieldCompositionTargets(d, { width: 512, height: 288, tiles: [] }), /source target/);
+  const missing = structuredClone(d); delete missing.renderHost;
+  assert.throws(() => assertFieldCompositionRenderTargets(missing), /qualification/);
+});
+test("pre-render cameras cull separate transparent meshes, clear gray every frame, and preserve source alpha-square", () => {
+  const d = targetFixture(), tile = targetTile([0, 0, 255, 128]);
+  const a = prepareFieldCompositionTargets(d, { width: 320, height: 180, tiles: [tile,
+    targetTile([0, 255, 0, 128], "CeilLayer"), targetTile([255, 0, 0, 128], "BottomLayer")] });
+  assert.deepEqual(pixelAt(a.upper!, 0, 0), [12, 12, 140, 64]);
+  assert.deepEqual(pixelAt(a.ceil!, 0, 0), [12, 140, 12, 64]);
+  assert.deepEqual(pixelAt(a.upper!, 1, 0), [24, 24, 24, 0]);
+  const next = prepareFieldCompositionTargets(d, { width: 320, height: 180, tiles: [] });
+  assert.deepEqual(pixelAt(next.upper!, 0, 0), [24, 24, 24, 0]);
+  assert.deepEqual(pixelAt(a.upper!, 0, 0), [12, 12, 140, 64], "new target does not mutate prior frame");
+});
+test("pre-render target discards opaque alpha255, retains inclusive254 and applies its own near/far clip", () => {
+  const d = targetFixture();
+  for (const [bytes, depth, expected] of [
+    [[0, 0, 255, 255], 150, [24, 24, 24, 0]],
+    [[0, 0, 255, 254], 150, [0, 0, 254, 253]],
+    [[0, 0, 255, 128], 250.01, [24, 24, 24, 0]],
+    [[0, 0, 255, 128], -49.71, [24, 24, 24, 0]],
+    [[0, 0, 255, 128], 250, [12, 12, 140, 64]],
+  ] as const) {
+    const targets = prepareFieldCompositionTargets(d, { width: 320, height: 180, tiles: [targetTile([...bytes], "UpperLayer", depth)] });
+    assert.deepEqual(pixelAt(targets.upper!, 0, 0), expected);
+  }
+});
+test("pre-rendered upper tint affects head while body keeps main target transparent blend", () => {
+  const d = targetFixture(), tile = targetTile([0, 0, 255, 128]);
+  const targets = prepareFieldCompositionTargets(d, { width: 320, height: 180, tiles: [tile] });
+  const output = composeFieldNativePixels({ width: 320, height: 180, tiles: [tile],
+    actors: [actor(160, { first: targets.upper, second: targets.ceil })] });
+  assert.deepEqual(pixelAt(output, 0, 0), [194, 3, 35, 207]);
+  assert.deepEqual(pixelAt(output, 0, 3), [127, 0, 128, 191]);
+});
+test("RT sampling preserves flipped and diagonal UV geometry, and disabled targets stay absent", () => {
+  const d = targetFixture(), q = targetTile([0, 0, 0, 0]);
+  q.image = { width: 2, height: 2, data: new Uint8ClampedArray([255, 0, 0, 128, 0, 255, 0, 128,
+    0, 0, 255, 128, 255, 255, 255, 128]) };
+  q.source = { x: 0, y: 0, width: 2, height: 2 }; q.destination = { x: 0, y: 0, width: 2, height: 2 };
+  q.diagonal = true; q.flipY = true;
+  const targets = prepareFieldCompositionTargets(d, { width: 320, height: 180, tiles: [q] });
+  assert.deepEqual(pixelAt(targets.upper!, 0, 0), [12, 140, 12, 64]);
+  assert.deepEqual(pixelAt(targets.upper!, 1, 0), [140, 140, 140, 64]);
+  const f = fieldActorFactoryFixture(), base = fixture();
+  const view = compileFieldActorView(base.sources, f.tilemap, f.mapPackage, f.map.mapRange);
+  const onlyBottom = compileFieldNativeComposition(base.sources, view, f.tilemap, ordinaryFieldCompositionRenderHost());
+  assert.deepEqual(prepareFieldCompositionTargets(onlyBottom, { width: 320, height: 180, tiles: [] }), { upper: null, ceil: null });
+});
+test("display resampling is point-only RGBA copy and cannot change the source aspect or alpha", () => {
+  const input = { width: 2, height: 1, data: new Uint8ClampedArray([194, 3, 35, 207, 127, 0, 128, 191]) };
+  assert.deepEqual([...scaleFieldCompositionPixels(input, 4, 2).data], Array(2).fill([
+    194, 3, 35, 207, 194, 3, 35, 207, 127, 0, 128, 191, 127, 0, 128, 191]).flat());
+  assert.throws(() => scaleFieldCompositionPixels(input, 4, 3), /aspect/);
 });

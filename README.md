@@ -159,4 +159,4 @@ npm run accept -- narshe
 
 `knowledge` 接受可选的 `--state '<JSON 上下文>'`。查询时只提供已有证据的状态值；没有证据就省略对应键。状态字符串只是上下文输入，不会自动建立它与原版剧情 flag 的映射。
 
-当前系统交付：[v33 集成说明](docs/systems-v33.md)。新增检查入口为 `npm run field-native-npc:check`、`npm run field-native-composition:check` 和 `npm run field-effects:check`；需要先完成文中的本地来源导入与世界构建。GitHub 仅追踪工具、源码、说明与合成夹具，原始游戏资源、提取文案、原生反编译与生成产物留在忽略目录。
+当前系统交付：[v34 集成说明](docs/systems-v34.md)。新增原生演员稳定存读档与粒子公共模块检查：`npm run field-native-checkpoint:check`、`npm run field-particles:check`；普通非空 Upper/Ceil 和效果生命周期继续由 `npm run field-native-composition:check`、`npm run field-effects:check` 验证。需要先完成模块文档中的本地来源导入与世界构建。真实开场仍受粒子/切图资源依赖阻塞。GitHub 仅追踪工具、源码、说明与合成夹具，原始游戏资源、提取文案、原生反编译与生成产物留在忽略目录。

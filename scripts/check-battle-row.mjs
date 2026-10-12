@@ -90,7 +90,7 @@ if (!sourceOnly) {
   const published = JSON.parse(await readFile(resolve(root, option("--catalog", "build/game/opening-playable.json")), "utf8"));
   const source = JSON.parse(await readFile(root + "build/game/opening-battle.json", "utf8"));
   for (const document of [source, published]) { const { contentHash, ...body } = document; assert.equal(hash(body), contentHash); }
-  assert.equal(published.common.profile, "narshe-playability-v33");
+  assert.equal(published.common.profile, "narshe-playability-v34");
   assert.equal(published.common.sourceContentHash, source.contentHash);
   assert.equal(source.nativeProfile.sha256, native.nativeSha256);
   assert.deepEqual(published.common.battleRows, catalog);
