@@ -44,6 +44,17 @@ function fixture() {
 }
 const codes = (result: ReturnType<typeof analyzeContentDependencies>) => result.diagnostics.map((diagnostic) => diagnostic.code);
 
+test("walking encounter tables contribute every candidate to the batch closure without event scripts", () => {
+  const f = fixture();
+  f.a.walkEncounters = { kind: "framework-walk-encounters-v1", id: "controlled-walking", minSteps: 2, maxSteps: 8,
+    transportationIds: [1], parties: [{ partyId: 20, weight: 80 }, { partyId: 21, weight: 1 }] };
+  const graph = f.analyze();
+  assert.deepEqual(graph.encounterIds, [20, 21]);
+  assert.equal(graph.edges.filter(edge => edge.kind === "encounter").length, 2);
+  f.a.walkEncounters.parties[1]!.weight = 0;
+  assert.ok(codes(f.analyze()).includes("walk-encounter-policy-invalid"));
+});
+
 test("entry selects continuation OR initializer, while null/empty continuation uses the initializer", () => {
   const f = fixture();
   script(f.a, "init", [{ kind: "blocked", mnemonic: "Unknown", reason: "controlled gap" }]);

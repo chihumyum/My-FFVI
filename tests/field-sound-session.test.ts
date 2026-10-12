@@ -193,7 +193,7 @@ test("active SE and its local handle survive a stable GameSession JSON checkpoin
   const t = fixture([play(2, true, 0, 0.2, 0.1, -0.5), exit]); t.start(); t.game.advance(30);
   assert.equal(t.game.checkpointReady, true);
   const saved = JSON.parse(JSON.stringify(t.game.checkpoint())) as GameCheckpoint;
-  assert.equal(saved.formatVersion, 4); assert.equal(saved.owned.formatVersion, 10);
+  assert.equal(saved.formatVersion, 5); assert.equal(saved.owned.formatVersion, 10);
   assert.equal(saved.world.kind, "idle-world-v10"); assert.equal(saved.world.field.kind, "idle-field-v10");
   const restored = t.restore(saved);
   assert.deepEqual(restored.checkpoint(), saved);

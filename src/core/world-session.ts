@@ -155,6 +155,7 @@ export function worldFieldContent(
       ...(actorEntry ? { partyActorCamera: actorEntry.plan.checkpoint.context.camera } : {}),
     },
     scripts: target.scripts,
+    ...(target.walkEncounters ? { walkEncounters: structuredClone(target.walkEncounters) } : {}),
     ...(target.developmentProfile ? { developmentProfile: structuredClone(target.developmentProfile) } : {}),
     ...(target.developmentOmissions ? { developmentOmissions: structuredClone(target.developmentOmissions) } : {}),
     scriptLocals: target.scriptLocals,
@@ -217,6 +218,7 @@ type Ownership = {
   fade: string;
   camera: string;
   publishPresentation(): void;
+  walkFieldState?: string;
   catalogHash: string;
   owned?: { commit(): boolean };
   effects?: { candidate: FieldEffectCandidate; publication: FieldEffectCandidatePrepared; map: FieldEffectMap; fieldState: string };
@@ -452,6 +454,24 @@ export class WorldSession {
         (presentationHost && presentation === null) || (!presentationHost && owned?.ports.sourcePresentation))
       throw new Error("Unbound candidate map presentation context");
     let presentationPublished = false;
+    let destinationField: FieldGame | null = null;
+    const walkOwner = this.owned?.current.walkEncounters;
+    const requirePublishedWalkOwner = () => {
+      if (!presentationPublished || this.current !== destinationField)
+        throw new Error("Walking encounters require the published current map");
+    };
+    const walkEncounters: FieldGameOptions["walkEncounters"] = walkOwner ? {
+      prepareStep: (mapId, policy) => {
+        requirePublishedWalkOwner();
+        const candidate = walkOwner.prepareStep(mapId, policy);
+        return Object.freeze({ partyId: candidate.partyId,
+          validate: () => { requirePublishedWalkOwner(); candidate.validate(); },
+          commitWith: (publish) => {
+            requirePublishedWalkOwner();
+            candidate.commitWith(() => { requirePublishedWalkOwner(); publish(); });
+          } });
+      },
+    } : undefined;
     // Candidate entry scripts may query the detached context. External title
     // effects cannot escape a map preparation that could still be discarded.
     const sourcePresentation = presentationHost ? {
@@ -514,6 +534,7 @@ export class WorldSession {
         new StaticAudioState(bgm),
         new StaticAudioState(environment),
         { ...(owned?.ports ?? {}), ...(nativeActors ? { nativeActorPreparation: true } : {}),
+          ...(walkEncounters ? { walkEncounters } : {}),
           ...(effectMap ? { fieldEffectMap: effectMap } : {}),
           ...(sourcePresentation ? { sourcePresentation } : {}),
           ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}),
@@ -525,6 +546,7 @@ export class WorldSession {
         false,
         FieldSoundState.restore(se, content.se),
       );
+      destinationField = field;
       if (nativeActors) {
         if (!prior || !actorEntry || !target.partyEntry || !target.actorView || target.actorViewBlockers?.length ||
             !owned?.ports.partyAppearance || !nativeRuntime || !catalog.nativeAnimationKeys ||
@@ -561,6 +583,7 @@ export class WorldSession {
         fade: fromFade,
         camera: fromCamera,
         publishPresentation: () => { presentationPublished = true; },
+        ...(content.walkEncounters ? { walkFieldState: this.effectFieldState(field) } : {}),
         catalogHash: catalog.contentHash,
         ...(owned ? { owned } : {}),
         ...(effectPublication ? { effects: { candidate: effectCandidate!, publication: effectPublication,
@@ -671,6 +694,7 @@ export class WorldSession {
       ownership.presentation === canonical(this.current.sourcePresentationContext) &&
       ownership.fade === canonical(this.current.fader.snapshot()) &&
       ownership.camera === canonical(this.current.cameraSnapshot) &&
+      (ownership.walkFieldState === undefined || ownership.walkFieldState === this.effectFieldState(value.field)) &&
       (!ownership.effects || ownership.effects.fieldState === this.effectFieldState(value.field));
   }
   private effectFieldState(field: FieldGame): string {

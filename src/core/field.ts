@@ -63,11 +63,14 @@ import { treasureFlagRef, validateTreasureInventory, type TreasureBoxRequest } f
 import { createTreasureTask, advanceTreasureTask, type TreasureTaskState, type TreasureTaskInput } from "./treasure-task.js";
 import type { PartyActorCatalog } from "./party-actors.js";
 import { FieldPartyActors, type FieldPartyActorCheckpoint, type FieldPartyActorRenderer,
-  type FieldPartyActorPublication, type FieldPartyActorRenderStep } from "./field-party-actors.js";
+  type FieldPartyActorPublication, type FieldPartyActorRenderStep,
+  type FieldPartyActorRendererPublication } from "./field-party-actors.js";
 import { prepareNativeFieldActorAppearance, type FieldNativeAnimationKeys } from "./field-native-appearance.js";
 import { missingFieldPoses } from "./character-media.js";
 import { executeRosterLifecycleEvent, type FieldRosterPort } from "./roster.js";
 import type { FieldConditionPort } from "./field-conditions.js";
+import { parseFrameworkWalkEncounterPolicy, type FrameworkWalkEncounterPolicy,
+  type WalkEncounterPrepared } from "./walk-encounters.js";
 import { projectFieldEntryContext } from "./field-entry-context.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { validateFieldMoveAreas, fieldMoveAreas, findFieldMoveArea, type FieldMoveArea } from "./field-move-area.js";
@@ -231,6 +234,8 @@ export type Stop =
       site: Site | null;
       party?: number;
       continuation?: string;
+      /** Explicit ordinary walking return; never a fabricated event script. */
+      returnTo?: { kind: "field-idle" };
     };
 export type Dialogue = FieldMessage & { task: number;
   manual?: FieldManualMessage & { page: number; availableAt: number; site: Site } };
@@ -271,6 +276,9 @@ export type FieldGameOptions = {
   party?: FieldPartyPort;
   roster?: FieldRosterPort;
   fieldSteps?: FieldConditionPort;
+  /** One session-owned development scheduler; this field keeps only a pending
+   * transaction for its currently moving player, never a second RNG/counter. */
+  walkEncounters?: { prepareStep(mapId: number, policy: FrameworkWalkEncounterPolicy): WalkEncounterPrepared };
   partyAppearance?: { catalog: PartyActorCatalog; current(): PartyAppearanceCandidate };
   transportation?: FieldTransportationPort;
   transportationTimestamp?: () => string;
@@ -566,6 +574,7 @@ export class FieldGame {
   private synchronizedEntry: boolean | null = null;
   private entryTaskStarted = false;
   private pendingPlayerStep: ReturnType<FieldConditionPort["prepareStep"]> | null = null;
+  private pendingWalkEncounter: WalkEncounterPrepared | null = null;
   private interaction: {
     entityId: string;
     restoreDirection: Direction | null;
@@ -1056,7 +1065,7 @@ export class FieldGame {
     const animation = this.initialAnimation(asset, actor.direction, mount);
     return () => { Object.assign(actor, { asset, mount, animation }); };
   }
-  get busy(): boolean {
+  private get fieldActivityBusy(): boolean {
     return (
       this.tasks.some((t) => !t.done) ||
       this.sourceMessage.active ||
@@ -1064,14 +1073,14 @@ export class FieldGame {
       !!this.pendingChoice ||
       !!this.shopTask ||
       this.treasureSceneState === "message" ||
-      !!this.stop ||
       this.openTriggers.busy ||
       (this.interaction?.waitUntil ?? 0) > this.time
     );
   }
+  get busy(): boolean { return this.fieldActivityBusy || !!this.stop; }
   /** Stable interaction does not require a particle/RNG save codec. Keep the
    * actor, script and presentation gates even when FX prohibit checkpointing. */
-  get menuReady(): boolean {
+  private get idleFieldReady(): boolean {
     return (
       (!this.options.puppetActors || !!(this.nativeActorBindings && this.nativeRuntime?.mapLifecycle &&
         this.nativeRuntime.animationKeys && this.nativeActorProviders && this.partyActors && this.camera)) &&
@@ -1079,12 +1088,13 @@ export class FieldGame {
       (!this.options.fieldEffectMap || this.options.fieldEffectMap.active) &&
       this.sourcePresentationContext?.advertisementOpeningFader !== "present" &&
       this.synchronizedEntry !== false &&
-      !this.busy &&
+      !this.fieldActivityBusy &&
       !this.fader.active &&
       !this.interaction &&
       Object.values(this.actors).every((a) => a.motion === null)
     );
   }
+  get menuReady(): boolean { return !this.stop && this.idleFieldReady; }
   get checkpointReady(): boolean {
     return this.menuReady && !this.effects && !this.options.fieldEffectMap?.hasHistory;
   }
@@ -1594,16 +1604,19 @@ export class FieldGame {
     }
     if (this.occupied([to], p.layer)) return faceBlockedStep();
     let step: ReturnType<FieldConditionPort["prepareStep"]> | null;
+    let encounter: WalkEncounterPrepared | null;
     let movementAnimation: ActorAnimation | null;
     try {
       step = this.preparePlayerStep();
       movementAnimation = p.animation?.clone() ?? null;
       movementAnimation?.move(direction, 0.24);
+      encounter = this.prepareWalkEncounterStep();
     } catch (error) {
       this.block(error instanceof Error ? error.message : String(error));
       return false;
     }
     this.pendingPlayerStep = step;
+    this.pendingWalkEncounter = encounter;
     p.animation = movementAnimation;
     p.motion = {
       from: { x: p.x, y: p.y },
@@ -1624,6 +1637,18 @@ export class FieldGame {
     return this.transportationId !== null && this.options.fieldSteps
       ? this.options.fieldSteps.prepareStep(this.transportationId)
       : null;
+  }
+  private prepareWalkEncounterStep(): WalkEncounterPrepared | null {
+    if (!this.content.walkEncounters || !this.menuReady || this.scriptHook ||
+        this.hasUnfinishedNativeEncounterActivity()) return null;
+    const policy = parseFrameworkWalkEncounterPolicy(this.content.walkEncounters);
+    if (this.transportationId === null)
+      throw new Error("Walking encounters require a known transportation identity");
+    if (!policy.transportationIds.includes(this.transportationId)) return null;
+    const mapId = this.content.map.identity?.mapId;
+    if (mapId === undefined || !this.options.walkEncounters)
+      throw new Error("Walking encounters require a bound map and scheduler owner");
+    return this.options.walkEncounters.prepareStep(mapId, policy);
   }
   private prepareActorScriptLerp(actor: Actor, op: Extract<Op, { kind: "field-script-motion" }>,
     progress: FieldScriptLerpProgress | null): { flow: "next" | "wait"; progress: FieldScriptLerpProgress } {
@@ -2006,6 +2031,7 @@ export class FieldGame {
       this.fader.advance(0.01);
       this.sourceMessage.advance(0.01);
       let entered = false;
+      let walkParty: number | null = null;
       for (const a of Object.values(this.actors)) {
         // Source fresh player, party puppets and residents have attribute 2.
         // Map NPC SetProperty can choose 10 and needs a distinct factory host.
@@ -2027,33 +2053,54 @@ export class FieldGame {
           // publish the native endpoint (or even advance its movement timer).
           const next = prepareFieldActorMotionTick(m, a.animation, 10);
           const step = next.completedSegment && a.id === this.player.id ? this.pendingPlayerStep : null;
+          const encounter = next.completedSegment && a.id === this.player.id && m.manual
+            ? this.pendingWalkEncounter : null;
+          if (encounter?.partyId !== null && encounter?.partyId !== undefined)
+            checkpointInteger(encounter.partyId, 1, 0x7fffffff);
           const omission = step?.result.soundId !== null && step?.result.soundId !== undefined
             ? { site: { script: "field-condition-step", index: a.steps, source: this.content.map.source },
               kind: "sound" as const, soundId: step.result.soundId } : null;
-          step?.commit();
-          // Native properties below are prevalidated accessors onto this same
-          // entity. Legacy actors publish their cell only at a completed step.
-          if (a.native || next.completedSegment) { a.x = next.point.x; a.y = next.point.y; }
-          a.animation = next.animation;
-          a.motion = next.motion;
-          if (next.completedSegment) {
-            if (a.id === this.player.id) this.pendingPlayerStep = null;
-            if (omission) this.presentationOmissions.push(omission);
-            a.steps++;
-            if (m.manual) entered = true;
-          }
+          const publish = () => {
+            step?.commit();
+            // Native properties below are prevalidated accessors onto this same
+            // entity. Legacy actors publish their cell only at a completed step.
+            if (a.native || next.completedSegment) { a.x = next.point.x; a.y = next.point.y; }
+            a.animation = next.animation;
+            a.motion = next.motion;
+            if (next.completedSegment) {
+              if (a.id === this.player.id) {
+                this.pendingPlayerStep = null;
+                this.pendingWalkEncounter = null;
+              }
+              if (omission) this.presentationOmissions.push(omission);
+              a.steps++;
+              if (m.manual) entered = true;
+            }
+          };
+          if (encounter) {
+            encounter.commitWith(publish);
+            walkParty = encounter.partyId;
+          } else publish();
         } catch (error) {
           this.block(error instanceof Error ? error.message : String(error));
           return;
         }
       }
       for (const t of this.tasks) t.wait = Math.max(0, t.wait - 10);
-      if (entered) this.enter();
+      const cellEvent = entered ? this.enter() : false;
       this.pump(0.01);
+      // This explicit development rule gives destination events priority. A
+      // selected roll is consumed even when that event finishes synchronously;
+      // it must not become a delayed surprise battle after the event returns.
+      if (walkParty !== null && !cellEvent && this.menuReady && !this.scriptHook &&
+          !this.hasUnfinishedNativeEncounterActivity())
+        this.stop = { kind: "encounter", party: walkParty, returnTo: { kind: "field-idle" },
+          site: null, message: "普通步行遭遇" };
     }
   }
-  private enter(): void {
-    if (!this.collisionSwitches.interactiveObservation) return;
+  /** True also covers a synchronously completed destination event. */
+  private enter(): boolean {
+    if (!this.collisionSwitches.interactiveObservation) return false;
     const p = this.player,
       hits = this.entityList.filter(
         (e) =>
@@ -2064,23 +2111,23 @@ export class FieldGame {
     const transitions = hits.filter((e) => e.kind === 4);
     if (transitions.length > 1) {
       this.block("层切换目标不明确");
-      return;
+      return false;
     }
     if (transitions[0]) {
       const next = transitions[0].destinationLayer;
       if (next === null || !this.content.map.collisions[next]) {
         this.block("未支持的地图层");
-        return;
+        return false;
       }
       p.layer = next;
     }
     const events = hits.filter((e) => e.kind === 2 || e.kind === 3);
     if (events.length > 1) {
       this.block("同格触发器顺序尚未验证");
-      return;
+      return true;
     }
     const e = events[0];
-    if (!e) return;
+    if (!e) return false;
     if (e.kind === 3) {
       const site = {
         script: e.script ?? "map-transition",
@@ -2089,9 +2136,9 @@ export class FieldGame {
       };
       if (!e.destination) {
         this.block("缺少跨地图目标", site);
-        return;
+        return true;
       }
-      if (this.effectMapHandoffBlocker) { this.block(this.effectMapHandoffBlocker, site); return; }
+      if (this.effectMapHandoffBlocker) { this.block(this.effectMapHandoffBlocker, site); return true; }
       this.stop = {
         kind: "map-transition",
         message: "正在载入地图…",
@@ -2105,13 +2152,14 @@ export class FieldGame {
           origin: "trigger",
         },
       };
-      return;
+      return true;
     }
     if (!e.script || !this.content.scripts[e.script]) {
       this.block("缺少事件脚本");
-      return;
+      return true;
     }
     this.beginRoot(e.script);
+    return true;
   }
   /** Runs a package-provided event through the same VM as map triggers. */
   startEvent(script: string): boolean {
@@ -2337,6 +2385,12 @@ export class FieldGame {
   /** Validate the handoff before consuming rewards. The commit only schedules
    * the continuation; normal simulation, not reward publication, runs its code. */
   prepareEncounterReturn(party: number, candidateOwned?: () => FieldEncounterReturnState): FieldEncounterReturnPublication {
+    if (this.stop?.kind === "encounter" && this.stop.returnTo !== undefined) {
+      checkpointKeys(this.stop.returnTo, "kind");
+      if (this.stop.returnTo.kind !== "field-idle" || this.stop.continuation !== undefined)
+        throw new Error("Invalid ordinary encounter return target");
+      return this.prepareIdleEncounterReturn(party, candidateOwned);
+    }
     if (this.hasUnfinishedInterpolation())
       throw new Error("Battle return cannot discard unfinished source interpolation registers");
     if (this.scriptHook)
@@ -2387,6 +2441,98 @@ export class FieldGame {
       validate(); consumed = true;
       if (native) native.commitWith(() => { commitOwned(); publish(); });
       else { commitOwned(); publish(); }
+    };
+    return Object.assign(() => commitWith(() => {}), { validate, commitWith });
+  }
+  /** A free-walking battle resumes this exact idle field, without executing a
+   * script or rebinding local banks. Only post-battle appearance is prepared. */
+  private prepareIdleEncounterReturn(party: number, candidateOwned?: () => FieldEncounterReturnState): FieldEncounterReturnPublication {
+    const stop = this.stop;
+    if (stop?.kind !== "encounter" || stop.party !== party || stop.returnTo?.kind !== "field-idle")
+      throw new Error("No matching ordinary field encounter to resume");
+    const requireIdle = () => {
+      if (!this.idleFieldReady || this.scriptHook || this.pendingPlayerStep || this.pendingWalkEncounter ||
+          this.hasUnfinishedInterpolation() || this.hasUnfinishedNativeEncounterActivity())
+        throw new Error("Ordinary battle return requires the suspended idle field");
+    };
+    requireIdle();
+    const owner = this.actors, tasks = this.tasks;
+    const actors = Object.values(owner).map(actor => ({ actor, native: actor.native, entity: actor.native?.entity }));
+    const fingerprint = () => canonical({ event: this.eventState.snapshot(), lifecycle: this.puppetLifecycle,
+      camera: this.cameraSnapshot, collision: this.collisionSwitches, updateMask: this.entityUpdateMask,
+      offset: this.mapScrollOffset, time: this.time, remainder: this.remainder, nextTask: this.nextTask,
+      eventRootScript: this.eventRootScript, tasks: this.tasks, stop: this.stop,
+      native: this.nativeActorStateFingerprint,
+      actors: Object.values(this.actors).map(actor => ({ id: actor.id, x: actor.x, y: actor.y,
+        layer: actor.layer, direction: actor.direction, asset: actor.asset, mount: actor.mount,
+        steps: actor.steps, motion: actor.motion, animation: actor.animation?.snapshot() ?? null })) });
+    const before = fingerprint();
+    let appearance: FieldPartyActorRendererPublication | null = null;
+    if (this.player.native || this.partyActors) {
+      if (!candidateOwned || !this.partyActors || !this.options.partyAppearance)
+        throw new Error("Ordinary battle return requires candidate owned-state appearance");
+      if (this.player.native && (!this.nativeActorBindings || !this.nativeRuntime?.mapLifecycle ||
+          !this.nativeRuntime.animationKeys || !this.nativeActorProviders || !this.camera))
+        throw new Error("Ordinary native battle return requires its complete actor host");
+      const candidate = structuredClone(candidateOwned());
+      if (!candidate.partyAppearance)
+        throw new Error("Ordinary battle return candidate party appearance is unavailable");
+      const party = this.partyActors, host = this.options.partyAppearance;
+      const draft = new FieldPartyActors(host.catalog, party.checkpoint(), this.transportationId,
+        this.transportationPresentation);
+      const renderer = this.partyRenderer(), publications: FieldPartyActorRendererPublication[] = [];
+      // Run the bookkeeping transaction on a private draft. Capture the live
+      // renderer's already-prepared writes without publishing them here: the
+      // ordinary callable validates again and must not run after owned commit.
+      const stagingRenderer: FieldPartyActorRenderer = typeof renderer === "function"
+        ? (media, plan) => {
+          const commit = renderer(media, plan);
+          const mediaFingerprint = () => canonical([this.content.characters[media.asset],
+            media.mount === null ? null : this.content.characters[media.mount]]);
+          const beforeMedia = mediaFingerprint();
+          publications.push({ validate: () => {
+            if (mediaFingerprint() !== beforeMedia) throw new Error("Stale ordinary battle return media");
+          }, commit });
+          return () => {};
+        }
+        : { prepareBatch: (steps) => {
+          const publication = renderer.prepareBatch(steps);
+          publications.push(publication);
+          return { validate: () => publication.validate(), commit() {} };
+        } };
+      draft.prepare(candidate.partyAppearance, stagingRenderer, true)();
+      const bookkeeping = party.prepareState(draft.checkpoint());
+      appearance = {
+        validate: () => {
+          if (this.partyActors !== party || this.options.partyAppearance !== host)
+            throw new Error("Stale ordinary battle return appearance owner");
+          for (const publication of publications) publication.validate();
+          bookkeeping.validate();
+        },
+        commit: () => {
+          for (const publication of publications) publication.commit();
+          bookkeeping.commit();
+        },
+      };
+    }
+    let consumed = false;
+    const validateField = () => {
+      if (consumed || this.stop !== stop || this.actors !== owner || this.tasks !== tasks ||
+          Object.keys(owner).length !== actors.length || actors.some(({ actor, native, entity }) =>
+            owner[actor.id] !== actor || actor.native !== native || actor.native?.entity !== entity) ||
+          fingerprint() !== before)
+        throw new Error("Stale ordinary battle return");
+      requireIdle();
+    };
+    const validate = () => { validateField(); appearance?.validate(); validateField(); };
+    const commitWith = (commitOwned: () => void) => {
+      validate(); consumed = true;
+      commitOwned();
+      // Only prevalidated plain writes remain after owned publication. In
+      // particular, do not call FieldPartyActors' validating callable here.
+      appearance?.commit();
+      this.stop = null;
+      this.remainder = 0;
     };
     return Object.assign(() => commitWith(() => {}), { validate, commitWith });
   }

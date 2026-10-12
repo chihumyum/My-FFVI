@@ -362,14 +362,18 @@ function sync() {
   $("stop").hidden = !game.stop;
   $("retry-map").hidden = !mapFailure;
   $("retry-map").disabled = failed || flow.busy;
+  const encounterFailure = flow.session.encounterPreparationError;
+  $("retry-encounter").hidden = !encounterFailure;
+  $("retry-encounter").disabled = failed || flow.busy;
   $("retry").hidden = game.stop?.kind === "map-transition";
   if (game.stop) {
     held.clear();
     text(
       "stop-title",
-      mapFailure ? "地图载入失败" : game.stop.kind === "map-transition" ? "正在载入地图" : "此处尚未迁移",
+      mapFailure ? "地图载入失败" : encounterFailure ? "战斗准备失败" : game.stop.kind === "map-transition" ? "正在载入地图" : "此处尚未迁移",
     );
-    text("stop-message", mapFailure ? `当前进度已保留，可以重试。${mapFailure.error?.message ?? String(mapFailure.error)}` : game.stop.message);
+    text("stop-message", mapFailure ? `当前进度已保留，可以重试。${mapFailure.error?.message ?? String(mapFailure.error)}` :
+      encounterFailure ? `当前位置与遇敌结果已保留。${encounterFailure}` : game.stop.message);
     text(
       "stop-source",
       game.stop.site
@@ -456,6 +460,10 @@ $("start").onclick = reset;
 $("source-start").onclick = startSourceGame;
 $("restart").onclick = reset;
 $("retry").onclick = reset;
+$("retry-encounter").onclick = () => {
+  if (failed || !flow.started || flow.busy) return;
+  try { flow.retryEncounterPreparation(); sync(); focus(); } catch (error) { failure(error); }
+};
 $("retry-map").onclick = () => {
   if (failed || !flow.started || flow.busy || mapLoadFailure?.session !== flow.session || mapLoadFailure.request !== game.stop) return;
   try {

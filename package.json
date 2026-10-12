@@ -16,6 +16,7 @@
     "batch:plan": "npm run build && node scripts/check-content-batch.mjs plan",
     "batch:check": "npm run build && node scripts/check-content-batch.mjs check",
     "batch-pipeline:check": "npm run build && node scripts/check-content-batch-pipeline.mjs",
+    "walk-encounters:check": "npm run build && node scripts/check-walk-encounters.mjs",
     "events:check": "npm run build && node scripts/check-events.mjs",
     "maps:check": "npm run build && node scripts/check-map-groups.mjs",
     "world:build": "npm run build && node scripts/build-world.mjs",

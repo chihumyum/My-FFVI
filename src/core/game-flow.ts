@@ -58,6 +58,7 @@ export class GameFlow {
     const battle = this.owner.battle;
     if (battle) return battle.phase === "active" ? "battle" : battle.phase;
     const field = this.owner.field;
+    if (this.owner.encounterPreparationError) return "blocked";
     if (field.stop?.kind === "map-transition") return "transition";
     if (field.stop?.kind === "unsupported") return "blocked";
     // An encounter stop is the pending FieldGame -> BattleGame handoff, not
@@ -151,5 +152,8 @@ export class GameFlow {
   retryBattle(): boolean {
     const owner = this.owner;
     return this.hostAllowsInput && owner?.battle?.phase === "defeat" ? owner.retryBattle() : false;
+  }
+  retryEncounterPreparation(): boolean {
+    return this.hostAllowsInput ? this.owner!.retryEncounterPreparation() : false;
   }
 }

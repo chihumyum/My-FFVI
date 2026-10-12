@@ -1,6 +1,7 @@
 import type { Evidence, FieldEntity, Op, Site } from "../field/types.js";
 import type { WorldCatalog, WorldMapContent } from "../field/world.js";
 import { canonical } from "../core/canonical.js";
+import { parseFrameworkWalkEncounterPolicy } from "../core/walk-encounters.js";
 
 export type ContentDependencyRoot =
   | { kind: "entry"; mapId: number; entrance: number; continuation: string | null }
@@ -116,6 +117,17 @@ export function analyzeContentDependencies(input: {
     const map = maps.get(mapId)!;
     if (!inspectedMaps.has(mapId)) {
       inspectedMaps.add(mapId);
+      if (map.walkEncounters !== undefined) {
+        try {
+          const policy = parseFrameworkWalkEncounterPolicy(map.walkEncounters);
+          for (const { partyId } of policy.parties) {
+            encounters.add(partyId);
+            edge(`${mapKey(mapId)}/walk-encounters`, "encounter", partyId, `encounter:${partyId}`, "resolved");
+          }
+        } catch (error) {
+          diagnose("walk-encounter-policy-invalid", String(error), { mapId });
+        }
+      }
       for (const issue of [...catalog.maps[String(mapId)]!.blockers, ...map.blockers])
         diagnose("map-capability-blocked", issue.reason, { mapId, source: issue.source });
       for (const [provider, issues] of [

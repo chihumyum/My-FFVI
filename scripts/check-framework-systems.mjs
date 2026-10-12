@@ -21,6 +21,7 @@ const lanes = [
   ["session-entry-ui", "check-game-entry-ui.mjs", "game-entry-ui-check.json", "tests"],
   ["event-save-continuation", "check-event-save.mjs", "event-save-check.json", "tests"],
   ["content-batch-pipeline", "check-content-batch-pipeline.mjs", "content-batch-pipeline-check.json", "tests"],
+  ["walking-encounter-loop", "check-walk-encounters.mjs", "walk-encounters-check.json", "stages"],
   ["multi-map-lifecycle", "check-framework-lifecycle.mjs", "framework-lifecycle-check.json", "stages"],
   ["event-motion-and-recovery", "check-script-motion-integration.mjs", "script-motion-integration-check.json", "stages"],
   ["shared-ownership", "check-system-integration.mjs", "system-integration-check.json", "cases"],

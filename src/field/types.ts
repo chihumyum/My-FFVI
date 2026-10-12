@@ -33,6 +33,7 @@ import type { FieldNativePosition } from "../core/field-native-position.js";
 import type { FieldNativeCompositionDefinition } from "../core/field-native-composition.js";
 import type { DevelopmentProfile } from "../core/development-profile.js";
 import type { FieldTransportationOp } from "../core/field-transportation-command.js";
+import type { FrameworkWalkEncounterPolicy } from "../core/walk-encounters.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -261,6 +262,8 @@ export type Tileset = {
   tiles?: { id: number; animation?: { tileid: number; duration: number }[] }[];
 };
 export type FieldContent = {
+  /** Explicit development rules, never inferred from native step counters. */
+  walkEncounters?: FrameworkWalkEncounterPolicy;
   developmentProfile?: DevelopmentProfile;
   formatVersion: 1;
   kind: "field-development";

@@ -58,7 +58,7 @@ test("native source session round-trips explicit origin, complete actors and com
   game.field.options.puppetActors!.prepareCollision(false)();
   game.field.options.sourceMessageEffects!.prepare([{ kind: "entity-update-group", group: 8, invokeCallback: false }])();
   const raw = game.checkpoint();
-  assert.equal(raw.formatVersion, 4); assert.equal(raw.world.kind, "idle-world-v10");
+  assert.equal(raw.formatVersion, 5); assert.equal(raw.world.kind, "idle-world-v10");
   assert.equal(raw.world.field.kind, "idle-field-v10"); assert.equal(raw.world.field.actors.length, 0);
   assert.deepEqual(raw.origin, { kind: "source-new-game", sourceContentHash: t.f.content.contentHash });
   assert.equal(raw.world.field.native!.completedScript!.name, "reserved");

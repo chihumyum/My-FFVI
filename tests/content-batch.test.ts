@@ -41,3 +41,20 @@ test("unknown manifest fields, hidden starting scripts and changed profiles are 
   f.packages.entry = sealBatchContent(f.packages.entry);
   assert.throws(() => planContentBatch(f.manifest, f.packages), /map\/scripts/);
 });
+
+test("a development walking policy cannot enter a source batch or hide outside its map graph", () => {
+  const f = contentBatchFixture();
+  f.packages.entry.walkEncounters = { kind: "framework-walk-encounters-v1", id: "synthetic", minSteps: 1, maxSteps: 2,
+    transportationIds: [1], parties: [{ partyId: 1000, weight: 1 }] };
+  f.packages.entry = sealBatchContent(f.packages.entry);
+  assert.throws(() => planContentBatch(f.manifest, f.packages), /profile/);
+  f.manifest.profile = "framework";
+  const profile = { kind: "framework-development-v1" as const, policy: "omit-anonymous-environment-particles-v1" as const,
+    sourceContentHash: "a".repeat(64), omissions: [] };
+  f.packages.maps = f.packages.maps.map(map => sealBatchContent({ ...map, developmentProfile: profile }));
+  f.packages.catalog.developmentProfile = profile;
+  for (const map of f.packages.maps) f.packages.catalog.maps[map.mapId]!.contentHash = map.contentHash;
+  f.packages.catalog = sealBatchContent(f.packages.catalog);
+  f.packages.entry = sealBatchContent({ ...f.packages.entry, developmentProfile: profile });
+  assert.throws(() => planContentBatch(f.manifest, f.packages), /map\/scripts/);
+});

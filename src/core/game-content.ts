@@ -107,9 +107,9 @@ export class GameContentRepository {
     this.newGameUrl = profile === "framework" ? "/framework/new-game.json" : "/game/new-game.json";
   }
 
-  private profileContent<T extends { developmentProfile?: { kind: string; policy: string; sourceContentHash: string } }>(value: T): T {
+  private profileContent<T extends { developmentProfile?: { kind: string; policy: string; sourceContentHash: string }; walkEncounters?: unknown }>(value: T): T {
     const policy = value.developmentProfile;
-    if (this.profile === "source" ? policy !== undefined :
+    if (this.profile === "source" ? policy !== undefined || value.walkEncounters !== undefined :
       policy?.kind !== "framework-development-v1" || policy.policy !== "omit-anonymous-environment-particles-v1")
       throw new Error("Game content development profile mismatch");
     if (policy) hash(policy.sourceContentHash);
@@ -152,7 +152,8 @@ export class GameContentRepository {
   restoreSessionContent(checkpoint: GameCheckpoint): Promise<RestoreSessionContent> {
     const saved = structuredClone(checkpoint);
     return this.operation(async (read) => {
-      header(saved, "game-checkpoint", 4);
+      header(saved, "game-checkpoint");
+      if (saved.formatVersion !== 4 && saved.formatVersion !== 5) throw new Error("Game checkpoint version mismatch");
       header(saved.world, saved.world?.kind === "event-world-v1" ? "event-world-v1" : "idle-world-v10");
       text(saved.sourceSetHash); hash(saved.battleCatalogHash); hash(saved.world.initialHash);
       object(saved.origin);

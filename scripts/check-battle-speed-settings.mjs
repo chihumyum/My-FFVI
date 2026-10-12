@@ -59,7 +59,7 @@ assert.deepEqual(catalog, original);
 const session = new GameSession(field, catalog);
 session.setBattlePreferences({ mode: 'wait', speedIndex: 4 });
 const checkpoint = session.checkpoint();
-assert.equal(checkpoint.formatVersion, 4);
+assert.equal(checkpoint.formatVersion, 5);
 const restored = GameSession.restore(checkpoint, field, catalog);
 assert.deepEqual(restored.battlePreferences, { mode: 'wait', speedIndex: 4 });
 for (const invalid of [-1, 5, 0.5, '2', null]) {

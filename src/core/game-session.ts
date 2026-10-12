@@ -23,6 +23,7 @@ import {
 } from "./game-state.js";
 import type { WorldCatalog, WorldMapContent } from "../field/world.js";
 import { canonical } from "./canonical.js";
+import { WalkEncounterState, type WalkEncounterSnapshot } from "./walk-encounters.js";
 import { prepareSourceNewGameField, installSourceNewGameActors, validateSourceNewGameLaunch,
   type SourceNewGameContent } from "./source-new-game.js";
 import type { NewGameFieldLaunch, NewGameFieldPreparation } from "./new-game-field-entry.js";
@@ -34,8 +35,7 @@ import {
   checkpointNumber,
 } from "./checkpoint-validation.js";
 
-export type GameCheckpoint = {
-  formatVersion: 4;
+type GameCheckpointBase = {
   kind: "game-checkpoint";
   sourceSetHash: string;
   battleCatalogHash: string;
@@ -47,6 +47,10 @@ export type GameCheckpoint = {
   owned: GameStateSnapshot;
   world: WorldCheckpoint;
 };
+/** Version 4 is read-only compatibility for content without walk encounters. */
+export type GameCheckpoint = GameCheckpointBase & (
+  { formatVersion: 4 } | { formatVersion: 5; walkEncounters: WalkEncounterSnapshot }
+);
 /** External observations are rebound by the host on load, never trusted from saves. */
 export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
@@ -87,6 +91,8 @@ export class GameSession {
   private currentSeed = 0;
   private remainder = 0;
   private currentBattlePreferences: BattlePreferences;
+  private readonly walkEncounters: WalkEncounterState;
+  private encounterFailure: { request: NonNullable<GameSession["field"]["stop"]>; message: string } | null = null;
   private freshEntry: { content: SourceNewGameContent; launched: boolean } | null = null;
   static prepareNewGame(content: SourceNewGameContent, world: WorldCatalog, map: WorldMapContent,
     battle: BattleCatalog, fade: FieldFadeState, presentation: SourcePresentationContext,
@@ -130,6 +136,7 @@ export class GameSession {
     fresh?: FreshSession,
   ) {
     checkpointInteger(seed, 0, 0xffffffff);
+    this.walkEncounters = new WalkEncounterState(seed);
     this.currentBattlePreferences = parseBattlePreferences(battleCatalog.common.timing);
     if (!fresh && field.sourceSetHash !== battleCatalog.common.fieldSourceSetHash)
       throw new Error("Field/battle source mismatch");
@@ -163,6 +170,7 @@ export class GameSession {
         ownedConditions: this.state.fieldOwnedConditions,
         ...(this.state.fieldTransportation ? { transportation: this.state.fieldTransportation } : {}),
         shop: this.state.fieldShop,
+        walkEncounters: { prepareStep: (mapId, policy) => this.walkEncounters.prepareStep(mapId, policy) },
         ...(battleCatalog.gameState.fieldConditions ? { fieldSteps: this.state.fieldSteps } : {}),
         ...(this.state.fieldPartyAppearance ? { partyAppearance: this.state.fieldPartyAppearance } : {}),
         movementBlocker: (transportationId, manual) => this.state.fieldMoveBlocker(transportationId, manual),
@@ -264,7 +272,7 @@ export class GameSession {
   }
   private captureCheckpoint(world: WorldCheckpoint): GameCheckpoint {
     return {
-      formatVersion: 4,
+      formatVersion: 5,
       kind: "game-checkpoint",
       sourceSetHash: this.field.content.parentSourceSetHash,
       battleCatalogHash: this.battleCatalog.contentHash,
@@ -274,6 +282,7 @@ export class GameSession {
       encounterSerial: this.encounterSerial,
       remainder: this.remainder,
       battlePreferences: this.battlePreferences,
+      walkEncounters: this.walkEncounters.snapshot(),
       owned: this.state.snapshot(),
       world,
     };
@@ -320,12 +329,14 @@ export class GameSession {
     runtime: GameSessionRuntime = {},
   ): GameSession {
     const s = structuredClone(raw);
+    if (s.formatVersion !== 4 && s.formatVersion !== 5) throw new Error("Game checkpoint source/version mismatch");
     checkpointKeys(
       s,
-      "formatVersion,kind,sourceSetHash,battleCatalogHash,origin,seed,encounterSerial,remainder,battlePreferences,owned,world",
+      "formatVersion,kind,sourceSetHash,battleCatalogHash,origin,seed,encounterSerial,remainder,battlePreferences,owned,world" +
+        (s.formatVersion === 5 ? ",walkEncounters" : ""),
     );
     if (
-      s.formatVersion !== 4 ||
+      (s.formatVersion !== 4 && s.formatVersion !== 5) ||
       s.kind !== "game-checkpoint" ||
       s.battleCatalogHash !== battle.contentHash
     )
@@ -375,6 +386,11 @@ export class GameSession {
     if (s.encounterSerial !== s.owned.completedBattles.length)
       throw new Error("Saved encounter sequence disagrees with rewards");
     next.world.restore(s.world, world?.catalog, world?.map, s.origin.kind === "source-new-game" ? world!.source : undefined);
+    if (s.formatVersion === 5) next.walkEncounters.restore(s.walkEncounters);
+    else if (initial?.walkEncounters || next.field.content.walkEncounters)
+      throw new Error("Legacy checkpoint has no walking encounter state");
+    if (next.field.content.walkEncounters)
+      next.walkEncounters.assertPolicy(next.field.content.map.identity!.mapId, next.field.content.walkEncounters);
     next.encounterSerial = s.encounterSerial;
     next.remainder = s.remainder;
     return next;
@@ -382,7 +398,7 @@ export class GameSession {
   advance(ms: number) {
     if (!Number.isFinite(ms) || ms < 0 || ms > 60000)
       throw new Error("Invalid session elapsed time");
-    if (this.eventSaveRequest) return;
+    if (this.eventSaveRequest || this.encounterPreparationError) return;
     this.remainder += ms;
     while (this.remainder >= 10) {
       this.remainder -= 10;
@@ -396,75 +412,63 @@ export class GameSession {
         continue;
       }
       this.field.advance(10);
-      if (this.field.stop?.kind === "encounter") {
-        let content = encounterContent(
-          this.battleCatalog,
-          this.field.stop.party!,
-        );
-        if (!content) {
-          const partyId = this.field.stop.party;
-          const reasons = this.battleCatalog.encounterDiagnostics
-            ?.filter((entry) => entry.partyId === partyId && entry.kind === "blocked")
-            .map((entry) => `${entry.code}: ${entry.reason}`) ?? [];
-          this.field.stop = { kind: "unsupported",
-            message: `Battle content is unavailable for encounter ${partyId}` +
-              (reasons.length ? ` (${reasons.join("; ")})` : ""),
-            site: this.field.stop.site };
-          continue;
-        }
-        if (content.battleEntry && content.qualificationContext?.mode === "source") {
-          try {
-            const entry = projectBattleFieldState(content.battleEntry,
-              this.field.battleEntryContext.state,
-              this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
-            if (entry.invalidContentIds === null || entry.blockers.length)
-              throw new Error(entry.blockers.join("; ") || "Unknown battle field exclusions");
-            content = { ...content, qualificationContext: { ...content.qualificationContext,
-              invalidContentIds: entry.invalidContentIds, conditionContext: "current" } };
-          } catch (error) {
-            this.field.stop = { kind: "unsupported", message: error instanceof Error ? error.message : String(error),
-              site: this.field.stop.site };
-            continue;
-          }
-        }
-        if (this.state.battlePartyBlocker) {
-          this.field.stop = {
-            kind: "unsupported",
-            message: this.state.battlePartyBlocker,
-            site: this.field.stop.site,
-          };
-          continue;
-        }
-        const templateBlocker = battleDefinitionBlocker(this.state.partyPlayers(), content.qualificationContext, content.conditions);
-        if (templateBlocker) {
-          this.field.stop = { kind: "unsupported", message: templateBlocker, site: this.field.stop.site };
-          continue;
-        }
-        this.currentSeed =
-          (this.seed + Math.imul(this.encounterSerial, 0x9e3779b1)) >>> 0;
-        const lease = this.state.openBattle(content.encounterId);
-        try {
-          this.battle = new BattleGame(
-            content,
-            this.currentSeed,
-            this.state.battlePlayers(lease),
-            this.state.battleInventory(lease),
-            this.state.battleProgression(lease, content.experience),
-            this.currentBattlePreferences,
-          );
-          this.battleLease = lease;
-          this.encounterSerial++;
-        } catch (error) {
-          this.state.cancelBattle(lease);
-          this.field.stop = {
-            kind: "unsupported",
-            message: error instanceof Error ? error.message : String(error),
-            site: this.field.stop.site,
-          };
-        }
-      }
+      if (this.field.stop?.kind === "encounter") this.startEncounter();
+      if (this.encounterPreparationError) { this.remainder = 0; return; }
     }
   }
+  /** A selected ordinary encounter survives preparation failure. Retrying it
+   * does not walk again, draw another enemy, or acquire a second battle lease. */
+  get encounterPreparationError(): string | null {
+    const failed = this.encounterFailure;
+    return failed && failed.request === this.field.stop ? failed.message : null;
+  }
+  retryEncounterPreparation(): boolean {
+    if (!this.encounterPreparationError || this.battle || this.battleLease || this.state.inBattle) return false;
+    this.encounterFailure = null;
+    this.startEncounter();
+    return this.battle !== null;
+  }
+  private startEncounter(): void {
+    const request = this.field.stop;
+    if (request?.kind !== "encounter" || this.battle || this.encounterPreparationError) return;
+    let lease: BattleLease | null = null;
+    try {
+      let content = encounterContent(this.battleCatalog, request.party!);
+      if (!content) {
+        const reasons = this.battleCatalog.encounterDiagnostics
+          ?.filter((entry) => entry.partyId === request.party && entry.kind === "blocked")
+          .map((entry) => `${entry.code}: ${entry.reason}`) ?? [];
+        throw new Error(`Battle content is unavailable for encounter ${request.party}` +
+          (reasons.length ? ` (${reasons.join("; ")})` : ""));
+      }
+      if (content.battleEntry && content.qualificationContext?.mode === "source") {
+        const entry = projectBattleFieldState(content.battleEntry, this.field.battleEntryContext.state,
+          this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
+        if (entry.invalidContentIds === null || entry.blockers.length)
+          throw new Error(entry.blockers.join("; ") || "Unknown battle field exclusions");
+        content = { ...content, qualificationContext: { ...content.qualificationContext,
+          invalidContentIds: entry.invalidContentIds, conditionContext: "current" } };
+      }
+      if (this.state.battlePartyBlocker) throw new Error(this.state.battlePartyBlocker);
+      const blocker = battleDefinitionBlocker(this.state.partyPlayers(), content.qualificationContext, content.conditions);
+      if (blocker) throw new Error(blocker);
+      const seed = (this.seed + Math.imul(this.encounterSerial, 0x9e3779b1)) >>> 0;
+      lease = this.state.openBattle(content.encounterId);
+      const battle = new BattleGame(content, seed, this.state.battlePlayers(lease), this.state.battleInventory(lease),
+        this.state.battleProgression(lease, content.experience), this.currentBattlePreferences);
+      this.battle = battle;
+      this.battleLease = lease;
+      this.currentSeed = seed;
+      this.encounterSerial++;
+      this.encounterFailure = null;
+    } catch (error) {
+      if (lease) this.state.cancelBattle(lease);
+      const message = error instanceof Error ? error.message : String(error);
+      if (request.returnTo?.kind === "field-idle") this.encounterFailure = { request, message };
+      else this.field.stop = { kind: "unsupported", message, site: request.site };
+    }
+  }
+
   continueVictory(): boolean {
     const result = this.battle?.previewVictory();
     if (!result) return false;

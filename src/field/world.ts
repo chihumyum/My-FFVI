@@ -17,6 +17,7 @@ export type WorldMapContent = {
   contentHash: string;
   developmentProfile?: DevelopmentProfile;
   developmentOmissions?: FieldContent["developmentOmissions"];
+  walkEncounters?: FieldContent["walkEncounters"];
   mapId: number;
   areaId: number;
   name: string;

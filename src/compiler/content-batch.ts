@@ -61,7 +61,8 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
     throw new Error("Batch packages must match the declared maps exactly");
   const framework = manifest.profile === "framework";
   for (const item of [catalog, ...maps, entry])
-    if ((item.developmentProfile?.kind === "framework-development-v1") !== framework)
+    if ((item.developmentProfile?.kind === "framework-development-v1") !== framework ||
+        !framework && "walkEncounters" in item && item.walkEncounters !== undefined)
       throw new Error("Batch content profile mismatch");
   if (entry.parentSourceSetHash !== catalog.parentSourceSetHash)
     throw new Error("Batch entry/world source mismatch");
@@ -78,7 +79,8 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
     // extra set of scripts that the batch analyzer never inspected.
     const initialMap = maps.find(m => m.mapId === entry.map.identity?.mapId);
     if (!initialMap || canonical(initialMap.map) !== canonical(entry.map) ||
-        canonical(initialMap.scripts) !== canonical(entry.scripts))
+        canonical(initialMap.scripts) !== canonical(entry.scripts) ||
+        canonical(initialMap.walkEncounters ?? null) !== canonical(entry.walkEncounters ?? null))
       throw new Error("Batch controlled entry map/scripts mismatch");
   }
   const dependencies = analyzeContentDependencies({ catalog, maps, roots: manifest.roots, mapIds: manifest.mapIds });
