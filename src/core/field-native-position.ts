@@ -1,6 +1,7 @@
 import type { FieldCameraMapRange } from "./field-camera.js";
 import { fieldCameraCellToWorld, fieldCameraWorldToCell } from "./field-camera.js";
 import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
+import { requireFieldTransportPose } from "./field-transport-pose.js";
 import { projectFieldPuppetActorEffects, type FieldPuppetHostProviders, type FieldPuppetHostSnapshot } from "./field-puppet-effects.js";
 
 /** Absolute source SetPos (mode 0). Layer 0 preserves Z; 1..3 select the
@@ -22,9 +23,7 @@ export function projectNativeFieldPosition(snapshot: FieldPuppetHostSnapshot,
   // position, layer, nor CueAnimation may partially reach the existing owner.
   let next = projectFieldPuppetActorEffects([], snapshot, providers);
   const target = next.actors.find((actor) => actor.id === actorId);
-  if (!target?.character || target.riding || target.riderAssetId !== null ||
-      !["absent", "idle"].includes(target.rideOnEntity))
-    throw new Error("Source actor SetPos requires an ordinary character host");
+  requireFieldTransportPose(target, providers.transportationPresentation);
   if (target.moving) throw new Error("Source actor SetPos during active movement is unresolved");
   const logicalLayer = command.layer === 0
     ? [349, 249, 149].indexOf(Math.trunc(Math.fround(target.position.z))) : command.layer - 1;

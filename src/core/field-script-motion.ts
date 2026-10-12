@@ -23,6 +23,7 @@ export type FieldScriptMotionOp = { kind: "field-script-motion"; command: FieldS
 
 import type { Point } from "../field/types.js";
 import { ActorAnimation } from "./actor-animation.js";
+import { requireFieldTransportPose } from "./field-transport-pose.js";
 import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
 import { fieldCameraCellToWorld, type FieldCameraMapRange } from "./field-camera.js";
 import { projectFieldPuppetActorEffects, type FieldPuppetHostProviders, type FieldPuppetHostSnapshot } from "./field-puppet-effects.js";
@@ -134,8 +135,7 @@ export function projectFieldScriptLerp(snapshot: FieldPuppetHostSnapshot, provid
   if (command.arcHeight !== 0) throw new Error("Sprite Lerp arc requires the source animation-offset owner");
   let next = projectFieldPuppetActorEffects([], snapshot, providers);
   const actor = next.actors.find((a) => a.id === actorId);
-  if (!actor?.character || actor.riding || actor.riderAssetId !== null || !["absent", "idle"].includes(actor.rideOnEntity))
-    throw new Error("Source Lerp requires an ordinary native actor");
+  requireFieldTransportPose(actor, providers.transportationPresentation);
   if (actor.moving) throw new Error("Source Lerp conflicts with active actor movement");
   let registers: FieldScriptLerpProgress;
   if (progress === null) {

@@ -11,6 +11,7 @@ import type {
 } from "../field/types.js";
 import {
   EventState,
+  UnknownEventValue,
   executeEventControl,
   type EventStateSnapshot,
   type ScriptLocalFrame,
@@ -25,6 +26,14 @@ import { executeOwnedConditionEvent, type FieldOwnedConditionPort } from "./owne
 import { executeSourcePresentation, cloneSourcePresentationContext, sourcePresentationCheckpoint,
   type SourcePresentationContext, type SourcePresentationPort } from "./source-presentation.js";
 import { canonical } from "./canonical.js";
+import { frameworkTransportationPresentation, FRAMEWORK_TRANSPORTATION_LIMITATIONS } from "./development-profile.js";
+import { Transportations } from "./transportation.js";
+import type { FieldTransportationPort } from "./transportation-state.js";
+import type { FieldTransportationCommand } from "./field-transportation-command.js";
+import { projectFieldTransportActors, projectFieldPuppetTransportationEffects,
+  type FieldTransportActorOperation } from "./field-transport-actors.js";
+import { requireFieldTransportPose } from "./field-transport-pose.js";
+import { partyActorCameraOffset } from "./party-actors.js";
 import { SourceMessageState, sourceMessageUpdateMask, type SourceMessageEffect } from "./source-message.js";
 import { createFieldChoiceRequest, resolveFieldChoiceAnswer, type FieldChoiceAnswer,
   type FieldChoiceRequest } from "./field-choice.js";
@@ -253,6 +262,8 @@ export type FieldGameOptions = {
   roster?: FieldRosterPort;
   fieldSteps?: FieldConditionPort;
   partyAppearance?: { catalog: PartyActorCatalog; current(): PartyAppearanceCandidate };
+  transportation?: FieldTransportationPort;
+  transportationTimestamp?: () => string;
   /** Read the current owned-state draft; unsupported step effects must not disappear. */
   movementBlocker?: (transportationId: number | null, manual: boolean) => string | null;
 };
@@ -265,7 +276,13 @@ export class FieldGame {
       .map((task) => (task.audioWait as Extract<Op, { kind: "bgm-ready" }>).track));
     return [...ids].map((id) => audioReadinessTrack(id, this.content.bgm));
   }
-  readonly transportationId: number | null;
+  private currentTransportationId: number | null;
+  get transportationId(): number | null { return this.currentTransportationId; }
+  get transportationPresentation() { return frameworkTransportationPresentation(this.content.developmentProfile); }
+  /** Observable development departures, separate from source state and saves. */
+  readonly transportationExecutions: { site: Site; command: FieldTransportationCommand; currentId: number | null;
+    omissions: readonly string[] }[] = [];
+  private transportationExecuting = false;
   private mapScrollOffset: Readonly<Point>;
   get cameraOffset(): Readonly<Point> { return this.mapScrollOffset; }
   private readonly camera: FieldCameraHost | null;
@@ -372,7 +389,7 @@ export class FieldGame {
     if (candidate.bindings.player !== this.player.id || candidate.snapshot.camera?.id !== this.cameraActorId)
       throw new Error("Native factory does not match the existing player/camera identities");
     const projected = createNativeFieldActorProjections(candidate, this.content.cameraHost!.mapRange,
-      this.options.partyAppearance.catalog);
+      this.options.partyAppearance.catalog, this.transportationPresentation);
     const player = projected.find((a) => a.id === this.player.id);
     if (!player || player.x !== this.player.x || player.y !== this.player.y ||
         player.layer !== this.player.layer || player.direction !== this.player.direction || player.asset !== this.player.asset)
@@ -407,6 +424,11 @@ export class FieldGame {
             return binding ? [binding] : [];
           }), restorePartyInstruction: "absent" }),
       controlContext: () => structuredClone(controlContext),
+      ...(this.transportationPresentation && animationKeys ? { transportation: {
+        read: () => ({ catalog: this.options.partyAppearance!.catalog, characters: this.content.characters,
+          animationKeys, presentation: this.transportationPresentation! }),
+        prepare: (operations: readonly FieldTransportActorOperation[]) => this.partyActors!.prepareTransportation({ operations }),
+      } } : {}),
       prepareCollision: (enabled) => {
         const before = this.collisionSwitches, next = projectFieldPuppetCollision(enabled);
         return () => { if (this.collisionSwitches !== before) throw new Error("Stale collision switch transaction");
@@ -555,7 +577,7 @@ export class FieldGame {
         throw new Error("Unknown field entry synchronization source");
       this.synchronizedEntry = false;
     }
-    this.transportationId = content.entry.transportationId ?? null;
+    this.currentTransportationId = content.entry.transportationId ?? null;
     const offset = content.entry.cameraOffset ?? { x: 0, y: 0 };
     checkpointKeys(offset, "x,y");
     if (!Number.isFinite(Math.fround(offset.x)) || !Number.isFinite(Math.fround(offset.y)))
@@ -602,7 +624,8 @@ export class FieldGame {
     if (content.entry.playerVisible === false) this.hiddenEntities.add("-1001");
     if (!options.nativeActorPreparation) Object.assign(this.actors, this.createActors(this.entityList));
     this.partyActors = content.entry.partyActors && options.partyAppearance
-      ? new FieldPartyActors(options.partyAppearance.catalog, content.entry.partyActors, this.transportationId) : null;
+      ? new FieldPartyActors(options.partyAppearance.catalog, content.entry.partyActors, this.transportationId,
+        this.transportationPresentation) : null;
     if (this.partyActors) {
       const media = this.partyActors.playerMedia();
       if (media.asset !== this.player.asset || media.mount !== (this.player.mount || null))
@@ -703,7 +726,7 @@ export class FieldGame {
       mapRange: this.content.cameraHost.mapRange, providers, existingActorIds,
       ...(this.content.nativeNpcStandby ? { standbyAnchorPosition: fieldNativeNpcStandbyPosition(this.content.nativeNpcStandby) } : {}),
     }).actors.map((actor) => createNativeFieldActorProjection(actor, this.content.cameraHost!.mapRange,
-      this.options.partyAppearance!.catalog));
+      this.options.partyAppearance!.catalog, this.transportationPresentation));
   }
   /** Source SetEventEntityGroup appends entities; it does not replace existing groups. */
   private activateGroup(name: string): void {
@@ -967,6 +990,7 @@ export class FieldGame {
       readActors: () => this.actors, readCatalog: () => this.options.partyAppearance!.catalog,
       readCharacters: () => this.content.characters, readProviders: this.nativeActorProviders,
       readAnimationKeys: () => this.nativeRuntime!.animationKeys!,
+      ...(this.transportationPresentation ? { transportationPresentation: this.transportationPresentation } : {}),
     }, steps);
     return {
       validate: () => {
@@ -1035,7 +1059,8 @@ export class FieldGame {
     });
     return { mapRange: this.content.cameraHost.mapRange, bindings, factory,
       partyCatalog: this.options.partyAppearance.catalog, partyCheckpoint: this.partyActors.checkpoint(),
-      characters: this.content.characters, npcs, providers };
+      characters: this.content.characters, npcs, providers,
+      ...(this.transportationPresentation ? { transportationPresentation: this.transportationPresentation } : {}) };
   }
   private nativeCheckpoint(): FieldCheckpoint["native"] {
     if (!this.nativeActorBindings) return null;
@@ -1100,8 +1125,20 @@ export class FieldGame {
       s,
       "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,fade,camera,native",
     );
-    if (s.kind !== "idle-field-v9" || s.contentHash !== content.contentHash ||
-      s.transportationId !== (content.entry.transportationId ?? null))
+    if (s.kind !== "idle-field-v9" || s.contentHash !== content.contentHash)
+      throw new Error("Field checkpoint source/version mismatch");
+    const transportationProfile = frameworkTransportationPresentation(content.developmentProfile);
+    if (transportationProfile && native && options.transportation) {
+      if (s.transportationId === null || !s.partyActors)
+        throw new Error("Saved transportation requires its native party owner");
+      const transports = new Transportations(options.transportation.catalog), identity = transports.identity(s.transportationId);
+      if (identity.type !== 1 && !(identity.id === 6 && identity.type === 12 && identity.assetId === 38) ||
+          canonical(s.partyActors.context.currentTransport) !== canonical({ id: identity.id,
+            typeId: identity.type, fieldAssetId: identity.assetId }) ||
+          !options.transportation.read().some((record) => record.id === identity.id) ||
+          new EventState(s.eventState).read(transports.releaseFlagRef(identity.id)) !== 1)
+        throw new Error("Saved transportation identity, party or availability mismatch");
+    } else if (s.transportationId !== (content.entry.transportationId ?? null))
       throw new Error("Field checkpoint source/version mismatch");
     const presentation = sourcePresentationCheckpoint(options.sourcePresentation?.context() ?? null);
     if (canonical(sourcePresentationCheckpoint(s.sourcePresentation)) !== canonical(presentation))
@@ -1141,6 +1178,9 @@ export class FieldGame {
     if (next.partyActors) {
       if (!s.partyActors) throw new Error("Missing saved party appearances");
       next.partyActors.restore(s.partyActors);
+      if (s.partyActors.context.currentTransport?.id !== s.transportationId)
+        throw new Error("Saved party and field transportation identities disagree");
+      next.currentTransportationId = s.transportationId;
       const media = next.partyActors.playerMedia();
       next.requirePlayerMedia(media.asset, media.mount);
       Object.assign(next.player, media);
@@ -1489,8 +1529,8 @@ export class FieldGame {
         !this.nativeActorProviders || !this.camera || this.content.cameraHost?.callbacks !== "fresh-normal-field-v1")
       throw new Error("Source Move requires an ordinary bound native actor");
     const entity = actor.native.entity;
-    if (!entity.character || entity.riding || entity.riderAssetId !== null ||
-        !["absent", "idle"].includes(entity.rideOnEntity) || actor.motion)
+    requireFieldTransportPose(entity, this.transportationPresentation);
+    if (actor.motion)
       throw new Error("Source Move riding or concurrent movement provider is unavailable");
     if (actor.id === this.player.id)
       throw new Error("Actual-player source Move requires its movement-state magnification provider");
@@ -2252,7 +2292,8 @@ export class FieldGame {
     const project = () => {
       const actors = Object.fromEntries(Object.values(this.actors).map((actor) => {
         if (!actor.native) throw new Error("Battle return cannot mix native and legacy actors");
-        const copy = createNativeFieldActorProjection(actor.native, this.content.cameraHost!.mapRange, appearanceHost.catalog);
+        const copy = createNativeFieldActorProjection(actor.native, this.content.cameraHost!.mapRange, appearanceHost.catalog,
+          this.transportationPresentation);
         return [copy.id, copy];
       }));
       const player = actors[bindings.player]!;
@@ -2263,7 +2304,8 @@ export class FieldGame {
           return { cell: { x: player.x, y: player.y }, logicalLayer: player.layer, direction: player.direction };
         }, readScrollOffset: () => ({ ...offset }),
       });
-      const draftParty = new FieldPartyActors(appearanceHost.catalog, currentParty, this.transportationId);
+      const draftParty = new FieldPartyActors(appearanceHost.catalog, currentParty, this.transportationId,
+        this.transportationPresentation);
       const readCamera = () => { const state = draftCamera.snapshot();
         return { id: this.cameraActorId, position: state.dummy.position, layer: state.dummy.layer }; };
       const initialize = (phase: "start" | "finish", context: FieldPuppetScriptContext,
@@ -2273,7 +2315,19 @@ export class FieldGame {
             bindings, snapshot: readNativeFieldActors(actors, readCamera()), ...roster,
             entities: old.context.entities, restorePartyInstruction: old.context.restorePartyInstruction }) });
         if (this.separateCameraInitialization(plan)) draftCamera.prepareInitializeDummy().commit();
-        const state = projectFieldPuppetActorEffects(plan.effects, readNativeFieldActors(actors, readCamera()), providers());
+        const snapshot = readNativeFieldActors(actors, readCamera());
+        const transportation = this.transportationPresentation ? projectFieldPuppetTransportationEffects({
+          snapshot, assets: snapshot.actors.map(({ id }) => ({ id, fieldAssetId: actors[id]!.native.fieldAssetId,
+            charaZOffset: actors[id]!.native.charaZOffset })), catalog: appearanceHost.catalog,
+          characters: this.content.characters, animationKeys: runtime.animationKeys!, effects: plan.effects,
+          providers: providers(), presentation: this.transportationPresentation,
+        }) : null;
+        const state = transportation?.snapshot ?? projectFieldPuppetActorEffects(plan.effects, snapshot, providers());
+        if (transportation) {
+          const bookkeeping = draftParty.prepareTransportation({ operations: transportation.operations });
+          bookkeeping.validate(); bookkeeping.commit();
+          for (const { id, fieldAssetId } of transportation.assets) actors[id]!.native.fieldAssetId = fieldAssetId;
+        }
         for (const entity of state.actors) {
           const { moving: _, ...values } = entity;
           Object.assign(actors[entity.id]!.native.entity, values);
@@ -2293,7 +2347,8 @@ export class FieldGame {
         }
         const appearance = prepareNativeFieldActorAppearance({ readActors: () => actors,
           readCatalog: () => appearanceHost.catalog, readCharacters: () => this.content.characters,
-          readProviders: providers, readAnimationKeys: () => runtime.animationKeys! }, steps);
+          readProviders: providers, readAnimationKeys: () => runtime.animationKeys!,
+          ...(this.transportationPresentation ? { transportationPresentation: this.transportationPresentation } : {}) }, steps);
         return { validate: appearance.validate, commit: () => { appearance.commit(); offset = nextOffset; } };
       } }, true)();
       const plan = initialize("start", script, owned.puppetRoster);
@@ -2362,6 +2417,103 @@ export class FieldGame {
     const publish = this.options.puppetActors.prepareCollision(enabled);
     if (typeof publish !== "function") throw new Error("Invalid source puppet collision transaction");
     return publish;
+  }
+  /** One transaction across the existing owned, event, actor and controller
+   * owners. This explicit framework variant is never an exact-source host. */
+  private executeTransportation(command: FieldTransportationCommand, site: Site): void {
+    if (this.transportationExecuting) throw new Error("Transportation publication cannot be reentered");
+    if (!this.transportationPresentation)
+      throw new Error("Source transportation lifecycle requires an explicit framework transportation profile");
+    const port = this.options.transportation, party = this.partyActors, appearance = this.options.partyAppearance;
+    const bindings = this.nativeActorBindings, providers = this.nativeActorProviders, keys = this.nativeRuntime?.animationKeys;
+    if (!port || !party || !appearance || !bindings || !providers || !keys || !this.camera || !this.content.cameraHost)
+      throw new Error("Transportation requires the shared owned, native actor and camera providers");
+    const transports = new Transportations(port.catalog), identity = transports.identity(command.transportationId);
+    const fingerprint = () => canonical({ current: this.transportationId, events: this.eventState.snapshot(),
+      actors: this.nativeActorStateFingerprint, party: party.checkpoint(), offset: this.mapScrollOffset,
+      collision: this.collisionSwitches });
+    const before = fingerprint();
+    this.transportationExecuting = true;
+    try {
+      if (command.kind === "place") {
+        if (!this.options.transportationTimestamp) throw new Error("Transportation timestamp observation is unavailable");
+        const layer = command.layer.kind === "player" ? this.player.native?.entity.layer : command.layer.value;
+        if (layer === undefined) throw new Error("SetVehicle player Unity layer is unavailable");
+        const ref = transports.releaseFlagRef(identity.id);
+        // Validate the flag write without replacing the live EventState or its
+        // active local frames. The timestamp is sampled exactly once by host.
+        new EventState(this.eventState.snapshot()).write(ref, 1);
+        const owned = port.prepare({ id: identity.id, enable: true, mapId: command.stayMapId,
+          position: command.position, layer, direction: command.direction,
+          timeStampTicks: this.options.transportationTimestamp() });
+        owned.validate();
+        if (fingerprint() !== before) throw new Error("Stale transportation placement");
+        owned.commitWith(() => this.eventState.write(ref, 1));
+      } else {
+        const checkpoint = party.checkpoint();
+        let currentId = this.transportationId, offset = this.mapScrollOffset;
+        let currentTransport: typeof checkpoint.context.currentTransport | undefined;
+        let operations: FieldTransportActorOperation[];
+        if (command.kind === "change") {
+          if (currentId === null || command.viewType !== 0)
+            throw new Error("Transportation view/control provider is unavailable");
+          const selected = transports.projectChange(currentId, identity.id, transports.availability((ref) => {
+            try { return this.eventState.read(ref); }
+            catch (error) { if (error instanceof UnknownEventValue) return null; throw error; }
+          }));
+          if (selected.currentId === null) throw new Error("Transportation has no effective current identity");
+          const effective = transports.identity(selected.currentId);
+          if (effective.type !== 1 && !(effective.id === 6 && effective.type === 12 && effective.assetId === 38))
+            throw new Error("Framework supports walking and Magitek transportation only");
+          currentId = effective.id;
+          currentTransport = { id: effective.id, typeId: effective.type, fieldAssetId: effective.assetId };
+          const asset = effective.type === 1 ? checkpoint.playerAssetCacheId : effective.assetId;
+          if (asset === null) throw new Error("Player transportation asset cache is unavailable");
+          operations = effective.type === 1
+            ? [{ kind: "replace", actorId: bindings.player, fieldAssetId: asset },
+               { kind: "ride-out", actorId: bindings.player, restoreRiderAsset: false }]
+            : [{ kind: "ride-on", actorId: bindings.player, frontAssetId: asset, skipIfSameOuter: false }];
+          offset = Object.freeze(partyActorCameraOffset(appearance.catalog, asset, checkpoint.context.camera));
+        } else {
+          if (identity.type !== 1 && !(identity.id === 6 && identity.type === 12 && identity.assetId === 38))
+            throw new Error("Framework supports walking and Magitek NPC riding only");
+          const host = this.options.puppetActors;
+          if (!host) throw new Error("NPC transportation source selector is unavailable");
+          const { catalog, context } = host.read(), resolved = resolveFieldPuppetActor(catalog, context, command.actorSelector);
+          if (resolved.actor === null) throw new Error("NPC transportation selector has no actor");
+          operations = identity.id === 1
+            ? [{ kind: "ride-out", actorId: resolved.actor, restoreRiderAsset: true }]
+            : [{ kind: "ride-on", actorId: resolved.actor, frontAssetId: identity.assetId, skipIfSameOuter: true }];
+        }
+        const readCamera = () => { const state = this.camera!.snapshot();
+          return { id: this.cameraActorId, position: state.dummy.position, layer: state.dummy.layer }; };
+        const snapshot = readNativeFieldActors(this.actors, readCamera());
+        const projected = projectFieldTransportActors({ snapshot,
+          assets: snapshot.actors.map(({ id }) => { const native = this.actors[id]!.native!;
+            return { id, fieldAssetId: native.fieldAssetId, charaZOffset: native.charaZOffset }; }),
+          catalog: appearance.catalog, characters: this.content.characters, animationKeys: keys,
+          operations, presentation: this.transportationPresentation });
+        const candidate = Object.fromEntries(projected.snapshot.actors.map((entity) => {
+          const row = projected.assets.find((value) => value.id === entity.id)!;
+          const actor = createNativeFieldActorProjection({ ...this.actors[entity.id]!.native!, entity,
+            fieldAssetId: row.fieldAssetId }, this.content.cameraHost!.mapRange, appearance.catalog,
+          this.transportationPresentation);
+          return [entity.id, actor];
+        }));
+        const actorPublication = prepareNativeFieldActorState({ readActors: () => this.actors,
+          readProviders: providers, readCamera }, candidate);
+        const partyPublication = party.prepareTransportation({ operations,
+          ...(currentTransport !== undefined ? { currentTransport } : {}) });
+        const collision = command.kind === "change" ? projectFieldPuppetCollision(command.changeCollisionEnable) : this.collisionSwitches;
+        actorPublication.validate(); partyPublication.validate();
+        if (fingerprint() !== before) throw new Error("Stale transportation actor/controller transaction");
+        // Only prevalidated plain writes remain; actor identities are retained.
+        actorPublication.commit(); partyPublication.commit();
+        this.currentTransportationId = currentId; this.mapScrollOffset = offset; this.collisionSwitches = collision;
+      }
+      this.transportationExecutions.push({ site, command: structuredClone(command), currentId: this.transportationId,
+        omissions: FRAMEWORK_TRANSPORTATION_LIMITATIONS });
+    } finally { this.transportationExecuting = false; }
   }
   private pump(frameDeltaSeconds = 0): void {
     if (this.stop || this.shopTask) return;
@@ -2715,7 +2867,7 @@ export class FieldGame {
                   t.animationWait = !op.loop;
                 }
               } else if (actor) {
-                if (actor.mount)
+                if (actor.mount && (!actor.native || !this.transportationPresentation))
                   throw new Error(
                     "Mounted actor animation dispatch is not implemented",
                   );
@@ -2952,7 +3104,7 @@ export class FieldGame {
             if (
               op.animation !== "" &&
               op.animation !== "Default" &&
-              (!actor.asset || !this.content.characters[actor.asset]?.animations[op.animation])
+              (!actor.asset || !this.content.characters[actor.mount ?? actor.asset]?.animations[op.animation])
             ) {
               this.block("尚未支持角色动画 " + op.animation, op);
               return;
@@ -3119,6 +3271,10 @@ export class FieldGame {
                 effects: [{ kind: "hide", actor: actor.id }] })(); }
               catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             } else this.hiddenEntities.add(t.actor);
+            break;
+          case "field-transportation":
+            try { this.executeTransportation(op.command, op); }
+            catch (error) { t.pc--; this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
           case "ride": {
             const rider = this.actors[op.actor];

@@ -24,6 +24,7 @@ export function prepareNativeFieldProviders(field: FieldGame, view: FieldActorVi
     throw new Error("Canvas native actor upper/ceiling composition is unresolved");
   return () => ({ mapRenderContext: view.contextId,
     transportationType: field.partyActorCheckpoint!.context.currentTransport?.typeId ?? null,
+    ...(field.transportationPresentation ? { transportationPresentation: field.transportationPresentation } : {}),
     footAttribute: (position) => readFieldNativeFoot(foot, position),
     upperTexture: composition?.upperTexture ?? null, ceilTexture: composition?.ceilTexture ?? null,
     ...(composition ? { composition: structuredClone(composition) } : {}),

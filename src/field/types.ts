@@ -31,6 +31,7 @@ import type { FieldNativeNpcDefinition, FieldNativeNpcStandby } from "../core/fi
 import type { FieldNativePosition } from "../core/field-native-position.js";
 import type { FieldNativeCompositionDefinition } from "../core/field-native-composition.js";
 import type { DevelopmentProfile } from "../core/development-profile.js";
+import type { FieldTransportationOp } from "../core/field-transportation-command.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -176,6 +177,7 @@ export type Op = Site &
     | TreasureBoxRequest
     | PartyEventOp
     | RosterLifecycleEventOp
+    | FieldTransportationOp
     | OwnedConditionEventOp
     | SourcePresentationOp
     | AudioReadinessOp

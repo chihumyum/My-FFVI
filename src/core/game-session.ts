@@ -46,7 +46,10 @@ export type GameCheckpoint = {
   world: WorldCheckpoint;
 };
 /** External observations are rebound by the host on load, never trusted from saves. */
-export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost };
+export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
+  /** Host wall-clock observation for source parking timestamps; recorded as an
+   * exact decimal Int64, never sampled by deterministic core state. */
+  transportationTimestamp?: () => string };
 type FreshSession = { content: SourceNewGameContent; state: GameState; events: EventState;
   map: WorldMapContent; fade: FieldFadeState; presentation: SourcePresentationContext; restoring?: true };
 export type GameRestoreWorld = { catalog: WorldCatalog; map: WorldMapContent;
@@ -148,6 +151,7 @@ export class GameSession {
         party: this.state.fieldParty,
         roster: this.state.fieldRoster,
         ownedConditions: this.state.fieldOwnedConditions,
+        ...(this.state.fieldTransportation ? { transportation: this.state.fieldTransportation } : {}),
         shop: this.state.fieldShop,
         ...(battleCatalog.gameState.fieldConditions ? { fieldSteps: this.state.fieldSteps } : {}),
         ...(this.state.fieldPartyAppearance ? { partyAppearance: this.state.fieldPartyAppearance } : {}),

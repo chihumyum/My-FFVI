@@ -16,6 +16,8 @@ import { StaticAudioState } from "./static-audio.js";
 import { checkpointKeys, checkpointInteger } from "./checkpoint-validation.js";
 import { prepareMapPartyEntry, readMapPartySwitching, type MapPartyEntryPlan } from "./map-party-entry.js";
 import { Transportations } from "./transportation.js";
+import { transportationStayMaps } from "./transportation-state.js";
+import { frameworkTransportationPresentation } from "./development-profile.js";
 import type { FieldFadeState } from "./field-fade.js";
 import type { SourceNativeState } from "./source-native-state.js";
 import { prepareSourceNativeMap } from "./source-native-map.js";
@@ -320,8 +322,9 @@ export class WorldSession {
       let traveler: Traveler;
       if (initialActors && appearance) {
         if (loc.traveler !== null) throw new Error("Duplicate saved native traveler ownership");
-        const transportationId = this.initial.entry.transportationId;
-        if (transportationId === undefined || snapshot.field.transportationId !== transportationId)
+        const transportationId = frameworkTransportationPresentation(target.developmentProfile)
+          ? snapshot.field.transportationId : this.initial.entry.transportationId;
+        if (transportationId === undefined || transportationId === null || snapshot.field.transportationId !== transportationId)
           throw new Error("Saved transportation identity changed without a supported transition");
         if (!catalog.transportation || !target.partyEntry)
           throw new Error("Saved map actor source dependencies are unavailable");
@@ -460,7 +463,7 @@ export class WorldSession {
       };
       const transport = transportation.projectMapEntry({
         currentId: from.transportationId, loadId: transportation.pointInIdentity().id,
-        mapId: request.mapId, stayMapIds: nativeState?.parkedTransportationMapIds ?? {},
+        mapId: request.mapId, stayMapIds: nativeState ? transportationStayMaps(nativeState.ownedTransportations) : {},
         availability: transportation.availability(read),
       });
       if (transport.currentId === null) throw new Error("Map transportation selection has no current identity");
@@ -500,6 +503,7 @@ export class WorldSession {
           ...(effectMap ? { fieldEffectMap: effectMap } : {}),
           ...(sourcePresentation ? { sourcePresentation } : {}),
           ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}),
+          ...(this.owned?.current.transportationTimestamp ? { transportationTimestamp: this.owned.current.transportationTimestamp } : {}),
           ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
         from.fader.fork(),
         from.cameraSnapshot ?? undefined,
@@ -516,6 +520,7 @@ export class WorldSession {
           entry: actorEntry.plan, definition: target.partyEntry, catalog: owned.ports.partyAppearance.catalog,
           party: owned.ports.partyAppearance.current(),
           characters: field.content.characters, animationKeys: catalog.nativeAnimationKeys,
+          ...(field.transportationPresentation ? { transportationPresentation: field.transportationPresentation } : {}),
           view: target.actorView, providers: providers() });
         field.installNativeActors(candidate, nativeRuntime.catalog, providers, nativeRuntime.controlContext,
           catalog.nativeAnimationKeys, nativeRuntime.mapLifecycle);

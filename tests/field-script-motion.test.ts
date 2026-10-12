@@ -132,6 +132,20 @@ test("positive Lerp selects its animation once, preserving the source same-key n
   assert.equal(serial(t.snapshot), before);
 });
 
+test("framework Lerp keeps riding identity through progress while strict source rejects the active rider", () => {
+  const t = native(), actor = t.snapshot.actors.find((a) => a.id === t.id)!;
+  actor.riding = true; actor.riderAssetId = 1; actor.rideOnEntity = "riding";
+  const before = serial(t.snapshot), command = lerp();
+  assert.throws(() => projectFieldScriptLerp(t.snapshot, t.f.input.providers, t.id,
+    command, t.f.map.mapRange, null, 0), /riding host/);
+  const providers = { ...t.f.input.providers, transportationPresentation: "framework-development" as const };
+  const first = projectFieldScriptLerp(t.snapshot, providers, t.id, command, t.f.map.mapRange, null, 0);
+  const last = projectFieldScriptLerp(first.snapshot, providers, t.id, command, t.f.map.mapRange, first.progress, 0.5);
+  const after = last.snapshot.actors.find((a) => a.id === t.id)!;
+  assert.equal(last.flow, "next"); assert.equal(after.riding, true); assert.equal(after.riderAssetId, 1);
+  assert.equal(serial(t.snapshot), before);
+});
+
 test("Lerp layer increase applies view at start, decrease at completion, with no partial provider failure", () => {
   const t = native(), command = lerp({ layer: 3 });
   const up = projectFieldScriptLerp(t.snapshot, t.f.input.providers, t.id, command, t.f.map.mapRange, null, 0);

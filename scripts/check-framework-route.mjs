@@ -41,23 +41,32 @@ while (entry.phase !== "field-preparing") {
   assert.ok(next); next.commit(); fade = next.fade;
 }
 const game = GameSession.prepareNewGame(content, catalog, map, battle, fade, presentation,
-  { audioReadiness: { isReady: () => true } });
+  { audioReadiness: { isReady: () => true }, transportationTimestamp: () => "639273600000000000" });
 const launch = entry.prepareLaunch(fade, game.newGamePreparation(true));
 game.launchNewGame(launch.launch); launch.commit();
 const flow = new GameFlow(game), host = { visible: true, mediaReady: true, overlayOpen: false };
 flow.start();
-const ownedAtStart = game.state.snapshot(), transitions = [], answers = [], motionSamples = [];
+const ownedAtStart = game.state.snapshot(), transitions = [], answers = [], motionSamples = [], transportation = [];
+const transportationOffsets = new WeakMap();
+function recordTransportation(field) {
+  const offset = transportationOffsets.get(field) ?? 0;
+  transportation.push(...field.transportationExecutions.slice(offset).map((entry) => ({
+    mapId: field.content.map.identity.mapId, ...entry,
+  })));
+  transportationOffsets.set(field, field.transportationExecutions.length);
+}
 const sampledActors = new Set();
 const report = { kind: "framework-source-route-check-v1", result: "running", profile: content.developmentProfile.kind,
   entryHash: content.contentHash, catalogHash: catalog.contentHash, battleHash: battle.contentHash,
   sourceEntryHash: content.developmentProfile.sourceContentHash,
-  controlledInputs: ["headless title, field UI and immediately ready audio", "10ms host updates", "automatic dialogue confirm; first displayed choice"],
+  controlledInputs: ["headless title, field UI and immediately ready audio", "10ms host updates", "automatic dialogue confirm; first displayed choice", "fixed explicit transportation timestamp"],
   omittedEnvironmentEffects: content.developmentProfile.omissions.length,
-  originalGameExecuted: false, completeOpening: false, transitions, answers, motionSamples };
+  originalGameExecuted: false, completeOpening: false, transitions, answers, motionSamples, transportation };
 const output = resolve(root, options.get("--report") ?? "build/reports/framework-source-route-check.json");
 let elapsedMs = 0, boundary = null;
 try {
   for (; elapsedMs < 120000; elapsedMs += 10) {
+    recordTransportation(game.field);
     const stop = game.field.stop;
     if (stop?.kind === "map-transition") {
       const ticket = flow.beginOperation("map");
@@ -103,6 +112,7 @@ try {
   report.result = "passed";
 } catch (error) { report.result = "failed"; throw error; }
 finally {
+  recordTransportation(game.field);
   Object.assign(report, { elapsedMs, boundary, mapId: game.field.content.map.identity.mapId,
     currentPhase: flow.phase, checkpointReady: game.checkpointReady });
   await writeFile(output, JSON.stringify(report, null, 2) + "\n");

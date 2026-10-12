@@ -13,12 +13,13 @@ const hook = registerHooks({ resolve(specifier, context, next) {
 } });
 let Renderer;
 try { ({ Renderer } = await import("../apps/game/renderer.js")); } finally { hook.deregister(); }
-const [{ fieldActorFactoryFixture }, { createFieldActorFactoryCandidate }, { createNativeFieldActorProjections },
+const [{ fieldActorFactoryFixture }, { createFieldActorFactoryCandidate }, { createNativeFieldActorProjections, createNativeFieldActorProjection },
   { compileFieldNativeComposition }, { fieldCameraCellToWorld }, { ordinaryFieldCompositionRenderHost },
   { compileFieldActorView }, { projectFieldActorView }] = await Promise.all([
   load("tests/fixtures/field-actor-factory.js"), load("src/core/field-actor-factory.js"), load("src/core/field-native-actors.js"),
   load("src/compiler/field-native-composition.js"), load("src/core/field-camera.js"), load("src/core/field-native-composition.js"),
   load("src/compiler/field-actor-view.js"), load("src/core/field-actor-view.js")]);
+const { ActorAnimation } = await load("src/core/actor-animation.js");
 class Canvas {
   constructor(width = 0, height = 0) { this.width = width; this.height = height; this.draws = []; this.fills = 0; this.puts = 0;
     this.ownerDocument = { createElement: () => new Canvas() }; }
@@ -199,6 +200,36 @@ run("Web display is point-scaled after source rendering and never changes camera
   const wrongAspect = fixture({ host: true, width: 320, height: 256 });
   assert.throws(() => wrongAspect.renderer.draw(wrongAspect.game), /宽高比/);
   assert.equal(wrongAspect.canvas.puts, 0);
+});
+function mountedFixture() {
+  const t = fixture(), old = t.player.native;
+  t.content.characters.armor.sprites.body.file = "mount.png";
+  const blue = { width: 16, height: 24, data: new Uint8ClampedArray(16 * 24 * 4) };
+  for (let i = 0; i < blue.data.length; i += 4) blue.data.set([0, 0, 255, 255], i);
+  t.renderer.images.set("mount.png", blue);
+  const animation = new ActorAnimation(t.content.characters.armor); animation.cue("Default", 0);
+  const mounted = createNativeFieldActorProjection({ ...old, fieldAssetId: 38,
+    entity: { ...old.entity, riding: true, riderAssetId: old.fieldAssetId, rideOnEntity: "riding",
+      direction: "down", animation } }, t.f.map.mapRange, t.f.partyCatalog, "framework-development");
+  t.actors[mounted.id] = mounted; t.player = mounted; t.game.player = mounted;
+  return t;
+}
+run("framework riding renders inner and outer media through the same map compositor without mutating playback", () => {
+  const t = mountedFixture(); t.game.transportationPresentation = "framework-development";
+  const before = t.player.animation.snapshot(), entity = t.player.native.entity;
+  t.renderer.draw(t.game);
+  assert.equal(t.canvas.puts, 1); assert.equal(t.canvas.draws.length, 0);
+  assert.ok(t.renderer.presentationOmissions.some((o) => o.kind === "framework-rider-pose-crop-offset"));
+  const data = t.canvas.getContext().data, colors = new Set();
+  for (let i = 0; i < data.length; i += 4) colors.add([...data.slice(i, i + 4)].join(","));
+  assert.ok(colors.has("255,0,0,255"), "inner rider image must be present");
+  assert.ok(colors.has("0,0,255,255"), "outer transportation image must be present");
+  assert.deepEqual(t.player.animation.snapshot(), before); assert.equal(t.player.native.entity, entity);
+});
+run("mounted native actor cannot grant framework presentation to the strict renderer", () => {
+  const t = mountedFixture();
+  assert.throws(() => t.renderer.draw(t.game), /骑乘/);
+  assert.equal(t.canvas.puts, 0); assert.equal(t.canvas.draws.length, 0);
 });
 await mkdir(root + "build/reports", { recursive: true });
 const report = { kind: "field-native-composition-ui", tests, passed: tests.length, rendererSha256: (await import("node:crypto")).createHash("sha256")

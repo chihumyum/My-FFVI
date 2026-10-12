@@ -5,6 +5,7 @@ import { readNativeFieldActors, type NativeFieldActorOwner } from "./field-nativ
 import type { FieldPartyActorRenderStep, FieldPartyActorRendererPublication } from "./field-party-actors.js";
 import type { FieldPuppetHostActor, FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import type { PartyActorAsset, PartyActorCatalog } from "./party-actors.js";
+import type { FieldTransportActorPresentation } from "./field-transport-actors.js";
 import type { Character, Direction, Evidence } from "../field/types.js";
 
 export type FieldNativeAnimationKeys = {
@@ -20,6 +21,7 @@ export type NativeFieldAppearanceHost = {
   readCharacters(): Readonly<Record<string, Character>>;
   readAnimationKeys(): FieldNativeAnimationKeys;
   readProviders(): FieldPuppetHostProviders;
+  transportationPresentation?: FieldTransportActorPresentation;
 };
 
 /** SetAssetStructure (aec180) allocates a fresh animation owner, then
@@ -66,7 +68,8 @@ function capture(host: NativeFieldAppearanceHost) {
   return { snapshot, refs, fingerprint: canonical(snapshot.actors.map(serialEntity)) };
 }
 type Capture = ReturnType<typeof capture>;
-type AppearanceUpdate = { id: string; fieldAssetId: number; animation: ActorAnimation; shadowVisible: boolean };
+type AppearanceUpdate = { id: string; fieldAssetId: number; riderAssetId: number | null;
+  animation?: ActorAnimation; shadowVisible?: boolean };
 
 function boundAsset(catalog: PartyActorCatalog, value: PartyActorAsset): PartyActorAsset {
   const expected = catalog.assets[value.id];
@@ -98,14 +101,19 @@ function project(host: NativeFieldAppearanceHost, input: Capture, steps: readonl
   const usedMedia = new Map<string, Character>(), usedAssets = new Map<number, PartyActorAsset>();
   const updates = new Map<string, AppearanceUpdate>();
   for (const step of steps) {
-    if (step.media.mount !== null) throw new Error("Native appearance riding publication is unavailable");
+    if (step.media.mount !== null && host.transportationPresentation !== "framework-development")
+      throw new Error("Native appearance riding publication is unavailable without framework-development presentation");
     for (const change of step.plan.changes) {
       const entity = entities.get(change.actorId);
       if (!entity) throw new Error("Missing native appearance actor: " + change.actorId);
       if (input.refs.find((ref) => ref.id === entity.id)!.native.mapObjectAsset !== undefined)
         throw new Error("Party appearance cannot replace a map-object actor asset");
-      if (!entity.character || change.mode !== "replace" || entity.riding || entity.riderAssetId !== null ||
-          !["absent", "idle"].includes(entity.rideOnEntity)) throw new Error("Native appearance riding/character replacement is unavailable");
+      if (!entity.character || !["replace", "rider"].includes(change.mode) || entity.rideOnEntity === "unknown" || entity.riding !== (entity.rideOnEntity === "riding") ||
+          entity.rideOnEntity === "absent" && entity.riderAssetId !== null ||
+          change.mode === "replace" && entity.riding || change.mode === "rider" && !entity.riding)
+        throw new Error("Native appearance riding/character replacement is unavailable");
+      if (change.mode === "rider" && host.transportationPresentation !== "framework-development")
+        throw new Error("Native rider replacement requires framework-development presentation");
       const selected = boundAsset(catalog, change.asset), character = characters[selected.asset];
       if (!character) throw new Error("Missing native appearance media: " + selected.asset);
       const keys = animationKeys.assets[selected.asset];
@@ -120,10 +128,24 @@ function project(host: NativeFieldAppearanceHost, input: Capture, steps: readonl
         usedAssets.set(oldAsset.id, oldAsset); usedMedia.set(oldAsset.asset, oldCharacter);
       }
       material(entity, providers);
+      if (change.mode === "rider") {
+        if (oldAssetId === null || entity.riderAssetId === null) throw new Error("Missing native inner/outer appearance identity");
+        const oldRider = catalog.assets[entity.riderAssetId], oldRiderMedia = oldRider && characters[oldRider.asset];
+        if (!oldRider || !oldRiderMedia) throw new Error("Unbound native prior rider media");
+        usedAssets.set(oldRider.id, oldRider); usedMedia.set(oldRider.asset, oldRiderMedia);
+        // UpdateRigingCharaAsset changes +0x1a0 and the ride-on component. The
+        // outer playback/shadow remain owned by the transport. The framework
+        // renderer derives its inner presentation from these real identities.
+        entity.riderAssetId = selected.id;
+        usedAssets.set(selected.id, selected); usedMedia.set(selected.asset, character);
+        updates.set(entity.id, { ...updates.get(entity.id), id: entity.id, fieldAssetId: oldAssetId, riderAssetId: selected.id });
+        continue;
+      }
       const animation = replaceNativeFieldActorAnimation(entity.animation, character, entity.direction, keys.keys);
       entity.animation = animation; entity.shadowVisible = selected.shadowType === 1;
       assets.set(entity.id, selected.id); usedAssets.set(selected.id, selected); usedMedia.set(selected.asset, character);
-      updates.set(entity.id, { id: entity.id, fieldAssetId: selected.id, animation, shadowVisible: entity.shadowVisible });
+      updates.set(entity.id, { id: entity.id, fieldAssetId: selected.id, riderAssetId: entity.riderAssetId,
+        animation, shadowVisible: entity.shadowVisible });
     }
   }
   return { updates: [...updates.values()], media: [...usedMedia.entries()],
@@ -156,7 +178,7 @@ export function prepareNativeFieldActorAppearance(
   });
   const validateWritable = () => {
     for (const { ref } of writes) {
-      writable(ref.native, ["fieldAssetId"]); writable(ref.entity, ["animation", "shadowVisible"]);
+      writable(ref.native, ["fieldAssetId"]); writable(ref.entity, ["animation", "shadowVisible", "riderAssetId"]);
     }
   };
   validateWritable();
@@ -184,8 +206,9 @@ export function prepareNativeFieldActorAppearance(
       // roster/provider read between them. Keep outer/native/entity identities.
       for (const { ref, update } of writes) {
         ref.native.fieldAssetId = update.fieldAssetId;
-        ref.entity.animation = update.animation;
-        ref.entity.shadowVisible = update.shadowVisible;
+        ref.entity.riderAssetId = update.riderAssetId;
+        if (update.animation !== undefined) ref.entity.animation = update.animation;
+        if (update.shadowVisible !== undefined) ref.entity.shadowVisible = update.shadowVisible;
       }
       committed = true;
     },

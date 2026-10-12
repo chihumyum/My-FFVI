@@ -21,6 +21,9 @@ const lanes = [
   ["dialogue-choice-ui", "check-event-interactions-ui.mjs", "event-interaction-ui-check.json", "checks"],
   ["battle-command-ui", "check-battle-abilities-ui.mjs", "battle-abilities-ui-check.json", "checked"],
   ["battle-command-persistence", "check-battle-row-change.mjs", "battle-row-change-check.json", "stages"],
+  ["transportation-state", "check-transportation-state.mjs", "transportation-state-check.json", "cases"],
+  ["transportation-lifecycle", "check-field-transportation-session.mjs", "field-transportation-session-check.json", "cases"],
+  ["field-compositor", "check-field-native-composition-ui.mjs", "field-native-composition-ui-check.json", "tests"],
   ["source-journey", "check-framework-route.mjs", "framework-source-route-check.json", "transitions"],
 ];
 async function runtimeDigest() {

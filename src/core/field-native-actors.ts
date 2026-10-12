@@ -7,7 +7,10 @@ import type { FieldPuppetActorPlan, FieldPuppetActorsPort, FieldPuppetControlCon
 import { projectFieldPuppetActorEffects, type FieldPuppetHostActor, type FieldPuppetHostProviders,
   type FieldPuppetHostSnapshot } from "./field-puppet-effects.js";
 import type { PartyActorCatalog } from "./party-actors.js";
-import type { Direction, Evidence, Point } from "../field/types.js";
+import { projectFieldPuppetTransportationEffects, type FieldTransportActorPresentation,
+  type FieldTransportActorOperation } from "./field-transport-actors.js";
+import type { FieldNativeAnimationKeys } from "./field-native-appearance.js";
+import type { Character, Direction, Evidence, Point } from "../field/types.js";
 
 /** This is stored ON the existing FieldGame Actor. It is not a second actor
  * collection. The native entity owns pose, playback and visibility; outer
@@ -55,6 +58,13 @@ export type NativeFieldPuppetActorsHost = NativeFieldActorEffectHost & {
   readContext(): NativeFieldActorContextRead;
   controlContext(): FieldPuppetControlContext;
   prepareCollision(enabled: boolean): () => void;
+  /** The same FieldPartyActors owner prepares the metadata half of script
+   * Init/Finish. Reads and all validation precede native/party publication. */
+  transportation?: {
+    read(): { catalog: PartyActorCatalog; characters: Readonly<Record<string, Character>>;
+      animationKeys: FieldNativeAnimationKeys; presentation: FieldTransportActorPresentation };
+    prepare(operations: readonly FieldTransportActorOperation[]): { validate(): void; commit(): void };
+  };
 };
 
 const f = Math.fround;
@@ -110,6 +120,7 @@ function asset(catalog: PartyActorCatalog, data: NativeFieldActorData): string |
  * function makes no publication and never retains the candidate or camera. */
 export function createNativeFieldActorProjections(
   candidate: FieldActorFactoryCandidate, map: FieldCameraMapRange, catalog: PartyActorCatalog,
+  transportationPresentation?: FieldTransportActorPresentation,
 ): NativeFieldActor[] {
   mapRange(map);
   const ids = new Set<string>();
@@ -126,7 +137,7 @@ export function createNativeFieldActorProjections(
     const metadata = candidate.assets.find((row) => row.id === source.id);
     if (!metadata || source.moving) throw new Error("Unbound or already moving factory actor");
     return createNativeFieldActorProjection({ entity: source, fieldAssetId: metadata.fieldAssetId,
-      charaZOffset: metadata.charaZOffset }, map, catalog);
+      charaZOffset: metadata.charaZOffset }, map, catalog, transportationPresentation);
   });
 }
 
@@ -134,6 +145,7 @@ export function createNativeFieldActorProjections(
  * source-bound map NPCs. Asset identity remains in its own table domain. */
 export function createNativeFieldActorProjection(
   input: NativeFieldActorData, map: FieldCameraMapRange, catalog: PartyActorCatalog,
+  transportationPresentation?: FieldTransportActorPresentation,
 ): NativeFieldActor {
     mapRange(map);
     const boundMap = { ...map };
@@ -146,8 +158,23 @@ export function createNativeFieldActorProjection(
     };
     const assetName = asset(catalog, data);
     if ((assetName === null) !== (entity.animation === null)) throw new Error("Native factory media/asset binding mismatch");
-    if (entity.riding || entity.riderAssetId !== null || !["absent", "idle"].includes(entity.rideOnEntity))
-      throw new Error("Native field actor riding projection is unavailable");
+    const ridingMedia = () => {
+      const a = data.entity;
+      if (a.rideOnEntity === "unknown" || a.riding !== (a.rideOnEntity === "riding") ||
+          a.rideOnEntity === "absent" && a.riderAssetId !== null ||
+          data.mapObjectAsset !== undefined && (a.riding || a.riderAssetId !== null))
+        throw new Error("Invalid native field riding component/cache");
+      const rider = a.riderAssetId === null ? null : catalog.assets[a.riderAssetId];
+      if (a.riderAssetId !== null && (!Number.isInteger(a.riderAssetId) || !rider || rider.id !== a.riderAssetId || !rider.asset))
+        throw new Error("Unbound native field rider asset");
+      if (!a.riding) return { asset: asset(catalog, data), mount: null };
+      if (transportationPresentation !== "framework-development")
+        throw new Error("Native field actor riding projection requires framework-development presentation");
+      const outer = asset(catalog, data);
+      if (!a.character || !rider || outer === null) throw new Error("Missing native riding inner/outer asset");
+      return { asset: rider.asset, mount: outer };
+    };
+    ridingMedia();
     const actor = { motion: null, steps: 0 } as NativeFieldActor;
     Object.defineProperties(actor, {
       id: { enumerable: true, value: entity.id },
@@ -184,12 +211,8 @@ export function createNativeFieldActorProjection(
           if (value !== null && !(value instanceof ActorAnimation)) throw new Error("Unknown native field playback");
           data.entity.animation = value;
         } },
-      asset: { enumerable: true, get: () => asset(catalog, data) },
-      mount: { enumerable: true, get: () => {
-        if (data.entity.riding || data.entity.riderAssetId !== null || !["absent", "idle"].includes(data.entity.rideOnEntity))
-          throw new Error("Native field actor riding projection is unavailable");
-        return null;
-      } },
+      asset: { enumerable: true, get: () => ridingMedia().asset },
+      mount: { enumerable: true, get: () => ridingMedia().mount },
     });
     // Interpolation already belongs to Actor.motion. The native read shape must
     // not keep a second moving flag which remains true after that motion ends.
@@ -345,6 +368,40 @@ export function prepareNativeFieldActorState(
   };
 }
 
+function prepareNativeFieldPuppetTransportation(
+  host: NativeFieldPuppetActorsHost, plan: Readonly<FieldPuppetActorPlan>, validateCurrent: () => void,
+): () => void {
+  const transportation = host.transportation!;
+  const initial = capture(host), effects = structuredClone(plan.effects);
+  const project = () => projectFieldPuppetTransportationEffects({ ...transportation.read(), effects,
+    snapshot: initial.snapshot, assets: initial.refs.map(({ id, fieldAssetId, charaZOffset }) =>
+      ({ id, fieldAssetId, charaZOffset })), providers: host.readProviders() });
+  const next = project();
+  const serialResult = (value: typeof next) => canonical({ ...value, snapshot: serial(value.snapshot),
+    characters: value.snapshot.actors.map((actor) => actor.animation?.character ?? null) });
+  const expected = serialResult(next);
+  const candidate = Object.fromEntries(initial.refs.map((ref, index) => [ref.id, { id: ref.id,
+    native: { ...ref.native, entity: next.snapshot.actors[index]!,
+      fieldAssetId: next.assets.find((row) => row.id === ref.id)!.fieldAssetId } }]));
+  const actorPublication = prepareNativeFieldActorState(host, candidate);
+  const partyPublication = transportation.prepare(structuredClone(next.operations));
+  const cameraChanged = canonical(initial.snapshot.camera) !== canonical(next.snapshot.camera);
+  if (cameraChanged && !host.prepareCamera) throw new Error("Native camera effects require the existing camera owner");
+  const publishCamera = cameraChanged ? host.prepareCamera!(next.snapshot.camera) : null;
+  if (publishCamera !== null && typeof publishCamera !== "function") throw new Error("Invalid native camera transaction");
+  let committed = false;
+  return () => {
+    if (committed) throw new Error("Native field actor transaction already committed");
+    if (host.transportation !== transportation) throw new Error("Stale native transportation host");
+    validateCurrent(); actorPublication.validate(); partyPublication.validate();
+    if (serialResult(project()) !== expected) throw new Error("Stale native transportation providers");
+    // Read-only providers cannot mutate an owner while we validate the other.
+    validateCurrent(); actorPublication.validate(); partyPublication.validate();
+    publishCamera?.();
+    actorPublication.commit(); partyPublication.commit(); committed = true;
+  };
+}
+
 /** Dynamic adapter to the existing actor, roster, appearance, camera and
  * collision owners. No mutable owned/actor/camera collection is retained. */
 export function createNativeFieldPuppetActorsPort(host: NativeFieldPuppetActorsHost): FieldPuppetActorsPort {
@@ -359,9 +416,13 @@ export function createNativeFieldPuppetActorsPort(host: NativeFieldPuppetActorsH
     read,
     prepare: (plan) => {
       const context = canonical(read());
-      return prepareNativeFieldActorEffects(host, plan, () => {
+      const validate = () => {
         if (canonical(read()) !== context) throw new Error("Stale native field actor context");
-      });
+      };
+      if (host.transportation && host.readProviders().transportationPresentation === "framework-development" &&
+          plan.effects.some((effect) => effect.kind === "ride-on" || effect.kind === "ride-out"))
+        return prepareNativeFieldPuppetTransportation(host, plan, validate);
+      return prepareNativeFieldActorEffects(host, plan, validate);
     },
     controlContext: () => structuredClone(host.controlContext()),
     prepareCollision: (enabled) => host.prepareCollision(enabled),

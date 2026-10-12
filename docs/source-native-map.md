@@ -2,6 +2,8 @@
 
 本模块迁移普通 `ResetMap → LoadMap → MapInitialize → MapSetup → MapViewSetup` 中已持有演员的生命周期。它生成待发布候选，不创建第二份演员所有者，也不以新游戏 factory 代替跨图。当前实际来源前导 `sc_e_0001` 的 index 19 是 `ChangeMap(3, 1, view=0, continuation=sc_e_0001_1)`；这一调用点是来源回归样本，运行时没有地图或脚本名称分支。
 
+v44 通过显式 `transportationPresentation: "framework-development"` 接入已验证普通入口计划的骑乘资产生命周期；严格来源双层表现仍有门禁。失活 rider cache 按来源保留，不再一概拒绝。具体调用顺序、保存合同和本批测试见 [交通演员](field-transport-actors.md)。下方 v43 的来源报告及路线数字作为该批历史证据保留。
+
 ## 来源边界
 
 所有证据绑定当前本地 `GameAssembly.dll`、IL2CPP symbols/header 与原资产快照。以下是静态原生证据；`originalGameExecuted=false`、`semanticsVerified=false`，不是原版动态一致性。
@@ -40,12 +42,13 @@ prepareSourceNativeMap({
   characters, animationKeys, // 完整来源 key 索引包含尚未可执行的 key
   priorComposition,  // 可选的可信旧图合成定义；旧演员有 RT 引用时必需
   view, providers,   // 明确的目的图来源材质与 raw foot 提供器
+  transportationPresentation, // 可选；活跃骑乘需要明确 framework-development
 }): FieldActorFactoryCandidate
 ```
 
 候选保持原生实例 ID，允许新 `FieldGame` 用新 JavaScript 投影对象封装这些身份。它深拷贝坐标、播放对象、相机 dummy 和资产元数据；准备失败不会改动旧字段、owned 或 event state。
 
-只有实际玩家采用目的 PointIn 的位置、层和朝向。其动画严格按“基础资产替换 → 可选条件资产替换 → 正常 Look → walking 缓存资产再次替换”计算；同方向正在播放的动画保留进度，改方向则采用来源 cue。中间资产缺少旧 key 时发生的回退不能因为最后资产再次包含旧 key 而撤销。完整来源 key 索引用于区分“原版没有该 key”和“尚未编译支持该 key”，后者必须拒绝。旧编译版本的同方向进度丢失已在 `build/reports/v32-native-map-animation-before.log` 复现，并有修复后回归。
+只有实际玩家采用目的 PointIn 的位置、层和朝向。普通行走动画按“基础资产替换 → 可选条件资产替换 → 正常 Look → walking 缓存资产再次替换”计算；骑乘则在最后按来源执行强制 RideOn 与 outer 替换，并由明确的开发表现宿主接收。其他持续演员保留骑乘与缓存。同方向正在播放的动画保留进度，改方向则采用来源 cue。中间资产缺少旧 key 时发生的回退不能因为最后资产再次包含旧 key 而撤销。完整来源 key 索引用于区分“原版没有该 key”和“尚未编译支持该 key”，后者必须拒绝。旧编译版本的同方向进度丢失已在 `build/reports/v32-native-map-animation-before.log` 复现，并有修复后回归。
 
 PointIn 使用资产包绝对格坐标；候选先减 `mapRange.x/y`，再用 `fieldCameraCellToWorld` 转到源世界像素。测试使用非零范围原点，验证 native projection 回到同一绝对格坐标，防止新地图尺寸和裁剪范围导致漂移。
 
@@ -70,9 +73,9 @@ PointIn 使用资产包绝对格坐标；候选先减 `mapRange.x/y`，再用 `f
 
 ## 当前明确门禁
 
-普通路径要求已有完整持续演员集合、无 companion、正 PointIn、非循环地图、view 0、明确且未切换的走路交通身份。地图入口需要 `prepareMapPartyEntry` 已核实的旗标、队伍和条件依赖。以下分支仍拒绝：
+普通路径要求已有完整持续演员集合、无 companion、正 PointIn、非循环地图、view 0、明确且未切换的交通身份。活跃骑乘还需明确的开发表现能力。地图入口需要 `prepareMapPartyEntry` 已核实的旗标、队伍和条件依赖。以下分支仍拒绝：
 
-- 活动移动、骑乘或保留的 rider cache；不能为了跨图清掉尚未恢复的状态。
+- 活动移动、缺少开发表现提供器的活跃骑乘、未知或与外观 owner 不一致的 rider cache；不能为了跨图清掉状态。
 - 新/缺/重复演员身份、旧外观簿记与实际 metadata 不符、缺媒体、隐藏演员的损坏播放。
 - 缺少完整来源动画 key 索引或替换中选中了尚未编译的 key；`FieldPlayer.GetOn` `0xe19090` 读取 Default playmode 为 1 时的自动播放分支也独立拒绝，不当成普通静止步行资产。
 - 自定义水面/调色板/着色器、身体透明与缺失的材质提供器。

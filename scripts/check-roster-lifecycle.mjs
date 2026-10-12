@@ -61,7 +61,7 @@ const make = () =>
     catalog.common.conditions,
   );
 const initial = make().snapshot();
-assert.equal(initial.formatVersion, 9);
+assert.equal(initial.formatVersion, 10);
 const { dependencies, ...initialMetadata } = compileInitialRosterLifecycle(
   corpus.tables,
   initial.roster,

@@ -2,6 +2,7 @@ import { canonical, hash } from "./content.js";
 import { fieldEffectCompilationBlockers } from "./field-effects.js";
 import { fieldEffectBoardBlockers } from "../core/field-effects.js";
 import type { DevelopmentOmission, DevelopmentProfile } from "../core/development-profile.js";
+import { FRAMEWORK_TRANSPORTATION_LIMITATIONS } from "../core/development-profile.js";
 import type { SourceNewGameContent } from "../core/source-new-game.js";
 import type { EntityGroup, Evidence, FieldEntity } from "../field/types.js";
 import type { ContentIssue, WorldCatalog, WorldMapContent } from "../field/world.js";
@@ -23,6 +24,7 @@ export type FrameworkContentReport = {
   maps: { mapId: number; sourceContentHash: string; contentHash: string }[];
   omissions: DevelopmentOmission[];
   retained: FrameworkContentRetained[];
+  transportation: { capability: NonNullable<DevelopmentProfile["transportation"]>; limitations: string[] };
 };
 export type FrameworkContent = {
   catalog: WorldCatalog & { developmentProfile: DevelopmentProfile };
@@ -34,7 +36,7 @@ export type FrameworkContent = {
 const PROFILE = "framework-development-v1";
 const POLICY = "omit-anonymous-environment-particles-v1";
 const REASON = "Framework development omits this anonymous, non-interactive environment particle; exact-source playback remains unimplemented.";
-const LIMITATION = "Framework development omits source-bound anonymous environment particles. Story instructions, owned state and non-presentation blockers are unchanged; this is not exact-source visual acceptance.";
+const LIMITATION = "Framework development omits source-bound anonymous environment particles and enables an explicit walking/Magitek transportation variant. It preserves parking, release flags, actor identity and current transportation, while vehicle control, collision geometry, encounter-table switching, transport BGM, transport condition removal and native boarding/feet/rider animation are not reproduced. Other story instructions and blockers remain unchanged; this is not exact-source acceptance.";
 const ENTITY_KEYS = new Set(["id", "objectId", "kind", "layer", "x", "y", "width", "height", "asset", "direction",
   "script", "collision", "destinationLayer", "source", "effect"]);
 const EFFECT_KEYS = new Set(["kind", "assetId", "assetGroup", "assetName", "pixelPosition", "pixelSize", "playOnAwake",
@@ -53,7 +55,8 @@ function verify(value: { contentHash: string; developmentProfile?: DevelopmentPr
     throw new Error("Framework derivation requires strict input, not an existing development profile");
 }
 function profile(sourceContentHash: string, omissions: DevelopmentOmission[]): DevelopmentProfile {
-  return { kind: PROFILE, policy: POLICY, sourceContentHash, omissions: structuredClone(omissions) };
+  return { kind: PROFILE, policy: POLICY, sourceContentHash, omissions: structuredClone(omissions),
+    transportation: "walking-magitek-framework-v1" };
 }
 function sourceObject(a: Evidence, b: Evidence): boolean {
   const { pointer: _a, ...objectA } = a, { pointer: _b, ...objectB } = b;
@@ -125,8 +128,8 @@ function eligibility(map: WorldMapContent, groupKey: string, group: EntityGroup,
   return { reasons: [...new Set(reasons)], particleBlockers };
 }
 
-/** Produce a separate framework world without manufacturing particle state or
- * changing story/owned data. Callers publish these files under /framework/;
+/** Produce a separately identified framework world with declared omissions
+ * and an explicit transportation integration variant. Callers publish under /framework/;
  * strict packages remain independently loadable and verifiable. */
 export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps: readonly WorldMapContent[],
   strictEntry: SourceNewGameContent): FrameworkContent {
@@ -217,6 +220,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
     developmentProfile: profile(strictEntry.contentHash, omissions) });
   return { catalog: derivedCatalog, maps, entry,
     report: { profile: PROFILE, policy: POLICY, sourceCatalogHash: strictCatalog.contentHash,
+      transportation: { capability: "walking-magitek-framework-v1", limitations: [...FRAMEWORK_TRANSPORTATION_LIMITATIONS] },
       sourceEntryHash: strictEntry.contentHash, catalogHash: derivedCatalog.contentHash, entryHash: entry.contentHash,
       maps: maps.map((map) => ({ mapId: map.mapId, sourceContentHash: map.developmentProfile.sourceContentHash,
         contentHash: map.contentHash })), omissions: structuredClone(omissions), retained } };

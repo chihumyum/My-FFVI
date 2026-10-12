@@ -48,7 +48,10 @@ const contents = new GameContentRepository(async (url) => {
   if (!response.ok) throw new Error("游戏内容载入失败，请确认本地内容已经构建。");
   return response.json();
 }, contentProfile);
-const runtime = { audioReadiness: { isReady: (track) => audio.isReady(track) } };
+const runtime = { audioReadiness: { isReady: (track) => audio.isReady(track) },
+  // Source DateTime.Now.Ticks is local wall time. Keep its Int64 as a string.
+  transportationTimestamp: () => { const now = new Date();
+    return (621355968000000000n + BigInt(now.getTime() - now.getTimezoneOffset() * 60000) * 10000n).toString(); } };
 const preview = query.has("map")
   ? {
       mapId: Number(query.get("map")),
@@ -534,7 +537,7 @@ async function init() {
   });
   showLimitations();
   if (contentProfile === "framework") {
-    text("welcome-scope", "可从故事开头运行；当前开发版暂不显示部分环境粒子，剧情与游戏系统仍在迁移中。");
+    text("welcome-scope", "可从故事开头运行；当前开发版采用简化的环境与骑乘演出，剧情与游戏系统仍在迁移中。");
     text("source-start", "从头开始（框架开发版）");
   }
   if (preview) {

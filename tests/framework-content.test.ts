@@ -69,6 +69,9 @@ test("framework derivation preserves strict bytes and all gameplay inputs while 
   assert.deepEqual({ catalog: f.catalog, maps: f.maps, entry: f.entry }, before);
   assert.equal(result.report.omissions.length, 1);
   assert.equal(result.report.retained.length, 0);
+  assert.equal(target.developmentProfile.transportation, "walking-magitek-framework-v1");
+  assert.equal(result.report.transportation.capability, target.developmentProfile.transportation);
+  assert.ok(result.report.transportation.limitations.some((text) => text.includes("GPS")));
   assert.equal(target.map!.entities.some((e) => e.kind === 11), false);
   assert.equal(target.map!.groups!.entity_default!.entities.some((e) => e.kind === 11), false);
   assert.deepEqual(target.map!.groups!.entity_default!.blockers, []);

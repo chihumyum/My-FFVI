@@ -49,6 +49,7 @@ try {
   const { FieldFadeState } = await module("core/field-fade");
   const { createSourcePresentationContext } = await module("core/source-presentation");
   const { createNewGame } = await module("core/new-game");
+  const { createSourceNativeState } = await module("core/source-native-state");
   const { fieldCameraCellToWorld } = await module("core/field-camera");
   const { canonical } = await module("core/canonical");
   const readPackage = async (file, expected) => {
@@ -142,8 +143,9 @@ try {
   report.sourceSessionCreated = true;
   const initial = game.state.snapshot(), plan = createNewGame(battle.gameState.sourceNewGame);
   check("fresh owner retains the complete source initializer without development condition 607", () => {
-    assert.equal(initial.formatVersion, 9); assert.equal(initial.initialization, "source-new-game");
-    assert.deepEqual(initial.nativeState, { kind: "source-native-state-v1", entrySeed: plan.entry, ...plan.nativeInitialization });
+    assert.equal(initial.formatVersion, 10); assert.equal(initial.initialization, "source-new-game");
+    assert.deepEqual(initial.nativeState, createSourceNativeState(plan));
+    assert.equal(initial.nativeState.kind, "source-native-state-v2");
     assert.deepEqual(game.state.fieldPuppetRoster.current(), { owned: [
       { ownedId: 1, sourceId: 1, enabled: true, conditionTypes: [] },
       { ownedId: 2, sourceId: 31, enabled: true, conditionTypes: [] },

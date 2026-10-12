@@ -86,7 +86,7 @@ check("published shared owner is bound to the same source initialization and com
   assert.deepEqual(catalog.gameState.sourceNewGame, initialization.definition);
   assert.deepEqual(system.initialStock, plan.owned.equipmentStock);
   const fresh = make().snapshot();
-  assert.equal(fresh.formatVersion, 9);
+  assert.equal(fresh.formatVersion, 10);
   assert.deepEqual(fresh.equipmentStock, plan.owned.equipmentStock);
   assert.ok(fresh.roster.every((p) => p.conditionIds.length === 0), "Fresh source state does not borrow checkpoint conditions");
 });

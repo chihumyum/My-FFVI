@@ -11,6 +11,7 @@ import { fieldNativeNpcSelectorBinding, type FieldNativeNpcDefinition } from "./
 import { fieldPuppetBoundTransparentTextures, type FieldPuppetHostActor,
   type FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import type { PartyActorCatalog, PartyActorInstance } from "./party-actors.js";
+import { validateFieldTransportActorInstance, type FieldTransportActorPresentation } from "./field-transport-actors.js";
 import type { Character, Direction } from "../field/types.js";
 
 /** Runtime values only. Source metadata, prefab flags, asset IDs, shader
@@ -53,6 +54,7 @@ export type FieldNativeCheckpointContext = {
   characters: Readonly<Record<string, Character>>;
   npcs: readonly FieldNativeNpcDefinition[];
   providers: FieldPuppetHostProviders;
+  transportationPresentation?: FieldTransportActorPresentation;
   /** A retained off-map instance may still reference a previous map material.
    * Without that trusted definition the checkpoint is explicitly unavailable. */
   resolveRetainedView?(contextId: string): FieldPuppetHostProviders | null;
@@ -63,7 +65,9 @@ type BoundActor = {
   metadata: Omit<NativeFieldActorData, "entity">;
   media: Character | null;
   childEntityObject: "absent";
-  rideOnEntity: "idle";
+  rideOnEntity: "idle" | "riding";
+  riding: boolean;
+  riderAssetId: number | null;
 };
 const f = Math.fround;
 function float32(value: number, label: string): void {
@@ -95,24 +99,33 @@ function expectedActors(context: FieldNativeCheckpointContext): BoundActor[] {
     throw new Error("Native checkpoint persistent actor bindings changed");
   const result: BoundActor[] = [], ids = new Set<string>();
   const add = (id: string, metadata: BoundActor["metadata"], mediaName: string | null,
-    prefab: FieldActorFactoryCatalog["npcPrefab"] | FieldActorFactoryCatalog["playerPrefab"]) => {
+    prefab: FieldActorFactoryCatalog["npcPrefab"] | FieldActorFactoryCatalog["playerPrefab"],
+    riding = false, riderAssetId: number | null = null) => {
     if (typeof id !== "string" || !id || ids.has(id)) throw new Error("Duplicate native checkpoint actor identity");
     ids.add(id);
     const media = mediaName === null ? null : context.characters[mediaName];
     if (media === undefined || media !== null && (!media.source?.file || !media.source.assetPath ||
         !media.animations || !media.sprites || !Object.keys(media.sprites).length))
       throw new Error("Missing native checkpoint source media: " + mediaName);
-    result.push({ id, metadata, media, childEntityObject: prefab.childEntityObject, rideOnEntity: prefab.rideOnEntity });
+    result.push({ id, metadata, media, childEntityObject: prefab.childEntityObject,
+      rideOnEntity: riding ? "riding" : prefab.rideOnEntity, riding, riderAssetId });
   };
   const persistent = (actor: PartyActorInstance, player = false) => {
-    if (!actor || actor.riding !== false || actor.riderFieldAssetId !== null)
-      throw new Error("Native checkpoint riding lifecycle is unresolved");
+    if (!actor) throw new Error("Missing native checkpoint actor identity");
+    validateFieldTransportActorInstance(catalog, actor);
+    if (actor.riding && context.transportationPresentation !== "framework-development")
+      throw new Error("Native checkpoint riding lifecycle requires framework-development presentation");
+    if (actor.riderFieldAssetId !== null) {
+      const rider = catalog.assets[actor.riderFieldAssetId]!, media = context.characters[rider.asset];
+      if (!media?.source?.file || !media.source.assetPath || !media.animations || !media.sprites || !Object.keys(media.sprites).length)
+        throw new Error("Missing native checkpoint rider media");
+    }
     const asset = actor.fieldAssetId === null ? null : catalog.assets[actor.fieldAssetId];
     if (asset === undefined || asset !== null && (asset.id !== actor.fieldAssetId || ![0, 1].includes(asset.shadowType)))
       throw new Error("Unbound native checkpoint field asset");
     if (actor.fieldAssetId !== null) checkpointInteger(actor.fieldAssetId, 1, 0x7fffffff);
     add(actor.id, { fieldAssetId: actor.fieldAssetId, charaZOffset: player ? 0.5 : context.factory.residentCharaZOffset },
-      asset?.asset ?? null, player ? context.factory.playerPrefab : context.factory.npcPrefab);
+      asset?.asset ?? null, player ? context.factory.playerPrefab : context.factory.npcPrefab, actor.riding, actor.riderFieldAssetId);
   };
   persistent(c.player, true);
   for (const actor of c.puppets) persistent(actor!);
@@ -179,10 +192,11 @@ function restoreActor(row: FieldNativeActorCheckpoint, expected: BoundActor, con
   }
   const entity: FieldPuppetHostActor = { id: expected.id, character: true, position: { ...row.position }, layer: row.layer,
     direction: row.direction, animation, visible: row.visible, fadeAlpha: row.fadeAlpha,
-    bodyOpaque: row.bodyOpaque, shadowVisible: row.shadowVisible, moving: false, riding: false, riderAssetId: null,
+    bodyOpaque: row.bodyOpaque, shadowVisible: row.shadowVisible, moving: false, riding: expected.riding, riderAssetId: expected.riderAssetId,
     childEntityObject: expected.childEntityObject, rideOnEntity: expected.rideOnEntity,
     viewBinding: material(row, context), transparentTextures: { ...row.transparentTextures } };
-  const actor = createNativeFieldActorProjection({ ...structuredClone(expected.metadata), entity }, context.mapRange, context.partyCatalog);
+  const actor = createNativeFieldActorProjection({ ...structuredClone(expected.metadata), entity }, context.mapRange, context.partyCatalog,
+    context.transportationPresentation);
   actor.steps = row.steps;
   return actor;
 }
@@ -210,7 +224,7 @@ export function captureFieldNativeCheckpoint(owner: FieldNativeCheckpointOwner, 
     const actor = owner[bound.id]!, native = actor.native, entity = native?.entity;
     if (actor.id !== bound.id || !native || !entity || entity.id !== bound.id || actor.motion !== null || entity.moving !== false)
       throw new Error("Cannot checkpoint a moving, legacy or misidentified native actor");
-    if (entity.character !== true || entity.riding !== false || entity.riderAssetId !== null ||
+    if (entity.character !== true || entity.riding !== bound.riding || entity.riderAssetId !== bound.riderAssetId ||
         entity.childEntityObject !== bound.childEntityObject || entity.rideOnEntity !== bound.rideOnEntity)
       throw new Error("Native checkpoint actor lifecycle provider is unresolved");
     const { entity: ignored, ...metadata } = native;

@@ -5,13 +5,14 @@ import { fieldCameraCellToWorld, fieldCameraLayerFromLogical } from "./field-cam
 import type { FieldActorFactoryCandidate } from "./field-actor-factory.js";
 import { projectFieldActorView, validateFieldActorView, type FieldActorViewDefinition } from "./field-actor-view.js";
 import { replaceNativeFieldActorAnimation, type FieldNativeAnimationKeys } from "./field-native-appearance.js";
+import { projectFieldTransportActors, validateFieldTransportActorInstance, type FieldTransportActorPresentation } from "./field-transport-actors.js";
 import { assertFieldCompositionRenderTargets, fieldCompositionTexture, validateFieldNativeComposition,
   type FieldNativeCompositionDefinition } from "./field-native-composition.js";
 import type { FieldPartyActorCheckpoint } from "./field-party-actors.js";
 import { fieldPuppetSemiTransparent, fieldPuppetBoundTransparentTextures, projectFieldPuppetActorEffects,
   type FieldPuppetHostActor, type FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import type { MapPartyEntryDefinition, MapPartyEntryPlan } from "./map-party-entry.js";
-import { partyActorLeaderOnMapChange, partyActorMapArea, preparePartyActors, type PartyActorCatalog, type PartyActorInstance } from "./party-actors.js";
+import { partyActorLeaderOnMapChange, partyActorMapArea, partyMemberFieldAsset, preparePartyActors, type PartyActorCatalog, type PartyActorInstance } from "./party-actors.js";
 import type { PartyAppearanceCandidate } from "./party.js";
 import type { Character } from "../field/types.js";
 
@@ -32,6 +33,7 @@ export type SourceNativeMapInput = {
   priorComposition?: FieldNativeCompositionDefinition;
   view: FieldActorViewDefinition;
   providers: FieldPuppetHostProviders;
+  transportationPresentation?: FieldTransportActorPresentation;
 };
 
 function same(actual: unknown, expected: unknown, message: string): void {
@@ -124,8 +126,10 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
       before.multiParty.some((p) => p.actor === null || p.members.length) ||
       after.multiParty.some((p) => p.actor === null || p.members.length))
     throw new Error("Native map companion/party placement lifecycle is unresolved");
-  if (before.currentTransport?.typeId !== 1 || after.currentTransport?.typeId !== 1 ||
-      providers.transportationType !== 1 || before.camera.mapViewType !== 0 || after.camera.mapViewType !== 0)
+  const developmentRiding = input.transportationPresentation === "framework-development";
+  if (!before.currentTransport || !after.currentTransport ||
+      (before.currentTransport.typeId !== 1 || after.currentTransport.typeId !== 1) && !developmentRiding ||
+      providers.transportationType !== after.currentTransport?.typeId || before.camera.mapViewType !== 0 || after.camera.mapViewType !== 0)
     throw new Error("Native map handoff requires explicit ordinary walking transportation/view");
   same(after.currentTransport, before.currentTransport, "Native map transportation switch lifecycle is unresolved");
   same(after.camera.mapArea, partyActorMapArea(definition.mapRange.width, definition.mapRange.height, definition.loopType),
@@ -150,27 +154,33 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
   if (metadata.size !== ids.length || ids.some((id) => !metadata.has(id)))
     throw new Error("Unbound native map actor asset metadata");
   const expected = new Map<string, number | null>();
+  const expectedInstances = new Map<string, PartyActorInstance>();
   const add = (actor: PartyActorInstance) => {
-    if (actor.riding || actor.riderFieldAssetId !== null)
-      throw new Error("Native map riding instance/cache lifecycle is unresolved");
+    validateFieldTransportActorInstance(catalog, actor);
+    if (actor.riding && !developmentRiding) throw new Error("Native map riding lifecycle requires framework-development presentation");
     expected.set(actor.id, actor.fieldAssetId);
+    expectedInstances.set(actor.id, actor);
   };
   [before.player, ...before.puppets, ...before.multiParty.map((p) => p.actor)].forEach((actor) => {
     if (!actor) throw new Error("Missing source native map instance");
     add(actor);
   });
-  if (after.player.riding || after.player.riderFieldAssetId !== null)
-    throw new Error("Native map riding instance/cache lifecycle is unresolved");
+  validateFieldTransportActorInstance(catalog, after.player);
+  if (after.player.riding && !developmentRiding) throw new Error("Native map riding lifecycle requires framework-development presentation");
   for (const [index, resident] of before.conditionResidents.entries()) expected.set(bindings.residents[index]!.actor, resident.fieldAssetId);
   same(entry.hiddenActorIds, [...bindings.partyPuppets, ...bindings.otherParties], "Unbound native map hidden actor set");
   const point = entry.player;
-  if (point.mount !== "" || typeof point.visible !== "boolean" || !definition.pointIns.some((p) =>
+  const expectedMount = after.player.riding && after.player.fieldAssetId !== null ? catalog.assets[after.player.fieldAssetId]?.asset : "";
+  if (point.mount !== expectedMount || typeof point.visible !== "boolean" || !definition.pointIns.some((p) =>
     p.linkObject === 0 && p.x === point.x && p.y === point.y && p.layer === point.layer && p.direction === point.direction))
     throw new Error("Native map player pose is not a supported source PointIn");
   same(entry.movement, { start: { x: point.x, y: point.y }, destination: { x: point.x, y: point.y },
     elapsed: 0, autoMove: false, cacheActiveEnable: 0, cacheActiveFlag: 0 }, "Unknown native map player movement initialization");
   const targetAsset = after.player.fieldAssetId === null ? null : catalog.assets[after.player.fieldAssetId];
-  if (!targetAsset || targetAsset.asset !== point.asset || entry.checkpoint.playerAssetCacheId !== targetAsset.id)
+  const visibleAssetId = after.player.riding ? after.player.riderFieldAssetId : after.player.fieldAssetId;
+  const visibleAsset = visibleAssetId === null ? null : catalog.assets[visibleAssetId];
+  if (!targetAsset || !visibleAsset || visibleAsset.asset !== point.asset ||
+      entry.checkpoint.playerAssetCacheId === null || !catalog.assets[entry.checkpoint.playerAssetCacheId])
     throw new Error("Unbound destination native player asset/cache");
   // This clone also validates every presentation field and every identity,
   // including residents hidden off-map. No changes reach the departed owner.
@@ -179,9 +189,14 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
     const row = metadata.get(actor.id);
     if (!row || !expected.has(actor.id) || row.fieldAssetId !== expected.get(actor.id))
       throw new Error("Native map actor metadata disagrees with appearance owner");
-    if (!actor.character || actor.childEntityObject !== "absent" || actor.moving || actor.riding || actor.riderAssetId !== null ||
-        !["absent", "idle"].includes(actor.rideOnEntity))
+    if (!actor.character || actor.childEntityObject !== "absent" || actor.moving ||
+        actor.riding && !developmentRiding || actor.rideOnEntity === "unknown" ||
+        actor.riding !== (actor.rideOnEntity === "riding") || actor.rideOnEntity === "absent" && actor.riderAssetId !== null)
       throw new Error("Active movement, riding or child native map lifecycle is unresolved");
+    const instance = expectedInstances.get(actor.id);
+    if (instance && (actor.riding !== instance.riding || actor.riderAssetId !== instance.riderFieldAssetId))
+      throw new Error("Native map riding instance/cache disagrees with appearance owner");
+    if (actor.riderAssetId !== null && !catalog.assets[actor.riderAssetId]) throw new Error("Unbound native map rider cache");
     if (!Number.isFinite(row.charaZOffset) || Math.fround(row.charaZOffset) !== row.charaZOffset ||
         [actor.position.x, actor.position.y, actor.position.z].some((n) => !Number.isFinite(Math.fround(n)) || Math.fround(n) !== n))
       throw new Error("Native map transform must retain finite float32 values");
@@ -211,11 +226,13 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
   refreshContext.camera = structuredClone(after.camera);
   refreshContext.conditionColliders = structuredClone(after.conditionColliders);
   const appearance = preparePartyActors(catalog, party.activeMembers, refreshContext, true);
+  const leader = party.activeMembers.find((member) => member.index === appearance.selectedLeaderIndex);
+  if (!leader) throw new Error("Missing native map party leader");
+  const base = partyMemberFieldAsset(catalog, leader);
   const replacements = appearance.changes.filter((change) => change.actorId === player.id);
   if (replacements.length < 1 || replacements.length > 2 || replacements[0]!.reason !== "leader" ||
-      replacements.some((change, index) => change.mode !== "replace" || index === 1 && change.reason !== "condition") ||
-      replacements.at(-1)!.asset.id !== targetAsset.id || appearance.playerAssetCache?.id !== targetAsset.id ||
-      appearance.savedLeaderIndex !== after.leaderIndex)
+      replacements.some((change, index) => index === 1 && change.reason !== "condition") ||
+      appearance.playerAssetCache?.id !== entry.checkpoint.playerAssetCacheId || appearance.savedLeaderIndex !== after.leaderIndex)
     throw new Error("Native map owned party/ordered player replacement mismatch");
   const replacePlayer = (assetId: number) => {
     const asset = catalog.assets[assetId], character = asset && characters[asset.asset], keys = asset && animationKeys.assets[asset.asset];
@@ -226,14 +243,31 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
   // ClearSprite only clears the old sprite dictionary. Each SetAssetStructure
   // preserves its current key/time/play via OverrideOldData, including the
   // intermediate base assignment before a condition appearance assignment.
-  for (const change of replacements) replacePlayer(change.asset.id);
+  // MapSetup invokes ChangeAssetOfPlayer(isInit=true): the outer receives the
+  // source leader base even when the preceding map was riding. This differs
+  // from an ordinary in-map refresh, which replaces only the rider component.
+  replacePlayer(base.id);
+  let currentOuter = base.id;
+  for (const change of replacements.slice(1)) {
+    if (change.mode === "rider") player.riderAssetId = change.asset.id;
+    else { replacePlayer(change.asset.id); currentOuter = change.asset.id; }
+  }
   // PointIn LookAt(changeAnimDefault=true) leaves a same-key playing animation
   // running; true is not a force-reset flag.
   player.animation!.look(point.direction);
   player.direction = point.direction;
   // MapViewSetup's walking SetupCharaAsset installs the current cache again
   // after PointIn. Do not collapse this ordered replacement into the first one.
-  replacePlayer(targetAsset.id);
+  const setup = projectFieldTransportActors({ snapshot: { actors: [player], camera: null },
+    assets: [{ id: player.id, fieldAssetId: currentOuter, charaZOffset: 0.5 }], catalog, characters, animationKeys,
+    operations: after.player.riding
+      ? [{ kind: "ride-on", actorId: player.id, frontAssetId: targetAsset.id, skipIfSameOuter: false }]
+      : [{ kind: "replace", actorId: player.id, fieldAssetId: targetAsset.id },
+        { kind: "ride-out", actorId: player.id, restoreRiderAsset: false }],
+    ...(input.transportationPresentation ? { presentation: input.transportationPresentation } : {}) });
+  Object.assign(player, setup.snapshot.actors[0]!);
+  same({ id: player.id, fieldAssetId: setup.assets[0]!.fieldAssetId, riderFieldAssetId: player.riderAssetId, riding: player.riding },
+    after.player, "Native map transport setup disagrees with source entry projection");
   if (!media.animations.Default || media.animations.Default.mode === 1)
     throw new Error("Native map transportation automatic playback is unresolved");
   // PointIn is in package cell coordinates; ConversionMapRangeCell subtracts

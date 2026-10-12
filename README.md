@@ -20,6 +20,7 @@
 - [游戏系统框架与连续流程验收](docs/game-framework.md)
 - [框架系统依赖与下一批实施范围](docs/framework-system-dependencies.md)
 - [通用遭遇内容管线](docs/battle-catalog.md)
+- [v44 交通、骑乘与共享状态](docs/systems-v44.md)
 - [v43 共用对话、地图生命周期与行动状态](docs/systems-v43.md)
 - [v42 地图、战斗与学习系统](docs/systems-v42.md)
 - [v41 共用事件移动与连续系统验收](docs/systems-v41.md)

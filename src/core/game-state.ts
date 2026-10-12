@@ -76,6 +76,8 @@ import type { PartyActorCatalog, PartyActorMember } from "./party-actors.js";
 import { projectFieldPuppetRoster, type FieldPuppetRosterPort } from "./field-puppet-roster.js";
 import { createSourceNativeState, validateSourceNativeState,
   type SourceNativeState } from "./source-native-state.js";
+import { projectTransportationState, type FieldTransportationPort,
+  type FieldTransportationTransaction, type TransportationStateCommand } from "./transportation-state.js";
 import { projectOwnedCondition, type FieldOwnedConditionPort,
   type OwnedConditionCommand, type OwnedConditionTransaction } from "./owned-condition.js";
 import {
@@ -155,7 +157,7 @@ export type OwnedCharacter = RosterMember & {
   growth: CharacterGrowthProgress | null;
 };
 export type GameStateSnapshot = {
-  formatVersion: 9;
+  formatVersion: 10;
   kind: "owned-game-state";
   catalogHash: string;
   initialization: "development-checkpoint" | "source-new-game";
@@ -207,6 +209,7 @@ export class GameState {
     qualification: BattleEntryInventory | null;
   } | null = null;
   private revision = 0;
+  private transportationPublication = false;
   private readonly conditions: BattleConditions;
   private readonly ownedConditionDefinitions: { id: number; type: number }[];
   private readonly fieldConditions: FieldConditions | null;
@@ -230,6 +233,16 @@ export class GameState {
   readonly fieldPuppetRoster: FieldPuppetRosterPort = {
     current: () => this.projectPuppetRoster(this.data),
   };
+  /** Source fresh/restore only. A development checkpoint never invents the
+   * complete parking payload from its current selected transport identity. */
+  get fieldTransportation(): FieldTransportationPort | undefined {
+    if (!this.data.nativeState || !this.content.sourceNewGame) return undefined;
+    return {
+      catalog: structuredClone(this.content.sourceNewGame.transportation),
+      read: () => this.readTransportations(this.data),
+      prepare: (command) => this.prepareTransportation(command),
+    };
+  }
   readonly fieldShop = { validate: (groupId: number): void => { this.shopOptions(groupId); } };
   /** Creates only the shared owner. The field host must independently prepare
    * and publish the source route before this can become a new game session. */
@@ -324,7 +337,7 @@ export class GameState {
       }
     }
     this.data = {
-      formatVersion: 9,
+      formatVersion: 10,
       kind: "owned-game-state",
       catalogHash,
       initialization: fresh ? "source-new-game" : "development-checkpoint",
@@ -420,7 +433,7 @@ export class GameState {
     );
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== 9 ||
+      data.formatVersion !== 10 ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -657,8 +670,50 @@ export class GameState {
     this.revision++;
   }
   private requireIdle() {
+    if (this.transportationPublication)
+      throw new Error("Owned transportation publication is in progress");
     if (this.active)
       throw new Error("Owned state is reserved by an active battle");
+  }
+  private readTransportations(data: GameStateSnapshot) {
+    if (!data.nativeState || !this.content.sourceNewGame)
+      throw new Error("Missing source transportation ownership");
+    return structuredClone(data.nativeState.ownedTransportations);
+  }
+  private projectTransportation(data: GameStateSnapshot, command: TransportationStateCommand) {
+    if (!data.nativeState || !this.content.sourceNewGame)
+      throw new Error("Missing source transportation ownership");
+    const change = projectTransportationState(this.content.sourceNewGame.transportation,
+      data.nativeState.ownedTransportations, command);
+    const next = structuredClone(data);
+    const index = next.nativeState!.ownedTransportations.findIndex((record) => record.id === command.id);
+    next.nativeState!.ownedTransportations[index] = structuredClone(change.after);
+    this.validate(next);
+    return { next, ...change };
+  }
+  private prepareTransportation(command: TransportationStateCommand): FieldTransportationTransaction {
+    this.requireIdle();
+    const { next, ...change } = this.projectTransportation(this.data, command), revision = this.revision;
+    const validate = () => {
+      this.requireIdle();
+      if (this.revision !== revision) throw new Error("Stale transportation transaction");
+    };
+    const commitWith = (publish: () => void) => {
+      validate();
+      if (typeof publish !== "function" || publish.constructor.name === "AsyncFunction")
+        throw new Error("Transportation publication must be synchronous");
+      this.transportationPublication = true;
+      try {
+        const result: unknown = publish();
+        if (result && typeof (result as { then?: unknown }).then === "function")
+          throw new Error("Transportation publication must be synchronous");
+        // Everything fallible was prepared/validated before the external
+        // assignment-only publication. The owned publish cannot now fail.
+        this.data = next;
+        this.revision++;
+      } finally { this.transportationPublication = false; }
+    };
+    return { ...change, validate, commit: () => commitWith(() => {}), commitWith };
   }
   private projectInventoryEvent(
     data: GameStateSnapshot,
@@ -953,6 +1008,7 @@ export class GameState {
       roster: FieldRosterPort;
       ownedConditions: FieldOwnedConditionPort;
       puppetRoster: FieldPuppetRosterPort;
+      transportation?: FieldTransportationPort;
       shop: { validate(groupId: number): void };
       fieldSteps?: FieldConditionPort;
       partyAppearance?: { catalog: PartyActorCatalog; current(): PartyAppearanceCandidate };
@@ -965,6 +1021,7 @@ export class GameState {
     let data = this.snapshot(),
       generation = 0,
       published = false,
+      transportationPublishing = false,
       publicationRevision: number | null = null;
     const inventory: FieldInventoryPort = {
       prepare: (command) => {
@@ -974,7 +1031,7 @@ export class GameState {
         return {
           result,
           commit: () => {
-            if (published || generation !== version)
+            if (transportationPublishing || published || generation !== version)
               throw new Error("Stale candidate inventory transaction");
             data = next;
             generation++;
@@ -992,7 +1049,7 @@ export class GameState {
         const { next, result } = this.projectInventoryEvent(data, command, true);
         const version = generation;
         return { result, commit: () => {
-          if (published || generation !== version)
+          if (transportationPublishing || published || generation !== version)
             throw new Error("Stale candidate treasure transaction");
           data = next;
           generation++;
@@ -1007,7 +1064,7 @@ export class GameState {
         return {
           ...projection,
           commit: () => {
-            if (published || generation !== version)
+            if (transportationPublishing || published || generation !== version)
               throw new Error("Stale candidate party transaction");
             data = next;
             generation++;
@@ -1023,7 +1080,7 @@ export class GameState {
         return {
           ...projection,
           commit: () => {
-            if (published || generation !== version)
+            if (transportationPublishing || published || generation !== version)
               throw new Error("Stale candidate roster transaction");
             data = next;
             generation++;
@@ -1039,7 +1096,7 @@ export class GameState {
         return {
           result,
           commit: () => {
-            if (generation !== version || (published &&
+            if (transportationPublishing || this.transportationPublication || generation !== version || (published &&
               (this.active || this.revision !== publicationRevision)))
               throw new Error("Stale candidate field step transaction");
             data = next;
@@ -1057,13 +1114,44 @@ export class GameState {
         if (published) return this.prepareOwnedConditionEvent(command);
         const { next, ...projection } = this.projectOwnedConditionEvent(data, command), version = generation;
         return { ...projection, commit: () => {
-          if (published || generation !== version)
+          if (transportationPublishing || published || generation !== version)
             throw new Error("Stale candidate owned condition transaction");
           data = next;
           generation++;
         } };
       },
     };
+    const transportation: FieldTransportationPort | undefined = data.nativeState && this.content.sourceNewGame ? {
+      catalog: structuredClone(this.content.sourceNewGame.transportation),
+      read: () => this.readTransportations(published ? this.data : data),
+      prepare: (command) => {
+        if (published) return this.prepareTransportation(command);
+        const { next, ...change } = this.projectTransportation(data, command), version = generation;
+        const validate = () => {
+          this.requireIdle();
+          if (transportationPublishing || published || generation !== version || this.revision !== revision)
+            throw new Error("Stale candidate transportation transaction");
+        };
+        const commitWith = (publish: () => void) => {
+          validate();
+          if (typeof publish !== "function" || publish.constructor.name === "AsyncFunction")
+            throw new Error("Transportation publication must be synchronous");
+          transportationPublishing = true;
+          this.transportationPublication = true;
+          try {
+            const result: unknown = publish();
+            if (result && typeof (result as { then?: unknown }).then === "function")
+              throw new Error("Transportation publication must be synchronous");
+            data = next;
+            generation++;
+          } finally {
+            transportationPublishing = false;
+            this.transportationPublication = false;
+          }
+        };
+        return { ...change, validate, commit: () => commitWith(() => {}), commitWith };
+      },
+    } : undefined;
     return {
       ports: {
         inventory,
@@ -1072,6 +1160,7 @@ export class GameState {
         roster,
         ownedConditions,
         puppetRoster: { current: () => this.projectPuppetRoster(published ? this.data : data) },
+        ...(transportation ? { transportation } : {}),
         shop: { validate: (groupId) => { this.projectShopOptions(published ? this.data : data, groupId); } },
         ...(this.fieldConditions ? { fieldSteps } : {}),
         ...(this.content.partyActors ? { partyAppearance: {
@@ -1082,7 +1171,7 @@ export class GameState {
           this.movementBlocker(published ? this.data : data, transportationId, manual),
       },
       commit: () => {
-        if (published || this.active || this.revision !== revision)
+        if (transportationPublishing || this.transportationPublication || published || this.active || this.revision !== revision)
           return false;
         this.data = data;
         this.revision++;

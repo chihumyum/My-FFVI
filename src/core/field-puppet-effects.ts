@@ -39,6 +39,8 @@ export type FieldPuppetHostSnapshot = {
 };
 export type FieldPuppetHostProviders = {
   mapRenderContext: string;
+  /** Trusted framework capability, never granted by actor/checkpoint data. */
+  transportationPresentation?: "framework-development";
   /** Null means source currentTransport is actually absent and uses Type=1. */
   transportationType: number | null | "unknown";
   /** Read the native map attribute at this projected position. Missing data is

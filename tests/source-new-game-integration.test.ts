@@ -4,6 +4,7 @@ import { GameSession } from "../src/core/game-session.js";
 import { GameState } from "../src/core/game-state.js";
 import { NewGameFieldEntry } from "../src/core/new-game-field-entry.js";
 import { FieldFadeState } from "../src/core/field-fade.js";
+import { createSourceNativeState } from "../src/core/source-native-state.js";
 import { worldFieldContent } from "../src/core/world-session.js";
 import { checkpointFixture } from "./fixtures/checkpoint-game.js";
 import { sourceNewGameFixture, reservedFlag, fallbackFlag } from "./fixtures/source-new-game.js";
@@ -28,9 +29,10 @@ test("fresh preparation retains complete origin and native metadata without deve
   const { f, fade } = title(), beforeFade = fade.snapshot(), before = structuredClone(f.content);
   const game = GameSession.prepareNewGame(f.content, f.world, f.map, f.battle, fade, f.presentation);
   const saved = game.state.snapshot();
-  assert.equal(saved.formatVersion, 9);
+  assert.equal(saved.formatVersion, 10);
   assert.equal(saved.initialization, "source-new-game");
-  assert.deepEqual(saved.nativeState, { kind: "source-native-state-v1", entrySeed: f.plan.entry, ...f.plan.nativeInitialization });
+  assert.deepEqual(saved.nativeState, createSourceNativeState(f.plan));
+  assert.equal(saved.nativeState!.kind, "source-native-state-v2");
   assert.deepEqual(saved.roster.map((member) => member.conditionIds), [[]]);
   assert.deepEqual(game.state.fieldPuppetRoster.current(), { owned: [{ ownedId: 1, sourceId: 2,
     enabled: true, conditionTypes: [] }], party: [1, 0, 0, 0] });

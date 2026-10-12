@@ -139,7 +139,8 @@ export class Renderer {
       if (!actor.native) throw new Error("原生材质视口混入未绑定演员");
       const entity = actor.native.entity, frame = actor.animation?.frame();
       if (!frame || actor.asset === null) continue;
-      if (!entity.character || entity.riding || !entity.bodyOpaque || entity.fadeAlpha !== 1)
+      if (!entity.character || entity.riding && game.transportationPresentation !== "framework-development" ||
+          !entity.bodyOpaque || entity.fadeAlpha !== 1)
         throw new Error("原生普通材质不支持当前骑乘或透明提供器");
       if (entity.shadowVisible) omissions.push({ kind: "native-character-shadow", actorId: actor.id });
       if (!entity.viewBinding?.properties) throw new Error("原生演员缺少普通材质绑定");
@@ -149,22 +150,38 @@ export class Renderer {
       const textures = fieldCompositionActorTextures(definition, entity.layer);
       if (entity.transparentTextures.first !== textures.first || entity.transparentTextures.second !== textures.second)
         throw new Error("原生演员的上层纹理属于其他地图或层");
-      const character = this.content.characters[actor.asset], sprite = character?.sprites[frame.sprite];
-      if (!sprite) throw new Error("原生角色帧缺少来源图像");
-      const image = this.compositionPixels(sprite.file);
-      if (image.width !== sprite.width || image.height !== sprite.height) throw new Error("原生角色图像几何不符");
-      const point = this.point(actor), x = (point.x + 0.5) * 16 - cx + frame.x,
-        y = (point.y + 0.5) * 16 - cy - frame.y;
-      // FF6 SerialOffset(+6) and prefab Offset(-6) cancel. Do not reuse the
-      // legacy bottom-2 anchor, which omitted the serial provider.
-      const left = frame.flip ? x - sprite.width * (1 - sprite.pivot[0]) : x - sprite.width * sprite.pivot[0];
-      projectedActors.push({ image, source: { x: 0, y: 0, width: sprite.width, height: sprite.height },
-        destination: { x: left, y: y - sprite.height * (1 - sprite.pivot[1]), width: sprite.width, height: sprite.height },
-        flipX: frame.flip, flipY: false, diagonal: false, alpha: frame.alpha,
-        depth: fieldCompositionActorDepth({ position: { y: (range.height * 0.5 - 0.5 - (point.y - range.y)) * 16,
+      const point = this.point(actor), depth = fieldCompositionActorDepth({
+        position: { y: (range.height * 0.5 - 0.5 - (point.y - range.y)) * 16,
           z: entity.position.z }, frameY: frame.y, cameraY: sourceCamera.cameraPosition.y,
-          clampTileSubY: sourceCamera.clampTileSubY, charaZOffset: actor.native.charaZOffset }),
-        first: sampleTarget(textures.first), second: sampleTarget(textures.second) });
+        clampTileSubY: sourceCamera.clampTileSubY, charaZOffset: actor.native.charaZOffset });
+      const layers = [{ asset: actor.mount ?? actor.asset, frame, crop: 0, lift: 0 }];
+      if (entity.riding) {
+        if (!actor.mount || !actor.direction) throw new Error("框架骑乘缺少内外层资产或朝向");
+        const key = FACING[actor.direction], riderKey = { WalkL: "RideL", WalkR: "RideR" }[key] ?? key;
+        const animation = this.content.characters[actor.asset]?.animations[riderKey];
+        const playback = actor.animation.snapshot();
+        if (!animation?.frames.length || !playback) throw new Error("框架骑乘缺少骑手姿态");
+        // Explicit framework convention: derive the rider from the existing
+        // outer clock, never create another native playback owner in Canvas.
+        const phase = Math.max(0, Math.min(1, playback.elapsed / playback.duration));
+        const rider = animation.frames[Math.min(animation.frames.length - 1, Math.floor(phase * animation.frames.length))];
+        layers.push({ asset: actor.asset, frame: { ...rider, flip: animation.flip !== rider.flip }, crop: 8, lift: 14 });
+        omissions.push({ kind: "framework-rider-pose-crop-offset", actorId: actor.id });
+      }
+      for (const layer of layers) {
+        const pose = layer.frame, sprite = this.content.characters[layer.asset]?.sprites[pose.sprite];
+        if (!sprite || sprite.height <= layer.crop) throw new Error("原生角色帧缺少来源图像");
+        const image = this.compositionPixels(sprite.file);
+        if (image.width !== sprite.width || image.height !== sprite.height) throw new Error("原生角色图像几何不符");
+        const x = (point.x + 0.5) * 16 - cx + pose.x,
+          y = (point.y + 0.5) * 16 - cy - pose.y - layer.lift;
+        // Source ordinary center anchor; framework rider offset is explicit.
+        const left = pose.flip ? x - sprite.width * (1 - sprite.pivot[0]) : x - sprite.width * sprite.pivot[0];
+        projectedActors.push({ image, source: { x: 0, y: 0, width: sprite.width, height: sprite.height - layer.crop },
+          destination: { x: left, y: y - sprite.height * (1 - sprite.pivot[1]), width: sprite.width, height: sprite.height - layer.crop },
+          flipX: pose.flip, flipY: false, diagonal: false, alpha: pose.alpha, depth,
+          first: sampleTarget(textures.first), second: sampleTarget(textures.second) });
+      }
     }
     let effects;
     const effectState = game.fieldEffectsSnapshot;

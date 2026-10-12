@@ -17,6 +17,7 @@ import { bindTileAnimationRegions } from "./tile-animation.js";
 import { compileInventoryEvent } from "./inventory-event.js";
 import { compileTreasureBoxInstruction, compileTreasureInventoryLimits } from "./treasure-inventory.js";
 import { compileNarsheMapEntrySeed } from "./map-party-entry.js";
+import { compileFieldTransportationInstruction, fieldTransportationMnemonics, fieldTransportationSelectors } from "./field-transportation.js";
 import { compilePartyEvent } from "./party.js";
 import { compileOwnedConditionInstruction } from "./owned-condition.js";
 import { compileSourcePresentationInstruction, sourcePresentationSelectors } from "./source-presentation.js";
@@ -134,6 +135,11 @@ export function decodeFieldOp(
   }
   const o = record(m.operands), i = list(o.iValues).map(integer),
     r = list(o.rValues).map(Number), s = list(o.sValues).map(string);
+  if (fieldTransportationMnemonics.some((mnemonic) => mnemonic === name) ||
+      name === "SysCall" && fieldTransportationSelectors.includes(s[0]!)) {
+    try { return { ...site, ...compileFieldTransportationInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (name === "Msg" && [0, 3].includes(i[0]!) && r[0] === 0) {
     try { return { ...site, ...compileManualMessageInstruction(raw, messages, context) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
@@ -404,8 +410,6 @@ export function decodeFieldOp(
     return { ...site, kind: "look", direction: directions[i[0]!]! };
   if (name === "Encount" && form([0], [], [0]))
     return { ...site, kind: "encounter", party: i[0]!, continuation: s[0]! };
-  if (name === "RideVehicleNPC" && form([0, 1]) && i[0] === 6 && i[1] === -1001)
-    return { ...site, kind: "ride", actor: String(i[1]), vehicle: 6 };
   if (
     name === "PlaySE" &&
     form([0, 1, 2]) &&

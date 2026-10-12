@@ -23,6 +23,7 @@ const { projectFieldPuppetRoster } = await module("core/field-puppet-roster");
 const { fieldPuppetResidentIndex } = await module("core/field-puppet-actors");
 const { EventState } = await module("core/event-state");
 const { Transportations } = await module("core/transportation");
+const { transportationStayMaps } = await module("core/transportation-state");
 const { hash } = await module("compiler/content");
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const output = root + "build/reports/source-native-state-check.json";
@@ -67,8 +68,8 @@ const state = fresh(), initial = state.snapshot();
 const cases = [];
 function check(name, fn) { fn(); cases.push({ name, pass: true }); }
 
-check("bound fresh and development states have distinct owned-v9 initialization identities", () => {
-  assert.equal(initial.formatVersion, 9);
+check("bound fresh and development states have distinct owned-v10 initialization identities", () => {
+  assert.equal(initial.formatVersion, 10);
   assert.equal(initial.initialization, "source-new-game");
   assert.deepEqual(initial.roster.map((member) => member.conditionIds), [[], [], []]);
   const old = development();
@@ -77,10 +78,12 @@ check("bound fresh and development states have distinct owned-v9 initialization 
   assert.deepEqual(old.fieldPuppetRoster.current().owned.map((member) => member.conditionTypes), [[607], [607], [607]]);
 });
 check("all native initialization domains and the complete entry seed survive source creation", () => {
-  assert.deepEqual(state.nativeState, { kind: "source-native-state-v1", entrySeed: plan.entry, ...plan.nativeInitialization });
-  assert.equal(state.nativeState.ownedTransportationIds.length, 8);
-  assert.equal(Object.keys(state.nativeState.parkedTransportationMapIds).length, 8);
-  assert.ok(Object.values(state.nativeState.parkedTransportationMapIds).every((id) => id === -1));
+  const { ownedTransportationIds, parkedTransportationMapIds: _maps, ...native } = plan.nativeInitialization;
+  assert.deepEqual(state.nativeState, { kind: "source-native-state-v2", entrySeed: plan.entry, ...native,
+    ownedTransportations: ownedTransportationIds.map((id) => ({ id, mapId: -1,
+      position: { x: 1000, y: 1000, z: -1000 }, direction: 0, timeStampTicks: "0" })) });
+  assert.equal(state.nativeState.ownedTransportations.length, 8);
+  assert.ok(state.nativeState.ownedTransportations.every((record) => record.mapId === -1));
   assert.equal(state.nativeState.entrySeed.beastExchangeFlags.length, 400);
   assert.equal(state.nativeState.entrySeed.mapId, 609);
   assert.equal(state.nativeState.entrySeed.scriptId, 1);
@@ -94,16 +97,16 @@ check("puppet reads retain real source identities and all four owned-id cells", 
   ], party: [1, 2, 3, 0] });
   const result = state.fieldPuppetRoster.current();
   result.owned[0].conditionTypes.push(999); result.party[0] = 999;
-  const native = state.nativeState; native.entrySeed.mapId = 1; native.ownedTransportationIds.splice(0);
+  const native = state.nativeState; native.entrySeed.mapId = 1; native.ownedTransportations.splice(0);
   assert.deepEqual(state.snapshot(), initial);
 });
 check("field entry selects from source-owned parking data and the independent EventState release flags", () => {
   const transportations = new Transportations(definition.transportation), events = new EventState(plan.events);
   const native = state.nativeState;
-  assert.deepEqual(native.ownedTransportationIds, definition.transportation.definitions.map((entry) => entry.id));
+  assert.deepEqual(native.ownedTransportations.map((record) => record.id), definition.transportation.definitions.map((entry) => entry.id));
   const result = transportations.projectMapEntry({ currentId: null,
     loadId: native.entrySeed.transportation.id, mapId: native.entrySeed.mapId,
-    stayMapIds: native.parkedTransportationMapIds,
+    stayMapIds: transportationStayMaps(native.ownedTransportations),
     availability: transportations.availability((ref) => events.read(ref)) });
   assert.equal(result.currentId, 1); assert.equal(result.currentType, 1); assert.equal(result.selected, true);
   assert.deepEqual(state.snapshot(), initial);
@@ -174,10 +177,10 @@ let rejectedNativeMutations = 0;
 check("old schemas, missing origin and unimplemented native writes reject before publication", () => {
   const before = state.snapshot();
   const mutations = [
-    (s) => { s.formatVersion = 7; }, (s) => { delete s.initialization; }, (s) => { delete s.nativeState; },
+    (s) => { s.formatVersion = 9; }, (s) => { delete s.initialization; }, (s) => { delete s.nativeState; },
     (s) => { s.initialization = "development-checkpoint"; }, (s) => { s.nativeState = null; },
-    (s) => { s.nativeState.ownedTransportationIds.pop(); },
-    (s) => { s.nativeState.parkedTransportationMapIds[1] = 609; },
+    (s) => { s.nativeState.ownedTransportations.pop(); },
+    (s) => { delete s.nativeState.ownedTransportations[0].position; },
     (s) => { s.nativeState.entrySeed.mapId = 3; },
     (s) => { s.nativeState.entrySeed.savedPlayer.x = 10; },
     (s) => { s.nativeState.entrySeed.entrySynchronized = true; },
@@ -207,20 +210,20 @@ const implementation = await Promise.all(["src/core/game-state.ts", "src/core/fi
 const report = { formatVersion: 1, status: "pass", kind: "source-native-state-check",
   sourceSetHash: corpus.manifest.sourceSetHash, parentSourceSetHash: corpus.manifest.parentSourceSetHash,
   publishedCatalogHash: contentHash, publishedCatalogFileSha256: sha(publishedBytes),
-  publishedProfile: published.common.profile, ownedFormatVersion: 8,
+  publishedProfile: published.common.profile, ownedFormatVersion: 10,
   sourceDefinitionHash: hash(definition), initialNativeStateHash: hash(initial.nativeState),
   nativeReports: nativeReports.map(({ name, sha256, report }) => ({ name, sha256,
     nativeSha256: report.nativeSha256, methods: report.methods?.length ?? null,
     rawRanges: report.rawRanges?.length ?? null, semanticsVerified: false })),
   implementation, cases,
   counts: { cases: cases.length, owners: initial.roster.length, conditionDefinitions: published.common.conditions.rules.definitions.length,
-    ownedTransportations: initial.nativeState.ownedTransportationIds.length,
+    ownedTransportations: initial.nativeState.ownedTransportations.length,
     beastExchangeFlags: initial.nativeState.entrySeed.beastExchangeFlags.length, rejectedNativeMutations },
   originalGameExecuted: false, semanticsVerified: false, newGameSessionPublished: false,
   limitations: ["This checker publishes only controlled shared ownership transactions, not actor refresh or a fresh field session.",
     "The retained entrySeed is initial provenance; current map, player and transportation remain separate field ownership.",
-    "Parking, counter, warehouse, crystal, keyword and global magic transitions have no admitted writer in this schema.",
+    "Parking writes use the independent transportation-state transaction checks; this checker only verifies initialization and structural rejection. Counter, warehouse, crystal and keyword transitions remain unadmitted.",
     "The full source corpus has more character/state capabilities than the admitted GameState roster; unknown active behavior stays blocked."] };
 await writeFile(output, JSON.stringify(report, null, 2) + "\n");
-console.log(JSON.stringify({ status: "pass", ...report.counts, ownedFormatVersion: 8,
+console.log(JSON.stringify({ status: "pass", ...report.counts, ownedFormatVersion: 10,
   reportSha256: sha(await readFile(output)), originalGameExecuted: false, semanticsVerified: false }));

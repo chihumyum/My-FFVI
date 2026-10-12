@@ -77,6 +77,25 @@ test("native instruction publication cannot silently remove or reorder owned act
   assert.deepEqual(serial(t.snapshot()), before);
 });
 
+test("framework SetPos retains riding identity and outer playback; strict source refuses active riding", () => {
+  const t = setup(), snapshot = t.snapshot(), player = snapshot.actors.find((a) => a.id === "-1001")!;
+  player.riding = true; player.riderAssetId = 1; player.rideOnEntity = "riding";
+  const before = serial(snapshot), command = { ...t.command, animation: "WalkB" };
+  assert.throws(() => projectNativeFieldPosition(snapshot, t.f.input.providers, player.id,
+    command, t.f.map.mapRange, "source-absent"), /riding host/);
+  const next = projectNativeFieldPosition(snapshot,
+    { ...t.f.input.providers, transportationPresentation: "framework-development" }, player.id,
+    command, t.f.map.mapRange, "source-absent");
+  const after = next.actors.find((a) => a.id === player.id)!;
+  assert.equal(after.riding, true); assert.equal(after.riderAssetId, 1); assert.equal(after.rideOnEntity, "riding");
+  assert.equal(after.animation!.snapshot()!.key, "WalkB");
+  assert.notDeepEqual(after.position, player.position); assert.deepEqual(serial(snapshot), before);
+  player.riding = false; player.rideOnEntity = "idle";
+  const cached = projectNativeFieldPosition(snapshot, t.f.input.providers, player.id,
+    command, t.f.map.mapRange, "source-absent");
+  assert.equal(cached.actors.find((a) => a.id === player.id)!.riderAssetId, 1);
+});
+
 test("native SetPos decoder retains layer and arbitrary source animation but rejects relative and stray operands", () => {
   const raw = { type: 2, mnemonic: "SetPos", operands: {
     iValues: [13, 24, 2, 0, 0, 0, 0, 0], rValues: Array(8).fill(0), sValues: ["wave", "", "", "", "", "", "", ""],

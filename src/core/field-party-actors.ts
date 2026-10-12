@@ -3,6 +3,8 @@ import { checkpointKeys, checkpointInteger } from "./checkpoint-validation.js";
 import { preparePartyActors, type PartyActorCatalog, type PartyActorContext,
   type PartyActorInstance, type PartyActorPlan } from "./party-actors.js";
 import type { PartyAppearanceCandidate } from "./party.js";
+import { projectFieldTransportActorInstance, validateFieldTransportActorInstance,
+  type FieldTransportActorOperation, type FieldTransportActorPresentation } from "./field-transport-actors.js";
 
 export type FieldPartyActorCheckpoint = {
   kind: "field-party-actors-v1";
@@ -66,7 +68,8 @@ export class FieldPartyActors {
   private publishing = false;
   constructor(catalog: PartyActorCatalog,
     origin: FieldPartyActorCheckpoint,
-    transportationId: number | null) {
+    transportationId: number | null,
+    private readonly transportationPresentation?: FieldTransportActorPresentation) {
     this.catalog = structuredClone(catalog);
     this.origin = { ...structuredClone(origin), context: detachedContext(origin.context) };
     this.state = structuredClone(this.origin);
@@ -83,9 +86,11 @@ export class FieldPartyActors {
       checkpointInteger(value.playerAssetCacheId, 1, 0x7fffffff);
       if (!this.catalog.assets[value.playerAssetCacheId]) throw new Error("Unknown player appearance cache");
     }
-    // These providers have no runtime mutation yet. A restore may not invent a
-    // companion, change transport, change condition residents or map geometry.
-    for (const key of ["currentTransport", "conditionResidents", "companion", "conditionColliders", "camera"] as const)
+    // The explicit framework transportation host can change a source-bound
+    // transport identity. Other providers remain bound to this map's origin.
+    if (this.transportationPresentation !== "framework-development" && canonical(c.currentTransport) !== canonical(base.currentTransport))
+      throw new Error("Unsupported saved appearance provider change: currentTransport");
+    for (const key of ["conditionResidents", "companion", "conditionColliders", "camera"] as const)
       if (canonical(c[key]) !== canonical(base[key])) throw new Error("Unsupported saved appearance provider change: " + key);
     if (!Array.isArray(c.multiParty) || c.multiParty.length !== 3 ||
       !Array.isArray(c.puppets) || c.puppets.length !== base.puppets.length)
@@ -106,10 +111,13 @@ export class FieldPartyActors {
         checkpointInteger(id, 1, 0x7fffffff);
         if (!this.catalog.assets[id]) throw new Error("Unknown saved field appearance asset");
       }
-      if (actor.riding !== initial[index]!.riding ||
+      validateFieldTransportActorInstance(this.catalog, actor);
+      if (this.transportationPresentation !== "framework-development" && (actor.riding !== initial[index]!.riding ||
         (actor.riding && actor.fieldAssetId !== initial[index]!.fieldAssetId) ||
-        (!actor.riding && actor.riderFieldAssetId !== initial[index]!.riderFieldAssetId))
+        (!actor.riding && actor.riderFieldAssetId !== initial[index]!.riderFieldAssetId)))
         throw new Error("Unsupported saved native riding transition");
+      if (actor.riding && !this.catalog.transportations.some((t) => t.fieldAssetId === actor.fieldAssetId))
+        throw new Error("Unknown saved transportation outer asset");
     }
     // The planner validates leader ranges, references and all hidden instances.
     preparePartyActors(this.catalog, [], c, true);
@@ -142,6 +150,29 @@ export class FieldPartyActors {
         this.state = next; this.revision++; committed = true;
       },
     };
+  }
+  /** Bookkeeping half of a containing actor/controller transaction. The caller
+   * projects the SAME ordered operations onto native actors and validates both
+   * publications before committing either. No renderer callback runs here. */
+  prepareTransportation(input: {
+    operations: readonly FieldTransportActorOperation[];
+    currentTransport?: PartyActorContext["currentTransport"];
+  }): FieldPartyActorRendererPublication & { readonly checkpoint: FieldPartyActorCheckpoint } {
+    if (this.transportationPresentation !== "framework-development")
+      throw new Error("Transportation changes require explicit framework-development presentation");
+    if (!input || !Array.isArray(input.operations)) throw new Error("Missing party transportation candidate");
+    const next = this.checkpoint(), actors = instances(next.context);
+    for (const op of input.operations) {
+      const actor = actors.find((a) => a.id === op.actorId);
+      if (!actor) throw new Error("Transportation bookkeeping references an absent party actor");
+      Object.assign(actor, projectFieldTransportActorInstance(actor, [op], this.catalog, this.transportationPresentation));
+    }
+    if (Object.hasOwn(input, "currentTransport")) {
+      if (input.currentTransport === undefined) throw new Error("Unknown transportation identity");
+      next.context.currentTransport = structuredClone(input.currentTransport);
+    }
+    const publication = this.prepareState(next);
+    return { ...publication, get checkpoint() { return structuredClone(next); } };
   }
   playerMedia(state = this.state): { asset: string; mount: string | null } {
     const player = state.context.player;
