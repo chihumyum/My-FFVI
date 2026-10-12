@@ -53,7 +53,7 @@ const plan = createNewGame(initialization.definition);
 const catalog = JSON.parse(await readFile(root + "build/game/opening-playable.json", "utf8"));
 const { contentHash, ...content } = catalog;
 assert.equal(hash(content), contentHash);
-assert.equal(catalog.common.profile, "narshe-playability-v30");
+assert.equal(catalog.common.profile, "narshe-playability-v31");
 const system = catalog.gameState.equipmentSystem;
 assert.ok(system);
 const emptyIds = [93, 197, 198, 199, 200];
@@ -86,7 +86,7 @@ check("published shared owner is bound to the same source initialization and com
   assert.deepEqual(catalog.gameState.sourceNewGame, initialization.definition);
   assert.deepEqual(system.initialStock, plan.owned.equipmentStock);
   const fresh = make().snapshot();
-  assert.equal(fresh.formatVersion, 7);
+  assert.equal(fresh.formatVersion, 8);
   assert.deepEqual(fresh.equipmentStock, plan.owned.equipmentStock);
   assert.ok(fresh.roster.every((p) => p.conditionIds.length === 0), "Fresh source state does not borrow checkpoint conditions");
 });

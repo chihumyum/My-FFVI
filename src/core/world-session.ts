@@ -15,6 +15,7 @@ import { StaticAudioState } from "./static-audio.js";
 import { checkpointKeys, checkpointInteger } from "./checkpoint-validation.js";
 import { prepareMapPartyEntry, readMapPartySwitching, type MapPartyEntryPlan } from "./map-party-entry.js";
 import { Transportations } from "./transportation.js";
+import type { FieldFadeState } from "./field-fade.js";
 export type WorldStateOwner = {
   current: FieldGameOptions;
   prepare(): { ports: FieldGameOptions; commit(): boolean };
@@ -38,7 +39,7 @@ export type WorldCheckpoint = {
 };
 
 /** Shared package resolution for map entry and saved-state restoration. Does not execute scripts. */
-function worldFieldContent(
+export function worldFieldContent(
   catalog: WorldCatalog,
   target: WorldMapContent,
   request: { mapId: number; entrance: number; birdview: boolean },
@@ -73,6 +74,8 @@ function worldFieldContent(
   if (target.blockers.length) throw new Error(target.blockers[0]!.reason);
   const map = target.map!,
     group = map.groups?.entity_default;
+  if (map.backgrounds?.length && !sourceCamera)
+    throw new Error("Source background requires a bound camera host");
   if (!group) throw new Error("Missing default entity group");
   if (group.blockers.length) throw new Error(group.blockers[0]!.reason);
   if (group.entities.some((e) => e.kind === 18) || catalog.minimap)
@@ -102,7 +105,11 @@ function worldFieldContent(
       entry,
       fieldCollisionRange(map.width, map.height, group.entities),
     ) ||
-    !map.collisions[entry.layer]
+    // Source MapSetup places the player at PointIn independently of collision
+    // mesh creation. Cinematic maps can legitimately have no collider grid.
+    // Do not invent an all-walkable grid: any later walk still requires the
+    // real collision provider in FieldGame.
+    (!map.collisions[entry.layer] && !(sourceCamera && actorEntry))
   )
     throw new Error("Unsupported entrance geometry/layer");
   const characters: FieldContent["characters"] = {};
@@ -214,6 +221,7 @@ export class WorldSession {
     private readonly initial: FieldContent,
     state = new EventState(),
     private readonly owned?: WorldStateOwner,
+    initialFade?: FieldFadeState,
   ) {
     this.current = new FieldGame(
       initial,
@@ -221,6 +229,7 @@ export class WorldSession {
       undefined,
       undefined,
       { ...(owned?.current ?? {}), ...(initial.playerFactory ? { playerVisibility: initial.playerFactory.capability } : {}) },
+      initialFade,
     );
   }
   get field(): FieldGame {
@@ -321,6 +330,7 @@ export class WorldSession {
       stop = from.stop;
     if (stop?.kind !== "map-transition")
       throw new Error("No pending map transition");
+    if (from.player.native) throw new Error("Native actor map handoff requires a destination actor factory and codec");
     const request = stop.request,
       identity = from.content.map.identity;
     if (!identity) throw new Error("Unknown previous map/area identity");

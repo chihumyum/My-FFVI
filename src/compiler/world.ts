@@ -4,6 +4,7 @@ import { loadCorpus } from "./corpus.js";
 import { hash, record } from "./content.js";
 import { bindMapPackages, compileMapGroups } from "./map-package.js";
 import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
+import { compileFieldBackgroundLayers, loadFieldBackgroundMedia } from "./field-background.js";
 import { bindTileAnimationRegions } from "./tile-animation.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { decodeFieldOp, decodeScriptLocals, decodeConditionVisualFlag } from "./field.js";
@@ -115,6 +116,7 @@ export async function compileWorld(root: string) {
   const corpus = await loadCorpus(root),
     files = await readSnapshot(root + "/build/world-media");
   const systemSource = await loadSystemSource(root, text(corpus.manifest.parentSourceSetHash));
+  const backgroundMedia = await loadFieldBackgroundMedia(root, corpus.sourceSetHash);
   const systemMessages = await loadSystemMessages(root, text(corpus.manifest.parentSourceSetHash),
     array(corpus.manifest.sources).map(record).map((s) => ({ file: text(s.file), sha256: text(s.sha256) })));
   const messages = { ...corpus.messages, system_zhc: systemMessages.messages };
@@ -233,7 +235,19 @@ export async function compileWorld(root: string) {
           source: t.source as Evidence,
         };
       }
-      const geometry = compileMapGeometry(tile, collision, textures);
+      const mapRow = corpus.tables["map.csv"]!.find(
+        (row) => Number(row.id) === Number(binding.id),
+      )!;
+      const rawTilemap = record(tile.data);
+      const mapRange = fieldCollisionRange(finite(rawTilemap.width), finite(rawTilemap.height),
+        groups.entity_default?.entities ?? []);
+      if (!tile.source.objectId) throw new Error("Map background has no serialized tilemap identity");
+      const background = compileFieldBackgroundLayers({ sources: sourceFiles,
+        tilemap: { data: tile.data, source: { ...tile.source, objectId: tile.source.objectId } },
+        mapRange, loopType: tableId(mapRow.loop_type), ...backgroundMedia });
+      for (const issue of background.blockers) blockers.push({ reason: issue.reason,
+        source: { ...tile.source, pointer: `/layers/id/${issue.layerId}` } });
+      const geometry = compileMapGeometry(tile, collision, textures, background.layers);
       blockers.push(...geometry.blockers);
       bindTileAnimationRegions(groups, geometry);
       fieldCollisionRange(
@@ -241,9 +255,6 @@ export async function compileWorld(root: string) {
         geometry.height,
         groups.entity_default?.entities ?? [],
       );
-      const mapRow = corpus.tables["map.csv"]!.find(
-        (row) => Number(row.id) === Number(binding.id),
-      )!;
       if (tableId(mapRow.loop_type) !== 0)
         blockers.push({
           reason: "Looping field presentation is not implemented",

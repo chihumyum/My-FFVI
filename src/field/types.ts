@@ -19,6 +19,8 @@ import type { FieldFadeOp, FieldFadeInitial } from "../core/field-fade.js";
 import type { FieldPuppetScriptContext } from "../core/field-puppet-actors.js";
 import type { FieldCameraOp, FieldCameraMotionOp, FieldCameraSetPosition } from "../core/field-camera.js";
 import type { FieldCameraHostDefinition } from "../core/field-camera-host.js";
+import type { FieldBackgroundLayer } from "../core/field-background.js";
+import type { SourceMessageOp } from "../core/source-message.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -158,6 +160,7 @@ export type Op = Site &
     | FieldFadeOp
     | FieldCameraOp
     | FieldCameraMotionOp
+    | SourceMessageOp
     | { kind: "entities"; group: string }
     | { kind: "change-map"; request: MapRequest }
     | { kind: "ride"; actor: string; vehicle: 6 }
@@ -235,6 +238,7 @@ export type FieldContent = {
     height: number;
     tileSize: number;
     layers: TileLayer[];
+    backgrounds?: FieldBackgroundLayer[];
     tilesets: Tileset[];
     textures: Record<string, string>;
     collisions: Record<string, number[]>;

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { compileMapGeometry } from "../src/compiler/map-geometry.js";
 import { compileWorldCharacter } from "../src/compiler/world.js";
 import { missingFieldPoses } from "../src/core/character-media.js";
+import type { FieldBackgroundLayer } from "../src/core/field-background.js";
 const source = {
   file: "synthetic",
   assetPath: "package/tilemap.json",
@@ -60,6 +61,31 @@ function geometry() {
     },
   };
 }
+test("background admission consumes only its own root layer and preserves unrelated geometry blockers", () => {
+  const f = geometry(), provenance = { ...source, serializedFile: "synthetic-assets", sha256: "a".repeat(64) };
+  const background: FieldBackgroundLayer = { kind: "native-center-repeat-background-v1", layerId: 7,
+    name: "FarBGLayer1", source: provenance, mapSize: { width: 32, height: 32 },
+    renderHost: { kind: "source-fresh-normal-background-host-v1", rendererWorld: { x: 0, y: 0 },
+      renderCamera: { x: 0, y: 0 }, sources: [provenance, provenance] },
+    size: { width: 512, height: 512 }, offset: { x: 0, y: 0 }, manualSpeed: { x: 0.5, y: 0.5 },
+    texture: { width: 512, height: 512, sha256: "b".repeat(64),
+      url: `/field-background-media/textures/${"b".repeat(64)}.png`, source: provenance, textureSource: provenance } };
+  const layer = { id: 7, type: "imagelayer", name: "FarBGLayer1", visible: true, properties: [] };
+  const tile = { source: provenance, data: { ...f.tile.data, layers: [...f.tile.data.layers, layer] } };
+  assert.equal(compileMapGeometry(tile, f.collision, f.textures).blockers.length, 1);
+  const accepted = compileMapGeometry(tile, f.collision, f.textures, [background]);
+  assert.equal(accepted.blockers.length, 0); assert.deepEqual(accepted.backgrounds, [background]);
+  const other = { ...tile, data: { ...tile.data, layers: [...tile.data.layers,
+    { ...layer, id: 8, name: "NearBGLayer1" }] } };
+  assert.equal(compileMapGeometry(other, f.collision, f.textures, [background]).blockers.length, 1);
+  assert.throws(() => compileMapGeometry(tile, f.collision, f.textures,
+    [{ ...background, source: { ...provenance, sha256: "c".repeat(64) } }]), /does not belong/);
+  assert.throws(() => compileMapGeometry(tile, f.collision, f.textures,
+    [{ ...background, layerId: 8 }]), /no source layer/);
+  const nested = { source: provenance, data: { ...f.tile.data,
+    layers: [{ type: "group", name: "other", layers: [layer] }] } };
+  assert.throws(() => compileMapGeometry(nested, f.collision, f.textures, [background]), /no source layer/);
+});
 test("all-map geometry preserves tile flags and collision editor visibility but rejects missing/foreign atlases", () => {
   const f = geometry();
   f.tile.data.layers[0]!.data[0] = 0x80000001;

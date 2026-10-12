@@ -2,7 +2,7 @@
 
 2026-10-12。结论：尚未摸清或迁移完整核心机制。地图和字段事件已有共用实现，战斗仍是开场开发子集。地图包、空闲入口和孤立脚本的数量不能代表战斗、角色、物品或保存系统的完成度。原版一致性对照按用户指示后置，HD-2D 不进入当前工作。
 
-当前系统批次为 `narshe-playability-v30`：摄像机宿主接入共用事件执行器、切图候选和稳定存档，玩家坐标实时读取，插值进度由各任务独占。来源演员工厂与标题到字段交接协议已独立实现，正式 fresh GameSession 仍待装配；现有纳尔谢开发入口保持明确边界。当前 owned v7、field/world v8、session v3。完整新游戏与全游戏迁移未完成，HD-2D 后置；证据和限制见 [v30 系统集成](systems-v30.md)。
+当前系统批次为 `narshe-playability-v31`：来源新游戏从同一 GameState、FieldGame 演员集合、镜头和全局渐变启动；原生角色显隐、碰撞开关与普通异步字幕接入共用执行器，滚动背景通过独立来源适配器编译。owned v8 保留来源初始化元数据，field/world v8、session v3 不变。完整开场、原生演员稳定保存、后续切图和全游戏迁移尚未完成，HD-2D 后置；证据和限制见 [v31 系统集成](systems-v31.md)。
 
 ## 当前证据与缺口
 
@@ -19,9 +19,9 @@
 | 队伍、库存与菜单 | v19 将普通新 owner、来源成长/自然学习与同图演员刷新接入事务；enabled 名册才登记装备，19 条来源 selector 解码、103 条未解码。`GameState` 统一拥有开场三人进度、三组四格编队、六槽装备、装备总数、普通/重要物品、Gil 与领奖记录。v16 编队保存空位/前后排，活动成员从所选组派生；196 条来源指令中 45 条通过实际字段执行，151 条外观刷新路径明确阻塞，见 [编队](party.md)。v15 普通恢复、玩家复活和已支持状态解除用于菜单/战斗，库存与字段和检查点共享；菜单 14 个/战斗 16 个道具 plan，固定恢复 17 组来源输入。预订、一次扣量、失败重试与胜利提交共用库存；装备菜单只展示真实可用选项并预览参数，见 [道具动作](item-actions.md)、[装备系统](equipment.md)、[共享状态](shared-game-state.md) | 18 条普通初始化/成长模板可用但不授予角色；新 owner 的完整战斗入口、其他学习、未覆盖的事件/跨图初始化分支、companion/同图镜头变更/条件碰撞、其他道具和活动状态、敌方道具目标与反应、宝箱/商店/掉落/偷取的完整取得流程、魔石事件、能力学习；14/16 是编译计划数，受当前状态和资格限制，不能全计为可实用道具 |
 | 存读档 | `game-checkpoint-v3` 保存共享状态、剧情变量、地图、门、动画、音频、下次遭遇序号与即时/等待及五档速度偏好；v19 内含 `owned-game-state` v7 的动态名册、追加经验/成长、能力/全局历史/名称标签、三组四格编队、六槽和 enabled 装备登记；字段/世界 v7 保存独立交通身份、来源入口演员上下文、初始化同步证明和宝箱独立开箱状态，恢复重验资格、占用与属性上限，不重放字段名册、编队或库存指令。稳定检查点浏览器保存/刷新继续/上一份恢复的历史证据保留，见 [检查点存档](checkpoint-saves.md) | 当前仅稳定地图检查点；活动事件/战斗、完整新游戏与区域边界、旧版本迁移、原版保存许可/格式及其他浏览器仍待做；旧构建通过不替代当前构建复验 |
 
-盘点依据是当前 `src/core/battle-content.ts`、`battle.ts`、`game-state.ts`、`game-session.ts` 及其编译器，而不是解析计数。`BattleContent` 仍明确限制为 `opening-battle-development` / `narshe-playability-v30`，能力和道具保留来源函数列表与独立受限执行 plan；道具菜单/战斗分别编译，行动保留载体身份，presentation 不参与逻辑分派。完整战斗的状态、命中和调度覆盖尚未形成。详见 [战斗研究](battle-migration.md)、[开发规则](battle-playability.md)。
+盘点依据是当前 `src/core/battle-content.ts`、`battle.ts`、`game-state.ts`、`game-session.ts` 及其编译器，而不是解析计数。`BattleContent` 仍明确限制为 `opening-battle-development` / `narshe-playability-v31`，能力和道具保留来源函数列表与独立受限执行 plan；道具菜单/战斗分别编译，行动保留载体身份，presentation 不参与逻辑分派。完整战斗的状态、命中和调度覆盖尚未形成。详见 [战斗研究](battle-migration.md)、[开发规则](battle-playability.md)。
 
-v30 当前结果见 [本批系统集成](systems-v30.md)，v29 历史证据见 [前一批系统集成](systems-v29.md)。普通成长见 [成长与恢复](character-growth.md)，同图演员刷新与交通见 [队伍演员](party-actors.md)、[交通](transportation.md)。普通初始化和地图毒伤详见 [角色初始化](owned-character.md)、[地图步行状态](field-conditions.md)。原生文件和方法区间摘要核验继续标为 `semanticsVerified=false`，不替代动态语义或全流程可达性；所有系统门禁仍保持未完成。
+v31 当前结果见 [本批系统集成](systems-v31.md)，v30 历史证据见 [前一批系统集成](systems-v30.md)。普通成长见 [成长与恢复](character-growth.md)，同图演员刷新与交通见 [队伍演员](party-actors.md)、[交通](transportation.md)。普通初始化和地图毒伤详见 [角色初始化](owned-character.md)、[地图步行状态](field-conditions.md)。原生文件和方法区间摘要核验继续标为 `semanticsVerified=false`，不替代动态语义或全流程可达性；所有系统门禁仍保持未完成。
 
 ## 系统闭环检查
 

@@ -1,6 +1,7 @@
 import { minimapMarkers, MINIMAP_ROTATION } from "/runtime/core/minimap.js";
 import { FIELD_POSE as FACING } from "/runtime/core/actor-animation.js";
 import { fieldFadeOverlay } from "/runtime/core/field-fade.js";
+import { projectFieldBackground } from "/runtime/core/field-background.js";
 export class Renderer {
   constructor(canvas, content, images) {
     this.canvas = canvas;
@@ -108,6 +109,9 @@ export class Renderer {
     c.restore();
   }
   actor(a, cx, cy) {
+    // Fresh factory residents may be active without a selected sprite. A zero
+    // direction is a native state, never an invitation to invent a facing.
+    if (a.asset === null || a.direction === null || (a.native && !a.animation?.frame())) return;
     const p = this.point(a),
       x = (p.x + 0.5) * 16 - cx,
       y = (p.y + 1) * 16 - 2 - cy;
@@ -154,6 +158,20 @@ export class Renderer {
     c.imageSmoothingEnabled = false;
     c.fillStyle = "#09111b";
     c.fillRect(0, 0, w, h);
+    for (const background of m.backgrounds ?? []) {
+      if (!sourceCamera) throw new Error("来源背景缺少摄像机宿主");
+      const image = this.images.get(background.texture.url);
+      if (!image) throw new Error("缺少来源背景图像");
+      const projection = projectFieldBackground(background, {
+        scrollCamera: sourceCamera.cameraPosition,
+        renderCamera: background.renderHost.renderCamera,
+        rendererWorld: background.renderHost.rendererWorld,
+        screen: { width: w, height: h }, renderTarget: { width: w, height: h },
+      });
+      for (const { source, destination } of projection.patches)
+        c.drawImage(image, source.x, source.y, source.width, source.height,
+          destination.x, destination.y, destination.width, destination.height);
+    }
     c.save();
     c.translate(ox, oy);
     c.scale(scale, scale);
@@ -243,7 +261,7 @@ export class Renderer {
     const actors = Object.values(game.actors)
       .filter(
         (a) =>
-          !game.hiddenEntities.has(a.id) &&
+          game.isEntityVisible(a.id) &&
           a.x >= 0 &&
           a.x < m.width &&
           a.y >= 0 &&
@@ -261,6 +279,21 @@ export class Renderer {
       if (l.name === "GroundLayer") drawActors(1);
       if (l.name === "UpperLayer") drawActors(2);
       if (l.name === "CeilLayer") drawActors(3);
+    }
+    const message = game.sourceMessage?.projection;
+    if (message) {
+      const lines = message.text.split("\n"), lineHeight = 24;
+      const startY = message.anchor === "top" ? 28 : message.anchor === "middle"
+        ? (h - lines.length * lineHeight) / 2 : h - 28 - lines.length * lineHeight;
+      c.save();
+      c.font = '16px system-ui, "PingFang SC", sans-serif';
+      c.textBaseline = "top";
+      c.textAlign = message.alignment;
+      c.fillStyle = "#fff";
+      c.shadowColor = "#000"; c.shadowBlur = 2;
+      for (const [index, line] of lines.entries()) c.fillText(line,
+        message.alignment === "center" ? w / 2 : 28, startY + lineHeight * index);
+      c.restore();
     }
     if (game.fade) {
       const color = fieldFadeOverlay(game.fade);

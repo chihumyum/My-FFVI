@@ -86,7 +86,7 @@ test("fresh shared owner consumes its bound initializer without applying the dev
   const { content, player, conditions, definition, make } = setup();
   const before = structuredClone(content), plan = createNewGame(definition), state = make();
   const snapshot = state.snapshot();
-  assert.equal(snapshot.formatVersion, 7);
+  assert.equal(snapshot.formatVersion, 8);
   assert.deepEqual(snapshot.roster.map((r) => [r.id, r.sourceId, r.ownedId]), [[firstId, 2, 1]]);
   assert.deepEqual(snapshot.roster[0]!.conditionIds, []);
   assert.equal(snapshot.roster[0]!.hp, 100);

@@ -16,6 +16,12 @@ import {
   type GameStateSnapshot,
 } from "./game-state.js";
 import type { WorldCatalog, WorldMapContent } from "../field/world.js";
+import { canonical } from "./canonical.js";
+import { prepareSourceNewGameField, installSourceNewGameActors, validateSourceNewGameLaunch,
+  type SourceNewGameContent } from "./source-new-game.js";
+import type { NewGameFieldLaunch, NewGameFieldPreparation } from "./new-game-field-entry.js";
+import type { FieldFadeState } from "./field-fade.js";
+import { cloneSourcePresentationContext, type SourcePresentationContext } from "./source-presentation.js";
 import {
   checkpointKeys,
   checkpointInteger,
@@ -36,6 +42,8 @@ export type GameCheckpoint = {
 };
 /** External observations are rebound by the host on load, never trusted from saves. */
 export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort };
+type FreshSession = { content: SourceNewGameContent; state: GameState; events: EventState;
+  map: WorldMapContent; fade: FieldFadeState; presentation: SourcePresentationContext };
 
 /** Owns the encounter handoff and consumes rewards exactly once. No renderer state drives progression. */
 export class GameSession {
@@ -59,25 +67,64 @@ export class GameSession {
   private currentSeed = 0;
   private remainder = 0;
   private currentBattlePreferences: BattlePreferences;
+  private freshEntry: { content: SourceNewGameContent; launched: boolean } | null = null;
+  static prepareNewGame(content: SourceNewGameContent, world: WorldCatalog, map: WorldMapContent,
+    battle: BattleCatalog, fade: FieldFadeState, presentation: SourcePresentationContext,
+    runtime: GameSessionRuntime = {}, seed = 20261010): GameSession {
+    const state = GameState.createNewGame(battle.gameState, battle.common.players, battle.contentHash, battle.common.conditions);
+    const prepared = prepareSourceNewGameField(content, world, map, battle, state, fade.projection ?? undefined);
+    const context = cloneSourcePresentationContext(presentation);
+    if (context?.origin !== "title-new-game" || context.advertisementOpeningFader !== "absent")
+      throw new Error("Fresh game requires ordinary title presentation context");
+    const events = new EventState(prepared.fresh.events);
+    events.clearMap(map.mapId);
+    const session = new GameSession(prepared.field, battle, seed, runtime, { content, state,
+      events, map, fade: fade.fork(), presentation: context });
+    session.setBattlePreferences(prepared.fresh.battlePreferences);
+    return session;
+  }
+  newGamePreparation(fieldUiReady: boolean): NewGameFieldPreparation {
+    const fresh = this.freshEntry;
+    if (!fresh || fresh.launched || !fieldUiReady || !this.field.player.native || !this.field.cameraSnapshot)
+      throw new Error("Fresh game field/UI preparation is incomplete");
+    return { kind: "source-new-game-field-prepared-v1", mapId: fresh.content.entry.mapId,
+      entrance: fresh.content.entry.entrance, reservedScriptName: fresh.content.entry.reservedScript.name,
+      firstLoad: true, mapLoadComplete: true, mapSetupComplete: true, mapViewSetupComplete: true,
+      firstFieldSceneInitialized: true, fieldUiReady: true };
+  }
+  launchNewGame(launch: NewGameFieldLaunch): void {
+    const fresh = this.freshEntry;
+    if (!fresh || fresh.launched) throw new Error("No pending fresh game launch");
+    validateSourceNewGameLaunch(fresh.content, launch);
+    if (canonical(launch.fade.snapshot()) !== canonical(this.field.fader.snapshot()) ||
+        canonical(launch.sourcePresentation) !== canonical(this.field.sourcePresentationContext))
+      throw new Error("Fresh game lost the prepared title fade/presentation owner");
+    this.field.startMapEntry(launch.scriptName);
+    fresh.launched = true;
+  }
   constructor(
     field: FieldContent,
     readonly battleCatalog: BattleCatalog,
     readonly seed = 20261010,
     runtime: GameSessionRuntime = {},
+    fresh?: FreshSession,
   ) {
     checkpointInteger(seed, 0, 0xffffffff);
     this.currentBattlePreferences = parseBattlePreferences(battleCatalog.common.timing);
-    if (field.sourceSetHash !== battleCatalog.common.fieldSourceSetHash)
+    if (!fresh && field.sourceSetHash !== battleCatalog.common.fieldSourceSetHash)
       throw new Error("Field/battle source mismatch");
-    this.state = new GameState(
+    if (fresh && (fresh.content.sourceSetHash !== field.sourceSetHash ||
+        fresh.content.battleCatalogHash !== battleCatalog.contentHash || fresh.state.catalogHash !== battleCatalog.contentHash))
+      throw new Error("Fresh field/battle content binding mismatch");
+    this.state = fresh?.state ?? new GameState(
       battleCatalog.gameState,
       battleCatalog.common.players,
       battleCatalog.contentHash,
       battleCatalog.common.conditions,
     );
-    const initialEvents = new EventState();
+    const initialEvents = fresh?.events ?? new EventState();
     const seeded = new Set<string>();
-    for (const { ref, value } of field.entry.initialEventValues ?? []) {
+    for (const { ref, value } of fresh ? [] : field.entry.initialEventValues ?? []) {
       const identity = `${ref.category}:${ref.index}`;
       if (seeded.has(identity)) throw new Error("Duplicate source checkpoint event seed");
       seeded.add(identity);
@@ -86,6 +133,8 @@ export class GameSession {
     this.world = new WorldSession(field, initialEvents, {
       current: {
         ...runtime,
+        ...(fresh ? { sourcePresentation: { context: () => structuredClone(fresh.presentation) } } : {}),
+        puppetRoster: this.state.fieldPuppetRoster,
         inventory: this.state.fieldInventory,
         treasure: this.state.fieldTreasure,
         party: this.state.fieldParty,
@@ -97,7 +146,11 @@ export class GameSession {
         movementBlocker: (transportationId, manual) => this.state.fieldMoveBlocker(transportationId, manual),
       },
       prepare: () => this.state.prepareFieldState(),
-    });
+    }, fresh?.fade);
+    if (fresh) {
+      installSourceNewGameActors(this.field, fresh.content, this.state, fresh.map);
+      this.freshEntry = { content: fresh.content, launched: false };
+    }
   }
   get battlePreferences(): BattlePreferences {
     return { ...this.currentBattlePreferences };
@@ -187,6 +240,8 @@ export class GameSession {
     const next = new GameSession(initial, battle, s.seed, runtime);
     next.setBattlePreferences(s.battlePreferences);
     next.state.restore(s.owned);
+    if (next.state.initialization !== "development-checkpoint")
+      throw new Error("Source new-game restore requires the native actor/world checkpoint codec");
     if (s.encounterSerial !== s.owned.completedBattles.length)
       throw new Error("Saved encounter sequence disagrees with rewards");
     next.world.restore(s.world, world?.catalog, world?.map);

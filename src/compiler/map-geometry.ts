@@ -2,8 +2,9 @@ import { z } from "zod";
 import { record } from "./content.js";
 import { entityProperties } from "./entity-group.js";
 import type { Evidence, TileLayer, Tileset } from "../field/types.js";
+import { validateFieldBackground, type FieldBackgroundLayer } from "../core/field-background.js";
 
-type Asset = { data: unknown; source: Evidence };
+type Asset = { data: unknown; source: Evidence & { sha256?: string } };
 export type MapTexture = {
   url: string;
   width: number;
@@ -32,6 +33,7 @@ export function compileMapGeometry(
   tilemap: Asset,
   collision: Asset,
   media: Record<string, MapTexture>,
+  backgrounds: readonly FieldBackgroundLayer[] = [],
 ) {
   const raw = record(tilemap.data),
     width = positive(raw.width),
@@ -46,6 +48,16 @@ export function compileMapGeometry(
   const layers: TileLayer[] = [],
     collisions: Record<string, number[]> = {};
   const blockers: { reason: string; source: Evidence }[] = [];
+  const admittedBackgrounds = new Map<number, FieldBackgroundLayer>();
+  for (const background of backgrounds) {
+    validateFieldBackground(background);
+    if (admittedBackgrounds.has(background.layerId) ||
+        background.source.file !== tilemap.source.file || background.source.objectId !== tilemap.source.objectId ||
+        background.source.sha256 !== tilemap.source.sha256)
+      throw new Error("Background admission does not belong to this tilemap");
+    admittedBackgrounds.set(background.layerId, background);
+  }
+  const usedBackgrounds = new Set<number>();
   const issue = (reason: string, source: Evidence, pointer: string) =>
     blockers.push({ reason, source: { ...source, pointer } });
   const transformed = (layer: Record<string, unknown>) =>
@@ -80,6 +92,10 @@ export function compileMapGeometry(
           data,
           opacity: opacity(l.opacity),
         });
+      } else if (l.type === "imagelayer" && parent === "/layers" &&
+                 admittedBackgrounds.get(Number(l.id))?.name === l.name) {
+        if (usedBackgrounds.has(Number(l.id))) throw new Error("Duplicate admitted background layer");
+        usedBackgrounds.add(Number(l.id));
       } else if (
         l.type !== "imagelayer" ||
         entityProperties(l.properties ?? []).active !== false
@@ -92,6 +108,8 @@ export function compileMapGeometry(
     }
   }
   walk(raw.layers, "/layers");
+  if (usedBackgrounds.size !== admittedBackgrounds.size)
+    throw new Error("Admitted background has no source layer");
   for (const [index, value] of array(record(collision.data).layers).entries()) {
     const l = record(value),
       name = text(l.name),
@@ -177,6 +195,7 @@ export function compileMapGeometry(
     height,
     tileSize: 16,
     layers,
+    ...(backgrounds.length ? { backgrounds: structuredClone([...backgrounds]) } : {}),
     tilesets: sets as Tileset[],
     textures,
     collisions,

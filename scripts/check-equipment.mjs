@@ -108,7 +108,7 @@ const make = () =>
   );
 const owned = make(),
   initial = owned.snapshot();
-assert.equal(initial.formatVersion, 7);
+assert.equal(initial.formatVersion, 8);
 assert.deepEqual(initial.equipmentStock, [
   { id: 93, count: 5 },
   { id: 95, count: 1 },

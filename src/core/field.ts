@@ -23,6 +23,13 @@ import { executeOwnedConditionEvent, type FieldOwnedConditionPort } from "./owne
 import { executeSourcePresentation, cloneSourcePresentationContext, sourcePresentationCheckpoint,
   type SourcePresentationContext, type SourcePresentationPort } from "./source-presentation.js";
 import { canonical } from "./canonical.js";
+import { SourceMessageState, sourceMessageUpdateMask, type SourceMessageEffect } from "./source-message.js";
+import type { FieldPuppetRosterPort } from "./field-puppet-roster.js";
+import { createNativeFieldActorProjections, createNativeFieldPuppetActorsPort,
+  type NativeFieldActorData } from "./field-native-actors.js";
+import type { FieldActorFactoryCandidate } from "./field-actor-factory.js";
+import { projectFieldPuppetCollision, type FieldPuppetCollisionState, type FieldPuppetHostProviders } from "./field-puppet-effects.js";
+import type { FieldPuppetActorCatalog, FieldPuppetControlContext } from "./field-puppet-actors.js";
 import type { PartyActorPlan } from "./party-actors.js";
 import type { FieldTreasurePort } from "./treasure-port.js";
 import { treasureFlagRef, validateTreasureInventory, type TreasureBoxRequest } from "./treasure-inventory.js";
@@ -101,14 +108,16 @@ export type Motion = {
 };
 export type Actor = Point & {
   id: string;
-  layer: number;
-  direction: Direction;
-  asset: string;
+  layer: number | null;
+  direction: Direction | null;
+  asset: string | null;
   mount: string | null;
   motion: Motion | null;
   steps: number;
   animation: ActorAnimation | null;
+  native?: NativeFieldActorData;
 };
+type PlacedActor = Actor & { layer: number; direction: Direction; asset: string };
 export type FieldCheckpoint = {
   kind: "idle-field-v8";
   contentHash: string;
@@ -123,7 +132,7 @@ export type FieldCheckpoint = {
   activeGroups: string[];
   hiddenEntities: string[];
   openedTreasures: string[];
-  actors: (Omit<Actor, "motion" | "animation"> & {
+  actors: (Omit<PlacedActor, "motion" | "animation" | "native"> & {
     animation: ActorPlayback | null;
   })[];
   tiles: TileCheckpoint;
@@ -176,7 +185,9 @@ export type Stop =
     };
 export type Dialogue = FieldMessage & { task: number };
 export type FieldGameOptions = {
+  sourceMessageEffects?: { prepare(effects: readonly SourceMessageEffect[]): () => void };
   puppetActors?: FieldPuppetActorsPort;
+  puppetRoster?: FieldPuppetRosterPort;
   audioReadiness?: AudioReadinessPort;
   /** Immutable host admission, never inferred from absent source fields or saved
    * visibility. Missing capability keeps native child propagation unresolved. */
@@ -236,6 +247,65 @@ export class FieldGame {
   readonly collisionRange: CollisionRange;
   private readonly collisionMappings = new Map<number, number[]>();
   readonly actors: Record<string, Actor> = {};
+  private collisionSwitches: FieldPuppetCollisionState = projectFieldPuppetCollision(true);
+  private entityUpdateMask = 3;
+  get updateAttributeMask(): number { return this.entityUpdateMask; }
+  get collisionState(): Readonly<FieldPuppetCollisionState> { return { ...this.collisionSwitches }; }
+  isEntityVisible(id: string): boolean {
+    const native = this.actors[id]?.native;
+    return native ? native.entity.visible : !this.hiddenEntities.has(id);
+  }
+  /** Install the prepared factory directly into the existing actor collection.
+   * A script alias is never an actor identity, and the camera stays separate. */
+  installNativeActors(candidate: FieldActorFactoryCandidate, catalog: FieldPuppetActorCatalog,
+    providers: () => FieldPuppetHostProviders, controlContext: FieldPuppetControlContext): void {
+    if (this.tasks.length || this.options.puppetActors || !this.camera || !this.partyActors ||
+        !this.options.partyAppearance || !this.options.puppetRoster ||
+        Object.keys(this.actors).some((id) => id !== this.player.id))
+      throw new Error("Native actor installation requires a fresh bound field without legacy NPC actors");
+    if (candidate.bindings.player !== this.player.id || candidate.snapshot.camera?.id !== this.cameraActorId)
+      throw new Error("Native factory does not match the existing player/camera identities");
+    const projected = createNativeFieldActorProjections(candidate, this.content.cameraHost!.mapRange,
+      this.options.partyAppearance.catalog);
+    const player = projected.find((a) => a.id === this.player.id);
+    if (!player || player.x !== this.player.x || player.y !== this.player.y ||
+        player.layer !== this.player.layer || player.direction !== this.player.direction || player.asset !== this.player.asset)
+      throw new Error("Native factory player disagrees with prepared PointIn");
+    const bindings = structuredClone(candidate.bindings), puppetCatalog = structuredClone(catalog);
+    const detachedActors = Object.fromEntries(projected.map((actor) => [actor.id, actor]));
+    let published = false;
+    const port = createNativeFieldPuppetActorsPort({
+      readActors: () => published ? this.actors : detachedActors,
+      readCamera: () => { const s = this.camera!.snapshot();
+        return { id: this.cameraActorId, position: s.dummy.position, layer: s.dummy.layer }; },
+      readProviders: providers,
+      readContext: () => ({ catalog: puppetCatalog, checkpoint: this.partyActors!.checkpoint(), bindings,
+        ...this.options.puppetRoster!.current(), entities: this.entityList.filter((e) => this.actors[e.id])
+          .map((e) => ({ entityId: Number(e.id), actor: e.id })), restorePartyInstruction: "absent" }),
+      controlContext: () => structuredClone(controlContext),
+      prepareCollision: (enabled) => {
+        const before = this.collisionSwitches, next = projectFieldPuppetCollision(enabled);
+        return () => { if (this.collisionSwitches !== before) throw new Error("Stale collision switch transaction");
+          this.collisionSwitches = next; };
+      },
+    });
+    // Reject missing/ambiguous alias and resident bindings while every new
+    // object is still private. A failed installation cannot replace the player.
+    port.read();
+    for (const actor of projected) { this.actors[actor.id] = actor; this.hiddenEntities.delete(actor.id); }
+    published = true;
+    this.options.puppetActors = port;
+    this.options.sourceMessageEffects = { prepare: (effects) => {
+      if (effects.length !== 1 || effects[0]!.kind !== "entity-update-group" ||
+          effects[0]!.invokeCallback !== false || ![8, 12].includes(effects[0]!.group))
+        throw new Error("Unbound source message update group");
+      const before = this.entityUpdateMask, mask = sourceMessageUpdateMask(effects[0]!.group);
+      return () => {
+        if (this.entityUpdateMask !== before) throw new Error("Stale source message update group");
+        this.entityUpdateMask = mask;
+      };
+    } };
+  }
   readonly hiddenEntities = new Set<string>();
   private readonly openedTreasures = new Set<string>();
   readonly activeGroups = new Set<string>();
@@ -259,6 +329,7 @@ export class FieldGame {
   }[] = [];
   get fade() { return this.fader.projection; }
   dialogue: Dialogue | null = null;
+  readonly sourceMessage = new SourceMessageState();
   private retainedMessage: Dialogue | null = null;
   private treasureSceneState: "player" | "message" = "player";
   /** A close=false source message keeps its window during the post-input yield. */
@@ -450,8 +521,11 @@ export class FieldGame {
     this.activeGroups.add(name);
     this.currentProperties = [...this.defaultProperties, ...group.entities];
   }
-  get player(): Actor {
-    return this.actors["-1001"]!;
+  get player(): PlacedActor {
+    const player = this.actors["-1001"]!;
+    if (player.layer === null || player.direction === null || player.asset === null)
+      throw new Error("Actual player is missing its prepared pose/media");
+    return player as PlacedActor;
   }
   private prepareTreasureInitialization(entities: readonly FieldEntity[]): FieldEntity[] {
     return entities.filter((e) => e.kind === 7).filter((e) => {
@@ -631,6 +705,7 @@ export class FieldGame {
   }
   private preparePartyRenderer({ asset, mount }: { asset: string; mount: string | null }, plan: PartyActorPlan): () => void {
     const actor = this.player;
+    if (actor.native) throw new Error("Native actor asset-refresh publication is not yet admitted");
     if (plan.cameraOffset && (plan.cameraOffset.x !== this.cameraOffset.x || plan.cameraOffset.y !== this.cameraOffset.y))
       throw new Error("Changing the field camera offset during party refresh is not implemented");
     if (actor.motion) throw new Error("Party appearance refresh during player movement is not supported");
@@ -641,6 +716,7 @@ export class FieldGame {
   get busy(): boolean {
     return (
       this.tasks.some((t) => !t.done) ||
+      this.sourceMessage.active ||
       !!this.dialogue ||
       !!this.shopTask ||
       this.treasureSceneState === "message" ||
@@ -682,12 +758,12 @@ export class FieldGame {
       activeGroups: [...this.activeGroups],
       hiddenEntities: [...this.hiddenEntities],
       openedTreasures: [...this.openedTreasures],
-      actors: Object.values(this.actors).map(
-        ({ motion: _, animation, ...actor }) => ({
-          ...actor,
-          animation: animation?.snapshot() ?? null,
-        }),
-      ),
+      actors: Object.values(this.actors).map(({ motion: _, animation, native, ...actor }) => {
+        if (native || actor.layer === null || actor.direction === null || actor.asset === null)
+          throw new Error("Native actors require their own stable field codec");
+        return { ...actor, layer: actor.layer, direction: actor.direction, asset: actor.asset,
+          animation: animation?.snapshot() ?? null };
+      }),
       tiles: this.tileAnimations.checkpoint(),
       doors: this.openTriggers.checkpoint(),
       bgm: this.bgm.snapshot(),
@@ -804,10 +880,11 @@ export class FieldGame {
     this.stop = { kind: "unsupported", message, site };
   }
   private dynamicCollision(p: Point, layer: number): number | null {
+    if (!this.collisionSwitches.entityCollision) return 15;
     let mask = 15;
     for (const e of this.entityList)
       if (
-        !this.hiddenEntities.has(e.id) &&
+        this.isEntityVisible(e.id) &&
         e.kind === 19 &&
         e.layer === layer &&
         contains(e, p)
@@ -830,6 +907,7 @@ export class FieldGame {
     return mask;
   }
   private collision(p: Point, layer: number): number | null {
+    if (!this.collisionSwitches.mapColliders) return this.dynamicCollision(p, layer);
     if (!inCollisionRange(p, this.collisionRange)) return 0;
     const cell =
       this.content.map.collisions[layer]?.[p.y * this.content.map.width + p.x];
@@ -843,19 +921,20 @@ export class FieldGame {
     }
   }
   private occupied(points: Point[], layer: number): boolean {
+    if (!this.collisionSwitches.entityCollision) return false;
     return (
       this.entityList.some(
         (e) =>
           ((e.kind === 8 && this.openTriggers.blocks(e.id)) ||
             ((e.kind === 5 || e.kind === 7) && e.mapObject?.collision)) &&
           e.layer === layer &&
-          !this.hiddenEntities.has(e.id) &&
+          this.isEntityVisible(e.id) &&
           points.some((p) => contains(e, p)),
       ) ||
       Object.values(this.actors).some(
         (a) =>
           a.id !== this.player.id &&
-          !this.hiddenEntities.has(a.id) &&
+          this.isEntityVisible(a.id) &&
           this.entityList.find((e) => e.id === a.id)?.npc?.collision !==
             false &&
           a.layer === layer &&
@@ -922,9 +1001,9 @@ export class FieldGame {
     let to = { x: p.x + d.x, y: p.y + d.y };
     const doors = this.entityList.filter(
       (e) =>
-        e.kind === 8 &&
+        this.collisionSwitches.entityCollision && e.kind === 8 &&
         e.layer === p.layer &&
-        !this.hiddenEntities.has(e.id) &&
+        this.isEntityVisible(e.id) &&
         this.openTriggers.blocks(e.id) &&
         contains(e, to),
     );
@@ -1030,7 +1109,7 @@ export class FieldGame {
       this.pump();
       return;
     }
-    if (this.busy || this.player.motion) return;
+    if (this.busy || this.player.motion || !this.collisionSwitches.interactiveObservation) return;
     const p = this.player,
       d = DELTA[p.direction],
       target = { x: p.x + d.x, y: p.y + d.y };
@@ -1043,7 +1122,7 @@ export class FieldGame {
           e.mapObject?.collision === false &&
           this.openedTreasures.has(e.id)
         ) &&
-        !this.hiddenEntities.has(e.id) &&
+        this.isEntityVisible(e.id) &&
         (this.actors[e.id]?.layer ?? e.layer) === p.layer &&
         (properties ? properties.interaction.kind !== "none" : !!e.script) &&
         (e.kind === 6 || e.kind === 17
@@ -1209,8 +1288,14 @@ export class FieldGame {
       this.openTriggers.advance();
       this.time += 10;
       this.fader.advance(0.01);
+      this.sourceMessage.advance(0.01);
       let entered = false;
       for (const a of Object.values(this.actors)) {
+        // Source fresh player, party puppets and residents have attribute 2.
+        // Map NPC SetProperty can choose 10 and needs a distinct factory host.
+        // Message group 8 has mask 9; event group 12 has mask 3. Camera (10),
+        // tile animation (42), VM and the global fader continue separately.
+        if (a.native && (this.entityUpdateMask & 2) === 0) continue;
         try {
           a.animation?.advance(10);
         } catch (error) {
@@ -1220,6 +1305,11 @@ export class FieldGame {
         const m = a.motion;
         if (!m) continue;
         m.elapsed += 10;
+        if (a.native) {
+          const ratio = Math.min(1, m.elapsed / m.duration);
+          a.x = m.from.x + (m.to.x - m.from.x) * ratio;
+          a.y = m.from.y + (m.to.y - m.from.y) * ratio;
+        }
         try {
           a.animation?.linkToMovement(Math.min(1, m.elapsed / m.duration));
         } catch (error) {
@@ -1259,10 +1349,11 @@ export class FieldGame {
     }
   }
   private enter(): void {
+    if (!this.collisionSwitches.interactiveObservation) return;
     const p = this.player,
       hits = this.entityList.filter(
         (e) =>
-          !this.hiddenEntities.has(e.id) &&
+          this.isEntityVisible(e.id) &&
           e.layer === p.layer &&
           contains(e, p),
       );
@@ -1858,6 +1949,9 @@ export class FieldGame {
             }
             break;
           case "change-map":
+            if (this.sourceMessage.active) {
+              this.block("Source message must close before map handoff", op); return;
+            }
             if (this.treasureHandoffBlocked()) {
               this.block("宝箱任务尚未完成，尚不支持并发切图", op);
               return;
@@ -1979,7 +2073,7 @@ export class FieldGame {
                 child.done = plan.status === "sleep";
                 child.state = "ready";
                 child.actor = actor;
-                if (plan.showActor && !(this.camera && actor === this.cameraActorId)) this.hiddenEntities.delete(actor);
+                if (plan.showActor && !(this.camera && actor === this.cameraActorId) && !this.actors[actor]?.native) this.hiddenEntities.delete(actor);
               }
               if (result.flow === "wait") {
                 t.puppetWait = command;
@@ -2005,11 +2099,12 @@ export class FieldGame {
             if (
               op.animation !== "" &&
               op.animation !== "Default" &&
-              !this.content.characters[actor.asset]?.animations[op.animation]
+              (!actor.asset || !this.content.characters[actor.asset]?.animations[op.animation])
             ) {
               this.block("尚未支持角色动画 " + op.animation, op);
               return;
             }
+            if (actor.native) { this.block("Source actor SetPos body/provider chain is not yet admitted", op); return; }
             if (op.animation && actor.animation) {
               try {
                 actor.animation.cue(op.animation, -1);
@@ -2057,9 +2152,11 @@ export class FieldGame {
               this.block("非角色实体不能转向", op);
               return;
             }
-            actor.direction = op.direction;
             try {
-              actor.animation?.look(op.direction);
+              const animation = actor.animation?.clone() ?? null;
+              animation?.look(op.direction);
+              actor.direction = op.direction;
+              actor.animation = animation;
             } catch (error) {
               this.block(
                 error instanceof Error ? error.message : String(error),
@@ -2070,6 +2167,11 @@ export class FieldGame {
             break;
           case "player-visibility":
             try {
+              if (this.player.native) {
+                this.options.puppetActors!.prepare({ leaderId: null, assignments: null,
+                  effects: [{ kind: op.command.kind === "hide-player" ? "hide" : "show", actor: this.player.id }] })();
+                break;
+              }
               const plan = projectPlayerVisibility(op.command, {
                 playerId: this.player.id,
                 partyPlayerId: this.partyActors?.checkpoint().context.player.id ?? null,
@@ -2097,7 +2199,11 @@ export class FieldGame {
               );
               return;
             }
-            this.hiddenEntities.add(t.actor);
+            if (actor?.native) {
+              try { this.options.puppetActors!.prepare({ leaderId: null, assignments: null,
+                effects: [{ kind: "hide", actor: actor.id }] })(); }
+              catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            } else this.hiddenEntities.add(t.actor);
             break;
           case "ride": {
             const rider = this.actors[op.actor];
@@ -2133,7 +2239,18 @@ export class FieldGame {
               return;
             }
             break;
+          case "source-message":
+            try {
+              if (this.messageWindow || this.shopTask || this.treasureSceneState === "message")
+                throw new Error("Source message conflicts with an occupied message window");
+              if (!this.options.sourceMessageEffects) throw new Error("Source message entity-update host is unavailable");
+              const next = this.sourceMessage.prepare(op), publish = this.options.sourceMessageEffects.prepare(next.effects);
+              if (typeof publish !== "function") throw new Error("Invalid source message host transaction");
+              publish(); next.commit();
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
           case "message":
+            if (this.sourceMessage.active) { this.block("Source message window is already occupied", op); return; }
             this.dialogue = {
               speaker: op.speaker,
               text: op.text,

@@ -1,0 +1,10 @@
+import { mkdir, writeFile, rename } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { compileSourceNewGame } from "../dist/src/compiler/source-new-game.js";
+import { canonical } from "../dist/src/core/canonical.js";
+const root = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
+const content = await compileSourceNewGame(root);
+await mkdir(root + "/build/game", { recursive: true });
+await writeFile(root + "/build/game/.source-new-game.json", canonical(content) + "\n");
+await rename(root + "/build/game/.source-new-game.json", root + "/build/game/source-new-game.json");
+console.log(JSON.stringify({ kind: content.kind, contentHash: content.contentHash, entry: content.entry }));

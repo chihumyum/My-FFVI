@@ -1310,6 +1310,38 @@
         "GameAssembly.dll:RVA 0x38eeb0,0x155fc10,0x2e37a0,0x2e39a0,0x2e3d30,0x2e6fe0",
         "docs/new-game-field-entry.md"
       ]
+    },
+    {
+      "id": "narshe:fresh-session-v31",
+      "subject": "narshe",
+      "predicate": "migration.newGameSession",
+      "value": "The source title entry is installed in the same GameState, native FieldGame actor collection, camera and fader owners. Source origin and initial metadata persist in owned v8; entrySeed is provenance only. Native actor stable save and cross-map handoff remain gated; a source owned state cannot be restored into a development world checkpoint.",
+      "when": {
+        "battleProfile": "narshe-playability-v31"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "docs/systems-v31.md",
+        "docs/source-native-state.md",
+        "docs/field-native-actors.md"
+      ]
+    },
+    {
+      "id": "narshe:source-message-v31",
+      "subject": "narshe",
+      "predicate": "migration.sourceMessage",
+      "value": "The bounded ordinary asynchronous NoWindow AUTO_P single-page message path enters entity-update mask 9 and closes to mask 3. Factory actors with attribute 2 pause movement and animation while VM, camera, tile animation and fader continue. Automatic wrapping, native font layout and other message managers remain incomplete; the Web single-page length limit is not a source rule.",
+      "when": {
+        "battleProfile": "narshe-playability-v31"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "GameAssembly.dll:RVA 0x98b5e0,0x98dd40,0x7126a0,0xab00d0",
+        "docs/source-messages.md",
+        "docs/systems-v31.md"
+      ]
     }
   ],
   "assets": []

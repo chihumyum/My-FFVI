@@ -5,6 +5,7 @@ import { hash, record } from "./content.js";
 import { ImportedProject } from "../contracts.js";
 import { compileEntityGroup } from "./entity-group.js";
 import { compileMessage } from "./message.js";
+import { compileSourceMessageInstruction } from "./source-message.js";
 import { tableId } from "./table-id.js";
 import { loadMinimapMedia } from "./map-ui.js";
 import { loadAudioMedia } from "./audio.js";
@@ -113,6 +114,10 @@ export function decodeFieldOp(
   }
   const o = record(m.operands), i = list(o.iValues).map(integer),
     r = list(o.rValues).map(Number), s = list(o.sValues).map(string);
+  if (name === "MsgClose" || (name === "Msg" && (i[0] !== 0 || r[0] !== 0))) {
+    try { return { ...site, ...compileSourceMessageInstruction(raw, messages) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   const form = (is: number[], rs: number[] = [], ss: number[] = []) =>
     i.every((v, n) => v === 0 || is.includes(n)) &&
     r.every((v, n) => v === 0 || rs.includes(n)) &&

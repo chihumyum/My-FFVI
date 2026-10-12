@@ -97,7 +97,13 @@
     "field-puppet-actors:check": "npm run build && node scripts/check-field-puppet-actors.mjs",
     "field-camera-host:check": "npm run build && node scripts/check-field-camera-host.mjs && node scripts/check-field-camera-ui.mjs",
     "field-actor-factory:check": "npm run build && node scripts/check-field-actor-factory.mjs",
-    "new-game-field-entry:check": "npm run build && node scripts/check-new-game-field-entry.mjs"
+    "new-game-field-entry:check": "npm run build && node scripts/check-new-game-field-entry.mjs",
+    "new-game:build": "npm run battle:build && npm run world:build && node scripts/build-source-new-game.mjs",
+    "source-new-game:check": "npm run build && node scripts/check-source-new-game.mjs",
+    "field-native-actors:check": "npm run build && node scripts/check-field-native-actors.mjs",
+    "source-native-state:check": "npm run build && node scripts/check-source-native-state.mjs",
+    "source-message:check": "npm run build && node scripts/check-source-message.mjs",
+    "field-background:check": "npm run build && node scripts/check-field-background.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

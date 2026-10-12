@@ -2,6 +2,9 @@ import { InventoryView } from "./inventory-view.js";
 import { EquipmentView } from "./equipment-view.js";
 import { ShopView } from "./shop-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
+import { NewGameFieldEntry } from "/runtime/core/new-game-field-entry.js";
+import { FieldFadeState, fieldFadeOverlay } from "/runtime/core/field-fade.js";
+import { createSourcePresentationContext } from "/runtime/core/source-presentation.js";
 import { battleAppearanceQuads } from "/runtime/core/battle-appearance.js";
 import { verifyContent } from "/runtime/core/content-integrity.js";
 import { CheckpointStorage } from "/runtime/core/saved-game.js";
@@ -29,6 +32,7 @@ let content,
   lastMinimapFrame = 0,
   last = 0,
   failed = false;
+let sourceBoot = null;
 let checkpointBusy = false,
   hasSave = false,
   hasPreviousSave = false;
@@ -99,6 +103,7 @@ function setupMapViews(next) {
 }
 function reset() {
   if (checkpointBusy) return;
+  sourceBoot = null;
   audio.reset();
   audio.unlock().catch(failure);
   const preferences = session?.battlePreferences;
@@ -124,6 +129,73 @@ function reset() {
   focus();
   if (preview) game.previewMap(preview.mapId, preview.entrance);
   sync();
+}
+async function startSourceGame() {
+  if (checkpointBusy || sourceBoot) return;
+  $("source-start").disabled = true;
+  $("load-error").hidden = true;
+  try {
+    const response = await fetch("/game/new-game.json");
+    if (!response.ok) throw new Error("原始新游戏内容尚未构建，请运行 npm run new-game:build。");
+    const bundle = await verifyContent(await response.json());
+    const presentation = createSourcePresentationContext({ kind: "title-new-game",
+      titleCleanupComplete: true, openingCallbackStarted: false });
+    const entry = new NewGameFieldEntry(bundle.entry, presentation);
+    // This is the visible Web title's actual clear overlay, not a guessed native prefab.
+    const titleFade = new FieldFadeState({ imageColor: { r: 0, g: 0, b: 0, a: 1 },
+      rendererColor: { r: 1, g: 1, b: 1, a: 0 }, raycastTarget: false });
+    const start = entry.prepareStart(titleFade, { active: true, callbacks: "absent" });
+    audio.reset(); // The Web title has no active BGM voice to fade.
+    await audio.unlock();
+    start.commit();
+    const boot = { bundle, presentation, entry, fade: start.fade, ready: false, catalog: null, map: null };
+    sourceBoot = boot;
+    started = false; paused = false; held.clear();
+    for (const id of ["welcome", "pause", "stop", "dialogue"]) $(id).hidden = true;
+    text("status", "正在准备新游戏…");
+    const catalog = await worldCatalog();
+    const indexed = catalog.maps[String(bundle.entry.mapId)];
+    if (!indexed) throw new Error("新游戏地图不在当前来源目录中。");
+    const mapResponse = await fetch(indexed.url);
+    if (!mapResponse.ok) throw new Error("新游戏地图载入失败。");
+    const map = await verifyContent(await mapResponse.json(), indexed.contentHash);
+    if (!map.map) throw new Error("新游戏地图几何未完成。");
+    await loadImages(new Set([...Object.values(map.map.textures),
+      ...(map.map.backgrounds ?? []).map(background => background.texture.url),
+      ...Object.values(catalog.characters).flatMap(c => Object.values(c.sprites).map(s => s.file)),
+      ...Object.values(catalog.minimap?.icons ?? {}).map(s => s.file)]));
+    if (sourceBoot !== boot) return;
+    Object.assign(boot, { catalog, map, ready: true });
+  } catch (error) {
+    sourceBoot = null;
+    $("welcome").hidden = false;
+    $("source-start").disabled = false;
+    $("load-error").hidden = false;
+    text("load-error", error.message ?? String(error));
+  }
+}
+function advanceSourceBoot(seconds) {
+  const boot = sourceBoot;
+  if (!boot) return;
+  boot.fade.advance(seconds);
+  const next = boot.entry.prepareResume(boot.fade, boot.ready);
+  if (next) { next.commit(); boot.fade = next.fade; }
+  if (boot.entry.phase !== "field-preparing" || !boot.ready) return;
+  const candidate = GameSession.prepareNewGame(boot.bundle, boot.catalog, boot.map, battleContent,
+    boot.fade, boot.presentation, runtime);
+  const nextRenderer = new Renderer(canvas, candidate.field.content, images);
+  const launch = boot.entry.prepareLaunch(boot.fade, candidate.newGamePreparation(true));
+  candidate.launchNewGame(launch.launch);
+  launch.commit();
+  session = candidate; game = session.field; renderer = nextRenderer;
+  setupMapViews(game.content);
+  sourceBoot = null; started = true; paused = false;
+  $("source-start").disabled = false;
+  battleView.hide(); shopView.reset();
+  $("menu-button").disabled = false;
+  $("menu-button").textContent = "暂停";
+  canvas.setAttribute("aria-label", `${game.content.map.id} 原始新游戏画面。`);
+  showLimitations(); focus(); sync();
 }
 function text(id, value) {
   const node = $(id);
@@ -252,6 +324,7 @@ document.addEventListener("visibilitychange", () => {
 canvas.addEventListener("blur", () => held.clear());
 canvas.addEventListener("click", focus);
 $("start").onclick = reset;
+$("source-start").onclick = startSourceGame;
 $("restart").onclick = reset;
 $("retry").onclick = reset;
 $("resume").onclick = () => pause(false);
@@ -286,6 +359,7 @@ function frame(now) {
   try {
     const dt = last ? Math.min(50, now - last) : 0;
     last = now;
+    if (sourceBoot && !document.hidden) advanceSourceBoot(dt / 1000);
     const ready = started && audio.ready(audioProjection(game), game.pendingBgmTracks);
     if (
       started &&
@@ -320,6 +394,11 @@ function frame(now) {
     );
     if (session.battle) battleView.draw(session.battle);
     else if (renderer) renderer.draw(game);
+    if (sourceBoot) {
+      const c = canvas.getContext("2d"), color = fieldFadeOverlay(sourceBoot.fade.projection);
+      c.fillStyle = `rgba(${color.r * 255},${color.g * 255},${color.b * 255},${color.a})`;
+      c.fillRect(0, 0, canvas.width, canvas.height);
+    }
     if (!$("minimap-button").hidden && now - lastMinimapFrame >= 125) {
       minimapRenderer.overview(game);
       lastMinimapFrame = now;
@@ -375,6 +454,7 @@ async function init() {
   await Promise.all([verifyContent(content), verifyContent(battleContent)]);
   const urls = new Set([
     ...Object.values(content.map.textures),
+    ...(content.map.backgrounds ?? []).map(background => background.texture.url),
     ...Object.values(content.characters).flatMap((c) =>
       Object.values(c.sprites).map((s) => s.file),
     ),
@@ -435,6 +515,7 @@ async function init() {
     );
   }
   $("start").disabled = false;
+  $("source-start").disabled = false;
   await refreshSaveInfo();
   text("start", preview ? "进入地图预览" : "进入纳尔谢");
   text("status", "地图与战斗已载入 · 本地开发预览");
@@ -482,6 +563,7 @@ async function loadMap(owner) {
     await loadImages(
       new Set([
         ...Object.values(next.map.textures),
+        ...(next.map.backgrounds ?? []).map(background => background.texture.url),
         ...Object.values(next.characters).flatMap((c) =>
           Object.values(c.sprites).map((s) => s.file),
         ),
@@ -613,6 +695,7 @@ async function loadGame(previous) {
     await loadImages(
       new Set([
         ...Object.values(next.map.textures),
+        ...(next.map.backgrounds ?? []).map(background => background.texture.url),
         ...Object.values(next.characters).flatMap((c) =>
           Object.values(c.sprites).map((s) => s.file),
         ),

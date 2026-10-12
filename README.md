@@ -17,6 +17,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [v31 新游戏会话、原生演员、字幕与滚动背景](docs/systems-v31.md)
 - [v30 摄像机、来源演员工厂与新游戏交接](docs/systems-v30.md)
 - [字段渐变](docs/field-fade.md)、[演员宿主](docs/field-puppet-actors.md)、[摄像机投影](docs/field-camera.md)
 - [v28 音频等待与玩家显隐](docs/systems-v28.md)
@@ -110,6 +111,7 @@ Web 片段为 `http://127.0.0.1:4173/game/`，方向键/WASD 移动，空格/Ent
 ```sh
 .venv/bin/python tools/source_adapter/export_corpus.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 .venv/bin/python tools/source_adapter/export_world_media.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
+.venv/bin/python tools/source_adapter/export_field_background.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 .venv/bin/python tools/source_adapter/export_map_ui.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 .venv/bin/python tools/source_adapter/export_bgm.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 .venv/bin/python tools/source_adapter/export_environment.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
@@ -140,6 +142,8 @@ npm run objects:check
 
 `doors:check` 对来源门的方向限制、关联图块动画、完成后通行和入口开门状态执行隔离检查。共用 OpenTrigger 已接入地图运行时，门批次记录了 418 个来源门通过、122 个空闲入口；最新结果见当前进度，完整地图剧情仍未迁移，详见 [接触开门批次](docs/open-trigger.md)。
 `world:build` 将全量地图、角色媒体和脚本编译成通用目录与地图包；`world:check` 整批尝试依赖已闭合的默认入口，保留每个失败原因。静态地图数、入口加载数与浏览器实玩分别记录。
+
+完成来源媒体准备后，`npm run new-game:build` 构建绑定同一来源的新游戏包，标题页的“从头开始（开发中）”进入真实新游戏状态。目前可执行首段字幕、镜头与淡出，之后在尚未接入的原生角色魔导状态刷新处明确停止；不代表完整开场。`npm run source-new-game:check` 重放这个受控系统链并记录第一个阻塞，`npm run field-background:check` 与 `npm run source-message:check` 分别检查共享背景和字幕能力。
 `objects:check` 和 `npc:check` 共用来源交互检查器，分别检查调查点/隐形碰撞物与 NPC 的原始动作和脚本；孤立动作不等于完整地图剧情，见 [调查点批次](docs/map-object.md)。
 工作台为 `http://127.0.0.1:4173`，展示真实纳尔谢图层、原始碰撞数据、剧情知识缺口、歌剧时间线与验收状态。它只用于检查；不宣称恢复了游戏规则。
 

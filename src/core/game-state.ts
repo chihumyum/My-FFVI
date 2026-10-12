@@ -72,6 +72,9 @@ import type { FieldTreasurePort } from "./treasure-port.js";
 import type { TreasureInventoryRead, TreasureRewardCommand } from "./treasure-inventory.js";
 import { recoverJoinedCharacter } from "./character-recovery.js";
 import type { PartyActorCatalog, PartyActorMember } from "./party-actors.js";
+import { projectFieldPuppetRoster, type FieldPuppetRosterPort } from "./field-puppet-roster.js";
+import { createSourceNativeState, validateSourceNativeState,
+  type SourceNativeState } from "./source-native-state.js";
 import { projectOwnedCondition, type FieldOwnedConditionPort,
   type OwnedConditionCommand, type OwnedConditionTransaction } from "./owned-condition.js";
 import {
@@ -151,9 +154,12 @@ export type OwnedCharacter = RosterMember & {
   growth: CharacterGrowthProgress | null;
 };
 export type GameStateSnapshot = {
-  formatVersion: 7;
+  formatVersion: 8;
   kind: "owned-game-state";
   catalogHash: string;
+  initialization: "development-checkpoint" | "source-new-game";
+  /** Null means the development checkpoint never proved these source domains. */
+  nativeState: SourceNativeState | null;
   roster: OwnedCharacter[];
   party: PartyState;
   gil: number;
@@ -191,6 +197,7 @@ export class GameState {
   private readonly content: GameStateContent;
   private readonly definitions: Map<string, CombatantDefinition>;
   private readonly initialIds: readonly string[];
+  private sourceNativeBaseline: SourceNativeState | undefined;
   private data: GameStateSnapshot;
   private active: {
     lease: BattleLease;
@@ -217,6 +224,10 @@ export class GameState {
   };
   readonly fieldOwnedConditions: FieldOwnedConditionPort = {
     prepare: (command) => this.prepareOwnedConditionEvent(command),
+  };
+  /** Whole-roster source identities and the selected four Corps cells. */
+  readonly fieldPuppetRoster: FieldPuppetRosterPort = {
+    current: () => this.projectPuppetRoster(this.data),
   };
   readonly fieldShop = { validate: (groupId: number): void => { this.shopOptions(groupId); } };
   /** Creates only the shared owner. The field host must independently prepare
@@ -312,9 +323,11 @@ export class GameState {
       }
     }
     this.data = {
-      formatVersion: 7,
+      formatVersion: 8,
       kind: "owned-game-state",
       catalogHash,
+      initialization: fresh ? "source-new-game" : "development-checkpoint",
+      nativeState: fresh ? createSourceNativeState(fresh) : null,
       roster: players.map((p) => ({
         ...structuredClone(content.rosterLifecycle.initial[p.id]!),
         id: p.id,
@@ -344,6 +357,7 @@ export class GameState {
       completedBattles: [],
     };
     if (fresh) {
+      this.sourceNativeBaseline = createSourceNativeState(fresh);
       Object.assign(this.data, structuredClone(fresh.owned), {
         roster: fresh.owned.roster.map((member) => ({
           ...structuredClone(member),
@@ -368,7 +382,7 @@ export class GameState {
     }
     this.validate(this.data);
   }
-  private sourceNewGamePlan(players: readonly CombatantDefinition[]): NewGamePlan {
+  private sourceNewGamePlan(players: readonly Pick<CombatantDefinition, "id" | "sourceId">[]): NewGamePlan {
     const definition = this.content.sourceNewGame, system = this.content.equipmentSystem;
     if (!definition || !system) throw new Error("Missing source new-game initializer");
     const same = (left: unknown, right: unknown) => canonical(left) === canonical(right);
@@ -401,14 +415,27 @@ export class GameState {
   private validate(data: GameStateSnapshot) {
     keys(
       data,
-      "formatVersion,kind,catalogHash,roster,party,gil,totalGil,items,equipmentStock,releasedJobIds,learnedAbilityIds,characterNames,completedBattles",
+      "formatVersion,kind,catalogHash,initialization,nativeState,roster,party,gil,totalGil,items,equipmentStock,releasedJobIds,learnedAbilityIds,characterNames,completedBattles",
     );
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== 7 ||
+      data.formatVersion !== 8 ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
+    if (data.initialization === "source-new-game") {
+      if (data.nativeState === null)
+        throw new Error("Missing source native-state ownership");
+      if (!this.sourceNativeBaseline) {
+        // Reconstruct only the validation baseline from trusted content. This
+        // does not merge fresh defaults, grants or checkpoint seeds into data.
+        const plan = this.sourceNewGamePlan(this.initialIds.map((id) => this.definitions.get(id)!));
+        this.sourceNativeBaseline = createSourceNativeState(plan);
+      }
+      validateSourceNativeState(data.nativeState, this.sourceNativeBaseline);
+    } else if (data.initialization !== "development-checkpoint" || data.nativeState !== null) {
+      throw new Error("Owned-state initialization identity mismatch");
+    }
     const limits = this.content.limits;
     integer(data.gil, limits.gil);
     integer(data.totalGil, 0x7fffffff);
@@ -583,6 +610,14 @@ export class GameState {
   }
   snapshot(): GameStateSnapshot {
     return structuredClone(this.data);
+  }
+  get initialization(): GameStateSnapshot["initialization"] {
+    return this.data.initialization;
+  }
+  /** Source domains and entry seed are returned by value. A read never creates
+   * source state for a development checkpoint or authorizes a later mutation. */
+  get nativeState(): SourceNativeState | null {
+    return structuredClone(this.data.nativeState);
   }
   /** A shared-state snapshot is not a complete field/battle save game. */
   restore(snapshot: GameStateSnapshot): void {
@@ -863,6 +898,7 @@ export class GameState {
       party: FieldPartyPort;
       roster: FieldRosterPort;
       ownedConditions: FieldOwnedConditionPort;
+      puppetRoster: FieldPuppetRosterPort;
       shop: { validate(groupId: number): void };
       fieldSteps?: FieldConditionPort;
       partyAppearance?: { catalog: PartyActorCatalog; current(): PartyAppearanceCandidate };
@@ -981,6 +1017,7 @@ export class GameState {
         party,
         roster,
         ownedConditions,
+        puppetRoster: { current: () => this.projectPuppetRoster(published ? this.data : data) },
         shop: { validate: (groupId) => { this.projectShopOptions(published ? this.data : data, groupId); } },
         ...(this.fieldConditions ? { fieldSteps } : {}),
         ...(this.content.partyActors ? { partyAppearance: {
@@ -1003,6 +1040,9 @@ export class GameState {
   }
   get activeParty() {
     return activePartyMembers(this.data.party);
+  }
+  private projectPuppetRoster(data: GameStateSnapshot) {
+    return projectFieldPuppetRoster(data.roster, data.party, this.ownedConditionDefinitions);
   }
   private projectPartyAppearance(data: GameStateSnapshot): PartyAppearanceCandidate {
     const parties = data.party.slots.map((slot) => slot.flatMap((cell, index): PartyActorMember[] => {
