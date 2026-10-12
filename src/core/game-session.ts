@@ -433,7 +433,8 @@ export class GameSession {
     if (request?.kind !== "encounter" || this.battle || this.encounterPreparationError) return;
     let lease: BattleLease | null = null;
     try {
-      let content = encounterContent(this.battleCatalog, request.party!);
+      const seed = (this.seed + Math.imul(this.encounterSerial, 0x9e3779b1)) >>> 0;
+      let content = encounterContent(this.battleCatalog, request.party!, seed);
       if (!content) {
         const reasons = this.battleCatalog.encounterDiagnostics
           ?.filter((entry) => entry.partyId === request.party && entry.kind === "blocked")
@@ -452,7 +453,6 @@ export class GameSession {
       if (this.state.battlePartyBlocker) throw new Error(this.state.battlePartyBlocker);
       const blocker = battleDefinitionBlocker(this.state.partyPlayers(), content.qualificationContext, content.conditions);
       if (blocker) throw new Error(blocker);
-      const seed = (this.seed + Math.imul(this.encounterSerial, 0x9e3779b1)) >>> 0;
       lease = this.state.openBattle(content.encounterId);
       const battle = new BattleGame(content, seed, this.state.battlePlayers(lease), this.state.battleInventory(lease),
         this.state.battleProgression(lease, content.experience), this.currentBattlePreferences);

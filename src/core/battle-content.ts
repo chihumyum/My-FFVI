@@ -15,6 +15,8 @@ import type { BattleRow, BattleRowCatalog } from "./battle-row.js";
 import type { BattlePreferences } from "./battle-preferences.js";
 import type { BattleEventRules } from "./battle-event-context.js";
 import type { ObservedLearningCatalog } from "./character-learning.js";
+import { parseBattleFormationPlan, selectBattleFormation,
+  type BattleFormationChoice, type BattleFormationPlan } from "./battle-formations.js";
 
 export type BattleQualificationContext = Omit<BattleAbilityContext, "conditionIds" | "partySize"> & {
   /** Source mode enforces qualification. The explicit development mode keeps
@@ -42,6 +44,8 @@ export type BattleContent = {
   fieldSourceSetHash: string;
   encounterId: number;
   formation: "normal" | "opposed";
+  /** Resolved once by the session before opening its battle lease. */
+  formationChoice?: BattleFormationChoice;
   atb: AtbRules;
   /** Defaults for this entry profile; live source speed slots and mode are session-owned. */
   timing: BattlePreferences;
@@ -129,8 +133,30 @@ export function battleDefinitionBlocker(
 
 export type BattleEncounter = Pick<
   BattleContent,
-  "encounterId" | "enemies" | "background" | "formation"
->;
+  "encounterId" | "enemies" | "background"
+> & {
+  /** null means selection is still required, never a default normal formation. */
+  formation: BattleContent["formation"] | null;
+  formationPlan?: BattleFormationPlan;
+};
+
+/** All reachable development branches, not a sample of the weighted pool. */
+export function encounterFormationOptions(encounter: BattleEncounter): BattleContent["formation"][] {
+  if (encounter.formationPlan === undefined) {
+    if (encounter.formation !== "normal" && encounter.formation !== "opposed")
+      throw new Error("Missing battle formation plan");
+    return [encounter.formation];
+  }
+  const plan = parseBattleFormationPlan(encounter.formationPlan);
+  if (plan.kind === "fixed") {
+    const formation = plan.pattern === 1 ? "normal" : "opposed";
+    if (encounter.formation !== formation) throw new Error("Inconsistent fixed battle formation");
+    return [formation];
+  }
+  if (encounter.formation !== null) throw new Error("Unresolved battle formation has a premature selection");
+  return plan.patterns.flatMap((eligible, index) => eligible && plan.policy.weights[index]! > 0
+    ? [index === 0 ? "normal" as const : "opposed" as const] : []);
+}
 /** Import diagnostics are separate from live party/AI admission. A compiled
  * definition can still have a conditional dependency which the runtime rejects. */
 export type BattleEncounterDiagnostic = {
@@ -156,7 +182,7 @@ export type BattleCatalog = {
   kind: "narshe-battle-catalog";
   contentHash: string;
   gameState: GameStateContent;
-  common: Omit<BattleContent, keyof BattleEncounter | "contentHash">;
+  common: Omit<BattleContent, keyof BattleEncounter | "contentHash" | "formationChoice">;
   encounters: Record<string, BattleEncounter>;
   encounterDiagnostics?: BattleEncounterDiagnostic[];
   encounterReport?: BattleEncounterReport;
@@ -164,11 +190,18 @@ export type BattleCatalog = {
 export function encounterContent(
   catalog: BattleCatalog,
   id: number,
+  seed?: number,
 ): BattleContent | null {
   const encounter = catalog.encounters[String(id)];
-  return encounter
-    ? { ...catalog.common, ...encounter, contentHash: catalog.contentHash }
-    : null;
+  if (!encounter) return null;
+  if (encounter.encounterId !== id) throw new Error("Inconsistent battle encounter identity");
+  const options = encounterFormationOptions(encounter);
+  const { formationPlan, ...definition } = encounter;
+  if (!formationPlan)
+    return { ...catalog.common, ...definition, formation: options[0]!, contentHash: catalog.contentHash };
+  const choice = selectBattleFormation(formationPlan, seed);
+  return { ...catalog.common, ...definition, formation: choice.formation, formationChoice: choice,
+    contentHash: catalog.contentHash };
 }
 export type AbilityDefinition = {
   id: number;

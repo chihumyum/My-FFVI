@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { GameSession } from "../src/core/game-session.js";
 import { BattleGame } from "../src/core/battle.js";
+import { encounterContent } from "../src/core/battle-content.js";
 import { compileFieldConditionCatalog } from "../src/compiler/field-conditions.js";
 import { checkpointFixture } from "./fixtures/checkpoint-game.js";
 import { conditionBlindFixture } from "./fixtures/condition-blind.js";
@@ -75,8 +76,7 @@ test("battle item cure, defeat retry and victory persistence use the same Blind 
 test("late multi-target numerical failure rolls back hit draws, resources and action before retry", () => {
   function battle() {
     const f = setup(), lease = f.game.state.openBattle(1000);
-    const encounter = f.battle.encounters[1000]!;
-    const content = { ...f.battle.common, ...encounter, contentHash: "synthetic" };
+    const content = encounterContent(f.battle, 1000, 917)!;
     const ability = content.abilities[10]!;
     ability.plan!.targeting.modes = ["side"]; ability.plan!.targeting.defaultMode = "side";
     for (const target of content.enemies) { target.hp = 1000; target.conditionIds = [109]; }

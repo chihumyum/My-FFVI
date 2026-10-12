@@ -1,5 +1,6 @@
 import { BattleConditions } from "../core/battle-conditions.js";
 import type { BattleCatalog, BattleEncounterDiagnostic } from "../core/battle-content.js";
+import { encounterFormationOptions } from "../core/battle-content.js";
 import { validateBattleDropCatalog } from "../core/battle-rewards.js";
 import { validateBattleEventRules } from "../core/battle-event-context.js";
 import { canonical } from "../core/canonical.js";
@@ -75,12 +76,12 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
     else if (compiled.length === 0 || !catalog.encounterDiagnostics)
       conditional("compiler-evidence-missing", "Source/runtime encounter compilation diagnostics are not available");
     const abilityIds = new Set<number>();
+    let formationOptions: ("normal" | "opposed")[] = [];
     if (!encounter) block("missing-encounter", `Battle catalog has no encounter ${id}`);
     else {
       if (catalog.kind !== "narshe-battle-catalog" || encounter.encounterId !== id)
         block("encounter-identity", "Encounter dictionary key and compiled identity disagree");
-      if (encounter.formation !== "normal" && encounter.formation !== "opposed")
-        block("encounter-formation", "Invalid compiled battle formation");
+      checked("encounter-formation", () => { formationOptions = encounterFormationOptions(encounter); });
       if (!encounter.enemies.length || encounter.enemies.length > 9 ||
           new Set(encounter.enemies.map(enemy => enemy.id)).size !== encounter.enemies.length)
         block("enemy-identity", "Missing, duplicate or excessive enemy identities");
@@ -164,6 +165,8 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
         limitations.push(...ability.limitations.map(detail => `Ability ${abilityId}: ${detail}`));
         if (!ability.plan || ability.blockers.length)
           conditional("ability-plan", `Ability ${abilityId}: ${ability.blockers.join("; ") || "unimplemented plan"}`, abilityId);
+        if (ability.plan?.targeting.normalFormationOnly && formationOptions.includes("opposed"))
+          conditional("ability-formation", `Ability ${abilityId} cannot execute in a reachable opposed formation`, abilityId);
         // Reference checking is independent of effect capability. The existing
         // compiler's plan/diagnostics decide which function families are supported.
         for (const effect of ability.plan?.effects ?? []) {

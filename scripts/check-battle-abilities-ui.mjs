@@ -8,6 +8,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const outDir = process.argv.includes("--dist") ? process.argv[process.argv.indexOf("--dist") + 1] : "dist";
 const module = (path) => import(pathToFileURL(resolve(root, outDir, path + ".js")));
 const { BattleGame } = await module("src/core/battle");
+const { projectDevelopmentBattleLayout } = await module("src/core/battle-layout");
 const { battleEntryRuntimeFixture } = await module("tests/fixtures/battle-entry-runtime");
 const { rowChangeFixture } = await module("tests/fixtures/battle-row-change");
 const { ControlledBattleGame } = await module("tests/fixtures/controlled-battle");
@@ -112,7 +113,8 @@ const paintedText = [], ctx = new Proxy({
 }, { get(target, key) { return target[key] ?? (() => {}); } });
 const rowCanvas = new Element("canvas"); rowCanvas.getContext = () => ctx;
 const rowView = new BattleView(rowCanvas, rowContent,
-  new Map(Object.values(rowContent.sprites).map((sprite) => [sprite.file, { file: sprite.file }])), () => {}, () => {});
+  new Map(Object.values(rowContent.sprites).map((sprite) => [sprite.file, { file: sprite.file }])), () => {}, () => {},
+  undefined, projectDevelopmentBattleLayout);
 rowView.sync(rowBattle, false);
 const rowActor = rowBattle.players[0], frontPosition = rowView.position(rowActor, rowBattle);
 button("换列").click();

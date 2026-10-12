@@ -26,12 +26,13 @@ export function battleMenuWaiting(state) {
   }
 }
 export class BattleView {
-  constructor(canvas, content, images, onReturn, onRetry, appearanceQuads) {
+  constructor(canvas, content, images, onReturn, onRetry, appearanceQuads, projectLayout) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.content = content;
     this.images = images;
     this.appearanceQuads = appearanceQuads;
+    this.projectLayout = projectLayout;
     this.selected = null;
     this.actionSource = null;
     this.commandId = null;
@@ -403,25 +404,17 @@ export class BattleView {
     }
     if (focused) menu.querySelector("button:not(:disabled)")?.focus();
   }
-  position(combatant, battle) {
-    const index = (
-      combatant.side === "player" ? battle.players : battle.enemies
-    ).indexOf(combatant);
-    // Development presentation only: row ownership and its combat effects
-    // remain in BattleGame. This offset is not a native animation measurement.
-    const rowOffset = combatant.side === "player" && combatant.row === "back" ? 20 : 0;
-    if (battle.content.formation === "opposed") {
-      if (combatant.side === "player")
-        return { x: 235 + index * 15 + rowOffset, y: 108 + index * 40 };
-      return combatant.placement.group === 2
-        ? { x: 408, y: 158 }
-        : { x: 90 + index * 65, y: 148 + index * 25 };
-    }
-    return combatant.side === "player"
-      ? { x: 350 + index * 15 + rowOffset, y: 108 + index * 40 }
-      : { x: 125 + index * 88, y: 178 - index * 30 };
+  layout(battle) {
+    if (typeof this.projectLayout !== "function") throw new Error("Battle layout provider is unavailable");
+    return this.projectLayout(battle.combatants, battle.content.formation);
+  }
+  position(combatant, battle, layout = this.layout(battle)) {
+    const position = combatant && Object.hasOwn(layout, combatant.id) ? layout[combatant.id] : null;
+    if (!position) throw new Error("Missing battle layout unit");
+    return position;
   }
   draw(battle) {
+    const layout = this.layout(battle);
     const c = this.ctx;
     c.imageSmoothingEnabled = false;
     c.clearRect(0, 0, 512, 288);
@@ -432,22 +425,22 @@ export class BattleView {
     const a = battle.action;
     const rowAction = a && battle.actionDefinition(a).presentation === "row";
     for (const actor of [...battle.enemies, ...battle.players]) {
-      const p = this.position(actor, battle);
+      const p = this.position(actor, battle, layout);
       let x = p.x,
         y = p.y;
       if (a?.actor === actor.id && !rowAction)
         x -= Math.sin(Math.min(1, a.elapsed / 900) * Math.PI) * 9;
       if (actor.hp === 0 && actor.side === "enemy") continue;
       c.save();
-      const rightSide = actor.side === "enemy" && actor.placement?.group === 2;
-      const aimingRight =
+      const actingPlayer =
         actor.side === "player" &&
         a?.actor === actor.id &&
-        a.targetIds.length > 0 &&
-        this.position(
+        a.targetIds.length > 0;
+      const aimingRight = actor.side === "player" && (actingPlayer ? this.position(
           battle.combatants.find((t) => t.id === a.targetIds[0]),
           battle,
-        ).x > x;
+          layout,
+        ).x > p.x : p.facing === "right");
       const dying = battle.content.conditions.dying &&
         actor.conditionIds.includes(battle.content.conditions.dying.conditionId);
       const defending = battle.content.conditions.behaviors.some((behavior) =>
@@ -458,7 +451,7 @@ export class BattleView {
         bodyFrame: 0, armorFrame: 0,
       });
       if (actor.hp === 0 && !appearance) c.globalAlpha = 0.3;
-      if (!appearance && (rightSide || aimingRight)) {
+      if (!appearance && (actor.side === "enemy" ? p.facing === "left" : aimingRight)) {
         c.translate(x * 2, 0);
         c.scale(-1, 1);
       }

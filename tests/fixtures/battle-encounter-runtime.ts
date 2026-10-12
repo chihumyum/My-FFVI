@@ -31,7 +31,7 @@ export function encounterRuntimeFixture() {
   const rawAI = aiSource([["Nop"], ["SyncAI"], ["StartTable", [0]], ["Act", [13]],
     ["EndTable"], ["JumpBattleAI", [0]]]);
   const encounter = (partyId: number, monsterId = 9101): SourceBattleEncounter => ({
-    partyId, source: rowSource("monster_party.csv", partyId), pattern: 1, patterns: [1, 0, 0, 0, 0, 0],
+    partyId, source: rowSource("monster_party.csv", partyId), patterns: [1, 0, 0, 0, 0, 0],
     background: "synthetic-background", script: null,
     metadata: { backgroundId: 1, bgmId: 0, appearanceProduction: 0, notEscape: 0,
       getAp: 0, getValue: 0, scriptId: 0, battleFlagGroupId: 0, battleFlags: [] },

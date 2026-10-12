@@ -6,6 +6,8 @@ import {
 import { encodeSavedGame, decodeSavedGame } from "/runtime/core/saved-game.js";
 import { EquipmentView } from "/game/equipment-view.js";
 import { BattleView } from "/game/battle-view.js";
+import { battleAppearanceQuads } from "/runtime/core/battle-appearance.js";
+import { projectDevelopmentBattleLayout } from "/runtime/core/battle-layout.js";
 
 const $ = (id) => document.getElementById(id);
 const controlIds = [
@@ -85,6 +87,8 @@ async function initialize() {
     images,
     () => run(leave),
     () => run(retry),
+    battleAppearanceQuads,
+    projectDevelopmentBattleLayout,
   );
 
   function sync(message) {

@@ -216,6 +216,8 @@ export class GameContentRepository {
       read(this.newGameUrl, (value) => this.profileContent(sourceContent(value)), expected),
       read(this.worldUrl, (value) => this.profileContent(worldContent(value))), read("/game/battle.json", battleContent),
     ]);
+    if (this.profile === "source" && Object.values(battle.encounters).some(e => e.formationPlan?.kind === "development"))
+      throw new Error("Source new game cannot use development formation selection");
     if (content.battleCatalogHash !== battle.contentHash || content.worldCatalogHash !== catalog.contentHash ||
         content.sourceSetHash !== catalog.sourceSetHash || content.parentSourceSetHash !== catalog.parentSourceSetHash ||
         catalog.maps[String(content.entry.mapId)]?.contentHash !== content.mapContentHash)

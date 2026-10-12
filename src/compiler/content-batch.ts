@@ -64,6 +64,8 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
     if ((item.developmentProfile?.kind === "framework-development-v1") !== framework ||
         !framework && "walkEncounters" in item && item.walkEncounters !== undefined)
       throw new Error("Batch content profile mismatch");
+  if (!framework && Object.values(battle.encounters).some(e => e.formationPlan?.kind === "development"))
+    throw new Error("Batch source profile cannot use development formation selection");
   if (entry.parentSourceSetHash !== catalog.parentSourceSetHash)
     throw new Error("Batch entry/world source mismatch");
   if (entry.kind === "source-new-game-content-v1") {

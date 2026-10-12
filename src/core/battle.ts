@@ -72,6 +72,7 @@ import type {
   AbilityDefinition,
 } from "./battle-content.js";
 import { battleDefinitionBlocker } from "./battle-content.js";
+import { validateBattleFormationChoice } from "./battle-formations.js";
 import { observeLearningAction, validateObservedLearningCatalog } from "./character-learning.js";
 
 export type Combatant = CombatantDefinition & {
@@ -180,6 +181,10 @@ export class BattleGame {
       throw new Error("Unsupported battle runtime profile");
     if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)
       throw new Error("Invalid battle seed");
+    if (content.formation !== "normal" && content.formation !== "opposed")
+      throw new Error("Battle formation selection is unresolved");
+    if (content.formationChoice !== undefined)
+      validateBattleFormationChoice(content.formationChoice, content.formation, seed);
     this.randomState = seed || 1;
     this.currentPreferences = parseBattlePreferences(content.timing);
     if (initialPreferences !== undefined)

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createBattleFormationPlan } from "../src/core/battle-formations.js";
 import { contentDigest } from "../src/core/content-integrity.js";
 import { GameContentRepository, fieldMediaUrls, openingMediaUrls, sessionMediaUrls,
   sourceEntryMediaUrls } from "../src/core/game-content.js";
@@ -251,6 +252,19 @@ test("fresh entry binds source, world, battle, map and reserved script without r
   actual.battle.common.players[0]!.hp = 1;
   assert.deepEqual(other, expected);
   assert.deepEqual(await repo.sourceNewGame(), expected);
+});
+
+test("a source new game rejects authored formation selection even with matching package identities", async () => {
+  const f = await freshFixture(), battle = structuredClone(f.battle);
+  const encounter = Object.values(battle.encounters)[0]!;
+  encounter.formation = null;
+  encounter.formationPlan = createBattleFormationPlan([1, 1, 0, 0, 0, 0], {
+    kind: "framework-battle-formations-v1", id: "normal-only", weights: [1, 0, 0, 0, 0, 0],
+  });
+  const next = await seal(battle);
+  f.files.set("/game/battle.json", next);
+  f.files.set("/game/new-game.json", await seal({ ...f.content, battleCatalogHash: next.contentHash }));
+  await assert.rejects(new GameContentRepository(loader(f.files).read).sourceNewGame(), /Source new game.*formation/);
 });
 
 test("fresh entry refuses stale manifest dependencies, alien parent and a missing reserved script", async () => {

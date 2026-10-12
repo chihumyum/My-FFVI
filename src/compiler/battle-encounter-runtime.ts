@@ -15,6 +15,8 @@ import { compileElementResistances } from "./elements.js";
 import { compileEnemyParameters } from "./parameters.js";
 import { compileEnemyPhysical } from "./physical-parameters.js";
 import { tableInteger as int } from "./table.js";
+import { createBattleFormationPlan, type BattleFormationPlan,
+  type FrameworkBattleFormationPolicy } from "../core/battle-formations.js";
 
 type Reader = {
   row(table: string, id: string | number): BattleRow;
@@ -35,6 +37,8 @@ export type BattleEncounterRuntimeInput = {
   /** Explicit source-bound regression omissions, never runtime permissions to
    * execute an unimplemented script or a new flag group. */
   development: {
+    /** Authored selection for non-fixed encounters; never the native weight rule. */
+    formations?: FrameworkBattleFormationPolicy;
     scripts: readonly { id: number; source: BattleAISource; reason: string }[];
     flagGroups: readonly { id: number; rows: readonly BattleRow[]; reason: string }[];
   };
@@ -77,12 +81,18 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         throw new Error("Missing or invalid battle sprite: " + key);
     };
     const enemies: CombatantDefinition[] = [];
+    let formationPlan: BattleFormationPlan | null = null;
     try {
       const m = encounter.metadata;
-      if (!encounter.source || encounter.source.rowId !== String(partyId) || !m ||
-          ![1, 3].includes(encounter.pattern) || !Array.isArray(encounter.patterns) ||
-          encounter.patterns.length !== 6 || encounter.patterns.some((v, n) => v !== (n + 1 === encounter.pattern ? 1 : 0)))
+      if (!encounter.source || encounter.source.rowId !== String(partyId) || !m)
         throw new Error("Invalid runtime encounter source binding");
+      try {
+        const enabled = encounter.patterns.flatMap((value, index) => value ? [index + 1] : []);
+        const fixed = enabled.length === 1 && [1, 3].includes(enabled[0]!);
+        formationPlan = createBattleFormationPlan(encounter.patterns, fixed ? undefined : input.development.formations);
+        if (formationPlan.kind === "development") add("development-omission", "formation-selection",
+          `Authored ${formationPlan.policy.id} formation weights replace the unresolved native selection; all source eligibility bits are retained`);
+      } catch (error) { block("formation-selection", message(error), "battle_pattern1..6"); }
       media(encounter.background);
       if (!encounter.enemies.length || encounter.enemies.length > 9 ||
           new Set(encounter.enemies.map((e) => e.slot)).size !== encounter.enemies.length ||
@@ -103,6 +113,8 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
           (m.battleFlagGroupId === 0) !== (m.battleFlags.length === 0))
         block("battle-flags", "Missing or inconsistent battle flag binding", "battle_flag_group_id");
       else if (m.battleFlagGroupId) {
+        if (m.battleFlags.some(flag => int(flag.values.battle_flag_id) === 27))
+          block("formation-override", "ForceSideAttack requires an unimplemented battle formation provider", "battle_flag_group_id");
         const omission = input.development.flagGroups.find((g) => g.id === m.battleFlagGroupId && same(g.rows, m.battleFlags));
         if (!omission) block("battle-flags", "Battle flag group is not implemented", "battle_flag_group_id");
         else add("development-omission", "battle-flags", omission.reason,
@@ -155,7 +167,9 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
                 `Ability ${id}: ${ability.blockers.join("; ") || "unimplemented plan"}`, { ...context, pc, dependency });
               else if (![3, 7].includes(ability.program.range) || ability.plan.targeting.life !== "alive")
                 add("runtime-dependency", "automatic-target", `Unimplemented automatic target range for ability ${id}`, { ...context, pc, dependency });
-              else if (ability.plan.targeting.normalFormationOnly && encounter.pattern !== 1)
+              else if (ability.plan.targeting.normalFormationOnly && formationPlan &&
+                (formationPlan.kind === "fixed" ? formationPlan.pattern !== 1
+                  : formationPlan.patterns[2] === 1 && formationPlan.policy.weights[2] > 0))
                 add("runtime-dependency", "ability-formation", `Unimplemented formation for ability ${id}`, { ...context, pc, dependency });
             }
           }
@@ -178,8 +192,9 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     } catch (error) { block("encounter-provider", message(error)); }
     const blocked = diagnostics.slice(start).some((d) => d.kind === "blocked") ||
       input.sourceDiagnostics.some((d) => d.partyId === partyId);
-    if (!blocked) encounters[partyId] = { encounterId: partyId, enemies,
-      background: encounter.background, formation: encounter.pattern === 3 ? "opposed" : "normal" };
+    if (!blocked && formationPlan) encounters[partyId] = { encounterId: partyId, enemies,
+      background: encounter.background, formationPlan,
+      formation: formationPlan.kind === "development" ? null : formationPlan.pattern === 3 ? "opposed" : "normal" };
     entries.push({ partyId, status: blocked ? "blocked" : "compiled", enemyCount: encounter.enemies.length,
       abilityIds: [...new Set(enemies.flatMap((e) => e.abilities))].sort((a, b) => a - b) });
   }

@@ -4,6 +4,13 @@ import { compileBattleEncounterRuntime } from "../src/compiler/battle-encounter-
 import { BattleGame } from "../src/core/battle.js";
 import { encounterRuntimeFixture } from "./fixtures/battle-encounter-runtime.js";
 import { aiSource } from "./fixtures/battle-ai.js";
+import { encounterContent } from "../src/core/battle-content.js";
+import { checkpointFixture } from "./fixtures/checkpoint-game.js";
+
+function contentFor(f: ReturnType<typeof encounterRuntimeFixture>, result: ReturnType<typeof compileBattleEncounterRuntime>, id: number, seed = 1) {
+  return encounterContent({ ...checkpointFixture().battle,
+    common: { ...f.battle, drops: result.drops }, encounters: result.encounters }, id, seed)!;
+}
 
 test("arbitrary encounter IDs preserve repeated monsters, source slots and placement through the shared compiler", () => {
   const f = encounterRuntimeFixture(), e = f.input.encounters[0]!;
@@ -62,7 +69,7 @@ test("unimplemented conditional abilities retain source PCs and the live battle 
   assert.equal(result.report.withRuntimeDependencies, 1);
   assert.ok(result.diagnostics.some((d) => d.partyId === 9202 && d.kind === "runtime-dependency" &&
     d.pc === 8 && d.dependency?.id === 12));
-  const content = { ...f.battle, ...result.encounters[9202]!, drops: result.drops };
+  const content = contentFor(f, result, 9202);
   assert.doesNotThrow(() => new BattleGame(content, 1));
   content.players[0]!.level = 7;
   assert.throws(() => new BattleGame(content, 1), /unimplemented ability 12/);
@@ -74,7 +81,7 @@ test("unimplemented AI opcodes survive for the runtime instead of being converte
   const result = compileBattleEncounterRuntime(f.reader(), f.input);
   assert.equal(result.encounters[9202]!.enemies[0]!.ai!.instructions[2]!.op.kind, "blocked");
   assert.ok(result.diagnostics.some((d) => d.kind === "runtime-dependency" && d.pc === 2));
-  assert.throws(() => new BattleGame({ ...f.battle, ...result.encounters[9202]!, drops: result.drops }, 1), /unsupported AI instruction/);
+  assert.throws(() => new BattleGame(contentFor(f, result, 9202), 1), /unsupported AI instruction/);
 });
 
 test("battle scripts require an exact explicit development binding and remain reported omissions", () => {
@@ -132,4 +139,68 @@ test("duplicate selections and corrupt shared reward rules still reject the whol
   f.input.requestedPartyIds = [9201, 9202];
   f.tables["game_constant_int.csv"]!.pop();
   assert.throws(() => compileBattleEncounterRuntime(f.reader(), f.input), /MONSTER_DROP_RATE_8/);
+});
+
+test("source eligibility remains complete and multi-pattern entry requires an authored selection plan", () => {
+  const f = encounterRuntimeFixture(), source = f.input.encounters[1]!;
+  source.patterns = [1, 1, 1, 1, 1, 1];
+  let result = compileBattleEncounterRuntime(f.reader(), f.input);
+  assert.equal(result.encounters[9202], undefined);
+  assert.ok(result.diagnostics.some(d => d.partyId === 9202 && d.code === "formation-selection" && d.kind === "blocked"));
+  f.input.development.formations = { kind: "framework-battle-formations-v1", id: "authored-normal", weights: [5, 0, 0, 0, 0, 0] };
+  result = compileBattleEncounterRuntime(f.reader(), f.input);
+  const encounter = result.encounters[9202]!;
+  assert.equal(encounter.formation, null, "Compilation does not select a runtime branch");
+  assert.deepEqual(encounter.formationPlan!.patterns, source.patterns);
+  assert.equal(result.encounters[9201]!.formationPlan!.kind, "fixed", "Existing fixed entries do not acquire a new lottery");
+  assert.ok(result.diagnostics.some(d => d.partyId === 9202 && d.code === "formation-selection" && d.kind === "development-omission"));
+  const content = contentFor(f, result, 9202, 17);
+  assert.equal(content.formation, "normal");
+  assert.equal(content.formationChoice!.seed, 17);
+  assert.doesNotThrow(() => new BattleGame(content, 17));
+  assert.throws(() => new BattleGame(content, 18), /formation choice/);
+  assert.throws(() => encounterContent({ ...checkpointFixture().battle, encounters: result.encounters }, 9202), /seed/);
+});
+
+test("unimplemented positive weights never get filtered and forced side attack cannot inherit an omission", () => {
+  const f = encounterRuntimeFixture(), source = f.input.encounters[1]!;
+  source.patterns = [1, 1, 1, 0, 0, 0];
+  f.input.development.formations = { kind: "framework-battle-formations-v1", id: "invalid", weights: [1, 1, 0, 0, 0, 0] };
+  let result = compileBattleEncounterRuntime(f.reader(), f.input);
+  assert.equal(result.encounters[9202], undefined);
+  assert.ok(result.diagnostics.some(d => d.code === "formation-selection" && d.reason.includes("Unsupported")));
+  f.input.development.formations.weights[1] = 0;
+  source.metadata.battleFlagGroupId = 8;
+  source.metadata.battleFlags = [{ source: f.rowSource("battle_flag_group.csv", 8),
+    values: { id: "8", group_id: "8", battle_flag_id: "27" } }];
+  f.input.development.flagGroups = [{ id: 8, rows: structuredClone(source.metadata.battleFlags), reason: "Cannot waive mechanics" }];
+  result = compileBattleEncounterRuntime(f.reader(), f.input);
+  assert.equal(result.encounters[9202], undefined);
+  assert.ok(result.diagnostics.some(d => d.code === "formation-override" && d.kind === "blocked"));
+  assert.ok(result.encounters[9201]);
+});
+
+test("ability formation dependencies cover every reachable branch, not a sampled normal branch", () => {
+  const f = encounterRuntimeFixture();
+  f.input.encounters[1]!.patterns = [1, 0, 1, 0, 0, 0];
+  f.input.abilities[13]!.plan!.targeting.normalFormationOnly = true;
+  f.input.development.formations = { kind: "framework-battle-formations-v1", id: "both", weights: [1, 0, 1, 0, 0, 0] };
+  let result = compileBattleEncounterRuntime(f.reader(), f.input);
+  assert.ok(result.diagnostics.some(d => d.partyId === 9202 && d.code === "ability-formation" && d.kind === "runtime-dependency"));
+  f.input.development.formations.weights[2] = 0;
+  result = compileBattleEncounterRuntime(f.reader(), f.input);
+  assert.ok(!result.diagnostics.some(d => d.code === "ability-formation"));
+});
+
+test("an unresolved or tampered compiled formation cannot bypass entry resolution", () => {
+  const f = encounterRuntimeFixture();
+  f.input.encounters[0]!.patterns = [1, 0, 1, 0, 0, 0];
+  f.input.development.formations = { kind: "framework-battle-formations-v1", id: "both", weights: [1, 0, 1, 0, 0, 0] };
+  const result = compileBattleEncounterRuntime(f.reader(), f.input);
+  const unresolved = { ...f.battle, ...result.encounters[9201]! };
+  assert.throws(() => new BattleGame(unresolved as never, 1), /unresolved/);
+  result.encounters[9201]!.formation = "normal";
+  assert.throws(() => contentFor(f, result, 9201), /premature/);
+  result.encounters[9202]!.formation = "opposed";
+  assert.throws(() => contentFor(f, result, 9202), /Inconsistent/);
 });

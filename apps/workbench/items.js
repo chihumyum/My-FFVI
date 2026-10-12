@@ -6,6 +6,8 @@ import {
 import { encodeSavedGame, decodeSavedGame } from "/runtime/core/saved-game.js";
 import { InventoryView } from "/game/inventory-view.js";
 import { BattleView } from "/game/battle-view.js";
+import { battleAppearanceQuads } from "/runtime/core/battle-appearance.js";
+import { projectDevelopmentBattleLayout } from "/runtime/core/battle-layout.js";
 const $ = (id) => document.getElementById(id);
 const [field, catalog] = await Promise.all(
   ["/game/content.json", "/game/battle.json"].map(async (url) =>
@@ -52,6 +54,8 @@ const battleView = new BattleView(
   images,
   leave,
   retry,
+  battleAppearanceQuads,
+  projectDevelopmentBattleLayout,
 );
 function sync(message) {
   view.render(game);

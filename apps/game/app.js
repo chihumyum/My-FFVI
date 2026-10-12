@@ -12,6 +12,7 @@ import { NewGameFieldEntry } from "/runtime/core/new-game-field-entry.js";
 import { FieldFadeState, fieldFadeOverlay } from "/runtime/core/field-fade.js";
 import { createSourcePresentationContext } from "/runtime/core/source-presentation.js";
 import { battleAppearanceQuads } from "/runtime/core/battle-appearance.js";
+import { projectDevelopmentBattleLayout } from "/runtime/core/battle-layout.js";
 import { CheckpointStorage } from "/runtime/core/saved-game.js";
 import { Renderer } from "./renderer.js";
 import { BattleView } from "./battle-view.js";
@@ -179,7 +180,7 @@ function bindSession(candidate, views) {
   battleView?.hide();
   battleView = new BattleView(canvas, candidate.battleCatalog.common, images,
     () => { if (flow.continueVictory()) { sync(); focus(); } },
-    () => { if (flow.retryBattle()) { sync(); focus(); } }, battleAppearanceQuads);
+    () => { if (flow.retryBattle()) { sync(); focus(); } }, battleAppearanceQuads, projectDevelopmentBattleLayout);
   inventoryView = new InventoryView($("pause"), candidate.battleCatalog.gameState.items,
     () => { equipmentView.render(flow.session); syncSaveControls(); });
   equipmentView.reset(); partyView.reset(); choiceView.reset(); shopView.reset();

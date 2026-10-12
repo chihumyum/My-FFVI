@@ -3,6 +3,7 @@ import type { BattleRow } from "./battle.js";
 import { battleAIAbilities, compileBattleAI } from "./battle-ai.js";
 import { compileElementResistances } from "./elements.js";
 import { tableInteger } from "./table.js";
+import type { BattleFormationPatterns } from "../core/battle-formations.js";
 
 export type BattleEncounterDiagnostic = {
   partyId: number;
@@ -17,8 +18,7 @@ export type SourceBattleEncounter = {
   source: BattleRow["source"];
   /** All source eligibility bits, including pattern 6. No random pattern is
    * chosen by importing a party or by taking its first nonzero field. */
-  patterns: [number, number, number, number, number, number];
-  pattern: 1 | 3;
+  patterns: BattleFormationPatterns;
   enemies: {
     slot: number;
     monsterId: number;
@@ -117,9 +117,8 @@ export function compileBattleEncounterSources(reader: Reader, input: BattleEncou
       const number = (key: string) => tableNumber(party, "monster_party.csv", key);
       const patterns = Array.from({ length: 6 }, (_, i) => number(`battle_pattern${i + 1}`)) as SourceBattleEncounter["patterns"];
       const enabled = patterns.flatMap((value, i) => value ? [i + 1] : []);
-      if (patterns.some((value) => value !== 0 && value !== 1) ||
-          enabled.length !== 1 || (enabled[0] !== 1 && enabled[0] !== 3))
-        throw new EncounterFailure("formation", `Unsupported battle formation values: ${patterns.join(",")}`,
+      if (patterns.some((value) => value !== 0 && value !== 1) || !enabled.length)
+        throw new EncounterFailure("formation", `Invalid battle formation values: ${patterns.join(",")}`,
           partySource, { table: "monster_party.csv", id: partyId, field: "battle_pattern1..6" });
       const battleFlagGroupId = number("battle_flag_group_id");
       let battleFlags: BattleRow[] = [];
@@ -178,7 +177,7 @@ export function compileBattleEncounterSources(reader: Reader, input: BattleEncou
           { table: "script.csv", id: metadata.scriptId });
       }
       encounters.push(structuredClone({ partyId, source: partySource, patterns,
-        pattern: enabled[0] as 1 | 3, enemies, script, background: backgroundSprite, metadata }));
+        enemies, script, background: backgroundSprite, metadata }));
     } catch (error) {
       diagnostics.push(structuredClone({ partyId,
         code: error instanceof EncounterFailure ? error.code : "source-dependency",

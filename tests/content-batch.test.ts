@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { planContentBatch } from "../src/compiler/content-batch.js";
 import { contentBatchFixture, sealBatchContent } from "./fixtures/content-batch.js";
+import { createBattleFormationPlan } from "../src/core/battle-formations.js";
 
 test("a batch binds actual payloads, compiled encounter dependencies and public-input routes", () => {
   const f = contentBatchFixture(), before = JSON.stringify(f), plan = planContentBatch(f.manifest, f.packages);
@@ -57,4 +58,14 @@ test("a development walking policy cannot enter a source batch or hide outside i
   f.packages.catalog = sealBatchContent(f.packages.catalog);
   f.packages.entry = sealBatchContent({ ...f.packages.entry, developmentProfile: profile });
   assert.throws(() => planContentBatch(f.manifest, f.packages), /map\/scripts/);
+});
+
+test("an authored formation policy cannot become a source batch through a fresh hash", () => {
+  const f = contentBatchFixture(), encounter = f.packages.battle.encounters[1000]!;
+  encounter.formation = null;
+  encounter.formationPlan = createBattleFormationPlan([1, 1, 0, 0, 0, 0], {
+    kind: "framework-battle-formations-v1", id: "normal-only", weights: [1, 0, 0, 0, 0, 0],
+  });
+  f.packages.battle = sealBatchContent(f.packages.battle);
+  assert.throws(() => planContentBatch(f.manifest, f.packages), /source profile.*formation/);
 });

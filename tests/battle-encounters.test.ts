@@ -61,8 +61,8 @@ test("arbitrary party identities retain sparse source slots, signed placement an
   const f = fixture(), result = f.compile([91, 77]);
   assert.deepEqual(result.requestedPartyIds, [77, 91]);
   assert.deepEqual(result.diagnostics, []);
-  assert.deepEqual(result.encounters.map((e) => [e.partyId, e.pattern, e.patterns]),
-    [[77, 1, [1, 0, 0, 0, 0, 0]], [91, 3, [0, 0, 1, 0, 0, 0]]]);
+  assert.deepEqual(result.encounters.map((e) => [e.partyId, e.patterns]),
+    [[77, [1, 0, 0, 0, 0, 0]], [91, [0, 0, 1, 0, 0, 0]]]);
   assert.deepEqual(result.encounters[1]!.enemies.map(({ slot, monsterId, group, x, y }) => ({ slot, monsterId, group, x, y })),
     [{ slot: 2, monsterId: 11, group: 1, x: -12, y: 15 }, { slot: 8, monsterId: 12, group: 2, x: 20, y: -8 }]);
   assert.equal(result.encounters[0]!.source.rowId, "77");
@@ -93,9 +93,20 @@ test("zero script/group references are explicit absence and do not resolve row z
   assert.equal(f.calls.includes("battle_script"), false);
 });
 
-test("pattern six, multiple eligible patterns and invalid bits remain per-party diagnostics", () => {
-  for (const patterns of [[0, 0, 0, 0, 0, 1], [1, 0, 0, 0, 0, 1], [1, 1, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0], [2, 0, 0, 0, 0, 0]]) {
+test("pattern six and multiple eligible patterns remain source data without an import-time choice", () => {
+  for (const patterns of [[0, 0, 0, 0, 0, 1], [1, 0, 0, 0, 0, 1], [1, 1, 1, 1, 1, 1]]) {
+    const f = fixture();
+    patterns.forEach((value, index) => { f.tables["monster_party.csv"]![0]![`battle_pattern${index + 1}`] = String(value); });
+    const result = f.compile();
+    assert.deepEqual(result.diagnostics, []);
+    assert.deepEqual(result.encounters[0]!.patterns, patterns);
+    assert.equal("pattern" in result.encounters[0]!, false);
+    assert.deepEqual(result.encounters[0]!.enemies.map(e => [e.slot, e.monsterId]), [[2, 11], [8, 12]]);
+  }
+});
+
+test("empty eligibility and invalid bits remain per-party diagnostics", () => {
+  for (const patterns of [[0, 0, 0, 0, 0, 0], [2, 0, 0, 0, 0, 0]]) {
     const f = fixture(), first = f.tables["monster_party.csv"]![0]!;
     patterns.forEach((value, index) => { first[`battle_pattern${index + 1}`] = String(value); });
     const result = f.compile();
