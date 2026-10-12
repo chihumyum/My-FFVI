@@ -550,6 +550,7 @@ async function loadMap(owner) {
   const request = owner.field.stop;
   loading.add(request);
   held.clear();
+  let prepared;
   try {
     const catalog = await worldCatalog();
     const indexed = catalog.maps[String(request.request.mapId)];
@@ -558,7 +559,7 @@ async function loadMap(owner) {
     if (!response.ok) throw new Error("地图内容载入失败。");
     const map = await verifyContent(await response.json(), indexed.contentHash);
     if (session !== owner || owner.field.stop !== request) return;
-    const prepared = owner.world.prepare(catalog, map);
+    prepared = owner.world.prepare(catalog, map);
     const next = prepared.field.content;
     await audio.prepare(audioProjection(prepared.field), prepared.field.pendingBgmTracks);
     await loadImages(
@@ -595,6 +596,8 @@ async function loadMap(owner) {
     catalogPromise = undefined;
     owner.world.fail(request, String(error.message ?? error));
     sync();
+  } finally {
+    if (prepared) owner.world.discard(prepared);
   }
 }
 function worldCatalog() {

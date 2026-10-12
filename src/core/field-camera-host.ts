@@ -61,7 +61,10 @@ export type FieldCameraPrepared = {
   /** Native ordinary MoveCallback/SetPosCallback are absent in the bound
    * lifecycle. No arbitrary user-supplied delegate is treated as a no-op. */
   callbackDisposition: "source-absent" | "not-invoked";
+  validate(): void;
   commit(): void;
+  /** Validate and lock this owner before the other atomic publication. */
+  commitWith(commitOwned: () => boolean): boolean;
 };
 
 const f = Math.fround;
@@ -116,6 +119,7 @@ export class FieldCameraHost {
   readonly #ports: FieldCameraHostPorts;
   #state: FieldCameraState;
   #revision = 0;
+  #publishing = false;
 
   constructor(definition: FieldCameraHostDefinition, ports: FieldCameraHostPorts,
     checkpoint: FieldCameraState = createFieldCameraState()) {
@@ -146,14 +150,22 @@ export class FieldCameraHost {
   }
   #prepare(state: FieldCameraState, refresh: boolean,
     callbackDisposition: FieldCameraPrepared["callbackDisposition"]): FieldCameraPrepared {
+    if (this.#publishing) throw new Error("Field camera publication is already in progress");
     validateFieldCameraState(state);
     const candidate = structuredClone(state), revision = this.#revision;
     let committed = false;
-    return { state: structuredClone(candidate), refresh, callbackDisposition,
-      commit: () => {
-        if (committed || revision !== this.#revision) throw new Error("Stale field camera transaction");
-        this.#state = candidate; this.#revision += 1; committed = true;
-      } };
+    const validate = () => {
+      if (committed || this.#publishing || revision !== this.#revision) throw new Error("Stale field camera transaction");
+    };
+    const commitWith = (commitOwned: () => boolean): boolean => {
+      validate(); committed = true; this.#publishing = true;
+      try {
+        if (commitOwned() !== true) return false;
+        this.#state = candidate; this.#revision += 1; return true;
+      } finally { this.#publishing = false; }
+    };
+    return { state: structuredClone(candidate), refresh, callbackDisposition, validate,
+      commit: () => { commitWith(() => true); }, commitWith };
   }
   prepareInitializeDummy(): FieldCameraPrepared {
     return this.#prepare(initializeFieldCameraDummy(this.#state, this.#player()), false, "not-invoked");

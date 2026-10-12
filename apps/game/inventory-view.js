@@ -53,7 +53,7 @@ export class InventoryView {
       (i) => i.count > 0 && !this.definitions[i.id].important,
     )) {
       const item = this.definitions[stack.id],
-        targets = session.checkpointReady
+        targets = session.menuReady
           ? session.state.menuItemTargets(item.id)
           : [];
       const b = button(
@@ -68,7 +68,7 @@ export class InventoryView {
         },
       );
       if (!item.uses.menu.plan) b.title = "此道具的菜单使用尚未接入";
-      else if (!session.checkpointReady) b.title = "请回到地图空闲时使用";
+      else if (!session.menuReady) b.title = "请回到地图空闲时使用";
       else if (!targets.length) b.title = "没有需要恢复的队员";
     }
     if (!list.childNodes.length) list.textContent = "无";
@@ -80,7 +80,7 @@ export class InventoryView {
       const title = document.createElement("p");
       title.textContent = `${itemName(item)} · 选择队员`;
       targetList.append(title);
-      const targets = session.checkpointReady
+      const targets = session.menuReady
         ? session.state.menuItemTargets(item.id)
         : [];
       for (const p of players)

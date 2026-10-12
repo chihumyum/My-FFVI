@@ -74,7 +74,7 @@ try {
     assert.equal(world.parentSourceSetHash, content.parentSourceSetHash);
     assert.equal(map.parentSourceSetHash, content.parentSourceSetHash);
     assert.equal(map.mapId, 609); assert.equal(content.entry.entrance, 1);
-    assert.equal(battle.common.profile, "narshe-playability-v34");
+    assert.equal(battle.common.profile, "narshe-playability-v35");
     assert.equal(content.entry.reservedScript.name, "sc_e_0001");
     assert.equal(map.scriptPuppetContexts[content.entry.reservedScript.name].scriptHash,
       content.entry.reservedScript.contentHash);

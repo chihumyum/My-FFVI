@@ -72,3 +72,58 @@ export function drawAxisAlignedEffectQuad(context, frame, quad) {
       a.x, a.y, b.x - a.x, c.y - a.y);
   } finally { context.restore(); }
 }
+
+/** Source board material preparation for the ordinary CPU compositor. The
+ * frame and renderer order are explicit providers: graph parsing does not
+ * manufacture either. In particular this never invokes the Canvas adapter. */
+export function prepareSourceFieldEffectBoards({ boards, frames, boardOrder, material, camera, width, height }, kernel) {
+  if (!kernel || typeof kernel.validateFieldEffectBoardMaterial !== "function") throw new Error("Missing source effect material kernel");
+  kernel.validateFieldEffectBoardMaterial(material);
+  if (!Array.isArray(boards) || !(frames instanceof Map) || !Array.isArray(boardOrder) ||
+      !Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0 ||
+      !camera || ![camera.x, camera.y].every(Number.isFinite) || width !== 320 || height !== 180)
+    throw new Error("Source field effect camera/frame/order provider is unavailable");
+  const active = boards.filter((b) => b.activeSelf), byId = new Map(active.map((b) => [b.id, b]));
+  if (new Set(boards.map((b) => b.id)).size !== boards.length || byId.size !== boardOrder.length ||
+      new Set(boardOrder).size !== boardOrder.length || boardOrder.some((id) => !byId.has(id)))
+    throw new Error("Source field effect draw order is not a complete active-board permutation");
+  const batches = [], copied = new Map();
+  for (const id of boardOrder) {
+    const board = byId.get(id), d = board.definition, mesh = board.mesh, frame = frames.get(board.cameraId);
+    if (!d || d.kind !== "source-field-effect-board-v1" || d.building || d.collision || d.birdviewPuppet || d.screen || d.visibleMinimap ||
+        board.currentFadeStatus !== 0 || !Number.isFinite(board.fadeAlpha) || board.fadeAlpha < 0 || board.fadeAlpha > 1)
+      throw new Error("Unrecovered source effect board host branch");
+    if (!frame || frame.kind !== "field-effect-sampled-rt-v1" || frame.assetGroup !== d.assetGroup || frame.cameraId !== board.cameraId ||
+        frame.sampleEncoding !== "rgba8-unorm" || frame.rowOrder !== "top-to-bottom" ||
+        !Number.isInteger(frame.width) || !Number.isInteger(frame.height) || frame.width <= 0 || frame.width !== frame.height ||
+        !(frame.data instanceof Uint8ClampedArray) || frame.data.length !== frame.width * frame.height * 4)
+      throw new Error("Missing qualified source particle render texture: " + board.cameraId);
+    if (!copied.has(board.cameraId)) copied.set(board.cameraId, { width: frame.width, height: frame.height, data: frame.data.slice() });
+    const queue = d.front ? d.affected ? 2458 : 2460 : 2453;
+    if (!mesh || mesh.renderQueue !== queue || mesh.affectedMode !== (d.affected ? 0 : 2) || mesh.blendType !== d.blendType ||
+        mesh.zTest !== d.zTest || ![0, 1, 2].includes(d.blendType) || ![4, 8].includes(d.zTest) ||
+        !Array.isArray(mesh.vertices) || mesh.vertices.length !== mesh.uv?.length || mesh.vertices.length % 4 !== 0 ||
+        mesh.triangles?.length !== mesh.vertices.length / 4 * 6)
+      throw new Error("Invalid source board mesh/material binding");
+    const quads = [];
+    for (let i = 0; i < mesh.vertices.length; i += 4) {
+      if ([i, i + 1, i + 2, i + 2, i + 1, i + 3].some((v, j) => mesh.triangles[i / 4 * 6 + j] !== v))
+        throw new Error("Unrecovered source effect triangle topology");
+      const vertices = mesh.vertices.slice(i, i + 4).map((v) => ({
+        x: Math.fround(Math.fround(board.position.x + v.x) - camera.x) + width / 2,
+        y: height / 2 - Math.fround(Math.fround(board.position.y + v.y) - camera.y),
+        z: Math.fround(board.position.z + v.z),
+      }));
+      if (vertices.some((v) => ![v.x, v.y, v.z].every(Number.isFinite))) throw new Error("Invalid source board vertex");
+      const [a, b, c, e] = vertices, [u0, u1, u2, u3] = mesh.uv.slice(i, i + 4);
+      if (!u0 || !u1 || !u2 || !u3 || [u0, u1, u2, u3].some((v) => ![v.x, v.y].every(Number.isFinite)) ||
+          a.y !== b.y || c.y !== e.y || a.x !== c.x || b.x !== e.x || a.z !== b.z || a.z !== c.z || a.z !== e.z ||
+          u0.y !== u1.y || u2.y !== u3.y || u0.x !== u2.x || u1.x !== u3.x)
+        throw new Error("Unrecovered source board transform or UV");
+      quads.push({ image: copied.get(board.cameraId), destination: { x: a.x, y: a.y, width: b.x - a.x, height: c.y - a.y },
+        uv: { left: u0.x, right: u1.x, top: u0.y, bottom: u2.y }, depth: a.z });
+    }
+    batches.push({ id, queue, blendType: d.blendType, zTest: d.zTest, stencilReference: mesh.affectedMode, alpha: board.fadeAlpha, quads });
+  }
+  return { material: structuredClone(material), batches };
+}

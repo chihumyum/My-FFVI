@@ -17,6 +17,8 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [v35 共享效果事务、来源粒子引擎子核与板合成](docs/systems-v35.md)
+- [v34 原生演员保存、普通图层与粒子模块](docs/systems-v34.md)
 - [v32 原生外观事务、常驻演员切图与独立脚下属性](docs/systems-v32.md)
 - [v31 新游戏会话、原生演员、字幕与滚动背景](docs/systems-v31.md)
 - [v30 摄像机、来源演员工厂与新游戏交接](docs/systems-v30.md)

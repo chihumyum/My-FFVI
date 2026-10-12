@@ -1,4 +1,9 @@
 import type { Evidence } from "../field/types.js";
+import { FieldEffectCandidate, type FieldEffectCandidateHost, type FieldEffectCandidateLimits,
+  type FieldEffectCandidateOrigin } from "./field-effect-transaction.js";
+export { FieldEffectCandidate, type FieldEffectCandidateHost, type FieldEffectCandidateLimits,
+  type FieldEffectCandidateOrigin, type FieldEffectCandidateBatch,
+  type FieldEffectCandidatePrepared } from "./field-effect-transaction.js";
 
 export type FieldEffectPoint = { x: number; y: number; z: number };
 /** A kind 11 object is a board. It is not a physical character or a particle
@@ -66,7 +71,12 @@ export type FieldEffectPlan = { before: FieldEffectState; after: FieldEffectStat
 export type FieldEffectPublication = { validate(): void; commit(): void };
 /** The host must prepare all particle, material and board changes without
  * publishing. commit only installs already-prepared state and cannot fail. */
-export type FieldEffectProvider = { prepare(plan: Readonly<FieldEffectPlan>): FieldEffectPublication };
+export type FieldEffectProvider = {
+  prepare(plan: Readonly<FieldEffectPlan>): FieldEffectPublication;
+  /** Capture the current host generation now, not when the candidate is sealed.
+   * The returned scope may stage private resources but cannot publish them. */
+  beginCandidate?(origin: Readonly<FieldEffectCandidateOrigin>): FieldEffectCandidateHost;
+};
 /** observe prepares read-only playback observations for the next update. Any
  * particle/texture work is staged by prepare and installed only by commit. */
 export type FieldEffectRuntimeHost = FieldEffectProvider & {
@@ -77,7 +87,20 @@ export const FIELD_EFFECT_PARTICLE_UPDATE_ATTRIBUTE = 42;
 export function fieldEffectUpdateAllowed(mask: number): boolean {
   integer(mask, 0); return (mask & FIELD_EFFECT_PARTICLE_UPDATE_ATTRIBUTE) !== 0;
 }
-export type FieldEffectPrepared = FieldEffectPublication & { readonly state: FieldEffectState };
+export type FieldEffectPrepared = FieldEffectPublication & {
+  readonly state: FieldEffectState;
+  /** Finish FX validation/copies and lock its owner before this synchronous
+   * atomic publication. false means the other owner made no changes. No FX
+   * host validation runs after the callback returns true. */
+  commitWith(commitOwned: () => boolean): boolean;
+};
+
+/** A scope identifies a map lifetime, not merely a map number. The World owner
+ * allocates it and retires the previous map's lease at publication. */
+export function fieldEffectBoardId(scope: string, localId: string): string {
+  identity(scope); identity(localId);
+  return JSON.stringify(["field-effect-board-v1", scope, localId]);
+}
 
 const f = Math.fround;
 function finite(value: number): void {
@@ -356,23 +379,109 @@ export function projectFieldEffects(state: FieldEffectState, catalog: FieldEffec
 export class FieldEffects {
   #state = createFieldEffectState();
   #revision = 0;
-  readonly #catalog: FieldEffectCatalog;
+  #catalog: FieldEffectCatalog;
+  #publishing = false;
+  #publicationFailed = false;
   readonly #provider: FieldEffectProvider | undefined;
   constructor(catalog: FieldEffectCatalog, provider?: FieldEffectProvider) {
     this.#catalog = structuredClone(catalog); this.#provider = provider;
   }
   snapshot(): FieldEffectState { return structuredClone(this.#state); }
+  catalogSnapshot(): FieldEffectCatalog { return structuredClone(this.#catalog); }
+  #validateRevision(revision: number): void {
+    if (this.#publicationFailed) throw new Error("Field effect host publication failed; the manager cannot be reused");
+    if (this.#publishing || this.#revision !== revision) throw new Error("Stale field effect publication");
+  }
+  #publish(revision: number, state: FieldEffectState, catalog: FieldEffectCatalog,
+    commit: () => void, commitOwned: () => boolean = () => true): boolean {
+    // Finish every fallible copy before entering the host's no-fail publication.
+    const next = structuredClone(state), nextCatalog = structuredClone(catalog);
+    this.#validateRevision(revision);
+    this.#publishing = true;
+    try {
+      // The owned draft must itself be atomic: false means no owned changes.
+      // No host validation may run after that separate owner has committed.
+      if (commitOwned() !== true) return false;
+      try { commit(); } catch (error) {
+        // An opaque host that violates the no-fail contract may already have
+        // published externally. Do not replay that commit or reuse the manager.
+        this.#publicationFailed = true; throw error;
+      }
+      this.#state = next; this.#catalog = nextCatalog; this.#revision++;
+      return true;
+    } finally { this.#publishing = false; }
+  }
   prepare(operations: readonly FieldEffectOperation[]): FieldEffectPrepared {
-    const plan = projectFieldEffects(this.#state, this.#catalog, operations), revision = this.#revision;
+    const revision = this.#revision;
+    this.#validateRevision(revision);
+    const plan = projectFieldEffects(this.#state, this.#catalog, operations);
     if (!this.#provider) throw new Error("Field effect renderer/particle host is unavailable");
     const publication = this.#provider.prepare(structuredClone(plan));
+    this.#validateRevision(revision);
     let used = false;
     const validate = () => {
-      if (used || this.#revision !== revision) throw new Error("Stale field effect publication");
+      if (used) throw new Error("Stale field effect publication");
+      this.#validateRevision(revision);
       publication.validate();
+      // A host callback cannot make an obsolete logical candidate current.
+      this.#validateRevision(revision);
     };
-    return { get state() { return structuredClone(plan.after); }, validate, commit: () => {
-      validate(); publication.commit(); this.#state = plan.after; this.#revision++; used = true;
-    } };
+    const commitWith = (commitOwned: () => boolean): boolean => {
+      validate(); used = true;
+      return this.#publish(revision, plan.after, this.#catalog, () => publication.commit(), commitOwned);
+    };
+    return { get state() { return structuredClone(plan.after); }, validate,
+      commit: () => { commitWith(() => true); }, commitWith };
   }
+  /** Runtime observations must come from the currently bound live host. */
+  prepareTick(deltaSeconds: number): FieldEffectPrepared {
+    finite(deltaSeconds); if (deltaSeconds < 0) throw new Error("Negative field effect delta");
+    const revision = this.#revision;
+    this.#validateRevision(revision);
+    const provider = this.#provider as FieldEffectRuntimeHost | undefined;
+    if (typeof provider?.observe !== "function") throw new Error("Field effect playback observer is unavailable");
+    const observations = provider.observe(this.snapshot(), deltaSeconds);
+    this.#validateRevision(revision);
+    return this.prepare([{ kind: "tick", deltaSeconds, observations }]);
+  }
+  fork(targetCatalog?: FieldEffectCatalog, limits?: FieldEffectCandidateLimits): FieldEffectCandidate {
+    const revision = this.#revision;
+    this.#validateRevision(revision);
+    const catalog = mergeFieldEffectCatalog(this.#catalog, targetCatalog);
+    const provider = this.#provider;
+    if (typeof provider?.beginCandidate !== "function") throw new Error("Field effect candidate host is unavailable");
+    const origin = { state: this.snapshot(), catalog: structuredClone(catalog) };
+    const host = provider.beginCandidate(structuredClone(origin));
+    try {
+      this.#validateRevision(revision);
+      return new FieldEffectCandidate(origin, host, {
+        validate: () => this.#validateRevision(revision),
+        project: projectFieldEffects,
+        publish: (state, candidateCatalog, commit, commitOwned) => this.#publish(revision, state, candidateCatalog, commit, commitOwned),
+      }, limits);
+    } catch (error) { host.discard?.(); throw error; }
+  }
+}
+
+/** Definitions are immutable source bindings. A destination can add a group,
+ * but cannot reinterpret an already loaded group, even after prefab release. */
+function mergeFieldEffectCatalog(base: FieldEffectCatalog, target: FieldEffectCatalog | undefined): FieldEffectCatalog {
+  const merged = structuredClone(base);
+  if (target === undefined) return merged;
+  if (!target || !target.media || typeof target.media !== "object" || Array.isArray(target.media))
+    throw new Error("Invalid field effect target catalog");
+  const canonical = (value: unknown): string => {
+    if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+    if (value !== null && typeof value === "object") return "{" + Object.entries(value)
+      .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+      .map(([key, item]) => JSON.stringify(key) + ":" + canonical(item)).join(",") + "}";
+    return JSON.stringify(value);
+  };
+  for (const [group, definition] of Object.entries(target.media)) {
+    identity(group); media(target, group, false);
+    if (Object.hasOwn(merged.media, group)) {
+      if (canonical(merged.media[group]) !== canonical(definition)) throw new Error("Changed field effect media definition: " + group);
+    } else Object.defineProperty(merged.media, group, { value: structuredClone(definition), enumerable: true, writable: true, configurable: true });
+  }
+  return merged;
 }

@@ -21,6 +21,8 @@ import type { SourceNativeState } from "./source-native-state.js";
 import { prepareSourceNativeMap } from "./source-native-map.js";
 import { prepareNativeFieldProviders } from "./field-native-providers.js";
 import type { SourceNewGameContent } from "./source-new-game.js";
+import { FieldEffects, type FieldEffectCandidate, type FieldEffectCandidatePrepared } from "./field-effects.js";
+import { FieldEffectMap } from "./field-effect-map.js";
 export type WorldStateOwner = {
   current: FieldGameOptions;
   prepare(): { ports: FieldGameOptions; commit(): boolean };
@@ -208,14 +210,20 @@ type Ownership = {
   publishPresentation(): void;
   catalogHash: string;
   owned?: { commit(): boolean };
+  effects?: { candidate: FieldEffectCandidate; publication: FieldEffectCandidatePrepared; map: FieldEffectMap; fieldState: string };
 };
+type MapCommit = { value: PreparedMap; cancelled: boolean; started: boolean };
 
 /** Owns field lifetime. Hosts fetch and verify packages/images before committing a prepared map. */
 export class WorldSession {
   private current: FieldGame;
   private location: WorldCheckpoint["location"] = null;
-  private prepared = new WeakMap<PreparedMap, Ownership>();
+  private prepared = new Map<PreparedMap, Ownership>();
+  private commitInProgress: MapCommit | null = null;
   private catalogHash: string | null = null;
+  private readonly effectOwner: FieldEffects | null;
+  private effectMap: FieldEffectMap | null;
+  private nextEffectScope = 1;
   readonly transitions: {
     from: number;
     to: number;
@@ -232,16 +240,34 @@ export class WorldSession {
     initialFade?: FieldFadeState,
     restoringNative = false,
   ) {
-    this.current = new FieldGame(
-      initial,
-      state,
-      undefined,
-      undefined,
-      { ...(owned?.current ?? {}), ...(initial.playerFactory ? { playerVisibility: initial.playerFactory.capability } : {}) },
-      initialFade,
-      undefined,
-      restoringNative,
-    );
+    // The explicit candidate capability admits the ordinary clear/load branch.
+    // Standalone hosts keep their prior map/save gates. A manager survives empty
+    // maps too: allocation IDs and off-map positions do not restart per map.
+    const effectHost = owned?.current.fieldEffects;
+    const hasEffects = initial.map.entities.some((entity) => entity.kind === 11);
+    if (hasEffects && owned?.current.nativeActorPreparation)
+      throw new Error("Initial native field effects require whole-session transactional publication");
+    if (effectHost?.beginCandidate && typeof effectHost.observe !== "function")
+      throw new Error("Field effect playback observation host is unavailable");
+    this.effectOwner = typeof effectHost?.beginCandidate === "function"
+      ? new FieldEffects(initial.fieldEffects ?? { media: {} }, effectHost) : null;
+    const candidate = hasEffects ? this.effectOwner?.fork() : undefined;
+    this.effectMap = this.effectOwner ? new FieldEffectMap("0", candidate ?? this.effectOwner,
+      initial.map.entities.filter((entity) => entity.kind === 11).map((entity) => entity.id)) : null;
+    try {
+      this.current = new FieldGame(
+        initial,
+        state,
+        undefined,
+        undefined,
+        { ...(owned?.current ?? {}), ...(this.effectMap ? { fieldEffectMap: this.effectMap } : {}),
+          ...(initial.playerFactory ? { playerVisibility: initial.playerFactory.capability } : {}) },
+        initialFade,
+        undefined,
+        restoringNative,
+      );
+      if (candidate) { candidate.seal().commit(); this.effectMap!.publish(this.effectOwner!); }
+    } catch (error) { candidate?.discard(); throw error; }
   }
   get field(): FieldGame {
     return this.current;
@@ -261,6 +287,7 @@ export class WorldSession {
     target?: WorldMapContent,
     native?: { content: SourceNewGameContent; initialMap: WorldMapContent },
   ): void {
+    if (this.commitInProgress) throw new Error("Cannot restore during map publication");
     checkpointKeys(snapshot, "kind,initialHash,location,field");
     if (
       snapshot.kind !== "idle-world-v9" ||
@@ -341,29 +368,35 @@ export class WorldSession {
         animationKeys: native.content.animationKeys, controlContext: { worldMapScript: false, callback: "absent" },
         providers: (field) => prepareNativeFieldProviders(field, map.actorView!, map.nativeFoot) };
     }
+    if (this.effectMap?.hasHistory) throw new Error("Field effect manager history cannot be restored without its particle/RNG codec");
+    const effectMap = this.effectOwner ? new FieldEffectMap(String(this.nextEffectScope), this.effectOwner, []) : null;
     const next = FieldGame.restore(
       content,
       snapshot.field,
-      { ...(this.owned?.current ?? {}), ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}) },
+      { ...(this.owned?.current ?? {}), ...(effectMap ? { fieldEffectMap: effectMap } : {}),
+        ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}) },
       nativeDependencies,
     );
+    for (const pending of this.prepared.keys()) this.discard(pending);
+    if (this.effectMap) this.effectMap.retire(this.effectMap.snapshot());
+    this.effectMap = effectMap;
+    this.nextEffectScope++;
     this.current = next;
     this.location = structuredClone(loc);
     this.catalogHash = loc?.catalogHash ?? null;
-    this.prepared = new WeakMap();
     this.transitions.length = 0;
   }
   prepare(catalog: WorldCatalog, target: WorldMapContent): PreparedMap {
+    if (this.commitInProgress) throw new Error("Cannot prepare another map during publication");
     const from = this.current,
       stop = from.stop;
     if (stop?.kind !== "map-transition")
       throw new Error("No pending map transition");
+    const fromActors = this.actorState(from), fromFade = canonical(from.fader.snapshot()),
+      fromCamera = canonical(from.cameraSnapshot), fromPresentation = from.sourcePresentationContext;
     const effectBlocker = from.effectMapHandoffBlocker;
     if (effectBlocker) throw new Error(effectBlocker);
-    // A destination particle provider cannot publish resources during a map
-    // candidate that can still be discarded. Keep this boundary closed until
-    // allocation, retirement and cancellation share the world transaction.
-    if (Object.values(target.map?.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11)))
+    if (!this.effectOwner && Object.values(target.map?.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11)))
       throw new Error("Destination field-effect particle allocation requires a transactional map lifecycle provider");
     const nativeActors = from.nativeActorCandidate, nativeRuntime = from.nativeActorRuntime;
     const nativeState = this.owned?.nativeState?.();
@@ -393,7 +426,7 @@ export class WorldSession {
       throw new Error("Environment media changed during map transition");
     const environment = from.environment.snapshot();
     const owned = this.owned?.prepare();
-    const presentation = from.sourcePresentationContext;
+    const presentation = fromPresentation;
     const presentationHost = this.owned?.current.sourcePresentation;
     if (canonical(presentation) !== canonical(presentationHost?.context() ?? null) ||
         (presentationHost && presentation === null) || (!presentationHost && owned?.ports.sourcePresentation))
@@ -450,73 +483,121 @@ export class WorldSession {
       from.content.parentSourceSetHash, actorEntry, this.initial.entry.fade, from.cameraSnapshot !== null);
     if (from.cameraSnapshot && !content.cameraHost)
       throw new Error(target.cameraHostBlockers?.[0]?.reason ?? "Destination native camera host is unavailable");
-    const field = new FieldGame(
-      content,
-      state,
-      new StaticAudioState(bgm),
-      new StaticAudioState(environment),
-      { ...(owned?.ports ?? {}), ...(nativeActors ? { nativeActorPreparation: true } : {}),
-        ...(sourcePresentation ? { sourcePresentation } : {}),
-        ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}),
-        ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
-      from.fader.fork(),
-      from.cameraSnapshot ?? undefined,
-    );
-    if (nativeActors) {
-      if (!prior || !actorEntry || !target.partyEntry || !target.actorView || target.actorViewBlockers?.length ||
-          !owned?.ports.partyAppearance || !nativeRuntime || !catalog.nativeAnimationKeys ||
-          canonical(nativeRuntime.animationKeys) !== canonical(catalog.nativeAnimationKeys))
-        throw new Error(target.actorViewBlockers?.[0]?.reason ?? "Native map actor source dependencies are unavailable");
-      if (target.nativeFootBlockers?.length) throw new Error(target.nativeFootBlockers[0]!.reason);
-      const providers = prepareNativeFieldProviders(field, target.actorView, target.nativeFoot);
-      const candidate = prepareSourceNativeMap({ prior: nativeActors, priorCheckpoint: prior,
-        entry: actorEntry.plan, definition: target.partyEntry, catalog: owned.ports.partyAppearance.catalog,
-        party: owned.ports.partyAppearance.current(),
-        characters: field.content.characters, animationKeys: catalog.nativeAnimationKeys,
-        view: target.actorView, providers: providers() });
-      field.installNativeActors(candidate, nativeRuntime.catalog, providers, nativeRuntime.controlContext,
-        catalog.nativeAnimationKeys, nativeRuntime.mapLifecycle);
-    }
-    field.initializeMapCamera();
-    const script = request.continuation || target.initializer;
-    field.startMapEntry(script || null);
-    if (field.stop?.kind === "unsupported") throw new Error(field.stop.message);
-    const prepared = { field, request: stop };
-    this.prepared.set(prepared, {
-      from,
-      stop,
-      request: canonical(stop.request),
-      state: canonical(snapshot),
-      bgm: canonical(bgm),
-      environment: canonical(environment),
-      actors: this.actorState(from),
-      presentation: canonical(presentation),
-      fade: canonical(from.fader.snapshot()),
-      camera: canonical(from.cameraSnapshot),
-      publishPresentation: () => { presentationPublished = true; },
-      catalogHash: catalog.contentHash,
-      ...(owned ? { owned } : {}),
-    });
-    return prepared;
+    const effectCandidate = this.effectOwner?.fork(content.fieldEffects);
+    try {
+      if (effectCandidate) this.effectMap!.prepareRetirement(effectCandidate);
+      const effectMap = effectCandidate ? new FieldEffectMap(String(this.nextEffectScope), effectCandidate,
+        content.map.entities.filter((entity) => entity.kind === 11).map((entity) => entity.id)) : null;
+      const field = new FieldGame(
+        content,
+        state,
+        new StaticAudioState(bgm),
+        new StaticAudioState(environment),
+        { ...(owned?.ports ?? {}), ...(nativeActors ? { nativeActorPreparation: true } : {}),
+          ...(effectMap ? { fieldEffectMap: effectMap } : {}),
+          ...(sourcePresentation ? { sourcePresentation } : {}),
+          ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}),
+          ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
+        from.fader.fork(),
+        from.cameraSnapshot ?? undefined,
+      );
+      if (nativeActors) {
+        if (!prior || !actorEntry || !target.partyEntry || !target.actorView || target.actorViewBlockers?.length ||
+            !owned?.ports.partyAppearance || !nativeRuntime || !catalog.nativeAnimationKeys ||
+            canonical(nativeRuntime.animationKeys) !== canonical(catalog.nativeAnimationKeys))
+          throw new Error(target.actorViewBlockers?.[0]?.reason ?? "Native map actor source dependencies are unavailable");
+        if (target.nativeFootBlockers?.length) throw new Error(target.nativeFootBlockers[0]!.reason);
+        const providers = prepareNativeFieldProviders(field, target.actorView, target.nativeFoot);
+        const candidate = prepareSourceNativeMap({ prior: nativeActors, priorCheckpoint: prior,
+          entry: actorEntry.plan, definition: target.partyEntry, catalog: owned.ports.partyAppearance.catalog,
+          party: owned.ports.partyAppearance.current(),
+          characters: field.content.characters, animationKeys: catalog.nativeAnimationKeys,
+          view: target.actorView, providers: providers() });
+        field.installNativeActors(candidate, nativeRuntime.catalog, providers, nativeRuntime.controlContext,
+          catalog.nativeAnimationKeys, nativeRuntime.mapLifecycle);
+      }
+      field.initializeMapCamera();
+      const script = request.continuation || target.initializer;
+      field.startMapEntry(script || null);
+      if (field.stop?.kind === "unsupported") throw new Error(field.stop.message);
+      const effectPublication = effectCandidate?.seal();
+      const prepared = Object.freeze({ field, request: stop });
+      this.prepared.set(prepared, {
+        from,
+        stop,
+        request: canonical(stop.request),
+        state: canonical(snapshot),
+        bgm: canonical(bgm),
+        environment: canonical(environment),
+        actors: fromActors,
+        presentation: canonical(presentation),
+        fade: fromFade,
+        camera: fromCamera,
+        publishPresentation: () => { presentationPublished = true; },
+        catalogHash: catalog.contentHash,
+        ...(owned ? { owned } : {}),
+        ...(effectPublication ? { effects: { candidate: effectCandidate!, publication: effectPublication,
+          map: effectMap!, fieldState: this.effectFieldState(field) } } : {}),
+      });
+      return prepared;
+    } catch (error) { effectCandidate?.discard(); throw error; }
   }
   commit(value: PreparedMap): boolean {
+    if (this.commitInProgress) return false;
     const ownership = this.prepared.get(value);
+    if (!ownership) return false;
     this.prepared.delete(value);
-    if (
-      !ownership ||
-      ownership.from !== this.current ||
-      ownership.stop !== this.current.stop ||
-      ownership.request !== canonical(this.current.stop.request) ||
-      ownership.state !== canonical(this.current.eventState.snapshot()) ||
-      ownership.bgm !== canonical(this.current.bgm.snapshot()) ||
-      ownership.environment !== canonical(this.current.environment.snapshot()) ||
-      ownership.actors !== this.actorState(this.current) ||
-      ownership.presentation !== canonical(this.current.sourcePresentationContext) ||
-      ownership.fade !== canonical(this.current.fader.snapshot()) ||
-      ownership.camera !== canonical(this.current.cameraSnapshot)
-    )
+    // Keep cancellation visible while fallible host validation is running.
+    // Cleanup itself waits until the callback has returned to avoid reentering
+    // a busy candidate. Publication becomes irrevocable at the owned commit.
+    const active: MapCommit = { value, cancelled: false, started: false };
+    this.commitInProgress = active;
+    try { return this.commitPrepared(value, ownership, active); }
+    catch (error) { if (!active.started) ownership.effects?.candidate.discard(); throw error; }
+    finally { this.commitInProgress = null; }
+  }
+  private commitPrepared(value: PreparedMap, ownership: Ownership, active: MapCommit): boolean {
+    if (!this.isCurrent(ownership, value) || active.cancelled) {
+      ownership.effects?.candidate.discard();
       return false;
-    if (ownership.owned && !ownership.owned.commit()) return false;
+    }
+    // Release losing private preparations before any visible state changes.
+    // A faulty cleanup callback must not turn a committed map into a reported
+    // failure while the browser still holds its previous renderer.
+    try { for (const pending of this.prepared.keys()) this.discard(pending); }
+    catch (error) { ownership.effects?.candidate.discard(); throw error; }
+    const previousEffects = this.effectMap?.snapshot();
+    if (ownership.effects) {
+      // All fallible effect validation runs before the owned-state callback.
+      // The manager is locked throughout the two no-fail publications.
+      let committed: boolean, ownedStarted = false;
+      try { committed = ownership.effects.publication.commitWith(() => {
+        if (!this.isCurrent(ownership, value) || active.cancelled) return false;
+        active.started = ownedStarted = true;
+        return ownership.owned?.commit() ?? true;
+      }); }
+      catch (error) {
+        ownership.effects.candidate.discard();
+        // A host commit that violates its no-fail contract is fatal; its manager
+        // is poisoned rather than replayed. Pre-publication failures are stale.
+        if (ownedStarted) {
+          this.current.stop = { kind: "unsupported", message: "Field effect publication failed: " + String(error),
+            site: ownership.stop.site };
+          for (const pending of this.prepared.keys()) this.discard(pending);
+          throw error;
+        }
+        return false;
+      }
+      if (!committed) return false;
+      this.effectMap!.retire(previousEffects!);
+      ownership.effects.map.publish(this.effectOwner!);
+      this.effectMap = ownership.effects.map;
+      this.nextEffectScope++;
+    } else {
+      if (!this.isCurrent(ownership, value) || active.cancelled) return false;
+      active.started = true;
+      if (ownership.owned && !ownership.owned.commit()) return false;
+    }
     ownership.publishPresentation();
     this.transitions.push({
       from: this.current.content.map.identity!.mapId,
@@ -541,6 +622,34 @@ export class WorldSession {
     };
     return true;
   }
+  /** Browser fetch/media failure or replaced session abandons private resources. */
+  discard(value: PreparedMap): void {
+    if (this.commitInProgress?.value === value) {
+      if (this.commitInProgress.started) throw new Error("Cannot cancel a map after publication has started");
+      this.commitInProgress.cancelled = true;
+      return;
+    }
+    const ownership = this.prepared.get(value);
+    this.prepared.delete(value);
+    ownership?.effects?.candidate.discard();
+  }
+  private isCurrent(ownership: Ownership, value: PreparedMap): boolean {
+    return ownership.from === this.current && ownership.stop === this.current.stop && value.request === ownership.stop &&
+      ownership.request === canonical(this.current.stop.request) &&
+      ownership.state === canonical(this.current.eventState.snapshot()) &&
+      ownership.bgm === canonical(this.current.bgm.snapshot()) &&
+      ownership.environment === canonical(this.current.environment.snapshot()) &&
+      ownership.actors === this.actorState(this.current) &&
+      ownership.presentation === canonical(this.current.sourcePresentationContext) &&
+      ownership.fade === canonical(this.current.fader.snapshot()) &&
+      ownership.camera === canonical(this.current.cameraSnapshot) &&
+      (!ownership.effects || ownership.effects.fieldState === this.effectFieldState(value.field));
+  }
+  private effectFieldState(field: FieldGame): string {
+    return canonical({ time: field.time, busy: field.busy, stop: field.stop,
+      state: field.eventState.snapshot(), actors: this.actorState(field), effects: field.fieldEffectsSnapshot,
+      fade: field.fader.snapshot(), camera: field.cameraSnapshot, bgm: field.bgm.snapshot(), environment: field.environment.snapshot() });
+  }
   private requireActorPresentation(plan: MapPartyEntryPlan): void {
     if (plan.colliderChanges.length)
       throw new Error("Conditional map party collision is not supported by this field host");
@@ -559,5 +668,6 @@ export class WorldSession {
   fail(request: MapTransitionStop, message: string): void {
     if (this.current.stop !== request) return;
     this.current.stop = { kind: "unsupported", message, site: request.site };
+    for (const [pending, ownership] of this.prepared) if (ownership.stop === request) this.discard(pending);
   }
 }

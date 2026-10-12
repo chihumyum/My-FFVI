@@ -31,6 +31,7 @@ import { projectNativeFieldPosition } from "./field-native-position.js";
 import { FieldEffects, FIELD_EFFECT_PARTICLE_UPDATE_ATTRIBUTE, fieldEffectAnimationLoopLimit,
   projectFieldEffectPlacement, type FieldEffectRuntimeHost, type FieldEffectState,
   type FieldEffectPrepared, type FieldEffectOperation } from "./field-effects.js";
+import { FieldEffectMap } from "./field-effect-map.js";
 import type { FieldActorFactoryCandidate, FieldActorFactoryBindings, FieldActorFactoryCatalog } from "./field-actor-factory.js";
 import { captureFieldNativeCheckpoint, restoreFieldNativeCheckpoint,
   type FieldNativeCheckpoint, type FieldNativeCheckpointContext } from "./field-native-checkpoint.js";
@@ -212,6 +213,8 @@ export type Dialogue = FieldMessage & { task: number };
 export type FieldGameOptions = {
   /** Explicit particle/material host. Content parsing never grants one. */
   fieldEffects?: FieldEffectRuntimeHost;
+  /** World-owned lease; a prepared map never allocates another live pool. */
+  fieldEffectMap?: FieldEffectMap;
   /** The private source-session candidate installs native actors before any
    * script/input. Suppresses temporary legacy NPC creation in that candidate. */
   nativeActorPreparation?: true;
@@ -248,10 +251,11 @@ export class FieldGame {
   private mapScrollOffset: Readonly<Point>;
   get cameraOffset(): Readonly<Point> { return this.mapScrollOffset; }
   private readonly camera: FieldCameraHost | null;
-  private readonly effects: FieldEffects | null;
+  private readonly effects: FieldEffects | FieldEffectMap | null;
   /** Read-only logical projection; not a particle/RNG checkpoint codec. */
   get fieldEffectsSnapshot(): FieldEffectState | null { return this.effects?.snapshot() ?? null; }
   get effectMapHandoffBlocker(): string | null {
+    if (this.options.fieldEffectMap?.active) return null;
     return this.effects ? "Field effect map retirement/particle checkpoint host is unresolved" : null;
   }
   private effectBoard(id: string) { return this.effects?.snapshot().boards.find((board) => board.id === id); }
@@ -577,11 +581,13 @@ export class FieldGame {
       throw new Error("Field effect pool is not bound to the source default group");
     this.effects = null;
     if (sourceEffects.length) {
-      if (options.nativeActorPreparation)
+      if (options.nativeActorPreparation && !options.fieldEffectMap)
         throw new Error("Source field effect allocation requires a transactional native map lifecycle provider");
       if (!content.fieldEffects) throw new Error("Field effect particle/material catalog is unavailable");
       if (!content.cameraHost) throw new Error("Field effect source map range is unavailable");
-      if (typeof options.fieldEffects?.observe !== "function") throw new Error("Field effect playback observation host is unavailable");
+      if (!options.fieldEffectMap && typeof options.fieldEffects?.observe !== "function")
+        throw new Error("Field effect playback observation host is unavailable");
+      options.fieldEffectMap?.assertCatalog(content.fieldEffects);
       const ids = new Set<string>();
       const operations: FieldEffectOperation[] = sourceEffects.map((entity) => {
         if (!entity.effect || ids.has(entity.id) || this.actors[entity.id] || entity.id === this.cameraActorId ||
@@ -593,7 +599,7 @@ export class FieldGame {
         return { kind: "create", id: entity.id, definition: entity.effect, position: placement.position };
       });
       operations.push({ kind: "setup", registeredBoards: sourceEffects.map((entity) => entity.id), groupUpdate: false });
-      const effects = new FieldEffects(content.fieldEffects, options.fieldEffects);
+      const effects = options.fieldEffectMap ?? new FieldEffects(content.fieldEffects, options.fieldEffects);
       effects.prepare(operations).commit();
       this.effects = effects;
     }
@@ -681,14 +687,20 @@ export class FieldGame {
     const treasures = this.prepareTreasureInitialization(group.entities);
     const effectSetup = this.effects?.prepare([{ kind: "setup", registeredBoards:
       this.defaultProperties.filter((entity) => entity.kind === 11).map((entity) => entity.id), groupUpdate: true }]);
-    effectSetup?.validate();
-    this.tileAnimations.register(group.entities);
-    effectSetup?.commit();
-    this.entityList.push(...group.entities);
-    this.initializeTreasures(treasures);
-    Object.assign(this.actors, actors);
-    this.activeGroups.add(name);
-    this.currentProperties = [...this.defaultProperties, ...group.entities];
+    const properties = [...this.defaultProperties, ...group.entities];
+    const publish = () => {
+      // register validates a private cells/regions draft before its two pointer
+      // swaps. No FX host validation may run after those bindings become live.
+      this.tileAnimations.register(group.entities);
+      this.entityList.push(...group.entities);
+      this.initializeTreasures(treasures);
+      Object.assign(this.actors, actors);
+      this.activeGroups.add(name);
+      this.currentProperties = properties;
+      return true;
+    };
+    if (effectSetup) effectSetup.commitWith(publish);
+    else publish();
   }
   get player(): PlacedActor {
     const player = this.actors["-1001"]!;
@@ -926,12 +938,14 @@ export class FieldGame {
       (this.interaction?.waitUntil ?? 0) > this.time
     );
   }
-  get checkpointReady(): boolean {
+  /** Stable interaction does not require a particle/RNG save codec. Keep the
+   * actor, script and presentation gates even when FX prohibit checkpointing. */
+  get menuReady(): boolean {
     return (
       (!this.options.puppetActors || !!(this.nativeActorBindings && this.nativeRuntime?.mapLifecycle &&
         this.nativeRuntime.animationKeys && this.nativeActorProviders && this.partyActors && this.camera)) &&
       !this.cameraEventActive && (!this.puppetLifecycle || this.puppetLifecycle.finished) &&
-      !this.effects &&
+      (!this.options.fieldEffectMap || this.options.fieldEffectMap.active) &&
       this.sourcePresentationContext?.advertisementOpeningFader !== "present" &&
       this.synchronizedEntry !== false &&
       !this.busy &&
@@ -939,6 +953,9 @@ export class FieldGame {
       !this.interaction &&
       Object.values(this.actors).every((a) => a.motion === null)
     );
+  }
+  get checkpointReady(): boolean {
+    return this.menuReady && !this.effects && !this.options.fieldEffectMap?.hasHistory;
   }
   get sourcePresentationContext(): SourcePresentationContext | null {
     return cloneSourcePresentationContext(this.options.sourcePresentation?.context() ?? null);
@@ -1014,7 +1031,7 @@ export class FieldGame {
   ): FieldGame {
     if (options.puppetActors)
       throw new Error("Source puppet host checkpoints require a bound actor/camera/collision codec");
-    if (content.map.entities.some((entity) => entity.kind === 11) ||
+    if (options.fieldEffectMap?.hasHistory || content.map.entities.some((entity) => entity.kind === 11) ||
         Object.values(content.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11)))
       throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
     const s = structuredClone(raw);
@@ -1589,8 +1606,7 @@ export class FieldGame {
       let effects: FieldEffectPrepared | undefined;
       try {
         if (this.effects && (this.entityUpdateMask & FIELD_EFFECT_PARTICLE_UPDATE_ATTRIBUTE) !== 0) {
-          const observations = this.options.fieldEffects!.observe(this.effects.snapshot(), 0.01);
-          effects = this.effects.prepare([{ kind: "tick", deltaSeconds: 0.01, observations }]);
+          effects = this.effects.prepareTick(0.01);
           effects.validate();
         }
       } catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
@@ -2395,19 +2411,31 @@ export class FieldGame {
                   .map((r) => ({ kind: "show", actor: r.actor })) }) : () => {};
               if (typeof publish !== "function") throw new Error("Invalid source puppet Ready transaction");
               const publishCollision = this.preparePuppetCollision(result.collisionEnabled);
-              effectShow?.validate();
-              publish();
-              cameraShow?.commit();
-              effectShow?.commit();
-              publishCollision();
-              if (result.clearAssignments && this.puppetLifecycle) this.puppetLifecycle.assignments = fieldPuppetAssignments();
-              for (const { child, actor, plan } of ready) {
-                child.done = plan.status === "sleep";
-                child.state = "ready";
-                child.actor = actor;
-                if (plan.showActor && !(this.camera && actor === this.cameraActorId) && !this.effectBoard(actor) && !this.actors[actor]?.native)
-                  this.hiddenEntities.delete(actor);
-              }
+              const assignments = result.clearAssignments ? fieldPuppetAssignments() : null;
+              const legacyShown = ready.filter(({ actor, plan }) => plan.showActor &&
+                !(this.camera && actor === this.cameraActorId) && !this.effectBoard(actor) && !this.actors[actor]?.native)
+                .map(({ actor }) => actor);
+              const publishReady = () => {
+                // Source actor/collision ports promise a prepared no-fail
+                // publication. An opaque violation stops the field; it cannot
+                // be represented as rollback of a third-party write.
+                publish();
+                publishCollision();
+                if (assignments && this.puppetLifecycle) this.puppetLifecycle.assignments = assignments;
+                for (const { child, actor, plan } of ready) {
+                  child.done = plan.status === "sleep";
+                  child.state = "ready";
+                  child.actor = actor;
+                }
+                for (const actor of legacyShown) this.hiddenEntities.delete(actor);
+                return true;
+              };
+              // Lock the camera before publishing actors/tasks, and finish all
+              // FX host checks before either owner changes. Reversing commit
+              // order alone would only move the partial-write failure.
+              const publishCamera = () => cameraShow ? cameraShow.commitWith(publishReady) : publishReady();
+              if (effectShow) effectShow.commitWith(publishCamera);
+              else publishCamera();
               if (result.flow === "wait") {
                 t.puppetWait = command;
                 return;

@@ -9,7 +9,7 @@
         "炭坑都市纳尔谢"
       ],
       "questions": [
-        "来源 fresh GameSession、原生演员、普通字幕、非空 Upper/Ceil 合成与稳定原生演员保存已接通。继续补齐粒子 Noise/RNG/预热/发射积分、跨图共享效果池事务、交通与骑乘、入战返回；实际开场仍停在609→3目的地图FX分配，开发检查点不等于完整序章。",
+        "共享跨图FX事务、原生演员稳定保存和普通字段合成已接入。继续闭合粒子Noise/Cone/预热/运动积分、真实billboard与RT色空间，再接源开场切图、交通/骑乘和入战返回。精确UnityPlayer随机/时钟/发射子核已验证，但5个完整来源发射器仍阻塞；开发检查点不等于完整序章。",
         "建立同一地点在不同世界阶段、剧情标记和局部状态下的变体条件。",
         "确认 Wait 时钟与 SysCall 选择器，并对已恢复的碰撞进行原版运行对照。"
       ]
@@ -1509,6 +1509,53 @@
         "GameAssembly.dll:RVA 0x575150,0x303710",
         "docs/field-effects.md",
         "docs/systems-v34.md"
+      ]
+    },
+    {
+      "id": "narshe:shared-effects-v35",
+      "subject": "narshe",
+      "when": {
+        "battleProfile": "narshe-playability-v35"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "predicate": "migration.fieldEffectLifetime",
+      "value": "Ordinary map transitions use one shared effect manager and disposable candidate journals. Catalog identity, counters and references survive map changes; failed or stale candidates never publish. Only a prepared explicit host admits the path; retained/event/resident FX and particle saves remain gated.",
+      "evidence": [
+        "docs/field-effect-transactions.md",
+        "docs/systems-v35.md",
+        "GameAssembly.dll:RVA 0x58b130,0x2e38f0,0x303450,0x30cce0"
+      ]
+    },
+    {
+      "id": "narshe:particle-engine-v35",
+      "subject": "narshe",
+      "when": {
+        "battleProfile": "narshe-playability-v35"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "predicate": "migration.fieldParticleEngine",
+      "value": "Exact UnityPlayer PDB and source-bound x64 probes support seed/RNG, clock and bounded constant emission primitives. Native manager entropy must be supplied explicitly. These subkernels do not admit the five complete Noise/Cone/prewarm emitters.",
+      "evidence": [
+        "docs/systems-v35.md",
+        "docs/field-particle-emitter.md",
+        "UnityPlayer.dll:CodeView 4420B376-89DD-4CFE-AEC8-2300F4A999D2 age 1"
+      ]
+    },
+    {
+      "id": "narshe:effect-composition-v35",
+      "subject": "narshe",
+      "when": {
+        "battleProfile": "narshe-playability-v35"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "predicate": "migration.fieldEffectComposition",
+      "value": "The source board shader has two non-exclusive passes with distinct discard and depth-write rules. Prepared source frames use the ordinary field color/depth/stencil attachments; missing particle geometry, ordering or RT color-space providers remain blockers.",
+      "evidence": [
+        "docs/systems-v35.md",
+        "docs/field-particle-geometry.md"
       ]
     }
   ],

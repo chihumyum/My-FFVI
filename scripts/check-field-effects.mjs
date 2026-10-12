@@ -14,7 +14,7 @@ const report = { formatVersion: 1, lane: "source-field-effect-board-and-prefab-i
   limitations: ["No Unity ParticleSystem simulation or source particle/board material implementation is admitted.",
     "A logical board and shared-player owner is executable only with an explicit prepared host; real source media remains blocked.",
     "This checker compiles current source objects directly; it does not claim published world or story reachability.",
-    "Event-group creation order, particle/RNG saves and transactional map allocation/retirement remain gated."] };
+    "Event-group creation order and particle/RNG saves remain gated. Transactional ordinary map handoff requires an explicit candidate host."] };
 const check = (name, work) => { work(); report.cases.push({ name, pass: true }); };
 let stage = "load-source";
 try {

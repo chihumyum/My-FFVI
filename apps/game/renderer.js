@@ -8,14 +8,19 @@ import { assertFieldCompositionRenderTargets, composeFieldNativePixels,
   scaleFieldCompositionPixels } from "/runtime/core/field-native-composition.js";
 import { projectFieldActorView, validateFieldActorViewProjection } from "/runtime/core/field-actor-view.js";
 import { canonical } from "/runtime/core/canonical.js";
+import { validateFieldEffectBoardMaterial } from "/runtime/core/field-particle-geometry.js";
+import { prepareSourceFieldEffectBoards } from "./field-effect-renderer.js";
 export class Renderer {
-  constructor(canvas, content, images) {
+  constructor(canvas, content, images, effectProvider = null) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.content = content;
     this.images = images;
     this.nativePixels = new WeakMap();
     this.presentationOmissions = [];
+    // Explicit qualified RT and draw-order provider. Absence is a capability
+    // error for an effect scene, never an empty or synthetic particle frame.
+    this.effectProvider = effectProvider;
     this.sets = [...content.map.tilesets].sort(
       (a, b) => b.firstgid - a.firstgid,
     );
@@ -161,9 +166,20 @@ export class Renderer {
           clampTileSubY: sourceCamera.clampTileSubY, charaZOffset: actor.native.charaZOffset }),
         first: sampleTarget(textures.first), second: sampleTarget(textures.second) });
     }
+    let effects;
+    const effectState = game.fieldEffectsSnapshot;
+    if (effectState != null) {
+      if (typeof this.effectProvider?.prepare !== "function") throw new Error("来源字段特效缺少粒子、材质和离屏纹理渲染宿主");
+      const prepared = this.effectProvider.prepare({ state: structuredClone(effectState),
+        camera: structuredClone(sourceCamera), width, height });
+      if (!prepared) throw new Error("来源字段特效宿主未准备完整帧");
+      effects = prepareSourceFieldEffectBoards({ boards: effectState.boards, frames: prepared.frames,
+        boardOrder: prepared.boardOrder, material: prepared.material,
+        camera: sourceCamera.cameraPosition, width, height }, { validateFieldEffectBoardMaterial });
+    }
     const canvas = this.compositionCanvas(width, height), context = canvas.getContext("2d", { willReadFrequently: true });
     this.background(context, sourceCamera, width, height);
-    const output = composeFieldNativePixels({ width, height, tiles, actors: projectedActors,
+    const output = composeFieldNativePixels({ width, height, tiles, actors: projectedActors, ...(effects ? { effects } : {}),
       background: { width, height, data: context.getImageData(0, 0, width, height).data } });
     const imageData = context.createImageData(width, height); imageData.data.set(output.data);
     for (const omission of omissions) if (!this.presentationOmissions.some((prior) =>
@@ -338,7 +354,7 @@ export class Renderer {
     c.restore();
   }
   draw(game) {
-    if (game.fieldEffectsSnapshot != null)
+    if (game.fieldEffectsSnapshot != null && typeof this.effectProvider?.prepare !== "function")
       throw new Error("来源字段特效缺少粒子、材质和离屏纹理渲染宿主");
     const c = this.ctx,
       m = this.content.map,
@@ -377,6 +393,7 @@ export class Renderer {
       .filter((a) => game.isEntityVisible(a.id) && a.x >= 0 && a.x < m.width && a.y >= 0 && a.y < m.height)
       .sort((a, b) => this.point(a).y - this.point(b).y || a.id.localeCompare(b.id));
     const native = this.prepareNativeComposition(game, actors, sourceCamera, cx, cy, viewportWidth, viewportHeight);
+    if (!native && game.fieldEffectsSnapshot != null) throw new Error("来源字段特效需要共享原生颜色与深度缓冲");
     c.imageSmoothingEnabled = false;
     if (native) {
       const scaled = scaleFieldCompositionPixels(native, w, h), frame = c.createImageData(w, h);

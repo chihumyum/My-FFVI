@@ -46,7 +46,7 @@
 
 ## 批量检查
 
-v34 补充了效果资源的所有权证据：MapManager 复制构造共享同一个 `FieldEffectInstanceManager`，每次切图重建播放器池会重置原版持续累加的 camera ID 与离屏位置。板引用最后释放与资产缓存卸载是不同操作；新 `release-prefab` 原语只清理 lookup，不销毁仍被引用的播放器。WorldSession 的效果分配/退休门禁继续保留，下一步需要共同准备、提交和回收共享池，见 [效果板生命周期](field-effects.md#shared-manager-lifetime-v34)。原生演员稳定保存和普通非空 Upper/Ceil 合成已分别接入，不代替这条资源事务。
+v34 历史批次补充了效果资源的所有权证据：MapManager 复制构造共享同一个 `FieldEffectInstanceManager`，每次切图重建播放器池会重置原版持续累加的 camera ID 与离屏位置。板引用最后释放与资产缓存卸载是不同操作；新 `release-prefab` 原语只清理 lookup，不销毁仍被引用的播放器。WorldSession 的效果分配/退休门禁继续保留，下一步需要共同准备、提交和回收共享池，见 [效果板生命周期](field-effects.md#shared-manager-lifetime-v34)。原生演员稳定保存和普通非空 Upper/Ceil 合成已分别接入，不代替这条资源事务。
 
 ```sh
 npm run maps:check
@@ -78,3 +78,9 @@ npm run world:check
 静态碰撞 0–13、默认 MapRange、MinimapIcon、显式 BGM、环境声、静止 NPC 交互和 TileAnimation 区域已加入共用模块。地图动画批次后 132 条地图默认实体无已识别阻塞，101 条同时满足几何和包检查，187 个尝试入口中 76 个到达空闲；见 [NPC 批次](npc.md)、[地图动画批次](tile-animation.md)。继续从阻塞报告推进角色动画、地图机关、NPC 游走/路线、交互选择与初始化状态/演出指令；不能为了增长地图数直接忽略。当前地图包还未执行随机遇敌、完整音频规则、全量队伍和存读档。
 
 能力补齐后重编所有依赖地图，用相连地图往返与状态变体验证。特殊离屏入口与过场层另列能力，不猜可行走位置；后续依旧不向运行时添加地图名、剧情 flag 或坐标例外。
+
+## v35 普通效果池切图事务
+
+WorldSession 在显式 beginCandidate 宿主下持有唯一效果管理器；FieldGame 只租用地图作用域的板。普通 ClearCurrentMap/yield/LoadMap 顺序已由该 DLL 的14个方法范围及11项调用绑定核对。候选先释放旧prefab/shared缓存和板引用，再创建目标板；catalog、全局分配计数和媒体身份不逐图重置。切图最终与队伍/库存联合发布，过期、取消和媒体失败都释放私有资源。已退休地图不能再写新管理器。
+
+浏览器在会话替换、图片/音频加载失败及成功发布后的finally路径调用 discard；重复调用不重复释放。缺少候选宿主仍保留原FX分配门禁。真实发射器、保留/复制地图、事件组和常驻FX仍未准入；粒子保存缺失也不能通过进入空地图来绕开。菜单空闲条件与存档codec条件分别检查。见 [v35系统集成](systems-v35.md)、[候选事务](field-effect-transactions.md)。

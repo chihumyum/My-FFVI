@@ -112,7 +112,11 @@
     "field-native-npc:check": "npm run build && node scripts/check-field-native-npc-native.mjs && node scripts/check-field-native-npc.mjs",
     "field-native-composition:check": "npm run build && node scripts/check-field-native-composition-native.mjs && node scripts/check-field-native-composition.mjs && node scripts/check-field-native-composition-ui.mjs",
     "field-native-checkpoint:check": "npm run build && node scripts/check-field-native-checkpoint.mjs",
-    "field-particles:check": "npm run build && node scripts/check-field-particles.mjs && node scripts/check-field-particles-ui.mjs"
+    "field-particles:check": "npm run build && node scripts/check-field-particles.mjs && node scripts/check-field-particles-ui.mjs",
+    "field-effect-map:check": "npm run build && node scripts/check-field-effect-map-native.mjs",
+    "field-menu-ready:check": "npm run build && node scripts/check-field-menu-ready-ui.mjs",
+    "field-particle-emitter:check": "npm run build && node scripts/check-field-particle-emitter-native.mjs && node scripts/check-field-particle-emitter.mjs",
+    "field-particle-geometry:check": "npm run build && node scripts/check-field-particle-geometry-native.mjs && node scripts/check-field-particle-geometry.mjs && node scripts/check-field-particle-geometry-ui.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

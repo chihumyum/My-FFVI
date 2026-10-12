@@ -63,7 +63,7 @@ export class EquipmentView {
         p.mp,
         ...stats.map(([, value]) => value(p)),
       ]),
-      session.checkpointReady,
+      session.menuReady,
       this.playerId,
       this.slot,
       this.contentId,
@@ -83,7 +83,7 @@ export class EquipmentView {
     }
     const inventory = session.state.equipmentInventory;
     const stock = new Map(inventory.map((entry) => [entry.id, entry]));
-    const choices = session.checkpointReady
+    const choices = session.menuReady
       ? session.state.equipmentChoices(owned.id, this.slot)
       : [];
     const currentId = owned.equipment[this.slot - 1];
@@ -166,7 +166,7 @@ export class EquipmentView {
 
     const options = node("div", undefined, "equipment-options");
     options.append(node("h4", `${slots[this.slot - 1]} · 选择装备`));
-    if (!session.checkpointReady) {
+    if (!session.menuReady) {
       options.append(node("p", "请回到地图空闲时调整装备。"));
     } else if (!choices.some((choice) => choice.changes.length)) {
       options.append(node("p", "当前没有可更换的装备。"));

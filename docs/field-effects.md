@@ -25,7 +25,7 @@ The receipts are in `build/native/v33-field-effect-lifecycle`, `v33-field-effect
 
 ## Ownership and transaction contract
 
-`FieldEffectState` holds boards, shared particle players, camera IDs, reference counts and registration order. The admitted standalone field has exactly one such owner. Neither `actors` nor `hiddenEntities` stores a second effect copy. Native evidence shows that the source manager itself is shared across MapManager copies; its lifetime is longer than one map. The current standalone owner is therefore not yet a complete cross-map host.
+`FieldEffectState` holds boards, shared particle players, camera IDs, reference counts and registration order. The admitted standalone field has exactly one such owner. Neither `actors` nor `hiddenEntities` stores a second effect copy. Native evidence shows that the source manager itself is shared across MapManager copies; its lifetime is longer than one map. v35 adds [disposable branches of the shared manager](field-effect-transactions.md), including exact destination catalog merging and joint publication with owned state. This does not supply a real particle host.
 
 `projectFieldEffects(state, catalog, operations)` builds one disposable candidate for an ordered operation list. `FieldEffects.prepare(operations)` obtains a host transaction and returns `{ state, validate, commit }`. Preparing or rejecting a stale candidate does not change the logical owner. A host must prepare its material, texture and particle changes without publishing; its commit installs prepared state and must not fail.
 
@@ -55,7 +55,7 @@ The actual DLL instructions in MapManager's copy constructor (`312160`, copy at 
 
 `ClearMapAsset` (`303710`) enumerates the recorded particle asset groups, calls `ReleaseAlreadyLoadPrefabs`, destroys the corresponding resource groups and clears the list. This is distinct from a board's final Release (`575200`). The native checker binds the full file digests, 12 additional method receipts, the copy/allocation instruction bytes, and the two dictionary removals. The earlier decompiler output truncates some methods at a write barrier, so the actual DLL bytes are required for the pointer-copy claim.
 
-The future WorldSession integration needs one shared pool, map-scoped board leases, candidate preparation with no external publication, and asset cleanup following the source unload order. A per-map pool and unconditional cache reset were rejected during investigation. Cross-map allocation/retirement remains gated until that joint lifecycle and a real particle host exist.
+The v34 investigation rejected a per-map pool and unconditional cache reset. v35 supplies the manager-side candidate transaction: map-scoped board IDs, private multiple preparations, preserved operation order, host generation checks and one final state/catalog publication. WorldSession must still follow the source unload order and retire the previous map's mutation lease. Real source particle admission remains independent; the candidate protocol cannot bypass missing runtime providers.
 
 ## Real Map3 diagnosis
 
@@ -88,7 +88,7 @@ Ignored diagnostics:
 
 Nonzero board fades, color fades, building/collision behavior, birdview/screen/minimap effects, nonzero blend-table behavior, animator-driven effects and unimplemented particle/material providers remain blocked. Generic effect movement/attachment is not added by admitting Show/Play.
 
-A logical FX snapshot omits Unity particle/RNG internals and is **not** a stable save codec. FieldGame checkpointing with an effect pool is blocked. Source native-actor preparation and destination map allocation cannot call a real particle provider's commit on a still-discardable candidate; they require a future joint allocation/cancel/retirement transaction. WorldSession rejects source-map effect retirement and destination-map effect allocation before changing owned state or preparing a new field. A hidden or stopped pool is still owned and cannot simply be discarded.
+A logical FX snapshot omits Unity particle/RNG internals and is **not** a stable save codec. FieldGame checkpointing with an effect pool is blocked. Source native-actor preparation and destination map allocation cannot call a particle provider's commit on a still-discardable candidate. They must use the v35 shared candidate protocol and an explicitly capable host; a private tick additionally requires its own observer. A hidden or stopped pool is still owned and cannot simply be discarded. v34's blanket map-handoff gates are historical; replacing those gates requires the shared World lifecycle and does not remove source media blockers.
 
 ## Repeatable checks
 

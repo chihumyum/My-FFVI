@@ -166,21 +166,22 @@ export class GameSession {
     this.battle?.setPreferences(next);
     this.currentBattlePreferences = next;
   }
-  get checkpointReady(): boolean {
+  private get fieldOwnerReady(): boolean {
     return (
       !this.battle &&
       !this.battleLease &&
       !this.state.inBattle &&
-      (!this.freshEntry || this.freshEntry.launched) &&
-      this.field.checkpointReady
+      (!this.freshEntry || this.freshEntry.launched)
     );
   }
+  get menuReady(): boolean { return this.fieldOwnerReady && this.field.menuReady; }
+  get checkpointReady(): boolean { return this.fieldOwnerReady && this.field.checkpointReady; }
   useMenuItem(id: number, targetId: string): boolean {
-    if (!this.checkpointReady) return false;
+    if (!this.menuReady) return false;
     return this.state.useMenuItem(id, targetId);
   }
   changeEquipment(playerId: string, slot: number, contentId: number): boolean {
-    if (!this.checkpointReady) return false;
+    if (!this.menuReady) return false;
     return this.state.changeEquipment(playerId, slot, contentId);
   }
   private requireShop() {
@@ -230,6 +231,9 @@ export class GameSession {
     world?: GameRestoreWorld,
     runtime: GameSessionRuntime = {},
   ): GameSession {
+    if (initial.map.entities.some((entity) => entity.kind === 11) ||
+        Object.values(initial.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11)))
+      throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
     const s = structuredClone(raw);
     checkpointKeys(
       s,

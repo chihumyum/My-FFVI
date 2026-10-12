@@ -1,6 +1,8 @@
 import { canonical } from "./canonical.js";
 import type { FieldActorViewDefinition, FieldActorViewSource } from "./field-actor-view.js";
 import { validateFieldActorView } from "./field-actor-view.js";
+import { blendFieldEffectBoard, fieldEffectBoardFragment, validateFieldEffectBoardMaterial,
+  type FieldEffectBoardMaterial, type FieldEffectCompositionBatch } from "./field-particle-geometry.js";
 
 export type FieldCompositionColor = readonly [number, number, number, number];
 export type FieldCompositionLayer = "BottomLayer" | "GroundLayer" | "UpperLayer" | "CeilLayer";
@@ -304,7 +306,10 @@ export function composeFieldNativePixels(input: {
    * transparent target for independent RT/formula checks; the Web host passes
    * its complete prepared background and publishes with putImageData. */
   background?: FieldCompositionPixels;
-}): FieldCompositionPixels {
+  /** Prepared in source draw order within each queue. The compositor does not
+   * invent an order from IDs or turn arbitrary particle centers into pixels. */
+  effects?: { material: FieldEffectBoardMaterial; batches: readonly FieldEffectCompositionBatch[] };
+}): FieldCompositionPixels & { depths: Float64Array; stencil: Uint8Array } {
   const output: FieldCompositionPixels = { width: input.width, height: input.height,
     data: new Uint8ClampedArray(input.width * input.height * 4) };
   pixels(output);
@@ -322,7 +327,30 @@ export function composeFieldNativePixels(input: {
     if (actor.first) pixels(actor.first);
     if (actor.second) pixels(actor.second);
   }
+  if (input.effects) {
+    validateFieldEffectBoardMaterial(input.effects.material);
+    const ids = new Set<string>();
+    for (const batch of input.effects.batches) {
+      if (!batch.id || ids.has(batch.id) || ![2453, 2458, 2460].includes(batch.queue) ||
+          ![0, 1, 2].includes(batch.blendType) || ![4, 8].includes(batch.zTest) || ![0, 2].includes(batch.stencilReference) ||
+          !Number.isFinite(batch.alpha) || batch.alpha < 0 || batch.alpha > 1 || !Array.isArray(batch.quads))
+        throw new Error("Invalid prepared field effect pass");
+      ids.add(batch.id);
+      for (const q of batch.quads) {
+        pixels(q.image); finite(q.depth);
+        for (const n of [q.destination.x, q.destination.y, q.destination.width, q.destination.height,
+          q.uv.left, q.uv.right, q.uv.top, q.uv.bottom]) {
+          if (typeof n !== "number") throw new Error("Invalid source effect geometry number");
+          finite(n);
+        }
+        if (q.destination.width < 0 || q.destination.height < 0 || q.uv.left < 0 || q.uv.right > 1 ||
+            q.uv.bottom < 0 || q.uv.top > 1 || q.uv.right < q.uv.left || q.uv.top < q.uv.bottom)
+          throw new Error("Unknown source effect-board UV geometry");
+      }
+    }
+  }
   const depths = new Float64Array(input.width * input.height); depths.fill(Infinity);
+  const stencil = new Uint8Array(input.width * input.height);
   const render = (q: FieldCompositionQuad, pass: "opaque" | "transparent" | "body" | "head") => {
     // CameraTileMap source near/far relative to world z=-50.
     if (q.depth < f(-50 + f(0.3)) || q.depth > 950) return;
@@ -347,13 +375,46 @@ export function composeFieldNativePixels(input: {
         if (result === null) continue;
         if (pass === "transparent") result = blendFieldTransparent(result, readPixel(output, x, y));
         else depths[index] = q.depth;
+        // Ordinary source transparent tiles Replace 0; character materials
+        // Replace 2. Opaque tiles Keep. No stencil consumer is guessed here.
+        if (pass === "transparent") stencil[index] = 0;
+        else if (pass === "body" || pass === "head") stencil[index] = 2;
         writePixel(output, index, result);
       }
     }
   };
+  const effects = (queue: 2453 | 2458 | 2460) => {
+    for (const batch of input.effects?.batches ?? []) {
+      if (batch.queue !== queue) continue;
+      // Unity renders the complete first pass before the same renderer's
+      // second pass. Doing both per fragment changes overlapping strips.
+      for (const pass of ["opaque", "color"] as const) for (const q of batch.quads) {
+        if (q.depth < f(-50 + f(0.3)) || q.depth > 950) continue;
+        const d = q.destination;
+        if (!d.width || !d.height) continue; // Native split mesh can end in a zero-area strip.
+        for (let y = Math.max(0, Math.ceil(d.y - 0.5)); y < Math.min(input.height, Math.ceil(d.y + d.height - 0.5)); y++) {
+          for (let x = Math.max(0, Math.ceil(d.x - 0.5)); x < Math.min(input.width, Math.ceil(d.x + d.width - 0.5)); x++) {
+            const index = y * input.width + x;
+            if (batch.zTest === 4 && q.depth > depths[index]!) continue;
+            const u = f(q.uv.left + f(f((x + 0.5 - d.x) / d.width) * f(q.uv.right - q.uv.left)));
+            const v = f(q.uv.top + f(f((y + 0.5 - d.y) / d.height) * f(q.uv.bottom - q.uv.top)));
+            const sample = readPixel(q.image, Math.min(q.image.width - 1, Math.max(0, Math.floor(u * q.image.width))),
+              Math.min(q.image.height - 1, Math.max(0, Math.floor((1 - v) * q.image.height))));
+            const fragment = fieldEffectBoardFragment(sample, input.effects!.material.vertexColor, batch.alpha, pass);
+            if (fragment === null) continue;
+            if (pass === "opaque") depths[index] = q.depth;
+            stencil[index] = batch.stencilReference;
+            writePixel(output, index, blendFieldEffectBoard(fragment, readPixel(output, x, y), batch.blendType));
+          }
+        }
+      }
+    }
+  };
   for (const tile of input.tiles) render(tile, "opaque");
+  effects(2453);
   for (const actor of input.actors) render(actor, "body");
   for (const tile of input.tiles) render(tile, "transparent");
   for (const actor of input.actors) render(actor, "head");
-  return output;
+  effects(2458); effects(2460);
+  return { ...output, depths, stencil };
 }
