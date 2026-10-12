@@ -1,0 +1,223 @@
+import { canonical, hash } from "./content.js";
+import { fieldEffectCompilationBlockers } from "./field-effects.js";
+import { fieldEffectBoardBlockers } from "../core/field-effects.js";
+import type { DevelopmentOmission, DevelopmentProfile } from "../core/development-profile.js";
+import type { SourceNewGameContent } from "../core/source-new-game.js";
+import type { EntityGroup, Evidence, FieldEntity } from "../field/types.js";
+import type { ContentIssue, WorldCatalog, WorldMapContent } from "../field/world.js";
+
+export type FrameworkContentRetained = {
+  mapId: number;
+  group: string;
+  entityId: string;
+  source: Evidence;
+  reasons: string[];
+};
+export type FrameworkContentReport = {
+  profile: DevelopmentProfile["kind"];
+  policy: DevelopmentProfile["policy"];
+  sourceCatalogHash: string;
+  sourceEntryHash: string;
+  catalogHash: string;
+  entryHash: string;
+  maps: { mapId: number; sourceContentHash: string; contentHash: string }[];
+  omissions: DevelopmentOmission[];
+  retained: FrameworkContentRetained[];
+};
+export type FrameworkContent = {
+  catalog: WorldCatalog & { developmentProfile: DevelopmentProfile };
+  maps: (WorldMapContent & { developmentProfile: DevelopmentProfile })[];
+  entry: SourceNewGameContent & { developmentProfile: DevelopmentProfile };
+  report: FrameworkContentReport;
+};
+
+const PROFILE = "framework-development-v1";
+const POLICY = "omit-anonymous-environment-particles-v1";
+const REASON = "Framework development omits this anonymous, non-interactive environment particle; exact-source playback remains unimplemented.";
+const LIMITATION = "Framework development omits source-bound anonymous environment particles. Story instructions, owned state and non-presentation blockers are unchanged; this is not exact-source visual acceptance.";
+const ENTITY_KEYS = new Set(["id", "objectId", "kind", "layer", "x", "y", "width", "height", "asset", "direction",
+  "script", "collision", "destinationLayer", "source", "effect"]);
+const EFFECT_KEYS = new Set(["kind", "assetId", "assetGroup", "assetName", "pixelPosition", "pixelSize", "playOnAwake",
+  "front", "split", "zOffset", "affected", "blendType", "zTest", "collision", "building", "birdviewPuppet",
+  "screen", "visibleMinimap", "source"]);
+
+function seal<T extends { contentHash: string }>(value: T): T {
+  const { contentHash: _, ...payload } = value;
+  return { ...payload, contentHash: hash(payload) } as T;
+}
+function verify(value: { contentHash: string; developmentProfile?: DevelopmentProfile }): void {
+  const { contentHash, ...payload } = value;
+  if (!/^[a-f0-9]{64}$/.test(contentHash) || hash(payload) !== contentHash)
+    throw new Error("Framework input content identity mismatch");
+  if (value.developmentProfile !== undefined)
+    throw new Error("Framework derivation requires strict input, not an existing development profile");
+}
+function profile(sourceContentHash: string, omissions: DevelopmentOmission[]): DevelopmentProfile {
+  return { kind: PROFILE, policy: POLICY, sourceContentHash, omissions: structuredClone(omissions) };
+}
+function sourceObject(a: Evidence, b: Evidence): boolean {
+  const { pointer: _a, ...objectA } = a, { pointer: _b, ...objectB } = b;
+  return canonical(objectA) === canonical(objectB);
+}
+function sameSource(a: Evidence, b: Evidence): boolean {
+  return canonical(a) === canonical(b);
+}
+function affects(issue: ContentIssue, source: Evidence): boolean {
+  if (!sourceObject(issue.source, source)) return false;
+  const parent = issue.source.pointer;
+  return !parent || parent === source.pointer || source.pointer?.startsWith(parent + "/") === true;
+}
+/** Check every compiled instruction, including currently unreachable branches.
+ * Unknown instructions remain blocked in the derivative. Anonymous source
+ * boards cannot be addressed through a numeric actor selector (zero is camera).
+ * The internal Web identity is nevertheless protected against authored/new ops. */
+function referenceStrings(value: unknown, result: Set<string>): void {
+  if (typeof value === "string") result.add(value);
+  else if (Array.isArray(value)) value.forEach((v) => referenceStrings(v, result));
+  else if (value && typeof value === "object")
+    for (const [key, child] of Object.entries(value)) if (key !== "source") referenceStrings(child, result);
+}
+function expectedParticleBlockers(map: WorldMapContent, entity: FieldEntity): Set<string> {
+  const effect = entity.effect!;
+  const media = map.fieldEffects?.media[effect.assetGroup];
+  // Exact compiler diagnostics only. A string prefix alone is not proof that
+  // an unknown blocker is presentation-only.
+  return new Set([
+    ...fieldEffectCompilationBlockers(effect),
+    ...(media ? fieldEffectCompilationBlockers(effect, media) : []),
+  ].filter((reason) => reason.startsWith("Field effect particle provider unavailable: ")));
+}
+function eligibility(map: WorldMapContent, groupKey: string, group: EntityGroup, entity: FieldEntity,
+  scriptReferences: ReadonlySet<string>): { reasons: string[]; particleBlockers: Set<string> } {
+  const reasons: string[] = [];
+  const pointer = /^\/layers\/(0|[1-9]\d*)\/objects\/(0|[1-9]\d*)$/.exec(entity.source.pointer ?? "");
+  if (groupKey !== group.name || entity.objectId !== 0 || !pointer ||
+      entity.id !== `${group.name}:${pointer[1]}:${pointer[2]}` ||
+      !sourceObject(entity.source, group.source))
+    reasons.push("Anonymous source entity identity is not established");
+  if (Object.keys(entity).some((key) => !ENTITY_KEYS.has(key)) || entity.script !== null ||
+      entity.collision !== null || entity.destinationLayer !== null || entity.asset !== null)
+    reasons.push("Entity has an interaction, script, collision, media or unknown property");
+  if (!Number.isInteger(entity.layer) || entity.layer < 0 || entity.layer > 3 ||
+      ![entity.x, entity.y, entity.width, entity.height].every(Number.isFinite) || entity.width <= 0 || entity.height <= 0 ||
+      !["up", "right", "down", "left"].includes(entity.direction))
+    reasons.push("Entity placement is unresolved");
+  let particleBlockers = new Set<string>();
+  try {
+    if (!entity.effect || !sameSource(entity.effect.source, entity.source) ||
+        Object.keys(entity.effect).some((key) => !EFFECT_KEYS.has(key)))
+      throw new Error("Complete source-bound environment effect definition is missing");
+    const blockers = fieldEffectBoardBlockers(entity.effect);
+    if (blockers.length) reasons.push(...blockers);
+    particleBlockers = expectedParticleBlockers(map, entity);
+  } catch (error) { reasons.push(error instanceof Error ? error.message : String(error)); }
+  if (group.entities.filter((e) => e.id === entity.id || sameSource(e.source, entity.source)).length !== 1)
+    reasons.push("Ambiguous entity identity or source object");
+  const copies = map.map!.entities.filter((e) => e.id === entity.id || sameSource(e.source, entity.source));
+  if (copies.length > 1 || copies.some((e) => canonical(e) !== canonical(entity)))
+    reasons.push("Active entity differs from its source group definition");
+  if (scriptReferences.has(entity.id))
+    reasons.push("A compiled script references this entity identity");
+  for (const issue of [...map.blockers, ...group.blockers])
+    if (affects(issue, entity.source) &&
+        !(sameSource(issue.source, entity.source) && particleBlockers.has(issue.reason)))
+      reasons.push("Non-particle source blocker: " + issue.reason);
+  return { reasons: [...new Set(reasons)], particleBlockers };
+}
+
+/** Produce a separate framework world without manufacturing particle state or
+ * changing story/owned data. Callers publish these files under /framework/;
+ * strict packages remain independently loadable and verifiable. */
+export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps: readonly WorldMapContent[],
+  strictEntry: SourceNewGameContent): FrameworkContent {
+  verify(strictCatalog); verify(strictEntry);
+  if (strictCatalog.kind !== "world-development" || strictCatalog.formatVersion !== 1 ||
+      strictEntry.kind !== "source-new-game-content-v1" ||
+      strictEntry.worldCatalogHash !== strictCatalog.contentHash ||
+      strictEntry.sourceSetHash !== strictCatalog.sourceSetHash ||
+      strictEntry.parentSourceSetHash !== strictCatalog.parentSourceSetHash)
+    throw new Error("Framework strict entry/catalog binding mismatch");
+  const ids = new Set<number>();
+  for (const map of strictMaps) {
+    verify(map);
+    const indexed = strictCatalog.maps[String(map.mapId)];
+    if (!Number.isInteger(map.mapId) || map.mapId <= 0 || ids.has(map.mapId) || !indexed ||
+        map.kind !== "world-map-development" || map.formatVersion !== 1 || indexed.contentHash !== map.contentHash ||
+        indexed.name !== map.name || indexed.areaId !== map.areaId ||
+        map.sourceSetHash !== strictCatalog.sourceSetHash || map.parentSourceSetHash !== strictCatalog.parentSourceSetHash ||
+        map.mediaSourceSetHash !== strictCatalog.mediaSourceSetHash ||
+        (map.map !== null && (map.map.identity?.mapId !== map.mapId || map.map.identity.areaId !== map.areaId)) ||
+        map.developmentOmissions?.length)
+      throw new Error("Framework strict map/catalog binding mismatch");
+    ids.add(map.mapId);
+  }
+  if (Object.keys(strictCatalog.maps).length !== ids.size ||
+      Object.keys(strictCatalog.maps).some((key) => !ids.has(Number(key)) || String(Number(key)) !== key))
+    throw new Error("Framework derivation requires every indexed strict map");
+  const initial = strictMaps.find((map) => map.mapId === strictEntry.entry.mapId);
+  if (!initial || strictEntry.mapContentHash !== initial.contentHash)
+    throw new Error("Framework strict entry/map binding mismatch");
+
+  const retained: FrameworkContentRetained[] = [], omissions: DevelopmentOmission[] = [], scriptReferences = new Set<string>();
+  for (const map of strictMaps) referenceStrings(map.scripts, scriptReferences);
+  const maps = [...strictMaps].sort((a, b) => a.mapId - b.mapId).map((strictMap) => {
+    const map = structuredClone(strictMap), local: DevelopmentOmission[] = [];
+    const removed: { entity: FieldEntity; particleBlockers: Set<string> }[] = [];
+    for (const [key, group] of Object.entries(map.map?.groups ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+      for (const entity of group.entities.filter((e) => e.kind === 11)) {
+        const decision = eligibility(strictMap, key, group, entity, scriptReferences);
+        if (decision.reasons.length) {
+          retained.push({ mapId: map.mapId, group: key, entityId: entity.id,
+            source: structuredClone(entity.source), reasons: decision.reasons });
+          continue;
+        }
+        local.push({ kind: "field-effect", mapId: map.mapId, group: key, entityId: entity.id,
+          source: structuredClone(entity.source), sourceMapContentHash: strictMap.contentHash, reason: REASON });
+        removed.push({ entity, particleBlockers: decision.particleBlockers });
+      }
+    }
+    // A kind-11 object without a group definition is never inferred to be an
+    // environment effect simply because another map had the same shape.
+    for (const entity of map.map?.entities.filter((e) => e.kind === 11) ?? []) {
+      if (Object.values(map.map?.groups ?? {}).some((group) => group.entities.some((e) =>
+        e.id === entity.id && sameSource(e.source, entity.source)))) continue;
+      retained.push({ mapId: map.mapId, group: "<unbound-map-entity>", entityId: entity.id,
+        source: structuredClone(entity.source), reasons: ["No source group definition"] });
+    }
+    const isRemoved = (e: FieldEntity) => removed.some(({ entity }) => e.id === entity.id && sameSource(e.source, entity.source));
+    const omittedBlocker = (issue: ContentIssue) => removed.some(({ entity, particleBlockers }) =>
+      sameSource(issue.source, entity.source) && particleBlockers.has(issue.reason));
+    if (map.map) {
+      map.map.entities = map.map.entities.filter((e) => !isRemoved(e));
+      for (const group of Object.values(map.map.groups ?? {})) {
+        group.entities = group.entities.filter((e) => !isRemoved(e));
+        group.blockers = group.blockers.filter((issue) => !omittedBlocker(issue));
+      }
+    }
+    map.blockers = map.blockers.filter((issue) => !omittedBlocker(issue));
+    map.developmentOmissions = local.map(({ kind, group, entityId, source, reason }) =>
+      ({ kind, group, entityId, source: structuredClone(source), reason }));
+    map.limitations.push(LIMITATION);
+    omissions.push(...local);
+    return seal({ ...map, developmentProfile: profile(strictMap.contentHash, local) });
+  });
+  const catalog = structuredClone(strictCatalog);
+  for (const map of maps) {
+    const index = catalog.maps[String(map.mapId)]!;
+    index.url = `/framework/world/maps/${map.mapId}.json`;
+    index.contentHash = map.contentHash;
+    index.geometryReady = map.map !== null && map.blockers.length === 0;
+    index.defaultGroupReady = !!map.map?.groups?.entity_default && map.map.groups.entity_default.blockers.length === 0;
+    index.blockers = structuredClone(map.blockers);
+  }
+  catalog.limitations.push(LIMITATION);
+  const derivedCatalog = seal({ ...catalog, developmentProfile: profile(strictCatalog.contentHash, omissions) });
+  const entry = seal({ ...structuredClone(strictEntry), worldCatalogHash: derivedCatalog.contentHash,
+    mapContentHash: maps.find((map) => map.mapId === strictEntry.entry.mapId)!.contentHash,
+    developmentProfile: profile(strictEntry.contentHash, omissions) });
+  return { catalog: derivedCatalog, maps, entry,
+    report: { profile: PROFILE, policy: POLICY, sourceCatalogHash: strictCatalog.contentHash,
+      sourceEntryHash: strictEntry.contentHash, catalogHash: derivedCatalog.contentHash, entryHash: entry.contentHash,
+      maps: maps.map((map) => ({ mapId: map.mapId, sourceContentHash: map.developmentProfile.sourceContentHash,
+        contentHash: map.contentHash })), omissions: structuredClone(omissions), retained } };
+}

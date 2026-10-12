@@ -16,12 +16,14 @@ import { prepareNativeFieldProviders } from "./field-native-providers.js";
 import { EventState } from "./event-state.js";
 import { canonical } from "./canonical.js";
 import type { FieldNativeAnimationKeys } from "./field-native-appearance.js";
+import type { DevelopmentProfile } from "./development-profile.js";
 
 /** Binds the differently scoped source manifests explicitly. The battle
  * package's development-field fingerprint is never relabelled as the corpus. */
 export type SourceNewGameContent = {
   kind: "source-new-game-content-v1";
   contentHash: string;
+  developmentProfile?: DevelopmentProfile;
   sourceSetHash: string;
   parentSourceSetHash: string;
   battleCatalogHash: string;

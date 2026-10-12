@@ -12,6 +12,7 @@ import {
   EventState,
   executeEventControl,
   type EventStateSnapshot,
+  type ScriptLocalFrame,
 } from "./event-state.js";
 import {
   executeInventoryEvent,
@@ -27,6 +28,7 @@ import { SourceMessageState, sourceMessageUpdateMask, type SourceMessageEffect }
 import { createFieldChoiceRequest, resolveFieldChoiceAnswer, type FieldChoiceAnswer,
   type FieldChoiceRequest } from "./field-choice.js";
 import { prepareEventContextBranch } from "./event-context-branch.js";
+import { prepareEventScriptTransition } from "./event-script-transition.js";
 import type { FieldPuppetRosterPort } from "./field-puppet-roster.js";
 import { createNativeFieldActorProjection, createNativeFieldActorProjections, createNativeFieldPuppetActorsPort, readNativeFieldActors,
   prepareNativeFieldActorProjection, type NativeFieldActorData, type NativeFieldActor } from "./field-native-actors.js";
@@ -461,6 +463,11 @@ export class FieldGame {
   stop: Stop | null = null;
   time = 0;
   private tasks: Task[] = [];
+  /** Execute owns SystemFlags for the whole event. ChangeScript replaces only
+   * processing/name/custom animations and must not adopt the target flags. */
+  private eventRootScript: string | null = null;
+  private scriptHook: { script: string; pc: number; range: FieldTaskRange;
+    locals: ScriptLocalFrame } | null = null;
   private puppetLifecycle: { name: string; script: FieldPuppetScriptContext; leaderId: number | null;
     assignments: boolean[]; finished: boolean } | null = null;
   private remainder = 0;
@@ -856,6 +863,8 @@ export class FieldGame {
         case "run-script":
           this.eventState.beginScript(this.content.scriptLocals?.[effect.name] ?? null);
           publishScript!();
+          this.eventRootScript = effect.name;
+          this.scriptHook = null;
           this.tasks.push(this.task(effect.name, 0, "-1001"));
           break;
         // The compiler resolves the source parameter into the bound message;
@@ -1871,8 +1880,71 @@ export class FieldGame {
       this.block(error instanceof Error ? error.message : String(error), this.content.scripts[script]?.[0] ?? null);
       return;
     }
+    this.eventRootScript = script;
+    this.scriptHook = null;
     this.tasks = [this.task(script, 0, "-1001")];
     this.pump();
+  }
+  /** The same native MainCore remains the owner of windows and execution.
+   * Prepare all admission/local-bank work before ResetAll publishes any reset. */
+  private transitionScript(t: Task, op: Extract<Op, { kind: "script-transition" }>): void {
+    const main = t.slot === null && !t.treasureRoot &&
+      this.tasks.find((other) => other.slot === null && !other.treasureRoot) === t;
+    const target = Object.hasOwn(this.content.scripts, op.targetScript)
+      ? this.content.scripts[op.targetScript] : undefined;
+    if (!target) throw new Error("Missing bound ChangeScript target " + op.targetScript);
+    const plan = prepareEventScriptTransition(op, { main, hooked: this.scriptHook !== null,
+      currentMetadata: this.content.scriptTransitionMetadata?.[t.script],
+      targetMetadata: this.content.scriptTransitionMetadata?.[op.targetScript], targetLength: target.length });
+    const localsByScript = this.content.scriptLocals;
+    if (!localsByScript || !Object.hasOwn(localsByScript, t.script) || !Object.hasOwn(localsByScript, op.targetScript))
+      throw new Error("ChangeScript source local declarations are unavailable");
+    if (this.pendingChoice) throw new Error("ChangeScript conflicts with an unfinished choice task");
+    if (this.messageWindow && this.messageWindow.task !== t.id)
+      throw new Error("ChangeScript cannot detach another task's message window");
+    if (this.treasureHandoffBlocked()) throw new Error("ChangeScript conflicts with an unfinished treasure task");
+    // The source name setter changes isMapScript. The current actor host only
+    // exposes its conjunction with CheckCurrentWorldMap, not that separate
+    // predicate; do not infer a false world-map value from the conjunction.
+    if (this.options.puppetActors &&
+        t.script.toLowerCase().startsWith("sc_map_") !== op.targetScript.toLowerCase().startsWith("sc_map_"))
+      throw new Error("ChangeScript map-script classification requires the current world-map provider");
+    const locals = structuredClone(localsByScript[op.targetScript]!);
+    new EventState(this.eventState.snapshot()).beginScript(locals);
+    const hook = op.returnToCaller
+      ? { script: t.script, pc: t.pc, range: { ...t.range }, locals: this.eventState.captureScriptLocals() }
+      : this.scriptHook;
+    this.eventState.beginScript(locals);
+    this.scriptHook = hook;
+    // ResetAll reaches all native cores, including Awake slots. External
+    // treasure coroutines are not cores and keep their existing owner.
+    this.tasks = this.tasks.filter((other) => other === t || other.treasureRoot);
+    Object.assign(t, plan, { stack: [], wait: 0, state: "ready", lastClock: this.time,
+      puppetWait: null, fadeWait: null, cameraLerp: null, remaining: 0, move: null,
+      animationWait: false, audioWait: null, treasure: null, done: false });
+  }
+  private restoreHookedScript(main: Task): void {
+    const hook = this.scriptHook!;
+    if (this.messageWindow && this.messageWindow.task !== main.id)
+      throw new Error("Hooked script cannot detach another task's message window");
+    // Exit/Entry do not clear the callee's stack. The old caller stack was
+    // already cleared by ResetAll; a cross-script leftover stack is not yet
+    // admitted as an ordinary same-script Return.
+    if (main.stack.length) throw new Error("Hooked script returned with a nonempty callee Call stack");
+    if (!this.content.scripts[hook.script]?.[hook.pc] || hook.pc < hook.range.min || hook.pc > hook.range.max)
+      throw new Error("Hooked script return address is outside its source range");
+    this.eventState.restoreScriptLocals(hook.locals);
+    main.script = hook.script;
+    main.pc = hook.pc;
+    main.range = { ...hook.range };
+    main.done = false;
+    main.state = "ready";
+    main.lastClock = this.time;
+    main.wait = 0;
+    for (const task of this.tasks) if (task.slot !== null) task.done = true;
+    this.scriptHook = null;
+    // Integrator.Update returns after restoring. The caller resumes on the
+    // following logical clock, without a finish/start actor lifecycle.
   }
   /** Source host effects and all native bindings are prepared before locals or
    * tasks change. The port publishes back into this field's actor owners. */
@@ -1946,6 +2018,8 @@ export class FieldGame {
   /** Validate the handoff before consuming rewards. The commit only schedules
    * the continuation; normal simulation, not reward publication, runs its code. */
   prepareEncounterReturn(party: number): () => void {
+    if (this.scriptHook)
+      throw new Error("Hooked script battle return requires a suspended-caller handoff provider");
     if (
       this.stop?.kind !== "encounter" ||
       this.stop.party !== party ||
@@ -1965,6 +2039,8 @@ export class FieldGame {
     return () => {
       if (this.stop !== stop) throw new Error("Stale battle continuation");
       this.eventState.beginScript(locals);
+      this.eventRootScript = continuation;
+      this.scriptHook = null;
       this.tasks = [this.task(continuation, 0, "-1001")];
       this.stop = null;
       this.remainder = 0;
@@ -2025,6 +2101,11 @@ export class FieldGame {
       }
       if (this.treasureHandoffBlocked()) {
         this.block("Main script ended with an unfinished treasure task");
+        return;
+      }
+      if (this.scriptHook) {
+        try { this.restoreHookedScript(main); }
+        catch (error) { this.block(error instanceof Error ? error.message : String(error)); }
         return;
       }
       if (this.puppetLifecycle && !this.puppetLifecycle.finished) {
@@ -2216,6 +2297,10 @@ export class FieldGame {
           return;
         }
         switch (op.kind) {
+          case "script-transition":
+            try { this.transitionScript(t, op); }
+            catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
           case "branch-character":
           case "branch-player-direction":
             try {
@@ -2249,7 +2334,7 @@ export class FieldGame {
               // source Format explicitly disables KeepBadStatusVisual. Its
               // other branch needs an additional native entity handoff.
               if (op.command.kind === "join" && op.command.recovery &&
-                  this.content.scriptSystemFlags?.[t.script]?.keepBadStatusVisual !== false)
+                  this.content.scriptSystemFlags?.[this.eventRootScript ?? t.script]?.keepBadStatusVisual !== false)
                 throw new Error("Roster recovery condition-visual context is unavailable");
               executeRosterLifecycleEvent(op, this.options.roster,
                 (_members, appearance, setDummy) => this.preparePartyAppearance(appearance, setDummy));
@@ -2292,7 +2377,7 @@ export class FieldGame {
             try {
               executeOwnedConditionEvent(op, this.options.ownedConditions, (steps) => {
                 if (!steps.length) return () => {};
-                const visual = this.content.scriptSystemFlags?.[t.script];
+                const visual = this.content.scriptSystemFlags?.[this.eventRootScript ?? t.script];
                 if (visual?.keepBadStatusVisual !== false)
                   throw new Error("Unknown or unsupported owned condition-visual context");
                 if (!this.partyActors) throw new Error("Party actor refresh is unavailable");
@@ -2377,6 +2462,9 @@ export class FieldGame {
             }
             break;
           case "change-map":
+            if (this.scriptHook) {
+              this.block("Hooked script map handoff requires a suspended-caller provider", op); return;
+            }
             if (this.sourceMessage.active) {
               this.block("Source message must close before map handoff", op); return;
             }
@@ -2746,6 +2834,9 @@ export class FieldGame {
             };
             return;
           case "encounter":
+            if (this.scriptHook) {
+              this.block("Hooked script battle handoff requires a suspended-caller provider", op); return;
+            }
             if (this.treasureHandoffBlocked()) {
               this.block("宝箱任务尚未完成，尚不支持并发入战", op);
               return;

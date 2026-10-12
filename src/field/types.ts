@@ -23,10 +23,12 @@ import type { FieldBackgroundLayer } from "../core/field-background.js";
 import type { SourceMessageOp } from "../core/source-message.js";
 import type { FieldChoiceOp } from "../core/field-choice.js";
 import type { EventContextBranchOp } from "../core/event-context-branch.js";
+import type { EventScriptTransitionOp, EventScriptTransitionMetadata } from "../core/event-script-transition.js";
 import type { FieldEffectBoardDefinition, FieldEffectCatalog } from "../core/field-effects.js";
 import type { FieldNativeNpcDefinition, FieldNativeNpcStandby } from "../core/field-native-npc.js";
 import type { FieldNativePosition } from "../core/field-native-position.js";
 import type { FieldNativeCompositionDefinition } from "../core/field-native-composition.js";
+import type { DevelopmentProfile } from "../core/development-profile.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -172,6 +174,7 @@ export type Op = Site &
     | SourceMessageOp
     | FieldChoiceOp
     | EventContextBranchOp
+    | EventScriptTransitionOp
     | { kind: "entities"; group: string }
     | { kind: "change-map"; request: MapRequest }
     | { kind: "ride"; actor: string; vehicle: 6 }
@@ -237,6 +240,7 @@ export type Tileset = {
   tiles?: { id: number; animation?: { tileid: number; duration: number }[] }[];
 };
 export type FieldContent = {
+  developmentProfile?: DevelopmentProfile;
   formatVersion: 1;
   kind: "field-development";
   sourceSetHash: string;
@@ -271,11 +275,13 @@ export type FieldContent = {
   cameraHost?: FieldCameraHostDefinition;
   nativeNpcStandby?: FieldNativeNpcStandby;
   fieldEffects?: FieldEffectCatalog;
-  /** Existing development checkpoint deviations only; source world packages
-   * keep these entities and their full capability blockers. */
+  /** Explicit development presentation omissions; strict source packages keep
+   * these entities and their full capability blockers. */
   developmentOmissions?: { kind: "field-effect"; entityId: string; group: string; source: Evidence; reason: string }[];
   scripts: Record<string, Op[]>;
   scriptLocals?: Record<string, ScriptLocals | null>;
+  /** Presence certifies the script has no separate custom animation host. */
+  scriptTransitionMetadata?: Record<string, EventScriptTransitionMetadata | null>;
   /** Integrator.Execute reads this per source Format; absence is unknown. */
   scriptSystemFlags?: Record<string, { keepBadStatusVisual: boolean } | null>;
   /** Full source lifecycle admission. Development checkpoints without this

@@ -151,7 +151,10 @@ export function worldFieldContent(
       ...(actorEntry ? { partyActorCamera: actorEntry.plan.checkpoint.context.camera } : {}),
     },
     scripts: target.scripts,
+    ...(target.developmentProfile ? { developmentProfile: structuredClone(target.developmentProfile) } : {}),
+    ...(target.developmentOmissions ? { developmentOmissions: structuredClone(target.developmentOmissions) } : {}),
     scriptLocals: target.scriptLocals,
+    ...(target.scriptTransitionMetadata ? { scriptTransitionMetadata: target.scriptTransitionMetadata } : {}),
     ...(target.scriptSystemFlags ? { scriptSystemFlags: target.scriptSystemFlags } : {}),
     characters,
     // The package describes conditional normal-view capability. Geometry-only

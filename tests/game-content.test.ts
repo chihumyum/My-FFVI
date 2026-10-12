@@ -29,6 +29,39 @@ function deferred<T>() {
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
+
+test("framework content uses separate dependency roots and never falls back to strict packages", async () => {
+  const f = await freshFixture();
+  const profile = (sourceContentHash: string) => ({ kind: "framework-development-v1" as const,
+    policy: "omit-anonymous-environment-particles-v1" as const, sourceContentHash, omissions: [] });
+  const map = await seal({ ...f.map, developmentProfile: profile(f.map.contentHash) });
+  const candidate = structuredClone(f.catalog);
+  candidate.maps[String(map.mapId)]!.url = `/framework/world/maps/${map.mapId}.json`;
+  candidate.maps[String(map.mapId)]!.contentHash = map.contentHash;
+  const catalog = await seal({ ...candidate, developmentProfile: profile(f.catalog.contentHash) });
+  const content = await seal({ ...f.content, developmentProfile: profile(f.content.contentHash),
+    worldCatalogHash: catalog.contentHash, mapContentHash: map.contentHash });
+  const files = new Map(f.files);
+  files.set("/framework/world/catalog.json", catalog);
+  files.set("/framework/new-game.json", content);
+  files.set(`/framework/world/maps/${map.mapId}.json`, map);
+  const host = loader(files), framework = new GameContentRepository(host.read, "framework");
+  const loaded = await framework.sourceNewGame();
+  assert.deepEqual(loaded, { content, catalog, map });
+  const saved = structuredClone(f.saved);
+  saved.origin = { kind: "source-new-game", sourceContentHash: content.contentHash };
+  saved.world.initialHash = content.contentHash;
+  assert.equal((await framework.restoreWorld(saved))!.source!.content.contentHash, content.contentHash);
+  const strict = new GameContentRepository(host.read);
+  await assert.rejects(() => strict.restoreWorld(saved), /identity|hash/i);
+  await assert.rejects(() => framework.restoreWorld(f.saved), /identity|hash/i);
+  files.delete("/framework/new-game.json");
+  framework.clear();
+  await assert.rejects(() => framework.sourceNewGame(), /Missing fixture/);
+  assert.equal((await strict.sourceNewGame()).content.contentHash, f.content.contentHash);
+  files.set("/framework/new-game.json", f.content);
+  await assert.rejects(() => framework.sourceNewGame(), /profile mismatch/);
+});
 async function fixture() {
   const f = checkpointFixture();
   const field = await seal(f.field), battle = await seal(f.battle), map = await seal(f.target);

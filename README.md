@@ -19,6 +19,7 @@
 - [核心机制现状与优先次序](docs/core-mechanics.md)
 - [游戏系统框架与连续流程验收](docs/game-framework.md)
 - [通用遭遇内容管线](docs/battle-catalog.md)
+- [v40 连续事件、脚本交接与新游戏开发配置](docs/systems-v40.md)
 - [v39 共用剧情选择与上下文分支](docs/systems-v39.md)
 - [v38 队伍菜单与通用战斗内容管线](docs/systems-v38.md)
 - [v37 统一游戏流程、内容装载与连续验收](docs/systems-v37.md)

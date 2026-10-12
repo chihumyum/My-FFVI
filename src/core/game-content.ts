@@ -6,6 +6,7 @@ import type { GameCheckpoint, GameRestoreWorld } from "./game-session.js";
 import type { SourceNewGameContent } from "./source-new-game.js";
 
 type HashedContent = { contentHash: string };
+export type GameContentProfile = "source" | "framework";
 type ContentReader = <T extends HashedContent>(
   url: string,
   parse: (value: unknown) => T,
@@ -90,8 +91,24 @@ function sourceContent(value: unknown): SourceNewGameContent {
  * publishes a map, or decodes media. Returned objects are detached from caches. */
 export class GameContentRepository {
   private readonly cache = new Map<string, Promise<HashedContent>>();
+  private readonly worldUrl: string;
+  private readonly newGameUrl: string;
 
-  constructor(private readonly loadJson: (url: string) => Promise<unknown>) {}
+  constructor(private readonly loadJson: (url: string) => Promise<unknown>,
+    private readonly profile: GameContentProfile = "source") {
+    if (profile !== "source" && profile !== "framework") throw new Error("Unknown game content profile");
+    this.worldUrl = profile === "framework" ? "/framework/world/catalog.json" : "/world/catalog.json";
+    this.newGameUrl = profile === "framework" ? "/framework/new-game.json" : "/game/new-game.json";
+  }
+
+  private profileContent<T extends { developmentProfile?: { kind: string; policy: string; sourceContentHash: string } }>(value: T): T {
+    const policy = value.developmentProfile;
+    if (this.profile === "source" ? policy !== undefined :
+      policy?.kind !== "framework-development-v1" || policy.policy !== "omit-anonymous-environment-particles-v1")
+      throw new Error("Game content development profile mismatch");
+    if (policy) hash(policy.sourceContentHash);
+    return value;
+  }
 
   clear(): void {
     this.cache.clear();
@@ -102,7 +119,7 @@ export class GameContentRepository {
   }
 
   world(): Promise<WorldCatalog> {
-    return this.operation((read) => read("/world/catalog.json", worldContent));
+    return this.operation((read) => read(this.worldUrl, (value) => this.profileContent(worldContent(value))));
   }
 
   map(mapId: number, catalog?: WorldCatalog): Promise<WorldMapContent> {
@@ -112,8 +129,8 @@ export class GameContentRepository {
     return this.operation(async (read) => {
       integer(mapId, 1);
       const world = supplied === undefined
-        ? await read("/world/catalog.json", worldContent)
-        : worldContent(await verifyContent(supplied));
+        ? await read(this.worldUrl, (value) => this.profileContent(worldContent(value)))
+        : this.profileContent(worldContent(await verifyContent(supplied)));
       return this.readMap(read, mapId, world);
     });
   }
@@ -151,7 +168,7 @@ export class GameContentRepository {
       if (saved.world.location === null) return result;
       const location = saved.world.location;
       object(location); integer(location.mapId, 1); integer(location.entrance); hash(location.catalogHash);
-      const catalog = result?.catalog ?? await read("/world/catalog.json", worldContent);
+      const catalog = result?.catalog ?? await read(this.worldUrl, (value) => this.profileContent(worldContent(value)));
       if (location.catalogHash !== catalog.contentHash || catalog.parentSourceSetHash !== saved.sourceSetHash)
         throw new Error("Saved map catalog/source identity mismatch");
       const map = await this.readMap(read, location.mapId, catalog);
@@ -173,7 +190,7 @@ export class GameContentRepository {
     const index = catalog.maps[String(mapId)];
     if (!index) throw new Error(`Missing map content dependency: ${mapId}`);
     object(index); text(index.url); hash(index.contentHash); integer(index.areaId);
-    const map = await read(index.url, mapContent, index.contentHash);
+    const map = await read(index.url, (value) => this.profileContent(mapContent(value)), index.contentHash);
     if (map.mapId !== mapId || map.areaId !== index.areaId ||
         map.sourceSetHash !== catalog.sourceSetHash || map.parentSourceSetHash !== catalog.parentSourceSetHash ||
         map.mediaSourceSetHash !== catalog.mediaSourceSetHash ||
@@ -184,8 +201,8 @@ export class GameContentRepository {
 
   private async readSourceEntry(read: ContentReader, expected?: string): Promise<SourceEntryContent> {
     const [content, catalog, battle] = await Promise.all([
-      read("/game/new-game.json", sourceContent, expected),
-      read("/world/catalog.json", worldContent), read("/game/battle.json", battleContent),
+      read(this.newGameUrl, (value) => this.profileContent(sourceContent(value)), expected),
+      read(this.worldUrl, (value) => this.profileContent(worldContent(value))), read("/game/battle.json", battleContent),
     ]);
     if (content.battleCatalogHash !== battle.contentHash || content.worldCatalogHash !== catalog.contentHash ||
         content.sourceSetHash !== catalog.sourceSetHash || content.parentSourceSetHash !== catalog.parentSourceSetHash ||

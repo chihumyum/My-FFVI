@@ -8,6 +8,7 @@ import { compileFieldBackgroundLayers, loadFieldBackgroundMedia } from "./field-
 import { bindTileAnimationRegions } from "./tile-animation.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { decodeFieldOp, decodeScriptLocals, decodeConditionVisualFlag } from "./field.js";
+import { compileEventScriptTransitionMetadata } from "./event-script-transition.js";
 import { compilePlayerVisibilityFactory } from "./player-visibility.js";
 import { compileFieldCameraHostDefinition } from "./field-camera-host.js";
 import { compileFieldActorView } from "./field-actor-view.js";
@@ -344,6 +345,7 @@ export async function compileWorld(root: string) {
     }
     const scripts: WorldMapContent["scripts"] = {},
       scriptLocals: WorldMapContent["scriptLocals"] = {},
+      scriptTransitionMetadata: NonNullable<WorldMapContent["scriptTransitionMetadata"]> = {},
       scriptSystemFlags: NonNullable<WorldMapContent["scriptSystemFlags"]> = {},
       scriptPuppetContexts: NonNullable<WorldMapContent["scriptPuppetContexts"]> = {};
     const aliases = { ...binding.residentScripts, ...binding.scriptAliases };
@@ -353,6 +355,8 @@ export async function compileWorld(root: string) {
       try {
         const data = record(asset.data);
         scriptLocals[name] = decodeScriptLocals(data);
+        try { scriptTransitionMetadata[name] = compileEventScriptTransitionMetadata(data); }
+        catch { scriptTransitionMetadata[name] = null; }
         scriptSystemFlags[name] = decodeConditionVisualFlag(data);
         // Missing lifecycle flags do not prevent independent decoding, and
         // they never grant a formal source actor host.
@@ -390,6 +394,7 @@ export async function compileWorld(root: string) {
           },
         ];
         scriptLocals[name] = null;
+        scriptTransitionMetadata[name] = null;
         scriptSystemFlags[name] = null;
         scriptPuppetContexts[name] = null;
       }
@@ -431,6 +436,7 @@ export async function compileWorld(root: string) {
       ...(nativeNpcStandby ? { nativeNpcStandby } : {}), nativeNpcStandbyBlockers,
       scripts,
       scriptLocals,
+      scriptTransitionMetadata,
       scriptSystemFlags,
       scriptPuppetContexts,
       initializer: binding.initializer ? binding.initializerName : null,

@@ -18,6 +18,24 @@ function win(game: GameSession) {
   }
   assert.equal(game.battle?.phase, "victory");
 }
+test("framework save slots preserve the existing current and previous progress", async () => {
+  const bytes = new Map<string, string>();
+  const storage = { getItem: (key: string) => bytes.get(key) ?? null,
+    setItem: (key: string, value: string) => { bytes.set(key, value); } };
+  const strict = new CheckpointStorage(storage), framework = new CheckpointStorage(storage, "framework");
+  const checkpoint = checkpointFixture().game.checkpoint();
+  await strict.save(checkpoint, 10);
+  await strict.save(checkpoint, 20);
+  const before = bytes.get("ffvi-reweb.checkpoint.v1");
+  assert.equal(await framework.load(), null);
+  await framework.save(checkpoint, 30);
+  await framework.save(checkpoint, 40);
+  assert.equal(bytes.get("ffvi-reweb.checkpoint.v1"), before);
+  assert.equal((await strict.load())!.savedAt, 20);
+  assert.equal((await strict.load(true))!.savedAt, 10);
+  assert.equal((await framework.load())!.savedAt, 40);
+  assert.equal((await framework.load(true))!.savedAt, 30);
+});
 test("battle preferences survive save, next encounter and retry without changing source content", () => {
   const f = checkpointFixture();
   const original = structuredClone(f.battle);

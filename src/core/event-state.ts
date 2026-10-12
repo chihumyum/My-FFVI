@@ -60,6 +60,10 @@ export type EventStateSnapshot = {
   currentMapId: Value;
 };
 export type ScriptLocals = { labels: string[]; values: number[] | null };
+/** Ephemeral handle to this owner's script bank, never a save or writable array.
+ * HookedProcess retains the native arrays by reference: a callee without a
+ * ScriptLocal declaration continues to write that same bank. */
+export type ScriptLocalFrame = Readonly<{ kind: "script-local-frame" }>;
 export function isCategory(name: string): name is Category {
   return (categories as readonly string[]).includes(name);
 }
@@ -143,6 +147,10 @@ export class UnknownEventValue extends Error {
 }
 export class EventState {
   private data: EventStateSnapshot;
+  private readonly scriptLocalFrames = new WeakMap<ScriptLocalFrame, {
+    labels: string[] | null;
+    values: Value[] | null;
+  }>();
   constructor(snapshot?: EventStateSnapshot) {
     this.data = snapshot ? validateSnapshot(snapshot) : blank(null);
   }
@@ -152,6 +160,19 @@ export class EventState {
   }
   snapshot(): EventStateSnapshot {
     return structuredClone(this.data);
+  }
+  captureScriptLocals(): ScriptLocalFrame {
+    const frame = Object.freeze({ kind: "script-local-frame" as const });
+    this.scriptLocalFrames.set(frame, { labels: this.data.scriptLabels, values: this.data.script });
+    return frame;
+  }
+  /** Native DataStorage.SetScriptLocal restores only the two references. It
+   * intentionally leaves MessageSelection and ItemSelection from the callee. */
+  restoreScriptLocals(frame: ScriptLocalFrame): void {
+    const saved = this.scriptLocalFrames.get(frame);
+    if (!saved) throw new Error("Script-local frame belongs to another event owner or is invalid");
+    this.data.scriptLabels = saved.labels;
+    this.data.script = saved.values;
   }
   private address(
     ref: VariableRef,

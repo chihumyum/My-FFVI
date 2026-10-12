@@ -43,7 +43,6 @@ export async function decodeSavedGame(text: string): Promise<SavedGame> {
 
 type StoragePort = Pick<Storage, "getItem" | "setItem">;
 type SaveSlot = { formatVersion: 1; current: string; previous: string | null };
-const slotKey = "ffvi-reweb.checkpoint.v1";
 function slot(raw: string): SaveSlot {
   const value: SaveSlot = JSON.parse(raw);
   checkpointKeys(value, "formatVersion,current,previous");
@@ -58,9 +57,13 @@ function slot(raw: string): SaveSlot {
 
 /** One storage write publishes current + prior checkpoint together; failed writes preserve the old slot. */
 export class CheckpointStorage {
-  constructor(private readonly storage: StoragePort) {}
+  private readonly slotKey: string;
+  constructor(private readonly storage: StoragePort, profile: "source" | "framework" = "source") {
+    if (profile !== "source" && profile !== "framework") throw new Error("Unknown save profile");
+    this.slotKey = profile === "framework" ? "ffvi-reweb.framework.checkpoint.v1" : "ffvi-reweb.checkpoint.v1";
+  }
   async save(checkpoint: GameCheckpoint, savedAt: number): Promise<void> {
-    const before = this.storage.getItem(slotKey);
+    const before = this.storage.getItem(this.slotKey);
     const current = await encodeSavedGame(checkpoint, savedAt);
     let previous: string | null = null;
     if (before !== null) {
@@ -70,15 +73,15 @@ export class CheckpointStorage {
         previous = before;
       } // Retain unreadable original bytes instead of silently deleting them.
     }
-    if (this.storage.getItem(slotKey) !== before)
+    if (this.storage.getItem(this.slotKey) !== before)
       throw new Error("Save slot changed while saving");
     this.storage.setItem(
-      slotKey,
+      this.slotKey,
       JSON.stringify({ formatVersion: 1, current, previous }),
     );
   }
   async load(previous = false): Promise<SavedGame | null> {
-    const raw = this.storage.getItem(slotKey);
+    const raw = this.storage.getItem(this.slotKey);
     if (raw === null) return null;
     const text = previous ? slot(raw).previous : slot(raw).current;
     return text === null ? null : decodeSavedGame(text);

@@ -37,7 +37,9 @@ let content,
 let sourceBoot = null;
 let hasSave = false,
   hasPreviousSave = false;
-const checkpointStorage = () => new CheckpointStorage(localStorage);
+const query = new URLSearchParams(location.search);
+const contentProfile = query.get("profile") === "framework" ? "framework" : "source";
+const checkpointStorage = () => new CheckpointStorage(localStorage, contentProfile);
 const images = new Map(),
   loading = new WeakSet();
 const audio = new AudioOutput();
@@ -45,9 +47,8 @@ const contents = new GameContentRepository(async (url) => {
   const response = await fetch(url);
   if (!response.ok) throw new Error("游戏内容载入失败，请确认本地内容已经构建。");
   return response.json();
-});
+}, contentProfile);
 const runtime = { audioReadiness: { isReady: (track) => audio.isReady(track) } };
-const query = new URLSearchParams(location.search);
 const preview = query.has("map")
   ? {
       mapId: Number(query.get("map")),
@@ -530,6 +531,10 @@ async function init() {
     if (!game.currentShop) focus();
   });
   showLimitations();
+  if (contentProfile === "framework") {
+    text("welcome-scope", "可从故事开头运行；当前开发版暂不显示部分环境粒子，剧情与游戏系统仍在迁移中。");
+    text("source-start", "从头开始（框架开发版）");
+  }
   if (preview) {
     text("welcome-title", "地图开发预览");
     text(

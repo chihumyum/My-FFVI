@@ -1,5 +1,5 @@
 // One continuous development-profile journey through the real session owner.
-// The only authored content is an explicit message -> two-Potion grant event.
+// Authored content is a message -> shared script call -> two-Potion grant event.
 // This is a systems acceptance lane, not source new-game or main-story parity.
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -21,7 +21,7 @@ const report = {
   kind: "continuous-game-framework-check-v1", lane: "controlled-development-profile",
   result: "running", stages: [],
   controlledInputs: ["New development-checkpoint session, not GameSession.prepareNewGame",
-    "Private message and grant-item event: source item 2, count 2", "In-memory browser-storage port",
+    "Private message and returning cross-script grant: source item 2, count 2", "In-memory browser-storage port",
     "Temporarily absent battle continuation tests failure before reward publication; restored before retry",
     "Headless visible/media-ready/overlay observations; no renderer or audio assertion"],
   doesNotEstablish: ["source-new-game completion", "main-story migration", "original-runtime parity",
@@ -49,10 +49,18 @@ try {
   const source = { file: "controlled-game-framework", assetPath: "Fixtures/GameFramework/supplies.json" };
   controlledField.scripts[script] = [
     { kind: "message", key: "CONTROLLED_FRAMEWORK_SUPPLIES", speaker: "", text: "Framework inventory probe", script, index: 0, source },
-    { kind: "inventory", command: { kind: "grant-item", id: 2, count: 2 }, result: null,
-      dependencies: [{ table: "content.csv", id: 2 }, { table: "item.csv", id: 1 }], script, index: 1, source },
+    { kind: "script-transition", targetScript: script + "_grant", returnToCaller: true, script, index: 1, source },
     { kind: "exit", script, index: 2, source },
   ];
+  controlledField.scripts[script + "_grant"] = [
+    { kind: "nop", script: script + "_grant", index: 0, source },
+    { kind: "inventory", command: { kind: "grant-item", id: 2, count: 2 }, result: null,
+      dependencies: [{ table: "content.csv", id: 2 }, { table: "item.csv", id: 1 }], script: script + "_grant", index: 1, source },
+    { kind: "exit", script: script + "_grant", index: 2, source },
+  ];
+  controlledField.scriptLocals = { ...controlledField.scriptLocals, [script]: null, [script + "_grant"]: null };
+  controlledField.scriptTransitionMetadata = { ...controlledField.scriptTransitionMetadata,
+    [script]: { customAnimations: "none" }, [script + "_grant"]: { customAnimations: "none" } };
   const { contentHash: discardedHash, ...controlledPayload } = controlledField;
   controlledField.contentHash = await contentDigest(controlledPayload);
   await verifyContent(controlledField);

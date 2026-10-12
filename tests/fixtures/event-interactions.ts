@@ -8,6 +8,7 @@ export function eventInteractionField(sourceField: FieldContent): FieldContent {
   if (field.scripts[interactionScript]) throw new Error("Interaction fixture already installed");
   const source = { file: "controlled-event-interaction", assetPath: "Fixtures/EventInteraction/main.json" };
   const site = (index: number) => ({ script: interactionScript, index, source });
+  const grantScript = "controlled_framework_supply_return";
   const selected = { category: "MessageSelection", index: 0 } as const;
   // The explicit type on the final array keeps each discriminated instruction
   // checked without coercing runtime content through an untyped fixture cast.
@@ -19,8 +20,7 @@ export function eventInteractionField(sourceField: FieldContent): FieldContent {
     { ...site(3), kind: "message", key: "FRAMEWORK_DECLINED", speaker: "", text: "本次暂不领取，可以继续探索。" },
     { ...site(4), kind: "exit" },
     { ...site(5), kind: "nop" },
-    { ...site(6), kind: "inventory", command: { kind: "grant-item", id: 2, count: 2 }, result: null,
-      dependencies: [{ table: "content.csv", id: 2 }, { table: "item.csv", id: 1 }] },
+    { ...site(6), kind: "script-transition", targetScript: grantScript, returnToCaller: true },
     { ...site(7), kind: "message", key: "FRAMEWORK_GRANTED", speaker: "", text: "补给已领取。请选择接下来的计划。" },
     { ...site(8), kind: "choice", options: [{ key: "FRAMEWORK_EXPLORE", text: "继续探索" },
       { key: "FRAMEWORK_PARTY", text: "整顿队伍" }, { key: "FRAMEWORK_WAIT", text: "原地等候" }],
@@ -31,5 +31,14 @@ export function eventInteractionField(sourceField: FieldContent): FieldContent {
     { ...site(11), kind: "exit" },
   ];
   field.scripts[interactionScript] = script;
+  field.scripts[grantScript] = [
+    { script: grantScript, index: 0, source, kind: "nop" },
+    { script: grantScript, index: 1, source, kind: "inventory", command: { kind: "grant-item", id: 2, count: 2 }, result: null,
+      dependencies: [{ table: "content.csv", id: 2 }, { table: "item.csv", id: 1 }] },
+    { script: grantScript, index: 2, source, kind: "exit" },
+  ];
+  field.scriptLocals = { ...field.scriptLocals, [interactionScript]: null, [grantScript]: null };
+  field.scriptTransitionMetadata = { ...field.scriptTransitionMetadata,
+    [interactionScript]: { customAnimations: "none" }, [grantScript]: { customAnimations: "none" } };
   return field;
 }

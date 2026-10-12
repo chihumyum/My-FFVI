@@ -5,6 +5,7 @@ import type { TransportationCatalog } from "../core/transportation.js";
 import type { FieldActorViewDefinition } from "../core/field-actor-view.js";
 import type { FieldNativeAnimationKeys } from "../core/field-native-appearance.js";
 import type { FieldNativeFootDefinition } from "../core/field-native-foot.js";
+import type { DevelopmentProfile } from "../core/development-profile.js";
 
 export type ContentIssue = { reason: string; source: Evidence };
 export type WorldMapContent = {
@@ -14,6 +15,8 @@ export type WorldMapContent = {
   parentSourceSetHash: string;
   mediaSourceSetHash: string;
   contentHash: string;
+  developmentProfile?: DevelopmentProfile;
+  developmentOmissions?: FieldContent["developmentOmissions"];
   mapId: number;
   areaId: number;
   name: string;
@@ -23,6 +26,7 @@ export type WorldMapContent = {
   partyEntryBlockers?: ContentIssue[];
   scripts: Record<string, Op[]>;
   scriptLocals: Record<string, ScriptLocals | null>;
+  scriptTransitionMetadata?: FieldContent["scriptTransitionMetadata"];
   scriptSystemFlags?: FieldContent["scriptSystemFlags"];
   scriptPuppetContexts?: FieldContent["scriptPuppetContexts"];
   cameraHost?: FieldContent["cameraHost"];
@@ -49,6 +53,7 @@ export type WorldCatalog = {
   parentSourceSetHash: string;
   mediaSourceSetHash: string;
   contentHash: string;
+  developmentProfile?: DevelopmentProfile;
   characters: Record<string, Character>;
   nativeAnimationKeys?: FieldNativeAnimationKeys;
   transportation?: TransportationCatalog;

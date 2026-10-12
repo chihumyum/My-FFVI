@@ -8,6 +8,7 @@ import { compileMessage } from "./message.js";
 import { compileSourceMessageInstruction } from "./source-message.js";
 import { compileFieldChoiceInstruction, type FieldChoiceCompileContext } from "./field-choice.js";
 import { compileEventContextBranchInstruction, eventContextBranchMnemonics } from "./event-context-branch.js";
+import { compileEventScriptTransitionInstruction, compileEventScriptTransitionMetadata } from "./event-script-transition.js";
 import { tableId } from "./table-id.js";
 import { loadMinimapMedia } from "./map-ui.js";
 import { loadAudioMedia } from "./audio.js";
@@ -122,6 +123,10 @@ export function decodeFieldOp(
   }
   if (eventContextBranchMnemonics.some(mnemonic => mnemonic === name)) {
     try { return { ...site, ...compileEventContextBranchInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "ChangeScript") {
+    try { return { ...site, ...compileEventScriptTransitionInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   const o = record(m.operands), i = list(o.iValues).map(integer),
@@ -646,6 +651,7 @@ export async function compileField(root: string): Promise<FieldContent> {
     throw new Error("Ambiguous active entity identity");
   const scripts: Record<string, Op[]> = {};
   const scriptLocals: Record<string, ScriptLocals | null> = {};
+  const scriptTransitionMetadata: NonNullable<FieldContent["scriptTransitionMetadata"]> = {};
   const scriptSystemFlags: NonNullable<FieldContent["scriptSystemFlags"]> = {};
   for (const [path, a] of Object.entries(assets)) {
     const d = record(a.data);
@@ -655,6 +661,8 @@ export async function compileField(root: string): Promise<FieldContent> {
       .at(-1)!
       .replace(/\.json$/, "");
     scriptLocals[name] = decodeScriptLocals(d);
+    try { scriptTransitionMetadata[name] = compileEventScriptTransitionMetadata(d); }
+    catch { scriptTransitionMetadata[name] = null; }
     scriptSystemFlags[name] = decodeConditionVisualFlag(d);
     const instructions = d.Mnemonics;
     scripts[name] = instructions.map((m, index) =>
@@ -777,6 +785,7 @@ export async function compileField(root: string): Promise<FieldContent> {
     treasureInventoryLimits: compileTreasureInventoryLimits(systemSource.tables).limits,
     scripts,
     scriptLocals,
+    scriptTransitionMetadata,
     scriptSystemFlags,
     playerFactory: compilePlayerVisibilityFactory(extended.map((s) => ({ file: string(s.file), sha256: string(s.sha256) }))),
     entry: {
