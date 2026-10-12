@@ -135,6 +135,13 @@ canvas:focus-visible {
   background: #080e1bcc;
   backdrop-filter: blur(2px);
 }
+#entry-loading { z-index: 3; }
+.entry-error {
+  margin: 0;
+  padding: 10px 24px;
+  color: #ffd3bd;
+  background: #391f28;
+}
 [hidden] {
   display: none !important;
 }

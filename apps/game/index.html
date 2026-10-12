@@ -12,7 +12,7 @@
     <header>
       <span class="brand">FINAL FANTASY VI <small>WEB</small></span
       ><span
-        ><span id="map-label">纳尔谢</span>
+        ><span id="map-label">游戏标题</span>
         <span class="muted">/ 开发预览</span></span
       ><span
         ><button id="sound-button" aria-pressed="true">声音开</button>
@@ -27,6 +27,7 @@
         <button id="menu-button" disabled>暂停</button></span
       >
     </header>
+    <p id="entry-error" class="entry-error" role="alert" hidden></p>
     <main>
       <div id="stage">
         <canvas
@@ -34,7 +35,7 @@
           width="512"
           height="288"
           tabindex="0"
-          aria-label="纳尔谢游戏画面。方向键移动，空格确认，Escape 暂停。"
+          aria-label="游戏画面。方向键移动，空格确认，Escape 暂停。"
         ></canvas>
         <button
           id="minimap-button"
@@ -67,16 +68,23 @@
         <section id="welcome" class="overlay">
           <div class="panel">
             <span class="eyebrow">FINAL FANTASY VI</span>
-            <h1 id="welcome-title">纳尔谢</h1>
-            <p id="welcome-description">踏入雪中的矿镇。</p>
+            <h1 id="welcome-title">FINAL FANTASY VI</h1>
+            <p id="welcome-description">选择新游戏或继续本地进度。</p>
             <p id="welcome-scope" class="muted">
-              当前开放开场行军后的短片段：探索矿镇、与守卫交战，再继续前行。首战规则和表现仍在迁移中。
+              Web 迁移开发版。可从故事开头运行，也可进入纳尔谢片段测试游戏系统；完整剧情仍在迁移中。
             </p>
             <button id="start" disabled>正在载入…</button>
             <button id="source-start" disabled>从头开始（开发中）</button>
             <button id="load-start" hidden>继续上次进度</button>
             <p id="save-info" role="status"></p>
             <p id="load-error" role="alert" hidden></p>
+          </div>
+        </section>
+        <section id="entry-loading" class="overlay" aria-label="载入游戏" aria-live="polite" hidden>
+          <div class="panel">
+            <h2 id="entry-loading-message">正在准备游戏…</h2>
+            <p>完成载入后进入游戏。</p>
+            <button id="cancel-entry-load">取消载入</button>
           </div>
         </section>
         <section id="pause" class="overlay" hidden>

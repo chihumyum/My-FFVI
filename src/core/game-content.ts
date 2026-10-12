@@ -13,10 +13,16 @@ type ContentReader = <T extends HashedContent>(
   expected?: string,
 ) => Promise<T>;
 type OpeningContent = { field: FieldContent; battle: BattleCatalog };
-type SourceEntryContent = {
+export type SourceEntryContent = {
   content: SourceNewGameContent;
   catalog: WorldCatalog;
   map: WorldMapContent;
+  battle: BattleCatalog;
+};
+export type RestoreSessionContent = {
+  initial?: FieldContent;
+  battle: BattleCatalog;
+  world?: GameRestoreWorld;
 };
 
 function object(value: unknown): asserts value is Record<string, unknown> {
@@ -139,14 +145,18 @@ export class GameContentRepository {
     return this.operation((read) => this.readSourceEntry(read));
   }
 
-  restoreWorld(checkpoint: GameCheckpoint): Promise<GameRestoreWorld | undefined> {
+  async restoreWorld(checkpoint: GameCheckpoint): Promise<GameRestoreWorld | undefined> {
+    return (await this.restoreSessionContent(checkpoint)).world;
+  }
+
+  restoreSessionContent(checkpoint: GameCheckpoint): Promise<RestoreSessionContent> {
     const saved = structuredClone(checkpoint);
     return this.operation(async (read) => {
       header(saved, "game-checkpoint", 4);
       header(saved.world, "idle-world-v10");
       text(saved.sourceSetHash); hash(saved.battleCatalogHash); hash(saved.world.initialHash);
       object(saved.origin);
-      let result: GameRestoreWorld | undefined;
+      let result: RestoreSessionContent;
       if (saved.origin.kind === "source-new-game") {
         hash(saved.origin.sourceContentHash);
         const initial = await this.readSourceEntry(read, saved.origin.sourceContentHash);
@@ -154,25 +164,26 @@ export class GameContentRepository {
             saved.battleCatalogHash !== initial.content.battleCatalogHash ||
             saved.world.initialHash !== initial.content.contentHash)
           throw new Error("Game checkpoint source identity mismatch");
-        result = { catalog: initial.catalog, map: initial.map,
-          source: { content: initial.content, initialMap: initial.map } };
+        result = { battle: initial.battle, world: { catalog: initial.catalog, map: initial.map,
+          source: { content: initial.content, initialMap: initial.map } } };
       } else if (saved.origin.kind === "development-checkpoint") {
         const initial = await this.readOpening(read);
         if (saved.sourceSetHash !== initial.field.parentSourceSetHash ||
             saved.battleCatalogHash !== initial.battle.contentHash ||
             saved.world.initialHash !== initial.field.contentHash)
           throw new Error("Game checkpoint source identity mismatch");
+        result = { initial: initial.field, battle: initial.battle };
       } else {
         throw new Error("Unknown game checkpoint origin");
       }
       if (saved.world.location === null) return result;
       const location = saved.world.location;
       object(location); integer(location.mapId, 1); integer(location.entrance); hash(location.catalogHash);
-      const catalog = result?.catalog ?? await read(this.worldUrl, (value) => this.profileContent(worldContent(value)));
+      const catalog = result.world?.catalog ?? await read(this.worldUrl, (value) => this.profileContent(worldContent(value)));
       if (location.catalogHash !== catalog.contentHash || catalog.parentSourceSetHash !== saved.sourceSetHash)
         throw new Error("Saved map catalog/source identity mismatch");
       const map = await this.readMap(read, location.mapId, catalog);
-      return { ...result, catalog, map };
+      return { ...result, world: { ...result.world, catalog, map } };
     });
   }
 
@@ -213,7 +224,7 @@ export class GameContentRepository {
     if (map.map === null || !Array.isArray(map.scripts[script.name]) ||
         map.scriptPuppetContexts?.[script.name]?.scriptHash !== script.contentHash)
       throw new Error("Fresh game entry/script dependency mismatch");
-    return { content, catalog, map };
+    return { content, catalog, map, battle };
   }
 
   private async operation<T>(work: (read: ContentReader) => Promise<T>): Promise<T> {
@@ -253,17 +264,35 @@ export class GameContentRepository {
   }
 }
 
-export function fieldMediaUrls(field: FieldContent): string[] {
+function fieldImageUrls(map: FieldContent["map"], characters: FieldContent["characters"],
+  minimap: FieldContent["minimap"]): string[] {
   return [...new Set([
-    ...Object.values(field.map.textures),
-    ...(field.map.backgrounds ?? []).map((background) => background.texture.url),
-    ...Object.values(field.characters).flatMap((character) => Object.values(character.sprites).map((sprite) => sprite.file)),
-    ...Object.values(field.minimap?.icons ?? {}).map((sprite) => sprite.file),
+    ...Object.values(map.textures),
+    ...(map.backgrounds ?? []).map((background) => background.texture.url),
+    ...Object.values(characters).flatMap((character) => Object.values(character.sprites).map((sprite) => sprite.file)),
+    ...Object.values(minimap?.icons ?? {}).map((sprite) => sprite.file),
   ])];
 }
 
-export function openingMediaUrls(field: FieldContent, battle: BattleCatalog): string[] {
+export function fieldMediaUrls(field: FieldContent): string[] {
+  return fieldImageUrls(field.map, field.characters, field.minimap);
+}
+
+export function sessionMediaUrls(field: FieldContent, battle: BattleCatalog): string[] {
   return [...new Set([
     ...fieldMediaUrls(field), ...Object.values(battle.common.sprites).map((sprite) => sprite.file),
+  ])];
+}
+
+/** Compatibility name for callers that still load the development opening. */
+export function openingMediaUrls(field: FieldContent, battle: BattleCatalog): string[] {
+  return sessionMediaUrls(field, battle);
+}
+
+export function sourceEntryMediaUrls(entry: SourceEntryContent): string[] {
+  if (entry.map.map === null) throw new Error("Fresh game entry map media is unavailable");
+  return [...new Set([
+    ...fieldImageUrls(entry.map.map, entry.catalog.characters, entry.catalog.minimap),
+    ...Object.values(entry.battle.common.sprites).map((sprite) => sprite.file),
   ])];
 }

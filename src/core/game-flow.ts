@@ -18,23 +18,33 @@ function pauseOption(options: GameFlowStartOptions): boolean {
   if (!options || (options.paused !== undefined && typeof options.paused !== "boolean")) throw new Error("Invalid game flow start options");
   return options.paused ?? false;
 }
-function requireSession(session: GameSession): void {
+function requireSession(session: unknown): asserts session is GameSession {
   if (!(session instanceof GameSession)) throw new Error("Game flow requires a GameSession owner");
 }
 
 /** Host flow owns only title/pause/I/O arbitration. World, field, battle and
  * durable state stay on the supplied GameSession; phase is always derived.
+ * An empty title needs no session or gameplay content. The first owner is
+ * installed by start or an active new-game/load ticket, never fabricated here.
  * Tickets do not own an I/O resource: the adapter must dispose its candidate
  * if publication is rejected. No renderer or browser global is read here. */
 export class GameFlow {
-  private owner: GameSession;
+  private owner: GameSession | null;
   private hasStarted = false;
   private isPaused = false;
   private operation: { kind: GameFlowOperation } | null = null;
   private host: GameFlowHostState | null = null;
 
-  constructor(session: GameSession) { requireSession(session); this.owner = session; }
-  get session(): GameSession { return this.owner; }
+  constructor(session?: GameSession) {
+    if (session !== undefined) requireSession(session);
+    this.owner = session ?? null;
+  }
+  get currentSession(): GameSession | null { return this.owner; }
+  get hasSession(): boolean { return this.owner !== null; }
+  get session(): GameSession {
+    if (!this.owner) throw new Error("Game flow has no GameSession owner");
+    return this.owner;
+  }
   get started(): boolean { return this.hasStarted; }
   get paused(): boolean { return this.isPaused; }
   get busy(): boolean { return this.operation !== null; }
@@ -43,7 +53,7 @@ export class GameFlow {
   get inputReady(): boolean { return this.hostAllowsInput; }
   get phase(): GameFlowPhase {
     if (this.operation) return this.operation.kind === "map" ? "transition" : "loading";
-    if (!this.hasStarted) return "title";
+    if (!this.hasStarted || !this.owner) return "title";
     if (this.isPaused) return "paused";
     const battle = this.owner.battle;
     if (battle) return battle.phase === "active" ? "battle" : battle.phase;
@@ -58,10 +68,13 @@ export class GameFlow {
     if (field.currentShop) return "shop";
     return field.busy ? "event" : "exploration";
   }
-  start(session: GameSession = this.owner, options: GameFlowStartOptions = {}): void {
-    requireSession(session); const paused = pauseOption(options);
+  start(session?: GameSession, options: GameFlowStartOptions = {}): void {
+    const next = session === undefined ? this.owner : session;
+    // Validate before invalidating a pending load, including an empty title's
+    // first load. A failed explicit start must leave that operation retryable.
+    requireSession(next); const paused = pauseOption(options);
     this.operation = null;
-    this.owner = session; this.hasStarted = true; this.isPaused = paused;
+    this.owner = next; this.hasStarted = true; this.isPaused = paused;
     // A new owner cannot inherit readiness for the previous owner's media.
     this.host = null;
   }
@@ -70,12 +83,14 @@ export class GameFlow {
   }
   pause(value: boolean): boolean {
     if (typeof value !== "boolean") throw new Error("Invalid game flow pause value");
-    if (!this.hasStarted || this.operation) return false;
+    if (!this.hasStarted || !this.owner || this.operation) return false;
     this.isPaused = value; return true;
   }
   beginOperation(kind: GameFlowOperation): GameFlowTicket {
     if (!["new-game", "load", "save", "map"].includes(kind)) throw new Error("Unknown game flow operation");
     if (this.operation) throw new Error("A game flow operation is already in progress");
+    if (!this.owner && (kind === "save" || kind === "map"))
+      throw new Error("Game flow save/map operation requires a GameSession owner");
     const operation = { kind }; this.operation = operation;
     const isCurrent = () => this.operation === operation;
     const finish = (): boolean => {
@@ -97,7 +112,7 @@ export class GameFlow {
     });
   }
   private get hostAllowsInput(): boolean {
-    return this.hasStarted && !this.isPaused && !this.operation && !!this.host?.visible &&
+    return this.owner !== null && this.hasStarted && !this.isPaused && !this.operation && !!this.host?.visible &&
       this.host.mediaReady && !this.host.overlayOpen;
   }
   advance(ms: number, host: GameFlowHostState): void {
@@ -105,30 +120,36 @@ export class GameFlow {
     if (!host || [host.visible, host.mediaReady, host.overlayOpen].some((value) => typeof value !== "boolean"))
       throw new Error("Incomplete game flow host state");
     this.host = { visible: host.visible, mediaReady: host.mediaReady, overlayOpen: host.overlayOpen };
-    if (!this.hostAllowsInput) return;
-    if (!this.owner.battle && (this.owner.field.stop?.kind === "map-transition" || this.owner.field.stop?.kind === "unsupported")) return;
+    const owner = this.owner;
+    if (!this.hostAllowsInput || !owner) return;
+    if (!owner.battle && (owner.field.stop?.kind === "map-transition" || owner.field.stop?.kind === "unsupported")) return;
     // Suppressed elapsed time is dropped, never accumulated into a resume jump.
-    this.owner.advance(ms);
+    owner.advance(ms);
   }
   move(direction: Direction): boolean {
     if (!["up", "right", "down", "left"].includes(direction)) throw new Error("Invalid game flow direction");
-    if (!this.hostAllowsInput || this.owner.battle) return false;
-    return this.owner.field.move(direction);
+    const owner = this.owner;
+    if (!this.hostAllowsInput || !owner || owner.battle) return false;
+    return owner.field.move(direction);
   }
   /** True means eligible input was dispatched; the field owner decides whether
    * a nearby object or a waiting dialogue actually accepts the confirmation. */
   confirm(): boolean {
-    if (!this.hostAllowsInput || this.owner.battle || this.owner.field.stop || this.owner.field.choicePending) return false;
-    this.owner.field.confirm(); return true;
+    const owner = this.owner;
+    if (!this.hostAllowsInput || !owner || owner.battle || owner.field.stop || owner.field.choicePending) return false;
+    owner.field.confirm(); return true;
   }
   choose(requestId: string, answer: FieldChoiceAnswer): boolean {
-    if (!this.hostAllowsInput || this.owner.battle || this.owner.field.stop) return false;
-    return this.owner.field.choose(requestId, answer);
+    const owner = this.owner;
+    if (!this.hostAllowsInput || !owner || owner.battle || owner.field.stop) return false;
+    return owner.field.choose(requestId, answer);
   }
   continueVictory(): boolean {
-    return this.hostAllowsInput && this.owner.battle?.phase === "victory" ? this.owner.continueVictory() : false;
+    const owner = this.owner;
+    return this.hostAllowsInput && owner?.battle?.phase === "victory" ? owner.continueVictory() : false;
   }
   retryBattle(): boolean {
-    return this.hostAllowsInput && this.owner.battle?.phase === "defeat" ? this.owner.retryBattle() : false;
+    const owner = this.owner;
+    return this.hostAllowsInput && owner?.battle?.phase === "defeat" ? owner.retryBattle() : false;
   }
 }

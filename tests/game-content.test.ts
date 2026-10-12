@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { contentDigest } from "../src/core/content-integrity.js";
-import { GameContentRepository, fieldMediaUrls, openingMediaUrls } from "../src/core/game-content.js";
+import { GameContentRepository, fieldMediaUrls, openingMediaUrls, sessionMediaUrls,
+  sourceEntryMediaUrls } from "../src/core/game-content.js";
 import type { GameCheckpoint } from "../src/core/game-session.js";
 import { checkpointFixture } from "./fixtures/checkpoint-game.js";
 import { sourceNewGameFixture } from "./fixtures/source-new-game.js";
@@ -47,7 +48,7 @@ test("framework content uses separate dependency roots and never falls back to s
   files.set(`/framework/world/maps/${map.mapId}.json`, map);
   const host = loader(files), framework = new GameContentRepository(host.read, "framework");
   const loaded = await framework.sourceNewGame();
-  assert.deepEqual(loaded, { content, catalog, map });
+  assert.deepEqual(loaded, { content, catalog, map, battle: f.battle });
   const saved = structuredClone(f.saved);
   saved.origin = { kind: "source-new-game", sourceContentHash: content.contentHash };
   saved.world.initialHash = content.contentHash;
@@ -240,12 +241,16 @@ test("a cleared in-flight failure cannot evict a replacement cache entry", async
 
 test("fresh entry binds source, world, battle, map and reserved script without requiring the development field", async () => {
   const f = await freshFixture(), host = loader(f.files), repo = new GameContentRepository(host.read);
-  const actual = await repo.sourceNewGame();
-  assert.deepEqual(actual, { content: f.content, catalog: f.catalog, map: f.map });
+  const [actual, other] = await Promise.all([repo.sourceNewGame(), repo.sourceNewGame()]);
+  const expected = { content: f.content, catalog: f.catalog, map: f.map, battle: f.battle };
+  assert.deepEqual(actual, expected);
   assert.equal(host.calls.includes("/game/content.json"), false);
+  assert.equal(host.calls.length, 4);
   actual.content.entry.mapId = 999;
   actual.map.scripts = {};
-  assert.deepEqual(await repo.sourceNewGame(), { content: f.content, catalog: f.catalog, map: f.map });
+  actual.battle.common.players[0]!.hp = 1;
+  assert.deepEqual(other, expected);
+  assert.deepEqual(await repo.sourceNewGame(), expected);
 });
 
 test("fresh entry refuses stale manifest dependencies, alien parent and a missing reserved script", async () => {
@@ -273,6 +278,69 @@ test("development checkpoint resolves no world for its initial map, and the exac
   assert.deepEqual(await repo.restoreWorld(f.saved), { catalog: f.catalog, map: f.map });
 });
 
+test("session restore dependencies retain the development initial field and read only its required origin", async () => {
+  const f = await fixture(), host = loader(f.files), repo = new GameContentRepository(host.read);
+  assert.deepEqual(await repo.restoreSessionContent(f.saved), { initial: f.field, battle: f.battle });
+  assert.deepEqual(host.calls.sort(), ["/game/battle.json", "/game/content.json"]);
+  f.saved.world.location = { catalogHash: f.catalog.contentHash, mapId: f.map.mapId, entrance: 1, traveler: null };
+  assert.deepEqual(await repo.restoreSessionContent(f.saved), {
+    initial: f.field, battle: f.battle, world: { catalog: f.catalog, map: f.map },
+  });
+  assert.equal(host.calls.some((url) => url.includes("new-game")), false);
+});
+
+test("source restore content supplies battle and trusted world without constructing or loading a legacy field", async () => {
+  const f = await freshFixture(), host = loader(f.files), repo = new GameContentRepository(host.read);
+  const expected = { battle: f.battle, world: { catalog: f.catalog, map: f.map,
+    source: { content: f.content, initialMap: f.map } } };
+  const [first, second] = await Promise.all([
+    repo.restoreSessionContent(f.saved), repo.restoreSessionContent(f.saved),
+  ]);
+  assert.deepEqual(first, expected);
+  assert.equal(Object.hasOwn(first, "initial"), false);
+  assert.equal(host.calls.includes("/game/content.json"), false);
+  assert.equal(host.calls.length, 4);
+  first.battle.common.players[0]!.hp = 1;
+  first.world!.source!.content.entry.mapId = 999;
+  first.world!.map.scripts = {};
+  assert.deepEqual(second, expected);
+  assert.deepEqual(await repo.restoreSessionContent(f.saved), expected);
+});
+
+test("source restore rejects a mismatched battle and retries the repaired dependency without clearing caches", async () => {
+  const f = await freshFixture(), host = loader(f.files), repo = new GameContentRepository(host.read);
+  const differentBattle = await seal({ ...f.battle, limitations: ["different signed battle package"] });
+  f.files.set("/game/battle.json", differentBattle);
+  await assert.rejects(repo.restoreSessionContent(f.saved), /source\/content binding mismatch/);
+  f.files.set("/game/battle.json", f.battle);
+  assert.deepEqual((await repo.restoreSessionContent(f.saved)).battle, f.battle);
+  assert.equal(host.calls.filter((url) => url === "/game/battle.json").length, 2);
+  assert.equal(host.calls.includes("/game/content.json"), false);
+  const wrongSave = structuredClone(f.saved); wrongSave.battleCatalogHash = differentBattle.contentHash;
+  await assert.rejects(repo.restoreSessionContent(wrongSave), /checkpoint source identity mismatch/);
+  assert.deepEqual((await repo.restoreSessionContent(f.saved)).battle, f.battle);
+});
+
+test("restore captures its checkpoint before pending reads and retries a missing saved destination", async () => {
+  const f = await fixture(), host = loader(f.files), started = deferred<void>(), waiting = deferred<void>();
+  const repo = new GameContentRepository(async (url) => {
+    if (url === "/game/content.json") { started.resolve(); await waiting.promise; }
+    return host.read(url);
+  });
+  const snapshot = structuredClone(f.saved), pending = repo.restoreSessionContent(f.saved);
+  await started.promise;
+  f.saved.origin = { kind: "source-new-game", sourceContentHash: "a".repeat(64) };
+  f.saved.world.initialHash = "f".repeat(64);
+  waiting.resolve();
+  assert.deepEqual(await pending, { initial: f.field, battle: f.battle });
+  snapshot.world.location = { catalogHash: f.catalog.contentHash, mapId: f.map.mapId, entrance: 1, traveler: null };
+  const url = f.catalog.maps[String(f.map.mapId)]!.url;
+  f.files.delete(url);
+  await assert.rejects(repo.restoreSessionContent(snapshot), /Missing fixture/);
+  f.files.set(url, f.map);
+  assert.deepEqual((await repo.restoreSessionContent(snapshot)).world, { catalog: f.catalog, map: f.map });
+});
+
 test("source checkpoint resolves the original entry separately from the saved destination and reuses hash-bound reads", async () => {
   const f = await freshFixture(), destination = await seal({ ...f.map, mapId: 900, name: "Saved destination",
     map: { ...f.map.map!, identity: { mapId: 900, areaId: f.map.areaId } } });
@@ -290,6 +358,8 @@ test("source checkpoint resolves the original entry separately from the saved de
   f.saved.world.location = { catalogHash: f.catalog.contentHash, mapId: 900, entrance: 1, traveler: null };
   const restored = await repo.restoreWorld(f.saved);
   assert.deepEqual(restored, { catalog: f.catalog, map: destination, source: { content: f.content, initialMap: f.map } });
+  assert.deepEqual(await repo.restoreSessionContent(f.saved), { battle: f.battle, world: restored });
+  assert.equal(host.calls.includes("/game/content.json"), false);
   assert.equal(host.calls.filter((url) => url === "/game/new-game.json").length, 1);
   assert.equal(host.calls.filter((url) => url === f.catalog.maps[String(f.map.mapId)]!.url).length, 1);
   assert.equal(host.calls.filter((url) => url === "/saved-map.json").length, 1);
@@ -333,6 +403,21 @@ test("media collection includes every existing image channel, deduplicates URLs 
   assert.deepEqual(fieldMediaUrls(field), ["/map.png", "/shared.png", "/background.png", "/actor.png", "/minimap.png"]);
   const urls = openingMediaUrls(field, battle);
   assert.deepEqual(urls, ["/map.png", "/shared.png", "/background.png", "/actor.png", "/minimap.png", "/enemy.png"]);
+  assert.deepEqual(sessionMediaUrls(field, battle), urls);
+  const fresh = await freshFixture();
+  fresh.map.map = structuredClone(field.map);
+  fresh.catalog.characters = structuredClone(field.characters);
+  fresh.catalog.minimap = structuredClone(field.minimap);
+  fresh.battle = structuredClone(battle);
+  const entry = { content: fresh.content, catalog: fresh.catalog, map: fresh.map, battle: fresh.battle };
+  const beforeEntry = structuredClone(entry);
+  const sourceUrls = sourceEntryMediaUrls(entry);
+  assert.deepEqual(sourceUrls, urls);
+  sourceUrls.push("/another-mutation.png");
+  assert.deepEqual(entry, beforeEntry);
+  assert.equal(sourceEntryMediaUrls(entry).includes("/another-mutation.png"), false);
+  entry.map.map = null;
+  assert.throws(() => sourceEntryMediaUrls(entry), /entry map media is unavailable/);
   urls.push("/mutation.png");
   assert.deepEqual({ field, battle }, before);
   assert.equal(openingMediaUrls(field, battle).includes("/mutation.png"), false);

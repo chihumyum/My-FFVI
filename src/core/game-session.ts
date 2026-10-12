@@ -266,14 +266,11 @@ export class GameSession {
   }
   static restore(
     raw: GameCheckpoint,
-    initial: FieldContent,
+    initial: FieldContent | undefined,
     battle: BattleCatalog,
     world?: GameRestoreWorld,
     runtime: GameSessionRuntime = {},
   ): GameSession {
-    if (initial.map.entities.some((entity) => entity.kind === 11) ||
-        Object.values(initial.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11)))
-      throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
     const s = structuredClone(raw);
     checkpointKeys(
       s,
@@ -282,7 +279,6 @@ export class GameSession {
     if (
       s.formatVersion !== 4 ||
       s.kind !== "game-checkpoint" ||
-      s.sourceSetHash !== initial.parentSourceSetHash ||
       s.battleCatalogHash !== battle.contentHash
     )
       throw new Error("Game checkpoint source/version mismatch");
@@ -295,8 +291,16 @@ export class GameSession {
       checkpointKeys(s.origin, "kind,sourceContentHash");
       const source = world?.source;
       if (!source || !world || source.content.contentHash !== s.origin.sourceContentHash ||
+          source.content.contentHash !== s.world.initialHash ||
           source.content.parentSourceSetHash !== s.sourceSetHash || s.owned.initialization !== "source-new-game")
         throw new Error("Source new-game restore requires trusted native actor/world checkpoint dependencies");
+      // A source checkpoint depends on its trusted entry map, never a legacy
+      // opening field supplied by an older caller. Reject effect publication
+      // before creating any native actor or external host during restoration.
+      const map = source.initialMap.map;
+      if (map && (map.entities.some((entity) => entity.kind === 11) ||
+          Object.values(map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11))))
+        throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
       if (s.world.field.fade === null) throw new Error("Source new-game checkpoint cannot discard the title fade host");
       const state = GameState.createNewGame(battle.gameState, battle.common.players, battle.contentHash, battle.common.conditions);
       const fade = FieldFadeState.restore(s.world.field.fade);
@@ -311,6 +315,11 @@ export class GameSession {
       checkpointKeys(s.origin, "kind");
       if (s.origin.kind !== "development-checkpoint" || s.owned.initialization !== "development-checkpoint")
         throw new Error("Checkpoint initialization origin mismatch");
+      if (!initial || s.sourceSetHash !== initial.parentSourceSetHash)
+        throw new Error("Game checkpoint source/version mismatch: development initial content is required");
+      if (initial.map.entities.some((entity) => entity.kind === 11) ||
+          Object.values(initial.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11)))
+        throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
       next = new GameSession(initial, battle, s.seed, runtime);
     }
     next.setBattlePreferences(s.battlePreferences);

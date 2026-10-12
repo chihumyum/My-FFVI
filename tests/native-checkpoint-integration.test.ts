@@ -80,8 +80,48 @@ test("whole-session restore never invokes native factory, NPC initialization, Lo
   ActorAnimation.prototype.look = () => { throw new Error("Unexpected Look replay"); };
   ActorAnimation.prototype.cue = () => { throw new Error("Unexpected Cue replay"); };
   FieldGame.prototype.installNativeActors = () => { throw new Error("Unexpected factory/NPC initialization"); };
-  try { assert.deepEqual(t.restore(raw).checkpoint(), raw); }
+  try {
+    assert.deepEqual(t.restore(raw).checkpoint(), raw);
+    assert.deepEqual(GameSession.restore(raw, undefined, t.f.battle, t.deps).checkpoint(), raw);
+  }
   finally { ActorAnimation.prototype.look = look; ActorAnimation.prototype.cue = cue; FieldGame.prototype.installNativeActors = install; }
+});
+
+test("source restore has no legacy initial-field dependency and requires its own trusted source resources", () => {
+  const t = fixture(true), raw = t.game.checkpoint();
+  const unrelatedInitial = new Proxy(t.initial, { get: () => { throw new Error("Legacy field must not be read"); } });
+  assert.deepEqual(GameSession.restore(raw, unrelatedInitial, t.f.battle, t.deps).checkpoint(), raw);
+  assert.throws(() => GameSession.restore(raw, undefined, t.f.battle), /trusted native/);
+  const wrongOrigin = structuredClone(raw); wrongOrigin.world.initialHash = "different-source-entry";
+  assert.throws(() => GameSession.restore(wrongOrigin, undefined, t.f.battle, t.deps), /trusted native/);
+  const wrongBattle = structuredClone(t.f.battle); wrongBattle.contentHash = "different-battle";
+  assert.throws(() => GameSession.restore(raw, undefined, wrongBattle, t.deps), /source\/version mismatch/);
+  const wrongWorld = structuredClone(t.deps); wrongWorld.catalog.contentHash = "different-world";
+  assert.throws(() => GameSession.restore(raw, undefined, t.f.battle, wrongWorld), /binding mismatch/);
+  assert.deepEqual(t.game.checkpoint(), raw);
+});
+
+test("development restore still requires its initial package and cannot borrow source restore dependencies", () => {
+  const f = checkpointFixture(), raw = f.game.checkpoint(), source = fixture();
+  assert.throws(() => GameSession.restore(raw, undefined, f.battle), /development initial content is required/);
+  assert.throws(() => GameSession.restore(raw, undefined, f.battle, source.deps), /development initial content is required/);
+  const wrongInitial = structuredClone(f.field); wrongInitial.parentSourceSetHash = "another-source";
+  assert.throws(() => GameSession.restore(raw, wrongInitial, f.battle), /source\/version mismatch/);
+  assert.deepEqual(GameSession.restore(raw, f.field, f.battle).checkpoint(), raw);
+});
+
+test("source restore keeps the trusted initial-map FX gate before host preparation", () => {
+  const t = fixture(), raw = t.game.checkpoint(), deps = structuredClone(t.deps);
+  const entity = structuredClone(checkpointFixture().target.map!.entities[0]!);
+  entity.kind = 11;
+  deps.source.initialMap.map!.entities.push(entity);
+  let prepared = 0;
+  assert.throws(() => GameSession.restore(raw, undefined, t.f.battle, deps, {
+    fieldEffects: { prepare: () => { prepared++; throw new Error("Unexpected FX host publication"); },
+      observe: () => { throw new Error("Unexpected FX observation"); } },
+  }), /particle\/RNG/);
+  assert.equal(prepared, 0);
+  assert.deepEqual(t.game.checkpoint(), raw);
 });
 
 test("default NPCs and subsequently activated anonymous NPCs restore into one owner", () => {
@@ -163,6 +203,7 @@ test("native world-location restore binds its destination while retaining the tr
   assert.equal(raw.world.location!.mapId, 902); assert.equal(raw.world.initialHash, t.f.content.contentHash);
   const restored = GameSession.restore(raw, t.initial, t.f.battle, deps);
   assert.deepEqual(restored.checkpoint(), raw);
+  assert.deepEqual(GameSession.restore(raw, undefined, t.f.battle, deps).checkpoint(), raw);
   assert.equal(restored.field.content.contentHash, target.contentHash);
   assert.equal(restored.field.actors["601"]!.steps, 9);
   assert.equal(restored.field.eventState.read(fallbackFlag), 1);

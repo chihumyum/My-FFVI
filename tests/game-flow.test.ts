@@ -4,10 +4,186 @@ import { GameFlow, type GameFlowHostState, type GameFlowStartOptions } from "../
 import { GameSession } from "../src/core/game-session.js";
 import { gameFlowFixture, readyHost, startFlow } from "./fixtures/game-flow.js";
 
+test("an empty title needs no gameplay owner and safely rejects all gameplay input", () => {
+  const flow = new GameFlow();
+  assert.equal(flow.currentSession, null);
+  assert.equal(flow.hasSession, false);
+  assert.equal(flow.started, false);
+  assert.equal(flow.paused, false);
+  assert.equal(flow.busy, false);
+  assert.equal(flow.phase, "title");
+  assert.throws(() => flow.session, /no GameSession owner/);
+  for (const host of [readyHost, { ...readyHost, visible: false },
+    { ...readyHost, mediaReady: false }, { ...readyHost, overlayOpen: true }]) {
+    flow.advance(1000, host);
+    assert.equal(flow.inputReady, false);
+    assert.equal(flow.move("right"), false);
+    assert.equal(flow.confirm(), false);
+    assert.equal(flow.choose("no-owner-choice", 0), false);
+    assert.equal(flow.choose("no-owner-choice", "cancel"), false);
+    assert.equal(flow.continueVictory(), false);
+    assert.equal(flow.retryBattle(), false);
+    assert.equal(flow.pause(true), false);
+  }
+  flow.returnToTitle();
+  assert.equal(flow.phase, "title");
+  assert.equal(flow.currentSession, null);
+});
+
+test("empty-title load and new-game failures leave no owner and can be retried", () => {
+  for (const kind of ["new-game", "load"] as const) {
+    const flow = new GameFlow(), failed = flow.beginOperation(kind);
+    assert.equal(flow.phase, "loading");
+    assert.equal(flow.busy, true);
+    assert.equal(flow.currentSession, null);
+    flow.advance(60000, readyHost);
+    assert.equal(flow.inputReady, false);
+    assert.equal(flow.confirm(), false);
+    assert.equal(flow.choose("no-owner-choice", 0), false);
+    assert.equal(flow.continueVictory(), false);
+    assert.equal(flow.retryBattle(), false);
+    failed.cancel();
+    assert.equal(flow.phase, "title");
+    assert.equal(flow.currentSession, null);
+    assert.equal(flow.hasSession, false);
+    assert.equal(flow.busy, false);
+    const retry = flow.beginOperation(kind);
+    assert.equal(retry.isCurrent(), true);
+    // Ending preparation without publication must not manufacture a session.
+    assert.equal(retry.finish(), true);
+    assert.equal(flow.phase, "title");
+    assert.equal(flow.currentSession, null);
+  }
+});
+
+test("save and map operations require a real owner without blocking empty-title load/new-game", () => {
+  const flow = new GameFlow();
+  for (const kind of ["save", "map"] as const) {
+    assert.throws(() => flow.beginOperation(kind), /requires a GameSession owner/);
+    assert.equal(flow.busy, false);
+    assert.equal(flow.phase, "title");
+    assert.equal(flow.currentSession, null);
+  }
+  const load = flow.beginOperation("load");
+  assert.throws(() => flow.beginOperation("save"), /already in progress/);
+  assert.throws(() => flow.beginOperation("map"), /already in progress/);
+  assert.equal(load.isCurrent(), true);
+  assert.equal(flow.phase, "loading");
+  load.cancel();
+  const first = flow.beginOperation("new-game"), { game } = gameFlowFixture();
+  assert.equal(first.publish(game), true);
+  const save = flow.beginOperation("save");
+  assert.equal(save.isCurrent(), true); save.cancel();
+  assert.equal(flow.currentSession, game);
+  assert.equal(flow.hasSession, true);
+});
+
+test("failed start or invalid first publication preserves the pending empty-title ticket", () => {
+  const flow = new GameFlow(), ticket = flow.beginOperation("load");
+  assert.throws(() => flow.start(), /GameSession owner/);
+  assert.throws(() => flow.start(undefined, { paused: true }), /GameSession owner/);
+  assert.throws(() => flow.start({} as GameSession), /GameSession owner/);
+  assert.throws(() => ticket.publish({} as GameSession), /GameSession owner/);
+  const { game } = gameFlowFixture(), before = game.checkpoint();
+  assert.throws(() => ticket.publish(game, { paused: "yes" } as unknown as GameFlowStartOptions), /options/);
+  assert.throws(() => flow.start(game, { paused: "yes" } as unknown as GameFlowStartOptions), /options/);
+  assert.equal(ticket.isCurrent(), true);
+  assert.equal(flow.phase, "loading");
+  assert.equal(flow.currentSession, null);
+  assert.equal(flow.started, false);
+  assert.equal(flow.paused, false);
+  assert.deepEqual(game.checkpoint(), before);
+  assert.equal(ticket.publish(game, { paused: true }), true);
+  assert.equal(flow.currentSession, game);
+  assert.equal(flow.session, game);
+  assert.equal(flow.phase, "paused");
+});
+
+test("a cancelled first load cannot publish late or unlock the retry that supplies the first owner", async () => {
+  const flow = new GameFlow(), old = flow.beginOperation("load");
+  let resolve!: (session: GameSession) => void;
+  const preparation = new Promise<GameSession>((done) => { resolve = done; });
+  const late = preparation.then((candidate) => old.publish(candidate));
+  old.cancel();
+  const current = flow.beginOperation("new-game"), { game } = gameFlowFixture();
+  resolve(gameFlowFixture().game);
+  assert.equal(await late, false);
+  assert.equal(flow.currentSession, null);
+  assert.equal(current.isCurrent(), true);
+  assert.equal(old.finish(), false);
+  old.cancel();
+  assert.equal(current.isCurrent(), true);
+  assert.equal(current.publish(game), true);
+  assert.equal(flow.session, game);
+  assert.equal(flow.phase, "exploration");
+  assert.equal(flow.inputReady, false);
+  assert.equal(current.publish(gameFlowFixture().game), false);
+  assert.equal(flow.session, game);
+});
+
+test("returning to an empty title invalidates preparation without affecting the next ticket", () => {
+  const flow = new GameFlow(), old = flow.beginOperation("new-game");
+  flow.returnToTitle();
+  assert.equal(flow.currentSession, null);
+  assert.equal(flow.phase, "title");
+  assert.equal(old.isCurrent(), false);
+  const current = flow.beginOperation("load");
+  old.cancel();
+  assert.equal(old.finish(), false);
+  assert.equal(old.publish(gameFlowFixture().game), false);
+  assert.equal(current.isCurrent(), true);
+  assert.equal(flow.currentSession, null);
+  current.cancel();
+  assert.equal(flow.phase, "title");
+});
+
+test("the first published owner receives neither title/loading elapsed time nor old media readiness", () => {
+  const flow = new GameFlow(), { game } = gameFlowFixture();
+  const before = game.checkpoint();
+  flow.advance(60000, readyHost);
+  const ticket = flow.beginOperation("new-game");
+  flow.advance(60000, readyHost);
+  assert.equal(ticket.publish(game), true);
+  assert.equal(flow.inputReady, false);
+  assert.equal(flow.move("right"), false);
+  assert.deepEqual(game.checkpoint(), before);
+  flow.advance(60000, { ...readyHost, mediaReady: false });
+  assert.deepEqual(game.checkpoint(), before);
+  flow.advance(0, readyHost);
+  assert.equal(flow.move("right"), true);
+  flow.advance(9, readyHost);
+  assert.equal(game.field.time, 0);
+  flow.advance(1, readyHost);
+  assert.equal(game.field.time, 10);
+  flow.advance(230, readyHost);
+  assert.equal(game.field.player.x, 2);
+  assert.equal(game.field.player.motion, null);
+});
+
+test("explicit first start and a retained title owner remain compatible with existing callers", () => {
+  const flow = new GameFlow(), { game } = gameFlowFixture();
+  const pending = flow.beginOperation("load");
+  flow.start(game);
+  assert.equal(flow.currentSession, game);
+  assert.equal(flow.hasSession, true);
+  assert.equal(pending.isCurrent(), false);
+  assert.equal(pending.publish(gameFlowFixture().game), false);
+  flow.returnToTitle();
+  assert.equal(flow.currentSession, game);
+  assert.equal(flow.hasSession, true);
+  assert.equal(flow.session, game);
+  flow.start();
+  assert.equal(flow.phase, "exploration");
+  assert.equal(flow.session, game);
+  assert.equal(flow.inputReady, false);
+});
+
 test("title retains one session owner and new starts require a fresh media observation", () => {
   const { game, flow } = gameFlowFixture(), before = game.checkpoint();
   assert.equal(flow.phase, "title");
   assert.equal(flow.session, game);
+  assert.equal(flow.currentSession, game);
+  assert.equal(flow.hasSession, true);
   assert.equal(flow.started, false);
   assert.equal(flow.pause(true), false);
   flow.advance(1000, readyHost);
