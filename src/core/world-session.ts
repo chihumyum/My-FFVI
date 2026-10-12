@@ -7,6 +7,7 @@ import {
   type FieldCheckpoint,
   type FieldGameOptions,
   type FieldNativeRestoreDependencies,
+  type GameEventSaveRequest,
 } from "./field.js";
 import { missingFieldPoses } from "./character-media.js";
 import { canonical } from "./canonical.js";
@@ -36,7 +37,7 @@ type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount"> & {
   transportationId: number | null;
 };
 export type WorldCheckpoint = {
-  kind: "idle-world-v10";
+  kind: "idle-world-v10" | "event-world-v1";
   initialHash: string;
   location: {
     catalogHash: string;
@@ -288,6 +289,11 @@ export class WorldSession {
       field: this.current.checkpoint(),
     };
   }
+  eventCheckpoint(request: GameEventSaveRequest): WorldCheckpoint {
+    if (this.commitInProgress) throw new Error("Cannot save during map publication");
+    return { kind: "event-world-v1", initialHash: this.initial.contentHash,
+      location: structuredClone(this.location), field: this.current.eventCheckpoint(request) };
+  }
   /** Used on an unpublished candidate session; current host state is replaced only after media preparation. */
   restore(
     snapshot: WorldCheckpoint,
@@ -298,10 +304,12 @@ export class WorldSession {
     if (this.commitInProgress) throw new Error("Cannot restore during map publication");
     checkpointKeys(snapshot, "kind,initialHash,location,field");
     if (
-      snapshot.kind !== "idle-world-v10" ||
+      !["idle-world-v10", "event-world-v1"].includes(snapshot.kind) ||
       snapshot.initialHash !== this.initial.contentHash
     )
       throw new Error("World checkpoint source/version mismatch");
+    if ((snapshot.kind === "event-world-v1") !== (snapshot.field.kind === "event-field-v1"))
+      throw new Error("World and field continuation formats disagree");
     let content = this.initial;
     const loc = snapshot.location;
     if (native && (!catalog || native.content.contentHash !== this.initial.contentHash ||

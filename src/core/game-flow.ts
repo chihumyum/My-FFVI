@@ -112,7 +112,7 @@ export class GameFlow {
     });
   }
   private get hostAllowsInput(): boolean {
-    return this.owner !== null && this.hasStarted && !this.isPaused && !this.operation && !!this.host?.visible &&
+    return this.owner !== null && !this.owner.eventSaveRequest && this.hasStarted && !this.isPaused && !this.operation && !!this.host?.visible &&
       this.host.mediaReady && !this.host.overlayOpen;
   }
   advance(ms: number, host: GameFlowHostState): void {

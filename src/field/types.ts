@@ -173,6 +173,9 @@ export type MapRequest = {
 export type Op = Site &
   (
     | { kind: "nop" | "exit" | "return" | "join" | "hide" }
+    /** Explicit Web continuation barrier. The source AutoSave instruction is
+     * not compiled to this development protocol. */
+    | { kind: "event-save" }
     | EventControlOp
     | InventoryEventOp
     | TreasureBoxRequest

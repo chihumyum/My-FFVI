@@ -71,6 +71,7 @@
     "framework:verify": "npm run build && node scripts/check-framework-systems.mjs",
     "framework-io:check": "npm run build && node scripts/check-framework-io.mjs && node scripts/check-framework-lifecycle.mjs",
     "framework-entry:check": "npm run build && node scripts/check-game-entry-ui.mjs",
+    "event-save:check": "npm run build && node scripts/check-event-save.mjs && node scripts/check-event-save-source.mjs",
     "framework:build": "npm run build && node scripts/build-framework-content.mjs",
     "framework-route:check": "npm run framework:build && node scripts/check-framework-route.mjs",
     "field-move-area:check": "npm run build && node scripts/check-field-move-area.mjs",

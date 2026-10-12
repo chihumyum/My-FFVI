@@ -153,7 +153,7 @@ export class GameContentRepository {
     const saved = structuredClone(checkpoint);
     return this.operation(async (read) => {
       header(saved, "game-checkpoint", 4);
-      header(saved.world, "idle-world-v10");
+      header(saved.world, saved.world?.kind === "event-world-v1" ? "event-world-v1" : "idle-world-v10");
       text(saved.sourceSetHash); hash(saved.battleCatalogHash); hash(saved.world.initialHash);
       object(saved.origin);
       let result: RestoreSessionContent;

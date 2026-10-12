@@ -26,6 +26,8 @@ import { executeOwnedConditionEvent, type FieldOwnedConditionPort } from "./owne
 import { executeSourcePresentation, cloneSourcePresentationContext, sourcePresentationCheckpoint,
   type SourcePresentationContext, type SourcePresentationPort } from "./source-presentation.js";
 import { canonical } from "./canonical.js";
+import { captureFieldEventCheckpoint, restoreFieldEventCheckpoint,
+  type FieldEventCheckpoint } from "./field-event-checkpoint.js";
 import { frameworkTransportationPresentation, FRAMEWORK_TRANSPORTATION_LIMITATIONS } from "./development-profile.js";
 import { Transportations } from "./transportation.js";
 import type { FieldTransportationPort } from "./transportation-state.js";
@@ -142,8 +144,7 @@ export type Actor = Point & {
   native?: NativeFieldActorData;
 };
 type PlacedActor = Actor & { layer: number; direction: Direction; asset: string };
-export type FieldCheckpoint = {
-  kind: "idle-field-v10";
+type FieldCheckpointState = {
   contentHash: string;
   time: number;
   remainder: number;
@@ -174,6 +175,10 @@ export type FieldCheckpoint = {
     completedScript: { name: string; leaderId: number | null; assignments: boolean[] } | null;
   } | null;
 };
+export type FieldCheckpoint = FieldCheckpointState & (
+  { kind: "idle-field-v10" } | { kind: "event-field-v1"; execution: FieldEventCheckpoint }
+);
+export type GameEventSaveRequest = Readonly<{ id: string; site: Site }>;
 /** Trusted source packages reconstruct this capability. Nothing in a saved
  * actor payload can supply prefab, script-control, material or media authority. */
 export type FieldNativeRestoreDependencies = {
@@ -545,6 +550,10 @@ export class FieldGame {
   stop: Stop | null = null;
   time = 0;
   private tasks: Task[] = [];
+  private nextEventSave = 1;
+  private pendingEventSave: { request: GameEventSaveRequest; task: Task;
+    barrier: { script: string; pc: number } } | null = null;
+  get eventSaveRequest(): GameEventSaveRequest | null { return this.pendingEventSave?.request ?? null; }
   /** Execute owns SystemFlags for the whole event. ChangeScript replaces only
    * processing/name/custom animations and must not adopt the target flags. */
   private eventRootScript: string | null = null;
@@ -1099,25 +1108,28 @@ export class FieldGame {
       characters: this.content.characters, npcs, providers,
       ...(this.transportationPresentation ? { transportationPresentation: this.transportationPresentation } : {}) };
   }
-  private nativeCheckpoint(): FieldCheckpoint["native"] {
+  private nativeCheckpoint(continuation = false): FieldCheckpoint["native"] {
     if (!this.nativeActorBindings) return null;
     if (!this.nativeRuntime?.mapLifecycle || !this.nativeActorProviders || !this.nativeRuntime.animationKeys)
       throw new Error("Native actor checkpoint source capabilities are incomplete");
     const lifecycle = this.puppetLifecycle;
-    if (lifecycle && (!lifecycle.finished ||
+    if (lifecycle && ((!continuation && !lifecycle.finished) ||
         canonical(lifecycle.script) !== canonical(this.content.scriptPuppetContexts?.[lifecycle.name])))
       throw new Error("Native script lifecycle is not stably bound to its source");
     return { actors: captureFieldNativeCheckpoint(this.actors, this.nativeCheckpointContext(
       this.nativeActorBindings, this.nativeRuntime.mapLifecycle.factory, this.nativeActorProviders())),
       collision: { ...this.collisionSwitches }, updateMask: this.entityUpdateMask,
-      cameraOffset: { ...this.cameraOffset }, completedScript: lifecycle && {
-        name: lifecycle.name, leaderId: lifecycle.leaderId, assignments: [...lifecycle.assignments] } };
+      cameraOffset: { ...this.cameraOffset }, completedScript: lifecycle?.finished ? {
+        name: lifecycle.name, leaderId: lifecycle.leaderId, assignments: [...lifecycle.assignments] } : null };
   }
   checkpoint(): FieldCheckpoint {
     if (!this.checkpointReady)
       throw new Error("Cannot save during field movement or an event");
+    return this.captureCheckpoint();
+  }
+  private captureCheckpoint(execution?: FieldEventCheckpoint): FieldCheckpoint {
     return {
-      kind: "idle-field-v10",
+      ...(execution ? { kind: "event-field-v1" as const, execution } : { kind: "idle-field-v10" as const }),
       contentHash: this.content.contentHash,
       time: this.time,
       remainder: this.remainder,
@@ -1143,8 +1155,62 @@ export class FieldGame {
       se: this.se.snapshot(),
       fade: this.fader.snapshot(),
       camera: this.cameraSnapshot,
-      native: this.nativeCheckpoint(),
+      native: this.nativeCheckpoint(execution !== undefined),
     };
+  }
+  /** A barrier owns one quiescent main core. Other live coroutine registers
+   * need their own codecs before a content package may save through them. */
+  private requireEventSaveBoundary(task: Task): void {
+    if (this.stop || this.effects || this.options.fieldEffectMap?.hasHistory ||
+        this.options.fieldEffectMap && !this.options.fieldEffectMap.active ||
+        this.sourcePresentationContext?.advertisementOpeningFader === "present" ||
+        this.fader.active || this.sourceMessage.active || this.messageWindow ||
+        this.pendingChoice || this.shopTask || this.treasureSceneState !== "player" ||
+        this.openTriggers.busy || this.interaction || this.pendingPlayerStep ||
+        Object.values(this.actors).some((actor) => actor.motion !== null) ||
+        this.tasks.some((other) => other !== task && !other.done) ||
+        task.done || task.slot !== null || task.treasureRoot || task.state !== "ready" ||
+        task.wait !== 0 || task.puppetWait || task.fadeWait || task.cameraLerp ||
+        task.scriptMove || task.scriptLerp || task.remaining !== 0 || task.move ||
+        task.animationWait || task.audioWait || task.soundWait || task.treasure ||
+        this.options.puppetActors && !this.nativeActorBindings)
+      throw new Error("Event save requires a quiescent main task with supported field owners");
+  }
+  private eventContinuation(task: Task, barrier: { script: string; pc: number }): FieldEventCheckpoint {
+    this.requireEventSaveBoundary(task);
+    if (!this.eventRootScript) throw new Error("Event save has no root script");
+    const lifecycle = this.puppetLifecycle;
+    if (lifecycle?.finished) throw new Error("Event save cannot resume a completed puppet lifecycle");
+    return captureFieldEventCheckpoint({ barrier, main: { id: task.id, script: task.script, pc: task.pc,
+      stack: [...task.stack], actor: task.actor, sourceEntityId: task.sourceEntityId, range: { ...task.range } },
+      eventRootScript: this.eventRootScript,
+      scriptHook: this.scriptHook && { script: this.scriptHook.script, pc: this.scriptHook.pc,
+        range: { ...this.scriptHook.range }, locals: this.eventState.exportScriptLocalFrame(this.scriptHook.locals) },
+      puppetLifecycle: lifecycle && { name: lifecycle.name, leaderId: lifecycle.leaderId,
+        assignments: [...lifecycle.assignments], finished: false },
+      cameraEventActive: this.cameraEventActive, entryTaskStarted: this.entryTaskStarted,
+    }, { content: this.content, eventState: this.eventState.snapshot(), actorIds: Object.keys(this.actors),
+      nextTask: this.nextTask, time: this.time, entrySynchronized: this.synchronizedEntry });
+  }
+  private requestEventSave(task: Task, op: Extract<Op, { kind: "event-save" }>): void {
+    if (this.pendingEventSave) throw new Error("An event save is already pending");
+    const barrier = { script: task.script, pc: task.pc - 1 };
+    // Fully validate before exposing an asynchronous host request.
+    this.captureCheckpoint(this.eventContinuation(task, barrier));
+    const site = Object.freeze({ script: op.script, index: op.index, source: Object.freeze({ ...op.source }) });
+    const request = Object.freeze({ id: `event-save:${this.choiceNamespace}:${this.nextEventSave++}`, site });
+    this.pendingEventSave = { task, barrier, request };
+  }
+  eventCheckpoint(request: GameEventSaveRequest): FieldCheckpoint {
+    const pending = this.pendingEventSave;
+    if (!pending || pending.request !== request) throw new Error("Stale event save request");
+    return this.captureCheckpoint(this.eventContinuation(pending.task, pending.barrier));
+  }
+  /** ACK alone never clocks the VM, emits rewards, or runs a completion callback. */
+  acknowledgeEventSave(request: GameEventSaveRequest): void {
+    if (!this.pendingEventSave || this.pendingEventSave.request !== request)
+      throw new Error("Stale event save acknowledgement");
+    this.pendingEventSave = null;
   }
   /** Rebuild dependencies from trusted content without replaying initialization or triggers. */
   static restore(
@@ -1161,9 +1227,10 @@ export class FieldGame {
     const s = structuredClone(raw);
     checkpointKeys(
       s,
-      "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,se,fade,camera,native",
+      "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,se,fade,camera,native" +
+        (s.kind === "event-field-v1" ? ",execution" : ""),
     );
-    if (s.kind !== "idle-field-v10" || s.contentHash !== content.contentHash)
+    if (!["idle-field-v10", "event-field-v1"].includes(s.kind) || s.contentHash !== content.contentHash)
       throw new Error("Field checkpoint source/version mismatch");
     const transportationProfile = frameworkTransportationPresentation(content.developmentProfile);
     if (transportationProfile && native && options.transportation) {
@@ -1181,9 +1248,10 @@ export class FieldGame {
     const presentation = sourcePresentationCheckpoint(options.sourcePresentation?.context() ?? null);
     if (canonical(sourcePresentationCheckpoint(s.sourcePresentation)) !== canonical(presentation))
       throw new Error("Field checkpoint source presentation context mismatch");
-    // Pending entry scripts cannot be saved. Unknown bootstrap context cannot
-    // acquire a source synchronization proof merely by editing a checkpoint.
-    if (s.entrySynchronized !== (content.entry.synchronization ? true : null))
+    // Only an explicit continuation can preserve an unfinished entry script.
+    if (content.entry.synchronization ?
+        s.entrySynchronized !== true && !(s.kind === "event-field-v1" && s.entrySynchronized === false) :
+        s.entrySynchronized !== null)
       throw new Error("Field checkpoint entry synchronization mismatch");
     checkpointNumber(s.time);
     checkpointNumber(s.remainder, 0, 10);
@@ -1276,6 +1344,23 @@ export class FieldGame {
     next.nextTask = s.nextTask;
     next.synchronizedEntry = s.entrySynchronized;
     next.entryTaskStarted = s.entrySynchronized === true;
+    if (s.kind === "event-field-v1") {
+      const execution = restoreFieldEventCheckpoint(s.execution, { content, eventState: next.eventState.snapshot(),
+        actorIds: Object.keys(next.actors), nextTask: s.nextTask, time: s.time, entrySynchronized: s.entrySynchronized });
+      if (s.native?.completedScript) throw new Error("Event continuation cannot also own a completed script");
+      const main = execution.main, task = next.task(main.script, main.pc, main.actor, main.id);
+      Object.assign(task, { stack: [...main.stack], range: { ...main.range },
+        sourceEntityId: main.sourceEntityId, lastClock: s.time });
+      next.tasks = [task];
+      next.eventRootScript = execution.eventRootScript;
+      next.scriptHook = execution.scriptHook && { ...execution.scriptHook,
+        locals: next.eventState.importScriptLocalFrame(execution.scriptHook.locals) };
+      next.puppetLifecycle = execution.puppetLifecycle && { ...execution.puppetLifecycle,
+        script: structuredClone(content.scriptPuppetContexts![execution.puppetLifecycle.name]!) };
+      next.cameraEventActive = execution.cameraEventActive;
+      next.entryTaskStarted = execution.entryTaskStarted;
+      next.requireEventSaveBoundary(task);
+    }
     return next;
   }
   /** Re-register immutable group definitions for their saved ordering only.
@@ -1897,10 +1982,11 @@ export class FieldGame {
       milliseconds > 60000
     )
       throw new Error("Invalid elapsed time");
+    if (this.pendingEventSave) return;
     this.remainder += milliseconds;
     while (this.remainder >= 10) {
       this.remainder -= 10;
-      if (this.stop) continue;
+      if (this.stop || this.pendingEventSave) continue;
       try { if (!this.soundReady) continue; }
       catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       let effects: FieldEffectPrepared | undefined;
@@ -2594,7 +2680,7 @@ export class FieldGame {
     return wait;
   }
   private pump(frameDeltaSeconds = 0): void {
-    if (this.stop || this.shopTask) return;
+    if (this.stop || this.shopTask || this.pendingEventSave) return;
     // Native Integrator clocks main, then the 32 global tracks. Core.Clock
     // drains Next results before the following core gets its first instruction.
     // External treasure coroutines do not occupy the native main core.
@@ -2606,7 +2692,7 @@ export class FieldGame {
     // frame. Discover it after that registration, without re-clocking a core.
     const main = this.tasks.find((t) => t.slot === null && !t.treasureRoot);
     if (main) this.clockTask(main, frameDeltaSeconds);
-    if (this.stop) return;
+    if (this.stop || this.pendingEventSave) return;
     for (let slot = 0; slot < 32; slot++) {
       const task = this.tasks.find((t) => !t.done && t.slot === slot);
       if (task) this.clockTask(task, frameDeltaSeconds);
@@ -2850,6 +2936,10 @@ export class FieldGame {
           return;
         }
         switch (op.kind) {
+          case "event-save":
+            try { this.requestEventSave(t, op); }
+            catch (error) { this.block(error instanceof Error ? error.message : String(error), op); }
+            return;
           case "script-transition":
             try { this.transitionScript(t, op); }
             catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }

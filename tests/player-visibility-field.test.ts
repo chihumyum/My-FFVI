@@ -157,7 +157,7 @@ test("a save cannot inject visibility admission and malformed capabilities are r
   const { content, field } = fixture();
   const saved = field.checkpoint();
   assert.throws(() => FieldGame.restore(content, { ...saved,
-    playerVisibility: { childEntityObject: "absent" } } as typeof saved), /checkpoint fields/);
+    playerVisibility: { childEntityObject: "absent" } } as unknown as typeof saved), /checkpoint fields/);
   assert.throws(() => fixture({ playerVisibility: { childEntityObject: "anything" } } as unknown as FieldGameOptions),
     /Unknown player visibility/);
 });

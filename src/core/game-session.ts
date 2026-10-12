@@ -1,4 +1,5 @@
 import type { FieldContent } from "../field/types.js";
+import type { GameEventSaveRequest } from "./field.js";
 import { encounterContent, battleDefinitionBlocker, type BattleCatalog } from "./battle-content.js";
 import { BattleGame } from "./battle.js";
 import { EventState } from "./event-state.js";
@@ -56,6 +57,13 @@ type FreshSession = { content: SourceNewGameContent; state: GameState; events: E
   map: WorldMapContent; fade: FieldFadeState; presentation: SourcePresentationContext; restoring?: true };
 export type GameRestoreWorld = { catalog: WorldCatalog; map: WorldMapContent;
   source?: { content: SourceNewGameContent; initialMap: WorldMapContent } };
+export type PreparedGameEventSave = {
+  checkpoint: GameCheckpoint;
+  validate(): void;
+  /** Atomically write the prepared snapshot, then ACK without clocking events. */
+  commitWith(write: () => void): void;
+  discard(): void;
+};
 
 /** Owns the encounter handoff and consumes rewards exactly once. No renderer state drives progression. */
 export class GameSession {
@@ -185,6 +193,9 @@ export class GameSession {
   }
   get menuReady(): boolean { return this.fieldOwnerReady && this.field.menuReady; }
   get checkpointReady(): boolean { return this.fieldOwnerReady && this.field.checkpointReady; }
+  get eventSaveRequest(): GameEventSaveRequest | null {
+    return this.fieldOwnerReady ? this.field.eventSaveRequest : null;
+  }
   partyMenu() {
     const owned = this.state.snapshot(), model = projectPartyMenu(owned.party, owned.roster);
     const blocker = model.blocker ?? (!this.menuReady ? "请在地图空闲时调整编队。" : this.field.partyMenuBlocker);
@@ -249,6 +260,9 @@ export class GameSession {
   checkpoint(): GameCheckpoint {
     if (!this.checkpointReady)
       throw new Error("Cannot save during battle, movement or an event");
+    return this.captureCheckpoint(this.world.checkpoint());
+  }
+  private captureCheckpoint(world: WorldCheckpoint): GameCheckpoint {
     return {
       formatVersion: 4,
       kind: "game-checkpoint",
@@ -261,8 +275,42 @@ export class GameSession {
       remainder: this.remainder,
       battlePreferences: this.battlePreferences,
       owned: this.state.snapshot(),
-      world: this.world.checkpoint(),
+      world,
     };
+  }
+  /** Storage and UI never serialize the VM themselves. The private candidate
+   * contains the state after a successful ACK, before any following opcode. */
+  prepareEventSave(request: GameEventSaveRequest): PreparedGameEventSave {
+    const field = this.field;
+    const capture = (): GameCheckpoint => {
+      if (!this.fieldOwnerReady || this.field !== field || this.eventSaveRequest !== request)
+        throw new Error("Stale event save owner or request");
+      return this.captureCheckpoint(this.world.eventCheckpoint(request));
+    };
+    const checkpoint = capture(), identity = canonical(checkpoint);
+    let status: "prepared" | "committing" | "consumed" = "prepared";
+    const validateLive = (): void => {
+      if (canonical(checkpoint) !== identity || canonical(capture()) !== identity)
+        throw new Error("Event save state changed during preparation");
+    };
+    const validate = (): void => {
+      if (status !== "prepared") throw new Error("Event save preparation is already consumed");
+      validateLive();
+    };
+    return Object.freeze({ checkpoint, validate,
+      commitWith: (write: () => void): void => {
+        if (typeof write !== "function") throw new Error("Event save requires a synchronous writer");
+        validate(); status = "committing";
+        try {
+          write();
+          // A throwing callback before write succeeds is retryable. Once it
+          // returns, any owner/ACK failure is fatal to the host, not a retry.
+          validateLive();
+          field.acknowledgeEventSave(request);
+        } finally { status = "consumed"; }
+      },
+      discard: (): void => { if (status === "prepared") status = "consumed"; },
+    });
   }
   static restore(
     raw: GameCheckpoint,
@@ -334,9 +382,11 @@ export class GameSession {
   advance(ms: number) {
     if (!Number.isFinite(ms) || ms < 0 || ms > 60000)
       throw new Error("Invalid session elapsed time");
+    if (this.eventSaveRequest) return;
     this.remainder += ms;
     while (this.remainder >= 10) {
       this.remainder -= 10;
+      if (this.eventSaveRequest) continue;
       if (this.battle) {
         if (!this.field.soundReady) continue;
         this.field.bgm.advance(10, this.field.content.bgm);

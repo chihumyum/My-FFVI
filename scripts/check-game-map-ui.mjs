@@ -104,7 +104,8 @@ function setup({ transition = false, play = false, mediaWait = null } = {}) {
     setItem: (key, value) => { records.storageWrites++; slot.set(key, value); } });
   const context = vm.createContext({
     $, flow, game: session.field, audio, audioProjection, mapLoader: loader, contents,
-    sourceBoot: null, entryLoad: null, mapLoadFailure: null, failed: false, mapOpen: false,
+    sourceBoot: null, entryLoad: null, mapLoadFailure: null, eventSaver: null, eventSaveFailure: null,
+    attemptedEventSaves: new WeakSet(), failed: false, mapOpen: false,
     last: 0, lastMinimapFrame: 0, held: new Map(), loading: new WeakSet(),
     document: { hidden: false }, canvas: $("canvas"), renderer: { draw() {} },
     battleView: { hide() {}, draw() {} }, shopView: { reset() {} }, choiceView: { reset() {} },

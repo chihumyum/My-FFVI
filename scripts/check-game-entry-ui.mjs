@@ -33,6 +33,7 @@ const report = { formatVersion: 1, kind: "controlled-game-entry-ui-check", resul
   limitations: [
     "Entire current app initialization and handlers with real core/repository/storage/audio modules",
     "Content, DOM, fetch, image decode, WebAudio and renderer/menu widgets are controlled fixtures",
+    "Event-save scenarios author a Web barrier and control setItem failure or real digest completion; no session or save coordinator is mocked",
     "Widget constructor bindings and publication are checked; this is not browser pixels, audible output or source-story acceptance",
   ] };
 await mkdir(resolve(reportPath, ".."), { recursive: true });
@@ -60,10 +61,72 @@ async function packages() {
   ]);
   return { initial, battle, content, catalog, map, files };
 }
+const beforeEventSave = { category: "ScenarioFlag1", index: 3 };
+const afterEventSave = { category: "ScenarioFlag1", index: 4 };
+async function eventPackages() {
+  const fixture = checkpointFixture();
+  const source = { file: "synthetic", assetPath: "game-entry-event-save" };
+  fixture.field.scripts.eventSave = [
+    { kind: "flag", ref: beforeEventSave, operation: "set" },
+    { kind: "inventory", command: { kind: "grant-item", id: 10, count: 2 }, result: null, dependencies: [] },
+    { kind: "event-save" },
+    { kind: "inventory", command: { kind: "grant-item", id: 10, count: 3 }, result: null, dependencies: [] },
+    { kind: "flag", ref: afterEventSave, operation: "set" },
+    { kind: "exit" },
+  ].map((command, index) => ({ ...command, script: "eventSave", index, source }));
+  fixture.field.entry.initialEventValues = [beforeEventSave, afterEventSave].map((ref) => ({ ref, value: 0 }));
+  const initial = await seal(fixture.field), battle = await seal(fixture.battle);
+  return { initial, battle, files: new Map([["/game/content.json", initial], ["/game/battle.json", battle]]) };
+}
+function eventProgress(owner) {
+  return {
+    before: owner.field.eventState.read(beforeEventSave),
+    items: owner.state.snapshot().items.find((item) => item.id === 10)?.count ?? 0,
+    after: owner.field.eventState.read(afterEventSave),
+  };
+}
+const atBarrier = { before: 1, items: 2, after: 0 };
+const afterBarrier = { before: 1, items: 5, after: 1 };
+function startEventSave(h) {
+  const owner = h.api.read().flow.currentSession;
+  assert.ok(owner instanceof GameSession);
+  assert.equal(owner.field.startEvent("eventSave"), true);
+  assert.equal(owner.field.stop, null);
+  assert.ok(owner.eventSaveRequest);
+  assert.deepEqual(eventProgress(owner), atBarrier);
+  return { owner, request: owner.eventSaveRequest };
+}
 function deferred() {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
+}
+async function eventually(predicate, message) {
+  const deadline = Date.now() + 5000;
+  while (!predicate()) {
+    assert.ok(Date.now() < deadline, message);
+    await new Promise((done) => setTimeout(done, 1));
+  }
+}
+// Hold one platform digest, not the encoder or coordinator. The actual hashing
+// and checkpoint validation still run, and the global method is always restored.
+function holdNextDigest() {
+  const subtle = globalThis.crypto.subtle;
+  const descriptor = Object.getOwnPropertyDescriptor(subtle, "digest"), original = subtle.digest;
+  const started = deferred(), release = deferred(), completed = deferred();
+  let held = false;
+  Object.defineProperty(subtle, "digest", { configurable: true, writable: true, value: async function (...args) {
+    const thisDigest = !held;
+    if (thisDigest) { held = true; started.resolve(); await release.promise; }
+    try { return await original.apply(this, args); }
+    finally { if (thisDigest) completed.resolve(); }
+  } });
+  return { started: started.promise, completed: completed.promise, release: release.resolve, get held() { return held; },
+    restore() {
+      release.resolve();
+      if (descriptor) Object.defineProperty(subtle, "digest", descriptor);
+      else delete subtle.digest;
+    } };
 }
 async function sourceSave(pack) {
   const presentation = createSourcePresentationContext({ kind: "title-new-game",
@@ -120,7 +183,8 @@ globalThis.__entry = {
 const audioBody = audioModule.body.replace(/\bexport (?=class |function )/g, "");
 
 async function host(pack, { slots = new Map() } = {}) {
-  const calls = { json: [], images: [], views: [], frameCallbacks: [], writes: 0, audioContexts: 0 };
+  const calls = { json: [], images: [], views: [], frameCallbacks: [], writes: 0, writeAttempts: 0, audioContexts: 0 };
+  const storageFault = { error: null };
   const failedUrls = new Set(), failedImages = new Set(), heldUrls = new Map(), heldImages = new Map();
   const observedRequests = new Map();
   const nodes = new Map(), listeners = new Map();
@@ -185,7 +249,11 @@ async function host(pack, { slots = new Map() } = {}) {
     console, performance: { now: () => now },
     requestAnimationFrame(fn) { calls.frameCallbacks.push(fn); },
     localStorage: { getItem: (key) => slots.get(key) ?? null,
-      setItem(key, value) { calls.writes++; slots.set(key, value); } },
+      setItem(key, value) {
+        calls.writeAttempts++;
+        if (storageFault.error) throw storageFault.error;
+        calls.writes++; slots.set(key, value);
+      } },
     async fetch(url) {
       record("json", url);
       const wait = heldUrls.get(url); if (wait) await wait.promise;
@@ -201,8 +269,8 @@ async function host(pack, { slots = new Map() } = {}) {
     await context.__init;
     assert.equal(api.read().failed, false, nodes.get("load-error").textContent);
   }
-  async function frame() {
-    now += 50;
+  async function frame(elapsed = 50) {
+    now += elapsed;
     const callback = calls.frameCallbacks.shift();
     assert.ok(callback, "The actual app must retain its RAF loop");
     callback(now);
@@ -226,10 +294,19 @@ async function host(pack, { slots = new Map() } = {}) {
       "BattleView must consume the newly published session catalog");
     assert.equal(state.inventoryView.args[1], owner.battleCatalog.gameState.items);
   }
-  return { api, ready, frame, sourceStarted, boundToCurrent, observed, calls, slots,
+  return { api, ready, frame, sourceStarted, boundToCurrent, observed, calls, slots, storageFault,
     failedUrls, failedImages, heldUrls, heldImages, $: (id) => document.getElementById(id) };
 }
 async function check(name, body) { await body(); report.tests.push({ name, pass: true }); }
+function stored(h) {
+  return new CheckpointStorage({ getItem: (key) => h.slots.get(key) ?? null,
+    setItem() { throw new Error("The test's save inspector must never write"); } });
+}
+async function eventSaveFinished(h) {
+  await eventually(() => !h.api.read().flow.busy && h.$("event-saving").hidden,
+    "The app did not finish and acknowledge its event save");
+  assert.equal(h.api.read().failed, false, h.$("load-error").textContent);
+}
 
 try {
   await check("the actual title initializes and renders with no session or content/media requests", async () => {
@@ -349,8 +426,108 @@ try {
     assert.deepEqual(old.checkpoint(), checkpoint);
     assert.equal(h.calls.writes, 0);
   });
+  await check("the app RAF automatically saves one barrier and ACK waits for the next logical clock", async () => {
+    const h = await host(await eventPackages()); await h.ready(); await h.$("start").onclick();
+    const { owner, request } = startEventSave(h);
+    assert.equal(h.calls.writeAttempts, 0, "Starting the script must not bypass the app persistence host");
+    await h.frame(10); await eventSaveFinished(h);
+    assert.equal(h.api.read().flow.currentSession, owner);
+    assert.equal(owner.eventSaveRequest, null);
+    assert.deepEqual(eventProgress(owner), atBarrier, "ACK must not execute the post-save reward");
+    assert.equal(h.calls.writes, 1); assert.equal(h.calls.writeAttempts, 1);
+    const saved = await stored(h).load(); assert.ok(saved);
+    assert.equal(saved.checkpoint.world.kind, "event-world-v1");
+    const field = saved.checkpoint.world.field;
+    assert.equal(field.kind, "event-field-v1");
+    assert.deepEqual(field.execution.barrier, { script: request.site.script, pc: 2 });
+    assert.equal(field.execution.main.pc, 3, "The persisted PC consumes the barrier exactly once");
+    assert.equal(saved.checkpoint.owned.items.find((item) => item.id === 10)?.count, 2);
+    await h.frame(10);
+    assert.deepEqual(eventProgress(owner), afterBarrier);
+    assert.equal(owner.checkpointReady, true);
+    await h.frame(50); assert.equal(h.calls.writeAttempts, 1);
+  });
+  await check("quota failure shows retry and preserves the same request, rewards and previous save bytes", async () => {
+    const h = await host(await eventPackages()); await h.ready(); await h.$("start").onclick();
+    await h.$("save-game").onclick();
+    const previous = await stored(h).load(), before = [...h.slots]; assert.ok(previous);
+    const writeBaseline = h.calls.writes, attemptBaseline = h.calls.writeAttempts;
+    h.storageFault.error = new Error("Controlled setItem quota exceeded");
+    const { owner, request } = startEventSave(h);
+    await h.frame(10);
+    await eventually(() => !h.$("retry-event-save").hidden && !h.api.read().flow.busy,
+      "The app did not offer retry for a recoverable storage failure");
+    assert.equal(h.$("event-saving").hidden, false);
+    assert.equal(h.$("retry-event-save").disabled, false);
+    assert.match(h.$("event-save-message").textContent, /quota exceeded/);
+    assert.equal(owner.eventSaveRequest, request); assert.deepEqual(eventProgress(owner), atBarrier);
+    assert.deepEqual([...h.slots], before); assert.equal(h.calls.writes, writeBaseline);
+    assert.equal(h.calls.writeAttempts, attemptBaseline + 1);
+    await h.frame(50); await h.frame(50);
+    assert.equal(h.calls.writeAttempts, attemptBaseline + 1, "RAF must not silently retry a failed request");
+    assert.equal(owner.eventSaveRequest, request); assert.deepEqual(eventProgress(owner), atBarrier);
+    h.storageFault.error = null;
+    await h.$("retry-event-save").onclick(); await eventSaveFinished(h);
+    assert.equal(h.api.read().flow.currentSession, owner);
+    assert.equal(owner.eventSaveRequest, null); assert.deepEqual(eventProgress(owner), atBarrier);
+    assert.equal(h.calls.writes, writeBaseline + 1); assert.equal(h.calls.writeAttempts, attemptBaseline + 2);
+    assert.deepEqual((await stored(h).load(true)).checkpoint, previous.checkpoint);
+    await h.frame(10); assert.deepEqual(eventProgress(owner), afterBarrier);
+    await h.frame(50); assert.equal(h.calls.writes, writeBaseline + 1);
+  });
+  await check("returning to title while real encoding is pending prevents every late storage write", async () => {
+    const h = await host(await eventPackages()); await h.ready(); await h.$("start").onclick();
+    await h.$("save-game").onclick();
+    const before = [...h.slots], writeBaseline = h.calls.writes, attemptBaseline = h.calls.writeAttempts;
+    const { owner, request } = startEventSave(h), digest = holdNextDigest();
+    try {
+      await h.frame(10);
+      assert.equal(digest.held, true, "Actual checkpoint encoding must have reached the controlled digest");
+      assert.equal(h.api.read().flow.busy, true);
+      assert.equal(h.$("event-saving").hidden, false);
+      assert.equal(h.$("event-save-title").disabled, false);
+      h.$("event-save-title").onclick();
+      assert.equal(h.api.read().flow.phase, "title");
+      assert.equal(h.api.read().flow.busy, false);
+      assert.equal(h.$("event-saving").hidden, true);
+      digest.release(); await digest.completed; await new Promise(setImmediate);
+      await h.frame(50); await h.frame(50);
+      assert.equal(h.api.read().flow.phase, "title");
+      assert.equal(h.api.read().flow.currentSession, owner, "A title does not fabricate a replacement owner");
+      assert.equal(owner.eventSaveRequest, request); assert.deepEqual(eventProgress(owner), atBarrier);
+      assert.deepEqual([...h.slots], before);
+      assert.equal(h.calls.writes, writeBaseline); assert.equal(h.calls.writeAttempts, attemptBaseline);
+    } finally { digest.restore(); }
+  });
+  await check("loading an event checkpoint retains pause and resumes after the barrier without a second save or grant", async () => {
+    const h = await host(await eventPackages()); await h.ready(); await h.$("start").onclick();
+    const { owner: old } = startEventSave(h);
+    await h.frame(10); await eventSaveFinished(h);
+    const saved = await stored(h).load(), bytes = [...h.slots]; assert.ok(saved);
+    const writeBaseline = h.calls.writes, attemptBaseline = h.calls.writeAttempts;
+    await h.$("load-game").onclick(); h.boundToCurrent();
+    const owner = h.api.read().flow.currentSession;
+    assert.notEqual(owner, old); assert.equal(h.api.read().flow.paused, true);
+    assert.equal(h.$("pause").hidden, false); assert.equal(h.$("event-saving").hidden, true);
+    assert.equal(owner.eventSaveRequest, null); assert.equal(owner.field.busy, true);
+    assert.deepEqual(eventProgress(owner), atBarrier);
+    const time = owner.field.time;
+    await h.frame(50); await h.frame(50);
+    assert.equal(owner.field.time, time, "Restoring must not resume the event behind the pause overlay");
+    assert.deepEqual(eventProgress(owner), atBarrier);
+    assert.deepEqual([...h.slots], bytes); assert.equal(h.calls.writeAttempts, attemptBaseline);
+    h.$("resume").onclick();
+    assert.equal(h.api.read().flow.paused, false);
+    assert.deepEqual(eventProgress(owner), atBarrier, "The Continue click must not pump the event synchronously");
+    await h.frame(10);
+    assert.deepEqual(eventProgress(owner), afterBarrier); assert.equal(owner.checkpointReady, true);
+    assert.deepEqual(eventProgress(old), atBarrier, "Restoring does not continue or mutate the outgoing owner");
+    await h.frame(50);
+    assert.equal(owner.eventSaveRequest, null); assert.equal(h.$("event-saving").hidden, true);
+    assert.equal(h.calls.writes, writeBaseline); assert.equal(h.calls.writeAttempts, attemptBaseline);
+  });
   report.runtimeSha256 = Object.fromEntries(await Promise.all([
-    "game-session", "game-flow", "game-content", "saved-game", "source-new-game",
+    "game-session", "game-flow", "game-content", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint",
   ].map(async (name) => [name, sha(await readFile(resolve(compiled, `src/core/${name}.js`)))])));
   report.result = "passed";
 } catch (error) {

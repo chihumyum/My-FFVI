@@ -6,6 +6,7 @@ import { ShopView } from "./shop-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
 import { GameFlow } from "/runtime/core/game-flow.js";
 import { GameMapLoader } from "/runtime/core/game-map-loader.js";
+import { GameEventSaveCoordinator } from "/runtime/core/game-event-save.js";
 import { GameContentRepository, fieldMediaUrls, sessionMediaUrls, sourceEntryMediaUrls } from "/runtime/core/game-content.js";
 import { NewGameFieldEntry } from "/runtime/core/new-game-field-entry.js";
 import { FieldFadeState, fieldFadeOverlay } from "/runtime/core/field-fade.js";
@@ -36,6 +37,9 @@ let flow,
 let sourceBoot = null;
 let entryLoad = null;
 let mapLoadFailure = null;
+let eventSaver = null;
+let eventSaveFailure = null;
+const attemptedEventSaves = new WeakSet();
 let hasSave = false,
   hasPreviousSave = false;
 const query = new URLSearchParams(location.search);
@@ -271,6 +275,8 @@ function advanceSourceBoot(seconds) {
 }
 function returnToTitle() {
   mapLoader.cancel();
+  eventSaver?.cancel();
+  eventSaveFailure = null;
   mapLoadFailure = null;
   flow.returnToTitle();
   if (entryLoad) finishEntryLoad(entryLoad);
@@ -279,7 +285,7 @@ function returnToTitle() {
   held.clear();
   mapOpen = false;
   last = 0;
-  for (const id of ["pause", "stop", "dialogue", "map-overview", "minimap-button", "shop-menu"])
+  for (const id of ["pause", "stop", "dialogue", "map-overview", "minimap-button", "shop-menu", "event-saving"])
     $(id).hidden = true;
   battleView?.hide();
   shopView?.reset();
@@ -299,6 +305,7 @@ function text(id, value) {
   if (node.textContent !== value) node.textContent = value;
 }
 function sync() {
+  syncEventSave();
   if (!flow.started || !game) {
     choiceView?.reset(); shopView?.reset();
     $("map-button").disabled = true;
@@ -475,6 +482,8 @@ $("save-game").onclick = saveGame;
 $("load-game").onclick = () => loadGame(false);
 $("load-start").onclick = () => loadGame(false);
 $("load-previous").onclick = () => loadGame(true);
+$("retry-event-save").onclick = () => saveEventProgress();
+$("event-save-title").onclick = returnToTitle;
 $("sound-button").onclick = () => {
   audio.mute();
   $("sound-button").textContent = audio.muted ? "声音关" : "声音开";
@@ -500,6 +509,8 @@ function frame(now) {
       audio.ready(audioProjection(game), game.pendingAudioTracks);
     flow.advance(dt, { visible: !document.hidden, mediaReady: ready, overlayOpen: mapOpen });
     if (flow.started && !sourceBoot) {
+      if (flow.session.eventSaveRequest && !attemptedEventSaves.has(flow.session.eventSaveRequest))
+        saveEventProgress();
       if (held.size) flow.move([...held.values()].at(-1));
       if (game.stop?.kind === "map-transition" && !loading.has(game.stop))
         loadMap(flow.session);
@@ -513,6 +524,7 @@ function frame(now) {
       audioReady &&
         !failed &&
         !flow.busy &&
+        !flow.session.eventSaveRequest &&
         !flow.paused &&
         !mapOpen &&
         !document.hidden &&
@@ -555,6 +567,7 @@ function failure(error) {
     "battle-result",
     "map-overview",
     "minimap-button",
+    "event-saving",
   ])
     $(id).hidden = true;
   $("menu-button").disabled = true;
@@ -750,6 +763,44 @@ async function saveGame() {
     prepared?.discard();
     operation.cancel();
     syncSaveControls();
+  }
+}
+function syncEventSave() {
+  const request = flow?.started ? flow.currentSession?.eventSaveRequest : null;
+  $("event-saving").hidden = !request;
+  if (!request) return;
+  const problem = eventSaveFailure?.request === request ? eventSaveFailure.error : null;
+  text("event-save-message", problem
+    ? `保存失败，剧情已停在此处。重试后继续：${problem.message ?? problem}`
+    : "正在保存进度…");
+  $("retry-event-save").hidden = !problem;
+  $("retry-event-save").disabled = failed || flow.busy;
+  $("event-save-title").disabled = failed;
+}
+async function saveEventProgress() {
+  const owner = flow.currentSession, request = owner?.eventSaveRequest;
+  if (failed || !flow.started || flow.busy || !request) return;
+  attemptedEventSaves.add(request);
+  eventSaveFailure = null;
+  held.clear();
+  try {
+    try { eventSaver ??= new GameEventSaveCoordinator(flow, checkpointStorage()); }
+    catch (error) { eventSaveFailure = { request, error }; return; }
+    const pending = eventSaver.save(Date.now());
+    syncSaveControls(); syncEventSave();
+    const result = await pending;
+    if (result.status === "cancelled") return;
+    if (result.status === "failed") {
+      if (flow.started && flow.currentSession === owner && owner.eventSaveRequest === request)
+        eventSaveFailure = { request, error: result.error };
+      return;
+    }
+    await refreshSaveInfo();
+  } catch (error) {
+    // After a successful write, an ACK or UI failure must not offer replay.
+    failure(error);
+  } finally {
+    syncEventSave(); syncSaveControls();
   }
 }
 async function loadGame(previous) {

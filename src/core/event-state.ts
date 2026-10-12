@@ -64,6 +64,30 @@ export type ScriptLocals = { labels: string[]; values: number[] | null };
  * HookedProcess retains the native arrays by reference: a callee without a
  * ScriptLocal declaration continues to write that same bank. */
 export type ScriptLocalFrame = Readonly<{ kind: "script-local-frame" }>;
+/** Web continuation data. The current bank remains owned by EventStateSnapshot;
+ * only a suspended, different bank carries its own values. */
+export type ScriptLocalFrameSnapshot =
+  | { kind: "current" }
+  | { kind: "detached"; labels: string[] | null; values: Value[] | null };
+
+export function validateScriptLocalFrameSnapshot(raw: unknown): ScriptLocalFrameSnapshot {
+  if (raw && typeof raw === "object" && "kind" in raw && raw.kind === "current") {
+    checkpointKeys(raw, "kind");
+    return { kind: "current" };
+  }
+  checkpointKeys(raw, "kind,labels,values");
+  const saved = raw as Extract<ScriptLocalFrameSnapshot, { kind: "detached" }>;
+  if (saved.kind !== "detached") throw new Error("Unknown script-local frame snapshot");
+  if (saved.labels === null || saved.values === null) {
+    if (saved.labels !== null || saved.values !== null) throw new Error("Mismatched script-local frame bank");
+  } else {
+    if (!Array.isArray(saved.labels) || !Array.isArray(saved.values) || saved.labels.length !== saved.values.length ||
+        Array.from(saved.labels).some((label) => typeof label !== "string"))
+      throw new Error("Invalid script-local frame bank");
+    for (const value of saved.values) if (value !== null) int32(value);
+  }
+  return structuredClone(saved);
+}
 export function isCategory(name: string): name is Category {
   return (categories as readonly string[]).includes(name);
 }
@@ -164,6 +188,23 @@ export class EventState {
   captureScriptLocals(): ScriptLocalFrame {
     const frame = Object.freeze({ kind: "script-local-frame" as const });
     this.scriptLocalFrames.set(frame, { labels: this.data.scriptLabels, values: this.data.script });
+    return frame;
+  }
+  exportScriptLocalFrame(frame: ScriptLocalFrame): ScriptLocalFrameSnapshot {
+    const saved = this.scriptLocalFrames.get(frame);
+    if (!saved) throw new Error("Script-local frame belongs to another event owner or is invalid");
+    return saved.labels === this.data.scriptLabels && saved.values === this.data.script
+      ? { kind: "current" }
+      : { kind: "detached", labels: saved.labels === null ? null : [...saved.labels],
+        values: saved.values === null ? null : [...saved.values] };
+  }
+  /** Rebind a saved frame to this owner without beginning a script, copying the
+   * current bank, or resetting MessageSelection/ItemSelection. */
+  importScriptLocalFrame(raw: ScriptLocalFrameSnapshot): ScriptLocalFrame {
+    const saved = validateScriptLocalFrameSnapshot(raw);
+    if (saved.kind === "current") return this.captureScriptLocals();
+    const frame = Object.freeze({ kind: "script-local-frame" as const });
+    this.scriptLocalFrames.set(frame, { labels: saved.labels, values: saved.values });
     return frame;
   }
   /** Native DataStorage.SetScriptLocal restores only the two references. It

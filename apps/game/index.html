@@ -151,6 +151,14 @@
           hidden
           aria-label="商店"
         ></section>
+        <section id="event-saving" class="overlay" aria-label="保存剧情进度" aria-live="polite" hidden>
+          <div class="panel">
+            <h2>保存进度</h2>
+            <p id="event-save-message">正在保存进度…</p>
+            <button id="retry-event-save" hidden>重试保存</button>
+            <button id="event-save-title">返回标题</button>
+          </div>
+        </section>
         <section id="dialogue" aria-live="polite" hidden>
           <strong id="speaker"></strong>
           <p id="message"></p>
