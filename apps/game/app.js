@@ -2,11 +2,12 @@ import { InventoryView } from "./inventory-view.js";
 import { EquipmentView } from "./equipment-view.js";
 import { ShopView } from "./shop-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
+import { GameFlow } from "/runtime/core/game-flow.js";
+import { GameContentRepository, fieldMediaUrls, openingMediaUrls } from "/runtime/core/game-content.js";
 import { NewGameFieldEntry } from "/runtime/core/new-game-field-entry.js";
 import { FieldFadeState, fieldFadeOverlay } from "/runtime/core/field-fade.js";
 import { createSourcePresentationContext } from "/runtime/core/source-presentation.js";
 import { battleAppearanceQuads } from "/runtime/core/battle-appearance.js";
-import { verifyContent } from "/runtime/core/content-integrity.js";
 import { CheckpointStorage } from "/runtime/core/saved-game.js";
 import { Renderer } from "./renderer.js";
 import { BattleView } from "./battle-view.js";
@@ -15,31 +16,32 @@ const $ = (id) => document.getElementById(id),
   canvas = $("game");
 let content,
   battleContent,
-  session,
+  flow,
   game,
   renderer,
   openingRenderer,
   minimapRenderer,
   overviewRenderer,
-  catalogPromise,
   battleView,
   inventoryView,
   equipmentView,
   shopView,
-  started = false,
-  paused = false,
   mapOpen = false,
   lastMinimapFrame = 0,
   last = 0,
   failed = false;
 let sourceBoot = null;
-let checkpointBusy = false,
-  hasSave = false,
+let hasSave = false,
   hasPreviousSave = false;
 const checkpointStorage = () => new CheckpointStorage(localStorage);
 const images = new Map(),
   loading = new WeakSet();
 const audio = new AudioOutput();
+const contents = new GameContentRepository(async (url) => {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("游戏内容载入失败，请确认本地内容已经构建。");
+  return response.json();
+});
 const runtime = { audioReadiness: { isReady: (track) => audio.isReady(track) } };
 const query = new URLSearchParams(location.search);
 const preview = query.has("map")
@@ -61,22 +63,20 @@ const held = new Map(),
   };
 const focus = () => canvas.focus();
 function pause(value) {
-  if (checkpointBusy) return;
-  if (!started || (game.stop && !session.battle)) return;
-  paused = value;
+  if (!flow?.pause(value)) return;
   if (!value) audio.unlock().catch(failure);
   mapOpen = false;
   held.clear();
   $("pause").hidden = !value;
   $("menu-button").textContent = value ? "继续" : "暂停";
   if (value) {
-    $("battle-mode").value = session.battlePreferences.mode;
-    $("battle-speed").value = String(session.battlePreferences.speedIndex);
+    $("battle-mode").value = flow.session.battlePreferences.mode;
+    $("battle-speed").value = String(flow.session.battlePreferences.speedIndex);
     syncSaveControls();
     inventoryView.reset();
-    inventoryView.render(session);
+    inventoryView.render(flow.session);
     equipmentView.reset();
-    equipmentView.render(session);
+    equipmentView.render(flow.session);
   }
   sync();
   if (value) $("resume").focus();
@@ -85,7 +85,7 @@ function pause(value) {
 function setMap(value) {
   if (
     value &&
-    (!started || paused || session.battle || game.busy || !game.content.minimap)
+    (!flow?.started || flow.paused || flow.busy || flow.session.battle || game.busy || !game.content.minimap)
   )
     return;
   mapOpen = value;
@@ -102,18 +102,17 @@ function setupMapViews(next) {
   lastMinimapFrame = 0;
 }
 function reset() {
-  if (checkpointBusy) return;
+  if (flow.busy) return;
   sourceBoot = null;
   audio.reset();
   audio.unlock().catch(failure);
-  const preferences = session?.battlePreferences;
-  session = new GameSession(content, battleContent, undefined, runtime);
-  if (preferences) session.setBattlePreferences(preferences);
-  game = session.field;
+  const preferences = flow.session.battlePreferences;
+  const candidate = new GameSession(content, battleContent, undefined, runtime);
+  candidate.setBattlePreferences(preferences);
+  flow.start(candidate);
+  game = flow.session.field;
   renderer = openingRenderer;
   setupMapViews(content);
-  started = true;
-  paused = false;
   held.clear();
   for (const id of ["welcome", "pause", "stop", "dialogue"])
     $(id).hidden = true;
@@ -131,13 +130,14 @@ function reset() {
   sync();
 }
 async function startSourceGame() {
-  if (checkpointBusy || sourceBoot) return;
+  if (flow.busy || sourceBoot) return;
+  const operation = flow.beginOperation("new-game");
+  syncSaveControls();
   $("source-start").disabled = true;
   $("load-error").hidden = true;
   try {
-    const response = await fetch("/game/new-game.json");
-    if (!response.ok) throw new Error("原始新游戏内容尚未构建，请运行 npm run new-game:build。");
-    const bundle = await verifyContent(await response.json());
+    const { content: bundle, catalog, map } = await contents.sourceNewGame();
+    if (!operation.isCurrent()) return;
     const presentation = createSourcePresentationContext({ kind: "title-new-game",
       titleCleanupComplete: true, openingCallbackStarted: false });
     const entry = new NewGameFieldEntry(bundle.entry, presentation);
@@ -148,35 +148,33 @@ async function startSourceGame() {
     audio.reset(); // The Web title has no active BGM voice to fade.
     await audio.unlock();
     start.commit();
-    const boot = { bundle, presentation, entry, fade: start.fade, ready: false, catalog: null, map: null };
+    if (!operation.isCurrent()) return;
+    const boot = { bundle, presentation, entry, fade: start.fade, ready: false, catalog, map, operation };
     sourceBoot = boot;
-    started = false; paused = false; held.clear();
+    held.clear();
     for (const id of ["welcome", "pause", "stop", "dialogue"]) $(id).hidden = true;
     text("status", "正在准备新游戏…");
-    const catalog = await worldCatalog();
-    const indexed = catalog.maps[String(bundle.entry.mapId)];
-    if (!indexed) throw new Error("新游戏地图不在当前来源目录中。");
-    const mapResponse = await fetch(indexed.url);
-    if (!mapResponse.ok) throw new Error("新游戏地图载入失败。");
-    const map = await verifyContent(await mapResponse.json(), indexed.contentHash);
     if (!map.map) throw new Error("新游戏地图几何未完成。");
     await loadImages(new Set([...Object.values(map.map.textures),
       ...(map.map.backgrounds ?? []).map(background => background.texture.url),
       ...Object.values(catalog.characters).flatMap(c => Object.values(c.sprites).map(s => s.file)),
       ...Object.values(catalog.minimap?.icons ?? {}).map(s => s.file)]));
-    if (sourceBoot !== boot) return;
-    Object.assign(boot, { catalog, map, ready: true });
+    if (sourceBoot !== boot || !operation.isCurrent()) return;
+    boot.ready = true;
   } catch (error) {
+    if (!operation.isCurrent()) return;
+    operation.cancel();
     sourceBoot = null;
     $("welcome").hidden = false;
     $("source-start").disabled = false;
     $("load-error").hidden = false;
     text("load-error", error.message ?? String(error));
+    syncSaveControls();
   }
 }
 function advanceSourceBoot(seconds) {
   const boot = sourceBoot;
-  if (!boot) return;
+  if (!boot || !boot.operation.isCurrent()) return;
   boot.fade.advance(seconds);
   const next = boot.entry.prepareResume(boot.fade, boot.ready);
   if (next) { next.commit(); boot.fade = next.fade; }
@@ -187,15 +185,36 @@ function advanceSourceBoot(seconds) {
   const launch = boot.entry.prepareLaunch(boot.fade, candidate.newGamePreparation(true));
   candidate.launchNewGame(launch.launch);
   launch.commit();
-  session = candidate; game = session.field; renderer = nextRenderer;
+  if (!boot.operation.publish(candidate)) return;
+  game = flow.session.field; renderer = nextRenderer;
   setupMapViews(game.content);
-  sourceBoot = null; started = true; paused = false;
+  sourceBoot = null;
   $("source-start").disabled = false;
   battleView.hide(); shopView.reset();
   $("menu-button").disabled = false;
   $("menu-button").textContent = "暂停";
   canvas.setAttribute("aria-label", `${game.content.map.id} 原始新游戏画面。`);
-  showLimitations(); focus(); sync();
+  showLimitations(); syncSaveControls(); focus(); sync();
+}
+function returnToTitle() {
+  flow.returnToTitle();
+  sourceBoot = null;
+  audio.reset();
+  held.clear();
+  mapOpen = false;
+  last = 0;
+  for (const id of ["pause", "stop", "dialogue", "map-overview", "minimap-button", "shop-menu"])
+    $(id).hidden = true;
+  battleView.hide();
+  shopView.reset();
+  $("welcome").hidden = false;
+  $("load-error").hidden = true;
+  $("menu-button").disabled = true;
+  $("menu-button").textContent = "暂停";
+  $("map-button").disabled = true;
+  syncSaveControls();
+  text("status", "选择开始游戏或继续本地进度。");
+  $("start").focus();
 }
 function text(id, value) {
   const node = $(id);
@@ -203,16 +222,17 @@ function text(id, value) {
 }
 function sync() {
   shopView?.render(
-    session,
-    started && !paused && !document.hidden && !session.battle && !game.stop,
+    flow.session,
+    flow.inputReady && !document.hidden && !flow.session.battle && !game.stop,
   );
   const mapName =
     game.content.map.id === content.map.id ? "纳尔谢" : game.content.map.id;
   text("map-label", mapName);
   const canMap =
-    started &&
-    !paused &&
-    !session.battle &&
+    flow.started &&
+    !flow.paused &&
+    !flow.busy &&
+    !flow.session.battle &&
     !game.busy &&
     !!game.content.minimap;
   if (!canMap) mapOpen = false;
@@ -221,19 +241,19 @@ function sync() {
   $("map-overview").hidden = !mapOpen;
   $("minimap-button").hidden = !canMap || mapOpen;
   text("overview-title", mapName);
-  if (session.battle) {
+  if (flow.session.battle) {
     held.clear();
     $("dialogue").hidden = true;
     $("stop").hidden = true;
-    battleView.sync(session.battle, paused);
+    battleView.sync(flow.session.battle, !flow.inputReady || document.hidden);
     text(
       "status",
-      `${mapName} · 战斗 · ${session.battle.phase === "active" ? "点击指令和目标；方向键选择，Enter 确认" : "战斗结束"}`,
+      `${mapName} · 战斗 · ${flow.session.battle.phase === "active" ? "点击指令和目标；方向键选择，Enter 确认" : "战斗结束"}`,
     );
     return;
   }
   battleView.hide();
-  $("dialogue").hidden = !game.messageWindow || paused;
+  $("dialogue").hidden = !game.messageWindow || flow.paused;
   if (game.messageWindow) {
     text("speaker", game.messageWindow.speaker);
     text("message", game.messageWindow.text);
@@ -268,32 +288,32 @@ function sync() {
           : game.busy
             ? "事件进行中…"
             : (game.movementBlocker ??
-              `${mapName} · ${game.player.x}, ${game.player.y} · ${session.gil} Gil`),
+              `${mapName} · ${game.player.x}, ${game.player.y} · ${flow.session.gil} Gil`),
   );
 }
 function confirm() {
-  if (!started || paused || mapOpen || game.stop) return;
-  game.confirm();
+  if (!flow.started || flow.paused || mapOpen || game.stop) return;
+  flow.confirm();
   sync();
 }
 window.addEventListener("keydown", (e) => {
-  if (e.code === "KeyM" && started) {
+  if (e.code === "KeyM" && flow?.started) {
     e.preventDefault();
     if (!e.repeat) setMap(!mapOpen);
     return;
   }
-  if (e.code === "Escape" && started) {
+  if (e.code === "Escape" && flow?.started) {
     e.preventDefault();
     if (!e.repeat) {
       if (mapOpen) setMap(false);
-      else if (!paused && game.currentShop && shopView.back()) sync();
-      else if (session.battle && !paused && battleView.back()) sync();
-      else pause(!paused);
+      else if (!flow.paused && game.currentShop && shopView.back()) sync();
+      else if (flow.session.battle && !flow.paused && battleView.back()) sync();
+      else pause(!flow.paused);
     }
     return;
   }
-  if (!started || paused || mapOpen) return;
-  if (session.battle) {
+  if (!flow?.started || flow.paused || flow.busy || mapOpen) return;
+  if (flow.session.battle) {
     if (e.target === canvas || $("battle-menu").contains(e.target))
       battleView.keyboard(e);
     return;
@@ -303,7 +323,7 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (!e.repeat) {
       held.set(e.code, directions[e.code]);
-      game.move(directions[e.code]);
+      flow.move(directions[e.code]);
     }
   }
   if (["Space", "Enter"].includes(e.code)) {
@@ -314,12 +334,12 @@ window.addEventListener("keydown", (e) => {
 window.addEventListener("keyup", (e) => held.delete(e.code));
 window.addEventListener("blur", () => {
   held.clear();
-  if (started) pause(true);
+  if (flow?.started) pause(true);
 });
 document.addEventListener("visibilitychange", () => {
   held.clear();
   last = 0;
-  if (document.hidden && started) pause(true);
+  if (document.hidden && flow?.started) pause(true);
 });
 canvas.addEventListener("blur", () => held.clear());
 canvas.addEventListener("click", focus);
@@ -327,14 +347,18 @@ $("start").onclick = reset;
 $("source-start").onclick = startSourceGame;
 $("restart").onclick = reset;
 $("retry").onclick = reset;
+$("return-title").onclick = returnToTitle;
+$("stop-title-return").onclick = returnToTitle;
 $("resume").onclick = () => pause(false);
-$("menu-button").onclick = () => pause(!paused);
+$("menu-button").onclick = () => pause(!flow.paused);
 $("battle-mode").onchange = () => {
-  session.setBattlePreferences({ ...session.battlePreferences, mode: $("battle-mode").value });
+  if (!flow.started || flow.busy) return;
+  flow.session.setBattlePreferences({ ...flow.session.battlePreferences, mode: $("battle-mode").value });
   sync();
 };
 $("battle-speed").onchange = () => {
-  session.setBattlePreferences({ ...session.battlePreferences, speedIndex: Number($("battle-speed").value) });
+  if (!flow.started || flow.busy) return;
+  flow.session.setBattlePreferences({ ...flow.session.battlePreferences, speedIndex: Number($("battle-speed").value) });
   sync();
 };
 $("save-game").onclick = saveGame;
@@ -360,39 +384,32 @@ function frame(now) {
     const dt = last ? Math.min(50, now - last) : 0;
     last = now;
     if (sourceBoot && !document.hidden) advanceSourceBoot(dt / 1000);
-    const ready = started && audio.ready(audioProjection(game), game.pendingBgmTracks);
-    if (
-      started &&
-      !paused &&
-      !checkpointBusy &&
-      !mapOpen &&
-      !document.hidden &&
-      ready
-    ) {
-      if (!session.battle && held.size) game.move([...held.values()].at(-1));
-      session.advance(dt);
+    const ready = flow.started && audio.ready(audioProjection(game), game.pendingBgmTracks);
+    flow.advance(dt, { visible: !document.hidden, mediaReady: ready, overlayOpen: mapOpen });
+    if (flow.started && !sourceBoot) {
+      if (held.size) flow.move([...held.values()].at(-1));
       if (game.stop?.kind === "map-transition" && !loading.has(game.stop))
-        loadMap(session);
+        loadMap(flow.session);
       sync();
     }
-    const projection = started ? audioProjection(game) : [];
-    const audioReady = started && audio.ready(projection, game.pendingBgmTracks);
+    const projection = flow.started ? audioProjection(game) : [];
+    const audioReady = flow.started && audio.ready(projection, game.pendingBgmTracks);
     audio.project(
       projection,
       audioReady &&
         !failed &&
-        !checkpointBusy &&
-        !paused &&
+        !flow.busy &&
+        !flow.paused &&
         !mapOpen &&
         !document.hidden &&
-        (!game.stop || !!session.battle),
+        (!game.stop || !!flow.session.battle),
       game.pendingBgmTracks,
     );
     text(
       "music-status",
-      started ? audio.status(audioReady, projection.length > 0) : "",
+      flow.started ? audio.status(audioReady, projection.length > 0) : "",
     );
-    if (session.battle) battleView.draw(session.battle);
+    if (flow.session.battle) battleView.draw(flow.session.battle);
     else if (renderer) renderer.draw(game);
     if (sourceBoot) {
       const c = canvas.getContext("2d"), color = fieldFadeOverlay(sourceBoot.fade.projection);
@@ -410,7 +427,8 @@ function frame(now) {
 }
 function failure(error) {
   failed = true;
-  audio.reset();
+  // Cleanup failure must not hide the original error or resume a broken loop.
+  try { audio.reset(); } catch { /* The game is already stopped. */ }
   held.clear();
   for (const id of [
     "pause",
@@ -442,28 +460,10 @@ async function init() {
       preview.entrance > 2147483647)
   )
     throw new Error("Invalid map preview identity");
-  const responses = await Promise.all([
-    fetch("/game/content.json"),
-    fetch("/game/battle.json"),
-  ]);
-  if (responses.some((r) => !r.ok))
-    throw new Error(
-      "缺少内容，请先运行 npm run game:build 和 npm run battle:build。",
-    );
-  [content, battleContent] = await Promise.all(responses.map((r) => r.json()));
-  await Promise.all([verifyContent(content), verifyContent(battleContent)]);
-  const urls = new Set([
-    ...Object.values(content.map.textures),
-    ...(content.map.backgrounds ?? []).map(background => background.texture.url),
-    ...Object.values(content.characters).flatMap((c) =>
-      Object.values(c.sprites).map((s) => s.file),
-    ),
-    ...Object.values(battleContent.common.sprites).map((s) => s.file),
-    ...Object.values(content.minimap?.icons ?? {}).map((s) => s.file),
-  ]);
-  await loadImages(urls);
-  session = new GameSession(content, battleContent, undefined, runtime);
-  game = session.field;
+  ({ field: content, battle: battleContent } = await contents.opening());
+  await loadImages(openingMediaUrls(content, battleContent));
+  flow = new GameFlow(new GameSession(content, battleContent, undefined, runtime));
+  game = flow.session.field;
   renderer = new Renderer(canvas, content, images);
   openingRenderer = renderer;
   setupMapViews(content);
@@ -472,13 +472,13 @@ async function init() {
     battleContent.common,
     images,
     () => {
-      if (session.continueVictory()) {
+      if (flow.continueVictory()) {
         sync();
         focus();
       }
     },
     () => {
-      if (session.retryBattle()) {
+      if (flow.retryBattle()) {
         sync();
         focus();
       }
@@ -489,12 +489,12 @@ async function init() {
     $("pause"),
     battleContent.gameState.items,
     () => {
-      equipmentView.render(session);
+      equipmentView.render(flow.session);
       syncSaveControls();
     },
   );
   equipmentView = new EquipmentView($("equipment-menu"), () => {
-    inventoryView.render(session);
+    inventoryView.render(flow.session);
     syncSaveControls();
   });
   shopView = new ShopView($("shop-menu"), () => {
@@ -547,39 +547,33 @@ async function loadImages(urls) {
   );
 }
 async function loadMap(owner) {
+  if (flow.busy || flow.session !== owner) return;
   const request = owner.field.stop;
+  const operation = flow.beginOperation("map");
   loading.add(request);
   held.clear();
+  syncSaveControls();
   let prepared;
+  let published = false;
   try {
-    const catalog = await worldCatalog();
-    const indexed = catalog.maps[String(request.request.mapId)];
-    if (!indexed) throw new Error("来源地图目录中没有此地图。");
-    const response = await fetch(indexed.url);
-    if (!response.ok) throw new Error("地图内容载入失败。");
-    const map = await verifyContent(await response.json(), indexed.contentHash);
-    if (session !== owner || owner.field.stop !== request) return;
+    const catalog = await contents.world();
+    const map = await contents.map(request.request.mapId, catalog);
+    if (!operation.isCurrent() || owner.field.stop !== request) return;
     prepared = owner.world.prepare(catalog, map);
     const next = prepared.field.content;
     await audio.prepare(audioProjection(prepared.field), prepared.field.pendingBgmTracks);
-    await loadImages(
-      new Set([
-        ...Object.values(next.map.textures),
-        ...(next.map.backgrounds ?? []).map(background => background.texture.url),
-        ...Object.values(next.characters).flatMap((c) =>
-          Object.values(c.sprites).map((s) => s.file),
-        ),
-        ...Object.values(next.minimap?.icons ?? {}).map((s) => s.file),
-      ]),
-    );
-    if (session !== owner) return;
+    await loadImages(fieldMediaUrls(next));
+    if (!operation.isCurrent()) return;
     const nextRenderer = new Renderer(canvas, next, images);
     if (!owner.world.commit(prepared)) {
       owner.world.fail(request, "地图载入期间状态已变化，请重新开始。");
+      operation.finish();
       sync();
       return;
     }
+    published = true;
     game = owner.field;
+    operation.finish();
     renderer = nextRenderer;
     setupMapViews(next);
     held.clear();
@@ -590,33 +584,33 @@ async function loadMap(owner) {
     );
     showLimitations();
     sync();
-    if (!paused && !document.hidden) focus();
+    if (!flow.paused && !document.hidden) focus();
   } catch (error) {
-    if (session !== owner) return;
-    catalogPromise = undefined;
+    if (published) { failure(error); return; }
+    if (!operation.isCurrent()) return;
+    contents.clear();
     owner.world.fail(request, String(error.message ?? error));
+    operation.finish();
     sync();
   } finally {
     if (prepared) owner.world.discard(prepared);
+    operation.cancel();
+    syncSaveControls();
   }
 }
-function worldCatalog() {
-  catalogPromise ??= fetch("/world/catalog.json").then(async (response) => {
-    if (!response.ok)
-      throw new Error("地图目录尚未生成，请运行 npm run world:build。");
-    return verifyContent(await response.json());
-  });
-  return catalogPromise;
-}
 function syncSaveControls() {
+  // Menu actions must not mutate the outgoing owner during asynchronous saves
+  // or while a replacement session is being prepared.
+  $("pause").inert = flow.busy;
+  $("pause").setAttribute("aria-busy", String(flow.busy));
   $("save-game").disabled =
-    failed || checkpointBusy || !session?.checkpointReady;
-  $("load-game").disabled = failed || checkpointBusy || !hasSave;
-  $("load-start").disabled = failed || checkpointBusy || !hasSave;
-  $("load-previous").disabled = failed || checkpointBusy || !hasPreviousSave;
-  for (const id of ["resume", "restart", "start"])
-    $(id).disabled = failed || checkpointBusy;
-  $("save-game").title = session?.checkpointReady
+    failed || flow.busy || !flow.session?.checkpointReady;
+  $("load-game").disabled = failed || flow.busy || !hasSave;
+  $("load-start").disabled = failed || flow.busy || !hasSave;
+  $("load-previous").disabled = failed || flow.busy || !hasPreviousSave;
+  for (const id of ["resume", "restart", "start", "source-start", "return-title", "stop-title-return"])
+    $(id).disabled = failed || flow.busy;
+  $("save-game").title = flow.session?.checkpointReady
     ? "保存到这台设备的浏览器"
     : "移动、事件或战斗结束后才能保存";
 }
@@ -641,69 +635,36 @@ async function refreshSaveInfo() {
   syncSaveControls();
 }
 async function saveGame() {
-  if (checkpointBusy || !session.checkpointReady) return;
-  checkpointBusy = true;
+  if (flow.busy || !flow.session.checkpointReady) return;
+  const operation = flow.beginOperation("save");
   syncSaveControls();
   try {
-    await checkpointStorage().save(session.checkpoint(), Date.now());
+    await checkpointStorage().save(flow.session.checkpoint(), Date.now());
+    if (!operation.isCurrent()) return;
     await refreshSaveInfo();
     text("save-status", "进度已保存在此浏览器，刷新后可继续。");
   } catch (error) {
+    if (!operation.isCurrent()) return;
     text("save-status", `保存失败，原存档未替换：${error.message ?? error}`);
   } finally {
-    checkpointBusy = false;
+    operation.cancel();
     syncSaveControls();
   }
 }
 async function loadGame(previous) {
-  if (checkpointBusy) return;
-  const owner = session;
-  checkpointBusy = true;
+  if (flow.busy) return;
+  const operation = flow.beginOperation("load");
+  let published = false;
   syncSaveControls();
-  text(started ? "save-status" : "save-info", "正在读取进度…");
+  text(flow.started ? "save-status" : "save-info", "正在读取进度…");
   try {
     // Create decoding resources during the click, without resuming a paused audio clock.
     // Playback resumes through the user's Continue action after the candidate is published.
     audio.initialize();
     const saved = await checkpointStorage().load(previous);
     if (!saved) throw new Error("尚无此本地进度。");
-    let world;
-    const location = saved.checkpoint?.world?.location;
-    // Origin is a selector for independently verified published packages, never
-    // a source capability embedded in the save. The initial map is needed even
-    // when the current location is a later map.
-    if (saved.checkpoint?.origin?.kind === "source-new-game") {
-      const response = await fetch("/game/new-game.json");
-      if (!response.ok) throw new Error("原始新游戏来源入口尚未生成。");
-      const source = await verifyContent(await response.json(), saved.checkpoint.origin.sourceContentHash);
-      const catalog = await worldCatalog();
-      const indexed = catalog.maps[String(source.entry.mapId)];
-      if (source.worldCatalogHash !== catalog.contentHash || indexed?.contentHash !== source.mapContentHash)
-        throw new Error("存档与当前原始入口资源版本不匹配。");
-      const initialResponse = await fetch(indexed.url);
-      if (!initialResponse.ok) throw new Error("原始入口地图载入失败。");
-      const initialMap = await verifyContent(await initialResponse.json(), indexed.contentHash);
-      world = { catalog, map: initialMap, source: { content: source, initialMap } };
-    }
-    if (location !== null && location !== undefined) {
-      if (
-        !Number.isInteger(location.mapId) ||
-        location.mapId <= 0 ||
-        location.mapId > 2147483647
-      )
-        throw new Error("存档中的地图身份无效。");
-      const catalog = world?.catalog ?? await worldCatalog();
-      const indexed = catalog.maps[String(location.mapId)];
-      if (location.catalogHash !== catalog.contentHash || !indexed)
-        throw new Error("存档与当前地图资源版本不匹配。");
-      const response = await fetch(indexed.url);
-      if (!response.ok) throw new Error("存档所需地图载入失败。");
-      world = {
-        ...world,
-        catalog,
-        map: await verifyContent(await response.json(), indexed.contentHash),
-      };
-    }
+    const world = await contents.restoreWorld(saved.checkpoint);
+    if (!operation.isCurrent()) return;
     const candidate = GameSession.restore(
       saved.checkpoint,
       content,
@@ -713,24 +674,14 @@ async function loadGame(previous) {
     );
     const next = candidate.field.content;
     await audio.prepare(audioProjection(candidate.field), candidate.field.pendingBgmTracks);
-    await loadImages(
-      new Set([
-        ...Object.values(next.map.textures),
-        ...(next.map.backgrounds ?? []).map(background => background.texture.url),
-        ...Object.values(next.characters).flatMap((c) =>
-          Object.values(c.sprites).map((s) => s.file),
-        ),
-        ...Object.values(next.minimap?.icons ?? {}).map((s) => s.file),
-      ]),
-    );
+    await loadImages(fieldMediaUrls(next));
     const nextRenderer = new Renderer(canvas, next, images);
-    if (session !== owner) return;
-    audio.reset();
-    session = candidate;
+    if (!operation.publish(candidate, { paused: true })) return;
+    published = true;
     game = candidate.field;
     renderer = nextRenderer;
+    audio.reset();
     setupMapViews(next);
-    started = true;
     held.clear();
     last = 0;
     for (const id of ["welcome", "stop", "dialogue"]) $(id).hidden = true;
@@ -740,23 +691,24 @@ async function loadGame(previous) {
       `${next.map.id} 游戏画面。方向键移动，空格确认，Escape 暂停。`,
     );
     showLimitations();
-    checkpointBusy = false;
     pause(true);
     text(
       "save-status",
       previous ? "已读取上一份进度，点击继续。" : "进度已读取，点击继续。",
     );
   } catch (error) {
-    catalogPromise = undefined;
+    if (published) { failure(error); return; }
+    if (!operation.isCurrent()) return;
+    contents.clear();
     const reason =
-      /source\/version mismatch|source identity|Content identity mismatch/i.test(
+      /(?:source|kind)\/version mismatch|source identity|Content identity mismatch/i.test(
         error.message ?? "",
       )
         ? "这份存档与当前游戏内容版本不同，暂时无法读取。原存档已保留。"
         : `读取失败，当前游戏和存档仍保留：${error.message ?? error}`;
-    text(started ? "save-status" : "save-info", reason);
+    text(flow.started ? "save-status" : "save-info", reason);
   } finally {
-    checkpointBusy = false;
+    operation.cancel();
     syncSaveControls();
   }
 }

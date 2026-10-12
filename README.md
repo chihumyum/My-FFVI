@@ -17,6 +17,8 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [游戏系统框架与连续流程验收](docs/game-framework.md)
+- [v37 统一游戏流程、内容装载与连续验收](docs/systems-v37.md)
 - [v36 来源粒子启动、出生、运动与渲染提供器](docs/systems-v36.md)
 - [v35 共享效果事务、来源粒子引擎子核与板合成](docs/systems-v35.md)
 - [v34 原生演员保存、普通图层与粒子模块](docs/systems-v34.md)
@@ -162,4 +164,4 @@ npm run accept -- narshe
 
 `knowledge` 接受可选的 `--state '<JSON 上下文>'`。查询时只提供已有证据的状态值；没有证据就省略对应键。状态字符串只是上下文输入，不会自动建立它与原版剧情 flag 的映射。
 
-当前系统交付：[v36 集成说明](docs/systems-v36.md)。来源粒子的启动、出生、运动和几何/RT 提供器分别由 `npm run field-particle-lifecycle:check`、`npm run field-particle-birth:check`、`npm run field-particle-motion:check`、`npm run field-particle-rendering:check` 验证。需要先完成模块文档中的本地来源导入。公开可玩 profile 仍为 v35，完整粒子宿主尚未接通，真实开场的 609→3 仍阻塞。GitHub 仅追踪工具、源码、说明与合成夹具，原始游戏资源、提取文案、原生反编译与生成产物留在忽略目录。
+当前系统交付：[v37 游戏框架](docs/systems-v37.md)。`npm run framework:check` 检查同一会话中的探索、事件、战败重试、胜利与成长、菜单物品、保存恢复和继续探索；使用明确的开发入口与内存存储。浏览器已接统一流程和内容仓库。公开可玩 profile 仍为 v35，来源完整开场和主线继续单独追踪；粒子精细恢复暂停。GitHub 仅追踪工具、源码、说明与合成夹具，原始游戏资源、提取文案、原生反编译与生成产物留在忽略目录。

@@ -1,6 +1,6 @@
 # 纳尔谢首批目标
 
-当前系统批次为 v36：已恢复来源粒子的启动/预热/调度与容量、Initial/Cone 出生、Noise/运动和 billboard/RT 独立提供器。完整共享粒子宿主、最终颜色/大小、死亡排列与来源投影仍需接线，5 个完整发射器保持阻塞，来源开场尚未通过 609→3。公开可玩 profile 保持 `narshe-playability-v35`，owned v8、field/world v9、session v4 不变。完整系统闭环和全游戏迁移未完成，HD-2D 后置；见 [v36 系统集成](../docs/systems-v36.md)。
+当前系统批次为 v37：`GameFlow` 统一标题、暂停、时钟、输入和异步发布，`GameContentRepository` 统一内容装载与依赖检查；浏览器已接入这套框架，12 阶段连续系统验收通过。公开可玩 profile 仍为 `narshe-playability-v35`，owned v8、field/world v9、session v4 不变。基础流程已贯通，完整机制和主线仍待迁移；来源开场 609→3 的表现依赖单独保留，粒子精细恢复与 HD-2D 暂缓。见 [v37 游戏框架](../docs/systems-v37.md)。
 
 当前目标是原版开场的一小段 Web 可玩流程。实际开场所用地图和状态必须经原版确认。HD-2D 调查和重制等待全游戏 Web 迁移放行。
 

@@ -300,7 +300,12 @@ export class GameSession {
           this.battleCatalog,
           this.field.stop.party!,
         );
-        if (!content) continue;
+        if (!content) {
+          this.field.stop = { kind: "unsupported",
+            message: `Battle content is unavailable for encounter ${this.field.stop.party}`,
+            site: this.field.stop.site };
+          continue;
+        }
         if (content.battleEntry && content.qualificationContext?.mode === "source") {
           try {
             const entry = projectBattleFieldState(content.battleEntry,
