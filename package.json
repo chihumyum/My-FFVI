@@ -83,6 +83,7 @@
     "framework-route:check": "npm run framework:build && node scripts/check-framework-route.mjs",
     "field-move-area:check": "npm run build && node scripts/check-field-move-area.mjs",
     "battle-event-context:check": "npm run battle:build && node scripts/check-battle-event-context-native.mjs && node scripts/check-battle-event-context.mjs",
+    "battle-lifecycle:check": "npm run battle:build && node scripts/check-battle-event-native.mjs && node scripts/check-battle-lifecycle.mjs",
     "character-learning:check": "npm run battle:build && node scripts/check-character-learning-native.mjs && node scripts/check-character-learning.mjs",
     "party-menu:check": "npm run build && node scripts/check-party-menu-ui.mjs",
     "event-interactions:check": "npm run build && node scripts/check-field-choice.mjs && node scripts/check-event-context-branch.mjs && node scripts/check-event-interactions-ui.mjs",

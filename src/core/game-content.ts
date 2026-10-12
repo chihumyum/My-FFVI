@@ -216,10 +216,17 @@ export class GameContentRepository {
       read(this.newGameUrl, (value) => this.profileContent(sourceContent(value)), expected),
       read(this.worldUrl, (value) => this.profileContent(worldContent(value))), read("/game/battle.json", battleContent),
     ]);
-    if (this.profile === "source" && Object.values(battle.encounters).some(e => e.formationPlan?.kind === "development"))
-      throw new Error("Source new game cannot use development formation selection");
-    if (this.profile === "source" && (Object.hasOwn(battle.common, "escapePolicy") || Object.values(battle.encounters).some(e => e.escapePolicy !== undefined)))
-      throw new Error("Source new game cannot use development escape policy");
+    // Source-origin restore uses this same entry path, so a matching saved
+    // hash cannot turn a development battle policy into source admission.
+    if (this.profile === "source") {
+      const encounters = Object.values(battle.encounters);
+      if (encounters.some(e => e.formationPlan?.kind === "development"))
+        throw new Error("Source new game cannot use development formation selection");
+      if (Object.hasOwn(battle.common, "escapePolicy") || encounters.some(e => e.escapePolicy !== undefined))
+        throw new Error("Source new game cannot use development escape policy");
+      if (Object.hasOwn(battle.common, "lifecycle") || encounters.some(e => e.lifecycle?.mode === "development-omission"))
+        throw new Error("Source new game cannot use an omitted or misplaced battle lifecycle");
+    }
     if (content.battleCatalogHash !== battle.contentHash || content.worldCatalogHash !== catalog.contentHash ||
         content.sourceSetHash !== catalog.sourceSetHash || content.parentSourceSetHash !== catalog.parentSourceSetHash ||
         catalog.maps[String(content.entry.mapId)]?.contentHash !== content.mapContentHash)

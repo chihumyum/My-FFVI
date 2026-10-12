@@ -19,6 +19,7 @@ import { parseBattleFormationPlan, selectBattleFormation,
   type BattleFormationChoice, type BattleFormationPlan } from "./battle-formations.js";
 import { parseBattleEscapePolicy, type FrameworkBattleEscapePolicy } from "./battle-escape.js";
 import { parseBattleRewardPolicy, type BattleRewardPolicy } from "./battle-result.js";
+import { parseBattleLifecycle, type BattleLifecycle } from "./battle-lifecycle.js";
 
 export type BattleQualificationContext = Omit<BattleAbilityContext, "conditionIds" | "partySize"> & {
   /** Source mode enforces qualification. The explicit development mode keeps
@@ -52,6 +53,8 @@ export type BattleContent = {
   escapePolicy?: FrameworkBattleEscapePolicy;
   /** Per-encounter source rewards, captured before opening owned battle state. */
   rewardPolicy?: BattleRewardPolicy;
+  /** New source catalogs always bind the event program or an explicit omission. */
+  lifecycle?: BattleLifecycle;
   atb: AtbRules;
   /** Defaults for this entry profile; live source speed slots and mode are session-owned. */
   timing: BattlePreferences;
@@ -148,6 +151,7 @@ export type BattleEncounter = Pick<
   formationPlan?: BattleFormationPlan;
   escapePolicy?: FrameworkBattleEscapePolicy;
   rewardPolicy?: BattleRewardPolicy;
+  lifecycle?: BattleLifecycle;
 };
 
 /** All reachable development branches, not a sample of the weighted pool. */
@@ -204,19 +208,26 @@ export function encounterContent(
 ): BattleContent | null {
   if (Object.hasOwn(catalog.common, "escapePolicy")) throw new Error("Escape policy must belong to an encounter");
   if (Object.hasOwn(catalog.common, "rewardPolicy")) throw new Error("Reward policy must belong to an encounter");
+  if (Object.hasOwn(catalog.common, "lifecycle")) throw new Error("Battle lifecycle must belong to an encounter");
   const encounter = catalog.encounters[String(id)];
   if (!encounter) return null;
   if (encounter.encounterId !== id) throw new Error("Inconsistent battle encounter identity");
   const options = encounterFormationOptions(encounter);
-  const { formationPlan, escapePolicy, rewardPolicy, ...definition } = encounter;
+  const { formationPlan, escapePolicy, rewardPolicy, lifecycle, ...definition } = encounter;
   const escape = escapePolicy === undefined ? {} : { escapePolicy: parseBattleEscapePolicy(escapePolicy) };
   if (rewardPolicy === undefined && catalog.gameState.characterInitializations)
     throw new Error("Source encounter lacks battle reward policy");
   const rewards = rewardPolicy === undefined ? {} : { rewardPolicy: parseBattleRewardPolicy(rewardPolicy) };
+  if (lifecycle === undefined && catalog.gameState.characterInitializations)
+    throw new Error("Source encounter lacks battle lifecycle binding");
+  const parsedLifecycle = lifecycle === undefined ? undefined : parseBattleLifecycle(lifecycle);
+  if (catalog.gameState.characterInitializations && parsedLifecycle?.mode === "script" && parsedLifecycle.program.source === null)
+    throw new Error("Source encounter battle lifecycle lacks source identity");
+  const event = parsedLifecycle === undefined ? {} : { lifecycle: parsedLifecycle };
   if (!formationPlan)
-    return { ...catalog.common, ...definition, ...escape, ...rewards, formation: options[0]!, contentHash: catalog.contentHash };
+    return { ...catalog.common, ...definition, ...escape, ...rewards, ...event, formation: options[0]!, contentHash: catalog.contentHash };
   const choice = selectBattleFormation(formationPlan, seed);
-  return { ...catalog.common, ...definition, ...escape, ...rewards, formation: choice.formation, formationChoice: choice,
+  return { ...catalog.common, ...definition, ...escape, ...rewards, ...event, formation: choice.formation, formationChoice: choice,
     contentHash: catalog.contentHash };
 }
 export type AbilityDefinition = {

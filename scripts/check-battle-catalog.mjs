@@ -81,6 +81,7 @@ try {
   const zero = { hp: 0, mp: 0, magic: 0, vitality: 0, attack: 0, defense: 0, magicDefense: 0,
     agility: 0, weight: 0, evasion: 0, magicEvasion: 0 };
   const legacy = source.encounters.find((e) => e.partyId === 1);
+  assert.equal(catalog.encounters[1].lifecycle.mode, "development-omission");
   const input = { requestedPartyIds: source.encounterPartyIds, encounters: source.encounters,
     sourceDiagnostics: source.encounterDiagnostics, abilities: catalog.common.abilities, conditions: catalog.common.conditions,
     sprites: source.sprites, name: (key) => {
@@ -91,7 +92,7 @@ try {
     },
     parameters: { temporary: zero, limits: compileParameterLimits(reader).values },
     physical: { temporary: { attack: 0, strength: 0, accuracy: 0, criticalRate: 0 }, limits: compilePhysicalLimits(reader).values },
-    development: { scripts: [{ id: 8010, source: legacy.script.source, reason: "Existing explicit development omission" }],
+    development: { scripts: [{ id: 8010, source: legacy.script.source, reason: catalog.encounters[1].lifecycle.reason }],
       flagGroups: [{ id: 11, rows: legacy.metadata.battleFlags, reason: "Existing explicit development omission" }] } };
   for (const [label, mutate, code] of [
     ["missing-monster", (e) => { e.enemies[0].monsterId = 2147483647; }, "enemy-provider"],

@@ -20,6 +20,8 @@ import { createBattleFormationPlan, type BattleFormationPlan,
 import { parseBattleEscapePolicy, type FrameworkBattleEscapePolicy } from "../core/battle-escape.js";
 import { compileBattleRewardPolicy } from "./battle-result.js";
 import type { BattleRewardPolicy } from "../core/battle-result.js";
+import { compileBattleEvent } from "./battle-event.js";
+import { parseBattleLifecycle, type BattleLifecycle } from "../core/battle-lifecycle.js";
 
 type Reader = {
   row(table: string, id: string | number): BattleRow;
@@ -89,6 +91,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     let formationPlan: BattleFormationPlan | null = null;
     let escapePolicy: FrameworkBattleEscapePolicy | undefined;
     let rewardPolicy: BattleRewardPolicy | undefined;
+    let lifecycle: BattleLifecycle | undefined;
     try {
       const m = encounter.metadata;
       if (!encounter.source || encounter.source.rowId !== String(partyId) || !m)
@@ -110,11 +113,27 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       if (!Number.isInteger(m.scriptId) || m.scriptId < 0 ||
           (m.scriptId === 0) !== (encounter.script === null))
         block("battle-script", "Missing or inconsistent battle script binding", "script_name");
-      else if (m.scriptId) {
+      else if (m.scriptId === 0) lifecycle = { kind: "battle-lifecycle-v1", mode: "none" };
+      else {
         const omission = input.development.scripts.find((s) => s.id === m.scriptId && same(s.source, encounter.script!.source));
-        if (!omission) block("battle-script", "Battle script lifecycle is not implemented", "script_name");
-        else add("development-omission", "battle-script", omission.reason,
-          { dependency: { table: "script.csv", id: m.scriptId } });
+        const issues: { reason: string; pc?: number }[] = [];
+        try {
+          const program = compileBattleEvent(encounter.script!.data, encounter.script!.source);
+          issues.push(...program.blockers.map(reason => ({ reason })),
+            ...program.instructions.flatMap(({ op }, pc) => op.kind === "blocked" ? [{ reason: op.reason, pc }] : []));
+          if (!issues.length) lifecycle = parseBattleLifecycle({ kind: "battle-lifecycle-v1", mode: "script",
+            scriptId: m.scriptId, program });
+        } catch (error) { issues.push({ reason: message(error) }); }
+        if (!lifecycle && omission) {
+          lifecycle = parseBattleLifecycle({ kind: "battle-lifecycle-v1", mode: "development-omission",
+            scriptId: m.scriptId, source: encounter.script!.source, reason: omission.reason });
+          add("development-omission", "battle-script", omission.reason,
+            { dependency: { table: "script.csv", id: m.scriptId } });
+        } else if (!lifecycle) {
+          for (const issue of issues) add("blocked", "battle-script", issue.reason,
+            { dependency: { table: "script.csv", id: m.scriptId },
+              ...(issue.pc === undefined ? {} : { pc: issue.pc }) });
+        }
       }
       if (!Number.isInteger(m.battleFlagGroupId) || m.battleFlagGroupId < 0 || !Array.isArray(m.battleFlags) ||
           (m.battleFlagGroupId === 0) !== (m.battleFlags.length === 0))
@@ -217,8 +236,8 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     } catch (error) { block("encounter-provider", message(error)); }
     const blocked = diagnostics.slice(start).some((d) => d.kind === "blocked") ||
       input.sourceDiagnostics.some((d) => d.partyId === partyId);
-    if (!blocked && formationPlan && rewardPolicy) encounters[partyId] = { encounterId: partyId, enemies,
-      background: encounter.background, formationPlan, rewardPolicy,
+    if (!blocked && formationPlan && rewardPolicy && lifecycle) encounters[partyId] = { encounterId: partyId, enemies,
+      background: encounter.background, formationPlan, rewardPolicy, lifecycle,
       ...(escapePolicy ? { escapePolicy } : {}),
       formation: formationPlan.kind === "development" ? null : formationPlan.pattern === 3 ? "opposed" : "normal" };
     entries.push({ partyId, status: blocked ? "blocked" : "compiled", enemyCount: encounter.enemies.length,

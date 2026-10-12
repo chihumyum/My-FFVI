@@ -37,6 +37,22 @@ export function validateBattleEventRules(rules: BattleEventRules) {
   }
 }
 
+/** ConditionUtility.IsBattleEndByUnit: the game-over predicate OR type 3.
+ * AI-core lifetime uses this rule plus the global executor queues; HP alone
+ * cannot answer it. This does not admit new active condition controllers. */
+export function battleEventUnitEnded(rules: BattleEventRules, conditionIds: readonly number[]): boolean {
+  validateBattleEventRules(rules);
+  const conditions = conditionIds.map(id => {
+    int32(id);
+    const condition = rules.conditions.find(row => row.id === id);
+    if (!condition) throw new Error(`Missing battle event condition ${id}`);
+    return condition;
+  });
+  if (conditions.some(condition => condition.type === 602))
+    throw new Error("Unimplemented battle event type 602 game-over exception");
+  return conditions.some(condition => condition.gameOverTarget === 1 || condition.type === 3);
+}
+
 /** BattleAI.IsOnlyAlive / IsUnitAliveCount. No normal/counter readiness gate
  * appears in either instruction. The VM owns the label+1 step and publication.
  * This function never changes the unit lists or caches a second life state. */

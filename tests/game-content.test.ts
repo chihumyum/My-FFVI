@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createBattleFormationPlan } from "../src/core/battle-formations.js";
+import type { BattleCatalog } from "../src/core/battle-content.js";
+import type { BattleLifecycle } from "../src/core/battle-lifecycle.js";
 import { contentDigest } from "../src/core/content-integrity.js";
 import { GameContentRepository, fieldMediaUrls, openingMediaUrls, sessionMediaUrls,
   sourceEntryMediaUrls } from "../src/core/game-content.js";
@@ -95,6 +97,27 @@ async function freshFixture() {
     ["/world/catalog.json", catalog], [catalog.maps[String(map.mapId)]!.url, map],
   ]);
   return { content, catalog, map, battle, saved, files };
+}
+
+async function bindFreshBattle(f: Awaited<ReturnType<typeof freshFixture>>, definition: BattleCatalog) {
+  const battle = await seal(definition);
+  const content = await seal({ ...f.content, battleCatalogHash: battle.contentHash });
+  const saved = structuredClone(f.saved);
+  saved.battleCatalogHash = battle.contentHash;
+  saved.origin = { kind: "source-new-game", sourceContentHash: content.contentHash };
+  saved.world.initialHash = content.contentHash;
+  const files = new Map(f.files);
+  files.set("/game/battle.json", battle);
+  files.set("/game/new-game.json", content);
+  return { ...f, battle, content, saved, files };
+}
+
+function omittedBattleLifecycle(): BattleLifecycle {
+  return { kind: "battle-lifecycle-v1", mode: "development-omission", scriptId: 8123,
+    source: { sourceSetHash: "a".repeat(64), battleSourceSetHash: "b".repeat(64),
+      sha256: "c".repeat(64), file: "synthetic-bundle", serializedFile: "synthetic-assets",
+      objectId: "8123", assetPath: "/synthetic/battle-event.json" },
+    reason: "Controlled lifecycle omission" };
 }
 
 test("opening verifies both payloads and coalesces concurrent loads without sharing mutable results", async () => {
@@ -254,30 +277,74 @@ test("fresh entry binds source, world, battle, map and reserved script without r
   assert.deepEqual(await repo.sourceNewGame(), expected);
 });
 
-test("a source new game rejects authored formation selection even with matching package identities", async () => {
+test("source new game and restore reject authored formation selection with matching package identities", async () => {
   const f = await freshFixture(), battle = structuredClone(f.battle);
   const encounter = Object.values(battle.encounters)[0]!;
   encounter.formation = null;
   encounter.formationPlan = createBattleFormationPlan([1, 1, 0, 0, 0, 0], {
     kind: "framework-battle-formations-v1", id: "normal-only", weights: [1, 0, 0, 0, 0, 0],
   });
-  const next = await seal(battle);
-  f.files.set("/game/battle.json", next);
-  f.files.set("/game/new-game.json", await seal({ ...f.content, battleCatalogHash: next.contentHash }));
-  await assert.rejects(new GameContentRepository(loader(f.files).read).sourceNewGame(), /Source new game.*formation/);
+  const bound = await bindFreshBattle(f, battle), repo = new GameContentRepository(loader(bound.files).read);
+  await assert.rejects(repo.sourceNewGame(), /Source new game.*formation/);
+  await assert.rejects(repo.restoreSessionContent(bound.saved), /Source new game.*formation/);
 });
 
-test("a source new game rejects authored escape even when content hashes are rebound", async () => {
+test("source new game and restore reject authored escape even when content hashes are rebound", async () => {
   for (const misplaced of [false, true]) {
     const f = await freshFixture(), battle = structuredClone(f.battle);
     const policy = { kind: "framework-battle-escape-v1" as const, id: "ordinary-retreat" };
     if (misplaced) Object.assign(battle.common, { escapePolicy: policy });
     else Object.values(battle.encounters)[0]!.escapePolicy = policy;
-    const next = await seal(battle);
-    f.files.set("/game/battle.json", next);
-    f.files.set("/game/new-game.json", await seal({ ...f.content, battleCatalogHash: next.contentHash }));
-    await assert.rejects(new GameContentRepository(loader(f.files).read).sourceNewGame(), /Source new game.*escape/);
+    const bound = await bindFreshBattle(f, battle), repo = new GameContentRepository(loader(bound.files).read);
+    await assert.rejects(repo.sourceNewGame(), /Source new game.*escape/);
+    await assert.rejects(repo.restoreSessionContent(bound.saved), /Source new game.*escape/);
   }
+});
+
+test("source new game and restore reject omitted battle events before loading the map", async () => {
+  for (const misplaced of [false, true]) {
+    const f = await freshFixture(), battle = structuredClone(f.battle), lifecycle = omittedBattleLifecycle();
+    if (misplaced) Object.assign(battle.common, { lifecycle });
+    else Object.values(battle.encounters)[0]!.lifecycle = lifecycle;
+    const bound = await bindFreshBattle(f, battle), host = loader(bound.files), repo = new GameContentRepository(host.read);
+    const before = structuredClone(bound.battle);
+    await assert.rejects(repo.sourceNewGame(), /Source new game.*lifecycle/);
+    await assert.rejects(repo.restoreSessionContent(bound.saved), /Source new game.*lifecycle/);
+    assert.equal(host.calls.includes(bound.catalog.maps[String(bound.map.mapId)]!.url), false);
+    assert.deepEqual(bound.battle, before, "admission never erases the omission");
+  }
+});
+
+test("explicit framework source entry and restore retain all three development battle policies", async () => {
+  const f = await freshFixture(), battle = structuredClone(f.battle), encounter = Object.values(battle.encounters)[0]!;
+  encounter.formation = null;
+  encounter.formationPlan = createBattleFormationPlan([1, 1, 0, 0, 0, 0], {
+    kind: "framework-battle-formations-v1", id: "controlled-normal", weights: [1, 0, 0, 0, 0, 0],
+  });
+  encounter.escapePolicy = { kind: "framework-battle-escape-v1", id: "controlled-retreat" };
+  encounter.lifecycle = omittedBattleLifecycle();
+  const bound = await bindFreshBattle(f, battle);
+  const profile = (sourceContentHash: string) => ({ kind: "framework-development-v1" as const,
+    policy: "omit-anonymous-environment-particles-v1" as const, sourceContentHash, omissions: [] });
+  const map = await seal({ ...bound.map, developmentProfile: profile(bound.map.contentHash) });
+  const candidate = structuredClone(bound.catalog);
+  candidate.maps[String(map.mapId)]!.url = `/framework/world/maps/${map.mapId}.json`;
+  candidate.maps[String(map.mapId)]!.contentHash = map.contentHash;
+  const catalog = await seal({ ...candidate, developmentProfile: profile(bound.catalog.contentHash) });
+  const content = await seal({ ...bound.content, developmentProfile: profile(bound.content.contentHash),
+    worldCatalogHash: catalog.contentHash, mapContentHash: map.contentHash });
+  const files = new Map(bound.files);
+  files.set("/framework/world/catalog.json", catalog);
+  files.set("/framework/new-game.json", content);
+  files.set(catalog.maps[String(map.mapId)]!.url, map);
+  const saved = structuredClone(bound.saved);
+  saved.origin = { kind: "source-new-game", sourceContentHash: content.contentHash };
+  saved.world.initialHash = content.contentHash;
+  const host = loader(files), repo = new GameContentRepository(host.read, "framework");
+  assert.deepEqual(await repo.sourceNewGame(), { content, catalog, map, battle: bound.battle });
+  assert.deepEqual(await repo.restoreSessionContent(saved), { battle: bound.battle,
+    world: { catalog, map, source: { content, initialMap: map } } });
+  assert.equal(host.calls.includes("/game/content.json"), false);
 });
 
 test("fresh entry refuses stale manifest dependencies, alien parent and a missing reserved script", async () => {

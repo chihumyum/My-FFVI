@@ -3,6 +3,7 @@ import type { BattleCatalog, BattleEncounterDiagnostic } from "../core/battle-co
 import { encounterFormationOptions } from "../core/battle-content.js";
 import { parseBattleEscapePolicy } from "../core/battle-escape.js";
 import { parseBattleRewardPolicy } from "../core/battle-result.js";
+import { parseBattleLifecycle } from "../core/battle-lifecycle.js";
 import { validateBattleDropCatalog } from "../core/battle-rewards.js";
 import { validateBattleEventRules } from "../core/battle-event-context.js";
 import { canonical } from "../core/canonical.js";
@@ -89,6 +90,32 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
         if (encounter.escapePolicy !== undefined) parseBattleEscapePolicy(encounter.escapePolicy);
       });
       if (encounter.escapePolicy) limitations.push("Authored ordinary-field retreat does not reproduce source escape rules or learning.");
+      checked("battle-lifecycle", () => {
+        if (Object.hasOwn(catalog.common, "lifecycle")) throw new Error("Battle lifecycle must belong to an encounter");
+        if (encounter.lifecycle === undefined) {
+          if (catalog.gameState.characterInitializations) throw new Error("Source encounter lacks battle lifecycle binding");
+          conditional("battle-lifecycle-missing", "Legacy synthetic encounter has no explicit battle lifecycle binding");
+          return;
+        }
+        const lifecycle = parseBattleLifecycle(encounter.lifecycle);
+        if (lifecycle.mode === "script") {
+          if (catalog.gameState.characterInitializations && lifecycle.program.source === null)
+            throw new Error("Source encounter battle lifecycle lacks source identity");
+          const rules = catalog.common.battleEvents;
+          if (!rules) throw new Error("Battle lifecycle requires battle event condition rules");
+          validateBattleEventRules(rules);
+          const definitions = catalog.common.conditions.rules.definitions;
+          if (rules.conditions.length !== definitions.length || definitions.some(definition =>
+            !rules.conditions.some(rule => rule.id === definition.id && rule.type === definition.type)))
+            throw new Error("Battle lifecycle condition rules do not cover the current condition catalog");
+          limitations.push("Compiled battle-event instructions require live lifecycle/AI/action/outcome execution evidence.");
+        } else if (lifecycle.mode === "development-omission") {
+          const omission = sourceDiagnostics.some(d => d.code === "battle-script" && d.kind === "development-omission" &&
+            d.dependency?.table === "script.csv" && d.dependency.id === lifecycle.scriptId && d.reason === lifecycle.reason);
+          if (!omission) throw new Error("Battle lifecycle omission lacks matching compiler evidence");
+          limitations.push(`Battle event ${lifecycle.scriptId} is explicitly omitted: ${lifecycle.reason}`);
+        }
+      });
       checked("encounter-rewards", () => {
         if (Object.hasOwn(catalog.common, "rewardPolicy")) throw new Error("Reward policy must belong to an encounter");
         if (encounter.rewardPolicy === undefined && catalog.gameState.characterInitializations)

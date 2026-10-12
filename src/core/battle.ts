@@ -76,6 +76,9 @@ import { validateBattleFormationChoice } from "./battle-formations.js";
 import { parseBattleEscapePolicy, type FrameworkBattleEscapePolicy } from "./battle-escape.js";
 import { parseBattleRewardPolicy, projectMagicLearningValue, type BattleRewardPolicy } from "./battle-result.js";
 import { observeLearningAction, validateObservedLearningCatalog } from "./character-learning.js";
+import { advanceBattleEvent, createBattleEventState, BattleEventError, type BattleEventState } from "./battle-event.js";
+import { parseBattleLifecycle, type BattleLifecycle } from "./battle-lifecycle.js";
+import { battleEventUnitEnded } from "./battle-event-context.js";
 
 export type Combatant = CombatantDefinition & {
   maxHp: number;
@@ -148,6 +151,10 @@ export class BattleGame {
   private collected = false;
   private readonly escapeRule: FrameworkBattleEscapePolicy | null;
   private readonly rewardPolicy: Readonly<BattleRewardPolicy>;
+  private readonly lifecycle: BattleLifecycle;
+  private eventState: BattleEventState | null = null;
+  private eventControls = { aiStarted: false, aiAliveLastSync: false, endEnabled: true,
+    interactive: true, updateEnabled: true };
   private escapeRequested = false;
   private currentPreferences: BattlePreferences;
   private clockInput = {
@@ -195,6 +202,8 @@ export class BattleGame {
     this.escapeRule = content.escapePolicy === undefined ? null : parseBattleEscapePolicy(content.escapePolicy);
     this.rewardPolicy = Object.freeze(parseBattleRewardPolicy(content.rewardPolicy === undefined
       ? { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 } : content.rewardPolicy));
+    this.lifecycle = parseBattleLifecycle(content.lifecycle ?? { kind: "battle-lifecycle-v1", mode: "none" });
+    if (this.lifecycle.mode === "script") this.eventState = createBattleEventState(this.lifecycle.program);
     this.randomState = seed || 1;
     this.currentPreferences = parseBattlePreferences(content.timing);
     if (initialPreferences !== undefined)
@@ -287,16 +296,7 @@ export class BattleGame {
       validateElements(c.attackElements);
       validateElementResistances(c.elementResistances);
     }
-    for (const c of this.enemies) {
-      if (!c.ai) throw new BattleAIError(null, 0, "missing enemy AI program");
-      const initial = startBattleAI(c.ai, this.aiContext(c));
-      const context = this.aiContext(c);
-      context.self.behavior = initial.behavior;
-      this.admitAITurn(c, planBattleAITurn(c.ai, initial.state, context));
-      // Initialization writes are real; speculative first-turn writes are not.
-      c.behavior = initial.behavior;
-      this.aiStates.set(c.id, initial.state);
-    }
+    if (!this.eventState) this.startEnemyAI();
     for (const c of this.combatants) {
       const range = content.initialAtb[c.side];
       c.atb = this.randomInt(range[0], range[1]);
@@ -316,6 +316,7 @@ export class BattleGame {
     }
     this.reconcileAppearances();
     this.log("敌人出现了。");
+    this.advanceEvent();
   }
   get players() {
     return this.combatants.filter((c) => c.side === "player");
@@ -337,12 +338,13 @@ export class BattleGame {
     }
   }
   get ready() {
-    if (this.escapeRequested) return [];
+    if (this.escapeRequested || !this.eventControls.interactive) return [];
     return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued);
   }
   get escapePending(): boolean { return this.escapeRequested; }
   get canRequestEscape(): boolean {
     return this.escapeRule !== null && this.phase === "active" && !this.escapeRequested &&
+      this.eventControls.endEnabled && this.eventControls.interactive && this.eventControls.updateEnabled &&
       this.players.some(c => c.hp > 0) && this.enemies.some(c => c.hp > 0) &&
       !this.clockInput.paused && !this.clockInput.helpPaused && this.clockInput.progressEnabled && !this.clockInput.forceWaiting;
   }
@@ -540,6 +542,7 @@ export class BattleGame {
   private clockGate() {
     return battleClockGate({
       ...this.clockInput,
+      progressEnabled: this.clockInput.progressEnabled && this.eventControls.updateEnabled,
       // Once accepted, an old target/ability menu must not deadlock WAIT.
       // Pause, help, special input and the host progress gate still apply.
       uiWaiting: this.escapeRequested ? false : this.clockInput.uiWaiting,
@@ -850,6 +853,79 @@ export class BattleGame {
     const state = this.aiStates.get(actorId);
     return state ? structuredClone(state) : null;
   }
+  /** A retry starts this same admitted event definition from its entry; mutable
+   * renderer/content references cannot replace a battle's control program. */
+  get lifecycleDefinition(): BattleLifecycle { return structuredClone(this.lifecycle); }
+  get eventExecution() {
+    return { state: structuredClone(this.eventState), controls: { ...this.eventControls } };
+  }
+  private startEnemyAI(): void {
+    if ([...this.aiStates.values()].some(state => state.status !== "exited"))
+      throw new Error("Battle AI cores are already running");
+    const initial = this.enemies.map(actor => {
+      if (!actor.ai) throw new BattleAIError(null, 0, "missing enemy AI program");
+      const turn = startBattleAI(actor.ai, this.aiContext(actor));
+      const context = this.aiContext(actor);
+      context.self.behavior = turn.behavior;
+      this.admitAITurn(actor, planBattleAITurn(actor.ai, turn.state, context));
+      return { actor, turn };
+    });
+    for (const { actor, turn } of initial) {
+      actor.behavior = turn.behavior;
+      this.aiStates.set(actor.id, turn.state);
+    }
+    this.eventControls.aiStarted = true;
+  }
+  private advanceEvent(): void {
+    if (this.lifecycle.mode !== "script" || !this.eventState || this.eventState.status === "exited") return;
+    const program = this.lifecycle.program;
+    for (;;) {
+      const cores = this.battleAICoresAlive();
+      const result = advanceBattleEvent(program, this.eventState, {
+        clock: this.time / 10, timeSeconds: this.time / 1000, started: true,
+        aiCoreAlive: cores.alive,
+        // Source IsNowAttackStaging includes staged/interrupt actions, but not
+        // ordinary queued turns. The queues remain owned by this BattleGame.
+        actionStaging: this.action !== null || this.reactions.length > 0,
+      });
+      for (const request of result.requests) {
+        try {
+          switch (request.kind) {
+            case "exec-ai": this.startEnemyAI(); break;
+            case "sync-ai":
+              for (const id of cores.exitedIds) this.aiStates.get(id)!.status = "exited";
+              if (cores.alive !== this.eventControls.aiAliveLastSync)
+                this.eventControls.updateEnabled = cores.alive;
+              this.eventControls.aiAliveLastSync = cores.alive;
+              break;
+            case "end-enabled": this.eventControls.endEnabled = request.enabled; break;
+            case "pause": this.eventControls.updateEnabled = !request.enabled; break;
+            case "interactive": this.eventControls.interactive = request.enabled; break;
+          }
+        } catch (error) {
+          throw new BattleEventError(program.source, request.pc,
+            error instanceof Error ? error.message : String(error));
+        }
+      }
+      this.eventState = result.state;
+      if (!result.requests.length) return;
+    }
+  }
+  private battleAICoresAlive(): { alive: boolean; exitedIds: string[] } {
+    const exitedIds: string[] = [];
+    let alive = false;
+    const actionsEnded = !this.action && !this.queue.length && !this.reactions.length;
+    for (const [id, state] of this.aiStates) {
+      if (state.status === "exited") continue;
+      const actor = this.enemies.find(enemy => enemy.id === id);
+      if (!actor) throw new Error("Battle event AI core has no unit owner");
+      if (!this.content.battleEvents) throw new Error("Missing battle event condition rules");
+      if (battleEventUnitEnded(this.content.battleEvents, actor.conditionIds) && actionsEnded)
+        exitedIds.push(id);
+      else alive = true;
+    }
+    return { alive, exitedIds };
+  }
   /** Inspection/replay callers cannot mutate the live queue or its selections. */
   get pendingActions(): readonly BattleAction[] {
     return structuredClone([...this.reactions, ...this.queue]);
@@ -1132,6 +1208,8 @@ export class BattleGame {
       queue: structuredClone(this.queue),
       reactions: structuredClone(this.reactions),
       ai: structuredClone(this.aiStates),
+      eventState: structuredClone(this.eventState),
+      eventControls: { ...this.eventControls },
       poison: structuredClone(this.poisonStates),
       slow: structuredClone(this.slowStates),
       stock: structuredClone(this.stock),
@@ -1157,6 +1235,8 @@ export class BattleGame {
       this.queue = before.queue;
       this.reactions = before.reactions;
       this.aiStates = before.ai;
+      this.eventState = before.eventState;
+      this.eventControls = before.eventControls;
       this.poisonStates = before.poison;
       this.slowStates = before.slow;
       this.stock = before.stock;
@@ -1178,11 +1258,12 @@ export class BattleGame {
     if (!gate.simulation) return;
     this.time += 10;
     if (this.escapeRequested && !this.action) {
-      if (!gate.progress) return;
       // Existing lethal results outrank retreat; a request cannot avoid defeat
       // or turn a completed victory into a reward-free exit.
+      // The event clock remains live when a script pauses progress. In
+      // particular its later unpause/end permission must be able to run.
       this.checkOutcome();
-      if (this.phase === "active") this.finishEscape();
+      if (this.phase === "active" && this.eventControls.endEnabled && this.clockGate().progress) this.finishEscape();
       return;
     }
     // The presentation remains a development profile. FF6 progress clocks run
@@ -1221,7 +1302,8 @@ export class BattleGame {
                 seconds: 0.01,
               }),
           );
-        if (!this.escapeRequested && c.side === "enemy" && c.atb >= 100) {
+        if (!this.escapeRequested && c.side === "enemy" && c.atb >= 100 &&
+            this.aiStates.get(c.id)?.status === "waiting") {
           if (!this.players.some((p) => p.hp > 0)) break;
           this.decideEnemyAction(c);
         }
@@ -1231,17 +1313,22 @@ export class BattleGame {
       // BattleMainUpdate 0x1588930 performs end judgment after Progress.Update,
       // including the frame on which execution finishes.
       this.checkOutcome();
-      if (this.escapeRequested && gate.progress && this.phase === "active" && !this.action) this.finishEscape();
+      if (this.escapeRequested && this.clockGate().progress && this.phase === "active" && !this.action &&
+          this.eventControls.endEnabled) this.finishEscape();
       return;
     }
     const queue = this.reactions.length ? this.reactions : this.queue;
-    const index = queue.findIndex((a) => a.charge <= 0);
+    // SetBattleUpdateEnabled does not cancel staged or interrupt actions. Its
+    // executor gate only prevents a new ordinary action from starting.
+    const index = queue === this.queue && !this.eventControls.updateEnabled
+      ? -1 : queue.findIndex((a) => a.charge <= 0);
     if (index >= 0) {
       const action = queue.splice(index, 1)[0]!,
         actor = this.combatants.find((c) => c.id === action.actor)!;
       if (!this.canUseAction(action)) {
         this.finishActorAction(actor, action.kind);
         this.log(`${actor.name} 的行动已失效。`);
+        this.checkOutcome();
         return;
       }
       const choice = resolveBattleTargets(
@@ -1359,6 +1446,7 @@ export class BattleGame {
     for (const result of results) {
       const actor = units.find((c) => c.id === result.target)!;
       if (actor.side !== "enemy") continue;
+      if (this.aiStates.get(actor.id)?.status !== "waiting") continue;
       if (action.source.kind === "item")
         throw new Error("Unimplemented enemy item reaction");
       const reaction = battleReaction(this.content.reactions, {
@@ -1569,7 +1657,12 @@ export class BattleGame {
   }
 
   private checkOutcome() {
-    if (this.phase !== "active" || this.action) return;
+    if (this.phase !== "active") return;
+    // Fixed Web ordering: action/progress, then event clock, then end judgment.
+    // Native Integrator and battle updates are separate Unity components; their
+    // relative frame order is not certified. The VM runs while progress waits.
+    this.advanceEvent();
+    if (this.action) return;
     for (const c of this.combatants) {
       Object.assign(c, this.conditions.settleLife(c.hp, c.conditionIds, false));
       this.observeDropLife(c);
@@ -1580,6 +1673,7 @@ export class BattleGame {
         this.reactions = this.reactions.filter((a) => a.actor !== c.id);
       }
     }
+    if (!this.eventControls.endEnabled) return;
     if (!this.players.some((c) => c.hp > 0)) {
       this.clearBattleConditions();
       this.phase = "defeat";
@@ -1589,6 +1683,11 @@ export class BattleGame {
       this.log("队伍倒下了。");
       return;
     }
+    // Normal source judgment uses !mainCore.IsReady for victory. Player defeat
+    // above is independent of that flag and takes precedence in the same frame.
+    if (this.eventState && this.eventState.status !== "exited") return;
+    if (this.eventState && this.enemies.some((c) => c.hp > 0))
+      throw new Error("Battle event victory with live enemies requires an admitted result provider");
     if (this.enemies.some((c) => c.hp > 0)) return;
     // Missing growth for a later recipient must not leave an earlier recipient
     // upgraded, or publish a victory whose reward cannot be collected.
@@ -1673,7 +1772,8 @@ export class BattleGame {
     this.slowStates.clear();
   }
   private finishEscape(): void {
-    if (!this.escapeRule || !this.escapeRequested || this.phase !== "active" || this.action)
+    if (!this.escapeRule || !this.escapeRequested || this.phase !== "active" || this.action ||
+        !this.eventControls.endEnabled)
       throw new Error("Battle escape is not at a safe action boundary");
     this.clearBattleConditions();
     this.phase = "escaped";

@@ -308,7 +308,48 @@ async function eventSaveFinished(h) {
   assert.equal(h.api.read().failed, false, h.$("load-error").textContent);
 }
 
+// Node can resolve package imports that the unbundled browser cannot. Verify
+// the served dependency graph before the controlled DOM exercises the app.
+async function nativeBrowserModules() {
+  const pending = ["/game/app.js"], seen = new Set(), modules = [];
+  while (pending.length) {
+    const url = pending.pop();
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const file = url.startsWith("/game/") ? resolve(root, "apps/game", url.slice(6))
+      : url.startsWith("/runtime/core/") ? resolve(compiled, "src/core", url.slice(14)) : null;
+    assert.ok(file, "Unserved browser module: " + url);
+    const source = await readFile(file, "utf8"), imports = [];
+    const ast = ts.createSourceFile(url, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    const visit = node => {
+      if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier)
+        imports.push(node.moduleSpecifier);
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        assert.equal(node.arguments.length, 1, "Unverified dynamic browser import: " + url);
+        imports.push(node.arguments[0]);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    for (const specifier of imports) {
+      assert.ok(ts.isStringLiteral(specifier), "Unverified computed browser import: " + url);
+      const spec = specifier.text;
+      assert.ok(/^(?:\.{1,2}\/|\/)/.test(spec) && !spec.startsWith("//"),
+        "Unbundled browser cannot resolve " + JSON.stringify(spec) + " from " + url);
+      const target = new URL(spec, "http://browser-module.test" + url);
+      assert.equal(target.search + target.hash, "", "Unverified browser module URL: " + spec);
+      pending.push(target.pathname);
+    }
+    modules.push({ url, sha256: sha(source) });
+  }
+  return modules.sort((a, b) => a.url.localeCompare(b.url));
+}
+
 try {
+  await check("the actual served browser module graph resolves without Node package lookup", async () => {
+    report.browserModules = await nativeBrowserModules();
+    assert.ok(report.browserModules.some(module => module.url === "/runtime/core/battle-event.js"));
+  });
   await check("the actual title initializes and renders with no session or content/media requests", async () => {
     const h = await host(await packages()); await h.ready();
     assert.equal(h.api.read().flow.currentSession, null);
