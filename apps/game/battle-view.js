@@ -26,23 +26,35 @@ export function battleMenuWaiting(state) {
   }
 }
 export class BattleView {
-  constructor(canvas, content, images, onReturn, onRetry, appearanceQuads, projectLayout) {
+  constructor(canvas, content, images, onReturn, onRetry, appearanceQuads, projectLayout, escapeActions) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.content = content;
     this.images = images;
     this.appearanceQuads = appearanceQuads;
     this.projectLayout = projectLayout;
+    if (escapeActions !== undefined &&
+      (typeof escapeActions?.canRequest !== "function" || typeof escapeActions?.request !== "function"))
+      throw new Error("Invalid battle escape actions");
+    this.escapeActions = escapeActions;
     this.selected = null;
     this.actionSource = null;
     this.commandId = null;
     this.key = "";
     this.instance = null;
+    this.returnError = null;
     this.paused = false;
     this.specialInput = null;
     this.revision = 0;
-    $("battle-return").onclick = onReturn;
-    $("battle-retry").onclick = onRetry;
+    $("battle-return").onclick = () => {
+      if (!this.paused && ["victory", "escaped"].includes(this.instance?.phase)) {
+        this.returnError = null;
+        onReturn();
+      }
+    };
+    $("battle-retry").onclick = () => {
+      if (!this.paused && this.instance?.phase === "defeat") onRetry();
+    };
     this.rows = new Map();
     $("party").replaceChildren();
   }
@@ -51,8 +63,17 @@ export class BattleView {
     this.selected = null;
     this.publishClock();
     this.instance = null;
+    this.returnError = null;
     $("battle-ui").hidden = true;
     $("battle-result").hidden = true;
+  }
+  /** Presentation-only failure marker, tied to this exact terminal battle.
+   * The session retains the receipt and remains the only settlement owner. */
+  showReturnError(battle) {
+    if (this.instance !== battle || !["victory", "escaped"].includes(battle.phase))
+      throw new Error("Cannot show return error for a stale battle");
+    this.returnError = battle;
+    this.sync(battle, this.paused);
   }
   resetMenu() {
     this.actionSource = null;
@@ -62,7 +83,7 @@ export class BattleView {
     this.revision++;
   }
   get menuState() {
-    if (!this.instance || this.instance.phase !== "active" || this.selected === null)
+    if (!this.instance || this.instance.phase !== "active" || this.instance.escapePending || this.selected === null)
       return "none";
     if (this.specialInput !== null) return this.specialInput;
     if (this.actionSource !== null)
@@ -86,7 +107,7 @@ export class BattleView {
   setSpecialInput(state) {
     if (state !== null && state !== "special-input" && state !== "slot")
       throw new Error("Unknown Web special input state");
-    if (!this.instance || this.instance.phase !== "active" || this.selected === null)
+    if (!this.instance || this.instance.phase !== "active" || this.instance.escapePending || this.selected === null)
       return false;
     if (state !== null && this.paused) return false;
     this.specialInput = state;
@@ -98,7 +119,7 @@ export class BattleView {
     return this.instance?.commandMenu(actor.id).find((c) => c.id === commandId)?.usesList ?? true;
   }
   back() {
-    if (this.paused || this.specialInput !== null) return false;
+    if (this.paused || this.instance?.escapePending || this.specialInput !== null) return false;
     if (this.actionSource !== null) {
       this.actionSource = null;
       const actor = this.instance?.ready.find((p) => p.id === this.selected);
@@ -116,7 +137,7 @@ export class BattleView {
     return false;
   }
   keyboard(e) {
-    if (this.paused || !this.instance || this.instance.phase !== "active") return;
+    if (this.paused || !this.instance || this.instance.phase !== "active" || this.instance.escapePending) return;
     if (
       ![
         "ArrowUp",
@@ -156,6 +177,7 @@ export class BattleView {
     if (this.instance !== battle) {
       this.content = battle.content;
       this.instance = battle;
+      this.returnError = null;
       this.selected = null;
       this.resetMenu();
     }
@@ -187,7 +209,7 @@ export class BattleView {
         meter.max = 100;
         button.append(name, hp, meter);
         button.onclick = () => {
-          if (this.paused || this.specialInput !== null || this.instance?.phase !== "active" ||
+          if (this.paused || this.instance?.escapePending || this.specialInput !== null || this.instance?.phase !== "active" ||
             !this.instance?.ready.some((member) => member.id === p.id)) return;
           this.selected = p.id;
           this.resetMenu();
@@ -209,7 +231,7 @@ export class BattleView {
       label(row.hp, `HP ${p.hp} / ${p.maxHp}\nMP ${p.mp} / ${p.maxMp}`);
       row.meter.value = p.atb;
       row.meter.setAttribute("aria-label", p.name + " 行动条");
-      row.button.disabled = paused || this.specialInput !== null || !readyIds.has(p.id);
+      row.button.disabled = paused || battle.escapePending || this.specialInput !== null || !readyIds.has(p.id);
       row.button.classList.toggle("selected", p.id === this.selected);
       row.button.classList.toggle("fallen", p.hp === 0);
     }
@@ -219,20 +241,23 @@ export class BattleView {
       this.publishClock();
       label(
         $("battle-result-title"),
-        battle.phase === "victory" ? "战斗胜利" : "队伍倒下了",
+        battle.phase === "escaped" ? "已撤离战斗" : battle.phase === "victory" ? "战斗胜利" : "队伍倒下了",
       );
       const r = battle.reward;
       label(
         $("battle-result-text"),
-        r
+        (battle.phase === "escaped"
+          ? "保留当前状态与已用掉的物品，不获得胜利奖励。"
+          : r
           ? `${r.exp} EXP · ${r.gil} Gil\n存活队员各获得 ${r.each} EXP` +
             (Array.isArray(r.drops) && r.drops.length ? "\n" + r.drops.map((drop) =>
               `${itemName({ name: battle.rewardItemName(drop.id) })} × ${drop.count}`).join(" · ") : "")
-          : "重新挑战这场战斗。",
+          : "重新挑战这场战斗。") +
+          (this.returnError === battle ? "\n返回地图失败，战斗结果仍保留，请重试。" : ""),
       );
       label(
         $("battle-levels"),
-        r
+        battle.phase !== "escaped" && r
           ? r.levels
               .map(
                 (l) =>
@@ -241,7 +266,8 @@ export class BattleView {
               .join(" · ")
           : "",
       );
-      $("battle-return").hidden = battle.phase !== "victory";
+      $("battle-return").hidden = !["victory", "escaped"].includes(battle.phase);
+      label($("battle-return"), this.returnError === battle ? "重试返回" : "继续前行");
       $("battle-retry").hidden = battle.phase !== "defeat";
       return;
     }
@@ -296,6 +322,8 @@ export class BattleView {
           ? battle.itemTargetChoices(actor.id, this.actionSource.id)
           : battle.targetChoices(actor.id, this.actionSource.id)
         : [];
+    const escapePending = battle.escapePending === true;
+    const canEscape = !!this.escapeActions && battle.canRequestEscape === true && this.escapeActions.canRequest() === true;
     const key = JSON.stringify([
       this.selected,
       this.actionSource,
@@ -306,9 +334,11 @@ export class BattleView {
       targets,
       paused,
       this.specialInput,
+      escapePending,
+      canEscape,
     ]);
     this.publishClock();
-    label($("battle-action"), battleLabel(battle.events.at(-1)?.text ?? ""));
+    label($("battle-action"), escapePending ? "正在撤退…" : battleLabel(battle.events.at(-1)?.text ?? ""));
     if (key === this.key) return;
     this.key = key;
     const revision = ++this.revision;
@@ -316,21 +346,23 @@ export class BattleView {
       focused = menu.contains(document.activeElement);
     menu.replaceChildren();
     const title = document.createElement("strong");
-    title.textContent = actor
+    title.textContent = escapePending ? "正在撤退…" : actor
       ? `${actor.name} · ${this.specialInput !== null ? "特殊输入中…" : this.actionSource !== null ? "选择目标" : this.commandId !== null ? commands.find((c) => c.id === this.commandId)?.name ?? "选择能力" : "选择指令"}`
       : "等待行动条…";
     menu.append(title);
-    if (!actor || this.specialInput !== null) return;
+    if (escapePending || this.specialInput !== null) return;
+    if (!actor && !this.escapeActions) return;
     const choices = document.createElement("div");
     choices.className = "battle-choices";
     menu.append(choices);
-    const add = (text, disabled, click) => {
+    const add = (text, disabled, click, needsActor = true) => {
       const b = document.createElement("button");
       b.textContent = text;
       b.disabled = disabled || paused;
       b.onclick = () => {
         if (this.instance !== battle || this.paused || revision !== this.revision ||
-          battle.phase !== "active" || !battle.ready.some((p) => p.id === actor.id)) return;
+          battle.phase !== "active" || battle.escapePending ||
+          (needsActor && (!actor || !battle.ready.some((p) => p.id === actor.id)))) return;
         click();
       };
       choices.append(b);
@@ -349,6 +381,15 @@ export class BattleView {
         });
         if (command.blockers.length) button.title = command.blockers.join("；");
       }
+      if (this.escapeActions) add("撤退", !canEscape, () => {
+        // Re-read both the battle and host owner at click time. The button may
+        // have been detached, paused or rendered before another queued action.
+        if (!battle.canRequestEscape || !this.escapeActions.canRequest()) return;
+        if (this.escapeActions.request()) {
+          this.resetMenu();
+          if (this.instance === battle) this.sync(battle, this.paused);
+        }
+      }, false);
     } else if (this.actionSource === null) {
       for (const { source, commandId, usable, name } of options.filter((option) => option.commandId === this.commandId)) {
         add(

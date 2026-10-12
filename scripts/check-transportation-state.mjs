@@ -62,7 +62,7 @@ const transportations = new Transportations(compiledCatalog.catalog), flag = tra
 const cases = [];
 function check(name, run) { run(); cases.push({ name, pass: true }); }
 check("source constructor creates eight complete distinct payloads without synthetic parked locations", () => {
-  assert.equal(before.formatVersion, 10); assert.equal(before.nativeState.kind, "source-native-state-v2");
+  assert.equal(before.formatVersion, 11); assert.equal(before.nativeState.kind, "source-native-state-v2");
   assert.equal(before.nativeState.ownedTransportations.length, 8);
   assert.deepEqual(before.nativeState.ownedTransportations, plan.nativeInitialization.ownedTransportationIds.map((id) => ({
     id, mapId: -1, position: { x: 1000, y: 1000, z: -1000 }, direction: 0, timeStampTicks: "0",

@@ -3,7 +3,7 @@ import type { FieldChoiceAnswer } from "./field-choice.js";
 import { GameSession } from "./game-session.js";
 
 export type GameFlowPhase = "title" | "loading" | "paused" | "exploration" | "event" | "dialogue" | "choice" | "shop" |
-  "battle" | "victory" | "defeat" | "transition" | "blocked";
+  "battle" | "victory" | "defeat" | "escaped" | "transition" | "blocked";
 export type GameFlowOperation = "new-game" | "load" | "save" | "map";
 export type GameFlowHostState = { visible: boolean; mediaReady: boolean; overlayOpen: boolean };
 export type GameFlowStartOptions = { paused?: boolean };
@@ -148,6 +148,11 @@ export class GameFlow {
   continueVictory(): boolean {
     const owner = this.owner;
     return this.hostAllowsInput && owner?.battle?.phase === "victory" ? owner.continueVictory() : false;
+  }
+  get canEscape(): boolean { return this.hostAllowsInput && !!this.owner?.canEscape; }
+  requestEscape(): boolean { return this.canEscape ? this.owner!.requestEscape() : false; }
+  continueEscape(): boolean {
+    return this.hostAllowsInput && this.owner?.battle?.phase === "escaped" ? this.owner.continueEscape() : false;
   }
   retryBattle(): boolean {
     const owner = this.owner;

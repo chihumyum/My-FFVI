@@ -66,6 +66,8 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
       throw new Error("Batch content profile mismatch");
   if (!framework && Object.values(battle.encounters).some(e => e.formationPlan?.kind === "development"))
     throw new Error("Batch source profile cannot use development formation selection");
+  if (!framework && (Object.hasOwn(battle.common, "escapePolicy") || Object.values(battle.encounters).some(e => e.escapePolicy !== undefined)))
+    throw new Error("Batch source profile cannot use development escape policy");
   if (entry.parentSourceSetHash !== catalog.parentSourceSetHash)
     throw new Error("Batch entry/world source mismatch");
   if (entry.kind === "source-new-game-content-v1") {

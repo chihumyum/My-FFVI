@@ -108,7 +108,7 @@ const make = () =>
   );
 const owned = make(),
   initial = owned.snapshot();
-assert.equal(initial.formatVersion, 10);
+assert.equal(initial.formatVersion, 11);
 assert.deepEqual(initial.equipmentStock, [
   { id: 93, count: 5 },
   { id: 95, count: 1 },
@@ -237,7 +237,7 @@ assert.equal(grownSave.roster[0].hp, beforeBattle.roster[0].hp);
 assert.equal(grownSave.roster[0].mp, beforeBattle.roster[0].mp);
 assert.deepEqual(grownSave.equipmentStock, beforeBattle.equipmentStock);
 assert.deepEqual(grownSave.learnedAbilityIds, beforeBattle.learnedAbilityIds);
-assert.deepEqual(grownSave.completedBattles, [...beforeBattle.completedBattles, { ...lease }]);
+assert.deepEqual(grownSave.completedBattles, [...beforeBattle.completedBattles, { ...lease, outcome: "victory" }]);
 assert.throws(commitVictory, /Stale victory/);
 assert.deepEqual(owned.snapshot(), grownSave, "a repeated reward cannot award EXP twice");
 restored.restore(JSON.parse(JSON.stringify(grownSave)));

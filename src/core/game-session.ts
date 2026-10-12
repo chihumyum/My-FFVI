@@ -384,7 +384,7 @@ export class GameSession {
     next.setBattlePreferences(s.battlePreferences);
     next.state.restore(s.owned);
     if (s.encounterSerial !== s.owned.completedBattles.length)
-      throw new Error("Saved encounter sequence disagrees with rewards");
+      throw new Error("Saved encounter sequence disagrees with settled battles");
     next.world.restore(s.world, world?.catalog, world?.map, s.origin.kind === "source-new-game" ? world!.source : undefined);
     if (s.formatVersion === 5) next.walkEncounters.restore(s.walkEncounters);
     else if (initial?.walkEncounters || next.field.content.walkEncounters)
@@ -450,6 +450,12 @@ export class GameSession {
         content = { ...content, qualificationContext: { ...content.qualificationContext,
           invalidContentIds: entry.invalidContentIds, conditionContext: "current" } };
       }
+      // A scripted encounter currently has a victory continuation only. Never
+      // let a catalog-level development policy bypass its story result branch.
+      if (content.escapePolicy && request.returnTo?.kind !== "field-idle") {
+        const { escapePolicy: _, ...scripted } = content;
+        content = scripted;
+      }
       if (this.state.battlePartyBlocker) throw new Error(this.state.battlePartyBlocker);
       const blocker = battleDefinitionBlocker(this.state.partyPlayers(), content.qualificationContext, content.conditions);
       if (blocker) throw new Error(blocker);
@@ -483,6 +489,26 @@ export class GameSession {
     commit.validate();
     resume.commitWith(commit);
     this.battle!.takeVictory();
+    this.battleLease = null;
+    this.battle = null;
+    return true;
+  }
+  get canEscape(): boolean {
+    return this.field.stop?.kind === "encounter" && this.field.stop.returnTo?.kind === "field-idle" &&
+      this.field.stop.continuation === undefined && !!this.battleLease && !!this.battle?.canRequestEscape;
+  }
+  requestEscape(): boolean { return this.canEscape ? this.battle!.requestEscape() : false; }
+  continueEscape(): boolean {
+    const result = this.battle?.previewEscape();
+    if (!result) return false;
+    if (!this.battleLease || this.field.stop?.kind !== "encounter" ||
+        this.field.stop.returnTo?.kind !== "field-idle" || this.field.stop.continuation !== undefined)
+      throw new Error("Escape requires an owned ordinary field encounter");
+    const commit = this.state.prepareEscape(this.battleLease, result);
+    const resume = this.field.prepareEncounterReturn(this.battle!.content.encounterId, commit.fieldState);
+    commit.validate();
+    resume.commitWith(commit);
+    this.battle!.takeEscape();
     this.battleLease = null;
     this.battle = null;
     return true;

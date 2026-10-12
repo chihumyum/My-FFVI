@@ -218,6 +218,8 @@ export class GameContentRepository {
     ]);
     if (this.profile === "source" && Object.values(battle.encounters).some(e => e.formationPlan?.kind === "development"))
       throw new Error("Source new game cannot use development formation selection");
+    if (this.profile === "source" && (Object.hasOwn(battle.common, "escapePolicy") || Object.values(battle.encounters).some(e => e.escapePolicy !== undefined)))
+      throw new Error("Source new game cannot use development escape policy");
     if (content.battleCatalogHash !== battle.contentHash || content.worldCatalogHash !== catalog.contentHash ||
         content.sourceSetHash !== catalog.sourceSetHash || content.parentSourceSetHash !== catalog.parentSourceSetHash ||
         catalog.maps[String(content.entry.mapId)]?.contentHash !== content.mapContentHash)

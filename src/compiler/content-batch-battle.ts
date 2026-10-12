@@ -1,6 +1,7 @@
 import { BattleConditions } from "../core/battle-conditions.js";
 import type { BattleCatalog, BattleEncounterDiagnostic } from "../core/battle-content.js";
 import { encounterFormationOptions } from "../core/battle-content.js";
+import { parseBattleEscapePolicy } from "../core/battle-escape.js";
 import { validateBattleDropCatalog } from "../core/battle-rewards.js";
 import { validateBattleEventRules } from "../core/battle-event-context.js";
 import { canonical } from "../core/canonical.js";
@@ -82,6 +83,11 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
       if (catalog.kind !== "narshe-battle-catalog" || encounter.encounterId !== id)
         block("encounter-identity", "Encounter dictionary key and compiled identity disagree");
       checked("encounter-formation", () => { formationOptions = encounterFormationOptions(encounter); });
+      checked("encounter-escape", () => {
+        if (Object.hasOwn(catalog.common, "escapePolicy")) throw new Error("Escape policy must belong to an encounter");
+        if (encounter.escapePolicy !== undefined) parseBattleEscapePolicy(encounter.escapePolicy);
+      });
+      if (encounter.escapePolicy) limitations.push("Authored ordinary-field retreat does not reproduce source escape rules or learning.");
       if (!encounter.enemies.length || encounter.enemies.length > 9 ||
           new Set(encounter.enemies.map(enemy => enemy.id)).size !== encounter.enemies.length)
         block("enemy-identity", "Missing, duplicate or excessive enemy identities");

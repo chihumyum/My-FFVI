@@ -267,6 +267,19 @@ test("a source new game rejects authored formation selection even with matching 
   await assert.rejects(new GameContentRepository(loader(f.files).read).sourceNewGame(), /Source new game.*formation/);
 });
 
+test("a source new game rejects authored escape even when content hashes are rebound", async () => {
+  for (const misplaced of [false, true]) {
+    const f = await freshFixture(), battle = structuredClone(f.battle);
+    const policy = { kind: "framework-battle-escape-v1" as const, id: "ordinary-retreat" };
+    if (misplaced) Object.assign(battle.common, { escapePolicy: policy });
+    else Object.values(battle.encounters)[0]!.escapePolicy = policy;
+    const next = await seal(battle);
+    f.files.set("/game/battle.json", next);
+    f.files.set("/game/new-game.json", await seal({ ...f.content, battleCatalogHash: next.contentHash }));
+    await assert.rejects(new GameContentRepository(loader(f.files).read).sourceNewGame(), /Source new game.*escape/);
+  }
+});
+
 test("fresh entry refuses stale manifest dependencies, alien parent and a missing reserved script", async () => {
   const f = await freshFixture();
   for (const key of ["battleCatalogHash", "worldCatalogHash", "mapContentHash", "sourceSetHash", "parentSourceSetHash"] as const) {

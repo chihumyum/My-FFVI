@@ -82,7 +82,7 @@ test("one source state settles learning, projects the menu, restores and admits 
   assert.deepEqual(state.snapshot(), before, "preview and prepare publish nothing");
   publish();
   const saved = JSON.parse(JSON.stringify(state.snapshot())) as ReturnType<GameState["snapshot"]>;
-  assert.equal(saved.formatVersion, 10);
+  assert.equal(saved.formatVersion, 11);
   assert.deepEqual(saved.nativeState!.ownedMagic, [742]);
   assert.deepEqual(saved.learnedAbilityIds, before.learnedAbilityIds, "initial history is a separate source list");
   assert.equal(menu(f, state).abilities!.find((a) => a.id === 142)!.skillLevel, 100);
@@ -112,7 +112,7 @@ test("learning save replay rejects forged global magic, receipts, skill and init
     (s) => { s.roster[0]!.growth!.observedLearning = []; },
     (s) => { s.roster[0]!.abilities!.owned.find((a) => a.abilityId === 142)!.skillLevel = 0; },
     (s) => { s.learnedAbilityIds.push(142); },
-    (s) => { s.formatVersion = 9 as 10; },
+    (s) => { s.formatVersion = 9 as 11; },
   ];
   for (const change of changes) {
     const bad = structuredClone(saved); change(bad);

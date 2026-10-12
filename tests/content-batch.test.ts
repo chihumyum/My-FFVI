@@ -69,3 +69,10 @@ test("an authored formation policy cannot become a source batch through a fresh 
   f.packages.battle = sealBatchContent(f.packages.battle);
   assert.throws(() => planContentBatch(f.manifest, f.packages), /source profile.*formation/);
 });
+
+test("an authored escape policy cannot become source battle coverage through new content hashes", () => {
+  const f = contentBatchFixture();
+  f.packages.battle.encounters[1000]!.escapePolicy = { kind: "framework-battle-escape-v1", id: "ordinary-retreat" };
+  f.packages.battle = sealBatchContent(f.packages.battle);
+  assert.throws(() => planContentBatch(f.manifest, f.packages), /source profile.*escape/);
+});

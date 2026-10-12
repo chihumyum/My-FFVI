@@ -17,6 +17,7 @@ import { compileEnemyPhysical } from "./physical-parameters.js";
 import { tableInteger as int } from "./table.js";
 import { createBattleFormationPlan, type BattleFormationPlan,
   type FrameworkBattleFormationPolicy } from "../core/battle-formations.js";
+import { parseBattleEscapePolicy, type FrameworkBattleEscapePolicy } from "../core/battle-escape.js";
 
 type Reader = {
   row(table: string, id: string | number): BattleRow;
@@ -39,6 +40,8 @@ export type BattleEncounterRuntimeInput = {
   development: {
     /** Authored selection for non-fixed encounters; never the native weight rule. */
     formations?: FrameworkBattleFormationPolicy;
+    /** Opt-in ordinary-field retreat, never source escape RNG or timing. */
+    escape?: FrameworkBattleEscapePolicy;
     scripts: readonly { id: number; source: BattleAISource; reason: string }[];
     flagGroups: readonly { id: number; rows: readonly BattleRow[]; reason: string }[];
   };
@@ -82,6 +85,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     };
     const enemies: CombatantDefinition[] = [];
     let formationPlan: BattleFormationPlan | null = null;
+    let escapePolicy: FrameworkBattleEscapePolicy | undefined;
     try {
       const m = encounter.metadata;
       if (!encounter.source || encounter.source.rowId !== String(partyId) || !m)
@@ -123,7 +127,23 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       if (m.getAp !== 0 || m.getValue !== 0)
         block("party-rewards", "Party AP or special reward provider is not implemented", "get_ap/get_value");
       if (![0, 2].includes(m.notEscape)) block("escape", "Unresolved source escape mode", "not_escape");
-      else add("development-omission", "escape", `Escape is unavailable in the development host (source mode ${m.notEscape})`);
+      if (input.development.escape !== undefined) {
+        const authored = parseBattleEscapePolicy(input.development.escape);
+        if (m.notEscape === 0 && m.getAp === 0 && m.getValue === 0) {
+          // NoARBattle (14) is the only pre-existing bounded flag omission.
+          // In particular CertaintyEscape and other overrides require their
+          // own provider; an omission list cannot silently authorize them.
+          if (m.battleFlags.some(flag => int(flag.values.battle_flag_id) !== 14))
+            block("escape-flags", "Battle flags require a separate escape outcome provider", "battle_flag_group_id");
+          else {
+            escapePolicy = authored;
+            add("development-omission", "escape-policy",
+              `Authored ${authored.id} retreat only for ordinary field encounters; guaranteed after the current action, no rewards or learning; source probability and timing remain unresolved`);
+          }
+        }
+      }
+      if (!escapePolicy && [0, 2].includes(m.notEscape))
+        add("development-omission", "escape", `Escape is unavailable in the development host (source mode ${m.notEscape})`);
       if (![0, 1].includes(m.appearanceProduction))
         block("appearance-production", "Unresolved battle introduction provider", "appearance_production");
       else if (m.appearanceProduction) add("development-omission", "appearance-production", "Source battle introduction is not played");
@@ -194,6 +214,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       input.sourceDiagnostics.some((d) => d.partyId === partyId);
     if (!blocked && formationPlan) encounters[partyId] = { encounterId: partyId, enemies,
       background: encounter.background, formationPlan,
+      ...(escapePolicy ? { escapePolicy } : {}),
       formation: formationPlan.kind === "development" ? null : formationPlan.pattern === 3 ? "opposed" : "normal" };
     entries.push({ partyId, status: blocked ? "blocked" : "compiled", enemyCount: encounter.enemies.length,
       abilityIds: [...new Set(enemies.flatMap((e) => e.abilities))].sort((a, b) => a - b) });

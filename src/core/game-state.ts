@@ -157,7 +157,7 @@ export type OwnedCharacter = RosterMember & {
   growth: CharacterGrowthProgress | null;
 };
 export type GameStateSnapshot = {
-  formatVersion: 10;
+  formatVersion: 11;
   kind: "owned-game-state";
   catalogHash: string;
   initialization: "development-checkpoint" | "source-new-game";
@@ -172,12 +172,33 @@ export type GameStateSnapshot = {
   releasedJobIds: number[];
   learnedAbilityIds: number[];
   characterNames: Record<string, string>;
+  /** One receipt per settled lease, including escapes. Only victories qualify
+   * as won encounters or as a source observation-learning result. */
+  completedBattles: { serial: number; encounterId: number; outcome: "victory" | "escaped" }[];
+};
+/** Version 10 could only settle victories. No other historical format is
+ * implicitly upgraded or supplied with missing fields. */
+export type LegacyGameStateSnapshotV10 = Omit<GameStateSnapshot, "formatVersion" | "completedBattles"> & {
+  formatVersion: 10;
   completedBattles: { serial: number; encounterId: number }[];
 };
 export type BattleLease = {
   readonly serial: number;
   readonly encounterId: number;
 };
+export type BattleEscapeResult = { players: Combatant[]; consumedItems: ItemStack[] };
+export type BattleVictoryResult = BattleEscapeResult & {
+  gil: number;
+  awardedExperience?: { id: string; amount: number }[];
+  observedAbilityIds?: number[];
+  dropGrants?: BattleDropGrant[];
+};
+export type PreparedBattleReturn = (() => void) & {
+  validate(): void;
+  fieldState(): { puppetRoster: ReturnType<FieldPuppetRosterPort["current"]>; partyAppearance: PartyAppearanceCandidate | null };
+};
+
+const ownedSnapshotFields = "formatVersion,kind,catalogHash,initialization,nativeState,roster,party,gil,totalGil,items,equipmentStock,releasedJobIds,learnedAbilityIds,characterNames,completedBattles";
 
 function integer(value: number, max: number, min = 0): number {
   if (!Number.isSafeInteger(value) || value < min || value > max)
@@ -337,7 +358,7 @@ export class GameState {
       }
     }
     this.data = {
-      formatVersion: 10,
+      formatVersion: 11,
       kind: "owned-game-state",
       catalogHash,
       initialization: fresh ? "source-new-game" : "development-checkpoint",
@@ -427,13 +448,10 @@ export class GameState {
     return plan;
   }
   private validate(data: GameStateSnapshot) {
-    keys(
-      data,
-      "formatVersion,kind,catalogHash,initialization,nativeState,roster,party,gil,totalGil,items,equipmentStock,releasedJobIds,learnedAbilityIds,characterNames,completedBattles",
-    );
+    keys(data, ownedSnapshotFields);
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== 10 ||
+      data.formatVersion !== 11 ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -501,10 +519,12 @@ export class GameState {
     this.observedMagic(data);
     distinct(data.completedBattles.map((b) => b.serial));
     for (const [index, b] of data.completedBattles.entries()) {
-      keys(b, "serial,encounterId");
+      keys(b, "serial,encounterId,outcome");
       if (b.serial !== index)
         throw new Error("Invalid battle receipt sequence");
       integer(b.encounterId, 0x7fffffff, 1);
+      if (b.outcome !== "victory" && b.outcome !== "escaped")
+        throw new Error("Invalid battle receipt outcome");
     }
   }
   /** Rebuild the single native magic owner from source-bound per-character
@@ -520,7 +540,8 @@ export class GameState {
     const identities = new Set<string>();
     for (const { member, receipt } of receipts) {
       const key = `${receipt.battleSerial}:${receipt.participantIndex}`;
-      if (identities.has(key) || !data.completedBattles.some((b) => b.serial === receipt.battleSerial))
+      if (identities.has(key) || !data.completedBattles.some((b) =>
+        b.serial === receipt.battleSerial && b.outcome === "victory"))
         throw new Error("Unbound observed learning battle receipt");
       identities.add(key);
       const catalog = this.content.characterGrowth?.[member.id]?.observedLearning;
@@ -645,7 +666,7 @@ export class GameState {
     return this.data.gil;
   }
   get completedEncounters() {
-    return this.data.completedBattles.map((b) => b.encounterId);
+    return this.data.completedBattles.filter((b) => b.outcome === "victory").map((b) => b.encounterId);
   }
   get inBattle() {
     return this.active !== null;
@@ -662,9 +683,19 @@ export class GameState {
     return structuredClone(this.data.nativeState);
   }
   /** A shared-state snapshot is not a complete field/battle save game. */
-  restore(snapshot: GameStateSnapshot): void {
+  restore(snapshot: GameStateSnapshot | LegacyGameStateSnapshotV10): void {
     this.requireIdle();
-    const next = structuredClone(snapshot);
+    const input = structuredClone(snapshot);
+    let next: GameStateSnapshot;
+    if (input.formatVersion === 10) {
+      // Check the complete historical shape before assigning its one possible
+      // outcome. All unchanged fields then pass the current content validator.
+      keys(input, ownedSnapshotFields);
+      if (!Array.isArray(input.completedBattles)) throw new Error("Invalid legacy battle receipts");
+      for (const receipt of input.completedBattles) keys(receipt, "serial,encounterId");
+      next = { ...input, formatVersion: 11,
+        completedBattles: input.completedBattles.map((receipt) => ({ ...receipt, outcome: "victory" })) };
+    } else next = input;
     this.validate(next);
     this.data = next;
     this.revision++;
@@ -1626,17 +1657,25 @@ export class GameState {
   }
   prepareVictory(
     lease: BattleLease,
-    result: { players: Combatant[]; gil: number; consumedItems: ItemStack[];
-      awardedExperience?: { id: string; amount: number }[]; observedAbilityIds?: number[];
-      dropGrants?: BattleDropGrant[] },
-  ): (() => void) & {
-    validate(): void;
-    fieldState(): { puppetRoster: ReturnType<FieldPuppetRosterPort["current"]>; partyAppearance: PartyAppearanceCandidate | null };
-  } {
+    result: BattleVictoryResult,
+  ): PreparedBattleReturn {
+    return this.prepareBattleReturn(lease, { outcome: "victory", result });
+  }
+  /** Development escape settlement is not a zero-experience victory. Source
+   * result learning, loot, currency and growth are deliberately not invoked. */
+  prepareEscape(lease: BattleLease, result: BattleEscapeResult): PreparedBattleReturn {
+    keys(result, "players,consumedItems");
+    return this.prepareBattleReturn(lease, { outcome: "escaped", result });
+  }
+  private prepareBattleReturn(
+    lease: BattleLease,
+    exit: { outcome: "victory"; result: BattleVictoryResult } | { outcome: "escaped"; result: BattleEscapeResult },
+  ): PreparedBattleReturn {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
+    const result = exit.result, victory = exit.outcome === "victory" ? exit.result : null;
     let next = this.snapshot();
     const revision = this.revision;
-    integer(result.gil, 0x7fffffff);
+    if (victory) integer(victory.gil, 0x7fffffff);
     validateItemStacks(
       result.consumedItems,
       this.content.items,
@@ -1653,7 +1692,7 @@ export class GameState {
         throw new Error("Invalid battle inventory consumption");
       stock.count -= used.count;
     }
-    const grants = result.dropGrants ?? [];
+    const grants = victory?.dropGrants ?? [];
     if (!Array.isArray(grants)) throw new Error("Invalid battle drop grants");
     distinct(grants.map((grant) => grant.id));
     // FixedStatusInfo.SaveItem removes used items before adding DropItemList.
@@ -1671,14 +1710,14 @@ export class GameState {
       result.players.some((p, n) => p.id !== party[n]!.id)
     )
       throw new Error("Battle party identity changed");
-    if (result.awardedExperience) {
-      distinct(result.awardedExperience.map((award) => award.id));
-      for (const award of result.awardedExperience) {
+    if (victory?.awardedExperience) {
+      distinct(victory.awardedExperience.map((award) => award.id));
+      for (const award of victory.awardedExperience) {
         keys(award, "id,amount");
         integer(award.amount, this.content.limits.exp);
       }
-      if (result.awardedExperience.length !== party.length ||
-        result.awardedExperience.some((award) => !party.some((p) => p.id === award.id)))
+      if (victory.awardedExperience.length !== party.length ||
+        victory.awardedExperience.some((award) => !party.some((p) => p.id === award.id)))
         throw new Error("Battle experience identity changed");
     }
     for (const [participantIndex, player] of result.players.entries()) {
@@ -1692,21 +1731,34 @@ export class GameState {
           (player.row !== "front" && player.row !== "back"))
         throw new Error("Battle party row identity changed");
       // Function17 writes the owned Corps row. The Web battle keeps a leased
-      // candidate until the whole victory/field-return transaction can commit.
+      // candidate until the whole battle/field-return transaction can commit.
       cell.row = player.row;
+      if (!victory) {
+        for (const key of ["level", "exp", "maxHp", "maxMp"] as const)
+          if (player[key] !== entry[key] || entry[key] !== target[key])
+            throw new Error("Escape cannot change owned growth or resource maxima");
+        if (canonical(player.ownedAbilities ?? null) !== canonical(entry.ownedAbilities ?? null))
+          throw new Error("Escape cannot change held abilities");
+        if (canonical(this.conditions.battleEnd(player.conditionIds)) !== canonical(player.conditionIds))
+          throw new Error("Escape contains uncleared battle-only conditions");
+        target.hp = player.hp;
+        target.mp = player.mp;
+        target.conditionIds = [...player.conditionIds];
+        continue;
+      }
       if (target.growth) {
-        const award = result.awardedExperience?.find((award) => award.id === player.id);
+        const award = victory.awardedExperience?.find((award) => award.id === player.id);
         if (!award) throw new Error("Missing source experience award");
-        if (!Array.isArray(result.observedAbilityIds)) throw new Error("Missing battle ability observations");
-        distinct(result.observedAbilityIds);
-        result.observedAbilityIds.forEach((id) => integer(id, 0x7fffffff, 1));
+        if (!Array.isArray(victory.observedAbilityIds)) throw new Error("Missing battle ability observations");
+        distinct(victory.observedAbilityIds);
+        victory.observedAbilityIds.forEach((id) => integer(id, 0x7fffffff, 1));
         const resources = { ...target, hp: player.hp, mp: player.mp, conditionIds: [...player.conditionIds] };
         let projected: OwnedCharacter;
         if (player.hp === 0) {
           if (award.amount !== 0 || !target.abilities) throw new Error("Invalid nonrecipient experience award");
-          projected = this.projectObservedLearning(resources, result.observedAbilityIds, lease, participantIndex);
+          projected = this.projectObservedLearning(resources, victory.observedAbilityIds, lease, participantIndex);
         } else projected = this.projectGrowth(resources, { kind: "add-experience", amount: award.amount,
-          context: "battle", observedAbilityIds: result.observedAbilityIds,
+          context: "battle", observedAbilityIds: victory.observedAbilityIds,
           learningReceipt: { battleSerial: lease.serial, participantIndex } });
         for (const key of ["level", "exp", "maxHp", "maxMp", "hp", "mp"] as const)
           if (projected[key] !== player[key]) throw new Error("Battle source growth projection mismatch");
@@ -1726,14 +1778,16 @@ export class GameState {
         conditionIds: [...player.conditionIds],
       });
     }
-    next.gil = Math.min(this.content.limits.gil, next.gil + result.gil);
-    next.totalGil += result.gil;
-    next.completedBattles.push({ ...lease });
-    if (next.nativeState) next.nativeState.ownedMagic = this.observedMagic(next);
+    if (victory) {
+      next.gil = Math.min(this.content.limits.gil, next.gil + victory.gil);
+      next.totalGil += victory.gil;
+    }
+    next.completedBattles.push({ ...lease, outcome: exit.outcome });
+    if (victory && next.nativeState) next.nativeState.ownedMagic = this.observedMagic(next);
     this.validate(next);
     const validate = () => {
       if (this.active?.lease !== lease || this.revision !== revision)
-        throw new Error("Stale victory transaction");
+        throw new Error(`Stale ${victory ? "victory" : "escape"} transaction`);
     };
     const commit = () => {
       validate();

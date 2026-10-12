@@ -228,7 +228,7 @@ test("victory keeps uncapped growth inputs so removing HP/MP equipment after cap
   assert.deepEqual([game.players[0]!.hp, game.players[0]!.mp], [100, 10]);
   assert.equal(game.gil, 104);
   assert.deepEqual(game.state.snapshot().completedBattles, [
-    { serial: 0, encounterId: 1000 },
+    { serial: 0, encounterId: 1000, outcome: "victory" },
   ]);
   assert.deepEqual(game.state.snapshot().equipmentStock, startingStock);
   assert.equal(

@@ -69,7 +69,7 @@ const cases = [];
 function check(name, fn) { fn(); cases.push({ name, pass: true }); }
 
 check("bound fresh and development states have distinct owned-v10 initialization identities", () => {
-  assert.equal(initial.formatVersion, 10);
+  assert.equal(initial.formatVersion, 11);
   assert.equal(initial.initialization, "source-new-game");
   assert.deepEqual(initial.roster.map((member) => member.conditionIds), [[], [], []]);
   const old = development();

@@ -178,9 +178,39 @@ function bindSession(candidate, views) {
   last = lastMinimapFrame = 0;
   held.clear();
   battleView?.hide();
+  const battleOwnerReady = () => !failed && !document.hidden && flow.currentSession === candidate &&
+    flow.inputReady && battleView?.instance === candidate.battle;
   battleView = new BattleView(canvas, candidate.battleCatalog.common, images,
-    () => { if (flow.continueVictory()) { sync(); focus(); } },
-    () => { if (flow.retryBattle()) { sync(); focus(); } }, battleAppearanceQuads, projectDevelopmentBattleLayout);
+    () => {
+      if (!battleOwnerReady()) return;
+      const returningBattle = candidate.battle, phase = returningBattle?.phase;
+      try {
+        const resumed = phase === "escaped" ? flow.continueEscape() :
+          phase === "victory" ? flow.continueVictory() : false;
+        if (resumed) { sync(); focus(); }
+      } catch (error) {
+        // Only an uncommitted return can be retried. Once the battle lease is
+        // released, a later renderer/focus error must not re-enter settlement.
+        if (flow.currentSession === candidate && candidate.battle === returningBattle &&
+          candidate.state.inBattle && ["victory", "escaped"].includes(phase) &&
+          returningBattle.phase === phase && battleView?.instance === returningBattle) {
+          try { battleView.showReturnError(returningBattle); }
+          catch (presentationError) { failure(presentationError); }
+        } else failure(error);
+      }
+    },
+    () => { if (battleOwnerReady() && flow.retryBattle()) { sync(); focus(); } },
+    battleAppearanceQuads, projectDevelopmentBattleLayout, {
+      canRequest: () => battleOwnerReady() && flow.canEscape,
+      request: () => {
+        if (!battleOwnerReady() || !flow.canEscape) return false;
+        try {
+          const requested = flow.requestEscape();
+          if (requested) { sync(); focus(); }
+          return requested;
+        } catch (error) { failure(error); return false; }
+      },
+    });
   inventoryView = new InventoryView($("pause"), candidate.battleCatalog.gameState.items,
     () => { equipmentView.render(flow.session); syncSaveControls(); });
   equipmentView.reset(); partyView.reset(); choiceView.reset(); shopView.reset();

@@ -340,7 +340,7 @@ test("shared-state restore rejects incompatible, incomplete, extra and inconsist
       Object.assign(x.items[0]!, { id: "20" });
     },
     (x: typeof before) => {
-      x.completedBattles.push({ serial: 2, encounterId: 1000 });
+      x.completedBattles.push({ serial: 2, encounterId: 1000, outcome: "victory" });
     },
   ];
   for (const mutate of invalid) {

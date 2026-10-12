@@ -73,6 +73,7 @@ import type {
 } from "./battle-content.js";
 import { battleDefinitionBlocker } from "./battle-content.js";
 import { validateBattleFormationChoice } from "./battle-formations.js";
+import { parseBattleEscapePolicy, type FrameworkBattleEscapePolicy } from "./battle-escape.js";
 import { observeLearningAction, validateObservedLearningCatalog } from "./character-learning.js";
 
 export type Combatant = CombatantDefinition & {
@@ -131,7 +132,7 @@ export type BattleMenuCommand = {
 export class BattleGame {
   readonly combatants: Combatant[];
   readonly events: BattleEvent[] = [];
-  phase: "active" | "victory" | "defeat" = "active";
+  phase: "active" | "victory" | "defeat" | "escaped" = "active";
   action: BattleAction | null = null;
   reward: BattleReward | null = null;
   time = 0;
@@ -143,6 +144,8 @@ export class BattleGame {
   private poisonStates = new Map<string, PoisonState>();
   private slowStates = new Map<string, SlowState>();
   private collected = false;
+  private readonly escapeRule: FrameworkBattleEscapePolicy | null;
+  private escapeRequested = false;
   private currentPreferences: BattlePreferences;
   private clockInput = {
     paused: false,
@@ -185,6 +188,7 @@ export class BattleGame {
       throw new Error("Battle formation selection is unresolved");
     if (content.formationChoice !== undefined)
       validateBattleFormationChoice(content.formationChoice, content.formation, seed);
+    this.escapeRule = content.escapePolicy === undefined ? null : parseBattleEscapePolicy(content.escapePolicy);
     this.randomState = seed || 1;
     this.currentPreferences = parseBattlePreferences(content.timing);
     if (initialPreferences !== undefined)
@@ -320,7 +324,20 @@ export class BattleGame {
     }
   }
   get ready() {
+    if (this.escapeRequested) return [];
     return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued);
+  }
+  get escapePending(): boolean { return this.escapeRequested; }
+  get canRequestEscape(): boolean {
+    return this.escapeRule !== null && this.phase === "active" && !this.escapeRequested &&
+      this.players.some(c => c.hp > 0) && this.enemies.some(c => c.hp > 0) &&
+      !this.clockInput.paused && !this.clockInput.helpPaused && this.clockInput.progressEnabled && !this.clockInput.forceWaiting;
+  }
+  requestEscape(): boolean {
+    if (!this.canRequestEscape) return false;
+    this.escapeRequested = true;
+    this.log("正在撤退…");
+    return true;
   }
   private get usesSourceQualification() {
     return this.content.qualificationContext?.mode === "source";
@@ -510,6 +527,9 @@ export class BattleGame {
   private clockGate() {
     return battleClockGate({
       ...this.clockInput,
+      // Once accepted, an old target/ability menu must not deadlock WAIT.
+      // Pause, help, special input and the host progress gate still apply.
+      uiWaiting: this.escapeRequested ? false : this.clockInput.uiWaiting,
       mode: this.currentPreferences.mode,
       battleResult: this.phase === "active" ? 0 : 1,
     });
@@ -1111,6 +1131,7 @@ export class BattleGame {
       random: this.randomState,
       phase: this.phase,
       reward: this.reward,
+      escapeRequested: this.escapeRequested,
     };
     try {
       this.reconcileAppearances();
@@ -1135,6 +1156,7 @@ export class BattleGame {
       this.randomState = before.random;
       this.phase = before.phase;
       this.reward = before.reward;
+      this.escapeRequested = before.escapeRequested;
       throw error;
     }
   }
@@ -1142,6 +1164,14 @@ export class BattleGame {
     const gate = this.clockGate();
     if (!gate.simulation) return;
     this.time += 10;
+    if (this.escapeRequested && !this.action) {
+      if (!gate.progress) return;
+      // Existing lethal results outrank retreat; a request cannot avoid defeat
+      // or turn a completed victory into a reward-free exit.
+      this.checkOutcome();
+      if (this.phase === "active") this.finishEscape();
+      return;
+    }
     // The presentation remains a development profile. FF6 progress clocks run
     // after the executor update even while this action is on screen.
     const presenting = this.action !== null;
@@ -1178,7 +1208,7 @@ export class BattleGame {
                 seconds: 0.01,
               }),
           );
-        if (c.side === "enemy" && c.atb >= 100) {
+        if (!this.escapeRequested && c.side === "enemy" && c.atb >= 100) {
           if (!this.players.some((p) => p.hp > 0)) break;
           this.decideEnemyAction(c);
         }
@@ -1188,6 +1218,7 @@ export class BattleGame {
       // BattleMainUpdate 0x1588930 performs end judgment after Progress.Update,
       // including the frame on which execution finishes.
       this.checkOutcome();
+      if (this.escapeRequested && gate.progress && this.phase === "active" && !this.action) this.finishEscape();
       return;
     }
     const queue = this.reactions.length ? this.reactions : this.queue;
@@ -1539,6 +1570,7 @@ export class BattleGame {
     if (!this.players.some((c) => c.hp > 0)) {
       this.clearBattleConditions();
       this.phase = "defeat";
+      this.escapeRequested = false;
       this.queue = [];
       this.reactions = [];
       this.log("队伍倒下了。");
@@ -1594,6 +1626,7 @@ export class BattleGame {
         player,
       );
     this.phase = "victory";
+    this.escapeRequested = false;
     this.poisonStates.clear();
     this.slowStates.clear();
     this.queue = [];
@@ -1614,6 +1647,27 @@ export class BattleGame {
       c.conditionIds = this.conditions.battleEnd(c.conditionIds);
     this.poisonStates.clear();
     this.slowStates.clear();
+  }
+  private finishEscape(): void {
+    if (!this.escapeRule || !this.escapeRequested || this.phase !== "active" || this.action)
+      throw new Error("Battle escape is not at a safe action boundary");
+    this.clearBattleConditions();
+    this.phase = "escaped";
+    this.escapeRequested = false;
+    this.queue = [];
+    this.reactions = [];
+    for (const unit of this.combatants) { unit.atb = 0; unit.queued = false; }
+    this.log("已撤离战斗。");
+  }
+  previewEscape(): { players: Combatant[]; consumedItems: ItemStack[] } | null {
+    if (this.phase !== "escaped" || this.collected) return null;
+    return { players: structuredClone(this.players),
+      consumedItems: structuredClone(this.consumedItems).sort((a, b) => a.id - b.id) };
+  }
+  takeEscape(): { players: Combatant[]; consumedItems: ItemStack[] } | null {
+    const result = this.previewEscape();
+    if (result) this.collected = true;
+    return result;
   }
   previewVictory(): {
     players: Combatant[];

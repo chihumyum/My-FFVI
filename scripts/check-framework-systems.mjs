@@ -23,6 +23,8 @@ const lanes = [
   ["content-batch-pipeline", "check-content-batch-pipeline.mjs", "content-batch-pipeline-check.json", "tests"],
   ["walking-encounter-loop", "check-walk-encounters.mjs", "walk-encounters-check.json", "stages"],
   ["battle-formation-entry", "check-battle-formations.mjs", "battle-formations-check.json", "stages"],
+  ["battle-escape-return", "check-battle-escape.mjs", "battle-escape-check.json", "stages"],
+  ["battle-escape-ui", "check-battle-escape-ui.mjs", "battle-escape-ui-check.json", "checked"],
   ["multi-map-lifecycle", "check-framework-lifecycle.mjs", "framework-lifecycle-check.json", "stages"],
   ["event-motion-and-recovery", "check-script-motion-integration.mjs", "script-motion-integration-check.json", "stages"],
   ["shared-ownership", "check-system-integration.mjs", "system-integration-check.json", "cases"],

@@ -13,7 +13,7 @@ test("source fresh owner retains every native domain and immutable before-field-
   const expected = { kind: "source-native-state-v2", entrySeed: plan.entry, ...native,
     ownedTransportations: ownedTransportationIds.map((id) => ({ id, mapId: -1,
       position: { x: 1000, y: 1000, z: -1000 }, direction: 0, timeStampTicks: "0" })) };
-  assert.equal(state.snapshot().formatVersion, 10);
+  assert.equal(state.snapshot().formatVersion, 11);
   assert.equal(state.initialization, "source-new-game");
   assert.deepEqual(state.nativeState, expected);
   assert.deepEqual(state.snapshot().nativeState, expected);
