@@ -22,6 +22,7 @@ import { compilePlayerVisibilityInstruction, compilePlayerVisibilityFactory, pla
 import { compileFieldTaskControlInstruction, fieldTaskControlMnemonics } from "./field-task-control.js";
 import { compileFieldFadeInstruction } from "./field-fade.js";
 import { compileFieldCameraInstruction, compileFieldCameraMotionInstruction, fieldCameraSelectors } from "./field-camera.js";
+import { compileFieldNativePosition } from "./field-native-position.js";
 import { DEVELOPMENT_TRANSPARENT_FADE } from "../core/field-fade.js";
 import { loadSystemSource } from "./system-source.js";
 import { compileTransportationCatalog, compileNarsheTransportationCheckpoint } from "./transportation.js";
@@ -354,6 +355,18 @@ export function decodeFieldOp(
   }
   if (name === "Wait" && form([], [0]) && Number.isFinite(r[0]) && r[0]! >= 0)
     return { ...site, kind: "wait", seconds: r[0]! };
+  if (name === "SetPos") {
+    try {
+      const nativeCommand = compileFieldNativePosition(raw);
+      let cameraCommand: Extract<Op, { kind: "position" }>["cameraCommand"];
+      try {
+        const motion = compileFieldCameraMotionInstruction(raw).command;
+        if (motion.kind === "set-position") cameraCommand = motion;
+      } catch { /* Ordinary character admission does not grant dummy admission. */ }
+      return { ...site, kind: "position", x: nativeCommand.x, y: nativeCommand.y, animation: nativeCommand.animation,
+        nativeCommand, ...(cameraCommand ? { cameraCommand } : {}) };
+    } catch { /* Older development fixtures retain their bounded decoder below. */ }
+  }
   if (
     name === "SetPos" &&
     form([0, 1, 2], [], [0]) &&
@@ -609,6 +622,11 @@ export async function compileField(root: string): Promise<FieldContent> {
         /^Unsupported NPC contact encounter$/.test(issue.reason)
       )
         continue;
+      // This checkpoint already declares omitted environment particles. The
+      // source compiler now identifies the entity instead of calling it an
+      // unknown kind; retain that same explicit development boundary.
+      if (entity?.kind === 11 && issue.reason.startsWith("Field effect particle provider unavailable:"))
+        continue;
       throw new Error(issue.reason);
     }
     entities.push(...group.entities);
@@ -700,6 +718,15 @@ export async function compileField(root: string): Promise<FieldContent> {
       return { ...member, sourceId: owner.sourceId, jobId: owner.jobId,
         enabled: owner.enabled, conditionIds: [...owner.conditionIds] };
     }));
+  const developmentOmissions: NonNullable<FieldContent["developmentOmissions"]> = [];
+  for (const group of Object.values(groups)) {
+    for (const entity of group.entities.filter((entity) => entity.kind === 11))
+      developmentOmissions.push({ kind: "field-effect", entityId: entity.id, group: group.name,
+        source: entity.source, reason: "Existing development checkpoint omits environment particles" });
+    // Keep group blockers: a later activation may not inherit the bootstrap
+    // approximation merely because this controlled entry omitted its pixels.
+    group.entities = group.entities.filter((entity) => entity.kind !== 11);
+  }
   const result: Omit<FieldContent, "contentHash"> = {
     formatVersion: 1,
     kind: "field-development",
@@ -719,13 +746,14 @@ export async function compileField(root: string): Promise<FieldContent> {
       tilesets,
       textures,
       collisions,
-      entities,
+      entities: entities.filter((entity) => entity.kind !== 11),
       groups,
       initialGroups: activeGroups,
       partyActorCamera: partyCheckpoint.context.camera,
       source: asset("tilemap").source,
     },
     characters: chars,
+    developmentOmissions,
     minimap: await loadMinimapMedia(root, project.sourceSetHash),
     bgm: await loadAudioMedia(root, project.sourceSetHash, "bgm"),
     environment: await loadAudioMedia(

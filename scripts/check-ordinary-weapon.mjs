@@ -116,7 +116,7 @@ for (const item of rangedEquip) {
 }
 
 if (!sourceOnly) {
-  assert.equal(published.common.profile, "narshe-playability-v32");
+  assert.equal(published.common.profile, "narshe-playability-v33");
   assert.equal(published.common.sourceContentHash, source.contentHash);
   assert.equal(source.nativeProfile.sha256, native.nativeSha256);
   assert.deepEqual(source.ordinaryWeaponEffects, effects);

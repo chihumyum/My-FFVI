@@ -153,6 +153,8 @@ export function worldFieldContent(
     // The package describes conditional normal-view capability. Geometry-only
     // previews cannot acquire a native camera lifecycle just by loading it.
     ...(sourceCamera && target.cameraHost ? { cameraHost: target.cameraHost } : {}),
+    ...(sourceCamera && target.nativeNpcStandby ? { nativeNpcStandby: target.nativeNpcStandby } : {}),
+    ...(sourceCamera && target.fieldEffects ? { fieldEffects: target.fieldEffects } : {}),
     ...(sourceCamera && target.scriptPuppetContexts ? { scriptPuppetContexts: target.scriptPuppetContexts } : {}),
     ...(catalog.playerFactory ? { playerFactory: structuredClone(catalog.playerFactory) } : {}),
     ...(catalog.minimap ? { minimap: catalog.minimap } : {}),
@@ -334,6 +336,13 @@ export class WorldSession {
       stop = from.stop;
     if (stop?.kind !== "map-transition")
       throw new Error("No pending map transition");
+    const effectBlocker = from.effectMapHandoffBlocker;
+    if (effectBlocker) throw new Error(effectBlocker);
+    // A destination particle provider cannot publish resources during a map
+    // candidate that can still be discarded. Keep this boundary closed until
+    // allocation, retirement and cancellation share the world transaction.
+    if (Object.values(target.map?.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11)))
+      throw new Error("Destination field-effect particle allocation requires a transactional map lifecycle provider");
     const nativeActors = from.nativeActorCandidate, nativeRuntime = from.nativeActorRuntime;
     const nativeState = this.owned?.nativeState?.();
     if (from.player.native && (!nativeActors || !nativeRuntime || !nativeState))
@@ -424,7 +433,8 @@ export class WorldSession {
       state,
       new StaticAudioState(bgm),
       new StaticAudioState(environment),
-      { ...(owned?.ports ?? {}), ...(sourcePresentation ? { sourcePresentation } : {}),
+      { ...(owned?.ports ?? {}), ...(nativeActors ? { nativeActorPreparation: true } : {}),
+        ...(sourcePresentation ? { sourcePresentation } : {}),
         ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}),
         ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
       from.fader.fork(),
@@ -443,7 +453,7 @@ export class WorldSession {
         characters: field.content.characters, animationKeys: catalog.nativeAnimationKeys,
         view: target.actorView, providers: providers() });
       field.installNativeActors(candidate, nativeRuntime.catalog, providers, nativeRuntime.controlContext,
-        catalog.nativeAnimationKeys);
+        catalog.nativeAnimationKeys, nativeRuntime.mapLifecycle);
     }
     field.initializeMapCamera();
     const script = request.continuation || target.initializer;
@@ -517,10 +527,8 @@ export class WorldSession {
   }
   private actorState(field: FieldGame): string {
     const p = field.player;
-    const native = field.nativeActorCandidate;
     return canonical({ prior: field.partyActorCheckpoint,
-      native: native && { ...native, snapshot: { ...native.snapshot, actors: native.snapshot.actors.map((actor) =>
-        ({ ...actor, animation: actor.animation?.snapshot() ?? null })) } },
+      native: field.nativeActorStateFingerprint,
       nativeRuntime: field.nativeActorRuntime, cameraOffset: field.cameraOffset,
       collision: field.collisionState, updateMask: field.updateAttributeMask,
       player: { x: p.x, y: p.y, layer: p.layer, direction: p.direction,

@@ -25,9 +25,14 @@ import { executeSourcePresentation, cloneSourcePresentationContext, sourcePresen
 import { canonical } from "./canonical.js";
 import { SourceMessageState, sourceMessageUpdateMask, type SourceMessageEffect } from "./source-message.js";
 import type { FieldPuppetRosterPort } from "./field-puppet-roster.js";
-import { createNativeFieldActorProjections, createNativeFieldPuppetActorsPort, readNativeFieldActors,
-  type NativeFieldActorData } from "./field-native-actors.js";
-import type { FieldActorFactoryCandidate, FieldActorFactoryBindings } from "./field-actor-factory.js";
+import { createNativeFieldActorProjection, createNativeFieldActorProjections, createNativeFieldPuppetActorsPort, readNativeFieldActors,
+  prepareNativeFieldActorProjection, type NativeFieldActorData, type NativeFieldActor } from "./field-native-actors.js";
+import { projectNativeFieldPosition } from "./field-native-position.js";
+import { FieldEffects, FIELD_EFFECT_PARTICLE_UPDATE_ATTRIBUTE, fieldEffectAnimationLoopLimit,
+  projectFieldEffectPlacement, type FieldEffectRuntimeHost, type FieldEffectState,
+  type FieldEffectPrepared, type FieldEffectOperation } from "./field-effects.js";
+import type { FieldActorFactoryCandidate, FieldActorFactoryBindings, FieldActorFactoryCatalog } from "./field-actor-factory.js";
+import { prepareFieldNativeNpcGroup, fieldNativeNpcRetirement, fieldNativeNpcStandbyPosition, fieldNativeNpcSelectorBinding } from "./field-native-npc.js";
 import { projectFieldPuppetCollision, type FieldPuppetCollisionState, type FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import type { FieldPuppetActorCatalog, FieldPuppetControlContext } from "./field-puppet-actors.js";
 import type { PartyActorPlan } from "./party-actors.js";
@@ -187,6 +192,11 @@ export type Stop =
     };
 export type Dialogue = FieldMessage & { task: number };
 export type FieldGameOptions = {
+  /** Explicit particle/material host. Content parsing never grants one. */
+  fieldEffects?: FieldEffectRuntimeHost;
+  /** The private source-session candidate installs native actors before any
+   * script/input. Suppresses temporary legacy NPC creation in that candidate. */
+  nativeActorPreparation?: true;
   sourceMessageEffects?: { prepare(effects: readonly SourceMessageEffect[]): () => void };
   puppetActors?: FieldPuppetActorsPort;
   puppetRoster?: FieldPuppetRosterPort;
@@ -220,6 +230,18 @@ export class FieldGame {
   private mapScrollOffset: Readonly<Point>;
   get cameraOffset(): Readonly<Point> { return this.mapScrollOffset; }
   private readonly camera: FieldCameraHost | null;
+  private readonly effects: FieldEffects | null;
+  /** Read-only logical projection; not a particle/RNG checkpoint codec. */
+  get fieldEffectsSnapshot(): FieldEffectState | null { return this.effects?.snapshot() ?? null; }
+  get effectMapHandoffBlocker(): string | null {
+    return this.effects ? "Field effect map retirement/particle checkpoint host is unresolved" : null;
+  }
+  private effectBoard(id: string) { return this.effects?.snapshot().boards.find((board) => board.id === id); }
+  private effectPlaying(id: string): boolean {
+    const state = this.effects?.snapshot(), board = state?.boards.find((board) => board.id === id);
+    if (!state || !board) throw new Error("Unknown effect animation target " + id);
+    return state.players.find((player) => player.cameraId === board.cameraId)!.playing;
+  }
   private cameraEventActive = false;
   readonly cameraActorId = "native:camera";
   get cameraSnapshot(): FieldCameraState | null { return this.camera?.snapshot() ?? null; }
@@ -253,27 +275,47 @@ export class FieldGame {
   private nativeActorBindings: FieldActorFactoryBindings | null = null;
   private nativeActorProviders: (() => FieldPuppetHostProviders) | null = null;
   private nativeRuntime: { catalog: FieldPuppetActorCatalog; animationKeys: FieldNativeAnimationKeys | null;
-    controlContext: FieldPuppetControlContext } | null = null;
+    controlContext: FieldPuppetControlContext; mapLifecycle: {
+      factory: FieldActorFactoryCatalog;
+    } | null } | null = null;
   get nativeActorRuntime() { return this.nativeRuntime && structuredClone(this.nativeRuntime); }
   /** A detached transition candidate, assembled from the current actor owner.
    * No second mutable actor collection is retained between map transactions. */
   get nativeActorCandidate(): FieldActorFactoryCandidate | null {
     if (!this.nativeActorBindings || !this.camera) return null;
     const camera = this.camera.snapshot();
+    const retired = new Set(fieldNativeNpcRetirement(Object.values(this.actors).flatMap((a) => a.native ? [a.native] : [])));
+    const snapshot = readNativeFieldActors(this.actors, { id: this.cameraActorId,
+      position: camera.dummy.position, layer: camera.dummy.layer });
     return {
-      snapshot: readNativeFieldActors(this.actors, { id: this.cameraActorId,
-        position: camera.dummy.position, layer: camera.dummy.layer }),
+      snapshot: { ...snapshot, actors: snapshot.actors.filter((actor) => !retired.has(actor.id)) },
       bindings: structuredClone(this.nativeActorBindings),
-      assets: Object.values(this.actors).filter((a) => a.native).map((a) => ({
+      assets: Object.values(this.actors).filter((a) => a.native && !retired.has(a.id)).map((a) => ({
         id: a.id, fieldAssetId: a.native!.fieldAssetId, charaZOffset: a.native!.charaZOffset,
       })),
     };
+  }
+  /** Map handoff stale checks must include map-local actors even though those
+   * instances are intentionally excluded from the destination factory. */
+  get nativeActorStateFingerprint(): string | null {
+    if (!this.nativeActorBindings || !this.camera) return null;
+    const camera = this.camera.snapshot(), snapshot = readNativeFieldActors(this.actors,
+      { id: this.cameraActorId, position: camera.dummy.position, layer: camera.dummy.layer });
+    return canonical({ snapshot: { ...snapshot, actors: snapshot.actors.map((actor) =>
+      ({ ...actor, animation: actor.animation?.snapshot() ?? null })) },
+      metadata: Object.values(this.actors).filter((actor) => actor.native).map((actor) => ({
+        id: actor.id, motion: actor.motion, steps: actor.steps, fieldAssetId: actor.native!.fieldAssetId,
+        charaZOffset: actor.native!.charaZOffset, mapObjectAsset: actor.native!.mapObjectAsset ?? null,
+        scope: actor.native!.scope ?? null, updateAttribute: actor.native!.updateAttribute ?? null,
+      })) });
   }
   private collisionSwitches: FieldPuppetCollisionState = projectFieldPuppetCollision(true);
   private entityUpdateMask = 3;
   get updateAttributeMask(): number { return this.entityUpdateMask; }
   get collisionState(): Readonly<FieldPuppetCollisionState> { return { ...this.collisionSwitches }; }
   isEntityVisible(id: string): boolean {
+    const board = this.effectBoard(id);
+    if (board) return board.activeSelf && board.fadeAlpha > 0;
     const native = this.actors[id]?.native;
     return native ? native.entity.visible : !this.hiddenEntities.has(id);
   }
@@ -281,8 +323,9 @@ export class FieldGame {
    * A script alias is never an actor identity, and the camera stays separate. */
   installNativeActors(candidate: FieldActorFactoryCandidate, catalog: FieldPuppetActorCatalog,
     providers: () => FieldPuppetHostProviders, controlContext: FieldPuppetControlContext,
-    animationKeys?: FieldNativeAnimationKeys): void {
-    if (this.tasks.length || this.options.puppetActors || !this.camera || !this.partyActors ||
+    animationKeys?: FieldNativeAnimationKeys,
+    mapLifecycle?: NonNullable<FieldGame["nativeRuntime"]>["mapLifecycle"]): void {
+    if (this.tasks.length || this.nativeActorBindings || this.options.puppetActors || !this.camera || !this.partyActors ||
         !this.options.partyAppearance || !this.options.puppetRoster ||
         Object.keys(this.actors).some((id) => id !== this.player.id))
       throw new Error("Native actor installation requires a fresh bound field without legacy NPC actors");
@@ -295,6 +338,12 @@ export class FieldGame {
         player.layer !== this.player.layer || player.direction !== this.player.direction || player.asset !== this.player.asset)
       throw new Error("Native factory player disagrees with prepared PointIn");
     const bindings = structuredClone(candidate.bindings), puppetCatalog = structuredClone(catalog);
+    const lifecycle = mapLifecycle ? structuredClone(mapLifecycle) : null;
+    const groups = new Set(this.entityList.filter((entity) => [6, 17].includes(entity.kind)).map((entity) => entity.nativeNpc?.group));
+    for (const group of groups) {
+      const entities = this.entityList.filter((entity) => [6, 17].includes(entity.kind) && entity.nativeNpc?.group === group);
+      projected.push(...this.prepareNativeNpcActors(entities, group, projected.map((actor) => actor.id), lifecycle, providers()));
+    }
     const detachedActors = Object.fromEntries(projected.map((actor) => [actor.id, actor]));
     let published = false;
     const port = createNativeFieldPuppetActorsPort({
@@ -303,8 +352,12 @@ export class FieldGame {
         return { id: this.cameraActorId, position: s.dummy.position, layer: s.dummy.layer }; },
       readProviders: providers,
       readContext: () => ({ catalog: puppetCatalog, checkpoint: this.partyActors!.checkpoint(), bindings,
-        ...this.options.puppetRoster!.current(), entities: this.entityList.filter((e) => this.actors[e.id])
-          .map((e) => ({ entityId: Number(e.id), actor: e.id })), restorePartyInstruction: "absent" }),
+        ...this.options.puppetRoster!.current(), entities: this.entityList.filter((e) => (published ? this.actors : detachedActors)[e.id])
+          .flatMap((e) => {
+            if (!e.nativeNpc) throw new Error("Native map selector requires its source NPC identity");
+            const binding = fieldNativeNpcSelectorBinding(e.nativeNpc);
+            return binding ? [binding] : [];
+          }), restorePartyInstruction: "absent" }),
       controlContext: () => structuredClone(controlContext),
       prepareCollision: (enabled) => {
         const before = this.collisionSwitches, next = projectFieldPuppetCollision(enabled);
@@ -319,7 +372,7 @@ export class FieldGame {
     this.nativeActorBindings = bindings;
     this.nativeActorProviders = providers;
     this.nativeRuntime = { catalog: puppetCatalog, controlContext: structuredClone(controlContext),
-      animationKeys: animationKeys ? structuredClone(animationKeys) : null };
+      animationKeys: animationKeys ? structuredClone(animationKeys) : null, mapLifecycle: lifecycle };
     published = true;
     this.options.puppetActors = port;
     this.options.sourceMessageEffects = { prepare: (effects) => {
@@ -470,7 +523,7 @@ export class FieldGame {
     if (content.entry.playerVisible !== undefined && typeof content.entry.playerVisible !== "boolean")
       throw new Error("Unknown field entry player visibility");
     if (content.entry.playerVisible === false) this.hiddenEntities.add("-1001");
-    Object.assign(this.actors, this.createActors(this.entityList));
+    if (!options.nativeActorPreparation) Object.assign(this.actors, this.createActors(this.entityList));
     this.partyActors = content.entry.partyActors && options.partyAppearance
       ? new FieldPartyActors(options.partyAppearance.catalog, content.entry.partyActors, this.transportationId) : null;
     if (this.partyActors) {
@@ -486,6 +539,37 @@ export class FieldGame {
     this.tileAnimations.register(this.entityList);
     this.initializeTreasures(treasures);
     this.openTriggers.initialize(this.entityList, this.player);
+    // All local dependencies are prepared before an external effect host can
+    // publish. Native CreateMapEntity creates default first; ordering among
+    // event groups is not yet bound, so no event-group FX can be lazily added.
+    const eventEffects = Object.entries(groups ?? {}).some(([name, group]) =>
+      name !== "entity_default" && group.entities.some((entity) => entity.kind === 11));
+    if (eventEffects) throw new Error("Event-group field effect creation order/lifecycle is unresolved");
+    const sourceEffects = this.defaultProperties.filter((entity) => entity.kind === 11);
+    if (this.entityList.filter((entity) => entity.kind === 11).some((entity) => !sourceEffects.includes(entity)))
+      throw new Error("Field effect pool is not bound to the source default group");
+    this.effects = null;
+    if (sourceEffects.length) {
+      if (options.nativeActorPreparation)
+        throw new Error("Source field effect allocation requires a transactional native map lifecycle provider");
+      if (!content.fieldEffects) throw new Error("Field effect particle/material catalog is unavailable");
+      if (!content.cameraHost) throw new Error("Field effect source map range is unavailable");
+      if (typeof options.fieldEffects?.observe !== "function") throw new Error("Field effect playback observation host is unavailable");
+      const ids = new Set<string>();
+      const operations: FieldEffectOperation[] = sourceEffects.map((entity) => {
+        if (!entity.effect || ids.has(entity.id) || this.actors[entity.id] || entity.id === this.cameraActorId ||
+            canonical(entity.effect.source) !== canonical(entity.source))
+          throw new Error("Unbound or duplicate source field effect identity");
+        ids.add(entity.id);
+        const placement = projectFieldEffectPlacement(entity.effect, { range: content.cameraHost!.mapRange,
+          tileMapPresent: true, standbyAnchor: content.nativeNpcStandby ? fieldNativeNpcStandbyPosition(content.nativeNpcStandby) : null }, entity.layer);
+        return { kind: "create", id: entity.id, definition: entity.effect, position: placement.position };
+      });
+      operations.push({ kind: "setup", registeredBoards: sourceEffects.map((entity) => entity.id), groupUpdate: false });
+      const effects = new FieldEffects(content.fieldEffects, options.fieldEffects);
+      effects.prepare(operations).commit();
+      this.effects = effects;
+    }
   }
   private initialAnimation(
     asset: string,
@@ -520,6 +604,28 @@ export class FieldGame {
         };
     return actors;
   }
+  private prepareNativeNpcActors(entities: readonly FieldEntity[], group: string | undefined,
+    existingActorIds: readonly string[], lifecycle: NonNullable<FieldGame["nativeRuntime"]>["mapLifecycle"],
+    providers: FieldPuppetHostProviders): NativeFieldActor[] {
+    const npcs = entities.filter((entity) => [6, 17].includes(entity.kind));
+    if (!npcs.length) return [];
+    if (!lifecycle || !this.content.cameraHost || !this.options.partyAppearance)
+      throw new Error("Native map-local actor factory is unresolved");
+    const definitions = npcs.map((entity) => {
+      if (entity.nativeNpcBlockers?.length) throw new Error(entity.nativeNpcBlockers[0]!);
+      const definition = entity.nativeNpc;
+      if (!definition || definition.entityId !== entity.id || definition.group !== group ||
+          definition.objectType !== entity.kind || definition.asset.asset !== entity.asset ||
+          definition.geometry.layer !== entity.layer || canonical(definition.source) !== canonical(entity.source))
+        throw new Error("Native NPC is not bound to its source entity group");
+      return definition;
+    });
+    return prepareFieldNativeNpcGroup({ definitions, factory: lifecycle.factory, characters: this.content.characters,
+      mapRange: this.content.cameraHost.mapRange, providers, existingActorIds,
+      ...(this.content.nativeNpcStandby ? { standbyAnchorPosition: fieldNativeNpcStandbyPosition(this.content.nativeNpcStandby) } : {}),
+    }).actors.map((actor) => createNativeFieldActorProjection(actor, this.content.cameraHost!.mapRange,
+      this.options.partyAppearance!.catalog));
+  }
   /** Source SetEventEntityGroup appends entities; it does not replace existing groups. */
   private activateGroup(name: string): void {
     const group = this.content.map.groups?.[name];
@@ -530,8 +636,6 @@ export class FieldGame {
       throw new Error(`${name}：${group.blockers[0]!.reason}`);
     if (this.camera && group.entities.some((entity) => entity.kind === 15))
       throw new Error("Camera ChangeOffset trigger provider is unresolved");
-    if (this.nativeActorBindings && group.entities.some((entity) => (entity.kind === 6 || entity.kind === 17) && entity.asset))
-      throw new Error("Native map-local actor factory is unresolved");
     if (group.entities.some((e) => e.kind === 18))
       requireMinimapMedia(group.entities, this.content.minimap);
     const ids = new Set(this.entityList.map((e) => e.id));
@@ -541,9 +645,18 @@ export class FieldGame {
       ids.add(e.id);
     }
     // Validate the entire group before any actor, collision, or trigger becomes visible.
-    const actors = this.createActors(group.entities);
+    if (this.options.nativeActorPreparation && !this.nativeActorBindings)
+      throw new Error("Source field actors have not been installed");
+    const actors = this.nativeActorBindings
+      ? Object.fromEntries(this.prepareNativeNpcActors(group.entities, name, Object.keys(this.actors),
+        this.nativeRuntime!.mapLifecycle, this.nativeActorProviders!()).map((actor) => [actor.id, actor]))
+      : this.createActors(group.entities);
     const treasures = this.prepareTreasureInitialization(group.entities);
+    const effectSetup = this.effects?.prepare([{ kind: "setup", registeredBoards:
+      this.defaultProperties.filter((entity) => entity.kind === 11).map((entity) => entity.id), groupUpdate: true }]);
+    effectSetup?.validate();
     this.tileAnimations.register(group.entities);
+    effectSetup?.commit();
     this.entityList.push(...group.entities);
     this.initializeTreasures(treasures);
     Object.assign(this.actors, actors);
@@ -791,6 +904,7 @@ export class FieldGame {
       // The source actor host also owns native camera/collision/hidden puppet
       // state. Stable saves remain blocked until that owner has a bound codec.
       !this.options.puppetActors &&
+      !this.effects &&
       this.sourcePresentationContext?.advertisementOpeningFader !== "present" &&
       this.synchronizedEntry !== false &&
       !this.busy &&
@@ -841,6 +955,9 @@ export class FieldGame {
   ): FieldGame {
     if (options.puppetActors)
       throw new Error("Source puppet host checkpoints require a bound actor/camera/collision codec");
+    if (content.map.entities.some((entity) => entity.kind === 11) ||
+        Object.values(content.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11)))
+      throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
     const s = structuredClone(raw);
     checkpointKeys(
       s,
@@ -1343,6 +1460,15 @@ export class FieldGame {
     while (this.remainder >= 10) {
       this.remainder -= 10;
       if (this.stop) continue;
+      let effects: FieldEffectPrepared | undefined;
+      try {
+        if (this.effects && (this.entityUpdateMask & FIELD_EFFECT_PARTICLE_UPDATE_ATTRIBUTE) !== 0) {
+          const observations = this.options.fieldEffects!.observe(this.effects.snapshot(), 0.01);
+          effects = this.effects.prepare([{ kind: "tick", deltaSeconds: 0.01, observations }]);
+          effects.validate();
+        }
+      } catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
+      effects?.commit();
       this.bgm.advance(10, this.content.bgm);
       this.environment.advance(10, this.content.environment);
       this.tileAnimations.advance(10);
@@ -1356,7 +1482,7 @@ export class FieldGame {
         // Map NPC SetProperty can choose 10 and needs a distinct factory host.
         // Message group 8 has mask 9; event group 12 has mask 3. Camera (10),
         // tile animation (42), VM and the global fader continue separately.
-        if (a.native && (this.entityUpdateMask & 2) === 0) continue;
+        if (a.native && (this.entityUpdateMask & (a.native.updateAttribute ?? 2)) === 0) continue;
         try {
           a.animation?.advance(10);
         } catch (error) {
@@ -1448,6 +1574,7 @@ export class FieldGame {
         this.block("缺少跨地图目标", site);
         return;
       }
+      if (this.effectMapHandoffBlocker) { this.block(this.effectMapHandoffBlocker, site); return; }
       this.stop = {
         kind: "map-transition",
         message: "正在载入地图…",
@@ -1512,6 +1639,7 @@ export class FieldGame {
   previewMap(mapId: number, entrance: number): void {
     if (this.busy || this.player.motion)
       throw new Error("Cannot preview a map during an event");
+    if (this.effectMapHandoffBlocker) throw new Error(this.effectMapHandoffBlocker);
     this.stop = {
       kind: "map-transition",
       message: "正在载入地图预览…",
@@ -1529,6 +1657,8 @@ export class FieldGame {
   }
   private beginRoot(script: string): void {
     try {
+      if (this.options.nativeActorPreparation && !this.nativeActorBindings)
+        throw new Error("Source field actors have not been installed");
       const locals = this.content.scriptLocals?.[script] ?? null;
       new EventState(this.eventState.snapshot()).beginScript(locals);
       const publish = this.preparePuppetStart(script);
@@ -1736,7 +1866,7 @@ export class FieldGame {
           if (
             actor
               ? actor.animation?.playing
-              : this.tileAnimations.isPlaying(t.actor)
+              : this.effectBoard(t.actor) ? this.effectPlaying(t.actor) : this.tileAnimations.isPlaying(t.actor)
           )
             return;
           t.animationWait = false;
@@ -1947,7 +2077,16 @@ export class FieldGame {
           case "animation-cue":
           case "animation-play":
             try {
-              if (actor) {
+              if (this.effectBoard(t.actor)) {
+                // Puppet.PlayAnim maps accepted i1 0/1 to mode 0, and -1 to
+                // mode 1. The board override ignores key/speed/flip. Its Cue
+                // override is source-proven empty; the particle owns playback.
+                if (op.kind === "animation-play") {
+                  this.effects!.prepare([{ kind: "play", id: t.actor,
+                    loopLimit: fieldEffectAnimationLoopLimit(op.loop ? 1 : 0) }]).commit();
+                  t.animationWait = !op.loop;
+                }
+              } else if (actor) {
                 if (actor.mount)
                   throw new Error(
                     "Mounted actor animation dispatch is not implemented",
@@ -2016,6 +2155,7 @@ export class FieldGame {
               this.block("宝箱任务尚未完成，尚不支持并发切图", op);
               return;
             }
+            if (this.effectMapHandoffBlocker) { this.block(this.effectMapHandoffBlocker, op); return; }
             this.stop = {
               kind: "map-transition",
               message: "正在载入地图…",
@@ -2057,8 +2197,9 @@ export class FieldGame {
           case "puppet":
             try {
               const host = this.options.puppetActors, lifecycle = this.puppetLifecycle;
+              const effect = this.effectBoard(op.actor);
               const nextKind = this.content.scripts[t.script]?.[op.target + 1]?.kind;
-              const plan = host && lifecycle ? projectFieldPuppetActorEntry({ ...host.read(), script: lifecycle.script,
+              const plan = host && lifecycle && !effect ? projectFieldPuppetActorEntry({ ...host.read(), script: lifecycle.script,
                 entityId: Number(op.actor), nextMnemonic: nextKind === "hide" ? "Hide" : nextKind ?? "unknown",
                 leaderId: lifecycle.leaderId, assignments: lifecycle.assignments }) : null;
               if (plan?.skipEntry) {
@@ -2119,21 +2260,27 @@ export class FieldGame {
               // publishing any actor, collision or task changes.
               const cameraShow = this.camera && ready.some((r) => r.plan.showActor && r.actor === this.cameraActorId)
                 ? this.camera.prepareVisibility(true) : null;
+              const effectShows: FieldEffectOperation[] = [...new Set(ready.filter((r) => r.plan.showActor && this.effectBoard(r.actor))
+                .map((r) => r.actor))].map((id) => ({ kind: "visibility", id, visible: true, duration: 0 }));
+              const effectShow = effectShows.length ? this.effects!.prepare(effectShows) : null;
               const publish = host && this.puppetLifecycle ? host.prepare({ leaderId: null,
                 assignments: result.clearAssignments ? fieldPuppetAssignments() : null,
-                effects: ready.filter((r) => r.plan.showActor && !(this.camera && r.actor === this.cameraActorId))
+                effects: ready.filter((r) => r.plan.showActor && !(this.camera && r.actor === this.cameraActorId) && !this.effectBoard(r.actor))
                   .map((r) => ({ kind: "show", actor: r.actor })) }) : () => {};
               if (typeof publish !== "function") throw new Error("Invalid source puppet Ready transaction");
               const publishCollision = this.preparePuppetCollision(result.collisionEnabled);
+              effectShow?.validate();
               publish();
               cameraShow?.commit();
+              effectShow?.commit();
               publishCollision();
               if (result.clearAssignments && this.puppetLifecycle) this.puppetLifecycle.assignments = fieldPuppetAssignments();
               for (const { child, actor, plan } of ready) {
                 child.done = plan.status === "sleep";
                 child.state = "ready";
                 child.actor = actor;
-                if (plan.showActor && !(this.camera && actor === this.cameraActorId) && !this.actors[actor]?.native) this.hiddenEntities.delete(actor);
+                if (plan.showActor && !(this.camera && actor === this.cameraActorId) && !this.effectBoard(actor) && !this.actors[actor]?.native)
+                  this.hiddenEntities.delete(actor);
               }
               if (result.flow === "wait") {
                 t.puppetWait = command;
@@ -2164,7 +2311,26 @@ export class FieldGame {
               this.block("尚未支持角色动画 " + op.animation, op);
               return;
             }
-            if (actor.native) { this.block("Source actor SetPos body/provider chain is not yet admitted", op); return; }
+            if (actor.native) {
+              try {
+                if (!op.nativeCommand || !this.nativeActorProviders || !this.camera ||
+                    this.content.cameraHost?.callbacks !== "fresh-normal-field-v1" ||
+                    op.x !== op.nativeCommand.x || op.y !== op.nativeCommand.y || op.animation !== op.nativeCommand.animation)
+                  throw new Error("Source actor SetPos operands or callback host are unavailable");
+                const command = structuredClone(op.nativeCommand);
+                prepareNativeFieldActorProjection({
+                  readActors: () => this.actors, readProviders: this.nativeActorProviders,
+                  readCamera: () => { const state = this.camera!.snapshot();
+                    return { id: this.cameraActorId, position: state.dummy.position, layer: state.dummy.layer }; },
+                }, (snapshot, providers) => projectNativeFieldPosition(snapshot, providers, actor.id, command,
+                  this.content.cameraHost!.mapRange, "source-absent"))();
+              } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+              break;
+            }
+            if (op.nativeCommand && (!([0, 3].includes(op.nativeCommand.layer)) ||
+                !["", "Default", "WalkL"].includes(op.animation))) {
+              this.block("Source SetPos requires the native actor host", op); return;
+            }
             if (op.animation && actor.animation) {
               try {
                 actor.animation.cue(op.animation, -1);
@@ -2247,6 +2413,11 @@ export class FieldGame {
             }
             break;
           case "hide":
+            if (this.effectBoard(t.actor)) {
+              try { this.effects!.prepare([{ kind: "visibility", id: t.actor, visible: false, duration: 0 }]).commit(); }
+              catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+              break;
+            }
             if (this.camera && t.actor === this.cameraActorId) {
               try { this.camera.prepareVisibility(false).commit(); }
               catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }

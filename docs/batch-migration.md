@@ -25,6 +25,8 @@
 
 ## 可执行的工作队列
 
+当前 v33 的下一批按依赖推进：先补地图效果的真实粒子/材质宿主与切图分配回收事务，再补非空 Upper/Ceil 渲染目标；局部 NPC、定位和普通合成继续作为共享机制回归。完整来源开场、骑乘、原生演员保存与战斗返回尚未闭合，详见 [系统集成](systems-v33.md)。匿名 NPC 内部身份不等于脚本 selector，0 保持匿名，不能占用镜头 selector。
+
 ```sh
 .venv/bin/python tools/source_adapter/export_corpus.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 npm run corpus:plan

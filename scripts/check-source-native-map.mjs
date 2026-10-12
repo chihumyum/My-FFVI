@@ -206,7 +206,7 @@ check("actual destination provider admits source raw foot while retaining its up
   assert.equal(destination.nativeFoot.basis, "package-attribute-absent");
   assert.equal(readFieldNativeFoot(destination.map.nativeFoot, { x: 10, y: -20, z: 200 }), 0);
   assert.ok(destination.map.map.layers.some((layer) => ["UpperLayer", "CeilLayer"].includes(layer.name) && layer.data.some((id) => id !== 0)));
-  assert.match(productionProviderBlocker, /composition is unresolved/);
+  assert.match(productionProviderBlocker, /nonempty Upper\/Ceil render-target allocation and sampling are unresolved/);
 });
 check("missing or another-map native foot cannot inherit the encounter default-monster-set result", () => {
   const field = { content: { cameraHost: destination.map.cameraHost, map: destination.map.map }, partyActorCheckpoint: plan.checkpoint };

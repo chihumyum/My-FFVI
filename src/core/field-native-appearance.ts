@@ -59,7 +59,9 @@ function capture(host: NativeFieldAppearanceHost) {
   const refs = snapshot.actors.map((actor) => {
     const outer = owner[actor.id]!, native = outer.native!;
     return { id: actor.id, outer, native, entity: native.entity, animation: native.entity.animation,
-      character: native.entity.animation?.character, fieldAssetId: native.fieldAssetId, charaZOffset: native.charaZOffset };
+      character: native.entity.animation?.character, fieldAssetId: native.fieldAssetId, charaZOffset: native.charaZOffset,
+      metadata: canonical({ mapObjectAsset: native.mapObjectAsset ?? null, scope: native.scope ?? null,
+        updateAttribute: native.updateAttribute ?? null }) };
   });
   return { snapshot, refs, fingerprint: canonical(snapshot.actors.map(serialEntity)) };
 }
@@ -100,6 +102,8 @@ function project(host: NativeFieldAppearanceHost, input: Capture, steps: readonl
     for (const change of step.plan.changes) {
       const entity = entities.get(change.actorId);
       if (!entity) throw new Error("Missing native appearance actor: " + change.actorId);
+      if (input.refs.find((ref) => ref.id === entity.id)!.native.mapObjectAsset !== undefined)
+        throw new Error("Party appearance cannot replace a map-object actor asset");
       if (!entity.character || change.mode !== "replace" || entity.riding || entity.riderAssetId !== null ||
           !["absent", "idle"].includes(entity.rideOnEntity)) throw new Error("Native appearance riding/character replacement is unavailable");
       const selected = boundAsset(catalog, change.asset), character = characters[selected.asset];
@@ -166,7 +170,7 @@ export function prepareNativeFieldActorAppearance(
         const prior = initial.refs[index]!;
         return ref.id !== prior.id || ref.outer !== prior.outer || ref.native !== prior.native || ref.entity !== prior.entity ||
           ref.animation !== prior.animation || ref.character !== prior.character || ref.fieldAssetId !== prior.fieldAssetId ||
-          ref.charaZOffset !== prior.charaZOffset;
+          ref.charaZOffset !== prior.charaZOffset || ref.metadata !== prior.metadata;
       })) throw new Error("Stale native appearance actor candidate");
       const refreshed = project(host, current, plans);
       if (refreshed.fingerprint !== candidate.fingerprint || refreshed.media.some(([key, media], index) =>

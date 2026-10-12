@@ -1388,6 +1388,65 @@
         "docs/systems-v32.md",
         "build/reports/source-new-game-check.json"
       ]
+    },
+    {
+      "id": "narshe:native-npc-v33",
+      "subject": "narshe",
+      "predicate": "migration.nativeMapNpc",
+      "value": "Ordinary wait-controlled map-local NPCs use mapobject media identities, source integer entity selectors and their own standby anchor. They join the existing FieldGame actor owner with source update attributes 2 or10; map-local actors are excluded from persistent handoff but included in stale-candidate checks. First activation is bounded to proved wait-controller initialization; repeat activation, moving controllers and native stable saves remain gated.",
+      "when": {
+        "battleProfile": "narshe-playability-v33"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "docs/field-native-npc.md",
+        "docs/systems-v33.md"
+      ]
+    },
+    {
+      "id": "narshe:native-position-v33",
+      "subject": "narshe",
+      "predicate": "migration.nativePosition",
+      "value": "Native source SetPos mode0 performs map-origin subtraction, retains a negative-axis current cell, preserves layer0 or applies source layer1..3, and cues animation on a detached candidate before committing the existing actor. Failed media/material or changed owners reject without partial position publication. Source callback, riding and other modes remain separate capabilities.",
+      "when": {
+        "battleProfile": "narshe-playability-v33"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "docs/systems-v33.md"
+      ]
+    },
+    {
+      "id": "narshe:field-effects-v33",
+      "subject": "narshe",
+      "predicate": "migration.fieldEffects",
+      "value": "Source object_type11 is a FieldEffectBoardEntity with an independent shared particle-player lifecycle, not an NPC. Default source order, shared references, activeSelf, fadeAlpha and playback are separate state. Actual map3 has15 default boards referencing5 effect assets; serialized ParticleSystem, noise/randomness, material/depth and transactional map allocation/retirement remain unresolved. No particle placeholder is admitted as source playback.",
+      "when": {
+        "battleProfile": "narshe-playability-v33"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "docs/field-effects.md",
+        "docs/systems-v33.md"
+      ]
+    },
+    {
+      "id": "narshe:native-composition-v33",
+      "subject": "narshe",
+      "predicate": "migration.nativeComposition",
+      "value": "Ordinary source tile and character fragment math, queue order, alpha thresholds, head/body UV split and depth are recovered independently of render-target allocation. Upper/Ceil targets distinguish absent, clear-only and nonempty unresolved. Source map3 nonempty targets still fail admission; no complete map or GPU parity is inferred from shader formula tests.",
+      "when": {
+        "battleProfile": "narshe-playability-v33"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "docs/field-native-composition.md",
+        "docs/systems-v33.md"
+      ]
     }
   ],
   "assets": []

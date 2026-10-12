@@ -526,6 +526,7 @@ function showLimitations() {
   for (const line of [
     game.content.entry.description,
     ...game.content.limitations,
+    ...(game.content.map.nativeComposition ? ["原生普通角色的身体和头部已接入来源合成；角色阴影仍缺失，属于当前开发版的画面偏差。"] : []),
     ...battleContent.common.limitations,
   ]) {
     const li = document.createElement("li");

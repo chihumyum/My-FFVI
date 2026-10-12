@@ -2,6 +2,8 @@ import { ActorAnimation } from "./actor-animation.js";
 import type { Direction } from "../field/types.js";
 import type { FieldPuppetActorEffect } from "./field-puppet-actors.js";
 import { validateFieldActorViewProjection, type FieldActorViewProjection } from "./field-actor-view.js";
+import { assertFieldCompositionRenderTargets, validateFieldNativeComposition,
+  type FieldNativeCompositionDefinition } from "./field-native-composition.js";
 
 export type FieldPuppetPosition = { x: number; y: number; z: number };
 /** A detached read/write projection of the existing field actors. It is never
@@ -44,6 +46,7 @@ export type FieldPuppetHostProviders = {
   footAttribute(position: Readonly<FieldPuppetPosition>): number | null;
   upperTexture: string | null | "unknown";
   ceilTexture: string | null | "unknown";
+  composition?: FieldNativeCompositionDefinition;
   /** A compiled ordinary source provider may prepare a new layer binding.
    * Undefined retains the older same-binding-only capability. */
   applyViewProperties?(layer: number): FieldActorViewProjection | null;
@@ -96,6 +99,20 @@ export function fieldPuppetTransparentTextures(layer: number, upper: string | nu
   return layer === 9 ? { first: upper, second: ceil }
     : layer === 10 ? { first: ceil, second: null }
     : { first: null, second: null };
+}
+
+/** New render-target bindings require the matching compiled compositor. This
+ * admits proved clear targets; nonempty, unrecovered RT hosts still reject. */
+export function fieldPuppetBoundTransparentTextures(layer: number, providers: FieldPuppetHostProviders) {
+  const value = fieldPuppetTransparentTextures(layer, providers.upperTexture, providers.ceilTexture);
+  if (value.first === null && value.second === null) return value;
+  if (!providers.composition) throw new Error("Source transparent render-texture composition is unsupported");
+  validateFieldNativeComposition(providers.composition);
+  assertFieldCompositionRenderTargets(providers.composition);
+  if (providers.composition.contextId !== providers.mapRenderContext ||
+      providers.composition.upperTexture !== providers.upperTexture || providers.composition.ceilTexture !== providers.ceilTexture)
+    throw new Error("Source transparent render-texture provider identity mismatch");
+  return value;
 }
 
 /** Executes the ordinary source effects on a private candidate, including all
@@ -192,7 +209,7 @@ export function projectFieldPuppetActorEffects(
         // bound projection is harmless, but new targets must not disappear.
         if ((projected.first !== null || projected.second !== null) &&
             (projected.first !== target.transparentTextures.first || projected.second !== target.transparentTextures.second))
-          throw new Error("Source transparent render-texture composition is unsupported");
+          fieldPuppetBoundTransparentTextures(target.layer, providers);
         target.transparentTextures = projected; break;
       }
       case "switch-transparent":

@@ -2,6 +2,7 @@ import type { FieldGame } from "./field.js";
 import { projectFieldActorView, validateFieldActorView, type FieldActorViewDefinition } from "./field-actor-view.js";
 import type { FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import { validateFieldNativeFoot, readFieldNativeFoot, type FieldNativeFootDefinition } from "./field-native-foot.js";
+import { assertFieldCompositionRenderTargets, validateFieldNativeComposition } from "./field-native-composition.js";
 
 /** Destination providers for the bounded Canvas native actor host. Encounter
  * monster-set defaults do not prove a water/foot attribute. The uniform zero
@@ -15,10 +16,16 @@ export function prepareNativeFieldProviders(field: FieldGame, view: FieldActorVi
   if (!foot)
     throw new Error("Native field foot provider is unresolved");
   validateFieldNativeFoot(foot, field.content.map.id);
-  if (field.content.map.layers.some((layer) => ["UpperLayer", "CeilLayer"].includes(layer.name) && layer.data.some((v) => v !== 0)))
+  const composition = field.content.map.nativeComposition;
+  if (composition) {
+    validateFieldNativeComposition(composition, view);
+    assertFieldCompositionRenderTargets(composition);
+  } else if (field.content.map.layers.some((layer) => ["UpperLayer", "CeilLayer"].includes(layer.name) && layer.data.some((v) => v !== 0)))
     throw new Error("Canvas native actor upper/ceiling composition is unresolved");
   return () => ({ mapRenderContext: view.contextId,
     transportationType: field.partyActorCheckpoint!.context.currentTransport?.typeId ?? null,
-    footAttribute: (position) => readFieldNativeFoot(foot, position), upperTexture: null, ceilTexture: null,
+    footAttribute: (position) => readFieldNativeFoot(foot, position),
+    upperTexture: composition?.upperTexture ?? null, ceilTexture: composition?.ceilTexture ?? null,
+    ...(composition ? { composition: structuredClone(composition) } : {}),
     applyViewProperties: (layer) => projectFieldActorView(view, layer) });
 }

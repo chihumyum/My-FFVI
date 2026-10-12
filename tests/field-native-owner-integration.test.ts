@@ -30,7 +30,7 @@ const entity = (id: string, kind: number, patch: Partial<FieldEntity> = {}): Fie
   script: null, collision: null, destinationLayer: null, source, ...patch,
 });
 
-function setup(entities: FieldEntity[] = [], install = true) {
+function setup(entities: FieldEntity[] = [], install = true, nativeLifecycle = false) {
   const f = fieldActorFactoryFixture(), point = f.entry.player;
   // The old factory fixture's illustrative -2 Z is not a source PointIn pose.
   // Bind all three coordinates and the Unity layer through the actual helpers.
@@ -60,6 +60,7 @@ function setup(entities: FieldEntity[] = [], install = true) {
       description: "Controlled source factory and shared owner", evidence: [source] },
   };
   const options: FieldGameOptions = {
+    ...(nativeLifecycle ? { nativeActorPreparation: true } : {}),
     partyAppearance: { catalog: f.partyCatalog, current: () => structuredClone(f.party) },
     puppetRoster: { current: () => ({ owned: f.fresh.owned.roster.map((member) => ({
       ownedId: member.ownedId, sourceId: member.sourceId, enabled: member.enabled, conditionTypes: [],
@@ -70,7 +71,8 @@ function setup(entities: FieldEntity[] = [], install = true) {
   let providers: FieldPuppetHostProviders = f.input.providers;
   const game = new FieldGame(content, EventState.initialized(), undefined, undefined, options);
   const publish = (value: FieldActorFactoryCandidate = candidate) => game.installNativeActors(value,
-    catalog, () => providers, { worldMapScript: false, callback: "absent" });
+    catalog, () => providers, { worldMapScript: false, callback: "absent" }, undefined,
+    nativeLifecycle ? { factory: f.factory } : null);
   if (install) publish();
   const addScript = (name: string, instructions: Instruction<Op>[], skipInitialize = false) => {
     content.scripts[name] = instructions.map(at);
@@ -118,6 +120,127 @@ test("source lifecycle writes the installed Actor and native entity identities, 
     assert.equal(ref.actor.native!.entity, ref.entity);
     assert.equal(ref.actor.animation, ref.entity.animation);
   }
+});
+
+function mapNpc(id: string, asset: string, updateAttribute: 2 | 10 = 2): FieldEntity {
+  return entity(id, 6, { asset, direction: "up", nativeNpc: {
+    kind: "native-map-npc-v1", group: "probe", entityId: id, sourceEntityId: Number(id), objectType: 6, source,
+    geometry: { x: 64, y: 80, width: 16, height: 16, layer: 0 },
+    sourceDirection: 1, direction: "up", asset: { id: 9001, asset, animationAsset: asset.toUpperCase(), shadowType: 1, source },
+    updateAttribute, controller: "wait", turnAround: false,
+  } });
+}
+
+test("native event group registers map-object NPCs in the single actor owner and excludes them from persistent handoff", () => {
+  const t = setup([], true, true), player = t.game.player;
+  const a = mapNpc("301", player.asset, 2), b = mapNpc("302", player.asset, 10);
+  t.content.map.groups = { probe: { name: "probe", source, entities: [a, b], blockers: [] } };
+  t.addScript("group", [{ kind: "entities", group: "probe" }, { kind: "wait", seconds: 0.05 }, end], true);
+  t.game.startEvent("group");
+  assert.equal(t.game.stop, null);
+  const first = t.game.actors[a.id]!, second = t.game.actors[b.id]!;
+  assert.equal(first.native!.fieldAssetId, null); assert.equal(first.native!.mapObjectAsset!.id, 9001);
+  assert.equal(first.native!.scope!.group, "probe");
+  assert.equal(first.native!.charaZOffset, 0);
+  assert.equal(t.options.puppetActors!.read().context.entities.find((e) => e.entityId === 301)!.actor, a.id);
+  const candidate = t.game.nativeActorCandidate!;
+  assert.equal(candidate.snapshot.actors.some((actor) => [a.id, b.id].includes(actor.id)), false);
+  assert.equal(candidate.assets.some((actor) => [a.id, b.id].includes(actor.id)), false);
+  const stamp = t.game.nativeActorStateFingerprint;
+  first.native!.entity.visible = false;
+  assert.notEqual(t.game.nativeActorStateFingerprint, stamp, "retiring actors still invalidate pending map handoff");
+  assert.equal(t.game.actors[a.id], first); assert.equal(t.game.player, player);
+  for (const actor of [first, second]) actor.motion = {
+    from: { x: actor.x, y: actor.y }, to: { x: actor.x + 1, y: actor.y }, elapsed: 0, duration: 240, manual: false,
+  };
+  t.options.sourceMessageEffects!.prepare([{ kind: "entity-update-group", group: 8, invokeCallback: false }])();
+  t.game.advance(10);
+  assert.equal(first.motion!.elapsed, 0); assert.equal(second.motion!.elapsed, 10);
+  assert.equal(t.game.checkpointReady, false);
+});
+
+test("late NPC media failure cannot publish part of a group, its collision entities or activation flag", () => {
+  const t = setup([], true, true), first = mapNpc("301", t.game.player.asset), missing = mapNpc("302", "missing-source-media");
+  t.content.map.groups = { probe: { name: "probe", source, entities: [first, missing], blockers: [] } };
+  const actors = Object.keys(t.game.actors), entities = [...t.game.entities];
+  t.addScript("group", [{ kind: "entities", group: "probe" }, end], true);
+  t.game.startEvent("group");
+  assert.match(t.game.stop?.message ?? "", /Missing native NPC source media/);
+  assert.deepEqual(Object.keys(t.game.actors), actors); assert.deepEqual(t.game.entities, entities);
+  assert.equal(t.game.activeGroups.has("probe"), false);
+});
+
+test("fresh native default NPC preparation never exposes a legacy duplicate and validates aliases before publication", () => {
+  const template = setup([], false, true), npc = mapNpc("301", template.game.player.asset);
+  npc.nativeNpc!.group = "entity_default";
+  const t = setup([npc], false, true);
+  assert.equal(t.game.actors[npc.id], undefined);
+  const oldPlayer = t.game.player;
+  t.publish();
+  assert.notEqual(t.game.player, oldPlayer);
+  assert.ok(t.game.actors[npc.id]!.native);
+  assert.equal(t.options.puppetActors!.read().context.entities.find((e) => e.entityId === 301)!.actor, npc.id);
+  assert.equal(Object.keys(t.game.actors).filter((id) => id === npc.id).length, 1);
+  const bad = structuredClone(npc); bad.id = "native:not-a-source-id"; bad.nativeNpc!.entityId = bad.id;
+  const rejected = setup([bad], false, true), before = state(rejected.game);
+  assert.throws(() => rejected.publish(), /NPC.*identity|NPC.*selector/);
+  assert.deepEqual(state(rejected.game), before);
+});
+
+function anonymousMapNpc(group: string): FieldEntity {
+  const npc = mapNpc("301", ""), evidence = { ...source, pointer: "/layers/0/objects/2" };
+  npc.id = `${group}:0:2`; npc.source = evidence;
+  Object.assign(npc.nativeNpc!, { group, entityId: npc.id, sourceEntityId: 0, source: evidence });
+  return npc;
+}
+
+test("anonymous native NPCs remain owned on default and event entry without becoming camera selector zero", () => {
+  const example = setup(), asset = example.game.player.asset;
+  const initial = anonymousMapNpc("entity_default");
+  initial.asset = asset; initial.nativeNpc!.asset.asset = asset; initial.nativeNpc!.asset.animationAsset = asset.toUpperCase();
+  const t = setup([initial], true, true), later = anonymousMapNpc("probe");
+  later.asset = asset; later.nativeNpc!.asset.asset = asset; later.nativeNpc!.asset.animationAsset = asset.toUpperCase();
+  assert.ok(t.game.actors[initial.id]!.native);
+  assert.equal(t.options.puppetActors!.read().context.entities.some((e) => e.actor === initial.id), false);
+  t.content.map.groups = { probe: { name: "probe", source, entities: [later], blockers: [] } };
+  t.addScript("anonymous", [{ kind: "entities", group: "probe" },
+    { kind: "puppet", slot: 0, actor: "0", target: 4 }, { kind: "wait", seconds: 1 }, end,
+    { kind: "wait", seconds: 2 }, end], true);
+  t.game.startEvent("anonymous");
+  assert.equal(t.game.stop, null); assert.ok(t.game.actors[later.id]!.native);
+  const context = t.options.puppetActors!.read().context;
+  assert.equal(context.entities.some((e) => e.actor === later.id || e.entityId === 0), false);
+  assert.equal(context.camera, t.game.cameraActorId);
+  assert.equal(t.game.checkpointReady, false);
+});
+
+test("invalid event NPC selector binding rejects before publishing actors or the group", () => {
+  const t = setup([], true, true), npc = mapNpc("301", t.game.player.asset);
+  npc.id = "not-the-source-selector"; npc.nativeNpc!.entityId = npc.id;
+  t.content.map.groups = { probe: { name: "probe", source, entities: [npc], blockers: [] } };
+  const actors = Object.keys(t.game.actors), entities = [...t.game.entities];
+  t.addScript("invalid-selector", [{ kind: "entities", group: "probe" }, end], true);
+  t.game.startEvent("invalid-selector");
+  assert.equal(t.game.stop?.kind, "unsupported");
+  assert.deepEqual(Object.keys(t.game.actors), actors); assert.deepEqual(t.game.entities, entities);
+  assert.equal(t.game.activeGroups.has("probe"), false);
+});
+
+test("decoded native SetPos reaches the existing VM actor without changing visibility or corrupting other actors", () => {
+  const t = setup(), player = t.game.player;
+  player.native!.entity.visible = false; player.native!.entity.fadeAlpha = 0;
+  const raw = { type: 2, mnemonic: "SetPos", operands: {
+    iValues: [8, 7, 3, 0, 0, 0, 0, 0], rValues: Array(8).fill(0), sValues: ["wave", "", "", "", "", "", "", ""],
+  } };
+  const op = decodeFieldOp(raw, { script: "position", index: 0, source }, {});
+  assert.equal(op.kind, "position");
+  t.addScript("position", [op, { kind: "wait", seconds: 1 }, end], true);
+  t.game.startEvent("position");
+  assert.equal(t.game.stop, null);
+  assert.equal(t.game.player, player);
+  assert.deepEqual(player.native!.entity.position, { x: -24, y: 8, z: 149 });
+  assert.equal(player.animation!.snapshot()!.key, "wave");
+  assert.equal(player.native!.entity.visible, false);
 });
 
 test("source subtitle pauses native actor movement and animation while camera, fade and VM continue", () => {

@@ -15,6 +15,11 @@ assert.deepEqual(
   "Compiled field differs from verified source snapshots",
 );
 const g = new FieldGame(built);
+assert.ok(built.developmentOmissions.length > 0);
+assert.ok(built.developmentOmissions.every((item) => item.kind === "field-effect" && item.source.pointer &&
+  built.map.groups[item.group].blockers.some((issue) => issue.source.pointer === item.source.pointer)));
+assert.equal(built.map.entities.some((entity) => entity.kind === 11), false);
+assert.equal(g.fieldEffectsSnapshot, null);
 assert.equal(g.move("left"), false);
 assert.equal(g.move("right"), false);
 for (let n = 0; n < 11; n++) {
@@ -45,6 +50,7 @@ const receipt = {
   sourceSetHash: built.sourceSetHash,
   checks: [
     "compile-reproducibility",
+    "explicit-existing-development-particle-omission",
     "corridor-collision",
     "guard-choreography",
     "dialogue-input-lock",

@@ -107,7 +107,10 @@
     "field-party-actor-transactions:check": "npm run build && node scripts/check-field-party-actor-transactions.mjs",
     "field-native-appearance:check": "npm run build && node scripts/check-field-native-appearance-native.mjs && node scripts/check-field-native-appearance.mjs",
     "source-native-map:check": "npm run build && node scripts/check-source-native-map-native.mjs && node scripts/check-source-native-map.mjs",
-    "field-native-foot:check": "npm run build && node scripts/check-field-native-foot-native.mjs && node scripts/check-field-native-foot.mjs"
+    "field-native-foot:check": "npm run build && node scripts/check-field-native-foot-native.mjs && node scripts/check-field-native-foot.mjs",
+    "field-effects:check": "npm run build && node scripts/check-field-effects-native.mjs && node scripts/check-field-effects.mjs && node scripts/check-field-effects-ui.mjs",
+    "field-native-npc:check": "npm run build && node scripts/check-field-native-npc-native.mjs && node scripts/check-field-native-npc.mjs",
+    "field-native-composition:check": "npm run build && node scripts/check-field-native-composition-native.mjs && node scripts/check-field-native-composition.mjs && node scripts/check-field-native-composition-ui.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

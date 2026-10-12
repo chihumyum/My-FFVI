@@ -74,7 +74,7 @@ try {
     assert.equal(world.parentSourceSetHash, content.parentSourceSetHash);
     assert.equal(map.parentSourceSetHash, content.parentSourceSetHash);
     assert.equal(map.mapId, 609); assert.equal(content.entry.entrance, 1);
-    assert.equal(battle.common.profile, "narshe-playability-v32");
+    assert.equal(battle.common.profile, "narshe-playability-v33");
     assert.equal(content.entry.reservedScript.name, "sc_e_0001");
     assert.equal(map.scriptPuppetContexts[content.entry.reservedScript.name].scriptHash,
       content.entry.reservedScript.contentHash);
@@ -281,7 +281,7 @@ try {
   try { game.world.prepare(world, destination); }
   catch (error) { transitionFailure = error instanceof Error ? error.message : String(error); }
   check("the destination entity gate leaves the condition and old field intact without publishing a partial map", () => {
-    assert.equal(transitionFailure, "Unsupported entity kind 11");
+    assert.equal(transitionFailure, "Destination field-effect particle allocation requires a transactional map lifecycle provider");
     assert.equal(game.field, beforeTransition.field);
     assert.deepEqual(game.state.snapshot(), beforeTransition.owned);
     assert.deepEqual(game.field.cameraSnapshot, beforeTransition.camera);

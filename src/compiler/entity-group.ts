@@ -3,6 +3,8 @@ import { record } from "./content.js";
 import { tableId } from "./table-id.js";
 import { MINIMAP_ICON_TYPES } from "../core/minimap.js";
 import { compileNpc } from "./npc.js";
+import { compileFieldEffectBoard, fieldEffectCompilationBlockers } from "./field-effects.js";
+import { compileFieldNativeNpc } from "./field-native-npc.js";
 import { compileInteraction, compileInteractionEligibility } from "./interaction.js";
 import { compileTreasureInventoryDefinition, compileTreasureInteraction, compileTreasureTaskMessages } from "./treasure-inventory.js";
 import type {
@@ -88,8 +90,13 @@ export function compileEntityGroup(
           p = entityProperties(o.properties),
           kind = integer(p.object_type);
         const issue = (reason: string) => blockers.push({ reason, source });
-        if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 17, 18, 19, 27].includes(kind))
+        if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 11, 17, 18, 19, 27].includes(kind))
           issue(`Unsupported entity kind ${kind}`);
+        // Kind 11 has a distinct shared-particle/board owner. Recovering the
+        // board does not admit its Unity particle and material providers.
+        const effect = kind === 11 ? compileFieldEffectBoard(p,
+          { x: o.x, y: o.y, width: o.width, height: o.height }, tables["mapobject.csv"], source) : undefined;
+        if (effect) fieldEffectCompilationBlockers(effect).forEach(issue);
         if (kind === 1) issue("Unbound tile animation geometry");
         if (
           kind === 18 &&
@@ -233,9 +240,15 @@ export function compileEntityGroup(
         const width = finite(o.width) / tileSize,
           height = finite(o.height) / tileSize;
         if (width <= 0 || height <= 0) issue("Unsupported entity bounds");
+        const id = entityId ? String(entityId) : `${name}:${li}:${oi}`;
+        const nativeNpc = compileFieldNativeNpc({ group: name, object: o,
+          entity: { id, kind, layer: layerId, source }, properties: p, tables });
         entities.push({
-          id: entityId ? String(entityId) : `${name}:${li}:${oi}`,
+          id,
+          ...(nativeNpc.definition ? { nativeNpc: nativeNpc.definition } : {}),
+          ...(nativeNpc.blockers.length ? { nativeNpcBlockers: nativeNpc.blockers } : {}),
           objectId: integer(p.object_id ?? 0),
+          ...(effect ? { effect } : {}),
           ...(npc ? { npc: npc.npc } : {}),
           ...(mapObject
             ? {

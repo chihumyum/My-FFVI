@@ -11,6 +11,8 @@ import { decodeFieldOp, decodeScriptLocals, decodeConditionVisualFlag } from "./
 import { compilePlayerVisibilityFactory } from "./player-visibility.js";
 import { compileFieldCameraHostDefinition } from "./field-camera-host.js";
 import { compileFieldActorView } from "./field-actor-view.js";
+import { compileFieldNativeNpcStandby } from "./field-native-npc.js";
+import { compileFieldNativeComposition } from "./field-native-composition.js";
 import { compileFieldNativeAnimationKeys } from "./field-native-appearance.js";
 import { compilePartyActorCatalog } from "./party-actors.js";
 import { compileFieldNativeFoot } from "./field-native-foot.js";
@@ -221,6 +223,10 @@ export async function compileWorld(root: string) {
     );
     let map: WorldMapContent["map"] = null;
     let nativeFoot: WorldMapContent["nativeFoot"];
+    let nativeNpcStandby: WorldMapContent["nativeNpcStandby"];
+    const nativeNpcStandbyBlockers: ContentIssue[] = [];
+    try { nativeNpcStandby = compileFieldNativeNpcStandby(sourceFiles); }
+    catch (error) { nativeNpcStandbyBlockers.push({ reason: error instanceof Error ? error.message : String(error), source }); }
     const nativeFootBlockers: ContentIssue[] = [];
     try {
       const sourcePackage = byId.get(binding.packageId ?? "");
@@ -237,6 +243,7 @@ export async function compileWorld(root: string) {
     const cameraHostBlockers: ContentIssue[] = [];
     let actorView: WorldMapContent["actorView"];
     const actorViewBlockers: ContentIssue[] = [];
+    const nativeCompositionBlockers: ContentIssue[] = [];
     try {
       const tile = byId.get(binding.tilemap ?? ""),
         collision = byId.get(binding.collision ?? "");
@@ -321,6 +328,10 @@ export async function compileWorld(root: string) {
           { data: tile.data, source: { ...tile.source, objectId: tile.source.objectId } },
           { data: sourcePackage.data, source: { ...sourcePackage.source, objectId: sourcePackage.source.objectId } },
           partyEntry.mapRange);
+        try {
+          map.nativeComposition = compileFieldNativeComposition(sourceFiles, actorView,
+            { data: tile.data, source: { ...tile.source, objectId: tile.source.objectId } });
+        } catch (error) { nativeCompositionBlockers.push({ reason: error instanceof Error ? error.message : String(error), source }); }
       } catch (error) {
         actorViewBlockers.push({ reason: error instanceof Error ? error.message : String(error), source });
       }
@@ -411,7 +422,9 @@ export async function compileWorld(root: string) {
       cameraHostBlockers,
       ...(actorView ? { actorView } : {}),
       actorViewBlockers,
+      nativeCompositionBlockers,
       ...(nativeFoot ? { nativeFoot } : {}), nativeFootBlockers,
+      ...(nativeNpcStandby ? { nativeNpcStandby } : {}), nativeNpcStandbyBlockers,
       scripts,
       scriptLocals,
       scriptSystemFlags,

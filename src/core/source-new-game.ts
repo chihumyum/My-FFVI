@@ -85,7 +85,8 @@ export function installSourceNewGameActors(field: FieldGame, content: SourceNewG
     player: { position: fieldCameraCellToWorld(range, { x: p.x - range.x, y: p.y - range.y }, p.layer),
       layer: fieldCameraLayerFromLogical(p.layer).layer, direction: p.direction, visible: field.isEntityVisible(p.id) },
     camera: { id: field.cameraActorId, position: camera.dummy.position, layer: camera.dummy.layer }, providers: providers() });
-  field.installNativeActors(candidate, content.puppetCatalog, providers, { worldMapScript: false, callback: "absent" }, content.animationKeys);
+  field.installNativeActors(candidate, content.puppetCatalog, providers, { worldMapScript: false, callback: "absent" },
+    content.animationKeys, { factory: content.factory });
   field.initializeMapCamera();
 }
 

@@ -5,7 +5,7 @@ import type { Character, Direction } from "../field/types.js";
 import type { FieldPartyActorCheckpoint } from "./field-party-actors.js";
 import type { FieldPuppetActorCatalog, FieldPuppetActorContext, FieldPuppetOwned } from "./field-puppet-actors.js";
 import type { FieldPuppetHostActor, FieldPuppetHostProviders, FieldPuppetHostSnapshot } from "./field-puppet-effects.js";
-import { fieldPuppetTransparentTextures } from "./field-puppet-effects.js";
+import { fieldPuppetBoundTransparentTextures } from "./field-puppet-effects.js";
 import { validateFieldActorViewProjection } from "./field-actor-view.js";
 import type { MapPartyEntryDefinition } from "./map-party-entry.js";
 import type { NewGamePlan } from "./new-game.js";
@@ -192,7 +192,7 @@ export function createFieldActorFactoryCandidate(input: {
       bodyOpaque: true, shadowVisible, viewBinding: isPlayer ? {
         map: providers.mapRenderContext, layer: player.layer, properties: structuredClone(view),
       } : null,
-      transparentTextures: isPlayer ? fieldPuppetTransparentTextures(player.layer, providers.upperTexture, providers.ceilTexture)
+      transparentTextures: isPlayer ? fieldPuppetBoundTransparentTextures(player.layer, providers)
         : { first: null, second: null },
     };
   };
@@ -200,8 +200,6 @@ export function createFieldActorFactoryCandidate(input: {
     ...c.puppets.map((p) => create(p!.id, p!.fieldAssetId, "puppet")),
     ...c.multiParty.map((p) => create(p.actor!.id, p.actor!.fieldAssetId, "party")),
     ...c.conditionResidents!.map((r) => create(`native:resident:${r.characterId}`, r.fieldAssetId, "resident"))];
-  if (actors[0]!.transparentTextures.first !== null || actors[0]!.transparentTextures.second !== null)
-    throw new Error("Fresh player transparent render-texture composition is unsupported");
   return { snapshot: { actors, camera: camera && { ...camera, position: { ...camera.position } } }, bindings, assets };
 }
 

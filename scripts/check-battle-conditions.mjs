@@ -32,7 +32,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v32");
+assert.equal(catalog.common.profile, "narshe-playability-v33");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const abilities = tables["ability.csv"].map((r) =>
   compileAbilityProgram(index, Number(r.id)),

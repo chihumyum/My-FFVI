@@ -31,8 +31,12 @@ export type WorldMapContent = {
    * alone does not admit that map's entity or lifecycle dependencies. */
   actorView?: FieldActorViewDefinition;
   actorViewBlockers?: ContentIssue[];
+  nativeCompositionBlockers?: ContentIssue[];
   nativeFoot?: FieldNativeFootDefinition;
   nativeFootBlockers?: ContentIssue[];
+  nativeNpcStandby?: FieldContent["nativeNpcStandby"];
+  nativeNpcStandbyBlockers?: ContentIssue[];
+  fieldEffects?: FieldContent["fieldEffects"];
   initializer: string | null;
   characterAssets: string[];
   blockers: ContentIssue[];

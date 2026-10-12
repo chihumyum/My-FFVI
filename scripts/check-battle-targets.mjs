@@ -31,7 +31,7 @@ const source = await compileOpeningBattle(root);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v32");
+assert.equal(catalog.common.profile, "narshe-playability-v33");
 assert.equal(catalog.common.sourceContentHash, source.contentHash);
 const base = encounterContent(catalog, 3);
 const inventory = tables["ability.csv"].map((row) => {

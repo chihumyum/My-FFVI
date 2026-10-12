@@ -21,6 +21,10 @@ import type { FieldCameraOp, FieldCameraMotionOp, FieldCameraSetPosition } from 
 import type { FieldCameraHostDefinition } from "../core/field-camera-host.js";
 import type { FieldBackgroundLayer } from "../core/field-background.js";
 import type { SourceMessageOp } from "../core/source-message.js";
+import type { FieldEffectBoardDefinition, FieldEffectCatalog } from "../core/field-effects.js";
+import type { FieldNativeNpcDefinition, FieldNativeNpcStandby } from "../core/field-native-npc.js";
+import type { FieldNativePosition } from "../core/field-native-position.js";
+import type { FieldNativeCompositionDefinition } from "../core/field-native-composition.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -73,6 +77,9 @@ export type FieldEntity = Point & {
   minimap?: Point & { icon: number };
   destination?: { mapId: number; entrance: number };
   npc?: NpcProperties;
+  nativeNpc?: FieldNativeNpcDefinition;
+  nativeNpcBlockers?: string[];
+  effect?: FieldEffectBoardDefinition;
   mapObject?: MapObjectProperties;
   /** Source property reward; native entityId may be zero for anonymous objects. */
   treasure?: TreasureInventoryDefinition;
@@ -186,6 +193,7 @@ export type Op = Site &
     | { kind: "wait"; seconds: number }
     | { kind: "puppet"; slot: number; actor: string; target: number }
     | { kind: "position"; x: number; y: number; animation: string;
+        nativeCommand?: FieldNativePosition;
         /** Independent source admission when the runtime binding is dummy 0. */
         cameraCommand?: FieldCameraSetPosition }
     | {
@@ -231,6 +239,7 @@ export type FieldContent = {
   parentSourceSetHash: string;
   contentHash: string;
   map: {
+    nativeComposition?: FieldNativeCompositionDefinition;
     id: string;
     identity?: { mapId: number; areaId: number };
     entryContext?: FieldEntryContextDefinition;
@@ -256,6 +265,11 @@ export type FieldContent = {
   playerFactory?: PlayerVisibilityFactory;
   /** Content-bound native camera factory and current map providers. */
   cameraHost?: FieldCameraHostDefinition;
+  nativeNpcStandby?: FieldNativeNpcStandby;
+  fieldEffects?: FieldEffectCatalog;
+  /** Existing development checkpoint deviations only; source world packages
+   * keep these entities and their full capability blockers. */
+  developmentOmissions?: { kind: "field-effect"; entityId: string; group: string; source: Evidence; reason: string }[];
   scripts: Record<string, Op[]>;
   scriptLocals?: Record<string, ScriptLocals | null>;
   /** Integrator.Execute reads this per source Format; absence is unknown. */

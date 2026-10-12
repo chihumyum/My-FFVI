@@ -6,7 +6,7 @@ import type { FieldActorFactoryCandidate } from "./field-actor-factory.js";
 import { projectFieldActorView, validateFieldActorView, type FieldActorViewDefinition } from "./field-actor-view.js";
 import { replaceNativeFieldActorAnimation, type FieldNativeAnimationKeys } from "./field-native-appearance.js";
 import type { FieldPartyActorCheckpoint } from "./field-party-actors.js";
-import { fieldPuppetSemiTransparent, fieldPuppetTransparentTextures, projectFieldPuppetActorEffects,
+import { fieldPuppetSemiTransparent, fieldPuppetBoundTransparentTextures, projectFieldPuppetActorEffects,
   type FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import type { MapPartyEntryDefinition, MapPartyEntryPlan } from "./map-party-entry.js";
 import { partyActorLeaderOnMapChange, partyActorMapArea, preparePartyActors, type PartyActorCatalog, type PartyActorInstance } from "./party-actors.js";
@@ -182,9 +182,7 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
   player.shadowVisible = targetAsset.shadowType === 1;
   if (fieldPuppetSemiTransparent(providers.transportationType, providers.footAttribute({ ...player.position })))
     throw new Error("Destination native map body transparency is unresolved");
-  player.transparentTextures = fieldPuppetTransparentTextures(player.layer, providers.upperTexture, providers.ceilTexture);
-  if (player.transparentTextures.first !== null || player.transparentTextures.second !== null)
-    throw new Error("Destination native map render-texture composition is unresolved");
+  player.transparentTextures = fieldPuppetBoundTransparentTextures(player.layer, providers);
   for (const actor of snapshot.actors) {
     if (entry.hiddenActorIds.includes(actor.id)) { actor.visible = false; actor.fadeAlpha = 0; }
     const properties = projectFieldActorView(view, actor.layer);

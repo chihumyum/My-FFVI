@@ -7,7 +7,7 @@ import type { FieldPuppetActorPlan, FieldPuppetActorsPort, FieldPuppetControlCon
 import { projectFieldPuppetActorEffects, type FieldPuppetHostActor, type FieldPuppetHostProviders,
   type FieldPuppetHostSnapshot } from "./field-puppet-effects.js";
 import type { PartyActorCatalog } from "./party-actors.js";
-import type { Direction, Point } from "../field/types.js";
+import type { Direction, Evidence, Point } from "../field/types.js";
 
 /** This is stored ON the existing FieldGame Actor. It is not a second actor
  * collection. The native entity owns pose, playback and visibility; outer
@@ -16,6 +16,10 @@ export type NativeFieldActorData = {
   entity: FieldPuppetHostActor;
   fieldAssetId: number | null;
   charaZOffset: number;
+  /** Mapobject rows are a different identity domain from field-character assets. */
+  mapObjectAsset?: { id: number; asset: string; source: Evidence };
+  updateAttribute?: 2 | 10;
+  scope?: { kind: "map-npc"; group: string; entityId: string; source: Evidence };
 };
 export type NativeFieldMotion = { from: Point; to: Point; elapsed: number; duration: number; manual: boolean };
 export type NativeFieldActor = {
@@ -77,9 +81,24 @@ function cloneEntity(entity: FieldPuppetHostActor): FieldPuppetHostActor {
     viewBinding: entity.viewBinding && structuredClone(entity.viewBinding),
     transparentTextures: { ...entity.transparentTextures } };
 }
+function validateMetadata(data: NativeFieldActorData): void {
+  if (data.mapObjectAsset !== undefined) {
+    if (data.fieldAssetId !== null || !data.scope || data.scope.kind !== "map-npc" ||
+        !data.scope.group || data.scope.entityId !== data.entity.id ||
+        !data.mapObjectAsset.asset || !data.mapObjectAsset.source?.file || !data.mapObjectAsset.source.assetPath ||
+        !data.scope.source?.file || !data.scope.source.assetPath || ![2, 10].includes(data.updateAttribute!))
+      throw new Error("Unbound native map-object asset/scope");
+    checkpointInteger(data.mapObjectAsset.id, 1, 0x7fffffff);
+    return;
+  }
+  if (data.scope !== undefined || data.updateAttribute !== undefined)
+    throw new Error("Map-local actor metadata requires its map-object asset");
+  if (data.fieldAssetId !== null) checkpointInteger(data.fieldAssetId, 1, 0x7fffffff);
+}
 function asset(catalog: PartyActorCatalog, data: NativeFieldActorData): string | null {
+  validateMetadata(data);
+  if (data.mapObjectAsset !== undefined) return data.mapObjectAsset.asset;
   if (data.fieldAssetId === null) return null;
-  checkpointInteger(data.fieldAssetId, 1, 0x7fffffff);
   const row = catalog.assets[data.fieldAssetId];
   if (!row || !row.asset) throw new Error("Missing native field asset binding");
   return row.asset;
@@ -93,7 +112,7 @@ export function createNativeFieldActorProjections(
   candidate: FieldActorFactoryCandidate, map: FieldCameraMapRange, catalog: PartyActorCatalog,
 ): NativeFieldActor[] {
   mapRange(map);
-  const boundMap = { ...map }, ids = new Set<string>();
+  const ids = new Set<string>();
   if (!candidate || candidate.snapshot.actors.length !== candidate.assets.length)
     throw new Error("Incomplete native field actor factory candidate");
   const assetIds = new Set<string>();
@@ -106,8 +125,24 @@ export function createNativeFieldActorProjections(
     ids.add(source.id);
     const metadata = candidate.assets.find((row) => row.id === source.id);
     if (!metadata || source.moving) throw new Error("Unbound or already moving factory actor");
-    const entity = cloneEntity(source), data: NativeFieldActorData = {
-      entity, fieldAssetId: metadata.fieldAssetId, charaZOffset: finite(metadata.charaZOffset),
+    return createNativeFieldActorProjection({ entity: source, fieldAssetId: metadata.fieldAssetId,
+      charaZOffset: metadata.charaZOffset }, map, catalog);
+  });
+}
+
+/** Shared coordinate/playback projection for both persistent factory actors and
+ * source-bound map NPCs. Asset identity remains in its own table domain. */
+export function createNativeFieldActorProjection(
+  input: NativeFieldActorData, map: FieldCameraMapRange, catalog: PartyActorCatalog,
+): NativeFieldActor {
+    mapRange(map);
+    const boundMap = { ...map };
+    if (input.entity.moving) throw new Error("Already moving native actor cannot be installed");
+    const entity = cloneEntity(input.entity), data: NativeFieldActorData = {
+      entity, fieldAssetId: input.fieldAssetId, charaZOffset: finite(input.charaZOffset),
+      ...(input.mapObjectAsset !== undefined ? { mapObjectAsset: structuredClone(input.mapObjectAsset) } : {}),
+      ...(input.updateAttribute !== undefined ? { updateAttribute: input.updateAttribute } : {}),
+      ...(input.scope !== undefined ? { scope: structuredClone(input.scope) } : {}),
     };
     const assetName = asset(catalog, data);
     if ((assetName === null) !== (entity.animation === null)) throw new Error("Native factory media/asset binding mismatch");
@@ -160,7 +195,6 @@ export function createNativeFieldActorProjections(
     // not keep a second moving flag which remains true after that motion ends.
     Object.defineProperty(entity, "moving", { enumerable: true, configurable: false, get: () => actor.motion !== null });
     return actor;
-  });
 }
 
 /** Legacy actors without native admission are not invented as native objects.
@@ -172,7 +206,7 @@ export function readNativeFieldActors(owner: NativeFieldActorOwner, camera: Nati
     if (!actor || actor.id !== id) throw new Error("Field actor owner key/identity mismatch");
     if (!actor.native) continue;
     if (actor.native.entity.id !== id) throw new Error("Native and outer field actor identities differ");
-    if (actor.native.fieldAssetId !== null) checkpointInteger(actor.native.fieldAssetId, 1, 0x7fffffff);
+    validateMetadata(actor.native);
     finite(actor.native.charaZOffset);
     const entity = cloneEntity(actor.native.entity);
     if (actor.motion !== undefined) entity.moving = actor.motion !== null;
@@ -190,7 +224,9 @@ function capture(host: NativeFieldActorEffectHost) {
   const refs = snapshot.actors.map(({ id }) => {
     const actor = owner[id]!, native = actor.native!;
     return { id, actor, native, entity: native.entity, animation: native.entity.animation,
-      character: native.entity.animation?.character, fieldAssetId: native.fieldAssetId, charaZOffset: native.charaZOffset };
+      character: native.entity.animation?.character, fieldAssetId: native.fieldAssetId, charaZOffset: native.charaZOffset,
+      metadata: canonical({ mapObjectAsset: native.mapObjectAsset ?? null, scope: native.scope ?? null,
+        updateAttribute: native.updateAttribute ?? null }) };
   });
   return { snapshot, refs, fingerprint: canonical(serial(snapshot)) };
 }
@@ -210,7 +246,20 @@ export function prepareNativeFieldActorEffects(
   host: NativeFieldActorEffectHost, plan: Readonly<FieldPuppetActorPlan>, validateCurrent: () => void = () => {},
 ): () => void {
   const effects = structuredClone(plan.effects);
-  const initial = capture(host), next = projectFieldPuppetActorEffects(effects, initial.snapshot, host.readProviders());
+  return prepareNativeFieldActorProjection(host,
+    (snapshot, providers) => projectFieldPuppetActorEffects(effects, snapshot, providers), validateCurrent);
+}
+
+/** Common publication boundary for source actor instructions. The projection
+ * only edits the existing identities; creation/removal belongs to map lifecycle. */
+export function prepareNativeFieldActorProjection(
+  host: NativeFieldActorEffectHost,
+  project: (snapshot: FieldPuppetHostSnapshot, providers: FieldPuppetHostProviders) => FieldPuppetHostSnapshot,
+  validateCurrent: () => void = () => {},
+): () => void {
+  const initial = capture(host), next = project(initial.snapshot, host.readProviders());
+  if (next.actors.length !== initial.refs.length || next.actors.some((actor, index) => actor.id !== initial.refs[index]!.id))
+    throw new Error("Native instruction cannot replace actor identities");
   const expected = canonical(serial(next));
   for (const [index, ref] of initial.refs.entries()) writable(ref.entity, next.actors[index]!);
   const cameraChanged = canonical(initial.snapshot.camera) !== canonical(next.camera);
@@ -225,11 +274,12 @@ export function prepareNativeFieldActorEffects(
     if (current.fingerprint !== initial.fingerprint || current.refs.length !== initial.refs.length || current.refs.some((ref, index) => {
       const prior = initial.refs[index]!;
       return ref.id !== prior.id || ref.actor !== prior.actor || ref.native !== prior.native || ref.entity !== prior.entity ||
-        ref.animation !== prior.animation || ref.character !== prior.character || ref.fieldAssetId !== prior.fieldAssetId || ref.charaZOffset !== prior.charaZOffset;
+        ref.animation !== prior.animation || ref.character !== prior.character || ref.fieldAssetId !== prior.fieldAssetId ||
+        ref.charaZOffset !== prior.charaZOffset || ref.metadata !== prior.metadata;
     })) throw new Error("Stale native field actor transaction");
     // Providers are live reads. A map/foot/media change between preparation and
     // publication cannot be hidden behind an unchanged actor snapshot.
-    if (canonical(serial(projectFieldPuppetActorEffects(effects, current.snapshot, host.readProviders()))) !== expected)
+    if (canonical(serial(project(current.snapshot, host.readProviders()))) !== expected)
       throw new Error("Stale native field actor providers");
     for (const [index, ref] of current.refs.entries()) writable(ref.entity, next.actors[index]!);
     // Camera commits first and may reject its own stale revision. All actor

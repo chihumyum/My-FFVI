@@ -2,12 +2,19 @@ import { minimapMarkers, MINIMAP_ROTATION } from "/runtime/core/minimap.js";
 import { FIELD_POSE as FACING } from "/runtime/core/actor-animation.js";
 import { fieldFadeOverlay } from "/runtime/core/field-fade.js";
 import { projectFieldBackground } from "/runtime/core/field-background.js";
+import { assertFieldCompositionRenderTargets, composeFieldNativePixels,
+  fieldCompositionActorDepth, fieldCompositionTileDepth, fieldCompositionActorTextures,
+  validateFieldNativeComposition } from "/runtime/core/field-native-composition.js";
+import { projectFieldActorView, validateFieldActorViewProjection } from "/runtime/core/field-actor-view.js";
+import { canonical } from "/runtime/core/canonical.js";
 export class Renderer {
   constructor(canvas, content, images) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.content = content;
     this.images = images;
+    this.nativePixels = new WeakMap();
+    this.presentationOmissions = [];
     this.sets = [...content.map.tilesets].sort(
       (a, b) => b.firstgid - a.firstgid,
     );
@@ -63,6 +70,121 @@ export class Renderer {
       x: m.from.x + (m.to.x - m.from.x) * t,
       y: m.from.y + (m.to.y - m.from.y) * t,
     };
+  }
+  compositionCanvas(width, height) {
+    const canvas = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(width, height)
+      : this.canvas.ownerDocument?.createElement("canvas");
+    if (!canvas) throw new Error("原生材质合成缺少离屏 Canvas");
+    canvas.width = width; canvas.height = height;
+    return canvas;
+  }
+  compositionPixels(file) {
+    const image = this.images.get(file);
+    if (!image) throw new Error("原生合成缺少图像 " + file);
+    let pixels = this.nativePixels.get(image);
+    if (!pixels) {
+      const width = image.naturalWidth ?? image.width, height = image.naturalHeight ?? image.height;
+      const canvas = this.compositionCanvas(width, height), context = canvas.getContext("2d", { willReadFrequently: true });
+      context.drawImage(image, 0, 0);
+      pixels = { width, height, data: context.getImageData(0, 0, width, height).data };
+      this.nativePixels.set(image, pixels);
+    }
+    return pixels;
+  }
+  /** Native material preparation is complete before drawing to the visible
+   * Canvas. Render targets are transient pixels; the existing actors remain
+   * the only state owner. Legacy/development actors retain their old lane. */
+  prepareNativeComposition(game, actors, sourceCamera, cx, cy, width, height) {
+    const m = this.content.map, definition = m.nativeComposition;
+    if (!definition || !Object.values(game.actors).some((actor) => actor.native)) return null;
+    validateFieldNativeComposition(definition);
+    assertFieldCompositionRenderTargets(definition);
+    const host = this.content.cameraHost;
+    if (!sourceCamera || !host || host.loop.horizontal || host.loop.vertical)
+      throw new Error("原生普通材质缺少非循环相机投影");
+    const range = host.mapRange, tiles = [], projectedActors = [], omissions = [];
+    if (definition.view.mapSize.width !== range.width || definition.view.mapSize.height !== range.height)
+      throw new Error("原生材质地图范围与来源不符");
+    for (const [li, layer] of m.layers.entries()) {
+      if (!definition.layers.includes(layer.name) || layer.opacity !== 1)
+        throw new Error("未绑定的原生图层材质");
+      for (let y = Math.max(range.y, 0, Math.floor(cy / 16)); y < Math.min(range.y + range.height, layer.height, Math.ceil((cy + height) / 16)); y++) {
+        for (let x = Math.max(range.x, 0, Math.floor(cx / 16)); x < Math.min(range.x + range.width, layer.width, Math.ceil((cx + width) / 16)); x++) {
+          const raw = layer.data[y * layer.width + x] >>> 0;
+          const gid = (game.tileAnimations.tile(li, y * layer.width + x) ?? raw) & 0x0fffffff;
+          if (!gid) continue;
+          const set = this.sets.find((s) => s.firstgid <= gid);
+          if (!set || set.tilewidth !== 16 || set.tileheight !== 16) throw new Error("未恢复的原生图块尺寸");
+          const n = gid - set.firstgid, image = this.compositionPixels(m.textures[set.image]);
+          tiles.push({ image, source: { x: (n % set.columns) * (16 + (set.spacing ?? 0)) + (set.margin ?? 0),
+            y: Math.floor(n / set.columns) * (16 + (set.spacing ?? 0)) + (set.margin ?? 0), width: 16, height: 16 },
+            destination: { x: x * 16 - cx, y: y * 16 - cy, width: 16, height: 16 },
+            flipX: !!(raw & 0x80000000), flipY: !!(raw & 0x40000000), diagonal: !!(raw & 0x20000000),
+            depth: fieldCompositionTileDepth({ layer: layer.name, localRow: y - range.y,
+              mapHeight: range.height, cameraY: sourceCamera.cameraPosition.y }) });
+        }
+      }
+    }
+    for (const actor of actors) {
+      if (!actor.native) throw new Error("原生材质视口混入未绑定演员");
+      const entity = actor.native.entity, frame = actor.animation?.frame();
+      if (!frame || actor.asset === null) continue;
+      if (!entity.character || entity.riding || !entity.bodyOpaque || entity.fadeAlpha !== 1)
+        throw new Error("原生普通材质不支持当前骑乘或透明提供器");
+      if (entity.shadowVisible) omissions.push({ kind: "native-character-shadow", actorId: actor.id });
+      if (!entity.viewBinding?.properties) throw new Error("原生演员缺少普通材质绑定");
+      validateFieldActorViewProjection(entity.viewBinding.properties, definition.contextId, entity.layer);
+      if (canonical(entity.viewBinding.properties) !== canonical(projectFieldActorView(definition.view, entity.layer)))
+        throw new Error("原生演员材质参数未绑定当前地图完整来源");
+      const textures = fieldCompositionActorTextures(definition, entity.layer);
+      if (entity.transparentTextures.first !== textures.first || entity.transparentTextures.second !== textures.second)
+        throw new Error("原生演员的上层纹理属于其他地图或层");
+      const character = this.content.characters[actor.asset], sprite = character?.sprites[frame.sprite];
+      if (!sprite) throw new Error("原生角色帧缺少来源图像");
+      const image = this.compositionPixels(sprite.file);
+      if (image.width !== sprite.width || image.height !== sprite.height) throw new Error("原生角色图像几何不符");
+      const point = this.point(actor), x = (point.x + 0.5) * 16 - cx + frame.x,
+        y = (point.y + 0.5) * 16 - cy - frame.y;
+      // FF6 SerialOffset(+6) and prefab Offset(-6) cancel. Do not reuse the
+      // legacy bottom-2 anchor, which omitted the serial provider.
+      const left = frame.flip ? x - sprite.width * (1 - sprite.pivot[0]) : x - sprite.width * sprite.pivot[0];
+      projectedActors.push({ image, source: { x: 0, y: 0, width: sprite.width, height: sprite.height },
+        destination: { x: left, y: y - sprite.height * (1 - sprite.pivot[1]), width: sprite.width, height: sprite.height },
+        flipX: frame.flip, flipY: false, diagonal: false, alpha: frame.alpha,
+        depth: fieldCompositionActorDepth({ position: { y: (range.height * 0.5 - 0.5 - (point.y - range.y)) * 16,
+          z: entity.position.z }, frameY: frame.y, cameraY: sourceCamera.cameraPosition.y,
+          clampTileSubY: sourceCamera.clampTileSubY, charaZOffset: actor.native.charaZOffset }),
+        // Only absent/clear-only targets pass the qualification above. Their
+        // alpha is zero independently of allocation size and point sampling.
+        first: null, second: null });
+    }
+    const canvas = this.compositionCanvas(width, height), context = canvas.getContext("2d", { willReadFrequently: true });
+    this.background(context, sourceCamera, width, height);
+    const output = composeFieldNativePixels({ width, height, tiles, actors: projectedActors,
+      background: { width, height, data: context.getImageData(0, 0, width, height).data } });
+    const imageData = context.createImageData(width, height); imageData.data.set(output.data);
+    for (const omission of omissions) if (!this.presentationOmissions.some((prior) =>
+      prior.kind === omission.kind && prior.actorId === omission.actorId)) this.presentationOmissions.push(omission);
+    return imageData;
+  }
+  background(context, sourceCamera, width, height) {
+    context.imageSmoothingEnabled = false;
+    context.fillStyle = "#09111b";
+    context.fillRect(0, 0, width, height);
+    for (const background of this.content.map.backgrounds ?? []) {
+      if (!sourceCamera) throw new Error("来源背景缺少摄像机宿主");
+      const image = this.images.get(background.texture.url);
+      if (!image) throw new Error("缺少来源背景图像");
+      const projection = projectFieldBackground(background, {
+        scrollCamera: sourceCamera.cameraPosition,
+        renderCamera: background.renderHost.renderCamera,
+        rendererWorld: background.renderHost.rendererWorld,
+        screen: { width, height }, renderTarget: { width, height },
+      });
+      for (const { source, destination } of projection.patches)
+        context.drawImage(image, source.x, source.y, source.width, source.height,
+          destination.x, destination.y, destination.width, destination.height);
+    }
   }
   sprite(asset, key, a, x, y, crop = 0, lift = 0, pose = null) {
     const char = this.content.characters[asset];
@@ -213,6 +335,8 @@ export class Renderer {
     c.restore();
   }
   draw(game) {
+    if (game.fieldEffectsSnapshot != null)
+      throw new Error("来源字段特效缺少粒子、材质和离屏纹理渲染宿主");
     const c = this.ctx,
       m = this.content.map,
       p = this.point(game.player),
@@ -241,45 +365,23 @@ export class Renderer {
       : camera(p.x + game.cameraOffset.x / 16, range.x, range.width, w),
       cy = sourceCamera ? Math.round((sourceCamera.cameraCell.y + 0.5) * 16 - h / 2)
       : camera(p.y - game.cameraOffset.y / 16, range.y, range.height, h);
-    c.imageSmoothingEnabled = false;
-    c.fillStyle = "#09111b";
-    c.fillRect(0, 0, w, h);
-    for (const background of m.backgrounds ?? []) {
-      if (!sourceCamera) throw new Error("来源背景缺少摄像机宿主");
-      const image = this.images.get(background.texture.url);
-      if (!image) throw new Error("缺少来源背景图像");
-      const projection = projectFieldBackground(background, {
-        scrollCamera: sourceCamera.cameraPosition,
-        renderCamera: background.renderHost.renderCamera,
-        rendererWorld: background.renderHost.rendererWorld,
-        screen: { width: w, height: h }, renderTarget: { width: w, height: h },
-      });
-      for (const { source, destination } of projection.patches)
-        c.drawImage(image, source.x, source.y, source.width, source.height,
-          destination.x, destination.y, destination.width, destination.height);
-    }
     const actors = Object.values(game.actors)
-      .filter(
-        (a) =>
-          game.isEntityVisible(a.id) &&
-          a.x >= 0 &&
-          a.x < m.width &&
-          a.y >= 0 &&
-          a.y < m.height,
-      )
-      .sort(
-        (a, b) => this.point(a).y - this.point(b).y || a.id.localeCompare(b.id),
-      );
+      .filter((a) => game.isEntityVisible(a.id) && a.x >= 0 && a.x < m.width && a.y >= 0 && a.y < m.height)
+      .sort((a, b) => this.point(a).y - this.point(b).y || a.id.localeCompare(b.id));
+    const native = this.prepareNativeComposition(game, actors, sourceCamera, cx, cy, w, h);
+    c.imageSmoothingEnabled = false;
+    if (native) c.putImageData(native, 0, 0);
+    else this.background(c, sourceCamera, w, h);
     const drawActors = (layer) => {
       for (const a of actors) if (a.layer === layer) this.actor(a, cx, cy);
     };
-    for (const [li, l] of m.layers.entries()) {
-      this.layer(l, cx, cy, w, h, game, li);
-      if (l.name === "BottomLayer") drawActors(0);
-      if (l.name === "GroundLayer") drawActors(1);
-      if (l.name === "UpperLayer") drawActors(2);
-      if (l.name === "CeilLayer") drawActors(3);
-    }
+    if (!native) for (const [li, l] of m.layers.entries()) {
+        this.layer(l, cx, cy, w, h, game, li);
+        if (l.name === "BottomLayer") drawActors(0);
+        if (l.name === "GroundLayer") drawActors(1);
+        if (l.name === "UpperLayer") drawActors(2);
+        if (l.name === "CeilLayer") drawActors(3);
+      }
     const message = game.sourceMessage?.projection;
     if (message) {
       const lines = message.text.split("\n"), lineHeight = 24;

@@ -3,6 +3,7 @@ import { encounterContent, battleDefinitionBlocker, type BattleCatalog } from ".
 import { BattleGame } from "./battle.js";
 import { EventState } from "./event-state.js";
 import type { AudioReadinessPort } from "./audio-readiness.js";
+import type { FieldEffectRuntimeHost } from "./field-effects.js";
 import type { ShopTradeRequest } from "./shop.js";
 import { projectBattleFieldState } from "./field-battle-entry.js";
 import {
@@ -41,7 +42,7 @@ export type GameCheckpoint = {
   world: WorldCheckpoint;
 };
 /** External observations are rebound by the host on load, never trusted from saves. */
-export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort };
+export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost };
 type FreshSession = { content: SourceNewGameContent; state: GameState; events: EventState;
   map: WorldMapContent; fade: FieldFadeState; presentation: SourcePresentationContext };
 
@@ -133,7 +134,8 @@ export class GameSession {
     this.world = new WorldSession(field, initialEvents, {
       current: {
         ...runtime,
-        ...(fresh ? { sourcePresentation: { context: () => structuredClone(fresh.presentation) } } : {}),
+        ...(fresh ? { nativeActorPreparation: true,
+          sourcePresentation: { context: () => structuredClone(fresh.presentation) } } : {}),
         puppetRoster: this.state.fieldPuppetRoster,
         inventory: this.state.fieldInventory,
         treasure: this.state.fieldTreasure,
