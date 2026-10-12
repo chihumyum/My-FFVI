@@ -1,6 +1,7 @@
 import { InventoryView } from "./inventory-view.js";
 import { EquipmentView } from "./equipment-view.js";
 import { PartyView } from "./party-view.js";
+import { ChoiceView } from "./choice-view.js";
 import { ShopView } from "./shop-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
 import { GameFlow } from "/runtime/core/game-flow.js";
@@ -27,6 +28,7 @@ let content,
   inventoryView,
   equipmentView,
   partyView,
+  choiceView,
   shopView,
   mapOpen = false,
   lastMinimapFrame = 0,
@@ -211,6 +213,7 @@ function returnToTitle() {
     $(id).hidden = true;
   battleView.hide();
   shopView.reset();
+  choiceView.reset();
   $("welcome").hidden = false;
   $("load-error").hidden = true;
   $("menu-button").disabled = true;
@@ -225,6 +228,8 @@ function text(id, value) {
   if (node.textContent !== value) node.textContent = value;
 }
 function sync() {
+  choiceView?.render(flow, { disabled: failed || document.hidden || mapOpen });
+  if (game.choicePending) held.clear();
   shopView?.render(
     flow.session,
     flow.inputReady && !document.hidden && !flow.session.battle && !game.stop,
@@ -258,6 +263,7 @@ function sync() {
   }
   battleView.hide();
   $("dialogue").hidden = !game.messageWindow || flow.paused;
+  $("next").hidden = game.choicePending;
   if (game.messageWindow) {
     text("speaker", game.messageWindow.speaker);
     text("message", game.messageWindow.text);
@@ -287,6 +293,8 @@ function sync() {
         : "当前片段已停止，可重新开始。"
       : game.currentShop
         ? "选择商品和数量，Esc 返回或离开商店"
+        : game.choice
+          ? "方向键选择，空格 / Enter 确认"
         : game.dialogue
           ? "空格 / Enter 继续对白"
           : game.busy
@@ -320,6 +328,10 @@ window.addEventListener("keydown", (e) => {
   if (flow.session.battle) {
     if (e.target === canvas || $("battle-menu").contains(e.target))
       battleView.keyboard(e);
+    return;
+  }
+  if (game.choicePending) {
+    if (e.target === canvas || $("choice-panel").contains(e.target)) choiceView.keyboard(e);
     return;
   }
   if (document.activeElement !== canvas) return;
@@ -434,6 +446,7 @@ function failure(error) {
   // Cleanup failure must not hide the original error or resume a broken loop.
   try { audio.reset(); } catch { /* The game is already stopped. */ }
   held.clear();
+  choiceView?.reset();
   for (const id of [
     "pause",
     "dialogue",
@@ -505,6 +518,11 @@ async function init() {
     inventoryView.render(flow.session);
     equipmentView.render(flow.session);
     syncSaveControls();
+  });
+  choiceView = new ChoiceView($("choice-panel"), () => {
+    held.clear();
+    sync();
+    if (!game.choice) focus();
   });
   shopView = new ShopView($("shop-menu"), () => {
     held.clear();

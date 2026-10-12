@@ -68,6 +68,7 @@
     "systems:check": "npm run game:build && npm run battle:build && node scripts/check-system-integration.mjs",
     "framework:check": "npm run build && node scripts/check-game-framework.mjs",
     "party-menu:check": "npm run build && node scripts/check-party-menu-ui.mjs",
+    "event-interactions:check": "npm run build && node scripts/check-field-choice.mjs && node scripts/check-event-context-branch.mjs && node scripts/check-event-interactions-ui.mjs",
     "battle-abilities:check": "npm run battle:build && node scripts/check-battle-abilities-native.mjs && node scripts/check-battle-abilities.mjs && node scripts/check-battle-abilities-ui.mjs",
     "map-party-entry:check": "npm run world:build && node scripts/check-map-party-entry-native.mjs && node scripts/check-map-party-entry.mjs",
     "treasure-inventory:check": "npm run battle:build && node scripts/check-treasure-inventory-native.mjs && node scripts/check-treasure-inventory.mjs",

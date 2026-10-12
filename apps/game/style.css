@@ -138,6 +138,28 @@ canvas:focus-visible {
 [hidden] {
   display: none !important;
 }
+#choice-panel {
+  position: absolute;
+  z-index: 1;
+  right: 5%;
+  bottom: 30%;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  min-width: 150px;
+  max-width: 75%;
+  max-height: 58%;
+  overflow: auto;
+  background: #101c2bf5;
+  border: 1px solid #91b3cb;
+  box-shadow: 0 6px 24px #0008;
+}
+#choice-panel p { margin: 0; color: #b4c7dd; }
+#choice-panel button { text-align: left; padding: 8px 16px; }
+#choice-panel button[aria-current="true"] { border-color: #ead298; background: #31465d; }
+#choice-panel[data-anchor="top-left"], #choice-panel[data-anchor="top-right"] { top: 5%; bottom: auto; }
+#choice-panel[data-anchor="top-left"], #choice-panel[data-anchor="bottom-left"] { left: 5%; right: auto; }
+#choice-panel[data-anchor="bottom-center"] { right: 50%; transform: translateX(50%); }
 .panel {
   width: min(520px, 85%);
   text-align: center;

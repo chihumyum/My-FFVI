@@ -5,6 +5,7 @@ import { Hash, SourceRef } from "../contracts.js";
 import { hash, record } from "./content.js";
 import { decodeFieldOp } from "./field.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
+import { loadSystemMessages } from "./system-messages.js";
 
 const Provenance = SourceRef.extend({
   serializedFile: z.string(),
@@ -189,6 +190,7 @@ export function analyzeCorpus(
             { script: asset.id, index, source: asset.source },
             messages,
             tables,
+            { nextMnemonic: index + 1 < ops.length ? String(record(ops[index + 1]).mnemonic) : null },
           );
           if (op.kind === "blocked") reason = op.reason;
           else if (op.kind === "sound" || op.kind === "sound-sync") {
@@ -436,8 +438,13 @@ export async function loadCorpus(root: string) {
 export async function compileCorpus(root: string) {
   const { assets, tables, messages, sourceSetHash, manifest } =
     await loadCorpus(root);
+  const systemMessages = await loadSystemMessages(root, z.string().parse(manifest.parentSourceSetHash),
+    array(manifest.sources).map((value) => {
+      const source = record(value);
+      return { file: z.string().parse(source.file), sha256: z.string().parse(source.sha256) };
+    }));
   return {
-    report: analyzeCorpus(assets, tables, messages, sourceSetHash),
+    report: analyzeCorpus(assets, tables, { ...messages, system_zhc: systemMessages.messages }, sourceSetHash),
     manifest,
   };
 }

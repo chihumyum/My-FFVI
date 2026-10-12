@@ -6,6 +6,8 @@ import { ImportedProject } from "../contracts.js";
 import { compileEntityGroup } from "./entity-group.js";
 import { compileMessage } from "./message.js";
 import { compileSourceMessageInstruction } from "./source-message.js";
+import { compileFieldChoiceInstruction, type FieldChoiceCompileContext } from "./field-choice.js";
+import { compileEventContextBranchInstruction, eventContextBranchMnemonics } from "./event-context-branch.js";
 import { tableId } from "./table-id.js";
 import { loadMinimapMedia } from "./map-ui.js";
 import { loadAudioMedia } from "./audio.js";
@@ -101,6 +103,7 @@ export function decodeFieldOp(
   site: Site,
   messages: Record<string, unknown>,
   tables: Record<string, unknown> = {},
+  context?: FieldChoiceCompileContext,
 ): Op {
   const m = record(raw), name = string(m.mnemonic);
   const blocked = (reason: string): Op => ({
@@ -111,6 +114,14 @@ export function decodeFieldOp(
   });
   if (name === "FadeIn" || name === "FadeOut") {
     try { return { ...site, ...compileFieldFadeInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "Select") {
+    try { return { ...site, ...compileFieldChoiceInstruction(raw, messages, tables, context) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (eventContextBranchMnemonics.some(mnemonic => mnemonic === name)) {
+    try { return { ...site, ...compileEventContextBranchInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   const o = record(m.operands), i = list(o.iValues).map(integer),
@@ -645,7 +656,8 @@ export async function compileField(root: string): Promise<FieldContent> {
       .replace(/\.json$/, "");
     scriptLocals[name] = decodeScriptLocals(d);
     scriptSystemFlags[name] = decodeConditionVisualFlag(d);
-    scripts[name] = d.Mnemonics.map((m, index) =>
+    const instructions = d.Mnemonics;
+    scripts[name] = instructions.map((m, index) =>
       decodeFieldOp(
         m,
         {
@@ -655,6 +667,7 @@ export async function compileField(root: string): Promise<FieldContent> {
         },
         record(field.messages),
         tables,
+        { nextMnemonic: index + 1 < instructions.length ? string(record(instructions[index + 1]).mnemonic) : null },
       ),
     );
   }

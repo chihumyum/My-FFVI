@@ -24,6 +24,9 @@ import { executeSourcePresentation, cloneSourcePresentationContext, sourcePresen
   type SourcePresentationContext, type SourcePresentationPort } from "./source-presentation.js";
 import { canonical } from "./canonical.js";
 import { SourceMessageState, sourceMessageUpdateMask, type SourceMessageEffect } from "./source-message.js";
+import { createFieldChoiceRequest, resolveFieldChoiceAnswer, type FieldChoiceAnswer,
+  type FieldChoiceRequest } from "./field-choice.js";
+import { prepareEventContextBranch } from "./event-context-branch.js";
 import type { FieldPuppetRosterPort } from "./field-puppet-roster.js";
 import { createNativeFieldActorProjection, createNativeFieldActorProjections, createNativeFieldPuppetActorsPort, readNativeFieldActors,
   prepareNativeFieldActorProjection, type NativeFieldActorData, type NativeFieldActor } from "./field-native-actors.js";
@@ -210,6 +213,9 @@ export type Stop =
       continuation?: string;
     };
 export type Dialogue = FieldMessage & { task: number };
+// Input identity is deliberately outside the semantic/checkpoint state. A new
+// FieldGame (including restore) cannot accept a callback from an older owner.
+let nextChoiceNamespace = 1;
 export type FieldGameOptions = {
   /** Explicit particle/material host. Content parsing never grants one. */
   fieldEffects?: FieldEffectRuntimeHost;
@@ -441,6 +447,14 @@ export class FieldGame {
   dialogue: Dialogue | null = null;
   readonly sourceMessage = new SourceMessageState();
   private retainedMessage: Dialogue | null = null;
+  private readonly choiceNamespace = nextChoiceNamespace++;
+  private nextChoice = 1;
+  private pendingChoice: { request: FieldChoiceRequest; task: Task;
+    op: Extract<Op, { kind: "choice" }>; answer: number | null } | null = null;
+  get choice(): FieldChoiceRequest | null {
+    return this.pendingChoice?.answer === null ? this.pendingChoice.request : null;
+  }
+  get choicePending(): boolean { return this.pendingChoice !== null; }
   private treasureSceneState: "player" | "message" = "player";
   /** A close=false source message keeps its window during the post-input yield. */
   get messageWindow(): Dialogue | null { return this.dialogue ?? this.retainedMessage; }
@@ -942,6 +956,7 @@ export class FieldGame {
       this.tasks.some((t) => !t.done) ||
       this.sourceMessage.active ||
       !!this.dialogue ||
+      !!this.pendingChoice ||
       !!this.shopTask ||
       this.treasureSceneState === "message" ||
       !!this.stop ||
@@ -1408,7 +1423,9 @@ export class FieldGame {
       : null;
   }
   confirm(): void {
-    if (this.stop) return;
+    // Confirm is not a choice response. Even an answered request waits for its
+    // own interpreter clock before another input can dismiss the next message.
+    if (this.stop || this.pendingChoice) return;
     if (this.dialogue) {
       if (this.shopTask) {
         if (
@@ -1435,7 +1452,8 @@ export class FieldGame {
           return;
         }
         this.retainedMessage = close ? null : message;
-      } else this.retainedMessage = null;
+      } else this.retainedMessage = task && this.content.scripts[task.script]?.[task.pc]?.kind === "choice"
+        ? this.dialogue : null;
       this.dialogue = null;
       if (task) task.lastClock = -1; // explicit input is a new host clock
       this.pump();
@@ -1588,6 +1606,38 @@ export class FieldGame {
       };
       if (action.start) this.dialogue = { ...action.start, task: id };
     } else this.dialogue = { ...action.message, task: 0 };
+  }
+  /** Source selection callbacks write the shared zero-based result. Only the
+   * issuing task may consume completion, on its next ordinary logical clock;
+   * input never clocks unrelated puppet tasks or an immediately following quiz. */
+  choose(requestId: string, answer: FieldChoiceAnswer): boolean {
+    const pending = this.pendingChoice;
+    if (this.stop || !pending || pending.answer !== null || pending.request.id !== requestId ||
+        pending.task.done || pending.task.state !== "ready" || !this.tasks.includes(pending.task)) return false;
+    const index = resolveFieldChoiceAnswer(pending.request, answer);
+    if (index === null) return false;
+    this.eventState.write({ category: "MessageSelection", index: 0 }, index);
+    pending.answer = index;
+    return true;
+  }
+  private finishChoice(t: Task): void {
+    const pending = this.pendingChoice;
+    if (!pending || pending.task !== t || pending.answer === null)
+      throw new Error("Field choice completion lost its task owner");
+    if (!pending.op.retainMessage) {
+      const effects: SourceMessageEffect[] = [{ kind: "entity-update-group", group: 12, invokeCallback: false }];
+      // Source native instances need their bound entity-update transaction.
+      // Legacy field actors already belong to this FieldGame's mask owner.
+      if (!this.options.sourceMessageEffects && (this.options.puppetActors || this.nativeActorBindings))
+        throw new Error("Source choice message entity-update host is unavailable");
+      const publish = this.options.sourceMessageEffects
+        ? this.options.sourceMessageEffects.prepare(effects)
+        : () => { this.entityUpdateMask = sourceMessageUpdateMask(12); };
+      if (typeof publish !== "function") throw new Error("Invalid choice message host transaction");
+      publish();
+      this.retainedMessage = null;
+    }
+    this.pendingChoice = null;
   }
   private finishInteraction(): void {
     if (!this.interaction || this.busy) return;
@@ -1969,6 +2019,10 @@ export class FieldGame {
       if (this.stop) return;
     }
     if (main?.done) {
+      if (this.pendingChoice) {
+        this.block("Main script ended with an unfinished choice task", this.pendingChoice.op);
+        return;
+      }
       if (this.treasureHandoffBlocked()) {
         this.block("Main script ended with an unfinished treasure task");
         return;
@@ -2003,8 +2057,16 @@ export class FieldGame {
   }
   private clockTask(t: Task, frameDeltaSeconds: number): void {
     if (t.done || t.state !== "ready" || t.lastClock === this.time ||
-        t.wait > 0 || this.dialogue?.task === t.id) return;
+        t.wait > 0 || this.dialogue?.task === t.id ||
+        (this.pendingChoice?.task === t && this.pendingChoice.answer === null)) return;
     t.lastClock = this.time;
+    if (this.pendingChoice?.task === t) {
+      try { this.finishChoice(t); }
+      catch (error) {
+        this.block(error instanceof Error ? error.message : String(error), this.pendingChoice?.op);
+        return;
+      }
+    }
     for (let budget = 0; budget < 4096; budget++) {
         if (t.done || t.wait > 0 || this.dialogue?.task === t.id) return;
         const actor = this.actors[t.actor];
@@ -2127,6 +2189,10 @@ export class FieldGame {
           this.block("Concurrent source message windows are not implemented", op);
           return;
         }
+        if (this.pendingChoice && ["message", "source-message", "choice", "change-map", "encounter", "treasure-box"].includes(op.kind)) {
+          this.block("Concurrent field interaction conflicts with an unfinished choice task", op);
+          return;
+        }
         if (t.pc < t.range.min || t.pc > t.range.max) {
           this.block("Field control flow leaves the source task range", op);
           return;
@@ -2150,6 +2216,16 @@ export class FieldGame {
           return;
         }
         switch (op.kind) {
+          case "branch-character":
+          case "branch-player-direction":
+            try {
+              const next = prepareEventContextBranch(op, { nextPc: t.pc, range: t.range,
+                ...(op.kind === "branch-character"
+                  ? (this.options.puppetRoster ? { roster: this.options.puppetRoster.current() } : {})
+                  : { playerDirection: this.player.direction }) });
+              t.pc = next.pc;
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
           case "source-presentation":
             try {
               if (executeSourcePresentation(op, this.eventState, this.options.sourcePresentation) === "end")
@@ -2645,6 +2721,21 @@ export class FieldGame {
               publish(); next.commit();
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
+          case "choice":
+            try {
+              if (this.sourceMessage.active || this.shopTask || this.treasureSceneState === "message")
+                throw new Error("Field choice conflicts with an occupied message manager");
+              if (this.messageWindow && this.messageWindow.task !== t.id)
+                throw new Error("Field choice message belongs to another task");
+              if (op.presentation === "yes-no" && !this.messageWindow)
+                throw new Error("Yes/no field choice requires its ordinary message window");
+              if (!op.retainMessage && !this.options.sourceMessageEffects && (this.options.puppetActors || this.nativeActorBindings))
+                throw new Error("Source choice message entity-update host is unavailable");
+              const request = createFieldChoiceRequest(op, `${this.choiceNamespace}:${this.nextChoice}`, t.id);
+              this.pendingChoice = { request, task: t, op: structuredClone(op), answer: null };
+              this.nextChoice++;
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); }
+            return;
           case "message":
             if (this.sourceMessage.active) { this.block("Source message window is already occupied", op); return; }
             this.dialogue = {

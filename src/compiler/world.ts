@@ -358,14 +358,17 @@ export async function compileWorld(root: string) {
         // they never grant a formal source actor host.
         try { scriptPuppetContexts[name] = compileFieldPuppetScriptContext(data, miscAssets[0]!.data); }
         catch { scriptPuppetContexts[name] = null; }
-        scripts[name] = array(data.Mnemonics).map((raw, index): Op => {
+        const mnemonics = array(data.Mnemonics);
+        scripts[name] = mnemonics.map((raw, index): Op => {
           const site = {
             script: name,
             index,
             source: { ...asset.source, pointer: `/Mnemonics/${index}` },
           };
           try {
-            return decodeFieldOp(raw, site, corpus.messages, corpus.tables);
+            return decodeFieldOp(raw, site, messages, corpus.tables, {
+              nextMnemonic: index + 1 < mnemonics.length ? String(record(mnemonics[index + 1]).mnemonic) : null,
+            });
           } catch (error) {
             return {
               ...site,

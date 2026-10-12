@@ -21,6 +21,8 @@ import type { FieldCameraOp, FieldCameraMotionOp, FieldCameraSetPosition } from 
 import type { FieldCameraHostDefinition } from "../core/field-camera-host.js";
 import type { FieldBackgroundLayer } from "../core/field-background.js";
 import type { SourceMessageOp } from "../core/source-message.js";
+import type { FieldChoiceOp } from "../core/field-choice.js";
+import type { EventContextBranchOp } from "../core/event-context-branch.js";
 import type { FieldEffectBoardDefinition, FieldEffectCatalog } from "../core/field-effects.js";
 import type { FieldNativeNpcDefinition, FieldNativeNpcStandby } from "../core/field-native-npc.js";
 import type { FieldNativePosition } from "../core/field-native-position.js";
@@ -168,6 +170,8 @@ export type Op = Site &
     | FieldCameraOp
     | FieldCameraMotionOp
     | SourceMessageOp
+    | FieldChoiceOp
+    | EventContextBranchOp
     | { kind: "entities"; group: string }
     | { kind: "change-map"; request: MapRequest }
     | { kind: "ride"; actor: string; vehicle: 6 }

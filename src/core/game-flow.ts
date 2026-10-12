@@ -1,7 +1,8 @@
 import type { Direction } from "../field/types.js";
+import type { FieldChoiceAnswer } from "./field-choice.js";
 import { GameSession } from "./game-session.js";
 
-export type GameFlowPhase = "title" | "loading" | "paused" | "exploration" | "event" | "dialogue" | "shop" |
+export type GameFlowPhase = "title" | "loading" | "paused" | "exploration" | "event" | "dialogue" | "choice" | "shop" |
   "battle" | "victory" | "defeat" | "transition" | "blocked";
 export type GameFlowOperation = "new-game" | "load" | "save" | "map";
 export type GameFlowHostState = { visible: boolean; mediaReady: boolean; overlayOpen: boolean };
@@ -52,6 +53,7 @@ export class GameFlow {
     // An encounter stop is the pending FieldGame -> BattleGame handoff, not
     // a terminal blocker. GameSession needs its next logical tick to resolve it.
     if (field.stop?.kind === "encounter") return "event";
+    if (field.choice) return "choice";
     if (field.dialogue) return "dialogue";
     if (field.currentShop) return "shop";
     return field.busy ? "event" : "exploration";
@@ -116,8 +118,12 @@ export class GameFlow {
   /** True means eligible input was dispatched; the field owner decides whether
    * a nearby object or a waiting dialogue actually accepts the confirmation. */
   confirm(): boolean {
-    if (!this.hostAllowsInput || this.owner.battle || this.owner.field.stop) return false;
+    if (!this.hostAllowsInput || this.owner.battle || this.owner.field.stop || this.owner.field.choicePending) return false;
     this.owner.field.confirm(); return true;
+  }
+  choose(requestId: string, answer: FieldChoiceAnswer): boolean {
+    if (!this.hostAllowsInput || this.owner.battle || this.owner.field.stop) return false;
+    return this.owner.field.choose(requestId, answer);
   }
   continueVictory(): boolean {
     return this.hostAllowsInput && this.owner.battle?.phase === "victory" ? this.owner.continueVictory() : false;

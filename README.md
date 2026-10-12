@@ -19,6 +19,7 @@
 - [核心机制现状与优先次序](docs/core-mechanics.md)
 - [游戏系统框架与连续流程验收](docs/game-framework.md)
 - [通用遭遇内容管线](docs/battle-catalog.md)
+- [v39 共用剧情选择与上下文分支](docs/systems-v39.md)
 - [v38 队伍菜单与通用战斗内容管线](docs/systems-v38.md)
 - [v37 统一游戏流程、内容装载与连续验收](docs/systems-v37.md)
 - [v36 来源粒子启动、出生、运动与渲染提供器](docs/systems-v36.md)
@@ -168,6 +169,6 @@ npm run accept -- narshe
 
 `knowledge` 接受可选的 `--state '<JSON 上下文>'`。查询时只提供已有证据的状态值；没有证据就省略对应键。状态字符串只是上下文输入，不会自动建立它与原版剧情 flag 的映射。
 
-当前系统交付：[v38 队伍与通用战斗管线](docs/systems-v38.md)。暂停菜单已接当前队伍排序、前后排与成长/能力查看；`npm run party-menu:check` 检查状态、地图外观、入战和保存的连接，`npm run battle-catalog:check` 验证两组非开场来源编组的同管线编译与战后返回。`npm run framework:check` 检查同一会话中的探索、事件、战败重试、胜利与成长、菜单物品、保存恢复和继续探索；使用明确的开发入口与内存存储。浏览器已接统一流程和内容仓库。公开可玩 profile 仍为 v35，来源完整开场和主线继续单独追踪；粒子精细恢复暂停。GitHub 仅追踪工具、源码、说明与合成夹具，原始游戏资源、提取文案、原生反编译与生成产物留在忽略目录。
+当前系统交付：[v39 共用剧情交互](docs/systems-v39.md)。已有标题、探索、战斗、奖励、队伍/装备菜单与存读档闭环；本批再接选择、队伍条件和朝向分支。`npm run event-interactions:check` 验证来源编译、选择到剧情/库存/保存的共用链路，`npm run framework:check` 验证完整基础循环。浏览器已通过选择、发物品、写剧情、移动、内存保存与恢复；未覆盖用户进度。公开可玩 profile 仍为 v35，完整主线单独追踪；精细表现与 HD-2D 后置。GitHub 仅追踪工具、源码、说明与合成夹具，原始资源和生成内容保留本地。
 
 战斗导出支持重复的 `--encounter-id`；上述示例的 3002、3035 是检验通用编译器的非开场编组。所选编组由同一编译器处理，来源指令、队形或资源缺口逐组报告；选择资源不会解锁剧情或授予角色。`npm run battle:build` 同时写出 `build/reports/battle-catalog.json`，区分无法构造的编组、运行到特定分支仍有依赖的编组和明确保留的开发表现偏差。

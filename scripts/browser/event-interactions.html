@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>剧情交互框架检查</title>
+    <link rel="stylesheet" href="/game/style.css" />
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">FFVI WEB · FRAMEWORK CHECK</p>
+      <h2>剧情交互框架检查</h2>
+      <p>受控事件：使用实际游戏会话、选择界面与纳尔谢开发内容。此事件用于系统验证。</p>
+      <div id="stage">
+        <canvas id="game" width="960" height="540" tabindex="0" aria-label="游戏画面"></canvas>
+        <section id="dialogue" hidden><strong id="speaker"></strong><p id="message"></p><button id="next">继续对白</button></section>
+        <section id="choice-panel" aria-label="对话选项" hidden></section>
+      </div>
+      <p id="status" role="status">正在载入…</p>
+      <div>
+        <button id="start" disabled>开始交互检查</button>
+        <button id="pause-button" disabled>暂停</button>
+        <button id="save" disabled>保存到测试内存</button>
+        <button id="restore" disabled>恢复测试进度</button>
+      </div>
+      <p id="saved-state">测试尚未保存；不会修改浏览器中的游戏存档。</p>
+      <pre id="observations" aria-label="会话检查结果"></pre>
+    </main>
+    <script type="module" src="/interaction-check.js"></script>
+  </body>
+</html>
