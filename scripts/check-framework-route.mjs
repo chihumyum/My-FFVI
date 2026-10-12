@@ -15,9 +15,9 @@ for (let i = 0; i < args.length; i += 2) {
 const runtime = resolve(root, options.get("--dist") ?? "dist");
 const load = (name) => import(pathToFileURL(resolve(runtime, "src/core", name + ".js")));
 const [{ GameContentRepository }, { GameSession }, { GameFlow }, { FieldFadeState },
-  { NewGameFieldEntry }, { createSourcePresentationContext }] = await Promise.all([
+  { NewGameFieldEntry }, { createSourcePresentationContext }, { GameMapLoader }] = await Promise.all([
   load("game-content"), load("game-session"), load("game-flow"), load("field-fade"),
-  load("new-game-field-entry"), load("source-presentation"),
+  load("new-game-field-entry"), load("source-presentation"), load("game-map-loader"),
 ]);
 const aliases = { "/game/content.json": "/game/narshe.json", "/game/battle.json": "/game/opening-playable.json",
   "/game/new-game.json": "/game/source-new-game.json" };
@@ -41,19 +41,30 @@ while (entry.phase !== "field-preparing") {
   assert.ok(next); next.commit(); fade = next.fade;
 }
 const game = GameSession.prepareNewGame(content, catalog, map, battle, fade, presentation,
-  { audioReadiness: { isReady: () => true }, transportationTimestamp: () => "639273600000000000" });
+  { audioReadiness: { isReady: () => true }, soundPresentation: { isPresented: () => true },
+    transportationTimestamp: () => "639273600000000000" });
 const launch = entry.prepareLaunch(fade, game.newGamePreparation(true));
 game.launchNewGame(launch.launch); launch.commit();
 const flow = new GameFlow(game), host = { visible: true, mediaReady: true, overlayOpen: false };
 flow.start();
-const ownedAtStart = game.state.snapshot(), transitions = [], answers = [], motionSamples = [], transportation = [];
+const mapLoader = new GameMapLoader(flow, repo, {
+  prepare: async field => { assert.notEqual(game.field, field, "Presentation prepares a private map"); },
+  discard: () => {},
+});
+const ownedAtStart = game.state.snapshot(), transitions = [], answers = [], motionSamples = [], transportation = [], sounds = [];
 const transportationOffsets = new WeakMap();
+const soundOffsets = new WeakMap();
 function recordTransportation(field) {
   const offset = transportationOffsets.get(field) ?? 0;
   transportation.push(...field.transportationExecutions.slice(offset).map((entry) => ({
     mapId: field.content.map.identity.mapId, ...entry,
   })));
   transportationOffsets.set(field, field.transportationExecutions.length);
+  const soundOffset = soundOffsets.get(field) ?? 0;
+  sounds.push(...field.soundExecutions.slice(soundOffset).map(entry => ({
+    mapId: field.content.map.identity.mapId, ...entry,
+  })));
+  soundOffsets.set(field, field.soundExecutions.length);
 }
 const sampledActors = new Set();
 const report = { kind: "framework-source-route-check-v1", result: "running", profile: content.developmentProfile.kind,
@@ -61,7 +72,7 @@ const report = { kind: "framework-source-route-check-v1", result: "running", pro
   sourceEntryHash: content.developmentProfile.sourceContentHash,
   controlledInputs: ["headless title, field UI and immediately ready audio", "10ms host updates", "automatic dialogue confirm; first displayed choice", "fixed explicit transportation timestamp"],
   omittedEnvironmentEffects: content.developmentProfile.omissions.length,
-  originalGameExecuted: false, completeOpening: false, transitions, answers, motionSamples, transportation };
+  originalGameExecuted: false, completeOpening: false, transitions, answers, motionSamples, transportation, sounds };
 const output = resolve(root, options.get("--report") ?? "build/reports/framework-source-route-check.json");
 let elapsedMs = 0, boundary = null;
 try {
@@ -69,24 +80,16 @@ try {
     recordTransportation(game.field);
     const stop = game.field.stop;
     if (stop?.kind === "map-transition") {
-      const ticket = flow.beginOperation("map");
       const old = game.field, owned = JSON.stringify(game.state.snapshot());
-      try {
-        const target = await repo.map(stop.request.mapId, catalog);
-        const prepared = game.world.prepare(catalog, target);
-        assert.equal(game.field, old);
-        assert.equal(JSON.stringify(game.state.snapshot()), owned, "Preparation cannot publish owned state");
-        assert.equal(game.world.commit(prepared), true);
-        ticket.finish();
-        transitions.push({ from: old.content.map.identity.mapId, to: target.mapId,
-          site: stop.site, omittedEnvironmentEffects: target.developmentOmissions.length });
-        assert.equal(game.world.commit(prepared), false, "A map publishes once");
-      } catch (error) {
-        ticket.cancel();
+      const result = await mapLoader.load();
+      if (result.status === "failed") {
         assert.equal(game.field, old);
         assert.equal(JSON.stringify(game.state.snapshot()), owned);
-        boundary = { kind: "map-preparation", request: stop.request, site: stop.site, message: String(error) }; break;
+        boundary = { kind: "map-preparation", request: stop.request, site: stop.site, message: String(result.error) }; break;
       }
+      assert.equal(result.status, "committed", "Source route cannot silently cancel a map request");
+      transitions.push({ from: old.content.map.identity.mapId, to: result.field.content.map.identity.mapId,
+        site: stop.site, omittedEnvironmentEffects: result.field.content.developmentProfile?.omissions.length ?? 0 });
     }
     if (game.field.stop?.kind === "unsupported") { boundary = structuredClone(game.field.stop); break; }
     if (game.battle) { boundary = { kind: "battle", encounter: game.battle.content.encounterId }; break; }

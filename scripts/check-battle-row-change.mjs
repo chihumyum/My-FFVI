@@ -1,3 +1,4 @@
+import { controlledAudioRuntime } from "./controlled-audio.mjs";
 // Source-bound action plus a continuous development-checkpoint session.
 // This does not assert native animation timing or original-game parity.
 import assert from "node:assert/strict";
@@ -56,7 +57,7 @@ if (!sourceOnly) {
     const table = row.source.assetPath.split("/").at(-1);
     assert.deepEqual(source.tables[table][row.source.rowId], row);
   }
-  const game = new GameSession(field, published, 20261010);
+  const game = new GameSession(field, published, 20261010, controlledAudioRuntime());
   const initial = game.state.snapshot();
   const advance = () => {
     game.advance(10);
@@ -121,7 +122,7 @@ if (!sourceOnly) {
   const saved = game.checkpoint();
   for (let slot = 0; slot < 3; slot++) if (slot !== initial.party.selectedSlot)
     assert.deepEqual(saved.owned.party.slots[slot], initial.party.slots[slot]);
-  const restored = GameSession.restore(JSON.parse(JSON.stringify(saved)), field, published);
+  const restored = GameSession.restore(JSON.parse(JSON.stringify(saved)), field, published, undefined, controlledAudioRuntime());
   assert.deepEqual(restored.checkpoint(), saved);
   assert.deepEqual(restored.players.map(({ id, row }) => ({ id, row })), changedRows);
   const lease = restored.state.openBattle(3);

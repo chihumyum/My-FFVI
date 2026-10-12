@@ -15,6 +15,9 @@ const run = promisify(execFile);
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const lanes = [
   ["session-loop", "check-game-framework.mjs", "game-framework-check.json", "stages"],
+  ["io-transactions", "check-framework-io.mjs", "framework-io-check.json", "cases"],
+  ["host-io-recovery", "check-game-map-ui.mjs", "game-map-ui-check.json", "tests"],
+  ["multi-map-lifecycle", "check-framework-lifecycle.mjs", "framework-lifecycle-check.json", "stages"],
   ["event-motion-and-recovery", "check-script-motion-integration.mjs", "script-motion-integration-check.json", "stages"],
   ["shared-ownership", "check-system-integration.mjs", "system-integration-check.json", "cases"],
   ["manual-dialogue-and-save", "check-field-manual-message.mjs", "field-manual-message-check.json", "controlledJourney.stages"],
@@ -24,6 +27,8 @@ const lanes = [
   ["transportation-state", "check-transportation-state.mjs", "transportation-state-check.json", "cases"],
   ["transportation-lifecycle", "check-field-transportation-session.mjs", "field-transportation-session-check.json", "cases"],
   ["field-compositor", "check-field-native-composition-ui.mjs", "field-native-composition-ui-check.json", "tests"],
+  ["sound-lifecycle", "check-field-sound-session.mjs", "field-sound-session-check.json", "cases"],
+  ["sound-output", "check-field-sound-ui.mjs", "field-sound-ui-check.json", "tests"],
   ["source-journey", "check-framework-route.mjs", "framework-source-route-check.json", "transitions"],
 ];
 async function runtimeDigest() {
@@ -41,6 +46,11 @@ async function runtimeDigest() {
 }
 const report = { kind: "framework-system-integration-suite-v1", result: "running", checks: [],
   evidence: "controlled-runtime-and-DOM", sourceJourney: null, readyForBatchPopulation: false,
+  frameworkContracts: { status: "running", missing: lanes.filter(([id]) => id !== "source-journey").map(([id]) => id) },
+  batchAdmission: { status: "not-assessed", blockers: [
+    "No specific source content batch has been nominated and its dependency closure accepted.",
+    "The multi-map lifecycle is a controlled systems fixture, not a held-out source-content playthrough.",
+  ] },
   browserVerified: false, originalGameExecuted: false, fullGameMigration: false };
 await mkdir(resolve(output, ".."), { recursive: true });
 await writeFile(output, JSON.stringify(report, null, 2) + "\n");
@@ -59,6 +69,8 @@ try {
     if (result.result !== undefined) assert.ok(["pass", "passed"].includes(result.result), id + " did not pass");
     report.checks.push({ id, report: relative(root, path), sha256: digest(bytes),
       cases: cases.length, result: "passed" });
+    report.frameworkContracts.missing = report.frameworkContracts.missing.filter(missing => missing !== id);
+    if (report.frameworkContracts.missing.length === 0) report.frameworkContracts.status = "passed";
     if (id === "source-journey") {
       report.sourceJourney = { status: result.checkpointReady ? "stable-field-reached" : "incomplete",
         completeOpening: result.completeOpening, mapId: result.mapId, elapsedMs: result.elapsedMs,
@@ -66,10 +78,13 @@ try {
     }
     await writeFile(output, JSON.stringify(report, null, 2) + "\n");
   }
-  assert.equal(await runtimeDigest(), report.runtimeSha256, "Runtime changed during integration; rebuild and rerun");
+  const unchanged = await runtimeDigest() === report.runtimeSha256;
+  if (!unchanged) report.frameworkContracts.status = "invalidated";
+  assert.equal(unchanged, true, "Runtime changed during integration; rebuild and rerun");
   report.result = "passed";
 } catch (error) {
   report.result = "failed";
+  if (report.frameworkContracts.missing.length) report.frameworkContracts.status = "incomplete";
   report.error = String(error.stack ?? error);
   throw error;
 } finally {

@@ -5,6 +5,7 @@ import { ChoiceView } from "./choice-view.js";
 import { ShopView } from "./shop-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
 import { GameFlow } from "/runtime/core/game-flow.js";
+import { GameMapLoader } from "/runtime/core/game-map-loader.js";
 import { GameContentRepository, fieldMediaUrls, openingMediaUrls } from "/runtime/core/game-content.js";
 import { NewGameFieldEntry } from "/runtime/core/new-game-field-entry.js";
 import { FieldFadeState, fieldFadeOverlay } from "/runtime/core/field-fade.js";
@@ -19,6 +20,7 @@ const $ = (id) => document.getElementById(id),
 let content,
   battleContent,
   flow,
+  mapLoader,
   game,
   renderer,
   openingRenderer,
@@ -35,6 +37,7 @@ let content,
   last = 0,
   failed = false;
 let sourceBoot = null;
+let mapLoadFailure = null;
 let hasSave = false,
   hasPreviousSave = false;
 const query = new URLSearchParams(location.search);
@@ -49,6 +52,7 @@ const contents = new GameContentRepository(async (url) => {
   return response.json();
 }, contentProfile);
 const runtime = { audioReadiness: { isReady: (track) => audio.isReady(track) },
+  soundPresentation: { isPresented: (voice, track) => audio.isSoundPresented(voice, track) },
   // Source DateTime.Now.Ticks is local wall time. Keep its Int64 as a string.
   transportationTimestamp: () => { const now = new Date();
     return (621355968000000000n + BigInt(now.getTime() - now.getTimezoneOffset() * 60000) * 10000n).toString(); } };
@@ -113,6 +117,8 @@ function setupMapViews(next) {
 }
 function reset() {
   if (flow.busy) return;
+  mapLoader.cancel();
+  mapLoadFailure = null;
   sourceBoot = null;
   audio.reset();
   audio.unlock().catch(failure);
@@ -207,6 +213,8 @@ function advanceSourceBoot(seconds) {
   showLimitations(); syncSaveControls(); focus(); sync();
 }
 function returnToTitle() {
+  mapLoader.cancel();
+  mapLoadFailure = null;
   flow.returnToTitle();
   sourceBoot = null;
   audio.reset();
@@ -232,6 +240,8 @@ function text(id, value) {
   if (node.textContent !== value) node.textContent = value;
 }
 function sync() {
+  const mapFailure = mapLoadFailure?.session === flow.session && mapLoadFailure.request === game.stop
+    ? mapLoadFailure : null;
   choiceView?.render(flow, { disabled: failed || document.hidden || mapOpen });
   if (game.choicePending) held.clear();
   shopView?.render(
@@ -276,13 +286,16 @@ function sync() {
     $("dialogue").dataset.anchor = game.messageWindow.manual?.anchor ?? "bottom";
   }
   $("stop").hidden = !game.stop;
+  $("retry-map").hidden = !mapFailure;
+  $("retry-map").disabled = failed || flow.busy;
+  $("retry").hidden = game.stop?.kind === "map-transition";
   if (game.stop) {
     held.clear();
     text(
       "stop-title",
-      game.stop.kind === "map-transition" ? "正在载入地图" : "此处尚未迁移",
+      mapFailure ? "地图载入失败" : game.stop.kind === "map-transition" ? "正在载入地图" : "此处尚未迁移",
     );
-    text("stop-message", game.stop.message);
+    text("stop-message", mapFailure ? `当前进度已保留，可以重试。${mapFailure.error?.message ?? String(mapFailure.error)}` : game.stop.message);
     text(
       "stop-source",
       game.stop.site
@@ -295,7 +308,7 @@ function sync() {
     "status",
     game.stop
       ? game.stop.kind === "map-transition"
-        ? "地图载入中…"
+        ? mapFailure ? "地图载入失败，进度已保留。" : "地图载入中…"
         : "当前片段已停止，可重新开始。"
       : game.currentShop
         ? "选择商品和数量，Esc 返回或离开商店"
@@ -369,6 +382,13 @@ $("start").onclick = reset;
 $("source-start").onclick = startSourceGame;
 $("restart").onclick = reset;
 $("retry").onclick = reset;
+$("retry-map").onclick = () => {
+  if (failed || flow.busy || mapLoadFailure?.session !== flow.session || mapLoadFailure.request !== game.stop) return;
+  try {
+    audio.reset();
+    loadMap(flow.session);
+  } catch (error) { failure(error); }
+};
 $("return-title").onclick = returnToTitle;
 $("stop-title-return").onclick = returnToTitle;
 $("resume").onclick = () => pause(false);
@@ -406,7 +426,10 @@ function frame(now) {
     const dt = last ? Math.min(50, now - last) : 0;
     last = now;
     if (sourceBoot && !document.hidden) advanceSourceBoot(dt / 1000);
-    const ready = flow.started && audio.ready(audioProjection(game), game.pendingBgmTracks);
+    // The current I/O operation owns candidate media failures. Polling a
+    // shared failed decode from the outgoing field would bypass map retry.
+    const ready = flow.started && !flow.busy && game.stop?.kind !== "map-transition" &&
+      audio.ready(audioProjection(game), game.pendingAudioTracks);
     flow.advance(dt, { visible: !document.hidden, mediaReady: ready, overlayOpen: mapOpen });
     if (flow.started && !sourceBoot) {
       if (held.size) flow.move([...held.values()].at(-1));
@@ -415,7 +438,8 @@ function frame(now) {
       sync();
     }
     const projection = flow.started ? audioProjection(game) : [];
-    const audioReady = flow.started && audio.ready(projection, game.pendingBgmTracks);
+    const audioReady = flow.started && !flow.busy && game.stop?.kind !== "map-transition" &&
+      audio.ready(projection, game.pendingAudioTracks);
     audio.project(
       projection,
       audioReady &&
@@ -425,7 +449,7 @@ function frame(now) {
         !mapOpen &&
         !document.hidden &&
         (!game.stop || !!flow.session.battle),
-      game.pendingBgmTracks,
+      game.pendingAudioTracks,
     );
     text(
       "music-status",
@@ -486,6 +510,15 @@ async function init() {
   ({ field: content, battle: battleContent } = await contents.opening());
   await loadImages(openingMediaUrls(content, battleContent));
   flow = new GameFlow(new GameSession(content, battleContent, undefined, runtime));
+  mapLoader = new GameMapLoader(flow, contents, {
+    prepare: async (field) => {
+      await audio.prepare(audioProjection(field), field.pendingAudioTracks);
+      await loadImages(fieldMediaUrls(field.content));
+      return new Renderer(canvas, field.content, images);
+    },
+    // Renderers only reference shared immutable images; they have no private GPU resources.
+    discard: () => {},
+  });
   game = flow.session.field;
   renderer = new Renderer(canvas, content, images);
   openingRenderer = renderer;
@@ -584,54 +617,38 @@ async function loadImages(urls) {
   );
 }
 async function loadMap(owner) {
-  if (flow.busy || flow.session !== owner) return;
+  if (flow.busy || flow.session !== owner || owner.field.stop?.kind !== "map-transition") return;
   const request = owner.field.stop;
-  const operation = flow.beginOperation("map");
   loading.add(request);
+  mapLoadFailure = null;
   held.clear();
-  syncSaveControls();
-  let prepared;
-  let published = false;
   try {
-    const catalog = await contents.world();
-    const map = await contents.map(request.request.mapId, catalog);
-    if (!operation.isCurrent() || owner.field.stop !== request) return;
-    prepared = owner.world.prepare(catalog, map);
-    const next = prepared.field.content;
-    await audio.prepare(audioProjection(prepared.field), prepared.field.pendingBgmTracks);
-    await loadImages(fieldMediaUrls(next));
-    if (!operation.isCurrent()) return;
-    const nextRenderer = new Renderer(canvas, next, images);
-    if (!owner.world.commit(prepared)) {
-      owner.world.fail(request, "地图载入期间状态已变化，请重新开始。");
-      operation.finish();
+    const pending = mapLoader.load();
+    syncSaveControls();
+    const result = await pending;
+    if (result.status === "cancelled") return;
+    if (result.status === "failed") {
+      if (flow.session !== result.session || result.session.field.stop !== result.request || !flow.started) return;
+      mapLoadFailure = result;
+      contents.clear();
       sync();
       return;
     }
-    published = true;
-    game = owner.field;
-    operation.finish();
-    renderer = nextRenderer;
-    setupMapViews(next);
+    // The coordinator has committed. UI failures from here are fatal, never a
+    // reason to replay the old request or publish its rewards a second time.
+    if (flow.session !== result.session || result.session.field !== result.field || !flow.started) return;
+    game = result.field;
+    renderer = result.presentation;
+    setupMapViews(game.content);
     held.clear();
     last = 0;
-    canvas.setAttribute(
-      "aria-label",
-      `${next.map.id} 游戏画面。方向键移动，空格确认，Escape 暂停。`,
-    );
+    canvas.setAttribute("aria-label", `${game.content.map.id} 游戏画面。方向键移动，空格确认，Escape 暂停。`);
     showLimitations();
     sync();
     if (!flow.paused && !document.hidden) focus();
   } catch (error) {
-    if (published) { failure(error); return; }
-    if (!operation.isCurrent()) return;
-    contents.clear();
-    owner.world.fail(request, String(error.message ?? error));
-    operation.finish();
-    sync();
+    failure(error);
   } finally {
-    if (prepared) owner.world.discard(prepared);
-    operation.cancel();
     syncSaveControls();
   }
 }
@@ -646,8 +663,9 @@ function syncSaveControls() {
   $("load-game").disabled = failed || flow.busy || !hasSave;
   $("load-start").disabled = failed || flow.busy || !hasSave;
   $("load-previous").disabled = failed || flow.busy || !hasPreviousSave;
-  for (const id of ["resume", "restart", "start", "source-start", "return-title", "stop-title-return"])
+  for (const id of ["resume", "restart", "start", "source-start", "return-title"])
     $(id).disabled = failed || flow.busy;
+  $("stop-title-return").disabled = failed;
   $("save-game").title = flow.session?.checkpointReady
     ? "保存到这台设备的浏览器"
     : "移动、事件或战斗结束后才能保存";
@@ -675,16 +693,20 @@ async function refreshSaveInfo() {
 async function saveGame() {
   if (flow.busy || !flow.session.checkpointReady) return;
   const operation = flow.beginOperation("save");
+  let prepared;
   syncSaveControls();
   try {
-    await checkpointStorage().save(flow.session.checkpoint(), Date.now());
+    prepared = await checkpointStorage().prepareSave(flow.session.checkpoint(), Date.now());
     if (!operation.isCurrent()) return;
+    prepared.commit();
     await refreshSaveInfo();
+    if (!operation.isCurrent()) return;
     text("save-status", "进度已保存在此浏览器，刷新后可继续。");
   } catch (error) {
     if (!operation.isCurrent()) return;
     text("save-status", `保存失败，原存档未替换：${error.message ?? error}`);
   } finally {
+    prepared?.discard();
     operation.cancel();
     syncSaveControls();
   }
@@ -711,7 +733,7 @@ async function loadGame(previous) {
       runtime,
     );
     const next = candidate.field.content;
-    await audio.prepare(audioProjection(candidate.field), candidate.field.pendingBgmTracks);
+    await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks);
     await loadImages(fieldMediaUrls(next));
     const nextRenderer = new Renderer(canvas, next, images);
     if (!operation.publish(candidate, { paused: true })) return;

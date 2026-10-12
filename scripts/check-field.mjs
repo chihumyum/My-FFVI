@@ -4,6 +4,7 @@ import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { FieldGame } from "../dist/src/core/field.js";
 import { compileField } from "../dist/src/compiler/field.js";
+import { controlledAudioRuntime } from "./controlled-audio.mjs";
 const root = resolve(import.meta.dirname, "..");
 const built = JSON.parse(
   await readFile(resolve(root, "build/game/narshe.json"), "utf8"),
@@ -14,7 +15,7 @@ assert.deepEqual(
   fresh,
   "Compiled field differs from verified source snapshots",
 );
-const g = new FieldGame(built);
+const g = new FieldGame(built, undefined, undefined, undefined, controlledAudioRuntime());
 assert.ok(built.developmentOmissions.length > 0);
 assert.ok(built.developmentOmissions.every((item) => item.kind === "field-effect" && item.source.pointer &&
   built.map.groups[item.group].blockers.some((issue) => issue.source.pointer === item.source.pointer)));
@@ -48,6 +49,7 @@ const receipt = {
   lane: "implementation-only",
   contentHash: built.contentHash,
   sourceSetHash: built.sourceSetHash,
+  audioHost: "controlled-headless-readiness-and-presentation",
   checks: [
     "compile-reproducibility",
     "explicit-existing-development-particle-omission",
@@ -62,6 +64,7 @@ const receipt = {
     "battle-playability",
     "complete-map-initialization",
     "full-game-migration",
+    "audible-browser-or-native-audio",
   ],
 };
 await mkdir(resolve(root, "build/game"), { recursive: true });

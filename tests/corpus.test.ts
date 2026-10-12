@@ -87,12 +87,18 @@ test("package-scoped references do not choose a same-named script from another b
   );
   assert.equal(r.maps[0]!.status, "not-playable-certified");
 });
-test("missing continuations, invalid instruction targets and omitted audio remain visible", () => {
+test("missing continuations and invalid targets remain visible while SE decode remains distinct from runtime admission", () => {
   const { assets, tables } = fixture();
   assets[1] = script("start", [
     op("Call", [999]),
     op("Encount", [3], ["missing"]),
-    op("PlaySE", [102, 0, 0]),
+    {
+      mnemonic: "PlaySE", type: 1,
+      operands: {
+        iValues: [102, 0, 0, 0, 0, 0, 0, 0],
+        rValues: Array(8).fill(0), sValues: Array(8).fill(""),
+      },
+    },
     op("Jump", [999]),
     op("Branch", [0, 1, 999], ["ScenarioFlag1", "＝", "imm"]),
   ]);
@@ -100,9 +106,10 @@ test("missing continuations, invalid instruction targets and omitted audio remai
   assert.equal(r.counts.unresolvedReferences, 4);
   assert.equal(r.maps[0]!.unresolvedReferences.length, 4);
   const sound = r.priorities.find((p) => p.id === "PlaySE")!;
-  assert.equal(sound.decodedSites, 0);
-  assert.equal(sound.omittedSites, 1);
-  assert.deepEqual(sound.blockedMaps, ["1"]);
+  assert.equal(sound.decodedSites, 1);
+  assert.equal(sound.omittedSites, 0);
+  assert.deepEqual(sound.blockedMaps, []);
+  assert.equal(r.maps[0]!.status, "not-playable-certified");
 });
 test("source instructions without operands are retained as decoder gaps, not discarded", () => {
   const { assets, tables } = fixture();

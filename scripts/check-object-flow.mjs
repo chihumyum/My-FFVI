@@ -6,6 +6,7 @@ import { FieldGame, DELTA } from "../dist/src/core/field.js";
 import { WorldSession } from "../dist/src/core/world-session.js";
 import { verifyContent } from "../dist/src/core/content-integrity.js";
 import { canonical, hash } from "../dist/src/compiler/content.js";
+import { controlledAudioRuntime } from "./controlled-audio.mjs";
 const root = new URL("..", import.meta.url);
 const read = async (p) =>
   verifyContent(JSON.parse(await readFile(new URL(p, root), "utf8")));
@@ -13,7 +14,13 @@ const catalog = await read("build/world/catalog.json"),
   bootstrap = await read("build/game/narshe.json"),
   map = await read("build/world/maps/293.json");
 assert.equal(catalog.maps[293].contentHash, map.contentHash);
-const world = new WorldSession(bootstrap);
+const runtime = controlledAudioRuntime();
+// This geometry probe has no owned-game state. The disposable map candidate
+// receives only the same explicit audio observation ports as the initial map.
+const world = new WorldSession(bootstrap, undefined, {
+  current: runtime,
+  prepare: () => ({ ports: runtime, commit: () => true }),
+});
 world.field.previewMap(293, 1);
 assert.ok(world.commit(world.prepare(catalog, map)));
 const game = world.field,
@@ -27,7 +34,7 @@ assert.ok(
 function walkTo(x, y) {
   // Candidate movement queries run in a disposable instance. The selected path
   // must then succeed from the actual entrance/session, with no teleportation.
-  const planner = new FieldGame(game.content),
+  const planner = new FieldGame(game.content, undefined, undefined, undefined, controlledAudioRuntime()),
     key = (p) => `${p.x},${p.y}`;
   for (const [id, actor] of Object.entries(game.actors))
     Object.assign(planner.actors[id], {
@@ -106,26 +113,51 @@ walkTo(116, 27);
 assert.equal(game.move("up"), false);
 const before = game.eventState.snapshot();
 game.confirm();
+const played = game.soundExecutions.find((execution) => execution.site.script === "sc_e_0335" && execution.command.kind === "play");
+assert.ok(played && Number.isInteger(played.handle) && played.handle > 0);
+assert.equal(played.command.soundId, 102);
+for (let i = 0; i < 100 && !game.soundExecutions.some((execution) => execution.command.kind === "sync"); i++) {
+  assert.equal(game.stop, null);
+  game.advance(10);
+}
+const voice = game.se.voices.find((v) => v.id === played.handle);
+assert.ok(voice, "The map object reaches SyncSE while its sound is still playing");
+assert.equal(game.busy, true);
+assert.equal(game.eventState.read({ category: "ScriptLocalVariable", index: 0 }), played.handle);
+const track = catalog.se.tracks[102], durationMs = track.frames / track.sampleRate * 1000;
+const beforeEnd = Math.floor((voice.started + durationMs - game.se.time) / 10) * 10;
+assert.ok(beforeEnd > 0);
+game.advance(beforeEnd);
+assert.equal(game.se.isPlaying(played.handle), true);
+assert.equal(game.busy, true, "SyncSE retains its task before the real media duration finishes");
+const waitEvidence = { handle: played.handle, started: voice.started, durationMs, stillWaitingAt: game.se.time };
 finishAction();
+assert.equal(game.se.isPlaying(played.handle), false);
+assert.ok(game.se.time >= voice.started + durationMs);
+waitEvidence.completedAt = game.se.time;
 // Starting another real script reinitializes its own locals, while map/story state persists.
 const locals = map.scriptLocals.sc_e_0335;
 assert.ok(locals);
+const expectedLocals = [...locals.values];
+expectedLocals[played.command.handleSlot] = played.handle;
 assert.deepEqual(game.eventState.snapshot(), {
   ...before,
-  script: locals.values,
+  script: expectedLocals,
   scriptLabels: locals.labels,
 });
-assert.equal(game.presentationOmissions.length, 2);
-assert.ok(
-  game.presentationOmissions.every((o) => o.site.script === "sc_e_0335"),
-);
-assert.equal(game.presentationOmissions[0].soundId, 102);
+assert.deepEqual(game.soundExecutions.map(({ site, command, handle }) => [site.script, site.index, command.kind, handle]), [
+  ["sc_e_0335", 1, "play", played.handle], ["sc_e_0335", 3, "sync", null],
+]);
+for (const { site, command } of game.soundExecutions)
+  assert.deepEqual(command, map.scripts[site.script][site.index].command);
+assert.equal(game.presentationOmissions.length, 0);
 walkTo(115, 27);
 const report = {
   kind: "source-map-object-approach-check",
   catalogHash: catalog.contentHash,
   bootstrapHash: bootstrap.contentHash,
   mapHash: map.contentHash,
+  soundSourceSetHash: catalog.se.sourceSetHash,
   mapId: 293,
   entrance: 1,
   entityId: "4",
@@ -135,12 +167,14 @@ const report = {
     (id) => game.entities.find((e) => e.id === id).source,
   ),
   scripts: ["sc_e_0892", "sc_e_0335"],
-  presentationOmissions: game.presentationOmissions,
+  soundExecutions: game.soundExecutions,
+  soundWait: waitEvidence,
+  audioHost: "controlled-headless-readiness-and-presentation",
   result: "completed",
   final: [game.player.x, game.player.y],
   limitations: [
     "Source entities and initialization; actual walking from a development entrance with unknown story flags.",
-    "Sound and SyncSE are explicit muted omissions; cue frame 1 resets to 0 without waiting for audible sound.",
+    "The headless host explicitly reports ready/presented media; the real sound instance duration gates SyncSE and the later cue. No audible output is measured.",
     "This is not original parity, full map completion, or migration of the opera performance.",
   ],
 };

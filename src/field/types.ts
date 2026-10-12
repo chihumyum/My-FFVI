@@ -13,6 +13,7 @@ import type { OwnedConditionEventOp } from "../core/owned-condition.js";
 import type { FieldEntryContextDefinition } from "../core/field-entry-context.js";
 import type { SourcePresentationOp } from "../core/source-presentation.js";
 import type { AudioReadinessOp } from "../core/audio-readiness.js";
+import type { FieldSoundOp } from "../core/field-sound-command.js";
 import type { PlayerVisibilityOp, PlayerVisibilityFactory } from "../core/player-visibility.js";
 import type { FieldTaskControlOp } from "../core/field-task-control.js";
 import type { FieldFadeOp, FieldFadeInitial } from "../core/field-fade.js";
@@ -181,6 +182,7 @@ export type Op = Site &
     | OwnedConditionEventOp
     | SourcePresentationOp
     | AudioReadinessOp
+    | FieldSoundOp
     | PlayerVisibilityOp
     | FieldTaskControlOp
     | FieldFadeOp
@@ -285,6 +287,7 @@ export type FieldContent = {
   minimap?: MinimapMedia;
   bgm?: AudioMedia;
   environment?: AudioMedia;
+  se?: AudioMedia;
   treasureInventoryLimits?: TreasureInventoryLimits;
   playerFactory?: PlayerVisibilityFactory;
   /** Content-bound native camera factory and current map providers. */

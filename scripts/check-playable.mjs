@@ -4,6 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { GameSession } from "../dist/src/core/game-session.js";
 import { compileOpeningBattle } from "../dist/src/compiler/battle.js";
 import { compileOpeningPlayable } from "../dist/src/compiler/opening-playable.js";
+import { controlledAudioRuntime } from "./controlled-audio.mjs";
 const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const field = JSON.parse(
   await readFile(root + "/build/game/narshe.json", "utf8"),
@@ -28,7 +29,7 @@ assert.deepEqual(
   [63, 68, 70],
 );
 function enter(parts = [1000]) {
-  const s = new GameSession(field, content);
+  const s = new GameSession(field, content, undefined, controlledAudioRuntime());
   for (let n = 0; n < 11; n++) {
     assert.equal(s.field.move("up"), true);
     s.advance(240);
@@ -101,8 +102,25 @@ assert.deepEqual(
 // Keep the already-built street slice as a shared handoff regression, not a map-specific runtime.
 const street = enter();
 let previousBattle = null;
+const sounds = [];
+function observeSounds() {
+  for (const execution of street.field.soundExecutions.slice(sounds.length)) {
+    const { site, command, handle } = execution;
+    assert.deepEqual(command, field.scripts[site.script][site.index].command);
+    const voice = street.field.se.voices.find((v) => v.id === handle);
+    if (command.kind === "play") {
+      assert.ok(voice, "A newly observed real sound must have a live instance");
+      assert.equal(voice.track, command.soundId);
+      if (command.asynchronous && command.handleSlot !== null)
+        assert.equal(street.field.eventState.read({ category: "ScriptLocalVariable", index: command.handleSlot }), handle);
+    }
+    sounds.push({ script: site.script, index: site.index, command, handle,
+      at: street.field.se.time, started: voice?.started ?? null });
+  }
+}
 function settle() {
   for (let n = 0; n < 12000; n++) {
+    observeSounds();
     if (street.battle) {
       if (street.battle !== previousBattle) {
         if (street.players)
@@ -157,15 +175,28 @@ assert.deepEqual(street.field.flags.ScenarioFlag1, {
   4: true,
 });
 assert.equal(street.field.hiddenEntities.has("155"), true);
-assert.equal(
-  street.field.presentationOmissions.length,
-  6,
-  "Muted development cues remain recorded",
-);
+observeSounds();
+assert.deepEqual(sounds.map(({ script, index, command, handle }) =>
+  [script, index, command.kind, handle]), [
+  ["sc_e_0004", 34, "play", 1], ["sc_e_0004", 35, "play", 2],
+  ["sc_e_0005", 6, "play", 3], ["sc_e_0005", 8, "sync", null],
+  ["sc_e_0006", 7, "play", 4], ["sc_e_0006", 8, "play", 5],
+]);
+const durationMs = field.se.tracks[102].frames / field.se.tracks[102].sampleRate * 1000;
+for (const [first, following] of [[sounds[0], sounds[1]], [sounds[4], sounds[5]]]) {
+  assert.equal(first.command.asynchronous, false);
+  const elapsed = following.started - first.started;
+  assert.ok(elapsed >= durationMs && elapsed < durationMs + 20,
+    "Synchronous PlaySE waits for the real media duration before the next play");
+}
+assert.ok(sounds[3].at >= sounds[2].started + durationMs, "SyncSE cannot continue before its instance finishes");
+assert.equal(street.field.presentationOmissions.length, 0, "Executed sounds cannot remain muted omissions");
 const receipt = {
   lane: "implementation-only",
   profile: content.common.profile,
   contentHash: content.contentHash,
+  fieldContentHash: field.contentHash,
+  soundSourceSetHash: field.se.sourceSetHash,
   checks: [
     "deterministic-compilation",
     "source-party-and-equipment",
@@ -177,13 +208,17 @@ const receipt = {
     "defeat-and-retry",
     "consecutive-encounters-retain-party",
     "shared-encounter-catalog-and-continuations",
+    "source-sound-handles-and-duration-waits",
   ],
+  soundExecutions: sounds,
+  audioHost: "controlled-headless-readiness-and-presentation",
   result: "pass",
   doesNotEstablish: [
     "original-parity",
     "all-abilities",
     "complete-rewards",
     "full-game-migration",
+    "audible-browser-or-native-audio",
   ],
 };
 await writeFile(

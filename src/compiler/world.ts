@@ -146,6 +146,7 @@ export async function compileWorld(root: string) {
     text(corpus.manifest.parentSourceSetHash),
     "environment",
   );
+  const se = await loadAudioMedia(root, text(corpus.manifest.parentSourceSetHash), "se");
   if (
     !array(corpus.manifest.sources)
       .map(record)
@@ -474,6 +475,7 @@ export async function compileWorld(root: string) {
     minimap,
     bgm,
     environment,
+    se,
     maps: Object.fromEntries(
       maps.map((m) => [
         String(m.mapId),

@@ -22,6 +22,7 @@ import { compilePartyEvent } from "./party.js";
 import { compileOwnedConditionInstruction } from "./owned-condition.js";
 import { compileSourcePresentationInstruction, sourcePresentationSelectors } from "./source-presentation.js";
 import { compileAudioReadinessInstruction } from "./audio-readiness.js";
+import { compileFieldSoundInstruction, fieldSoundMnemonics } from "./field-sound.js";
 import { compilePlayerVisibilityInstruction, compilePlayerVisibilityFactory, playerVisibilityMnemonics } from "./player-visibility.js";
 import { compileFieldTaskControlInstruction, fieldTaskControlMnemonics } from "./field-task-control.js";
 import { compileFieldFadeInstruction } from "./field-fade.js";
@@ -113,6 +114,10 @@ export function decodeFieldOp(
     mnemonic: name,
     reason,
   });
+  if (fieldSoundMnemonics.some(mnemonic => mnemonic === name)) {
+    try { return { ...site, ...compileFieldSoundInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (name === "FadeIn" || name === "FadeOut") {
     try { return { ...site, ...compileFieldFadeInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
@@ -410,21 +415,6 @@ export function decodeFieldOp(
     return { ...site, kind: "look", direction: directions[i[0]!]! };
   if (name === "Encount" && form([0], [], [0]))
     return { ...site, kind: "encounter", party: i[0]!, continuation: s[0]! };
-  if (
-    name === "PlaySE" &&
-    form([0, 1, 2]) &&
-    i[0] === 102 &&
-    [0, 1].includes(i[1]!) &&
-    [0, 1].includes(i[2]!)
-  )
-    return {
-      ...site,
-      kind: "sound",
-      soundId: i[0],
-      channel: i[1]!,
-      mode: i[2]!,
-    };
-  if (name === "SyncSE" && form([])) return { ...site, kind: "sound-sync" };
   return blocked("Instruction or operand form has not been migrated");
 }
 
@@ -762,6 +752,7 @@ export async function compileField(root: string): Promise<FieldContent> {
     developmentOmissions,
     minimap: await loadMinimapMedia(root, project.sourceSetHash),
     bgm: await loadAudioMedia(root, project.sourceSetHash, "bgm"),
+    se: await loadAudioMedia(root, project.sourceSetHash, "se"),
     environment: await loadAudioMedia(
       root,
       project.sourceSetHash,
@@ -797,8 +788,8 @@ export async function compileField(root: string): Promise<FieldContent> {
     },
     limitations: [
       "纳尔谢街道战斗使用可玩开发规则；完整地图流程、队伍菜单和存读档仍未完成。",
-      "共用背景音乐已接入；本检查点尚未确定初始音乐。脚本音效仍记录为省略，音效完成等待暂按静音模式立即完成。",
-      "同步音乐等待、环境音暂停/变调、音效、环境粒子、精确镜头与演出时序尚未接入；骑乘合成和碰撞等待正式对照。",
+      "背景音乐、普通脚本音效与结束等待已接入共用音频状态；本检查点尚未确定初始音乐。机关、宝箱与字段状态音效仍分别记录省略。",
+      "环境音暂停/变调、特殊音效程序、环境粒子、精确镜头与演出时序仍有缺口；骑乘合成和碰撞等待正式对照。",
       "环境音已保留来源音量、循环和线性淡入；SEAD 类别混音、起止宏、空间处理与混响未复现。",
       "此入口使用明确的开场状态，尚未执行完整地图初始化脚本。",
       "既有开场检查点的 NPC 使用静止、不可推动的开发近似；新实体组不继承这些行为省略。",

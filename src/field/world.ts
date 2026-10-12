@@ -63,6 +63,7 @@ export type WorldCatalog = {
   minimap?: FieldContent["minimap"];
   bgm?: FieldContent["bgm"];
   environment?: FieldContent["environment"];
+  se?: FieldContent["se"];
   characterIssues: Record<string, ContentIssue[]>;
   maps: Record<
     string,

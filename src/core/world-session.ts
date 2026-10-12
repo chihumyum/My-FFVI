@@ -13,6 +13,7 @@ import { canonical } from "./canonical.js";
 import { fieldCollisionRange, inCollisionRange } from "./collision.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState } from "./static-audio.js";
+import { FieldSoundState } from "./field-sound.js";
 import { checkpointKeys, checkpointInteger } from "./checkpoint-validation.js";
 import { prepareMapPartyEntry, readMapPartySwitching, type MapPartyEntryPlan } from "./map-party-entry.js";
 import { Transportations } from "./transportation.js";
@@ -35,7 +36,7 @@ type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount"> & {
   transportationId: number | null;
 };
 export type WorldCheckpoint = {
-  kind: "idle-world-v9";
+  kind: "idle-world-v10";
   initialHash: string;
   location: {
     catalogHash: string;
@@ -169,6 +170,7 @@ export function worldFieldContent(
     ...(catalog.minimap ? { minimap: catalog.minimap } : {}),
     ...(catalog.bgm ? { bgm: catalog.bgm } : {}),
     ...(catalog.environment ? { environment: catalog.environment } : {}),
+    ...(catalog.se ? { se: catalog.se } : {}),
     ...(catalog.treasureInventoryLimits ? { treasureInventoryLimits: catalog.treasureInventoryLimits } : {}),
     entry: {
       ...(fade ? { fade: structuredClone(fade) } : {}),
@@ -208,6 +210,7 @@ type Ownership = {
   state: string;
   bgm: string;
   environment: string;
+  se: string;
   actors: string;
   presentation: string;
   fade: string;
@@ -279,7 +282,7 @@ export class WorldSession {
   }
   checkpoint(): WorldCheckpoint {
     return {
-      kind: "idle-world-v9",
+      kind: "idle-world-v10",
       initialHash: this.initial.contentHash,
       location: structuredClone(this.location),
       field: this.current.checkpoint(),
@@ -295,7 +298,7 @@ export class WorldSession {
     if (this.commitInProgress) throw new Error("Cannot restore during map publication");
     checkpointKeys(snapshot, "kind,initialHash,location,field");
     if (
-      snapshot.kind !== "idle-world-v9" ||
+      snapshot.kind !== "idle-world-v10" ||
       snapshot.initialHash !== this.initial.contentHash
     )
       throw new Error("World checkpoint source/version mismatch");
@@ -431,6 +434,9 @@ export class WorldSession {
     )
       throw new Error("Environment media changed during map transition");
     const environment = from.environment.snapshot();
+    if (from.se.voices.length && catalog.se?.sourceSetHash !== from.content.se?.sourceSetHash)
+      throw new Error("SE media changed during map transition");
+    const se = from.se.snapshot();
     const owned = this.owned?.prepare();
     const presentation = fromPresentation;
     const presentationHost = this.owned?.current.sourcePresentation;
@@ -504,9 +510,12 @@ export class WorldSession {
           ...(sourcePresentation ? { sourcePresentation } : {}),
           ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}),
           ...(this.owned?.current.transportationTimestamp ? { transportationTimestamp: this.owned.current.transportationTimestamp } : {}),
+          ...(this.owned?.current.soundPresentation ? { soundPresentation: this.owned.current.soundPresentation } : {}),
           ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
         from.fader.fork(),
         from.cameraSnapshot ?? undefined,
+        false,
+        FieldSoundState.restore(se, content.se),
       );
       if (nativeActors) {
         if (!prior || !actorEntry || !target.partyEntry || !target.actorView || target.actorViewBlockers?.length ||
@@ -538,6 +547,7 @@ export class WorldSession {
         state: canonical(snapshot),
         bgm: canonical(bgm),
         environment: canonical(environment),
+        se: canonical(se),
         actors: fromActors,
         presentation: canonical(presentation),
         fade: fromFade,
@@ -648,6 +658,7 @@ export class WorldSession {
       ownership.state === canonical(this.current.eventState.snapshot()) &&
       ownership.bgm === canonical(this.current.bgm.snapshot()) &&
       ownership.environment === canonical(this.current.environment.snapshot()) &&
+      ownership.se === canonical(this.current.se.snapshot()) &&
       ownership.actors === this.actorState(this.current) &&
       ownership.presentation === canonical(this.current.sourcePresentationContext) &&
       ownership.fade === canonical(this.current.fader.snapshot()) &&
@@ -657,7 +668,7 @@ export class WorldSession {
   private effectFieldState(field: FieldGame): string {
     return canonical({ time: field.time, busy: field.busy, stop: field.stop,
       state: field.eventState.snapshot(), actors: this.actorState(field), effects: field.fieldEffectsSnapshot,
-      fade: field.fader.snapshot(), camera: field.cameraSnapshot, bgm: field.bgm.snapshot(), environment: field.environment.snapshot() });
+      fade: field.fader.snapshot(), camera: field.cameraSnapshot, bgm: field.bgm.snapshot(), environment: field.environment.snapshot(), se: field.se.snapshot() });
   }
   private requireActorPresentation(plan: MapPartyEntryPlan): void {
     if (plan.colliderChanges.length)

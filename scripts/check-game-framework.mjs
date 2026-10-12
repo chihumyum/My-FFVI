@@ -1,3 +1,4 @@
+import { controlledAudioRuntime } from "./controlled-audio.mjs";
 // One continuous development-profile journey through the real session owner.
 // Authored content is a message -> shared script call -> two-Potion grant event.
 // This is a systems acceptance lane, not source new-game or main-story parity.
@@ -68,7 +69,7 @@ try {
   Object.assign(report, { sourceSetHash: field.parentSourceSetHash, fieldHash: field.contentHash,
     controlledFieldHash: controlledField.contentHash, battleCatalogHash: catalog.contentHash, profile: catalog.common.profile });
 
-  const flow = new GameFlow(new GameSession(controlledField, catalog));
+  const flow = new GameFlow(new GameSession(controlledField, catalog, undefined, controlledAudioRuntime()));
   const host = { visible: true, mediaReady: true, overlayOpen: false };
   const game = () => flow.session;
   const owned = () => game().state.snapshot();
@@ -266,7 +267,7 @@ try {
   assert.equal(game(), liveBeforeLoad); assert.deepEqual(game().checkpoint(), liveCheckpoint);
 
   const load = flow.beginOperation("load");
-  const restored = GameSession.restore(saved.checkpoint, controlledField, catalog);
+  const restored = GameSession.restore(saved.checkpoint, controlledField, catalog, undefined, controlledAudioRuntime());
   assert.deepEqual(restored.checkpoint(), savedCheckpoint);
   assert.equal(load.publish(restored), true);
   assert.equal(load.publish(liveBeforeLoad), false, "A consumed load ticket cannot reinstall an old session");
@@ -295,7 +296,7 @@ try {
   tick(60000); assert.deepEqual(game().checkpoint(), finalCheckpoint);
   const restart = flow.beginOperation("load");
   const latest = await storage.load();
-  assert.equal(restart.publish(GameSession.restore(latest.checkpoint, controlledField, catalog), { paused: true }), true);
+  assert.equal(restart.publish(GameSession.restore(latest.checkpoint, controlledField, catalog, undefined, controlledAudioRuntime()), { paused: true }), true);
   assert.equal(flow.phase, "paused"); tick(60000);
   assert.deepEqual(game().checkpoint(), finalCheckpoint);
   assert.equal(flow.pause(false), true); tick(0);

@@ -43,6 +43,13 @@ export async function decodeSavedGame(text: string): Promise<SavedGame> {
 
 type StoragePort = Pick<Storage, "getItem" | "setItem">;
 type SaveSlot = { formatVersion: 1; current: string; previous: string | null };
+export type PreparedSave = {
+  /** Synchronously publish once, provided the slot still has its captured bytes. */
+  commit(): void;
+  /** Discarding is idempotent and never modifies the storage slot. */
+  discard(): void;
+  cancel(): void;
+};
 function slot(raw: string): SaveSlot {
   const value: SaveSlot = JSON.parse(raw);
   checkpointKeys(value, "formatVersion,current,previous");
@@ -63,6 +70,12 @@ export class CheckpointStorage {
     this.slotKey = profile === "framework" ? "ffvi-reweb.framework.checkpoint.v1" : "ffvi-reweb.checkpoint.v1";
   }
   async save(checkpoint: GameCheckpoint, savedAt: number): Promise<void> {
+    const prepared = await this.prepareSave(checkpoint, savedAt);
+    prepared.commit();
+  }
+  /** Encoding does not authorize publication. A host can check its operation
+   * ticket after this promise resolves and discard an obsolete candidate. */
+  async prepareSave(checkpoint: GameCheckpoint, savedAt: number): Promise<PreparedSave> {
     const before = this.storage.getItem(this.slotKey);
     const current = await encodeSavedGame(checkpoint, savedAt);
     let previous: string | null = null;
@@ -73,12 +86,22 @@ export class CheckpointStorage {
         previous = before;
       } // Retain unreadable original bytes instead of silently deleting them.
     }
-    if (this.storage.getItem(this.slotKey) !== before)
-      throw new Error("Save slot changed while saving");
-    this.storage.setItem(
-      this.slotKey,
-      JSON.stringify({ formatVersion: 1, current, previous }),
-    );
+    const encoded = JSON.stringify({ formatVersion: 1, current, previous });
+    let active = true;
+    const discard = (): void => { active = false; };
+    return Object.freeze({
+      commit: (): void => {
+        if (!active) throw new Error("Prepared save has already been consumed or discarded");
+        // Consume before accessing the port: a reentrant or failed storage write
+        // cannot reuse a preparation authorized by an earlier host operation.
+        active = false;
+        if (this.storage.getItem(this.slotKey) !== before)
+          throw new Error("Save slot changed while saving");
+        this.storage.setItem(this.slotKey, encoded);
+      },
+      discard,
+      cancel: discard,
+    });
   }
   async load(previous = false): Promise<SavedGame | null> {
     const raw = this.storage.getItem(this.slotKey);

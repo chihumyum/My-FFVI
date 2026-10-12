@@ -1,3 +1,4 @@
+import { controlledAudioRuntime } from "./controlled-audio.mjs";
 // Real content with private controlled events; does not grant story progress.
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
@@ -27,7 +28,7 @@ const cases = [];
 const source = { file: "controlled-source-integration", assetPath: "mechanism-probe" };
 const make = () => {
   const content = structuredClone(field);
-  return { content, game: new GameSession(content, battle) };
+  return { content, game: new GameSession(content, battle, undefined, controlledAudioRuntime()) };
 };
 const execute = ({ game, content }, command, kind, visualFlag = false) => {
   const name = "controlled_system_probe";
@@ -58,7 +59,7 @@ assert.match(battleDefinitionBlocker(f.game.state.partyPlayers(),
   { ...battle.common.qualificationContext, mode: "development-static" }, battle.common.conditions), /来源战斗入口/);
 cases.push({ name: "new owner plus source correction and full same-map refresh", level: locke.level, exp: locke.exp, hp: locke.hp, maxHp: locke.maxHp });
 const checkpoint = f.game.checkpoint();
-assert.deepEqual(GameSession.restore(JSON.parse(JSON.stringify(checkpoint)), f.content, battle).checkpoint(), checkpoint);
+assert.deepEqual(GameSession.restore(JSON.parse(JSON.stringify(checkpoint)), f.content, battle, undefined, controlledAudioRuntime()).checkpoint(), checkpoint);
 cases.push({ name: "new owned state and native actor checkpoint round trip" });
 const stock = structuredClone(snapshot.equipmentStock);
 execute(f, join, "roster");
@@ -78,7 +79,7 @@ assert.equal(reordered.game.field.player.asset, "mo_ff6_p021");
 assert.equal(reordered.game.field.player.mount, "mo_ff6_v006_c00");
 assert.equal(reordered.game.field.partyActorCheckpoint.context.player.riderFieldAssetId, 31);
 assert.equal(reordered.game.field.partyActorCheckpoint.context.player.fieldAssetId, 38);
-assert.deepEqual(GameSession.restore(reordered.game.checkpoint(), reordered.content, battle).checkpoint(), reordered.game.checkpoint());
+assert.deepEqual(GameSession.restore(reordered.game.checkpoint(), reordered.content, battle, undefined, controlledAudioRuntime()).checkpoint(), reordered.game.checkpoint());
 cases.push({ name: "source-mounted leader change renders inner identity and restores" });
 const recovered = make();
 execute(recovered, { ...join, refreshActors: false, recovery: true }, "roster");
@@ -106,12 +107,12 @@ poisonedArmor.game.state.restore(poisonState);
 assert.equal(poisonedArmor.game.field.move("up"), true);
 poisonedArmor.game.advance(240);
 assert.equal(poisonedArmor.game.state.snapshot().roster[0].hp, poisonState.roster[0].hp);
-assert.deepEqual(GameSession.restore(poisonedArmor.game.checkpoint(), poisonedArmor.content, battle).checkpoint(), poisonedArmor.game.checkpoint());
+assert.deepEqual(GameSession.restore(poisonedArmor.game.checkpoint(), poisonedArmor.content, battle, undefined, controlledAudioRuntime()).checkpoint(), poisonedArmor.game.checkpoint());
 cases.push({ name: "source opening transport 6 skips ordinary field poison" });
 const walkingField = structuredClone(field);
 delete walkingField.entry.partyActors;
 walkingField.entry.transportationId = 1; walkingField.entry.player.mount = "";
-const walking = new GameSession(walkingField, battle);
+const walking = new GameSession(walkingField, battle, undefined, controlledAudioRuntime());
 walking.state.restore(poisonState);
 assert.equal(walking.field.move("up"), true); walking.advance(240);
 assert.equal(walking.state.snapshot().roster[0].hp, poisonState.roster[0].hp - 1);
@@ -137,7 +138,7 @@ const entry = make();
 assert.deepEqual(entry.game.state.snapshot().roster.map((p) => p.conditionIds), [[53], [53], [53]]);
 execute(entry, join, "roster");
 const entryOwned = entry.game.state.snapshot(), entrySave = entry.game.checkpoint();
-const entryRestored = GameSession.restore(JSON.parse(JSON.stringify(entrySave)), entry.content, battle);
+const entryRestored = GameSession.restore(JSON.parse(JSON.stringify(entrySave)), entry.content, battle, undefined, controlledAudioRuntime());
 enterBattle(entryRestored, entry.content);
 assert.ok(entryRestored.battle, entryRestored.field.stop?.message);
 assert.equal(entryRestored.battle.content.qualificationContext.mode, "source");
@@ -164,7 +165,7 @@ assert.equal(conditionEvent.game.field.stop, null);
 assert.equal(conditionEvent.game.checkpointReady, true);
 assert.deepEqual(conditionEvent.game.state.snapshot().roster.map((p) => p.conditionIds), [[], [], []]);
 const removedSave = conditionEvent.game.checkpoint();
-const ordinarySession = GameSession.restore(JSON.parse(JSON.stringify(removedSave)), conditionEvent.content, battle);
+const ordinarySession = GameSession.restore(JSON.parse(JSON.stringify(removedSave)), conditionEvent.content, battle, undefined, controlledAudioRuntime());
 assert.deepEqual(ordinarySession.state.snapshot().roster.map((p) => p.conditionIds), [[], [], []], "restore never replays initialOwnedConditions");
 enterBattle(ordinarySession, conditionEvent.content);
 assert.ok(ordinarySession.battle, ordinarySession.field.stop?.message);
@@ -182,7 +183,7 @@ for (const player of ordinarySession.battle.players) {
 }
 cases.push({ name: "FieldGame Remove607 saves and restores ordinary source entry without seed replay" });
 const reacquired = { content: structuredClone(conditionEvent.content), game: null };
-reacquired.game = GameSession.restore(JSON.parse(JSON.stringify(removedSave)), reacquired.content, battle);
+reacquired.game = GameSession.restore(JSON.parse(JSON.stringify(removedSave)), reacquired.content, battle, undefined, controlledAudioRuntime());
 execute(reacquired, { kind: "add-condition", conditionType: 607, target: 0 }, "owned-condition");
 assert.equal(reacquired.game.field.stop, null);
 assert.deepEqual(reacquired.game.state.snapshot().roster.map((p) => p.conditionIds), [[53], [53], [53]]);
@@ -204,7 +205,7 @@ for (const [label, mutateBattle, mutateField, pattern] of [
 ]) {
   const alteredBattle = structuredClone(battle), alteredField = structuredClone(field);
   mutateBattle(alteredBattle); mutateField(alteredField);
-  const blocked = new GameSession(alteredField, alteredBattle), before = blocked.state.snapshot();
+  const blocked = new GameSession(alteredField, alteredBattle, undefined, controlledAudioRuntime()), before = blocked.state.snapshot();
   enterBattle(blocked, alteredField);
   assert.equal(blocked.battle, null, label); assert.equal(blocked.state.inBattle, false, label);
   assert.match(blocked.field.stop.message, pattern, label);

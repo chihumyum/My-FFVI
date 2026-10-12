@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { controlledAudioRuntime } from "./controlled-audio.mjs";
 const root = new URL("..", import.meta.url);
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || args.length === 2 && args[0] === "--compiled-dir", "Use --compiled-dir <directory>");
@@ -23,7 +24,7 @@ async function restore(game, world, bootstrap = field, definitions = battle) {
   const checkpoint = game.checkpoint();
   const file = await encodeSavedGame(checkpoint, 0);
   const saved = await decodeSavedGame(file);
-  const restored = GameSession.restore(saved.checkpoint, bootstrap, definitions, world);
+  const restored = GameSession.restore(saved.checkpoint, bootstrap, definitions, world, controlledAudioRuntime());
   assert.deepEqual(restored.checkpoint(), checkpoint);
   assert.equal(
     restored.continueVictory(),
@@ -34,10 +35,20 @@ async function restore(game, world, bootstrap = field, definitions = battle) {
 }
 
 async function street(reload) {
-  let game = new GameSession(field, battle);
+  let game = new GameSession(field, battle, undefined, controlledAudioRuntime());
   let restores = 0;
+  let soundOffset = 0;
+  const sounds = [];
+  function observeSounds() {
+    for (const { site, command, handle } of game.field.soundExecutions.slice(soundOffset)) {
+      assert.deepEqual(command, field.scripts[site.script][site.index].command);
+      sounds.push({ script: site.script, index: site.index, command, handle, at: game.field.se.time });
+    }
+    soundOffset = game.field.soundExecutions.length;
+  }
   function settle() {
     for (let n = 0; n < 12000; n++) {
+      observeSounds();
       if (game.battle) {
         assert.notEqual(game.battle.phase, "defeat");
         if (game.battle.phase === "victory") {
@@ -70,6 +81,8 @@ async function street(reload) {
       settle();
       if (reload) {
         game = await restore(game);
+        soundOffset = 0;
+        assert.equal(game.field.soundExecutions.length, 0, "Restore must not replay sound instructions");
         restores++;
       }
     }
@@ -83,7 +96,15 @@ async function street(reload) {
   assert.deepEqual(game.completedEncounters, [3, 1, 2, 3, 42]);
   assert.deepEqual([game.field.player.x, game.field.player.y], [38, 17]);
   assert.equal(game.field.hiddenEntities.has("155"), true);
-  return { checkpoint: game.checkpoint(), restores };
+  observeSounds();
+  assert.deepEqual(sounds.map(({ script, index, command, handle }) => [script, index, command.kind, handle]), [
+    ["sc_e_0004", 34, "play", 1], ["sc_e_0004", 35, "play", 2],
+    ["sc_e_0005", 6, "play", 3], ["sc_e_0005", 8, "sync", null],
+    ["sc_e_0006", 7, "play", 4], ["sc_e_0006", 8, "play", 5],
+  ]);
+  assert.equal(game.field.presentationOmissions.length, 0);
+  assert.equal(restores, reload ? 40 : 0);
+  return { checkpoint: game.checkpoint(), restores, sounds };
 }
 const uninterrupted = await street(false),
   reloaded = await street(true);
@@ -92,6 +113,7 @@ assert.deepEqual(
   uninterrupted.checkpoint,
   "Repeated reloads preserve the entire next encounter/field outcome, including seeds and rewards",
 );
+assert.deepEqual(reloaded.sounds, uninterrupted.sounds, "Reload preserves sound handles and scheduling without replay");
 
 const runs = [], nativePartyRuns = [], nativePartyBoundaryChecks = [];
 // Exercise a real source ordinary entrance with the shared owned/actor host.
@@ -108,7 +130,7 @@ for (const entry of prior.runs.filter((r) => r.result === "idle")) {
 assert.ok(nativeFixture, "A source ordinary PointIn must exercise the native actor lifecycle");
 {
   const { map, entry } = nativeFixture;
-  const game = new GameSession(field, battle), old = game.field,
+  const game = new GameSession(field, battle, undefined, controlledAudioRuntime()), old = game.field,
     oldActors = old.partyActorCheckpoint;
   assert.ok(oldActors);
   old.hiddenEntities.add("-1001");
@@ -135,7 +157,7 @@ assert.ok(nativeFixture, "A source ordinary PointIn must exercise the native act
   // bootstrap seed is not a repair policy for saved event state.
   const unknown = game.checkpoint();
   unknown.world.field.eventState.scenario[2 * 256 + 45] = null;
-  const missing = GameSession.restore(unknown, field, battle, { catalog, map });
+  const missing = GameSession.restore(unknown, field, battle, { catalog, map }, controlledAudioRuntime());
   missing.field.previewMap(entry.mapId, entry.entrance);
   assert.throws(() => missing.world.prepare(catalog, map), /Unknown.*switching flag/);
   nativePartyBoundaryChecks.push({ name: "restored-unknown-party-flag", result: "blocked" });
@@ -145,7 +167,7 @@ assert.ok(nativeFixture, "A source ordinary PointIn must exercise the native act
     ["saved-position-native-path", (g) => { g.field.stop.request.entrance = -1; }, /Saved-position/],
     ["bird-view", (g) => { g.field.stop.request.birdview = true; }, /view\/loop/],
   ]) {
-    const gate = new GameSession(field, battle), owned = gate.state.snapshot(), old = gate.field;
+    const gate = new GameSession(field, battle, undefined, controlledAudioRuntime()), owned = gate.state.snapshot(), old = gate.field;
     gate.field.previewMap(entry.mapId, entry.entrance);
     change(gate);
     const variables = gate.field.eventState.snapshot();
@@ -161,7 +183,7 @@ assert.ok(nativeFixture, "A source ordinary PointIn must exercise the native act
     ["duplicate-traveler-owner", (s) => { s.world.location.traveler = { asset: "mo_ff6_p001", mount: "mo_ff6_v006_c00", transportationId: 6 }; }],
   ]) {
     const bad = game.checkpoint(); change(bad);
-    assert.throws(() => GameSession.restore(bad, field, battle, { catalog, map }));
+    assert.throws(() => GameSession.restore(bad, field, battle, { catalog, map }, controlledAudioRuntime()));
     nativePartyBoundaryChecks.push({ name, result: "blocked" });
   }
 }
@@ -177,7 +199,7 @@ for (const content of [geometryField, geometryBattle]) {
 for (const entry of prior.runs.filter((r) => r.result === "idle")) {
   const map = await read(`build/world/maps/${entry.mapId}.json`);
   assert.equal(map.contentHash, entry.contentHash);
-  const game = new GameSession(geometryField, geometryBattle);
+  const game = new GameSession(geometryField, geometryBattle, undefined, controlledAudioRuntime());
   game.field.previewMap(entry.mapId, entry.entrance);
   assert.equal(game.world.commit(game.world.prepare(catalog, map)), true);
   assert.equal(
@@ -205,11 +227,14 @@ const report = {
   battleCatalogHash: battle.contentHash,
   worldCatalogHash: catalog.contentHash,
   worldReportHash: prior.contentHash,
+  soundSourceSetHash: field.se.sourceSetHash,
   street: {
     restores: reloaded.restores,
     encounters: [3, 1, 2, 3, 42],
+    soundExecutions: reloaded.sounds,
     result: "pass",
   },
+  audioHost: "controlled-headless-readiness-and-presentation",
   runs,
   nativePartyRuns,
   nativePartyBoundaryChecks,
@@ -222,6 +247,7 @@ const report = {
     "Existing development entrances are mechanism probes, not new playable maps or story reachability.",
     "Ordinary source MapSetup/PointIn uses the native actor host; unknown state and unimplemented multi-party/view/saved-position paths remain blocked.",
     "Does not establish original-game save format, save permission, parity or browser storage behavior.",
+    "Headless media readiness/presentation is explicit; no audible browser/native audio is tested.",
   ],
 };
 const contentHash = await contentDigest(report);

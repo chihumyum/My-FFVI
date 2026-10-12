@@ -51,6 +51,9 @@ const server = http.createServer(async (req, res) => {
     } else if (url.pathname.startsWith("/bgm/tracks/")) {
       base = resolve(root, "build/bgm/tracks");
       relative = decodeURIComponent(url.pathname.slice("/bgm/tracks/".length));
+    } else if (url.pathname.startsWith("/se/tracks/")) {
+      base = resolve(root, "build/se/tracks");
+      relative = decodeURIComponent(url.pathname.slice("/se/tracks/".length));
     } else if (url.pathname.startsWith("/environment/tracks/")) {
       base = resolve(root, "build/environment/tracks");
       relative = decodeURIComponent(

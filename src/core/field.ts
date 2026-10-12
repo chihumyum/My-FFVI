@@ -70,6 +70,8 @@ import { projectFieldEntryContext } from "./field-entry-context.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { validateFieldMoveAreas, fieldMoveAreas, findFieldMoveArea, type FieldMoveArea } from "./field-move-area.js";
 import { StaticAudioState, type AudioSnapshot } from "./static-audio.js";
+import { FieldSoundState, type SoundSnapshot } from "./field-sound.js";
+import type { FieldSoundPresentation } from "./field-sound-presentation.js";
 import { audioReadinessTrack, pollAudioReadiness, type AudioReadinessPort } from "./audio-readiness.js";
 import { projectPlayerVisibility } from "./player-visibility.js";
 import { FieldFadeState, type FieldFadeSnapshot } from "./field-fade.js";
@@ -141,7 +143,7 @@ export type Actor = Point & {
 };
 type PlacedActor = Actor & { layer: number; direction: Direction; asset: string };
 export type FieldCheckpoint = {
-  kind: "idle-field-v9";
+  kind: "idle-field-v10";
   contentHash: string;
   time: number;
   remainder: number;
@@ -161,6 +163,7 @@ export type FieldCheckpoint = {
   doors: OpenTriggerCheckpoint;
   bgm: AudioSnapshot;
   environment: AudioSnapshot;
+  se: SoundSnapshot;
   fade: FieldFadeSnapshot | null;
   camera: FieldCameraState | null;
   native: {
@@ -203,6 +206,7 @@ type Task = {
   move: Extract<Op, { kind: "move" }> | null;
   animationWait: boolean;
   audioWait: Extract<Op, { kind: "bgm-ready" | "bgm-sync" }> | null;
+  soundWait: { op: Extract<Op, { kind: "field-sound" }>; handle: number | null } | null;
   treasure: { state: TreasureTaskState; entity: FieldEntity; site: Site;
     closeMessage: boolean; messageAvailableAt: number } | null;
   treasureRoot: boolean;
@@ -249,6 +253,7 @@ export type FieldGameOptions = {
   puppetActors?: FieldPuppetActorsPort;
   puppetRoster?: FieldPuppetRosterPort;
   audioReadiness?: AudioReadinessPort;
+  soundPresentation?: FieldSoundPresentation;
   /** Immutable host admission, never inferred from absent source fields or saved
    * visibility. Missing capability keeps native child propagation unresolved. */
   playerVisibility?: Readonly<{ childEntityObject: "absent" | "unresolved" }>;
@@ -276,6 +281,37 @@ export class FieldGame {
       .map((task) => (task.audioWait as Extract<Op, { kind: "bgm-ready" }>).track));
     return [...ids].map((id) => audioReadinessTrack(id, this.content.bgm));
   }
+  get pendingAudioTracks() {
+    const ids = new Set(this.tasks.flatMap(task => !task.done && task.soundWait?.op.command.kind === "ready"
+      ? [task.soundWait.op.command.soundId] : []));
+    return [...this.pendingBgmTracks, ...[...ids].map(id => this.soundTrack(id))];
+  }
+  private soundTrack(id: number) {
+    const track = this.content.se?.tracks[id];
+    if (!track) throw new Error("Missing SE media " + id);
+    return structuredClone(track);
+  }
+  private soundResourceReady(id: number): boolean {
+    const track = this.soundTrack(id), host = this.options.audioReadiness;
+    if (!host || typeof host.isReady !== "function") throw new Error("Missing SE resource readiness provider");
+    const ready = host.isReady(track);
+    if (typeof ready !== "boolean") throw new Error("Invalid SE resource readiness observation");
+    return ready;
+  }
+  /** Host loading freezes logical time before even a very short sound can
+   * expire. A decode callback never writes an event or finishes a task. */
+  get soundReady(): boolean {
+    return this.se.voices.every(voice => {
+      if (!this.soundResourceReady(voice.track)) return false;
+      const host = this.options.soundPresentation;
+      if (!host || typeof host.isPresented !== "function") throw new Error("Missing SE presentation provider");
+      const presented = host.isPresented(voice, this.soundTrack(voice.track));
+      if (typeof presented !== "boolean") throw new Error("Invalid SE presentation observation");
+      return presented;
+    });
+  }
+  readonly soundExecutions: { site: Site; command: Extract<Op, { kind: "field-sound" }>["command"];
+    handle: number | null }[] = [];
   private currentTransportationId: number | null;
   get transportationId(): number | null { return this.currentTransportationId; }
   get transportationPresentation() { return frameworkTransportationPresentation(this.content.developmentProfile); }
@@ -562,6 +598,7 @@ export class FieldGame {
     readonly fader: FieldFadeState = new FieldFadeState(content.entry.fade ?? null),
     cameraState?: FieldCameraState,
     restoringNative = false,
+    readonly se: FieldSoundState = new FieldSoundState(),
   ) {
     cloneSourcePresentationContext(options.sourcePresentation?.context() ?? null);
     if (options.playerVisibility !== undefined) {
@@ -1080,7 +1117,7 @@ export class FieldGame {
     if (!this.checkpointReady)
       throw new Error("Cannot save during field movement or an event");
     return {
-      kind: "idle-field-v9",
+      kind: "idle-field-v10",
       contentHash: this.content.contentHash,
       time: this.time,
       remainder: this.remainder,
@@ -1103,6 +1140,7 @@ export class FieldGame {
       doors: this.openTriggers.checkpoint(),
       bgm: this.bgm.snapshot(),
       environment: this.environment.snapshot(),
+      se: this.se.snapshot(),
       fade: this.fader.snapshot(),
       camera: this.cameraSnapshot,
       native: this.nativeCheckpoint(),
@@ -1123,9 +1161,9 @@ export class FieldGame {
     const s = structuredClone(raw);
     checkpointKeys(
       s,
-      "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,fade,camera,native",
+      "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,se,fade,camera,native",
     );
-    if (s.kind !== "idle-field-v9" || s.contentHash !== content.contentHash)
+    if (s.kind !== "idle-field-v10" || s.contentHash !== content.contentHash)
       throw new Error("Field checkpoint source/version mismatch");
     const transportationProfile = frameworkTransportationPresentation(content.developmentProfile);
     if (transportationProfile && native && options.transportation) {
@@ -1166,6 +1204,7 @@ export class FieldGame {
       FieldFadeState.restore(s.fade),
       s.camera ?? undefined,
       native !== undefined,
+      FieldSoundState.restore(s.se, content.se),
     );
     checkpointIds(s.activeGroups);
     const initial = [...next.activeGroups];
@@ -1862,6 +1901,8 @@ export class FieldGame {
     while (this.remainder >= 10) {
       this.remainder -= 10;
       if (this.stop) continue;
+      try { if (!this.soundReady) continue; }
+      catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       let effects: FieldEffectPrepared | undefined;
       try {
         if (this.effects && (this.entityUpdateMask & FIELD_EFFECT_PARTICLE_UPDATE_ATTRIBUTE) !== 0) {
@@ -1872,6 +1913,7 @@ export class FieldGame {
       effects?.commit();
       this.bgm.advance(10, this.content.bgm);
       this.environment.advance(10, this.content.environment);
+      this.se.advance(10, this.content.se);
       this.tileAnimations.advance(10);
       this.openTriggers.advance();
       this.time += 10;
@@ -2102,7 +2144,7 @@ export class FieldGame {
     this.tasks = this.tasks.filter((other) => other === t || other.treasureRoot);
     Object.assign(t, plan, { stack: [], wait: 0, state: "ready", lastClock: this.time,
       puppetWait: null, fadeWait: null, cameraLerp: null, scriptMove: null, scriptLerp: null, remaining: 0, move: null,
-      animationWait: false, audioWait: null, treasure: null, done: false });
+      animationWait: false, audioWait: null, soundWait: null, treasure: null, done: false });
   }
   private restoreHookedScript(main: Task): void {
     const hook = this.scriptHook!;
@@ -2185,6 +2227,7 @@ export class FieldGame {
       move: null,
       animationWait: false,
       audioWait: null,
+      soundWait: null,
       treasure: null,
       treasureRoot: false,
       done: false,
@@ -2515,6 +2558,41 @@ export class FieldGame {
         omissions: FRAMEWORK_TRANSPORTATION_LIMITATIONS });
     } finally { this.transportationExecuting = false; }
   }
+  private soundWaitComplete(wait: NonNullable<Task["soundWait"]>): boolean {
+    const command = wait.op.command;
+    if (command.kind === "ready") return this.soundResourceReady(command.soundId);
+    const handle = command.kind === "sync"
+      ? this.eventState.read({ category: "ScriptLocalVariable", index: command.handleSlot }) : wait.handle;
+    if (handle === null) throw new Error("Missing synchronous SE play handle");
+    return !this.se.isPlaying(handle);
+  }
+  private executeSound(op: Extract<Op, { kind: "field-sound" }>): Task["soundWait"] {
+    const command = op.command;
+    let handle: number | null = null, wait: Task["soundWait"] = null;
+    if (command.kind === "play") {
+      if (!this.options.audioReadiness || typeof this.options.audioReadiness.isReady !== "function")
+        throw new Error("Missing SE resource readiness provider");
+      if (!this.options.soundPresentation || typeof this.options.soundPresentation.isPresented !== "function")
+        throw new Error("Missing SE presentation provider");
+      const ref = command.asynchronous && command.handleSlot !== null
+        ? { category: "ScriptLocalVariable" as const, index: command.handleSlot } : null;
+      // Validate the actual bank without replacing it or detaching hooked
+      // script frames. The subsequent live write is a prevalidated plain write.
+      if (ref) new EventState(this.eventState.snapshot()).write(ref, 1);
+      const played = this.se.play(command, this.content.se);
+      handle = played;
+      if (ref) this.eventState.write(ref, played);
+      if (!command.asynchronous) wait = { op, handle }; // Source first clock always repeats.
+    } else if (command.kind === "stop") {
+      handle = this.eventState.read({ category: "ScriptLocalVariable", index: command.handleSlot });
+      this.se.stop(handle, command.fadeSeconds);
+    } else {
+      const pending = { op, handle: null };
+      if (!this.soundWaitComplete(pending)) wait = pending;
+    }
+    this.soundExecutions.push({ site: op, command: structuredClone(command), handle });
+    return wait;
+  }
   private pump(frameDeltaSeconds = 0): void {
     if (this.stop || this.shopTask) return;
     // Native Integrator clocks main, then the 32 global tracks. Core.Clock
@@ -2666,6 +2744,15 @@ export class FieldGame {
           } catch (error) {
             this.block(error instanceof Error ? error.message : String(error), t.audioWait);
             return;
+          }
+        }
+        if (t.soundWait) {
+          const pending = t.soundWait;
+          try {
+            if (!this.soundWaitComplete(pending)) return;
+            t.soundWait = null;
+          } catch (error) {
+            this.block(error instanceof Error ? error.message : String(error), pending.op); return;
           }
         }
         if (t.treasure) {
@@ -3298,6 +3385,14 @@ export class FieldGame {
               kind: op.kind,
               soundId: op.kind === "sound" ? op.soundId : null,
             });
+            break;
+          case "field-sound":
+            try {
+              t.soundWait = this.executeSound(op);
+              if (t.soundWait) return;
+            } catch (error) {
+              t.pc--; this.block(error instanceof Error ? error.message : String(error), op); return;
+            }
             break;
           case "field-fade":
             try {

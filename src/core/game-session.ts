@@ -3,6 +3,7 @@ import { encounterContent, battleDefinitionBlocker, type BattleCatalog } from ".
 import { BattleGame } from "./battle.js";
 import { EventState } from "./event-state.js";
 import type { AudioReadinessPort } from "./audio-readiness.js";
+import type { FieldSoundPresentation } from "./field-sound-presentation.js";
 import type { FieldEffectRuntimeHost } from "./field-effects.js";
 import type { ShopTradeRequest } from "./shop.js";
 import { projectPartyMenu, type PartyMenuRequest } from "./party-menu.js";
@@ -47,6 +48,7 @@ export type GameCheckpoint = {
 };
 /** External observations are rebound by the host on load, never trusted from saves. */
 export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
+  soundPresentation?: FieldSoundPresentation;
   /** Host wall-clock observation for source parking timestamps; recorded as an
    * exact decimal Int64, never sampled by deterministic core state. */
   transportationTimestamp?: () => string };
@@ -327,8 +329,10 @@ export class GameSession {
     while (this.remainder >= 10) {
       this.remainder -= 10;
       if (this.battle) {
+        if (!this.field.soundReady) continue;
         this.field.bgm.advance(10, this.field.content.bgm);
         this.field.environment.advance(10, this.field.content.environment);
+        this.field.se.advance(10, this.field.content.se);
         this.battle.advance(10);
         continue;
       }

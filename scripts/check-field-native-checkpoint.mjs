@@ -228,7 +228,7 @@ const report = { kind:"field-native-checkpoint-source", sourceSetHash:corpus.sou
     file: `src/core/${name}.ts`, sha256: sha(await readFile(resolve(root, `src/core/${name}.ts`))),
     compiledSha256: sha(await readFile(resolve(compiled, `src/core/${name}.js`))),
   }))),
-  webSchema: { field: "idle-field-v9", world: "idle-world-v9", game: 4 },
+  webSchema: { field: "idle-field-v10", world: "idle-world-v10", game: 4 },
   remaining:["outer native field/world/session integration is exercised separately by native-checkpoint-integration.test.ts; this source probe publishes no GameSession",
     "browser persistence and original-game dynamic parity are independent acceptance lanes",
     "active motion/scripts/FX hosts and original-game save format are not implemented by this actor codec"] };

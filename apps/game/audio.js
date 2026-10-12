@@ -1,5 +1,9 @@
 import { audioGain, audioPosition } from "/runtime/core/static-audio.js";
 
+const voiceIdentity = (voice, track) => JSON.stringify([
+  track.sha256, voice.id, voice.track, voice.started, voice.seek, voice.fadeIn, voice.pan ?? 0,
+]);
+
 /** Web Audio projects the current session. Decode completion cannot mutate game state. */
 export class AudioOutput {
   constructor() {
@@ -32,6 +36,7 @@ export class AudioOutput {
       node.source.stop();
       node.source.disconnect();
       node.gain.disconnect();
+      node.pan?.disconnect();
     }
     this.nodes.clear();
     this.lastSignal = undefined;
@@ -81,6 +86,9 @@ export class AudioOutput {
     if (this.errors.has(track.sha256)) throw this.errors.get(track.sha256);
     return this.buffers.has(track.sha256);
   }
+  isSoundPresented(voice, track) {
+    return this.nodes.get("se:" + voice.id)?.identity === voiceIdentity(voice, track);
+  }
   ready(projection, dependencies = []) {
     let ready = true;
     for (const track of [...projection.map(({ track }) => track), ...dependencies]) {
@@ -112,6 +120,7 @@ export class AudioOutput {
         node.source.stop();
         node.source.disconnect();
         node.gain.disconnect();
+        node.pan?.disconnect();
         this.nodes.delete(id);
       }
     if (!running) return;
@@ -125,15 +134,16 @@ export class AudioOutput {
       // The simulation intentionally caps long render frames. Correct audible drift after a stall.
       if (
         node &&
-        Math.abs(
+        (node.identity !== voiceIdentity(voice, track) || Math.abs(
           time -
             node.clock -
             1000 * (this.context.currentTime - node.audioClock),
-        ) > 125
+        ) > 125)
       ) {
         node.source.stop();
         node.source.disconnect();
         node.gain.disconnect();
+        node.pan?.disconnect();
         this.nodes.delete(id);
         node = null;
       }
@@ -148,12 +158,20 @@ export class AudioOutput {
           source.loopEnd = track.loop.end / track.sampleRate;
         }
         source.connect(gain);
-        gain.connect(this.master);
+        let pan;
+        if (voice.pan) {
+          pan = this.context.createStereoPanner();
+          pan.pan.value = voice.pan;
+          gain.connect(pan);
+          pan.connect(this.master);
+        } else gain.connect(this.master);
         gain.gain.value = audioGain(voice, time, track);
         source.start(0, audioPosition(voice, time, track));
         node = {
+          identity: voiceIdentity(voice, track),
           source,
           gain,
+          pan,
           clock: time,
           audioClock: this.context.currentTime,
         };
@@ -190,11 +208,12 @@ export class AudioOutput {
   }
 }
 
-/** Namespaced voice identities prevent BGM and environment slots from replacing each other. */
+/** Namespaced identities keep BGM/environment slots and dynamic SE handles separate. */
 export function audioProjection(field) {
-  return ["bgm", "environment"].flatMap((kind) => {
+  return ["bgm", "environment", "se"].flatMap((kind) => {
     const state = field[kind],
       media = field.content[kind];
+    if (!state) return [];
     return state.voices.map((voice) => {
       const track = media?.tracks[voice.track];
       if (!track) throw new Error("缺少声音资源 " + kind + "/" + voice.track);
