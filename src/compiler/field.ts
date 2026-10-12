@@ -25,6 +25,7 @@ import { compilePlayerVisibilityInstruction, compilePlayerVisibilityFactory, pla
 import { compileFieldTaskControlInstruction, fieldTaskControlMnemonics } from "./field-task-control.js";
 import { compileFieldFadeInstruction } from "./field-fade.js";
 import { compileFieldCameraInstruction, compileFieldCameraMotionInstruction, fieldCameraSelectors } from "./field-camera.js";
+import { compileFieldScriptMotionInstruction } from "./field-script-motion.js";
 import { compileFieldNativePosition } from "./field-native-position.js";
 import { DEVELOPMENT_TRANSPARENT_FADE } from "../core/field-fade.js";
 import { loadSystemSource } from "./system-source.js";
@@ -58,8 +59,6 @@ import type {
   Site,
 } from "../field/types.js";
 const directions: Direction[] = ["up", "right", "down", "left"];
-// Source GetFieldSpriteMoveSecondsPerCell, RVA 0x38D7F0; magnification is 1 in the development profile.
-const moveSeconds = [0.24, 0.48, 0.12, 0.96, 0.06, 1.92, 0.16, 0.096, 0.08];
 const integer = (x: unknown): number => {
   if (!Number.isSafeInteger(x)) throw new Error(`Expected integer: ${x}`);
   return x as number;
@@ -129,6 +128,10 @@ export function decodeFieldOp(
     try { return { ...site, ...compileEventScriptTransitionInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
+  if (name === "Move" || name === "Lerp") {
+    try { return { ...site, ...compileFieldScriptMotionInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   const o = record(m.operands), i = list(o.iValues).map(integer),
     r = list(o.rValues).map(Number), s = list(o.sValues).map(string);
   if (name === "MsgClose" || (name === "Msg" && (i[0] !== 0 || r[0] !== 0))) {
@@ -164,10 +167,6 @@ export function decodeFieldOp(
   }
   if (name === "SysCall" && fieldCameraSelectors.some((selector) => selector === s[0])) {
     try { return { ...site, ...compileFieldCameraInstruction(raw) }; }
-    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
-  }
-  if (name === "Lerp") {
-    try { return { ...site, ...compileFieldCameraMotionInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if (
@@ -397,21 +396,6 @@ export function decodeFieldOp(
     return { ...site, kind: "position", x: i[0]!, y: i[1]!, animation: s[0]!,
       ...(cameraCommand ? { cameraCommand } : {}) };
   }
-  if (
-    name === "Move" &&
-    form([0, 1, 2]) &&
-    directions[i[0]!] &&
-    i[1]! >= 0 &&
-    i[2]! >= 0 &&
-    i[2]! < moveSeconds.length
-  )
-    return {
-      ...site,
-      kind: "move",
-      direction: directions[i[0]!]!,
-      steps: i[1]!,
-      secondsPerCell: moveSeconds[i[2]!]!,
-    };
   if (name === "LookAt" && form([0]) && directions[i[0]!])
     return { ...site, kind: "look", direction: directions[i[0]!]! };
   if (name === "Msg" && form([1], [], [0]) && [0, 2].includes(i[1]!)) {

@@ -139,11 +139,11 @@ test("formal actor Ready routes dummy Show to camera, with failed collision prep
   }
 });
 
-test("camera-only motion cannot silently mutate a normal actor, and source SetPos retains independent admission", () => {
+test("source actor motion requires native providers, and source SetPos retains independent admission", () => {
   const game = new FieldGame(content([lerp(10, 20, 1), end]));
   const player = { x: game.player.x, y: game.player.y };
   game.startEvent("main");
-  assert.match(game.stop?.message ?? "", /only admitted for camera dummy/);
+  assert.match(game.stop?.message ?? "", /bound native actor and map providers/);
   assert.deepEqual({ x: game.player.x, y: game.player.y }, player);
   const ops = sequence(); ops[4] = { kind: "position", x: 10, y: 10, animation: "Default" };
   const unsupported = new FieldGame(content(ops)); unsupported.startEvent("main");

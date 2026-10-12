@@ -33,6 +33,8 @@ import type { FieldPuppetRosterPort } from "./field-puppet-roster.js";
 import { createNativeFieldActorProjection, createNativeFieldActorProjections, createNativeFieldPuppetActorsPort, readNativeFieldActors,
   prepareNativeFieldActorProjection, type NativeFieldActorData, type NativeFieldActor } from "./field-native-actors.js";
 import { projectNativeFieldPosition } from "./field-native-position.js";
+import { prepareFieldActorMotionTick, prepareFieldScriptMove, projectFieldScriptLerp,
+  type FieldActorMotion, type FieldScriptLerpProgress } from "./field-script-motion.js";
 import { FieldEffects, FIELD_EFFECT_PARTICLE_UPDATE_ATTRIBUTE, fieldEffectAnimationLoopLimit,
   projectFieldEffectPlacement, type FieldEffectRuntimeHost, type FieldEffectState,
   type FieldEffectPrepared, type FieldEffectOperation } from "./field-effects.js";
@@ -114,13 +116,7 @@ const OPPOSITE: Record<Direction, Direction> = {
   right: "left",
   down: "up",
 };
-export type Motion = {
-  from: Point;
-  to: Point;
-  elapsed: number;
-  duration: number;
-  manual: boolean;
-};
+export type Motion = FieldActorMotion;
 export type Actor = Point & {
   id: string;
   layer: number | null;
@@ -188,8 +184,10 @@ type Task = {
   lastClock: number;
   puppetWait: Extract<Op, { kind: "exec-puppets" | "finish-puppets" }> | null;
   fadeWait: Extract<Op, { kind: "field-fade" }> | null;
-  cameraLerp: { op: Extract<Op, { kind: "field-camera-motion" }>; command: FieldCameraLerp;
+  cameraLerp: { op: Site; command: FieldCameraLerp;
     progress: FieldCameraLerpProgress } | null;
+  scriptMove: Extract<Op, { kind: "field-script-motion" }> | null;
+  scriptLerp: { op: Extract<Op, { kind: "field-script-motion" }>; progress: FieldScriptLerpProgress } | null;
   remaining: number;
   move: Extract<Op, { kind: "move" }> | null;
   animationWait: boolean;
@@ -1403,14 +1401,17 @@ export class FieldGame {
     }
     if (this.occupied([to], p.layer)) return faceBlockedStep();
     let step: ReturnType<FieldConditionPort["prepareStep"]> | null;
+    let movementAnimation: ActorAnimation | null;
     try {
       step = this.preparePlayerStep();
-      p.animation?.move(direction, 0.24);
+      movementAnimation = p.animation?.clone() ?? null;
+      movementAnimation?.move(direction, 0.24);
     } catch (error) {
       this.block(error instanceof Error ? error.message : String(error));
       return false;
     }
     this.pendingPlayerStep = step;
+    p.animation = movementAnimation;
     p.motion = {
       from: { x: p.x, y: p.y },
       to,
@@ -1430,6 +1431,62 @@ export class FieldGame {
     return this.transportationId !== null && this.options.fieldSteps
       ? this.options.fieldSteps.prepareStep(this.transportationId)
       : null;
+  }
+  private prepareActorScriptLerp(actor: Actor, op: Extract<Op, { kind: "field-script-motion" }>,
+    progress: FieldScriptLerpProgress | null): { flow: "next" | "wait"; progress: FieldScriptLerpProgress } {
+    if (op.command.kind !== "lerp" || !actor.native || !this.nativeActorProviders || !this.camera ||
+        this.content.cameraHost?.callbacks !== "fresh-normal-field-v1")
+      throw new Error("Source actor Lerp requires the bound native actor and map providers");
+    if (this.content.cameraHost.loop.horizontal || this.content.cameraHost.loop.vertical)
+      throw new Error("Source actor Lerp loop-map provider is unavailable");
+    const command = structuredClone(op.command), map = this.content.cameraHost.mapRange;
+    let result: ReturnType<typeof projectFieldScriptLerp> | null = null;
+    const publish = prepareNativeFieldActorProjection({
+      readActors: () => this.actors, readProviders: this.nativeActorProviders,
+      readCamera: () => { const state = this.camera!.snapshot();
+        return { id: this.cameraActorId, position: state.dummy.position, layer: state.dummy.layer }; },
+    }, (snapshot, providers) => {
+      result = projectFieldScriptLerp(snapshot, providers, actor.id, command, map, progress, this.time / 1000);
+      return result.snapshot;
+    });
+    // The projection runs during prepare and validation, before any publication.
+    const prepared = result as ReturnType<typeof projectFieldScriptLerp> | null;
+    if (!prepared) throw new Error("Missing prepared source actor Lerp");
+    publish();
+    return { flow: prepared.flow, progress: prepared.progress };
+  }
+  private startScriptMove(actor: Actor, op: Extract<Op, { kind: "field-script-motion" }>): void {
+    if (op.command.kind !== "move" || !actor.native || !this.nativeRuntime ||
+        !this.nativeActorProviders || !this.camera || this.content.cameraHost?.callbacks !== "fresh-normal-field-v1")
+      throw new Error("Source Move requires an ordinary bound native actor");
+    const entity = actor.native.entity;
+    if (!entity.character || entity.riding || entity.riderAssetId !== null ||
+        !["absent", "idle"].includes(entity.rideOnEntity) || actor.motion)
+      throw new Error("Source Move riding or concurrent movement provider is unavailable");
+    if (actor.id === this.player.id)
+      throw new Error("Actual-player source Move requires its movement-state magnification provider");
+    if (this.collisionSwitches.mapColliders || this.collisionSwitches.entityCollision)
+      throw new Error("Source Move with active collision requires the native raycast provider");
+    if (actor.layer === null || actor.layer > 2 || !actor.animation)
+      throw new Error("Source Move actor position or animation media is unavailable");
+    const command = op.command;
+    // Ordinary FieldEntity ctor has magnification 1. The actual player has a
+    // separate MoveTo override and was explicitly excluded above.
+    const plan = prepareFieldScriptMove(command, actor, { loop: this.content.cameraHost.loop, magnification: 1 });
+    // Empty SearchSimple route leaves the entity untouched, but the caller
+    // still observes Move's mandatory first-clock Wait.
+    if (plan.points.length === 0) return;
+    const animation = actor.animation.clone();
+    animation.move(command.direction, plan.animationSecondsPerCell, command.animation || undefined);
+    animation.frame();
+    const motion: Motion = { from: { x: actor.x, y: actor.y }, to: { ...plan.points[0]! },
+      duration: plan.secondsPerCell * 1000, elapsed: 0, manual: false,
+      route: { points: plan.points, index: 0, pendingSegment: false, direction: command.direction,
+        animation: command.animation, animationSecondsPerCell: plan.animationSecondsPerCell } };
+    // A supplied animation name deliberately preserves directionVector.
+    if (command.animation === "") actor.direction = command.direction;
+    actor.animation = animation;
+    actor.motion = motion;
   }
   confirm(): void {
     // Confirm is not a choice response. Even an answered request waits for its
@@ -1696,50 +1753,38 @@ export class FieldGame {
         // tile animation (42), VM and the global fader continue separately.
         if (a.native && (this.entityUpdateMask & (a.native.updateAttribute ?? 2)) === 0) continue;
         try {
-          a.animation?.advance(10);
-        } catch (error) {
-          this.block(error instanceof Error ? error.message : String(error));
-          return;
-        }
-        const m = a.motion;
-        if (!m) continue;
-        m.elapsed += 10;
-        if (a.native) {
-          const ratio = Math.min(1, m.elapsed / m.duration);
-          a.x = m.from.x + (m.to.x - m.from.x) * ratio;
-          a.y = m.from.y + (m.to.y - m.from.y) * ratio;
-        }
-        try {
-          a.animation?.linkToMovement(Math.min(1, m.elapsed / m.duration));
-        } catch (error) {
-          this.block(error instanceof Error ? error.message : String(error));
-          return;
-        }
-        if (m.elapsed >= m.duration) {
-          // Resolve all owned effects before publishing coordinates or starting
-          // destination events. A failed/stale provider leaves this move pending.
-          if (a.id === this.player.id && this.pendingPlayerStep) {
-            try {
-              const step = this.pendingPlayerStep;
-              step.commit();
-              this.pendingPlayerStep = null;
-              if (step.result.soundId !== null)
-                this.presentationOmissions.push({
-                  site: { script: "field-condition-step", index: a.steps, source: this.content.map.source },
-                  kind: "sound",
-                  soundId: step.result.soundId,
-                });
-            } catch (error) {
-              this.block(error instanceof Error ? error.message : String(error));
-              return;
+          const m = a.motion;
+          if (!m) {
+            if (a.animation?.playing) {
+              const animation = a.animation.clone();
+              animation.advance(10);
+              a.animation = animation;
             }
+            continue;
           }
-          a.animation?.stop();
-          a.x = m.to.x;
-          a.y = m.to.y;
-          a.motion = null;
-          a.steps++;
-          if (m.manual) entered = true;
+          // Every potentially failing animation/coordinate calculation happens
+          // on a private candidate. In particular a stale owned step must not
+          // publish the native endpoint (or even advance its movement timer).
+          const next = prepareFieldActorMotionTick(m, a.animation, 10);
+          const step = next.completedSegment && a.id === this.player.id ? this.pendingPlayerStep : null;
+          const omission = step?.result.soundId !== null && step?.result.soundId !== undefined
+            ? { site: { script: "field-condition-step", index: a.steps, source: this.content.map.source },
+              kind: "sound" as const, soundId: step.result.soundId } : null;
+          step?.commit();
+          // Native properties below are prevalidated accessors onto this same
+          // entity. Legacy actors publish their cell only at a completed step.
+          if (a.native || next.completedSegment) { a.x = next.point.x; a.y = next.point.y; }
+          a.animation = next.animation;
+          a.motion = next.motion;
+          if (next.completedSegment) {
+            if (a.id === this.player.id) this.pendingPlayerStep = null;
+            if (omission) this.presentationOmissions.push(omission);
+            a.steps++;
+            if (m.manual) entered = true;
+          }
+        } catch (error) {
+          this.block(error instanceof Error ? error.message : String(error));
+          return;
         }
       }
       for (const t of this.tasks) t.wait = Math.max(0, t.wait - 10);
@@ -1869,6 +1914,8 @@ export class FieldGame {
   }
   private beginRoot(script: string): void {
     try {
+      if (this.hasUnfinishedInterpolation())
+        throw new Error("Starting a script cannot discard unfinished source interpolation registers");
       if (this.options.nativeActorPreparation && !this.nativeActorBindings)
         throw new Error("Source field actors have not been installed");
       const locals = this.content.scriptLocals?.[script] ?? null;
@@ -1888,6 +1935,8 @@ export class FieldGame {
   /** The same native MainCore remains the owner of windows and execution.
    * Prepare all admission/local-bank work before ResetAll publishes any reset. */
   private transitionScript(t: Task, op: Extract<Op, { kind: "script-transition" }>): void {
+    if (this.hasUnfinishedInterpolation())
+      throw new Error("ChangeScript cannot discard unfinished source interpolation registers");
     const main = t.slot === null && !t.treasureRoot &&
       this.tasks.find((other) => other.slot === null && !other.treasureRoot) === t;
     const target = Object.hasOwn(this.content.scripts, op.targetScript)
@@ -1920,7 +1969,7 @@ export class FieldGame {
     // treasure coroutines are not cores and keep their existing owner.
     this.tasks = this.tasks.filter((other) => other === t || other.treasureRoot);
     Object.assign(t, plan, { stack: [], wait: 0, state: "ready", lastClock: this.time,
-      puppetWait: null, fadeWait: null, cameraLerp: null, remaining: 0, move: null,
+      puppetWait: null, fadeWait: null, cameraLerp: null, scriptMove: null, scriptLerp: null, remaining: 0, move: null,
       animationWait: false, audioWait: null, treasure: null, done: false });
   }
   private restoreHookedScript(main: Task): void {
@@ -1998,6 +2047,8 @@ export class FieldGame {
       puppetWait: null,
       fadeWait: null,
       cameraLerp: null,
+      scriptMove: null,
+      scriptLerp: null,
       remaining: 0,
       move: null,
       animationWait: false,
@@ -2015,9 +2066,14 @@ export class FieldGame {
       !!this.content.entry.absentHideTargets?.includes(id)
     );
   }
+  private hasUnfinishedInterpolation(): boolean {
+    return this.tasks.some((task) => !task.done && !!(task.scriptLerp || task.cameraLerp));
+  }
   /** Validate the handoff before consuming rewards. The commit only schedules
    * the continuation; normal simulation, not reward publication, runs its code. */
   prepareEncounterReturn(party: number): () => void {
+    if (this.hasUnfinishedInterpolation())
+      throw new Error("Battle return cannot discard unfinished source interpolation registers");
     if (this.scriptHook)
       throw new Error("Hooked script battle return requires a suspended-caller handoff provider");
     if (
@@ -2095,6 +2151,10 @@ export class FieldGame {
       if (this.stop) return;
     }
     if (main?.done) {
+      if (this.hasUnfinishedInterpolation()) {
+        this.block("Main script ended with an unfinished source interpolation task");
+        return;
+      }
       if (this.pendingChoice) {
         this.block("Main script ended with an unfinished choice task", this.pendingChoice.op);
         return;
@@ -2157,7 +2217,17 @@ export class FieldGame {
         }
         // A movement suspends its own instruction, not every core currently
         // bound to that actor (in particular, the main core's dialogue/flags).
-        if (actor?.motion && t.move) return;
+        if (actor?.motion && (t.move || t.scriptMove)) return;
+        if (t.scriptMove) t.scriptMove = null;
+        if (t.scriptLerp) {
+          const pending = t.scriptLerp;
+          try {
+            if (!actor) throw new Error("Source actor Lerp lost its entity binding");
+            const next = this.prepareActorScriptLerp(actor, pending.op, pending.progress);
+            if (next.flow === "wait") { pending.progress = next.progress; return; }
+            t.scriptLerp = null;
+          } catch (error) { this.block(error instanceof Error ? error.message : String(error), pending.op); return; }
+        }
         if (t.animationWait) {
           if (
             actor
@@ -2234,9 +2304,11 @@ export class FieldGame {
           }
           const d = DELTA[t.move.direction];
           let step: ReturnType<FieldConditionPort["prepareStep"]> | null = null;
+          let animation: ActorAnimation | null;
           try {
             if (actor.id === this.player.id) step = this.preparePlayerStep();
-            actor.animation?.move(t.move.direction, t.move.secondsPerCell);
+            animation = actor.animation?.clone() ?? null;
+            animation?.move(t.move.direction, t.move.secondsPerCell);
           } catch (error) {
             this.block(
               error instanceof Error ? error.message : String(error),
@@ -2245,6 +2317,7 @@ export class FieldGame {
             return;
           }
           if (actor.id === this.player.id) this.pendingPlayerStep = step;
+          actor.animation = animation;
           actor.direction = t.move.direction;
           actor.motion = {
             from: { x: actor.x, y: actor.y },
@@ -2262,7 +2335,8 @@ export class FieldGame {
           this.block(`无效脚本位置 ${t.script}:${t.pc}`);
           return;
         }
-        if (actor?.motion && ["move", "position", "look", "animation-play", "animation-cue"].includes(op.kind)) {
+        if ((actor?.motion || this.tasks.some((other) => !other.done && other.actor === t.actor && other.scriptLerp)) &&
+            ["move", "field-script-motion", "field-camera-motion", "position", "look", "animation-play", "animation-cue"].includes(op.kind)) {
           this.block("Concurrent source actor movement arbitration is not implemented", op);
           return;
         }
@@ -2462,6 +2536,9 @@ export class FieldGame {
             }
             break;
           case "change-map":
+            if (this.hasUnfinishedInterpolation()) {
+              this.block("Map handoff requires completion of source interpolation tasks", op); return;
+            }
             if (this.scriptHook) {
               this.block("Hooked script map handoff requires a suspended-caller provider", op); return;
             }
@@ -2698,6 +2775,44 @@ export class FieldGame {
               }
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
+          case "field-script-motion":
+            try {
+              if (t.actor === this.cameraActorId) {
+                if (!this.camera || op.command.kind !== "lerp" || op.command.layer !== 0 || op.command.animation !== "")
+                  throw new Error("Camera source Move, animation or layer transition requires a separate provider");
+                const command: FieldCameraLerp = { kind: "lerp", x: op.command.x, y: op.command.y,
+                  layer: 0, duration: op.command.duration, arcHeight: op.command.arcHeight };
+                if (command.duration < 0) throw new Error("Negative source Lerp duration is not admitted");
+                const next = this.camera.prepareLerp(command, null, this.time / 1000);
+                next.commit();
+                if (next.flow === "wait") { t.cameraLerp = { op, command, progress: next.progress }; return; }
+              } else {
+                if (!actor) throw new Error("Source script motion requires a bound actor");
+                if (op.command.kind === "move") {
+                  if (!actor.native && !this.options.nativeActorPreparation && !this.options.puppetActors &&
+                      !this.content.scriptPuppetContexts && op.command.animation === "" && op.command.speedId !== null) {
+                    // Preserve the earlier explicit development host's bounded
+                    // empty-animation Move subset. This is not native factory,
+                    // wrap, raycast, custom-animation or nullable-speed admission.
+                    const plan = prepareFieldScriptMove(op.command, actor, {
+                      loop: { horizontal: false, vertical: false }, magnification: 1,
+                    });
+                    t.move = { script: op.script, index: op.index, source: op.source,
+                      kind: "move", direction: op.command.direction, steps: op.command.steps,
+                      secondsPerCell: plan.secondsPerCell };
+                    t.remaining = op.command.steps;
+                    if (op.command.steps === 0) return;
+                    break;
+                  }
+                  this.startScriptMove(actor, op);
+                  t.scriptMove = op;
+                  return; // Move always returns Wait on its first clock.
+                }
+                const next = this.prepareActorScriptLerp(actor, op, null);
+                if (next.flow === "wait") { t.scriptLerp = { op, progress: next.progress }; return; }
+              }
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
           case "move":
             t.move = op;
             t.remaining = op.steps;
@@ -2834,6 +2949,9 @@ export class FieldGame {
             };
             return;
           case "encounter":
+            if (this.hasUnfinishedInterpolation()) {
+              this.block("Battle handoff requires completion of source interpolation tasks", op); return;
+            }
             if (this.scriptHook) {
               this.block("Hooked script battle handoff requires a suspended-caller provider", op); return;
             }

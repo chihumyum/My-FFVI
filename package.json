@@ -72,6 +72,7 @@
     "party-menu:check": "npm run build && node scripts/check-party-menu-ui.mjs",
     "event-interactions:check": "npm run build && node scripts/check-field-choice.mjs && node scripts/check-event-context-branch.mjs && node scripts/check-event-interactions-ui.mjs",
     "script-transitions:check": "npm run build && node scripts/check-event-script-transition-native.mjs && node scripts/check-event-script-transition.mjs",
+    "script-motion:check": "npm run build && node scripts/check-field-script-motion.mjs && node scripts/check-script-motion-integration.mjs",
     "battle-abilities:check": "npm run battle:build && node scripts/check-battle-abilities-native.mjs && node scripts/check-battle-abilities.mjs && node scripts/check-battle-abilities-ui.mjs",
     "map-party-entry:check": "npm run world:build && node scripts/check-map-party-entry-native.mjs && node scripts/check-map-party-entry.mjs",
     "treasure-inventory:check": "npm run battle:build && node scripts/check-treasure-inventory-native.mjs && node scripts/check-treasure-inventory.mjs",

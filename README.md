@@ -19,6 +19,7 @@
 - [核心机制现状与优先次序](docs/core-mechanics.md)
 - [游戏系统框架与连续流程验收](docs/game-framework.md)
 - [通用遭遇内容管线](docs/battle-catalog.md)
+- [v41 共用事件移动与连续系统验收](docs/systems-v41.md)
 - [v40 连续事件、脚本交接与新游戏开发配置](docs/systems-v40.md)
 - [v39 共用剧情选择与上下文分支](docs/systems-v39.md)
 - [v38 队伍菜单与通用战斗内容管线](docs/systems-v38.md)
@@ -170,6 +171,6 @@ npm run accept -- narshe
 
 `knowledge` 接受可选的 `--state '<JSON 上下文>'`。查询时只提供已有证据的状态值；没有证据就省略对应键。状态字符串只是上下文输入，不会自动建立它与原版剧情 flag 的映射。
 
-当前系统交付：[v39 共用剧情交互](docs/systems-v39.md)。已有标题、探索、战斗、奖励、队伍/装备菜单与存读档闭环；本批再接选择、队伍条件和朝向分支。`npm run event-interactions:check` 验证来源编译、选择到剧情/库存/保存的共用链路，`npm run framework:check` 验证完整基础循环。浏览器已通过选择、发物品、写剧情、移动、内存保存与恢复；未覆盖用户进度。公开可玩 profile 仍为 v35，完整主线单独追踪；精细表现与 HD-2D 后置。GitHub 仅追踪工具、源码、说明与合成夹具，原始资源和生成内容保留本地。
+当前系统交付：[v41 共用事件移动](docs/systems-v41.md)。标题、探索、事件、战斗、奖励、队伍/装备菜单与稳定存读档使用同一会话；本批将角色和镜头的脚本移动接入共用调度及交接保护。`npm run framework:check` 验证基础循环，`npm run script-motion:check` 验证移动编译和连续原生演员宿主。框架开发配置已继续到开场下一地图请求，完整主线仍待迁移。精细表现与 HD-2D 后置。GitHub 仅追踪工具、源码、说明与合成夹具，原始资源和生成内容保留本地。
 
 战斗导出支持重复的 `--encounter-id`；上述示例的 3002、3035 是检验通用编译器的非开场编组。所选编组由同一编译器处理，来源指令、队形或资源缺口逐组报告；选择资源不会解锁剧情或授予角色。`npm run battle:build` 同时写出 `build/reports/battle-catalog.json`，区分无法构造的编组、运行到特定分支仍有依赖的编组和明确保留的开发表现偏差。

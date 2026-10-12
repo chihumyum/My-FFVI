@@ -259,18 +259,12 @@ test("unsupported operand forms and inline message controls are not erased", () 
   );
 });
 
-test("96ms source movement keeps input locked until all cells commit across frame partitions", () => {
+test("fractional development movement keeps input locked until all cells commit across frame partitions", () => {
   const c = eventFixture();
-  const movement = decodeFieldOp(
-    {
-      mnemonic: "Move",
-      type: 2,
-      operands: { iValues: [2, 3, 7], rValues: [], sValues: [] },
-    },
-    site,
-    {},
-  );
-  c.scripts.event = [movement, ...ops({ kind: "exit" })];
+  // This tests the development scheduler's non-integral cell duration. Source
+  // Puppet has only seven selectors; 96ms is not a source Move operand.
+  c.scripts.event = ops({ kind: "move", direction: "down", steps: 3, secondsPerCell: 0.096 },
+    { kind: "exit" });
   const a = start(c),
     b = start(c);
   a.advance(290);

@@ -87,11 +87,11 @@ try {
   const program = map.scripts[content.entry.reservedScript.name];
   const play = program.filter((op) => op.kind === "source-message" && op.command.kind === "play");
   const set = program.filter((op) => op.kind === "position" && op.cameraCommand);
-  const motion = program.filter((op) => op.kind === "field-camera-motion");
+  const motion = program.filter((op) => op.kind === "field-script-motion");
   assert.equal(play.length, 1); assert.equal(set.length, 1); assert.equal(motion.length, 1);
   const subtitle = play[0], cameraSet = set[0], cameraMotion = motion[0];
   assert.deepEqual(cameraSet.cameraCommand, { kind: "set-position", x: 29, y: 5, layer: 0 });
-  assert.deepEqual(cameraMotion.command, { kind: "lerp", x: 29, y: 24, layer: 0, duration: 11, arcHeight: 0 });
+  assert.deepEqual(cameraMotion.command, { kind: "lerp", x: 29, y: 24, layer: 0, duration: 11, arcHeight: 0, animation: "" });
   const cameraStart = fieldCameraCellToWorld(map.partyEntry.mapRange,
     { x: cameraSet.cameraCommand.x, y: cameraSet.cameraCommand.y }, 0);
   const cameraEnd = fieldCameraCellToWorld(map.partyEntry.mapRange,

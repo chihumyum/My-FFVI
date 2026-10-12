@@ -147,6 +147,10 @@ export class ActorAnimation {
     next.start(key, loop ? 1 : 0, scale);
     this.state = next.state;
   }
+  /** Entity PlayAnimation with a null time scale, without Puppet's preceding Cue. */
+  playEntity(key: string, loop: boolean): void {
+    this.start(key, loop ? 1 : 0, 1);
+  }
   stop(position = 1): void {
     if (!Number.isFinite(f(position)))
       throw new Error("Invalid actor animation stop");
@@ -165,10 +169,10 @@ export class ActorAnimation {
     if (this.same(key) && this.playing) return;
     this.cue(key, -1);
   }
-  move(direction: Direction, secondsPerCell: number): void {
+  move(direction: Direction, secondsPerCell: number, animationKey?: string): void {
     if (!Number.isFinite(secondsPerCell) || secondsPerCell <= 0)
       throw new Error("Invalid actor movement animation speed");
-    const key = FIELD_POSE[direction];
+    const key = animationKey ?? FIELD_POSE[direction];
     const scale = f(Math.max(1, f(f(secondsPerCell) / f(0.48))));
     if (!Number.isFinite(scale))
       throw new Error("Invalid actor movement animation speed");

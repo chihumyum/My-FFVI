@@ -38,13 +38,14 @@ const launch = entry.prepareLaunch(fade, game.newGamePreparation(true));
 game.launchNewGame(launch.launch); launch.commit();
 const flow = new GameFlow(game), host = { visible: true, mediaReady: true, overlayOpen: false };
 flow.start();
-const ownedAtStart = game.state.snapshot(), transitions = [], answers = [];
+const ownedAtStart = game.state.snapshot(), transitions = [], answers = [], motionSamples = [];
+const sampledActors = new Set();
 const report = { kind: "framework-source-route-check-v1", result: "running", profile: content.developmentProfile.kind,
   entryHash: content.contentHash, catalogHash: catalog.contentHash, battleHash: battle.contentHash,
   sourceEntryHash: content.developmentProfile.sourceContentHash,
   controlledInputs: ["headless title, field UI and immediately ready audio", "10ms host updates", "automatic dialogue confirm; first displayed choice"],
   omittedEnvironmentEffects: content.developmentProfile.omissions.length,
-  originalGameExecuted: false, completeOpening: false, transitions, answers };
+  originalGameExecuted: false, completeOpening: false, transitions, answers, motionSamples };
 const output = root + "/build/reports/framework-source-route-check.json";
 let elapsedMs = 0, boundary = null;
 try {
@@ -67,7 +68,7 @@ try {
         ticket.cancel();
         assert.equal(game.field, old);
         assert.equal(JSON.stringify(game.state.snapshot()), owned);
-        boundary = { kind: "map-preparation", request: stop.request, message: String(error) }; break;
+        boundary = { kind: "map-preparation", request: stop.request, site: stop.site, message: String(error) }; break;
       }
     }
     if (game.field.stop?.kind === "unsupported") { boundary = structuredClone(game.field.stop); break; }
@@ -77,11 +78,20 @@ try {
       assert.equal(flow.choose(choice.id, 0), true); answers.push({ id: choice.id, index: 0 });
     } else if (game.field.dialogue) flow.confirm();
     flow.advance(10, host);
+    for (const actor of Object.values(game.field.actors)) {
+      const motion = actor.motion, key = `${game.field.content.map.identity.mapId}:${actor.id}`;
+      if (!motion || motion.manual || motion.elapsed <= 0 || motion.elapsed >= motion.duration || sampledActors.has(key)) continue;
+      sampledActors.add(key);
+      motionSamples.push({ mapId: game.field.content.map.identity.mapId, actorId: actor.id,
+        elapsedMs, position: { x: actor.x, y: actor.y }, from: motion.from, to: motion.to,
+        progressMs: motion.elapsed, durationMs: motion.duration });
+    }
     if (game.checkpointReady) { boundary = { kind: "stable-field", mapId: game.field.content.map.identity.mapId }; break; }
   }
   assert.equal(ownedAtStart.initialization, "source-new-game");
   assert.ok(boundary, "Source route did not reach an observable boundary within 120s");
   assert.ok(transitions.length > 0, `The source route must commit its first map handoff: ${JSON.stringify(boundary)}`);
+  assert.ok(motionSamples.length > 0, `Source actor movement must actually advance after map handoff: ${JSON.stringify(boundary)}`);
   report.result = "passed";
 } catch (error) { report.result = "failed"; throw error; }
 finally {

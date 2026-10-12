@@ -18,6 +18,7 @@ import type { FieldTaskControlOp } from "../core/field-task-control.js";
 import type { FieldFadeOp, FieldFadeInitial } from "../core/field-fade.js";
 import type { FieldPuppetScriptContext } from "../core/field-puppet-actors.js";
 import type { FieldCameraOp, FieldCameraMotionOp, FieldCameraSetPosition } from "../core/field-camera.js";
+import type { FieldScriptMotionOp } from "../core/field-script-motion.js";
 import type { FieldCameraHostDefinition } from "../core/field-camera-host.js";
 import type { FieldBackgroundLayer } from "../core/field-background.js";
 import type { SourceMessageOp } from "../core/source-message.js";
@@ -171,6 +172,7 @@ export type Op = Site &
     | FieldFadeOp
     | FieldCameraOp
     | FieldCameraMotionOp
+    | FieldScriptMotionOp
     | SourceMessageOp
     | FieldChoiceOp
     | EventContextBranchOp
