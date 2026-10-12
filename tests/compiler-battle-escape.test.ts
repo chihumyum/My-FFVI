@@ -22,7 +22,7 @@ test("escape compilation is opt-in, preserves source modes and never treats AllR
   assert.equal(f.input.development.escape.id, policy.id);
 });
 
-test("escape overrides and special reward fields cannot be authorized by a generic omission", () => {
+test("escape overrides and unimplemented AP cannot be authorized by a generic omission", () => {
   for (const flagId of [3, 9, 15, 27]) {
     const f = encounterRuntimeFixture(), source = f.input.encounters[0]!;
     f.input.development.escape = policy;
@@ -33,13 +33,22 @@ test("escape overrides and special reward fields cannot be authorized by a gener
     assert.equal(result.encounters[9201], undefined);
     assert.ok(result.diagnostics.some(d => d.partyId === 9201 && d.code === "escape-flags"));
   }
-  for (const key of ["getAp", "getValue"] as const) {
+  for (const key of ["getAp"] as const) {
     const f = encounterRuntimeFixture(); f.input.development.escape = policy;
     f.input.encounters[0]!.metadata[key] = 1;
     const result = compileBattleEncounterRuntime(f.reader(), f.input);
     assert.equal(result.encounters[9201], undefined);
     assert.ok(result.diagnostics.some(d => d.code === "party-rewards"));
   }
+});
+
+test("source magic points remain victory-only when an encounter also permits authored retreat", () => {
+  const f = encounterRuntimeFixture(); f.input.development.escape = policy;
+  f.input.encounters[0]!.metadata.getValue = 5;
+  const result = compileBattleEncounterRuntime(f.reader(), f.input);
+  assert.deepEqual(result.encounters[9201]!.rewardPolicy,
+    { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 5 });
+  assert.deepEqual(result.encounters[9201]!.escapePolicy, policy);
 });
 
 test("invalid policy and misplaced common policy fail admission before a battle can open", () => {

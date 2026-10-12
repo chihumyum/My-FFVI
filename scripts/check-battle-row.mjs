@@ -133,7 +133,7 @@ if (!sourceOnly) {
       owner.conditionIds = owner.conditionIds.filter((id) => id !== 53);
       owned.restore(snapshot);
       assert.equal(owned.activeParty.find((member) => member.id === owner.id).row, row);
-      const before = owned.snapshot(), lease = owned.openBattle(content.encounterId);
+      const before = owned.snapshot(), lease = owned.openBattle(content.encounterId, content.rewardPolicy);
       const battle = new BattleGame(content, 1951, owned.battlePlayers(lease), owned.battleInventory(lease));
       battle.combatants.forEach((unit) => { unit.atb = 0; });
       const actor = battle.players.find((member) => member.id === owner.id); actor.atb = 100;

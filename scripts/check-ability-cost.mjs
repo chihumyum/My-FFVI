@@ -86,14 +86,15 @@ function setup(slots, { grow = false } = {}) {
   assert.equal(owner.abilities.owned.find((a) => a.abilityId === 31).skillLevel, 100);
   assert.equal(owner.abilities.owned.find((a) => a.abilityId === 40).skillLevel, 100);
   if (grow) {
-    const lease = state.openBattle(entryId), players = state.battlePlayers(lease), original = state.snapshot();
+    const lease = state.openBattle(entryId, published.encounters[entryId].rewardPolicy), players = state.battlePlayers(lease), original = state.snapshot();
     const actor = players.find((p) => p.id === owner.id), plan = published.gameState.characterGrowth[actor.id];
     const targetLevel = actor.level + 2;
     const amount = plan.experience.find((r) => r.level === targetLevel).totalExp - actor.exp;
     assert.ok(amount > 0);
     const progression = state.battleProgression(lease);
-    for (const player of players) Object.assign(player, progression(player, player.id === actor.id ? amount : 0, []));
-    const result = { players, gil: 0, consumedItems: [], awardedExperience: players.map((p) => ({ id: p.id, amount: p.id === actor.id ? amount : 0 })), observedAbilityIds: [] };
+    const magicPoints = published.encounters[entryId].rewardPolicy.magicPoints;
+    for (const player of players) Object.assign(player, progression(player, player.id === actor.id ? amount : 0, [], magicPoints));
+    const result = { players, gil: 0, magicPoints, consumedItems: [], awardedExperience: players.map((p) => ({ id: p.id, amount: p.id === actor.id ? amount : 0 })), observedAbilityIds: [] };
     const commit = state.prepareVictory(lease, result);
     assert.deepEqual(state.snapshot(), original); commit();
     const grown = state.snapshot().roster.find((p) => p.id === actor.id);
@@ -109,7 +110,7 @@ function setup(slots, { grow = false } = {}) {
     { mapId: 3, transportationId: 6, isSavePoint: null, beastFieldController: null, footAttributeType: null },
     published.gameState.fieldConditions.transportations);
   content.qualificationContext = { ...content.qualificationContext, invalidContentIds: exclusions.invalidContentIds };
-  const lease = restored.openBattle(entryId), inventory = restored.battleInventory(lease);
+  const lease = restored.openBattle(entryId, content.rewardPolicy), inventory = restored.battleInventory(lease);
   const battle = new BattleGame(content, 0x681, restored.battlePlayers(lease), inventory, restored.battleProgression(lease));
   const actor = battle.players.find((p) => p.id === owner.id);
   actor.atb = 100; for (const enemy of battle.enemies) enemy.atb = 0;

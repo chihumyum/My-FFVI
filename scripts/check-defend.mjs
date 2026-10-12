@@ -97,7 +97,7 @@ if (!sourceOnly) {
   content.qualificationContext = { ...content.qualificationContext, invalidContentIds: exclusions.invalidContentIds };
   for (const player of content.players) {
     const owned = new GameState(published.gameState, published.common.players, published.contentHash, content.conditions);
-    const before = owned.snapshot(), lease = owned.openBattle(content.encounterId);
+    const before = owned.snapshot(), lease = owned.openBattle(content.encounterId, content.rewardPolicy);
     const battle = new BattleGame(content, 1741, owned.battlePlayers(lease), owned.battleInventory(lease));
     battle.combatants.forEach((unit) => { unit.atb = 0; });
     const actor = battle.players.find((p) => p.id === player.id), resources = [actor.hp, actor.mp]; actor.atb = 100;

@@ -19,6 +19,7 @@
     "walk-encounters:check": "npm run build && node scripts/check-walk-encounters.mjs",
     "battle-formations:check": "npm run build && node scripts/check-battle-formations.mjs",
     "battle-escape:check": "npm run build && node scripts/check-battle-escape.mjs && node scripts/check-battle-escape-ui.mjs",
+    "battle-magic-points:check": "npm run battle:build && node scripts/check-battle-result-native.mjs && node scripts/check-battle-magic-points.mjs && node scripts/check-battle-magic-points-ui.mjs",
     "events:check": "npm run build && node scripts/check-events.mjs",
     "maps:check": "npm run build && node scripts/check-map-groups.mjs",
     "world:build": "npm run build && node scripts/build-world.mjs",

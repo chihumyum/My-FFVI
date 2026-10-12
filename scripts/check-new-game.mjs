@@ -300,7 +300,7 @@ check("published source initializer creates shared ownership without checkpoint 
   const fresh = GameState.createNewGame(published.gameState, published.common.players,
     published.contentHash, published.common.conditions);
   const saved = fresh.snapshot();
-  assert.equal(saved.formatVersion, 11);
+  assert.equal(saved.formatVersion, 12);
   assert.deepEqual(saved.equipmentStock, plan.owned.equipmentStock);
   assert.deepEqual(saved.roster.map((member) => member.conditionIds), [[], [], []]);
   assert.deepEqual(saved.roster.map((member) => member.sourceId), [1, 31, 32]);

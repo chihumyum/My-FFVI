@@ -125,7 +125,7 @@ if (!sourceOnly) {
   const restored = GameSession.restore(JSON.parse(JSON.stringify(saved)), field, published, undefined, controlledAudioRuntime());
   assert.deepEqual(restored.checkpoint(), saved);
   assert.deepEqual(restored.players.map(({ id, row }) => ({ id, row })), changedRows);
-  const lease = restored.state.openBattle(3);
+  const lease = restored.state.openBattle(3, published.encounters[3].rewardPolicy);
   assert.deepEqual(restored.state.battlePlayers(lease).map(({ id, row }) => ({ id, row })), changedRows);
   restored.state.cancelBattle(lease);
   report.stages.push({ name: "same-owner-menu-checkpoint-and-next-lease", rows: changedRows,

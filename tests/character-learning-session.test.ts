@@ -12,7 +12,7 @@ const createState = (f: ReturnType<typeof characterLearningSessionFixture>) =>
   GameState.createNewGame(f.battle.gameState, f.battle.common.players, f.battle.contentHash, f.battle.common.conditions);
 function battle(f: ReturnType<typeof characterLearningSessionFixture>, state: GameState) {
   const content = encounterContent(f.battle, 1000)!;
-  const lease = state.openBattle(content.encounterId);
+  const lease = state.openBattle(content.encounterId, content.rewardPolicy);
   return { lease, game: new BattleGame(content, 17, state.battlePlayers(lease), state.battleInventory(lease),
     state.battleProgression(lease, content.experience)) };
 }
@@ -82,7 +82,7 @@ test("one source state settles learning, projects the menu, restores and admits 
   assert.deepEqual(state.snapshot(), before, "preview and prepare publish nothing");
   publish();
   const saved = JSON.parse(JSON.stringify(state.snapshot())) as ReturnType<GameState["snapshot"]>;
-  assert.equal(saved.formatVersion, 11);
+  assert.equal(saved.formatVersion, 12);
   assert.deepEqual(saved.nativeState!.ownedMagic, [742]);
   assert.deepEqual(saved.learnedAbilityIds, before.learnedAbilityIds, "initial history is a separate source list");
   assert.equal(menu(f, state).abilities!.find((a) => a.id === 142)!.skillLevel, 100);
@@ -112,7 +112,7 @@ test("learning save replay rejects forged global magic, receipts, skill and init
     (s) => { s.roster[0]!.growth!.observedLearning = []; },
     (s) => { s.roster[0]!.abilities!.owned.find((a) => a.abilityId === 142)!.skillLevel = 0; },
     (s) => { s.learnedAbilityIds.push(142); },
-    (s) => { s.formatVersion = 9 as 11; },
+    (s) => { s.formatVersion = 9 as 12; },
   ];
   for (const change of changes) {
     const bad = structuredClone(saved); change(bad);

@@ -18,6 +18,7 @@ import type { ObservedLearningCatalog } from "./character-learning.js";
 import { parseBattleFormationPlan, selectBattleFormation,
   type BattleFormationChoice, type BattleFormationPlan } from "./battle-formations.js";
 import { parseBattleEscapePolicy, type FrameworkBattleEscapePolicy } from "./battle-escape.js";
+import { parseBattleRewardPolicy, type BattleRewardPolicy } from "./battle-result.js";
 
 export type BattleQualificationContext = Omit<BattleAbilityContext, "conditionIds" | "partySize"> & {
   /** Source mode enforces qualification. The explicit development mode keeps
@@ -49,6 +50,8 @@ export type BattleContent = {
   formationChoice?: BattleFormationChoice;
   /** Enabled only for explicitly authored ordinary-field development battles. */
   escapePolicy?: FrameworkBattleEscapePolicy;
+  /** Per-encounter source rewards, captured before opening owned battle state. */
+  rewardPolicy?: BattleRewardPolicy;
   atb: AtbRules;
   /** Defaults for this entry profile; live source speed slots and mode are session-owned. */
   timing: BattlePreferences;
@@ -98,6 +101,8 @@ export type CombatantDefinition = ParameterValues & {
   conditionResistances: Record<string, number>;
   /** Current owned state, independent of the development action whitelist. */
   ownedAbilities?: BattleAbilityMember;
+  /** Current owned learning counter; distinct from the MP resource. */
+  magicLearningValue?: number;
   appearance?: BattleAppearanceActor;
   /** Admission constraints travel with reusable templates, independently of
    * ownership. An empty action list never permits a static-menu fallback. */
@@ -142,6 +147,7 @@ export type BattleEncounter = Pick<
   formation: BattleContent["formation"] | null;
   formationPlan?: BattleFormationPlan;
   escapePolicy?: FrameworkBattleEscapePolicy;
+  rewardPolicy?: BattleRewardPolicy;
 };
 
 /** All reachable development branches, not a sample of the weighted pool. */
@@ -197,16 +203,20 @@ export function encounterContent(
   seed?: number,
 ): BattleContent | null {
   if (Object.hasOwn(catalog.common, "escapePolicy")) throw new Error("Escape policy must belong to an encounter");
+  if (Object.hasOwn(catalog.common, "rewardPolicy")) throw new Error("Reward policy must belong to an encounter");
   const encounter = catalog.encounters[String(id)];
   if (!encounter) return null;
   if (encounter.encounterId !== id) throw new Error("Inconsistent battle encounter identity");
   const options = encounterFormationOptions(encounter);
-  const { formationPlan, escapePolicy, ...definition } = encounter;
+  const { formationPlan, escapePolicy, rewardPolicy, ...definition } = encounter;
   const escape = escapePolicy === undefined ? {} : { escapePolicy: parseBattleEscapePolicy(escapePolicy) };
+  if (rewardPolicy === undefined && catalog.gameState.characterInitializations)
+    throw new Error("Source encounter lacks battle reward policy");
+  const rewards = rewardPolicy === undefined ? {} : { rewardPolicy: parseBattleRewardPolicy(rewardPolicy) };
   if (!formationPlan)
-    return { ...catalog.common, ...definition, ...escape, formation: options[0]!, contentHash: catalog.contentHash };
+    return { ...catalog.common, ...definition, ...escape, ...rewards, formation: options[0]!, contentHash: catalog.contentHash };
   const choice = selectBattleFormation(formationPlan, seed);
-  return { ...catalog.common, ...definition, ...escape, formation: choice.formation, formationChoice: choice,
+  return { ...catalog.common, ...definition, ...escape, ...rewards, formation: choice.formation, formationChoice: choice,
     contentHash: catalog.contentHash };
 }
 export type AbilityDefinition = {

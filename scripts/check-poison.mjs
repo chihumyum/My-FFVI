@@ -229,7 +229,7 @@ cases.push({
   after: restored.snapshot(),
 });
 
-const lease = owned.openBattle(3);
+const lease = owned.openBattle(3, catalog.encounters[3].rewardPolicy);
 const itemBattle = new BattleGame(
   encounterContent(catalog, 3),
   71,

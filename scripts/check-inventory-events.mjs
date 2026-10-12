@@ -367,7 +367,7 @@ for (const { site, raw, op, content } of equipmentSites) {
     Object.keys(catalog.encounters).sort((a, b) => +a - +b)[0],
   );
   assert.ok(Number.isInteger(encounterId));
-  const lease = restored.state.openBattle(encounterId);
+  const lease = restored.state.openBattle(encounterId, catalog.encounters[encounterId].rewardPolicy);
   const borrowed = restored.state.battlePlayers(lease);
   assert.deepEqual(borrowed, game.players);
   assert.throws(

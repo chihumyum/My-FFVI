@@ -176,7 +176,7 @@ if (!sourceOnly) {
   const state = new GameState(published.gameState, published.common.players, published.contentHash, published.common.conditions);
   const before = state.snapshot(), entry = Number(Object.keys(published.encounters)[0]);
   assert.ok(before.roster.every((p) => !p.abilities.owned.some((a) => [65, 71, 79, 80].includes(a.abilityId) && a.skillLevel === 100)));
-  const lease = state.openBattle(entry), units = state.battlePlayers(lease), inventory = state.battleInventory(lease);
+  const lease = state.openBattle(entry, published.encounters[entry].rewardPolicy), units = state.battlePlayers(lease), inventory = state.battleInventory(lease);
   for (const ids of [[], [21], [25], [10, 21], [10, 25]]) {
     const content = structuredClone(encounterContent(published, entry)), candidates = structuredClone(units);
     content.initialAtb.player = [0, 0];

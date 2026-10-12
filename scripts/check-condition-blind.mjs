@@ -169,7 +169,7 @@ if (!sourceOnly) {
   assert.deepEqual(state.snapshot().roster[0].conditionIds, initial.roster[0].conditionIds);
   assert.equal(state.snapshot().items.find((i) => i.id === contentId).count, 1);
   assert.equal(state.useMenuItem(contentId, target.id), false); report.hostProbes.push('Eye Drops clears status-only change and consumes once');
-  const entry = Number(Object.keys(published.encounters)[0]), lease = restored.openBattle(entry);
+  const entry = Number(Object.keys(published.encounters)[0]), lease = restored.openBattle(entry, published.encounters[entry].rewardPolicy);
   const units = restored.battlePlayers(lease), inventory = restored.battleInventory(lease);
   assert.ok(units[0].conditionIds.includes(9));
   const battle = new BattleGame(encounterContent(published, entry), 0x269, units, inventory, restored.battleProgression(lease));

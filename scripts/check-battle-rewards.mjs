@@ -119,7 +119,9 @@ if (!sourceOnly) {
   const make = () => new GameState(published.gameState, published.common.players, published.contentHash, published.common.conditions);
   const result = (owned, lease, dropGrants, consumedItems = []) => {
     const players = owned.battlePlayers(lease);
-    return { players, gil: 0, consumedItems, dropGrants,
+    const magicPoints = published.encounters[lease.encounterId].rewardPolicy.magicPoints;
+    assert.equal(magicPoints, 0, "Drop-only ownership probes use the real zero-MagicPoint source party");
+    return { players, gil: 0, magicPoints, consumedItems, dropGrants,
       awardedExperience: players.map((player) => ({ id: player.id, amount: 0 })), observedAbilityIds: [] };
   };
   // These are controlled owner receipts: every reward identity comes from an
@@ -137,7 +139,7 @@ if (!sourceOnly) {
       const existing = stock.find((entry) => entry.id === identity.id);
       if (existing) existing.count = near; else stock.push({ id: identity.id, count: near });
       stock.sort((a, b) => a.id - b.id); owned.restore(before);
-      const lease = owned.openBattle(3), finish = owned.prepareVictory(lease, result(owned, lease, plan.grants));
+      const lease = owned.openBattle(3, published.encounters[3].rewardPolicy), finish = owned.prepareVictory(lease, result(owned, lease, plan.grants));
       assert.deepEqual(owned.snapshot(), before, "Preparation must not publish");
       finish(); assert.throws(finish, /Stale/);
       const after = owned.snapshot(), received = identity.kind === "item" ? after.items : after.equipmentStock;
@@ -153,7 +155,7 @@ if (!sourceOnly) {
   // one must finish at MAX_ITEM rather than MAX_ITEM-1.
   const owner = make(), full = owner.snapshot(), id = guard.slots[0].contentId, limit = published.gameState.limits.item;
   full.items = full.items.filter((entry) => entry.id !== id); full.items.push({ id, count: limit }); full.items.sort((a, b) => a.id - b.id);
-  owner.restore(full); const lease = owner.openBattle(3), grant = project(compiled.catalog, [1], [0, 0]).plan.grants;
+  owner.restore(full); const lease = owner.openBattle(3, published.encounters[3].rewardPolicy), grant = project(compiled.catalog, [1], [0, 0]).plan.grants;
   const payload = result(owner, lease, grant, [{ id, count: 1 }]);
   for (const bad of [
     [...grant, { kind: "grant-item", id: 2147483647, count: 1 }],
@@ -168,7 +170,7 @@ if (!sourceOnly) {
   assert.equal(owner.snapshot().items.find((entry) => entry.id === id).count, limit);
   assert.throws(finish, /Stale/);
   receiptProbes.push({ kind: "consume-before-drop", id, limit, rejectedCandidates: 4 });
-  const staleOwner = make(), staleBefore = staleOwner.snapshot(), staleLease = staleOwner.openBattle(3);
+  const staleOwner = make(), staleBefore = staleOwner.snapshot(), staleLease = staleOwner.openBattle(3, published.encounters[3].rewardPolicy);
   const stale = staleOwner.prepareVictory(staleLease, result(staleOwner, staleLease, grant));
   staleOwner.cancelBattle(staleLease); assert.throws(stale, /Stale/); assert.deepEqual(staleOwner.snapshot(), staleBefore);
   receiptProbes.push({ kind: "cancelled-lease-does-not-publish" });

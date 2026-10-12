@@ -9,6 +9,8 @@ import type {
 } from "./inventory-event.js";
 import { projectEquipmentOwnership } from "./inventory-ownership.js";
 import type { BattleDropGrant } from "./battle-rewards.js";
+import { MAX_MAGIC_LEARNING_VALUE, parseBattleRewardPolicy, projectMagicLearningValue,
+  type BattleRewardPolicy } from "./battle-result.js";
 import { projectShopTrade, shopBuyOptions, shopSellOptions, validateShopCatalog,
   type ShopCatalog, type ShopInventoryRead, type ShopTradeRequest } from "./shop.js";
 import {
@@ -150,6 +152,8 @@ export type OwnedCharacter = RosterMember & {
   mp: number;
   maxHp: number;
   maxMp: number;
+  /** Source per-character reserve; independent of ability proficiency and MP. */
+  magicLearningValue: number;
   conditionIds: number[];
   /** Null only in logic fixtures that have no source initialization provider. */
   abilities: OwnedCharacterAbilities | null;
@@ -157,7 +161,7 @@ export type OwnedCharacter = RosterMember & {
   growth: CharacterGrowthProgress | null;
 };
 export type GameStateSnapshot = {
-  formatVersion: 11;
+  formatVersion: 12;
   kind: "owned-game-state";
   catalogHash: string;
   initialization: "development-checkpoint" | "source-new-game";
@@ -176,9 +180,14 @@ export type GameStateSnapshot = {
    * as won encounters or as a source observation-learning result. */
   completedBattles: { serial: number; encounterId: number; outcome: "victory" | "escaped" }[];
 };
-/** Version 10 could only settle victories. No other historical format is
- * implicitly upgraded or supplied with missing fields. */
-export type LegacyGameStateSnapshotV10 = Omit<GameStateSnapshot, "formatVersion" | "completedBattles"> & {
+/** The two supported historical formats had no admitted magic-point rewards;
+ * version 10 additionally could only settle victories. */
+type LegacyOwnedCharacter = Omit<OwnedCharacter, "magicLearningValue">;
+export type LegacyGameStateSnapshotV11 = Omit<GameStateSnapshot, "formatVersion" | "roster"> & {
+  formatVersion: 11;
+  roster: LegacyOwnedCharacter[];
+};
+export type LegacyGameStateSnapshotV10 = Omit<LegacyGameStateSnapshotV11, "formatVersion" | "completedBattles"> & {
   formatVersion: 10;
   completedBattles: { serial: number; encounterId: number }[];
 };
@@ -189,6 +198,8 @@ export type BattleLease = {
 export type BattleEscapeResult = { players: Combatant[]; consumedItems: ItemStack[] };
 export type BattleVictoryResult = BattleEscapeResult & {
   gil: number;
+  /** Exactly the frozen encounter policy, before per-character eligibility/cap. */
+  magicPoints?: number;
   awardedExperience?: { id: string; amount: number }[];
   observedAbilityIds?: number[];
   dropGrants?: BattleDropGrant[];
@@ -199,6 +210,7 @@ export type PreparedBattleReturn = (() => void) & {
 };
 
 const ownedSnapshotFields = "formatVersion,kind,catalogHash,initialization,nativeState,roster,party,gil,totalGil,items,equipmentStock,releasedJobIds,learnedAbilityIds,characterNames,completedBattles";
+const legacyOwnedMemberFields = "id,sourceId,name,enabled,level,exp,hp,mp,maxHp,maxMp,conditionIds,equipment,ownedId,jobId,additionalLevel,magicStoneId,ownedJobs,abilities,growth";
 
 function integer(value: number, max: number, min = 0): number {
   if (!Number.isSafeInteger(value) || value < min || value > max)
@@ -228,6 +240,7 @@ export class GameState {
     players: Combatant[];
     items: ItemStack[];
     qualification: BattleEntryInventory | null;
+    rewardPolicy: Readonly<BattleRewardPolicy>;
   } | null = null;
   private revision = 0;
   private transportationPublication = false;
@@ -358,7 +371,7 @@ export class GameState {
       }
     }
     this.data = {
-      formatVersion: 11,
+      formatVersion: 12,
       kind: "owned-game-state",
       catalogHash,
       initialization: fresh ? "source-new-game" : "development-checkpoint",
@@ -379,6 +392,7 @@ export class GameState {
         abilities: null,
         equipment: [...(content.equipment[p.id] ?? [])],
         ...structuredClone(initializedMembers.get(p.id) ?? {}),
+        magicLearningValue: 0,
         growth: content.characterGrowth?.[p.id] ? initialCharacterGrowth() : null,
       })),
       party: structuredClone(content.initialParty),
@@ -396,6 +410,7 @@ export class GameState {
       Object.assign(this.data, structuredClone(fresh.owned), {
         roster: fresh.owned.roster.map((member) => ({
           ...structuredClone(member),
+          magicLearningValue: 0,
           growth: content.characterGrowth?.[member.id] ? initialCharacterGrowth() : null,
         })),
       });
@@ -451,7 +466,7 @@ export class GameState {
     keys(data, ownedSnapshotFields);
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== 11 ||
+      data.formatVersion !== 12 ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -559,8 +574,12 @@ export class GameState {
     const limits = this.content.limits;
     keys(
       p,
-      "id,sourceId,name,enabled,level,exp,hp,mp,maxHp,maxMp,conditionIds,equipment,ownedId,jobId,additionalLevel,magicStoneId,ownedJobs,abilities,growth",
+      legacyOwnedMemberFields + ",magicLearningValue",
     );
+    // This is current owned state, like HP and Gil, not a second progression
+    // ledger or a claim that a serialized save proves its historical battles.
+    integer(p.magicLearningValue, MAX_MAGIC_LEARNING_VALUE);
+    if (Object.is(p.magicLearningValue, -0)) throw new Error("Invalid owned magic learning value");
     const definition = this.definitions.get(p.id);
     const template = this.content.characterInitializations?.[p.id];
     if (
@@ -683,18 +702,25 @@ export class GameState {
     return structuredClone(this.data.nativeState);
   }
   /** A shared-state snapshot is not a complete field/battle save game. */
-  restore(snapshot: GameStateSnapshot | LegacyGameStateSnapshotV10): void {
+  restore(snapshot: GameStateSnapshot | LegacyGameStateSnapshotV10 | LegacyGameStateSnapshotV11): void {
     this.requireIdle();
     const input = structuredClone(snapshot);
     let next: GameStateSnapshot;
-    if (input.formatVersion === 10) {
-      // Check the complete historical shape before assigning its one possible
-      // outcome. All unchanged fields then pass the current content validator.
+    if (input.formatVersion === 10 || input.formatVersion === 11) {
+      // Both historical compilers rejected positive GetValue. Check their
+      // exact old shape before supplying the proven initial reserve; never
+      // recompute it from battle receipts, or rewrite their content identity.
       keys(input, ownedSnapshotFields);
+      if (!Array.isArray(input.roster)) throw new Error("Invalid legacy owned roster");
+      for (const member of input.roster) keys(member, legacyOwnedMemberFields);
       if (!Array.isArray(input.completedBattles)) throw new Error("Invalid legacy battle receipts");
-      for (const receipt of input.completedBattles) keys(receipt, "serial,encounterId");
-      next = { ...input, formatVersion: 11,
-        completedBattles: input.completedBattles.map((receipt) => ({ ...receipt, outcome: "victory" })) };
+      for (const receipt of input.completedBattles)
+        keys(receipt, input.formatVersion === 10 ? "serial,encounterId" : "serial,encounterId,outcome");
+      next = { ...input, formatVersion: 12,
+        roster: input.roster.map((member) => ({ ...member, magicLearningValue: 0 })),
+        completedBattles: input.formatVersion === 10
+          ? input.completedBattles.map((receipt) => ({ ...receipt, outcome: "victory" }))
+          : input.completedBattles };
     } else next = input;
     this.validate(next);
     this.data = next;
@@ -960,7 +986,7 @@ export class GameState {
           if (initialized.nameBinding)
             next.characterNames[initialized.nameBinding.key] = initialized.nameBinding.value;
           candidateRosterSize++;
-          return { ...initialized.member,
+          return { ...initialized.member, magicLearningValue: 0,
             growth: this.content.characterGrowth?.[id] ? initialCharacterGrowth() : null };
         },
         projectEquipment: (member) => {
@@ -1575,10 +1601,14 @@ export class GameState {
     this.data = next;
     this.revision++;
   }
-  openBattle(encounterId: number): BattleLease {
+  openBattle(encounterId: number, rewardPolicy?: BattleRewardPolicy): BattleLease {
     this.requireIdle();
     if (this.battlePartyBlocker) throw new Error(this.battlePartyBlocker);
     integer(encounterId, 0x7fffffff, 1);
+    if (rewardPolicy === undefined && this.content.characterInitializations)
+      throw new Error("Source battle requires an explicit reward policy");
+    const policy = Object.freeze(parseBattleRewardPolicy(rewardPolicy === undefined
+      ? { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 } : rewardPolicy));
     const lease = Object.freeze({
       serial: this.data.completedBattles.length,
       encounterId,
@@ -1599,12 +1629,17 @@ export class GameState {
       players,
       items: structuredClone(this.data.items),
       qualification,
+      rewardPolicy: policy,
     };
     return lease;
   }
   battlePlayers(lease: BattleLease): Combatant[] {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     return structuredClone(this.active.players);
+  }
+  battleRewardPolicy(lease: BattleLease): BattleRewardPolicy {
+    if (this.active?.lease !== lease) throw new Error("Stale battle lease");
+    return { ...this.active.rewardPolicy };
   }
   battleInventory(lease: BattleLease): BattleInventoryWithQualification {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
@@ -1618,15 +1653,19 @@ export class GameState {
   battleProgression(
     lease: BattleLease,
     fixtureExperience: BattleContent["experience"] = [],
-  ): ((player: Combatant, amount: number, observedAbilityIds: readonly number[]) => BattleStatProjection & { level: number; exp: number }) | undefined {
+  ): ((player: Combatant, amount: number, observedAbilityIds: readonly number[], magicPoints?: number) =>
+    BattleStatProjection & { level: number; exp: number; magicLearningValue: number }) | undefined {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     if (!this.content.equipmentSystem) return undefined;
-    return (player, amount, observedAbilityIds) => {
+    return (player, amount, observedAbilityIds, magicPoints = 0) => {
       if (this.active?.lease !== lease) throw new Error("Stale battle lease");
       const owned = this.data.roster.find((p) => p.id === player.id);
       if (!owned || owned.sourceId !== player.sourceId)
         throw new Error("Battle roster identity changed");
       integer(amount, this.content.limits.exp);
+      if (magicPoints !== this.active.rewardPolicy.magicPoints)
+        throw new Error("Battle magic points disagree with leased reward policy");
+      const magicLearningValue = projectMagicLearningValue(owned.magicLearningValue, magicPoints, player.hp > 0);
       if (owned.growth) {
         // IsGetExp excludes condition types 5/3/608. Only death (5) is
         // currently admitted, with HP/condition consistency checked by core.
@@ -1634,12 +1673,12 @@ export class GameState {
           if (amount !== 0 || !owned.abilities) throw new Error("Invalid nonrecipient experience award");
           const next = this.projectObservedLearning(owned, observedAbilityIds, lease,
             this.active.players.findIndex((p) => p.id === player.id));
-          return { ...this.projectOwnedParameters(next), level: next.level, exp: next.exp };
+          return { ...this.projectOwnedParameters(next), level: next.level, exp: next.exp, magicLearningValue };
         }
         const next = this.projectGrowth({ ...owned, hp: player.hp, mp: player.mp,
           conditionIds: [...player.conditionIds] }, { kind: "add-experience", amount, context: "battle", observedAbilityIds: [...observedAbilityIds],
           learningReceipt: { battleSerial: lease.serial, participantIndex: this.active.players.findIndex((p) => p.id === player.id) } });
-        return { ...this.projectOwnedParameters(next), level: next.level, exp: next.exp };
+        return { ...this.projectOwnedParameters(next), level: next.level, exp: next.exp, magicLearningValue };
       }
       // Only synthetic profiles without source initialization use this legacy
       // numerical fixture curve. Source owners require a recovered growth plan.
@@ -1648,7 +1687,7 @@ export class GameState {
       if (!fixtureExperience.length) throw new Error("Missing fixture experience curve");
       const exp = Math.min(this.content.limits.exp, owned.exp + amount);
       const level = Math.max(owned.level, fixtureExperience.filter((r) => r.exp <= exp).at(-1)?.level ?? owned.level);
-      return { ...this.projectOwnedParameters({ ...owned, level }), level, exp };
+      return { ...this.projectOwnedParameters({ ...owned, level }), level, exp, magicLearningValue };
     };
   }
   cancelBattle(lease: BattleLease): void {
@@ -1676,6 +1715,10 @@ export class GameState {
     let next = this.snapshot();
     const revision = this.revision;
     if (victory) integer(victory.gil, 0x7fffffff);
+    const magicPoints = victory && victory.magicPoints !== undefined ? victory.magicPoints : 0;
+    if (victory && (magicPoints !== this.active.rewardPolicy.magicPoints ||
+        (victory.magicPoints === undefined && this.content.characterInitializations)))
+      throw new Error("Battle magic points disagree with leased reward policy");
     validateItemStacks(
       result.consumedItems,
       this.content.items,
@@ -1730,6 +1773,16 @@ export class GameState {
           cell.id !== player.id || cell.row !== entry.row ||
           (player.row !== "front" && player.row !== "back"))
         throw new Error("Battle party row identity changed");
+      if (entry.magicLearningValue !== target.magicLearningValue)
+        throw new Error("Battle magic learning owner changed");
+      const magicLearningValue = victory
+        ? projectMagicLearningValue(target.magicLearningValue, magicPoints, player.hp > 0)
+        : target.magicLearningValue;
+      const providedMagicLearningValue = player.magicLearningValue === undefined &&
+        !this.content.characterInitializations && magicPoints === 0 && target.magicLearningValue === 0
+        ? 0 : player.magicLearningValue;
+      if (providedMagicLearningValue !== magicLearningValue)
+        throw new Error("Battle magic learning projection mismatch");
       // Function17 writes the owned Corps row. The Web battle keeps a leased
       // candidate until the whole battle/field-return transaction can commit.
       cell.row = player.row;
@@ -1752,7 +1805,7 @@ export class GameState {
         if (!Array.isArray(victory.observedAbilityIds)) throw new Error("Missing battle ability observations");
         distinct(victory.observedAbilityIds);
         victory.observedAbilityIds.forEach((id) => integer(id, 0x7fffffff, 1));
-        const resources = { ...target, hp: player.hp, mp: player.mp, conditionIds: [...player.conditionIds] };
+        const resources = { ...target, hp: player.hp, mp: player.mp, conditionIds: [...player.conditionIds], magicLearningValue };
         let projected: OwnedCharacter;
         if (player.hp === 0) {
           if (award.amount !== 0 || !target.abilities) throw new Error("Invalid nonrecipient experience award");
@@ -1775,6 +1828,7 @@ export class GameState {
         level: player.level,
         additionalLevel: target.additionalLevel + player.level - target.level,
         exp: player.exp,
+        magicLearningValue,
         conditionIds: [...player.conditionIds],
       });
     }

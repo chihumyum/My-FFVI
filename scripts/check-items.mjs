@@ -139,7 +139,7 @@ for (const item of Object.values(catalog.gameState.items).sort(
       const run = (parts) => {
         const state = setup(item.id),
           entry = state.snapshot(),
-          lease = state.openBattle(3);
+          lease = state.openBattle(3, catalog.encounters[3].rewardPolicy);
         const battle = new BattleGame(
           encounterContent(catalog, 3),
           42,

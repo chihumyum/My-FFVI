@@ -18,6 +18,8 @@ import { tableInteger as int } from "./table.js";
 import { createBattleFormationPlan, type BattleFormationPlan,
   type FrameworkBattleFormationPolicy } from "../core/battle-formations.js";
 import { parseBattleEscapePolicy, type FrameworkBattleEscapePolicy } from "../core/battle-escape.js";
+import { compileBattleRewardPolicy } from "./battle-result.js";
+import type { BattleRewardPolicy } from "../core/battle-result.js";
 
 type Reader = {
   row(table: string, id: string | number): BattleRow;
@@ -86,6 +88,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     const enemies: CombatantDefinition[] = [];
     let formationPlan: BattleFormationPlan | null = null;
     let escapePolicy: FrameworkBattleEscapePolicy | undefined;
+    let rewardPolicy: BattleRewardPolicy | undefined;
     try {
       const m = encounter.metadata;
       if (!encounter.source || encounter.source.rowId !== String(partyId) || !m)
@@ -124,12 +127,14 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         else add("development-omission", "battle-flags", omission.reason,
           { dependency: { table: "battle_flag_group.csv", id: m.battleFlagGroupId } });
       }
-      if (m.getAp !== 0 || m.getValue !== 0)
-        block("party-rewards", "Party AP or special reward provider is not implemented", "get_ap/get_value");
+      try {
+        rewardPolicy = compileBattleRewardPolicy({ getAp: m.getAp, getValue: m.getValue,
+          battleFlags: m.battleFlags.map(flag => int(flag.values.battle_flag_id)) });
+      } catch (error) { block("party-rewards", message(error), "get_ap/get_value/battle_flag_group_id"); }
       if (![0, 2].includes(m.notEscape)) block("escape", "Unresolved source escape mode", "not_escape");
       if (input.development.escape !== undefined) {
         const authored = parseBattleEscapePolicy(input.development.escape);
-        if (m.notEscape === 0 && m.getAp === 0 && m.getValue === 0) {
+        if (m.notEscape === 0 && m.getAp === 0) {
           // NoARBattle (14) is the only pre-existing bounded flag omission.
           // In particular CertaintyEscape and other overrides require their
           // own provider; an omission list cannot silently authorize them.
@@ -212,8 +217,8 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     } catch (error) { block("encounter-provider", message(error)); }
     const blocked = diagnostics.slice(start).some((d) => d.kind === "blocked") ||
       input.sourceDiagnostics.some((d) => d.partyId === partyId);
-    if (!blocked && formationPlan) encounters[partyId] = { encounterId: partyId, enemies,
-      background: encounter.background, formationPlan,
+    if (!blocked && formationPlan && rewardPolicy) encounters[partyId] = { encounterId: partyId, enemies,
+      background: encounter.background, formationPlan, rewardPolicy,
       ...(escapePolicy ? { escapePolicy } : {}),
       formation: formationPlan.kind === "development" ? null : formationPlan.pattern === 3 ? "opposed" : "normal" };
     entries.push({ partyId, status: blocked ? "blocked" : "compiled", enemyCount: encounter.enemies.length,

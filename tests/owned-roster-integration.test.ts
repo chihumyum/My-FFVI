@@ -75,7 +75,7 @@ test("owned menu actions and equipment work before a new owner's battle presenta
   const { state } = setup();
   state.fieldRoster.prepare(join).commit();
   assert.match(state.battlePartyBlocker!, /战斗动作/);
-  assert.throws(() => state.openBattle(1), /战斗动作/);
+  assert.throws(() => state.openBattle(1, { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 }), /战斗动作/);
   assert.deepEqual(state.menuItemTargets(10), ["joining"]);
   assert.equal(state.useMenuItem(10, "joining"), true);
   assert.equal(state.snapshot().roster[1]!.hp, 150);
@@ -116,13 +116,13 @@ test("source growth restore rejects forged additions, levels and learned state a
 
 test("battle projection and victory share source growth, learning and a single durable publication", () => {
   const { state } = setup(), before = state.snapshot();
-  const lease = state.openBattle(1), player = state.battlePlayers(lease)[0]!;
+  const lease = state.openBattle(1, { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 }), player = state.battlePlayers(lease)[0]!;
   Object.assign(player, state.battleProgression(lease)!(player, 100, []));
   assert.equal(player.level, 4);
   assert.equal(player.maxHp, 150);
   assert.deepEqual(state.snapshot(), before);
-  assert.throws(() => state.prepareVictory(lease, { players: [player], gil: 0, consumedItems: [] }), /experience award/);
-  const result = { players: [player], gil: 2, consumedItems: [], awardedExperience: [{ id: player.id, amount: 100 }], observedAbilityIds: [] };
+  assert.throws(() => state.prepareVictory(lease, { players: [player], gil: 0, magicPoints: 0, consumedItems: [] }), /experience award/);
+  const result = { players: [player], gil: 2, magicPoints: 0, consumedItems: [], awardedExperience: [{ id: player.id, amount: 100 }], observedAbilityIds: [] };
   const wrong = structuredClone(result);
   wrong.players[0]!.level++;
   assert.throws(() => state.prepareVictory(lease, wrong), /growth projection/);

@@ -68,7 +68,7 @@ for (const row of source.tables['ability.csv']) {
   conditions.validateReferences(entry.conditionDependencies.recovered);
   // Controlled arithmetic inputs exercise EVERY emitted plan against the actual
   // shared target projector. This does not put these actions on an owned menu.
-  const actor = { id: 'controlled-actor', side: 'player', level: 5, magic: 20,
+  const actor = { id: 'controlled-actor', side: 'player', row: 'front', level: 5, magic: 20,
     attack: 20, defense: 20, magicDefense: 20, evasion: 0, magicEvasion: 0,
     physical: { attack: 20, strength: 20, accuracy: 100, criticalRate: 0 },
     attackElements: [], elementResistances: {}, hp: 80, maxHp: 100,
@@ -80,7 +80,7 @@ for (const row of source.tables['ability.csv']) {
   } else if (effects[0]?.kind === 'recover-condition') {
     target.conditionIds = entry.conditionDependencies.recovered.filter((id) => conditionCatalog.behaviors.some((behavior) => behavior.id === id));
   }
-  if (effects[0]?.kind === 'defend') target.id = actor.id;
+  if (definition.plan.targeting.relation === 'self') target.id = actor.id;
   const before = structuredClone({ actor, target });
   const result = projectActionTarget(definition.plan, definition.power, actor, target, conditions,
     (min) => min, 1, definition.cost,
@@ -134,7 +134,7 @@ const make = () => {
     published.gameState.fieldConditions.transportations);
   assert.ok(exclusions.invalidContentIds);
   content.qualificationContext = { ...content.qualificationContext, invalidContentIds: exclusions.invalidContentIds };
-  const lease = state.openBattle(content.encounterId), ownerBefore = state.snapshot();
+  const lease = state.openBattle(content.encounterId, content.rewardPolicy), ownerBefore = state.snapshot();
   const battle = new BattleGame(content, 0x61, state.battlePlayers(lease), state.battleInventory(lease), state.battleProgression(lease));
   return { state, content, lease, battle, ownerBefore, ownedBefore };
 };

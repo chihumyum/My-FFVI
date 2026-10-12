@@ -74,6 +74,7 @@ import type {
 import { battleDefinitionBlocker } from "./battle-content.js";
 import { validateBattleFormationChoice } from "./battle-formations.js";
 import { parseBattleEscapePolicy, type FrameworkBattleEscapePolicy } from "./battle-escape.js";
+import { parseBattleRewardPolicy, projectMagicLearningValue, type BattleRewardPolicy } from "./battle-result.js";
 import { observeLearningAction, validateObservedLearningCatalog } from "./character-learning.js";
 
 export type Combatant = CombatantDefinition & {
@@ -108,6 +109,7 @@ export type BattleAction = {
 export type BattleReward = {
   exp: number;
   gil: number;
+  magicPoints: number;
   each: number;
   recipients: string[];
   levels: { id: string; from: number; to: number }[];
@@ -145,6 +147,7 @@ export class BattleGame {
   private slowStates = new Map<string, SlowState>();
   private collected = false;
   private readonly escapeRule: FrameworkBattleEscapePolicy | null;
+  private readonly rewardPolicy: Readonly<BattleRewardPolicy>;
   private escapeRequested = false;
   private currentPreferences: BattlePreferences;
   private clockInput = {
@@ -174,7 +177,8 @@ export class BattleGame {
       player: Combatant,
       amount: number,
       observedAbilityIds: readonly number[],
-    ) => BattleStatProjection & { level: number; exp: number },
+      magicPoints: number,
+    ) => BattleStatProjection & { level: number; exp: number; magicLearningValue?: number },
     initialPreferences?: BattlePreferences,
   ) {
     if (
@@ -189,6 +193,8 @@ export class BattleGame {
     if (content.formationChoice !== undefined)
       validateBattleFormationChoice(content.formationChoice, content.formation, seed);
     this.escapeRule = content.escapePolicy === undefined ? null : parseBattleEscapePolicy(content.escapePolicy);
+    this.rewardPolicy = Object.freeze(parseBattleRewardPolicy(content.rewardPolicy === undefined
+      ? { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 } : content.rewardPolicy));
     this.randomState = seed || 1;
     this.currentPreferences = parseBattlePreferences(content.timing);
     if (initialPreferences !== undefined)
@@ -238,6 +244,13 @@ export class BattleGame {
       new Set(this.combatants.map((c) => c.id)).size !== this.combatants.length
     )
       throw new Error("Duplicate battle identity");
+    if (this.rewardPolicy.magicPoints > 0) {
+      if (!this.projectProgression) throw new Error("Magic point rewards require an owned progression provider");
+      for (const player of this.players) {
+        if (player.magicLearningValue === undefined) throw new Error("Missing owned magic learning value");
+        projectMagicLearningValue(player.magicLearningValue, 0, false);
+      }
+    }
     this.validateInventoryQualification();
     if (this.inventoryQualification) for (const player of this.players) {
       const catalog = this.inventoryQualification.equipmentCatalog,
@@ -447,7 +460,7 @@ export class BattleGame {
     return projectBattleAbilities(catalog, actor.ownedAbilities, {
       conditionIds: context.conditionContext === "current" ? actor.conditionIds : null,
       battleType: context.battleType,
-      magicLearningValue: context.magicLearningValue,
+      magicLearningValue: actor.magicLearningValue ?? context.magicLearningValue,
       invalidContentIds: context.invalidContentIds,
       itemMenuAvailable: this.usesSourceQualification ? this.itemQualification(actorId).available : context.itemMenuAvailable,
       partySize: this.players.length,
@@ -1591,7 +1604,7 @@ export class BattleGame {
     for (const c of recipients) {
       const from = c.level;
       if (this.projectProgression) {
-        Object.assign(c, this.projectProgression(structuredClone(c), each, [...this.observedAbilityIds]));
+        Object.assign(c, this.progressionResult(c, each));
         c.hp = Math.min(c.hp, c.maxHp);
         c.mp = Math.min(c.mp, c.maxMp);
       } else {
@@ -1617,7 +1630,7 @@ export class BattleGame {
     // Native nonrecipients still run observation learning, independently of
     // StatusUp. The owned provider preserves their existing growth exactly.
     if (this.projectProgression) for (const c of players.filter((p) => p.hp === 0))
-      Object.assign(c, this.projectProgression(structuredClone(c), 0, [...this.observedAbilityIds]));
+      Object.assign(c, this.progressionResult(c, 0));
     const dropPlan = this.content.drops === null ? null : projectBattleDrops(this.content.drops,
       this.dropRegistrations, (min, max) => this.randomInt(min, max));
     for (const player of players)
@@ -1634,6 +1647,7 @@ export class BattleGame {
     this.reward = {
       exp,
       gil,
+      magicPoints: this.rewardPolicy.magicPoints,
       each,
       recipients: recipients.map((c) => c.id),
       levels,
@@ -1641,6 +1655,16 @@ export class BattleGame {
       dropPlan,
     };
     this.log(`战斗胜利！获得 ${exp} EXP / ${gil} Gil。`);
+  }
+  private progressionResult(player: Combatant, experience: number) {
+    const projected = this.projectProgression!(structuredClone(player), experience,
+      [...this.observedAbilityIds], this.rewardPolicy.magicPoints);
+    if (this.rewardPolicy.magicPoints > 0 || projected.magicLearningValue !== undefined) {
+      if (player.magicLearningValue === undefined || projected.magicLearningValue !==
+          projectMagicLearningValue(player.magicLearningValue, this.rewardPolicy.magicPoints, player.hp > 0))
+        throw new Error("Battle progression magic learning value mismatch");
+    }
+    return projected;
   }
   private clearBattleConditions() {
     for (const c of this.players)
@@ -1672,6 +1696,7 @@ export class BattleGame {
   previewVictory(): {
     players: Combatant[];
     gil: number;
+    magicPoints: number;
     consumedItems: ItemStack[];
     awardedExperience: { id: string; amount: number }[];
     observedAbilityIds: number[];
@@ -1685,6 +1710,7 @@ export class BattleGame {
         queued: false,
       })),
       gil: this.reward.gil,
+      magicPoints: this.reward.magicPoints,
       dropGrants: structuredClone(this.reward.dropPlan?.grants ?? []),
       observedAbilityIds: [...this.observedAbilityIds],
       awardedExperience: this.players.map((p) => ({ id: p.id,
@@ -1697,6 +1723,7 @@ export class BattleGame {
   takeVictory(): {
     players: Combatant[];
     gil: number;
+    magicPoints: number;
     consumedItems: ItemStack[];
     awardedExperience: { id: string; amount: number }[];
     observedAbilityIds: number[];

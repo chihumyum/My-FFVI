@@ -148,7 +148,8 @@ assert.deepEqual(owner.abilities, published.gameState.characterInitializations[o
 const restored = make(); restored.restore(JSON.parse(JSON.stringify(joined)));
 assert.deepEqual(restored.snapshot(), joined);
 assert.deepEqual(restored.partyPlayers(), state.partyPlayers());
-const lease = restored.openBattle(Number(Object.keys(published.encounters)[0]));
+const encounterId = Number(Object.keys(published.encounters)[0]);
+const lease = restored.openBattle(encounterId, published.encounters[encounterId].rewardPolicy);
 const players = restored.battlePlayers(lease), player = players.find((p) => p.sourceId === 2);
 assert.equal(player.hp, owner.hp);
 assert.equal(player.maxHp, owner.maxHp);

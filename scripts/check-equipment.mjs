@@ -108,7 +108,7 @@ const make = () =>
   );
 const owned = make(),
   initial = owned.snapshot();
-assert.equal(initial.formatVersion, 11);
+assert.equal(initial.formatVersion, 12);
 assert.deepEqual(initial.equipmentStock, [
   { id: 93, count: 5 },
   { id: 95, count: 1 },
@@ -182,7 +182,7 @@ const forged = structuredClone(transferred);
 forged.equipmentStock.find((s) => s.id === 104).count = 1;
 assert.throws(() => restored.restore(forged), /exceeds owned count/);
 assert.deepEqual(restored.snapshot(), transferred);
-const lease = owned.openBattle(3),
+const lease = owned.openBattle(3, catalog.encounters[3].rewardPolicy),
   beforeBattle = owned.snapshot();
 assert.throws(() => owned.changeEquipment("player:1", 1, 93), /reserved/);
 assert.deepEqual(owned.snapshot(), beforeBattle);
@@ -193,9 +193,10 @@ const targetLevel = grown.level + 2;
 const awarded = growthPlan.experience.find((row) => row.level === targetLevel).totalExp - grown.exp;
 assert.ok(awarded > 0);
 const progression = owned.battleProgression(lease);
-const growthProjection = progression(grown, awarded, []);
+const magicPoints = catalog.encounters[3].rewardPolicy.magicPoints;
+const growthProjection = progression(grown, awarded, [], magicPoints);
 Object.assign(grown, growthProjection);
-for (const player of battlePlayers.slice(1)) Object.assign(player, progression(player, 0, []));
+for (const player of battlePlayers.slice(1)) Object.assign(player, progression(player, 0, [], magicPoints));
 assert.equal(grown.level, targetLevel);
 const growthGroup = catalog.common.players[0].growthGroup;
 const increments = system.growth[growthGroup].filter(
@@ -214,6 +215,7 @@ assert.deepEqual(owned.snapshot(), beforeBattle, "growth projection must not mut
 const result = {
   players: battlePlayers,
   gil: 0,
+  magicPoints,
   consumedItems: [],
   awardedExperience: battlePlayers.map((player) => ({ id: player.id, amount: player.id === grown.id ? awarded : 0 })),
   observedAbilityIds: [],

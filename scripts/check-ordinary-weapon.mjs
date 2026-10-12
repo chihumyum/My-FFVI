@@ -175,7 +175,7 @@ if (!sourceOnly) {
         cells.find((cell) => cell.id === actor.id).row = actorRow;
         cells.find((cell) => cell.id === target.id).row = targetRow;
         owned.restore(input);
-        const before = owned.snapshot(), lease = owned.openBattle(content.encounterId);
+        const before = owned.snapshot(), lease = owned.openBattle(content.encounterId, content.rewardPolicy);
         const inventory = owned.battleInventory(lease), players = owned.battlePlayers(lease);
         assert.equal(inventory.qualification.members.find((member) => member.id === actor.id).equipment[arm - 1], item.id);
         const battle = new BattleGame(content, 1951, players, inventory);

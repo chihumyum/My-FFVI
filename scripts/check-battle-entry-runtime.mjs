@@ -50,7 +50,7 @@ const exclusions = projectBattleFieldState(content.battleEntry, { mapId: 3, tran
 assert.deepEqual(exclusions, { invalidContentIds: [16, 17, 23, 412, 1309], blockers: [] });
 content.qualificationContext = { ...content.qualificationContext, invalidContentIds: exclusions.invalidContentIds };
 const createState = () => new GameState(published.gameState, published.common.players, published.contentHash, content.conditions);
-const state = createState(), before = state.snapshot(), lease = state.openBattle(content.encounterId);
+const state = createState(), before = state.snapshot(), lease = state.openBattle(content.encounterId, content.rewardPolicy);
 const input = state.battleInventory(lease);
 assert.deepEqual(input.qualification.members.map((m) => [m.id, m.sourceId]), state.battlePlayers(lease).map((p) => [p.id, p.sourceId]));
 const battle = new BattleGame(content, 79, state.battlePlayers(lease), input);
@@ -74,7 +74,7 @@ assert.deepEqual(state.snapshot(), before);
 // One controlled ordinary consumable is introduced only to this isolated state.
 const probe = createState();
 probe.changeItems([{ id: 2, count: 1 }], "grant");
-const probeBefore = probe.snapshot(), probeLease = probe.openBattle(content.encounterId);
+const probeBefore = probe.snapshot(), probeLease = probe.openBattle(content.encounterId, content.rewardPolicy);
 const consuming = new BattleGame(content, 83, probe.battlePlayers(probeLease), probe.battleInventory(probeLease));
 consuming.combatants.forEach((unit) => { unit.atb = 0; });
 const user = consuming.players[0]; user.atb = 100;

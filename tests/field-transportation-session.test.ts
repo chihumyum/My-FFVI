@@ -108,7 +108,7 @@ test("session SetVehicle jointly writes complete source parking and flag while p
   assert.deepEqual(t.game.state.nativeState!.entrySeed, before.owned.nativeState!.entrySeed);
   t.game.advance(10); assert.equal(t.game.checkpointReady, true);
   const saved = JSON.parse(JSON.stringify(t.game.checkpoint())) as GameCheckpoint;
-  assert.equal(saved.owned.formatVersion, 11); assert.equal(saved.owned.nativeState!.kind, "source-native-state-v2");
+  assert.equal(saved.owned.formatVersion, 12); assert.equal(saved.owned.nativeState!.kind, "source-native-state-v2");
   const restored = t.restore(saved);
   assert.deepEqual(restored.checkpoint(), saved);
   t.run("park_upper", restored);

@@ -86,7 +86,7 @@ check("published shared owner is bound to the same source initialization and com
   assert.deepEqual(catalog.gameState.sourceNewGame, initialization.definition);
   assert.deepEqual(system.initialStock, plan.owned.equipmentStock);
   const fresh = make().snapshot();
-  assert.equal(fresh.formatVersion, 11);
+  assert.equal(fresh.formatVersion, 12);
   assert.deepEqual(fresh.equipmentStock, plan.owned.equipmentStock);
   assert.ok(fresh.roster.every((p) => p.conditionIds.length === 0), "Fresh source state does not borrow checkpoint conditions");
 });
@@ -159,7 +159,7 @@ check("missing all hand defaults rejects automatic hand conflict without publish
 });
 check("ordinary battle inventory uses the same material projection while owner stock keeps empty Count", () => {
   const owner = make(), before = owner.snapshot();
-  const lease = owner.openBattle(3);
+  const lease = owner.openBattle(3, catalog.encounters[3].rewardPolicy);
   try {
     const inventory = owner.battleInventory(lease);
     assert.ok(inventory.qualification);

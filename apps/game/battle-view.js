@@ -250,6 +250,7 @@ export class BattleView {
           ? "保留当前状态与已用掉的物品，不获得胜利奖励。"
           : r
           ? `${r.exp} EXP · ${r.gil} Gil\n存活队员各获得 ${r.each} EXP` +
+            (r.magicPoints > 0 ? `\n${r.magicPoints} 魔法学习点` : "") +
             (Array.isArray(r.drops) && r.drops.length ? "\n" + r.drops.map((drop) =>
               `${itemName({ name: battle.rewardItemName(drop.id) })} × ${drop.count}`).join(" · ") : "")
           : "重新挑战这场战斗。") +

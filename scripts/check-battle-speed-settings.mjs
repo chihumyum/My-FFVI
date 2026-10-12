@@ -23,7 +23,7 @@ assert.equal(catalog.common.timing.speedIndex, native.defaultIndex);
 const state = new GameState(catalog.gameState, catalog.common.players, catalog.contentHash, catalog.common.conditions);
 const encounter = Number(Object.keys(catalog.encounters)[0]);
 assert.ok(encounter);
-const before = state.snapshot(), lease = state.openBattle(encounter), inventory = state.battleInventory(lease);
+const before = state.snapshot(), lease = state.openBattle(encounter, catalog.encounters[encounter].rewardPolicy), inventory = state.battleInventory(lease);
 const units = state.battlePlayers(lease), progression = state.battleProgression(lease);
 const probes = [];
 for (let speedIndex = 0; speedIndex < 5; speedIndex++) {

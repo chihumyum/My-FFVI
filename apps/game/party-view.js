@@ -115,6 +115,8 @@ export class PartyView {
       const detail = node("section", undefined, "party-menu-character");
       detail.setAttribute("aria-label", `${character.name}的成长与能力`);
       detail.append(node("h4", character.name), node("p", `等级 ${character.level} · 经验 ${character.exp}`));
+      if (character.magicLearningValue != null)
+        detail.append(node("p", `魔法学习值 ${character.magicLearningValue} / 128`));
       detail.append(node("p", character.atMaxLevel ? "已达到等级上限。" : character.experienceToNextLevel === null
         ? "下一级经验尚未确定。" : `距离下一级还需 ${character.experienceToNextLevel} 经验。`));
       if (character.additional) {

@@ -95,10 +95,11 @@ owned.rosterLifecycle.initial = { [id]: { ownedId: member.ownedId, jobId: member
 const definitions = [owned.battleDefinitions.find((d) => d.sourceId === 8)];
 const binding = hash({ parent: published.contentHash, probe: "controlled-source8-observed-learning", owned });
 const make = () => GameState.createNewGame(owned, definitions, binding, published.common.conditions);
-const state = make(), initialSnapshot = state.snapshot(), lease = state.openBattle(1);
+const state = make(), initialSnapshot = state.snapshot(), lease = state.openBattle(1, published.encounters[1].rewardPolicy);
 const players = state.battlePlayers(lease), progression = state.battleProgression(lease, published.common.experience);
-Object.assign(players[0], progression(players[0], 0, [162,142,161]));
-const result = { players, gil: 0, consumedItems: [], dropGrants: [], observedAbilityIds: [162,142,161],
+const magicPoints = published.encounters[1].rewardPolicy.magicPoints;
+Object.assign(players[0], progression(players[0], 0, [162,142,161], magicPoints));
+const result = { players, gil: 0, magicPoints, consumedItems: [], dropGrants: [], observedAbilityIds: [162,142,161],
   awardedExperience: [{ id, amount: 0 }] };
 const commit = state.prepareVictory(lease, result);
 assert.deepEqual(state.snapshot(), initialSnapshot); commit();
@@ -133,7 +134,7 @@ const content = encounterContent(published, encounterId);
 // These field exclusions are explicit mechanism inputs. Actual map/transport
 // resolution remains the GameSession entry provider's responsibility.
 content.qualificationContext.invalidContentIds = [];
-const nextLease = restored.openBattle(encounterId);
+const nextLease = restored.openBattle(encounterId, content.rewardPolicy);
 const next = new BattleGame(content, 1234, restored.battlePlayers(nextLease), restored.battleInventory(nextLease),
   restored.battleProgression(nextLease, content.experience));
 const command = next.commandMenu(id).find((c) => c.id === 17);

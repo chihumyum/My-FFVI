@@ -25,6 +25,7 @@ function result(state: GameState, lease: ReturnType<GameState["openBattle"]>): B
 function legacy(snapshot: GameStateSnapshot): LegacyGameStateSnapshotV10 {
   assert.ok(snapshot.completedBattles.every((receipt) => receipt.outcome === "victory"));
   return { ...structuredClone(snapshot), formatVersion: 10,
+    roster: snapshot.roster.map(({ magicLearningValue: _, ...member }) => structuredClone(member)),
     completedBattles: snapshot.completedBattles.map(({ serial, encounterId }) => ({ serial, encounterId })) };
 }
 function sourceFixture() {
@@ -49,7 +50,7 @@ test("escape publishes spent items, resources, surviving conditions and rows onc
   field.puppetRoster.owned[1]!.conditionTypes.length = 0;
   publish.validate(); publish();
   const saved = state.snapshot();
-  assert.equal(saved.formatVersion, 11);
+  assert.equal(saved.formatVersion, 12);
   assert.equal(saved.roster[0]!.hp, 31); assert.equal(saved.roster[0]!.mp, 3);
   assert.equal(saved.roster[1]!.hp, 0); assert.deepEqual(saved.roster[1]!.conditionIds, [305]);
   assert.equal(state.activeParty[0]!.row, "back");
@@ -150,7 +151,8 @@ test("an obsolete escape preparation cannot close a newer lease with the same se
 });
 
 test("source owners escape without running natural growth or observation learning", () => {
-  const { state } = sourceFixture(), before = state.snapshot(), lease = state.openBattle(1000);
+  const { state, battle: catalog } = sourceFixture(), before = state.snapshot(),
+    lease = state.openBattle(1000, catalog.encounters[1000]!.rewardPolicy);
   const escaped = result(state, lease);
   escaped.players[0]!.hp--; escaped.players[0]!.mp--;
   const abilities = escaped.players[0]!.ownedAbilities!;
@@ -171,7 +173,7 @@ test("source owners escape without running natural growth or observation learnin
 
 test("learning receipts cannot be relabeled as escaped battle results on restore", () => {
   const f = sourceFixture(), state = f.state, content = encounterContent(f.battle, 1000)!;
-  const lease = state.openBattle(1000), battle = new BattleGame(content, 17, state.battlePlayers(lease),
+  const lease = state.openBattle(1000, content.rewardPolicy), battle = new BattleGame(content, 17, state.battlePlayers(lease),
     state.battleInventory(lease), state.battleProgression(lease, content.experience));
   for (let i = 0; i < 50; i++) battle.advance(10);
   assert.equal(battle.command(f.id, 10, "e1", 100), true);
@@ -189,7 +191,7 @@ test("learning receipts cannot be relabeled as escaped battle results on restore
   assert.deepEqual(state.snapshot(), saved);
 });
 
-test("strict version 10 migration creates detached victory receipts and version 11 round trips", () => {
+test("strict version 10 migration creates detached victory receipts and version 12 round trips", () => {
   const { state, make } = fixture(), lease = state.openBattle(1000);
   state.prepareVictory(lease, { ...result(state, lease), gil: 14 })();
   const saved = state.snapshot(), old = legacy(saved), bytes = JSON.stringify(old);

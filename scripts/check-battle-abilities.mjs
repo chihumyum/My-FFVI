@@ -107,7 +107,7 @@ const exclusions = projectBattleFieldState(published.common.battleEntry, { mapId
   isSavePoint: null, beastFieldController: null, footAttributeType: null }, published.gameState.fieldConditions.transportations);
 assert.ok(exclusions.invalidContentIds);
 content.qualificationContext = { ...content.qualificationContext, invalidContentIds: exclusions.invalidContentIds };
-const lease = state.openBattle(content.encounterId);
+const lease = state.openBattle(content.encounterId, content.rewardPolicy);
 const battle = new BattleGame(content, 71, state.battlePlayers(lease), state.battleInventory(lease));
 for (const player of battle.players) {
   const result = battle.commandQualification(player.id);

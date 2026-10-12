@@ -13,7 +13,7 @@ import { projectBattleFieldState } from "../dist/src/core/field-battle-entry.js"
 export function sourceBattleInventory(catalog, encounterId = 3) {
   const state = new GameState(catalog.gameState, catalog.common.players,
     catalog.contentHash, catalog.common.conditions);
-  const lease = state.openBattle(encounterId);
+  const lease = state.openBattle(encounterId, catalog.encounters[encounterId].rewardPolicy);
   const inventory = state.battleInventory(lease);
   state.cancelBattle(lease);
   return inventory;
@@ -40,7 +40,7 @@ export function controlledBattleContent(catalog, encounterId) {
   const content = sourceBattleContent(catalog, encounterId);
   const state = new GameState(catalog.gameState, catalog.common.players,
     catalog.contentHash, catalog.common.conditions);
-  const lease = state.openBattle(encounterId);
+  const lease = state.openBattle(encounterId, catalog.encounters[encounterId].rewardPolicy);
   const players = state.battlePlayers(lease);
   const battle = new BattleGame(content, 1, players, state.battleInventory(lease));
   content.players = players.map((player) => {

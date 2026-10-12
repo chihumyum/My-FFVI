@@ -101,7 +101,7 @@ for (const site of admitted) {
   assert.deepEqual(state.snapshot(), stable);
   const restored = make(); restored.restore(JSON.parse(JSON.stringify(stable)));
   assert.deepEqual(restored.snapshot(), stable);
-  const lease = restored.openBattle(1), players = restored.battlePlayers(lease);
+  const lease = restored.openBattle(1, published.encounters[1].rewardPolicy), players = restored.battlePlayers(lease);
   for (const player of players)
     assert.deepEqual(player.conditionIds, stable.roster.find((owner) => owner.id === player.id).conditionIds);
   const qualification = restored.battleInventory(lease).qualification;

@@ -25,6 +25,8 @@ const lanes = [
   ["battle-formation-entry", "check-battle-formations.mjs", "battle-formations-check.json", "stages"],
   ["battle-escape-return", "check-battle-escape.mjs", "battle-escape-check.json", "stages"],
   ["battle-escape-ui", "check-battle-escape-ui.mjs", "battle-escape-ui-check.json", "checked"],
+  ["battle-magic-points", "check-battle-magic-points.mjs", "battle-magic-points-check.json", "stages"],
+  ["battle-magic-points-ui", "check-battle-magic-points-ui.mjs", "battle-magic-points-ui-check.json", "checked"],
   ["multi-map-lifecycle", "check-framework-lifecycle.mjs", "framework-lifecycle-check.json", "stages"],
   ["event-motion-and-recovery", "check-script-motion-integration.mjs", "script-motion-integration-check.json", "stages"],
   ["shared-ownership", "check-system-integration.mjs", "system-integration-check.json", "cases"],

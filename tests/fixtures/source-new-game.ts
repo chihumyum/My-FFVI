@@ -23,7 +23,8 @@ export function sourceNewGameFixture() {
   common.conditions = owner.conditions;
   const battle: BattleCatalog = {
     kind: "narshe-battle-catalog", contentHash: "controlled-fresh-battle", common,
-    encounters: { [encounterId]: { encounterId, formation, enemies, background } },
+    encounters: { [encounterId]: { encounterId, formation, enemies, background,
+      rewardPolicy: { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 } } },
     gameState: { ...owner.content, partyActors: actor.partyCatalog },
   };
   const source = { file: "synthetic", assetPath: "source-new-game-integration" };

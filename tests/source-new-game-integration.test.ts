@@ -29,7 +29,7 @@ test("fresh preparation retains complete origin and native metadata without deve
   const { f, fade } = title(), beforeFade = fade.snapshot(), before = structuredClone(f.content);
   const game = GameSession.prepareNewGame(f.content, f.world, f.map, f.battle, fade, f.presentation);
   const saved = game.state.snapshot();
-  assert.equal(saved.formatVersion, 11);
+  assert.equal(saved.formatVersion, 12);
   assert.equal(saved.initialization, "source-new-game");
   assert.deepEqual(saved.nativeState, createSourceNativeState(f.plan));
   assert.equal(saved.nativeState!.kind, "source-native-state-v2");

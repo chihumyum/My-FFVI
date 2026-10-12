@@ -124,18 +124,19 @@ for (const [sourceId, plan] of plans) {
 }
 const make = () => new GameState(catalog.gameState, catalog.common.players, contentHash, catalog.common.conditions);
 const owned = make(), before = owned.snapshot();
-assert.equal(before.formatVersion, 11);
+assert.equal(before.formatVersion, 12);
 assert.deepEqual(catalog.gameState.rosterLifecycle.firstJoinLevelAdjustments, firstJoinLevelAdjustments);
 // Public victory integration verifies independently recomputed source additions.
-const lease = owned.openBattle(1), players = owned.battlePlayers(lease);
+const lease = owned.openBattle(1, catalog.encounters[1].rewardPolicy), players = owned.battlePlayers(lease);
+const magicPoints = catalog.encounters[1].rewardPolicy.magicPoints;
 const progression = owned.battleProgression(lease);
 assert.equal(typeof progression, "function");
 const awards = players.map((player) => ({ id: player.id, amount: 2000 }));
 const results = players.map((player) => {
-  const projected = progression(player, 2000, []);
+  const projected = progression(player, 2000, [], magicPoints);
   return { ...player, ...projected, conditionIds: conditionRules.updateDying(player.hp, projected.maxHp, player.conditionIds) };
 });
-const commit = owned.prepareVictory(lease, { players: results, gil: 0, consumedItems: [], awardedExperience: awards, observedAbilityIds: [] });
+const commit = owned.prepareVictory(lease, { players: results, gil: 0, magicPoints, consumedItems: [], awardedExperience: awards, observedAbilityIds: [] });
 assert.deepEqual(owned.snapshot(), before, "victory preparation is detached");
 commit();
 const grown = owned.snapshot();
@@ -152,10 +153,12 @@ assert.ok(fallenSource.abilities.owned.some((ability) => ability.abilityId === 7
 fallenSource.hp = 0;
 fallenSource.conditionIds = [catalog.common.conditions.hpZeroConditionId];
 fallen.restore(fallenState);
-const fallenBefore = fallen.snapshot(), fallenLease = fallen.openBattle(1);
-const fallenResult = { players: fallen.battlePlayers(fallenLease), gil: 0, consumedItems: [],
+const fallenBefore = fallen.snapshot(), fallenLease = fallen.openBattle(1, catalog.encounters[1].rewardPolicy);
+const fallenResult = { players: fallen.battlePlayers(fallenLease), gil: 0, magicPoints, consumedItems: [],
   awardedExperience: fallen.battlePlayers(fallenLease).map((player) => ({ id: player.id, amount: 0 })),
   observedAbilityIds: [] };
+const fallenProgression = fallen.battleProgression(fallenLease);
+for (const player of fallenResult.players) Object.assign(player, fallenProgression(player, 0, [], magicPoints));
 const invalidAward = structuredClone(fallenResult);
 invalidAward.awardedExperience.find((award) => award.id === fallenSource.id).amount = 1;
 assert.throws(() => fallen.prepareVictory(fallenLease, invalidAward), /nonrecipient/);

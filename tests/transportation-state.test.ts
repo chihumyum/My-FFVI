@@ -160,7 +160,8 @@ test("joint publication faults and reentry cannot partially replace live or cand
 
 test("transport mutation respects the battle lease and development origin never synthesizes owned payloads", () => {
   const f = sourceNativeStateFixture(), state = f.fresh();
-  const port = state.fieldTransportation!, lease = state.openBattle(44);
+  const port = state.fieldTransportation!, lease = state.openBattle(44,
+    { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 });
   assert.throws(() => port.prepare(command()), /reserved/);
   state.cancelBattle(lease);
   port.prepare(command()).commit();

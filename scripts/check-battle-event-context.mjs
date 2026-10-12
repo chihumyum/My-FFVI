@@ -121,7 +121,7 @@ function ownedProbe() {
   assert.deepEqual(entry.blockers, []);
   content.qualificationContext = { ...content.qualificationContext, invalidContentIds: entry.invalidContentIds };
   const state = new GameState(catalog.gameState, catalog.common.players, catalog.contentHash, catalog.common.conditions);
-  const lease = state.openBattle(3), players = state.battlePlayers(lease), inventory = state.battleInventory(lease);
+  const lease = state.openBattle(3, content.rewardPolicy), players = state.battlePlayers(lease), inventory = state.battleInventory(lease);
   const initial = new BattleGame(content, 1, players, inventory);
   content.players = players.map((player) => {
     const menu = initial.commandMenu(player.id).filter((command) => command.available);

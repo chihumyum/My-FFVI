@@ -292,7 +292,7 @@ for (const deathId of phoenix.functions[0].recoveryIds) {
     const runBattle = (parts) => {
       const owned = makeState(candidate);
       owned.restore(before);
-      const lease = owned.openBattle(3);
+      const lease = owned.openBattle(3, candidate.encounters[3].rewardPolicy);
       const battle = new BattleGame(
         encounterContent(candidate, 3),
         71,
@@ -385,7 +385,7 @@ for (const id of [15, 21]) {
     consumed: id === 15 ? 1 : 0,
   });
   state.restore(before);
-  const lease = state.openBattle(3);
+  const lease = state.openBattle(3, catalog.encounters[3].rewardPolicy);
   const battle = new BattleGame(
     encounterContent(catalog, 3),
     79,
@@ -417,7 +417,7 @@ function doubleRevival(parts) {
   target.conditionIds = [5];
   state.restore(s);
   state.changeItems([{ id: 10, count: 2 }], "grant");
-  const lease = state.openBattle(3),
+  const lease = state.openBattle(3, catalog.encounters[3].rewardPolicy),
     battle = new BattleGame(
       encounterContent(catalog, 3),
       83,

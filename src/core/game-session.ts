@@ -213,13 +213,13 @@ export class GameSession {
     const member = this.state.snapshot().roster.find((candidate) => candidate.id === id);
     if (!member) throw new Error("Character menu references an unowned member");
     const content = this.battleCatalog.gameState;
-    return projectCharacterMenu(member, {
+    return { ...projectCharacterMenu(member, {
       growth: content.characterGrowth?.[id] ?? null,
       developmentExperience: this.battleCatalog.common.experience,
       abilities: this.battleCatalog.common.abilities,
       commands: this.battleCatalog.common.commands,
       equipmentAbilities: content.equipmentSystem ? equipmentOwnedAbilities(content.equipmentSystem.catalog, member) : [],
-    });
+    }), magicLearningValue: content.characterInitializations?.[id] ? member.magicLearningValue : null };
   }
   changeParty(request: PartyMenuRequest): boolean {
     if (!this.menuReady) return false;
@@ -459,7 +459,7 @@ export class GameSession {
       if (this.state.battlePartyBlocker) throw new Error(this.state.battlePartyBlocker);
       const blocker = battleDefinitionBlocker(this.state.partyPlayers(), content.qualificationContext, content.conditions);
       if (blocker) throw new Error(blocker);
-      lease = this.state.openBattle(content.encounterId);
+      lease = this.state.openBattle(content.encounterId, content.rewardPolicy);
       const battle = new BattleGame(content, seed, this.state.battlePlayers(lease), this.state.battleInventory(lease),
         this.state.battleProgression(lease, content.experience), this.currentBattlePreferences);
       this.battle = battle;
@@ -517,7 +517,7 @@ export class GameSession {
     if (this.battle?.phase !== "defeat") return false;
     if (!this.battleLease) throw new Error("Missing battle state ownership");
     this.battle = new BattleGame(
-      this.battle.content,
+      { ...this.battle.content, rewardPolicy: this.state.battleRewardPolicy(this.battleLease) },
       this.currentSeed,
       this.state.battlePlayers(this.battleLease),
       this.state.battleInventory(this.battleLease),

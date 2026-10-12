@@ -11,6 +11,7 @@ v20 的正式开场仍使用显式 `development-static` 模式。查询接口已
 - `src/compiler/battle-abilities.ts` 的 `compileBattleAbilityCatalog(reader, tables, sourceIds)` 返回 `catalog` 和逐行 `sources`。catalog 保留命令、条件、能力的来源身份及未支持提供器；能力效果计划另由既有编译器决定。
 - `src/core/battle-abilities.ts` 的 `projectBattleAbilities(catalog, member, context)` 返回所有持有命令的 `entries`、已完成资格判断的 `abilityIds` 并集和 `blockers`。`released/available` 为 `true | false | null`：`null` 是未知，绝不转换为空条件集合或允许。
 - `BattleAbilityMember` 读取 `sourceId/jobId/magicStoneId/abilities`；`abilities.owned` 是当前状态。初始化白名单、全局学习历史和旧 `byCommand` 缓存不能授予技能。
+- v52 从本场角色副本读取各自的 `magicLearningValue`，已知值优先于共享上下文；来源角色由持有状态和入战副本提供。没有该字段的旧合成夹具保留显式未知上下文。此资格查询不代表变身效果或消耗规则已迁移。
 - `BattleAbilityContext` 明确要求 `conditionIds`、`battleType`、`magicLearningValue`、`invalidContentIds`、`itemMenuAvailable`、`partySize`。可未知的输入必须传 `null`。`[]` 表示宿主已有证据的空集合。
 - `BattleContent.battleAbilities` 与 `qualificationContext` 必须同时存在。`qualificationContext.mode` 为 `source` 时，`BattleGame` 的能力/物品下令、队列执行前复查、目标查询与 `commandMenu` 使用当前资格；`development-static` 保留原测试动作名单，`commandQualification(actorId)` 仍可只读检查未闭合来源。
 - `CombatantDefinition.ownedAbilities` 由共享名册复制到战斗。能力效果、MP、目标范围和物品存量继续使用各自的准入检查。拥有或学会能力不等于已实现其效果。

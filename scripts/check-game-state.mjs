@@ -69,7 +69,7 @@ const exported = JSON.parse(JSON.stringify(owned.snapshot()));
 const restored = make();
 restored.restore(exported);
 assert.deepEqual(restored.snapshot(), owned.snapshot());
-const lease = restored.openBattle(3),
+const lease = restored.openBattle(3, catalog.encounters[3].rewardPolicy),
   before = restored.snapshot();
 const players = restored.battlePlayers(lease);
 players[0].hp = 1;

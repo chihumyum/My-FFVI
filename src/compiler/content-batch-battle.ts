@@ -2,6 +2,7 @@ import { BattleConditions } from "../core/battle-conditions.js";
 import type { BattleCatalog, BattleEncounterDiagnostic } from "../core/battle-content.js";
 import { encounterFormationOptions } from "../core/battle-content.js";
 import { parseBattleEscapePolicy } from "../core/battle-escape.js";
+import { parseBattleRewardPolicy } from "../core/battle-result.js";
 import { validateBattleDropCatalog } from "../core/battle-rewards.js";
 import { validateBattleEventRules } from "../core/battle-event-context.js";
 import { canonical } from "../core/canonical.js";
@@ -88,6 +89,16 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
         if (encounter.escapePolicy !== undefined) parseBattleEscapePolicy(encounter.escapePolicy);
       });
       if (encounter.escapePolicy) limitations.push("Authored ordinary-field retreat does not reproduce source escape rules or learning.");
+      checked("encounter-rewards", () => {
+        if (Object.hasOwn(catalog.common, "rewardPolicy")) throw new Error("Reward policy must belong to an encounter");
+        if (encounter.rewardPolicy === undefined && catalog.gameState.characterInitializations)
+          throw new Error("Source encounter lacks battle reward policy");
+        if (encounter.rewardPolicy !== undefined) {
+          const policy = parseBattleRewardPolicy(encounter.rewardPolicy);
+          if (policy.magicPoints > 0 && !catalog.gameState.equipmentSystem)
+            throw new Error("Magic point rewards require an owned progression provider");
+        }
+      });
       if (!encounter.enemies.length || encounter.enemies.length > 9 ||
           new Set(encounter.enemies.map(enemy => enemy.id)).size !== encounter.enemies.length)
         block("enemy-identity", "Missing, duplicate or excessive enemy identities");
