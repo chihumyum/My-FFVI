@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { birthParticleBatch } from "../src/core/field-particle-birth.js";
+import { birthParticleBatch, birthPaddedParticleBatch } from "../src/core/field-particle-birth.js";
 import { compileFieldParticleBirth, compileParticleBirthEngine } from "../src/compiler/field-particle-birth.js";
 import { nextParticleRandomLanes } from "../src/core/field-particle-emitter.js";
 import { controlledBirthEvidence, particleBirthDefinition, particleBirthExport, particleBirthInput, particleBirthRandom } from "./fixtures/field-particle-birth.js";
@@ -19,6 +19,26 @@ test("one live birth consumes all four SIMD lanes and does not return padding pa
   const one = birthParticleBatch(d, r, particleBirthInput(1)), four = birthParticleBatch(d, r, particleBirthInput(4));
   assert.equal(one.paddedCount, 4); assert.equal(one.particles.length, 1); assert.deepEqual(one.random, four.random);
   assert.deepEqual(one.particles[0], four.particles[0]); assert.deepEqual(r, before);
+});
+test("padded birth API exposes all source lanes only with explicit complete timing", () => {
+  const d = particleBirthDefinition(), r = particleBirthRandom(), input = particleBirthInput(1);
+  const padded = { ...input, paddedBirthDeltas: [.01, .02, .03, .04], paddedBirthNormalizedTimes: [.5, .49, .48, .47] };
+  const result = birthPaddedParticleBatch(d, r, padded), live = birthParticleBatch(d, r, input);
+  assert.deepEqual(result.particles, live.particles); assert.deepEqual(result.random, live.random);
+  assert.equal(result.paddedParticles.length, 4);
+  for (let i = 0; i < 4; i++) {
+    assert.equal(result.paddedParticles[i]!.birthDelta, Math.fround(padded.paddedBirthDeltas[i]!));
+    assert.equal(result.paddedParticles[i]!.normalizedEmitterTime, Math.fround(padded.paddedBirthNormalizedTimes[i]!));
+  }
+  result.paddedParticles[0]!.position[0] = 99;
+  assert.notEqual(result.particles[0]!.position[0], 99);
+});
+test("missing padding timing or a mismatched live prefix cannot consume random state", () => {
+  const d = particleBirthDefinition(), r = particleBirthRandom(), before = structuredClone(r), input = particleBirthInput(1);
+  assert.throws(() => birthPaddedParticleBatch(d, r, { ...input, paddedBirthDeltas: [.01], paddedBirthNormalizedTimes: [.5] }), /Incomplete/);
+  assert.throws(() => birthPaddedParticleBatch(d, r, { ...input, paddedBirthDeltas: [.02, 0, 0, 0], paddedBirthNormalizedTimes: [.5, .5, .5, .5] }), /mismatched/);
+  assert.throws(() => birthPaddedParticleBatch(d, r, { ...input, paddedBirthDeltas: [.01, 0, 0, NaN], paddedBirthNormalizedTimes: [.5, .5, .5, .5] }), /Invalid/);
+  assert.deepEqual(r, before);
 });
 test("each batch restarts lane indexing and preserves native padded draw sequence", () => {
   const d = particleBirthDefinition(), r = particleBirthRandom();

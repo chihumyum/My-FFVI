@@ -68,6 +68,8 @@ birthParticleBatch(definition, { initial, shape }, {
 
 返回 `{ particles, paddedCount, random }`。每个 live particle 保存 `index/seed/lifetime/inverseLifetime/normalizedAge/position/velocity/size/rotation/color/packedColor/birthDelta/normalizedEmitterTime`。`normalizedAge` 为 0；两个时间输入只验证并保留，不会在此移动粒子。输入 RNG、定义和数组不会被修改，准备失败不会消费状态。
 
+v37 新增 `birthPaddedParticleBatch`，原 live-only API 的返回形状保持不变。新入口额外要求 `paddedBirthDeltas/paddedBirthNormalizedTimes`，长度为 `ceil(count/4)*4` 且 live 前缀与原时间数组一致；额外返回全部 `paddedParticles`。每个返回的 padding lane 都有显式来源时间，不能默认零或共同时间。`1957f0` 的死亡扫描会读取 padding，必须把整个 scratch 批次交给[数组转换](field-particle-array.md)。live 和 padded 返回记录互不共享可写对象。
+
 `AddNewParticles(186c80)` 的临时起点为 `(oldCount+3)&~3`，最后再由 `18a500` 把新生数据挪回旧逻辑尾部。因此 oldCount=999 时可产生临时 index=1000，不能错误套用逻辑容量边界。这些容量/搬移由生命周期提供器负责；出生模块只处理明确的对齐批次，不能将一批五个粒子改为五次单粒子调用。
 
 `1957f0` 还生成逐 lane 的 fraction：连续部分使用 `(relativeIndex + emissionFraction) * spacing`，超出 continuousCount 的 lane 先 mask 为零，然后统一 clamp 到 `[float32(1e-6),1]`。随后求 birthDelta 和 current/previous normalized time 的插值，burst 也保留极小的非零出生时间。后续整合检查已通过原指令恢复到 [生命周期](field-particle-lifecycle.md) 的 `prepareParticleBirthTiming`；本出生内核仍只保留其显式输入，没有运行完整的运动分支。不能用固定 `dt/2`、固定 `.02` 或一份共同时间填补宿主输入。
@@ -81,8 +83,8 @@ node scripts/check-field-particle-birth-native.mjs
 node scripts/check-field-particle-birth.mjs --compiled-dir build/v36-birth-dist
 ```
 
-- 10 项语义测试：原指令固定向量、四 lane padding、连续批次、常量抽样、时间保留、零出生/末尾对齐、clamp/Color32、失败不消费状态、来源摘要和未迁移分支拒绝。
+- 12 项语义测试：原指令固定向量、四 lane padding、连续批次、常量抽样、时间保留、零出生/末尾对齐、clamp/Color32、失败不消费状态、来源摘要、完整 padding 时间和未迁移分支拒绝。
 - native checker：159 项检查、16 方法；重新核对本机 DLL/PDB/反编译回执并运行原始 x64 指令。
-- source checker：五份真实资源 × 六个明确固定 seed，180 批次、630 个 live 粒子；另有三组受控边界批次、24 个粒子。8827 项检查，11118 个标量字段比较，全部精确匹配。输出在 `build/reports/field-particle-birth-{native-check,check}.json`。
+- source checker：五份真实资源 × 六个明确固定 seed，180 批次、630 个 live 粒子；另有三组受控边界批次、24 个粒子。扩展 padding 后共核验 864 个记录，11713 项检查、14688 个标量字段比较，全部精确匹配。输出在 `build/reports/field-particle-birth-{native-check,check}.json`。
 
 隔离执行使用本地原 DLL 指令、显式私有数据数组、单位 simulation scale 和已初始化 CRT 颜色常量。它不启动 Windows/Unity 进程，不产生或伪造系统熵，不验证真实浏览器像素。`semanticsVerified=false`，`admittedFullEmitters=0`。正式可执行粒子还需连接生命周期/自动 seed、Noise/运动、几何/RT 和原子共享池宿主。

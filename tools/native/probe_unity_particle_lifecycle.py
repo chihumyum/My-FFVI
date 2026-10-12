@@ -207,8 +207,10 @@ class BirthTimingEngine(LifecycleEngine):
         self.call(0x1957f0, [MEM + 0x8000, MEM + 0x2000 + 0x1d0, 0, MEM + 0xd300], stack=[
             ('Q', MEM + 0xd000), ('Q', particles), ('Q', start), ('Q', MEM + 0xd100),
             ('Q', MEM + 0xd200), ('f', delta), ('Q', continuous), ('f', 0), ('Q', MEM + 0xa000), ('Q', 0)])
-        return {'birthNormalizedTimes': [n for t in self.trace if t['operation'] == 'birth-time' for n in t['values']][:count],
-                'birthDeltas': [n for t in self.trace if t['operation'] == 'birth-delta' for n in t['values']][:count]}
+        times = [n for t in self.trace if t['operation'] == 'birth-time' for n in t['values']]
+        deltas = [n for t in self.trace if t['operation'] == 'birth-delta' for n in t['values']]
+        return {'birthNormalizedTimes': times[:count], 'birthDeltas': deltas[:count],
+                'paddedBirthNormalizedTimes': times, 'paddedBirthDeltas': deltas}
 
 
 def main():

@@ -34,7 +34,7 @@ const engine = c.compileParticleBirthEngine(inspections), names = ["ef_ff6_m_001
 check(() => assert.deepEqual(Object.keys(media.groups), names)); check(() => assert.equal(engine.nativeSha256, probes.nativeSha256));
 const definitions = Object.fromEntries(names.map((name) => [name, c.compileFieldParticleBirth(name, media.groups[name], engine)]));
 const stateWords = (state) => [0, 1, 2, 3].flatMap((word) => state.map((lane) => lane[word]));
-let actualBatches = 0, actualParticles = 0, controlledBatches = 0, controlledParticles = 0, scalarComparisons = 0;
+let actualBatches = 0, actualParticles = 0, controlledBatches = 0, controlledParticles = 0, scalarComparisons = 0, paddedParticlesCompared = 0;
 const traces = new Map(names.map((n) => [n, []]));
 function compareCase(definition, probe, controlled) {
   let random = { initial: rng.seedParticleRandomLanes(probe.seed), shape: rng.seedParticleRandomLanes(probe.seed) };
@@ -46,20 +46,25 @@ function compareCase(definition, probe, controlled) {
       birthNormalizedTimes: Array.from({ length: step.count }, (_, i) => Math.max(0, Math.fround(step.normalizedEmitterTime - i * .001))),
       simulationScale: [1, 1, 1] };
     const previous = structuredClone(random), result = k.birthParticleBatch(definition, random, input);
+    const paddedInput = { ...input,
+      paddedBirthDeltas: Array.from({ length: step.paddedCount }, (_, i) => Math.fround(.002 * (i + 1))),
+      paddedBirthNormalizedTimes: Array.from({ length: step.paddedCount }, (_, i) => Math.max(0, Math.fround(step.normalizedEmitterTime - i * .001))) };
+    const padded = k.birthPaddedParticleBatch(definition, random, paddedInput);
+    check(() => assert.deepEqual(padded.particles, result.particles)); check(() => assert.deepEqual(padded.random, result.random));
     check(() => assert.deepEqual(random, previous)); check(() => assert.equal(result.paddedCount, step.paddedCount));
     check(() => assert.equal(result.particles.length, step.count));
     for (const module of ["initial", "shape"]) check(() => assert.deepEqual(stateWords(result.random[module]), step.random[module]));
-    for (let i = 0; i < step.count; i++) {
-      const actual = result.particles[i], expected = step.particles[i];
+    for (let i = 0; i < step.paddedCount; i++) {
+      const actual = padded.paddedParticles[i], expected = step.particles[i];
       for (const key of ["index", "seed", "inverseLifetime", "normalizedAge", "packedColor", "position", "velocity"]) {
         check(() => assert.deepEqual(actual[key], expected[key], `${probe.asset ?? probe.label}: ${step.startIndex}/${i}/${key}`));
         scalarComparisons += Array.isArray(actual[key]) ? actual[key].length : 1;
       }
       check(() => assert.deepEqual(actual.size, [expected.size, expected.size, expected.size]));
       check(() => assert.deepEqual(actual.rotation, [0, 0, expected.rotation]));
-      check(() => assert.equal(actual.birthDelta, input.birthDeltas[i])); check(() => assert.equal(actual.normalizedEmitterTime, input.birthNormalizedTimes[i]));
+      check(() => assert.equal(actual.birthDelta, paddedInput.paddedBirthDeltas[i])); check(() => assert.equal(actual.normalizedEmitterTime, paddedInput.paddedBirthNormalizedTimes[i]));
       check(() => assert.deepEqual(actual.color.map((n) => Math.round(n * 255)), [0, 8, 16, 24].map((shift) => (expected.packedColor >>> shift) & 255)));
-      scalarComparisons += 6;
+      scalarComparisons += 6; paddedParticlesCompared++;
     }
     random = result.random;
     if (controlled) { controlledBatches++; controlledParticles += step.count; }
@@ -90,10 +95,10 @@ const assets = names.map((name, i) => {
 });
 const report = { lane: "source-bound-particle-birth-kernel-with-isolated-original-instruction-comparison", semanticsVerified: false,
   checks, nativeChecks: native.checks, engine, sourceSetHash: corpus.sourceSetHash, nativeInstructionReport: "build/reports/field-particle-birth-native-check.json",
-  actualAssets: names.length, actualBatches, actualParticles, controlledBatches, controlledParticles, scalarComparisons,
-  instructionComparison: "Exact float32/uint outputs for all tested live particles; no tolerance masks", assets,
+  actualAssets: names.length, actualBatches, actualParticles, controlledBatches, controlledParticles, paddedParticlesCompared, scalarComparisons,
+  instructionComparison: "Exact float32/uint outputs for all tested live and SIMD padding particles; no tolerance masks", assets,
   admittedFullEmitters: 0, controlledInputs: ["Fixed seeds and explicit aligned batches", "Birth delta/time arrays retained, not integrated", "Unit simulation scale/fresh inherited defaults"],
   remaining: ["Host automatic entropy/lifecycle scheduling and capacity commit", "Motion/Noise integration and render provider assembly", "Physical CPU reciprocal estimates may differ within the SSE estimate contract", "Original-game dynamic comparison"] };
 await mkdir(resolve(root, "build/reports"), { recursive: true });
 await writeFile(resolve(root, "build/reports/field-particle-birth-check.json"), JSON.stringify(report, null, 2) + "\n");
-console.log(JSON.stringify({ checks, actualAssets: names.length, actualBatches, actualParticles, controlledBatches, controlledParticles, scalarComparisons, admittedFullEmitters: 0, semanticsVerified: false }));
+console.log(JSON.stringify({ checks, actualAssets: names.length, actualBatches, actualParticles, controlledBatches, controlledParticles, paddedParticlesCompared, scalarComparisons, admittedFullEmitters: 0, semanticsVerified: false }));

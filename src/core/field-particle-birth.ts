@@ -48,6 +48,12 @@ export type ParticleBirthBatchInput = {
    * requires an explicit unit scale; no renderer/world transform is applied. */
   simulationScale: ParticleBirthVector;
 };
+export type ParticlePaddedBirthBatchInput = ParticleBirthBatchInput & {
+  /** Exact StartModules timing for every SIMD lane, including scratch padding.
+   * The live prefix must equal birthDeltas/birthNormalizedTimes. */
+  paddedBirthDeltas: readonly number[];
+  paddedBirthNormalizedTimes: readonly number[];
+};
 const f = Math.fround;
 const nativeSha = "7930dbf028be9e3d146a92dc756a166f10cada81f433c49b8fb4eb6767ae9845";
 const add = (a: number, b: number) => f(a + b), sub = (a: number, b: number) => f(a - b), mul = (a: number, b: number) => f(a * b);
@@ -128,10 +134,9 @@ function transform(columns: [ParticleBirthVector, ParticleBirthVector, ParticleB
   return [0, 1, 2].map((i) => add(mul(columns[0][i]!, v[0]), add(mul(columns[1][i]!, v[1]), mul(columns[2][i]!, v[2])))) as ParticleBirthVector;
 }
 
-/** One native Start batch. Each phase processes all four-lane blocks before the
- * next phase. Padding lanes are consumed but not returned as live particles. */
-export function birthParticleBatch(definition: FieldParticleBirthDefinition, prior: Readonly<ParticleBirthRandom>, input: ParticleBirthBatchInput): {
-  particles: FieldParticleBirth[]; paddedCount: number; random: ParticleBirthRandom;
+function generateBirthBatch(definition: FieldParticleBirthDefinition, prior: Readonly<ParticleBirthRandom>, input: ParticleBirthBatchInput,
+  paddedTiming?: Pick<ParticlePaddedBirthBatchInput, "paddedBirthDeltas" | "paddedBirthNormalizedTimes">): {
+  particles: FieldParticleBirth[]; paddedParticles: FieldParticleBirth[]; paddedCount: number; random: ParticleBirthRandom;
 } {
   validateFieldParticleBirth(definition);
   if (!Number.isSafeInteger(input.startIndex) || input.startIndex < 0 || input.startIndex % 4 !== 0 || !Number.isSafeInteger(input.count) || input.count < 0 || input.count > 1000 || input.startIndex + input.count > 1003 ||
@@ -144,10 +149,19 @@ export function birthParticleBatch(definition: FieldParticleBirthDefinition, pri
   if (deltas.some((n) => n < 0)) throw new Error("Invalid native particle birth delta");
   const times = input.birthNormalizedTimes.map(finite);
   if (times.some((n) => n < 0 || n > 1)) throw new Error("Invalid native particle birth normalized time");
+  const paddedCount = Math.ceil(input.count / 4) * 4;
+  let allDeltas = deltas, allTimes = times;
+  if (paddedTiming) {
+    if (paddedTiming.paddedBirthDeltas.length !== paddedCount || paddedTiming.paddedBirthNormalizedTimes.length !== paddedCount)
+      throw new Error("Incomplete native particle padded birth timing");
+    allDeltas = paddedTiming.paddedBirthDeltas.map(finite); allTimes = paddedTiming.paddedBirthNormalizedTimes.map(finite);
+    if (allDeltas.some((n, i) => n < 0 || (i < deltas.length && n !== deltas[i])) ||
+        allTimes.some((n, i) => n < 0 || n > 1 || (i < times.length && n !== times[i])))
+      throw new Error("Invalid or mismatched native particle padded birth timing");
+  }
   // Validate without advancing either input. nextParticleRandomLanes is pure.
   nextParticleRandomLanes(prior.initial, false); nextParticleRandomLanes(prior.shape, false);
   const random: ParticleBirthRandom = structuredClone(prior), particles: FieldParticleBirth[] = [];
-  const paddedCount = Math.ceil(input.count / 4) * 4;
   const color = definition.initial.color.map((n) => Math.trunc(add(mul(Math.max(0, Math.min(1, f(n))), 255), .5))) as ParticleBirthColor;
   const packedColor = ((color[0]) | color[1] << 8 | color[2] << 16 | color[3] << 24) >>> 0;
   for (let block = 0; block < paddedCount; block += 4) {
@@ -163,7 +177,7 @@ export function birthParticleBatch(definition: FieldParticleBirthDefinition, pri
       particles.push({ index: input.startIndex + block + lane, seed, lifetime, inverseLifetime: sourceReciprocal(lifetime), normalizedAge: 0,
         position: [0, 0, 0], velocity: [0, 0, 1], size: [size, size, size], rotation: [0, 0, rotation],
         color: color.map((n) => f(n / 255)) as ParticleBirthColor, packedColor,
-        birthDelta: deltas[block + lane] ?? 0, normalizedEmitterTime: times[block + lane] ?? time });
+        birthDelta: allDeltas[block + lane] ?? 0, normalizedEmitterTime: allTimes[block + lane] ?? time });
     }
   }
   const matrix = shapeMatrix(definition.cone.rotation), a = phase(radians(definition.cone.angle));
@@ -186,5 +200,23 @@ export function birthParticleBatch(definition: FieldParticleBirthDefinition, pri
     const speed = sample(definition.initial.speed, speedRandom);
     particle.velocity = particle.velocity.map((v) => mul(v, speed)) as ParticleBirthVector;
   }
-  return { particles: particles.slice(0, input.count), paddedCount, random };
+  return { particles: structuredClone(particles.slice(0, input.count)), paddedParticles: particles, paddedCount, random };
+}
+
+/** One native Start batch. The historical live-only API consumes padding RNG
+ * but does not expose scratch records with unspecified padding timing. */
+export function birthParticleBatch(definition: FieldParticleBirthDefinition, prior: Readonly<ParticleBirthRandom>, input: ParticleBirthBatchInput): {
+  particles: FieldParticleBirth[]; paddedCount: number; random: ParticleBirthRandom;
+} {
+  const { particles, paddedCount, random } = generateBirthBatch(definition, prior, input);
+  return { particles, paddedCount, random };
+}
+
+/** Full source scratch batch for subsequent StartModules motion and deletion.
+ * Padding is physical scratch, not extra live births. No zero/current-time
+ * fallback is permitted for a returned padding record. */
+export function birthPaddedParticleBatch(definition: FieldParticleBirthDefinition, prior: Readonly<ParticleBirthRandom>, input: ParticlePaddedBirthBatchInput): {
+  particles: FieldParticleBirth[]; paddedParticles: FieldParticleBirth[]; paddedCount: number; random: ParticleBirthRandom;
+} {
+  return generateBirthBatch(definition, prior, input, input);
 }

@@ -148,6 +148,9 @@ test("continuous birth age follows spacing and carry while bursts retain the sou
   assert.equal(result.birthNormalizedTimes[3], 0.009999969974160194);
   const limited = prepareParticleBirthTiming({ duration: 1, currentTime: .01, delta: .03, acceptedCount: 2, emission });
   assert.deepEqual(limited.birthDeltas, result.birthDeltas.slice(0, 2));
+  assert.deepEqual(limited.paddedBirthDeltas, result.birthDeltas.slice(0, 4));
+  assert.deepEqual(result.paddedBirthDeltas.slice(5), Array(3).fill(result.birthDeltas[4]));
+  assert.equal(result.paddedBirthNormalizedTimes.length, 8);
 });
 test("birth timing rejects excess capacity claims and unsupported normalization", () => {
   const slice = scheduleParticleSimulation(definition(), state(), normal(.02)).slices[0]!;

@@ -42,11 +42,12 @@ export function reserveParticleBirthBatch(input: { activeCount: number; maximumP
 /** StartModules' per-newborn timing after emission and capacity admission.
  * Source assets all have duration 1; other reciprocal-duration paths remain
  * unavailable. Continuous particles are aged within the slice, while burst
- * particles use the source minimum fraction 1e-6 (not zero). SIMD padding is
- * the birth provider's responsibility and is not returned as live timing. */
+ * particles use the source minimum fraction 1e-6 (not zero). Padding timing
+ * is explicit: its lanes participate in source newborn death/compaction. */
 export function prepareParticleBirthTiming(input: { duration: number; currentTime: number; delta: number;
   emission: ParticleEmissionResult; acceptedCount: number }): {
     normalizedEmitterTime: number; birthDeltas: number[]; birthNormalizedTimes: number[];
+    paddedBirthDeltas: number[]; paddedBirthNormalizedTimes: number[];
   } {
   const { emission: e, acceptedCount: count } = input;
   if (input.duration !== 1) throw new Error("Unrecovered particle birth duration normalization");
@@ -58,12 +59,14 @@ export function prepareParticleBirthTiming(input: { duration: number; currentTim
   if (current < 0 || current > 1 || delta < 0 || spacing < 0 || remainder < 0 || remainder >= 1)
     throw new Error("Invalid particle birth timing interval");
   const previous = f(current - delta), birthDeltas: number[] = [], birthNormalizedTimes: number[] = [];
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < Math.ceil(count / 4) * 4; i++) {
     const fraction = Math.max(epsilon, Math.min(1, i < e.continuousCount ? f(f(f(i) + remainder) * spacing) : 0));
     birthDeltas.push(f(fraction * delta));
     birthNormalizedTimes.push(Math.max(0, Math.min(1, f(f(f(previous - current) * fraction) + current))));
   }
-  return { normalizedEmitterTime: current, birthDeltas, birthNormalizedTimes };
+  return { normalizedEmitterTime: current, birthDeltas: birthDeltas.slice(0, count),
+    birthNormalizedTimes: birthNormalizedTimes.slice(0, count),
+    paddedBirthDeltas: birthDeltas, paddedBirthNormalizedTimes: birthNormalizedTimes };
 }
 const f = Math.fround;
 const epsilon = f(0.000001), emissionEpsilon = f(0.0001);

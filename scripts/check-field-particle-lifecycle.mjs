@@ -48,7 +48,8 @@ for (const test of probes.birthTimings) {
     emission: { totalCount, continuousCount: i.continuous, burstCount: totalCount - i.continuous,
       state: { random: e.seedParticleRandom(42), spacing: i.spacing, fractionalCount: i.fractional } } });
   check(() => assert.equal(actual.normalizedEmitterTime, i.time));
-  check(() => assert.deepEqual({ birthNormalizedTimes: actual.birthNormalizedTimes, birthDeltas: actual.birthDeltas }, test.output));
+  check(() => assert.deepEqual({ birthNormalizedTimes: actual.birthNormalizedTimes, birthDeltas: actual.birthDeltas,
+    paddedBirthNormalizedTimes: actual.paddedBirthNormalizedTimes, paddedBirthDeltas: actual.paddedBirthDeltas }, test.output));
 }
 for (const test of probes.playSequences) {
   const resetCount = test.input.stopped ? test.input.prewarm ? 3 : 1 : 0;
