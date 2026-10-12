@@ -20,6 +20,7 @@
 - [游戏系统框架与连续流程验收](docs/game-framework.md)
 - [框架系统依赖与下一批实施范围](docs/framework-system-dependencies.md)
 - [通用遭遇内容管线](docs/battle-catalog.md)
+- [v48 批量内容接入框架](docs/systems-v48.md)
 - [v47 事件保存与续行](docs/systems-v47.md)
 - [v46 独立游戏入口与恢复依赖](docs/systems-v46.md)
 - [v45 公共运行框架与失败恢复](docs/systems-v45.md)

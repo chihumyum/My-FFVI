@@ -1,0 +1,18 @@
+{
+  "kind": "content-batch-manifest-v1",
+  "id": "framework-opening-to-field",
+  "profile": "framework",
+  "mapIds": [609, 3, 178],
+  "roots": [{ "kind": "entry", "mapId": 609, "entrance": 1, "continuation": "sc_e_0001" }],
+  "routes": [{
+    "id": "new-game-to-stable-field",
+    "entry": "source-new-game",
+    "expectedMapId": 3,
+    "requiredMapIds": [609, 3, 178],
+    "requiredEncounterIds": [],
+    "maxTicks": 12000,
+    "inputs": [],
+    "choiceAnswers": [],
+    "battleAbilityIds": []
+  }]
+}

@@ -5,9 +5,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runtimeDigest } from "./runtime-digest.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const output = resolve(root, "build/reports/framework-systems-check.json");
@@ -19,6 +20,7 @@ const lanes = [
   ["host-io-recovery", "check-game-map-ui.mjs", "game-map-ui-check.json", "tests"],
   ["session-entry-ui", "check-game-entry-ui.mjs", "game-entry-ui-check.json", "tests"],
   ["event-save-continuation", "check-event-save.mjs", "event-save-check.json", "tests"],
+  ["content-batch-pipeline", "check-content-batch-pipeline.mjs", "content-batch-pipeline-check.json", "tests"],
   ["multi-map-lifecycle", "check-framework-lifecycle.mjs", "framework-lifecycle-check.json", "stages"],
   ["event-motion-and-recovery", "check-script-motion-integration.mjs", "script-motion-integration-check.json", "stages"],
   ["shared-ownership", "check-system-integration.mjs", "system-integration-check.json", "cases"],
@@ -33,31 +35,18 @@ const lanes = [
   ["sound-output", "check-field-sound-ui.mjs", "field-sound-ui-check.json", "tests"],
   ["source-journey", "check-framework-route.mjs", "framework-source-route-check.json", "transitions"],
 ];
-async function runtimeDigest() {
-  const files = [];
-  async function walk(path) {
-    for (const entry of await readdir(path, { withFileTypes: true })) {
-      const full = resolve(path, entry.name);
-      if (entry.isDirectory()) await walk(full);
-      else if (/\.(?:js|mjs|json)$/.test(entry.name)) files.push(full);
-    }
-  }
-  for (const folder of ["dist/src", "dist/tests", "apps/game", "scripts"]) await walk(resolve(root, folder));
-  const hashes = await Promise.all(files.sort().map(async (path) => [relative(root, path), digest(await readFile(path))]));
-  return digest(JSON.stringify(hashes));
-}
 const report = { kind: "framework-system-integration-suite-v1", result: "running", checks: [],
   evidence: "controlled-runtime-and-DOM", sourceJourney: null, readyForBatchPopulation: false,
   frameworkContracts: { status: "running", missing: lanes.filter(([id]) => id !== "source-journey").map(([id]) => id) },
   batchAdmission: { status: "not-assessed", blockers: [
-    "No specific source content batch has been nominated and its dependency closure accepted.",
+    "Source batches require a separate fresh batch:check against this runtime; the systems suite does not admit them.",
     "The multi-map lifecycle is a controlled systems fixture, not a held-out source-content playthrough.",
   ] },
   browserVerified: false, originalGameExecuted: false, fullGameMigration: false };
 await mkdir(resolve(output, ".."), { recursive: true });
 await writeFile(output, JSON.stringify(report, null, 2) + "\n");
 try {
-  report.runtimeSha256 = await runtimeDigest();
+  report.runtimeSha256 = await runtimeDigest(root);
   for (const [id, script, artifact, countKey] of lanes) {
     const path = resolve(root, "build/reports", artifact);
     await rm(path, { force: true });
@@ -80,7 +69,7 @@ try {
     }
     await writeFile(output, JSON.stringify(report, null, 2) + "\n");
   }
-  const unchanged = await runtimeDigest() === report.runtimeSha256;
+  const unchanged = await runtimeDigest(root) === report.runtimeSha256;
   if (!unchanged) report.frameworkContracts.status = "invalidated";
   assert.equal(unchanged, true, "Runtime changed during integration; rebuild and rerun");
   report.result = "passed";

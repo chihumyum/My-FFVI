@@ -25,8 +25,7 @@ const repo = new GameContentRepository(async (url) => {
   assert.match(url, /^\/(game|framework|world)\/[a-zA-Z0-9/_-]+\.json$/);
   return JSON.parse(await readFile(root + "/build" + (aliases[url] ?? url), "utf8"));
 }, "framework");
-const { content, catalog, map } = await repo.sourceNewGame();
-const { battle } = await repo.opening();
+const { content, catalog, map, battle } = await repo.sourceNewGame();
 const presentation = createSourcePresentationContext({ kind: "title-new-game",
   titleCleanupComplete: true, openingCallbackStarted: false });
 const entry = new NewGameFieldEntry(content.entry, presentation);
