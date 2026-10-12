@@ -2,9 +2,13 @@ import { z } from "zod";
 import type { BattleAISource } from "../core/battle-ai.js";
 import type { BattleEventOp, BattleEventProgram, BattleEventValue } from "../core/battle-event.js";
 import { isOperator } from "../core/script-integer.js";
+import { isCategory, validVariable, type EventValue, type VariableRef } from "../core/event-state.js";
 
 const integer = z.number().int().min(-0x80000000).max(0x7fffffff);
 const flags = ["KeepBadStatusVisual", "KeepPlayerPuppet", "RidingVehicle", "SkipInitialize"] as const;
+const sharedCategories = ["ScenarioFlag1", "ScenarioFlag2", "ScenarioFlag3", "ScenarioFlag4",
+  "TreasureFlag1", "TreasureFlag2", "TreasureFlag3", "TreasureFlag4",
+  "ScenarioVariable", "ScriptLocalVariable"];
 const script = z.object({
   Name: z.string().min(1),
   Title: z.object({ main: z.string(), sub: z.string() }).strict(),
@@ -49,6 +53,12 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null):
     ? [...data.ScriptLocalValue] : data.ScriptLocal.map(() => 0);
   const local = (index: number | undefined): index is number =>
     index !== undefined && index >= 0 && index < data.ScriptLocal.length;
+  const variable = (category: string | undefined, index: number | undefined): VariableRef | null => {
+    if (category === undefined || index === undefined || !sharedCategories.includes(category) || !isCategory(category))
+      return null;
+    const ref = { category, index };
+    return validVariable(ref) && (category !== "ScriptLocalVariable" || local(index)) ? ref : null;
+  };
   const target = (index: number | undefined): index is number =>
     index !== undefined && index >= entry && index + 1 < end;
   const instructions = data.Mnemonics.map(raw => {
@@ -87,16 +97,30 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null):
       op = { kind: "end-enabled", enabled: i[0] !== 0 };
     if (m.mnemonic === "BattlePause" && form([0])) op = { kind: "pause", enabled: i[0] !== 0 };
     if (m.mnemonic === "BattleInteractive" && form([0])) op = { kind: "interactive", enabled: i[0] !== 0 };
+    if (m.mnemonic === "SysCall" && form([], [], [0]) && s[0] === "プレイヤーの状況で戦闘終了")
+      op = local(0) ? { kind: "players-ended" }
+        : blocked("Player battle-end query requires ScriptLocalVariable[0]");
     // Format.rValues and Integrator.time are doubles in this build.
     if (m.mnemonic === "Wait" && form([], [0])) op = { kind: "wait", seconds: r[0]! };
+    if (["SetFlag", "ResetFlag", "FlipFlag"].includes(m.mnemonic) && form([0], [], [0])) {
+      const ref = variable(s[0], i[0]);
+      if (ref) op = { kind: "variable-flag", ref,
+        operation: m.mnemonic === "SetFlag" ? "set" : m.mnemonic === "ResetFlag" ? "reset" : "flip" };
+    }
     if (["Calc", "Branch"].includes(m.mnemonic) &&
-        form(m.mnemonic === "Branch" ? [0, 1, 2] : [0, 1], [], [0, 1, 2]) &&
-        s[0] === "ScriptLocalVariable" && local(i[0]) && isOperator(s[1]!)) {
-      const right: BattleEventValue | null = s[2] === "imm" ? { kind: "immediate", value: i[1]! }
-        : s[2] === "ScriptLocalVariable" && local(i[1]) ? { kind: "local", index: i[1] } : null;
-      if (right && (m.mnemonic === "Calc" || target(i[2])))
-        op = m.mnemonic === "Calc" ? { kind: "calc", index: i[0], operator: s[1], right }
-          : { kind: "branch", index: i[0], operator: s[1], right, target: i[2]! };
+        form(m.mnemonic === "Branch" ? [0, 1, 2] : [0, 1], [], [0, 1, 2]) && isOperator(s[1]!)) {
+      const left = variable(s[0], i[0]), rightRef = variable(s[2], i[1]);
+      const right: EventValue | null = s[2] === "imm" ? { kind: "immediate", value: i[1]! }
+        : rightRef ? { kind: "variable", ref: rightRef } : null;
+      if (left && right && (m.mnemonic === "Calc" || target(i[2]))) {
+        if (left.category === "ScriptLocalVariable" &&
+            (right.kind === "immediate" || right.ref.category === "ScriptLocalVariable")) {
+          const localRight: BattleEventValue = right.kind === "immediate" ? right : { kind: "local", index: right.ref.index };
+          op = m.mnemonic === "Calc" ? { kind: "calc", index: left.index, operator: s[1], right: localRight }
+            : { kind: "branch", index: left.index, operator: s[1], right: localRight, target: i[2]! };
+        } else op = m.mnemonic === "Calc" ? { kind: "variable-calc", left, operator: s[1], right }
+          : { kind: "variable-branch", left, operator: s[1], right, target: i[2]! };
+      }
     }
     return { mnemonic: m.mnemonic, op };
   });

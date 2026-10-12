@@ -3,6 +3,7 @@ import type { GameEventSaveRequest } from "./field.js";
 import { encounterContent, battleDefinitionBlocker, type BattleCatalog } from "./battle-content.js";
 import { BattleGame } from "./battle.js";
 import { EventState } from "./event-state.js";
+import { battleEventSharedSnapshot } from "./battle-event-shared.js";
 import type { AudioReadinessPort } from "./audio-readiness.js";
 import type { FieldSoundPresentation } from "./field-sound-presentation.js";
 import type { FieldEffectRuntimeHost } from "./field-effects.js";
@@ -461,7 +462,8 @@ export class GameSession {
       if (blocker) throw new Error(blocker);
       lease = this.state.openBattle(content.encounterId, content.rewardPolicy);
       const battle = new BattleGame(content, seed, this.state.battlePlayers(lease), this.state.battleInventory(lease),
-        this.state.battleProgression(lease, content.experience), this.currentBattlePreferences);
+        this.state.battleProgression(lease, content.experience), this.currentBattlePreferences,
+        battleEventSharedSnapshot(this.field.eventState));
       this.battle = battle;
       this.battleLease = lease;
       this.currentSeed = seed;
@@ -483,6 +485,7 @@ export class GameSession {
     const resume = this.field.prepareEncounterReturn(
       this.battle!.content.encounterId,
       commit.fieldState,
+      this.battle!.eventSharedReturn,
     );
     // Prepare source actors against the post-victory owner, then validate both
     // before publishing rewards, poses, camera or continuation tasks.
@@ -505,7 +508,8 @@ export class GameSession {
         this.field.stop.returnTo?.kind !== "field-idle" || this.field.stop.continuation !== undefined)
       throw new Error("Escape requires an owned ordinary field encounter");
     const commit = this.state.prepareEscape(this.battleLease, result);
-    const resume = this.field.prepareEncounterReturn(this.battle!.content.encounterId, commit.fieldState);
+    const resume = this.field.prepareEncounterReturn(this.battle!.content.encounterId, commit.fieldState,
+      this.battle!.eventSharedReturn);
     commit.validate();
     resume.commitWith(commit);
     this.battle!.takeEscape();
@@ -524,6 +528,7 @@ export class GameSession {
       this.state.battleInventory(this.battleLease),
       this.state.battleProgression(this.battleLease, this.battle.content.experience),
       this.currentBattlePreferences,
+      this.battle.eventSharedEntry,
     );
     return true;
   }

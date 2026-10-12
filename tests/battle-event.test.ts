@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { EventState, type VariableRef } from "../src/core/event-state.js";
 import {
   advanceBattleEvent,
   assertBattleEventExecutable,
@@ -15,6 +16,8 @@ import {
 } from "../src/core/battle-event.js";
 
 const immediate = (value: number) => ({ kind: "immediate" as const, value });
+const ref = (category: VariableRef["category"], index = 0): VariableRef => ({ category, index });
+const variable = (ref: VariableRef) => ({ kind: "variable" as const, ref });
 const program = (ops: BattleEventOp[], initialLocals = [0]): BattleEventProgram => ({
   kind: "battle-event-v1", source: null, entry: 0, end: ops.length,
   localNames: initialLocals.map((_, index) => `local-${index}`), initialLocals,
@@ -360,4 +363,223 @@ test("execution errors retain the bound source and exact failing PC", () => {
     sha256: "c".repeat(64), assetPath: "synthetic-battle-event", serializedFile: "synthetic", objectId: "9007199254740993" };
   assert.throws(() => advanceBattleEvent(p, createBattleEventState(p), context()), (error: unknown) =>
     error instanceof BattleEventError && error.pc === 1 && error.source?.objectId === "9007199254740993" && /matching Call/.test(error.message));
+});
+
+test("shared variable references admit only the supported banks and preserve signed flag aliases", () => {
+  const supported: VariableRef[] = [
+    ref("ScenarioFlag1", 1023), ref("ScenarioFlag2", -256), ref("ScenarioFlag3", 0), ref("ScenarioFlag4", 255),
+    ref("TreasureFlag1", 0), ref("TreasureFlag2", 767), ref("TreasureFlag3", -512), ref("TreasureFlag4", -768),
+    ref("ScenarioVariable", 15), ref("ScriptLocalVariable", 0),
+  ];
+  for (const left of supported) {
+    const p = program([{ kind: "variable-calc", left, operator: "←", right: immediate(1) }, { kind: "exit" }]);
+    const parsed = parseBattleEventProgram(p);
+    assert.deepEqual(parsed, p);
+    const op = parsed.instructions[0]!.op;
+    if (op.kind !== "variable-calc") throw new Error("unreachable");
+    op.left.index = 17;
+    assert.deepEqual(p.instructions[0]!.op, { kind: "variable-calc", left, operator: "←", right: immediate(1) });
+  }
+  const invalid: unknown[] = [
+    ref("AreaLocalVariable"), ref("MapLocalVariable"), ref("MessageSelection"), ref("ItemSelection"),
+    ref("ScenarioFlag1", -1), ref("ScenarioFlag4", 256), ref("TreasureFlag2", -257),
+    ref("ScenarioVariable", 16), ref("ScriptLocalVariable", -1), ref("ScriptLocalVariable", 1),
+    { category: "ScenarioFlag5", index: 0 }, { category: "ScenarioVariable", index: "0" },
+    { category: "ScenarioVariable", index: 0.5 }, { category: "ScenarioVariable", index: 0, extra: 1 },
+  ];
+  for (const bad of invalid) for (const part of ["left", "right", "flag"] as const) {
+    const op = part === "flag" ? { kind: "variable-flag", ref: bad, operation: "set" }
+      : { kind: "variable-calc", left: part === "left" ? bad : ref("ScriptLocalVariable"), operator: "←",
+        right: part === "right" ? { kind: "variable", ref: bad } : immediate(1) };
+    const p = program([{ kind: "nop" }, { kind: "exit" }, { kind: "exit" }]);
+    const raw = { ...p, instructions: [p.instructions[0], { mnemonic: "invalid", op }, p.instructions[2]] };
+    assert.throws(() => parseBattleEventProgram(raw), (e: unknown) => e instanceof BattleEventError && e.pc === 1);
+  }
+  const branch = program([{ kind: "variable-branch", left: ref("ScenarioVariable"), operator: "＝",
+    right: immediate(1), target: 1 }, { kind: "exit" }]);
+  assert.throws(() => parseBattleEventProgram(branch), /target label/);
+});
+
+test("shared writes yield detached requests and the same clock resumes against the host's current bank", () => {
+  const global = ref("ScenarioVariable"), reads: VariableRef[] = [], events = new EventState();
+  const p = program([
+    { kind: "variable-calc", left: global, operator: "←", right: variable(ref("ScriptLocalVariable")) },
+    { kind: "variable-calc", left: ref("ScriptLocalVariable", 1), operator: "←", right: variable(global) },
+    { kind: "variable-calc", left: global, operator: "＋", right: immediate(5) },
+    { kind: "variable-branch", left: global, operator: "＝", right: immediate(12), target: 5 },
+    { kind: "calc", index: 0, operator: "←", right: immediate(-99) }, { kind: "nop" },
+    { kind: "variable-calc", left: ref("ScriptLocalVariable"), operator: "＋", right: variable(global) },
+    { kind: "exit" },
+  ], [7, 0]);
+  const input = createBattleEventState(p), before = structuredClone(input);
+  const currentContext = () => context({ variables: { read: value => { reads.push({ ...value }); return events.read(value); } } });
+  const first = advanceBattleEvent(p, input, currentContext());
+  assert.deepEqual(first.requests, [{ kind: "write-variable", pc: 0, ref: global, value: 7 }]);
+  assert.equal(first.state.pc, 1);
+  assert.equal(reads.length, 0);
+  assert.throws(() => events.read(global), /未知事件状态/);
+  events.write(global, 7);
+  const second = advanceBattleEvent(p, first.state, currentContext());
+  assert.deepEqual(second.state.locals, [7, 7]);
+  assert.deepEqual(second.requests, [{ kind: "write-variable", pc: 2, ref: global, value: 12 }]);
+  assert.equal(events.read(global), 7, "the VM cannot commit its own shared writes");
+  const request = second.requests[0]!;
+  if (request.kind !== "write-variable") throw new Error("unreachable");
+  events.write(request.ref, request.value);
+  request.ref.index = 15;
+  assert.equal(global.index, 0);
+  const final = advanceBattleEvent(p, second.state, currentContext());
+  assert.deepEqual(final.state.locals, [19, 7]);
+  assert.equal(final.state.status, "exited");
+  assert.deepEqual(final.requests, []);
+  assert.ok(reads.every(value => value.category === "ScenarioVariable" && value.index === 0));
+  assert.deepEqual(input, before);
+});
+
+test("shared assignment and flag set/reset establish unknown cells without reading them", () => {
+  const events = new EventState(), global = ref("ScenarioVariable"), alias = ref("ScenarioFlag2", -256);
+  const p = program([
+    { kind: "variable-calc", left: global, operator: "←", right: immediate(2147483647) },
+    { kind: "variable-flag", ref: alias, operation: "set" },
+    { kind: "variable-flag", ref: ref("TreasureFlag4", 255), operation: "reset" },
+    { kind: "exit" },
+  ]);
+  let state = createBattleEventState(p);
+  const ctx = context({ variables: { read: () => { throw new Error("lhs must not be read"); } } });
+  for (const expectedPc of [0, 1, 2]) {
+    const result = advanceBattleEvent(p, state, ctx), request = result.requests[0]!;
+    assert.equal(request.pc, expectedPc);
+    if (request.kind !== "write-variable") throw new Error("unreachable");
+    events.write(request.ref, request.value);
+    state = result.state;
+  }
+  assert.equal(events.read(global), 2147483647);
+  assert.equal(events.read(ref("ScenarioFlag1")), 1);
+  assert.equal(events.read(ref("TreasureFlag1", 1023)), 0);
+  assert.equal(advanceBattleEvent(p, state, ctx).state.status, "exited");
+});
+
+test("shared arithmetic uses int32 and rereads owner-normalized flag values before flipping", () => {
+  const events = EventState.initialized(), global = ref("ScenarioVariable"), flag = ref("TreasureFlag1");
+  events.write(global, 2147483647);
+  const p = program([
+    { kind: "variable-calc", left: global, operator: "＋", right: immediate(1) },
+    { kind: "variable-calc", left: flag, operator: "←", right: immediate(2) },
+    { kind: "variable-flag", ref: flag, operation: "flip" },
+    { kind: "variable-flag", ref: flag, operation: "flip" }, { kind: "exit" },
+  ]);
+  let state = createBattleEventState(p);
+  const writes: number[] = [];
+  while (state.status !== "exited") {
+    const result = advanceBattleEvent(p, state, context({ variables: { read: value => events.read(value) } }));
+    for (const request of result.requests) {
+      if (request.kind !== "write-variable") throw new Error("unreachable");
+      writes.push(request.value); events.write(request.ref, request.value);
+    }
+    state = result.state;
+  }
+  assert.deepEqual(writes, [-2147483648, 2, 0, 1]);
+  assert.equal(events.read(global), -2147483648);
+  assert.equal(events.read(flag), 1);
+});
+
+test("new variable operations never delegate local banks and preserve exact-one Branch semantics", () => {
+  const scriptLocal = ref("ScriptLocalVariable"), events = EventState.initialized();
+  events.beginScript({ labels: ["field-local"], values: [99] });
+  for (const compared of [-1, 0, 1, 2]) {
+    const p = program([
+      { kind: "variable-calc", left: scriptLocal, operator: "＋", right: variable(scriptLocal) },
+      { kind: "variable-flag", ref: scriptLocal, operation: "flip" },
+      { kind: "variable-branch", left: ref("ScenarioVariable"), operator: "←", right: immediate(compared), target: 5 },
+      { kind: "variable-flag", ref: scriptLocal, operation: "set" }, { kind: "exit" }, { kind: "nop" },
+      { kind: "variable-calc", left: scriptLocal, operator: "←", right: immediate(7) }, { kind: "exit" },
+    ], [2]);
+    const ctx = context({ variables: { read: () => { throw new Error("local or assignment lhs was delegated"); } } });
+    const result = advanceBattleEvent(p, createBattleEventState(p), ctx);
+    assert.deepEqual(result.requests, []);
+    assert.deepEqual(result.state.locals, [compared === 1 ? 7 : 1]);
+    assert.equal(events.read(scriptLocal), 99);
+  }
+  const p = program([{ kind: "variable-flag", ref: scriptLocal, operation: "reset" }, { kind: "exit" }], [9]);
+  assert.deepEqual(advanceBattleEvent(p, createBattleEventState(p), context()).state.locals, [0]);
+});
+
+test("missing shared providers and unknown values fail at the requesting PC without publishing earlier locals", () => {
+  const global = ref("ScenarioVariable"), read = ref("ScenarioFlag1");
+  const operations: BattleEventOp[] = [
+    { kind: "variable-calc", left: global, operator: "←", right: immediate(7) },
+    { kind: "variable-calc", left: global, operator: "＋", right: immediate(1) },
+    { kind: "variable-calc", left: ref("ScriptLocalVariable"), operator: "←", right: variable(read) },
+    { kind: "variable-branch", left: global, operator: "＝", right: immediate(0), target: 2 },
+    { kind: "variable-flag", ref: read, operation: "set" },
+    { kind: "variable-flag", ref: read, operation: "reset" },
+    { kind: "variable-flag", ref: read, operation: "flip" },
+  ];
+  for (const op of operations) {
+    const p = program([{ kind: "calc", index: 0, operator: "＋", right: immediate(1) }, op,
+      { kind: "nop" }, { kind: "exit" }]);
+    const state = createBattleEventState(p), before = structuredClone(state);
+    assert.throws(() => advanceBattleEvent(p, state, context()), (error: unknown) =>
+      error instanceof BattleEventError && error.pc === 1 && /variable provider/.test(error.message));
+    assert.deepEqual(state, before);
+  }
+  const p = program([{ kind: "nop" }, { kind: "variable-calc", left: global, operator: "＋", right: immediate(1) }, { kind: "exit" }]);
+  const state = createBattleEventState(p), before = structuredClone(state);
+  for (const invalid of [null, undefined, false, "0", NaN, Infinity, 0.5, 2147483648]) {
+    const ctx = context({ variables: { read: () => invalid as unknown as number } });
+    assert.throws(() => advanceBattleEvent(p, state, ctx), (error: unknown) => error instanceof BattleEventError && error.pc === 1);
+    assert.deepEqual(state, before);
+  }
+  const unknown = new EventState();
+  assert.throws(() => advanceBattleEvent(p, state, context({ variables: { read: value => unknown.read(value) } })),
+    (error: unknown) => error instanceof BattleEventError && error.pc === 1 && /未知事件状态/.test(error.message));
+});
+
+test("shared integer failure leaves the current continuation and owner unchanged", () => {
+  const events = EventState.initialized(), global = ref("ScenarioVariable");
+  events.write(global, -2147483648);
+  const p = program([{ kind: "calc", index: 0, operator: "＋", right: immediate(1) },
+    { kind: "variable-calc", left: global, operator: "÷", right: immediate(-1) }, { kind: "exit" }]);
+  const state = createBattleEventState(p), before = structuredClone(state), ownerBefore = events.snapshot();
+  assert.throws(() => advanceBattleEvent(p, state, context({ variables: { read: value => events.read(value) } })),
+    (error: unknown) => error instanceof BattleEventError && error.pc === 1 && /division overflow/.test(error.message));
+  assert.deepEqual(state, before);
+  assert.deepEqual(events.snapshot(), ownerBefore);
+});
+
+test("shared-write request loops cannot reset the per-clock instruction budget", () => {
+  const p = program([{ kind: "nop" }, { kind: "variable-flag", ref: ref("ScenarioFlag1"), operation: "set" },
+    { kind: "jump", target: 0 }, { kind: "exit" }]);
+  const ctx = context({ variables: { read: () => { throw new Error("set must not read"); } } });
+  let state = createBattleEventState(p), requests = 0, failedInput = structuredClone(state);
+  assert.throws(() => {
+    while (true) {
+      failedInput = structuredClone(state);
+      const advanced = advanceBattleEvent(p, state, ctx);
+      assert.equal(advanced.requests[0]?.kind, "write-variable");
+      requests++;
+      state = advanced.state;
+    }
+  }, /instruction budget/);
+  assert.deepEqual(state, failedInput);
+  assert.ok(requests > 0 && requests < BATTLE_EVENT_CLOCK_INSTRUCTION_LIMIT);
+});
+
+test("players-ended writes only local zero on true and needs an explicit predicate only when executed", () => {
+  const p = program([{ kind: "nop" }, { kind: "players-ended" }, { kind: "exit" }], [17, 23]);
+  const input = createBattleEventState(p), before = structuredClone(input);
+  for (const playersEnded of [false, true]) {
+    const result = advanceBattleEvent(p, input, context({ playersEnded }));
+    assert.deepEqual(result.state.locals, [playersEnded ? -1 : 17, 23]);
+    assert.deepEqual(result.requests, []);
+    assert.equal(result.state.status, "exited");
+  }
+  assert.throws(() => advanceBattleEvent(p, input, context()), (error: unknown) =>
+    error instanceof BattleEventError && error.pc === 1 && /players-ended provider/.test(error.message));
+  assert.deepEqual(input, before);
+  assert.throws(() => parseBattleEventProgram(program([{ kind: "players-ended" }, { kind: "exit" }], [])), /Local/);
+  const skipped = program([{ kind: "exit" }, { kind: "players-ended" }]);
+  assert.equal(advanceBattleEvent(skipped, createBattleEventState(skipped), context()).state.status, "exited");
+  for (const playersEnded of [null, 1, "false"])
+    assert.throws(() => advanceBattleEvent(p, input, context({ playersEnded: playersEnded as unknown as boolean })));
 });

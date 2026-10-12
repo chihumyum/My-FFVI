@@ -100,11 +100,11 @@ test("source pause/interactivity flags and negative waits retain their distinct 
   ]);
 });
 
-test("branches cannot read undeclared/global state or target the final label without a following instruction", () => {
+test("branches cannot read undeclared/unsupported banks or target the final label without a following instruction", () => {
   for (const op of [
     ["Branch", [2, 0, 0], [], ["ScriptLocalVariable", "＝", "imm"]],
     ["Branch", [0, 2, 0], [], ["ScriptLocalVariable", "＝", "ScriptLocalVariable"]],
-    ["Branch", [0, 0, 0], [], ["ScenarioVariable", "＝", "imm"]],
+    ["Branch", [0, 0, 0], [], ["AreaLocalVariable", "＝", "imm"]],
     ["Branch", [0, 0, -1], [], ["ScriptLocalVariable", "＝", "imm"]],
     ["Jump", [2]],
   ] as RawOp[]) {
@@ -114,6 +114,110 @@ test("branches cannot read undeclared/global state or target the final label wit
   const noLocals = raw(); noLocals.ScriptLocal = []; noLocals.ScriptLocalValue = [];
   assert.deepEqual(compileBattleEvent(noLocals, source).instructions[4]!.op,
     { kind: "blocked", reason: "SyncBattleAI requires ScriptLocalVariable[0]" });
+});
+
+test("shared bank operands compile without replacing the battle-local fast path", () => {
+  const value = raw([["Nop"],
+    ["Calc", [1, 10], [], ["ScriptLocalVariable", "←", "ScenarioVariable"]],
+    ["Calc", [3, 1], [], ["ScenarioVariable", "＋", "ScriptLocalVariable"]],
+    ["Branch", [3, 10, 0], [], ["ScenarioVariable", "≧", "imm"]],
+    ["Calc", [1, 0], [], ["ScriptLocalVariable", "←", "ScriptLocalVariable"]],
+    ["SetFlag", [52], [], ["ScenarioFlag1"]],
+    ["ResetFlag", [53], [], ["ScenarioFlag1"]],
+    ["FlipFlag", [12], [], ["TreasureFlag4"]], ["Exit"]]);
+  const program = compileBattleEvent(value, source);
+  assert.doesNotThrow(() => assertBattleEventExecutable(program));
+  assert.deepEqual(program.instructions[1]!.op, { kind: "variable-calc",
+    left: { category: "ScriptLocalVariable", index: 1 }, operator: "←",
+    right: { kind: "variable", ref: { category: "ScenarioVariable", index: 10 } } });
+  assert.deepEqual(program.instructions[2]!.op, { kind: "variable-calc",
+    left: { category: "ScenarioVariable", index: 3 }, operator: "＋",
+    right: { kind: "variable", ref: { category: "ScriptLocalVariable", index: 1 } } });
+  assert.deepEqual(program.instructions[3]!.op, { kind: "variable-branch",
+    left: { category: "ScenarioVariable", index: 3 }, operator: "≧",
+    right: { kind: "immediate", value: 10 }, target: 0 });
+  assert.deepEqual(program.instructions[4]!.op,
+    { kind: "calc", index: 1, operator: "←", right: { kind: "local", index: 0 } });
+  assert.deepEqual(program.instructions.slice(5, 8).map(instruction => instruction.op), [
+    { kind: "variable-flag", ref: { category: "ScenarioFlag1", index: 52 }, operation: "set" },
+    { kind: "variable-flag", ref: { category: "ScenarioFlag1", index: 53 }, operation: "reset" },
+    { kind: "variable-flag", ref: { category: "TreasureFlag4", index: 12 }, operation: "flip" },
+  ]);
+  const first = program.instructions[1]!.op;
+  if (first.kind !== "variable-calc") throw new Error("Unexpected compiler result");
+  first.left.index = 99;
+  assert.equal(compileBattleEvent(value, source).instructions[1]!.op.kind, "variable-calc");
+  assert.equal(value.Mnemonics[1]!.operands.iValues[0], 1);
+});
+
+test("flag bank bounds retain source offset aliases while globals and locals retain their own lengths", () => {
+  for (const family of ["ScenarioFlag", "TreasureFlag"]) for (let bank = 1; bank <= 4; bank++) {
+    const offset = (bank - 1) * 256, category = family + bank;
+    for (const index of [-offset, 1023 - offset]) {
+      const p = compileBattleEvent(raw([["SetFlag", [index], [], [category]], ["Exit"]]), source);
+      assert.deepEqual(p.instructions[0]!.op, { kind: "variable-flag", ref: { category, index }, operation: "set" });
+      assert.doesNotThrow(() => assertBattleEventExecutable(p));
+    }
+    for (const index of [-offset - 1, 1024 - offset])
+      assert.equal(compileBattleEvent(raw([["SetFlag", [index], [], [category]], ["Exit"]]), source).instructions[0]!.op.kind, "blocked");
+  }
+  for (const [category, index, kind] of [["ScenarioVariable", 15, "variable-flag"],
+    ["ScenarioVariable", 16, "blocked"], ["ScriptLocalVariable", 1, "variable-flag"],
+    ["ScriptLocalVariable", 2, "blocked"], ["ScenarioVariable", -1, "blocked"]] as const)
+    assert.equal(compileBattleEvent(raw([["FlipFlag", [index], [], [category]], ["Exit"]]), source).instructions[0]!.op.kind, kind);
+});
+
+test("unsupported persistent and selection contexts stay blocked on either side of an operation", () => {
+  for (const category of ["AreaLocalVariable", "MapLocalVariable", "MessageSelection", "ItemSelection", "FutureBank", "imm"]) {
+    const inputs: RawOp[] = [
+      ["SetFlag", [0], [], [category]],
+      ["Calc", [0, 1], [], [category, "←", "imm"]],
+      ["Branch", [0, 0, 0], [], [category, "＝", "ScriptLocalVariable"]],
+    ];
+    if (category !== "imm") inputs.push(["Calc", [0, 0], [], ["ScriptLocalVariable", "←", category]]);
+    for (const op of inputs)
+      assert.equal(compileBattleEvent(raw([["Nop"], op, ["Exit"]]), source).instructions[1]!.op.kind, "blocked");
+  }
+  for (const op of [
+    ["Calc", [0, 16], [], ["ScriptLocalVariable", "←", "ScenarioVariable"]],
+    ["Calc", [0, 2], [], ["ScenarioVariable", "←", "ScriptLocalVariable"]],
+    ["Branch", [3, 1, 2], [], ["ScenarioVariable", "＝", "imm"]],
+  ] as RawOp[])
+    assert.equal(compileBattleEvent(raw([["Nop"], op, ["Exit"]]), source).instructions[1]!.op.kind, "blocked");
+});
+
+test("new shared instructions keep exact operand slots and reject unhandled argument tails", () => {
+  for (const mutation of [
+    (op: ReturnType<typeof raw>["Mnemonics"][number]) => { op.operands.iValues[1] = 1; },
+    (op: ReturnType<typeof raw>["Mnemonics"][number]) => { op.operands.rValues[0] = 1; },
+    (op: ReturnType<typeof raw>["Mnemonics"][number]) => { op.operands.sValues[1] = "ScenarioFlag1"; },
+    (op: ReturnType<typeof raw>["Mnemonics"][number]) => { op.operands.iValues.pop(); },
+  ]) {
+    const value = raw([["SetFlag", [52], [], ["ScenarioFlag1"]], ["Exit"]]);
+    mutation(value.Mnemonics[0]!);
+    assert.equal(compileBattleEvent(value, source).instructions[0]!.op.kind, "blocked");
+  }
+  const bad = raw([["Calc", [3, 7], [], ["ScenarioVariable", "←", "imm"]], ["Exit"]]);
+  bad.Mnemonics[0]!.operands.iValues[2] = 1;
+  assert.equal(compileBattleEvent(bad, source).instructions[0]!.op.kind, "blocked");
+  bad.Mnemonics[0]!.operands.iValues[2] = 0; bad.Mnemonics[0]!.operands.sValues[1] = "=";
+  assert.equal(compileBattleEvent(bad, source).instructions[0]!.op.kind, "blocked");
+});
+
+test("the player-end SysCall is one exact no-argument binding with a declared return local", () => {
+  const value = raw([["SysCall", [], [], ["プレイヤーの状況で戦闘終了"]], ["Exit"]]);
+  assert.deepEqual(compileBattleEvent(value, source).instructions[0]!.op, { kind: "players-ended" });
+  assert.doesNotThrow(() => assertBattleEventExecutable(compileBattleEvent(value, source)));
+  for (const mutate of [
+    (v: ReturnType<typeof raw>) => { v.Mnemonics[0]!.operands.sValues[0] += " "; },
+    (v: ReturnType<typeof raw>) => { v.Mnemonics[0]!.operands.iValues[0] = 1; },
+    (v: ReturnType<typeof raw>) => { v.Mnemonics[0]!.operands.rValues[0] = 0.1; },
+    (v: ReturnType<typeof raw>) => { v.Mnemonics[0]!.operands.sValues[1] = "arg"; },
+    (v: ReturnType<typeof raw>) => { v.ScriptLocal = []; v.ScriptLocalValue = []; },
+  ]) {
+    const invalid = structuredClone(value); mutate(invalid);
+    assert.equal(compileBattleEvent(invalid, source).instructions[0]!.op.kind, "blocked");
+  }
 });
 
 test("source headers, segment, animations and flags cannot inherit implicit defaults", () => {

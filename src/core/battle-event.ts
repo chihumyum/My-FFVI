@@ -1,6 +1,7 @@
 import type { BattleAISource } from "./battle-ai.js";
 import { int32, integerOperation, isOperator, type Operator } from "./script-integer.js";
 import { checkpointInteger, checkpointKeys, checkpointNumber, checkpointRecord } from "./checkpoint-validation.js";
+import { validVariable, type EventValue, type VariableRef } from "./event-state.js";
 
 /** BattleGame owns every unit, AI core, action queue, permission, and RNG. This
  * interpreter owns only a detached continuation and script-local integers. */
@@ -8,10 +9,13 @@ export type BattleEventValue =
   | { kind: "immediate"; value: number }
   | { kind: "local"; index: number };
 export type BattleEventOp =
-  | { kind: "nop" | "blank" | "exit" | "return" | "wait-start" | "exec-ai" | "sync-ai" | "sync-action" }
+  | { kind: "nop" | "blank" | "exit" | "return" | "wait-start" | "exec-ai" | "sync-ai" | "sync-action" | "players-ended" }
   | { kind: "call" | "jump"; target: number }
   | { kind: "calc"; index: number; operator: Operator; right: BattleEventValue }
   | { kind: "branch"; index: number; operator: Operator; right: BattleEventValue; target: number }
+  | { kind: "variable-calc"; left: VariableRef; operator: Operator; right: EventValue }
+  | { kind: "variable-branch"; left: VariableRef; operator: Operator; right: EventValue; target: number }
+  | { kind: "variable-flag"; ref: VariableRef; operation: "set" | "reset" | "flip" }
   | { kind: "wait"; seconds: number }
   | { kind: "end-enabled" | "pause" | "interactive"; enabled: boolean }
   | { kind: "blocked"; reason: string };
@@ -47,9 +51,15 @@ export type BattleEventContext = {
   started: boolean;
   aiCoreAlive: boolean;
   actionStaging: boolean;
+  /** Only the shared banks are delegated. ScriptLocalVariable remains owned
+   * by this VM; the battle host supplies its current transactional read view. */
+  variables?: { read(ref: VariableRef): number };
+  /** A source query of the current players, not an HP-derived VM cache. */
+  playersEnded?: boolean;
 };
 export type BattleEventRequest =
   | { kind: "exec-ai" | "sync-ai"; pc: number }
+  | { kind: "write-variable"; pc: number; ref: VariableRef; value: number }
   | { kind: "end-enabled" | "pause" | "interactive"; pc: number; enabled: boolean };
 export type BattleEventAdvance = {
   state: BattleEventState;
@@ -90,7 +100,7 @@ function boolean(raw: unknown): boolean {
   if (typeof raw !== "boolean") throw new Error("Invalid battle event boolean");
   return raw;
 }
-function array<T>(raw: unknown, parse: (value: unknown) => T): T[] {
+function array<T>(raw: unknown, parse: (value: unknown, index: number) => T): T[] {
   if (!Array.isArray(raw)) throw new Error("Invalid battle event array");
   // Array.from visits sparse entries too; missing data is not an empty slot.
   return Array.from(raw, parse);
@@ -108,12 +118,36 @@ function parseValue(raw: unknown): BattleEventValue {
   }
   throw new Error("Invalid battle event operand");
 }
+function parseVariable(raw: unknown): VariableRef {
+  const value = record(raw, "category,index"), category = text(value.category);
+  if (!/^(?:Scenario|Treasure)Flag[1-4]$/.test(category) &&
+      category !== "ScenarioVariable" && category !== "ScriptLocalVariable")
+    throw new Error(`Unsupported battle event variable category: ${category}`);
+  const ref: VariableRef = { category: category as VariableRef["category"], index: int32(value.index) };
+  // Flags use the shared 1024-bit bank, including valid signed index aliases.
+  // Local bank length is checked against this particular program below.
+  if (!validVariable(ref)) throw new Error(`Invalid battle event variable: ${category}[${ref.index}]`);
+  return ref;
+}
+function parseEventValue(raw: unknown): EventValue {
+  checkpointRecord(raw);
+  const value = raw as Record<string, unknown>;
+  if (value.kind === "immediate") {
+    checkpointKeys(value, "kind,value");
+    return { kind: "immediate", value: int32(value.value) };
+  }
+  if (value.kind === "variable") {
+    checkpointKeys(value, "kind,ref");
+    return { kind: "variable", ref: parseVariable(value.ref) };
+  }
+  throw new Error("Invalid battle event variable operand");
+}
 function parseOp(raw: unknown): BattleEventOp {
   checkpointRecord(raw);
   const value = raw as Record<string, unknown>, kind = value.kind;
   switch (kind) {
     case "nop": case "blank": case "exit": case "return":
-    case "wait-start": case "exec-ai": case "sync-ai": case "sync-action":
+    case "wait-start": case "exec-ai": case "sync-ai": case "sync-action": case "players-ended":
       checkpointKeys(value, "kind");
       return { kind };
     case "call": case "jump":
@@ -125,6 +159,20 @@ function parseOp(raw: unknown): BattleEventOp {
       if (!isOperator(operator)) throw new Error("Invalid battle event operator");
       const common = { index: integer(value.index), operator, right: parseValue(value.right) };
       return kind === "calc" ? { kind, ...common } : { kind, ...common, target: integer(value.target) };
+    }
+    case "variable-calc": case "variable-branch": {
+      checkpointKeys(value, kind === "variable-calc" ? "kind,left,operator,right" : "kind,left,operator,right,target");
+      const operator = text(value.operator);
+      if (!isOperator(operator)) throw new Error("Invalid battle event operator");
+      const common = { left: parseVariable(value.left), operator, right: parseEventValue(value.right) };
+      return kind === "variable-calc" ? { kind, ...common } : { kind, ...common, target: integer(value.target) };
+    }
+    case "variable-flag": {
+      checkpointKeys(value, "kind,ref,operation");
+      const operation = value.operation;
+      if (operation !== "set" && operation !== "reset" && operation !== "flip")
+        throw new Error("Invalid battle event flag operation");
+      return { kind, ref: parseVariable(value.ref), operation };
     }
     case "wait":
       checkpointKeys(value, "kind,seconds");
@@ -158,12 +206,17 @@ function parseSource(raw: unknown): BattleAISource | null {
 export function parseBattleEventProgram(raw: unknown): BattleEventProgram {
   const value = record(raw, "kind,source,entry,end,localNames,initialLocals,instructions,blockers");
   if (value.kind !== "battle-event-v1") throw new Error("Invalid battle event program kind");
+  const source = parseSource(value.source);
   const program: BattleEventProgram = {
-    kind: "battle-event-v1", source: parseSource(value.source), entry: integer(value.entry), end: integer(value.end),
+    kind: "battle-event-v1", source, entry: integer(value.entry), end: integer(value.end),
     localNames: array(value.localNames, name => text(name, true)), initialLocals: array(value.initialLocals, int32),
-    instructions: array(value.instructions, raw => {
-      const instruction = record(raw, "mnemonic,op");
-      return { mnemonic: text(instruction.mnemonic), op: parseOp(instruction.op) };
+    instructions: array(value.instructions, (raw, pc) => {
+      try {
+        const instruction = record(raw, "mnemonic,op");
+        return { mnemonic: text(instruction.mnemonic), op: parseOp(instruction.op) };
+      } catch (error) {
+        throw new BattleEventError(source, pc, error instanceof Error ? error.message : String(error));
+      }
     }), blockers: array(value.blockers, value => text(value)),
   };
   const fail = (pc: number, reason: string): never => { throw new BattleEventError(program.source, pc, reason); };
@@ -177,8 +230,15 @@ export function parseBattleEventProgram(raw: unknown): BattleEventProgram {
     if ((op.kind === "calc" || op.kind === "branch") &&
         (op.index >= program.localNames.length || op.right.kind === "local" && op.right.index >= program.localNames.length))
       fail(pc, "script-local index is outside the declared bank");
+    const refs = op.kind === "variable-flag" ? [op.ref]
+      : op.kind === "variable-calc" || op.kind === "variable-branch"
+        ? [op.left, ...(op.right.kind === "variable" ? [op.right.ref] : [])] : [];
+    if (refs.some(ref => ref.category === "ScriptLocalVariable" && ref.index >= program.localNames.length))
+      fail(pc, "script-local index is outside the declared bank");
     if (op.kind === "sync-ai" && program.localNames.length === 0)
       fail(pc, "SyncBattleAI requires ScriptLocalVariable[0]");
+    if (op.kind === "players-ended" && program.localNames.length === 0)
+      fail(pc, "players-ended requires ScriptLocalVariable[0]");
   }
   return program;
 }
@@ -232,13 +292,27 @@ function parseState(raw: unknown): BattleEventState {
     clockInstructions: integer(value.clockInstructions, 0, BATTLE_EVENT_CLOCK_INSTRUCTION_LIMIT) };
 }
 function parseContext(raw: unknown): BattleEventContext {
-  const value = record(raw, "clock,timeSeconds,started,aiCoreAlive,actionStaging");
+  checkpointRecord(raw);
+  const fields = raw as Record<string, unknown>;
+  const value = record(raw, "clock,timeSeconds,started,aiCoreAlive,actionStaging" +
+    (Object.hasOwn(fields, "variables") ? ",variables" : "") +
+    (Object.hasOwn(fields, "playersEnded") ? ",playersEnded" : ""));
+  let variables: BattleEventContext["variables"];
+  if (Object.hasOwn(value, "variables")) {
+    const port = record(value.variables, "read");
+    if (typeof port.read !== "function") throw new Error("Invalid battle event variable provider");
+    const owner = port as { read(ref: VariableRef): number }, read = owner.read;
+    variables = { read: ref => read.call(owner, ref) };
+  }
   return { clock: clockNumber(value.clock), timeSeconds: finite(value.timeSeconds, 0),
-    started: boolean(value.started), aiCoreAlive: boolean(value.aiCoreAlive), actionStaging: boolean(value.actionStaging) };
+    started: boolean(value.started), aiCoreAlive: boolean(value.aiCoreAlive), actionStaging: boolean(value.actionStaging),
+    ...(variables ? { variables } : {}),
+    ...(Object.hasOwn(value, "playersEnded") ? { playersEnded: boolean(value.playersEnded) } : {}) };
 }
 
 /** Advance one source clock until it yields, exits, or needs the battle host.
- * No callback runs here. A thrown error leaves the input state untouched. The
+ * Shared reads are synchronous; writes are returned as requests. A thrown
+ * error leaves the input state untouched. The
  * host must transact all returned requests and resumed segments in its tick. */
 export function advanceBattleEvent(
   program: BattleEventProgram,
@@ -299,6 +373,34 @@ export function advanceBattleEvent(
   };
   const value = (operand: BattleEventValue) => operand.kind === "immediate"
     ? guarded(() => int32(operand.value)) : local(operand.index);
+  const variableProvider = () => {
+    if (!context.variables) return fail("Missing battle event variable provider", state.pc);
+    return context.variables;
+  };
+  const readVariable = (ref: VariableRef): number => {
+    if (ref.category === "ScriptLocalVariable") return local(ref.index);
+    const result = guarded(() => variableProvider().read({ ...ref }));
+    if (result == null) return fail(`Unknown battle event variable ${ref.category}[${ref.index}]`, state.pc);
+    return guarded(() => int32(result));
+  };
+  const eventValue = (operand: EventValue): number => operand.kind === "immediate"
+    ? guarded(() => int32(operand.value)) : readVariable(operand.ref);
+  const writeVariable = (ref: VariableRef, value: number, pc: number): boolean => {
+    guarded(() => int32(value));
+    if (ref.category === "ScriptLocalVariable") {
+      if (ref.index < 0 || ref.index >= state.locals.length)
+        return fail("script-local index outside the current bank", pc);
+      state.locals[ref.index] = value;
+      next();
+      return false;
+    }
+    // Even an assignment/set/reset needs an attached shared-state context,
+    // but it never reads the old cell. The host performs the write itself.
+    variableProvider();
+    next();
+    requests.push({ kind: "write-variable", pc, ref: { ...ref }, value });
+    return true;
+  };
   const jump = (target: number) => {
     if (!inRange(target) || !inRange(target + 1)) fail("jump leaves the program range", state.pc);
     state.pc = target + 1;
@@ -335,16 +437,39 @@ export function advanceBattleEvent(
         break;
       }
       case "calc":
-        state.locals[op.index] = guarded(() => integerOperation(local(op.index), op.operator, value(op.right)));
+        state.locals[op.index] = guarded(() => integerOperation(op.operator === "←" ? 0 : local(op.index), op.operator, value(op.right)));
         next();
         break;
       case "branch": {
-        const condition = guarded(() => integerOperation(local(op.index), op.operator, value(op.right)));
+        const condition = guarded(() => integerOperation(op.operator === "←" ? 0 : local(op.index), op.operator, value(op.right)));
         // Internal.Main.ComparisonOperation callback 0x2ca840 branches only
         // for exactly 1, including when authored with an arithmetic operator.
         if (condition === 1) jump(op.target); else next();
         break;
       }
+      case "variable-calc": {
+        const calculated = guarded(() => integerOperation(op.operator === "←" ? 0 : readVariable(op.left),
+          op.operator, eventValue(op.right)));
+        if (writeVariable(op.left, calculated, pc)) return result();
+        break;
+      }
+      case "variable-branch": {
+        const condition = guarded(() => integerOperation(op.operator === "←" ? 0 : readVariable(op.left),
+          op.operator, eventValue(op.right)));
+        if (condition === 1) jump(op.target); else next();
+        break;
+      }
+      case "variable-flag": {
+        const flag = op.operation === "set" ? 1 : op.operation === "reset" ? 0 : Number(readVariable(op.ref) === 0);
+        if (writeVariable(op.ref, flag, pc)) return result();
+        break;
+      }
+      case "players-ended":
+        if (typeof context.playersEnded !== "boolean") return fail("Missing battle event players-ended provider", pc);
+        local(0);
+        if (context.playersEnded) state.locals[0] = -1;
+        next();
+        break;
       case "sync-ai":
         local(0);
         state.locals[0] = Number(!context.aiCoreAlive);

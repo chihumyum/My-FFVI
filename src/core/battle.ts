@@ -79,6 +79,7 @@ import { observeLearningAction, validateObservedLearningCatalog } from "./charac
 import { advanceBattleEvent, createBattleEventState, BattleEventError, type BattleEventState } from "./battle-event.js";
 import { parseBattleLifecycle, type BattleLifecycle } from "./battle-lifecycle.js";
 import { battleEventUnitEnded } from "./battle-event-context.js";
+import { BattleEventSharedState, type BattleEventSharedSnapshot } from "./battle-event-shared.js";
 
 export type Combatant = CombatantDefinition & {
   maxHp: number;
@@ -153,6 +154,7 @@ export class BattleGame {
   private readonly rewardPolicy: Readonly<BattleRewardPolicy>;
   private readonly lifecycle: BattleLifecycle;
   private eventState: BattleEventState | null = null;
+  private readonly eventShared: BattleEventSharedState | null;
   private eventControls = { aiStarted: false, aiAliveLastSync: false, endEnabled: true,
     interactive: true, updateEnabled: true };
   private escapeRequested = false;
@@ -187,6 +189,7 @@ export class BattleGame {
       magicPoints: number,
     ) => BattleStatProjection & { level: number; exp: number; magicLearningValue?: number },
     initialPreferences?: BattlePreferences,
+    eventShared?: BattleEventSharedSnapshot,
   ) {
     if (
       content.kind !== "opening-battle-development" ||
@@ -203,6 +206,7 @@ export class BattleGame {
     this.rewardPolicy = Object.freeze(parseBattleRewardPolicy(content.rewardPolicy === undefined
       ? { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 } : content.rewardPolicy));
     this.lifecycle = parseBattleLifecycle(content.lifecycle ?? { kind: "battle-lifecycle-v1", mode: "none" });
+    this.eventShared = eventShared === undefined ? null : new BattleEventSharedState(eventShared);
     if (this.lifecycle.mode === "script") this.eventState = createBattleEventState(this.lifecycle.program);
     this.randomState = seed || 1;
     this.currentPreferences = parseBattlePreferences(content.timing);
@@ -859,6 +863,8 @@ export class BattleGame {
   get eventExecution() {
     return { state: structuredClone(this.eventState), controls: { ...this.eventControls } };
   }
+  get eventSharedEntry(): BattleEventSharedSnapshot | undefined { return this.eventShared?.entry; }
+  get eventSharedReturn() { return this.eventShared?.prepareReturn() ?? null; }
   private startEnemyAI(): void {
     if ([...this.aiStates.values()].some(state => state.status !== "exited"))
       throw new Error("Battle AI cores are already running");
@@ -887,6 +893,10 @@ export class BattleGame {
         // Source IsNowAttackStaging includes staged/interrupt actions, but not
         // ordinary queued turns. The queues remain owned by this BattleGame.
         actionStaging: this.action !== null || this.reactions.length > 0,
+        ...(this.eventShared ? { variables: { read: (ref) => this.eventShared!.read(ref) } } : {}),
+        ...(program.instructions.some(({ op }) => op.kind === "players-ended") ? {
+          playersEnded: this.eventPlayersEnded(),
+        } : {}),
       });
       for (const request of result.requests) {
         try {
@@ -901,6 +911,10 @@ export class BattleGame {
             case "end-enabled": this.eventControls.endEnabled = request.enabled; break;
             case "pause": this.eventControls.updateEnabled = !request.enabled; break;
             case "interactive": this.eventControls.interactive = request.enabled; break;
+            case "write-variable":
+              if (!this.eventShared) throw new Error("Missing shared battle event state");
+              this.eventShared.write(request.ref, request.value);
+              break;
           }
         } catch (error) {
           throw new BattleEventError(program.source, request.pc,
@@ -910,6 +924,13 @@ export class BattleGame {
       this.eventState = result.state;
       if (!result.requests.length) return;
     }
+  }
+  private eventPlayersEnded(): boolean {
+    if (!this.content.battleEvents) throw new Error("Missing battle event condition rules");
+    // Current.BattleFinishIsPlayersFault projects the current player parameters,
+    // then All(IsBattleEndByUnit). It neither reads the persistent HP copy nor
+    // creates another roster/life-state owner.
+    return this.players.every(player => battleEventUnitEnded(this.content.battleEvents!, player.conditionIds));
   }
   private battleAICoresAlive(): { alive: boolean; exitedIds: string[] } {
     const exitedIds: string[] = [];
@@ -1210,6 +1231,7 @@ export class BattleGame {
       ai: structuredClone(this.aiStates),
       eventState: structuredClone(this.eventState),
       eventControls: { ...this.eventControls },
+      eventShared: this.eventShared?.snapshot() ?? null,
       poison: structuredClone(this.poisonStates),
       slow: structuredClone(this.slowStates),
       stock: structuredClone(this.stock),
@@ -1237,6 +1259,7 @@ export class BattleGame {
       this.aiStates = before.ai;
       this.eventState = before.eventState;
       this.eventControls = before.eventControls;
+      if (this.eventShared && before.eventShared) this.eventShared.restore(before.eventShared);
       this.poisonStates = before.poison;
       this.slowStates = before.slow;
       this.stock = before.stock;

@@ -26,6 +26,7 @@ import { executeOwnedConditionEvent, type FieldOwnedConditionPort } from "./owne
 import { executeSourcePresentation, cloneSourcePresentationContext, sourcePresentationCheckpoint,
   type SourcePresentationContext, type SourcePresentationPort } from "./source-presentation.js";
 import { canonical } from "./canonical.js";
+import { prepareBattleEventSharedReturn, type BattleEventSharedReturn } from "./battle-event-shared.js";
 import { captureFieldEventCheckpoint, restoreFieldEventCheckpoint,
   type FieldEventCheckpoint } from "./field-event-checkpoint.js";
 import { frameworkTransportationPresentation, FRAMEWORK_TRANSPORTATION_LIMITATIONS } from "./development-profile.js";
@@ -2384,12 +2385,13 @@ export class FieldGame {
   }
   /** Validate the handoff before consuming rewards. The commit only schedules
    * the continuation; normal simulation, not reward publication, runs its code. */
-  prepareEncounterReturn(party: number, candidateOwned?: () => FieldEncounterReturnState): FieldEncounterReturnPublication {
+  prepareEncounterReturn(party: number, candidateOwned?: () => FieldEncounterReturnState,
+    eventShared?: BattleEventSharedReturn | null): FieldEncounterReturnPublication {
     if (this.stop?.kind === "encounter" && this.stop.returnTo !== undefined) {
       checkpointKeys(this.stop.returnTo, "kind");
       if (this.stop.returnTo.kind !== "field-idle" || this.stop.continuation !== undefined)
         throw new Error("Invalid ordinary encounter return target");
-      return this.prepareIdleEncounterReturn(party, candidateOwned);
+      return this.prepareIdleEncounterReturn(party, candidateOwned, eventShared);
     }
     if (this.hasUnfinishedInterpolation())
       throw new Error("Battle return cannot discard unfinished source interpolation registers");
@@ -2409,6 +2411,7 @@ export class FieldGame {
       this.content.scriptLocals?.[continuation] ?? null,
     );
     new EventState(this.eventState.snapshot()).beginScript(locals);
+    const shared = eventShared ? prepareBattleEventSharedReturn(this.eventState, eventShared) : null;
     const fingerprint = () => canonical({ stop: this.stop, event: this.eventState.snapshot(), lifecycle: this.puppetLifecycle,
       camera: this.cameraSnapshot, collision: this.collisionSwitches, updateMask: this.entityUpdateMask,
       offset: this.mapScrollOffset, time: this.time, remainder: this.remainder,
@@ -2425,8 +2428,10 @@ export class FieldGame {
     };
     const validate = () => {
       validateField();
+      shared?.validate();
       native?.validate();
       validateField();
+      shared?.validate();
     };
     const publish = () => {
       this.eventState.beginScript(locals);
@@ -2439,14 +2444,19 @@ export class FieldGame {
     };
     const commitWith = (commitOwned: () => void) => {
       validate(); consumed = true;
-      if (native) native.commitWith(() => { commitOwned(); publish(); });
-      else { commitOwned(); publish(); }
+      const publishAll = () => {
+        if (shared) shared.commitWith(commitOwned); else commitOwned();
+        publish();
+      };
+      if (native) native.commitWith(publishAll);
+      else publishAll();
     };
     return Object.assign(() => commitWith(() => {}), { validate, commitWith });
   }
   /** A free-walking battle resumes this exact idle field, without executing a
    * script or rebinding local banks. Only post-battle appearance is prepared. */
-  private prepareIdleEncounterReturn(party: number, candidateOwned?: () => FieldEncounterReturnState): FieldEncounterReturnPublication {
+  private prepareIdleEncounterReturn(party: number, candidateOwned?: () => FieldEncounterReturnState,
+    eventShared?: BattleEventSharedReturn | null): FieldEncounterReturnPublication {
     const stop = this.stop;
     if (stop?.kind !== "encounter" || stop.party !== party || stop.returnTo?.kind !== "field-idle")
       throw new Error("No matching ordinary field encounter to resume");
@@ -2456,6 +2466,7 @@ export class FieldGame {
         throw new Error("Ordinary battle return requires the suspended idle field");
     };
     requireIdle();
+    const shared = eventShared ? prepareBattleEventSharedReturn(this.eventState, eventShared) : null;
     const owner = this.actors, tasks = this.tasks;
     const actors = Object.values(owner).map(actor => ({ actor, native: actor.native, entity: actor.native?.entity }));
     const fingerprint = () => canonical({ event: this.eventState.snapshot(), lifecycle: this.puppetLifecycle,
@@ -2524,10 +2535,12 @@ export class FieldGame {
         throw new Error("Stale ordinary battle return");
       requireIdle();
     };
-    const validate = () => { validateField(); appearance?.validate(); validateField(); };
+    const validate = () => {
+      validateField(); shared?.validate(); appearance?.validate(); validateField(); shared?.validate();
+    };
     const commitWith = (commitOwned: () => void) => {
       validate(); consumed = true;
-      commitOwned();
+      if (shared) shared.commitWith(commitOwned); else commitOwned();
       // Only prevalidated plain writes remain after owned publication. In
       // particular, do not call FieldPartyActors' validating callable here.
       appearance?.commit();
