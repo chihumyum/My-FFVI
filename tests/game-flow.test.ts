@@ -179,12 +179,15 @@ test("defeat retry reuses the session lease and restores entry combatants withou
 test("unavailable encounter becomes a stable blocker before any shared-state lease", () => {
   const { game, flow, battle } = gameFlowFixture();
   delete battle.encounters[1000];
+  battle.encounterDiagnostics = [{ partyId: 1000, kind: "blocked", code: "battle-script",
+    reason: "Battle script lifecycle is not implemented", source: null }];
   const before = game.state.snapshot(); startFlow(flow);
   game.field.startEvent("fight");
   assert.equal(flow.phase, "event");
   flow.advance(10, readyHost);
   assert.equal(flow.phase, "blocked");
   assert.match(game.field.stop!.message, /encounter 1000/);
+  assert.match(game.field.stop!.message, /battle-script: Battle script lifecycle is not implemented/);
   assert.equal(game.battle, null);
   assert.equal(game.state.inBattle, false);
   assert.deepEqual(game.state.snapshot(), before);

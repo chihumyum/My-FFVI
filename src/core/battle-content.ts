@@ -125,12 +125,35 @@ export type BattleEncounter = Pick<
   BattleContent,
   "encounterId" | "enemies" | "background" | "formation"
 >;
+/** Import diagnostics are separate from live party/AI admission. A compiled
+ * definition can still have a conditional dependency which the runtime rejects. */
+export type BattleEncounterDiagnostic = {
+  partyId: number;
+  kind: "blocked" | "runtime-dependency" | "development-omission";
+  code: string;
+  reason: string;
+  source: { file: string; assetPath: string; serializedFile: string; objectId: string; rowId: string } | null;
+  dependency?: { table: string; id: number; field?: string };
+  enemySlot?: number;
+  pc?: number;
+};
+export type BattleEncounterReport = {
+  requested: number;
+  compiledDefinitions: number;
+  blocked: number;
+  withRuntimeDependencies: number;
+  withDevelopmentOmissions: number;
+  originalGameExecuted: false;
+  entries: { partyId: number; status: "compiled" | "blocked"; enemyCount: number; abilityIds: number[] }[];
+};
 export type BattleCatalog = {
   kind: "narshe-battle-catalog";
   contentHash: string;
   gameState: GameStateContent;
   common: Omit<BattleContent, keyof BattleEncounter | "contentHash">;
   encounters: Record<string, BattleEncounter>;
+  encounterDiagnostics?: BattleEncounterDiagnostic[];
+  encounterReport?: BattleEncounterReport;
 };
 export function encounterContent(
   catalog: BattleCatalog,

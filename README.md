@@ -18,6 +18,8 @@
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
 - [游戏系统框架与连续流程验收](docs/game-framework.md)
+- [通用遭遇内容管线](docs/battle-catalog.md)
+- [v38 队伍菜单与通用战斗内容管线](docs/systems-v38.md)
 - [v37 统一游戏流程、内容装载与连续验收](docs/systems-v37.md)
 - [v36 来源粒子启动、出生、运动与渲染提供器](docs/systems-v36.md)
 - [v35 共享效果事务、来源粒子引擎子核与板合成](docs/systems-v35.md)
@@ -84,7 +86,9 @@ npm run game:check
 .venv/bin/python tools/source_adapter/export_battle.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster" \
   --character-id 2 --character-id 3 --character-id 5 --character-id 6 --character-id 7 \
   --character-id 8 --character-id 11 --character-id 12 --character-id 13 --character-id 15 \
-  --character-id 17 --character-id 18 --character-id 19 --character-id 26 --character-id 29
+  --character-id 17 --character-id 18 --character-id 19 --character-id 26 --character-id 29 \
+  --encounter-id 3002 --encounter-id 3035
+npm run battle-catalog:check
 npm run playable:check
 npm run parameters:check
 npm run abilities:check
@@ -164,4 +168,6 @@ npm run accept -- narshe
 
 `knowledge` 接受可选的 `--state '<JSON 上下文>'`。查询时只提供已有证据的状态值；没有证据就省略对应键。状态字符串只是上下文输入，不会自动建立它与原版剧情 flag 的映射。
 
-当前系统交付：[v37 游戏框架](docs/systems-v37.md)。`npm run framework:check` 检查同一会话中的探索、事件、战败重试、胜利与成长、菜单物品、保存恢复和继续探索；使用明确的开发入口与内存存储。浏览器已接统一流程和内容仓库。公开可玩 profile 仍为 v35，来源完整开场和主线继续单独追踪；粒子精细恢复暂停。GitHub 仅追踪工具、源码、说明与合成夹具，原始游戏资源、提取文案、原生反编译与生成产物留在忽略目录。
+当前系统交付：[v38 队伍与通用战斗管线](docs/systems-v38.md)。暂停菜单已接当前队伍排序、前后排与成长/能力查看；`npm run party-menu:check` 检查状态、地图外观、入战和保存的连接，`npm run battle-catalog:check` 验证两组非开场来源编组的同管线编译与战后返回。`npm run framework:check` 检查同一会话中的探索、事件、战败重试、胜利与成长、菜单物品、保存恢复和继续探索；使用明确的开发入口与内存存储。浏览器已接统一流程和内容仓库。公开可玩 profile 仍为 v35，来源完整开场和主线继续单独追踪；粒子精细恢复暂停。GitHub 仅追踪工具、源码、说明与合成夹具，原始游戏资源、提取文案、原生反编译与生成产物留在忽略目录。
+
+战斗导出支持重复的 `--encounter-id`；上述示例的 3002、3035 是检验通用编译器的非开场编组。所选编组由同一编译器处理，来源指令、队形或资源缺口逐组报告；选择资源不会解锁剧情或授予角色。`npm run battle:build` 同时写出 `build/reports/battle-catalog.json`，区分无法构造的编组、运行到特定分支仍有依赖的编组和明确保留的开发表现偏差。

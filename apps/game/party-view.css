@@ -1,0 +1,11 @@
+#party-menu { display: grid; gap: 0.8rem; padding: 0.8rem 0; }
+.party-menu-cells { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+.party-menu-cell { border: 1px solid #7778; border-radius: 0.4rem; padding: 0.75rem; }
+.party-menu-cell h4, .party-menu-cell p, .party-menu-character p { margin: 0 0 0.6rem; }
+.party-menu-actions, .party-menu-members { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.party-menu-members h3 { flex-basis: 100%; margin: 0; }
+#party-menu button[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 2px; }
+.party-menu-note, .party-menu-status { margin: 0; font-size: 0.9rem; }
+.party-menu-abilities { max-height: 18rem; overflow-y: auto; margin: 0; padding-left: 1.3rem; }
+.party-menu-abilities li { margin: 0.3rem 0; }
+@media (max-width: 560px) { .party-menu-cells { grid-template-columns: 1fr; } }

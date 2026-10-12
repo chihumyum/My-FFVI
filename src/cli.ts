@@ -197,6 +197,16 @@ async function main() {
       resolve(out, "opening-playable.json.tmp"),
       resolve(out, "opening-playable.json"),
     );
+    const reportPath = resolve(repo, "build/reports/battle-catalog.json");
+    await mkdir(dirname(reportPath), { recursive: true });
+    await writeFile(reportPath + ".tmp", canonical({
+      kind: "battle-catalog-compilation-v1",
+      sourceContentHash: result.contentHash,
+      catalogContentHash: playable.contentHash,
+      report: playable.encounterReport,
+      diagnostics: playable.encounterDiagnostics,
+    }) + "\n");
+    await rename(reportPath + ".tmp", reportPath);
     console.log(
       JSON.stringify({
         output: "build/game/opening-battle.json",
@@ -205,6 +215,8 @@ async function main() {
         initialParty: result.initialParty.length,
         developmentOutput: "build/game/opening-playable.json",
         profile: playable.common.profile,
+        encounterReport: playable.encounterReport,
+        diagnosticsOutput: "build/reports/battle-catalog.json",
       }),
     );
     return;

@@ -884,6 +884,17 @@ export class FieldGame {
     if (!this.partyActors || !appearance) throw new Error("Party actor refresh is unavailable");
     return this.partyActors.prepare(appearance, this.partyRenderer(), setDummy);
   }
+  get partyMenuBlocker(): string | null {
+    if (!this.menuReady) return "请在地图空闲时调整编队。";
+    return !this.partyActors || !this.options.partyAppearance ? "当前地图的编队外观刷新尚未接入。" : null;
+  }
+  /** A thin menu entry into the same actor owner used by party events. No
+   * fallback actor, media or camera capability is granted by opening a menu. */
+  prepareMenuPartyAppearance(appearance: PartyAppearanceCandidate): FieldPartyActorPublication {
+    const blocker = this.partyMenuBlocker;
+    if (blocker) throw new Error(blocker);
+    return this.preparePartyAppearance(appearance, true);
+  }
   private partyRenderer(): FieldPartyActorRenderer {
     return this.player.native
       ? { prepareBatch: (steps) => this.prepareNativePartyRenderer(steps) }

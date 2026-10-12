@@ -5,6 +5,9 @@ import { EventState } from "./event-state.js";
 import type { AudioReadinessPort } from "./audio-readiness.js";
 import type { FieldEffectRuntimeHost } from "./field-effects.js";
 import type { ShopTradeRequest } from "./shop.js";
+import { projectPartyMenu, type PartyMenuRequest } from "./party-menu.js";
+import { projectCharacterMenu } from "./character-menu.js";
+import { equipmentOwnedAbilities } from "./equipment.js";
 import { projectBattleFieldState } from "./field-battle-entry.js";
 import {
   parseBattlePreferences,
@@ -176,6 +179,37 @@ export class GameSession {
   }
   get menuReady(): boolean { return this.fieldOwnerReady && this.field.menuReady; }
   get checkpointReady(): boolean { return this.fieldOwnerReady && this.field.checkpointReady; }
+  partyMenu() {
+    const owned = this.state.snapshot(), model = projectPartyMenu(owned.party, owned.roster);
+    const blocker = model.blocker ?? (!this.menuReady ? "请在地图空闲时调整编队。" : this.field.partyMenuBlocker);
+    return { ...model, blocker, editable: blocker === null };
+  }
+  characterMenu(id: string) {
+    const member = this.state.snapshot().roster.find((candidate) => candidate.id === id);
+    if (!member) throw new Error("Character menu references an unowned member");
+    const content = this.battleCatalog.gameState;
+    return projectCharacterMenu(member, {
+      growth: content.characterGrowth?.[id] ?? null,
+      developmentExperience: this.battleCatalog.common.experience,
+      abilities: this.battleCatalog.common.abilities,
+      commands: this.battleCatalog.common.commands,
+      equipmentAbilities: content.equipmentSystem ? equipmentOwnedAbilities(content.equipmentSystem.catalog, member) : [],
+    });
+  }
+  changeParty(request: PartyMenuRequest): boolean {
+    if (!this.menuReady) return false;
+    const field = this.field, transaction = this.state.preparePartyMenu(request);
+    if (!transaction.changed) return false;
+    const publish = field.prepareMenuPartyAppearance(transaction.appearance);
+    // Both owners finish fallible preparation before either is published. The
+    // existing renderer publication writes prepared state without owned reads.
+    publish.validate();
+    if (this.field !== field || !this.menuReady) throw new Error("Field changed during party menu preparation");
+    transaction.validate();
+    transaction.commit();
+    publish();
+    return true;
+  }
   useMenuItem(id: number, targetId: string): boolean {
     if (!this.menuReady) return false;
     return this.state.useMenuItem(id, targetId);
@@ -301,8 +335,13 @@ export class GameSession {
           this.field.stop.party!,
         );
         if (!content) {
+          const partyId = this.field.stop.party;
+          const reasons = this.battleCatalog.encounterDiagnostics
+            ?.filter((entry) => entry.partyId === partyId && entry.kind === "blocked")
+            .map((entry) => `${entry.code}: ${entry.reason}`) ?? [];
           this.field.stop = { kind: "unsupported",
-            message: `Battle content is unavailable for encounter ${this.field.stop.party}`,
+            message: `Battle content is unavailable for encounter ${partyId}` +
+              (reasons.length ? ` (${reasons.join("; ")})` : ""),
             site: this.field.stop.site };
           continue;
         }

@@ -15,10 +15,15 @@ assert.equal(
   "Battle compilation must be reproducible",
 );
 const opening = saved.encounters.find((e) => e.partyId === 3);
+const selected = JSON.parse(await readFile(new URL("../build/battle/battle.json", import.meta.url), "utf8")).encounterPartyIds;
 assert.deepEqual(
-  saved.encounters.map((e) => e.partyId),
-  [1, 2, 3, 42],
+  [...new Set([...saved.encounters.map((e) => e.partyId),
+    ...(saved.encounterDiagnostics ?? []).map((d) => d.partyId)])].sort((a, b) => a - b),
+  [...selected].sort((a, b) => a - b),
+  "Each selected source identity must be compiled or explicitly diagnosed",
 );
+for (const id of [1, 2, 3, 42])
+  assert.ok(saved.encounters.some((e) => e.partyId === id), "Existing regression encounter must remain available");
 assert.deepEqual(
   opening.enemies.map((e) => [e.slot, e.monsterId]),
   [

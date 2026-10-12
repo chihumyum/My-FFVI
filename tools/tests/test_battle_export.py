@@ -3,7 +3,38 @@ import sys
 from types import SimpleNamespace as N
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'source_adapter'))
-from export_battle import full_rect_picture, character_rows, sprite_geometry
+from export_battle import full_rect_picture, character_rows, encounter_rows, sprite_geometry
+
+
+class EncounterSelectionTests(unittest.TestCase):
+    def fixture(self):
+        assets = {f'events/{name}.json': {'data': {'Mnemonics': []}}
+                  for name in ['sc_e_0002', 'sc_e_0004', 'sc_e_0005', 'sc_e_0006']}
+        assets['events/sc_e_0002.json']['data']['Mnemonics'] = [
+            {'mnemonic': 'Encount', 'operands': {'iValues': [3], 'sValues': ['continued']}}]
+        assets['events/continued.json'] = {'data': {'Mnemonics': []}}
+        return {'narshe': {'assets': assets}}, {'monster_party.csv': [{'id': '3'}, {'id': '3002'}, {'id': '3035'}]}
+
+    def test_explicit_selection_keeps_regression_roots_and_source_identity(self):
+        project, tables = self.fixture()
+        selected = encounter_rows(project, tables, [3035, 3002, 3035])
+        self.assertEqual([r['id'] for r in selected], ['3', '3002', '3035'])
+        self.assertEqual([r['id'] for r in encounter_rows(project, tables)], ['3'])
+        self.assertEqual(len(project['narshe']['assets']['events/sc_e_0002.json']['data']['Mnemonics']), 1)
+
+    def test_invalid_missing_or_ambiguous_selection_never_substitutes_a_party(self):
+        for requested in ([0], [-1], [True], [3.0], ['3'], [0x80000000], [404]):
+            project, tables = self.fixture()
+            with self.assertRaises(ValueError): encounter_rows(project, tables, requested)
+        project, tables = self.fixture()
+        tables['monster_party.csv'].append({'id': '3002'})
+        with self.assertRaises(ValueError): encounter_rows(project, tables, [3002])
+
+    def test_missing_regression_continuation_still_rejects_export(self):
+        project, tables = self.fixture()
+        del project['narshe']['assets']['events/continued.json']
+        with self.assertRaisesRegex(ValueError, 'Missing street script'):
+            encounter_rows(project, tables, [3002])
 
 
 class CharacterMediaTests(unittest.TestCase):

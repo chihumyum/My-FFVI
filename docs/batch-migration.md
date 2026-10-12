@@ -25,7 +25,7 @@
 
 ## 可执行的工作队列
 
-当前 v33 的下一批按依赖推进：先补地图效果的真实粒子/材质宿主与切图分配回收事务，再补非空 Upper/Ceil 渲染目标；局部 NPC、定位和普通合成继续作为共享机制回归。完整来源开场、骑乘、原生演员保存与战斗返回尚未闭合，详见 [系统集成](systems-v33.md)。匿名 NPC 内部身份不等于脚本 selector，0 保持匿名，不能占用镜头 selector。
+当前从 v37 的 [游戏系统框架](game-framework.md) 继续推进：移除战斗内容生产中的开场编组选择限制，建立通用遭遇编译和逐组依赖诊断；队伍、成长与已持有能力通过同一状态所有者接入菜单。先检查系统之间的连续流转，再批量填充区域。粒子、材质和逐位数值研究保持冻结。过去 v33 的表现工作队列属于历史记录，不再作为当前接续任务。
 
 ```sh
 .venv/bin/python tools/source_adapter/export_corpus.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"

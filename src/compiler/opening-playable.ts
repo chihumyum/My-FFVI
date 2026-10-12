@@ -1,14 +1,8 @@
-import {
-  compilePhysicalLimits,
-  compileEnemyPhysical,
-} from "./physical-parameters.js";
+import { compilePhysicalLimits } from "./physical-parameters.js";
 import { hash, record } from "./content.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { tableInteger as int, type compileOpeningBattle } from "./battle.js";
-import {
-  compileEnemyParameters,
-  compileParameterLimits,
-} from "./parameters.js";
+import { compileParameterLimits } from "./parameters.js";
 import type { ParameterValues } from "../core/parameters.js";
 import { compileBattleAbilityContent } from "./battle-ability-content.js";
 import { loadCorpus } from "./corpus.js";
@@ -16,11 +10,10 @@ import { bindSystemMessages } from "./system-messages.js";
 import { compileBattleConditionCatalog } from "./conditions.js";
 import { compileBattleCommand } from "./commands.js";
 import { compileBattleAbilityCatalog } from "./battle-abilities.js";
-import { compileBattleDropCatalog } from "./battle-rewards.js";
+import { compileBattleEncounterRuntime } from "./battle-encounter-runtime.js";
 import { compileBattleRowCatalog } from "./battle-row.js";
 import { compileShopCatalog } from "./shop.js";
 import { compilePlayerBattleDefinitions } from "./player-battle.js";
-import { compileBattleAI, battleAIAbilities } from "./battle-ai.js";
 import { compileGameState } from "./game-state.js";
 import { compileNewGame } from "./new-game.js";
 import { createNewGame } from "../core/new-game.js";
@@ -37,7 +30,6 @@ import {
 import type {
   BattleContent,
   BattleCatalog,
-  BattleEncounter,
   CombatantDefinition,
 } from "../core/battle-content.js";
 
@@ -221,65 +213,33 @@ export async function compileOpeningPlayable(
     // the AddFromMaster initial state or a replay of the skipped prelude.
     return { ...structuredClone(definition), conditionIds: [checkpoint.conditionId] };
   });
-  const encounters: Record<string, BattleEncounter> = {};
-  for (const encounter of source.encounters) {
-    const enemies: CombatantDefinition[] = encounter.enemies.map((e) => {
-      const r = row("monster.csv", e.monsterId);
-      if (
-        ["attack_attribute", "attack_plus", "attack_plus_grop"].some((k) =>
-          int(r[k]),
-        )
-      )
-        throw new Error("Unimplemented enemy physical modifier");
-      if (int(r.resistance_condition))
-        throw new Error("Unimplemented enemy resistance input");
-      const parameters = compileEnemyParameters(
-        parameterReader,
-        e.monsterId,
-        noTemporary,
-        parameterLimits,
-      ).confirmed;
-      if (r.initial_condition !== "0")
-        throw new Error("Unimplemented initial enemy conditions");
-      const ai = compileBattleAI(e.ai.data, e.ai.source);
-      return {
-        id: `enemy:${e.slot}`,
-        sourceId: e.monsterId,
-        name: name(r.mes_id_name!),
-        side: "enemy",
-        row: "front",
-        level: int(r.lv),
-        attackElements: [], // attack_attribute=0 was checked above.
-        elementResistances: compileElementResistances(
-          parameterReader,
-          int(r.resistance_attribute),
-        ).resistances,
-        physical: compileEnemyPhysical(
-          parameterReader,
-          e.monsterId,
-          noPhysicalTemporary,
-          physicalLimits,
-        ).confirmed,
-        ...parameters,
-        exp: int(r.exp),
-        gil: int(r.gill),
-        growthGroup: null,
-        abilities: battleAIAbilities(ai),
-        commands: [],
-        conditionIds: [],
-        conditionResistances: {},
-        ai,
-        placement: { x: e.x, y: e.y, group: e.group },
-        sprites: { idle: e.sprite, mount: null },
-      };
-    });
-    encounters[encounter.partyId] = {
-      encounterId: encounter.partyId,
-      enemies,
-      background: encounter.background,
-      formation: encounter.pattern === 3 ? "opposed" : "normal",
-    };
-  }
+  // These are the existing checkpoint's acknowledged omissions. Bind both the
+  // source name and row values; selecting another party never grants an unknown
+  // script/flag capability. No encounter IDs select runtime behavior.
+  const legacyScript = source.encounters.find((e) => e.metadata.scriptId === 8010 &&
+    source.tables["script.csv"]?.["8010"]?.values.script_name === "sc_b_0239" &&
+    e.script?.source.assetPath.endsWith("/sc_b_0239.json"))?.script;
+  const legacyFlags = source.encounters.find((e) => e.metadata.battleFlagGroupId === 11 &&
+    e.metadata.battleFlags.length === 1 &&
+    e.metadata.battleFlags[0]!.values.id === "16" &&
+    e.metadata.battleFlags[0]!.values.group_id === "11" &&
+    e.metadata.battleFlags[0]!.values.battle_flag_id === "14")?.metadata.battleFlags;
+  const runtimeEncounters = compileBattleEncounterRuntime({ ...parameterReader,
+    matching: (table, key, value) => Object.values(source.tables[table] ?? {})
+      .filter((r) => r.values[key] === String(value)),
+  }, {
+    requestedPartyIds: source.encounterPartyIds, encounters: source.encounters,
+    sourceDiagnostics: source.encounterDiagnostics, abilities, conditions, sprites: source.sprites, name,
+    parameters: { temporary: noTemporary, limits: parameterLimits },
+    physical: { temporary: noPhysicalTemporary, limits: physicalLimits },
+    development: {
+      scripts: legacyScript ? [{ id: 8010, source: legacyScript.source,
+        reason: "Existing development checkpoint omits source sc_b_0239 battle lifecycle; it is not executed" }] : [],
+      flagGroups: legacyFlags ? [{ id: 11, rows: legacyFlags,
+        reason: "Existing development checkpoint omits battle flag group 11 / flag 14" }] : [],
+    },
+  });
+  const { encounters } = runtimeEncounters;
   const growth: BattleContent["growth"] = {};
   for (const r of rows("growth_curve.csv")) {
     if (
@@ -314,14 +274,7 @@ export async function compileOpeningPlayable(
       magicLearningValue: null, invalidContentIds: null, itemMenuAvailable: null,
     },
     reactions: source.reactions,
-    drops: (() => {
-      const compiled = compileBattleDropCatalog({ ...parameterReader,
-        matching: (table, key, value) => Object.values(source.tables[table] ?? {})
-          .filter((r) => r.values[key] === String(value)),
-      }, [...new Set(source.encounters.flatMap((encounter) => encounter.enemies.map((e) => e.monsterId)))]);
-      if (compiled.blockers.length) throw new Error("Unresolved battle drops: " + JSON.stringify(compiled.blockers));
-      return compiled.catalog;
-    })(),
+    drops: runtimeEncounters.drops,
     initialAtb: {
       player: initialAtb("ACCUMULATION_ATB_NORMAL"),
       enemy: initialAtb("ENEMY_ACCUMULATION_ATB_NORMAL"),
@@ -416,6 +369,8 @@ export async function compileOpeningPlayable(
     kind: "narshe-battle-catalog" as const,
     common,
     encounters,
+    encounterDiagnostics: runtimeEncounters.diagnostics,
+    encounterReport: runtimeEncounters.report,
     gameState,
   };
   return { ...result, contentHash: hash(result) };

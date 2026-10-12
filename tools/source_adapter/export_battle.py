@@ -1,4 +1,4 @@
-"""Export street battle sources and explicitly requested character media; source stays read-only."""
+"""Export source encounter selections and character media; source stays read-only."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -28,6 +28,26 @@ def street_encounters(project):
             found.add(op['operands']['iValues'][0])
             pending.append(op['operands']['sValues'][0])
     return sorted(found)
+
+
+def encounter_rows(project, tables, requested=()):
+    """Extend the regression selection without granting story reachability.
+
+    Each requested identity must name one source row. The compiler, not media
+    selection, decides which formations and rules the runtime can execute.
+    """
+    identities = set(street_encounters(project))
+    for identity in requested:
+        if type(identity) is not int or not 0 < identity <= 0x7fffffff:
+            raise ValueError('Invalid requested encounter identity')
+        identities.add(identity)
+    result = []
+    for identity in sorted(identities):
+        found = [r for r in tables['monster_party.csv'] if r['id'] == str(identity)]
+        if len(found) != 1:
+            raise ValueError(f'Unresolved monster_party.csv:{identity}')
+        result.append(found[0])
+    return result
 
 
 def full_rect_picture(sprite, path):
@@ -77,7 +97,7 @@ def character_rows(tables, requested=()):
     return result
 
 
-def export_battle(source: Path, out: Path, character_ids=()):
+def export_battle(source: Path, out: Path, character_ids=(), encounter_ids=()):
     import UnityPy
     parent = checked_snapshot(REPO / 'build/import')
     project = json.loads(parent['project.json'])
@@ -93,8 +113,8 @@ def export_battle(source: Path, out: Path, character_ids=()):
         found = sorted(bundle_root.glob(name + '_assets_all_*.bundle'))
         if len(found) != 1: raise ValueError('Ambiguous bundle: ' + name)
         return found[0]
-    party_ids = street_encounters(project)
-    parties = [row('monster_party.csv', identity) for identity in party_ids]
+    parties = encounter_rows(project, tables, encounter_ids)
+    party_ids = [int(party['id']) for party in parties]
     monsters = [row('monster.csv', party[f'monster{i}']) for party in parties
                 for i in range(1, 10) if int(party[f'monster{i}'])]
     characters = character_rows(tables, character_ids)
@@ -153,11 +173,13 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--character-id', type=int, action='append', default=[],
                         help='Additional source character media identity; repeatable, does not change the party')
+    parser.add_argument('--encounter-id', type=int, action='append', default=[],
+                        help='Additional source encounter identity; repeatable, does not unlock story content')
     args = parser.parse_args()
     staged = Path(tempfile.mkdtemp(prefix='.battle-', dir=REPO / 'build'))
     target = REPO / 'build/battle'; backup = REPO / 'build/.previous-battle'
     try:
-        result = export_battle(args.source.resolve(), staged, args.character_id)
+        result = export_battle(args.source.resolve(), staged, args.character_id, args.encounter_id)
         if backup.exists(): raise RuntimeError('Inspect interrupted build/.previous-battle first')
         if target.exists(): target.rename(backup)
         try: staged.rename(target)
@@ -166,6 +188,7 @@ def main():
             raise
         if backup.exists(): shutil.rmtree(backup)
         print(canonical({'sourceSetHash': result['sourceSetHash'], 'sprites': len(result['sprites']),
+            'encounterPartyIds': result['encounterPartyIds'],
             'jsonAssets': len(result['assets']), 'output': str(target)}))
     finally:
         if staged.exists(): shutil.rmtree(staged)

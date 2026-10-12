@@ -29,6 +29,7 @@ import {
   type PartyEventTransaction,
   type PartyAppearanceCandidate,
 } from "./party.js";
+import { previewPartyMenu, type PartyMenuRequest } from "./party-menu.js";
 import {
   equipmentAvailability,
   selectEmptyEquipment,
@@ -795,6 +796,31 @@ export class GameState {
           throw new Error("Stale field party transaction");
         this.data = next;
         this.revision++;
+      },
+    };
+  }
+  /** Current-party menu editing is separate from source script organization:
+   * it cannot select a different saved party, add members or reset their rows. */
+  preparePartyMenu(request: PartyMenuRequest) {
+    this.requireIdle();
+    const next = this.snapshot(), revision = this.revision;
+    const preview = previewPartyMenu(next.party, next.roster, structuredClone(request));
+    next.party = preview.state;
+    this.validate(next);
+    let consumed = false;
+    const validate = () => {
+      this.requireIdle();
+      if (consumed || this.revision !== revision) throw new Error("Stale party menu transaction");
+    };
+    return {
+      changed: preview.changed,
+      activeMembers: preview.activeMembers,
+      appearance: this.projectPartyAppearance(next),
+      validate,
+      commit: () => {
+        validate(); consumed = true;
+        if (!preview.changed) return;
+        this.data = next; this.revision++;
       },
     };
   }

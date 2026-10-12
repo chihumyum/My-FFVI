@@ -1,5 +1,6 @@
 import { InventoryView } from "./inventory-view.js";
 import { EquipmentView } from "./equipment-view.js";
+import { PartyView } from "./party-view.js";
 import { ShopView } from "./shop-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
 import { GameFlow } from "/runtime/core/game-flow.js";
@@ -25,6 +26,7 @@ let content,
   battleView,
   inventoryView,
   equipmentView,
+  partyView,
   shopView,
   mapOpen = false,
   lastMinimapFrame = 0,
@@ -77,6 +79,8 @@ function pause(value) {
     inventoryView.render(flow.session);
     equipmentView.reset();
     equipmentView.render(flow.session);
+    partyView.reset();
+    partyView.render(flow.session);
   }
   sync();
   if (value) $("resume").focus();
@@ -497,6 +501,11 @@ async function init() {
     inventoryView.render(flow.session);
     syncSaveControls();
   });
+  partyView = new PartyView($("party-menu"), () => {
+    inventoryView.render(flow.session);
+    equipmentView.render(flow.session);
+    syncSaveControls();
+  });
   shopView = new ShopView($("shop-menu"), () => {
     held.clear();
     sync();
@@ -603,6 +612,7 @@ function syncSaveControls() {
   // or while a replacement session is being prepared.
   $("pause").inert = flow.busy;
   $("pause").setAttribute("aria-busy", String(flow.busy));
+  partyView?.render(flow.session, { disabled: failed || flow.busy });
   $("save-game").disabled =
     failed || flow.busy || !flow.session?.checkpointReady;
   $("load-game").disabled = failed || flow.busy || !hasSave;

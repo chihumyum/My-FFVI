@@ -22,6 +22,7 @@ import { compileBattleRowCatalog } from "./battle-row.js";
 import { compileShopCatalog } from "./shop.js";
 import { compileOrdinaryWeaponEffects } from "./ordinary-weapon.js";
 import { loadCorpus } from "./corpus.js";
+import { compileBattleEncounterSources } from "./battle-encounters.js";
 import {
   compileAttackElements,
   compileElementResistances,
@@ -238,51 +239,10 @@ export async function compileOpeningBattle(root: string) {
       throw new Error("Unresolved battle sprite: " + suffix);
     return paths[0]!;
   };
-  if (battle.encounterPartyIds.join() !== "1,2,3,42")
-    throw new Error("Unreviewed street encounter scope");
-  const encounters = battle.encounterPartyIds.map((partyId) => {
-    const party = row("monster_party.csv", partyId);
-    const enemies = [];
-    for (let slot = 1; slot <= 9; slot++) {
-      const id = tableInteger(party.values[`monster${slot}`]);
-      if (!id) continue;
-      const monster = row("monster.csv", id),
-        asset = row("monster_asset.csv", monster.values.monster_asset_id!);
-      const ai = row("monster_ai_script.csv", monster.values.script_id!);
-      enemies.push({
-        slot,
-        monsterId: id,
-        group: tableInteger(party.values[`monster${slot}_group`]),
-        x: tableInteger(party.values[`monster${slot}_x_position`]),
-        y: tableInteger(party.values[`monster${slot}_y_position`]),
-        sprite: spritePath(
-          `/${asset.values.group_name}_${asset.values.asset_name}.png`,
-        ),
-        ai: json(ai.values.script_name!),
-      });
-      compileElementResistances(
-        { row, group: tableGroup },
-        tableInteger(monster.values.resistance_attribute),
-      );
-    }
-    const patterns = Array.from({ length: 5 }, (_, n) => n + 1).filter((n) =>
-      tableInteger(party.values[`battle_pattern${n}`]),
-    );
-    if (patterns.length !== 1 || ![1, 3].includes(patterns[0]!))
-      throw new Error("Unsupported street battle formation");
-    const background = row(
-      "battle_background_asset.csv",
-      party.values.battle_background_asset_id!,
-    );
-    const battleScript = row("script.csv", party.values.script_name!);
-    return {
-      partyId,
-      enemies,
-      pattern: patterns[0]!,
-      script: json(battleScript.values.script_name!),
-      background: spritePath(`/${background.values.asset_name}.png`),
-    };
+  const encounterSources = compileBattleEncounterSources({ row, group: tableGroup }, {
+    partyIds: battle.encounterPartyIds, json, spritePath,
   });
+  const encounters = encounterSources.encounters;
   const initialParty = tables["initialize_data.csv"]!.filter((r) =>
     /^INIT_PARTY_\d+$/.test(r.key_name!),
   )
@@ -356,23 +316,10 @@ export async function compileOpeningBattle(root: string) {
   );
   if (!magitek.length) throw new Error("Missing Magitek source group");
   const abilityIds = new Set(magitek.map((a) => tableInteger(a.values.id)));
-  // The exported guard AI contains both references. This preserves definitions;
-  // interpreting its branches and weighting remains a separate runtime task.
-  for (const enemy of encounters.flatMap((e) => e.enemies)) {
-    const script = z
-      .object({
-        Mnemonics: z.array(
-          z.object({
-            mnemonic: z.string(),
-            operands: z.object({ iValues: z.array(z.number().int()) }),
-          }),
-        ),
-      })
-      .parse(enemy.ai.data);
-    for (const op of script.Mnemonics)
-      if (op.mnemonic === "Act")
-        for (const id of op.operands.iValues) if (id !== 0) abilityIds.add(id);
-  }
+  // References were resolved per party, so a missing Act/CounterAct/LoopAct
+  // dependency cannot turn one blocked descriptor into a failed whole batch.
+  for (const enemy of encounters.flatMap((e) => e.enemies))
+    for (const id of enemy.aiAbilityIds) abilityIds.add(id);
   for (const id of [...abilityIds].sort((a, b) => a - b)) {
     const ability = row("ability.csv", id);
     compileAttackElements(
@@ -618,6 +565,8 @@ export async function compileOpeningBattle(root: string) {
       initRva: "0x676A00",
     },
     encounters,
+    encounterPartyIds: encounterSources.requestedPartyIds,
+    encounterDiagnostics: encounterSources.diagnostics,
     initialParty,
     characterMedia,
     ordinaryWeaponEffects,
