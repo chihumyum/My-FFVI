@@ -123,8 +123,8 @@ test("source package, factory, route and foot provider failures never mutate the
     if (change === "factory") Object.assign(f.content.factory.playerPrefab, { childEntityObject: "unresolved" });
     if (change === "view") f.content.view.contextId = "wrong";
     if (change === "presentation") Object.assign(f.presentation, { origin: "loaded-game" });
-    if (change === "missing-foot") delete f.map.map!.entryContext;
-    if (change === "unknown-foot") f.map.map!.entryContext!.foot = { kind: "unresolved", reason: "Controlled unknown foot", source: f.source };
+    if (change === "missing-foot") delete f.map.nativeFoot;
+    if (change === "unknown-foot") f.map.nativeFootBlockers = [{ reason: "Controlled unknown foot provider", source: f.source }];
     assert.throws(() => GameSession.prepareNewGame(f.content, f.world, f.map, f.battle, fade, f.presentation),
       /binding mismatch|provider is unavailable|actor prefab|ordinary actor view|presentation|foot provider/, change);
     assert.deepEqual(fade.snapshot(), beforeFade, change);
@@ -174,7 +174,7 @@ test("source PointIn placement does not invent collision data or grant legacy en
   assert.deepEqual(game.state.snapshot(), before);
 });
 
-test("fresh actors retain explicit stable-save and next-map gates after a successfully completed reserved script", () => {
+test("fresh actors retain stable-save and missing map-dependency gates after a completed reserved script", () => {
   const { f, entry, fade } = title();
   const game = GameSession.prepareNewGame(f.content, f.world, f.map, f.battle, fade, f.presentation);
   const launch = entry.prepareLaunch(fade, game.newGamePreparation(true));
@@ -184,7 +184,114 @@ test("fresh actors retain explicit stable-save and next-map gates after a succes
   assert.throws(() => game.checkpoint(), /Cannot save/);
   const before = game.state.snapshot(), player = game.field.player, oldField = game.field;
   game.field.previewMap(f.map.mapId, f.content.entry.entrance);
-  assert.throws(() => game.world.prepare(f.world, f.map), /Native actor map handoff requires.*factory and codec/);
+  assert.throws(() => game.world.prepare(f.world, f.map), /Missing source map actor entry/);
   assert.equal(game.field, oldField); assert.equal(game.field.player, player);
   assert.deepEqual(game.state.snapshot(), before);
+});
+
+test("source condition refresh uses the existing native actors and publishes the camera offset with owned state", () => {
+  const { f, entry, fade } = title();
+  f.battle.gameState.partyActors!.conditionTypes[9007] = 607;
+  f.battle.gameState.partyActors!.viewpointOffsets = [{ fieldAssetId: 2, x: 3, y: 16 }];
+  f.map.scriptSystemFlags = { reserved: { keepBadStatusVisual: false } };
+  f.map.scripts.reserved = [{ kind: "owned-condition", script: "reserved", index: 0, source: f.source,
+    command: { kind: "add-condition", conditionType: 607, target: 0 }, dependencies: [] },
+  { kind: "wait", seconds: 0, script: "reserved", index: 1, source: f.source },
+  { kind: "exit", script: "reserved", index: 2, source: f.source }];
+  const game = GameSession.prepareNewGame(f.content, f.world, f.map, f.battle, fade, f.presentation);
+  const player = game.field.player, entity = player.native!.entity, oldAnimation = entity.animation;
+  const identities = Object.values(game.field.actors).map((actor) => [actor.id, actor, actor.native!.entity] as const);
+  const position = { ...entity.position }, layer = entity.layer, direction = entity.direction;
+  const launch = entry.prepareLaunch(fade, game.newGamePreparation(true));
+  game.launchNewGame(launch.launch); launch.commit();
+  assert.equal(game.field.stop, null);
+  assert.deepEqual(game.state.snapshot().roster[0]!.conditionIds, [9007]);
+  assert.deepEqual(game.field.cameraOffset, { x: 3, y: 16 });
+  assert.equal(player.native!.fieldAssetId, 2, "607 has no fabricated field sprite replacement");
+  assert.notEqual(entity.animation, oldAnimation);
+  assert.deepEqual(entity.position, position); assert.equal(entity.layer, layer); assert.equal(entity.direction, direction);
+  assert.equal(player.native!.charaZOffset, 0.5);
+  for (const [id, actor, nativeEntity] of identities) {
+    assert.equal(game.field.actors[id], actor); assert.equal(actor.native!.entity, nativeEntity);
+  }
+  game.advance(10); assert.equal(game.field.stop, null); assert.equal(game.field.entrySynchronized, true);
+});
+
+test("missing source animation admission cannot partly apply a native condition or camera write", () => {
+  const { f, entry, fade } = title();
+  f.battle.gameState.partyActors!.conditionTypes[9007] = 607;
+  f.battle.gameState.partyActors!.viewpointOffsets = [{ fieldAssetId: 2, x: 3, y: 16 }];
+  f.map.scriptSystemFlags = { reserved: { keepBadStatusVisual: false } };
+  f.map.scripts.reserved = [{ kind: "wait", seconds: 0, script: "reserved", index: 0, source: f.source },
+  { kind: "owned-condition", script: "reserved", index: 1, source: f.source,
+    command: { kind: "add-condition", conditionType: 607, target: 0 }, dependencies: [] }];
+  delete f.content.animationKeys.assets.bravo;
+  f.world.nativeAnimationKeys = structuredClone(f.content.animationKeys);
+  const game = GameSession.prepareNewGame(f.content, f.world, f.map, f.battle, fade, f.presentation);
+  const launch = entry.prepareLaunch(fade, game.newGamePreparation(true));
+  game.launchNewGame(launch.launch); launch.commit();
+  const before = game.state.snapshot(), player = game.field.player, animation = player.animation,
+    offset = game.field.cameraOffset;
+  game.advance(10);
+  assert.equal(game.field.stop?.kind, "unsupported");
+  assert.match(game.field.stop!.message, /source animation/);
+  assert.deepEqual(game.state.snapshot(), before);
+  assert.equal(game.field.player, player); assert.equal(player.animation, animation);
+  assert.equal(game.field.cameraOffset, offset);
+});
+
+test("ordinary native map handoff stages persistent residents and rejects a stale hidden actor before commit", () => {
+  for (const stale of [false, true]) {
+    const { f, entry, fade } = title();
+    f.world.transportation = structuredClone(f.battle.gameState.sourceNewGame!.transportation);
+    const game = GameSession.prepareNewGame(f.content, f.world, f.map, f.battle, fade, f.presentation);
+    const launch = entry.prepareLaunch(fade, game.newGamePreparation(true));
+    game.launchNewGame(launch.launch); launch.commit(); game.advance(10);
+    const resident = Object.values(game.field.actors).find((actor) => actor.id.startsWith("native:resident:"))!;
+    assert.ok(resident);
+    resident.native!.entity.position = { x: 96, y: 120, z: 349 };
+    const oldField = game.field, before = game.state.snapshot();
+    game.field.previewMap(f.map.mapId, f.content.entry.entrance);
+    const prepared = game.world.prepare(f.world, f.map);
+    assert.equal(game.field, oldField);
+    assert.deepEqual(game.state.snapshot(), before);
+    assert.deepEqual(prepared.field.actors[resident.id]!.native!.entity.position, resident.native!.entity.position);
+    assert.notEqual(prepared.field.actors[resident.id]!.native!.entity, resident.native!.entity);
+    assert.equal(prepared.field.cameraSnapshot!.target, "player", "completed destination initializer selects the actual player");
+    if (stale) resident.native!.entity.position.x += 16;
+    assert.equal(game.world.commit(prepared), !stale);
+    if (stale) {
+      assert.equal(game.field, oldField); assert.deepEqual(game.state.snapshot(), before);
+    } else {
+      assert.equal(game.field, prepared.field);
+      game.advance(10);
+      assert.equal(game.field.stop, null); assert.equal(game.field.entrySynchronized, true);
+      assert.equal(game.field.cameraSnapshot!.target, "player");
+      assert.deepEqual(game.field.actors[resident.id]!.native!.entity.position, { x: 96, y: 120, z: 349 });
+      assert.equal(game.checkpointReady, false, "map handoff does not grant the missing native save codec");
+    }
+  }
+});
+
+test("native HidePlayer followed by ChangeMap retains the real visibility owner across PointIn", () => {
+  const { f, entry, fade } = title();
+  f.world.transportation = structuredClone(f.battle.gameState.sourceNewGame!.transportation);
+  f.map.initializer = null;
+  f.map.scripts.reserved = [
+    { kind: "player-visibility", command: { kind: "hide-player" }, script: "reserved", index: 0, source: f.source },
+    { kind: "change-map", request: { mapId: f.map.mapId, entrance: f.content.entry.entrance,
+      continuation: null, birdview: false, skipFade: false, skipBgm: true, origin: "script" },
+    script: "reserved", index: 1, source: f.source },
+  ];
+  const game = GameSession.prepareNewGame(f.content, f.world, f.map, f.battle, fade, f.presentation);
+  const launch = entry.prepareLaunch(fade, game.newGamePreparation(true));
+  game.launchNewGame(launch.launch); launch.commit();
+  assert.equal(game.field.stop?.kind, "map-transition");
+  assert.equal(game.field.player.native!.entity.visible, false);
+  assert.equal(game.field.hiddenEntities.has(game.field.player.id), false, "legacy hidden set is not the native owner");
+  const previous = game.field, prepared = game.world.prepare(f.world, f.map);
+  assert.equal(game.field, previous); assert.equal(game.field.isEntityVisible(game.field.player.id), false);
+  assert.equal(prepared.field.isEntityVisible(prepared.field.player.id), false);
+  assert.equal(game.world.commit(prepared), true);
+  assert.equal(game.field.isEntityVisible(game.field.player.id), false);
 });

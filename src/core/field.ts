@@ -25,9 +25,9 @@ import { executeSourcePresentation, cloneSourcePresentationContext, sourcePresen
 import { canonical } from "./canonical.js";
 import { SourceMessageState, sourceMessageUpdateMask, type SourceMessageEffect } from "./source-message.js";
 import type { FieldPuppetRosterPort } from "./field-puppet-roster.js";
-import { createNativeFieldActorProjections, createNativeFieldPuppetActorsPort,
+import { createNativeFieldActorProjections, createNativeFieldPuppetActorsPort, readNativeFieldActors,
   type NativeFieldActorData } from "./field-native-actors.js";
-import type { FieldActorFactoryCandidate } from "./field-actor-factory.js";
+import type { FieldActorFactoryCandidate, FieldActorFactoryBindings } from "./field-actor-factory.js";
 import { projectFieldPuppetCollision, type FieldPuppetCollisionState, type FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import type { FieldPuppetActorCatalog, FieldPuppetControlContext } from "./field-puppet-actors.js";
 import type { PartyActorPlan } from "./party-actors.js";
@@ -35,7 +35,9 @@ import type { FieldTreasurePort } from "./treasure-port.js";
 import { treasureFlagRef, validateTreasureInventory, type TreasureBoxRequest } from "./treasure-inventory.js";
 import { createTreasureTask, advanceTreasureTask, type TreasureTaskState, type TreasureTaskInput } from "./treasure-task.js";
 import type { PartyActorCatalog } from "./party-actors.js";
-import { FieldPartyActors, type FieldPartyActorCheckpoint } from "./field-party-actors.js";
+import { FieldPartyActors, type FieldPartyActorCheckpoint, type FieldPartyActorRenderer,
+  type FieldPartyActorPublication, type FieldPartyActorRenderStep } from "./field-party-actors.js";
+import { prepareNativeFieldActorAppearance, type FieldNativeAnimationKeys } from "./field-native-appearance.js";
 import { missingFieldPoses } from "./character-media.js";
 import { executeRosterLifecycleEvent, type FieldRosterPort } from "./roster.js";
 import type { FieldConditionPort } from "./field-conditions.js";
@@ -215,7 +217,8 @@ export class FieldGame {
     return [...ids].map((id) => audioReadinessTrack(id, this.content.bgm));
   }
   readonly transportationId: number | null;
-  readonly cameraOffset: Readonly<Point>;
+  private mapScrollOffset: Readonly<Point>;
+  get cameraOffset(): Readonly<Point> { return this.mapScrollOffset; }
   private readonly camera: FieldCameraHost | null;
   private cameraEventActive = false;
   readonly cameraActorId = "native:camera";
@@ -247,6 +250,25 @@ export class FieldGame {
   readonly collisionRange: CollisionRange;
   private readonly collisionMappings = new Map<number, number[]>();
   readonly actors: Record<string, Actor> = {};
+  private nativeActorBindings: FieldActorFactoryBindings | null = null;
+  private nativeActorProviders: (() => FieldPuppetHostProviders) | null = null;
+  private nativeRuntime: { catalog: FieldPuppetActorCatalog; animationKeys: FieldNativeAnimationKeys | null;
+    controlContext: FieldPuppetControlContext } | null = null;
+  get nativeActorRuntime() { return this.nativeRuntime && structuredClone(this.nativeRuntime); }
+  /** A detached transition candidate, assembled from the current actor owner.
+   * No second mutable actor collection is retained between map transactions. */
+  get nativeActorCandidate(): FieldActorFactoryCandidate | null {
+    if (!this.nativeActorBindings || !this.camera) return null;
+    const camera = this.camera.snapshot();
+    return {
+      snapshot: readNativeFieldActors(this.actors, { id: this.cameraActorId,
+        position: camera.dummy.position, layer: camera.dummy.layer }),
+      bindings: structuredClone(this.nativeActorBindings),
+      assets: Object.values(this.actors).filter((a) => a.native).map((a) => ({
+        id: a.id, fieldAssetId: a.native!.fieldAssetId, charaZOffset: a.native!.charaZOffset,
+      })),
+    };
+  }
   private collisionSwitches: FieldPuppetCollisionState = projectFieldPuppetCollision(true);
   private entityUpdateMask = 3;
   get updateAttributeMask(): number { return this.entityUpdateMask; }
@@ -258,7 +280,8 @@ export class FieldGame {
   /** Install the prepared factory directly into the existing actor collection.
    * A script alias is never an actor identity, and the camera stays separate. */
   installNativeActors(candidate: FieldActorFactoryCandidate, catalog: FieldPuppetActorCatalog,
-    providers: () => FieldPuppetHostProviders, controlContext: FieldPuppetControlContext): void {
+    providers: () => FieldPuppetHostProviders, controlContext: FieldPuppetControlContext,
+    animationKeys?: FieldNativeAnimationKeys): void {
     if (this.tasks.length || this.options.puppetActors || !this.camera || !this.partyActors ||
         !this.options.partyAppearance || !this.options.puppetRoster ||
         Object.keys(this.actors).some((id) => id !== this.player.id))
@@ -293,6 +316,10 @@ export class FieldGame {
     // object is still private. A failed installation cannot replace the player.
     port.read();
     for (const actor of projected) { this.actors[actor.id] = actor; this.hiddenEntities.delete(actor.id); }
+    this.nativeActorBindings = bindings;
+    this.nativeActorProviders = providers;
+    this.nativeRuntime = { catalog: puppetCatalog, controlContext: structuredClone(controlContext),
+      animationKeys: animationKeys ? structuredClone(animationKeys) : null };
     published = true;
     this.options.puppetActors = port;
     this.options.sourceMessageEffects = { prepare: (effects) => {
@@ -402,9 +429,9 @@ export class FieldGame {
     this.transportationId = content.entry.transportationId ?? null;
     const offset = content.entry.cameraOffset ?? { x: 0, y: 0 };
     checkpointKeys(offset, "x,y");
-    if (!Number.isFinite(offset.x) || !Number.isFinite(offset.y))
+    if (!Number.isFinite(Math.fround(offset.x)) || !Number.isFinite(Math.fround(offset.y)))
       throw new Error("Invalid field entry camera offset");
-    this.cameraOffset = Object.freeze({ ...offset });
+    this.mapScrollOffset = Object.freeze({ x: Math.fround(offset.x), y: Math.fround(offset.y) });
     if (this.transportationId !== null)
       checkpointInteger(this.transportationId, 1, 0x7fffffff);
     this.tileAnimations = new TileAnimationState(content.map);
@@ -503,6 +530,8 @@ export class FieldGame {
       throw new Error(`${name}：${group.blockers[0]!.reason}`);
     if (this.camera && group.entities.some((entity) => entity.kind === 15))
       throw new Error("Camera ChangeOffset trigger provider is unresolved");
+    if (this.nativeActorBindings && group.entities.some((entity) => (entity.kind === 6 || entity.kind === 17) && entity.asset))
+      throw new Error("Native map-local actor factory is unresolved");
     if (group.entities.some((e) => e.kind === 18))
       requireMinimapMedia(group.entities, this.content.minimap);
     const ids = new Set(this.entityList.map((e) => e.id));
@@ -699,9 +728,41 @@ export class FieldGame {
       if (missing.length) throw new Error(`Missing party appearance media ${id}/${missing.join(",")}`);
     }
   }
-  private preparePartyAppearance(appearance: PartyAppearanceCandidate | undefined, setDummy = true): () => void {
+  private preparePartyAppearance(appearance: PartyAppearanceCandidate | undefined, setDummy = true): FieldPartyActorPublication {
     if (!this.partyActors || !appearance) throw new Error("Party actor refresh is unavailable");
-    return this.partyActors.prepare(appearance, (media, plan) => this.preparePartyRenderer(media, plan), setDummy);
+    return this.partyActors.prepare(appearance, this.partyRenderer(), setDummy);
+  }
+  private partyRenderer(): FieldPartyActorRenderer {
+    return this.player.native
+      ? { prepareBatch: (steps) => this.prepareNativePartyRenderer(steps) }
+      : (media, plan) => this.preparePartyRenderer(media, plan);
+  }
+  private prepareNativePartyRenderer(steps: readonly FieldPartyActorRenderStep[]) {
+    if (!this.nativeActorProviders || !this.nativeRuntime?.animationKeys || !this.options.partyAppearance || !this.camera)
+      throw new Error("Native party appearance source providers are unavailable");
+    const before = this.mapScrollOffset;
+    let offset = before;
+    for (const step of steps) {
+      if (step.plan.cameraOffset !== null) {
+        const next = step.plan.cameraOffset;
+        checkpointKeys(next, "x,y");
+        if (!Number.isFinite(Math.fround(next.x)) || !Number.isFinite(Math.fround(next.y)))
+          throw new Error("Invalid native appearance camera offset");
+        offset = Object.freeze({ x: Math.fround(next.x), y: Math.fround(next.y) });
+      }
+    }
+    const appearance = prepareNativeFieldActorAppearance({
+      readActors: () => this.actors, readCatalog: () => this.options.partyAppearance!.catalog,
+      readCharacters: () => this.content.characters, readProviders: this.nativeActorProviders,
+      readAnimationKeys: () => this.nativeRuntime!.animationKeys!,
+    }, steps);
+    return {
+      validate: () => {
+        if (this.mapScrollOffset !== before) throw new Error("Stale native appearance camera offset");
+        appearance.validate();
+      },
+      commit: () => { appearance.commit(); this.mapScrollOffset = offset; },
+    };
   }
   private preparePartyRenderer({ asset, mount }: { asset: string; mount: string | null }, plan: PartyActorPlan): () => void {
     const actor = this.player;
@@ -1876,8 +1937,7 @@ export class FieldGame {
                 if (visual?.keepBadStatusVisual !== false)
                   throw new Error("Unknown or unsupported owned condition-visual context");
                 if (!this.partyActors) throw new Error("Party actor refresh is unavailable");
-                return this.partyActors.prepareSequence(steps,
-                  (media, plan) => this.preparePartyRenderer(media, plan));
+                return this.partyActors.prepareSequence(steps, this.partyRenderer());
               });
             } catch (error) {
               this.block(error instanceof Error ? error.message : String(error), op);

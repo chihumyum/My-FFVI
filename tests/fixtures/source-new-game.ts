@@ -54,7 +54,10 @@ export function sourceNewGameFixture() {
     },
     scriptLocals: {}, scriptPuppetContexts: { reserved: scriptContext,
       fallback: { ...scriptContext, scriptHash: "c".repeat(64) } }, initializer: "fallback", characterAssets: [],
-    partyEntry: actor.map, partyEntryBlockers: [],
+    partyEntry: actor.map, partyEntryBlockers: [], actorView: structuredClone(actor.view), actorViewBlockers: [],
+    nativeFoot: { kind: "source-native-foot-v1", mapName: "controlled", kindOfFoot: "uniform-zero",
+      basis: "package-attribute-absent", attributeRepresentation: "missing",
+      source: { ...actor.view.sources[1]!.source, pointer: "/map/0/attribute" } }, nativeFootBlockers: [],
     cameraHost: { kind: "source-field-camera-host-v1", mapRange: actor.map.mapRange,
       loop: { horizontal: false, vertical: false }, playerVisualOffset: { x: 0, y: -6 },
       callbacks: "fresh-normal-field-v1", sources: actor.sources.map((s) => ({ ...s })) },
@@ -65,7 +68,11 @@ export function sourceNewGameFixture() {
     mediaSourceSetHash: map.mediaSourceSetHash, contentHash: "controlled-world",
     maps: { [map.mapId]: { contentHash: map.contentHash, url: "/controlled-map.json", name: map.name,
       areaId: map.areaId, geometryReady: true, defaultGroupReady: true, blockers: [] } },
-    characters: actor.characters, characterIssues: {}, limitations: [] };
+    characters: actor.characters, characterIssues: {}, limitations: [],
+    nativeAnimationKeys: { kind: "native-field-animation-keys-v1", assets: Object.fromEntries(
+      Object.entries(actor.characters).map(([key, character]) => [key, {
+        keys: Object.keys(character.animations), source: structuredClone(character.source), contentHash: "a".repeat(64),
+      }])) } };
   const content: SourceNewGameContent = {
     kind: "source-new-game-content-v1", contentHash: "controlled-fresh-content",
     sourceSetHash: map.sourceSetHash, parentSourceSetHash: map.parentSourceSetHash,
@@ -75,7 +82,7 @@ export function sourceNewGameFixture() {
       fallbackScript: { id: 23, name: "fallback" } },
     factory: actor.factory, puppetCatalog: { kind: "field-puppet-actors-v1", memberCount: 4,
       characteristics: true, corpsOrder: [0, 1, 2, 3], residents: [], conditionChanges: [], miscHash: scriptContext.miscHash },
-    view: actor.view,
+    view: actor.view, animationKeys: structuredClone(world.nativeAnimationKeys!),
   };
   const presentation = createSourcePresentationContext({ kind: "title-new-game",
     titleCleanupComplete: true, openingCallbackStarted: false });

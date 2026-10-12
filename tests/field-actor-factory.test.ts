@@ -30,7 +30,8 @@ test("fresh factory keeps actual player identity separate from four aliases and 
     assert.equal(actor.visible, actor.id.startsWith("native:resident:"));
   }
   assert.deepEqual(result.assets.filter((a) => a.id.startsWith("native:party:")).map((a) => a.fieldAssetId), [null, null, null]);
-  assert.equal(result.assets[0]!.charaZOffset, 0); assert.ok(result.assets.slice(1).every((a) => a.charaZOffset === 0.5));
+  assert.equal(result.assets[0]!.charaZOffset, 0.5, "PointIn finishes FieldPlayer.Init before this candidate");
+  assert.ok(result.assets.slice(1).every((a) => a.charaZOffset === 0.5));
   assert.deepEqual(f.entry.checkpoint, before);
 });
 

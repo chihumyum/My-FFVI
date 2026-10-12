@@ -111,6 +111,11 @@ function content(ops, options = {}) {
           },
         }),
     characters: { player: structuredClone(character) },
+    minimap: {
+      sourceSetHash: "synthetic", source,
+      icons: { 0: { file: "synthetic-minimap.png", width: 8, height: 8,
+        pivot: [0.5, 0.5], sha256: sourceHash, source } },
+    },
     limitations: [],
     map: {
       id: "synthetic-camera-canvas",
@@ -140,6 +145,7 @@ function content(ops, options = {}) {
         },
       ],
       textures: { "synthetic-atlas": "synthetic-map.png" },
+      ...(options.backgrounds ? { backgrounds: options.backgrounds } : {}),
       entities: [],
       source,
     },
@@ -173,7 +179,8 @@ function puppet(ops) {
 function canvas(width = 160, height = 160) {
   let state = { matrix: [1, 0, 0, 1, 0, 0], alpha: 1 };
   const stack = [],
-    draws = [];
+    draws = [],
+    calls = [];
   function transform(a, b, c, d, e, f) {
     const [aa, ab, ac, ad, ae, af] = state.matrix;
     state.matrix = [
@@ -205,10 +212,23 @@ function canvas(width = 160, height = 160) {
     scale(x, y) {
       transform(x, 0, 0, y, 0, 0);
     },
+    rotate(angle) {
+      transform(Math.cos(angle), Math.sin(angle), -Math.sin(angle), Math.cos(angle), 0, 0);
+    },
     transform,
-    fillRect() {},
-    drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh) {
+    // These calls are observed as a draw contract, not rasterized clipping.
+    beginPath() {},
+    rect() {},
+    clip() {},
+    fillRect(x, y, width, height) {
+      calls.push({ kind: "fill", rect: [x, y, width, height] });
+    },
+    drawImage(image, ...coordinates) {
+      assert.ok(coordinates.length === 4 || coordinates.length === 8);
+      const [sx, sy, sw, sh, dx, dy, dw, dh] = coordinates.length === 8
+        ? coordinates : [0, 0, image.width, image.height, ...coordinates];
       assert.ok([sx, sy, sw, sh, dx, dy, dw, dh].every(Number.isFinite));
+      calls.push({ kind: "image", file: image.file });
       const [a, b, c, d, e, f] = state.matrix,
         corners = [
           [dx, dy],
@@ -243,10 +263,15 @@ function canvas(width = 160, height = 160) {
     reset() {
       assert.equal(stack.length, 0);
       draws.length = 0;
+      calls.length = 0;
     },
     snapshot() {
       assert.equal(stack.length, 0);
       return structuredClone(draws);
+    },
+    calls() {
+      assert.equal(stack.length, 0);
+      return structuredClone(calls);
     },
   };
 }
@@ -254,18 +279,26 @@ function scene(definition, width = 160, height = 160) {
   const game = new FieldGame(definition, EventState.initialized()),
     target = canvas(width, height),
     images = new Map(
-      ["synthetic-map.png", "synthetic-player.png"].map((file) => [
+      ["synthetic-map.png", "synthetic-player.png", "synthetic-minimap.png",
+        ...(definition.map.backgrounds ?? []).map((layer) => layer.texture.url)].map((file) => [
         file,
-        { file },
+        { file, width: 8, height: 8 },
       ]),
     ),
     renderer = new Renderer(target.element, definition, images);
   return {
     game,
     renderer,
+    images,
+    calls: () => target.calls(),
     draw() {
       target.reset();
       renderer.draw(game);
+      return target.snapshot();
+    },
+    overview() {
+      target.reset();
+      renderer.overview(game);
       return target.snapshot();
     },
   };
@@ -443,12 +476,96 @@ check(
   },
 );
 
+check("legacy overview without backgrounds draws the full tile range and player marker", () => {
+  const s = scene(content([exit], { legacy: true, width: 4, height: 6,
+    player: { x: 1, y: 2 } }));
+  const draws = s.overview();
+  assert.equal(s.game.cameraSnapshot, null);
+  assert.equal(draws.filter((draw) => draw.file === "synthetic-map.png").length, 24);
+  assert.equal(draws.filter((draw) => draw.file === "synthetic-minimap.png").length, 1);
+  assert.equal(draws.filter((draw) => draw.file === "synthetic-player.png").length, 0);
+  return { tiles: 24, markers: 1, sourceCamera: false };
+});
+
+function background() {
+  const provenance = (file, objectId = "1") => ({ file, objectId,
+    assetPath: "Assets/synthetic/background", serializedFile: "synthetic", sha256: sourceHash });
+  return {
+    kind: "native-center-repeat-background-v1", layerId: 11, name: "FarBGLayer1",
+    source: provenance("synthetic-map"), mapSize: { width: 672, height: 512 },
+    size: { width: 1920, height: 512 }, offset: { x: -864, y: -24 },
+    manualSpeed: { x: 0.5, y: 0.5 },
+    renderHost: { kind: "source-fresh-normal-background-host-v1",
+      rendererWorld: { x: 0, y: 0 }, renderCamera: { x: 0, y: 0 },
+      sources: [provenance("synthetic-renderer"), provenance("synthetic-raster-camera")] },
+    texture: { url: "/field-background-media/textures/" + "b".repeat(64) + ".png",
+      sha256: "b".repeat(64), width: 512, height: 512,
+      source: provenance("synthetic-background"), textureSource: provenance("synthetic-background", "2") },
+  };
+}
+function backgroundScene(layer = background(), options = {}) {
+  const s = scene(content(puppet([position(26, 7), { kind: "wait", seconds: 1 }]), {
+    width: 42, height: 32, backgrounds: [layer], ...options,
+  }), 320, 180);
+  if (!options.legacy) {
+    assert.equal(s.game.startEvent("main"), true);
+    assert.equal(s.game.stop, null);
+  }
+  return s;
+}
+
+check("overview ignores scrolling backgrounds and does not require their image or camera host", () => {
+  const layer = background(), s = backgroundScene(layer, { legacy: true });
+  s.images.delete(layer.texture.url);
+  const draws = s.overview();
+  assert.equal(draws.filter((draw) => draw.file === "synthetic-map.png").length, 42 * 32);
+  assert.equal(draws.filter((draw) => draw.file === "synthetic-minimap.png").length, 1);
+  assert.ok(draws.every((draw) => draw.file !== layer.texture.url));
+  return { tiles: 42 * 32, markers: 1, backgroundDraws: 0 };
+});
+
+check("real Renderer draws source background after clear and before map tiles", () => {
+  const layer = background(), s = backgroundScene(layer);
+  const before = s.game.cameraSnapshot, time = s.game.time, draws = s.draw();
+  const backgroundDraws = draws.filter((draw) => draw.file === layer.texture.url);
+  // Independent source arithmetic: scrollCamera=(88,136), U=.5*(88+864+336-160)=564;
+  // V=.5*(256-136-90)+136-24+256-90=293. Wrapping gives source (52,39).
+  assert.deepEqual(backgroundDraws, [{ file: layer.texture.url,
+    source: [52, 39, 320, 180], rect: [0, 0, 320, 180], alpha: 1 }]);
+  const calls = s.calls();
+  assert.deepEqual(calls[0], { kind: "fill", rect: [0, 0, 320, 180] });
+  assert.deepEqual(calls[1], { kind: "image", file: layer.texture.url });
+  assert.equal(calls.findIndex((call) => call.file === "synthetic-map.png"), 2);
+  assert.deepEqual(s.draw(), draws);
+  assert.deepEqual(s.game.cameraSnapshot, before); assert.equal(s.game.time, time);
+  return { background: backgroundDraws[0], order: ["clear", "background", "tiles"] };
+});
+
+check("background scroll camera stays separate from its raster camera and renderer origin", () => {
+  const layer = background();
+  layer.renderHost.rendererWorld = { x: 12, y: -8 };
+  layer.renderHost.renderCamera = { x: 100, y: 128 };
+  const s = backgroundScene(layer), draws = s.draw().filter((draw) => draw.file === layer.texture.url);
+  assert.deepEqual(draws, [{ file: layer.texture.url, source: [52, 39, 320, 180],
+    rect: [-88, 136, 320, 180], alpha: 1 }]);
+  return draws[0];
+});
+
+check("draw refuses a source background with a missing camera host or image", () => {
+  const layer = background(), legacy = backgroundScene(layer, { legacy: true });
+  assert.throws(() => legacy.draw(), /来源背景缺少摄像机宿主/);
+  const source = backgroundScene(layer); source.images.delete(layer.texture.url);
+  assert.throws(() => source.draw(), /缺少来源背景图像/);
+  return { missingCamera: "blocked", missingImage: "blocked" };
+});
+
 const implementation = {};
 for (const file of [
   "apps/game/renderer.js",
   "src/core/field.ts",
   "src/core/field-camera.ts",
   "src/core/field-camera-host.ts",
+  "src/core/field-background.ts",
 ])
   implementation[file] = sha(await readFile(resolve(root, file)));
 const runtimeModules = {};
@@ -458,6 +575,7 @@ for (const file of [
   "src/core/field-camera-host.js",
   "src/core/actor-animation.js",
   "src/core/field-fade.js",
+  "src/core/field-background.js",
 ])
   runtimeModules[file] = sha(await readFile(resolve(compiled, file)));
 const report = {
@@ -468,7 +586,7 @@ const report = {
   browserRasterVerified: false,
   originalGameParityVerified: false,
   fixture:
-    "Redistributable synthetic map, unique tile rectangles and one player sprite; no browser injection",
+    "Redistributable synthetic map, unique tile rectangles, player/overview marker and scrolling background; no browser injection",
   implementation,
   runtimeModules,
   checks,

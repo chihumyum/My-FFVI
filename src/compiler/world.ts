@@ -10,6 +10,10 @@ import { readSnapshot, snapshotFile } from "./integrity.js";
 import { decodeFieldOp, decodeScriptLocals, decodeConditionVisualFlag } from "./field.js";
 import { compilePlayerVisibilityFactory } from "./player-visibility.js";
 import { compileFieldCameraHostDefinition } from "./field-camera-host.js";
+import { compileFieldActorView } from "./field-actor-view.js";
+import { compileFieldNativeAnimationKeys } from "./field-native-appearance.js";
+import { compilePartyActorCatalog } from "./party-actors.js";
+import { compileFieldNativeFoot } from "./field-native-foot.js";
 import { compileFieldPuppetScriptContext } from "./field-puppet-actors.js";
 import { missingFieldPoses } from "../core/character-media.js";
 import { fieldCollisionRange } from "../core/collision.js";
@@ -196,6 +200,8 @@ export async function compileWorld(root: string) {
     .map((s) => ({ file: text(s.file), sha256: text(s.sha256) }));
   const miscAssets = systemSource.assets.filter((asset) => asset.source.assetPath.endsWith("/serial_misc_assets.json"));
   if (miscAssets.length !== 1) throw new Error("Missing source puppet settings");
+  const nativeAnimationKeys = compileFieldNativeAnimationKeys(
+    compilePartyActorCatalog(systemSource.tables, miscAssets[0]!.data).catalog, record(media.characters));
   const maps: WorldMapContent[] = [];
   for (const binding of bindMapPackages(corpus.assets, corpus.tables)) {
     const source = byId.get(binding.packageId ?? "")?.source ?? {
@@ -214,10 +220,23 @@ export async function compileWorld(root: string) {
       messages,
     );
     let map: WorldMapContent["map"] = null;
+    let nativeFoot: WorldMapContent["nativeFoot"];
+    const nativeFootBlockers: ContentIssue[] = [];
+    try {
+      const sourcePackage = byId.get(binding.packageId ?? "");
+      if (!sourcePackage?.source.objectId || !sourcePackage.source.sha256)
+        throw new Error("Native field foot has no bound source map package");
+      nativeFoot = compileFieldNativeFoot(sourcePackage.data,
+        { ...sourcePackage.source, objectId: sourcePackage.source.objectId, sha256: sourcePackage.source.sha256 }, binding.name);
+    } catch (error) {
+      nativeFootBlockers.push({ reason: error instanceof Error ? error.message : String(error), source });
+    }
     let partyEntry: WorldMapContent["partyEntry"];
     const partyEntryBlockers: ContentIssue[] = [];
     let cameraHost: WorldMapContent["cameraHost"];
     const cameraHostBlockers: ContentIssue[] = [];
+    let actorView: WorldMapContent["actorView"];
+    const actorViewBlockers: ContentIssue[] = [];
     try {
       const tile = byId.get(binding.tilemap ?? ""),
         collision = byId.get(binding.collision ?? "");
@@ -293,6 +312,17 @@ export async function compileWorld(root: string) {
       } catch (error) {
         partyEntryBlockers.push({ reason: error instanceof Error ? error.message : String(error),
           source: defaultGroup?.source ?? source });
+      }
+      try {
+        const sourcePackage = byId.get(binding.packageId ?? "");
+        if (!sourcePackage?.source.objectId || !tile.source.objectId || !partyEntry)
+          throw new Error("Native actor view has no bound map package or range");
+        actorView = compileFieldActorView(sourceFiles,
+          { data: tile.data, source: { ...tile.source, objectId: tile.source.objectId } },
+          { data: sourcePackage.data, source: { ...sourcePackage.source, objectId: sourcePackage.source.objectId } },
+          partyEntry.mapRange);
+      } catch (error) {
+        actorViewBlockers.push({ reason: error instanceof Error ? error.message : String(error), source });
       }
     } catch (error) {
       blockers.push({
@@ -379,6 +409,9 @@ export async function compileWorld(root: string) {
       partyEntryBlockers,
       ...(cameraHost ? { cameraHost } : {}),
       cameraHostBlockers,
+      ...(actorView ? { actorView } : {}),
+      actorViewBlockers,
+      ...(nativeFoot ? { nativeFoot } : {}), nativeFootBlockers,
       scripts,
       scriptLocals,
       scriptSystemFlags,
@@ -402,6 +435,7 @@ export async function compileWorld(root: string) {
     maps.push({ ...value, contentHash: hash(value) });
   }
   const catalog: Omit<WorldCatalog, "contentHash"> = {
+    nativeAnimationKeys,
     formatVersion: 1,
     kind: "world-development",
     sourceSetHash: corpus.sourceSetHash,

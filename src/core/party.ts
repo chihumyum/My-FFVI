@@ -69,12 +69,14 @@ export interface FieldPartyPort {
    */
   prepare(command: PartyCommand): PartyEventTransaction;
 }
-/** Preparation may fail; the returned publication must be synchronous and non-failing. */
+/** A live actor owner may require one final read-only stale check before owned
+ * publication. Once validated, publication is synchronous and non-failing. */
+export type PartyPresentationPublication = (() => void) & { validate?(): void };
 export type PreparePartyPresentation = (
   members: ActivePartyMember[],
   appearance?: PartyAppearanceCandidate,
   setDummy?: boolean,
-) => () => void;
+) => PartyPresentationPublication;
 
 function slotIndex(value: number): PartySlotIndex {
   if (!Number.isInteger(value) || value < 0 || value > 2)
@@ -235,7 +237,7 @@ export function executePartyEvent(
   const transaction = party.prepare(structuredClone(op.command));
   if (transaction.refreshActors !== op.command.refreshActors)
     throw new Error("Party refresh transaction contract changed");
-  let publishPresentation: (() => void) | undefined;
+  let publishPresentation: PartyPresentationPublication | undefined;
   if (transaction.refreshActors) {
     if (!preparePresentation)
       throw new Error("Party actor refresh is unavailable");
@@ -246,6 +248,7 @@ export function executePartyEvent(
     if (typeof publishPresentation !== "function")
       throw new Error("Invalid party presentation transaction");
   }
+  publishPresentation?.validate?.();
   transaction.commit();
   publishPresentation?.();
 }

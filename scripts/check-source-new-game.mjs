@@ -32,8 +32,8 @@ const report = {
     "Camera projection uses an explicit 16:9, 108-pixel orthographic viewport; no rendered pixels are compared.",
   ],
   limitations: [
-    "The checker stops at the first unsupported source instruction and never substitutes the development checkpoint.",
-    "Native actor stable saves and later map handoff remain separate capabilities.",
+    "The checker executes the first source segment and attempts its requested destination without substituting the development checkpoint.",
+    "Ordinary native actor map lifecycle is implemented; destination entity/compositor admission and stable saves remain separate capabilities.",
     "Static source binding and controlled Web execution do not establish original-game timing or visual equivalence.",
   ],
 };
@@ -74,7 +74,7 @@ try {
     assert.equal(world.parentSourceSetHash, content.parentSourceSetHash);
     assert.equal(map.parentSourceSetHash, content.parentSourceSetHash);
     assert.equal(map.mapId, 609); assert.equal(content.entry.entrance, 1);
-    assert.equal(battle.common.profile, "narshe-playability-v31");
+    assert.equal(battle.common.profile, "narshe-playability-v32");
     assert.equal(content.entry.reservedScript.name, "sc_e_0001");
     assert.equal(map.scriptPuppetContexts[content.entry.reservedScript.name].scriptHash,
       content.entry.reservedScript.contentHash);
@@ -252,21 +252,45 @@ try {
     assert.deepEqual(game.field.cameraSnapshot.dummy.position, cameraEnd);
     assert.equal(game.field.fade.rendererColor.a, 1);
   });
-  check("the first unsupported owned-condition instruction remains explicit and atomic", () => {
+  check("the owned condition publishes through native actors and reaches the real next-map instruction", () => {
     const stop = game.field.stop;
     assert.ok(stop, "No explicit stop before the 120-second safety bound");
-    assert.equal(stop.kind, "unsupported");
+    assert.equal(stop.kind, "map-transition");
     assert.equal(stop.site.script, content.entry.reservedScript.name);
-    assert.equal(stop.site.index, 18); assert.equal(stop.site.kind, "owned-condition");
-    assert.deepEqual(stop.site.command, { kind: "add-condition", conditionType: 607, target: 0 });
-    assert.match(stop.message, /Nonzero party camera offset|Native actor asset-refresh publication/);
-    assert.equal(stop.site.source.pointer, "/Mnemonics/18");
-    assert.deepEqual(game.state.snapshot(), ownedBeforeStop);
-    assert.deepEqual(game.state.snapshot(), initial);
-    assert.ok(game.state.fieldPuppetRoster.current().owned.every((member) => member.conditionTypes.length === 0));
+    assert.equal(stop.site.index, 19); assert.equal(stop.site.kind, "change-map");
+    assert.equal(stop.site.source.pointer, "/Mnemonics/19");
+    assert.deepEqual(stop.request, { mapId: 3, entrance: 1, continuation: "sc_e_0001_1", birdview: false,
+      skipFade: false, skipBgm: true, origin: "script" });
+    assert.deepEqual(game.state.snapshot().roster.map((member) => member.conditionIds), [[53], [53], [53]]);
+    assert.ok(game.state.fieldPuppetRoster.current().owned.every((member) => canonical(member.conditionTypes) === "[607]"));
+    const expected = structuredClone(initial);
+    for (const member of expected.roster) member.conditionIds = [53];
+    assert.deepEqual(game.state.snapshot(), expected);
+    assert.deepEqual(ownedBeforeStop, initial);
+    assert.deepEqual(game.field.cameraOffset, { x: 0, y: 16 });
+    assert.equal(game.field.player.native.fieldAssetId, 1);
+    assert.equal(game.field.player.native.charaZOffset, 0.5);
     assert.equal(game.field.entrySynchronized, false);
     assert.equal(game.battle, null);
   });
+  stage = "attempt-source-destination";
+  const destination = await readPackage("build/world/maps/3.json", world.maps["3"].contentHash);
+  const beforeTransition = { field: game.field, owned: game.state.snapshot(),
+    camera: game.field.cameraSnapshot, fade: game.field.fader.snapshot() };
+  let transitionFailure = null;
+  try { game.world.prepare(world, destination); }
+  catch (error) { transitionFailure = error instanceof Error ? error.message : String(error); }
+  check("the destination entity gate leaves the condition and old field intact without publishing a partial map", () => {
+    assert.equal(transitionFailure, "Unsupported entity kind 11");
+    assert.equal(game.field, beforeTransition.field);
+    assert.deepEqual(game.state.snapshot(), beforeTransition.owned);
+    assert.deepEqual(game.field.cameraSnapshot, beforeTransition.camera);
+    assert.deepEqual(game.field.fader.snapshot(), beforeTransition.fade);
+    assert.equal(game.world.transitions.length, 0);
+  });
+  report.destination = { requested: structuredClone(game.field.stop.request), contentHash: destination.contentHash,
+    prepared: false, published: false, failure: transitionFailure,
+    nativeFoot: destination.nativeFoot, actorViewBlockers: destination.actorViewBlockers };
   check("the running source host preserves actor identities and the unsupported native save boundary", () => {
     for (const entry of identities) {
       assert.equal(game.field.actors[entry.id], entry.actor);
@@ -289,14 +313,14 @@ try {
     })));
   report.checkerSha256 = sha(await readFile(fileURLToPath(import.meta.url)));
   report.status = "pass";
-  report.outcome = "first-source-segment-executed-then-explicitly-blocked";
+  report.outcome = "source-condition-applied-next-map-requested-destination-explicitly-blocked";
   report.counts = { cases: report.cases.length, actors: actors.length, owners: initial.roster.length,
     verifiedPackages: report.packages.length, audioReadyCalls: audioCalls.length,
     logicalFrames: elapsedMs / 10, messageTransitions: messageTransitions.length, milestones: milestones.length };
   await writeFile(output, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ status: report.status, outcome: report.outcome, ...report.counts,
     elapsedMs, blockedAt: { script: game.field.stop.site.script, index: game.field.stop.site.index,
-      reason: game.field.stop.message }, reportSha256: sha(await readFile(output)),
+      reason: transitionFailure }, reportSha256: sha(await readFile(output)),
     semanticsVerified: false, originalGameExecuted: false, browserExecuted: false }));
 } catch (error) {
   report.status = "fail";

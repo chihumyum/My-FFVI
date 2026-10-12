@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { FieldPartyActors, type FieldPartyActorCheckpoint } from "../src/core/field-party-actors.js";
+import { FieldPartyActors, type FieldPartyActorCheckpoint, type FieldPartyActorRenderStep,
+  type FieldPartyActorRendererBatch } from "../src/core/field-party-actors.js";
 import { GameSession } from "../src/core/game-session.js";
 import { actorCatalog, actorContext, actorMember } from "./fixtures/party-actors.js";
 import { checkpointFixture } from "./fixtures/checkpoint-game.js";
@@ -74,6 +75,169 @@ test("ordered actor refreshes prepare every intermediate bitmap before publishin
   assert.deepEqual(visible, ["bravo", "charlie"]);
   assert.equal(host.checkpoint().context.player.fieldAssetId, 3);
   assert.equal(host.checkpoint().playerAssetCacheId, 3);
+});
+
+test("a batch renderer receives each ordered candidate once and publishes from one owner revision", () => {
+  const { host, candidate } = standalone();
+  const before = host.checkpoint(), next = structuredClone(candidate);
+  next.activeMembers[0]!.sourceId = 3; next.activeMembers[0]!.jobId = 7;
+  next.parties[0] = structuredClone(next.activeMembers);
+  let rendererRevision = 0, prepareCalls = 0, commits = 0;
+  const rendered: string[] = [];
+  const transaction = host.prepareSequence([
+    { appearance: candidate, setDummy: false }, { appearance: next, setDummy: false },
+  ], { prepareBatch(steps) {
+    prepareCalls++;
+    assert.deepEqual(steps.map((step) => step.media.asset), ["bravo", "charlie"]);
+    const revision = rendererRevision, pending = steps.map((step) => step.media.asset);
+    return { validate() { assert.equal(rendererRevision, revision); },
+      commit() { rendered.push(...pending); rendererRevision++; commits++; } };
+  } });
+  assert.equal(prepareCalls, 1); assert.equal(commits, 0);
+  assert.deepEqual(host.checkpoint(), before);
+  assert.deepEqual(rendered, []);
+  transaction.validate(); transaction();
+  assert.equal(commits, 1); assert.equal(rendererRevision, 1);
+  assert.deepEqual(rendered, ["bravo", "charlie"]);
+  assert.equal(host.checkpoint().context.player.fieldAssetId, 3);
+  assert.throws(transaction, /Stale or repeated/);
+  assert.throws(() => transaction.validate(), /Stale or repeated/);
+  assert.equal(commits, 1);
+});
+
+test("later batch plans read earlier candidate assets for source setDummy=false preservation", () => {
+  const { host, candidate } = standalone();
+  const empty: PartyAppearanceCandidate = { activeMembers: [], parties: [[], [], []] };
+  let captured: readonly FieldPartyActorRenderStep[] = [];
+  const transaction = host.prepareSequence([
+    { appearance: candidate, setDummy: false }, { appearance: empty, setDummy: false },
+  ], { prepareBatch(steps) {
+    captured = steps;
+    return { validate() {}, commit() {} };
+  } });
+  assert.equal(captured.length, 2);
+  assert.ok(captured[0]!.plan.changes.some((change) => change.actorId === "puppet:0" && change.asset.id === 2));
+  assert.equal(captured[1]!.plan.changes.some((change) => change.actorId.startsWith("puppet:")), false);
+  assert.equal(captured[1]!.plan.cameraOffset, null);
+  transaction();
+  assert.deepEqual(host.checkpoint().context.puppets.map((actor) => actor?.fieldAssetId), [2, 1, 1, 1]);
+  assert.ok(host.checkpoint().context.multiParty.every((party) => party.members.length === 0));
+});
+
+test("nonzero and null camera writes require explicit batch host admission without losing source order", () => {
+  const catalog = actorCatalog(), context = actorContext();
+  const host = new FieldPartyActors(catalog,
+    { kind: "field-party-actors-v1", context, playerAssetCacheId: 1 }, 1);
+  const members = [actorMember({ sourceId: 2, jobId: 8 })];
+  const candidate: PartyAppearanceCandidate = { activeMembers: members, parties: [members, [], []] };
+  const empty: PartyAppearanceCandidate = { activeMembers: [], parties: [[], [], []] };
+  const steps = [{ appearance: candidate, setDummy: false }, { appearance: empty, setDummy: false }];
+  const before = host.checkpoint();
+  assert.throws(() => host.prepareSequence(steps, () => () => {}), /Nonzero party camera offset/);
+  assert.throws(() => host.prepareSequence(steps, { prepareBatch(batch) {
+    assert.deepEqual(batch.map((step) => step.plan.cameraOffset), [{ x: 0, y: 8 }, null]);
+    throw new Error("Camera owner cannot admit the requested offset");
+  } }), /Camera owner/);
+  assert.deepEqual(host.checkpoint(), before);
+  let offset = { x: 9, y: 9 };
+  const transaction = host.prepareSequence(steps, { prepareBatch(batch) {
+    let next = { ...offset };
+    for (const step of batch) if (step.plan.cameraOffset !== null) next = { ...step.plan.cameraOffset };
+    return { validate() {}, commit() { offset = next; } };
+  } });
+  assert.deepEqual(offset, { x: 9, y: 9 }); transaction();
+  assert.deepEqual(offset, { x: 0, y: 8 }, "null is not a reset");
+  assert.equal(host.checkpoint().context.player.fieldAssetId, 2);
+  assert.deepEqual(host.checkpoint().context.camera, before.context.camera,
+    "Map view metadata must not become a second live offset owner");
+});
+
+test("later planning or renderer preparation failures leave every publication untouched", () => {
+  const { host, candidate } = standalone(), invalid = structuredClone(candidate);
+  invalid.activeMembers[0]!.jobId = 999;
+  invalid.parties[0] = structuredClone(invalid.activeMembers);
+  const before = host.checkpoint();
+  let calls = 0;
+  const renderer: FieldPartyActorRendererBatch = { prepareBatch() {
+    calls++; throw new Error("Missing second source bitmap");
+  } };
+  assert.throws(() => host.prepareSequence([
+    { appearance: candidate, setDummy: false }, { appearance: invalid, setDummy: false },
+  ], renderer), /character\/job/);
+  assert.equal(calls, 0, "All pure plans must succeed before asking a renderer to prepare");
+  assert.deepEqual(host.checkpoint(), before);
+  assert.throws(() => host.prepareSequence([
+    { appearance: candidate, setDummy: false }, { appearance: candidate, setDummy: false },
+  ], renderer), /second source bitmap/);
+  assert.equal(calls, 1); assert.deepEqual(host.checkpoint(), before);
+});
+
+test("stale renderer validation rejects before local appearance publication", () => {
+  const { host, candidate } = standalone(), before = host.checkpoint();
+  let allowed = true, committed = false;
+  const transaction = host.prepare(candidate, { prepareBatch() {
+    return { validate() { if (!allowed) throw new Error("Stale native actor snapshot"); },
+      commit() { committed = true; } };
+  } });
+  allowed = false;
+  assert.throws(() => transaction.validate(), /Stale native actor/);
+  assert.throws(transaction, /Stale native actor/);
+  assert.equal(committed, false); assert.deepEqual(host.checkpoint(), before);
+});
+
+test("restore and competing appearance publication invalidate previously prepared batches", () => {
+  for (const change of ["restore", "refresh"] as const) {
+    const { host, candidate } = standalone();
+    let commits = 0;
+    const transaction = host.prepare(candidate, { prepareBatch() {
+      return { validate() {}, commit() { commits++; } };
+    } });
+    if (change === "restore") host.restore(host.checkpoint());
+    else host.prepare(candidate, () => () => {})();
+    const current = host.checkpoint();
+    assert.throws(() => transaction.validate(), /Stale or repeated/, change);
+    assert.throws(transaction, /Stale or repeated/, change);
+    assert.equal(commits, 0); assert.deepEqual(host.checkpoint(), current);
+  }
+});
+
+test("batch planning detaches caller data and exposes immutable ordered renderer inputs", () => {
+  const { catalog, origin, host, candidate } = standalone();
+  origin.context.player.id = "external-owner";
+  catalog.assets[2]!.asset = "external-media";
+  let batch: readonly FieldPartyActorRenderStep[] = [];
+  const transaction = host.prepare(candidate, { prepareBatch(steps) {
+    batch = steps;
+    assert.equal(steps[0]!.media.asset, "bravo");
+    return { validate() {}, commit() {} };
+  } });
+  candidate.activeMembers[0]!.sourceId = 999;
+  assert.throws(() => { batch[0]!.plan.changes[0]!.asset.id = 999; }, TypeError);
+  assert.throws(() => { batch[0]!.media.asset = "external-media"; }, TypeError);
+  transaction();
+  assert.equal(host.checkpoint().context.player.id, "player");
+  assert.equal(host.checkpoint().context.player.fieldAssetId, 2);
+  assert.equal(host.playerMedia().asset, "bravo");
+});
+
+test("invalid publication receipts and rejected commits cannot install the local candidate", () => {
+  const { host, candidate } = standalone(), before = host.checkpoint();
+  assert.throws(() => host.prepare(candidate, { prepareBatch() {
+    return { commit() {} } as ReturnType<FieldPartyActorRendererBatch["prepareBatch"]>;
+  } }), /Invalid party batch renderer transaction/);
+  const transaction = host.prepare(candidate, { prepareBatch() {
+    return { validate() {}, commit() { throw new Error("Host broke its no-throw publication contract"); } };
+  } });
+  assert.throws(transaction, /no-throw publication/);
+  assert.deepEqual(host.checkpoint(), before);
+  assert.throws(transaction, /Stale or repeated/);
+});
+
+test("empty refresh batches do not invoke a renderer or retain a second roster", () => {
+  const { host } = standalone(), before = host.checkpoint();
+  const transaction = host.prepareSequence([], { prepareBatch() { throw new Error("unexpected renderer"); } });
+  transaction.validate(); transaction();
+  assert.deepEqual(host.checkpoint(), before);
 });
 
 test("native actor saves reject altered providers, hidden identities and unresolved player media atomically", () => {

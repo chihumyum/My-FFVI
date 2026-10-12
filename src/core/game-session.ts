@@ -146,6 +146,7 @@ export class GameSession {
         movementBlocker: (transportationId, manual) => this.state.fieldMoveBlocker(transportationId, manual),
       },
       prepare: () => this.state.prepareFieldState(),
+      nativeState: () => this.state.nativeState,
     }, fresh?.fade);
     if (fresh) {
       installSourceNewGameActors(this.field, fresh.content, this.state, fresh.map);

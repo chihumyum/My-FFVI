@@ -16,9 +16,13 @@ import { checkpointKeys, checkpointInteger } from "./checkpoint-validation.js";
 import { prepareMapPartyEntry, readMapPartySwitching, type MapPartyEntryPlan } from "./map-party-entry.js";
 import { Transportations } from "./transportation.js";
 import type { FieldFadeState } from "./field-fade.js";
+import type { SourceNativeState } from "./source-native-state.js";
+import { prepareSourceNativeMap } from "./source-native-map.js";
+import { prepareNativeFieldProviders } from "./field-native-providers.js";
 export type WorldStateOwner = {
   current: FieldGameOptions;
   prepare(): { ports: FieldGameOptions; commit(): boolean };
+  nativeState?(): SourceNativeState | null;
 };
 
 type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount"> & {
@@ -330,7 +334,10 @@ export class WorldSession {
       stop = from.stop;
     if (stop?.kind !== "map-transition")
       throw new Error("No pending map transition");
-    if (from.player.native) throw new Error("Native actor map handoff requires a destination actor factory and codec");
+    const nativeActors = from.nativeActorCandidate, nativeRuntime = from.nativeActorRuntime;
+    const nativeState = this.owned?.nativeState?.();
+    if (from.player.native && (!nativeActors || !nativeRuntime || !nativeState))
+      throw new Error("Native actor map handoff requires its actor and source state owners");
     const request = stop.request,
       identity = from.content.map.identity;
     if (!identity) throw new Error("Unknown previous map/area identity");
@@ -386,7 +393,8 @@ export class WorldSession {
       };
       const transport = transportation.projectMapEntry({
         currentId: from.transportationId, loadId: transportation.pointInIdentity().id,
-        mapId: request.mapId, stayMapIds: {}, availability: transportation.availability(read),
+        mapId: request.mapId, stayMapIds: nativeState?.parkedTransportationMapIds ?? {},
+        availability: transportation.availability(read),
       });
       if (transport.currentId === null) throw new Error("Map transportation selection has no current identity");
       if (!transport.selected) throw new Error("Disabled current map transportation lifecycle is not implemented");
@@ -397,7 +405,7 @@ export class WorldSession {
       const plan = prepareMapPartyEntry(appearance.catalog, {
         definition: target.partyEntry, entrance: request.entrance,
         mapViewType: request.birdview ? 1 : 0, prior,
-        playerVisible: !from.hiddenEntities.has(from.player.id), party: appearance.current(),
+        playerVisible: from.isEntityVisible(from.player.id), party: appearance.current(),
         transportation: transportation.identity(transport.currentId),
         canPartySwitching: readMapPartySwitching(read),
       });
@@ -422,6 +430,21 @@ export class WorldSession {
       from.fader.fork(),
       from.cameraSnapshot ?? undefined,
     );
+    if (nativeActors) {
+      if (!prior || !actorEntry || !target.partyEntry || !target.actorView || target.actorViewBlockers?.length ||
+          !owned?.ports.partyAppearance || !nativeRuntime || !catalog.nativeAnimationKeys ||
+          canonical(nativeRuntime.animationKeys) !== canonical(catalog.nativeAnimationKeys))
+        throw new Error(target.actorViewBlockers?.[0]?.reason ?? "Native map actor source dependencies are unavailable");
+      if (target.nativeFootBlockers?.length) throw new Error(target.nativeFootBlockers[0]!.reason);
+      const providers = prepareNativeFieldProviders(field, target.actorView, target.nativeFoot);
+      const candidate = prepareSourceNativeMap({ prior: nativeActors, priorCheckpoint: prior,
+        entry: actorEntry.plan, definition: target.partyEntry, catalog: owned.ports.partyAppearance.catalog,
+        party: owned.ports.partyAppearance.current(),
+        characters: field.content.characters, animationKeys: catalog.nativeAnimationKeys,
+        view: target.actorView, providers: providers() });
+      field.installNativeActors(candidate, nativeRuntime.catalog, providers, nativeRuntime.controlContext,
+        catalog.nativeAnimationKeys);
+    }
     field.initializeMapCamera();
     const script = request.continuation || target.initializer;
     field.startMapEntry(script || null);
@@ -494,7 +517,12 @@ export class WorldSession {
   }
   private actorState(field: FieldGame): string {
     const p = field.player;
+    const native = field.nativeActorCandidate;
     return canonical({ prior: field.partyActorCheckpoint,
+      native: native && { ...native, snapshot: { ...native.snapshot, actors: native.snapshot.actors.map((actor) =>
+        ({ ...actor, animation: actor.animation?.snapshot() ?? null })) } },
+      nativeRuntime: field.nativeActorRuntime, cameraOffset: field.cameraOffset,
+      collision: field.collisionState, updateMask: field.updateAttributeMask,
       player: { x: p.x, y: p.y, layer: p.layer, direction: p.direction,
         asset: p.asset, mount: p.mount, motion: p.motion }, hidden: [...field.hiddenEntities] });
   }

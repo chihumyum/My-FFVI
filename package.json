@@ -103,7 +103,11 @@
     "field-native-actors:check": "npm run build && node scripts/check-field-native-actors.mjs",
     "source-native-state:check": "npm run build && node scripts/check-source-native-state.mjs",
     "source-message:check": "npm run build && node scripts/check-source-message.mjs",
-    "field-background:check": "npm run build && node scripts/check-field-background.mjs"
+    "field-background:check": "npm run build && node scripts/check-field-background.mjs",
+    "field-party-actor-transactions:check": "npm run build && node scripts/check-field-party-actor-transactions.mjs",
+    "field-native-appearance:check": "npm run build && node scripts/check-field-native-appearance-native.mjs && node scripts/check-field-native-appearance.mjs",
+    "source-native-map:check": "npm run build && node scripts/check-source-native-map-native.mjs && node scripts/check-source-native-map.mjs",
+    "field-native-foot:check": "npm run build && node scripts/check-field-native-foot-native.mjs && node scripts/check-field-native-foot.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

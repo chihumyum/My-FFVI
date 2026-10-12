@@ -15,6 +15,7 @@ import {
   type PartyState,
   type PartyAppearanceCandidate,
   type PreparePartyPresentation,
+  type PartyPresentationPublication,
 } from "./party.js";
 import { int32 } from "./script-integer.js";
 
@@ -453,7 +454,7 @@ export function executeRosterLifecycleEvent(
   const transaction = port.prepare(structuredClone(op.command));
   if (transaction.refreshActors !== op.command.refreshActors)
     throw new Error("Roster refresh transaction contract changed");
-  let publishPresentation: (() => void) | undefined;
+  let publishPresentation: PartyPresentationPublication | undefined;
   // FullRecovery ends in RemoveCondition(type=0), which requests
   // ChangeAssetPartyCharacter(false) even for an empty condition list. The
   // explicit ChangeAssetPartyCharacter(true), when requested, occurs afterward.
@@ -468,6 +469,7 @@ export function executeRosterLifecycleEvent(
     if (typeof publishPresentation !== "function")
       throw new Error("Invalid roster presentation transaction");
   }
+  publishPresentation?.validate?.();
   transaction.commit();
   publishPresentation?.();
 }

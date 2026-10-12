@@ -1,7 +1,7 @@
 import { checkpointKeys } from "./checkpoint-validation.js";
 import { int32 } from "./script-integer.js";
 import { activePartyMembers, validatePartyState, type PartyState,
-  type PartyAppearanceCandidate } from "./party.js";
+  type PartyAppearanceCandidate, type PartyPresentationPublication } from "./party.js";
 
 export type OwnedConditionCommand = {
   kind: "add-condition" | "remove-condition";
@@ -114,18 +114,19 @@ export function projectOwnedCondition<T extends OwnedConditionMember>(
 export function executeOwnedConditionEvent(
   op: OwnedConditionEventOp,
   port: FieldOwnedConditionPort | undefined,
-  preparePresentation?: (steps: readonly OwnedConditionAppearanceStep[]) => () => void,
+  preparePresentation?: (steps: readonly OwnedConditionAppearanceStep[]) => PartyPresentationPublication,
 ): void {
   if (op.kind !== "owned-condition") throw new Error("Invalid owned condition event");
   validateOwnedConditionCommand(op.command);
   if (!port) throw new Error("Field owned condition state is unavailable");
   const transaction = port.prepare(structuredClone(op.command));
-  let publish: (() => void) | undefined;
+  let publish: PartyPresentationPublication | undefined;
   if (transaction.steps.length) {
     if (!preparePresentation) throw new Error("Owned condition actor refresh is unavailable");
     publish = preparePresentation(structuredClone(transaction.steps));
     if (typeof publish !== "function") throw new Error("Invalid owned condition presentation transaction");
   }
+  publish?.validate?.();
   transaction.commit();
   publish?.();
 }

@@ -24,7 +24,7 @@ const batches = {
   "v29-field-hosts": ["2d6e30", "879750", "e0dfc0"],
   "v29-field-providers": ["2df5f0"],
   "v19-party-actor-initialization": ["2d6cf0", "2d6880"],
-  "v20-map-party-entry": ["2ee8d0"],
+  "v20-map-party-entry": ["2ee8d0", "e194c0"],
   "v19-transport-lifecycle": ["2e3d30"],
   "v30-field-factories-complete": ["309d10", "309f50", "87a930"],
   "v30-field-render-factory": ["aeb200", "8795c0", "9ec010", "9eef20", "7b8aa0"],
@@ -102,6 +102,7 @@ for (const rva of ["309d10", "309f50"]) {
   for (const literal of ["0x46ea6000", "0x447a0000", "0xc47a0000"]) assert.ok(operands.includes(literal), literal);
 }
 assert.match(code.get("87a930"), /CharaZOffset_k__BackingField = 0.5/);
+assert.match(code.get("e194c0"), /FieldCharaEntity__Init[\s\S]*CharaZOffset_k__BackingField = 0.5/);
 assert.match(code.get("2d6cf0"), /CreateNonPlayer[\s\S]*SetResidentCharaZOffset/);
 assert.match(code.get("2d6880"), /CreatePartyEntity[\s\S]*SetResidentCharaZOffset/);
 assert.match(code.get("2ee8d0"), /ChangeAssetOfPartyPuppet[\s\S]*true/);

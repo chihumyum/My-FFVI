@@ -9,7 +9,7 @@
         "炭坑都市纳尔谢"
       ],
       "questions": [
-        "来源摄像机已接共用字段宿主；演员工厂与标题到字段交接协议已有独立能力。继续装配正式 fresh GameSession、完整演员状态与交通所有者、叙述消息、入战返回及对应保存；现有纳尔谢开发检查点仍不是完整序章。",
+        "来源 fresh GameSession、原生演员、镜头、普通字幕和整批外观事务已接通；继续完成通用地图实体、原生地图局部 NPC、上层合成、交通切换、入战返回和稳定原生保存。原始开场已请求609→3，目标地图依赖仍明确阻塞；开发检查点不等于完整序章。",
         "建立同一地点在不同世界阶段、剧情标记和局部状态下的变体条件。",
         "确认 Wait 时钟与 SysCall 选择器，并对已恢复的碰撞进行原版运行对照。"
       ]
@@ -1341,6 +1341,52 @@
         "GameAssembly.dll:RVA 0x98b5e0,0x98dd40,0x7126a0,0xab00d0",
         "docs/source-messages.md",
         "docs/systems-v31.md"
+      ]
+    },
+    {
+      "id": "narshe:native-appearance-v32",
+      "subject": "narshe",
+      "predicate": "migration.nativeAppearance",
+      "value": "Ordinary native party refresh prepares all source targets as one batch, validates before owned publication and preserves existing actor/entity identities. Source AddCondition type607 stores row53 for all three fresh owners and writes camera offset (0,16); it has no field condition-asset replacement rule. Native riding publication and stable saves remain gated.",
+      "when": {
+        "battleProfile": "narshe-playability-v32"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "docs/systems-v32.md",
+        "docs/field-native-appearance.md",
+        "docs/field-party-actor-transactions.md"
+      ]
+    },
+    {
+      "id": "narshe:native-map-v32",
+      "subject": "narshe",
+      "predicate": "migration.nativeMapLifecycle",
+      "value": "Ordinary MapSetup retains resident world poses/playback, hides four party puppets and three other-party actors, and reinitializes the actual player at PointIn with CharaZOffset0.5. WorldSession stages native actors with owned/event/camera/fade/audio and rejects stale actors. Map3 production admission is still blocked by entity kind11 and upper/ceiling composition.",
+      "when": {
+        "battleProfile": "narshe-playability-v32"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "docs/systems-v32.md",
+        "docs/source-native-map.md"
+      ]
+    },
+    {
+      "id": "narshe:source-route-v32",
+      "subject": "narshe",
+      "predicate": "migration.sourceOpeningRoute",
+      "value": "The fresh source reserved script sc_e_0001 executes condition607 at index18 and directly requests map3 entrance1 with continuation sc_e_0001_1 at index19. This is not the older development-route interpretation 609->572->3. Condition607 alone does not select transport6 or armor field asset38.",
+      "when": {
+        "battleProfile": "narshe-playability-v32"
+      },
+      "status": "observed",
+      "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+      "evidence": [
+        "docs/systems-v32.md",
+        "build/reports/source-new-game-check.json"
       ]
     }
   ],

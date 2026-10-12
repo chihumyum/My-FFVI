@@ -10,21 +10,66 @@ export type FieldPartyActorCheckpoint = {
   context: PartyActorContext;
   playerAssetCacheId: number | null;
 };
+export type FieldPartyActorRenderStep = {
+  media: { asset: string; mount: string | null };
+  /** Includes every source write in order, including repeated replacements
+   * and cameraOffset:null (which means no write, not a reset to zero). */
+  plan: PartyActorPlan;
+};
+export type FieldPartyActorRendererPublication = {
+  /** Read-only current-owner check. The containing owned transaction calls
+   * this before publishing any of its state. */
+  validate(): void;
+  /** Synchronous publication of already prepared data; no fallible work,
+   * current-roster reads, callbacks or per-plan stale checks belong here. */
+  commit(): void;
+};
+export type FieldPartyActorRendererBatch = {
+  /** One detached projection for the whole ordered batch. This host explicitly
+   * accepts or rejects every camera write, including nonzero source offsets. */
+  prepareBatch(steps: readonly FieldPartyActorRenderStep[]): FieldPartyActorRendererPublication;
+};
+/** Compatibility path for the existing zero-offset development renderer.
+ * Each returned closure must publish prepared data without throwing. Native
+ * actor/camera owners must use the batch port, never independent closures. */
+export type LegacyFieldPartyActorRenderer = (
+  media: FieldPartyActorRenderStep["media"], plan: PartyActorPlan,
+) => () => void;
+export type FieldPartyActorRenderer = LegacyFieldPartyActorRenderer | FieldPartyActorRendererBatch;
+/** Callable compatibility with the existing dispatchers. validate() must run
+ * before an outer owned-state commit; invocation also guards direct callers. */
+export type FieldPartyActorPublication = (() => void) & { validate(): void };
 
 const instances = (c: PartyActorContext): PartyActorInstance[] =>
   [c.player, ...c.puppets, ...c.multiParty.map((p) => p.actor),
     c.companion?.actor ?? null, c.companion?.puppet ?? null].filter((a): a is PartyActorInstance => a !== null);
 const detachedContext = (context: PartyActorContext) => ({ ...structuredClone(context),
   multiParty: context.multiParty.map((p) => ({ ...structuredClone(p), members: [] })) });
+function readonlyCopy<T>(value: T): T {
+  const copied = structuredClone(value);
+  const freeze = (node: unknown): void => {
+    if (node === null || typeof node !== "object") return;
+    for (const child of Object.values(node)) freeze(child);
+    Object.freeze(node);
+  };
+  freeze(copied);
+  return copied;
+}
 
-/** Native hidden actors keep source identities without invented coordinates or
- * Web NPC bindings. Only the existing player has a renderer in this host. */
+/** Asset bookkeeping, never a second owner of native pose, visibility, animation
+ * or camera offset. Renderer preparation binds these source IDs to live actors. */
 export class FieldPartyActors {
   private state: FieldPartyActorCheckpoint;
-  constructor(private readonly catalog: PartyActorCatalog,
-    private readonly origin: FieldPartyActorCheckpoint,
+  private readonly catalog: PartyActorCatalog;
+  private readonly origin: FieldPartyActorCheckpoint;
+  private revision = 0;
+  private publishing = false;
+  constructor(catalog: PartyActorCatalog,
+    origin: FieldPartyActorCheckpoint,
     transportationId: number | null) {
-    this.state = { ...structuredClone(origin), context: detachedContext(origin.context) };
+    this.catalog = structuredClone(catalog);
+    this.origin = { ...structuredClone(origin), context: detachedContext(origin.context) };
+    this.state = structuredClone(this.origin);
     if (origin.context.currentTransport?.id !== transportationId)
       throw new Error("Party appearance transportation is not bound to this field");
     this.validate(this.state);
@@ -72,9 +117,11 @@ export class FieldPartyActors {
   }
   checkpoint(): FieldPartyActorCheckpoint { return structuredClone(this.state); }
   restore(raw: FieldPartyActorCheckpoint) {
+    if (this.publishing) throw new Error("Cannot restore party appearance during publication");
     const next = structuredClone(raw);
     this.validate(next);
     this.state = next;
+    this.revision++;
   }
   playerMedia(state = this.state): { asset: string; mount: string | null } {
     const player = state.context.player;
@@ -84,43 +131,64 @@ export class FieldPartyActors {
     if (!asset || (player.riding && !mount)) throw new Error("Unresolved playable actor appearance");
     return { asset: asset.asset, mount: mount?.asset ?? null };
   }
-  /** A source event can refresh once per target. Build that ordered sequence
-   * against an isolated actor state, checking every intermediate media binding
-   * before the caller publishes any owned state. Renderer callbacks only run
-   * after all preparations succeed, in the same source order. */
+  /** A source event refreshes once per target, including storage no-ops. Project
+   * each step against the previous candidate, then let one renderer transaction
+   * stage the complete sequence before any owned/context/native publication. */
   prepareSequence(
     steps: readonly { appearance: PartyAppearanceCandidate; setDummy: boolean }[],
-    prepareRenderer: (media: { asset: string; mount: string | null }, plan: PartyActorPlan) => () => void,
-  ): () => void {
-    const draft = new FieldPartyActors(this.catalog, this.origin, this.state.context.currentTransport?.id ?? null);
-    draft.restore(this.checkpoint());
-    const publications: (() => void)[] = [];
+    renderer: FieldPartyActorRenderer,
+  ): FieldPartyActorPublication {
+    if (!Array.isArray(steps)) throw new Error("Missing ordered party appearance steps");
+    if (this.publishing) throw new Error("Cannot prepare party appearance during publication");
+    const revision = this.revision;
+    let next = this.checkpoint();
+    const rendered: FieldPartyActorRenderStep[] = [];
     for (const step of steps) {
-      draft.prepare(step.appearance, (media, plan) => {
-        const publish = prepareRenderer(media, plan);
-        if (typeof publish !== "function") throw new Error("Invalid party renderer transaction");
-        publications.push(publish);
-        return () => {};
-      }, step.setDummy)();
+      if (!step || typeof step.setDummy !== "boolean") throw new Error("Unknown party appearance dummy request");
+      const prepared = this.prepareStep(next, step.appearance, step.setDummy);
+      next = prepared.next;
+      rendered.push(prepared.render);
     }
-    const next = draft.checkpoint();
-    return () => { this.state = next; for (const publish of publications) publish(); };
+    const publication = this.prepareRenderer(rendered, renderer);
+    let consumed = false;
+    const validate = () => {
+      if (consumed || this.publishing || revision !== this.revision)
+        throw new Error("Stale or repeated party appearance transaction");
+      publication.validate();
+      if (revision !== this.revision) throw new Error("Party appearance changed during renderer validation");
+    };
+    const publish = () => {
+      validate();
+      consumed = true;
+      this.publishing = true;
+      try {
+        // A renderer rejection cannot install this checkpoint. The accepted
+        // batch commit is a no-throw write; arbitrary external effects cannot
+        // be rolled back by this asset-bookkeeping owner.
+        publication.commit();
+        this.state = next;
+        this.revision++;
+      } finally { this.publishing = false; }
+    };
+    return Object.assign(publish, { validate });
   }
   /** All fallible media/animation preparation happens before owned publication. */
   prepare(candidate: PartyAppearanceCandidate,
-    prepareRenderer: (media: { asset: string; mount: string | null }, plan: PartyActorPlan) => () => void,
-    setDummy = true): () => void {
+    renderer: FieldPartyActorRenderer,
+    setDummy = true): FieldPartyActorPublication {
+    return this.prepareSequence([{ appearance: candidate, setDummy }], renderer);
+  }
+  private prepareStep(state: FieldPartyActorCheckpoint, candidate: PartyAppearanceCandidate,
+    setDummy: boolean): { next: FieldPartyActorCheckpoint; render: FieldPartyActorRenderStep } {
     if (!candidate || candidate.parties.length !== 3) throw new Error("Missing candidate owned appearance");
-    const context = structuredClone(this.state.context);
+    const context = structuredClone(state.context);
     context.multiParty.forEach((party, index) => { party.members = structuredClone(candidate.parties[index]!); });
     const plan = preparePartyActors(this.catalog, candidate.activeMembers, context, setDummy);
-    if (plan.cameraOffset && (plan.cameraOffset.x !== 0 || plan.cameraOffset.y !== 0))
-      throw new Error("Nonzero party camera offset is not supported by this field renderer");
     if (plan.colliderChanges.length)
       throw new Error("Conditional party collision refresh is not supported by this field host");
-    if (canonical(plan.companionConditionTypes) !== canonical(this.state.context.companion?.conditionTypes ?? null))
+    if (canonical(plan.companionConditionTypes) !== canonical(state.context.companion?.conditionTypes ?? null))
       throw new Error("Companion condition refresh is not supported by this field host");
-    const next = this.checkpoint(), actors = instances(next.context);
+    const next = structuredClone(state), actors = instances(next.context);
     for (const change of plan.changes) {
       const actor = actors.find((a) => a.id === change.actorId);
       if (!actor) throw new Error("Party appearance references an absent native actor");
@@ -135,8 +203,33 @@ export class FieldPartyActors {
     next.context.leaderIndex = plan.savedLeaderIndex;
     if (plan.playerAssetCache) next.playerAssetCacheId = plan.playerAssetCache.id;
     this.validate(next);
-    const publishRenderer = prepareRenderer(this.playerMedia(next), plan);
-    if (typeof publishRenderer !== "function") throw new Error("Invalid party renderer transaction");
-    return () => { this.state = next; publishRenderer(); };
+    return { next, render: { media: this.playerMedia(next), plan } };
+  }
+  private prepareRenderer(steps: readonly FieldPartyActorRenderStep[],
+    renderer: FieldPartyActorRenderer): FieldPartyActorRendererPublication {
+    if (typeof renderer === "function") {
+      for (const { plan } of steps) {
+        if (plan.cameraOffset && (plan.cameraOffset.x !== 0 || plan.cameraOffset.y !== 0))
+          throw new Error("Nonzero party camera offset is not supported by this field renderer");
+      }
+      const callbacks = steps.map((step) => {
+        const { media, plan } = structuredClone(step);
+        const publish = renderer(media, plan);
+        if (typeof publish !== "function") throw new Error("Invalid party renderer transaction");
+        return publish;
+      });
+      return { validate() {}, commit() { for (const publish of callbacks) publish(); } };
+    }
+    if (!renderer || typeof renderer.prepareBatch !== "function")
+      throw new Error("Missing party batch renderer capability");
+    if (steps.length === 0) return { validate() {}, commit() {} };
+    const publication = renderer.prepareBatch(readonlyCopy(steps));
+    if (!publication || typeof publication.validate !== "function" || typeof publication.commit !== "function")
+      throw new Error("Invalid party batch renderer transaction");
+    // Validate while still preparing as well as at publication admission. The
+    // outer owner may then revalidate immediately before its own commit.
+    const accepted = { validate: publication.validate.bind(publication), commit: publication.commit.bind(publication) };
+    accepted.validate();
+    return accepted;
   }
 }

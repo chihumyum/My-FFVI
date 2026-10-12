@@ -181,7 +181,9 @@ export function createFieldActorFactoryCandidate(input: {
       if (isPlayer) animation.look(player.direction);
     }
     const visible = isPlayer ? player.visible : role === "resident";
-    assets.push({ id, fieldAssetId, charaZOffset: isPlayer ? 0 : factory.residentCharaZOffset });
+    // This candidate is after PointIn.Init, not the uninitialized player
+    // constructor. FieldPlayer.Init (0xe194c0) sets its own depth offset to 0.5.
+    assets.push({ id, fieldAssetId, charaZOffset: isPlayer ? 0.5 : factory.residentCharaZOffset });
     return {
       id, character: true, position: isPlayer ? { ...player.position } : { ...factory.offMapPosition },
       layer: isPlayer ? player.layer : prefab.layer, direction: isPlayer ? player.direction : null,

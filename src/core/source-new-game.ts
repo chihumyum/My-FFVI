@@ -6,14 +6,16 @@ import { createNewGame } from "./new-game.js";
 import { createFreshFieldPartyActorCheckpoint, createFieldActorFactoryCandidate,
   type FieldActorFactoryCatalog } from "./field-actor-factory.js";
 import type { FieldPuppetActorCatalog } from "./field-puppet-actors.js";
-import { projectFieldActorView, type FieldActorViewDefinition } from "./field-actor-view.js";
+import type { FieldActorViewDefinition } from "./field-actor-view.js";
 import type { NewGameFieldEntryDefinition, NewGameFieldLaunch } from "./new-game-field-entry.js";
 import { prepareMapPartyEntry, readMapPartySwitching } from "./map-party-entry.js";
 import { fieldCameraCellToWorld, fieldCameraLayerFromLogical } from "./field-camera.js";
 import { worldFieldContent } from "./world-session.js";
 import type { FieldGame } from "./field.js";
-import type { FieldPuppetHostProviders } from "./field-puppet-effects.js";
+import { prepareNativeFieldProviders } from "./field-native-providers.js";
 import { EventState } from "./event-state.js";
+import { canonical } from "./canonical.js";
+import type { FieldNativeAnimationKeys } from "./field-native-appearance.js";
 
 /** Binds the differently scoped source manifests explicitly. The battle
  * package's development-field fingerprint is never relabelled as the corpus. */
@@ -29,6 +31,7 @@ export type SourceNewGameContent = {
   factory: FieldActorFactoryCatalog;
   puppetCatalog: FieldPuppetActorCatalog;
   view: FieldActorViewDefinition;
+  animationKeys: FieldNativeAnimationKeys;
 };
 
 export function prepareSourceNewGameField(content: SourceNewGameContent, world: WorldCatalog,
@@ -38,6 +41,8 @@ export function prepareSourceNewGameField(content: SourceNewGameContent, world: 
       content.battleCatalogHash !== battle.contentHash || content.worldCatalogHash !== world.contentHash ||
       content.mapContentHash !== map.contentHash || world.maps[String(map.mapId)]?.contentHash !== map.contentHash ||
       content.sourceSetHash !== world.sourceSetHash || map.sourceSetHash !== world.sourceSetHash ||
+      !map.actorView || map.actorViewBlockers?.length || canonical(content.view) !== canonical(map.actorView) ||
+      !world.nativeAnimationKeys || canonical(content.animationKeys) !== canonical(world.nativeAnimationKeys) ||
       content.parentSourceSetHash !== world.parentSourceSetHash || map.parentSourceSetHash !== world.parentSourceSetHash)
     throw new Error("Fresh game source/content binding mismatch");
   const fresh = createNewGame(definition), partyPort = state.fieldPartyAppearance;
@@ -72,26 +77,15 @@ export function installSourceNewGameActors(field: FieldGame, content: SourceNewG
   const party = state.fieldPartyAppearance, checkpoint = field.partyActorCheckpoint, camera = field.cameraSnapshot;
   if (!party || !checkpoint || !camera || !map.partyEntry || !field.content.cameraHost)
     throw new Error("Fresh field was not prepared with its party and camera owners");
-  const foot = field.content.map.entryContext?.foot;
-  if (foot?.kind !== "uniform-zero" || foot.basis !== "no-attribute-asset")
-    throw new Error("Fresh native field foot provider is unresolved");
-  if (field.content.map.layers.some((layer) => ["UpperLayer", "CeilLayer"].includes(layer.name) && layer.data.some((v) => v !== 0)))
-    throw new Error("Canvas native actor upper/ceiling composition is unresolved");
-  const providers = (): FieldPuppetHostProviders => ({ mapRenderContext: content.view.contextId,
-    transportationType: field.partyActorCheckpoint!.context.currentTransport?.typeId ?? null,
-    footAttribute: () => 0,
-    // The bounded Canvas host has no upper/ceiling pixels and allocates no
-    // texture attachments. This is a Web renderer input, not a claim that the
-    // original Unity camera did not allocate render targets.
-    upperTexture: null, ceilTexture: null,
-    applyViewProperties: (layer) => projectFieldActorView(content.view, layer) });
+  if (map.nativeFootBlockers?.length) throw new Error(map.nativeFootBlockers[0]!.reason);
+  const providers = prepareNativeFieldProviders(field, content.view, map.nativeFoot);
   const p = field.player, range = map.partyEntry.mapRange;
   const candidate = createFieldActorFactoryCandidate({ factory: content.factory, partyCatalog: party.catalog,
     checkpoint, characters: field.content.characters,
     player: { position: fieldCameraCellToWorld(range, { x: p.x - range.x, y: p.y - range.y }, p.layer),
       layer: fieldCameraLayerFromLogical(p.layer).layer, direction: p.direction, visible: field.isEntityVisible(p.id) },
     camera: { id: field.cameraActorId, position: camera.dummy.position, layer: camera.dummy.layer }, providers: providers() });
-  field.installNativeActors(candidate, content.puppetCatalog, providers, { worldMapScript: false, callback: "absent" });
+  field.installNativeActors(candidate, content.puppetCatalog, providers, { worldMapScript: false, callback: "absent" }, content.animationKeys);
   field.initializeMapCamera();
 }
 

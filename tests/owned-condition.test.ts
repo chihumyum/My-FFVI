@@ -94,6 +94,18 @@ test("a stale owned transaction never publishes a prepared renderer", () => {
   assert.deepEqual(state.snapshot().roster.map((p) => p.conditionIds), [[], []]);
 });
 
+test("a rejected appearance preflight cannot publish the condition into the real owner", () => {
+  const { state } = ownedConditionGameFixture(), before = state.snapshot();
+  let published = false;
+  const publication = Object.assign(() => { published = true; }, {
+    validate: () => { throw new Error("Appearance actors changed during preparation"); },
+  });
+  assert.throws(() => executeOwnedConditionEvent(event(), state.fieldOwnedConditions,
+    () => publication), /actors changed/);
+  assert.equal(published, false);
+  assert.deepEqual(state.snapshot(), before);
+});
+
 const raw = (mnemonic = "AddCondition", type = 607, target = 0) => ({ type: 1, mnemonic,
   operands: { iValues: [type, target, 0, 0, 0, 0, 0, 0], rValues: Array(8).fill(0), sValues: Array(8).fill("") } });
 const tables = () => ({ "condition.csv": [magitekMasterRow()], "character_status.csv": [{ id: "12" }] });

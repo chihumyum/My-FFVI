@@ -26,7 +26,7 @@ const reader = battleTableIndex(tables, exported.tableSources);
 const catalog = JSON.parse(
   await readFile(root + "/build/game/opening-playable.json", "utf8"),
 );
-assert.equal(catalog.common.profile, "narshe-playability-v31");
+assert.equal(catalog.common.profile, "narshe-playability-v32");
 const candidates = [];
 for (const row of tables["ability.csv"]) {
   const decoded = compileAbilityProgram(reader, Number(row.id));

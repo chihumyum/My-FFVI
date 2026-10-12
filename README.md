@@ -17,6 +17,7 @@
 - [实施计划与当前状态](docs/implementation-plan.md)
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
+- [v32 原生外观事务、常驻演员切图与独立脚下属性](docs/systems-v32.md)
 - [v31 新游戏会话、原生演员、字幕与滚动背景](docs/systems-v31.md)
 - [v30 摄像机、来源演员工厂与新游戏交接](docs/systems-v30.md)
 - [字段渐变](docs/field-fade.md)、[演员宿主](docs/field-puppet-actors.md)、[摄像机投影](docs/field-camera.md)

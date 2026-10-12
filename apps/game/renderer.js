@@ -158,20 +158,6 @@ export class Renderer {
     c.imageSmoothingEnabled = false;
     c.fillStyle = "#09111b";
     c.fillRect(0, 0, w, h);
-    for (const background of m.backgrounds ?? []) {
-      if (!sourceCamera) throw new Error("来源背景缺少摄像机宿主");
-      const image = this.images.get(background.texture.url);
-      if (!image) throw new Error("缺少来源背景图像");
-      const projection = projectFieldBackground(background, {
-        scrollCamera: sourceCamera.cameraPosition,
-        renderCamera: background.renderHost.renderCamera,
-        rendererWorld: background.renderHost.rendererWorld,
-        screen: { width: w, height: h }, renderTarget: { width: w, height: h },
-      });
-      for (const { source, destination } of projection.patches)
-        c.drawImage(image, source.x, source.y, source.width, source.height,
-          destination.x, destination.y, destination.width, destination.height);
-    }
     c.save();
     c.translate(ox, oy);
     c.scale(scale, scale);
@@ -258,6 +244,20 @@ export class Renderer {
     c.imageSmoothingEnabled = false;
     c.fillStyle = "#09111b";
     c.fillRect(0, 0, w, h);
+    for (const background of m.backgrounds ?? []) {
+      if (!sourceCamera) throw new Error("来源背景缺少摄像机宿主");
+      const image = this.images.get(background.texture.url);
+      if (!image) throw new Error("缺少来源背景图像");
+      const projection = projectFieldBackground(background, {
+        scrollCamera: sourceCamera.cameraPosition,
+        renderCamera: background.renderHost.renderCamera,
+        rendererWorld: background.renderHost.rendererWorld,
+        screen: { width: w, height: h }, renderTarget: { width: w, height: h },
+      });
+      for (const { source, destination } of projection.patches)
+        c.drawImage(image, source.x, source.y, source.width, source.height,
+          destination.x, destination.y, destination.width, destination.height);
+    }
     const actors = Object.values(game.actors)
       .filter(
         (a) =>
