@@ -169,7 +169,7 @@ export function projectBattleAbilities(
           if (master?.typeId === typeId && master.groupId !== 0 && owned.skillLevel >= 100)
             abilityIds.push(master.id);
         }
-      if (command.abilityTypes.some((type) => ![1, 2, 604].includes(type)))
+      if (command.abilityTypes.some((type) => ![1, 2, 504, 604].includes(type)))
         blockers.push("Unresolved specialized battle ability-list provider");
       if (commandId === 7 && member.magicStoneId !== 0)
         blockers.push("Unresolved equipped magic-stone battle invocation");

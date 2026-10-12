@@ -6,6 +6,11 @@ import {
   type EnemyBehaviorState,
 } from "./enemy-behavior.js";
 import { integerOperation, int32, type Operator } from "./script-integer.js";
+import {
+  evaluateBattleEventBranch,
+  type BattleEventBranchOp,
+  type BattleEventContext,
+} from "./battle-event-context.js";
 
 export type BattleAISource = {
   sourceSetHash: string;
@@ -17,6 +22,7 @@ export type BattleAISource = {
   objectId: string;
 };
 export type BattleAIOp =
+  | BattleEventBranchOp
   | { kind: "nop" | "sync" | "exit" | "end-table" }
   | { kind: "jump"; target: number }
   | { kind: "condition"; conditionId: number; target: number }
@@ -72,6 +78,9 @@ export type BattleAIState = {
   receivedAbility: { id: number; systemId: number } | null;
 };
 export type BattleAIContext = {
+  /** Required only by source population-event instructions. Derived from the
+   * current or transactional candidate units, never from initial formation. */
+  events?: BattleEventContext;
   self: {
     hp: number;
     mp: number;
@@ -252,6 +261,13 @@ function route(
         // Source getters 0x15b7e80/0x15b7ea0 return zero for no ability. These
         // predicates have no HP, normal readiness or counter readiness gate.
         if ((state.receivedAbility?.[op.field] ?? 0) === op.value) {
+          state.pc = op.target + 1;
+          continue;
+        }
+        break;
+      case "only-alive":
+      case "unit-alive-count":
+        if (guarded(() => evaluateBattleEventBranch(op, context.events))) {
           state.pc = op.target + 1;
           continue;
         }

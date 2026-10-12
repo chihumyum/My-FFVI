@@ -19,6 +19,7 @@ import type { FieldFadeOp, FieldFadeInitial } from "../core/field-fade.js";
 import type { FieldPuppetScriptContext } from "../core/field-puppet-actors.js";
 import type { FieldCameraOp, FieldCameraMotionOp, FieldCameraSetPosition } from "../core/field-camera.js";
 import type { FieldScriptMotionOp } from "../core/field-script-motion.js";
+import type { FieldMoveAreaDefinition } from "../core/field-move-area.js";
 import type { FieldCameraHostDefinition } from "../core/field-camera-host.js";
 import type { FieldBackgroundLayer } from "../core/field-background.js";
 import type { SourceMessageOp } from "../core/source-message.js";
@@ -85,6 +86,8 @@ export type FieldEntity = Point & {
   nativeNpc?: FieldNativeNpcDefinition;
   nativeNpcBlockers?: string[];
   effect?: FieldEffectBoardDefinition;
+  /** Immutable source region consumed by autonomous NPC controllers. */
+  moveArea?: FieldMoveAreaDefinition;
   mapObject?: MapObjectProperties;
   /** Source property reward; native entityId may be zero for anonymous objects. */
   treasure?: TreasureInventoryDefinition;

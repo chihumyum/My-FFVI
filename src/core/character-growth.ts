@@ -1,3 +1,4 @@
+import { applyObservedLearning, observedLearningRows, validateObservedLearningCatalog, type ObservedLearningCatalog, type ObservedLearningReceipt } from "./character-learning.js";
 import { checkpointKeys } from "./checkpoint-validation.js";
 import { validateOwnedCharacterAbilities, type OwnedCharacterAbilities, type OwnedAbility } from "./owned-character.js";
 
@@ -8,6 +9,7 @@ export type CharacterGrowthAdditional = {
 export type CharacterGrowthProgress = {
   additionalExp: number;
   additional: CharacterGrowthAdditional;
+  observedLearning: ObservedLearningReceipt[];
 };
 export type CharacterGrowthMember = {
   sourceId: number; jobId: number; additionalLevel: number; magicStoneId: number;
@@ -29,13 +31,15 @@ export type CharacterGrowthPlan = {
   hasBattleBackgroundLearning: boolean;
   /** GetLearningAbility considers source Ability.TypeId=504. */
   observedLearningAbilityIds: number[];
+  observedLearning?: ObservedLearningCatalog;
 };
 export type CharacterGrowthRequest =
   | { kind: "correct-level"; targetLevel: number }
   | { kind: "add-experience"; amount: number; context: "field" }
   | { kind: "add-experience"; amount: number; context: "battle";
-      /** Every executed ability ID; may conservatively include non-learning acts. */
-      observedAbilityIds: readonly number[] };
+      /** Source IsLearningAbility acts only when the catalog is supplied. */
+      observedAbilityIds: readonly number[];
+      learningReceipt?: { battleSerial: number; participantIndex: number } };
 export type CharacterGrowthStep = {
   level: number; hp: number; mp: number; learnedAbilityIds: number[];
 };
@@ -63,7 +67,7 @@ function same(a: unknown, b: unknown): boolean {
     same((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
 }
 export function initialCharacterGrowth(): CharacterGrowthProgress {
-  return { additionalExp: 0, additional: { hp: 0, mp: 0, strength: 0, vitality: 0, agility: 0, magic: 0 } };
+  return { additionalExp: 0, additional: { hp: 0, mp: 0, strength: 0, vitality: 0, agility: 0, magic: 0 }, observedLearning: [] };
 }
 
 function validatePlan(plan: CharacterGrowthPlan): void {
@@ -103,6 +107,15 @@ function validatePlan(plan: CharacterGrowthPlan): void {
   plan.observedLearningAbilityIds.forEach((id) => integer(id, 1));
   if (new Set(plan.observedLearningAbilityIds).size !== plan.observedLearningAbilityIds.length)
     throw new Error("Duplicate observed learning identity");
+  if (plan.observedLearning) {
+    validateObservedLearningCatalog(plan.observedLearning);
+    if (!same(plan.observedLearningAbilityIds, plan.observedLearning.candidates.map((r) => r.observedAbilityId)))
+      throw new Error("Observed learning catalog order changed");
+    for (const row of plan.observedLearning.candidates)
+      if (!plan.abilities.some((a) => a.id === row.abilityId && a.contentId === row.contentId &&
+          a.typeId === row.typeId && a.groupId === row.groupId))
+        throw new Error("Missing observed learning ability metadata");
+  }
   for (const command of plan.commands) {
     if (!plan.initialAbilities.commandIds.includes(integer(command.id, 1)))
       throw new Error("Unowned growth command");
@@ -147,7 +160,7 @@ function projectCommands(plan: CharacterGrowthPlan, abilities: OwnedCharacterAbi
  * External learning, job changes and esper bonuses must get another proven plan. */
 export function expectedOwnedGrowth(plan: CharacterGrowthPlan, progress: CharacterGrowthProgress): CharacterGrowthProjection {
   validatePlan(plan);
-  checkpointKeys(progress, "additionalExp,additional");
+  checkpointKeys(progress, "additionalExp,additional,observedLearning");
   integer(progress.additionalExp, 0, plan.maxExp);
   checkpointKeys(progress.additional, "hp,mp,strength,vitality,agility,magic");
   Object.values(progress.additional).forEach((value) => integer(value));
@@ -156,12 +169,32 @@ export function expectedOwnedGrowth(plan: CharacterGrowthPlan, progress: Charact
   if (level < plan.initialLevel || levelFromExp(plan, plan.baseExp) !== plan.initialLevel)
     throw new Error("Unresolved character growth origin");
   const additional = initialCharacterGrowth().additional;
-  const abilities = structuredClone(plan.initialAbilities);
+  let abilities = structuredClone(plan.initialAbilities);
+  if (!Array.isArray(progress.observedLearning)) throw new Error("Missing observed learning progress");
+  let serial = -1, learnedAt = plan.initialLevel;
+  for (const receipt of progress.observedLearning) {
+    checkpointKeys(receipt, "battleSerial,participantIndex,level,observedAbilityIds");
+    integer(receipt.battleSerial); integer(receipt.participantIndex, 0, 3);
+    integer(receipt.level, plan.initialLevel, level);
+    if (receipt.battleSerial <= serial || receipt.level < learnedAt || !plan.observedLearning)
+      throw new Error("Invalid observed learning receipt order or provider");
+    serial = receipt.battleSerial; learnedAt = receipt.level;
+  }
+  const observeAt = (at: number) => {
+    for (const receipt of progress.observedLearning.filter((r) => r.level === at)) {
+      const rows = observedLearningRows(plan.observedLearning!, abilities.owned, receipt.observedAbilityIds);
+      if (!rows.length || !same(rows.map((r) => r.observedAbilityId), receipt.observedAbilityIds))
+        throw new Error("Invalid observed learning receipt identity or order");
+      abilities = applyObservedLearning(plan.observedLearning!, abilities, receipt.observedAbilityIds).abilities;
+    }
+  };
+  observeAt(plan.initialLevel);
   for (let next = plan.initialLevel + 1; next <= level; next++) {
     const row = plan.growth[next - 1]!;
     additional.hp = integer(additional.hp + row.hp);
     additional.mp = integer(additional.mp + row.mp);
     for (const learning of plan.learning.filter((l) => l.level === next)) grant(abilities, learning);
+    observeAt(next);
   }
   // Command availability is a projection using the recovered FF6 filter.
   projectCommands(plan, abilities);
@@ -197,9 +230,47 @@ export function validateObservedLearning(
   validateOwnedCharacterAbilities(member.abilities, equipmentAbilities);
   if (!Array.isArray(observedAbilityIds)) throw new Error("Missing observed battle abilities");
   observedAbilityIds.forEach((id) => integer(id, 1));
+  if (plan.observedLearning) {
+    observedLearningRows(plan.observedLearning, member.abilities.owned, observedAbilityIds);
+    return;
+  }
   if (member.abilities.owned.some((a) => a.abilityId === 74) &&
     observedAbilityIds.some((id) => plan.observedLearningAbilityIds.includes(id)))
     throw new Error("Unimplemented observed-ability learning provider");
+}
+
+/** Replays the persistent receipt through the same provider used at victory.
+ * A receipt describes a transition; the owned list remains the sole ability owner. */
+export function learnObservedCharacter<T extends CharacterGrowthMember>(
+  plan: CharacterGrowthPlan, member: T, progress: CharacterGrowthProgress,
+  observedAbilityIds: readonly number[],
+  receipt: { battleSerial: number; participantIndex: number } | undefined,
+  equipmentAbilities: readonly OwnedAbility[] = [],
+): { member: T; progress: CharacterGrowthProgress } {
+  validateCharacterGrowth(plan, member, progress, equipmentAbilities);
+  validateObservedLearning(plan, member, observedAbilityIds, equipmentAbilities);
+  const rows = plan.observedLearning
+    ? observedLearningRows(plan.observedLearning, member.abilities.owned, observedAbilityIds) : [];
+  if (!rows.length) return { member: structuredClone(member), progress: structuredClone(progress) };
+  if (!receipt) throw new Error("Missing observed learning battle receipt");
+  const nextProgress = structuredClone(progress);
+  nextProgress.observedLearning.push({ ...receipt, level: member.level,
+    observedAbilityIds: rows.map((r) => r.observedAbilityId) });
+  const expected = expectedOwnedGrowth(plan, nextProgress);
+  const next = { ...structuredClone(member), abilities: preserveEquipmentAbilities(member.abilities,
+    expected.abilities, equipmentAbilities) };
+  validateCharacterGrowth(plan, next, nextProgress, equipmentAbilities);
+  return { member: next, progress: nextProgress };
+}
+function preserveEquipmentAbilities(
+  current: OwnedCharacterAbilities, expected: OwnedCharacterAbilities, equipmentAbilities: readonly OwnedAbility[],
+): OwnedCharacterAbilities {
+  const passiveIds = new Set(equipmentAbilities.map((a) => a.abilityId));
+  const owned = current.owned.map((a) => structuredClone(passiveIds.has(a.abilityId)
+    ? a : expected.owned.find((row) => row.abilityId === a.abilityId)!));
+  for (const ability of expected.owned)
+    if (!owned.some((a) => a.abilityId === ability.abilityId)) owned.push(structuredClone(ability));
+  return { ...expected, owned };
 }
 
 /** The amount is already distributed and adjusted by the battle reward/passive
@@ -242,14 +313,14 @@ export function growCharacter<T extends CharacterGrowthMember>(
   // Equipment passives share OwnedAbilityList but not ordinary learning order.
   // Keep their current positions/copies; new natural abilities append after
   // existing records, as AddAbility does, without entering the passive list.
-  const passiveIds = new Set(equipmentAbilities.map((a) => a.abilityId));
-  const owned = member.abilities.owned.map((a) => structuredClone(passiveIds.has(a.abilityId)
-    ? a : expected.abilities.owned.find((row) => row.abilityId === a.abilityId)!));
-  for (const ability of expected.abilities.owned)
-    if (!owned.some((a) => a.abilityId === ability.abilityId)) owned.push(structuredClone(ability));
-  expected.abilities.owned = owned;
-  const candidate: T = { ...structuredClone(member), level: expected.level, additionalLevel: expected.level,
-    exp: expected.exp, abilities: expected.abilities };
+  let candidate: T = { ...structuredClone(member), level: expected.level, additionalLevel: expected.level,
+    exp: expected.exp, abilities: preserveEquipmentAbilities(member.abilities, expected.abilities, equipmentAbilities) };
+  if (request.kind === "add-experience" && request.context === "battle") {
+    const learning = learnObservedCharacter(plan, candidate, candidateProgress, request.observedAbilityIds,
+      request.learningReceipt, equipmentAbilities);
+    candidate = learning.member;
+    candidateProgress.observedLearning = learning.progress.observedLearning;
+  }
   const resources = projectParameters(structuredClone(candidate), structuredClone(candidateProgress));
   candidate.maxHp = integer(resources.maxHp, 1); candidate.maxMp = integer(resources.maxMp);
   candidate.hp = Math.min(integer(member.hp), candidate.maxHp);

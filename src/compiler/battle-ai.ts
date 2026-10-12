@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { enemyVariableCount } from "../core/enemy-behavior.js";
 import { isOperator } from "../core/script-integer.js";
+import { compileBattleEventBranch } from "./battle-event-context.js";
 import type {
   BattleAIProgram,
   BattleAIOp,
@@ -94,6 +95,8 @@ export function compileBattleAI(
       `unsupported AI instruction or operands: ${m.mnemonic}`,
     );
     if (m.type === 1) {
+      const eventBranch = compileBattleEventBranch(m.mnemonic, m.operands, { entry, end });
+      if (eventBranch) op = eventBranch;
       if (form([])) {
         if (m.mnemonic === "Nop") op = { kind: "nop" };
         if (m.mnemonic === "SyncAI") op = { kind: "sync" };

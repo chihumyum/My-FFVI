@@ -312,6 +312,10 @@ export function compileDevelopmentAbility(
   // (MagicSealSword.ForciblyTarget 0x922500), not a scalar damage flag.
   // Its behavior is admitted only in the host's no-Runic active-state domain.
   const ordinaryMagic = magicOnly && [1, 2].includes(r.type_id!);
+  // Lore's ordinary damage uses the same Function3 -> GetMagicStatus ->
+  // MagicExecution path. Type 504 controls command/observation eligibility;
+  // it does not replace this calculator or grant learning to an actor.
+  const loreMagic = magicOnly && effects[0]!.kind === "magic" && r.type_id === 504;
   for (const key of [
     "attack_count",
     "Impact_status",
@@ -344,11 +348,11 @@ export function compileDevelopmentAbility(
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (!defendOnly && !ordinaryMagic && !protectionSpell && !speedSpell && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
+  if (!defendOnly && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
   if (!defendOnly && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
-  if ((ordinaryMagic || protectionSpell || speedSpell) && int(a.ability_lv) !== 0)
+  if ((ordinaryMagic || loreMagic || protectionSpell || speedSpell) && int(a.ability_lv) !== 0)
     blockers.push("unresolved level-specific ability consumption");
   if (abilityId === 154)
     blockers.push("unresolved play-time ability cost provider");

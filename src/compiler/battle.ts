@@ -11,6 +11,7 @@ import { compileConditionCatalog } from "./conditions.js";
 import { compileOwnedCharacterInitialization } from "./owned-character.js";
 import type { OwnedCharacterInitializationTemplate } from "../core/owned-character.js";
 import { compileCharacterGrowth } from "./character-growth.js";
+import { compileObservedLearning } from "./character-learning.js";
 import type { CharacterGrowthPlan } from "../core/character-growth.js";
 import { compilePartyActorCatalog } from "./party-actors.js";
 import { compileTransportationCatalog } from "./transportation.js";
@@ -19,6 +20,7 @@ import { compileBattleAppearance } from "./battle-appearance.js";
 import { compileAbilityProgram } from "./ability.js";
 import { compileEquipmentAbilityCost } from "./ability-cost.js";
 import { compileBattleRowCatalog } from "./battle-row.js";
+import { compileBattleEventRules } from "./battle-event-context.js";
 import { compileShopCatalog } from "./shop.js";
 import { compileOrdinaryWeaponEffects } from "./ordinary-weapon.js";
 import { loadCorpus } from "./corpus.js";
@@ -296,6 +298,7 @@ export async function compileOpeningBattle(root: string) {
     { row, group: tableGroup },
     tables["condition.csv"]!.map((r) => tableInteger(r.id)),
   );
+  compileBattleEventRules({ row }, tables["condition.csv"]!.map((r) => tableInteger(r.id)));
   for (const condition of tables["condition.csv"]!) {
     const soundId = tableInteger(condition.field_se_asset_id);
     if (soundId > 0) row("se_asset.csv", soundId);
@@ -485,6 +488,11 @@ export async function compileOpeningBattle(root: string) {
     source: extraSource.source,
   };
   const misc = z.record(z.string(), z.unknown()).parse(reactionSource.data);
+  const observedLearning = compileObservedLearning({ row }, tables, {
+    exchange_learning_ability: z.array(z.object({
+      before_ability_id: z.number().int(), after_ability_id: z.number().int(),
+    }).strict()).parse(misc.exchange_learning_ability),
+  }).catalog;
   const excluded = misc.not_counter_ability_id;
   if (
     !Array.isArray(excluded) ||
@@ -527,7 +535,7 @@ export async function compileOpeningBattle(root: string) {
   for (const template of Object.values(ownedInitializations)) {
     const sourceId = template.initial.sourceId;
     try {
-      characterGrowth[sourceId] = compileCharacterGrowth({ row, unique }, tables, template).plan;
+      characterGrowth[sourceId] = compileCharacterGrowth({ row, unique }, tables, template, observedLearning).plan;
     } catch (error) {
       if (initialParty.some((p) => p.characterId === sourceId)) throw error;
       characterGrowthBlockers.push({ sourceId,
@@ -574,6 +582,7 @@ export async function compileOpeningBattle(root: string) {
     ownedInitializationBlockers,
     characterGrowth,
     characterGrowthBlockers,
+    observedLearning,
     partyActors: partyActors.catalog,
     transportations,
     entryProviders,

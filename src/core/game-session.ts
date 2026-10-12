@@ -402,13 +402,15 @@ export class GameSession {
     const result = this.battle?.previewVictory();
     if (!result) return false;
     if (!this.battleLease) throw new Error("Missing battle state ownership");
+    const commit = this.state.prepareVictory(this.battleLease, result);
     const resume = this.field.prepareEncounterReturn(
       this.battle!.content.encounterId,
+      commit.fieldState,
     );
-    const commit = this.state.prepareVictory(this.battleLease, result);
-    // Synchronous commits: no event code or user callbacks execute between them.
-    commit();
-    resume();
+    // Prepare source actors against the post-victory owner, then validate both
+    // before publishing rewards, poses, camera or continuation tasks.
+    commit.validate();
+    resume.commitWith(commit);
     this.battle!.takeVictory();
     this.battleLease = null;
     this.battle = null;

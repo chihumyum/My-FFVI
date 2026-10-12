@@ -3,6 +3,8 @@ import { tableInteger as int } from "./table.js";
 import type { OwnedCharacterInitializationTemplate } from "../core/owned-character.js";
 import { initialCharacterGrowth, validateCharacterGrowth, type CharacterGrowthPlan } from "../core/character-growth.js";
 
+import type { ObservedLearningCatalog } from "../core/character-learning.js";
+
 type Tables = Record<string, Record<string, string>[]>;
 type Reader = {
   row(table: string, id: string | number): BattleRow;
@@ -15,6 +17,7 @@ export function compileCharacterGrowth(
   reader: Reader,
   tables: Tables,
   template: OwnedCharacterInitializationTemplate,
+  observedLearning?: ObservedLearningCatalog,
 ): { plan: CharacterGrowthPlan; sources: BattleRow["source"][] } {
   const sources: BattleRow["source"][] = [];
   const row = (table: string, id: string | number) => {
@@ -72,12 +75,13 @@ export function compileCharacterGrowth(
     if (int(content.type_id) !== 4) throw new Error("Unresolved natural learning content kind");
     return { id: int(r.id), level: int(r.value1), abilityId: int(content.type_value), contentId: int(content.id) };
   });
-  const abilityIds = [...new Set([...template.initial.abilities.owned.map((a) => a.abilityId), ...learning.map((r) => r.abilityId)])];
+  const abilityIds = [...new Set([...template.initial.abilities.owned.map((a) => a.abilityId), ...learning.map((r) => r.abilityId), ...(observedLearning?.candidates.map((r) => r.abilityId) ?? [])])];
   const abilities = abilityIds.map((id) => {
     const source = row("ability.csv", id);
     const contents = new Set([
       ...template.initial.abilities.owned.filter((a) => a.abilityId === id).map((a) => a.contentId),
       ...learning.filter((r) => r.abilityId === id).map((r) => r.contentId),
+      ...(observedLearning?.candidates.filter((r) => r.abilityId === id).map((r) => r.contentId) ?? []),
     ]);
     if (contents.size !== 1) throw new Error("Ambiguous growth ability content");
     const contentId = [...contents][0]!;
@@ -103,6 +107,7 @@ export function compileCharacterGrowth(
     });
   const plan: CharacterGrowthPlan = {
     kind: "character-growth-v1", sourceId, jobId,
+    ...(observedLearning ? { observedLearning: structuredClone(observedLearning) } : {}),
     baseExp: Math.min(maxExp, int(character.exp)), initialLevel: template.initial.level,
     maxExp, maxLevel, experience, growth, learning, abilities, commands,
     initialAbilities: structuredClone(template.initial.abilities),

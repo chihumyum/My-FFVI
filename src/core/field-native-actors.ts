@@ -293,6 +293,58 @@ export function prepareNativeFieldActorProjection(
   };
 }
 
+/** A containing transaction can run several source operations on one detached
+ * actor draft, then publish its final state into the SAME live identities.
+ * validate is fallible; commit is plain writes only and must follow validation
+ * under the containing owner's synchronous publication boundary. */
+export function prepareNativeFieldActorState(
+  host: NativeFieldActorEffectHost, candidate: NativeFieldActorOwner,
+): { validate(): void; commit(): void } {
+  const initial = capture(host), next = capture({ ...host, readActors: () => candidate });
+  if (initial.refs.length !== next.refs.length || initial.refs.some((ref, index) => {
+    const after = next.refs[index]!;
+    return ref.id !== after.id || ref.charaZOffset !== after.charaZOffset || ref.metadata !== after.metadata;
+  })) throw new Error("Native actor candidate cannot replace source identities or scopes");
+  if (initial.snapshot.actors.some((actor) => actor.moving) || next.snapshot.actors.some((actor) => actor.moving))
+    throw new Error("Native actor state publication cannot discard movement");
+  const writes = initial.refs.map((ref, index) => ({ ref, entity: next.snapshot.actors[index]!,
+    fieldAssetId: next.refs[index]!.fieldAssetId }));
+  const validateWritable = () => {
+    for (const { ref, entity } of writes) {
+      writable(ref.entity, entity);
+      const descriptor = Object.getOwnPropertyDescriptor(ref.native, "fieldAssetId");
+      if (!descriptor || !Object.hasOwn(descriptor, "value") || descriptor.writable !== true)
+        throw new Error("Native actor candidate requires writable asset metadata");
+    }
+  };
+  validateWritable();
+  let validated = false, committed = false;
+  return {
+    validate: () => {
+      validated = false;
+      if (committed) throw new Error("Native actor candidate already committed");
+      const current = capture(host);
+      if (current.fingerprint !== initial.fingerprint || current.refs.length !== initial.refs.length ||
+          current.refs.some((ref, index) => {
+            const prior = initial.refs[index]!;
+            return ref.id !== prior.id || ref.actor !== prior.actor || ref.native !== prior.native ||
+              ref.entity !== prior.entity || ref.animation !== prior.animation || ref.character !== prior.character ||
+              ref.fieldAssetId !== prior.fieldAssetId || ref.charaZOffset !== prior.charaZOffset || ref.metadata !== prior.metadata;
+          })) throw new Error("Stale native actor candidate");
+      validateWritable(); validated = true;
+    },
+    commit: () => {
+      if (!validated || committed) throw new Error("Native actor publication requires current validation");
+      for (const { ref, entity, fieldAssetId } of writes) {
+        const { moving: _, ...values } = entity;
+        ref.native.fieldAssetId = fieldAssetId;
+        Object.assign(ref.entity, values);
+      }
+      committed = true;
+    },
+  };
+}
+
 /** Dynamic adapter to the existing actor, roster, appearance, camera and
  * collision owners. No mutable owned/actor/camera collection is retained. */
 export function createNativeFieldPuppetActorsPort(host: NativeFieldPuppetActorsHost): FieldPuppetActorsPort {

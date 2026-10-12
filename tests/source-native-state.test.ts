@@ -9,7 +9,7 @@ import { sourceNativeStateFixture } from "./fixtures/source-native-state.js";
 test("source fresh owner retains every native domain and immutable before-field-load entry seed", () => {
   const { fresh, plan, development } = sourceNativeStateFixture(), state = fresh();
   const expected = { kind: "source-native-state-v1", entrySeed: plan.entry, ...plan.nativeInitialization };
-  assert.equal(state.snapshot().formatVersion, 8);
+  assert.equal(state.snapshot().formatVersion, 9);
   assert.equal(state.initialization, "source-new-game");
   assert.deepEqual(state.nativeState, expected);
   assert.deepEqual(state.snapshot().nativeState, expected);
@@ -53,10 +53,10 @@ test("fresh codec restores saved values into a candidate without replaying grant
   assert.equal(restored.nativeState, null, "restoring development does not fill source domains");
 });
 
-test("owned v8 rejects omitted origin/native state and earlier schemas without partial replacement", () => {
+test("owned v9 rejects omitted origin/native state and earlier schemas without partial replacement", () => {
   const state = sourceNativeStateFixture().fresh(), before = state.snapshot();
   const corrupt: ((snapshot: Record<string, unknown>) => void)[] = [
-    (s) => { s.formatVersion = 7; },
+    (s) => { s.formatVersion = 8; },
     (s) => { delete s.initialization; },
     (s) => { delete s.nativeState; },
     (s) => { s.initialization = "new-game"; },

@@ -68,7 +68,7 @@ for (const id of [1, 2, 31, 32]) assert.ok(templates.has(id), JSON.stringify(blo
 for (const id of [4, 14, 33]) assert.ok(blocked.some((b) => b.sourceId === id && /conditions/.test(b.reason)));
 const make = () => new GameState(catalog.gameState, catalog.common.players, catalog.contentHash, catalog.common.conditions);
 const state = make(), initial = state.snapshot();
-assert.equal(initial.formatVersion, 8);
+assert.equal(initial.formatVersion, 9);
 const openingChecks = [];
 for (const player of catalog.common.players) {
   const template = templates.get(player.sourceId);

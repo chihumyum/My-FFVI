@@ -5,6 +5,7 @@ import { MINIMAP_ICON_TYPES } from "../core/minimap.js";
 import { compileNpc } from "./npc.js";
 import { compileFieldEffectBoard, fieldEffectCompilationBlockers } from "./field-effects.js";
 import { compileFieldNativeNpc } from "./field-native-npc.js";
+import { compileFieldMoveArea } from "./field-move-area.js";
 import { compileInteraction, compileInteractionEligibility } from "./interaction.js";
 import { compileTreasureInventoryDefinition, compileTreasureInteraction, compileTreasureTaskMessages } from "./treasure-inventory.js";
 import type {
@@ -90,7 +91,7 @@ export function compileEntityGroup(
           p = entityProperties(o.properties),
           kind = integer(p.object_type);
         const issue = (reason: string) => blockers.push({ reason, source });
-        if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 11, 17, 18, 19, 27].includes(kind))
+        if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 17, 18, 19, 27].includes(kind))
           issue(`Unsupported entity kind ${kind}`);
         // Kind 11 has a distinct shared-particle/board owner. Recovering the
         // board does not admit its Unity particle and material providers.
@@ -241,10 +242,13 @@ export function compileEntityGroup(
           height = finite(o.height) / tileSize;
         if (width <= 0 || height <= 0) issue("Unsupported entity bounds");
         const id = entityId ? String(entityId) : `${name}:${li}:${oi}`;
+        const moveArea = kind === 13 ? compileFieldMoveArea({ group: name, entityId: id, layer: layerId,
+          object: o, properties: p, source }) : undefined;
         const nativeNpc = compileFieldNativeNpc({ group: name, object: o,
           entity: { id, kind, layer: layerId, source }, properties: p, tables });
         entities.push({
           id,
+          ...(moveArea ? { moveArea } : {}),
           ...(nativeNpc.definition ? { nativeNpc: nativeNpc.definition } : {}),
           ...(nativeNpc.blockers.length ? { nativeNpcBlockers: nativeNpc.blockers } : {}),
           objectId: integer(p.object_id ?? 0),

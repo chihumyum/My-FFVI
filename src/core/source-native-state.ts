@@ -3,14 +3,16 @@ import { checkpointKeys } from "./checkpoint-validation.js";
 import type { NewGamePlan } from "./new-game.js";
 
 /** The source-owned domains established by DataInitializeManager.Create that
- * are not represented by roster/inventory/EventState. This version retains
- * their proven initialization values; later writes require their own source
- * providers and are deliberately not inferred from Web clocks or receipts.
+ * are not represented by roster/inventory/EventState. OwnedMagic evolves only
+ * through source-bound observed learning. Other domains retain their proven
+ * initialization values until their own mutation providers are implemented.
  *
  * entrySeed is immutable before-field-load provenance. Current map, player
  * position, selected transportation and entry synchronization remain owned by
  * FieldGame/WorldSession rather than duplicated here. */
-export type SourceNativeState = NewGamePlan["nativeInitialization"] & {
+export type SourceNativeState = Omit<NewGamePlan["nativeInitialization"], "ownedMagic"> & {
+  /** Content identities in the native global OwnedMagicList. */
+  ownedMagic: number[];
   kind: "source-native-state-v1";
   entrySeed: NewGamePlan["entry"];
 };
@@ -29,17 +31,21 @@ export function createSourceNativeState(plan: NewGamePlan): SourceNativeState {
 }
 
 /** Stored values are checked, never repaired or filled from the initializer.
- * A parking, crystal, warehouse, magic or counter change has no admitted
- * provider in this schema. Rejecting it keeps that limitation explicit rather
+ * Only a source-replayed observed-learning ledger may change ownedMagic.
+ * Parking, crystal, warehouse, esper and counter changes remain unadmitted. Rejecting it keeps that limitation explicit rather
  * than accepting arbitrary save data as proof of the missing transition. */
 export function validateSourceNativeState(
   state: SourceNativeState,
   initial: Readonly<SourceNativeState>,
+  expectedOwnedMagic: readonly number[] = initial.ownedMagic,
 ): void {
   checkpointKeys(state,
     "kind,entrySeed,ownedTransportationIds,parkedTransportationMapIds,crystalFlags,warehouseItems,keywords,ownedMagic,ownedMagicStones,counters");
   if (state.kind !== "source-native-state-v1" || initial.kind !== "source-native-state-v1")
     throw new Error("Source native-state version mismatch");
-  if (canonical(state) !== canonical(initial))
+  if (!Array.isArray(expectedOwnedMagic) || new Set(expectedOwnedMagic).size !== expectedOwnedMagic.length ||
+      expectedOwnedMagic.some((id) => !Number.isSafeInteger(id) || id <= 0))
+    throw new Error("Invalid source owned magic projection");
+  if (canonical(state) !== canonical({ ...initial, ownedMagic: expectedOwnedMagic }))
     throw new Error("Unimplemented source native-state change or mismatched entry seed");
 }

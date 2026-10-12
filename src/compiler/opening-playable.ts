@@ -12,6 +12,7 @@ import { compileBattleCommand } from "./commands.js";
 import { compileBattleAbilityCatalog } from "./battle-abilities.js";
 import { compileBattleEncounterRuntime } from "./battle-encounter-runtime.js";
 import { compileBattleRowCatalog } from "./battle-row.js";
+import { compileBattleEventRules } from "./battle-event-context.js";
 import { compileShopCatalog } from "./shop.js";
 import { compilePlayerBattleDefinitions } from "./player-battle.js";
 import { compileGameState } from "./game-state.js";
@@ -268,6 +269,8 @@ export async function compileOpeningPlayable(
     battleRows: compileBattleRowCatalog(parameterReader,
       Object.fromEntries(Object.entries(source.tables).map(([key, values]) =>
         [key, Object.values(values).map((r) => r.values)]))).catalog,
+    battleEvents: compileBattleEventRules(parameterReader, conditions.rules.definitions.map((row) => row.id)).rules,
+    observedLearning: structuredClone(source.observedLearning),
     abilityContentIds,
     qualificationContext: {
       mode: "source", conditionContext: "current", battleType: 0,

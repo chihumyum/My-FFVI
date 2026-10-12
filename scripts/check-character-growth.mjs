@@ -12,6 +12,7 @@ const { readSnapshot, snapshotFile } = await module("compiler/integrity");
 const { compileOwnedCharacterInitialization } = await module("compiler/owned-character");
 const { compileOrdinaryWeaponEffects } = await module("compiler/ordinary-weapon");
 const { compileCharacterGrowth } = await module("compiler/character-growth");
+const { compileObservedLearning } = await module("compiler/character-learning");
 const { createOwnedCharacter } = await module("core/owned-character");
 const { initialCharacterGrowth, growCharacter, expectedOwnedGrowth, validateCharacterGrowth, validateObservedLearning, firstJoinLevelAdjustments } = await module("core/character-growth");
 const { projectEquipmentParameters } = await module("core/equipment");
@@ -37,6 +38,10 @@ const name = (key) => {
 };
 const reader = () => battleTableIndex(corpus.tables, battle.tableSources);
 const weaponEffects = exportedOrdinaryWeaponEffects(battle, reader(), compileOrdinaryWeaponEffects).catalog;
+const miscAssets = Object.values(battle.assets).filter((asset) => asset.source.assetPath.endsWith("/serial_misc_assets.json"));
+assert.equal(miscAssets.length, 1);
+const observedLearning = compileObservedLearning(reader(), corpus.tables, miscAssets[0].data).catalog;
+assert.deepEqual(catalog.common.observedLearning, observedLearning);
 const decoded = [], blocked = [], templates = new Map(), plans = new Map();
 for (const character of corpus.tables["character_status.csv"]) {
   const sourceId = Number(character.id);
@@ -44,7 +49,7 @@ for (const character of corpus.tables["character_status.csv"]) {
   try {
     const { template } = compileOwnedCharacterInitialization(reader(), corpus.tables, sourceId, name, weaponEffects);
     stage = "growth";
-    const { plan, sources } = compileCharacterGrowth(reader(), corpus.tables, template);
+    const { plan, sources } = compileCharacterGrowth(reader(), corpus.tables, template, observedLearning);
     templates.set(sourceId, template); plans.set(sourceId, plan);
     decoded.push({ sourceId, jobId: plan.jobId, baseExp: plan.baseExp, initialLevel: plan.initialLevel, naturalLearningRows: plan.learning.length, sources });
   } catch (error) { blocked.push({ sourceId, stage, reason: error.message }); }
@@ -119,7 +124,7 @@ for (const [sourceId, plan] of plans) {
 }
 const make = () => new GameState(catalog.gameState, catalog.common.players, contentHash, catalog.common.conditions);
 const owned = make(), before = owned.snapshot();
-assert.equal(before.formatVersion, 8);
+assert.equal(before.formatVersion, 9);
 assert.deepEqual(catalog.gameState.rosterLifecycle.firstJoinLevelAdjustments, firstJoinLevelAdjustments);
 // Public victory integration verifies independently recomputed source additions.
 const lease = owned.openBattle(1), players = owned.battlePlayers(lease);
@@ -157,7 +162,7 @@ assert.throws(() => fallen.prepareVictory(fallenLease, invalidAward), /nonrecipi
 assert.deepEqual(fallen.snapshot(), fallenBefore);
 const observedSpecial = structuredClone(fallenResult);
 observedSpecial.observedAbilityIds = [catalog.gameState.characterGrowth[fallenSource.id].observedLearningAbilityIds[0]];
-assert.throws(() => fallen.prepareVictory(fallenLease, observedSpecial), /observed-ability/);
+assert.throws(() => fallen.prepareVictory(fallenLease, observedSpecial), /requires source native owned-magic state/);
 assert.deepEqual(fallen.snapshot(), fallenBefore);
 fallen.prepareVictory(fallenLease, fallenResult)();
 const fallenAfter = fallen.snapshot();

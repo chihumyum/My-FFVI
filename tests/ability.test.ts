@@ -199,6 +199,30 @@ test("fixed HP and MP effects need neither a magic formula nor a random draw", (
     { slot: 3, resource: "mp", recovery: true, amount: 50, missed: false },
   ]);
 });
+test("ordinary Lore damage reuses magic rules while unrelated type504 effects stay gated", () => {
+  const f = fixture();
+  f.functions[0]!.type_id = "3";
+  f.group.function1_value2 = "0";
+  f.group.function3_id = f.group.function3_value1 = f.group.function3_value2 = "0";
+  f.ability.type_id = "504";
+  f.ability.system_id = "3";
+  f.ability.ability_lv = "0";
+  const lore = f.compile();
+  assert.deepEqual(lore.blockers, []);
+  assert.deepEqual(lore.plan!.effects, [{ slot: 1, kind: "magic" }]);
+  f.ability.type_id = "3";
+  assert.deepEqual(f.compile().plan, lore.plan, "The learned command type does not change damage arithmetic");
+  f.ability.type_id = "504";
+  f.ability.ability_lv = "1";
+  assert.match(f.compile().blockers.join(), /level-specific/);
+  f.ability.ability_lv = "0";
+  f.ability.content_flag_group_id = "11";
+  f.flags[0]!.content_flag_id = "3";
+  assert.match(f.compile().blockers.join(), /content flags/);
+  f.ability.content_flag_group_id = "0";
+  f.functions[0]!.type_id = "1";
+  assert.equal(f.compile().plan, null, "A Lore type alone cannot grant an unrelated recovery provider");
+});
 test("physical admission retains integer multiply and source normal-attack semantics", () => {
   const f = fixture();
   f.functions[0]!.type_id = "2";

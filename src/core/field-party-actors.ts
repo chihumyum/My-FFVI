@@ -123,6 +123,26 @@ export class FieldPartyActors {
     this.state = next;
     this.revision++;
   }
+  /** Publish bookkeeping already produced by source refreshes on a private
+   * actor draft. This does not run renderer effects or initialize actors. */
+  prepareState(raw: FieldPartyActorCheckpoint): FieldPartyActorRendererPublication {
+    if (this.publishing) throw new Error("Cannot prepare party appearance during publication");
+    const next = structuredClone(raw), revision = this.revision;
+    this.validate(next);
+    let validated = false, committed = false;
+    return {
+      validate: () => {
+        validated = false;
+        if (committed || this.publishing || revision !== this.revision)
+          throw new Error("Stale party appearance state");
+        validated = true;
+      },
+      commit: () => {
+        if (!validated || committed) throw new Error("Party appearance state requires current validation");
+        this.state = next; this.revision++; committed = true;
+      },
+    };
+  }
   playerMedia(state = this.state): { asset: string; mount: string | null } {
     const player = state.context.player;
     const id = player.riding ? player.riderFieldAssetId : player.fieldAssetId;

@@ -29,9 +29,9 @@ import { createFieldChoiceRequest, resolveFieldChoiceAnswer, type FieldChoiceAns
   type FieldChoiceRequest } from "./field-choice.js";
 import { prepareEventContextBranch } from "./event-context-branch.js";
 import { prepareEventScriptTransition } from "./event-script-transition.js";
-import type { FieldPuppetRosterPort } from "./field-puppet-roster.js";
+import type { FieldPuppetRosterPort, FieldPuppetRosterRead } from "./field-puppet-roster.js";
 import { createNativeFieldActorProjection, createNativeFieldActorProjections, createNativeFieldPuppetActorsPort, readNativeFieldActors,
-  prepareNativeFieldActorProjection, type NativeFieldActorData, type NativeFieldActor } from "./field-native-actors.js";
+  prepareNativeFieldActorProjection, prepareNativeFieldActorState, type NativeFieldActorData, type NativeFieldActor } from "./field-native-actors.js";
 import { projectNativeFieldPosition } from "./field-native-position.js";
 import { prepareFieldActorMotionTick, prepareFieldScriptMove, projectFieldScriptLerp,
   type FieldActorMotion, type FieldScriptLerpProgress } from "./field-script-motion.js";
@@ -39,12 +39,12 @@ import { FieldEffects, FIELD_EFFECT_PARTICLE_UPDATE_ATTRIBUTE, fieldEffectAnimat
   projectFieldEffectPlacement, type FieldEffectRuntimeHost, type FieldEffectState,
   type FieldEffectPrepared, type FieldEffectOperation } from "./field-effects.js";
 import { FieldEffectMap } from "./field-effect-map.js";
-import type { FieldActorFactoryCandidate, FieldActorFactoryBindings, FieldActorFactoryCatalog } from "./field-actor-factory.js";
+import { fieldPuppetContextFromActors, type FieldActorFactoryCandidate, type FieldActorFactoryBindings, type FieldActorFactoryCatalog } from "./field-actor-factory.js";
 import { captureFieldNativeCheckpoint, restoreFieldNativeCheckpoint,
   type FieldNativeCheckpoint, type FieldNativeCheckpointContext } from "./field-native-checkpoint.js";
 import { prepareFieldNativeNpcGroup, fieldNativeNpcRetirement, fieldNativeNpcStandbyPosition, fieldNativeNpcSelectorBinding } from "./field-native-npc.js";
-import { projectFieldPuppetCollision, type FieldPuppetCollisionState, type FieldPuppetHostProviders } from "./field-puppet-effects.js";
-import type { FieldPuppetActorCatalog, FieldPuppetControlContext } from "./field-puppet-actors.js";
+import { projectFieldPuppetCollision, projectFieldPuppetActorEffects, type FieldPuppetCollisionState, type FieldPuppetHostProviders } from "./field-puppet-effects.js";
+import type { FieldPuppetActorCatalog, FieldPuppetActorContext, FieldPuppetControlContext } from "./field-puppet-actors.js";
 import type { PartyActorPlan } from "./party-actors.js";
 import type { FieldTreasurePort } from "./treasure-port.js";
 import { treasureFlagRef, validateTreasureInventory, type TreasureBoxRequest } from "./treasure-inventory.js";
@@ -58,6 +58,7 @@ import { executeRosterLifecycleEvent, type FieldRosterPort } from "./roster.js";
 import type { FieldConditionPort } from "./field-conditions.js";
 import { projectFieldEntryContext } from "./field-entry-context.js";
 import { requireMinimapMedia } from "./minimap.js";
+import { validateFieldMoveAreas, fieldMoveAreas, findFieldMoveArea, type FieldMoveArea } from "./field-move-area.js";
 import { StaticAudioState, type AudioSnapshot } from "./static-audio.js";
 import { audioReadinessTrack, pollAudioReadiness, type AudioReadinessPort } from "./audio-readiness.js";
 import { projectPlayerVisibility } from "./player-visibility.js";
@@ -213,6 +214,15 @@ export type Stop =
       continuation?: string;
     };
 export type Dialogue = FieldMessage & { task: number };
+export type FieldEncounterReturnState = {
+  puppetRoster: FieldPuppetRosterRead;
+  partyAppearance: PartyAppearanceCandidate | null;
+};
+export type FieldEncounterReturnPublication = (() => void) & {
+  validate(): void;
+  /** Owned publication contains only its already prepared synchronous writes. */
+  commitWith(commitOwned: () => void): void;
+};
 // Input identity is deliberately outside the semantic/checkpoint state. A new
 // FieldGame (including restore) cannot accept a callback from an older owner.
 let nextChoiceNamespace = 1;
@@ -431,6 +441,20 @@ export class FieldGame {
   get entities(): readonly FieldEntity[] {
     return this.entityList;
   }
+  /** Controllers read regions from the cumulative map entity owner. Queries
+   * return detached projections; neither the renderer nor a controller can
+   * mutate the trusted definition or keep a second region registry. */
+  get moveAreas(): readonly FieldMoveArea[] {
+    if (!this.entityList.some((entity) => entity.kind === 13)) return [];
+    if (!this.content.cameraHost) throw new Error("Field move area map range is unavailable");
+    return fieldMoveAreas(this.entityList, this.content.cameraHost.mapRange);
+  }
+  getMoveArea(linkObjectId: number): FieldMoveArea | null {
+    checkpointInteger(linkObjectId, -0x80000000, 0x7fffffff);
+    if (!this.entityList.some((entity) => entity.kind === 13)) return null;
+    if (!this.content.cameraHost) throw new Error("Field move area map range is unavailable");
+    return findFieldMoveArea(this.entityList, linkObjectId, this.content.cameraHost.mapRange);
+  }
   /** Source minimap queries current properties (default + latest event group), not all spawned bodies. */
   get minimapEntities(): readonly FieldEntity[] {
     return this.currentProperties;
@@ -540,6 +564,7 @@ export class FieldGame {
     this.tileAnimations = new TileAnimationState(content.map);
     this.openTriggers = new OpenTriggerState(this.tileAnimations);
     this.entityList = [...content.map.entities];
+    validateFieldMoveAreas(this.entityList);
     const groups = content.map.groups,
       initial = content.map.initialGroups;
     this.defaultProperties =
@@ -686,6 +711,7 @@ export class FieldGame {
       throw new Error(`重复实体组激活尚未恢复：${name}`);
     if (group.blockers.length)
       throw new Error(`${name}：${group.blockers[0]!.reason}`);
+    validateFieldMoveAreas([...this.entityList, ...group.entities]);
     if (this.camera && group.entities.some((entity) => entity.kind === 15))
       throw new Error("Camera ChangeOffset trigger provider is unresolved");
     if (group.entities.some((e) => e.kind === 18))
@@ -1178,6 +1204,7 @@ export class FieldGame {
     const group = this.content.map.groups?.[name];
     if (!group || this.activeGroups.has(name) || group.blockers.length)
       throw new Error("Unknown or blocked saved native entity group");
+    validateFieldMoveAreas([...this.entityList, ...group.entities]);
     if (group.entities.some((entity) => entity.kind === 11 || entity.kind === 15))
       throw new Error("Saved native group has unresolved effect/camera lifecycle");
     if (group.entities.some((entity) => entity.kind === 18)) requireMinimapMedia(group.entities, this.content.minimap);
@@ -2031,9 +2058,9 @@ export class FieldGame {
     const transaction = this.camera.prepareState(draft.snapshot());
     return () => { transaction.commit(); this.cameraEventActive = phase === "start"; };
   }
-  private task(script: string, pc: number, actor: string): Task {
+  private task(script: string, pc: number, actor: string, id = this.nextTask++): Task {
     return {
-      id: this.nextTask++,
+      id,
       script,
       pc,
       actor,
@@ -2069,9 +2096,13 @@ export class FieldGame {
   private hasUnfinishedInterpolation(): boolean {
     return this.tasks.some((task) => !task.done && !!(task.scriptLerp || task.cameraLerp));
   }
+  private hasUnfinishedNativeEncounterActivity(): boolean {
+    return !!(this.pendingChoice || this.messageWindow || this.sourceMessage.active || this.shopTask ||
+      this.treasureHandoffBlocked() || Object.values(this.actors).some((actor) => actor.motion !== null));
+  }
   /** Validate the handoff before consuming rewards. The commit only schedules
    * the continuation; normal simulation, not reward publication, runs its code. */
-  prepareEncounterReturn(party: number): () => void {
+  prepareEncounterReturn(party: number, candidateOwned?: () => FieldEncounterReturnState): FieldEncounterReturnPublication {
     if (this.hasUnfinishedInterpolation())
       throw new Error("Battle return cannot discard unfinished source interpolation registers");
     if (this.scriptHook)
@@ -2082,25 +2113,161 @@ export class FieldGame {
       !this.stop.continuation
     )
       throw new Error("No matching field encounter to resume");
-    if (this.options.puppetActors || this.content.scriptPuppetContexts)
-      throw new Error("Source puppet battle return requires a candidate owned-state actor host");
     const continuation = this.stop.continuation;
     if (!this.content.scripts[continuation])
       throw new Error("Missing battle continuation");
-    const stop = this.stop;
+    const stop = this.stop, taskId = this.nextTask, tasks = this.tasks;
     const locals = structuredClone(
       this.content.scriptLocals?.[continuation] ?? null,
     );
     new EventState(this.eventState.snapshot()).beginScript(locals);
-    return () => {
-      if (this.stop !== stop) throw new Error("Stale battle continuation");
+    const fingerprint = () => canonical({ stop: this.stop, event: this.eventState.snapshot(), lifecycle: this.puppetLifecycle,
+      camera: this.cameraSnapshot, collision: this.collisionSwitches, updateMask: this.entityUpdateMask,
+      offset: this.mapScrollOffset, time: this.time, remainder: this.remainder,
+      script: this.content.scripts[continuation], locals: this.content.scriptLocals?.[continuation] ?? null });
+    const before = fingerprint();
+    const nextTask = this.task(continuation, 0, "-1001", taskId);
+    const native = this.options.puppetActors || this.content.scriptPuppetContexts
+      ? this.prepareNativeEncounterReturn(continuation, candidateOwned) : null;
+    let consumed = false;
+    const validateField = () => {
+      if (consumed || this.stop !== stop || this.tasks !== tasks || this.nextTask !== taskId ||
+          fingerprint() !== before)
+        throw new Error("Stale battle continuation");
+    };
+    const validate = () => {
+      validateField();
+      native?.validate();
+      validateField();
+    };
+    const publish = () => {
       this.eventState.beginScript(locals);
       this.eventRootScript = continuation;
       this.scriptHook = null;
-      this.tasks = [this.task(continuation, 0, "-1001")];
+      this.tasks = [nextTask];
+      this.nextTask = taskId + 1;
       this.stop = null;
       this.remainder = 0;
     };
+    const commitWith = (commitOwned: () => void) => {
+      validate(); consumed = true;
+      if (native) native.commitWith(() => { commitOwned(); publish(); });
+      else { commitOwned(); publish(); }
+    };
+    return Object.assign(() => commitWith(() => {}), { validate, commitWith });
+  }
+  /** Battle stops before the Web host runs the Integrator's final cleanup.
+   * Stage that old-context finish, source asset refresh, and the next Execute
+   * against one private actor draft. Only final publication touches live actors. */
+  private prepareNativeEncounterReturn(continuation: string, candidateOwned?: () => FieldEncounterReturnState) {
+    const port = this.options.puppetActors, appearanceHost = this.options.partyAppearance;
+    const runtime = this.nativeRuntime, bindings = this.nativeActorBindings;
+    const providers = this.nativeActorProviders, partyActors = this.partyActors, camera = this.camera;
+    if (!candidateOwned || !port || !appearanceHost || !runtime?.animationKeys || !bindings ||
+        !providers || !partyActors || !camera || !this.content.cameraHost || !this.puppetLifecycle)
+      throw new Error("Source puppet battle return requires a candidate owned-state actor host");
+    if (this.hasUnfinishedNativeEncounterActivity())
+      throw new Error("Source battle return has unfinished field activity");
+    const script = this.content.scriptPuppetContexts?.[continuation];
+    if (!script) throw new Error("Missing battle continuation puppet source context");
+    const owned = structuredClone(candidateOwned());
+    if (!owned.partyAppearance) throw new Error("Battle return candidate party appearance is unavailable");
+    const old = port.read(), oldContext = canonical(old), control = canonical(port.controlContext());
+    // Ordinary battle results update resources and conditions, not the roster,
+    // party slots or enabled identities. Those transitions need their own host.
+    const identities = (roster: Pick<FieldPuppetActorContext, "party" | "owned">) => ({ party: roster.party,
+      owned: roster.owned.map(({ conditionTypes: _, ...member }) => member) });
+    if (canonical(identities(owned.puppetRoster)) !== canonical(identities(old.context)))
+      throw new Error("Battle return roster/party transition is unavailable");
+    const currentParty = partyActors.checkpoint(), currentOffset = this.mapScrollOffset;
+    const oldLifecycle = structuredClone(this.puppetLifecycle);
+    const sourceScripts = canonical({ old: this.content.scriptPuppetContexts?.[oldLifecycle.name], next: script });
+    if (canonical(oldLifecycle.script) !== canonical(this.content.scriptPuppetContexts?.[oldLifecycle.name]))
+      throw new Error("Unbound suspended puppet lifecycle");
+    const project = () => {
+      const actors = Object.fromEntries(Object.values(this.actors).map((actor) => {
+        if (!actor.native) throw new Error("Battle return cannot mix native and legacy actors");
+        const copy = createNativeFieldActorProjection(actor.native, this.content.cameraHost!.mapRange, appearanceHost.catalog);
+        return [copy.id, copy];
+      }));
+      const player = actors[bindings.player]!;
+      let offset: Readonly<Point> = currentOffset;
+      const draftCamera = camera.fork(this.content.cameraHost!, {
+        readPlayer: () => {
+          if (player.layer === null || player.direction === null) throw new Error("Unplaced battle-return player");
+          return { cell: { x: player.x, y: player.y }, logicalLayer: player.layer, direction: player.direction };
+        }, readScrollOffset: () => ({ ...offset }),
+      });
+      const draftParty = new FieldPartyActors(appearanceHost.catalog, currentParty, this.transportationId);
+      const readCamera = () => { const state = draftCamera.snapshot();
+        return { id: this.cameraActorId, position: state.dummy.position, layer: state.dummy.layer }; };
+      const initialize = (phase: "start" | "finish", context: FieldPuppetScriptContext,
+        roster: Pick<FieldPuppetActorContext, "party" | "owned">) => {
+        const plan = projectFieldPuppetInitialization({ phase, script: context, catalog: old.catalog,
+          context: fieldPuppetContextFromActors({ catalog: old.catalog, checkpoint: draftParty.checkpoint(),
+            bindings, snapshot: readNativeFieldActors(actors, readCamera()), ...roster,
+            entities: old.context.entities, restorePartyInstruction: old.context.restorePartyInstruction }) });
+        if (this.separateCameraInitialization(plan)) draftCamera.prepareInitializeDummy().commit();
+        const state = projectFieldPuppetActorEffects(plan.effects, readNativeFieldActors(actors, readCamera()), providers());
+        for (const entity of state.actors) {
+          const { moving: _, ...values } = entity;
+          Object.assign(actors[entity.id]!.native.entity, values);
+        }
+        if (phase === "start") draftCamera.prepareSelect({ target: "dummy" }).commit();
+        return plan;
+      };
+      if (!oldLifecycle.finished) initialize("finish", oldLifecycle.script, old.context);
+      draftParty.prepare(owned.partyAppearance!, { prepareBatch: (steps) => {
+        let nextOffset = offset;
+        for (const step of steps) if (step.plan.cameraOffset !== null) {
+          const value = step.plan.cameraOffset;
+          checkpointKeys(value, "x,y");
+          if (!Number.isFinite(Math.fround(value.x)) || !Number.isFinite(Math.fround(value.y)))
+            throw new Error("Invalid battle return camera offset");
+          nextOffset = Object.freeze({ x: Math.fround(value.x), y: Math.fround(value.y) });
+        }
+        const appearance = prepareNativeFieldActorAppearance({ readActors: () => actors,
+          readCatalog: () => appearanceHost.catalog, readCharacters: () => this.content.characters,
+          readProviders: providers, readAnimationKeys: () => runtime.animationKeys! }, steps);
+        return { validate: appearance.validate, commit: () => { appearance.commit(); offset = nextOffset; } };
+      } }, true)();
+      const plan = initialize("start", script, owned.puppetRoster);
+      const lifecycle = { name: continuation, script: structuredClone(script), leaderId: plan.leaderId,
+        assignments: plan.assignments ?? fieldPuppetAssignments(), finished: false };
+      return { actors, party: draftParty.checkpoint(), camera: draftCamera.snapshot(), offset, lifecycle,
+        fingerprint: canonical({ party: draftParty.checkpoint(), camera: draftCamera.snapshot(), offset, lifecycle,
+          actors: Object.values(actors).map((actor) => ({ ...actor.native,
+            entity: { ...actor.native.entity, animation: actor.animation && {
+              state: actor.animation.snapshot(), character: actor.animation.character } } })) }) };
+    };
+    const draft = project();
+    const actorState = prepareNativeFieldActorState({ readActors: () => this.actors,
+      readCamera: () => null, readProviders: providers }, draft.actors);
+    const appearanceState = partyActors.prepareState(draft.party), cameraState = camera.prepareState(draft.camera);
+    const validate = () => {
+      if (this.options.puppetActors !== port || this.options.partyAppearance !== appearanceHost ||
+          this.nativeRuntime !== runtime || this.nativeActorBindings !== bindings || this.nativeActorProviders !== providers ||
+          this.mapScrollOffset !== currentOffset || canonical(port.read()) !== oldContext ||
+          canonical(port.controlContext()) !== control ||
+          canonical({ old: this.content.scriptPuppetContexts?.[oldLifecycle.name],
+            next: this.content.scriptPuppetContexts?.[continuation] }) !== sourceScripts)
+        throw new Error("Stale battle return source context");
+      actorState.validate(); appearanceState.validate(); cameraState.validate();
+      if (project().fingerprint !== draft.fingerprint) throw new Error("Stale battle return media/providers");
+      // Read-only source providers may not alter any owner during validation.
+      actorState.validate(); appearanceState.validate(); cameraState.validate();
+    };
+    return { validate, commitWith: (commitOwned: () => void) => {
+      // Outer validate ran every fallible media/roster operation. The camera
+      // locks its revision BEFORE the owned commit; the remaining writes never
+      // read the now-replaced owned roster or call a provider again.
+      cameraState.commitWith(() => {
+        commitOwned(); actorState.commit(); appearanceState.commit();
+        this.mapScrollOffset = draft.offset; this.puppetLifecycle = draft.lifecycle;
+        this.cameraEventActive = true;
+        return true;
+      });
+    } };
   }
   /** Isolated field hosts can resume immediately; GameSession uses the prepared
    * continuation so shared-state publication precedes subsequent event code. */
@@ -2951,6 +3118,12 @@ export class FieldGame {
           case "encounter":
             if (this.hasUnfinishedInterpolation()) {
               this.block("Battle handoff requires completion of source interpolation tasks", op); return;
+            }
+            // Battle freezes this field. Activities the native return host
+            // cannot preserve must be rejected before any battle lease opens.
+            if ((this.options.puppetActors || this.content.scriptPuppetContexts) &&
+                this.hasUnfinishedNativeEncounterActivity()) {
+              this.block("Source battle handoff requires completion of field activity", op); return;
             }
             if (this.scriptHook) {
               this.block("Hooked script battle handoff requires a suspended-caller provider", op); return;

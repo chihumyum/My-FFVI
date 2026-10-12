@@ -13,6 +13,8 @@ import type { BattleAppearanceActor, BattleAppearanceCatalog } from "./battle-ap
 import type { BattleDropCatalog } from "./battle-rewards.js";
 import type { BattleRow, BattleRowCatalog } from "./battle-row.js";
 import type { BattlePreferences } from "./battle-preferences.js";
+import type { BattleEventRules } from "./battle-event-context.js";
+import type { ObservedLearningCatalog } from "./character-learning.js";
 
 export type BattleQualificationContext = Omit<BattleAbilityContext, "conditionIds" | "partySize"> & {
   /** Source mode enforces qualification. The explicit development mode keeps
@@ -58,6 +60,10 @@ export type BattleContent = {
   abilityContentIds?: Record<string, number | null>;
   battleAppearance?: BattleAppearanceCatalog;
   battleRows?: BattleRowCatalog;
+  /** Source condition predicates; current unit state remains owned by BattleGame. */
+  battleEvents?: BattleEventRules;
+  /** Observations grant learning only through the source recipient and settlement rules. */
+  observedLearning?: ObservedLearningCatalog;
   conditions: BattleConditionCatalog;
   growth: Record<string, { level: number; hp: number; mp: number }[]>;
   experience: { level: number; exp: number }[];

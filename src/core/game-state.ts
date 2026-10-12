@@ -82,7 +82,7 @@ import {
   growCharacter,
   initialCharacterGrowth,
   validateCharacterGrowth,
-  validateObservedLearning,
+  learnObservedCharacter,
   type CharacterGrowthPlan,
   type CharacterGrowthProgress,
   type CharacterGrowthRequest,
@@ -155,7 +155,7 @@ export type OwnedCharacter = RosterMember & {
   growth: CharacterGrowthProgress | null;
 };
 export type GameStateSnapshot = {
-  formatVersion: 8;
+  formatVersion: 9;
   kind: "owned-game-state";
   catalogHash: string;
   initialization: "development-checkpoint" | "source-new-game";
@@ -324,7 +324,7 @@ export class GameState {
       }
     }
     this.data = {
-      formatVersion: 8,
+      formatVersion: 9,
       kind: "owned-game-state",
       catalogHash,
       initialization: fresh ? "source-new-game" : "development-checkpoint",
@@ -420,7 +420,7 @@ export class GameState {
     );
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== 8 ||
+      data.formatVersion !== 9 ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -433,7 +433,7 @@ export class GameState {
         const plan = this.sourceNewGamePlan(this.initialIds.map((id) => this.definitions.get(id)!));
         this.sourceNativeBaseline = createSourceNativeState(plan);
       }
-      validateSourceNativeState(data.nativeState, this.sourceNativeBaseline);
+      validateSourceNativeState(data.nativeState, this.sourceNativeBaseline, this.observedMagic(data));
     } else if (data.initialization !== "development-checkpoint" || data.nativeState !== null) {
       throw new Error("Owned-state initialization identity mismatch");
     }
@@ -485,6 +485,7 @@ export class GameState {
         throw new Error("Unimplemented inventory content: " + item.id);
       integer(item.count, limits.item);
     }
+    this.observedMagic(data);
     distinct(data.completedBattles.map((b) => b.serial));
     for (const [index, b] of data.completedBattles.entries()) {
       keys(b, "serial,encounterId");
@@ -492,6 +493,33 @@ export class GameState {
         throw new Error("Invalid battle receipt sequence");
       integer(b.encounterId, 0x7fffffff, 1);
     }
+  }
+  /** Rebuild the single native magic owner from source-bound per-character
+   * transition receipts. Ordering follows result participant order, not roster order. */
+  private observedMagic(data: GameStateSnapshot): number[] {
+    const values = [...(this.sourceNativeBaseline?.ownedMagic ?? [])];
+    const receipts = data.roster.flatMap((member) =>
+      (member.growth?.observedLearning ?? []).map((receipt) => ({ member, receipt })));
+    if (receipts.length && data.initialization !== "source-new-game")
+      throw new Error("Observed learning requires source native owned-magic state");
+    receipts.sort((a, b) => a.receipt.battleSerial - b.receipt.battleSerial ||
+      a.receipt.participantIndex - b.receipt.participantIndex);
+    const identities = new Set<string>();
+    for (const { member, receipt } of receipts) {
+      const key = `${receipt.battleSerial}:${receipt.participantIndex}`;
+      if (identities.has(key) || !data.completedBattles.some((b) => b.serial === receipt.battleSerial))
+        throw new Error("Unbound observed learning battle receipt");
+      identities.add(key);
+      const catalog = this.content.characterGrowth?.[member.id]?.observedLearning;
+      if (!catalog || !member.abilities?.owned.some((a) => a.abilityId === catalog.recipientAbilityId))
+        throw new Error("Unbound observed learning recipient");
+      for (const observed of receipt.observedAbilityIds) {
+        const row = catalog.candidates.find((r) => r.observedAbilityId === observed);
+        if (!row) throw new Error("Unknown observed learning receipt ability");
+        if (!values.includes(row.contentId)) values.push(row.contentId);
+      }
+    }
+    return values;
   }
   private validateOwnedMember(p: OwnedCharacter, rosterSize: number) {
     const limits = this.content.limits;
@@ -1229,9 +1257,21 @@ export class GameState {
       throw new Error("Unimplemented source character growth: " + member.id);
     const result = growCharacter(plan, { ...member, abilities: member.abilities }, member.growth,
       request, (candidate, growth) => this.projectOwnedParameters({ ...candidate, growth }), this.equipmentAbilities(member));
+    if (result.progress.observedLearning.length > member.growth.observedLearning.length && !this.data.nativeState)
+      throw new Error("Observed learning requires source native owned-magic state");
     const next: OwnedCharacter = { ...result.member, growth: result.progress };
     next.conditionIds = this.conditions.updateDying(next.hp, next.maxHp, next.conditionIds);
     return next;
+  }
+  private projectObservedLearning(member: OwnedCharacter, observedAbilityIds: readonly number[], lease: BattleLease,
+    participantIndex: number): OwnedCharacter {
+    const plan = this.content.characterGrowth?.[member.id];
+    if (!plan || !member.growth || !member.abilities) throw new Error("Missing source observation recipient");
+    const result = learnObservedCharacter(plan, { ...member, abilities: member.abilities }, member.growth,
+      observedAbilityIds, { battleSerial: lease.serial, participantIndex }, this.equipmentAbilities(member));
+    if (result.progress.observedLearning.length > member.growth.observedLearning.length && !this.data.nativeState)
+      throw new Error("Observed learning requires source native owned-magic state");
+    return { ...result.member, growth: result.progress };
   }
   private menuParticipant(member: OwnedCharacter): ActionParticipant {
     const definition = this.definitions.get(member.id);
@@ -1472,12 +1512,13 @@ export class GameState {
         // currently admitted, with HP/condition consistency checked by core.
         if (player.hp === 0) {
           if (amount !== 0 || !owned.abilities) throw new Error("Invalid nonrecipient experience award");
-          validateObservedLearning(this.content.characterGrowth![owned.id]!,
-            { abilities: owned.abilities }, observedAbilityIds, this.equipmentAbilities(owned));
-          return { ...this.projectOwnedParameters(owned), level: owned.level, exp: owned.exp };
+          const next = this.projectObservedLearning(owned, observedAbilityIds, lease,
+            this.active.players.findIndex((p) => p.id === player.id));
+          return { ...this.projectOwnedParameters(next), level: next.level, exp: next.exp };
         }
         const next = this.projectGrowth({ ...owned, hp: player.hp, mp: player.mp,
-          conditionIds: [...player.conditionIds] }, { kind: "add-experience", amount, context: "battle", observedAbilityIds: [...observedAbilityIds] });
+          conditionIds: [...player.conditionIds] }, { kind: "add-experience", amount, context: "battle", observedAbilityIds: [...observedAbilityIds],
+          learningReceipt: { battleSerial: lease.serial, participantIndex: this.active.players.findIndex((p) => p.id === player.id) } });
         return { ...this.projectOwnedParameters(next), level: next.level, exp: next.exp };
       }
       // Only synthetic profiles without source initialization use this legacy
@@ -1499,7 +1540,10 @@ export class GameState {
     result: { players: Combatant[]; gil: number; consumedItems: ItemStack[];
       awardedExperience?: { id: string; amount: number }[]; observedAbilityIds?: number[];
       dropGrants?: BattleDropGrant[] },
-  ): () => void {
+  ): (() => void) & {
+    validate(): void;
+    fieldState(): { puppetRoster: ReturnType<FieldPuppetRosterPort["current"]>; partyAppearance: PartyAppearanceCandidate | null };
+  } {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     let next = this.snapshot();
     const revision = this.revision;
@@ -1548,7 +1592,7 @@ export class GameState {
         result.awardedExperience.some((award) => !party.some((p) => p.id === award.id)))
         throw new Error("Battle experience identity changed");
     }
-    for (const player of result.players) {
+    for (const [participantIndex, player] of result.players.entries()) {
       const target = next.roster.find((p) => p.id === player.id)!;
       if (player.side !== "player" || player.sourceId !== target.sourceId)
         throw new Error("Battle roster identity changed");
@@ -1562,11 +1606,10 @@ export class GameState {
         let projected: OwnedCharacter;
         if (player.hp === 0) {
           if (award.amount !== 0 || !target.abilities) throw new Error("Invalid nonrecipient experience award");
-          validateObservedLearning(this.content.characterGrowth![target.id]!,
-            { abilities: target.abilities }, result.observedAbilityIds, this.equipmentAbilities(target));
-          projected = resources;
+          projected = this.projectObservedLearning(resources, result.observedAbilityIds, lease, participantIndex);
         } else projected = this.projectGrowth(resources, { kind: "add-experience", amount: award.amount,
-          context: "battle", observedAbilityIds: result.observedAbilityIds });
+          context: "battle", observedAbilityIds: result.observedAbilityIds,
+          learningReceipt: { battleSerial: lease.serial, participantIndex } });
         for (const key of ["level", "exp", "maxHp", "maxMp", "hp", "mp"] as const)
           if (projected[key] !== player[key]) throw new Error("Battle source growth projection mismatch");
         if (canonical(projected.conditionIds) !== canonical(player.conditionIds))
@@ -1588,13 +1631,25 @@ export class GameState {
     next.gil = Math.min(this.content.limits.gil, next.gil + result.gil);
     next.totalGil += result.gil;
     next.completedBattles.push({ ...lease });
+    if (next.nativeState) next.nativeState.ownedMagic = this.observedMagic(next);
     this.validate(next);
-    return () => {
+    const validate = () => {
       if (this.active?.lease !== lease || this.revision !== revision)
         throw new Error("Stale victory transaction");
+    };
+    const commit = () => {
+      validate();
       this.data = next;
       this.active = null;
       this.revision++;
     };
+    return Object.assign(commit, {
+      validate,
+      fieldState: () => {
+        validate();
+        return { puppetRoster: this.projectPuppetRoster(next),
+          partyAppearance: this.content.partyActors ? this.projectPartyAppearance(next) : null };
+      },
+    });
   }
 }

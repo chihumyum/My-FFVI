@@ -4,7 +4,7 @@
 
 ## 状态与提供器
 
-`src/compiler/character-growth.ts` 的 `compileCharacterGrowth(reader, tables, initializationTemplate)` 编译独立 `CharacterGrowthPlan`，不从开场战斗数值反推来源。输入包括角色、职业对应的 `intermediate_growth_curve`、经验与成长行、自然学习、能力和命令类型分组。每份计划保留完整来源行定位。
+`src/compiler/character-growth.ts` 的 `compileCharacterGrowth(reader, tables, initializationTemplate, observedLearning?)` 编译独立 `CharacterGrowthPlan`，不从开场战斗数值反推来源。输入包括角色、职业对应的 `intermediate_growth_curve`、经验与成长行、自然学习、能力和命令类型分组。每份计划保留完整来源行定位；有来源观察目录时绑定同一学习计划，缺失时仍保留特殊学习门禁。
 
 `src/core/character-growth.ts` 保存 `CharacterGrowthProgress`：独立的 `additionalExp`，以及未截断的追加 HP、MP、力量、耐力、敏捷和魔力。来源角色的 `exp` 是基础值；显示经验为基础加追加后按 `MAX_EXP` 截断。初始额外经验及追加参数为零，初始等级由来源经验曲线决定，而不是直接采用 `character_status.lv`。例如开场蒂娜以基础经验 96 开始，初始等级 3，不重新领取 1→3 级的成长。
 
@@ -37,15 +37,15 @@ growCharacter(plan, member, progress, request, projectParameters)
 
 每级自然学习筛选当前职业、`Learning.TypeId=1`、`Value1=刚达到的等级`，保留来源行顺序。`Content.TypeId=4` 再解析能力身份。已有技能更新到熟练度 100；不存在的技能先以熟练度 0 加入持有列表，再设为 100。`additionOrder` 存的是**内容 ID**，不是能力 ID，已有条目不会重复追加。按类型/技能组/熟练度过滤的 `byCommand` 是当前持有状态的派生投影；不声称此数组的重建时机已经复现原生界面缓存生命周期。战斗活动能力仍由独立准入配置决定，持有或升级学习不会自动开放动作执行。
 
-普通自然学习不写全局 `learnedAbilityIds`。首次 `AddFromMaster` 才把初始持有集合（包含熟练度 0）按顺序去重追加到历史。另一条 `ExecutionLearning` 会调用 `AddOwnedMagic` 写历史，但它属于尚未实现的观察学习，不与自然升级混用。
+普通自然学习不写全局 `learnedAbilityIds`。首次 `AddFromMaster` 才把初始持有集合（包含熟练度 0）按顺序去重追加到历史。另一条 `ExecutionLearning` 调用 `AddOwnedMagic` 写入独立的全局内容 ID 集合，现已通过[观察学习系统](character-learning.md)接入同一持有状态；它不追加初始能力历史，不与自然升级混用。
 
 ## 战斗学习边界
 
 战斗奖励先按来源资格分配经验、应用奖励被动，再增加 `AdditionalExp`，最后执行 StatusUp。因此 `add-experience.amount` 是上层已经分配、修正的数值；本模块不负责经验分配、经验倍率、魔法学习点累计或胜利演出。
 
-`BattleUtility.IsGetExp 0x769570` 及谓词 `0x771fa0` 排除当前状态类型 5、3、608，不能把“本次奖励为零”当成没有经验资格。`BattleResult 0x3d51a0` 对无资格者只调用 `ExecutionLearning 0x4e9e30`，不会运行完整 StatusUp。宿主对此调用独立的 `validateObservedLearning`，保留经验、追加参数与能力集合；它不运行装备或背景学习守卫。当前状态准入只包含其中的死亡类型 5，且状态系统维持死亡和零 HP 一致；未来准入另外两类时必须扩展资格投影，不能继续只判断 HP。
+`BattleUtility.IsGetExp 0x769570` 及谓词 `0x771fa0` 排除当前状态类型 5、3、608，不能把“本次奖励为零”当成没有经验资格。`BattleResult 0x3d51a0` 对无资格者只调用 `ExecutionLearning 0x4e9e30`，不会运行完整 StatusUp。宿主对此调用独立的 `learnObservedCharacter`，保留经验、追加参数和当前 HP/MP，只按已验证观察更新持有能力；它不运行装备或背景学习守卫。当前状态准入只包含其中的死亡类型 5，且状态系统维持死亡和零 HP 一致；未来准入另外两类时必须扩展资格投影，不能继续只判断 HP。
 
-`add-experience` 的战斗分支必须提供 `observedAbilityIds`。`GetLearningAbility 0x4ec8f0` 在拥有能力 74 时检查实际战斗记录，**不看该能力的熟练度**；蒂娜的初始持有集合确实含熟练度 0 的能力 74。原生先过滤 `BattleActData.IsLearningAbility`，然后用每条动作的 `abilityList` 匹配来源 `Ability.TypeId=504` 的 28 个候选。Web 宿主可以提供所有成功执行能力的保守超集；若候选交集非空，明确阻塞特殊学习，缺日志也阻塞。对每条物品直接函数效果不伪造能力 ID；若物品确实展开能力列表，则其中的实际能力身份属于观察输入。该边界不以角色名称或初始技能解锁状态代替日志。
+`add-experience` 的战斗分支必须提供 `observedAbilityIds`。`GetLearningAbility 0x4ec8f0` 在拥有能力 74 时检查实际战斗记录，**不看该能力的熟练度**；蒂娜的初始持有集合确实含熟练度 0 的能力 74。原生先过滤 `BattleActData.IsLearningAbility`，然后匹配来源 `Ability.TypeId=504` 的 28 个候选。绑定观察目录的宿主现在按动作开始时第一个 source8 玩家及其状态/技能过滤，成功动作只记录合格能力，成长阶段按来源主表顺序应用；缺目录的旧合成宿主仍以保守日志在候选相交时明确阻塞。直接物品效果不伪造能力 ID；未来展开能力列表的物品需要独立准入。观察资格、Skill0 接收者资格、全局内容 ID 及恢复重放规则见[观察学习系统](character-learning.md)。
 
 其余阻塞条件：
 

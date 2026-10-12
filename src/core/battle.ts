@@ -72,6 +72,7 @@ import type {
   AbilityDefinition,
 } from "./battle-content.js";
 import { battleDefinitionBlocker } from "./battle-content.js";
+import { observeLearningAction, validateObservedLearningCatalog } from "./character-learning.js";
 
 export type Combatant = CombatantDefinition & {
   maxHp: number;
@@ -98,6 +99,8 @@ export type BattleAction = {
   charge: number;
   elapsed: number;
   resolved: boolean;
+  /** Captured at source InitActionState, before effects or later condition ticks. */
+  learningAbilityIds?: number[];
   results: { target: string; effects: AbilityEffectResult[] }[];
 };
 export type BattleReward = {
@@ -187,6 +190,7 @@ export class BattleGame {
     this.inventoryQualification = inventory.qualification ? structuredClone(inventory.qualification) : undefined;
     validateReactionRules(content.reactions);
     this.conditions = new BattleConditions(content.conditions);
+    if (content.observedLearning) validateObservedLearningCatalog(content.observedLearning);
     if (content.battleRows) validateBattleRowCatalog(content.battleRows);
     if (content.drops !== null) {
       validateBattleDropCatalog(content.drops);
@@ -791,6 +795,15 @@ export class BattleGame {
       conditionIds: actor.conditionIds,
       players: units.filter((c) => c.side === "player"),
       enemies: units.filter((c) => c.side === "enemy"),
+      ...(this.content.battleEvents ? { events: {
+        rules: this.content.battleEvents,
+        selfId: actor.id,
+        units: units.map((c) => ({ id: c.id, side: c.side, conditionIds: [...c.conditionIds],
+          // The admitted host has a fixed unit collection. Enemy removal and
+          // staged ActType.FinalAttack are separate, still-unavailable lanes.
+          removed: false })),
+        finalAttackFirstTargetSide: null,
+      } } : {}),
     };
   }
   enemyAIState(actorId: string): BattleAIState | null {
@@ -1193,6 +1206,15 @@ export class BattleGame {
       }
       action.selection = choice.selection;
       action.targetIds = choice.targetIds;
+      if (this.content.observedLearning) {
+        action.learningAbilityIds = action.source.kind === "item" ? [] : observeLearningAction(
+          this.content.observedLearning,
+          { id: action.source.id, typeId: this.content.abilities[action.source.id]!.program.rules.type_id! },
+          this.players.map((player) => ({ sourceId: player.sourceId,
+            conditionTypes: this.conditions.types(player.conditionIds),
+            abilities: player.ownedAbilities?.abilities ?? null })),
+        );
+      }
       this.action = action;
       const actionName = this.actionDefinition(action).name;
       this.log(actionName ? `${actor.name} · ${actionName}` : `${actor.name} 行动。`);
@@ -1448,8 +1470,16 @@ export class BattleGame {
         const used = this.consumedItems.find((i) => i.id === action.source.id);
         if (used) used.count++;
         else this.consumedItems.push({ id: action.source.id, count: 1 });
-      } else if (!this.observedAbilityIds.includes(action.source.id))
+      }
+      if (this.content.observedLearning) {
+        if (!Array.isArray(action.learningAbilityIds)) throw new Error("Missing action-start learning observation");
+        for (const id of action.learningAbilityIds)
+          if (!this.observedAbilityIds.includes(id)) this.observedAbilityIds.push(id);
+      } else if (action.source.kind === "ability" && !this.observedAbilityIds.includes(action.source.id)) {
+        // Catalog-less synthetic/development callers retain the conservative
+        // log; growth still rejects matching observations without a provider.
         this.observedAbilityIds.push(action.source.id);
+      }
       actor.mp -= payment;
       for (const next of poison) {
         this.poisonStates.set(next.id, next.state);

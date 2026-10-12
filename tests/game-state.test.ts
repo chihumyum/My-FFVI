@@ -287,6 +287,27 @@ test("victory validates the whole roster then publishes once, preserving invento
   );
   assert.deepEqual(s.completedEncounters, [1000]);
 });
+test("battle return reads a detached post-victory roster before rewards are published", () => {
+  const owner = state(), before = owner.snapshot(), lease = owner.openBattle(1000);
+  const players = owner.battlePlayers(lease);
+  players[0]!.hp = 0;
+  players[0]!.conditionIds = [fixture().conditions.hpZeroConditionId];
+  const transaction = owner.prepareVictory(lease, { players, gil: 7, consumedItems: [] });
+  const candidate = transaction.fieldState();
+  assert.deepEqual(candidate.puppetRoster.owned[0]!.conditionTypes, [5]);
+  assert.deepEqual(owner.fieldPuppetRoster.current().owned[0]!.conditionTypes, []);
+  assert.equal(candidate.partyAppearance, null, "Missing source appearance is not inferred");
+  candidate.puppetRoster.owned[0]!.conditionTypes.length = 0;
+  assert.deepEqual(transaction.fieldState().puppetRoster.owned[0]!.conditionTypes, [5]);
+  transaction.validate();
+  assert.deepEqual(owner.snapshot(), before);
+  transaction();
+  assert.equal(owner.gil, before.gil + 7);
+  assert.deepEqual(owner.fieldPuppetRoster.current().owned[0]!.conditionTypes, [5]);
+  assert.throws(transaction.fieldState, /Stale/);
+  assert.throws(transaction.validate, /Stale/);
+});
+
 test("shared-state restore rejects incompatible, incomplete, extra and inconsistent data before mutation", () => {
   const s = state(),
     before = s.snapshot();

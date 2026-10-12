@@ -67,8 +67,8 @@ const state = fresh(), initial = state.snapshot();
 const cases = [];
 function check(name, fn) { fn(); cases.push({ name, pass: true }); }
 
-check("bound fresh and development states have distinct owned-v8 initialization identities", () => {
-  assert.equal(initial.formatVersion, 8);
+check("bound fresh and development states have distinct owned-v9 initialization identities", () => {
+  assert.equal(initial.formatVersion, 9);
   assert.equal(initial.initialization, "source-new-game");
   assert.deepEqual(initial.roster.map((member) => member.conditionIds), [[], [], []]);
   const old = development();
