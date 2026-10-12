@@ -80,6 +80,12 @@ const loadMap = async (id) => {
 };
 const start = await loadMap(fresh.entry.mapId), destination = await loadMap(sourceOp.operands.iValues[0]);
 assert.ok(destination.binding.scriptAliases[sourceOp.operands.sValues[0]]);
+const nextScript = unique(corpus.assets, "/Map_20010/Map_20010/" + sourceOp.operands.sValues[0] + ".json");
+const secondSourceOp = nextScript.data.Mnemonics[10];
+assert.equal(secondSourceOp.mnemonic, "ChangeMap");
+assert.deepEqual(secondSourceOp.operands.iValues, [178, 1, 0, 0, 1, 0, 0, 0]);
+assert.equal(secondSourceOp.operands.sValues[0], "sc_e_0001_2");
+const secondDestination = await loadMap(secondSourceOp.operands.iValues[0]);
 const initial = createFreshFieldPartyActorCheckpoint({ factory, catalog, fresh, party, map: start.definition, playerId: "-1001" });
 const entry = prepareMapPartyEntry(catalog, { definition: start.definition, entrance: fresh.entry.entrance,
   mapViewType: fresh.entry.viewType, prior: initial, playerVisible: true, party, transportation: fresh.entry.transportation,
@@ -199,6 +205,9 @@ check("unknown foot, missing media and active movement reject without partial pu
   assert.equal(JSON.stringify(serial(prior)), before);
 });
 let productionProviderBlocker = null;
+const productionProviders = (destination, checkpoint) => prepareNativeFieldProviders({
+  content: { cameraHost: destination.map.cameraHost, map: destination.map.map }, partyActorCheckpoint: checkpoint,
+}, destination.view, destination.map.nativeFoot)();
 check("actual destination provider binds source raw foot and the newly published nonempty render targets", () => {
   const field = { content: { cameraHost: destination.map.cameraHost, map: destination.map.map }, partyActorCheckpoint: plan.checkpoint };
   const bound = prepareNativeFieldProviders(field, destination.view, destination.map.nativeFoot)();
@@ -221,19 +230,62 @@ check("missing or another-map native foot cannot inherit the encounter default-m
   assert.throws(() => prepareNativeFieldProviders(field, destination.view, undefined), /foot provider is unresolved/);
   assert.throws(() => prepareNativeFieldProviders(field, destination.view, start.map.nativeFoot), /another source map/);
 });
+const firstProductionCandidate = prepareSourceNativeMap({ ...input, providers: productionProviders(destination, plan.checkpoint) });
+const nextPlan = prepareMapPartyEntry(catalog, { definition: secondDestination.definition, entrance: secondSourceOp.operands.iValues[1],
+  mapViewType: secondSourceOp.operands.iValues[2], prior: plan.checkpoint, playerVisible: false, party,
+  transportation: fresh.entry.transportation, canPartySwitching: fresh.events.scenario[2 * 256 + 45] === 1 });
+const secondInput = { ...input, prior: firstProductionCandidate, priorCheckpoint: plan.checkpoint,
+  priorComposition: destination.map.map.nativeComposition, entry: nextPlan, definition: secondDestination.definition,
+  view: secondDestination.view, providers: productionProviders(secondDestination, nextPlan.checkpoint) };
+check("real map3 to map178 source PointIn accepts prior RTs and rebinds the actual player without a fresh factory", () => {
+  const before = JSON.stringify(serial(firstProductionCandidate)), next = prepareSourceNativeMap(secondInput);
+  const oldPlayer = firstProductionCandidate.snapshot.actors.find((a) => a.id === prior.bindings.player);
+  const player = next.snapshot.actors.find((a) => a.id === prior.bindings.player);
+  assert.equal(oldPlayer.transparentTextures.first, destination.map.map.nativeComposition.ceilTexture);
+  assert.equal(player.transparentTextures.first, secondDestination.map.map.nativeComposition.ceilTexture);
+  assert.notEqual(player.transparentTextures.first, oldPlayer.transparentTextures.first);
+  assert.equal(player.transparentTextures.second, null);
+  const projections = createNativeFieldActorProjections(next, secondDestination.definition.mapRange, catalog);
+  const projected = projections.find((a) => a.id === player.id);
+  assert.equal(projected.x, nextPlan.player.x); assert.equal(projected.y, nextPlan.player.y);
+  assert.deepEqual(next.bindings, firstProductionCandidate.bindings);
+  assert.equal(JSON.stringify(serial(firstProductionCandidate)), before);
+});
+check("hidden persistent actors do not acquire new attachments just because the next map has enabled RTs", () => {
+  const next = prepareSourceNativeMap(secondInput);
+  for (const id of [puppet.id, resident.id]) {
+    const a = next.snapshot.actors.find((a) => a.id === id);
+    assert.equal(a.visible, false); assert.deepEqual(a.transparentTextures, { first: null, second: null });
+    assert.equal(a.viewBinding.map, secondDestination.view.contextId);
+  }
+});
+check("second source handoff rejects self-authorized old tokens and unimplemented transparent bodies", () => {
+  const before = JSON.stringify(serial(firstProductionCandidate));
+  const { priorComposition, ...missing } = secondInput;
+  assert.throws(() => prepareSourceNativeMap(missing), /Missing trusted departed native composition/);
+  assert.throws(() => prepareSourceNativeMap({ ...secondInput, priorComposition: secondDestination.map.map.nativeComposition }), /Unbound departed native texture slots/);
+  const changed = { ...firstProductionCandidate,
+    snapshot: projectFieldPuppetActorEffects([], firstProductionCandidate.snapshot, secondInput.providers) };
+  changed.snapshot.actors.find((a) => a.id === prior.bindings.player).bodyOpaque = false;
+  assert.throws(() => prepareSourceNativeMap({ ...secondInput, prior: changed }), /transparent body lifecycle/);
+  assert.equal(JSON.stringify(serial(firstProductionCandidate)), before);
+});
 const report = { kind: "source-native-map-source", sourceSetHash: corpus.sourceSetHash, contentHash,
   nativeReceiptSha256: sha(receiptBytes), sourceRoute: { source: script.source, script: script.data.Name, index: 19,
     mapId: sourceOp.operands.iValues[0], entrance: sourceOp.operands.iValues[1], continuation: sourceOp.operands.sValues[0] },
-  maps: [start, destination].map((m) => ({ mapId: m.map.mapId, contentHash: m.map.contentHash,
+  secondSourceRoute: { source: nextScript.source, script: nextScript.data.Name, index: 10,
+    mapId: secondSourceOp.operands.iValues[0], entrance: secondSourceOp.operands.iValues[1], continuation: secondSourceOp.operands.sValues[0] },
+  maps: [start, destination, secondDestination].map((m) => ({ mapId: m.map.mapId, contentHash: m.map.contentHash,
     definitionHash: hash(m.definition), viewContextId: m.view.contextId, encounterFoot: m.foot, nativeFoot: m.nativeFoot })),
   counts: { cases: cases.length, persistentActors: 55, residents: prior.bindings.residents.length,
     hiddenPartyActors: plan.hiddenActorIds.length, verifiedSpriteFiles: checked.size }, cases,
   productionProviderBlocker, originalGameExecuted: false, semanticsVerified: false,
   formalMapPublished: false, browserExecuted: false, gpuShaderParity: false,
   controlledInputs: ["Resident and puppet poses/playback are controlled mutations on genuine source-created actors",
-    "Destination upper/ceiling RTs=null test the pure candidate; they are not production render providers for map3",
+    "Original pure-mechanism cases use null RTs; the second-handoff cases separately bind the actual published map3/map178 compositors and raw foot providers",
     "Condition607 case projects a source-valid party candidate without executing or mutating the story/owned state"],
-  remaining: ["Production source map3 particle and shared-pool map lifecycle", "Full map-local NPC controller lifecycle",
+  remaining: ["This source check prepares actor candidates only and does not execute either complete story script", "Full map-local NPC controller lifecycle",
+    "Visible disabled RT references or retained null slots require a different renderer contract; hidden retained slots may remain outside the stable checkpoint codec",
     "Mounted/retained-rider, companion and active motion; stable Web saves are checked separately"] };
 await writeFile(output, JSON.stringify(report, null, 2) + "\n");
 console.log(JSON.stringify({ result: "pass", ...report.counts, productionProviderBlocker,

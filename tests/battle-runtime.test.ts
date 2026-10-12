@@ -668,8 +668,11 @@ test("one group action can damage a weak target and heal an absorbing target wit
     assert.equal(battle.players[0]!.mp, 6);
     assert.ok(battle.enemies[0]!.hp < 1000);
     assert.ok(battle.enemies[1]!.hp > 300);
-    assert.equal(results[0]!.effects[0]!.recovery, false);
-    assert.equal(results[1]!.effects[0]!.recovery, true);
+    const firstEffect = results[0]!.effects[0]!, secondEffect = results[1]!.effects[0]!;
+    assert.equal(firstEffect.resource, "hp");
+    assert.equal(secondEffect.resource, "hp");
+    assert.equal(firstEffect.resource === "hp" && firstEffect.recovery, false);
+    assert.equal(secondEffect.resource === "hp" && secondEffect.recovery, true);
     const before = structuredClone(battle.combatants);
     battle.advance(100);
     assert.deepEqual(

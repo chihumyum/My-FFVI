@@ -512,6 +512,7 @@ export class WorldSession {
         if (target.nativeFootBlockers?.length) throw new Error(target.nativeFootBlockers[0]!.reason);
         const providers = prepareNativeFieldProviders(field, target.actorView, target.nativeFoot);
         const candidate = prepareSourceNativeMap({ prior: nativeActors, priorCheckpoint: prior,
+          ...(from.content.map.nativeComposition ? { priorComposition: from.content.map.nativeComposition } : {}),
           entry: actorEntry.plan, definition: target.partyEntry, catalog: owned.ports.partyAppearance.catalog,
           party: owned.ports.partyAppearance.current(),
           characters: field.content.characters, animationKeys: catalog.nativeAnimationKeys,

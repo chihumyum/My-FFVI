@@ -185,6 +185,7 @@ function run(map, asset, ops, input) {
   game.startEvent(asset.id);
   for (let n = 0; n < 6000 && game.busy && !game.stop; n++)
     if (game.dialogue) {
+      if (game.dialogue.manual) game.advance(10);
       messages.push(game.dialogue.key);
       game.confirm();
     } else game.advance(10);
@@ -218,6 +219,8 @@ for (const map of maps)
           m,
           { script: id, index, source: asset.source },
           corpus.messages,
+          corpus.tables,
+          { nextMnemonic: asset.data.Mnemonics[index + 1]?.mnemonic ?? null },
         ),
       );
     } catch {

@@ -1,12 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { compileFieldActorView } from "../src/compiler/field-actor-view.js";
+import { compileFieldNativeComposition } from "../src/compiler/field-native-composition.js";
 import { ActorAnimation } from "../src/core/actor-animation.js";
 import { createFieldActorFactoryCandidate } from "../src/core/field-actor-factory.js";
 import { projectFieldActorView } from "../src/core/field-actor-view.js";
 import { fieldCameraCellToWorld } from "../src/core/field-camera.js";
 import { createNativeFieldActorProjections } from "../src/core/field-native-actors.js";
 import type { FieldNativeAnimationKeys } from "../src/core/field-native-appearance.js";
+import { fieldCompositionActorTextures, fieldCompositionTexture, ordinaryFieldCompositionRenderHost } from "../src/core/field-native-composition.js";
 import { prepareMapPartyEntry, type MapPartyEntryDefinition } from "../src/core/map-party-entry.js";
 import { prepareSourceNativeMap } from "../src/core/source-native-map.js";
 import { fieldActorFactoryFixture } from "./fixtures/field-actor-factory.js";
@@ -51,6 +53,32 @@ function fixture() {
 const serial = (candidate: ReturnType<typeof prepareSourceNativeMap>) => ({ ...candidate,
   snapshot: { ...candidate.snapshot, actors: candidate.snapshot.actors.map((a) => ({ ...a,
     animation: a.animation?.snapshot() ?? null })) } });
+
+function compositionFixture(destinationLayers: string[] = ["UpperLayer", "CeilLayer"]) {
+  const f = fixture(), prefix = "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/";
+  f.sources.push({ file: prefix + "map_common_assets_all_320e510e7137e96ac91fe79e18fdd504.bundle",
+    sha256: "c46413a1c208556af2ce202aab276e6ecefc54863229bbb77af38bb0f766233a" },
+  { file: prefix + "shaders_assets_all_46e9e3032245a8a2ff9ff3236afcb55a.bundle",
+    sha256: "56bebde18b58f95d3e4f9cd23e7e2c13e83892075606f1a85b5c92ac81ce1c6e" });
+  const prepare = (width: number, height: number, layers: string[], range: typeof f.map.mapRange) => {
+    const tilemap = structuredClone(f.tilemap);
+    tilemap.data.width = width; tilemap.data.height = height;
+    tilemap.data.layers[0]!.layers.push(...layers.map((name) => ({ type: "tilelayer", name,
+      width, height, data: Array(width * height).fill(0) })));
+    const view = compileFieldActorView(f.sources, tilemap, f.mapPackage, range);
+    return { view, composition: compileFieldNativeComposition(f.sources, view, tilemap) };
+  };
+  const old = prepare(20, 16, ["UpperLayer", "CeilLayer"], f.map.mapRange);
+  const next = prepare(32, 24, destinationLayers, f.definition.mapRange);
+  for (const actor of [f.player, f.puppet, f.resident]) {
+    actor.viewBinding = { map: old.view.contextId, layer: actor.layer, properties: projectFieldActorView(old.view, actor.layer)! };
+    actor.transparentTextures = fieldCompositionActorTextures(old.composition, actor.layer);
+  }
+  const providers = { ...f.providers, mapRenderContext: next.view.contextId, composition: next.composition,
+    upperTexture: next.composition.upperTexture, ceilTexture: next.composition.ceilTexture,
+    applyViewProperties: (layer: number) => projectFieldActorView(next.view, layer) };
+  return { ...f, old, next, input: { ...f.input, priorComposition: old.composition, view: next.view, providers } };
+}
 
 test("ordinary map handoff retains resident world pose, visibility and playback instead of running the save-load reset", () => {
   const f = fixture(), before = serial(f.prior), next = prepareSourceNativeMap(f.input);
@@ -228,4 +256,107 @@ test("invalid player PointIn, camera range and hide scope cannot invent a viable
   assert.throws(() => prepareSourceNativeMap(camera.input), /camera range/);
   const hide = fixture(); hide.entry.hiddenActorIds.pop();
   assert.throws(() => prepareSourceNativeMap(hide.input), /hidden actor set/);
+});
+
+test("ordinary map handoff migrates existing global RT references without rebuilding persistent actors", () => {
+  const f = compositionFixture(), before = serial(f.prior), next = prepareSourceNativeMap(f.input);
+  const player = next.snapshot.actors.find((a) => a.id === f.player.id)!;
+  assert.equal(f.player.layer, 9); assert.equal(player.layer, 10);
+  assert.deepEqual(player.transparentTextures, { first: f.next.composition.ceilTexture, second: null },
+    "the actual player is reattached after its destination PointIn");
+  for (const old of [f.puppet, f.resident]) {
+    const retained = next.snapshot.actors.find((a) => a.id === old.id)!;
+    assert.deepEqual(retained.transparentTextures, fieldCompositionActorTextures(f.next.composition, old.layer));
+    assert.notDeepEqual(retained.transparentTextures, old.transparentTextures);
+    assert.deepEqual(retained.position, old.position); assert.deepEqual(retained.animation!.snapshot(), old.animation!.snapshot());
+    assert.equal(retained.viewBinding!.map, f.next.view.contextId);
+  }
+  assert.deepEqual(serial(f.prior), before);
+  next.snapshot.actors.find((a) => a.id === f.resident.id)!.transparentTextures.first = null;
+  assert.deepEqual(serial(f.prior), before);
+});
+
+test("MapSetup hiding does not invent attachments for old null slots even when the new layer exists", () => {
+  const f = compositionFixture();
+  for (const actor of [f.puppet, f.resident]) actor.transparentTextures = { first: null, second: null };
+  const next = prepareSourceNativeMap(f.input);
+  for (const old of [f.puppet, f.resident]) {
+    const actor = next.snapshot.actors.find((a) => a.id === old.id)!;
+    assert.equal(actor.visible, false); assert.deepEqual(actor.transparentTextures, { first: null, second: null });
+    assert.equal(actor.viewBinding!.map, f.next.view.contextId);
+  }
+  assert.ok(next.snapshot.actors.find((a) => a.id === f.player.id)!.transparentTextures.first,
+    "only the registered actual player receives the destination Attach call");
+});
+
+test("retained RT tokens cannot authorize their own source composition or forged material properties", () => {
+  const f = compositionFixture(), before = serial(f.prior);
+  const { priorComposition: ignored, ...missing } = f.input;
+  assert.throws(() => prepareSourceNativeMap(missing), /Missing trusted departed native composition/);
+  assert.throws(() => prepareSourceNativeMap({ ...f.input, priorComposition: f.next.composition }), /Unbound departed native texture slots/);
+  assert.deepEqual(serial(f.prior), before);
+  const invalid = compositionFixture(); invalid.puppet.transparentTextures.first = invalid.old.composition.ceilTexture;
+  assert.throws(() => prepareSourceNativeMap(invalid.input), /Unbound departed native texture slots/);
+  const properties = compositionFixture(); properties.resident.viewBinding!.map = properties.next.view.contextId;
+  assert.throws(() => prepareSourceNativeMap(properties.input), /actor material projection|departed material identity/);
+});
+
+test("unknown old and new RT capabilities and transparent bodies fail without touching departed actors", () => {
+  const f = compositionFixture(), before = serial(f.prior), old = structuredClone(f.old.composition);
+  old.renderTargets.upper = "unresolved";
+  assert.throws(() => prepareSourceNativeMap({ ...f.input, priorComposition: old }), /allocation and sampling/);
+  const next = structuredClone(f.next.composition); next.renderTargets.ceil = "unresolved";
+  assert.throws(() => prepareSourceNativeMap({ ...f.input, providers: { ...f.input.providers, composition: next } }), /allocation and sampling/);
+  assert.deepEqual(serial(f.prior), before);
+  f.resident.bodyOpaque = false;
+  assert.throws(() => prepareSourceNativeMap(f.input), /transparent body lifecycle/);
+});
+
+test("disabled global targets require explicit global target identity and cannot be silently replaced with null", () => {
+  const f = compositionFixture([]), before = serial(f.prior);
+  assert.throws(() => prepareSourceNativeMap(f.input), /Retained native render target is disabled/);
+  assert.deepEqual(serial(f.prior), before);
+  for (const actor of [f.puppet, f.resident]) actor.transparentTextures = { first: null, second: null };
+  const next = prepareSourceNativeMap(f.input);
+  assert.deepEqual(next.snapshot.actors.find((a) => a.id === f.player.id)!.transparentTextures, { first: null, second: null },
+    "the actual player's source Attach call can release its old references");
+});
+
+test("hidden persistent global RT references survive enabled to disabled to enabled maps without an invented Attach", () => {
+  const f = compositionFixture([]);
+  f.next.composition.renderHost = ordinaryFieldCompositionRenderHost();
+  const before = serial(f.prior), disabled = prepareSourceNativeMap(f.input);
+  const puppet = disabled.snapshot.actors.find((a) => a.id === f.puppet.id)!;
+  assert.equal(puppet.visible, false);
+  assert.equal(f.next.composition.upperTexture, null);
+  assert.deepEqual(puppet.transparentTextures, {
+    first: fieldCompositionTexture(f.next.view.contextId, "UpperLayer"),
+    second: fieldCompositionTexture(f.next.view.contextId, "CeilLayer"),
+  });
+  assert.deepEqual(disabled.snapshot.actors.find((a) => a.id === f.player.id)!.transparentTextures, { first: null, second: null });
+  const destination = compositionFixture(), priorBefore = serial(disabled);
+  const next = prepareSourceNativeMap({ ...destination.input, prior: disabled,
+    priorCheckpoint: f.entry.checkpoint, priorComposition: f.next.composition });
+  assert.deepEqual(next.snapshot.actors.find((a) => a.id === f.puppet.id)!.transparentTextures,
+    fieldCompositionActorTextures(destination.next.composition, f.puppet.layer));
+  assert.deepEqual(serial(f.prior), before); assert.deepEqual(serial(disabled), priorBefore);
+  const bad = structuredClone(f.next.composition); delete bad.renderHost;
+  assert.throws(() => prepareSourceNativeMap({ ...destination.input, prior: disabled,
+    priorCheckpoint: f.entry.checkpoint, priorComposition: bad }), /trusted global native render target/);
+});
+
+test("a retained disabled RT never bypasses the visible renderer contract", () => {
+  const f = compositionFixture([]); f.next.composition.renderHost = ordinaryFieldCompositionRenderHost();
+  f.resident.visible = true; f.resident.fadeAlpha = 1;
+  const before = serial(f.prior);
+  assert.throws(() => prepareSourceNativeMap(f.input), /Visible retained native texture slots/);
+  assert.deepEqual(serial(f.prior), before);
+});
+
+test("visible persistent actors with retained null slots keep a precise renderer gate instead of an invented Attach", () => {
+  const f = compositionFixture(); f.resident.visible = true; f.resident.fadeAlpha = 1;
+  f.resident.transparentTextures = { first: null, second: null };
+  const before = serial(f.prior);
+  assert.throws(() => prepareSourceNativeMap(f.input), /Visible retained native texture slots/);
+  assert.deepEqual(serial(f.prior), before);
 });

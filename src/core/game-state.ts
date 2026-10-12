@@ -1596,6 +1596,15 @@ export class GameState {
       const target = next.roster.find((p) => p.id === player.id)!;
       if (player.side !== "player" || player.sourceId !== target.sourceId)
         throw new Error("Battle roster identity changed");
+      const cell = next.party.slots[next.party.selectedSlot][party[participantIndex]!.index];
+      const entry = this.active.players[participantIndex];
+      if (!entry || entry.id !== player.id || entry.sourceId !== player.sourceId ||
+          cell.id !== player.id || cell.row !== entry.row ||
+          (player.row !== "front" && player.row !== "back"))
+        throw new Error("Battle party row identity changed");
+      // Function17 writes the owned Corps row. The Web battle keeps a leased
+      // candidate until the whole victory/field-return transaction can commit.
+      cell.row = player.row;
       if (target.growth) {
         const award = result.awardedExperience?.find((award) => award.id === player.id);
         if (!award) throw new Error("Missing source experience award");

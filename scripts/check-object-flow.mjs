@@ -81,6 +81,7 @@ function walkTo(x, y) {
 function finishAction() {
   for (let i = 0; i < 3000 && game.busy && !game.stop; i++) {
     if (game.dialogue) {
+      if (game.dialogue.manual) game.advance(10);
       messages.push({ key: game.dialogue.key, hash: hash(game.dialogue.text) });
       game.confirm();
     } else game.advance(10);

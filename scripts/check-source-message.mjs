@@ -35,7 +35,8 @@ for (const asset of corpus.assets.filter(a => a.kind === "script")) {
     let op;
     try { op = compileSourceMessageInstruction(raw, corpus.messages); }
     catch (error) { blocked.push({ ...site, mnemonic: raw.mnemonic, reason: error.message }); continue; }
-    assert.deepEqual(decodeFieldOp(raw, site, corpus.messages, corpus.tables), { ...site, ...op }, "shared field dispatch");
+    assert.deepEqual(decodeFieldOp(raw, site, corpus.messages, corpus.tables,
+      { nextMnemonic: asset.data.Mnemonics[index + 1]?.mnemonic ?? null }), { ...site, ...op }, "shared field dispatch");
     const owner = new SourceMessageState(), tx = owner.prepare(op);
     assert.equal(tx.flow, "next"); assert.equal(owner.active, false);
     assert.equal(tx.effects[0].invokeCallback, false);

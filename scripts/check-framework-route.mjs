@@ -3,14 +3,22 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { GameContentRepository } from "../dist/src/core/game-content.js";
-import { GameSession } from "../dist/src/core/game-session.js";
-import { GameFlow } from "../dist/src/core/game-flow.js";
-import { FieldFadeState } from "../dist/src/core/field-fade.js";
-import { NewGameFieldEntry } from "../dist/src/core/new-game-field-entry.js";
-import { createSourcePresentationContext } from "../dist/src/core/source-presentation.js";
+import { pathToFileURL } from "node:url";
 
 const root = resolve(import.meta.dirname, "..");
+const args = process.argv.slice(2), options = new Map();
+for (let i = 0; i < args.length; i += 2) {
+  assert.ok(["--dist", "--report"].includes(args[i]) && args[i + 1] &&
+    !args[i + 1].startsWith("--") && !options.has(args[i]), "Use --dist/--report <path>");
+  options.set(args[i], args[i + 1]);
+}
+const runtime = resolve(root, options.get("--dist") ?? "dist");
+const load = (name) => import(pathToFileURL(resolve(runtime, "src/core", name + ".js")));
+const [{ GameContentRepository }, { GameSession }, { GameFlow }, { FieldFadeState },
+  { NewGameFieldEntry }, { createSourcePresentationContext }] = await Promise.all([
+  load("game-content"), load("game-session"), load("game-flow"), load("field-fade"),
+  load("new-game-field-entry"), load("source-presentation"),
+]);
 const aliases = { "/game/content.json": "/game/narshe.json", "/game/battle.json": "/game/opening-playable.json",
   "/game/new-game.json": "/game/source-new-game.json" };
 const repo = new GameContentRepository(async (url) => {
@@ -46,7 +54,7 @@ const report = { kind: "framework-source-route-check-v1", result: "running", pro
   controlledInputs: ["headless title, field UI and immediately ready audio", "10ms host updates", "automatic dialogue confirm; first displayed choice"],
   omittedEnvironmentEffects: content.developmentProfile.omissions.length,
   originalGameExecuted: false, completeOpening: false, transitions, answers, motionSamples };
-const output = root + "/build/reports/framework-source-route-check.json";
+const output = resolve(root, options.get("--report") ?? "build/reports/framework-source-route-check.json");
 let elapsedMs = 0, boundary = null;
 try {
   for (; elapsedMs < 120000; elapsedMs += 10) {

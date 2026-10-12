@@ -200,7 +200,7 @@ export class BattleView {
       const conditionNames = p.conditionIds.map((id) => battle.conditions.name(id)).filter(Boolean);
       label(
         row.name,
-        p.name +
+        p.name + ` · ${p.row === "back" ? "后排" : "前排"}` +
           (conditionNames.length
             ? ` · ${conditionNames.join("、")}`
             : ""),
@@ -407,15 +407,18 @@ export class BattleView {
     const index = (
       combatant.side === "player" ? battle.players : battle.enemies
     ).indexOf(combatant);
+    // Development presentation only: row ownership and its combat effects
+    // remain in BattleGame. This offset is not a native animation measurement.
+    const rowOffset = combatant.side === "player" && combatant.row === "back" ? 20 : 0;
     if (battle.content.formation === "opposed") {
       if (combatant.side === "player")
-        return { x: 235 + index * 15, y: 108 + index * 40 };
+        return { x: 235 + index * 15 + rowOffset, y: 108 + index * 40 };
       return combatant.placement.group === 2
         ? { x: 408, y: 158 }
         : { x: 90 + index * 65, y: 148 + index * 25 };
     }
     return combatant.side === "player"
-      ? { x: 350 + index * 15, y: 108 + index * 40 }
+      ? { x: 350 + index * 15 + rowOffset, y: 108 + index * 40 }
       : { x: 125 + index * 88, y: 178 - index * 30 };
   }
   draw(battle) {
@@ -427,11 +430,12 @@ export class BattleView {
     );
     c.drawImage(background, 0, 0, 512, 288);
     const a = battle.action;
+    const rowAction = a && battle.actionDefinition(a).presentation === "row";
     for (const actor of [...battle.enemies, ...battle.players]) {
       const p = this.position(actor, battle);
       let x = p.x,
         y = p.y;
-      if (a?.actor === actor.id)
+      if (a?.actor === actor.id && !rowAction)
         x -= Math.sin(Math.min(1, a.elapsed / 900) * Math.PI) * 9;
       if (actor.hp === 0 && actor.side === "enemy") continue;
       c.save();
@@ -503,7 +507,7 @@ export class BattleView {
           battle.combatants.find((p) => p.id === id),
           battle,
         );
-        if (a.elapsed > 150 && a.elapsed < 500) {
+        if (a.elapsed > 150 && a.elapsed < 500 && !rowAction) {
           c.save();
           c.globalAlpha = Math.sin(((a.elapsed - 150) / 350) * Math.PI);
           c.strokeStyle =
@@ -532,7 +536,9 @@ export class BattleView {
             a.results.find((result) => result.target === id)?.effects ?? [];
           for (const [index, effect] of effects.entries()) {
             c.fillStyle = effect.recovery ? "#80ffa7" : "white";
-            const text = effect.missed
+            const text = effect.resource === "row"
+                ? effect.after === "back" ? "后排" : "前排"
+                : effect.missed
                 ? "MISS"
                 : effect.nullified
                   ? "无效"

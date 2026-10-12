@@ -5,7 +5,8 @@ import {
 } from "./ability.js";
 import { calculateRevivalEffects, revivalEffects } from "./battle-revival.js";
 import type { BattleConditions } from "./battle-conditions.js";
-import type { PhysicalRowContext } from "./battle-row.js";
+import type { BattleRow, PhysicalRowContext } from "./battle-row.js";
+import { changeBattleRow } from "./battle-row-change.js";
 
 /** Effects need numerical and condition state, not a battle renderer, command
  * queue or encounter definition. Owned characters can use menu items before a
@@ -18,6 +19,7 @@ export type ActionParticipant = Parameters<typeof calculateDevelopmentEffects>[2
     maxHp: number;
     maxMp: number;
     conditionIds: number[];
+    row?: BattleRow;
     conditionResistances?: Record<string, number>;
   };
 
@@ -53,6 +55,7 @@ export function projectActionTarget(
   conditions.validateActive(target.conditionIds);
   let conditionIds = [...target.conditionIds];
   let effects: AbilityEffectResult[];
+  let row: BattleRow | undefined;
   const first = plan.effects[0];
   if (revivalEffects(plan)) {
     ({ effects, conditionIds } = calculateRevivalEffects(
@@ -60,6 +63,13 @@ export function projectActionTarget(
       conditions,
       target,
     ));
+  } else if (plan.effects.length === 1 && first?.kind === "change-row") {
+    if (cost !== 0 || targetCount !== 1 || plan.targeting.relation !== "self" ||
+        plan.targeting.modes.length !== 1 || plan.targeting.modes[0] !== "single")
+      throw new Error("Invalid Change Row action context");
+    const result = changeBattleRow(first, actor, { ...target, row: target.row });
+    row = result.after;
+    effects = [result];
   } else if (plan.effects.length === 1 && first?.kind === "defend") {
     if (cost !== 0 || targetCount !== 1) throw new Error("Invalid Defend action context");
     const change = conditions.defend(target.conditionIds, first.conditionId, actor.id, target.id);
@@ -109,13 +119,14 @@ export function projectActionTarget(
       physicalRows,
     );
   }
-  const state = {
+  const state: { hp: number; mp: number; conditionIds: number[]; row?: BattleRow } = {
     hp: target.hp,
     mp: target.mp - (target.id === actor.id ? cost : 0),
     conditionIds,
+    ...(row ? { row } : {}),
   };
   for (const effect of effects) {
-    if (effect.missed || effect.resource === "condition" || effect.nullified)
+    if (effect.missed || effect.resource === "condition" || effect.resource === "row" || effect.nullified)
       continue;
     const resource = effect.resource;
     state[resource] = effect.recovery

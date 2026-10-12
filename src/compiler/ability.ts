@@ -17,6 +17,7 @@ import { compileContentFlags } from "./content-flags.js";
 import { compileTargetRule } from "./battle-targets.js";
 import { compileAttackElements } from "./elements.js";
 import { compileDefendEffect } from "./defend.js";
+import { compileChangeBattleRowEffect } from "./battle-row-change.js";
 import { hasProtectionBehavior } from "./protection.js";
 import { hasSpeedBehavior } from "./condition-speed.js";
 import { hasBlindBehavior } from "./condition-blind.js";
@@ -167,6 +168,12 @@ export function compileDevelopmentAbility(
       } catch (error) {
         blockers.push(error instanceof Error ? error.message : String(error));
       }
+    } else if (fn.type === 17) {
+      try {
+        effects.push(compileChangeBattleRowEffect(reader, program));
+      } catch (error) {
+        blockers.push(error instanceof Error ? error.message : String(error));
+      }
     } else if (fn.type === 2 && zero(fn.values)) {
       effects.push({ slot: fn.slot, kind: "physical" });
     } else if (fn.type === 3 && v1 === 1 && v2 === 0 && v3 === 0) {
@@ -289,6 +296,7 @@ export function compileDevelopmentAbility(
   const r = program.rules;
   const physicalOnly = effects.length === 1 && effects[0]!.kind === "physical";
   const defendOnly = effects.length === 1 && effects[0]!.kind === "defend";
+  const rowOnly = effects.length === 1 && effects[0]!.kind === "change-row";
   const conditionOnly =
     effects.length === 1 &&
     ["add-condition", "recover-condition", "defend"].includes(effects[0]!.kind);
@@ -348,9 +356,9 @@ export function compileDevelopmentAbility(
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (!defendOnly && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
+  if (!defendOnly && !rowOnly && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
-  if (!defendOnly && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
+  if (!defendOnly && !rowOnly && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
   if ((ordinaryMagic || loreMagic || protectionSpell || speedSpell) && int(a.ability_lv) !== 0)
     blockers.push("unresolved level-specific ability consumption");
@@ -458,6 +466,8 @@ export function compileDevelopmentAbility(
     attribute,
     presentation: !plan
       ? "unsupported"
+      : rowOnly
+        ? "row"
       : revival
         ? "heal"
         : conditionOnly

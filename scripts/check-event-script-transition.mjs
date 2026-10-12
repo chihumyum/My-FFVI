@@ -108,7 +108,10 @@ function run(f, state, answer) {
       assert.equal(typeof answer, "number", "unexpected choice in controlled journey");
       chosen.push({ script: field.choice.script ?? f.targetName, answer });
       assert.equal(field.choose(field.choice.id, answer), true);
-    } else if (field.dialogue) { shown.push(field.dialogue.key); field.confirm(); }
+    } else if (field.dialogue) {
+      if (field.dialogue.manual) field.advance(10);
+      shown.push(field.dialogue.key); field.confirm();
+    }
     else field.advance(10);
   }
   assert.ok(!field.busy || field.stop, "controlled source journey exceeded its clock budget");

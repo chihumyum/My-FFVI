@@ -14,6 +14,7 @@ import type { TargetRule } from "./battle-targets.js";
 import type { ElementResistances } from "./elements.js";
 import type { DefendEffect } from "./defend.js";
 import type { PhysicalRowContext } from "./battle-row.js";
+import type { ChangeBattleRowEffect, ChangeBattleRowResult } from "./battle-row-change.js";
 /** Decoded source dispatch, separate from the bounded playability executor. */
 export type AbilityFunction = {
   slot: number;
@@ -35,6 +36,7 @@ export type AbilityProgram = {
 };
 export type AbilityEffect =
   | DefendEffect
+  | ChangeBattleRowEffect
   | { slot: number; kind: "physical" | "magic" }
   | {
       slot: number;
@@ -73,6 +75,7 @@ export type NumericalEffectResult = {
 };
 export type AbilityEffectResult =
   | NumericalEffectResult
+  | ChangeBattleRowResult
   | {
       slot: number;
       resource: "condition";

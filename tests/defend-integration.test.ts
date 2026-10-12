@@ -109,8 +109,8 @@ test("action effects derive physical guard from condition identity and do not ha
       actor, { ...target, conditionIds: guarded ? [701] : [] }, conditions, (min) => min, 1, 0,
       { actor: "front", target: "front", ignoreActorPenalty: false, ignoreTargetPenalty: false });
     const effect = result.effects[0]!;
-    assert.notEqual(effect.resource, "condition");
-    return effect.resource === "condition" ? 0 : effect.amount;
+    assert.ok(effect.resource === "hp" || effect.resource === "mp");
+    return effect.amount;
   };
   assert.equal(damage(13, true), Math.trunc(damage(13, false) / 2));
   assert.equal(damage(10, true), damage(10, false));

@@ -547,7 +547,7 @@ export class BattleGame {
       !item ||
       item.important ||
       !item.uses.battle.plan ||
-      item.uses.battle.plan.effects.some((effect) => effect.kind === "physical") ||
+      item.uses.battle.plan.effects.some((effect) => effect.kind === "physical" || effect.kind === "change-row") ||
       !(this.usesSourceQualification
         ? this.commandMenu(actorId).some((c) => c.id === commandId && c.kind === "item" && c.available)
         : actor.commands.includes(commandId)) ||
@@ -740,6 +740,8 @@ export class BattleGame {
       try { this.physicalRows(actor, abilityId, actor); }
       catch { return false; }
     }
+    if (ability.plan.effects.some((effect) => effect.kind === "change-row") &&
+        (actor.side !== "player" || !["front", "back"].includes(actor.row))) return false;
     const command = this.actionCommand(actor, abilityId, commandId);
     if (command === undefined) return false;
     if (actor.side === "player" && this.usesSourceQualification &&
@@ -1401,7 +1403,9 @@ export class BattleGame {
         );
         const messages: string[] = [];
         for (const effect of effects) {
-          if (effect.missed) {
+          if (effect.resource === "row") {
+            messages.push(`${target.name} 移到${effect.after === "front" ? "前排" : "后排"}。`);
+          } else if (effect.missed) {
             messages.push(
               effect.resource === "condition"
                 ? `${target.name} 的状态未改变。`

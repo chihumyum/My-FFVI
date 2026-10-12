@@ -64,6 +64,8 @@ for (const asset of corpus.assets
         raw,
         { script: asset.id, index, source: asset.source },
         corpus.messages,
+        corpus.tables,
+        { nextMnemonic: asset.data.Mnemonics[index + 1]?.mnemonic ?? null },
       ),
     );
   } catch {
@@ -163,6 +165,7 @@ function run(candidate, input) {
   assert.equal(game.startEvent(asset.id), true);
   for (let n = 0; n < 6000 && game.busy && !game.stop; n++) {
     if (game.dialogue) {
+      if (game.dialogue.manual) game.advance(10);
       messages.push(game.dialogue.key);
       game.confirm();
     } else game.advance(10);

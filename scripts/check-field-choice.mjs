@@ -287,6 +287,7 @@ for (const journey of journeys) {
       step++
     ) {
       if (field.dialogue) {
+        if (field.dialogue.manual) field.advance(10);
         shown.push(field.dialogue.key);
         field.confirm();
       } else field.advance(10);
@@ -320,6 +321,7 @@ for (const journey of journeys) {
     );
     for (let step = 0; step < 1000 && field.busy && !field.stop; step++) {
       if (field.dialogue) {
+        if (field.dialogue.manual) field.advance(10);
         shown.push(field.dialogue.key);
         field.confirm();
       } else field.advance(10);

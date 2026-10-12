@@ -280,7 +280,8 @@ for (const mode of ["reward", "full", "empty", "script-handoff", "script-blocked
     const asset = candidates[0]; scriptSource = asset.source;
     scripts[entry.definition.scriptName] = asset.data.Mnemonics.map((m, index) => decodeFieldOp(m,
       { source: { ...asset.source, pointer: `/Mnemonics/${index}` }, script: entry.definition.scriptName, index },
-      { ...corpus.messages, system_zhc: systemMessages }, corpus.tables));
+      { ...corpus.messages, system_zhc: systemMessages }, corpus.tables,
+      { nextMnemonic: asset.data.Mnemonics[index + 1]?.mnemonic ?? null }));
     assert.deepEqual(scripts[entry.definition.scriptName].slice(0, 3).map((op) => op.kind),
       ["nop", "treasure-box", mode === "script-blocked" ? "blocked" : "flag"]);
   }

@@ -9,6 +9,8 @@ const outDir = process.argv.includes("--dist") ? process.argv[process.argv.index
 const module = (path) => import(pathToFileURL(resolve(root, outDir, path + ".js")));
 const { BattleGame } = await module("src/core/battle");
 const { battleEntryRuntimeFixture } = await module("tests/fixtures/battle-entry-runtime");
+const { rowChangeFixture } = await module("tests/fixtures/battle-row-change");
+const { ControlledBattleGame } = await module("tests/fixtures/controlled-battle");
 class Element {
   constructor(tag) {
     this.tag = tag; this.children = []; this.parentElement = null;
@@ -97,6 +99,35 @@ assert.equal(allButtons()[0].textContent, "Synthetic command");
 assert.equal(allButtons()[0].disabled, true);
 assert.equal(menu.children.some((n) => n.tag === "small"), false);
 checked.push("explicit development mode retains legacy menu without a permanent development notice");
+// A control-command effect must travel through the same UI queue without
+// mutating the row on selection or rendering a made-up damage number.
+const rowContent = rowChangeFixture();
+rowContent.background = "background";
+rowContent.sprites.background = { file: "synthetic-background.png", width: 512, height: 288 };
+rowContent.sprites.synthetic = { file: "synthetic-actor.png", width: 24, height: 32 };
+const rowBattle = new ControlledBattleGame(rowContent, 43);
+rowBattle.enemies.forEach((enemy) => { enemy.atb = -1000; });
+const paintedText = [], ctx = new Proxy({
+  fillText(text) { paintedText.push(text); },
+}, { get(target, key) { return target[key] ?? (() => {}); } });
+const rowCanvas = new Element("canvas"); rowCanvas.getContext = () => ctx;
+const rowView = new BattleView(rowCanvas, rowContent,
+  new Map(Object.values(rowContent.sprites).map((sprite) => [sprite.file, { file: sprite.file }])), () => {}, () => {});
+rowView.sync(rowBattle, false);
+const rowActor = rowBattle.players[0], frontPosition = rowView.position(rowActor, rowBattle);
+button("换列").click();
+assert.equal(rowView.menuState, "ability-target");
+assert.deepEqual(allButtons().map((entry) => entry.textContent), [rowActor.name, "返回"]);
+button(rowActor.name).click();
+assert.equal(rowActor.row, "front", "Selection reserves the command but does not apply its effect");
+assert.equal(rowBattle.pendingActions.length, 1);
+for (let n = 0; n < 1000 && rowActor.row === "front"; n++) rowBattle.advance(10);
+assert.equal(rowActor.row, "back");
+rowView.sync(rowBattle, false); rowView.draw(rowBattle);
+assert.match(rowView.rows.get(rowActor.id).name.textContent, /后排/);
+assert.ok(rowView.position(rowActor, rowBattle).x > frontPosition.x);
+assert.deepEqual(paintedText, ["后排"], "Row effect is distinct from HP/MP damage");
+checked.push("row command uses only self, changes on effect commit, and renders the current row without fake damage");
 const report = { lane: "controlled-dom-real-battle-owned-qualification", scenarios: checked.length, checked,
   browserRendering: false, originalGameExecution: false };
 await mkdir(root + "build/reports", { recursive: true });

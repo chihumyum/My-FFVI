@@ -259,6 +259,7 @@ const entryDependencies = prelude.map((asset) => {
       },
       messages,
       corpus.tables,
+      { nextMnemonic: asset.data.Mnemonics[index + 1]?.mnemonic ?? null },
     ),
   );
   return {
@@ -346,6 +347,7 @@ fixture.scripts.probe = first.data.Mnemonics.map((m, index) =>
     },
     messages,
     corpus.tables,
+    { nextMnemonic: first.data.Mnemonics[index + 1]?.mnemonic ?? null },
   ),
 );
 fixture.contentHash = hash({ controlled: true, script: fixture.scripts.probe });

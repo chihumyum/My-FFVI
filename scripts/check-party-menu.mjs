@@ -92,6 +92,7 @@ globalThis.document = {
 const player = (id, name) => ({
   id,
   name,
+  row: "front",
   hp: 100,
   maxHp: 100,
   atb: 100,
@@ -212,7 +213,7 @@ assert.deepEqual(
   ["d"],
   "participant need not occur in constructor content.players",
 );
-assert.equal(view.rows.get("d").name.textContent, "D");
+assert.equal(view.rows.get("d").name.textContent, "D · 前排");
 assert.equal(view.selected, "d");
 assert.equal(view.actionSource, null);
 assert.equal(view.commandId, null);

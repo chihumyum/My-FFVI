@@ -240,6 +240,21 @@ li {
   font-size: 16px;
   color: #d8cd9e;
 }
+#dialogue[data-window="none"] {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  text-shadow: 0 2px 3px #000;
+}
+#dialogue[data-anchor="top"] {
+  top: 4%;
+  bottom: auto;
+}
+#dialogue[data-anchor="middle"] {
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
+}
 #dialogue p {
   font-size: 18px;
   line-height: 1.6;

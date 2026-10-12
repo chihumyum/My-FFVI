@@ -5,9 +5,11 @@ import { fieldCameraCellToWorld, fieldCameraLayerFromLogical } from "./field-cam
 import type { FieldActorFactoryCandidate } from "./field-actor-factory.js";
 import { projectFieldActorView, validateFieldActorView, type FieldActorViewDefinition } from "./field-actor-view.js";
 import { replaceNativeFieldActorAnimation, type FieldNativeAnimationKeys } from "./field-native-appearance.js";
+import { assertFieldCompositionRenderTargets, fieldCompositionTexture, validateFieldNativeComposition,
+  type FieldNativeCompositionDefinition } from "./field-native-composition.js";
 import type { FieldPartyActorCheckpoint } from "./field-party-actors.js";
 import { fieldPuppetSemiTransparent, fieldPuppetBoundTransparentTextures, projectFieldPuppetActorEffects,
-  type FieldPuppetHostProviders } from "./field-puppet-effects.js";
+  type FieldPuppetHostActor, type FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import type { MapPartyEntryDefinition, MapPartyEntryPlan } from "./map-party-entry.js";
 import { partyActorLeaderOnMapChange, partyActorMapArea, preparePartyActors, type PartyActorCatalog, type PartyActorInstance } from "./party-actors.js";
 import type { PartyAppearanceCandidate } from "./party.js";
@@ -25,12 +27,64 @@ export type SourceNativeMapInput = {
   party: PartyAppearanceCandidate;
   characters: Readonly<Record<string, Character>>;
   animationKeys: FieldNativeAnimationKeys;
+  /** Trusted departed map content, required whenever a retained actor has RT
+   * references. Actor tokens alone cannot authorize their source identity. */
+  priorComposition?: FieldNativeCompositionDefinition;
   view: FieldActorViewDefinition;
   providers: FieldPuppetHostProviders;
 };
 
 function same(actual: unknown, expected: unknown, message: string): void {
   if (canonical(actual) !== canonical(expected)) throw new Error(message);
+}
+
+function validatePriorTextures(actor: FieldPuppetHostActor, prior: FieldNativeCompositionDefinition | undefined): void {
+  if (actor.transparentTextures.first === null && actor.transparentTextures.second === null) return;
+  if (!prior) throw new Error("Missing trusted departed native composition for retained textures");
+  const slots = actor.layer === 9 ? ["UpperLayer", "CeilLayer"] as const
+    : actor.layer === 10 ? ["CeilLayer", null] as const : [null, null] as const;
+  for (const [index, token] of [actor.transparentTextures.first, actor.transparentTextures.second].entries()) {
+    if (token === null) continue;
+    const layer = slots[index];
+    if (!layer || token !== fieldCompositionTexture(prior.contextId, layer))
+      throw new Error("Unbound departed native texture slots");
+    if (!prior.layers.includes(layer) && !prior.renderHost)
+      throw new Error("Missing trusted global native render target for retained disabled slot");
+  }
+  if (!actor.viewBinding || actor.viewBinding.map !== prior.contextId || actor.viewBinding.layer !== actor.layer)
+    throw new Error("Retained native textures disagree with departed material identity");
+  same(actor.viewBinding.properties, projectFieldActorView(prior.view, actor.layer), "Retained native textures disagree with departed material properties");
+}
+
+/** MapSetup keeps CommonCamera's global RT objects. A persistent actor outside
+ * FieldController.entityList is not reattached by ChangeViewNormal. Preserve
+ * each existing reference (including null); only rebind the Web content token
+ * for the same global target. A disabled target remains a reference to the
+ * global object, whose cleared contents are proved by MapSetup. The current
+ * renderer/codec may still reject that reference when shown or saved. */
+function retainTextures(actor: FieldPuppetHostActor, prior: FieldNativeCompositionDefinition | undefined,
+  providers: FieldPuppetHostProviders): FieldPuppetHostActor["transparentTextures"] {
+  const destination = fieldPuppetBoundTransparentTextures(actor.layer, providers);
+  const relocate = (token: string | null): string | null => {
+    if (token === null) return null;
+    const slot = prior && token === fieldCompositionTexture(prior.contextId, "UpperLayer") ? "UpperLayer"
+      : prior && token === fieldCompositionTexture(prior.contextId, "CeilLayer") ? "CeilLayer" : undefined;
+    const next = slot === "UpperLayer" ? providers.upperTexture : slot === "CeilLayer" ? providers.ceilTexture : undefined;
+    if (next === null) {
+      if (!providers.composition?.renderHost || !slot)
+        throw new Error("Retained native render target is disabled without a trusted global target host");
+      // CommonCamera's objects survive layer disablement. Do not erase the
+      // reference or carry the departed map's content token into the new map.
+      return fieldCompositionTexture(providers.mapRenderContext, slot);
+    }
+    if (next === undefined || next === "unknown") throw new Error("Unbound retained native render target");
+    return next;
+  };
+  const value = { first: relocate(actor.transparentTextures.first), second: relocate(actor.transparentTextures.second) };
+  // MapSetup has already hidden party puppets. Unplaced/hidden residents keep
+  // null slots; destination layer presence alone does not perform Attach.
+  if (actor.visible) same(value, destination, "Visible retained native texture slots require an unsupported destination renderer binding");
+  return value;
 }
 
 /** Ordinary, positive PointIn handoff of the existing native actor instances.
@@ -54,6 +108,14 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
     "Destination native map range/material size mismatch");
   if (providers.mapRenderContext !== view.contextId || !providers.applyViewProperties)
     throw new Error("Missing destination native map material provider");
+  if (providers.composition !== undefined) {
+    validateFieldNativeComposition(providers.composition, view);
+    assertFieldCompositionRenderTargets(providers.composition);
+  }
+  if (input.priorComposition !== undefined) {
+    validateFieldNativeComposition(input.priorComposition);
+    assertFieldCompositionRenderTargets(input.priorComposition);
+  }
   const before = priorCheckpoint.context, after = entry.checkpoint.context;
   if (before.companion !== null || after.companion !== null ||
       !Array.isArray(before.conditionResidents) || !Array.isArray(after.conditionResidents) ||
@@ -124,8 +186,8 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
         [actor.position.x, actor.position.y, actor.position.z].some((n) => !Number.isFinite(Math.fround(n)) || Math.fround(n) !== n))
       throw new Error("Native map transform must retain finite float32 values");
     checkpointInteger(actor.layer, 0, 31);
-    if (!actor.bodyOpaque || actor.transparentTextures.first !== null || actor.transparentTextures.second !== null)
-      throw new Error("Native map transparent body/compositor lifecycle is unresolved");
+    if (!actor.bodyOpaque) throw new Error("Native map transparent body lifecycle is unresolved");
+    validatePriorTextures(actor, input.priorComposition);
     if (row.fieldAssetId === null) {
       if (actor.animation !== null) throw new Error("Unbound native map actor playback");
     } else {
@@ -185,6 +247,7 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
   player.transparentTextures = fieldPuppetBoundTransparentTextures(player.layer, providers);
   for (const actor of snapshot.actors) {
     if (entry.hiddenActorIds.includes(actor.id)) { actor.visible = false; actor.fadeAlpha = 0; }
+    if (actor.id !== bindings.player) actor.transparentTextures = retainTextures(actor, input.priorComposition, providers);
     const properties = projectFieldActorView(view, actor.layer);
     same(providers.applyViewProperties(actor.layer), properties, "Destination native map material provider disagrees with source");
     // Native ApplyCustomProperties returns outside layers 9..12. Keep the old

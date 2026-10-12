@@ -269,6 +269,8 @@ function sync() {
     text("speaker", game.messageWindow.speaker);
     text("message", game.messageWindow.text);
     $("message").style.textAlign = game.messageWindow.alignment ?? "left";
+    $("dialogue").dataset.window = game.messageWindow.manual?.window ?? "frame";
+    $("dialogue").dataset.anchor = game.messageWindow.manual?.anchor ?? "bottom";
   }
   $("stop").hidden = !game.stop;
   if (game.stop) {

@@ -105,7 +105,8 @@ function fixture(
     characters: {},
     scripts: {
       conversation: instructions.map((m, index) =>
-        decodeFieldOp(m, { script: "conversation", index, source }, messages),
+        decodeFieldOp(m, { script: "conversation", index, source }, messages, {},
+          { nextMnemonic: (instructions[index + 1] as { mnemonic?: string } | undefined)?.mnemonic ?? null }),
       ),
     },
     scriptLocals: { conversation: { labels: ["visit"], values: [7] } },
@@ -135,7 +136,7 @@ const raw = (
   type: 1,
   operands: {
     iValues: [...iValues, ...Array(8 - iValues.length).fill(0)],
-    rValues,
+    rValues: [...rValues, ...Array(8 - rValues.length).fill(0)],
     sValues: [...sValues, ...Array(8 - sValues.length).fill("")],
   },
 });
@@ -279,6 +280,9 @@ test("script interaction runs the shared VM and player root, initializes locals 
     game.eventState.read({ category: "ScriptLocalVariable", index: 0 }),
     7,
   );
+  game.confirm();
+  assert.ok(game.dialogue, "the interaction input cannot also consume its first message");
+  game.advance(10);
   game.confirm();
   game.advance(90);
   assert.equal(game.busy, true);

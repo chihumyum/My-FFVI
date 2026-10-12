@@ -33,6 +33,10 @@ const batches = {
   "actor-dispatch": ["aeb570"],
   "v30-field-render-factory": ["aeb200", "7b8aa0"],
   "v30-field-material-defaults": ["7bb4d0"],
+  "v34-native-field-render-targets": ["2d5880"],
+  "v19-transport-prelude": ["2d5f90"],
+  "v33-native-map-hosts": ["2d17a0", "87a280"],
+  "v29-puppet-opaque": ["878af0"],
 };
 const methods = [], code = new Map();
 for (const [batch, entries] of Object.entries(batches)) {
@@ -127,6 +131,21 @@ assert.match(code.get("e0dfd0"), /cacheActiveEnable = 0/);
 assert.match(code.get("879870"), /FieldEntity__Init[\s\S]*_41_LookAt.methodPtr/);
 assert.match(code.get("e194c0"), /FieldCharaEntity__Init[\s\S]*CharaZOffset_k__BackingField = 0.5/);
 assert.match(code.get("2e3d30"), /residentCharaEntityList/);
+assert.match(code.get("2e3d30"), /GetTransparentRTCamera[\s\S]*set_enabled[\s\S]*GetTransparentRTCamera[\s\S]*get_targetTexture[\s\S]*ClearRenderTexture[\s\S]*set_enabled/);
+assert.doesNotMatch(code.get("2e3d30"), /set_targetTexture|RenderTexture___ctor|RenderTexture__Release/);
+assert.match(code.get("2ed030"), /entityList[\s\S]*System_Collections_Generic_List[^\n]*__Add/);
+assert.match(code.get("2d5f90"), /ChangeViewNormal/);
+assert.match(code.get("2d5880"), /GetTransparentRTCamera[\s\S]*get_enabled[\s\S]*get_targetTexture[\s\S]*entityList[\s\S]*FieldCharaEntity__AttachTransparentTexture/);
+assert.match(code.get("878af0"), /layer == 9[\s\S]*upperTexture[\s\S]*layer == 10[\s\S]*ceilTexture/);
+assert.match(code.get("87a280"), /UnapplyCustomTextures/);
+assert.doesNotMatch(code.get("87a280"), /AttachTransparentTexture/);
+// Registration restores five water-specific texture defaults, not either
+// ordinary head pre-render slot. Bind the dictionary keys to source strings.
+for (const [address, value] of [[0x1fc7770, "_NoiseTex"], [0x1fc7618, "_NormalLargeTex"],
+  [0x1fc7588, "_CondensingPatternTex"], [0x1fc76c0, "_NormalSmallTex"], [0x1fc7838, "_WaterTex"]]) {
+  assert.ok(symbols.ScriptString.some((row) => row.Address === address && row.Value === value));
+  assert.match(code.get("7bb4d0"), new RegExp("__Add[^\\n]*\\n\\s*\\(__this,_DAT_18" + address.toString(16)));
+}
 assert.match(code.get("2e3d30"), /residentPartyEntityList[\s\S]*vtable\[0x17\].methodPtr/);
 assert.match(code.get("2e3d30"), /SetupBodyBorder[\s\S]*PartyEntityActiveSet[\s\S]*ChangeCameraTarget/);
 assert.match(code.get("2f3340"), /_16_Registered.methodPtr[\s\S]*ApplyCustomPropertiesToCharacterEntity[\s\S]*_12_LateUpdateEntity.methodPtr/);
@@ -165,9 +184,13 @@ const report = { kind: "source-native-map-native", ...identity, dumpSha256: sha(
     "ClearSprite clears the sprite dictionary rather than selectedKey/time/isPlay; GetOn Default mode1 automatic playback remains an explicit candidate blocker",
     "CameraFollowing.ClearSetup clears callbacks and target, not dummy transform; MapSetup later selects the actual player",
     "Resident off-map reset is directly called by GotoLoadSaveData, not substituted into ordinary MapSetup",
+    "MapSetup enables or clears/disables the existing CommonCamera RTs; it does not allocate new target objects",
+    "ChangeViewNormal attaches RTs only to FieldController.entityList; the actual player belongs to that list while separately registered resident/party actors keep their existing references",
+    "Registered resets water-specific texture defaults, not ordinary upper/ceil head slots; old non-null ordinary references require trusted prior composition identity",
     "Ordinary body threshold with no override is 0.25, identical to the native factory default"],
   limits: ["Direct call scanning does not enumerate arbitrary indirect calls", "Native material splitting and render-texture pixel parity remain independent",
-    "Mounted, companion, pending motion and map-local autonomous actor lifecycle are not admitted by this candidate"] };
+    "Mounted, companion, pending motion and map-local autonomous actor lifecycle are not admitted by this candidate",
+    "Hidden persistent actors may retain disabled global RT references only with the trusted source global target host; visible presentation and stable checkpoint encoding remain separate capabilities"] };
 await writeFile(output, JSON.stringify(report, null, 2) + "\n");
 console.log(JSON.stringify({ result: "pass", methods: methods.length, rawRanges: raw.length,
   originalGameExecuted: false, semanticsVerified: false }));

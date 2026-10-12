@@ -4,7 +4,7 @@ import { readSnapshot, snapshotFile } from "./integrity.js";
 import { hash, record } from "./content.js";
 import { ImportedProject } from "../contracts.js";
 import { compileEntityGroup } from "./entity-group.js";
-import { compileMessage } from "./message.js";
+import { compileManualMessageInstruction } from "./message.js";
 import { compileSourceMessageInstruction } from "./source-message.js";
 import { compileFieldChoiceInstruction, type FieldChoiceCompileContext } from "./field-choice.js";
 import { compileEventContextBranchInstruction, eventContextBranchMnemonics } from "./event-context-branch.js";
@@ -134,7 +134,11 @@ export function decodeFieldOp(
   }
   const o = record(m.operands), i = list(o.iValues).map(integer),
     r = list(o.rValues).map(Number), s = list(o.sValues).map(string);
-  if (name === "MsgClose" || (name === "Msg" && (i[0] !== 0 || r[0] !== 0))) {
+  if (name === "Msg" && [0, 3].includes(i[0]!) && r[0] === 0) {
+    try { return { ...site, ...compileManualMessageInstruction(raw, messages, context) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "MsgClose" || name === "Msg") {
     try { return { ...site, ...compileSourceMessageInstruction(raw, messages) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
@@ -398,13 +402,6 @@ export function decodeFieldOp(
   }
   if (name === "LookAt" && form([0]) && directions[i[0]!])
     return { ...site, kind: "look", direction: directions[i[0]!]! };
-  if (name === "Msg" && form([1], [], [0]) && [0, 2].includes(i[1]!)) {
-    try {
-      return { ...site, kind: "message", ...compileMessage(s[0]!, messages) };
-    } catch (error) {
-      return blocked(error instanceof Error ? error.message : String(error));
-    }
-  }
   if (name === "Encount" && form([0], [], [0]))
     return { ...site, kind: "encounter", party: i[0]!, continuation: s[0]! };
   if (name === "RideVehicleNPC" && form([0, 1]) && i[0] === 6 && i[1] === -1001)

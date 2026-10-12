@@ -137,6 +137,7 @@ for (const [mapId, indexed] of Object.entries(catalog.maps)) {
         let elapsed = 0;
         while (game.busy && !game.stop && elapsed < 60000) {
           if (game.dialogue) {
+            if (game.dialogue.manual) { game.advance(10); elapsed += 10; }
             messages.push({
               key: game.dialogue.key,
               hash: hash(game.dialogue.text),

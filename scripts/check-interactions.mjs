@@ -123,6 +123,7 @@ for (const { entity, group, map, mapIds } of records.values()) {
   const messages = [];
   for (let frame = 0; frame < 3000 && game.busy && !game.stop; frame++) {
     if (game.dialogue) {
+      if (game.dialogue.manual) game.advance(10);
       messages.push({ key: game.dialogue.key, hash: hash(game.dialogue.text) });
       game.confirm();
     } else game.advance(10);
@@ -215,6 +216,7 @@ for (const run of worldCheck.runs.filter((r) => r.result === "idle")) {
     const messages = [];
     for (let frame = 0; frame < 3000 && game.busy && !game.stop; frame++) {
       if (game.dialogue) {
+        if (game.dialogue.manual) game.advance(10);
         messages.push({
           key: game.dialogue.key,
           hash: hash(game.dialogue.text),

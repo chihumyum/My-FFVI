@@ -178,7 +178,7 @@ export type AbilityDefinition = {
   blockers: string[];
   limitations: string[];
   /** Presentation only. Logic dispatches the complete admitted effect plan. */
-  presentation: "beam" | "heal" | "physical" | "condition" | "unsupported";
+  presentation: "beam" | "heal" | "physical" | "condition" | "row" | "unsupported";
   power: number;
   cost: number;
   wait: number;

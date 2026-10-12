@@ -17,6 +17,8 @@
 | `FieldEntity.Init` `0xe0dfd0`、`FieldCharaEntity.Init` `0x879870`、`FieldPlayer.Init` `0xe194c0`、`LookAt` `0xaeb570` | 初始化玩家起止位置、移动缓存、层和朝向；`changeAnimDefault=true` 不是强制停止，同 key 正在播放时继续。玩家 `CharaZOffset=0.5`。 |
 | `MapViewSetup` `0x2e6fe0`、`ChangeTransportation` `0x2d3e80`、`SetupCharaAsset` `0x991bc0` | PointIn 之后，普通 walking 分支再次对缓存的玩家资产执行 SetAssetStructure，再 RideOut。不能把这次替换与前面的基础/条件替换合并。 |
 | `MapSetup` 注册回调 `0x2f3340` | 对注册演员执行 `Registered → ApplyCustomPropertiesToCharacterEntity → LateUpdateEntity`，重新绑定目的图材质输入。 |
+| `MapSetup` `0x2e3d30`、`ChangeViewNormal` `0x2d5880`、`AttachTransparentTexture` `0x878af0` | 按 Upper/Ceil 层存在性启用或清空并停用 CommonCamera 的既有 RT，不新建目标对象。ChangeViewNormal 只向 `FieldController.entityList` 内的角色重新 Attach；实际玩家在这个集合中，另行注册的持续居民和队伍演员不因此自动获得新绑定。 |
+| `FieldChara.Registered` `0x87a280`、`WaterLayer.UnapplyCustomTextures` `0x7bb390`、`WaterLayer..cctor` `0x7bb4d0` | Registered 恢复 Noise、NormalSmall、NormalLarge、CondensingPattern、Water 五个水面纹理默认值；不清除普通头部的 Upper/Ceil 引用。 |
 | `SetupBodyBorder` `0x2ef7d0`、FF6 `BorderBodyHead` `0x407660`、`DefaultBorderBodyHead` `0x4076c0`、`SetHorizontalBorderLine` `0x87a840` | 无 `body_threshold` 覆写时使用 `8 × 0.03125 = 0.25`，与 factory 默认值相同。现有普通 `actorView` 编译器拒绝这类覆写，不能借此准入自定义身体/头部分界。 |
 | `CameraFollowing.ClearSetup` `0x387050` | 清移动回调和目标引用，不重置 dummy transform。随后来源 `ChangeCameraTarget(null)` 选择实际玩家。 |
 
@@ -36,6 +38,7 @@ prepareSourceNativeMap({
   definition,        // 目的图来源 PointIn/范围
   catalog, party,    // 同一 owned 候选提供有序基础/条件外观选择
   characters, animationKeys, // 完整来源 key 索引包含尚未可执行的 key
+  priorComposition,  // 可选的可信旧图合成定义；旧演员有 RT 引用时必需
   view, providers,   // 明确的目的图来源材质与 raw foot 提供器
 }): FieldActorFactoryCandidate
 ```
@@ -47,6 +50,14 @@ prepareSourceNativeMap({
 PointIn 使用资产包绝对格坐标；候选先减 `mapRange.x/y`，再用 `fieldCameraCellToWorld` 转到源世界像素。测试使用非零范围原点，验证 native projection 回到同一绝对格坐标，防止新地图尺寸和裁剪范围导致漂移。
 
 4 个 puppet 和 3 个其他队伍演员隐藏但不移回 factory 坐标、不替换媒体、不重置播放。居民保留世界坐标、层、朝向、可见性、alpha 与播放状态。所有处于源 Unity layer 9..12 的演员重新接受目的图普通材质；其他层遵循来源不写入分支，保留旧绑定。新图对象坐标与持续演员坐标不能混为同一初始化流程。
+
+### 普通 RT 的跨图生命周期（v43）
+
+旧版候选把任何非空 `transparentTextures` 与未知身体透明合并拒绝。这会挡住已具备普通合成提供器的后续切图。v43 将二者分开：身体透明仍拒绝；已有 Upper/Ceil 引用由可信旧图内容校验，按同一 CommonCamera 全局目标迁移到目的图内容身份。
+
+实际玩家在 PointIn 后按来源重新 Attach，旧引用可以释放或换槽。其他持续演员保留各自的引用，包括 null；不能因为目的图有 Upper/Ceil 层就给隐藏演员补齐空绑定。原非空引用只改变 Web 的地图内容 token，不改变所指全局 Upper/Ceil 槽。MapSetup 关闭目标时，原生是清空目标并停用相机，不是销毁对象；因此可信 `composition.renderHost` 存在时，隐藏演员继续持有目的 context 下同槽的 `fieldCompositionTexture` 句柄。后续地图重新启用该目标时，引用可继续迁移，不需要逐地图特例。
+
+禁用状态的引用仍不是 null，也不是可见渲染授权。可见演员的引用不符合当前普通 renderer 支持时，候选保留明确门禁。隐藏引用可跨图保留，稳定 checkpoint codec 则按其独立合同检查；不能把保存失败掩盖成一次虚构的 Attach。旧合成缺失、槽与来源 layer 不符、旧材质身份不符或缺少全局目标提供器，均在私有候选阶段拒绝。
 
 调用方按如下顺序发布：
 
@@ -65,20 +76,24 @@ PointIn 使用资产包绝对格坐标；候选先减 `mapRange.x/y`，再用 `f
 - 新/缺/重复演员身份、旧外观簿记与实际 metadata 不符、缺媒体、隐藏演员的损坏播放。
 - 缺少完整来源动画 key 索引或替换中选中了尚未编译的 key；`FieldPlayer.GetOn` `0xe19090` 读取 Default playmode 为 1 时的自动播放分支也独立拒绝，不当成普通静止步行资产。
 - 自定义水面/调色板/着色器、身体透明与缺失的材质提供器。
-- 上层/顶层 render-texture 合成、地图本地 NPC/自主控制器和 companion 生命周期。
-- native 演员稳定存档/读档；普通跨图候选不是这些能力的替代品。
+- 缺少已验证的上层/顶层合成提供器，或缺少禁用 RT 引用所需的全局目标身份；可见演员的特殊保留引用也不能借隐藏路径放行。
+- 地图本地 NPC/自主控制器和 companion 的未知生命周期；本模块只接手持续演员，地图本地实例由目的图实体组宿主管理。
+- 超出独立 native checkpoint codec 范围的稳定存档，例如隐藏演员保留的禁用目标引用；普通跨图候选不是存档授权。
 
-raw 足下属性由独立 `FieldNativeFootDefinition` 证明。`BeastFieldEncount` 的 `default-monster-set` 不足以证明可视足下为 0。当前纳尔谢 map3 的源包没有 attribute 网格，新的独立提供器可证明该分支为 0；但 UpperLayer/CeilLayer 有非零 tile，正式 Canvas 提供器仍应拒绝未实现的合成。纯候选回归显式传入空 RT 仅用于验证状态机制，不能宣称正式 map3 已发布或完整开场已可玩。
+raw 足下属性由独立 `FieldNativeFootDefinition` 证明。`BeastFieldEncount` 的 `default-monster-set` 不足以证明可视足下为 0。当前纳尔谢 map3 的源包没有 attribute 网格，该独立提供器可证明对应分支为 0；其非空 UpperLayer/CeilLayer 已有 source-rendered 合同。保留的空 RT 纯机制样例不作为生产准入证据；v43 另用实际发布的 map3/map178 合成定义和足下提供器验证连续候选，不能据此宣称原版像素一致或完整开场可玩。
 
 ## 检查
 
 ```sh
-node_modules/.bin/tsc --outDir build/v32-native-map-dist --pretty false
-node --test build/v32-native-map-dist/tests/source-native-map.test.js
+node_modules/.bin/tsc --outDir build/v43-native-map-dist --pretty false
+node --test build/v43-native-map-dist/tests/source-native-map.test.js
 node scripts/check-source-native-map-native.mjs
-node scripts/check-source-native-map.mjs --compiled-dir build/v32-native-map-dist
+node scripts/check-source-native-map.mjs --compiled-dir build/v43-native-map-dist
+node scripts/check-framework-route.mjs --dist build/v43-native-map-dist --report build/reports/v43-field-route.json
 ```
 
-16 项 TypeScript 测试覆盖状态保留、PointIn 初始化、有序媒体替换、同向继续/转向停止、中间回退、条件外观、非零地图原点、独立候选以及身份/媒体/交通/移动/材质失败。原生检查重新读取原 DLL，验证 26 个导出方法、12 个 raw 范围和来源三哈希，输出 `build/reports/source-native-map-native-check.json`；不复制旧报告作为本轮验证。
+24 项 TypeScript 测试覆盖状态保留、PointIn 初始化、有序媒体替换、同向继续/转向停止、中间回退、条件外观、非零地图原点、独立候选，以及 RT 引用启用→禁用→再启用、隐藏空槽保留和失败无发布。原生检查重新读取原 DLL，验证 31 个已有导出方法、12 个 raw 范围和来源三哈希，输出 `build/reports/source-native-map-native-check.json`；本批没有新原生导出，不复制旧报告作为验证。
 
-来源检查从真实包重新编译 MapPartyEntry、普通 actorView、nativeFoot 和完整动画 key 索引，并重新核 sprite bytes。9 个受控来源检查涵盖 55 个持续演员、47 个居民、7 个隐藏队伍演员及真实媒体的同方向播放保留，另明确验证生产渲染门禁及缺/错图 foot 拒绝，输出 `build/reports/source-native-map-check.json`。最后一条命令要求目的世界包已包含本批 `nativeFoot`；不能把旧版缺提供器产生的失败当作最终的地图合成门禁。来源、受控状态机制、浏览器、原版动态与正式故事可达性分别记录。
+来源检查从真实包重新编译 MapPartyEntry、普通 actorView、nativeFoot 和完整动画 key 索引，并重新核 1,109 个 sprite 文件。13 个受控来源检查涵盖 55 个持续演员、47 个居民、7 个隐藏队伍演员，以及真实 map3→178 的 RT 连续候选、旧来源身份拒绝、未知身体透明和缺/错图 foot 拒绝，输出 `build/reports/source-native-map-check.json`。来源检查本身不发布地图或执行完整剧情。
+
+独立框架路线检查使用真实脚本和上述运行时，在受控标题、UI、音频准备及 10ms 更新下完成 `609 → 3 → 178 → 609` 三次地图发布，44,590ms 停在 `sc_e_0001_3[4] SetVehicle` 未迁移指令。结果保存在 `build/reports/v43-field-route.json`，仍为 framework-development 表现范围，`completeOpening=false`、`originalGameExecuted=false`；没有由此扩大原版动态或像素一致性结论。v32 的 16 项测试、26 个方法与对应动画修复日志保留为历史证据，当前数字以本节命令新生成的报告为准。

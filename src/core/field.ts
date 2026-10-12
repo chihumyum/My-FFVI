@@ -3,6 +3,7 @@ import type {
   FieldContent,
   FieldEntity,
   FieldMessage,
+  FieldManualMessage,
   Op,
   Point,
   Site,
@@ -213,7 +214,8 @@ export type Stop =
       party?: number;
       continuation?: string;
     };
-export type Dialogue = FieldMessage & { task: number };
+export type Dialogue = FieldMessage & { task: number;
+  manual?: FieldManualMessage & { page: number; availableAt: number; site: Site } };
 export type FieldEncounterReturnState = {
   puppetRoster: FieldPuppetRosterRead;
   partyAppearance: PartyAppearanceCandidate | null;
@@ -1520,6 +1522,31 @@ export class FieldGame {
     // own interpreter clock before another input can dismiss the next message.
     if (this.stop || this.pendingChoice) return;
     if (this.dialogue) {
+      if (this.dialogue.manual) {
+        const current = this.dialogue, manual = current.manual!,
+          task = this.tasks.find(t => t.id === current.task && !t.done);
+        if (this.time < manual.availableAt) return;
+        try {
+          if (!task || task.state !== "ready") throw new Error("Ordinary source Msg lost its task owner");
+          if (manual.page + 1 < manual.pages.length) {
+            const page = manual.page + 1;
+            this.dialogue = { ...current, text: manual.pages[page]!,
+              manual: { ...manual, page, availableAt: this.time + 10 } };
+            return;
+          }
+          const publish = manual.after === "close" ? this.prepareDialogueMask(12) : () => {};
+          if (this.dialogue !== current) throw new Error("Stale ordinary source Msg completion");
+          publish();
+          this.retainedMessage = manual.after === "close" ? null : current;
+          this.dialogue = null;
+          task.lastClock = -1;
+        } catch (error) {
+          this.block(error instanceof Error ? error.message : String(error), manual.site);
+          return;
+        }
+        this.pump();
+        return;
+      }
       if (this.shopTask) {
         if (
           this.dialogue.task !== this.shopTask.id ||
@@ -1713,6 +1740,39 @@ export class FieldGame {
     pending.answer = index;
     return true;
   }
+  private prepareDialogueMask(group: 8 | 12): () => void {
+    if (!this.options.sourceMessageEffects && (this.options.puppetActors || this.nativeActorBindings))
+      throw new Error("Ordinary source Msg entity-update host is unavailable");
+    const before = this.entityUpdateMask,
+      effects: SourceMessageEffect[] = [{ kind: "entity-update-group", group, invokeCallback: false }],
+      publish = this.options.sourceMessageEffects
+        ? this.options.sourceMessageEffects.prepare(effects)
+        : () => {
+          if (this.entityUpdateMask !== before) throw new Error("Stale ordinary message update group");
+          this.entityUpdateMask = sourceMessageUpdateMask(group);
+        };
+    if (typeof publish !== "function") throw new Error("Invalid ordinary message host transaction");
+    return publish;
+  }
+  private beginManualDialogue(op: Extract<Op, { kind: "message" }>, task: Task): void {
+    const manual = op.manual;
+    if (!manual || !Array.isArray(manual.pages) || manual.pages.length === 0 ||
+        manual.pages.some(page => typeof page !== "string" || page.length === 0 || /<|\\/.test(page)) ||
+        op.text !== manual.pages[0] || !["frame", "none"].includes(manual.window) ||
+        !["top", "middle", "bottom"].includes(manual.anchor) || !["close", "message", "choice"].includes(manual.after))
+      throw new Error("Invalid ordinary source Msg document");
+    if (this.sourceMessage.active || this.shopTask || this.treasureSceneState === "message")
+      throw new Error("Ordinary source Msg conflicts with an occupied message manager");
+    const before = this.messageWindow, prepared: Dialogue = { key: op.key, speaker: op.speaker,
+      text: manual.pages[0]!, task: task.id,
+      manual: { ...structuredClone(manual), page: 0, availableAt: this.time + 10,
+        site: { script: op.script, index: op.index, source: structuredClone(op.source) } } },
+      publish = this.prepareDialogueMask(8);
+    if (this.messageWindow !== before) throw new Error("Stale ordinary source Msg preparation");
+    publish();
+    this.retainedMessage = null;
+    this.dialogue = prepared;
+  }
   private finishChoice(t: Task): void {
     const pending = this.pendingChoice;
     if (!pending || pending.task !== t || pending.answer === null)
@@ -1729,6 +1789,11 @@ export class FieldGame {
       if (typeof publish !== "function") throw new Error("Invalid choice message host transaction");
       publish();
       this.retainedMessage = null;
+    } else if (this.retainedMessage?.manual) {
+      // Select's own source successor now owns the handoff decision. The
+      // preceding Msg may have retained this same window for the choice.
+      this.retainedMessage = { ...this.retainedMessage,
+        manual: { ...this.retainedMessage.manual, after: "message" } };
     }
     this.pendingChoice = null;
   }
@@ -2326,6 +2391,10 @@ export class FieldGame {
         this.block("Main script ended with an unfinished choice task", this.pendingChoice.op);
         return;
       }
+      if (this.messageWindow?.manual) {
+        this.block("Main script ended with an unfinished ordinary message", this.messageWindow.manual.site);
+        return;
+      }
       if (this.treasureHandoffBlocked()) {
         this.block("Main script ended with an unfinished treasure task");
         return;
@@ -2509,6 +2578,10 @@ export class FieldGame {
         }
         if (op.kind === "message" && this.messageWindow && this.messageWindow.task !== t.id) {
           this.block("Concurrent source message windows are not implemented", op);
+          return;
+        }
+        if (this.dialogue?.manual && ["change-map", "encounter"].includes(op.kind)) {
+          this.block("Field transition conflicts with an unfinished ordinary message", op);
           return;
         }
         if (this.pendingChoice && ["message", "source-message", "choice", "change-map", "encounter", "treasure-box"].includes(op.kind)) {
@@ -3083,12 +3156,16 @@ export class FieldGame {
             break;
           case "source-message":
             try {
-              if (this.messageWindow || this.shopTask || this.treasureSceneState === "message")
+              const retained = this.retainedMessage,
+                handoff = !this.dialogue && retained?.manual?.after === "message" && retained.task === t.id;
+              if ((this.messageWindow && !handoff) || this.shopTask || this.treasureSceneState === "message")
                 throw new Error("Source message conflicts with an occupied message window");
               if (!this.options.sourceMessageEffects) throw new Error("Source message entity-update host is unavailable");
               const next = this.sourceMessage.prepare(op), publish = this.options.sourceMessageEffects.prepare(next.effects);
               if (typeof publish !== "function") throw new Error("Invalid source message host transaction");
+              if (this.retainedMessage !== retained) throw new Error("Stale source message handoff");
               publish(); next.commit();
+              if (handoff) this.retainedMessage = null;
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
           case "choice":
@@ -3107,6 +3184,11 @@ export class FieldGame {
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); }
             return;
           case "message":
+            if (op.manual) {
+              try { this.beginManualDialogue(op, t); }
+              catch (error) { t.pc--; this.block(error instanceof Error ? error.message : String(error), op); }
+              return;
+            }
             if (this.sourceMessage.active) { this.block("Source message window is already occupied", op); return; }
             this.dialogue = {
               speaker: op.speaker,

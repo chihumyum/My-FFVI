@@ -58,7 +58,7 @@ const battle = new BattleGame(content, 61, undefined, inventory);
 const images = new Map(Object.values(content.sprites).map((sprite) => [sprite.file, { file: sprite.file }]));
 const view = new BattleView(canvas, content, images, () => {}, () => {}, battleAppearanceQuads);
 view.sync(battle, false);
-assert.equal(view.rows.get('a').name.textContent, battle.players[0].name, 'hidden 607 must not leave a separator');
+assert.equal(view.rows.get('a').name.textContent, battle.players[0].name + ' · 前排', 'hidden 607 must not leave a separator');
 assert.equal(battle.command('a', 10, { kind: 'single', id: 'e1' }, 7), true);
 battle.advance(10);
 assert.equal(battle.action.actor, 'a'); assert.equal(battle.action.elapsed, 0);
@@ -86,7 +86,7 @@ checked.push('opposed target-right selects exact right aliases; armor/body order
 const actor = battle.players[0];
 actor.hp = 1; actor.conditionIds.push(content.conditions.dying.conditionId);
 view.sync(battle, false);
-assert.equal(view.rows.get('a').name.textContent, actor.name + ' · ' + battle.conditions.name(content.conditions.dying.conditionId));
+assert.equal(view.rows.get('a').name.textContent, actor.name + ' · 前排 · ' + battle.conditions.name(content.conditions.dying.conditionId));
 draw();
 assert.equal(requests.find((request) => request.actorId === 'a').key, 'dyingR00');
 assert.equal(bodyDraws('DyingR_00').length, 2);

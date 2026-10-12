@@ -46,6 +46,15 @@ export type FieldMessage = {
   /** Source MessageParser CT tag; absence retains the ordinary layout. */
   alignment?: "center";
 };
+/** Ordinary source Msg document. Other message managers and inline waits do
+ * not share this manual, explicitly paginated capability. */
+export type FieldManualMessage = {
+  pages: string[];
+  window: "frame" | "none";
+  anchor: "top" | "middle" | "bottom";
+  /** Bound to the immediate source mnemonic, before capability decoding. */
+  after: "close" | "message" | "choice";
+};
 export type FieldInteraction =
   | { kind: "none" }
   | { kind: "script"; script: string | null }
@@ -222,7 +231,7 @@ export type Op = Site &
         speed: number;
         loop: boolean;
       }
-    | { kind: "message"; key: string; text: string; speaker: string }
+    | ({ kind: "message"; manual?: FieldManualMessage } & FieldMessage)
     | { kind: "encounter"; party: number; continuation: string }
     | { kind: "blocked"; mnemonic: string; reason: string }
   );
