@@ -22,7 +22,8 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
   const runtime = { ...controlledAudioRuntime(), battleHandoff: "prepared",
     transportationTimestamp: () => "639273600000000000" };
   const host = { visible: true, mediaReady: true, overlayOpen: false };
-  const extended = route.inputs.some(input => input.kind === "menu" || input.kind === "save-restore");
+  const extended = route.inputs.some(input => input.kind === "menu" || input.kind === "save-restore" ||
+    input.kind === "shop" || input.kind === "leave-shop");
   const program = { inputCount: 0, menuCount: 0, restoreCount: 0, postRestoreInputCount: 0 };
   let restoredDuringProgram = false;
   const receipt = { kind: "content-batch-route-receipt-v1", routeId: route.id,
@@ -35,7 +36,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     controls: ["10ms headless host; media and audio output immediately ready", "in-memory real checkpoint codec/storage",
       "GameEntryLoader entry/restore, prepared GameBattleHandoff and owner-bound GameCommands",
       "fixed explicit transportation timestamp", "manifest player inputs, choice answers and battle abilities",
-      extended ? "only declared menu mutations and stable-field restore relays"
+      extended ? "only declared menu/shop mutations and stable-field restore relays"
         : "pause-menu readiness only; no undeclared menu mutation"], boundary: null,
     ...(extended ? { program } : {}) };
   const trace = [], flow = new GameFlow();
@@ -46,6 +47,11 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
   let commandChannel = null, maps = null, saves = null;
   let ticks = 0, inputIndex = 0, answerIndex = 0, commands = 0, checkpointHash = null;
   const current = () => flow.session;
+  const completeInput = input => {
+    program.inputCount++;
+    if (restoredDuringProgram && input.kind !== "save-restore") program.postRestoreInputCount++;
+    trace.push({ kind: "input", inputIndex, input }); inputIndex++;
+  };
   const handoff = new GameBattleHandoff(flow, {
     prepareStart: async view => {
       const owner = current(), field = owner.field, time = field.time;
@@ -297,7 +303,40 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
       } else if (field.dialogue) {
         assert.equal(flow.confirm(), true);
       } else if (field.currentShop) {
-        receipt.boundary = { kind: "shop-input-not-declared" }; break;
+        const input = route.inputs[inputIndex], shop = field.currentShop;
+        if (!input || input.kind !== "shop" && input.kind !== "leave-shop") {
+          receipt.boundary = { kind: "shop-input-not-declared" }; break;
+        }
+        const shopOwner = current(), channel = commandChannel, before = await contentDigest(state.snapshot());
+        const matchesRequest = () => current() === shopOwner && shopOwner.field === field &&
+          channel.owner === shopOwner && field.currentShop?.id === shop.id &&
+          field.currentShop?.groupId === shop.groupId && field.currentShop?.entityId === shop.entityId;
+        if (input.groupId !== shop.groupId || !matchesRequest() || !channel.shopReady) {
+          assert.equal(await contentDigest(state.snapshot()), before);
+          receipt.boundary = { kind: "rejected-shop-input", inputIndex, input,
+            reason: input.groupId !== shop.groupId ? "shop-group-mismatch" : "shop-owner-or-request-unavailable" };
+          break;
+        }
+        let result;
+        try {
+          result = input.kind === "shop" ? channel.tradeShop(input.request) : channel.closeShop();
+        } catch (error) {
+          assert.equal(await contentDigest(state.snapshot()), before, "A rejected shop transaction cannot partly publish");
+          throw error;
+        }
+        const accepted = input.kind === "shop" ? result !== null : result === true;
+        if (!accepted) {
+          assert.equal(await contentDigest(state.snapshot()), before);
+          receipt.boundary = { kind: "rejected-shop-input", inputIndex, input, reason: "shop-command-rejected" }; break;
+        }
+        assert.equal(current(), shopOwner); assert.equal(shopOwner.field, field);
+        if (input.kind === "shop") {
+          assert.ok(matchesRequest(), "A trade must retain its field shop request");
+          assert.equal(result.groupId, shop.groupId);
+        }
+        trace.push({ kind: "shop-command", inputIndex, shop: structuredClone(shop), input: structuredClone(input),
+          ownerBound: channel.owner === shopOwner, accepted, result: structuredClone(result) });
+        completeInput(input);
       } else if (game.checkpointReady) {
         const input = route.inputs[inputIndex];
         if (input) {
@@ -322,11 +361,12 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
               accepted, ownerBound: commandChannel.owner === menuOwner, pauseRestored: flow.paused === paused });
           } else if (input.kind === "move") accepted = flow.move(input.direction);
           else if (input.kind === "confirm") accepted = flow.confirm();
+          else if (input.kind === "shop" || input.kind === "leave-shop") {
+            receipt.boundary = { kind: "rejected-shop-input", inputIndex, input, reason: "no-open-shop" }; break;
+          }
           else throw new Error("Unknown declared route input: " + input.kind);
           if (!accepted) { receipt.boundary = { kind: "rejected-player-input", inputIndex, input }; break; }
-          program.inputCount++;
-          if (restoredDuringProgram && input.kind !== "save-restore") program.postRestoreInputCount++;
-          trace.push({ kind: "input", inputIndex, input }); inputIndex++;
+          completeInput(input);
         } else {
           const missingMaps = route.requiredMapIds.filter(id => !receipt.visitedMapIds.includes(id));
           const missingEncounters = route.requiredEncounterIds.filter(id => !receipt.completedEncounterIds.includes(id));

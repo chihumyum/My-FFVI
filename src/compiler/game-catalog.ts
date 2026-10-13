@@ -26,6 +26,10 @@ import { firstJoinLevelAdjustments } from "../core/character-growth.js";
 import { compileEquipmentCatalog } from "./equipment.js";
 import { createBattleHandoffMusicLookup } from "./battle-handoff.js";
 import { loadSystemSource } from "./system-source.js";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { compileMagicStoneCatalog } from "./magic-stones.js";
+import { compileCharacterGrowth } from "./character-growth.js";
 import type {
   BattleContent,
   BattleCatalog,
@@ -37,7 +41,7 @@ import type {
 export type GameCatalogModules = {
   common: Omit<BattleCatalog["common"], "players" | "limitations" | "drops">;
   owned: Pick<GameStateContent, "shops" | "characterInitializations" | "characterGrowth" |
-    "partyActors" | "battleDefinitions" | "fieldConditions" | "fieldAbilities"> & {
+    "partyActors" | "battleDefinitions" | "fieldConditions" | "fieldAbilities" | "magicStones"> & {
     sourceNewGame: NewGameDefinition;
     equipmentSystem: NonNullable<GameStateContent["equipmentSystem"]>;
   };
@@ -244,6 +248,12 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
   // an unselected music row is absent. Resolve optional handoff declarations
   // against the existing complete, verified source reader instead.
   const handoffSystem = await loadSystemSource(root, source.parentSourceSetHash);
+  const [stoneReceipt, constructorC] = await Promise.all([
+    readFile(resolve(root, "build/reports/v71-esper-native-complete/complete.json"), "utf8"),
+    readFile(resolve(root, "build/reports/v71-esper-native-complete/856d80.c"), "utf8"),
+  ]);
+  const magicStones = compileMagicStoneCatalog(handoffSystem.reader, handoffSystem.tables, resolveAbilityName,
+    { receipt: JSON.parse(stoneReceipt), constructorC, sourceSetHash: source.parentSourceSetHash }).catalog;
   // Menu-only function groups need the complete source tables. The selected
   // battle closure cannot establish their absence or grant field execution.
   // This named Web generator seed is an authored transaction policy, not an
@@ -327,8 +337,13 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
       return [`player:${sourceId}`, template];
     }),
   );
-  const characterGrowth = Object.fromEntries(Object.entries(source.characterGrowth)
-    .map(([sourceId, plan]) => [`player:${sourceId}`, structuredClone(plan)]));
+  const characterGrowth = Object.fromEntries(Object.entries(source.ownedInitializations).map(([sourceId, template]) => {
+    const previous = source.characterGrowth[sourceId];
+    if (!previous) throw new Error("Missing source ordinary growth template");
+    const compiled = compileCharacterGrowth(handoffSystem.reader, handoffSystem.tables, template,
+      previous.observedLearning, magicStones);
+    return [`player:${sourceId}`, compiled.plan];
+  }));
   const fieldConditions = compileFieldConditionCatalog(parameterReader, conditions,
     rows("transportation.csv").map((r) => int(r.id))).catalog;
   const equipment = compileEquipmentCatalog(
@@ -344,7 +359,7 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
   const owned: GameCatalogModules["owned"] = {
     shops: shops.catalog, characterInitializations, characterGrowth,
     partyActors: structuredClone(source.partyActors),
-    battleDefinitions: structuredClone(ordinary.definitions), fieldConditions, fieldAbilities,
+    battleDefinitions: structuredClone(ordinary.definitions), fieldConditions, fieldAbilities, magicStones,
     sourceNewGame: newGame.definition,
     equipmentSystem: {
       catalog: equipment, initialStock: createNewGame(newGame.definition).owned.equipmentStock,

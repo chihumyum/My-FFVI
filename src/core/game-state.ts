@@ -95,11 +95,16 @@ import { fieldAbilityMenu, fieldAbilityTargets, projectFieldAbility, validateFie
   type FieldAbilityCatalog, type FieldAbilityContext, type FieldAbilityRequest,
   type FieldAbilityMember, type FieldAbilityCostOwner } from "./field-abilities.js";
 import { createFieldRandom, drawFieldRandom, validateFieldRandom, type FieldRandomState } from "./field-random.js";
+import { validateMagicStoneCatalog, validateMagicStoneOwnership, projectAcquireMagicStone,
+  projectEquipMagicStone, projectRemoveMagicStone, projectRemoveInventoryMagicStone,
+  type MagicStoneCatalog, type MagicStonePassiveContext } from "./magic-stones.js";
 import {
   growCharacter,
   initialCharacterGrowth,
   validateCharacterGrowth,
   learnObservedCharacter,
+  projectCharacterMagicStone,
+  projectCharacterInventoryMagicStoneRemoval,
   type CharacterGrowthPlan,
   type CharacterGrowthProgress,
   type CharacterGrowthRequest,
@@ -131,6 +136,7 @@ export type GameStateContent = {
   /** Field execution is independent of an ability's battle plan and creates no
    * ownership. Packages without this contract do not expose menu spellcasting. */
   fieldAbilities?: FieldAbilityCatalog;
+  magicStones?: MagicStoneCatalog;
   /** Source templates for potential party members, not additional owned actors. */
   battleDefinitions?: CombatantDefinition[];
   rosterLifecycle: {
@@ -177,7 +183,7 @@ export type OwnedCharacter = RosterMember & {
   growth: CharacterGrowthProgress | null;
 };
 export type GameStateSnapshot = {
-  formatVersion: 12 | 13;
+  formatVersion: 12 | 13 | 14;
   kind: "owned-game-state";
   catalogHash: string;
   initialization: "development-checkpoint" | "source-new-game";
@@ -336,6 +342,7 @@ export class GameState {
       : null;
     this.content = structuredClone(content);
     if (content.fieldAbilities) validateFieldAbilityCatalog(this.content.fieldAbilities!, this.conditions);
+    if (content.magicStones) validateMagicStoneCatalog(this.content.magicStones!);
     if (content.shops) {
       validateShopCatalog(content.shops);
       if (content.shops.itemLimit !== content.limits.item || content.shops.gilLimit !== content.limits.gil)
@@ -406,7 +413,7 @@ export class GameState {
       }
     }
     this.data = {
-      formatVersion: content.fieldAbilities ? 13 : 12,
+      formatVersion: content.magicStones ? 14 : content.fieldAbilities ? 13 : 12,
       kind: "owned-game-state",
       catalogHash,
       initialization: fresh ? "source-new-game" : "development-checkpoint",
@@ -429,7 +436,7 @@ export class GameState {
         equipment: [...(content.equipment[p.id] ?? [])],
         ...structuredClone(initializedMembers.get(p.id) ?? {}),
         magicLearningValue: 0,
-        growth: content.characterGrowth?.[p.id] ? initialCharacterGrowth() : null,
+        growth: content.characterGrowth?.[p.id] ? initialCharacterGrowth(content.characterGrowth[p.id]) : null,
       })),
       party: structuredClone(content.initialParty),
       gil: content.initialGil,
@@ -447,7 +454,7 @@ export class GameState {
         roster: fresh.owned.roster.map((member) => ({
           ...structuredClone(member),
           magicLearningValue: 0,
-          growth: content.characterGrowth?.[member.id] ? initialCharacterGrowth() : null,
+          growth: content.characterGrowth?.[member.id] ? initialCharacterGrowth(content.characterGrowth[member.id]) : null,
         })),
       });
     }
@@ -502,7 +509,7 @@ export class GameState {
     keys(data, ownedSnapshotFields + (this.content.fieldAbilities ? ",fieldRandom" : ""));
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== (this.content.fieldAbilities ? 13 : 12) ||
+      data.formatVersion !== (this.content.magicStones ? 14 : this.content.fieldAbilities ? 13 : 12) ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -519,7 +526,8 @@ export class GameState {
         const plan = this.sourceNewGamePlan(this.initialIds.map((id) => this.definitions.get(id)!));
         this.sourceNativeBaseline = createSourceNativeState(plan);
       }
-      validateSourceNativeState(data.nativeState, this.sourceNativeBaseline, this.observedMagic(data));
+      validateSourceNativeState(data.nativeState, this.sourceNativeBaseline, this.observedMagic(data),
+        this.content.magicStones ? Object.values(this.content.magicStones.stones).map(stone => stone.contentId) : undefined);
     } else if (data.initialization !== "development-checkpoint" || data.nativeState !== null) {
       throw new Error("Owned-state initialization identity mismatch");
     }
@@ -563,6 +571,20 @@ export class GameState {
     else if (data.equipmentStock.length)
       throw new Error("Unimplemented equipment stock");
     validatePartyState(data.party, data.roster);
+    if (this.content.magicStones) {
+      const roster = this.magicStoneRoster(data);
+      validateMagicStoneOwnership(this.content.magicStones, data.nativeState?.ownedMagicStones ?? [],
+        roster, this.magicStonePassives(data));
+      const receiptIds = new Set<string>();
+      for (const member of roster) for (const receipt of member.growth?.history ?? []) {
+        if (receipt.kind !== "status-up" || receipt.battleSerial === null) continue;
+        const key = `${receipt.battleSerial}:${receipt.participantIndex}`;
+        if (receiptIds.has(key) || !data.completedBattles.some(battle =>
+          battle.serial === receipt.battleSerial && battle.outcome === "victory"))
+          throw new Error("Unbound magic stone growth battle receipt");
+        receiptIds.add(key);
+      }
+    }
     distinct(data.items.map((item) => item.id));
     for (const item of data.items) {
       keys(item, "id,count");
@@ -659,7 +681,7 @@ export class GameState {
       (template ? p.level : lifecycle!.additionalLevel + p.level - definition!.level)
     )
       throw new Error("Owned level disagrees with source additional level");
-    if (p.magicStoneId !== 0)
+    if (p.magicStoneId !== 0 && !this.content.magicStones)
       throw new Error("Unimplemented owned magic stone");
     distinct(p.ownedJobs.map((j) => j.id));
     for (const job of p.ownedJobs) {
@@ -872,6 +894,21 @@ export class GameState {
         next.equipmentStock,
         command,
       );
+    } else if (command.kind === "grant-magic-stone" || command.kind === "remove-magic-stone") {
+      integer(command.id, 0x7fffffff, 1); integer(command.count, 0x7fffffff, -2147483648);
+      const catalog = this.content.magicStones;
+      if (!catalog || !next.nativeState) throw new Error("Magic stone ownership is unavailable in this entry");
+      if (command.kind === "grant-magic-stone")
+        next.nativeState.ownedMagicStones = projectAcquireMagicStone(catalog, next.nativeState.ownedMagicStones, command.id);
+      else {
+        const projection = projectRemoveInventoryMagicStone(catalog, next.nativeState.ownedMagicStones,
+          this.magicStoneRoster(next), command.id, this.magicStonePassives(next));
+        next.nativeState.ownedMagicStones = projection.heldIds;
+        for (const id of projection.changedIds) {
+          const member = next.roster.find(member => member.id === id)!;
+          Object.assign(member, this.projectMagicStoneRemoval(member));
+        }
+      }
     } else if (command.kind === "grant-gil") {
       integer(command.amount, 0x7fffffff);
       next.gil = Math.min(this.content.limits.gil, next.gil + command.amount);
@@ -984,15 +1021,18 @@ export class GameState {
     this.requireIdle();
     const { next, ...projection } = this.projectPartyEvent(this.data, command);
     const revision = this.revision;
+    let consumed = false;
+    const validate = () => {
+      this.requireIdle();
+      if (consumed || this.revision !== revision)
+        throw new Error("Stale field party transaction");
+    };
+    const commitWith = (publish: () => void) => {
+      this.commitMenuPresentation(next, validate, publish); consumed = true;
+    };
     return {
       ...projection,
-      commit: () => {
-        this.requireIdle();
-        if (this.revision !== revision)
-          throw new Error("Stale field party transaction");
-        this.data = next;
-        this.revision++;
-      },
+      commit: () => commitWith(() => {}), commitWith,
     };
   }
   /** Menu organization changes only saved cells and the selected group. It
@@ -1055,7 +1095,7 @@ export class GameState {
             next.characterNames[initialized.nameBinding.key] = initialized.nameBinding.value;
           candidateRosterSize++;
           return { ...initialized.member, magicLearningValue: 0,
-            growth: this.content.characterGrowth?.[id] ? initialCharacterGrowth() : null };
+            growth: this.content.characterGrowth?.[id] ? initialCharacterGrowth(this.content.characterGrowth[id]) : null };
         },
         projectEquipment: (member) => {
           const projected = this.projectOwnedParameters(member);
@@ -1073,6 +1113,7 @@ export class GameState {
         correctLevel: (member, targetLevel) => this.projectGrowth(member,
           { kind: "correct-level", targetLevel }),
         recover: (member) => recoverJoinedCharacter(member, this.conditions),
+        removeMagicStone: (member) => this.projectMagicStoneRemoval(member),
       },
     );
     Object.assign(next, preview.state);
@@ -1090,15 +1131,18 @@ export class GameState {
     this.requireIdle();
     const { next, ...projection } = this.projectRosterEvent(this.data, command);
     const revision = this.revision;
+    let consumed = false;
+    const validate = () => {
+      this.requireIdle();
+      if (consumed || this.revision !== revision)
+        throw new Error("Stale field roster transaction");
+    };
+    const commitWith = (publish: () => void) => {
+      this.commitMenuPresentation(next, validate, publish); consumed = true;
+    };
     return {
       ...projection,
-      commit: () => {
-        this.requireIdle();
-        if (this.revision !== revision)
-          throw new Error("Stale field roster transaction");
-        this.data = next;
-        this.revision++;
-      },
+      commit: () => commitWith(() => {}), commitWith,
     };
   }
   private projectOwnedConditionEvent(data: GameStateSnapshot, command: OwnedConditionCommand) {
@@ -1212,14 +1256,22 @@ export class GameState {
         if (published) return this.preparePartyEvent(command);
         const { next, ...projection } = this.projectPartyEvent(data, command),
           version = generation;
+        const commitWith = (publish: () => void) => {
+          if (transportationPublishing || published || generation !== version)
+            throw new Error("Stale candidate party transaction");
+          if (typeof publish !== "function" || publish.constructor.name === "AsyncFunction")
+            throw new Error("Candidate party publication must be synchronous");
+          transportationPublishing = true;
+          try {
+            const result: unknown = publish();
+            if (result && typeof (result as { then?: unknown }).then === "function")
+              throw new Error("Candidate party publication must be synchronous");
+            data = next; generation++;
+          } finally { transportationPublishing = false; }
+        };
         return {
           ...projection,
-          commit: () => {
-            if (transportationPublishing || published || generation !== version)
-              throw new Error("Stale candidate party transaction");
-            data = next;
-            generation++;
-          },
+          commit: () => commitWith(() => {}), commitWith,
         };
       },
     };
@@ -1228,14 +1280,22 @@ export class GameState {
         if (published) return this.prepareRosterEvent(command);
         const { next, ...projection } = this.projectRosterEvent(data, command),
           version = generation;
+        const commitWith = (publish: () => void) => {
+          if (transportationPublishing || published || generation !== version)
+            throw new Error("Stale candidate roster transaction");
+          if (typeof publish !== "function" || publish.constructor.name === "AsyncFunction")
+            throw new Error("Candidate roster publication must be synchronous");
+          transportationPublishing = true;
+          try {
+            const result: unknown = publish();
+            if (result && typeof (result as { then?: unknown }).then === "function")
+              throw new Error("Candidate roster publication must be synchronous");
+            data = next; generation++;
+          } finally { transportationPublishing = false; }
+        };
         return {
           ...projection,
-          commit: () => {
-            if (transportationPublishing || published || generation !== version)
-              throw new Error("Stale candidate roster transaction");
-            data = next;
-            generation++;
-          },
+          commit: () => commitWith(() => {}), commitWith,
         };
       },
     };
@@ -1624,6 +1684,78 @@ export class GameState {
     });
     return { roster, costOwner: { side: "player", catalog: system.catalog, loadout: actor } };
   }
+  private magicStoneRoster(data: GameStateSnapshot) {
+    return data.roster.flatMap(member => {
+      if (!member.abilities) {
+        if (member.magicStoneId !== 0) throw new Error("Equipped magic stone requires owned abilities");
+        return [];
+      }
+      return [{ ...member, abilities: member.abilities }];
+    });
+  }
+  private projectMagicStoneRemoval(member: OwnedCharacter): OwnedCharacter {
+    if (member.magicStoneId === 0) return structuredClone(member);
+    const plan = this.content.characterGrowth?.[member.id];
+    if (!plan?.magicStones || !member.abilities || !member.growth)
+      throw new Error("Missing magic stone removal history provider");
+    const result = projectCharacterInventoryMagicStoneRemoval(plan, { ...member, abilities: member.abilities },
+      member.growth, this.equipmentAbilities(member));
+    return { ...result.member, growth: result.progress };
+  }
+  private magicStonePassives(data: GameStateSnapshot): MagicStonePassiveContext {
+    return Object.fromEntries(data.roster.map(member => [member.id, this.equipmentAbilities(member)]));
+  }
+  magicStoneMenu(playerId: string) {
+    const catalog = this.content.magicStones, member = this.data.roster.find(candidate => candidate.id === playerId);
+    const available = !this.active && catalog !== undefined && this.data.nativeState !== null;
+    const plan = this.content.characterGrowth?.[playerId];
+    const canEquip = available && !!member?.enabled && !!member.abilities && !!member.growth &&
+      plan?.magicStones !== undefined && !catalog!.rules.excludedSourceIds.includes(member.sourceId as 13 | 14);
+    return { available, playerId: member?.id ?? null, currentContentId: member?.magicStoneId ?? null,
+      currentName: member?.magicStoneId ? catalog?.stones[member.magicStoneId]?.name ?? null : null, canEquip,
+      stones: available ? this.data.nativeState!.ownedMagicStones.map(contentId => {
+        const stone = catalog!.stones[contentId]!;
+        const equipped = this.data.roster.find(owner => owner.enabled && owner.magicStoneId === contentId);
+        return { contentId, name: stone.name, equippedBy: equipped ? { id: equipped.id, name: equipped.name } : null,
+          bonus: structuredClone(stone.bonus), learning: stone.learning.map(row => ({ abilityId: row.abilityId,
+            name: this.content.fieldAbilities?.abilities[row.abilityId]?.name ?? String(row.abilityId), rate: row.rate,
+            skillLevel: member?.abilities?.owned.find(ability => ability.abilityId === row.abilityId)?.skillLevel ?? 0 })) };
+      }) : [] };
+  }
+  /** Association and command history publish to the original owner together.
+   * Equipping has no immediate parameter, learned-skill or resource effect. */
+  prepareMagicStoneMenu(playerId: string, contentId: number) {
+    this.requireIdle(); integer(contentId, 0x7fffffff);
+    const catalog = this.content.magicStones;
+    if (!catalog || !this.data.nativeState) throw new Error("Magic stone ownership is unavailable in this entry");
+    const roster = this.magicStoneRoster(this.data), passives = this.magicStonePassives(this.data);
+    const metadata = [...Object.values(this.content.characterGrowth ?? {}).flatMap(plan => plan.abilities),
+      ...Object.values(this.content.fieldAbilities?.abilities ?? {}).map(ability => ({ id: ability.id, typeId: ability.typeId }))];
+    const projection = contentId === 0
+      ? projectRemoveMagicStone(catalog, this.data.nativeState.ownedMagicStones, roster, playerId, metadata, passives)
+      : projectEquipMagicStone(catalog, this.data.nativeState.ownedMagicStones, roster,
+        { ownedId: playerId, contentId }, metadata, passives);
+    if (!projection.changedIds.length) return null;
+    const next = this.snapshot(), revision = this.revision;
+    for (const id of projection.changedIds) {
+      const old = this.data.roster.find(member => member.id === id)!, plan = this.content.characterGrowth?.[id];
+      if (!plan?.magicStones || canonical(plan.magicStones) !== canonical(catalog) || !old.abilities || !old.growth)
+        throw new Error("Missing source magic stone growth contract");
+      const target = projection.roster.find(member => member.id === id)!;
+      const projected = projectCharacterMagicStone(plan, { ...old, abilities: old.abilities }, old.growth,
+        target.magicStoneId, passives[id] ?? []);
+      Object.assign(next.roster.find(member => member.id === id)!, projected.member, { growth: projected.progress });
+    }
+    this.validate(next);
+    let consumed = false;
+    const validate = () => {
+      this.requireIdle();
+      if (consumed || this.revision !== revision) throw new Error("Stale magic stone menu transaction");
+    };
+    return { validate, commit: () => {
+      this.commitMenuPresentation(next, validate, () => {}); consumed = true;
+    } };
+  }
   menuAbilities(actorId: string, context: FieldAbilityContext) {
     if (this.active || !this.content.fieldAbilities) return [];
     const input = this.fieldAbilityInput(actorId);
@@ -1946,7 +2078,7 @@ export class GameState {
         }
         const next = this.projectGrowth({ ...owned, hp: player.hp, mp: player.mp,
           conditionIds: [...player.conditionIds] }, { kind: "add-experience", amount, context: "battle", observedAbilityIds: [...observedAbilityIds],
-          learningReceipt: { battleSerial: lease.serial, participantIndex: ordinal } });
+          magicPoints, learningReceipt: { battleSerial: lease.serial, participantIndex: ordinal } });
         return { ...this.projectOwnedParameters(next), level: next.level, exp: next.exp, magicLearningValue };
       }
       // Only synthetic profiles without source initialization use this legacy
@@ -2129,7 +2261,7 @@ export class GameState {
           projected = this.projectObservedLearning(resources, observations, lease, participantIndex);
         } else projected = this.projectGrowth(resources, { kind: "add-experience", amount: award.amount,
           context: "battle", observedAbilityIds: observations,
-          learningReceipt: { battleSerial: lease.serial, participantIndex } });
+          magicPoints, learningReceipt: { battleSerial: lease.serial, participantIndex } });
         for (const key of ["level", "exp", "maxHp", "maxMp", "hp", "mp"] as const)
           if (projected[key] !== player[key]) throw new Error("Battle source growth projection mismatch");
         if (canonical(projected.conditionIds) !== canonical(player.conditionIds))

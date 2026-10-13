@@ -104,6 +104,7 @@ const make = () =>
   );
 const entries = [],
   checks = [],
+  hostBlockedChecks = [],
   equipmentChains = [],
   equipmentSites = [];
 for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
@@ -116,9 +117,32 @@ for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
       source: { ...asset.source, pointer: `/Mnemonics/${index}` },
     };
     const op = decodeFieldOp(raw, site, corpus.messages, corpus.tables);
-    entries.push({ site, mnemonic: raw.mnemonic, op });
+    const entry = { site, mnemonic: raw.mnemonic, op };
+    entries.push(entry);
     if (op.kind === "blocked") continue;
     assert.equal(op.kind, "inventory");
+    if (op.command.kind === "grant-magic-stone" || op.command.kind === "remove-magic-stone") {
+      const content = corpus.tables["content.csv"].filter(row => Number(row.id) === raw.operands.iValues[0]);
+      assert.equal(content.length, 1); assert.equal(content[0].type_id, "9");
+      assert.equal(op.command.id, raw.operands.iValues[0]);
+      assert.equal(op.command.count, raw.operands.iValues[1]);
+      // Decoding a source operation does not grant its ownership domain to the
+      // legacy development checkpoint. Execute it and verify a real refusal,
+      // rather than treating it as Gil or reclassifying it as compiler-blocked.
+      const owned = make(), before = owned.snapshot(), field = controlledField(site, op);
+      assert.equal(before.initialization, "development-checkpoint");
+      assert.equal(before.nativeState, null);
+      const game = new FieldGame(field, EventState.initialized(), undefined, undefined,
+        { inventory: owned.fieldInventory });
+      game.startEvent(asset.id); game.advance(1000);
+      assert.equal(game.stop?.kind, "unsupported");
+      assert.equal(game.stop.message, "Magic stone ownership is unavailable in this entry");
+      assert.deepEqual(owned.snapshot(), before, "A context refusal must preserve the complete owned state");
+      entry.runtimeAdmission = "context-blocked";
+      hostBlockedChecks.push({ site, command: op.command, entry: before.initialization,
+        nativeState: "absent", reason: game.stop.message, ownedBefore: hash(before), ownedAfter: hash(owned.snapshot()) });
+      continue;
+    }
     // Expectations use raw source identity/coefficient, not the compiled command.
     const sourceId = raw.operands.iValues[0],
       amount = raw.operands.iValues[1];
@@ -234,6 +258,7 @@ for (const asset of corpus.assets.filter((a) => a.kind === "script")) {
         fieldAfter: hash(game.checkpoint()),
       });
     }
+    entry.runtimeAdmission = "completed";
     if (equipment) equipmentSites.push({ site, raw, op, content });
   }
 }
@@ -394,6 +419,11 @@ for (const { site, raw, op, content } of equipmentSites) {
   });
 }
 assert.equal(equipmentSites.length, 17);
+assert.equal(entries.length, 173);
+assert.equal(entries.filter(entry => entry.op.kind === "inventory").length, 173);
+assert.equal(entries.filter(entry => entry.runtimeAdmission === "completed").length, 134);
+assert.equal(hostBlockedChecks.length, 39);
+assert.equal(checks.length, 462);
 assert.equal(
   equipmentSites.filter((x) => x.raw.mnemonic === "RemoveItem").length,
   0,
@@ -452,8 +482,10 @@ const report = {
   ownershipNativeReportHash: hash(ownershipNative),
   counts: {
     sourceSites: entries.length,
-    admittedSites: entries.filter((e) => e.op.kind === "inventory").length,
+    decodedSites: entries.filter((e) => e.op.kind === "inventory").length,
+    admittedSites: entries.filter((e) => e.runtimeAdmission === "completed").length,
     blockedSites: entries.filter((e) => e.op.kind === "blocked").length,
+    hostBlockedSites: hostBlockedChecks.length,
     probes: checks.length,
     equipmentGrantSites: equipmentSites.length,
     equipmentGrantIdentities: new Set(
@@ -466,12 +498,19 @@ const report = {
   },
   entries,
   checks,
+  hostBlockedChecks,
   equipmentChains,
   querySurvey,
+  magicStoneEvidenceReferences: {
+    sourceCatalog: { report: "build/reports/v72-magic-stones-source.json", lane: "static-source-catalogue" },
+    session: { tests: "tests/magic-stone-session.test.ts", lane: "synthetic-controlled-source-initialized-session" },
+    scope: "Independent capability evidence; these legacy-host refusals do not certify source story reachability or native execution",
+  },
   limitations: [
     "No new maps or story unlocks",
     "Isolated instructions with controlled stock and Gil",
-    "Magic and esper ownership stays blocked; held equipment with unsupported wear effects cannot be equipped",
+    "Type9 magic-stone operations decode, but this legacy entry has nativeState=null and explicitly rejects their ownership changes; fresh-session evidence is separate",
+    "Other magic ownership and summon execution remain separate capabilities; held equipment with unsupported wear effects cannot be equipped",
     "Equipment removals below full-roster occupancy are explicitly unsupported, not silently clamped or unequipped",
     "Acquisition/save/battle chains use isolated source instructions and the existing controlled opening party, not source story reachability",
     "No general item-count query or arbitrary SysCall support",

@@ -30,7 +30,9 @@ test("declared menu inputs snapshot every supported command and nested selection
     { kind: "change-party", change: { kind: "set-member", slot: 1, position: 0, ownedId: null, row: "front" } },
     { kind: "change-party", change: { kind: "select-slot", slot: 2 } },
     { kind: "use-ability", actorId: "a", abilityId: 31, selection: { kind: "single", id: "b" } },
-    { kind: "use-ability", actorId: "a", abilityId: 31, selection: { kind: "all" } }];
+    { kind: "use-ability", actorId: "a", abilityId: 31, selection: { kind: "all" } },
+    { kind: "change-magic-stone", playerId: "a", contentId: 63 },
+    { kind: "change-magic-stone", playerId: "a", contentId: 0 }];
   const foreign = runInNewContext("(" + JSON.stringify(original) + ")") as unknown[];
   const parsed = Array.from(foreign, parseGameMenuCommand);
   assert.deepEqual(parsed, original);
@@ -56,6 +58,9 @@ test("declared menu inputs snapshot every supported command and nested selection
 test("invalid fields and boundaries never become a partially applied typed input", () => {
   const f = fixture(), before = f.game.checkpoint();
   const invalid: unknown[] = [
+    { kind: "change-magic-stone", playerId: "a", contentId: -1 },
+    { kind: "change-magic-stone", playerId: "a", contentId: 63, count: 1 },
+    { kind: "change-magic-stone", playerId: " a", contentId: 0 },
     { kind: "shop", itemId: 10, targetId: "a" },
     { kind: "use-item", itemId: 0, targetId: "a" },
     { kind: "use-item", itemId: 0x80000000, targetId: "a" },

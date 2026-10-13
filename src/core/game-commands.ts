@@ -41,6 +41,7 @@ export class GameCommands {
       case "use-ability": return this.useMenuAbility({ actorId: input.actorId, abilityId: input.abilityId,
         selection: input.selection });
       case "change-equipment": return this.changeEquipment(input.playerId, input.slot, input.contentId);
+      case "change-magic-stone": return this.changeMagicStone(input.playerId, input.contentId);
       case "set-preferences": return this.setBattlePreferences(input.preferences);
       case "change-party": {
         if (!this.menuReady) return false;
@@ -58,6 +59,9 @@ export class GameCommands {
   }
   changeEquipment(playerId: string, slot: number, contentId: number): boolean {
     return this.menuReady ? this.owner.changeEquipment(playerId, slot, contentId) : false;
+  }
+  changeMagicStone(playerId: string, contentId: number): boolean {
+    return this.menuReady ? this.owner.changeMagicStone(playerId, contentId, () => this.menuReady) : false;
   }
   changeParty(request: PartyMenuRequest): boolean {
     return this.menuReady ? this.owner.changeParty(request, () => this.menuReady) : false;

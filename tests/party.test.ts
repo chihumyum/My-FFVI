@@ -211,6 +211,10 @@ test("actor refresh is prepared before publication; unavailable or failed media 
           state = preview.state;
           commits++;
         },
+        commitWith(publish: () => void) {
+          publish();
+          this.commit();
+        },
       };
     },
   };
@@ -239,8 +243,8 @@ test("actor refresh is prepared before publication; unavailable or failed media 
   assert.deepEqual(events, [
     "prepare-owned",
     "prepare-actors",
-    "publish-owned",
     "publish-actors",
+    "publish-owned",
   ]);
   assert.deepEqual(activePartyMembers(state), [
     { id: "owned:42", index: 0, row: "front" },
@@ -260,6 +264,10 @@ test("false refresh never calls presentation; stale owned publication never publ
         commit() {
           ownedCommits++;
         },
+        commitWith(publish: () => void) {
+          publish();
+          this.commit();
+        },
       }),
     },
     () => {
@@ -276,6 +284,9 @@ test("false refresh never calls presentation; stale owned publication never publ
             activeMembers: [],
             refreshActors: true,
             commit() {
+              throw new Error("stale");
+            },
+            commitWith(_publish: () => void) {
               throw new Error("stale");
             },
           }),
@@ -304,6 +315,10 @@ test("event dispatch rejects missing owner, wrong refresh and malformed command 
           commit() {
             commits++;
           },
+          commitWith(publish: () => void) {
+            publish();
+            this.commit();
+          },
         }),
       }),
     /contract changed/,
@@ -315,7 +330,15 @@ test("event dispatch rejects missing owner, wrong refresh and malformed command 
     {
       prepare(command) {
         if (command.kind === "organize-slot") command.members[0] = 999;
-        return { activeMembers: [], refreshActors: true, commit() {} };
+        return {
+          activeMembers: [],
+          refreshActors: true,
+          commit() {},
+          commitWith(publish: () => void) {
+            publish();
+            this.commit();
+          },
+        };
       },
     },
     () => () => {},

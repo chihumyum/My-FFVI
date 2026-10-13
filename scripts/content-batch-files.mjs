@@ -50,7 +50,8 @@ export function batchRouteSpecs(manifest) {
   return manifest.routes.map(({ id, entry, expectedMapId, requiredMapIds, requiredEncounterIds, inputs }) => {
     const spec = { id, entry, expectedMapId,
       requiredMapIds: [...requiredMapIds], requiredEncounterIds: [...requiredEncounterIds] };
-    if (inputs.some(input => input.kind === "menu" || input.kind === "save-restore")) {
+    if (inputs.some(input => input.kind === "menu" || input.kind === "save-restore" ||
+      input.kind === "shop" || input.kind === "leave-shop")) {
       const firstRestore = inputs.findIndex(input => input.kind === "save-restore");
       spec.program = {
         inputCount: inputs.length,

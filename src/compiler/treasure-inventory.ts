@@ -75,6 +75,8 @@ export function compileTreasureInventoryDefinition(
     case "grant-item":
     case "grant-equipment": reward = { kind: inventory.command.kind,
       id: inventory.command.id, count: contentNum }; break;
+    case "grant-magic-stone":
+      throw new Error("Magic-stone treasure capacity and reward context are not implemented");
     default: throw new Error("Unexpected treasure reward projection");
   }
   const content = row(tables, "content.csv", contentId);

@@ -400,6 +400,16 @@ export class GameSession {
     if (!this.menuReady) return false;
     return this.state.changeEquipment(playerId, slot, contentId);
   }
+  magicStoneMenu(playerId: string) { return this.state.magicStoneMenu(playerId); }
+  changeMagicStone(playerId: string, contentId: number, stillAdmitted?: () => boolean): boolean {
+    if (!this.menuReady || stillAdmitted !== undefined && stillAdmitted() !== true) return false;
+    const field = this.field, transaction = this.state.prepareMagicStoneMenu(playerId, contentId);
+    if (!transaction) return false;
+    transaction.validate();
+    if (this.field !== field || !this.menuReady || stillAdmitted !== undefined && stillAdmitted() !== true) return false;
+    transaction.commit();
+    return true;
+  }
   private requireShop() {
     const shop = this.field.currentShop;
     if (this.battle || this.battleLease || this.state.inBattle || this.field.stop || !shop)

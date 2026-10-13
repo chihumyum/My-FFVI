@@ -26,6 +26,8 @@ const lanes = [
   ["party-organization-owner-loop", "check-party-organization.mjs", "party-organization-check.json", "tests"],
   ["party-organization-ui", "check-party-menu-ui.mjs", "party-menu-ui-check.json", "cases"],
   ["field-abilities-ui", "check-field-abilities-ui.mjs", "field-abilities-ui-check.json", "tests"],
+  ["shop-economy-loop", "check-shop-economy-loop.mjs", "shop-economy-loop-check.json", "tests"],
+  ["magic-stones-ui", "check-magic-stones-ui.mjs", "magic-stones-ui-check.json", "cases"],
   ["battle-ai-target-transactions", "check-battle-ai-targets.mjs", "battle-ai-targets-check.json", "stages"],
   ["event-save-continuation", "check-event-save.mjs", "event-save-check.json", "tests"],
   ["content-batch-pipeline", "check-content-batch-pipeline.mjs", "content-batch-pipeline-check.json", "tests"],

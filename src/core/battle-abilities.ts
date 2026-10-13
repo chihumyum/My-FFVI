@@ -59,6 +59,9 @@ export type BattleCommandEligibility = {
   abilityIds: number[];
   forbiddenConditionIds: number[];
   blockers: string[];
+  /** A temporary summon row has separate execution/usage dependencies. Its
+   * absence must not disable ordinary, actually learned spells in command 7. */
+  summon?: { contentId: number; available: null; blockers: string[] };
 };
 
 export type BattleAbilityProjection = {
@@ -171,8 +174,6 @@ export function projectBattleAbilities(
         }
       if (command.abilityTypes.some((type) => ![1, 2, 504, 604].includes(type)))
         blockers.push("Unresolved specialized battle ability-list provider");
-      if (commandId === 7 && member.magicStoneId !== 0)
-        blockers.push("Unresolved equipped magic-stone battle invocation");
     } else blockers.push("Unresolved command execution/list shape");
     let available: boolean | null = true;
     if (command.contentId !== null) {
@@ -200,6 +201,8 @@ export function projectBattleAbilities(
     if (blockers.length && available !== false) available = null;
     if (released === false || menu === "none") available = false;
     return { commandId, nameKey: command.nameKey, menu, released, available, kind, abilityIds,
+      ...(commandId === 7 && member.magicStoneId !== 0 ? { summon: { contentId: member.magicStoneId,
+        available: null, blockers: ["Unresolved equipped magic-stone summon execution and usage lifecycle"] } } : {}),
       forbiddenConditionIds: [...command.forbiddenConditionIds], blockers: [...new Set(blockers)] };
   });
   const priority = (entry: BattleCommandEligibility) => entry.menu === "normal" ? 0 : entry.menu === "extra"

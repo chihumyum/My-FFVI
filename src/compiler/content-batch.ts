@@ -25,10 +25,18 @@ const menuCommand = z.unknown().transform((value, context) => {
     return z.NEVER;
   }
 });
+const shopRequest = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("buy"), productId: id, count: id }).strict(),
+  z.object({ kind: z.literal("sell"), contentId: id, count: id }).strict(),
+]);
 const input = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("move"), direction: z.enum(["up", "right", "down", "left"]) }).strict(),
   z.object({ kind: z.literal("confirm") }).strict(),
   z.object({ kind: z.literal("menu"), command: menuCommand }).strict(),
+  // Shops remain field interactions. A menu command does not authorize a
+  // trade, and a declared group cannot redirect the live shop request.
+  z.object({ kind: z.literal("shop"), groupId: id, request: shopRequest }).strict(),
+  z.object({ kind: z.literal("leave-shop"), groupId: id }).strict(),
   z.object({ kind: z.literal("save-restore") }).strict(),
 ]);
 // The runtime and compiler consume one reference contract. The manifest does
@@ -41,7 +49,7 @@ const contentRefs = z.unknown().transform((value, context) => {
   }
 });
 /** Authored routing metadata, never a source-data or saved-state replacement.
- * Inputs are public player actions, dispatched one at a time at stable fields. */
+ * Public inputs are dispatched one at a time in their owning field/menu stage. */
 export const ContentBatchManifest = z.object({
   kind: z.literal("content-batch-manifest-v1"), id: name,
   profile: z.enum(["source", "framework"]),
@@ -156,7 +164,8 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
     ...Object.fromEntries([...maps].sort((a, b) => a.mapId - b.mapId).map(m => [`map:${m.mapId}`, m.contentHash])) };
   // Legacy routes keep their dependency identity. Extended programs bind the
   // actual ordered commands, not only their aggregate execution counts.
-  const routePrograms = manifest.routes.some(r => r.inputs.some(i => i.kind === "menu" || i.kind === "save-restore")) ?
+  const routePrograms = manifest.routes.some(r => r.inputs.some(i =>
+    i.kind === "menu" || i.kind === "save-restore" || i.kind === "shop" || i.kind === "leave-shop")) ?
     manifest.routes.map(({ id, inputs }) => ({ id, inputs })) : null;
   const dependencyHash = hash({ contentHashes, dependencies, encounters, diagnostics,
     ...(manifest.contentRefs ? { contentRefs: manifest.contentRefs } : {}),

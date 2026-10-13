@@ -4,6 +4,7 @@ import type { OwnedCharacterInitializationTemplate } from "../core/owned-charact
 import { initialCharacterGrowth, validateCharacterGrowth, type CharacterGrowthPlan } from "../core/character-growth.js";
 
 import type { ObservedLearningCatalog } from "../core/character-learning.js";
+import { validateMagicStoneCatalog, type MagicStoneCatalog } from "../core/magic-stones.js";
 
 type Tables = Record<string, Record<string, string>[]>;
 type Reader = {
@@ -18,6 +19,7 @@ export function compileCharacterGrowth(
   tables: Tables,
   template: OwnedCharacterInitializationTemplate,
   observedLearning?: ObservedLearningCatalog,
+  magicStones?: MagicStoneCatalog,
 ): { plan: CharacterGrowthPlan; sources: BattleRow["source"][] } {
   const sources: BattleRow["source"][] = [];
   const row = (table: string, id: string | number) => {
@@ -75,13 +77,33 @@ export function compileCharacterGrowth(
     if (int(content.type_id) !== 4) throw new Error("Unresolved natural learning content kind");
     return { id: int(r.id), level: int(r.value1), abilityId: int(content.type_value), contentId: int(content.id) };
   });
-  const abilityIds = [...new Set([...template.initial.abilities.owned.map((a) => a.abilityId), ...learning.map((r) => r.abilityId), ...(observedLearning?.candidates.map((r) => r.abilityId) ?? [])])];
+  const stoneLearning = magicStones ? Object.values(magicStones.stones).flatMap(stone => stone.learning) : [];
+  if (magicStones) {
+    validateMagicStoneCatalog(magicStones);
+    const referencedIds = new Set<number>();
+    for (const stone of Object.values(magicStones.stones)) {
+      const expected = learningRows.filter(r => int(r.type_id) === 2 && int(r.value1) === stone.contentId);
+      if (expected.length !== stone.learning.length || expected.some((r, i) => int(r.id) !== stone.learning[i]!.id))
+        throw new Error("Changed magic stone learning enumeration");
+      for (const binding of stone.learning) {
+        const r = row("learning.csv", binding.id);
+        if (int(r.type_id) !== 2 || int(r.value1) !== stone.contentId ||
+            int(r.content_id) !== binding.contentId || int(r.value2) !== binding.rate || referencedIds.has(binding.id))
+          throw new Error("Changed magic stone growth learning identity");
+        referencedIds.add(binding.id);
+      }
+    }
+    if (learningRows.some(r => int(r.type_id) === 2 && !referencedIds.has(int(r.id))))
+      throw new Error("Incomplete magic stone growth learning catalog");
+  }
+  const abilityIds = [...new Set([...template.initial.abilities.owned.map((a) => a.abilityId), ...learning.map((r) => r.abilityId), ...(observedLearning?.candidates.map((r) => r.abilityId) ?? []), ...stoneLearning.map(r => r.abilityId)])];
   const abilities = abilityIds.map((id) => {
     const source = row("ability.csv", id);
     const contents = new Set([
       ...template.initial.abilities.owned.filter((a) => a.abilityId === id).map((a) => a.contentId),
       ...learning.filter((r) => r.abilityId === id).map((r) => r.contentId),
       ...(observedLearning?.candidates.filter((r) => r.abilityId === id).map((r) => r.contentId) ?? []),
+      ...stoneLearning.filter(r => r.abilityId === id).map(r => r.contentId),
     ]);
     if (contents.size !== 1) throw new Error("Ambiguous growth ability content");
     const contentId = [...contents][0]!;
@@ -98,8 +120,16 @@ export function compileCharacterGrowth(
   if (abilities.some((a) => passiveIds.includes(a.id) || a.typeId === 12))
     throw new Error("Unresolved learned passive parameter ability");
   const groups = all("ability_group.csv");
-  const commands = Array.from({ length: 6 }, (_, i) => int(character[`command_id${i + 1}`]))
-    .filter((id) => id !== 0).map((id) => {
+  const commandIds = Array.from({ length: 6 }, (_, i) => int(character[`command_id${i + 1}`]))
+    .filter((id) => id !== 0);
+  if (magicStones)
+    // Initialization also appends source common commands (for example row and
+    // defend). Dynamic projection reads that complete owned list, not only the
+    // six character_status slots. Metadata closure does not grant a command.
+    for (const id of [...template.initial.abilities.commandIds,
+      magicStones.rules.magicCommandId, magicStones.rules.alternativeMagicCommandId])
+      if (!commandIds.includes(id)) commandIds.push(id);
+  const commands = commandIds.map((id) => {
       const command = row("command.csv", id);
       const abilityTypes = groups.filter((r) => int(r.group_id) === int(command.ability_group_id))
         .map((group) => int(row("chanting.csv", group.type_id!).ability_type_id));
@@ -108,6 +138,7 @@ export function compileCharacterGrowth(
   const plan: CharacterGrowthPlan = {
     kind: "character-growth-v1", sourceId, jobId,
     ...(observedLearning ? { observedLearning: structuredClone(observedLearning) } : {}),
+    ...(magicStones ? { magicStones: structuredClone(magicStones) } : {}),
     baseExp: Math.min(maxExp, int(character.exp)), initialLevel: template.initial.level,
     maxExp, maxLevel, experience, growth, learning, abilities, commands,
     initialAbilities: structuredClone(template.initial.abilities),
@@ -115,6 +146,6 @@ export function compileCharacterGrowth(
     hasBattleBackgroundLearning: learningRows.some((r) => int(r.type_id) === 3 && int(r.job_id) === jobId),
     observedLearningAbilityIds: all("ability.csv").filter((r) => int(r.type_id) === 504).map((r) => int(r.id)),
   };
-  validateCharacterGrowth(plan, template.initial, initialCharacterGrowth());
+  validateCharacterGrowth(plan, template.initial, initialCharacterGrowth(plan));
   return { plan, sources: [...new Map(sources.map((s) => [JSON.stringify(s), s])).values()] };
 }

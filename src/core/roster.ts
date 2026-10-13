@@ -78,6 +78,8 @@ export type RosterLifecycleProviders<T extends RosterMember> = {
   correctLevel?: (member: T, targetLevel: number) => T;
   /** FullRecoveryHpAndMp followed by RemoveCondition(id, 0). */
   recover?: (member: T) => T;
+  /** Low-level removal clears the association without the menu's command cleanup. */
+  removeMagicStone?: (member: T) => T;
   /** The owner validates all additional fields, including abilities and growth. */
   validateMember: (member: T) => void;
 };
@@ -106,6 +108,9 @@ export type RosterLifecycleTransaction = {
   readonly refreshActors: boolean;
   readonly appearance?: PartyAppearanceCandidate;
   commit(): void;
+  /** Finish fallible presentation reads against the old owner, then publish
+   * prepared actors and owned state under one synchronous mutation lock. */
+  commitWith(publish: () => void): void;
 };
 export interface FieldRosterPort {
   prepare(command: RosterCommand): RosterLifecycleTransaction;
@@ -282,7 +287,7 @@ export function prepareRosterLifecycle<T extends RosterMember>(
   const existed = member !== undefined,
     wasEnabled = member?.enabled === true;
   const firstJoin = !existed || member!.additionalLevel === 1;
-  const replace = (next: T, allowGrowth = false) => {
+  const replace = (next: T, allowGrowth = false, allowMagicRemoval = false) => {
     if (!member) throw new Error("Missing roster provider target");
     for (const key of [
       "id",
@@ -292,8 +297,10 @@ export function prepareRosterLifecycle<T extends RosterMember>(
       "jobId",
       "magicStoneId",
     ] as const)
-      if (next[key] !== member[key])
+      if (!(allowMagicRemoval && key === "magicStoneId") && next[key] !== member[key])
         throw new Error("Roster provider changed lifecycle identity");
+    if (allowMagicRemoval && next.magicStoneId !== 0)
+      throw new Error("Roster magic stone removal did not clear the association");
     if (
       (!allowGrowth && next.additionalLevel !== member.additionalLevel) ||
       (allowGrowth && next.additionalLevel < member.additionalLevel) ||
@@ -395,7 +402,9 @@ export function prepareRosterLifecycle<T extends RosterMember>(
       id: member.id,
       magicStoneId: member.magicStoneId,
     });
-    member.magicStoneId = 0; // OwnedCharacterClient.RemoveMagicStone only clears the equipped ID.
+    if (member.magicStoneId !== 0 && providers.removeMagicStone)
+      replace(providers.removeMagicStone(structuredClone(member)), false, true);
+    else member.magicStoneId = 0; // OwnedCharacterClient.RemoveMagicStone only clears the equipped ID.
   } else if (command.kind === "join") {
     const slot = state.party.slots[state.party.selectedSlot];
     const position =
@@ -470,6 +479,5 @@ export function executeRosterLifecycleEvent(
       throw new Error("Invalid roster presentation transaction");
   }
   publishPresentation?.validate?.();
-  transaction.commit();
-  publishPresentation?.();
+  transaction.commitWith(publishPresentation ?? (() => {}));
 }

@@ -42,10 +42,21 @@ export function compileInventoryEvent(
     };
   }
   const count = tableId(values[1]);
-  if (count <= 0) throw new Error("Field item count must be positive");
   const content = row("content.csv", id),
     type = tableId(content.type_id);
   const dependencies = [{ table: "content.csv", id }];
+  if (type === 9) {
+    // OwnedItemClient's type-9 branch dispatches the content identity to the
+    // native ordered magic-stone list; count is not a stack quantity.
+    const value = tableId(content.type_value);
+    if (mnemonic === "RemoveItem" && rows("content.csv").filter(row => tableId(row.type_id) === 9 &&
+        tableId(row.type_value) === value).length !== 1)
+      throw new Error("Ambiguous magic stone inventory identity");
+    return { kind: "inventory", command: {
+      kind: mnemonic === "GetItem" ? "grant-magic-stone" : "remove-magic-stone", id, count,
+    }, result: null, dependencies };
+  }
+  if (count <= 0) throw new Error("Field item count must be positive");
   if (type === 5 && mnemonic === "GetItem")
     return {
       kind: "inventory",

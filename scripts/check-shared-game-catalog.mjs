@@ -139,6 +139,11 @@ try {
     await mkdir(resolve(fixture, "build/corpus/bundles"), { recursive: true });
     for (const directory of ["import", "battle", "field"])
       await symlink(resolve(root, "build", directory), resolve(fixture, "build", directory), "dir");
+    // The production catalog's magic-stone dictionary is an independent
+    // authenticated input. Preserve it while mutating only the legacy prelude.
+    await mkdir(resolve(fixture, "build/reports"), { recursive: true });
+    await symlink(resolve(root, "build/reports/v71-esper-native-complete"),
+      resolve(fixture, "build/reports/v71-esper-native-complete"), "dir");
     const directory = resolve(root, "build/corpus");
     const manifestBytes = await readFile(resolve(directory, "corpus.json"));
     const manifest = JSON.parse(manifestBytes);

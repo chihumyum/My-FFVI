@@ -10,6 +10,7 @@ export type GameMenuCommand =
   | { kind: "use-ability"; actorId: string; abilityId: number;
       selection: { kind: "single"; id: string } | { kind: "all" } }
   | { kind: "change-equipment"; playerId: string; slot: number; contentId: number }
+  | { kind: "change-magic-stone"; playerId: string; contentId: number }
   | { kind: "change-party"; change: PartyMenuChange }
   | { kind: "set-preferences"; preferences: BattlePreferences };
 
@@ -105,6 +106,9 @@ export function parseGameMenuCommand(raw: unknown): GameMenuCommand {
       keys(value, "kind,playerId,slot,contentId");
       return { kind: "change-equipment", playerId: ownedId(value.playerId), slot: integer(value.slot, 1, 6),
         contentId: integer(value.contentId, 1, 0x7fffffff) };
+    case "change-magic-stone":
+      keys(value, "kind,playerId,contentId");
+      return { kind: "change-magic-stone", playerId: ownedId(value.playerId), contentId: integer(value.contentId, 0, 0x7fffffff) };
     case "change-party":
       keys(value, "kind,change");
       return { kind: "change-party", change: partyChange(value.change) };

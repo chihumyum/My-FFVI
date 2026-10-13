@@ -55,6 +55,7 @@ export type PartyEventTransaction = {
   readonly appearance?: PartyAppearanceCandidate;
   /** Reject stale/repeated publication, and publish the prepared state exactly once. */
   commit(): void;
+  commitWith(publish: () => void): void;
 };
 /** Detached owned identities from the same transaction as the slot mutation. */
 export type PartyAppearanceCandidate = {
@@ -69,8 +70,8 @@ export interface FieldPartyPort {
    */
   prepare(command: PartyCommand): PartyEventTransaction;
 }
-/** A live actor owner may require one final read-only stale check before owned
- * publication. Once validated, publication is synchronous and non-failing. */
+/** The callable may finish fallible actor checks. The owned transaction must
+ * invoke it while the prior owned state is still live and mutation-locked. */
 export type PartyPresentationPublication = (() => void) & { validate?(): void };
 export type PreparePartyPresentation = (
   members: ActivePartyMember[],
@@ -249,6 +250,5 @@ export function executePartyEvent(
       throw new Error("Invalid party presentation transaction");
   }
   publishPresentation?.validate?.();
-  transaction.commit();
-  publishPresentation?.();
+  transaction.commitWith(publishPresentation ?? (() => {}));
 }

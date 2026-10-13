@@ -4,6 +4,7 @@ import type { EquipmentOwnershipCommand } from "./inventory-ownership.js";
 /** Inventory is owned by GameState, never by a field or event task. */
 export type FieldInventoryCommand =
   | { kind: "grant-item" | "remove-item"; id: number; count: number }
+  | { kind: "grant-magic-stone" | "remove-magic-stone"; id: number; count: number }
   | EquipmentOwnershipCommand
   | { kind: "grant-gil"; amount: number }
   | { kind: "pay-gil"; amount: number };
@@ -44,6 +45,9 @@ export function executeInventoryEvent(
   ) {
     if (int32(command.id) <= 0 || int32(command.count) <= 0)
       throw new Error("Invalid field item amount");
+  } else if (command.kind === "grant-magic-stone" || command.kind === "remove-magic-stone") {
+    if (int32(command.id) <= 0) throw new Error("Invalid magic stone content identity");
+    int32(command.count); // Source type-9 dispatch ignores the signed Count operand.
   } else if (command.kind === "grant-gil" || command.kind === "pay-gil") {
     if (int32(command.amount) < 0) throw new Error("Invalid field Gil amount");
   } else throw new Error("Unknown field inventory command");

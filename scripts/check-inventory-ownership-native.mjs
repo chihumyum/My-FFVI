@@ -124,7 +124,7 @@ const report = {
     "AddOwnedItem bounds the incoming count and then merged total Count to GetItemMaxCount",
     "RemoveOwnedItem subtracts Count and deletes an exhausted stack without changing equipment registrations",
     "This runtime explicitly blocks removal below full-roster occupancy; it does not imitate the resulting source negative-free state",
-    "Content type 9 uses a separate owned-summon path and remains unsupported",
+    "Content type 9 uses a separate ordered magic-stone ID owner; check-magic-stone-native.mjs binds its inventory Add/Remove path separately from UI equipment and summon execution",
   ],
   semanticsVerified: false,
   doesNotEstablish: [

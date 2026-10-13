@@ -38,16 +38,16 @@
     "profile": "framework",
     "source": {
       "battle": {
-        "contentHash": "0d900c2b5f8571face9e6e88fff20e7abcda388528aff569126c50b67dadee8c",
+        "contentHash": "6e8a406f2de60128267eca0c3d3039a77de96c4b183e31f4a8d84c2ea779a926",
         "url": "/content-packages/source/battle.json"
       },
       "entry": {
-        "contentHash": "c76e71141e41841cee6884a4242fdc120b1f93a9eaa38f23483d48bf826ef52f",
+        "contentHash": "767accc2da8cd235e8a933c134b3fbb93e31d9038ce713c6ed098d32cdebcfdc",
         "url": "/content-packages/framework/entry.json"
       }
     },
     "world": {
-      "contentHash": "7fee63ad02f49f44c158ab0ca3cbb8739cfa185b5c7918116ae717d693c94c61",
+      "contentHash": "63a73539015e337d232fd7e9dc49b3949f44e28f5bee5176ea6e8f8ab8ccf615",
       "url": "/content-packages/framework/world.json"
     }
   }

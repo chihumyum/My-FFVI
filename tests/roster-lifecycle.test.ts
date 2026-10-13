@@ -366,6 +366,10 @@ test("field lifecycle prepares presentation before owned publication and refuses
       commit: () => {
         calls.push("owned");
       },
+      commitWith(publish: () => void) {
+        publish();
+        this.commit();
+      },
     }),
   };
   assert.throws(
@@ -387,5 +391,5 @@ test("field lifecycle prepares presentation before owned publication and refuses
       calls.push("presentation");
     };
   });
-  assert.deepEqual(calls, ["prepare", "owned", "presentation"]);
+  assert.deepEqual(calls, ["prepare", "presentation", "owned"]);
 });

@@ -21,6 +21,7 @@ const tables = {
     { id: "304", type_id: "2", type_value: "88" },
     { id: "305", type_id: "2", type_value: "89" },
     { id: "404", type_id: "9", type_value: "88" },
+    { id: "405", type_id: "8", type_value: "88" },
     { id: "505", type_id: "5", type_value: "1" },
   ],
   "item.csv": [
@@ -168,10 +169,29 @@ test("equipment event ownership keeps content, weapon and armor identities disti
   assert.deepEqual(commands, [{ kind: "grant-equipment", id: 303, count: 2 }]);
 });
 
+test("magic stone dispatch preserves content ID and ignored signed count without a stack or summon grant", () => {
+  for (const count of [0, -1, 1, 99, -2147483648]) {
+    const grant = inventoryOp("GetItem", [404, count]);
+    assert.deepEqual(grant.command, { kind: "grant-magic-stone", id: 404, count });
+    assert.deepEqual(grant.dependencies, [{ table: "content.csv", id: 404 }]);
+    const commands: FieldInventoryCommand[] = [];
+    executeInventoryEvent(grant, new EventState(), { prepare(command) {
+      commands.push(command); return { result: null, commit() {} };
+    } });
+    assert.deepEqual(commands, [grant.command]);
+    assert.deepEqual(inventoryOp("RemoveItem", [404, count]).command,
+      { kind: "remove-magic-stone", id: 404, count });
+  }
+  const aliases = { ...tables, "content.csv": [...tables["content.csv"],
+    { id: "406", type_id: "9", type_value: "88" }] };
+  assert.equal(decode("GetItem", [404, 1], aliases).kind, "inventory");
+  assert.equal(decode("RemoveItem", [404, 1], aliases).kind, "blocked");
+});
+
 test("missing, ambiguous, special and malformed inventory operands remain blockers", () => {
   for (const [name, values] of [
     ["GetItem", [305, 1]],
-    ["GetItem", [404, 1]],
+    ["GetItem", [405, 1]],
     ["RemoveItem", [505, 1]],
     ["GetItem", [201, -1]],
     ["GetItem", [201, 0]],

@@ -1,3 +1,5 @@
+import { MagicStoneView } from "./magic-stones-view.js";
+
 const cleanName = (name) => name.replace(/<IC_[A-Z0-9_]+>/g, "");
 const node = (tag, text, className) => {
   const element = document.createElement(tag);
@@ -49,9 +51,16 @@ export class PartyView {
     this.onChange = onChange;
     this.commands = commands;
     this.owner = owner;
+    this.magicStoneRoot = node("section", undefined, "party-menu-magic-stones");
+    this.magicStoneView = new MagicStoneView(this.magicStoneRoot, () => {
+      this.key = "";
+      if (this.session) this.render(this.session, { disabled: this.disabled });
+      this.onChange();
+    }, { commands, owner });
     this.reset();
   }
   reset() {
+    this.magicStoneView?.reset();
     this.playerId = null;
     this.slot = null;
     this.abilityDraft = null;
@@ -78,6 +87,8 @@ export class PartyView {
     if (!model.roster.some((member) => member.id === this.playerId))
       this.playerId = model.cells.find((cell) => cell.id !== null)?.id ?? model.roster[0]?.id ?? null;
     const character = this.playerId === null ? null : session.characterMenu(this.playerId);
+    const magicStones = this.playerId === null || typeof session.magicStoneMenu !== "function"
+      ? null : session.magicStoneMenu(this.playerId);
     const activeMember = model.cells.some((cell) => cell.id === this.playerId && cell.member?.enabled);
     let fieldAbilities = [], abilityChoices = [], fieldAbilityError = "";
     try {
@@ -87,7 +98,7 @@ export class PartyView {
     } catch (error) { fieldAbilityError = abilityError(error); }
     this.slot ??= model.selectedSlot;
     const key = JSON.stringify([model, character, disabled, this.message, this.slot,
-      fieldAbilities, fieldAbilityError, this.abilityDraft, abilityChoices]);
+      fieldAbilities, fieldAbilityError, this.abilityDraft, abilityChoices, magicStones]);
     if (key === this.key) return;
     this.key = key;
     const focused = this.root.contains(document.activeElement)
@@ -321,6 +332,10 @@ export class PartyView {
       }
       this.root.append(casting);
     }
+    if (this.playerId !== null && magicStones !== null) {
+      this.magicStoneView.render(session, this.playerId, { disabled });
+      this.root.append(this.magicStoneRoot);
+    } else this.magicStoneView.reset();
     if (focused) [...this.root.querySelectorAll("[data-party-focus]")]
       .find((element) => element.dataset.partyFocus === focused)?.focus();
   }

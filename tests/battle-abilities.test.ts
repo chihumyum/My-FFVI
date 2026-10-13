@@ -74,7 +74,12 @@ test("FF6 magic menu can open with no learned spell; equipped esper and trance m
   f.context.magicLearningValue = 8;
   assert.equal(query().entries.find((c) => c.commandId === 8)!.available, true);
   f.member.magicStoneId = 77;
-  assert.match(query().entries.find((c) => c.commandId === 7)!.blockers.join(), /magic-stone/);
+  const equipped = query().entries.find(c => c.commandId === 7)!;
+  assert.equal(equipped.available, true);
+  assert.deepEqual(equipped.blockers, []);
+  assert.equal(equipped.summon?.contentId, 77);
+  assert.equal(equipped.summon?.available, null);
+  assert.match(equipped.summon!.blockers.join(), /magic-stone/);
 });
 
 test("unknown command and specialized or replacement providers are retained with blockers", () => {

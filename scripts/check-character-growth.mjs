@@ -12,6 +12,8 @@ const { readSnapshot, snapshotFile } = await module("compiler/integrity");
 const { compileOwnedCharacterInitialization } = await module("compiler/owned-character");
 const { compileOrdinaryWeaponEffects } = await module("compiler/ordinary-weapon");
 const { compileCharacterGrowth } = await module("compiler/character-growth");
+const { compileMagicStoneCatalog } = await module("compiler/magic-stones");
+const { loadSystemMessages } = await module("compiler/system-messages");
 const { compileObservedLearning } = await module("compiler/character-learning");
 const { createOwnedCharacter } = await module("core/owned-character");
 const { initialCharacterGrowth, growCharacter, expectedOwnedGrowth, validateCharacterGrowth, validateObservedLearning, firstJoinLevelAdjustments } = await module("core/character-growth");
@@ -42,6 +44,19 @@ const miscAssets = Object.values(battle.assets).filter((asset) => asset.source.a
 assert.equal(miscAssets.length, 1);
 const observedLearning = compileObservedLearning(reader(), corpus.tables, miscAssets[0].data).catalog;
 assert.deepEqual(catalog.common.observedLearning, observedLearning);
+const systemMessages = (await loadSystemMessages(root, corpus.manifest.parentSourceSetHash,
+  corpus.manifest.sources)).messages;
+const magicStones = compileMagicStoneCatalog(reader(), corpus.tables, key => {
+  const values = [...new Set([systemMessages[key], corpus.messages.story_mes_zhc[key]]
+    .filter(value => typeof value === "string"))];
+  return values.length === 1 ? values[0] : null;
+}, { receipt: JSON.parse(await readFile(root + "build/reports/v71-esper-native-complete/complete.json", "utf8")),
+  constructorC: await readFile(root + "build/reports/v71-esper-native-complete/856d80.c", "utf8"),
+  sourceSetHash: corpus.manifest.sourceSetHash }).catalog;
+assert.deepEqual(catalog.gameState.magicStones, magicStones);
+const unextendedSource = JSON.parse(await readFile(root + "build/game/opening-battle.json", "utf8"));
+const { contentHash: unextendedHash, ...unextendedInput } = unextendedSource;
+assert.equal(hash(unextendedInput), unextendedHash);
 const decoded = [], blocked = [], templates = new Map(), plans = new Map();
 for (const character of corpus.tables["character_status.csv"]) {
   const sourceId = Number(character.id);
@@ -75,7 +90,12 @@ for (const [sourceId, plan] of plans) {
   assert.ok(entry);
   const [id, published] = entry;
   assert.deepEqual(published, template);
-  assert.deepEqual(catalog.gameState.characterGrowth[id], plan);
+  // Retain all historical natural-growth probes, independently binding both
+  // the unextended source plan and the newly composed production contract.
+  assert.deepEqual(unextendedSource.characterGrowth[sourceId], plan);
+  const extended = compileCharacterGrowth(reader(), corpus.tables, template, observedLearning, magicStones).plan;
+  assert.deepEqual(extended.initialAbilities, plan.initialAbilities);
+  assert.deepEqual(catalog.gameState.characterGrowth[id], extended);
   const initialized = createOwnedCharacter(template, { id, ownedId: 1, releasedJobIds: [], learnedAbilityIds: [] });
   let member = initialized.member, progress = initialCharacterGrowth();
   const origin = structuredClone(member), originProgress = structuredClone(progress);
@@ -124,7 +144,7 @@ for (const [sourceId, plan] of plans) {
 }
 const make = () => new GameState(catalog.gameState, catalog.common.players, contentHash, catalog.common.conditions);
 const owned = make(), before = owned.snapshot();
-assert.equal(before.formatVersion, 13);
+assert.equal(before.formatVersion, 14);
 assert.deepEqual(catalog.gameState.rosterLifecycle.firstJoinLevelAdjustments, firstJoinLevelAdjustments);
 // Public victory integration verifies independently recomputed source additions.
 const lease = owned.openBattle(1, catalog.encounters[1].rewardPolicy), players = owned.battlePlayers(lease);

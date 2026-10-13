@@ -14,9 +14,11 @@ import { initialOwnedTransportations, validateOwnedTransportations,
  * position, selected transportation and entry synchronization remain owned by
  * FieldGame/WorldSession rather than duplicated here. */
 export type SourceNativeState = Omit<NewGamePlan["nativeInitialization"],
-  "ownedMagic" | "ownedTransportationIds" | "parkedTransportationMapIds"> & {
+  "ownedMagic" | "ownedMagicStones" | "ownedTransportationIds" | "parkedTransportationMapIds"> & {
   /** Content identities in the native global OwnedMagicList. */
   ownedMagic: number[];
+  /** Ordered, unique content IDs; admitted only by a bound magic-stone catalog. */
+  ownedMagicStones: number[];
   ownedTransportations: OwnedTransportation[];
   kind: "source-native-state-v2";
   entrySeed: NewGamePlan["entry"];
@@ -39,13 +41,14 @@ export function createSourceNativeState(plan: NewGamePlan): SourceNativeState {
 
 /** Stored values are checked, never repaired or filled from the initializer.
  * Only a source-replayed observed-learning ledger may change ownedMagic.
- * Parking now has a complete payload provider; crystal, warehouse, esper and
+ * Parking and bound magic-stone ownership have mutation providers; crystal, warehouse and
  * counter changes remain unadmitted. Rejecting them keeps that limitation explicit rather
  * than accepting arbitrary save data as proof of the missing transition. */
 export function validateSourceNativeState(
   state: SourceNativeState,
   initial: Readonly<SourceNativeState>,
   expectedOwnedMagic: readonly number[] = initial.ownedMagic,
+  admittedMagicStoneIds?: readonly number[],
 ): void {
   checkpointKeys(state,
     "kind,entrySeed,ownedTransportations,crystalFlags,warehouseItems,keywords,ownedMagic,ownedMagicStones,counters");
@@ -55,7 +58,12 @@ export function validateSourceNativeState(
       expectedOwnedMagic.some((id) => !Number.isSafeInteger(id) || id <= 0))
     throw new Error("Invalid source owned magic projection");
   validateOwnedTransportations(state.ownedTransportations, initial.ownedTransportations.map((record) => record.id));
+  if (admittedMagicStoneIds !== undefined && (!Array.isArray(state.ownedMagicStones) ||
+      new Set(state.ownedMagicStones).size !== state.ownedMagicStones.length ||
+      state.ownedMagicStones.some(id => !Number.isInteger(id) || id <= 0 || !admittedMagicStoneIds.includes(id))))
+    throw new Error("Invalid source owned magic stone identity or order");
   if (canonical(state) !== canonical({ ...initial, ownedMagic: expectedOwnedMagic,
-    ownedTransportations: state.ownedTransportations }))
+    ownedTransportations: state.ownedTransportations,
+    ...(admittedMagicStoneIds === undefined ? {} : { ownedMagicStones: state.ownedMagicStones }) }))
     throw new Error("Unimplemented source native-state change or mismatched entry seed");
 }
