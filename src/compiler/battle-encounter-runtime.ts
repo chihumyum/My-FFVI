@@ -334,6 +334,11 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       }
       const dynamicEntries = lifecycle?.mode === "script" ? lifecycle.program.instructions.flatMap(({ op }, pc) =>
         op.kind === "add-enemy" || op.kind === "change-enemy-party" ? [{ op, pc }] : []) : [];
+      if (lifecycle?.mode === "script") for (const [pc, { op }] of lifecycle.program.instructions.entries()) {
+        if (op.kind === "add-player") add("blocked", "owned-player-borrow-policy",
+          `Battle event PC ${pc} requires an admitted existing owned source ${op.sourceId}, resource closure and explicit return policy`,
+          { pc, dependency: { table: "character_status.csv", id: op.sourceId } });
+      }
       const slotIds = new Set(encounter.enemies.map(enemy => String(enemy.slot)));
       if (participantPolicy) for (const key of Object.keys(participantPolicy.slots)) slotIds.add(key);
       for (const { op, pc } of dynamicEntries) {

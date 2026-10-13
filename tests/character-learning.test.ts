@@ -5,6 +5,14 @@ import { expectedOwnedGrowth, growCharacter, learnObservedCharacter, validateCha
 import { characterLearningFixture } from "./fixtures/character-learning.js";
 
 const context = { battleSerial: 0, participantIndex: 0 };
+test("explicit Web borrowing receipts retain first-entry ordinals beyond four active Corps cells", () => {
+  const f = characterLearningFixture();
+  const learned = learnObservedCharacter(f.plan, f.member, f.progress, [142], { battleSerial: 0, participantIndex: 4 });
+  assert.equal(learned.progress.observedLearning[0]!.participantIndex, 4);
+  validateCharacterGrowth(f.plan, learned.member, JSON.parse(JSON.stringify(learned.progress)));
+  const invalid = structuredClone(learned.progress); invalid.observedLearning[0]!.participantIndex = 0x80000000;
+  assert.throws(() => validateCharacterGrowth(f.plan, learned.member, invalid));
+});
 test("observation selects the first source8 unit and respects all source forbidden condition types", () => {
   const f = characterLearningFixture();
   const observer = { sourceId: 8, conditionTypes: [] as number[], abilities: f.member.abilities };
@@ -79,7 +87,7 @@ test("restore rejects wrong observation identity, chronology, participant, level
   for (const change of [
     (p: typeof result.progress) => { p.observedLearning[0]!.observedAbilityIds = [999]; },
     (p: typeof result.progress) => { p.observedLearning[0]!.observedAbilityIds.reverse(); },
-    (p: typeof result.progress) => { p.observedLearning[0]!.participantIndex = 4; },
+    (p: typeof result.progress) => { p.observedLearning[0]!.participantIndex = -1; },
     (p: typeof result.progress) => { p.observedLearning[0]!.battleSerial = -1; },
     (p: typeof result.progress) => { p.observedLearning[0]!.level++; },
     (p: typeof result.progress) => { p.observedLearning.push(structuredClone(p.observedLearning[0]!)); },

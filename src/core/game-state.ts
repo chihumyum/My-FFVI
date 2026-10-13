@@ -1,6 +1,10 @@
 import type { CombatantDefinition, BattleContent } from "./battle-content.js";
 import type { BattleEntryInventory, BattleInventoryWithQualification } from "./battle-entry.js";
 import type { Combatant, BattleStatProjection } from "./battle.js";
+import { parseBattlePlayerBorrow, parseBattlePlayerPlan, parseBattlePlayerReturn,
+  type BattlePlayerBorrow, type BattlePlayerPlan, type BattlePlayerReturn } from "./battle-player-participants.js";
+import { firstEnteredOwnerIds,
+  type BattlePlayerGroupSlot } from "./battle-player-state.js";
 import { projectActionTarget, type ActionParticipant } from "./action-effects.js";
 import type {
   FieldInventoryCommand,
@@ -195,7 +199,8 @@ export type BattleLease = {
   readonly serial: number;
   readonly encounterId: number;
 };
-export type BattleEscapeResult = { players: Combatant[]; consumedItems: ItemStack[] };
+export type BattleEscapeResult = { players: Combatant[]; consumedItems: ItemStack[];
+  playerParticipants?: BattlePlayerReturn };
 export type BattleVictoryResult = BattleEscapeResult & {
   gil: number;
   /** Exactly the frozen encounter policy, before per-character eligibility/cap. */
@@ -241,6 +246,7 @@ export class GameState {
     items: ItemStack[];
     qualification: BattleEntryInventory | null;
     rewardPolicy: Readonly<BattleRewardPolicy>;
+    playerBorrow: BattlePlayerBorrow | undefined;
   } | null = null;
   private revision = 0;
   private transportationPublication = false;
@@ -1320,36 +1326,85 @@ export class GameState {
     return null;
   }
   partyPlayers(): Combatant[] {
-    return this.activeParty.map(({ id, row }) => {
-      const p = this.data.roster.find((p) => p.id === id)!;
-      const definition = this.definitions.get(id);
-      if (!definition) throw new Error("Unimplemented owned character battle definition: " + id);
-      const {
-        equipment: _,
-        enabled: _enabled,
-        ownedId: _ownedId,
-        jobId: _job,
-        additionalLevel: _additionalLevel,
-        magicStoneId: _magicStone,
-        ownedJobs: _jobs,
-        abilities: _abilities,
-        growth: _growth,
-        ...progress
-      } = p;
-      return {
-        ...structuredClone(definition),
-        ...structuredClone(progress),
-        row,
-        ...(p.abilities ? { ownedAbilities: {
-          sourceId: p.sourceId, jobId: p.jobId, magicStoneId: p.magicStoneId,
-          abilities: structuredClone(p.abilities),
-        } } : {}),
-        ...(this.content.equipmentSystem ? this.projectOwnedParameters(p) : {}),
-        atb: 0,
-        queued: false,
-        behavior: null,
-      };
+    return this.activeParty.map(({ id, row }) =>
+      this.projectOwnedBattlePlayer(this.data.roster.find((p) => p.id === id)!, row));
+  }
+  private projectOwnedBattlePlayer(p: OwnedCharacter, row: "front" | "back"): Combatant {
+    const definition = this.definitions.get(p.id);
+    if (!definition) throw new Error("Unimplemented owned character battle definition: " + p.id);
+    if (definition.sourceId !== p.sourceId || definition.side !== "player")
+      throw new Error("Owned character battle definition identity mismatch");
+    const {
+      equipment: _,
+      enabled: _enabled,
+      ownedId: _ownedId,
+      jobId: _job,
+      additionalLevel: _additionalLevel,
+      magicStoneId: _magicStone,
+      ownedJobs: _jobs,
+      abilities: _abilities,
+      growth: _growth,
+      ...progress
+    } = p;
+    return {
+      ...structuredClone(definition),
+      ...structuredClone(progress),
+      row,
+      ...(p.abilities ? { ownedAbilities: {
+        sourceId: p.sourceId, jobId: p.jobId, magicStoneId: p.magicStoneId,
+        abilities: structuredClone(p.abilities),
+      } } : {}),
+      ...(this.content.equipmentSystem ? this.projectOwnedParameters(p) : {}),
+      atb: 0,
+      queued: false,
+      behavior: null,
+    };
+  }
+  private prepareBattlePlayerBorrow(rawPlan: BattlePlayerPlan, initialPlayers: readonly Combatant[]): BattlePlayerBorrow {
+    const plan = parseBattlePlayerPlan(rawPlan);
+    const owners = new Map<string, OwnedCharacter>();
+    const admit = (id: string): OwnedCharacter => {
+      const matches = this.data.roster.filter(member => member.id === id);
+      if (matches.length !== 1) throw new Error("Missing or ambiguous borrowed player owner");
+      const member = matches[0]!;
+      if (member.id.startsWith("player:dynamic:")) throw new Error("Reserved dynamic battle player owner identity");
+      owners.set(id, member);
+      return member;
+    };
+    const group = (index: 0 | 1 | 2): BattlePlayerGroupSlot[] => this.data.party.slots[index].map(cell => {
+      if (cell.id === null) return { ownedId: null, row: cell.row };
+      const member = admit(cell.id);
+      return { ownedId: member.id, sourceId: member.sourceId, row: cell.row };
     });
+    const initial = group(this.data.party.selectedSlot);
+    for (const sourceId of plan.sourceIds) {
+      // Disabled held records remain candidates. No AddFromMaster, Join or
+      // persistent availability/party transition is performed by a battle.
+      const matches = this.data.roster.filter(member => member.sourceId === sourceId);
+      if (matches.length !== 1) throw new Error("Missing or ambiguous borrowed source owner: " + sourceId);
+      admit(matches[0]!.id);
+    }
+    const groups: BattlePlayerBorrow["groups"] = {};
+    for (const index of plan.groups) groups[index] = group(index);
+    const candidates = [...owners.values()].map(member => {
+      const entered = initialPlayers.find(player => player.id === member.id);
+      if (entered) return structuredClone(entered);
+      const definition = this.definitions.get(member.id);
+      if (!definition) throw new Error("Unimplemented owned character battle definition: " + member.id);
+      return this.projectOwnedBattlePlayer(member, definition.row);
+    });
+    const system = this.content.equipmentSystem;
+    const qualification: BattleEntryInventory | null = system ? {
+      equipmentCatalog: structuredClone(system.catalog),
+      // Enabled nonparticipants already occupy inventory copies. Add each
+      // admitted disabled owner once so later eligibility cannot reuse gear.
+      equipmentStock: equipmentAvailability(system.catalog,
+        this.data.roster.filter(member => member.enabled || owners.has(member.id)), this.data.equipmentStock)
+        .map(({ id, count, equipped }) => ({ id, count, equipped })),
+      members: [...owners.values()].map(member => ({ id: member.id, sourceId: member.sourceId,
+        equipment: [...member.equipment] })),
+    } : null;
+    return parseBattlePlayerBorrow({ kind: "battle-player-borrow-v1", plan, initial, candidates, groups, qualification });
   }
   private projectOwnedParameters(
     p: Pick<OwnedCharacter, "id" | "sourceId" | "level" | "equipment" | "growth">,
@@ -1601,7 +1656,7 @@ export class GameState {
     this.data = next;
     this.revision++;
   }
-  openBattle(encounterId: number, rewardPolicy?: BattleRewardPolicy): BattleLease {
+  openBattle(encounterId: number, rewardPolicy?: BattleRewardPolicy, playerPlan?: BattlePlayerPlan): BattleLease {
     this.requireIdle();
     if (this.battlePartyBlocker) throw new Error(this.battlePartyBlocker);
     integer(encounterId, 0x7fffffff, 1);
@@ -1624,18 +1679,24 @@ export class GameState {
         return { id: owner.id, sourceId: owner.sourceId, equipment: [...owner.equipment] };
       }),
     } : null;
+    const playerBorrow = playerPlan === undefined ? undefined : this.prepareBattlePlayerBorrow(playerPlan, players);
     this.active = {
       lease,
       players,
       items: structuredClone(this.data.items),
       qualification,
       rewardPolicy: policy,
+      playerBorrow,
     };
     return lease;
   }
   battlePlayers(lease: BattleLease): Combatant[] {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     return structuredClone(this.active.players);
+  }
+  battlePlayerBorrow(lease: BattleLease): BattlePlayerBorrow | undefined {
+    if (this.active?.lease !== lease) throw new Error("Stale battle lease");
+    return this.active.playerBorrow === undefined ? undefined : structuredClone(this.active.playerBorrow);
   }
   battleRewardPolicy(lease: BattleLease): BattleRewardPolicy {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
@@ -1653,15 +1714,30 @@ export class GameState {
   battleProgression(
     lease: BattleLease,
     fixtureExperience: BattleContent["experience"] = [],
-  ): ((player: Combatant, amount: number, observedAbilityIds: readonly number[], magicPoints?: number) =>
+  ): ((player: Combatant, amount: number, observedAbilityIds: readonly number[], magicPoints?: number, participantIndex?: number) =>
     BattleStatProjection & { level: number; exp: number; magicLearningValue: number }) | undefined {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     if (!this.content.equipmentSystem) return undefined;
-    return (player, amount, observedAbilityIds, magicPoints = 0) => {
+    return (player, amount, observedAbilityIds, magicPoints = 0, participantIndex) => {
       if (this.active?.lease !== lease) throw new Error("Stale battle lease");
       const owned = this.data.roster.find((p) => p.id === player.id);
       if (!owned || owned.sourceId !== player.sourceId)
         throw new Error("Battle roster identity changed");
+      const initialIndex = this.active.players.findIndex(candidate => candidate.id === player.id);
+      let ordinal: number;
+      if (this.active.playerBorrow) {
+        if (!this.active.playerBorrow.candidates.some(candidate => candidate.id === player.id && candidate.sourceId === player.sourceId))
+          throw new Error("Unadmitted borrowed progression owner");
+        if (participantIndex === undefined) throw new Error("Missing borrowed progression participant index");
+        ordinal = integer(participantIndex, 0x7fffffff);
+        if (initialIndex >= 0 && ordinal !== initialIndex) throw new Error("Initial borrowed participant index changed");
+        // Pure projection: the host derives this index from its identity
+        // ledger. Final return replays growth at the first-entered ordinal,
+        // so a failed frame never reserves an index in the persistent owner.
+      } else {
+        if (initialIndex < 0) throw new Error("Battle progression party identity changed");
+        ordinal = initialIndex;
+      }
       integer(amount, this.content.limits.exp);
       if (magicPoints !== this.active.rewardPolicy.magicPoints)
         throw new Error("Battle magic points disagree with leased reward policy");
@@ -1672,12 +1748,12 @@ export class GameState {
         if (player.hp === 0) {
           if (amount !== 0 || !owned.abilities) throw new Error("Invalid nonrecipient experience award");
           const next = this.projectObservedLearning(owned, observedAbilityIds, lease,
-            this.active.players.findIndex((p) => p.id === player.id));
+            ordinal);
           return { ...this.projectOwnedParameters(next), level: next.level, exp: next.exp, magicLearningValue };
         }
         const next = this.projectGrowth({ ...owned, hp: player.hp, mp: player.mp,
           conditionIds: [...player.conditionIds] }, { kind: "add-experience", amount, context: "battle", observedAbilityIds: [...observedAbilityIds],
-          learningReceipt: { battleSerial: lease.serial, participantIndex: this.active.players.findIndex((p) => p.id === player.id) } });
+          learningReceipt: { battleSerial: lease.serial, participantIndex: ordinal } });
         return { ...this.projectOwnedParameters(next), level: next.level, exp: next.exp, magicLearningValue };
       }
       // Only synthetic profiles without source initialization use this legacy
@@ -1703,8 +1779,45 @@ export class GameState {
   /** Development escape settlement is not a zero-experience victory. Source
    * result learning, loot, currency and growth are deliberately not invoked. */
   prepareEscape(lease: BattleLease, result: BattleEscapeResult): PreparedBattleReturn {
-    keys(result, "players,consumedItems");
+    keys(result, "players,consumedItems" + (Object.hasOwn(result, "playerParticipants") ? ",playerParticipants" : ""));
     return this.prepareBattleReturn(lease, { outcome: "escaped", result });
+  }
+  private validateBorrowedReturn(
+    result: BattleEscapeResult,
+    victory: BattleVictoryResult | null,
+  ): BattlePlayerReturn | null {
+    const borrow = this.active!.playerBorrow;
+    if (!borrow) {
+      if (Object.hasOwn(result, "playerParticipants")) throw new Error("Fixed battle cannot return borrowed player participants");
+      return null;
+    }
+    if (!Object.hasOwn(result, "playerParticipants")) throw new Error("Missing borrowed player return envelope");
+    const returned = parseBattlePlayerReturn(result.playerParticipants);
+    const initial = returned.state.entries.filter(entry => !entry.instanceId.startsWith("player:dynamic:"));
+    const expected = borrow.initial.flatMap((cell, slot) => cell.ownedId === null ? [] :
+      [{ instanceId: cell.ownedId, ownedId: cell.ownedId, sourceId: cell.sourceId!, slot }]);
+    if (initial.length !== expected.length || initial.some((entry, index) => {
+      const original = expected[index]!;
+      return entry.instanceId !== original.instanceId || entry.ownedId !== original.ownedId ||
+        entry.sourceId !== original.sourceId || entry.slot !== original.slot;
+    })) throw new Error("Borrowed initial participant history changed");
+    for (const entry of returned.state.entries)
+      if (!borrow.candidates.some(candidate => candidate.id === entry.ownedId && candidate.sourceId === entry.sourceId))
+        throw new Error("Borrowed return contains an unadmitted owner/source identity");
+    if (!victory && returned.observations.some(observation => observation.abilityIds.length))
+      throw new Error("Escape cannot learn borrowed player observations");
+    if (victory && !Array.isArray(victory.awardedExperience)) throw new Error("Missing borrowed experience awards");
+    if (victory && victory.observedAbilityIds !== undefined) {
+      if (!Array.isArray(victory.observedAbilityIds) || Object.keys(victory.observedAbilityIds).length !== victory.observedAbilityIds.length ||
+          Array.from({ length: victory.observedAbilityIds.length }, (_, index) => !Object.hasOwn(victory.observedAbilityIds!, index)).some(Boolean))
+        throw new Error("Invalid borrowed global observation collection");
+      distinct(victory.observedAbilityIds);
+      victory.observedAbilityIds.forEach(id => integer(id, 0x7fffffff, 1));
+      const union = [...new Set(returned.observations.flatMap(observation => observation.abilityIds))];
+      if (canonical(victory.observedAbilityIds) !== canonical(union))
+        throw new Error("Borrowed global observations differ from owner observation union");
+    }
+    return returned;
   }
   private prepareBattleReturn(
     lease: BattleLease,
@@ -1712,6 +1825,7 @@ export class GameState {
   ): PreparedBattleReturn {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     const result = exit.result, victory = exit.outcome === "victory" ? exit.result : null;
+    const borrowed = this.validateBorrowedReturn(result, victory);
     let next = this.snapshot();
     const revision = this.revision;
     if (victory) integer(victory.gil, 0x7fffffff);
@@ -1748,29 +1862,37 @@ export class GameState {
       next = this.projectInventoryEvent(next, grant).next;
     }
     const party = activePartyMembers(next.party);
+    const ownerIds = borrowed ? firstEnteredOwnerIds(borrowed.state) : party.map(member => member.id);
     if (
-      result.players.length !== party.length ||
-      result.players.some((p, n) => p.id !== party[n]!.id)
+      !Array.isArray(result.players) || Object.keys(result.players).length !== result.players.length ||
+      Array.from({ length: result.players.length }, (_, index) => !Object.hasOwn(result.players, index)).some(Boolean) ||
+      result.players.length !== ownerIds.length ||
+      result.players.some((p, n) => p.id !== ownerIds[n])
     )
       throw new Error("Battle party identity changed");
     if (victory?.awardedExperience) {
+      if (Object.keys(victory.awardedExperience).length !== victory.awardedExperience.length ||
+          Array.from({ length: victory.awardedExperience.length }, (_, index) => !Object.hasOwn(victory.awardedExperience!, index)).some(Boolean))
+        throw new Error("Invalid battle experience award collection");
       distinct(victory.awardedExperience.map((award) => award.id));
       for (const award of victory.awardedExperience) {
         keys(award, "id,amount");
         integer(award.amount, this.content.limits.exp);
       }
-      if (victory.awardedExperience.length !== party.length ||
-        victory.awardedExperience.some((award) => !party.some((p) => p.id === award.id)))
+      if (victory.awardedExperience.length !== ownerIds.length ||
+        victory.awardedExperience.some((award, index) => borrowed ? award.id !== ownerIds[index] : !ownerIds.includes(award.id)))
         throw new Error("Battle experience identity changed");
     }
     for (const [participantIndex, player] of result.players.entries()) {
-      const target = next.roster.find((p) => p.id === player.id)!;
-      if (player.side !== "player" || player.sourceId !== target.sourceId)
+      const target = next.roster.find((p) => p.id === player.id);
+      if (!target || player.side !== "player" || player.sourceId !== target.sourceId)
         throw new Error("Battle roster identity changed");
-      const cell = next.party.slots[next.party.selectedSlot][party[participantIndex]!.index];
-      const entry = this.active.players[participantIndex];
+      const cell = borrowed ? null : next.party.slots[next.party.selectedSlot][party[participantIndex]!.index];
+      const entry = borrowed ? this.active.playerBorrow!.candidates.find(candidate => candidate.id === player.id) : this.active.players[participantIndex];
+      const latest = borrowed?.state.entries.filter(history => history.ownedId === player.id).at(-1);
       if (!entry || entry.id !== player.id || entry.sourceId !== player.sourceId ||
-          cell.id !== player.id || cell.row !== entry.row ||
+          (cell !== null && (cell.id !== player.id || cell.row !== entry.row)) ||
+          (latest !== undefined && latest.row !== player.row) ||
           (player.row !== "front" && player.row !== "back"))
         throw new Error("Battle party row identity changed");
       if (entry.magicLearningValue !== target.magicLearningValue)
@@ -1783,9 +1905,10 @@ export class GameState {
         ? 0 : player.magicLearningValue;
       if (providedMagicLearningValue !== magicLearningValue)
         throw new Error("Battle magic learning projection mismatch");
-      // Function17 writes the owned Corps row. The Web battle keeps a leased
-      // candidate until the whole battle/field-return transaction can commit.
-      cell.row = player.row;
+      // The borrowed Web profile preserves all saved party cells, including
+      // rows and disabled owners. Legacy fixed-party Function17 row writeback
+      // stays within the same leased, atomic field-return transaction.
+      if (cell) cell.row = player.row;
       if (!victory) {
         for (const key of ["level", "exp", "maxHp", "maxMp"] as const)
           if (player[key] !== entry[key] || entry[key] !== target[key])
@@ -1802,16 +1925,17 @@ export class GameState {
       if (target.growth) {
         const award = victory.awardedExperience?.find((award) => award.id === player.id);
         if (!award) throw new Error("Missing source experience award");
-        if (!Array.isArray(victory.observedAbilityIds)) throw new Error("Missing battle ability observations");
-        distinct(victory.observedAbilityIds);
-        victory.observedAbilityIds.forEach((id) => integer(id, 0x7fffffff, 1));
+        const observations = borrowed ? borrowed.observations[participantIndex]!.abilityIds : victory.observedAbilityIds;
+        if (!Array.isArray(observations)) throw new Error("Missing battle ability observations");
+        distinct(observations);
+        observations.forEach((id) => integer(id, 0x7fffffff, 1));
         const resources = { ...target, hp: player.hp, mp: player.mp, conditionIds: [...player.conditionIds], magicLearningValue };
         let projected: OwnedCharacter;
         if (player.hp === 0) {
           if (award.amount !== 0 || !target.abilities) throw new Error("Invalid nonrecipient experience award");
-          projected = this.projectObservedLearning(resources, victory.observedAbilityIds, lease, participantIndex);
+          projected = this.projectObservedLearning(resources, observations, lease, participantIndex);
         } else projected = this.projectGrowth(resources, { kind: "add-experience", amount: award.amount,
-          context: "battle", observedAbilityIds: victory.observedAbilityIds,
+          context: "battle", observedAbilityIds: observations,
           learningReceipt: { battleSerial: lease.serial, participantIndex } });
         for (const key of ["level", "exp", "maxHp", "maxMp", "hp", "mp"] as const)
           if (projected[key] !== player[key]) throw new Error("Battle source growth projection mismatch");

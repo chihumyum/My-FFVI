@@ -262,7 +262,7 @@ export class BattleView {
           ? r.levels
               .map(
                 (l) =>
-                  `${battle.players.find((p) => p.id === l.id).name}  Lv ${l.from} → ${l.to}`,
+                  `${battle.resultPlayerName(l.id)}  Lv ${l.from} → ${l.to}`,
               )
               .join(" · ")
           : "",

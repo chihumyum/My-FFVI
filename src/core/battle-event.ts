@@ -18,6 +18,9 @@ export type BattleEventOp =
   | { kind: "variable-flag"; ref: VariableRef; operation: "set" | "reset" | "flip" }
   | { kind: "wait"; seconds: number }
   | { kind: "add-enemy"; monsterId: number; uniqueId: number }
+  | { kind: "add-player"; sourceId: number }
+  /** Explicit Web selection. Native ChangePlayerParty has no group operand. */
+  | { kind: "change-player-group"; group: 0 | 1 | 2 }
   | { kind: "change-enemy-party"; partyId: number; hidden: boolean }
   | { kind: "end-enabled" | "pause" | "interactive" | "enemy-no-act"; enabled: boolean }
   | { kind: "blocked"; reason: string };
@@ -34,9 +37,9 @@ export type BattleEventProgram = {
   blockers: string[];
 };
 export type BattleEventWait =
-  | { kind: "blank" | "start" | "action" | "enemy-party-entry"; clock: number }
+  | { kind: "blank" | "start" | "action" | "enemy-party-entry" | "player-group-entry"; clock: number }
   | { kind: "time"; clock: number; entryTimeSeconds: number }
-  | { kind: "enemy-entry"; clock: number; previousNoAct: boolean };
+  | { kind: "enemy-entry" | "player-entry"; clock: number; previousNoAct: boolean };
 export type BattleEventState = {
   pc: number;
   stack: number[];
@@ -63,11 +66,16 @@ export type BattleEventContext = {
    * the executor's action queues. The VM remembers the previous enemy gate. */
   enemyEntry?: { noAct: boolean; completed: boolean };
   enemyPartyEntry?: { completed: boolean };
+  /** Native AddFellow waits on IsEndAct, separately from AddEnemy loading. */
+  playerEntry?: { noAct: boolean; completed: boolean };
+  playerGroupEntry?: { completed: boolean };
 };
 export type BattleEventRequest =
   | { kind: "exec-ai" | "sync-ai"; pc: number }
   | { kind: "write-variable"; pc: number; ref: VariableRef; value: number }
   | { kind: "add-enemy"; pc: number; monsterId: number; uniqueId: number }
+  | { kind: "add-player"; pc: number; sourceId: number }
+  | { kind: "change-player-group"; pc: number; group: 0 | 1 | 2 }
   | { kind: "change-enemy-party"; pc: number; partyId: number; hidden: boolean }
   | { kind: "end-enabled" | "pause" | "interactive" | "enemy-no-act"; pc: number; enabled: boolean };
 export type BattleEventAdvance = {
@@ -189,6 +197,12 @@ function parseOp(raw: unknown): BattleEventOp {
     case "add-enemy":
       checkpointKeys(value, "kind,monsterId,uniqueId");
       return { kind, monsterId: integer(value.monsterId, 1), uniqueId: integer(value.uniqueId, 1, 9) };
+    case "add-player":
+      checkpointKeys(value, "kind,sourceId");
+      return { kind, sourceId: integer(value.sourceId, 1) };
+    case "change-player-group":
+      checkpointKeys(value, "kind,group");
+      return { kind, group: integer(value.group, 0, 2) as 0 | 1 | 2 };
     case "change-enemy-party":
       checkpointKeys(value, "kind,partyId,hidden");
       return { kind, partyId: integer(value.partyId, 1), hidden: boolean(value.hidden) };
@@ -288,7 +302,7 @@ function parseWait(raw: unknown): BattleEventWait | null {
   if (raw === null) return null;
   checkpointRecord(raw);
   const value = raw as Record<string, unknown>, kind = value.kind;
-  if (kind === "blank" || kind === "start" || kind === "action" || kind === "enemy-party-entry") {
+  if (kind === "blank" || kind === "start" || kind === "action" || kind === "enemy-party-entry" || kind === "player-group-entry") {
     checkpointKeys(value, "kind,clock");
     return { kind, clock: clockNumber(value.clock) };
   }
@@ -296,7 +310,7 @@ function parseWait(raw: unknown): BattleEventWait | null {
     checkpointKeys(value, "kind,clock,entryTimeSeconds");
     return { kind, clock: clockNumber(value.clock), entryTimeSeconds: finite(value.entryTimeSeconds, 0) };
   }
-  if (kind === "enemy-entry") {
+  if (kind === "enemy-entry" || kind === "player-entry") {
     checkpointKeys(value, "kind,clock,previousNoAct");
     return { kind, clock: clockNumber(value.clock), previousNoAct: boolean(value.previousNoAct) };
   }
@@ -317,7 +331,9 @@ function parseContext(raw: unknown): BattleEventContext {
     (Object.hasOwn(fields, "variables") ? ",variables" : "") +
     (Object.hasOwn(fields, "playersEnded") ? ",playersEnded" : "") +
     (Object.hasOwn(fields, "enemyEntry") ? ",enemyEntry" : "") +
-    (Object.hasOwn(fields, "enemyPartyEntry") ? ",enemyPartyEntry" : ""));
+    (Object.hasOwn(fields, "enemyPartyEntry") ? ",enemyPartyEntry" : "") +
+    (Object.hasOwn(fields, "playerEntry") ? ",playerEntry" : "") +
+    (Object.hasOwn(fields, "playerGroupEntry") ? ",playerGroupEntry" : ""));
   let variables: BattleEventContext["variables"];
   if (Object.hasOwn(value, "variables")) {
     const port = record(value.variables, "read");
@@ -335,11 +351,23 @@ function parseContext(raw: unknown): BattleEventContext {
     const entry = record(value.enemyPartyEntry, "completed");
     enemyPartyEntry = { completed: boolean(entry.completed) };
   }
+  let playerEntry: BattleEventContext["playerEntry"];
+  if (Object.hasOwn(value, "playerEntry")) {
+    const entry = record(value.playerEntry, "noAct,completed");
+    playerEntry = { noAct: boolean(entry.noAct), completed: boolean(entry.completed) };
+  }
+  let playerGroupEntry: BattleEventContext["playerGroupEntry"];
+  if (Object.hasOwn(value, "playerGroupEntry")) {
+    const entry = record(value.playerGroupEntry, "completed");
+    playerGroupEntry = { completed: boolean(entry.completed) };
+  }
   return { clock: clockNumber(value.clock), timeSeconds: finite(value.timeSeconds, 0),
     started: boolean(value.started), aiCoreAlive: boolean(value.aiCoreAlive), actionStaging: boolean(value.actionStaging),
     ...(variables ? { variables } : {}),
     ...(enemyEntry ? { enemyEntry } : {}),
     ...(enemyPartyEntry ? { enemyPartyEntry } : {}),
+    ...(playerEntry ? { playerEntry } : {}),
+    ...(playerGroupEntry ? { playerGroupEntry } : {}),
     ...(Object.hasOwn(value, "playersEnded") ? { playersEnded: boolean(value.playersEnded) } : {}) };
 }
 
@@ -383,7 +411,8 @@ export function advanceBattleEvent(
   if (!inRange(state.pc)) fail("PC outside the program range");
   if (state.wait) {
     const expected = { blank: "blank", start: "wait-start", action: "sync-action", time: "wait",
-      "enemy-entry": "add-enemy", "enemy-party-entry": "change-enemy-party" }[state.wait.kind];
+      "enemy-entry": "add-enemy", "enemy-party-entry": "change-enemy-party",
+      "player-entry": "add-player", "player-group-entry": "change-player-group" }[state.wait.kind];
     if (program.instructions[state.pc]?.op.kind !== expected) fail("wait does not match its instruction");
     if (state.wait.clock === context.clock) return { state, requests: [], visited: [] };
   }
@@ -540,6 +569,38 @@ export function advanceBattleEvent(
         next();
         requests.push({ kind: "enemy-no-act", pc, enabled: previousNoAct });
         return result();
+      }
+      case "add-player": {
+        if (!context.playerEntry) return fail("Missing battle owned player entry provider", pc);
+        if (state.wait?.kind !== "player-entry") {
+          state.status = "waiting";
+          state.wait = { kind: "player-entry", clock: context.clock, previousNoAct: context.playerEntry.noAct };
+          requests.push({ kind: "add-player", pc, sourceId: op.sourceId });
+          return result();
+        }
+        if (!context.playerEntry.completed) {
+          state.wait.clock = context.clock;
+          return result();
+        }
+        const previousNoAct = state.wait.previousNoAct;
+        next();
+        requests.push({ kind: "enemy-no-act", pc, enabled: previousNoAct });
+        return result();
+      }
+      case "change-player-group": {
+        if (!context.playerGroupEntry) return fail("Missing battle player group provider", pc);
+        if (state.wait?.kind !== "player-group-entry") {
+          state.status = "waiting";
+          state.wait = { kind: "player-group-entry", clock: context.clock };
+          requests.push({ kind: "change-player-group", pc, group: op.group });
+          return result();
+        }
+        if (!context.playerGroupEntry.completed) {
+          state.wait.clock = context.clock;
+          return result();
+        }
+        next();
+        break;
       }
       case "change-enemy-party": {
         if (!context.enemyPartyEntry) return fail("Missing battle enemy party entry provider", pc);

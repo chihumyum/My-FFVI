@@ -84,6 +84,11 @@ import { parseBattleParticipantContent, type BattleParticipantContent, type Batt
   type EnemyBattleDefinition } from "./battle-participants.js";
 import { createBattleParticipantState, projectEnemyReplacement, projectEnemyPartyReplacement, projectBattleParticipantRewards,
   type BattleParticipantState } from "./battle-participant-state.js";
+import { canonical } from "./canonical.js";
+import { parseBattlePlayerBorrow, parseBattlePlayerPlan, type BattlePlayerBorrow,
+  type BattlePlayerReturn } from "./battle-player-participants.js";
+import { createBattlePlayerState, parseBattlePlayerState, projectPlayerJoin, projectPlayerGroup,
+  firstEnteredOwnerIds, type BattlePlayerState, type BattlePlayerProjection } from "./battle-player-state.js";
 
 export type Combatant = CombatantDefinition & {
   maxHp: number;
@@ -112,6 +117,7 @@ export type BattleAction = {
   resolved: boolean;
   /** Captured at source InitActionState, before effects or later condition ticks. */
   learningAbilityIds?: number[];
+  learningByOwner?: { ownedId: string; abilityIds: number[] }[];
   results: { target: string; effects: AbilityEffectResult[] }[];
 };
 export type BattleReward = {
@@ -165,6 +171,11 @@ export class BattleGame {
   private currentEnemyPartyId: number;
   private currentEnemySlots: Record<string, BattleParticipantSlot>;
   private hiddenEnemyIds = new Set<string>();
+  private readonly playerBorrow: BattlePlayerBorrow | null;
+  private playerState: BattlePlayerState | null = null;
+  /** Retired resource copies; active resources remain owned by combatants. */
+  private playerResources = new Map<string, Combatant>();
+  private playerObservations = new Map<string, number[]>();
   private eventControls = { aiStarted: false, aiAliveLastSync: false, endEnabled: true,
     interactive: true, updateEnabled: true, enemyNoAct: false };
   private escapeRequested = false;
@@ -179,7 +190,7 @@ export class BattleGame {
   readonly conditions: BattleConditions;
   readonly items: Record<string, ItemDefinition>;
   private stock: ItemStack[];
-  private readonly inventoryQualification: BattleEntryInventory | undefined;
+  private inventoryQualification: BattleEntryInventory | undefined;
   private readonly costOwners = new Map<string, AbilityCostOwner>();
   private readonly unresolvedCostOwners = new Set<string>();
   private readonly equipmentAbilities = new Map<string, OwnedAbility[]>();
@@ -197,9 +208,11 @@ export class BattleGame {
       amount: number,
       observedAbilityIds: readonly number[],
       magicPoints: number,
+      participantIndex?: number,
     ) => BattleStatProjection & { level: number; exp: number; magicLearningValue?: number },
     initialPreferences?: BattlePreferences,
     eventShared?: BattleEventSharedSnapshot,
+    playerBorrow?: BattlePlayerBorrow,
   ) {
     if (
       content.kind !== "opening-battle-development" ||
@@ -219,6 +232,10 @@ export class BattleGame {
     this.entryEnemies = structuredClone(content.enemies);
     this.participantContent = content.participants === undefined ? null
       : parseBattleParticipantContent(content.participants, this.entryEnemies);
+    this.playerBorrow = playerBorrow === undefined ? null : parseBattlePlayerBorrow(playerBorrow);
+    if (Boolean(content.playerParticipants) !== Boolean(this.playerBorrow) ||
+        (this.playerBorrow && canonical(parseBattlePlayerPlan(content.playerParticipants)) !== canonical(this.playerBorrow.plan)))
+      throw new Error("Battle player plan requires its matching owned borrow");
     this.currentEnemyPartyId = content.encounterId;
     this.currentEnemySlots = structuredClone(this.participantContent?.slots ?? {});
     this.participantState = createBattleParticipantState(this.entryEnemies.map((unit, index) => ({
@@ -236,6 +253,11 @@ export class BattleGame {
         throw new BattleEventError(this.lifecycle.program.source, pc, "Missing admitted enemy slot in replacement party");
       if (op.kind === "change-enemy-party" && !this.participantContent?.enemyParties?.[op.partyId])
         throw new BattleEventError(this.lifecycle.program.source, pc, "Missing admitted replacement enemy party");
+      if (op.kind === "add-player" && (!this.playerBorrow?.plan.sourceIds.includes(op.sourceId) ||
+          !this.playerBorrow.candidates.some(player => player.sourceId === op.sourceId)))
+        throw new BattleEventError(this.lifecycle.program.source, pc, "Missing admitted owned player borrow");
+      if (op.kind === "change-player-group" && !this.playerBorrow?.groups[op.group])
+        throw new BattleEventError(this.lifecycle.program.source, pc, "Missing admitted Web player group");
     }
     this.randomState = seed || 1;
     this.currentPreferences = parseBattlePreferences(content.timing);
@@ -282,6 +304,21 @@ export class BattleGame {
         behavior: initialEnemyBehavior(),
       })),
     ];
+    if (this.playerBorrow) {
+      this.playerState = createBattlePlayerState(this.playerBorrow.initial);
+      const entered = this.playerState.entries;
+      if (entered.length !== this.players.length || entered.some((entry, index) => {
+        const player = this.players[index]!, candidate = this.playerBorrow!.candidates.find(p => p.id === entry.ownedId);
+        return !candidate || player.id !== entry.ownedId || player.sourceId !== entry.sourceId || player.row !== entry.row ||
+          canonical({ ...player, atb: 0, queued: false, behavior: null }) !==
+          canonical({ ...candidate, row: entry.row, atb: 0, queued: false, behavior: null });
+      })) throw new Error("Battle player initial borrow identity or resources changed");
+      if (this.playerBorrow.qualification) this.inventoryQualification = {
+        ...structuredClone(this.playerBorrow.qualification),
+        members: this.playerBorrow.qualification.members.filter(member => entered.some(entry => entry.ownedId === member.id))
+          .map(member => structuredClone(member)),
+      };
+    }
     if (
       new Set(this.combatants.map((c) => c.id)).size !== this.combatants.length
     )
@@ -350,6 +387,11 @@ export class BattleGame {
       this.slowStates.set(c.id, this.conditions.reconcileSlowState(c.conditionIds, []));
     }
     this.reconcileAppearances();
+    if (this.playerBorrow) {
+      this.validatePlayerBorrow();
+      for (const player of this.players) this.playerResources.set(player.id, structuredClone(player));
+      for (const owner of firstEnteredOwnerIds(this.playerState!)) this.playerObservations.set(owner, []);
+    }
     this.log("敌人出现了。");
     this.advanceEvent();
   }
@@ -472,12 +514,15 @@ export class BattleGame {
   /** Recomputed from current stock for one actor. Queued reservations constrain
    * execution, but do not rewrite the source's Count/EquipCount menu predicate. */
   itemQualification(actorId: string): ReturnType<typeof projectBattleItemMenu> {
-    const actor = this.players.find((p) => p.id === actorId),
-      input = this.inventoryQualification, catalog = this.content.battleEntry;
+    const actor = this.players.find((p) => p.id === actorId);
+    return this.itemQualificationFor(actor, this.inventoryQualification);
+  }
+  private itemQualificationFor(actor: Combatant | undefined, input: BattleEntryInventory | undefined) {
+    const catalog = this.content.battleEntry;
     if (!actor || !input || !catalog)
       return { available: null, usableItemIds: [], canChangeEquipment: null,
         blockers: ["Unknown per-character battle inventory qualification"] };
-    const member = input.members.find((m) => m.id === actorId);
+    const member = input.members.find((m) => m.id === actor.id);
     if (!member || member.sourceId !== actor.sourceId)
       throw new Error("Battle inventory qualification member mismatch");
     return projectBattleItemMenu(catalog, {
@@ -488,8 +533,13 @@ export class BattleGame {
   /** A read-only source query is also available while the opening development
    * actions remain in use. Unknown entry conditions are never guessed empty. */
   commandQualification(actorId: string): BattleAbilityProjection | null {
-    const actor = this.players.find((p) => p.id === actorId),
-      catalog = this.content.battleAbilities,
+    const actor = this.players.find((p) => p.id === actorId);
+    return this.commandQualificationFor(actor, this.players.length, this.inventoryQualification,
+      this.equipmentAbilities.get(actorId));
+  }
+  private commandQualificationFor(actor: Combatant | undefined, partySize: number,
+    inventory: BattleEntryInventory | undefined, equipmentAbilities: OwnedAbility[] | undefined) {
+    const catalog = this.content.battleAbilities,
       context = this.content.qualificationContext;
     if (!actor || !actor.ownedAbilities || !catalog || !context) return null;
     if (actor.ownedAbilities.sourceId !== actor.sourceId)
@@ -499,9 +549,9 @@ export class BattleGame {
       battleType: context.battleType,
       magicLearningValue: actor.magicLearningValue ?? context.magicLearningValue,
       invalidContentIds: context.invalidContentIds,
-      itemMenuAvailable: this.usesSourceQualification ? this.itemQualification(actorId).available : context.itemMenuAvailable,
-      partySize: this.players.length,
-    }, this.equipmentAbilities.get(actorId));
+      itemMenuAvailable: this.usesSourceQualification ? this.itemQualificationFor(actor, inventory).available : context.itemMenuAvailable,
+      partySize,
+    }, equipmentAbilities);
   }
   /** The UI receives source menu entries, including unresolved commands. Effect
    * support is separate from qualification and cannot grant an owned ability. */
@@ -910,6 +960,146 @@ export class BattleGame {
     return { enemies: structuredClone(this.entryEnemies),
       ...(this.participantContent ? { participants: structuredClone(this.participantContent) } : {}) };
   }
+  get playerEntryContent(): Pick<BattleContent, "playerParticipants"> {
+    return this.playerBorrow ? { playerParticipants: structuredClone(this.playerBorrow.plan) } : {};
+  }
+  get playerExecution(): BattlePlayerState | null {
+    if (!this.playerState) return null;
+    const state = structuredClone(this.playerState);
+    for (const entry of state.entries.filter(entry => !entry.removed)) {
+      const unit = this.players.find(player => player.id === entry.instanceId);
+      if (!unit || unit.sourceId !== entry.sourceId) throw new Error("Battle player live identity changed");
+      entry.row = unit.row; state.slots[entry.slot]!.row = unit.row;
+    }
+    return parseBattlePlayerState(state);
+  }
+  /** Public projections keep identity metadata separate from resource owners. */
+  playerOwnedId(instanceId: string): string {
+    if (!this.playerState) return instanceId;
+    const entry = this.playerState.entries.find(entry => entry.instanceId === instanceId);
+    if (!entry) throw new Error("Unknown battle player instance");
+    return entry.ownedId;
+  }
+  resultPlayerName(ownedId: string): string {
+    const player = this.playerBorrow?.candidates.find(player => player.id === ownedId) ??
+      this.players.find(player => player.id === ownedId);
+    if (!player) throw new Error("Unknown battle result player");
+    return player.name;
+  }
+  private playerEquipment(player: Combatant, qualification: BattleEntryInventory | undefined) {
+    if (!qualification) return { passives: [] as OwnedAbility[], cost: null as AbilityCostOwner | null, unresolved: false };
+    const catalog = qualification.equipmentCatalog,
+      loadout = qualification.members.find(member => member.id === player.id);
+    if (!loadout || loadout.sourceId !== player.sourceId) throw new Error("Battle borrowed equipment owner mismatch");
+    const passives = equipmentOwnedAbilities(catalog, loadout);
+    if (player.ownedAbilities) validateEquipmentAbilityOwnership(catalog, loadout, player.ownedAbilities.abilities.owned);
+    else if (passives.length) throw new Error("Equipment passive lacks borrowed owned abilities");
+    try {
+      equipmentAbilityCostProviders(catalog, loadout);
+      return { passives, cost: { side: "player" as const, catalog, loadout }, unresolved: false };
+    } catch { return { passives, cost: null, unresolved: true }; }
+  }
+  private validateBorrowedPlayer(player: Combatant, qualification: BattleEntryInventory | undefined, partySize: number) {
+    if (player.side !== "player" || player.ai !== null || player.behavior !== null)
+      throw new Error("Borrow requires an owned player definition");
+    const blocker = battleDefinitionBlocker([player], this.content.qualificationContext, this.content.conditions);
+    if (blocker) throw new Error(blocker);
+    this.validateConditionState([player]);
+    validateElements(player.attackElements); validateElementResistances(player.elementResistances);
+    for (const id of player.abilities) if (!this.content.abilities[id]) throw new Error("Missing borrowed player ability");
+    if (!this.content.sprites[player.sprites.idle] || player.sprites.mount !== null && !this.content.sprites[player.sprites.mount])
+      throw new Error("Missing borrowed player media");
+    this.appearanceCandidate(player);
+    if (this.rewardPolicy.magicPoints > 0) {
+      if (player.magicLearningValue === undefined) throw new Error("Missing borrowed magic learning value");
+      projectMagicLearningValue(player.magicLearningValue, 0, false);
+    }
+    const gear = this.playerEquipment(player, qualification);
+    if (this.usesSourceQualification && !player.ownedAbilities) throw new Error("Source borrowed player lacks owned abilities");
+    this.itemQualificationFor(player, qualification);
+    this.commandQualificationFor(player, partySize, qualification, gear.passives);
+    return gear;
+  }
+  private validatePlayerBorrow(): void {
+    const borrow = this.playerBorrow!;
+    for (const player of borrow.candidates) {
+      if (player.id.startsWith("enemy:dynamic:") || this.entryEnemies.some(enemy => enemy.id === player.id))
+        throw new Error("Borrowed player collides with enemy identity");
+      this.validateBorrowedPlayer(player, borrow.qualification ?? undefined, 1);
+    }
+  }
+  private preparePlayerTransition(planned: BattlePlayerProjection) {
+    const borrow = this.playerBorrow!;
+    const resources = new Map(this.playerResources);
+    for (const instanceId of planned.removedIds) {
+      const player = this.players.find(player => player.id === instanceId);
+      if (!player) throw new Error("Missing retiring battle player owner");
+      resources.set(this.playerOwnedId(instanceId), structuredClone(player));
+    }
+    const units = planned.joins.map(entry => {
+      const held = resources.get(entry.ownedId) ?? borrow.candidates.find(player => player.id === entry.ownedId);
+      if (!held || held.sourceId !== entry.sourceId) throw new Error("Missing admitted owned player borrow");
+      const unit: Combatant = { ...structuredClone(held), id: entry.instanceId, row: entry.row,
+        atb: 0, queued: false, behavior: null };
+      Object.assign(unit, this.conditions.settleLife(unit.hp, unit.conditionIds, false));
+      return unit;
+    });
+    const players = this.players.filter(player => !planned.removedIds.includes(player.id)).concat(units)
+      .sort((a, b) => planned.state.entries.find(entry => entry.instanceId === a.id)!.slot -
+        planned.state.entries.find(entry => entry.instanceId === b.id)!.slot);
+    const qualification = borrow.qualification === null ? undefined : {
+      ...structuredClone(borrow.qualification),
+      members: players.map(player => {
+        const entry = planned.state.entries.find(entry => entry.instanceId === player.id)!;
+        const held = borrow.qualification!.members.find(member => member.id === entry.ownedId);
+        if (!held || held.sourceId !== player.sourceId) throw new Error("Missing borrowed equipment loadout");
+        return { ...structuredClone(held), id: player.id };
+      }),
+    };
+    const entries = units.map(unit => ({
+      gear: this.validateBorrowedPlayer(unit, qualification, players.length),
+      poison: this.conditions.reconcilePoisonState(unit.conditionIds, [], this.atbSpeed),
+      slow: this.conditions.reconcileSlowState(unit.conditionIds, []),
+    }));
+    // All candidate owners/conditions/loadouts are admitted before owned RNG.
+    for (const unit of units) unit.atb = unit.hp === 0 ? 0 : this.randomInt(...this.content.initialAtb.player);
+    return { planned, resources, players, units, entries, qualification };
+  }
+  private publishPlayerTransition(next: ReturnType<BattleGame["preparePlayerTransition"]>): void {
+    this.retireActors(next.planned.removedIds);
+    for (const id of next.planned.removedIds) {
+      this.costOwners.delete(id); this.unresolvedCostOwners.delete(id); this.equipmentAbilities.delete(id);
+    }
+    this.combatants.splice(0, this.combatants.length, ...next.players, ...this.enemies);
+    this.playerState = next.planned.state;
+    this.playerResources = next.resources;
+    this.inventoryQualification = next.qualification;
+    for (const [index, unit] of next.units.entries()) {
+      const entry = next.entries[index]!;
+      this.poisonStates.set(unit.id, entry.poison); this.slowStates.set(unit.id, entry.slow);
+      this.equipmentAbilities.set(unit.id, entry.gear.passives);
+      if (entry.gear.cost) this.costOwners.set(unit.id, entry.gear.cost);
+      if (entry.gear.unresolved) this.unresolvedCostOwners.add(unit.id);
+      const owner = this.playerOwnedId(unit.id);
+      if (!this.playerObservations.has(owner)) this.playerObservations.set(owner, []);
+    }
+  }
+  private addPlayer(sourceId: number): void {
+    const held = this.playerBorrow?.plan.sourceIds.includes(sourceId)
+      ? this.playerBorrow.candidates.find(player => player.sourceId === sourceId) : undefined;
+    if (!held || !this.playerState) throw new Error("Missing admitted owned player borrow");
+    const planned = projectPlayerJoin(this.playerExecution!, { ownedId: held.id, sourceId });
+    this.publishPlayerTransition(this.preparePlayerTransition(planned));
+    this.eventControls.enemyNoAct = true;
+    this.log(`${held.name} 加入战斗。`);
+  }
+  private changePlayerGroup(group: 0 | 1 | 2): void {
+    const members = this.playerBorrow?.groups[group];
+    if (!members || !this.playerState) throw new Error("Missing admitted Web player group");
+    const planned = projectPlayerGroup(this.playerExecution!, members);
+    this.publishPlayerTransition(this.preparePlayerTransition(planned));
+    this.log("战斗编队已切换。");
+  }
   private addEnemy(monsterId: number, uniqueId: number): void {
     const definition = this.participantContent?.enemyDefinitions[monsterId],
       placement = this.currentEnemySlots[uniqueId];
@@ -919,7 +1109,7 @@ export class BattleGame {
     const unit = this.prepareEnemy(definition, placement, planned.instanceId);
     const nextUnits = this.combatants.filter(current => current.id !== planned.removedId).concat(unit);
     const entry = this.prepareEnemyEntry(unit, nextUnits);
-    this.retireEnemies(planned.removedId === null ? [] : [planned.removedId]);
+    this.retireActors(planned.removedId === null ? [] : [planned.removedId]);
     this.combatants.splice(0, this.combatants.length, ...nextUnits);
     this.participantState = planned.state;
     this.publishEnemyEntry(unit, entry);
@@ -953,7 +1143,7 @@ export class BattleGame {
   }
   /** Both single-slot and complete-party transitions invalidate old instances
    * through one shared queue/timer boundary. Death/drop registrations survive. */
-  private retireEnemies(ids: readonly string[]): void {
+  private retireActors(ids: readonly string[]): void {
     const removed = new Set(ids);
     this.queue = this.queue.filter(action => !removed.has(action.actor));
     this.reactions = this.reactions.filter(action => !removed.has(action.actor));
@@ -999,7 +1189,7 @@ export class BattleGame {
     }));
     // Explicit Web transaction: all late resources were admitted before entry.
     // Native removes the prior display/party while asynchronous loading runs.
-    this.retireEnemies(planned.removedIds);
+    this.retireActors(planned.removedIds);
     players.forEach((player, index) => {
       player.conditionIds = playerCandidates[index]!.conditionIds;
       this.poisonStates.set(player.id, playerTimers[index]!.poison);
@@ -1046,6 +1236,10 @@ export class BattleGame {
         actionStaging: this.action !== null || this.reactions.length > 0,
         enemyEntry: { noAct: this.eventControls.enemyNoAct, completed: true },
         enemyPartyEntry: { completed: true },
+        // Resources are admitted synchronously in this Web profile. The two
+        // ports remain distinct; native asynchronous completion is unverified.
+        playerEntry: { noAct: this.eventControls.enemyNoAct, completed: true },
+        playerGroupEntry: { completed: true },
         ...(this.eventShared ? { variables: { read: (ref) => this.eventShared!.read(ref) } } : {}),
         ...(program.instructions.some(({ op }) => op.kind === "players-ended") ? {
           playersEnded: this.eventPlayersEnded(),
@@ -1067,6 +1261,8 @@ export class BattleGame {
             case "enemy-no-act": this.eventControls.enemyNoAct = request.enabled; break;
             case "add-enemy": this.addEnemy(request.monsterId, request.uniqueId); break;
             case "change-enemy-party": this.changeEnemyParty(request.partyId, request.hidden); break;
+            case "add-player": this.addPlayer(request.sourceId); break;
+            case "change-player-group": this.changePlayerGroup(request.group); break;
             case "write-variable":
               if (!this.eventShared) throw new Error("Missing shared battle event state");
               this.eventShared.write(request.ref, request.value);
@@ -1380,6 +1576,15 @@ export class BattleGame {
       currentEnemyPartyId: this.currentEnemyPartyId,
       currentEnemySlots: structuredClone(this.currentEnemySlots),
       hiddenEnemyIds: new Set(this.hiddenEnemyIds),
+      playerState: structuredClone(this.playerState),
+      playerResources: structuredClone(this.playerResources),
+      playerObservations: structuredClone(this.playerObservations),
+      // Qualification catalogs/loadouts are immutable; group publication swaps
+      // the complete view. Preserve its owner without copying the master per tick.
+      inventoryQualification: this.inventoryQualification,
+      costOwners: new Map(this.costOwners),
+      unresolvedCostOwners: new Set(this.unresolvedCostOwners),
+      equipmentAbilities: new Map(this.equipmentAbilities),
       units: this.combatants.map((c) => ({
         ...c,
         conditionIds: [...c.conditionIds],
@@ -1419,6 +1624,13 @@ export class BattleGame {
       this.currentEnemyPartyId = before.currentEnemyPartyId;
       this.currentEnemySlots = before.currentEnemySlots;
       this.hiddenEnemyIds = before.hiddenEnemyIds;
+      this.playerState = before.playerState;
+      this.playerResources = before.playerResources;
+      this.playerObservations = before.playerObservations;
+      this.inventoryQualification = before.inventoryQualification;
+      this.costOwners.clear(); before.costOwners.forEach((value, key) => this.costOwners.set(key, value));
+      this.unresolvedCostOwners.clear(); before.unresolvedCostOwners.forEach(key => this.unresolvedCostOwners.add(key));
+      this.equipmentAbilities.clear(); before.equipmentAbilities.forEach((value, key) => this.equipmentAbilities.set(key, value));
       this.action = before.action;
       this.queue = before.queue;
       this.reactions = before.reactions;
@@ -1542,6 +1754,13 @@ export class BattleGame {
             abilities: player.ownedAbilities?.abilities ?? null })),
         );
       }
+      if (this.playerBorrow) action.learningByOwner = this.players.map(player => ({
+        ownedId: this.playerOwnedId(player.id),
+        // Source observation is decided once by the current first source8.
+        // Each present owner captures that log; result ownership filters it.
+        abilityIds: action.source.kind === "item" ? [] : this.content.observedLearning
+          ? [...action.learningAbilityIds!] : [action.source.id],
+      }));
       this.action = action;
       const actionName = this.actionDefinition(action).name;
       this.log(actionName ? `${actor.name} · ${actionName}` : `${actor.name} 行动。`);
@@ -1801,7 +2020,15 @@ export class BattleGame {
         if (used) used.count++;
         else this.consumedItems.push({ id: action.source.id, count: 1 });
       }
-      if (this.content.observedLearning) {
+      if (this.playerBorrow) {
+        if (!Array.isArray(action.learningByOwner)) throw new Error("Missing player action-start observations");
+        for (const observation of action.learningByOwner) {
+          const held = this.playerObservations.get(observation.ownedId);
+          if (!held) throw new Error("Missing player learning owner");
+          for (const id of observation.abilityIds) if (!held.includes(id)) held.push(id);
+        }
+        this.observedAbilityIds = [...new Set(firstEnteredOwnerIds(this.playerState!).flatMap(owner => this.playerObservations.get(owner)!))];
+      } else if (this.content.observedLearning) {
         if (!Array.isArray(action.learningAbilityIds)) throw new Error("Missing action-start learning observation");
         for (const id of action.learningAbilityIds)
           if (!this.observedAbilityIds.includes(id)) this.observedAbilityIds.push(id);
@@ -1880,7 +2107,7 @@ export class BattleGame {
     if (this.enemies.some((c) => c.hp > 0)) return;
     // Missing growth for a later recipient must not leave an earlier recipient
     // upgraded, or publish a victory whose reward cannot be collected.
-    const players = this.players.map((c) => ({
+    const players = this.settlementPlayers().map((c) => ({
       ...structuredClone(c),
       conditionIds: this.conditions.battleEnd(c.conditionIds),
     }));
@@ -1921,11 +2148,11 @@ export class BattleGame {
       Object.assign(c, this.progressionResult(c, 0));
     const dropPlan = this.content.drops === null ? null : projectBattleDrops(this.content.drops,
       this.dropRegistrations, (min, max) => this.randomInt(min, max));
-    for (const player of players)
-      Object.assign(
-        this.combatants.find((c) => c.id === player.id)!,
-        player,
-      );
+    for (const player of players) {
+      const live = this.players.find(c => this.playerOwnedId(c.id) === player.id);
+      if (live) Object.assign(live, player, { id: live.id });
+      if (this.playerBorrow) this.playerResources.set(player.id, structuredClone(player));
+    }
     this.phase = "victory";
     this.escapeRequested = false;
     this.poisonStates.clear();
@@ -1946,7 +2173,8 @@ export class BattleGame {
   }
   private progressionResult(player: Combatant, experience: number) {
     const projected = this.projectProgression!(structuredClone(player), experience,
-      [...this.observedAbilityIds], this.rewardPolicy.magicPoints);
+      this.playerBorrow ? [...this.playerObservations.get(player.id)!] : [...this.observedAbilityIds], this.rewardPolicy.magicPoints,
+      this.playerBorrow ? firstEnteredOwnerIds(this.playerState!).indexOf(player.id) : undefined);
     if (this.rewardPolicy.magicPoints > 0 || projected.magicLearningValue !== undefined) {
       if (player.magicLearningValue === undefined || projected.magicLearningValue !==
           projectMagicLearningValue(player.magicLearningValue, this.rewardPolicy.magicPoints, player.hp > 0))
@@ -1957,6 +2185,8 @@ export class BattleGame {
   private clearBattleConditions() {
     for (const c of this.players)
       c.conditionIds = this.conditions.battleEnd(c.conditionIds);
+    if (this.playerBorrow) for (const player of this.playerResources.values())
+      player.conditionIds = this.conditions.battleEnd(player.conditionIds);
     this.poisonStates.clear();
     this.slowStates.clear();
   }
@@ -1972,12 +2202,28 @@ export class BattleGame {
     for (const unit of this.combatants) { unit.atb = 0; unit.queued = false; }
     this.log("已撤离战斗。");
   }
-  previewEscape(): { players: Combatant[]; consumedItems: ItemStack[] } | null {
+  private settlementPlayers(): Combatant[] {
+    if (!this.playerState) return this.players;
+    return firstEnteredOwnerIds(this.playerState).map(owner => {
+      const live = this.players.find(player => this.playerOwnedId(player.id) === owner);
+      const held = live ?? this.playerResources.get(owner);
+      if (!held) throw new Error("Missing entered player resource owner");
+      return { ...structuredClone(held), id: owner };
+    });
+  }
+  private playerReturn(escaped = false): { playerParticipants?: BattlePlayerReturn } {
+    if (!this.playerState) return {};
+    return { playerParticipants: { state: this.playerExecution!,
+      observations: firstEnteredOwnerIds(this.playerState).map(ownedId => ({ ownedId,
+        abilityIds: escaped ? [] : [...this.playerObservations.get(ownedId)!] })) } };
+  }
+  previewEscape(): { players: Combatant[]; consumedItems: ItemStack[]; playerParticipants?: BattlePlayerReturn } | null {
     if (this.phase !== "escaped" || this.collected) return null;
-    return { players: structuredClone(this.players),
+    return { players: structuredClone(this.settlementPlayers()).map(player => ({ ...player, atb: 0, queued: false })),
+      ...this.playerReturn(true),
       consumedItems: structuredClone(this.consumedItems).sort((a, b) => a.id - b.id) };
   }
-  takeEscape(): { players: Combatant[]; consumedItems: ItemStack[] } | null {
+  takeEscape(): { players: Combatant[]; consumedItems: ItemStack[]; playerParticipants?: BattlePlayerReturn } | null {
     const result = this.previewEscape();
     if (result) this.collected = true;
     return result;
@@ -1990,19 +2236,21 @@ export class BattleGame {
     awardedExperience: { id: string; amount: number }[];
     observedAbilityIds: number[];
     dropGrants: BattleDropGrant[];
+    playerParticipants?: BattlePlayerReturn;
   } | null {
     if (this.phase !== "victory" || !this.reward || this.collected) return null;
     return {
-      players: structuredClone(this.players).map((c) => ({
+      players: structuredClone(this.settlementPlayers()).map((c) => ({
         ...c,
         atb: 0,
         queued: false,
       })),
       gil: this.reward.gil,
+      ...this.playerReturn(),
       magicPoints: this.reward.magicPoints,
       dropGrants: structuredClone(this.reward.dropPlan?.grants ?? []),
       observedAbilityIds: [...this.observedAbilityIds],
-      awardedExperience: this.players.map((p) => ({ id: p.id,
+      awardedExperience: this.settlementPlayers().map((p) => ({ id: p.id,
         amount: this.reward!.recipients.includes(p.id) ? this.reward!.each : 0 })),
       consumedItems: structuredClone(this.consumedItems).sort(
         (a, b) => a.id - b.id,
@@ -2017,6 +2265,7 @@ export class BattleGame {
     awardedExperience: { id: string; amount: number }[];
     observedAbilityIds: number[];
     dropGrants: BattleDropGrant[];
+    playerParticipants?: BattlePlayerReturn;
   } | null {
     const result = this.previewVictory();
     if (result) this.collected = true;

@@ -9,6 +9,7 @@ import { validateBattleEventRules } from "../core/battle-event-context.js";
 import { canonical } from "../core/canonical.js";
 import { battleAIAbilities } from "./battle-ai.js";
 import { parseBattleParticipantContent, type EnemyBattleDefinition } from "../core/battle-participants.js";
+import { parseBattlePlayerPlan } from "../core/battle-player-participants.js";
 
 export type BatchBattleDiagnostic = {
   code: string;
@@ -119,6 +120,17 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
             throw new Error("Battle lifecycle condition rules do not cover the current condition catalog");
           limitations.push("Compiled battle-event instructions require live lifecycle/AI/action/outcome execution evidence.");
           for (const [pc, { op }] of lifecycle.program.instructions.entries()) {
+            if (op.kind === "add-player" || op.kind === "change-player-group") {
+              const plan = encounter.playerParticipants === undefined ? null : parseBattlePlayerPlan(encounter.playerParticipants);
+              if (!plan || op.kind === "add-player" && !plan.sourceIds.includes(op.sourceId) ||
+                  op.kind === "change-player-group" && !plan.groups.includes(op.group))
+                block("owned-player-borrow-reference", `Battle event PC ${pc} lacks an explicit owned player/group borrow plan`);
+              else if (op.kind === "add-player" && !(catalog.gameState.battleDefinitions ?? catalog.common.players)
+                  .some(player => player.sourceId === op.sourceId))
+                block("owned-player-template-missing", `Battle event PC ${pc} lacks the source ${op.sourceId} battle template closure`);
+              else conditional("owned-player-borrow-state", `Battle event PC ${pc} requires the frozen existing roster and group state at its battle lease`);
+              continue;
+            }
             if (op.kind === "change-enemy-party") {
               if (!encounter.participants?.enemyParties?.[String(op.partyId)])
                 block("enemy-party-reference", `Battle event PC ${pc} has no admitted source enemy party ${op.partyId}`);

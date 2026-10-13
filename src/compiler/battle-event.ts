@@ -100,6 +100,10 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null):
     if (m.mnemonic === "BattleSleepEnemy" && form([0])) op = { kind: "enemy-no-act", enabled: i[0] !== 0 };
     if (m.mnemonic === "BattleAddEnemy" && form([0, 1]) && i[0]! > 0 && i[1]! >= 1 && i[1]! <= 9)
       op = { kind: "add-enemy", monsterId: i[0]!, uniqueId: i[1]! };
+    if (m.mnemonic === "BattleAddFellow" && form([0]) && i[0]! > 0)
+      op = { kind: "add-player", sourceId: i[0]! };
+    if (m.mnemonic === "SysCall" && form([], [], [0]) && s[0] === "LB:プレイヤーパーティ変更")
+      op = blocked("ChangePlayerParty requires the native waiting-owned-character queue and dead-player replacement provider");
     if (m.mnemonic === "SysCall" && form([], [], [0]) && s[0] === "プレイヤーの状況で戦闘終了")
       op = local(0) ? { kind: "players-ended" }
         : blocked("Player battle-end query requires ScriptLocalVariable[0]");

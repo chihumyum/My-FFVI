@@ -460,10 +460,10 @@ export class GameSession {
       if (this.state.battlePartyBlocker) throw new Error(this.state.battlePartyBlocker);
       const blocker = battleDefinitionBlocker(this.state.partyPlayers(), content.qualificationContext, content.conditions);
       if (blocker) throw new Error(blocker);
-      lease = this.state.openBattle(content.encounterId, content.rewardPolicy);
+      lease = this.state.openBattle(content.encounterId, content.rewardPolicy, content.playerParticipants);
       const battle = new BattleGame(content, seed, this.state.battlePlayers(lease), this.state.battleInventory(lease),
         this.state.battleProgression(lease, content.experience), this.currentBattlePreferences,
-        battleEventSharedSnapshot(this.field.eventState));
+        battleEventSharedSnapshot(this.field.eventState), this.state.battlePlayerBorrow(lease));
       this.battle = battle;
       this.battleLease = lease;
       this.currentSeed = seed;
@@ -520,16 +520,17 @@ export class GameSession {
   retryBattle(): boolean {
     if (this.battle?.phase !== "defeat") return false;
     if (!this.battleLease) throw new Error("Missing battle state ownership");
-    const { participants: _mutableParticipants, ...content } = this.battle.content;
+    const { participants: _mutableParticipants, playerParticipants: _mutablePlayers, ...content } = this.battle.content;
     this.battle = new BattleGame(
       { ...content, rewardPolicy: this.state.battleRewardPolicy(this.battleLease),
-        lifecycle: this.battle.lifecycleDefinition, ...this.battle.participantEntryContent },
+        lifecycle: this.battle.lifecycleDefinition, ...this.battle.participantEntryContent, ...this.battle.playerEntryContent },
       this.currentSeed,
       this.state.battlePlayers(this.battleLease),
       this.state.battleInventory(this.battleLease),
       this.state.battleProgression(this.battleLease, this.battle.content.experience),
       this.currentBattlePreferences,
       this.battle.eventSharedEntry,
+      this.state.battlePlayerBorrow(this.battleLease),
     );
     return true;
   }

@@ -7,6 +7,25 @@ import { encounterRuntimeFixture } from "./fixtures/battle-encounter-runtime.js"
 import { checkpointFixture } from "./fixtures/checkpoint-game.js";
 import { aiSource } from "./fixtures/battle-ai.js";
 import type { BattleCatalog } from "../src/core/battle-content.js";
+import { playerSessionFixture } from "./fixtures/battle-player-game.js";
+
+test("batch planning blocks a declared player source with a statically absent battle template", () => {
+  const f = playerSessionFixture([{ kind: "add-player", sourceId: 33 }]);
+  f.battle.common.players = f.battle.common.players.filter(player => player.sourceId !== 33);
+  const report = analyzeBatchEncounters(f.battle, [1000]);
+  assert.equal(report.encounters[0]!.status, "blocked");
+  assert.ok(report.encounters[0]!.blockers.some(blocker => blocker.code === "owned-player-template-missing"));
+});
+
+test("available player templates still require an explicit live borrow rather than static ready status", () => {
+  const f = playerSessionFixture([{ kind: "add-player", sourceId: 33 }]);
+  const report = analyzeBatchEncounters(f.battle, [1000]);
+  assert.ok(report.encounters[0]!.runtimeDependencies.some(dependency => dependency.code === "owned-player-borrow-state"));
+  assert.equal(report.encounters[0]!.blockers.some(blocker => blocker.code === "owned-player-template-missing"), false);
+  delete f.battle.encounters[1000]!.playerParticipants;
+  assert.ok(analyzeBatchEncounters(f.battle, [1000]).encounters[0]!.blockers
+    .some(blocker => blocker.code === "owned-player-borrow-reference"));
+});
 
 /** Reuse the actual source-selection/runtime compilation chain with authored
  * source-shaped records; no hand-authored ready/capability certificate. */

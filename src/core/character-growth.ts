@@ -174,7 +174,9 @@ export function expectedOwnedGrowth(plan: CharacterGrowthPlan, progress: Charact
   let serial = -1, learnedAt = plan.initialLevel;
   for (const receipt of progress.observedLearning) {
     checkpointKeys(receipt, "battleSerial,participantIndex,level,observedAbilityIds");
-    integer(receipt.battleSerial); integer(receipt.participantIndex, 0, 3);
+    // The common result owner uses first-entry ordinals for explicit Web
+    // borrowing. This is not a native Corps-position range claim.
+    integer(receipt.battleSerial); integer(receipt.participantIndex);
     integer(receipt.level, plan.initialLevel, level);
     if (receipt.battleSerial <= serial || receipt.level < learnedAt || !plan.observedLearning)
       throw new Error("Invalid observed learning receipt order or provider");
