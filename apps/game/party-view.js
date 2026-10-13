@@ -32,6 +32,12 @@ const slotBlocker = (message) => {
   if (/unavailable|disabled|不可编组/i.test(message)) return "该编组含不可用角色，请先换出。";
   return message;
 };
+const abilityError = (error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/stale|changed/i.test(message)) return "技能或目标已变化，请重新选择。";
+  if (/appearance|bitmap|media|character asset/i.test(message)) return "地图角色状态尚未就绪，请稍后重新选择技能。";
+  return `当前无法施放：${message}`;
+};
 
 /** Only UI selection lives here. All roster, row and progression data is read
  * from the current session; even a retained button submits its old baseline. */
@@ -48,6 +54,7 @@ export class PartyView {
   reset() {
     this.playerId = null;
     this.slot = null;
+    this.abilityDraft = null;
     this.message = "";
     this.key = "";
     this.session = null;
@@ -62,6 +69,7 @@ export class PartyView {
       this.key = "";
       this.playerId = null;
       this.slot = null;
+      this.abilityDraft = null;
       this.message = "";
     }
     this.session = session;
@@ -70,8 +78,16 @@ export class PartyView {
     if (!model.roster.some((member) => member.id === this.playerId))
       this.playerId = model.cells.find((cell) => cell.id !== null)?.id ?? model.roster[0]?.id ?? null;
     const character = this.playerId === null ? null : session.characterMenu(this.playerId);
+    const activeMember = model.cells.some((cell) => cell.id === this.playerId && cell.member?.enabled);
+    let fieldAbilities = [], abilityChoices = [], fieldAbilityError = "";
+    try {
+      if (activeMember && typeof session.menuAbilities === "function") fieldAbilities = session.menuAbilities(this.playerId);
+      if (this.abilityDraft?.actorId === this.playerId && activeMember)
+        abilityChoices = session.menuAbilityTargets(this.playerId, this.abilityDraft.abilityId);
+    } catch (error) { fieldAbilityError = abilityError(error); }
     this.slot ??= model.selectedSlot;
-    const key = JSON.stringify([model, character, disabled, this.message, this.slot]);
+    const key = JSON.stringify([model, character, disabled, this.message, this.slot,
+      fieldAbilities, fieldAbilityError, this.abilityDraft, abilityChoices]);
     if (key === this.key) return;
     this.key = key;
     const focused = this.root.contains(document.activeElement)
@@ -86,6 +102,7 @@ export class PartyView {
       try {
         changed = commands ? commands.changeParty(request) : session.changeParty(request);
         this.message = changed ? "编队已更新。" : "编队没有变化。";
+        if (changed) this.abilityDraft = null;
       } catch (error) { this.message = partyError(error); }
       // A rejected select change must revert its DOM value to the owned model,
       // even when the same error was already displayed on the previous attempt.
@@ -143,6 +160,7 @@ export class PartyView {
         const select = button(cell.member.name, `member-${cell.member.id}`, () => {
           if (!current() || this.disabled) return;
           this.playerId = cell.member.id;
+          this.abilityDraft = null;
           this.render(session, { disabled: this.disabled });
         }, disabled);
         select.setAttribute("aria-pressed", String(cell.member.id === this.playerId));
@@ -180,6 +198,7 @@ export class PartyView {
       const choose = button(member.name, `inspect-${member.id}`, () => {
         if (!current() || this.disabled) return;
         this.playerId = member.id;
+        this.abilityDraft = null;
         this.render(session, { disabled: this.disabled });
       }, disabled);
       choose.setAttribute("aria-pressed", String(member.id === this.playerId));
@@ -203,11 +222,11 @@ export class PartyView {
         detail.append(node("p", "持有指令：" + character.commands.map((command) => cleanName(command.name)).join("、")));
       if (character.abilities === null) detail.append(node("p", "当前角色的能力资料尚未接入。"));
       else {
-        detail.append(node("p", "以下为持有与学习记录；实际可选能力由战斗中的条件决定。", "party-menu-note"));
+        detail.append(node("p", "以下为持有与学习记录；地图技能和战斗分别检查当前资格。", "party-menu-note"));
         const list = node("ul", undefined, "party-menu-abilities");
         for (const ability of character.abilities) {
           const learned = ability.equipment ? "装备赋予" : ability.skillLevel === 100 ? "已习得" : `学习 ${ability.skillLevel}%`;
-          const availability = ability.effectSupport === "implemented" ? "" : ability.effectSupport === "blocked" ? " · 暂不支持施放" : " · 说明待接入";
+          const availability = ability.effectSupport === "implemented" ? "" : ability.effectSupport === "blocked" ? " · 战斗效果尚未接入" : " · 战斗说明待接入";
           const row = node("li", `${cleanName(ability.name)} · ${learned}${availability}`);
           row.dataset.partyAbility = String(ability.id);
           list.append(row);
@@ -216,6 +235,91 @@ export class PartyView {
         detail.append(list);
       }
       this.root.append(detail);
+    }
+    if (character && typeof session.menuAbilities === "function") {
+      const casting = node("section", undefined, "party-menu-character");
+      casting.setAttribute("aria-label", `${character.name}的字段技能`);
+      casting.append(node("h3", "地图技能"));
+      if (!activeMember) casting.append(node("p", "请从当前队伍选择施法角色。", "party-menu-note"));
+      else if (fieldAbilityError) casting.append(node("p", fieldAbilityError, "party-menu-note"));
+      else if (!fieldAbilities.length) casting.append(node("p", "暂无可在地图菜单施放的已持有技能。", "party-menu-note"));
+      const actorId = this.playerId;
+      const reRender = () => { this.key = ""; this.render(session, { disabled: this.disabled }); };
+      for (const ability of fieldAbilities) {
+        const row = node("div", undefined, "party-menu-actions");
+        const cost = ability.cost ? `MP ${ability.cost.mp}` : "MP 待确定";
+        row.append(button(`${cleanName(ability.name)} · ${cost}`, `field-ability-${ability.abilityId}`, () => {
+          if (!current() || this.disabled || !session.menuReady || this.playerId !== actorId) return;
+          try {
+            const fresh = session.menuAbilities(actorId).find((entry) => entry.abilityId === ability.abilityId);
+            if (!fresh || fresh.available !== true ||
+                JSON.stringify(session.partyMenu().expected) !== JSON.stringify(model.expected)) {
+              this.message = "技能或目标已变化，请重新选择。";
+            } else {
+              this.abilityDraft = { actorId, abilityId: ability.abilityId, selection: null, targetIds: null,
+                expected: JSON.stringify(model.expected), cost: JSON.stringify(fresh.cost) };
+              this.message = "请选择目标，然后确认施放。";
+            }
+          } catch (error) { this.message = abilityError(error); }
+          reRender();
+        }, disabled || ability.available !== true));
+        if (ability.blockers.length) row.append(node("span", ability.blockers.join("；"), "party-menu-note"));
+        else if (ability.available === false) row.append(node("span", "当前状态或 MP 不允许施放。", "party-menu-note"));
+        casting.append(row);
+      }
+      const draft = this.abilityDraft;
+      if (draft?.actorId === actorId) {
+        const selected = fieldAbilities.find((entry) => entry.abilityId === draft.abilityId);
+        casting.append(node("h4", selected ? cleanName(selected.name) : "选择施法目标"));
+        const targets = node("div", undefined, "party-menu-actions");
+        for (const choice of abilityChoices) {
+          const names = choice.targetIds.map((id) => model.roster.find((member) => member.id === id)?.name ?? id);
+          const label = choice.selection.kind === "all" ? `全队（${names.join("、")}）` : names[0];
+          const targetKey = choice.selection.kind === "all" ? "all" : choice.selection.id;
+          const target = button(label, `field-target-${targetKey}`, () => {
+            if (!current() || this.disabled || this.abilityDraft !== draft) return;
+            draft.selection = { ...choice.selection }; draft.targetIds = [...choice.targetIds];
+            reRender();
+          }, disabled);
+          target.setAttribute("aria-pressed", String(JSON.stringify(draft.selection) === JSON.stringify(choice.selection)));
+          targets.append(target);
+        }
+        casting.append(targets);
+        if (!abilityChoices.length) casting.append(node("p", "当前没有合格目标，请重新选择。", "party-menu-note"));
+        const actions = node("div", undefined, "party-menu-actions");
+        actions.append(button(selected?.cost ? `确认施放 · MP ${selected.cost.mp}` : "确认施放", "field-cast-confirm", () => {
+          if (!current() || this.disabled || !session.menuReady || this.abilityDraft !== draft || !draft.selection) return;
+          // Read qualification again, retaining the rendered target identities
+          // and all three saved groups. A stale all-target choice never grows.
+          let changed = false;
+          this.abilityDraft = null;
+          try {
+            const fresh = session.menuAbilities(actorId).find((entry) => entry.abilityId === draft.abilityId);
+            const choice = session.menuAbilityTargets(actorId, draft.abilityId).find((entry) =>
+              JSON.stringify(entry.selection) === JSON.stringify(draft.selection));
+            if (!fresh || fresh.available !== true || !choice ||
+                JSON.stringify(fresh.cost) !== draft.cost ||
+                JSON.stringify(choice.targetIds) !== JSON.stringify(draft.targetIds) ||
+                JSON.stringify(session.partyMenu().expected) !== draft.expected) {
+              this.message = "技能或目标已变化，请重新选择。";
+            } else {
+              const request = { kind: "use-ability", actorId, abilityId: draft.abilityId,
+                selection: { ...draft.selection } };
+              changed = commands ? commands.menu(request) : session.useMenuAbility({ actorId, abilityId: draft.abilityId,
+                selection: { ...draft.selection } });
+              this.message = changed ? "技能已施放。" : "当前状态、MP 或目标不允许施放，请重新选择。";
+            }
+          } catch (error) { this.message = abilityError(error); }
+          reRender();
+          if (changed) this.onChange();
+        }, disabled || !draft.selection || selected?.available !== true));
+        actions.append(button("取消", "field-cast-cancel", () => {
+          if (!current() || this.disabled || this.abilityDraft !== draft) return;
+          this.abilityDraft = null; this.message = "已取消施放。"; reRender();
+        }, disabled));
+        casting.append(actions);
+      }
+      this.root.append(casting);
     }
     if (focused) [...this.root.querySelectorAll("[data-party-focus]")]
       .find((element) => element.dataset.partyFocus === focused)?.focus();

@@ -239,17 +239,19 @@ check("published development checkpoint exposes only its actual owned roster and
 check("published menu changes the actual mounted leader without touching inventory or ability ownership", () => {
   const oldAsset = sourceGame.field.player.asset, oldMount = sourceGame.field.player.mount;
   const actualPrepare = sourceGame.field.prepareMenuPartyAppearance.bind(sourceGame.field);
-  let observedNewOwner = false;
+  let observedOldOwner = false;
   sourceGame.field.prepareMenuPartyAppearance = (appearance) => {
     const publication = actualPrepare(appearance);
-    return Object.assign(() => {
-      observedNewOwner = sourceGame.state.activeParty[0].id === before.party.slots[before.party.selectedSlot][1].id;
-      publication();
+    return Object.assign((beforeWrite) => {
+      observedOldOwner = sourceGame.state.activeParty[0].id === before.party.slots[before.party.selectedSlot][0].id;
+      publication(beforeWrite);
     }, { validate: publication.validate });
   };
   find("swap-0-1").click();
   sourceGame.field.prepareMenuPartyAppearance = actualPrepare;
-  assert.equal(observedNewOwner, true, "Actual actor publication ran after the owned revision update and accepted it");
+  assert.equal(observedOldOwner, true, "The last fallible actor publication began before writing the owned party");
+  assert.equal(sourceGame.state.activeParty[0].id, before.party.slots[before.party.selectedSlot][1].id,
+    "Successful actor publication and owned party publication finish with the new leader");
   assert.notEqual(sourceGame.field.player.asset, oldAsset);
   assert.equal(sourceGame.field.player.mount, oldMount);
   assert.deepEqual(sourceGame.state.snapshot().roster, before.roster);

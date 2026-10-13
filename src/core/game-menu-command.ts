@@ -7,6 +7,8 @@ import type { PartyPosition, PartySlotIndex } from "./party.js";
  * their existing owners and context-dependent qualification rules. */
 export type GameMenuCommand =
   | { kind: "use-item"; itemId: number; targetId: string }
+  | { kind: "use-ability"; actorId: string; abilityId: number;
+      selection: { kind: "single"; id: string } | { kind: "all" } }
   | { kind: "change-equipment"; playerId: string; slot: number; contentId: number }
   | { kind: "change-party"; change: PartyMenuChange }
   | { kind: "set-preferences"; preferences: BattlePreferences };
@@ -49,6 +51,18 @@ function ownedId(value: unknown): string {
     throw new Error("Invalid game menu command owned identity");
   return value;
 }
+function abilitySelection(raw: unknown): { kind: "single"; id: string } | { kind: "all" } {
+  const value = record(raw);
+  if (kind(value) === "single") {
+    keys(value, "kind,id");
+    return { kind: "single", id: ownedId(value.id) };
+  }
+  if (kind(value) === "all") {
+    keys(value, "kind");
+    return { kind: "all" };
+  }
+  throw new Error("Invalid field ability selection");
+}
 function partyChange(raw: unknown): PartyMenuChange {
   const value = record(raw);
   if (kind(value) === "swap") {
@@ -83,6 +97,10 @@ export function parseGameMenuCommand(raw: unknown): GameMenuCommand {
     case "use-item":
       keys(value, "kind,itemId,targetId");
       return { kind: "use-item", itemId: integer(value.itemId, 1, 0x7fffffff), targetId: ownedId(value.targetId) };
+    case "use-ability":
+      keys(value, "kind,actorId,abilityId,selection");
+      return { kind: "use-ability", actorId: ownedId(value.actorId),
+        abilityId: integer(value.abilityId, 1, 0x7fffffff), selection: abilitySelection(value.selection) };
     case "change-equipment":
       keys(value, "kind,playerId,slot,contentId");
       return { kind: "change-equipment", playerId: ownedId(value.playerId), slot: integer(value.slot, 1, 6),

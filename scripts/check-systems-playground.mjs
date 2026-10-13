@@ -344,17 +344,50 @@ try {
   assert.deepEqual(h.current().world.transitions.map(({ from, to }) => [from, to]), [[900001, 900002]]);
   record("restored-player-input-crosses-the-real-map-loader-transaction");
 
-  const second = await move(h, "up", 517);
+  const second = await move(h, "up", 517, true);
   assert.equal(second.baseline.completedBattles.length, 1);
   assert.deepEqual(second.after.completedBattles.map(({ serial, encounterId, outcome }) => [serial, encounterId, outcome]),
     [[0, 3002, "victory"], [1, 517, "victory"]]);
   assert.equal(second.after.gil, initial.owned.gil + first.reward.gil + second.reward.gil);
   record("a-second-battle-after-restore-and-travel-grants-one-new-reward");
 
+  const caster = h.current().state.snapshot().roster.find(player => player.sourceId === 1);
+  assert.ok(caster?.abilities?.owned.some(ability => ability.abilityId === 31 && ability.skillLevel === 100),
+    "The actual initialized held character must own Cure; the checker grants no ability");
+  h.flow.pause(true);
+  const beforeModels = h.current().checkpoint();
+  const spells = h.current().menuAbilities(caster.id);
+  const cure = spells.find(ability => ability.abilityId === 31);
+  assert.equal(cure?.available, true, JSON.stringify(cure));
+  const choices = h.current().menuAbilityTargets(caster.id, 31);
+  const choice = choices.find(choice => choice.selection.kind === "single");
+  assert.ok(choice, "A real battle must leave a source Cure target without checker-side resource edits");
+  assert.deepEqual(h.current().checkpoint(), beforeModels, "Reading field spell models must not consume random draws");
+  h.flow.pause(false); h.flow.observeHost(ready);
+  const spell = menu(h, { kind: "use-ability", actorId: caster.id, abilityId: 31, selection: choice.selection });
+  const targetId = choice.targetIds[0];
+  assert.ok(member(spell.after.owned, targetId).hp > member(spell.before.owned, targetId).hp);
+  assert.equal(member(spell.after.owned, caster.id).mp, member(spell.before.owned, caster.id).mp - cure.cost.mp);
+  assert.ok(spell.after.owned.fieldRandom.draws > spell.before.owned.fieldRandom.draws);
+  assert.deepEqual(spell.after.owned.items, spell.before.owned.items);
+  assert.deepEqual(spell.after.owned.party, spell.before.owned.party);
+  for (const player of spell.after.owned.roster) {
+    const before = member(spell.before.owned, player.id);
+    assert.deepEqual(player.abilities, before.abilities);
+    assert.deepEqual(player.equipment, before.equipment);
+    assert.deepEqual(player.growth, before.growth);
+  }
+  record("source-owned-menu-cure-heals-real-injury-and-pays-mp-with-one-field-random-transaction");
+
   const final = await h.saveRestore();
   assert.equal(h.current().field.content.map.identity.mapId, 900002);
   assert.deepEqual([h.current().field.player.x, h.current().field.player.y], [38, 48]);
   assert.deepEqual(h.current().checkpoint(), final.checkpoint);
+  assert.deepEqual(h.current().state.snapshot().fieldRandom, spell.after.owned.fieldRandom,
+    "Real package storage and owner rebind must preserve the successful spell's random continuation");
+  assert.equal(final.oldCommands.menu({ kind: "use-ability", actorId: caster.id, abilityId: 31,
+    selection: choice.selection }), false);
+  record("field-spell-state-and-random-continuation-survive-package-save-and-owner-rebinding");
   const savedFinal = h.current().checkpoint(); await move(h, "down"); await move(h, "up");
   assert.deepEqual(h.current().state.snapshot(), savedFinal.owned);
   assert.equal(h.current().state.snapshot().completedBattles.length, 2);

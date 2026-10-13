@@ -91,6 +91,10 @@ import { projectFieldRecovery, type FieldRecoveryCommand,
 import { projectOwnedMessageNames, type FieldMessageNamesPort,
   type PreparedFieldMessageNames } from "./owned-message-names.js";
 import type { CharacterMessageNameRef } from "./field-message-template.js";
+import { fieldAbilityMenu, fieldAbilityTargets, projectFieldAbility, validateFieldAbilityCatalog,
+  type FieldAbilityCatalog, type FieldAbilityContext, type FieldAbilityRequest,
+  type FieldAbilityMember, type FieldAbilityCostOwner } from "./field-abilities.js";
+import { createFieldRandom, drawFieldRandom, validateFieldRandom, type FieldRandomState } from "./field-random.js";
 import {
   growCharacter,
   initialCharacterGrowth,
@@ -124,6 +128,9 @@ export type GameStateContent = {
   characterGrowth?: Record<string, CharacterGrowthPlan>;
   partyActors?: PartyActorCatalog;
   shops?: ShopCatalog;
+  /** Field execution is independent of an ability's battle plan and creates no
+   * ownership. Packages without this contract do not expose menu spellcasting. */
+  fieldAbilities?: FieldAbilityCatalog;
   /** Source templates for potential party members, not additional owned actors. */
   battleDefinitions?: CombatantDefinition[];
   rosterLifecycle: {
@@ -170,12 +177,15 @@ export type OwnedCharacter = RosterMember & {
   growth: CharacterGrowthProgress | null;
 };
 export type GameStateSnapshot = {
-  formatVersion: 12;
+  formatVersion: 12 | 13;
   kind: "owned-game-state";
   catalogHash: string;
   initialization: "development-checkpoint" | "source-new-game";
   /** Null means the development checkpoint never proved these source domains. */
   nativeState: SourceNativeState | null;
+  /** Required in v13 packages with menu abilities; absent in historical v12
+   * packages. Restore never recreates a missing stream from the entry seed. */
+  fieldRandom?: FieldRandomState;
   roster: OwnedCharacter[];
   party: PartyState;
   gil: number;
@@ -255,6 +265,7 @@ export class GameState {
   } | null = null;
   private revision = 0;
   private transportationPublication = false;
+  private menuPublication = false;
   private readonly conditions: BattleConditions;
   private readonly ownedConditionDefinitions: { id: number; type: number }[];
   private readonly fieldConditions: FieldConditions | null;
@@ -324,6 +335,7 @@ export class GameState {
       ? new FieldConditions(structuredClone(content.fieldConditions))
       : null;
     this.content = structuredClone(content);
+    if (content.fieldAbilities) validateFieldAbilityCatalog(this.content.fieldAbilities!, this.conditions);
     if (content.shops) {
       validateShopCatalog(content.shops);
       if (content.shops.itemLimit !== content.limits.item || content.shops.gilLimit !== content.limits.gil)
@@ -394,11 +406,12 @@ export class GameState {
       }
     }
     this.data = {
-      formatVersion: 12,
+      formatVersion: content.fieldAbilities ? 13 : 12,
       kind: "owned-game-state",
       catalogHash,
       initialization: fresh ? "source-new-game" : "development-checkpoint",
       nativeState: fresh ? createSourceNativeState(fresh) : null,
+      ...(content.fieldAbilities ? { fieldRandom: createFieldRandom(content.fieldAbilities.rules.random.seed) } : {}),
       roster: players.map((p) => ({
         ...structuredClone(content.rosterLifecycle.initial[p.id]!),
         id: p.id,
@@ -486,13 +499,17 @@ export class GameState {
     return plan;
   }
   private validate(data: GameStateSnapshot) {
-    keys(data, ownedSnapshotFields);
+    keys(data, ownedSnapshotFields + (this.content.fieldAbilities ? ",fieldRandom" : ""));
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== 12 ||
+      data.formatVersion !== (this.content.fieldAbilities ? 13 : 12) ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
+    if (this.content.fieldAbilities) {
+      if (!data.fieldRandom) throw new Error("Missing field random ownership");
+      validateFieldRandom(data.fieldRandom);
+    }
     if (data.initialization === "source-new-game") {
       if (data.nativeState === null)
         throw new Error("Missing source native-state ownership");
@@ -750,10 +767,26 @@ export class GameState {
     this.revision++;
   }
   private requireIdle() {
+    if (this.menuPublication)
+      throw new Error("Owned menu publication is in progress");
     if (this.transportationPublication)
       throw new Error("Owned transportation publication is in progress");
     if (this.active)
       throw new Error("Owned state is reserved by an active battle");
+  }
+  private commitMenuPresentation(next: GameStateSnapshot, validate: () => void, publish: () => void): void {
+    validate();
+    if (typeof publish !== "function" || publish.constructor.name === "AsyncFunction")
+      throw new Error("Menu publication must be synchronous");
+    this.menuPublication = true;
+    try {
+      const result: unknown = publish();
+      if (result && typeof (result as { then?: unknown }).then === "function")
+        throw new Error("Menu publication must be synchronous");
+      // The prepared actor publisher finishes its last fallible validation
+      // while the old owned state is still live, then writes only prepared data.
+      this.data = next; this.revision++;
+    } finally { this.menuPublication = false; }
   }
   private readTransportations(data: GameStateSnapshot) {
     if (!data.nativeState || !this.content.sourceNewGame)
@@ -978,6 +1011,10 @@ export class GameState {
       if (consumed || this.revision !== revision) throw new Error("Stale party menu transaction");
     };
     const project = (member: OwnedCharacter, row: "front" | "back") => this.projectOwnedBattlePlayer(member, row);
+    const commitWith = (publish: () => void) => {
+      if (!preview.changed) { validate(); consumed = true; return; }
+      this.commitMenuPresentation(next, validate, publish); consumed = true;
+    };
     return {
       changed: preview.changed,
       activeChanged,
@@ -991,11 +1028,8 @@ export class GameState {
           project(next.roster.find(member => member.id === id)!, row));
       },
       validate,
-      commit: () => {
-        validate(); consumed = true;
-        if (!preview.changed) return;
-        this.data = next; this.revision++;
-      },
+      commit: () => commitWith(() => {}),
+      commitWith,
     };
   }
   private projectRosterEvent(data: GameStateSnapshot, command: RosterCommand) {
@@ -1578,6 +1612,70 @@ export class GameState {
       hp: member.hp, mp: member.mp, maxHp: member.maxHp, maxMp: member.maxMp,
       conditionIds: [...member.conditionIds],
       ...(definition ? { conditionResistances: definition.conditionResistances } : {}) };
+  }
+  private fieldAbilityInput(actorId: string): { roster: FieldAbilityMember[]; costOwner: FieldAbilityCostOwner } | null {
+    const system = this.content.equipmentSystem;
+    const actor = this.data.roster.find(member => member.id === actorId && member.enabled);
+    if (!system || !actor || !this.activeParty.some(member => member.id === actorId)) return null;
+    const roster = this.activeParty.map(({ id }) => {
+      const member = this.data.roster.find(candidate => candidate.id === id)!;
+      return { ...this.menuParticipant(member), sourceId: member.sourceId, enabled: member.enabled,
+        abilities: structuredClone(member.abilities) };
+    });
+    return { roster, costOwner: { side: "player", catalog: system.catalog, loadout: actor } };
+  }
+  menuAbilities(actorId: string, context: FieldAbilityContext) {
+    if (this.active || !this.content.fieldAbilities) return [];
+    const input = this.fieldAbilityInput(actorId);
+    return input ? fieldAbilityMenu(this.content.fieldAbilities, input.roster, this.data.party,
+      actorId, input.costOwner, this.conditions, context) : [];
+  }
+  menuAbilityTargets(actorId: string, abilityId: number, context: FieldAbilityContext) {
+    if (this.active || !this.content.fieldAbilities) return [];
+    const input = this.fieldAbilityInput(actorId);
+    return input ? fieldAbilityTargets(this.content.fieldAbilities, input.roster, this.data.party,
+      actorId, abilityId, input.costOwner, this.conditions, context) : [];
+  }
+  /** Project every recipient and the payer before preparing field appearance.
+   * Abilities, equipment, growth and inventory stay with their existing owner. */
+  prepareFieldAbility(request: FieldAbilityRequest, context: FieldAbilityContext) {
+    this.requireIdle();
+    const catalog = this.content.fieldAbilities, input = this.fieldAbilityInput(request.actorId);
+    if (!catalog || !input) return null;
+    if (!this.data.fieldRandom) throw new Error("Missing field random ownership");
+    const candidateRandom = structuredClone(this.data.fieldRandom);
+    const projected = projectFieldAbility(catalog, input.roster, this.data.party, request,
+      input.costOwner, this.conditions, context, (min, max) => drawFieldRandom(candidateRandom, min, max));
+    if (!projected) return null;
+    const next = this.snapshot(), revision = this.revision, catalogBaseline = canonical(catalog);
+    next.fieldRandom = candidateRandom;
+    let appearanceChanged = false;
+    for (const candidate of projected.roster) {
+      const member = next.roster.find(member => member.id === candidate.id);
+      if (!member) throw new Error("Field ability changed an unowned identity");
+      appearanceChanged ||= canonical(member.conditionIds) !== canonical(candidate.conditionIds);
+      member.hp = candidate.hp; member.mp = candidate.mp;
+      member.conditionIds = [...candidate.conditionIds];
+    }
+    this.validate(next);
+    let consumed = false;
+    const validate = () => {
+      this.requireIdle();
+      if (consumed || this.revision !== revision || canonical(this.content.fieldAbilities) !== catalogBaseline)
+        throw new Error("Stale field ability transaction");
+    };
+    const commitWith = (publish: () => void) => {
+      this.commitMenuPresentation(next, validate, publish); consumed = true;
+    };
+    return {
+      result: structuredClone({ actorId: projected.actorId, abilityId: projected.abilityId,
+        targetIds: projected.targetIds, cost: projected.cost, effects: projected.effects }),
+      appearance: appearanceChanged ? this.projectPartyAppearance(next) : undefined,
+      appearanceChanged,
+      validate,
+      commit: () => commitWith(() => {}),
+      commitWith,
+    };
   }
   get equipmentInventory() {
     const system = this.content.equipmentSystem;

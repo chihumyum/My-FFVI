@@ -134,19 +134,27 @@ test("moving the leader to an empty cell refreshes the actual actor and preserve
   assert.deepEqual(GameSession.restore(saved, field, battle).checkpoint(), saved);
 });
 
-test("validated actor publication succeeds after the owned revision changes in the same menu transaction", () => {
+test("final actor validation precedes the joint owned and actor menu publication", () => {
   const { game } = partyMenuFixture(), prepare = game.field.prepareMenuPartyAppearance.bind(game.field);
-  let observedOwner: string | null = null;
+  let observedOwner: string | null = null, observedAsset: string | null = null;
   game.field.prepareMenuPartyAppearance = (candidate) => {
     const publish = prepare(candidate);
-    return Object.assign(() => {
-      observedOwner = game.state.activeParty[0]!.id;
-      publish(); // Includes the existing actor owner's final stale validation.
+    return Object.assign((beforeWrite?: () => void) => {
+      publish(() => {
+        // The real actor publisher has finished its final validation, but
+        // neither actor assignments nor the owned candidate has been written.
+        observedOwner = game.state.activeParty[0]!.id;
+        observedAsset = game.field.player.asset;
+        beforeWrite?.();
+      });
     }, { validate: publish.validate });
   };
   assert.equal(game.changeParty(request(game, { kind: "swap", from: 0, to: 1 })), true);
-  assert.equal(observedOwner, "b");
+  assert.equal(observedOwner, "a");
+  assert.equal(observedAsset, "alpha");
+  assert.deepEqual(game.state.activeParty, [{ id: "b", index: 0, row: "front" }, { id: "a", index: 1, row: "front" }]);
   assert.equal(game.field.player.asset, "bravo");
+  assert.equal(game.field.partyActorCheckpoint!.context.player.fieldAssetId, 2);
 });
 
 test("missing actor host or replacement media preserves every state and keeps the error explicit", () => {

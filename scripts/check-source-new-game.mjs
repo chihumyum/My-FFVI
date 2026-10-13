@@ -143,7 +143,7 @@ try {
   report.sourceSessionCreated = true;
   const initial = game.state.snapshot(), plan = createNewGame(battle.gameState.sourceNewGame);
   check("fresh owner retains the complete source initializer without development condition 607", () => {
-    assert.equal(initial.formatVersion, 12); assert.equal(initial.initialization, "source-new-game");
+    assert.equal(initial.formatVersion, 13); assert.equal(initial.initialization, "source-new-game");
     assert.deepEqual(initial.nativeState, createSourceNativeState(plan));
     assert.equal(initial.nativeState.kind, "source-native-state-v2");
     assert.deepEqual(game.state.fieldPuppetRoster.current(), { owned: [

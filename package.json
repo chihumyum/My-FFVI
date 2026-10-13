@@ -104,6 +104,7 @@
     "character-learning:check": "npm run battle:build && node scripts/check-character-learning-native.mjs && node scripts/check-character-learning.mjs",
     "party-menu:check": "npm run build && node scripts/check-party-menu-ui.mjs",
     "party-organization:check": "npm run build && node scripts/check-party-organization.mjs",
+    "field-abilities:check": "npm run build && node scripts/check-field-abilities-ui.mjs",
     "event-interactions:check": "npm run build && node scripts/check-field-choice.mjs && node scripts/check-event-context-branch.mjs && node scripts/check-event-interactions-ui.mjs",
     "script-transitions:check": "npm run build && node scripts/check-event-script-transition-native.mjs && node scripts/check-event-script-transition.mjs",
     "script-motion:check": "npm run build && node scripts/check-field-script-motion.mjs && node scripts/check-script-motion-integration.mjs",

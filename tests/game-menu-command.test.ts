@@ -22,13 +22,15 @@ function fixture() {
   return { ...f, flow, commands: new GameCommands(flow, f.game) };
 }
 
-test("declared menu inputs snapshot all four existing command types across object realms", () => {
+test("declared menu inputs snapshot every supported command and nested selection across object realms", () => {
   const original: GameMenuCommand[] = [...structuredClone(mutations),
     { kind: "change-equipment", playerId: "a", slot: 6, contentId: 5 },
     { kind: "change-party", change: { kind: "set-row", position: 1, row: "back" } },
     { kind: "change-party", change: { kind: "set-member", slot: 2, position: 3, ownedId: "a", row: "back" } },
     { kind: "change-party", change: { kind: "set-member", slot: 1, position: 0, ownedId: null, row: "front" } },
-    { kind: "change-party", change: { kind: "select-slot", slot: 2 } }];
+    { kind: "change-party", change: { kind: "select-slot", slot: 2 } },
+    { kind: "use-ability", actorId: "a", abilityId: 31, selection: { kind: "single", id: "b" } },
+    { kind: "use-ability", actorId: "a", abilityId: 31, selection: { kind: "all" } }];
   const foreign = runInNewContext("(" + JSON.stringify(original) + ")") as unknown[];
   const parsed = Array.from(foreign, parseGameMenuCommand);
   assert.deepEqual(parsed, original);
@@ -42,6 +44,12 @@ test("declared menu inputs snapshot all four existing command types across objec
   assert.deepEqual(savedParty, mutations[2]); assert.deepEqual(savedPreferences, mutations[3]);
   assert.deepEqual(savedMember, { kind: "change-party", change: {
     kind: "set-member", slot: 2, position: 3, ownedId: "a", row: "back" } });
+  const ability = original[9] as Extract<GameMenuCommand, { kind: "use-ability" }>;
+  const savedAbility = parseGameMenuCommand(ability);
+  if (ability.selection.kind === "single") ability.selection.id = "a";
+  ability.actorId = "b";
+  assert.deepEqual(savedAbility, { kind: "use-ability", actorId: "a", abilityId: 31,
+    selection: { kind: "single", id: "b" } });
   assert.deepEqual(parseGameMenuCommand(Object.assign(Object.create(null), mutations[0])), mutations[0]);
 });
 
@@ -54,6 +62,16 @@ test("invalid fields and boundaries never become a partially applied typed input
     { kind: "use-item", itemId: 10, targetId: " a" },
     { kind: "use-item", itemId: 10, targetId: "x".repeat(161) },
     { kind: "use-item", itemId: 10, targetId: "a", count: 2 },
+    ...[
+      { actorId: "a", abilityId: 0, selection: { kind: "single", id: "b" } },
+      { actorId: "a", abilityId: 0x80000000, selection: { kind: "all" } },
+      { actorId: " a", abilityId: 31, selection: { kind: "all" } },
+      { actorId: "a", abilityId: 31, selection: { kind: "single", id: " b" } },
+      { actorId: "a", abilityId: 31, selection: { kind: "single", id: "b", count: 2 } },
+      { actorId: "a", abilityId: 31, selection: { kind: "all", side: "enemy" } },
+      { actorId: "a", abilityId: 31, selection: { kind: "side", side: "player" } },
+      { actorId: "a", abilityId: 31, selection: { kind: "all" }, mp: 0 },
+    ].map(value => ({ kind: "use-ability", ...value })),
     { kind: "change-equipment", playerId: "a", slot: 0, contentId: 5 },
     { kind: "change-equipment", playerId: "a", slot: 7, contentId: 5 },
     { kind: "change-equipment", playerId: "a", slot: 5, contentId: "5" },
@@ -88,8 +106,11 @@ test("accessors, symbols and inherited input data cannot run a reentrant command
   Object.defineProperty(preferences, "speedIndex", { enumerable: true, get() { getters++; return 4; } });
   const membership = { kind: "set-member", slot: 0, position: 0, row: "front" };
   Object.defineProperty(membership, "ownedId", { enumerable: true, get() { getters++; f.flow.returnToTitle(); return "b"; } });
+  const selection = { kind: "single" };
+  Object.defineProperty(selection, "id", { enumerable: true, get() { getters++; f.flow.returnToTitle(); return "b"; } });
   class Input { kind = "use-item"; itemId = 10; targetId = "a"; }
-  for (const input of [target, { kind: "set-preferences", preferences }, { kind: "change-party", change: membership }, new Input(),
+  for (const input of [target, { kind: "set-preferences", preferences }, { kind: "change-party", change: membership },
+    { kind: "use-ability", actorId: "a", abilityId: 31, selection }, new Input(),
     { ...mutations[0], [Symbol("metadata")]: 1 }, Object.create(mutations[0]!)])
     assert.throws(() => f.commands.menu(input as GameMenuCommand));
   assert.equal(getters, 0); assert.equal(f.flow.currentSession, f.game); assert.equal(f.flow.started, true);

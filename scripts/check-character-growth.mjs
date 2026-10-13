@@ -124,7 +124,7 @@ for (const [sourceId, plan] of plans) {
 }
 const make = () => new GameState(catalog.gameState, catalog.common.players, contentHash, catalog.common.conditions);
 const owned = make(), before = owned.snapshot();
-assert.equal(before.formatVersion, 12);
+assert.equal(before.formatVersion, 13);
 assert.deepEqual(catalog.gameState.rosterLifecycle.firstJoinLevelAdjustments, firstJoinLevelAdjustments);
 // Public victory integration verifies independently recomputed source additions.
 const lease = owned.openBattle(1, catalog.encounters[1].rewardPolicy), players = owned.battlePlayers(lease);

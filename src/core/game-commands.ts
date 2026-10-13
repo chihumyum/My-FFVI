@@ -6,6 +6,7 @@ import type { TargetSelection } from "./battle-targets.js";
 import type { PartyMenuRequest } from "./party-menu.js";
 import type { ShopTradePlan, ShopTradeRequest } from "./shop.js";
 import { parseGameMenuCommand, type GameMenuCommand } from "./game-menu-command.js";
+import type { FieldAbilityRequest } from "./field-abilities.js";
 
 /** User command admission, bound to the exact published session. This gateway
  * owns no resources, menu model, clock or transaction; existing subsystem
@@ -37,6 +38,8 @@ export class GameCommands {
     const input = parseGameMenuCommand(command);
     switch (input.kind) {
       case "use-item": return this.useMenuItem(input.itemId, input.targetId);
+      case "use-ability": return this.useMenuAbility({ actorId: input.actorId, abilityId: input.abilityId,
+        selection: input.selection });
       case "change-equipment": return this.changeEquipment(input.playerId, input.slot, input.contentId);
       case "set-preferences": return this.setBattlePreferences(input.preferences);
       case "change-party": {
@@ -49,6 +52,9 @@ export class GameCommands {
   }
   useMenuItem(id: number, targetId: string): boolean {
     return this.menuReady ? this.owner.useMenuItem(id, targetId) : false;
+  }
+  useMenuAbility(request: FieldAbilityRequest): boolean {
+    return this.menuReady ? this.owner.useMenuAbility(request, () => this.menuReady) : false;
   }
   changeEquipment(playerId: string, slot: number, contentId: number): boolean {
     return this.menuReady ? this.owner.changeEquipment(playerId, slot, contentId) : false;

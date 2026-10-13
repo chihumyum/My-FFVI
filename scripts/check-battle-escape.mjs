@@ -91,7 +91,7 @@ try {
   flow.start(); flow.advance(0, host);
   const fieldOwner = session.field, playerOwner = fieldOwner.player, ownedOwner = session.state;
   const baseline = ownedOwner.snapshot(), flags = fieldOwner.eventState.snapshot();
-  assert.equal(baseline.formatVersion, 12, "Escape settlement requires outcome-bearing owned receipts");
+  assert.equal(baseline.formatVersion, 13, "Escape settlement retains field random ownership and outcome-bearing receipts");
   const count = (stacks, id) => stacks.find(item => item.id === id)?.count ?? 0;
   const resources = players => players.map(player => ({ id: player.id, hp: player.hp, mp: player.mp,
     row: player.row, conditionIds: [...player.conditionIds] }));

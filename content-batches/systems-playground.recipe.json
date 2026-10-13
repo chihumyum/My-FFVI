@@ -2,7 +2,7 @@
   "kind": "systems-playground-recipe-v1",
   "id": "systems-playground",
   "baseField": {"url": "/game/narshe.json", "contentHash": "566698ca0b6c06293daafce903756bd9ae848a8cec81b387c9022787b12bdd31"},
-  "battle": {"url": "/content-batches/ordinary-battles/battle.json", "contentHash": "438c741c00a600087031a8270b9fc82560fd1ce4e1dff27373c4a5928ed2e25e"},
+  "battle": {"url": "/content-batches/ordinary-battles/battle.json", "contentHash": "3bcaf25f42d892810a36875d4a00a26baadeaa902143fdbc524086adb36ec103"},
   "baseWorld": {"url": "/framework/world/catalog.json", "contentHash": "7fee63ad02f49f44c158ab0ca3cbb8739cfa185b5c7918116ae717d693c94c61"},
   "mapRules": {"url": "/framework/world/maps/3.json", "contentHash": "6d83344229fbed4d43dc9b5e7bd9e833e0a5d237c6b6f48ce914573e78374e0e"},
   "areaId": 900000,

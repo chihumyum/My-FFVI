@@ -40,7 +40,7 @@ export type LegacyFieldPartyActorRenderer = (
 export type FieldPartyActorRenderer = LegacyFieldPartyActorRenderer | FieldPartyActorRendererBatch;
 /** Callable compatibility with the existing dispatchers. validate() must run
  * before an outer owned-state commit; invocation also guards direct callers. */
-export type FieldPartyActorPublication = (() => void) & { validate(): void };
+export type FieldPartyActorPublication = ((beforeWrite?: () => void) => void) & { validate(): void };
 
 const instances = (c: PartyActorContext): PartyActorInstance[] =>
   [c.player, ...c.puppets, ...c.multiParty.map((p) => p.actor),
@@ -208,8 +208,11 @@ export class FieldPartyActors {
       publication.validate();
       if (revision !== this.revision) throw new Error("Party appearance changed during renderer validation");
     };
-    const publish = () => {
+    const publish = (beforeWrite?: () => void) => {
       validate();
+      // Joint owners can recheck their exact session/host after the renderer's
+      // last fallible read and before any actor checkpoint is published.
+      beforeWrite?.();
       consumed = true;
       this.publishing = true;
       try {

@@ -5,6 +5,7 @@ import { tableInteger as int, type SharedBattleSource } from "./battle.js";
 import { compileParameterLimits } from "./parameters.js";
 import type { ParameterValues } from "../core/parameters.js";
 import { compileBattleAbilityContent } from "./battle-ability-content.js";
+import { compileFieldAbilityCatalog } from "./field-abilities.js";
 import { loadCorpus } from "./corpus.js";
 import { bindSystemMessages } from "./system-messages.js";
 import { compileBattleConditionCatalog } from "./conditions.js";
@@ -36,7 +37,7 @@ import type {
 export type GameCatalogModules = {
   common: Omit<BattleCatalog["common"], "players" | "limitations" | "drops">;
   owned: Pick<GameStateContent, "shops" | "characterInitializations" | "characterGrowth" |
-    "partyActors" | "battleDefinitions" | "fieldConditions"> & {
+    "partyActors" | "battleDefinitions" | "fieldConditions" | "fieldAbilities"> & {
     sourceNewGame: NewGameDefinition;
     equipmentSystem: NonNullable<GameStateContent["equipmentSystem"]>;
   };
@@ -208,12 +209,13 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
   });
   const systemMessages = bindSystemMessages(field, source.parentSourceSetHash, messageSources).messages;
   const storyMessages = record(corpus.messages.story_mes_zhc);
-  const abilityContent = compileBattleAbilityContent(parameterReader,
-    Object.fromEntries(Object.keys(source.tables).map((table) => [table, rows(table)])), (key) => {
+  const resolveAbilityName = (key: string) => {
       const found = [systemMessages[key], storyMessages[key]].filter((value): value is string => typeof value === "string");
       const uniqueValues = [...new Set(found)];
       return uniqueValues.length === 1 ? uniqueValues[0]! : null;
-    });
+  };
+  const abilityContent = compileBattleAbilityContent(parameterReader,
+    Object.fromEntries(Object.keys(source.tables).map((table) => [table, rows(table)])), resolveAbilityName);
   // Definitions describe executable capabilities, never acquisition. Commands
   // still use each actor's actual owned list and current source qualification.
   const { abilities, abilityContentIds } = abilityContent;
@@ -242,6 +244,15 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
   // an unselected music row is absent. Resolve optional handoff declarations
   // against the existing complete, verified source reader instead.
   const handoffSystem = await loadSystemSource(root, source.parentSourceSetHash);
+  // Menu-only function groups need the complete source tables. The selected
+  // battle closure cannot establish their absence or grant field execution.
+  // This named Web generator seed is an authored transaction policy, not an
+  // original Unity random sequence or an initial character ability grant.
+  const fieldAbilities = compileFieldAbilityCatalog(handoffSystem.reader, handoffSystem.tables,
+    battleAbilities.commands, resolveAbilityName, {
+      kind: "field-ability-rules-v1", profile: "source",
+      random: { kind: "web-field-random-v1", seed: 0x71f6c0de },
+    }).catalog;
   const reader: GameCatalogModules["reader"] = { ...parameterReader,
     matching: (table, key, value) => Object.values(source.tables[table] ?? {})
       .filter((r) => r.values[key] === String(value)),
@@ -333,7 +344,7 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
   const owned: GameCatalogModules["owned"] = {
     shops: shops.catalog, characterInitializations, characterGrowth,
     partyActors: structuredClone(source.partyActors),
-    battleDefinitions: structuredClone(ordinary.definitions), fieldConditions,
+    battleDefinitions: structuredClone(ordinary.definitions), fieldConditions, fieldAbilities,
     sourceNewGame: newGame.definition,
     equipmentSystem: {
       catalog: equipment, initialStock: createNewGame(newGame.definition).owned.equipmentStock,

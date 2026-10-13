@@ -5,7 +5,7 @@
   "battleSourceSetHash": "d713cd2b9b117321b895f480fbc32c93a1fe630ac269b2de9a40a5a885324856",
   "baseCatalogRef": {
     "url": "/game/opening-playable.json",
-    "contentHash": "ec5ef702e875bc3bab635855c1f2026cac4ac39f082860062a97fe4961f1b69f"
+    "contentHash": "7288cc9fbb4585c1c308b737c812c28134b800166be1a992a1b49b2cf219d1da"
   },
   "partyIds": [3002, 517, 3362, 3398],
   "handoff": {

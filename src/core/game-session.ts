@@ -16,6 +16,7 @@ import { projectBattleAbilities } from "./battle-abilities.js";
 import { projectBattleItemMenu } from "./battle-entry.js";
 import { BattleConditions } from "./battle-conditions.js";
 import { projectBattleFieldState } from "./field-battle-entry.js";
+import type { FieldAbilityContext, FieldAbilityRequest } from "./field-abilities.js";
 import {
   parseBattlePreferences,
   type BattlePreferences,
@@ -350,13 +351,50 @@ export class GameSession {
     // A fallible appearance provider may synchronously replace the Flow owner,
     // return to title or revoke host readiness. Recheck before either publish.
     if (stillAdmitted !== undefined && stillAdmitted() !== true) return false;
-    transaction.commit();
-    publish();
+    transaction.commitWith(() => publish(() => {
+      if (this.field !== field || !this.menuReady || stillAdmitted !== undefined && stillAdmitted() !== true)
+        throw new Error("Party menu owner or host changed before publication");
+    }));
     return true;
   }
   useMenuItem(id: number, targetId: string): boolean {
     if (!this.menuReady) return false;
     return this.state.useMenuItem(id, targetId);
+  }
+  private fieldAbilityContext(): FieldAbilityContext {
+    const entry = this.battleCatalog.common.battleEntry;
+    if (!entry) return { invalidContentIds: null };
+    const field = projectBattleFieldState(entry, this.field.battleEntryContext.state,
+      this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
+    return { invalidContentIds: field.blockers.length ? null : field.invalidContentIds };
+  }
+  menuAbilities(actorId: string) {
+    return this.menuReady ? this.state.menuAbilities(actorId, this.fieldAbilityContext()) : [];
+  }
+  menuAbilityTargets(actorId: string, abilityId: number) {
+    return this.menuReady ? this.state.menuAbilityTargets(actorId, abilityId, this.fieldAbilityContext()) : [];
+  }
+  useMenuAbility(request: FieldAbilityRequest, stillAdmitted?: () => boolean): boolean {
+    if (stillAdmitted !== undefined && typeof stillAdmitted !== "function")
+      throw new Error("Invalid field ability admission predicate");
+    if (!this.menuReady || stillAdmitted !== undefined && stillAdmitted() !== true) return false;
+    const field = this.field, context = this.fieldAbilityContext(), baseline = canonical(context);
+    const transaction = this.state.prepareFieldAbility(request, context);
+    if (!transaction) return false;
+    if (transaction.appearanceChanged && !transaction.appearance)
+      throw new Error("Field ability condition appearance is unavailable");
+    const publish = transaction.appearance ? field.prepareMenuPartyAppearance(transaction.appearance) : undefined;
+    publish?.validate();
+    if (this.field !== field || !this.menuReady || canonical(this.fieldAbilityContext()) !== baseline)
+      throw new Error("Field ability context changed during preparation");
+    transaction.validate();
+    if (stillAdmitted !== undefined && stillAdmitted() !== true) return false;
+    transaction.commitWith(() => publish?.(() => {
+      if (this.field !== field || !this.menuReady || canonical(this.fieldAbilityContext()) !== baseline ||
+          stillAdmitted !== undefined && stillAdmitted() !== true)
+        throw new Error("Field ability owner, context or host changed before publication");
+    }));
+    return true;
   }
   changeEquipment(playerId: string, slot: number, contentId: number): boolean {
     if (!this.menuReady) return false;

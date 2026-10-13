@@ -18,6 +18,8 @@
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
 - [游戏系统框架与连续流程验收](docs/game-framework.md)
+- [当前完整系统推进顺序](docs/systems-roadmap.md)
+- [v71 字段魔法系统](docs/systems-v71.md)
 - [v70 完整持有名册与三组编队](docs/systems-v70.md)
 - [v69 可操作的游戏系统骨架](docs/systems-v69.md)
 - [v68 来源内容批次与开发地图入口](docs/systems-v68.md)
