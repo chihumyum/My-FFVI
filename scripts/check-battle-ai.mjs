@@ -535,7 +535,9 @@ const report = {
     "advanced-counter-query-triggers-and-ability-6-gauge-exception-remain-gated",
     "constructed-soulsaver-checkpoint-is-control-flow-only-not-source-save-or-playable-enemy",
     "shared-ability-and-event-writes-to-enemy-variables-remain-unimplemented",
-    "normal-auto-targets-only-ranges-3-and-7-with-development-player-weighting",
+    "ordinary-alive-auto-targets-use-shared-range-capabilities-with-development-player-weighting",
+    "counter-targets-remain-explicit-attacker-ranges-3-and-7",
+    "special-fallen-target-append-and-empty-native-fallback-remain-unimplemented",
     "development-atb-scheduling-and-prng-no-original-parity",
   ],
 };

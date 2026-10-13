@@ -6,6 +6,14 @@ import { encounterRuntimeFixture } from "./fixtures/battle-encounter-runtime.js"
 import { aiSource } from "./fixtures/battle-ai.js";
 import { encounterContent } from "../src/core/battle-content.js";
 import { checkpointFixture } from "./fixtures/checkpoint-game.js";
+import { compileTargetRule } from "../src/compiler/battle-targets.js";
+
+function automaticRangeFixture(range: number, system = 1) {
+  const f = encounterRuntimeFixture(), ability = f.input.abilities[13]!;
+  ability.program.range = range;
+  ability.plan!.targeting = compileTargetRule(range, system)!;
+  return f;
+}
 
 function contentFor(f: ReturnType<typeof encounterRuntimeFixture>, result: ReturnType<typeof compileBattleEncounterRuntime>, id: number, seed = 1) {
   return encounterContent({ ...checkpointFixture().battle,
@@ -82,6 +90,94 @@ test("unimplemented AI opcodes survive for the runtime instead of being converte
   assert.equal(result.encounters[9202]!.enemies[0]!.ai!.instructions[2]!.op.kind, "blocked");
   assert.ok(result.diagnostics.some((d) => d.kind === "runtime-dependency" && d.pc === 2));
   assert.throws(() => new BattleGame(contentFor(f, result, 9202), 1), /unsupported AI instruction/);
+});
+
+test("ordinary and repeated AI actions admit the shared source range matrix without rewriting menu defaults", () => {
+  for (const range of [1, 2, 4, 5, 6, 8, 9, 14, 20, 21]) {
+    const f = automaticRangeFixture(range);
+    f.input.encounters[1]!.enemies[0]!.ai.data = aiSource([
+      ["Nop"], ["SyncAI"], ["StartTable", [0]], ["Act", [13]],
+      ["LoopAct", [13], [3]], ["EndTable"], ["JumpBattleAI", [0]],
+    ]);
+    const before = JSON.stringify(f.input), result = compileBattleEncounterRuntime(f.reader(), f.input);
+    assert.equal(result.report.compiledDefinitions, 2, "range " + range);
+    assert.equal(result.report.withRuntimeDependencies, 0, "range " + range);
+    assert.equal(JSON.stringify(f.input), before, "The compiler preserves source programs and menu defaults");
+    assert.deepEqual(result.encounters[9202]!.enemies[0]!.abilities, [13]);
+    assert.deepEqual(result.encounters[9202]!.enemies[0]!.ai!.instructions[4]!.op,
+      { kind: "loop-act", abilities: [13], counts: [3] });
+    if (range === 20) {
+      assert.equal(f.input.abilities[13]!.plan!.targeting.defaultMode, "side");
+      assert.equal(f.input.abilities[13]!.plan!.targeting.defaultRelation, "ally");
+    }
+  }
+});
+
+test("a future CounterAct retains its own target dependency even when ordinary rows admit the same plan", () => {
+  for (const range of [1, 2, 4, 5, 6, 8, 9, 14, 20, 21]) {
+    const f = automaticRangeFixture(range);
+    f.input.encounters[1]!.enemies[0]!.ai.data = aiSource([
+      ["Nop"], ["SyncAI"], ["IsLevelCheck", [1, 7, 7]], ["StartTable", [0]], ["Act", [13]],
+      ["EndTable"], ["JumpBattleAI", [0]], ["StartTable", [0]], ["CounterAct", [13]],
+      ["EndTable"], ["JumpBattleAI", [0]],
+    ]);
+    const result = compileBattleEncounterRuntime(f.reader(), f.input);
+    assert.equal(result.report.compiledDefinitions, 2, "range " + range);
+    assert.equal(result.report.withRuntimeDependencies, 1, "range " + range);
+    const dependencies = result.diagnostics.filter(d => d.code === "automatic-target");
+    assert.equal(dependencies.length, 1, "The ordinary action does not inherit the counter restriction");
+    const diagnostic = dependencies[0]!;
+    assert.deepEqual([diagnostic.partyId, diagnostic.enemySlot, diagnostic.pc, diagnostic.kind, diagnostic.dependency],
+      [9202, 5, 8, "runtime-dependency", { table: "ability.csv", id: 13 }]);
+    assert.match(diagnostic.reason, /counter target range/);
+    assert.equal(result.encounters[9202]!.enemies[0]!.ai!.instructions[8]!.op.kind, "counter-act");
+  }
+});
+
+test("existing range 3 and 7 CounterAct support remains separate from ordinary range expansion", () => {
+  for (const range of [3, 7]) {
+    const f = automaticRangeFixture(range);
+    f.input.encounters[1]!.enemies[0]!.ai.data = aiSource([
+      ["Nop"], ["SyncAI"], ["CounterAct", [13]], ["SyncAI"], ["JumpBattleAI", [0]],
+    ]);
+    const result = compileBattleEncounterRuntime(f.reader(), f.input);
+    assert.equal(result.report.withRuntimeDependencies, 0);
+    assert.equal(result.encounters[9202]!.enemies[0]!.ai!.instructions[2]!.op.kind, "counter-act");
+  }
+});
+
+test("a compiled plan cannot use a contradictory or unsupported automatic target contract", () => {
+  for (const fault of ["source-range", "side-mode", "life", "unknown-range"] as const) {
+    const f = automaticRangeFixture(20), ability = f.input.abilities[13]!;
+    if (fault === "source-range") ability.program.range = 3;
+    if (fault === "side-mode") ability.plan!.targeting.modes = ["single"];
+    if (fault === "life") ability.plan!.targeting.life = "include-fallen-players";
+    if (fault === "unknown-range") ability.program.range = 999;
+    const result = compileBattleEncounterRuntime(f.reader(), f.input);
+    const diagnostic = result.diagnostics.find(d => d.partyId === 9202 && d.code === "automatic-target")!;
+    assert.ok(diagnostic, fault);
+    assert.deepEqual([diagnostic.kind, diagnostic.pc, diagnostic.dependency],
+      ["runtime-dependency", 3, { table: "ability.csv", id: 13 }]);
+    assert.equal(result.report.withRuntimeDependencies, 2);
+  }
+});
+
+test("automatic range support does not grant unknown initial conditions or source flag policies", () => {
+  for (const fault of ["initial-condition", "flags"] as const) {
+    const f = automaticRangeFixture(20), encounter = f.input.encounters[1]!;
+    assert.equal(compileBattleEncounterRuntime(f.reader(), f.input).report.withRuntimeDependencies, 0);
+    if (fault === "initial-condition") f.tables["monster.csv"]![1]!.initial_condition = "22";
+    else {
+      encounter.metadata.battleFlagGroupId = 18;
+      encounter.metadata.battleFlags = [{ source: f.rowSource("battle_flag_group.csv", 19),
+        values: { id: "19", group_id: "18", battle_flag_id: "20" } }];
+    }
+    const result = compileBattleEncounterRuntime(f.reader(), f.input);
+    assert.deepEqual(Object.keys(result.encounters), ["9201"]);
+    assert.equal(result.report.blocked, 1);
+    assert.ok(result.diagnostics.some(d => d.partyId === 9202 && d.kind === "blocked" &&
+      (fault === "initial-condition" ? d.reason.includes("initial_condition=22") : d.code === "battle-flags")));
+  }
 });
 
 test("battle scripts require an exact explicit development binding and remain reported omissions", () => {
@@ -183,7 +279,8 @@ test("unimplemented positive weights never get filtered and forced side attack c
 test("ability formation dependencies cover every reachable branch, not a sampled normal branch", () => {
   const f = encounterRuntimeFixture();
   f.input.encounters[1]!.patterns = [1, 0, 1, 0, 0, 0];
-  f.input.abilities[13]!.plan!.targeting.normalFormationOnly = true;
+  f.input.abilities[13]!.program.range = 6;
+  f.input.abilities[13]!.plan!.targeting = compileTargetRule(6, 1)!;
   f.input.development.formations = { kind: "framework-battle-formations-v1", id: "both", weights: [1, 0, 1, 0, 0, 0] };
   let result = compileBattleEncounterRuntime(f.reader(), f.input);
   assert.ok(result.diagnostics.some(d => d.partyId === 9202 && d.code === "ability-formation" && d.kind === "runtime-dependency"));

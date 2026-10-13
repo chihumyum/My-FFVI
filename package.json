@@ -47,6 +47,7 @@
     "battle-conditions:check": "npm run battle:build && node scripts/check-battle-conditions.mjs",
     "battle-life:check": "npm run battle:build && node scripts/check-battle-life.mjs",
     "battle-ai:check": "npm run battle:build && node scripts/check-battle-ai.mjs",
+    "battle-ai-targets:check": "npm run build && node scripts/check-battle-ai-targets.mjs",
     "battle-reactions:check": "npm run battle:build && node scripts/check-battle-reactions.mjs",
     "game-state:check": "npm run battle:build && node scripts/check-game-state.mjs",
     "save:check": "npm run build && node scripts/check-saves.mjs",

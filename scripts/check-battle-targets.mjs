@@ -15,10 +15,28 @@ import { compileTargetRule } from "../dist/src/compiler/battle-targets.js";
 import { readSnapshot, snapshotFile } from "../dist/src/compiler/integrity.js";
 import { hash } from "../dist/src/compiler/content.js";
 import { BattleGame } from "../dist/src/core/battle.js";
+import { enemyBattleDefinition } from "../dist/src/core/battle-participants.js";
 import { controlledBattleContent as encounterContent } from "./battle-probe-context.mjs";
 import { calculateDevelopmentEffects } from "../dist/src/core/ability.js";
 import { BattleConditions } from "../dist/src/core/battle-conditions.js";
 import { battleTargetChoices } from "../dist/src/core/battle-targets.js";
+
+// The HP override belongs to this controlled host's immutable templates.
+// Keep every source identity and raw slot instead of dropping the binding.
+function admittedTargetProbe(content) {
+  const entry = content.participants;
+  assert.ok(entry, "Missing source participants for controlled target host");
+  return { ...content, participants: { ...entry,
+    enemyDefinitions: Object.fromEntries(content.enemies.map(enemy =>
+      [enemy.sourceId, enemyBattleDefinition(enemy)])),
+    initial: content.enemies.map(enemy => {
+      const binding = entry.initial.find(binding => binding.id === enemy.id);
+      assert.ok(binding && binding.sourceId === enemy.sourceId,
+        "Changed source identity or missing raw slot for controlled target host");
+      return structuredClone(binding);
+    }),
+  } };
+}
 
 const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const imported = await readSnapshot(root + "/build/import");
@@ -74,7 +92,7 @@ for (const enemy of content.enemies) enemy.hp = 5000;
 const sourceResults = [];
 for (const count of [1, 2]) {
   const run = (parts) => {
-    const battle = new BattleGame(content, 71, undefined, sourceBattleInventory(catalog));
+    const battle = new BattleGame(admittedTargetProbe(content), 71, undefined, sourceBattleInventory(catalog));
     const actor = battle.players[0];
     for (const enemy of battle.enemies.slice(count)) enemy.hp = 0;
     const choice = battle.targetChoices(actor.id, ability.id);
@@ -170,7 +188,7 @@ await writeFile(
 // Browser harness may consume this exact checked setup without changing the game catalog.
 await writeFile(
   root + "/build/reports/battle-target-probe.json",
-  JSON.stringify(content) + "\n",
+  JSON.stringify(admittedTargetProbe(content)) + "\n",
 );
 console.log(
   JSON.stringify({

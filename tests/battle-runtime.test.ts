@@ -108,6 +108,7 @@ test("misses and healing wake source AI but do not turn into ordinary turns or d
     const f = counterFixture();
     if (healing) {
       f.abilities[10]!.plan = structuredClone(f.abilities[11]!.plan);
+      f.abilities[10]!.program.range = 7;
       f.abilities[10]!.plan!.targeting = compileTargetRule(7, 2)!;
       f.abilities[10]!.program.rules.system_id = 2;
     } else {
@@ -146,8 +147,8 @@ test("zero damage can counter, while fatal hits never enqueue a living CounterAc
 
 test("a counter may target a friendly attacker and cannot recursively trigger that attacker's counter AI", () => {
   const b = new BattleGame(counterFixture(), 383);
-  // Controlled friendly-fire host. Normal enemy automatic targeting is still
-  // restricted to players; the reaction rule itself must retain explicit identity.
+  // Controlled friendly-fire host. This ordinary physical range still selects
+  // players; the reaction rule itself must retain explicit attacker identity.
   b.command("a", 10, "e2");
   b.advance(10);
   b.action!.actor = "e1";
@@ -167,6 +168,7 @@ test("a counter may target a friendly attacker and cannot recursively trigger th
 
 test("a later unsupported counter rolls back every target, cost, AI parameter, queue and random draw", () => {
   const f = counterFixture();
+  f.abilities[10]!.program.range = 4;
   f.abilities[10]!.plan!.targeting = compileTargetRule(4, 3)!;
   f.abilities[10]!.cost = 2;
   const clean = new BattleGame(structuredClone(f), 389);
@@ -419,7 +421,7 @@ test("a later target failure rolls back the entire loop, its controller counters
   clean.enemies[0]!.atb = broken.enemies[0]!.atb = 100;
   const initial = broken.enemyAIState("e1");
   f.abilities[10]!.plan!.targeting.modes = [];
-  assert.throws(() => broken.advance(10), /Invalid battle target rule/);
+  assert.throws(() => broken.advance(10), /Invalid automatic target rule/);
   assert.deepEqual(broken.pendingActions, []);
   assert.equal(broken.enemies[0]!.queued, false);
   assert.equal(broken.enemies[0]!.behavior!.variables[0], 0);
@@ -624,7 +626,7 @@ test("failed AI target resolution rolls back its random stream, turn and queue",
   const broken = new BattleGame(f, 227);
   clean.enemies[0]!.atb = broken.enemies[0]!.atb = 100;
   f.abilities[13]!.plan!.targeting.modes = [];
-  assert.throws(() => broken.advance(10), /Invalid battle target rule/);
+  assert.throws(() => broken.advance(10), /Invalid automatic target rule/);
   assert.equal(broken.enemyAIState("e1")!.actTurn, 0);
   assert.equal(broken.enemies[0]!.queued, false);
   assert.equal(broken.action, null);

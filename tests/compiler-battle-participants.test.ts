@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { encounterRuntimeFixture } from "./fixtures/battle-encounter-runtime.js";
 import { aiSource } from "./fixtures/battle-ai.js";
 import { compileBattleEncounterRuntime } from "../src/compiler/battle-encounter-runtime.js";
+import { compileTargetRule } from "../src/compiler/battle-targets.js";
 import { parseBattleParticipantContent } from "../src/core/battle-participants.js";
 import { analyzeBatchEncounters } from "../src/compiler/content-batch-battle.js";
 import { checkpointFixture } from "./fixtures/checkpoint-game.js";
@@ -177,7 +178,8 @@ test("late formation requirements cover all reachable branches and explicit acco
   const f = reserveFixture();
   f.input.encounters[0]!.patterns = [1, 0, 1, 0, 0, 0];
   f.input.development.formations = { kind: "framework-battle-formations-v1", id: "both", weights: [1, 0, 1, 0, 0, 0] };
-  f.input.abilities[10]!.plan!.targeting.normalFormationOnly = true;
+  f.input.abilities[10]!.program.range = 6;
+  f.input.abilities[10]!.plan!.targeting = compileTargetRule(6, 3)!;
   f.input.reserveEnemies![0]!.enemy.ai.data = aiSource([
     ["Nop"], ["SyncAI"], ["StartTable", [0]], ["Act", [10]], ["EndTable"], ["JumpBattleAI", [0]],
   ]);

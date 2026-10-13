@@ -14,8 +14,26 @@ import {
 import { compileDevelopmentAbility } from "../dist/src/compiler/ability.js";
 import { selectBattleAIAbilities } from "../dist/src/core/battle-ai.js";
 import { BattleGame } from "../dist/src/core/battle.js";
+import { enemyBattleDefinition } from "../dist/src/core/battle-participants.js";
 import { controlledBattleContent as encounterContent } from "./battle-probe-context.mjs";
 import { hash } from "../dist/src/compiler/content.js";
+
+// AI, life and conditions are explicit controlled inputs, with source slots
+// retained. Each variant must bind its own templates before runtime admission.
+function admittedReactionProbe(content) {
+  const entry = content.participants;
+  assert.ok(entry, "Missing source participants for controlled reaction host");
+  return { ...content, participants: { ...entry,
+    enemyDefinitions: Object.fromEntries(content.enemies.map(enemy =>
+      [enemy.sourceId, enemyBattleDefinition(enemy)])),
+    initial: content.enemies.map(enemy => {
+      const binding = entry.initial.find(binding => binding.id === enemy.id);
+      assert.ok(binding && binding.sourceId === enemy.sourceId,
+        "Changed source identity or missing raw slot for controlled reaction host");
+      return structuredClone(binding);
+    }),
+  } };
+}
 
 const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const source = await compileOpeningBattle(root);
@@ -153,7 +171,7 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked, condition
   };
   content.players[0].abilities.push(1);
   content.players[0].commands.push(900001);
-  const b = new BattleGame(content, 409, undefined, sourceBattleInventory(catalog));
+  const b = new BattleGame(admittedReactionProbe(content), 409, undefined, sourceBattleInventory(catalog));
   const attacker = b.players[0].id;
   assert.equal(b.command(attacker, 1, enemy.id, 900001), true);
   b.advance(10);
@@ -184,7 +202,7 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked, condition
   b.advance(900);
   assert.ok(b.enemies[0].atb > 0 && b.enemies[0].atb < 1);
   const replay = (parts) => {
-    const b = new BattleGame(content, 409, undefined, sourceBattleInventory(catalog));
+    const b = new BattleGame(admittedReactionProbe(content), 409, undefined, sourceBattleInventory(catalog));
     b.command(attacker, 1, enemy.id, 900001);
     parts.forEach((dt) => b.advance(dt));
     return b;
@@ -201,7 +219,7 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked, condition
     );
   let originalBlocker = null;
   try {
-    new BattleGame(full, 409, undefined, sourceBattleInventory(catalog));
+    new BattleGame(admittedReactionProbe(full), 409, undefined, sourceBattleInventory(catalog));
   } catch (error) {
     originalBlocker = error.message;
   }
@@ -236,7 +254,7 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked, condition
     assert.equal(reader.row("condition.csv", 93).values.condition_type, "19");
     const withSourceConditions = structuredClone(full);
     withSourceConditions.enemies[0].conditionIds = ids;
-    assert.throws(() => new BattleGame(withSourceConditions, 409, undefined, sourceBattleInventory(catalog)),
+    assert.throws(() => new BattleGame(admittedReactionProbe(withSourceConditions), 409, undefined, sourceBattleInventory(catalog)),
       /Unimplemented active battle condition: 93/);
     originalConditionBlocker = {
       monsterId: conditionMonsterId, source: monster.source,
@@ -264,7 +282,7 @@ for (const [name, pc, expected, missingAbilityId, initialRouteBlocked, condition
   if (probes.length === 1)
     await writeFile(
       root + "/build/reports/counter-probe.json",
-      JSON.stringify(content, null, 2) + "\n",
+      JSON.stringify(admittedReactionProbe(content), null, 2) + "\n",
     );
 }
 const report = {

@@ -1,4 +1,5 @@
 import { BattleConditions, type BattleConditionCatalog } from "../core/battle-conditions.js";
+import { battleAITargetBlocker } from "../core/battle-ai-targets.js";
 import type { AbilityDefinition, BattleEncounterDiagnostic } from "../core/battle-content.js";
 import type { EnemyBattleDefinition } from "../core/battle-participants.js";
 import type { BattleFormationPlan } from "../core/battle-formations.js";
@@ -95,12 +96,16 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
         if (!ability || ability.id !== id) add("blocked", "ability-reference", `Missing AI ability ${id}`, { pc, dependency });
         else if (!ability.plan) add("runtime-dependency", "ability-plan",
           `Ability ${id}: ${ability.blockers.join("; ") || "unimplemented plan"}`, { pc, dependency });
-        else if (![3, 7].includes(ability.program.range) || ability.plan.targeting.life !== "alive")
-          add("runtime-dependency", "automatic-target", `Unimplemented automatic target range for ability ${id}`, { pc, dependency });
-        else if (ability.plan.targeting.normalFormationOnly && formationPlan &&
-          (formationPlan.kind === "fixed" ? formationPlan.pattern !== 1
-            : formationPlan.patterns[2] === 1 && formationPlan.policy.weights[2] > 0))
-          add("runtime-dependency", "ability-formation", `Unimplemented formation for ability ${id}`, { pc, dependency });
+        else {
+          const targetBlocker = battleAITargetBlocker(ability.program.range, ability.plan.targeting,
+            op.kind === "counter-act" ? "counter" : "normal");
+          if (targetBlocker)
+            add("runtime-dependency", "automatic-target", `Ability ${id}: ${targetBlocker}`, { pc, dependency });
+          else if (ability.plan.targeting.normalFormationOnly && formationPlan &&
+            (formationPlan.kind === "fixed" ? formationPlan.pattern !== 1
+              : formationPlan.patterns[2] === 1 && formationPlan.policy.weights[2] > 0))
+            add("runtime-dependency", "ability-formation", `Unimplemented formation for ability ${id}`, { pc, dependency });
+        }
       }
     }
     return { source, diagnostics, definition: {

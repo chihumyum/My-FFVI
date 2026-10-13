@@ -44,6 +44,7 @@ import {
   type BattleAIState,
   type BattleAITurn,
 } from "./battle-ai.js";
+import { battleAITargetBlocker, planBattleAITarget } from "./battle-ai-targets.js";
 import { battleReaction, validateReactionRules } from "./battle-reactions.js";
 import { projectActionTarget } from "./action-effects.js";
 import { projectPhysicalRows, validateBattleRow, validateBattleRowCatalog, type PhysicalRowContext } from "./battle-row.js";
@@ -1357,16 +1358,12 @@ export class BattleGame {
             act.pc,
             `unimplemented ability ${id}: ${ability?.blockers.join("; ") ?? "missing definition"}`,
           );
-        // Native automatic targets differ from the player's menu defaults. The
-        // reviewed normal path covers random player targeting for ranges 3/7.
-        // Other ranges and special target filters remain explicit capabilities.
-        if (
-          ![3, 7].includes(ability!.program.range) ||
-          ability!.plan!.targeting.life !== "alive"
-        )
+        const targetBlocker = battleAITargetBlocker(ability!.program.range,
+          ability!.plan!.targeting, act.kind === "counter-act" ? "counter" : "normal");
+        if (targetBlocker)
           fail(
             act.pc,
-            `unimplemented automatic target range for ability ${id}`,
+            `unimplemented automatic target range for ability ${id}: ${targetBlocker}`,
           );
         if (
           !actor.physical &&
@@ -1396,12 +1393,15 @@ export class BattleGame {
         });
         for (const id of ids) {
           const ability = this.content.abilities[id]!;
-          const choices = this.targetChoices(actor.id, id).filter(
-            (choice) =>
-              choice.selection.kind === "single" &&
-              this.players.some((p) => p.id === choice.targetIds[0]),
-          );
-          if (!choices.length)
+          // Native raw groups and their derived target type precede execution
+          // eligibility. In particular, an enemy corpse still in the current
+          // list can be the initial random ally, and range 8 collapses to a
+          // single only when the raw player list contains one instance.
+          const choice = planBattleAITarget({ actor, units: this.combatants,
+            eligiblePlayers: this.players.filter(player => player.hp > 0),
+            range: ability.program.range, rule: ability.plan!.targeting,
+            formation: this.content.formation }, (min, max) => this.randomInt(min, max));
+          if (!choice)
             throw new BattleAIError(
               actor.ai!.source,
               act.pc,
@@ -1411,7 +1411,7 @@ export class BattleGame {
             this.createAction(
               actor,
               ability,
-              choices[this.randomInt(0, choices.length - 1)]!,
+              choice,
               null,
               act.kind === "loop-act" ? "loop" : "normal",
             ),
@@ -1837,11 +1837,19 @@ export class BattleGame {
       }));
   }
   private actionTargetChoices(action: BattleAction) {
-    return action.kind === "counter"
-      ? this.counterTargetChoices(this.combatants)
-      : action.source.kind === "item"
-        ? this.itemTargetChoices(action.actor, action.source.id)
-        : this.targetChoices(action.actor, action.source.id);
+    if (action.kind === "counter") return this.counterTargetChoices(this.combatants);
+    if (action.source.kind === "item") return this.itemTargetChoices(action.actor, action.source.id);
+    const actor = this.combatants.find(unit => unit.id === action.actor),
+      ability = this.content.abilities[action.source.id];
+    if (actor?.side !== "enemy") return this.targetChoices(action.actor, action.source.id);
+    if (!ability?.plan || !this.qualifiedAbility(actor, ability.id)) return [];
+    // Automatic decisions preserve native target type, independently of menu
+    // modes. Resolve their captured single/side/all intent against the current
+    // roster at both staging and effect execution; never redirect a retired
+    // instance to a newly added unit that happens to occupy its old slot.
+    const mode = action.selection.kind;
+    return battleTargetChoices({ ...ability.plan.targeting, modes: [mode], defaultMode: mode },
+      actor, this.combatants, this.content.formation);
   }
   private planReactions(
     action: BattleAction,
