@@ -28,7 +28,7 @@ import { compilePlayerVisibilityInstruction, compilePlayerVisibilityFactory, pla
 import { compileFieldTaskControlInstruction, fieldTaskControlMnemonics } from "./field-task-control.js";
 import { compileFieldFadeInstruction } from "./field-fade.js";
 import { compileFieldCameraInstruction, compileFieldCameraMotionInstruction, fieldCameraSelectors } from "./field-camera.js";
-import { compileFieldScriptMotionInstruction } from "./field-script-motion.js";
+import { compileFieldScriptMotionInstruction, fieldScriptMotionMnemonics } from "./field-script-motion.js";
 import { compileFieldNativePosition } from "./field-native-position.js";
 import { DEVELOPMENT_TRANSPARENT_FADE } from "../core/field-fade.js";
 import { loadSystemSource } from "./system-source.js";
@@ -135,7 +135,7 @@ export function decodeFieldOp(
     try { return { ...site, ...compileEventScriptTransitionInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
-  if (name === "Move" || name === "Lerp") {
+  if (fieldScriptMotionMnemonics.some(mnemonic => mnemonic === name)) {
     try { return { ...site, ...compileFieldScriptMotionInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }

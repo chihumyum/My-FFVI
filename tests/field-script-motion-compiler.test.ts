@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { compileFieldScriptMotionInstruction } from "../src/compiler/field-script-motion.js";
+import { decodeFieldOp } from "../src/compiler/field.js";
 
 function instruction(mnemonic = "Move") {
   return { type: 2, mnemonic, operands: {
@@ -89,7 +90,7 @@ test("incomplete legacy arrays cannot fall back to a less strict Move decoder", 
 });
 
 test("wrong instruction kinds and nonempty reserved fields remain explicit blockers", () => {
-  for (const raw of [null, {}, { ...instruction(), type: 1 }, { ...instruction(), mnemonic: "MoveTo" }])
+  for (const raw of [null, {}, { ...instruction(), type: 1 }, { ...instruction(), mnemonic: "MoveBirdView" }])
     assert.throws(() => compileFieldScriptMotionInstruction(raw));
   for (const mnemonic of ["Move", "Lerp"]) {
     for (let index = 3; index < 8; index++) {
@@ -128,4 +129,91 @@ test("decoder has no actor selection or mutable source ownership", () => {
   assert.deepEqual(raw, before);
   assert.equal(compileFieldScriptMotionInstruction(raw).command.animation, "Default");
   assert.ok(!("script" in first), "Site.script remains the caller's provenance");
+});
+
+function moveTo(axis: number, mode: number, value: number, parameter: number, speed = 1) {
+  const raw = instruction("MoveTo");
+  raw.operands.iValues = [axis, mode, value, parameter, speed, 0, 0, 0];
+  return raw;
+}
+
+test("MoveTo preserves one selected axis and the direct layer request without resolving a destination", () => {
+  for (const [id, axis] of ["x", "y"].entries()) for (const layer of [0, 1, 2, 3]) {
+    const raw = moveTo(id, 0, -2, layer);
+    assert.deepEqual(compileFieldScriptMotionInstruction(raw), {
+      kind: "field-script-motion", command: { kind: "move-to", axis,
+        target: { kind: "direct", value: -2, layer }, speedId: 1, animation: "Default" },
+    });
+  }
+});
+
+test("MoveTo entity selector is a target reference, with signed cell offset and independent speed", () => {
+  for (const selector of [-1001, -5, 230]) for (const offset of [-1, 0, 1]) {
+    const raw = moveTo(1, 1, selector, offset, -1); raw.operands.sValues[0] = "";
+    const op = compileFieldScriptMotionInstruction(raw);
+    assert.deepEqual(op, { kind: "field-script-motion", command: { kind: "move-to", axis: "y",
+      target: { kind: "entity", selector, offset }, speedId: null, animation: "" } });
+    assert.ok(!("actorId" in op.command), "The compiler must not select the movement owner from the target operand");
+  }
+  for (const speed of [-2147483648, -2, -1, 0, 1, 2, 3, 4, 5, 6]) {
+    const op = compileFieldScriptMotionInstruction(moveTo(0, 0, 12, 0, speed));
+    assert.equal(op.command.kind, "move-to");
+    if (op.command.kind === "move-to") assert.equal(op.command.speedId, speed < 0 ? null : speed);
+  }
+  assert.throws(() => compileFieldScriptMotionInstruction(moveTo(0, 0, 12, 0, 7)), /speed selector/);
+});
+
+test("MoveTo keeps unsupported axes, layers and unobserved empty-target mode blocked", () => {
+  for (const axis of [-1, 2]) assert.throws(() => compileFieldScriptMotionInstruction(moveTo(axis, 0, 1, 0)), /axis/);
+  for (const mode of [-1, 2, 3]) assert.throws(() => compileFieldScriptMotionInstruction(moveTo(0, mode, 1, 0)), /target mode/);
+  for (const layer of [-1, 4]) assert.throws(() => compileFieldScriptMotionInstruction(moveTo(0, 0, 1, layer)), /layer request/);
+});
+
+test("MoveTo cannot silently pad sandbox arrays or reinterpret unknown path flags", () => {
+  for (const key of ["iValues", "rValues", "sValues"] as const) {
+    const raw = moveTo(0, 0, 1, 0); raw.operands[key].length = 7;
+    assert.throws(() => compileFieldScriptMotionInstruction(raw));
+  }
+  assert.throws(() => compileFieldScriptMotionInstruction({ type: 2, mnemonic: "MoveTo",
+    operands: { iValues: [1, 0, 43, 0, 2], sValues: [""] } }));
+  for (let index = 5; index < 8; index++) {
+    const raw = moveTo(0, 0, 1, 0); raw.operands.iValues[index] = 1;
+    assert.throws(() => compileFieldScriptMotionInstruction(raw), /reserved operands/);
+  }
+  for (let index = 0; index < 8; index++) {
+    const raw = moveTo(0, 0, 1, 0); raw.operands.rValues[index] = 0.5;
+    assert.throws(() => compileFieldScriptMotionInstruction(raw), /reserved operands/);
+  }
+  for (let index = 1; index < 8; index++) {
+    const raw = moveTo(0, 0, 1, 0); raw.operands.sValues[index] = "unknown";
+    assert.throws(() => compileFieldScriptMotionInstruction(raw), /reserved operands/);
+  }
+});
+
+test("MoveTo source integer domains and target data stay detached", () => {
+  for (const index of [0, 1, 2, 3, 4]) for (const value of [NaN, Infinity, 0.5, -2147483649, 2147483648]) {
+    const raw = moveTo(0, 0, 1, 0); raw.operands.iValues[index] = value;
+    assert.throws(() => compileFieldScriptMotionInstruction(raw));
+  }
+  const raw = moveTo(0, 1, -1001, -1), before = structuredClone(raw), first = compileFieldScriptMotionInstruction(raw);
+  assert.equal(first.command.kind, "move-to");
+  if (first.command.kind === "move-to" && first.command.target.kind === "entity") first.command.target.offset = 9;
+  assert.deepEqual(raw, before);
+  assert.deepEqual(compileFieldScriptMotionInstruction(raw).command, {
+    kind: "move-to", axis: "x", target: { kind: "entity", selector: -1001, offset: -1 }, speedId: 1, animation: "Default",
+  });
+});
+
+test("field decoder routes MoveTo through the common compiler and preserves exact source site", () => {
+  const site = { script: "source-motion", index: 58, source: {
+    file: "controlled.bundle", assetPath: "controlled/script.json", objectId: "-7100474102474677432", pointer: "/Mnemonics/58",
+  } };
+  const raw = moveTo(0, 1, -1001, 0), before = structuredClone(raw);
+  assert.deepEqual(decodeFieldOp(raw, site, {}), { ...site, ...compileFieldScriptMotionInstruction(raw) });
+  assert.deepEqual(raw, before);
+  const malformed = { type: 2, mnemonic: "MoveTo", operands: { iValues: [1, 0, 43, 0, 2], sValues: [""] } };
+  const blocked = decodeFieldOp(malformed, site, {});
+  assert.equal(blocked.kind, "blocked");
+  assert.deepEqual(blocked.source, site.source);
+  if (blocked.kind === "blocked") assert.equal(blocked.mnemonic, "MoveTo");
 });

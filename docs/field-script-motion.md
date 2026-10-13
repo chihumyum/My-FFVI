@@ -1,6 +1,6 @@
 # 共用剧情移动
 
-v41 为来源 `Move` / `Lerp` 建立同一个带类型的编译入口，由当前 puppet 的真实目标决定演员或相机宿主。坐标、速度、动画名来自指令数据；没有按地图名或剧情脚本名选择实现。此能力服务连续事件框架，不代表新增可玩地图，也不声称原版动态一致。
+来源 `Move` / `Lerp` / `MoveTo` 使用同一个类型化编译入口，由当前 puppet 的真实目标决定演员或相机宿主。坐标、速度、动画名来自指令数据；没有按地图名或剧情脚本名选择实现。此能力服务连续事件框架，不代表新增可玩地图，也不声称原版动态一致。
 
 ## 指令与所有权
 
@@ -10,12 +10,15 @@ v41 为来源 `Move` / `Lerp` 建立同一个带类型的编译入口，由当�
 { kind: "field-script-motion", command:
   | { kind: "move", direction, steps, speedId: number | null, animation: string }
   | { kind: "lerp", x, y, layer: 0 | 1 | 2 | 3, duration, arcHeight, animation: string }
+  | { kind: "move-to", axis: "x" | "y",
+      target: { kind: "direct", value, layer } | { kind: "entity", selector, offset },
+      speedId: number | null, animation: string }
 }
 ```
 
 `Site.script` 始终是来源脚本，不作目标字段。编译器不解析当前 puppet 绑定，也不创建演员、相机或动画 owner。`FieldGame` 复用唯一演员集合、动画对象和相机宿主；完整移动路径属于演员，指令任务只负责等待，不因任务重置而擅自取消演员的既有运动。
 
-两种指令只接收 `type=2` 和完整的三组八项数组。整数必须为 int32，实数必须有限，保留槽必须为零或空串。旧的不完整 `Move` 不再退回宽松解码器，保留为具有来源位置的 `blocked`。
+三种指令只接收 `type=2` 和完整的三组八项数组。整数必须为 int32，实数必须有限，保留槽必须为零或空串。旧的不完整指令不退回宽松解码器，保留为具有来源位置的 `blocked`。
 
 | 指令 | 来源参数 | 合同 |
 | --- | --- | --- |
@@ -27,6 +30,11 @@ v41 为来源 `Move` / `Lerp` 建立同一个带类型的编译入口，由当�
 | Lerp | `i2` | 0 保持当前层；1..3 为来源层请求，是否具备图层副作用宿主由运行时检查 |
 | Lerp | `r0/r1` | 秒数与弧高；零秒直接到端点，正秒首次 clock 从零进度等待；负秒不当作异步，本批阻塞 |
 | Lerp | `s0` | 正秒的非空值启动 loop 模式；零秒走 CueAnimation 的末帧请求 |
+| MoveTo | `i0/i1` | x/y 单轴；直接坐标或实际绑定实体目标 |
+| MoveTo | `i2/i3` | 直接坐标及层请求，或实体 selector 及带符号单轴 offset |
+| MoveTo | `i4/s0` | 同一 nullable 来源速度 selector 及动画名 |
+
+`MoveTo` 在原生坐标转 cell 后，只替换指定轴。当前轴已相等时在层请求或实体 offset 之前返回空目标，同一 clock 继续；否则使用既有逐格路线并等待实际演员运动收尾。实体目标读取实际绑定位置，缺失不当作空目标。当前普通宿主限制非骑乘、非实际玩家、非循环图、碰撞关闭、同层且具有明确来源 Z；offset 抵消成空路线的原生 warning 宿主仍阻塞。它不使用通用 BFS，不授予 NPC 自主巡逻或玩家移动回调。
 
 来源速度枚举的普通每格秒数为 `[0.24, 0.48, 0.12, 0.96, 0.06, 1.92, 0.16]`，再除以当前实体的 `entityMoveMagnification`；nullable 默认为 `0.24 / magnification`。不能把整段步数一次乘成单条插值。动画时间缩放独立使用 magnification 为 1 的每格秒数并取 `max(1, seconds / 0.48)`，不重复缩放。
 

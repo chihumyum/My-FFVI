@@ -50,9 +50,10 @@ import { prepareEventContextBranch } from "./event-context-branch.js";
 import { prepareEventScriptTransition } from "./event-script-transition.js";
 import type { FieldPuppetRosterPort, FieldPuppetRosterRead } from "./field-puppet-roster.js";
 import { createNativeFieldActorProjection, createNativeFieldActorProjections, createNativeFieldPuppetActorsPort, readNativeFieldActors,
-  prepareNativeFieldActorProjection, prepareNativeFieldActorState, type NativeFieldActorData, type NativeFieldActor } from "./field-native-actors.js";
+  prepareNativeFieldActorProjection, prepareNativeFieldActorState, createNativeFieldActorDraft,
+  type NativeFieldActorData, type NativeFieldActor } from "./field-native-actors.js";
 import { projectNativeFieldPosition } from "./field-native-position.js";
-import { prepareFieldActorMotionTick, prepareFieldScriptMove, projectFieldScriptLerp,
+import { prepareFieldActorMotionTick, prepareFieldScriptMove, projectFieldScriptLerp, resolveFieldScriptMoveToTarget,
   type FieldActorMotion, type FieldScriptLerpProgress } from "./field-script-motion.js";
 import { FieldEffects, FIELD_EFFECT_PARTICLE_UPDATE_ATTRIBUTE, fieldEffectAnimationLoopLimit,
   projectFieldEffectPlacement, type FieldEffectRuntimeHost, type FieldEffectState,
@@ -89,6 +90,7 @@ import { projectPlayerVisibility } from "./player-visibility.js";
 import { FieldFadeState, type FieldFadeSnapshot } from "./field-fade.js";
 import { FieldCameraHost, type FieldCameraViewport } from "./field-camera-host.js";
 import type { FieldCameraState, FieldCameraLerp, FieldCameraLerpProgress } from "./field-camera.js";
+import { fieldCameraWorldToCell } from "./field-camera.js";
 import { projectFieldPuppetInitialization, projectFieldPuppetActorEntry, resolveFieldPuppetActor,
   fieldPuppetAssignments, type FieldPuppetActorsPort, type FieldPuppetScriptContext } from "./field-puppet-actors.js";
 import {
@@ -1824,8 +1826,8 @@ export class FieldGame {
     publish();
     return { flow: prepared.flow, progress: prepared.progress };
   }
-  private startScriptMove(actor: Actor, op: Extract<Op, { kind: "field-script-motion" }>): void {
-    if (op.command.kind !== "move" || !actor.native || !this.nativeRuntime ||
+  private requireOrdinaryScriptMove(actor: Actor): void {
+    if (!actor.native || !this.nativeRuntime ||
         !this.nativeActorProviders || !this.camera || this.content.cameraHost?.callbacks !== "fresh-normal-field-v1")
       throw new Error("Source Move requires an ordinary bound native actor");
     const entity = actor.native.entity;
@@ -1838,14 +1840,15 @@ export class FieldGame {
       throw new Error("Source Move with active collision requires the native raycast provider");
     if (actor.layer === null || actor.layer > 2 || !actor.animation)
       throw new Error("Source Move actor position or animation media is unavailable");
-    const command = op.command;
+  }
+  private publishScriptMove(actor: Actor, command: Extract<Op, { kind: "field-script-motion" }>["command"] & { kind: "move" },
+    plan: ReturnType<typeof prepareFieldScriptMove>): void {
     // Ordinary FieldEntity ctor has magnification 1. The actual player has a
     // separate MoveTo override and was explicitly excluded above.
-    const plan = prepareFieldScriptMove(command, actor, { loop: this.content.cameraHost.loop, magnification: 1 });
     // Empty SearchSimple route leaves the entity untouched, but the caller
     // still observes Move's mandatory first-clock Wait.
     if (plan.points.length === 0) return;
-    const animation = actor.animation.clone();
+    const animation = actor.animation!.clone();
     animation.move(command.direction, plan.animationSecondsPerCell, command.animation || undefined);
     animation.frame();
     const motion: Motion = { from: { x: actor.x, y: actor.y }, to: { ...plan.points[0]! },
@@ -1856,6 +1859,48 @@ export class FieldGame {
     if (command.animation === "") actor.direction = command.direction;
     actor.animation = animation;
     actor.motion = motion;
+  }
+  private startScriptMove(actor: Actor, op: Extract<Op, { kind: "field-script-motion" }>): void {
+    if (op.command.kind !== "move") throw new Error("Expected source Move command");
+    this.requireOrdinaryScriptMove(actor);
+    const plan = prepareFieldScriptMove(op.command, actor, { loop: this.content.cameraHost!.loop, magnification: 1 });
+    this.publishScriptMove(actor, op.command, plan);
+  }
+  private startScriptMoveTo(actor: Actor, op: Extract<Op, { kind: "field-script-motion" }>): "next" | "wait" {
+    if (op.command.kind !== "move-to") throw new Error("Expected source MoveTo command");
+    if (!actor.native || !this.nativeRuntime || !this.nativeActorProviders || !this.camera ||
+        this.content.cameraHost?.callbacks !== "fresh-normal-field-v1")
+      throw new Error("Source MoveTo requires its native actor and ordinary map target providers");
+    const command = op.command, map = this.content.cameraHost!.mapRange;
+    let target: { x: number; y: number; z: number } | undefined;
+    if (command.target.kind === "entity") {
+      if (!this.options.puppetActors) throw new Error("Source MoveTo target entity selector owner is unavailable");
+      const { catalog, context } = this.options.puppetActors.read();
+      const resolved = resolveFieldPuppetActor(catalog, context, command.target.selector);
+      if (resolved.actor === null) throw new Error("Source MoveTo target entity is unavailable");
+      const entity = this.actors[resolved.actor]?.native?.entity;
+      if (entity) target = { ...entity.position };
+      else if (resolved.actor === this.cameraActorId && this.camera) target = { ...this.camera.snapshot().dummy.position };
+      else throw new Error("Source MoveTo target entity has no bound native position");
+    }
+    const owner = { ...actor.native!.entity.position };
+    const resolved = resolveFieldScriptMoveToTarget(command, map, owner, target);
+    if (resolved === null) return "next"; // Source nullable-empty skips, without a Move or first-clock wait.
+    this.requireOrdinaryScriptMove(actor);
+    if (actor.native!.entity.riding)
+      throw new Error("Source MoveTo riding movement provider is unavailable");
+    if (resolved.logicalLayer !== actor.layer)
+      throw new Error("Source MoveTo layer transition route provider is unavailable");
+    if (owner.z !== [349, 249, 149][actor.layer!])
+      throw new Error("Source MoveTo noncanonical Z waypoint provider is unavailable");
+    const local = fieldCameraWorldToCell(map, { x: owner.x, y: owner.y }), from = { x: local.x + map.x, y: local.y + map.y };
+    const distance = resolved.point[command.axis] - from[command.axis];
+    if (distance === 0) throw new Error("Source MoveTo empty SearchSimple warning provider is unavailable");
+    const direction: Direction = command.axis === "x" ? distance > 0 ? "right" : "left" : distance > 0 ? "down" : "up";
+    const move = { kind: "move" as const, direction, steps: Math.abs(distance), speedId: command.speedId, animation: command.animation };
+    const plan = prepareFieldScriptMove(move, from, { loop: this.content.cameraHost!.loop, magnification: 1 });
+    this.publishScriptMove(actor, move, plan);
+    return "wait";
   }
   confirm(): void {
     // Confirm is not a choice response. Even an answered request waits for its
@@ -2784,7 +2829,7 @@ export class FieldGame {
     const project = () => {
       const actors = Object.fromEntries(Object.values(this.actors).map((actor) => {
         if (!actor.native) throw new Error("Battle return cannot mix native and legacy actors");
-        const copy = createNativeFieldActorProjection(actor.native, this.content.cameraHost!.mapRange, appearanceHost.catalog,
+        const copy = createNativeFieldActorDraft(actor, this.content.cameraHost!.mapRange, appearanceHost.catalog,
           this.transportationPresentation);
         return [copy.id, copy];
       }));
@@ -3736,6 +3781,10 @@ export class FieldGame {
                 if (next.flow === "wait") { t.cameraLerp = { op, command, progress: next.progress }; return; }
               } else {
                 if (!actor) throw new Error("Source script motion requires a bound actor");
+                if (op.command.kind === "move-to") {
+                  if (this.startScriptMoveTo(actor, op) === "wait") { t.scriptMove = op; return; }
+                  break;
+                }
                 if (op.command.kind === "move") {
                   if (!actor.native && !this.options.nativeActorPreparation && !this.options.puppetActors &&
                       !this.content.scriptPuppetContexts && op.command.animation === "" && op.command.speedId !== null) {

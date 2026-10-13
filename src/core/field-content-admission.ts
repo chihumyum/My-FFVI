@@ -174,8 +174,9 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     case "bgm-ready": add("audioReadiness", "Missing BGM resource readiness provider"); break;
     case "field-script-motion": {
       const command = commandOf(op);
-      if (command.kind !== "move" && command.kind !== "lerp") throw new Error("Invalid field script motion requirement command");
-      add("scriptMotion", command.kind === "move" ? "Source Move requires an ordinary bound native actor"
+      if (command.kind !== "move" && command.kind !== "move-to" && command.kind !== "lerp") throw new Error("Invalid field script motion requirement command");
+      add("scriptMotion", command.kind === "move-to" ? "Source MoveTo requires an ordinary bound native actor"
+        : command.kind === "move" ? "Source Move requires an ordinary bound native actor"
         : "Source actor Lerp requires the bound native actor and map providers");
       break;
     }

@@ -220,6 +220,28 @@ export function createNativeFieldActorProjection(
     return actor;
 }
 
+/** Private containing-transaction draft, never an actor to install over the
+ * live owner. Rebuilding the accessors does not replay a source factory or
+ * cancel movement: the temporary non-moving input is detached, and the entire
+ * motion (including route fields) is copied back only onto the draft. */
+export function createNativeFieldActorDraft(
+  actor: NativeFieldActorOwner[string] & { readonly steps: number },
+  map: FieldCameraMapRange, catalog: PartyActorCatalog,
+  transportationPresentation?: FieldTransportActorPresentation,
+): NativeFieldActor {
+  if (!actor.native || actor.id !== actor.native.entity.id)
+    throw new Error("Native actor draft requires an existing native identity");
+  const motion = actor.motion ?? null;
+  if (actor.native.entity.moving !== (motion !== null))
+    throw new Error("Native actor draft requires the complete movement owner");
+  checkpointInteger(actor.steps);
+  const copy = createNativeFieldActorProjection({ ...actor.native,
+    entity: { ...actor.native.entity, moving: false } }, map, catalog, transportationPresentation);
+  copy.motion = structuredClone(motion);
+  copy.steps = actor.steps;
+  return copy;
+}
+
 /** Legacy actors without native admission are not invented as native objects.
  * A mapped/referenced legacy actor will be rejected by context/effect lookup. */
 export function readNativeFieldActors(owner: NativeFieldActorOwner, camera: NativeFieldCamera): FieldPuppetHostSnapshot {
@@ -318,20 +340,60 @@ export function prepareNativeFieldActorProjection(
 
 /** A containing transaction can run several source operations on one detached
  * actor draft, then publish its final state into the SAME live identities.
- * validate is fallible; commit is plain writes only and must follow validation
- * under the containing owner's synchronous publication boundary. */
+ * Preparation freezes the write set; unchanged actors are never overwritten.
+ * validate checks both live and draft identities/values and is fallible. The
+ * containing owner must validate after its last fallible operation, then run
+ * commit (plain writes only) within its synchronous publication boundary. */
 export function prepareNativeFieldActorState(
   host: NativeFieldActorEffectHost, candidate: NativeFieldActorOwner,
 ): { validate(): void; commit(): void } {
-  const initial = capture(host), next = capture({ ...host, readActors: () => candidate });
+  // This transaction owns actor writes only. Its containing transaction owns
+  // the camera, which may publish before these prevalidated plain writes.
+  const readState = (owner: NativeFieldActorOwner) => {
+    const state = capture({ ...host, readActors: () => owner, readCamera: () => null });
+    const refs = state.refs.map((ref) => {
+      // Do not narrow the value to NativeFieldMotion's common fields: routes
+      // and any future movement registers belong to this same owner. Retain
+      // nested identities too, so replacing an equal route is still stale.
+      const motion = ref.actor.motion ?? null, motionFingerprint = canonical(motion), motionRefs: object[] = [];
+      const visit = (value: unknown): void => {
+        if (value !== null && typeof value === "object") {
+          motionRefs.push(value);
+          for (const child of Object.values(value)) visit(child);
+        }
+      };
+      visit(motion);
+      return { ...ref, motion, motionFingerprint, motionRefs };
+    });
+    return { ...state, refs, fingerprint: canonical({ actors: serial(state.snapshot).actors,
+      metadata: refs.map((ref) => ({ fieldAssetId: ref.fieldAssetId, charaZOffset: ref.charaZOffset,
+        scope: ref.metadata, motion: ref.motionFingerprint })) }) };
+  };
+  const initial = readState(host.readActors()), next = readState(candidate);
   if (initial.refs.length !== next.refs.length || initial.refs.some((ref, index) => {
     const after = next.refs[index]!;
     return ref.id !== after.id || ref.charaZOffset !== after.charaZOffset || ref.metadata !== after.metadata;
   })) throw new Error("Native actor candidate cannot replace source identities or scopes");
-  if (initial.snapshot.actors.some((actor) => actor.moving) || next.snapshot.actors.some((actor) => actor.moving))
-    throw new Error("Native actor state publication cannot discard movement");
-  const writes = initial.refs.map((ref, index) => ({ ref, entity: next.snapshot.actors[index]!,
-    fieldAssetId: next.refs[index]!.fieldAssetId }));
+  const writes = initial.refs.flatMap((ref, index) => {
+    const before = initial.snapshot.actors[index]!, entity = next.snapshot.actors[index]!, after = next.refs[index]!;
+    const changed = ref.fieldAssetId !== after.fieldAssetId || ref.character !== after.character ||
+      canonical(serial({ camera: null, actors: [before] })) !== canonical(serial({ camera: null, actors: [entity] }));
+    if (ref.motionFingerprint !== after.motionFingerprint ||
+        (before.moving || entity.moving) && (changed || ref.motion === null || after.motion === null))
+      throw new Error("Native actor state publication requires an explicit movement takeover");
+    // No assignments, including equivalent cloned playback/position values,
+    // are permitted on an actor outside the candidate's actual write set.
+    return changed ? [{ ref, entity, fieldAssetId: after.fieldAssetId }] : [];
+  });
+  const sameState = (current: ReturnType<typeof readState>, prior: ReturnType<typeof readState>) =>
+    current.fingerprint === prior.fingerprint && current.refs.length === prior.refs.length &&
+    current.refs.every((ref, index) => {
+      const before = prior.refs[index]!;
+      return ref.id === before.id && ref.actor === before.actor && ref.native === before.native &&
+        ref.entity === before.entity && ref.animation === before.animation && ref.character === before.character &&
+        ref.motion === before.motion && ref.motionRefs.length === before.motionRefs.length &&
+        ref.motionRefs.every((value, i) => value === before.motionRefs[i]);
+    });
   const validateWritable = () => {
     for (const { ref, entity } of writes) {
       writable(ref.entity, entity);
@@ -346,14 +408,8 @@ export function prepareNativeFieldActorState(
     validate: () => {
       validated = false;
       if (committed) throw new Error("Native actor candidate already committed");
-      const current = capture(host);
-      if (current.fingerprint !== initial.fingerprint || current.refs.length !== initial.refs.length ||
-          current.refs.some((ref, index) => {
-            const prior = initial.refs[index]!;
-            return ref.id !== prior.id || ref.actor !== prior.actor || ref.native !== prior.native ||
-              ref.entity !== prior.entity || ref.animation !== prior.animation || ref.character !== prior.character ||
-              ref.fieldAssetId !== prior.fieldAssetId || ref.charaZOffset !== prior.charaZOffset || ref.metadata !== prior.metadata;
-          })) throw new Error("Stale native actor candidate");
+      if (!sameState(readState(host.readActors()), initial)) throw new Error("Stale native actor candidate owner");
+      if (!sameState(readState(candidate), next)) throw new Error("Stale native actor candidate draft");
       validateWritable(); validated = true;
     },
     commit: () => {
@@ -381,6 +437,7 @@ function prepareNativeFieldPuppetTransportation(
     characters: value.snapshot.actors.map((actor) => actor.animation?.character ?? null) });
   const expected = serialResult(next);
   const candidate = Object.fromEntries(initial.refs.map((ref, index) => [ref.id, { id: ref.id,
+    motion: structuredClone(ref.actor.motion ?? null),
     native: { ...ref.native, entity: next.snapshot.actors[index]!,
       fieldAssetId: next.assets.find((row) => row.id === ref.id)!.fieldAssetId } }]));
   const actorPublication = prepareNativeFieldActorState(host, candidate);

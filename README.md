@@ -6,7 +6,7 @@
 
 [整体游戏骨架](docs/game-skeleton.md) 以同一公共运行时贯通入口、探索/事件、战斗往返、队伍/经济/成长、存读档和批量内容。`npm run skeleton:check` 验证代表性完整流程；`npm run skeleton:plan` 查看范围。完整细项回归保留为 `npm run framework:verify`，来源剧情与全游戏迁移单独验收。
 
-[本轮交付](docs/systems-v79.md)：在 [v78 公共骨架](docs/systems-v78.md) 上接通内容版本与旧进度续行；默认可操作入口、六组连续系统验收和批次准入仍使用同一运行时。后续按公共系统工作单并行实施整块能力。
+[本轮交付](docs/systems-v80.md)：整体游戏骨架与公共内容生产使用统一边界；独立生产器并行准备候选，所有内容包及依赖验证完成后一次发布，中途失败保留原集合。默认入口和六组连续系统验收继续使用同一运行时。详见 [公共内容管线](docs/content-package-pipeline.md)。
 
 [内容版本与旧进度](docs/content-versions.md) 保留完整 JSON 和图声闭包，恢复旧版本后继续使用其地图、事件与战斗，再次存读档。共享导出之前先运行 `npm run content-history:archive`；正常公共包与来源地点构建自动保留旧新版本，旧存档不改写为新初始化。
 

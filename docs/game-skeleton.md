@@ -18,7 +18,7 @@
 
 ## 运行与失败
 
-已有本地来源导出后，`npm run skeleton:build` 构建公共内容包，`npm run skeleton:check` 先构建再执行本门禁，`npm run dev` 提供默认可操作系统入口。基础包重建保留独立内容批次；原资源与配方身份不匹配仍停止，不能补造依赖。
+已有本地来源导出和编译输入后，`npm run skeleton:build` 通过 [统一候选管线](content-package-pipeline.md) 构建公共内容包，`npm run skeleton:check` 先构建再执行本门禁，`npm run dev` 提供默认可操作系统入口。整批候选成功前不替换旧集合，独立内容批次保留；原资源与配方身份不匹配仍停止，不能补造依赖。
 
 下列直接调用只检查现有产物，不隐式构建、改内容或补缺失依赖：
 

@@ -6,6 +6,7 @@ import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {archivePublishedContentPackages} from './archive-content-release.mjs';
 import {buildInitializedContentBatch} from './build-initialized-content-batch.mjs';
+import {acquireContentPackageLock} from './content-package-lock.mjs';
 
 const repository=resolve(import.meta.dirname,'..');
 
@@ -19,12 +20,14 @@ export async function buildVersionedSourceContent({root=repository,
   const output=resolve(root,'build/reports/versioned-source-content-build.json');
   await mkdir(resolve(output,'..'),{recursive:true});
   const persist=()=>writeFile(output,JSON.stringify(report,null,2)+'\n');
+  let releaseLock=null;
   async function stage(name,work){
     const record={name,status:'running'};report.stages.push(record);await persist();
     try{const value=await work();record.status='passed';await persist();return value;}
     catch(error){record.status='failed';throw error;}
   }
   try{
+    if(publicOutput)releaseLock=await acquireContentPackageLock(root);
     if(publicOutput)report.before=await stage('archive-published-before-source-build',()=>
       archivePublishedContentPackages({root,compiledDir:dist}));
     const result=await stage('build-initialized-source-content',()=>
@@ -36,9 +39,9 @@ export async function buildVersionedSourceContent({root=repository,
   }catch(error){
     report.result='failed';report.error=String(error.stack??error);
     // A secondary report failure must not hide the original producer error.
-    try{await persist();}catch(reportError){console.error('Failed to persist source build report:',reportError);}
+    if(releaseLock||!publicOutput)try{await persist();}catch(reportError){console.error('Failed to persist source build report:',reportError);}
     throw error;
-  }
+  }finally{if(releaseLock)await releaseLock();}
 }
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){

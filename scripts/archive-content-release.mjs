@@ -129,13 +129,7 @@ export async function archiveContentPackage({root=repository,packageId,refs,read
   for(const [key,ref] of Object.entries(world.maps)){
     const {value:map}=await capture(ref.url),mapId=Number(key);
     assert.ok(Number.isInteger(mapId)&&mapId>0&&mapId<=0x7fffffff&&String(mapId)===key,'Invalid map index identity');
-    assert.equal(map.kind,'world-map-development','Invalid indexed map kind');assert.equal(map.formatVersion,1,'Invalid indexed map version');
-    assert.equal(map.mapId,mapId,'Indexed map ID mismatch');assert.equal(map.areaId,ref.areaId,'Indexed map area mismatch');
-    for(const field of ['sourceSetHash','parentSourceSetHash','mediaSourceSetHash'])
-      assert.equal(map[field],world[field],'Indexed map source identity mismatch');
-    assert.ok(map.map===null||typeof map.map==='object'&&!Array.isArray(map.map),'Invalid indexed map geometry');
-    if(map.map!==null){assert.equal(map.map.identity?.mapId,mapId,'Indexed geometry ID mismatch');
-      assert.equal(map.map.identity?.areaId,ref.areaId,'Indexed geometry area mismatch');}
+    api.assertGameWorldMapIdentity(mapId,world,map);
     const policy=map.developmentProfile;
     const profileBlocked=selected.profile==='source'?policy!==undefined||map.walkEncounters!==undefined:
       policy?.kind!=='framework-development-v1'||policy.policy!=='omit-anonymous-environment-particles-v1';
@@ -195,14 +189,24 @@ export async function archiveContentPackage({root=repository,packageId,refs,read
 /** Only already published top-level refs. Partial failures stop the wrapper;
  * completed package indexes remain valid, and no old release is removed. */
 export async function archivePublishedContentPackages(options={}){
-  const root=resolve(options.root??repository),directory=resolve(root,'build/content-packages');let files;
+  const root=resolve(options.root??repository),directory=resolve(root,options.packageDirectory??'build/content-packages');let files;
+  assert.ok(within(resolve(root,'build'),directory),'Package collection must be inside build');
+  const readJson=options.readJson??(async url=>{
+    if(!url.startsWith('/content-packages/'))return publishedBytes(root,url,'json');
+    assert.ok(jsonURL.test(url)&&posix.normalize(url)===url,'Invalid collection JSON URL');
+    const file=resolve(directory,url.slice('/content-packages/'.length));
+    assert.ok(within(directory,file),'Collection JSON escapes its directory');
+    const [base,actual]=await Promise.all([realpath(directory),realpath(file)]);
+    assert.ok(within(base,actual),'Collection JSON symlink escapes its directory');
+    return readFile(actual);
+  });
   try{files=await readdir(directory,{withFileTypes:true});}catch(error){if(error.code==='ENOENT')return {packages:[],reports:[]};throw error;}
   const results=[];
   for(const file of files.sort((a,b)=>a.name.localeCompare(b.name))){
     if(!file.isFile()||!/^([a-z0-9][a-z0-9-]{0,79})\.json$/.test(file.name))continue;
     const refs=JSON.parse(await readFile(resolve(directory,file.name),'utf8'));
     if(refs?.kind!=='game-content-refs-v1'&&refs?.kind!=='game-content-refs-v2')continue;
-    results.push(await archiveContentPackage({...options,root,packageId:file.name.slice(0,-5),refs}));
+    results.push(await archiveContentPackage({...options,root,readJson,packageId:file.name.slice(0,-5),refs}));
   }
   return {packages:results.map(result=>result.index.packageId),reports:results.map(result=>result.report)};
 }

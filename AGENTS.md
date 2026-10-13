@@ -26,6 +26,8 @@ Scene changes are recipes, semantic annotations, or versioned asset changes. A s
 
 ## Batch migration priority
 
+Public downstream content construction uses one candidate collection and one publication through `scripts/content-package-pipeline.mjs`. Keep pure compilation independent of publication. Derived consumers must use the same build's dependencies; never silently refresh tracked recipe pins, use an old battle cache or drop unresolved diagnostics. Low-level single-package writers are local development tools; do not run them concurrently with a public collection build.
+
 2026-10-14 renewed user correction: deliver the overall gameplay skeleton first and stop spending the main effort on isolated details. The default app entry must expose the supported systems loop. Use `npm run skeleton:check` to assess complete shared flows, then nominate content batches from their grouped capability gaps. The larger `framework:verify` suite remains a regression tool, not an ever-growing prerequisite to start content work. NPC route data interfaces may be built in parallel; native controller investigation, individual AI PCs, exact cameras and visual providers must not hold this skeleton milestone open. Source capabilities and runnable story coverage remain independent.
 
 2026-10-13 renewed user priority: deliver the interactive systems skeleton before expanding regions or decoding more isolated source instructions. The systems playground must use the same repository, session, Flow, map loader, prepared battle handoff, commands and save APIs as the app. Authored demonstration content has its own package and save namespace; it never counts as source-story reachability. Close shared lifecycle defects and verify continuous play, then nominate bulk content work.

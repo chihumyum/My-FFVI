@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, posix, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { compileDevelopmentMapEntry } from "../dist/src/compiler/development-map-entry.js";
 import { canonical, hash } from "../dist/src/compiler/content.js";
@@ -20,7 +20,7 @@ const within = (parent, path) => {
   return child && child !== ".." && !child.startsWith(".." + sep) && !isAbsolute(child);
 };
 
-export async function compileSystemsPlayground(root, rawRecipe, recipeSha256) {
+export async function compileSystemsPlayground(root, rawRecipe, recipeSha256, { readJson } = {}) {
   root = resolve(root); const recipe = structuredClone(rawRecipe), build = resolve(root, "build");
   fields(recipe, "kind,id,baseField,battle,baseWorld,mapRules,areaId,supplies,stages");
   assert.equal(recipe.kind, "systems-playground-recipe-v1"); assert.equal(recipe.id, "systems-playground");
@@ -28,9 +28,16 @@ export async function compileSystemsPlayground(root, rawRecipe, recipeSha256) {
   const read = async ref => {
     fields(ref, "url,contentHash");
     assert.match(ref.url, /^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.json$/);
+    assert.equal(posix.normalize(ref.url), ref.url, "Unexpected noncanonical content path");
     assert.match(ref.contentHash, /^[a-f0-9]{64}$/);
-    const path = await realpath(resolve(build, ref.url.slice(1))); assert.ok(within(build, path));
-    return verifyContent(JSON.parse(await readFile(path, "utf8")), ref.contentHash);
+    const path = resolve(build, ref.url.slice(1)); assert.ok(within(build, path));
+    let value;
+    if (readJson) value = await readJson(ref.url);
+    else {
+      const actual = await realpath(path); assert.ok(within(build, actual));
+      value = JSON.parse(await readFile(actual, "utf8"));
+    }
+    return verifyContent(structuredClone(value), ref.contentHash);
   };
   const [baseField, sourceBattle, baseWorld, mapRules] = await Promise.all(
     [recipe.baseField, recipe.battle, recipe.baseWorld, recipe.mapRules].map(read));

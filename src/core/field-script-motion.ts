@@ -18,14 +18,24 @@ export type FieldScriptLerp = {
   arcHeight: number;
   animation: string;
 };
-export type FieldScriptMotion = FieldScriptMove | FieldScriptLerp;
+/** Keep the source axis accessor and target request separate from its resolved
+ * position. Entity selectors are resolved by the existing field owner. */
+export type FieldScriptMoveTo = {
+  kind: "move-to";
+  axis: "x" | "y";
+  target: { kind: "direct"; value: number; layer: number }
+    | { kind: "entity"; selector: number; offset: number };
+  speedId: number | null;
+  animation: string;
+};
+export type FieldScriptMotion = FieldScriptMove | FieldScriptLerp | FieldScriptMoveTo;
 export type FieldScriptMotionOp = { kind: "field-script-motion"; command: FieldScriptMotion };
 
 import type { Point } from "../field/types.js";
 import { ActorAnimation } from "./actor-animation.js";
 import { requireFieldTransportPose } from "./field-transport-pose.js";
 import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
-import { fieldCameraCellToWorld, type FieldCameraMapRange } from "./field-camera.js";
+import { fieldCameraCellToWorld, fieldCameraWorldToCell, type FieldCameraMapRange } from "./field-camera.js";
 import { projectFieldPuppetActorEffects, type FieldPuppetHostProviders, type FieldPuppetHostSnapshot } from "./field-puppet-effects.js";
 
 const delta: Record<Direction, Point> = {
@@ -38,6 +48,47 @@ function finite(value: number): void {
   if (!Number.isFinite(value) || !Number.isFinite(f(value))) throw new Error("Invalid script motion coordinate or time");
 }
 function point(value: Point): void { finite(value.x); finite(value.y); }
+
+/** Puppet.GetDirectTargetPosition/GetTargetEntityPosition. World-to-cell
+ * conversion zeroes Z; equality therefore precedes both layer selection and
+ * the entity offset. Missing target ownership is different from that known
+ * nullable-empty result. Ordinary source Z admission matches SetPos/Lerp. */
+export function resolveFieldScriptMoveToTarget(command: FieldScriptMoveTo, map: FieldCameraMapRange,
+  owner: { x: number; y: number; z: number }, entity?: { x: number; y: number; z: number }):
+  { point: Point; logicalLayer: 0 | 1 | 2 } | null {
+  checkpointKeys(command, "kind,axis,target,speedId,animation");
+  if (command.kind !== "move-to" || command.axis !== "x" && command.axis !== "y" || typeof command.animation !== "string")
+    throw new Error("Invalid source MoveTo command");
+  if (command.speedId !== null) checkpointInteger(command.speedId, 0, speeds.length - 1);
+  checkpointKeys(owner, "x,y,z"); point(owner); finite(owner.z);
+  const current = fieldCameraWorldToCell(map, { x: owner.x, y: owner.y }), target = { ...current };
+  let layerRequest: number, sourceZ: number;
+  if (command.target.kind === "direct") {
+    checkpointKeys(command.target, "kind,value,layer");
+    checkpointInteger(command.target.value, -0x80000000, 0x7fffffff);
+    checkpointInteger(command.target.layer, 0, 3);
+    // ConversionMapRangeCell is an Int32 subtraction before the float setter.
+    target[command.axis] = f((command.target.value - map[command.axis]) | 0);
+    if (target.x === current.x && target.y === current.y) return null;
+    layerRequest = command.target.layer; sourceZ = owner.z;
+  } else if (command.target.kind === "entity") {
+    checkpointKeys(command.target, "kind,selector,offset");
+    checkpointInteger(command.target.selector, -0x80000000, 0x7fffffff);
+    checkpointInteger(command.target.offset, -0x80000000, 0x7fffffff);
+    if (!entity) throw new Error("Source MoveTo target entity owner is unavailable");
+    checkpointKeys(entity, "x,y,z"); point(entity); finite(entity.z);
+    target[command.axis] = fieldCameraWorldToCell(map, { x: entity.x, y: entity.y })[command.axis];
+    // Native compares the merged point before applying the signed cell offset.
+    if (target.x === current.x && target.y === current.y) return null;
+    target[command.axis] = f(target[command.axis] + f(command.target.offset));
+    layerRequest = 0; sourceZ = entity.z;
+  } else throw new Error("Unsupported source MoveTo target request");
+  const logicalLayer = layerRequest === 0 ? [349, 249, 149].indexOf(Math.trunc(f(sourceZ))) : layerRequest - 1;
+  if (logicalLayer < 0 || logicalLayer > 2) throw new Error("Source MoveTo cannot preserve this source Z layer");
+  const destination = { x: target.x + map.x, y: target.y + map.y };
+  point(destination);
+  return { point: destination, logicalLayer: logicalLayer as 0 | 1 | 2 };
+}
 
 /** SearchSimple's non-wrapping four-direction route. This intentionally does
  * not ask the exploration collision/trigger engine for another path. The

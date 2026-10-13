@@ -89,6 +89,22 @@ function mapContent(value: unknown): WorldMapContent {
   if (value.map !== null) object(value.map);
   return value as WorldMapContent;
 }
+/** Validate an indexed map's physical/source identity without granting its
+ * execution profile. Runtime loading applies its existing profile gate too;
+ * complete archives must retain correctly bound unavailable maps. */
+export function assertGameWorldMapIdentity(mapId: number, catalog: WorldCatalog, raw: unknown): WorldMapContent {
+  integer(mapId, 1);
+  const index = catalog.maps[String(mapId)];
+  if (!index) throw new Error(`Missing map content dependency: ${mapId}`);
+  object(index); text(index.url); hash(index.contentHash); integer(index.areaId);
+  const map = mapContent(raw);
+  if (map.mapId !== mapId || map.areaId !== index.areaId ||
+      map.sourceSetHash !== catalog.sourceSetHash || map.parentSourceSetHash !== catalog.parentSourceSetHash ||
+      map.mediaSourceSetHash !== catalog.mediaSourceSetHash ||
+      (map.map !== null && (map.map.identity?.mapId !== mapId || map.map.identity.areaId !== map.areaId)))
+    throw new Error("Map package/source identity mismatch");
+  return map;
+}
 function sourceContent(value: unknown): SourceNewGameContent {
   header(value, "source-new-game-content-v1");
   source(value);
@@ -294,12 +310,7 @@ export class GameContentRepository {
     if (!index) throw new Error(`Missing map content dependency: ${mapId}`);
     object(index); text(index.url); hash(index.contentHash); integer(index.areaId);
     const map = await read(index.url, (value) => this.profileContent(mapContent(value)), index.contentHash);
-    if (map.mapId !== mapId || map.areaId !== index.areaId ||
-        map.sourceSetHash !== catalog.sourceSetHash || map.parentSourceSetHash !== catalog.parentSourceSetHash ||
-        map.mediaSourceSetHash !== catalog.mediaSourceSetHash ||
-        (map.map !== null && (map.map.identity?.mapId !== mapId || map.map.identity.areaId !== map.areaId)))
-      throw new Error("Map package/source identity mismatch");
-    return map;
+    return assertGameWorldMapIdentity(mapId, catalog, map);
   }
 
   private async readSourceEntry(read: ContentReader, expected?: string): Promise<SourceEntryContent> {
