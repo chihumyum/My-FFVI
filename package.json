@@ -85,7 +85,7 @@
     "batch-program:check": "npm run build && node scripts/check-content-batch-program.mjs",
     "event-save:check": "npm run build && node scripts/check-event-save.mjs && node scripts/check-event-save-source.mjs",
     "framework:build": "npm run build && node scripts/build-framework-content.mjs",
-    "content-packages:build": "npm run build && node scripts/build-content-packages.mjs && node scripts/build-battle-content-batch.mjs && node scripts/build-development-content-batch.mjs && node scripts/build-systems-playground.mjs && node scripts/build-initialized-systems.mjs && node scripts/build-world-travel.mjs",
+    "content-packages:build": "npm run build && node scripts/build-versioned-content-packages.mjs",
     "playground:build": "npm run content-packages:build",
     "playground:check": "npm run build && node scripts/check-systems-playground.mjs",
     "initialized-systems:build": "npm run build && node scripts/build-initialized-systems.mjs",
@@ -186,8 +186,10 @@
     "skeleton:check": "npm run skeleton:build && node scripts/check-game-skeleton.mjs",
     "systems:plan": "npm run build && node scripts/plan-system-content.mjs",
     "npc-routes:plan": "npm run build && node dist/src/cli.js npc-routes",
-    "source-content:build": "npm run build && node scripts/build-initialized-content-batch.mjs",
-    "source-content:check": "npm run build && node scripts/check-initialized-content-batch.mjs"
+    "source-content:build": "npm run build && node scripts/build-versioned-source-content.mjs",
+    "source-content:check": "npm run build && node scripts/check-initialized-content-batch.mjs",
+    "content-history:archive": "npm run build && node scripts/archive-content-release.mjs",
+    "content-history:check": "npm run build && node scripts/check-content-release-session.mjs && node scripts/check-audio-release-ui.mjs && node scripts/check-game-entry-ui.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

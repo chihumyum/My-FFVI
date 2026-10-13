@@ -6,7 +6,9 @@ const voiceIdentity = (voice, track) => JSON.stringify([
 
 /** Web Audio projects the current session. Decode completion cannot mutate game state. */
 export class AudioOutput {
-  constructor() {
+  constructor(resolveFile = (track) => track.file) {
+    if (typeof resolveFile !== "function") throw new Error("Invalid audio file resolver");
+    this.resolveFile = resolveFile;
     this.buffers = new Map();
     this.pending = new Map();
     this.errors = new Map();
@@ -48,12 +50,16 @@ export class AudioOutput {
     this.muted = !this.muted;
     if (this.master) this.master.gain.value = this.muted ? 0 : 0.45;
   }
-  load(track) {
+  load(track, resolveFile = this.resolveFile) {
+    if (typeof resolveFile !== "function") throw new Error("Invalid audio file resolver");
     const key = track.sha256;
     if (this.buffers.has(key)) return Promise.resolve();
     if (!this.pending.has(key)) {
+      // Resolve this request before its first await. A private candidate's
+      // resolver cannot be replaced by a later active session or reset.
+      const resolveRequestFile = resolveFile;
       const task = (async () => {
-        const response = await fetch(track.file);
+        const response = await fetch(resolveRequestFile(track));
         if (!response.ok) throw new Error("声音资源载入失败");
         const raw = await response.arrayBuffer();
         const digest = [
@@ -89,19 +95,19 @@ export class AudioOutput {
   isSoundPresented(voice, track) {
     return this.nodes.get("se:" + voice.id)?.identity === voiceIdentity(voice, track);
   }
-  ready(projection, dependencies = []) {
+  ready(projection, dependencies = [], resolveFile = this.resolveFile) {
     let ready = true;
     for (const track of [...projection.map(({ track }) => track), ...dependencies]) {
       if (!this.isReady(track)) {
-        this.load(track);
+        this.load(track, resolveFile);
         ready = false;
       }
     }
     return ready;
   }
-  async prepare(projection, dependencies = []) {
-    await Promise.all([...projection.map(({ track }) => track), ...dependencies].map((track) => this.load(track)));
-    if (!this.ready(projection, dependencies)) throw new Error("声音资源尚未就绪");
+  async prepare(projection, dependencies = [], resolveFile = this.resolveFile) {
+    await Promise.all([...projection.map(({ track }) => track), ...dependencies].map((track) => this.load(track, resolveFile)));
+    if (!this.ready(projection, dependencies, resolveFile)) throw new Error("声音资源尚未就绪");
   }
   project(projection, running, dependencies = []) {
     if (!this.context) return;

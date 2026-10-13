@@ -13,6 +13,9 @@ import { GameBattleHandoff } from "/runtime/core/game-battle-handoff.js";
 import { GameEventSaveCoordinator } from "/runtime/core/game-event-save.js";
 import { GameContentRepository, fieldMediaUrls, sourceEntryMediaUrls } from "/runtime/core/game-content.js";
 import { parseGameContentRefs } from "/runtime/core/game-content-refs.js";
+import { GameContentHistory } from "/runtime/core/game-content-history.js";
+import { GameContentSessions } from "/runtime/core/game-content-sessions.js";
+import { resolveGameContentReleaseMedia } from "/runtime/core/game-content-release.js";
 import { selectGamePackage } from "/runtime/core/game-package-selection.js";
 import { NewGameFieldEntry } from "/runtime/core/new-game-field-entry.js";
 import { FieldFadeState, fieldFadeOverlay } from "/runtime/core/field-fade.js";
@@ -51,6 +54,7 @@ let battleLoadAttempt = null;
 let eventSaver = null;
 let eventSaveFailure = null;
 let menuCommandsReady = null;
+let contentHistory, contentSessions;
 const attemptedEventSaves = new WeakSet();
 const attemptedBattleStarts = new WeakSet();
 let hasSave = false,
@@ -61,9 +65,16 @@ let systemsPlayground = false, worldTravel = false;
 let contentProfile = "source";
 let contentReady = false;
 const checkpointStorage = () => new CheckpointStorage(localStorage, contentProfile, packageSelection?.packageId ?? undefined);
-const images = new Map(),
-  loading = new WeakSet();
-const audio = new AudioOutput();
+const currentImages = new Map(), imageSets = new WeakMap(), loading = new WeakSet();
+let images = currentImages;
+const audioFile = (release, track) => {
+  if (release === null) return track.file;
+  const reference = resolveGameContentReleaseMedia(release, track.file);
+  if (reference.extension !== "flac" || reference.sha256 !== track.sha256)
+    throw new Error("历史声音资源与内容摘要不匹配。");
+  return reference.url;
+};
+const audio = new AudioOutput(track => audioFile(contentSessions?.release ?? null, track));
 const readGameJson = async (url) => {
   const response = await fetch(url);
   if (!response.ok) throw new Error("游戏内容载入失败，请确认本地内容已经构建。");
@@ -177,11 +188,16 @@ function cancelEntryLoad() {
   if (flow.started) { sync(); if (flow.paused) $("resume").focus(); else focus(); }
   else $(contents.hasInitializedEntry || contents.hasDevelopmentEntry ? "start" : "source-start").focus();
 }
-function prepareSessionViews(candidate) {
+function imagesFor(repository) {
+  let result = imageSets.get(repository);
+  if (!result) { result = new Map(); imageSets.set(repository, result); }
+  return result;
+}
+function prepareSessionViews(candidate, nextImages = currentImages) {
   const next = candidate.field.content;
-  return { field: new Renderer(canvas, next, images),
-    minimap: new Renderer($("minimap"), next, images),
-    overview: new Renderer($("overview"), next, images) };
+  return { field: new Renderer(canvas, next, nextImages),
+    minimap: new Renderer($("minimap"), next, nextImages),
+    overview: new Renderer($("overview"), next, nextImages), images: nextImages };
 }
 // Content and media are prepared privately before the flow ticket publishes.
 // Once published, view-binding failures are fatal; never retry the committed entry.
@@ -189,6 +205,7 @@ function bindSession(candidate, views) {
   battleHandoff?.cancel();
   battleLoadAttempt = null;
   game = candidate.field;
+  images = views.images;
   commands = new GameCommands(flow, candidate);
   menuCommandsReady = null;
   renderer = views.field;
@@ -261,9 +278,11 @@ async function reset() {
         : new GameSession(field, battle, undefined, runtime);
       current();
       if (preferences) candidate.setBattlePreferences(preferences);
-      await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks); current();
-      await loadImages(fieldMediaUrls(candidate.field.content)); current();
-      return { session: candidate, presentation: prepareSessionViews(candidate) };
+      contentSessions.registerCandidate(candidate, contents);
+      const nextImages = imagesFor(contents);
+      await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks, track => audioFile(null, track)); current();
+      await loadImages(fieldMediaUrls(candidate.field.content), null, nextImages); current();
+      return { session: candidate, presentation: prepareSessionViews(candidate, nextImages) };
     });
     if (result.status === "cancelled") return;
     if (result.status === "failed") { entryLoadFailed(operation, result.error); return; }
@@ -293,9 +312,11 @@ async function startInitializedGame() {
       const candidate = await GameSession.prepareFrameworkNewGame(content, catalog, map, battle, runtime);
       current();
       if (preferences) candidate.setBattlePreferences(preferences);
-      await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks); current();
-      await loadImages(fieldMediaUrls(candidate.field.content)); current();
-      return { session: candidate, presentation: prepareSessionViews(candidate) };
+      contentSessions.registerCandidate(candidate, contents);
+      const nextImages = imagesFor(contents);
+      await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks, track => audioFile(null, track)); current();
+      await loadImages(fieldMediaUrls(candidate.field.content), null, nextImages); current();
+      return { session: candidate, presentation: prepareSessionViews(candidate, nextImages) };
     });
     if (result.status === "cancelled") return;
     if (result.status === "failed") { entryLoadFailed(operation, result.error); return; }
@@ -332,7 +353,7 @@ async function startSourceGame() {
     held.clear();
     text("status", "正在准备新游戏…");
     if (!map.map) throw new Error("新游戏地图几何未完成。");
-    await loadImages(sourceEntryMediaUrls(entryContent, { includeBattle: false }));
+    await loadImages(sourceEntryMediaUrls(entryContent, { includeBattle: false }), null, imagesFor(contents));
     if (sourceBoot !== boot || !operation.isCurrent()) return;
     boot.ready = true;
   } catch (error) {
@@ -350,7 +371,8 @@ function advanceSourceBoot(seconds) {
     if (boot.entry.phase !== "field-preparing" || !boot.ready) return;
     const candidate = GameSession.prepareNewGame(boot.bundle, boot.catalog, boot.map, boot.battle,
       boot.fade, boot.presentation, runtime);
-    const views = prepareSessionViews(candidate);
+    contentSessions.registerCandidate(candidate, contents);
+    const views = prepareSessionViews(candidate, imagesFor(contents));
     const launch = boot.entry.prepareLaunch(boot.fade, candidate.newGamePreparation(true));
     candidate.launchNewGame(launch.launch);
     launch.commit();
@@ -718,6 +740,7 @@ async function init() {
   });
   packageSelection = selectGamePackage(location.search);
   const { packageId } = packageSelection;
+  let configuredRefs;
   systemsPlayground = packageId === "systems-playground";
   worldTravel = packageId === "world-travel";
   contentProfile = packageSelection.profile;
@@ -727,6 +750,7 @@ async function init() {
     // The host selects an authored same-origin package. Saved state never
     // supplies its URLs or changes the declared source/development profile.
     const refs = parseGameContentRefs(await readGameJson(`/content-packages/${packageId}.json`));
+    configuredRefs = refs;
     if (packageSelection.explicitProfile && refs.profile !== contentProfile)
       throw new Error("Content package profile mismatch");
     contentProfile = refs.profile;
@@ -743,7 +767,11 @@ async function init() {
       preview.entrance > 2147483647)
   )
     throw new Error("Invalid map preview identity");
-  mapLoader = new GameMapLoader(flow, contents, {
+  contentHistory = new GameContentHistory({ current: contents, profile: contentProfile, loadJson: readGameJson,
+    ...(packageId === null ? {} : { packageId, refs: configuredRefs }) });
+  contentSessions = new GameContentSessions(flow, contents);
+  imageSets.set(contents, currentImages);
+  mapLoader = new GameMapLoader(flow, contentSessions, {
     prepare: async (field) => {
       await audio.prepare(audioProjection(field), field.pendingAudioTracks);
       await loadImages(fieldMediaUrls(field.content));
@@ -850,15 +878,27 @@ function showLimitations() {
     $("limitations").append(li);
   }
 }
-async function loadImages(urls) {
+async function loadImages(urls, release = contentSessions?.release ?? null, target = images) {
   await Promise.all(
     [...urls]
-      .filter((url) => !images.has(url))
+      .filter((url) => !target.has(url))
       .map(async (url) => {
         const img = new Image();
-        img.src = url;
-        await img.decode();
-        images.set(url, img);
+        if (release === null) { img.src = url; await img.decode(); }
+        else {
+          const reference = resolveGameContentReleaseMedia(release, url);
+          if (reference.extension !== "png") throw new Error("历史图片类型不匹配。");
+          const response = await fetch(reference.url);
+          if (!response.ok) throw new Error("历史图片资源载入失败。");
+          const bytes = await response.arrayBuffer();
+          const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+            .map(value => value.toString(16).padStart(2, "0")).join("");
+          if (hash !== reference.sha256) throw new Error("历史图片资源摘要不匹配。");
+          const objectUrl = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+          try { img.src = objectUrl; await img.decode(); }
+          finally { URL.revokeObjectURL(objectUrl); }
+        }
+        target.set(url, img);
       }),
   );
 }
@@ -1076,11 +1116,15 @@ async function loadGame(previous) {
       audio.reset();
       const saved = await checkpointStorage().load(previous); current();
       if (!saved) throw new Error("尚无此本地进度。");
-      const { initial, battle, world } = await contents.restoreSessionContent(saved.checkpoint); current();
+      const restored = await contentHistory.restoreSessionContent(saved.checkpoint); current();
+      const { initial, battle, world } = restored.content;
       const candidate = GameSession.restore(saved.checkpoint, initial, battle, world, runtime);
-      await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks); current();
-      await loadImages(fieldMediaUrls(candidate.field.content)); current();
-      return { session: candidate, presentation: prepareSessionViews(candidate), options: { paused: true } };
+      contentSessions.registerCandidate(candidate, restored.repository, restored.release);
+      const nextImages = imagesFor(restored.repository);
+      await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks,
+        track => audioFile(restored.release, track)); current();
+      await loadImages(fieldMediaUrls(candidate.field.content), restored.release, nextImages); current();
+      return { session: candidate, presentation: prepareSessionViews(candidate, nextImages), options: { paused: true } };
     });
     if (result.status === "cancelled") return;
     if (result.status === "failed") throw result.error;

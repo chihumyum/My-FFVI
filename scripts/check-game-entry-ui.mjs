@@ -7,6 +7,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import vm from "node:vm";
+import { deflateSync } from "node:zlib";
 import ts from "typescript";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -18,7 +19,8 @@ const sha = (value) => createHash("sha256").update(value).digest("hex");
 const runtime = (name) => import(pathToFileURL(resolve(compiled, "src/core", name + ".js")).href);
 const [{ contentDigest }, { GameSession }, { NewGameFieldEntry }, { FieldFadeState },
   { createSourcePresentationContext }, { CheckpointStorage }, { sourceNewGameFixture }, { checkpointFixture },
-  { contentBatchProgramFixture }, { compileDevelopmentMapEntry }] =
+  { contentBatchProgramFixture }, { compileDevelopmentMapEntry },
+  { contentReleaseSessionFixture, releaseSessionRuntime }] =
   await Promise.all([
     runtime("content-integrity"), runtime("game-session"), runtime("new-game-field-entry"),
     runtime("field-fade"), runtime("source-presentation"), runtime("saved-game"),
@@ -26,6 +28,7 @@ const [{ contentDigest }, { GameSession }, { NewGameFieldEntry }, { FieldFadeSta
     import(pathToFileURL(resolve(compiled, "tests/fixtures/checkpoint-game.js")).href),
     import(pathToFileURL(resolve(compiled, "tests/fixtures/content-batch-program.js")).href),
     import(pathToFileURL(resolve(compiled, "src/compiler/development-map-entry.js")).href),
+    import(pathToFileURL(resolve(compiled, "tests/fixtures/content-release-session.js")).href),
   ]);
 const app = await readFile(resolve(root, "apps/game/app.js"), "utf8");
 const audio = await readFile(resolve(root, "apps/game/audio.js"), "utf8");
@@ -39,6 +42,7 @@ const report = { formatVersion: 1, kind: "controlled-game-entry-ui-check", resul
     "Event-save scenarios author a Web barrier and control setItem failure or real digest completion; no session or save coordinator is mocked",
     "Widget constructor bindings and publication are checked; this is not browser pixels, audible output or source-story acceptance",
     "Development-map checks use two authored synthetic maps; helper observation delegates to the real implementation and establishes no source-region coverage",
+    "Historical-release cases run real History, Sessions, entry/map loaders and SHA verification; PNG bytes are synthetic and Blob URLs, Image decode, DOM and drawing are controlled",
   ] };
 await mkdir(resolve(reportPath, ".."), { recursive: true });
 await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n");
@@ -67,20 +71,49 @@ async function packages() {
   ]);
   return { initial, battle, content, catalog, map, files };
 }
-function referencedPackages(pack, { source = true, development = true, id = "custom" } = {}) {
+async function referencedPackages(pack, { source = true, development = true, id = "custom" } = {}) {
   const prefix = `/content-packages/${id}`, files = new Map(pack.files);
+  const png = controlledPng([72, 104, 136, 255]), pngHash = sha(png), media = new Map();
+  const initial = structuredClone(pack.initial);
+  // These are authored presentation URLs. A legacy checkpoint with no world
+  // identity needs one unambiguous archived release even when roots match.
+  for (const character of Object.values(initial.characters)) for (const sprite of Object.values(character.sprites)) {
+    sprite.file = "/controlled/package-actor.png"; sprite.sha256 = pngHash;
+  }
+  const entry = await seal(initial);
+  const world = structuredClone(pack.catalog);
+  for (const character of Object.values(world.characters)) for (const sprite of Object.values(character.sprites)) {
+    sprite.file = "/controlled/package-actor.png"; sprite.sha256 = pngHash;
+  }
+  const catalog = await seal(world), content = await seal({ ...pack.content, worldCatalogHash: catalog.contentHash });
   const reference = (name, payload) => {
     const url = `${prefix}/${name}.json`; files.set(url, payload);
     return { url, contentHash: payload.contentHash };
   };
-  const refs = { kind: "game-content-refs-v1", profile: "source", world: reference("world", pack.catalog),
-    source: source ? { entry: reference("source-entry", pack.content), battle: reference("source-battle", pack.battle) } : null,
-    development: development ? { entry: reference("development-entry", pack.initial),
+  const refs = { kind: "game-content-refs-v1", profile: "source", world: reference("world", catalog),
+    source: source ? { entry: reference("source-entry", content), battle: reference("source-battle", pack.battle) } : null,
+    development: development ? { entry: reference("development-entry", entry),
       battle: reference("development-battle", pack.files.get("/game/battle.json")) } : null };
   for (const url of ["/game/content.json", "/game/battle.json", "/game/new-game.json",
     "/game/source-catalog.json", "/world/catalog.json"]) files.delete(url);
+  const bindings = Object.fromEntries([...files].filter(([, value]) => /^[a-f0-9]{64}$/.test(value.contentHash))
+    .map(([url, value]) => [url, value.contentHash]));
+  const mediaBindings = Object.fromEntries([...coreBindings.fieldMediaUrls(entry),
+    ...coreBindings.fieldMediaUrls({ map: pack.map.map, characters: catalog.characters, minimap: pack.map.minimap })].map(url =>
+    [url, { sha256: pngHash, extension: "png" }]));
+  for (const url of Object.keys(mediaBindings)) media.set(url, { bytes: png, sha256: pngHash });
+  media.set(`/content-releases/media/${pngHash}.png`, { bytes: png, sha256: pngHash });
+  const sources = [...new Set([...(development ? [entry.parentSourceSetHash ?? entry.sourceSetHash] : []),
+    ...(source ? [content.parentSourceSetHash] : [])])];
+  const releases = await Promise.all(sources.map(async sourceSetHash => ({
+    id: await contentDigest({ id, sourceSetHash, refs, bindings, mediaBindings }), sourceSetHash, refs, bindings, mediaBindings })));
+  const release = releases[0];
+  const index = await seal({ kind: "game-content-release-index-v1", packageId: id, profile: refs.profile,
+    objectRoot: "/content-releases", currentReleaseId: release.id, releases });
+  for (const [url, hash] of Object.entries(bindings)) files.set(`/content-releases/objects/${hash}.json`, files.get(url));
+  files.set(`/content-releases/packages/${id}.json`, index);
   files.set(`/content-packages/${id}.json`, refs);
-  return { ...pack, refs, files, packageId: id };
+  return { ...pack, initial: entry, catalog, content, refs, files, media, release, index, packageId: id };
 }
 const beforeEventSave = { category: "ScenarioFlag1", index: 3 };
 const afterEventSave = { category: "ScenarioFlag1", index: 4 };
@@ -127,6 +160,48 @@ async function developmentMapPackages(id = "development-map") {
   const files = new Map([[`/content-packages/${id}.json`, refs], [refs.world.url, catalog],
     [refs.development.entry.url, initial], [refs.development.battle.url, battle], [catalog.maps[String(map.mapId)].url, map]]);
   return { initial, battle, catalog, map, baseField, refs, files, packageId: id };
+}
+// Valid redistributable PNG bytes, with differing release contents at identical
+// logical URLs. Image decoding below remains an explicit controlled boundary.
+function controlledPng(rgba) {
+  function chunk(name, bytes) {
+    const body = Buffer.concat([Buffer.from(name), bytes]);
+    let crc = 0xffffffff;
+    for (const byte of body) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+    const size = Buffer.alloc(4), checksum = Buffer.alloc(4);
+    size.writeUInt32BE(bytes.length); checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
+    return Buffer.concat([size, body, checksum]);
+  }
+  const header = Buffer.alloc(13); header.writeUInt32BE(16); header.writeUInt32BE(24, 4);
+  header[8] = 8; header[9] = 6;
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: 16 }, () => rgba).flat())]);
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header),
+    chunk("IDAT", deflateSync(Buffer.concat(Array.from({ length: 24 }, () => row)))), chunk("IEND", Buffer.alloc(0))]);
+}
+async function historicalPackages() {
+  const bytes = { old: controlledPng([48, 96, 160, 255]), current: controlledPng([192, 112, 48, 255]) };
+  const f = await contentReleaseSessionFixture({ uiMedia: { old: sha(bytes.old), current: sha(bytes.current) } });
+  const files = new Map(f.files), media = new Map();
+  files.set(`/content-packages/${f.packageId}.json`, f.current.refs);
+  for (const label of ["old", "current"]) {
+    for (const [logical, pin] of Object.entries(f[label].release.mediaBindings)) {
+      const image = { bytes: bytes[label], sha256: pin.sha256 };
+      media.set(`/content-releases/media/${pin.sha256}.png`, image);
+      if (label === "current") media.set(logical, image);
+    }
+  }
+  const owner = await GameSession.prepareFrameworkNewGame(f.old.content, f.old.world,
+    f.old.initialMap, f.old.battle, releaseSessionRuntime);
+  owner.advance(10); assert.equal(owner.checkpointReady, true);
+  const slots = new Map(), checkpoint = owner.checkpoint();
+  await new CheckpointStorage({ getItem: key => slots.get(key) ?? null,
+    setItem: (key, value) => slots.set(key, value) }, "framework", f.packageId).save(checkpoint, 1000);
+  return { ...f, files, media, slots, checkpoint, refs: f.current.refs,
+    oldImageHash: sha(bytes.old), currentImageHash: sha(bytes.current),
+    oldImageUrl: `/content-releases/media/${sha(bytes.old)}.png` };
 }
 function eventProgress(owner) {
   return {
@@ -227,7 +302,7 @@ assert.equal((appModule.body.match(/init\(\)\.catch\(failure\);/g) ?? []).length
   "Capture the real app's one initialization promise without calling init twice");
 const appBody = appModule.body.replace("init().catch(failure);", "globalThis.__init = init().catch(failure);") + `
 globalThis.__entry = {
-  read: () => ({ flow, commands, entryLoader, contents, contentReady, contentProfile, game, sourceBoot, entryLoad, failed, battleView, inventoryView, renderer, images, battleLoadAttempt }),
+  read: () => ({ flow, commands, entryLoader, contents, contentHistory, contentSessions, currentImages, mapLoader, contentReady, contentProfile, game, sourceBoot, entryLoad, failed, battleView, inventoryView, renderer, images, battleLoadAttempt }),
   reset, startSourceGame, loadGame, returnToTitle, loadBattle, cancelBattleLoad, frame
 };`;
 const audioBody = audioModule.body.replace(/\bexport (?=class |function )/g, "");
@@ -236,6 +311,7 @@ const audioBody = audioModule.body.replace(/\bexport (?=class |function )/g, "")
 // initialized systems package. That default is exercised by its actual-app checker.
 async function host(pack, { slots = new Map(), failBinding = false, search = "?profile=source" } = {}) {
   const calls = { json: [], images: [], audio: [], audioDecodes: [], audioStarts: [], views: [],
+    media: [], imageBytes: [], objectUrls: [], revokedUrls: [],
     frameCallbacks: [], writes: 0, writeAttempts: 0, audioContexts: 0, developmentEntries: [] };
   const storageFault = { error: null };
   const failedUrls = new Set(), failedImages = new Set(), heldUrls = new Map(), heldImages = new Map();
@@ -296,14 +372,35 @@ async function host(pack, { slots = new Map(), failBinding = false, search = "?p
         sampleRate: fixture.track.sampleRate, sourceSha256: digest };
     }
   }
+  const blobs = new Map();
+  class ControlledURL extends URL {
+    static createObjectURL(blob) {
+      assert.ok(blob instanceof Blob); assert.equal(blob.type, "image/png");
+      const url = `blob:controlled-entry/${calls.objectUrls.length + 1}`;
+      blobs.set(url, blob); record("objectUrls", url); return url;
+    }
+    static revokeObjectURL(url) {
+      assert.ok(blobs.has(url), "Every controlled Blob URL must be revoked exactly once");
+      blobs.delete(url); record("revokedUrls", url);
+    }
+  }
   class Image {
     set src(value) { this.file = value; }
     get src() { return this.file; }
     async decode() {
       record("images", this.file);
-      const wait = heldImages.get(this.file); if (wait) await wait.promise;
-      if (failedImages.has(this.file)) throw new Error("Controlled image decode failure: " + this.file);
-      this.width = this.naturalWidth = 32; this.height = this.naturalHeight = 32;
+      const blob = blobs.get(this.file);
+      const bytes = blob ? Buffer.from(await blob.arrayBuffer()) : pack.media?.get(this.file)?.bytes;
+      if (this.file.startsWith("blob:")) assert.ok(blob, "Historical decode must use its live Blob URL");
+      const digest = bytes ? sha(bytes) : null;
+      if (digest) record("imageBytes", digest);
+      const wait = heldImages.get(this.file) ?? heldImages.get(`sha256:${digest}`); if (wait) await wait.promise;
+      if (failedImages.has(this.file) || failedImages.has(`sha256:${digest}`))
+        throw new Error("Controlled image decode failure: " + this.file);
+      if (bytes) assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+      this.sourceSha256 = digest;
+      this.width = this.naturalWidth = bytes ? bytes.readUInt32BE(16) : 32;
+      this.height = this.naturalHeight = bytes ? bytes.readUInt32BE(20) : 32;
     }
   }
   const bindings = {};
@@ -325,7 +422,7 @@ async function host(pack, { slots = new Map(), failBinding = false, search = "?p
   } };
   const context = vm.createContext({ ...observedCore, ...bindings, document, Image, AudioContext,
     window: { addEventListener(name, fn) { listeners.set(name, fn); } },
-    location: { search }, URLSearchParams, Map, WeakSet, Set, structuredClone, crypto: webcrypto,
+    location: { search }, URL: ControlledURL, URLSearchParams, Blob, Map, WeakSet, Set, structuredClone, crypto: webcrypto,
     console, performance: { now: () => now },
     requestAnimationFrame(fn) { calls.frameCallbacks.push(fn); },
     localStorage: { getItem: (key) => slots.get(key) ?? null,
@@ -335,8 +432,8 @@ async function host(pack, { slots = new Map(), failBinding = false, search = "?p
         calls.writes++; slots.set(key, value);
       } },
     async fetch(url) {
-      const binary = pack.audio?.get(url);
-      record(binary ? "audio" : "json", url);
+      const binary = pack.audio?.get(url) ?? pack.media?.get(url);
+      record(pack.audio?.has(url) ? "audio" : pack.media?.has(url) ? "media" : "json", url);
       const wait = heldUrls.get(url); if (wait) await wait.promise;
       if (failedUrls.has(url)) return { ok: false, status: 503 };
       if (binary) return { ok: true, arrayBuffer: async () => Uint8Array.from(binary.bytes).buffer };
@@ -403,6 +500,30 @@ async function moveInApp(h, code) {
   assert.equal(owner.field.player.motion, null);
   assert.notDeepEqual({ x: owner.field.player.x, y: owner.field.player.y }, before);
 }
+const releaseItemCount = owner => owner.state.snapshot().items.find(item => item.id === 701)?.count ?? 0;
+async function startCurrentRelease(h) {
+  await h.$("start").onclick();
+  await h.frame(10); await h.frame(10);
+  const owner = h.api.read().flow.currentSession;
+  assert.ok(owner); assert.equal(owner.checkpointReady, true); h.boundToCurrent();
+  return owner;
+}
+function assertReleaseBinding(h, p, label) {
+  const state = h.api.read(), owner = state.flow.session;
+  assert.equal(state.contentHistory.current, state.contents, "Configured current repository is never replaced by an archive");
+  assert.equal(owner.battleCatalog.contentHash, p[label].battle.contentHash);
+  assert.equal(state.contentSessions.contextFor(owner).repository, state.contentSessions.repository);
+  if (label === "old") {
+    assert.notEqual(state.contentSessions.repository, state.contents);
+    assert.equal(state.contentSessions.release.release.id, p.old.release.id);
+    assert.notEqual(state.images, state.currentImages);
+  } else {
+    assert.equal(state.contentSessions.repository, state.contents);
+    assert.equal(state.contentSessions.release, null); assert.equal(state.images, state.currentImages);
+  }
+  assert.equal(state.images.get(p.mediaFiles.character).sourceSha256, p[label + "ImageHash"]);
+  assert.equal(state.renderer.args[2], state.images); h.boundToCurrent();
+}
 async function eventSaveFinished(h) {
   await eventually(() => !h.api.read().flow.busy && h.$("event-saving").hidden,
     "The app did not finish and acknowledge its event save");
@@ -466,7 +587,7 @@ try {
     assert.equal(h.$("systems-playground-help").hidden, true);
   });
   await check("a nominated content package loads only its references before publishing any game owner", async () => {
-    const p = referencedPackages(await packages()), h = await host(p, { search: "?package=custom" });
+    const p = await referencedPackages(await packages()), h = await host(p, { search: "?package=custom" });
     await h.ready();
     assert.deepEqual(h.calls.json, ["/content-packages/custom.json"]);
     assert.deepEqual(h.calls.images, []); assert.equal(h.api.read().flow.currentSession, null);
@@ -474,22 +595,23 @@ try {
     assert.equal(h.$("start").textContent, "进入开发片段");
   });
   await check("source-only package starts and restores through its pinned roots without a development fallback", async () => {
-    const p = referencedPackages(await packages(), { development: false }), saved = await sourceSave(p);
+    const p = await referencedPackages(await packages(), { development: false }), saved = await sourceSave(p);
     const h = await host(p, { search: "?package=custom", slots: saved.slots }); await h.ready();
     assert.equal(h.$("start").hidden, true); assert.equal(h.$("start").disabled, true);
     await h.api.reset(); assert.deepEqual(h.calls.json, ["/content-packages/custom.json"]);
     await h.$("source-start").onclick(); const old = await h.sourceStarted(); h.boundToCurrent();
     await h.$("load-start").onclick();
-    assert.notEqual(h.api.read().flow.currentSession, old); h.boundToCurrent();
+    assert.notEqual(h.api.read().flow.currentSession, old, h.$("save-status").textContent); h.boundToCurrent();
     assert.equal(h.api.read().flow.paused, true);
     assert.deepEqual(h.api.read().flow.session.checkpoint(), saved.checkpoint);
     const wanted = new Set(["/content-packages/custom.json", p.refs.world.url,
-      p.refs.source.entry.url, p.refs.source.battle.url, p.catalog.maps[p.map.mapId].url]);
+      p.refs.source.entry.url, p.refs.source.battle.url, p.catalog.maps[p.map.mapId].url,
+      "/content-releases/packages/custom.json", ...Object.values(p.release.bindings).map(hash => `/content-releases/objects/${hash}.json`)]);
     assert.ok(h.calls.json.every(url => wanted.has(url)), "No legacy root may satisfy a missing custom dependency");
     assert.equal(h.calls.writeAttempts, 0);
   });
   await check("development-only package uses the same entry and save flow while its source entry stays unavailable", async () => {
-    const p = referencedPackages(await packages(), { source: false }), h = await host(p, { search: "?package=custom" });
+    const p = await referencedPackages(await packages(), { source: false }), h = await host(p, { search: "?package=custom" });
     await h.ready(); assert.equal(h.$("source-start").hidden, true); assert.equal(h.$("source-start").disabled, true);
     await h.api.startSourceGame(); assert.deepEqual(h.calls.json, ["/content-packages/custom.json"]);
     await h.$("start").onclick(); const old = h.api.read().flow.session; h.boundToCurrent();
@@ -498,7 +620,9 @@ try {
     assert.notEqual(h.api.read().flow.session, old); assert.equal(h.api.read().flow.paused, true);
     assert.deepEqual(h.api.read().flow.session.checkpoint(), checkpoint); h.boundToCurrent();
     assert.deepEqual(new Set(h.calls.json), new Set(["/content-packages/custom.json",
-      p.refs.development.entry.url, p.refs.development.battle.url]));
+      p.refs.development.entry.url, p.refs.development.battle.url, "/content-releases/packages/custom.json",
+      `/content-releases/objects/${p.refs.development.entry.contentHash}.json`,
+      `/content-releases/objects/${p.refs.development.battle.contentHash}.json`]));
   });
   await check("invalid package identity cannot load a default entry or touch saved bytes", async () => {
     const p = await packages(), slots = new Map([["untouched", "original"]]);
@@ -510,7 +634,7 @@ try {
   });
   await check("explicit profile conflict and malformed references reject the package before gameplay", async () => {
     for (const malformed of [false, true]) {
-      const p = referencedPackages(await packages());
+      const p = await referencedPackages(await packages());
       if (malformed) p.files.set("/content-packages/custom.json", { ...p.refs, world: { ...p.refs.world, url: "//other/world.json" } });
       const h = await host(p, { search: malformed ? "?package=custom" : "?package=custom&profile=framework" });
       await assert.rejects(h.ready(), malformed ? /Invalid game content reference URL/ : /Content package profile mismatch/);
@@ -519,7 +643,7 @@ try {
     }
   });
   await check("a custom entry revision fails its host pin and retains the current owner, pause and saved progress", async () => {
-    const p = referencedPackages(await packages(), { source: false }), h = await host(p, { search: "?package=custom" });
+    const p = await referencedPackages(await packages(), { source: false }), h = await host(p, { search: "?package=custom" });
     await h.ready(); await h.$("start").onclick(); h.$("menu-button").onclick(); await h.$("save-game").onclick();
     const old = h.api.read().flow.session, checkpoint = old.checkpoint(), bytes = [...h.slots];
     const changed = structuredClone(p.initial); changed.entry.player.x += 1;
@@ -1077,6 +1201,128 @@ try {
     assert.equal(owner.eventSaveRequest, null); assert.equal(h.$("event-saving").hidden, true);
     assert.equal(h.calls.writes, writeBaseline); assert.equal(h.calls.writeAttempts, attemptBaseline);
   });
+  await check("an old package save publishes its own repository and PNG set through actual load, map, dialogue, save and title handlers", async () => {
+    const p = await historicalPackages(), h = await host(p, { slots: p.slots, search: `?package=${p.packageId}` });
+    await h.ready(); assert.equal(h.$("source-start").hidden, true);
+    const current = await startCurrentRelease(h), currentCommands = h.api.read().commands;
+    assertReleaseBinding(h, p, "current");
+    const currentCheckpoint = current.checkpoint(), currentImages = h.api.read().images;
+    h.$("menu-button").onclick(); await h.$("load-game").onclick();
+    const archived = h.api.read().flow.session;
+    assert.notEqual(archived, current); assertReleaseBinding(h, p, "old");
+    assert.deepEqual(archived.checkpoint(), p.checkpoint);
+    assert.equal(currentCommands.menu({ kind: "set-preferences", preferences: { mode: "wait", speedIndex: 3 } }), false);
+    assert.deepEqual(current.checkpoint(), currentCheckpoint);
+    assert.equal(currentImages.get(p.mediaFiles.character).sourceSha256, p.currentImageHash);
+    assert.equal(h.calls.json.includes(p.indexUrl), true);
+    assert.equal(h.calls.media.includes(p.oldImageUrl), true);
+    assert.deepEqual(new Set(h.calls.revokedUrls), new Set(h.calls.objectUrls));
+
+    const oldState = archived.state, oldWorld = archived.world, beforeItems = releaseItemCount(archived);
+    h.$("resume").onclick(); await h.frame(10);
+    await moveInApp(h, "ArrowRight");
+    await eventually(() => !h.api.read().flow.busy && archived.field.content.map.identity.mapId === p.nextMapId,
+      "The actual map loader must commit the archived destination");
+    await h.frame(10); assertReleaseBinding(h, p, "old");
+    assert.equal(archived.field.content.contentHash, p.old.nextMap.contentHash);
+    assert.equal(archived.state, oldState); assert.equal(archived.world, oldWorld);
+    assert.equal(releaseItemCount(archived), beforeItems + p.old.grant);
+    assert.ok(h.calls.json.includes(`/content-releases/objects/${p.old.nextMap.contentHash}.json`));
+    assert.equal(h.calls.json.includes(p.urls.map(p.nextMapId)), false,
+      "The current release's same logical map URL cannot serve an archived session");
+    assert.equal(h.api.read().images.get(p.mediaFiles.nextMap).sourceSha256, p.oldImageHash);
+    await moveInApp(h, "ArrowLeft");
+    assert.equal(archived.field.dialogue?.key, "AUTHORED_RELEASE_OLD");
+    assert.equal(releaseItemCount(archived), beforeItems + p.old.grant, "Dialogue confirmation owns the later grant");
+    h.key("Enter"); await h.frame(10);
+    assert.equal(archived.field.dialogue, null); assert.equal(archived.checkpointReady, true);
+    assert.equal(releaseItemCount(archived), beforeItems + p.old.grant * 2);
+    h.$("menu-button").onclick();
+    h.$("battle-speed").value = "3"; h.$("battle-speed").onchange();
+    assert.equal(archived.battlePreferences.speedIndex, 3);
+    const checkpoint = archived.checkpoint(), previousCommands = h.api.read().commands;
+    await h.$("save-game").onclick();
+    assert.deepEqual((await stored(h).load()).checkpoint, checkpoint);
+    assert.ok([...h.slots.keys()].every(key => key.includes(p.packageId)), "Archive and current use the same selected package's isolated save namespace");
+    await h.$("load-game").onclick(); assertReleaseBinding(h, p, "old");
+    assert.notEqual(h.api.read().flow.session, archived);
+    assert.deepEqual(h.api.read().flow.session.checkpoint(), checkpoint);
+    assert.equal(previousCommands.menu({ kind: "set-preferences", preferences: { mode: "wait", speedIndex: 4 } }), false);
+    h.$("resume").onclick(); await h.frame(10); await moveInApp(h, "ArrowUp");
+    h.$("menu-button").onclick(); const savedBytes = [...h.slots];
+    h.$("return-title").onclick();
+    assert.equal(h.api.read().contentSessions.repository, h.api.read().contents);
+    assert.equal(h.api.read().contentSessions.release, null);
+    const restarted = await startCurrentRelease(h); assertReleaseBinding(h, p, "current");
+    assert.notEqual(restarted, archived);
+    assert.equal(restarted.checkpoint().origin.entryContentHash, p.current.content.contentHash);
+    assert.equal(restarted.field.content.contentHash, current.field.content.contentHash);
+    assert.equal(releaseItemCount(restarted), releaseItemCount(current));
+    assert.deepEqual([...h.slots], savedBytes, "Restarting current content does not migrate or overwrite an archived save");
+    report.releaseScenario = { packageId: p.packageId, indexHash: p.index.contentHash,
+      oldReleaseId: p.old.release.id, currentReleaseId: p.current.release.id,
+      oldEntryHash: p.old.content.contentHash, currentEntryHash: p.current.content.contentHash,
+      oldImageSha256: p.oldImageHash, currentImageSha256: p.currentImageHash,
+      stages: ["current-start", "old-save-restore", "archived-map", "archived-dialogue-grant", "menu-save",
+        "old-reload", "next-input", "title-current-restart"],
+      actualApp: true, actualHistory: true, actualContentSessions: true, mediaShaVerified: true,
+      controlledDOMImageBlob: true, browserExecuted: false, originalGameExecuted: false };
+  });
+  await check("missing archived JSON leaves the running owner and repository intact and the same Load button can retry", async () => {
+    const p = await historicalPackages(), h = await host(p, { slots: p.slots, search: `?package=${p.packageId}` });
+    await h.ready(); const owner = await startCurrentRelease(h); h.$("menu-button").onclick();
+    const before = owner.checkpoint(), images = h.api.read().images, savedBytes = [...h.slots];
+    const missing = `/content-releases/objects/${p.old.battle.contentHash}.json`;
+    h.failedUrls.add(missing); await h.$("load-game").onclick();
+    assert.equal(h.api.read().flow.session, owner); assertReleaseBinding(h, p, "current");
+    assert.deepEqual(owner.checkpoint(), before); assert.equal(h.api.read().images, images);
+    assert.deepEqual([...h.slots], savedBytes); assert.equal(h.api.read().flow.busy, false);
+    assert.equal(h.api.read().flow.paused, true); assert.match(h.$("save-status").textContent, /读取失败/);
+    h.failedUrls.delete(missing); await h.$("load-game").onclick(); assertReleaseBinding(h, p, "old");
+    assert.notEqual(h.api.read().flow.session, owner); assert.deepEqual([...h.slots], savedBytes);
+    assert.equal(h.calls.writeAttempts, 0);
+  });
+  await check("historical PNG digest mismatch rejects before Blob publication and retry never borrows the current image cache", async () => {
+    const p = await historicalPackages(), h = await host(p, { slots: p.slots, search: `?package=${p.packageId}` });
+    await h.ready(); const owner = await startCurrentRelease(h); h.$("menu-button").onclick();
+    const before = owner.checkpoint(), images = h.api.read().images, savedBytes = [...h.slots];
+    const original = p.media.get(p.oldImageUrl);
+    p.media.set(p.oldImageUrl, { ...original, bytes: controlledPng([1, 2, 3, 255]) });
+    await h.$("load-game").onclick();
+    assert.equal(h.api.read().flow.session, owner); assertReleaseBinding(h, p, "current");
+    assert.deepEqual(owner.checkpoint(), before); assert.equal(h.api.read().images, images);
+    assert.deepEqual([...h.slots], savedBytes); assert.equal(h.calls.objectUrls.length, 0);
+    assert.match(h.$("save-status").textContent, /摘要不匹配/);
+    p.media.set(p.oldImageUrl, original); await h.$("load-game").onclick(); assertReleaseBinding(h, p, "old");
+    assert.deepEqual(new Set(h.calls.revokedUrls), new Set(h.calls.objectUrls));
+    assert.equal(h.calls.writeAttempts, 0);
+  });
+  for (const rejectLate of [false, true]) await check(`cancelled historical image ${rejectLate ? "rejection" : "completion"} cannot replace a newer session, repository or image set`, async () => {
+    const p = await historicalPackages(), h = await host(p, { slots: p.slots, search: `?package=${p.packageId}` });
+    await h.ready(); const owner = await startCurrentRelease(h); h.$("menu-button").onclick();
+    const before = owner.checkpoint(), savedBytes = [...h.slots], wait = deferred();
+    h.heldImages.set(`sha256:${p.oldImageHash}`, wait);
+    const pending = h.$("load-game").onclick(); await h.observed("imageBytes", p.oldImageHash);
+    assert.equal(h.api.read().flow.busy, true); assertReleaseBinding(h, p, "current");
+    h.$("cancel-entry-load").onclick();
+    assert.equal(h.api.read().flow.session, owner); assertReleaseBinding(h, p, "current");
+    assert.deepEqual(owner.checkpoint(), before); assert.equal(h.api.read().flow.paused, true);
+    h.$("return-title").onclick(); const next = await startCurrentRelease(h);
+    const nextCheckpoint = next.checkpoint(), nextImages = h.api.read().images, nextCommands = h.api.read().commands;
+    if (rejectLate) wait.reject(new Error("Controlled late archived Image rejection")); else wait.resolve();
+    await pending; await new Promise(setImmediate);
+    assert.equal(h.api.read().failed, false); assert.equal(h.api.read().flow.busy, false);
+    assert.equal(h.api.read().flow.session, next); assertReleaseBinding(h, p, "current");
+    assert.equal(h.api.read().images, nextImages); assert.equal(h.api.read().commands, nextCommands);
+    assert.deepEqual(next.checkpoint(), nextCheckpoint); assert.deepEqual([...h.slots], savedBytes);
+    assert.ok(h.calls.objectUrls.length > 0);
+    assert.deepEqual(new Set(h.calls.revokedUrls), new Set(h.calls.objectUrls));
+    assert.equal(h.calls.revokedUrls.length, h.calls.objectUrls.length);
+    assert.equal(h.calls.writeAttempts, 0);
+  });
+  report.releaseRuntimeSha256 = Object.fromEntries(await Promise.all([
+    "game-content-history", "game-content-sessions", "game-content-release", "game-map-loader",
+  ].map(async name => [name, sha(await readFile(resolve(compiled, `src/core/${name}.js`)))])));
   report.runtimeSha256 = Object.fromEntries(await Promise.all([
     "game-session", "game-flow", "game-commands", "game-entry-loader", "game-content", "game-content-refs", "game-package-selection", "game-development-entry", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint", "game-battle-handoff",
   ].map(async (name) => [name, sha(await readFile(resolve(compiled, `src/core/${name}.js`)))])));

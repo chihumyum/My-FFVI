@@ -6,7 +6,9 @@
 
 [整体游戏骨架](docs/game-skeleton.md) 以同一公共运行时贯通入口、探索/事件、战斗往返、队伍/经济/成长、存读档和批量内容。`npm run skeleton:check` 验证代表性完整流程；`npm run skeleton:plan` 查看范围。完整细项回归保留为 `npm run framework:verify`，来源剧情与全游戏迁移单独验收。
 
-[本轮交付](docs/systems-v78.md)：默认可操作骨架、共同构建、六组连续系统验收与批次准入接线；按公共系统归并整批缺口，后续按工作单并行实施。
+[本轮交付](docs/systems-v79.md)：在 [v78 公共骨架](docs/systems-v78.md) 上接通内容版本与旧进度续行；默认可操作入口、六组连续系统验收和批次准入仍使用同一运行时。后续按公共系统工作单并行实施整块能力。
+
+[内容版本与旧进度](docs/content-versions.md) 保留完整 JSON 和图声闭包，恢复旧版本后继续使用其地图、事件与战斗，再次存读档。共享导出之前先运行 `npm run content-history:archive`；正常公共包与来源地点构建自动保留旧新版本，旧存档不改写为新初始化。
 
 已接入 [v77 来源内容批次](docs/source-content-v77.md)：[费加罗内容](http://127.0.0.1:4173/game/?package=figaro-initialized) 保留原地图、NPC、对白、出口和碰撞，使用来源初始化及明确的开发起始放置。通用普通地图呈现适配器不清除原版材质缺口，完整剧情与依赖准入继续独立记录。
 

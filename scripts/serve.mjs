@@ -36,6 +36,9 @@ const server = http.createServer(async (req, res) => {
     } else if (url.pathname.startsWith("/content-packages/")) {
       base = resolve(root, "build/content-packages");
       relative = decodeURIComponent(url.pathname.slice("/content-packages/".length));
+    } else if (url.pathname.startsWith("/content-releases/")) {
+      base = resolve(root, "build/content-releases");
+      relative = decodeURIComponent(url.pathname.slice("/content-releases/".length));
     } else if (url.pathname.startsWith("/framework/")) {
       base = resolve(root, "build/framework");
       relative = decodeURIComponent(url.pathname.slice("/framework/".length));
@@ -106,7 +109,7 @@ const server = http.createServer(async (req, res) => {
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy":
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'",
     });
     res.end(req.method === "HEAD" ? undefined : body);
   } catch {

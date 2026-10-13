@@ -6,6 +6,7 @@ import { createHash, webcrypto } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { deflateSync } from "node:zlib";
 import vm from "node:vm";
 import ts from "typescript";
 
@@ -29,9 +30,11 @@ const report = { kind: "controlled-initialized-systems-ui-check-v1", result: "ru
   appSha256: sha(app), htmlSha256: sha(html),
   viewSha256: Object.fromEntries(Object.entries(ui).map(([key, source]) => [key, sha(source)])),
   evidence: { actualApp: true, actualSession: true, actualRepository: true, actualCommands: true,
-    actualCheckpointStorage: true, originalGameExecuted: false, sourceStoryAdmitted: false },
+    actualCheckpointStorage: true, actualContentHistory: true, actualContentSessions: true,
+    originalGameExecuted: false, sourceStoryAdmitted: false },
   limitations: ["Synthetic content declares its initializer, held domains, prices, abilities and encounters explicitly.",
-    "DOM, network, image decode and WebAudio are controlled. Renderer and BattleView drawing are host doubles.",
+    "DOM, network, Blob URLs, image decode and WebAudio are controlled. Renderer and BattleView drawing are host doubles.",
+    "The synthetic package publishes one verified release index, immutable JSON objects and authored PNG bytes; this grants no source-story admission.",
     "The app publishes and restores the actual owner. No checkpoint, roster, HP or learned-ability state is patched by the driver."] };
 await mkdir(resolve(reportPath, ".."), { recursive: true });
 await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n");
@@ -55,7 +58,7 @@ for (const entry of [...appModule.imports, ...stripImports(ui.audio, "audio.js")
 assert.equal((appModule.body.match(/init\(\)\.catch\(failure\);/g) ?? []).length, 1);
 const appBody = appModule.body.replace("init().catch(failure);", "globalThis.__init = init().catch(failure);") + `
 globalThis.__app = {
-  read: () => ({ flow, commands, game, contents, failed, entryLoad, sourceBoot, partyView, shopView,
+  read: () => ({ flow, commands, game, contents, contentSessions, failed, entryLoad, sourceBoot, partyView, shopView,
     battleView, inventoryView, contentProfile, renderer, entryLoader, images, battleLoadAttempt }),
   frame, sync, reset, startInitializedGame, returnToTitle, pause, saveGame, loadGame
 };`;
@@ -74,7 +77,8 @@ async function until(predicate, message) {
 }
 
 async function host(pack, { slots = new Map(), search = "?package=" + pack.packageId } = {}) {
-  const calls = { json: [], images: [], views: [], frames: [], writes: 0 };
+  const calls = { json: [], images: [], media: [], imageBytes: [], objectUrls: [], revokedUrls: [],
+    views: [], frames: [], writes: 0 };
   const failedUrls = new Set(), heldUrls = new Map(), failedImages = new Set(), heldImages = new Map();
   const listeners = new Map(), nodes = new Map();
   let now = 0;
@@ -135,6 +139,18 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
     createBufferSource() { return { connect() {}, disconnect() {}, start() {}, stop() {} }; }
     async decodeAudioData() { throw new Error("This fixture did not declare an audio stream"); }
   }
+  const blobs = new Map();
+  class ControlledURL extends URL {
+    static createObjectURL(blob) {
+      assert.ok(blob instanceof Blob); assert.equal(blob.type, "image/png");
+      const url = "blob:controlled-initialized-" + calls.objectUrls.length;
+      blobs.set(url, blob); calls.objectUrls.push(url); return url;
+    }
+    static revokeObjectURL(url) {
+      assert.ok(blobs.delete(url), "An image Blob URL must be revoked exactly once");
+      calls.revokedUrls.push(url);
+    }
+  }
   class Image {
     set src(value) { this.file = value; }
     get src() { return this.file; }
@@ -142,6 +158,12 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
       calls.images.push(this.file);
       const hold = heldImages.get(this.file); if (hold) await hold.promise;
       if (failedImages.has(this.file)) throw new Error("Controlled image failure: " + this.file);
+      if (this.file.startsWith("blob:")) {
+        const blob = blobs.get(this.file); assert.ok(blob, "Decode requires its live Blob URL");
+        const bytes = Buffer.from(await blob.arrayBuffer());
+        assert.deepEqual([...bytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+        calls.imageBytes.push(sha(bytes));
+      }
       this.width = this.naturalWidth = 32; this.height = this.naturalHeight = 32;
     }
   }
@@ -156,11 +178,16 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
   }
   const context = vm.createContext({ ...core, document, Image, AudioContext, Renderer, BattleView,
     window: { addEventListener(name, callback) { listeners.set(name, callback); } },
-    location: { search }, URLSearchParams, structuredClone, crypto: webcrypto,
+    location: { search }, URLSearchParams, URL: ControlledURL, Blob, structuredClone, crypto: webcrypto,
     console, performance: { now: () => now }, requestAnimationFrame(callback) { calls.frames.push(callback); },
     localStorage: { getItem: key => slots.get(key) ?? null,
       setItem(key, value) { calls.writes++; slots.set(key, value); } },
     async fetch(url) {
+      if (pack.media.has(url)) {
+        calls.media.push(url);
+        if (failedUrls.has(url)) return { ok: false, status: 503 };
+        return { ok: true, arrayBuffer: async () => Uint8Array.from(pack.media.get(url)).buffer };
+      }
       calls.json.push(url);
       const hold = heldUrls.get(url); if (hold) await hold.promise;
       if (failedUrls.has(url)) return { ok: false, status: 503 };
@@ -191,7 +218,8 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
   };
   const bound = () => {
     const current = api.read(), owner = current.flow.currentSession;
-    assert.ok(owner instanceof GameSession); assert.equal(current.game, owner.field);
+    assert.ok(owner instanceof GameSession, nodes.get("load-error").textContent || "App has no published GameSession");
+    assert.equal(current.game, owner.field);
     assert.equal(current.commands.owner, owner);
     assert.equal(current.battleView.common, owner.battleCatalog.common);
     for (const view of [current.inventoryView, current.partyView, current.shopView]) {
@@ -216,6 +244,27 @@ async function seal(value) {
   return { ...payload, contentHash: await contentDigest(payload) };
 }
 
+// Redistributable authored image bytes. The app verifies their digest before
+// the controlled Image host decodes them; no original image is substituted.
+function controlledPng() {
+  const chunk = (name, bytes) => {
+    const body = Buffer.concat([Buffer.from(name), bytes]);
+    let crc = 0xffffffff;
+    for (const byte of body) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+    const size = Buffer.alloc(4), checksum = Buffer.alloc(4);
+    size.writeUInt32BE(bytes.length); checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
+    return Buffer.concat([size, body, checksum]);
+  };
+  const header = Buffer.alloc(13); header.writeUInt32BE(32); header.writeUInt32BE(32, 4);
+  header[8] = 8; header[9] = 6;
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: 32 }, () => [72, 104, 136, 255]).flat())]);
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header),
+    chunk("IDAT", deflateSync(Buffer.concat(Array.from({ length: 32 }, () => row)))), chunk("IEND", Buffer.alloc(0))]);
+}
+
 // Fixture composition and assertions follow below. They exercise the same
 // pinned initialized entry as the app; no legacy owner is patched into one.
 async function packages(packageId = "controlled-initialized-ui") {
@@ -223,6 +272,11 @@ async function packages(packageId = "controlled-initialized-ui") {
   const { compileFrameworkNewGame } = await load("src/compiler/framework-new-game.js");
   const { itemFixture } = await load("tests/fixtures/items.js");
   const f = await frameworkNewGameFixture();
+  const png = controlledPng(), pngHash = sha(png);
+  for (const character of Object.values(f.world.characters)) for (const sprite of Object.values(character.sprites)) {
+    sprite.file = "/controlled/initialized-actor.png"; sprite.sha256 = pngHash;
+  }
+  for (const sprite of Object.values(f.battle.common.sprites)) sprite.file = "/controlled/initialized-battle.png";
   const source = { file: "synthetic", assetPath: "initialized-systems-ui" };
   const playerId = f.battle.common.players[0].id;
   const stoneId = Number(Object.keys(f.battle.gameState.magicStones.stones)[0]);
@@ -293,7 +347,25 @@ async function packages(packageId = "controlled-initialized-ui") {
   const files = new Map([["/content-packages/" + packageId + ".json", refs],
     [refs.world.url, f.world], [refs.initialized.entry.url, f.content],
     [refs.initialized.battle.url, f.battle], [f.world.maps[String(f.map.mapId)].url, f.map]]);
-  return { ...f, packageId, refs, files, playerId, stoneId, skill, itemId, productId, groupId,
+  // The first-map save has no committed world location. Even matching current
+  // roots therefore need a unique trusted release; never patch the saved map
+  // identity or bypass History to make this UI fixture restore.
+  const bindings = Object.fromEntries([...files].filter(([, value]) => /^[a-f0-9]{64}$/.test(value.contentHash))
+    .map(([url, value]) => [url, value.contentHash]));
+  const mediaBindings = Object.fromEntries([...core.fieldMediaUrls({ map: f.map.map,
+    characters: f.world.characters, minimap: f.map.minimap }),
+    ...Object.values(f.battle.common.sprites).map(sprite => sprite.file)]
+    .map(url => [url, { sha256: pngHash, extension: "png" }]));
+  const release = { id: await contentDigest({ packageId, refs, bindings, mediaBindings }),
+    sourceSetHash: f.content.parentSourceSetHash, refs, bindings, mediaBindings };
+  const indexUrl = `/content-releases/packages/${packageId}.json`;
+  const index = await seal({ kind: "game-content-release-index-v1", packageId, profile: "framework",
+    objectRoot: "/content-releases", currentReleaseId: release.id, releases: [release] });
+  for (const [url, hash] of Object.entries(bindings)) files.set(`/content-releases/objects/${hash}.json`, files.get(url));
+  files.set(indexUrl, index);
+  const media = new Map(Object.keys(mediaBindings).map(url => [url, png]));
+  media.set(`/content-releases/media/${pngHash}.png`, png);
+  return { ...f, packageId, refs, files, media, release, indexUrl, pngHash, playerId, stoneId, skill, itemId, productId, groupId,
     attackId: 10, attackCommandId: 100, encounterId: entry.encounterId,
     fieldImage: "/controlled/initialized-field.png" };
 }
@@ -373,6 +445,14 @@ try {
     await explicit.click(explicit.$("load-start"));
     const restored = explicit.bound();
     assert.notEqual(restored, owner); assert.deepEqual(restored.checkpoint(), saved);
+    assert.equal(saved.world.location, null);
+    assert.ok(explicit.calls.json.includes(pack.indexUrl));
+    assert.ok(explicit.calls.json.includes(`/content-releases/objects/${pack.content.contentHash}.json`));
+    assert.equal(explicit.api.read().contentSessions.release.release.id, pack.release.id);
+    assert.notEqual(explicit.api.read().contentSessions.repository, explicit.api.read().contents);
+    assert.ok(explicit.calls.imageBytes.length > 0);
+    assert.ok(explicit.calls.imageBytes.every(hash => hash === pack.pngHash));
+    assert.deepEqual(explicit.calls.revokedUrls.toSorted(), explicit.calls.objectUrls.toSorted());
     assert.equal(oldCommands.menu({ kind: "change-magic-stone", playerId: pack.playerId, contentId: 0 }), false);
 
     const travelPack = await packages("world-travel"), travel = await host(travelPack, { slots: h.slots });
