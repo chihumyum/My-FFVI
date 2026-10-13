@@ -18,7 +18,9 @@
 
 ## 运行与失败
 
-先使用现有命令准备编译结果和实际内容包。本门禁不会隐式构建、改内容或补缺失依赖。
+已有本地来源导出后，`npm run skeleton:build` 构建公共内容包，`npm run skeleton:check` 先构建再执行本门禁，`npm run dev` 提供默认可操作系统入口。基础包重建保留独立内容批次；原资源与配方身份不匹配仍停止，不能补造依赖。
+
+下列直接调用只检查现有产物，不隐式构建、改内容或补缺失依赖：
 
     node scripts/check-game-skeleton.mjs --list
     node scripts/check-game-skeleton.mjs --plan
@@ -35,5 +37,9 @@
 六组通过且运行时一致时，报告给出 skeletonContracts.status=passed、readyForDeclaredContentBatches=true：现有公共接口可以承载声明内容批次的接入与验证。此结果不替具体批次授予执行资格。
 
 wholeSourceBatchAdmission 仍为 not-assessed；来源完整剧情、实际浏览器、原版执行和全迁移分别留证。受控 DOM/Canvas 或 Renderer double 不会将 browserVerified 置 true，作者地图和回程不改写来源故事。未恢复的 NPC 自主路线、车辆或其他能力继续显式准入，按实际内容需求整块推进；不静默跳过，也不把所有特殊细节设为已支持骨架的前置。
+
+`npm run batch:check -- <manifest.json>` 默认使用本骨架作为公共合同证据，再检查该批次完整依赖与连续路线。检查器核对 aggregate、所有必需组与检查项、子报告摘要和实际案例，以及开始/结束的当前 runtime；失败、缺项或过期证据不能放行。`--framework-scope full-suite` 可显式选择完整回归范围，日常批次不再必须先运行它。
+
+`npm run systems:plan -- <manifest.json>` 重新读取批次包，按上述系统归并诊断与 provider 依赖，保留全部来源位置和未知项。它输出实施工作单，不授予能力或批次执行资格；各组可并行实施，涉及共享状态的提交仍集中集成。
 
 本页描述门禁合同，最终结果以本次新报告为准。完整 Web 迁移 goal 保持 active，HD-2D 后置。

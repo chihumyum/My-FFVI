@@ -1,5 +1,5 @@
-import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { cp, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { relative, resolve } from "node:path";
 import { canonical, hash } from "../dist/src/compiler/content.js";
 import { verifyContent } from "../dist/src/core/content-integrity.js";
 import { parseGameContentRefs } from "../dist/src/core/game-content-refs.js";
@@ -44,7 +44,26 @@ for (const refs of packages.values()) {
 }
 
 const staged = await mkdtemp(resolve(root, "build/.content-packages-")), backup = resolve(root, "build/.previous-content-packages");
+const ownedFiles = new Set([...payloads.keys(), ...[...packages.keys()].map(id => id + ".json")]);
 try {
+  // This producer owns these exact files, not the content package registry.
+  // Independent batches, their manifests and other files survive the same
+  // staged publication. Do not copy an owned file's old bytes or symlink.
+  let existing = false;
+  try {
+    const current = await stat(target);
+    if (!current.isDirectory()) throw new Error("Content package target must be a directory");
+    existing = true;
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
+  if (existing) await cp(target, staged, { recursive: true, verbatimSymlinks: true,
+    filter: file => !ownedFiles.has(relative(target, file)) });
+  for (const id of packages.keys()) {
+    try {
+      const namespace = await lstat(resolve(staged, id));
+      if (!namespace.isDirectory() || namespace.isSymbolicLink())
+        throw new Error("Owned content payload namespace must be a directory: " + id);
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
   for (const [path, payload] of payloads) {
     const file = resolve(staged, path); await mkdir(resolve(file, ".."), { recursive: true });
     await writeFile(file, canonical(payload) + "\n");

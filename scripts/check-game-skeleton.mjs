@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { runtimeDigest } from "./runtime-digest.mjs";
+import { GAME_SKELETON_CHECKS, GAME_SKELETON_GROUPS } from "./game-skeleton-contract.mjs";
 
 const root = resolve(import.meta.dirname, ".."), args = process.argv.slice(2), options = new Map();
 const usage = "Use [--plan | --list] [--compiled-dir <directory>] [--content-dir <directory>] [--report <build/reports/path.json>]";
@@ -26,66 +27,13 @@ const reports = resolve(root, "build/reports"), scope = resolve(reports, "game-s
 const output = resolve(root, options.get("--report") ?? "build/reports/game-skeleton-check.json");
 assert.ok(output.startsWith(reports + sep) && output.endsWith(".json"), usage);
 const local = path => relative(root, path), scoped = id => resolve(scope, id + ".json");
-const lanes = [
-  {
-    id: "entry-session", script: "check-game-entry-ui.mjs", kind: "controlled-game-entry-ui-check",
-    countKey: "tests", marker: "pass", artifact: resolve(reports, "game-entry-ui-check.json"),
-    args: ["--compiled-dir", compiled],
-    publicAPIs: ["actual apps/game/app.js", "GameContentRepository", "GameEntryLoader", "GameFlow", "CheckpointStorage"],
-    scope: "Actual app with controlled DOM/media: explicit entries, failures, cancellation and restored-owner binding",
-  },
-  {
-    id: "default-entry-app", script: "check-initialized-systems-ui.mjs", kind: "controlled-initialized-systems-ui-check-v1",
-    countKey: "cases", marker: "pass", artifact: resolve(reports, "initialized-systems-ui-check.json"),
-    args: ["--compiled-dir", compiled],
-    publicAPIs: ["actual apps/game/app.js default /game/", "GameContentRepository", "GameSession.prepareFrameworkNewGame", "GameEntryLoader", "GameCommands", "CheckpointStorage"],
-    scope: "Current default entry and actual menu/restore handlers; DOM, media decode, Renderer and BattleView drawing are controlled",
-  },
-  {
-    id: "continuous-playground", script: "check-systems-playground.mjs", kind: "systems-playground-check-v1",
-    countKey: "tests", marker: "passed", artifact: scoped("continuous-playground"),
-    args: ["--compiled-dir", compiled, "--package-root", content, "--report", scoped("continuous-playground")],
-    publicAPIs: ["GameContentRepository", "GameEntryLoader", "GameFlow", "GameMapLoader", "GameBattleHandoff", "GameCommands", "CheckpointStorage"],
-    scope: "Actual page package: movement/event, two battles, item/equipment/party/field-magic menus, restore and continuing across maps",
-  },
-  {
-    id: "battle-roundtrip", script: "check-game-framework.mjs", kind: "continuous-game-framework-check-v1",
-    countKey: "stages", marker: null, artifact: scoped("battle-roundtrip"),
-    args: ["--dist", compiled, "--battle-handoff", "prepared", "--report", scoped("battle-roundtrip")],
-    publicAPIs: ["GameSession", "GameFlow", "GameEntryLoader", "GameBattleHandoff", "GameCommands", "CheckpointStorage"],
-    scope: "Prepared entry/return cancellation and failure, defeat/fixed retry, one reward, restore and another battle",
-  },
-  {
-    id: "owned-economy-growth", script: "check-initialized-systems.mjs", kind: "initialized-systems-check-v1",
-    countKey: "tests", marker: "passed", artifact: scoped("owned-economy-growth"),
-    args: ["--compiled-dir", compiled, "--content-dir", content, "--report", scoped("owned-economy-growth")],
-    publicAPIs: ["GameContentRepository", "GameSession.prepareFrameworkNewGame", "GameEntryLoader", "GameCommands", "GameBattleHandoff", "CheckpointStorage"],
-    scope: "Source initializer on an authored map: native held domain, shop, magic stone, battle growth and durable restore",
-  },
-  {
-    id: "map-world-travel", script: "check-world-travel.mjs", kind: "framework-world-travel-check-v1",
-    countKey: "stages", marker: "passed", artifact: scoped("map-world-travel"),
-    args: ["--compiled-dir", compiled, "--content-dir", content, "--report", scoped("map-world-travel")],
-    publicAPIs: ["GameContentRepository", "GameEntryLoader", "GameFlow", "GameMapLoader", "GameBattleHandoff", "GameCommands", "CheckpointStorage"],
-    scope: "Source world geometry/terrain and exit, authored return, world encounter/one reward, menu/restore and next input",
-  },
-  {
-    id: "declared-content-batch", script: "check-content-batch-program.mjs", kind: "controlled-content-batch-program-v1",
-    countKey: "tests", marker: "passed", artifact: resolve(reports, "content-batch-program-check.json"),
-    args: ["--compiled-dir", compiled],
-    publicAPIs: ["runContentBatchRoute", "GameContentRepository", "GameEntryLoader", "GameCommands", "GameBattleHandoff", "CheckpointStorage"],
-    scope: "Common runner: declared menus/intermediate restore, continuing inputs, second battle and rejected-program admission",
-  },
-];
+const lanes = GAME_SKELETON_CHECKS.map(check => ({ ...check,
+  artifact: resolve(reports, check.artifact),
+  args: check.args.map(argument => argument === "{compiled}" ? compiled :
+    argument === "{content}" ? content : argument === "{report}" ? scoped(check.id) : argument),
+}));
+const groupDefinitions = GAME_SKELETON_GROUPS;
 assert.ok(!lanes.some(lane => output === lane.artifact || output === scoped(lane.id)), "Aggregate report cannot replace a child report");
-const groupDefinitions = [
-  { id: "entry-and-session", label: "入口与会话", required: ["entry-session", "default-entry-app", "continuous-playground"] },
-  { id: "map-event-and-travel", label: "地图、事件与切图", required: ["continuous-playground", "map-world-travel"] },
-  { id: "battle-and-return", label: "战斗、重试与返场", required: ["battle-roundtrip", "continuous-playground"] },
-  { id: "owned-menus-economy-and-growth", label: "持有菜单、经济与成长", required: ["continuous-playground", "owned-economy-growth"] },
-  { id: "save-restore-and-continuation", label: "存读档与续行", required: ["entry-session", "default-entry-app", "battle-roundtrip", "declared-content-batch"] },
-  { id: "content-batch-interface", label: "批量内容接口", required: ["declared-content-batch", "map-world-travel"] },
-];
 const sharedOutputs = lanes.filter(lane => lane.artifact !== scoped(lane.id)).map(lane => local(lane.artifact));
 const plan = {
   kind: "game-skeleton-plan-v1", mode, compiledDirectory: local(compiled), contentDirectory: local(content), report: local(output),
