@@ -18,6 +18,7 @@ const lanes = [
   ["session-loop", "check-game-framework.mjs", "game-framework-check.json", "stages"],
   ["battle-handoff-loop", "check-game-framework.mjs", "battle-handoff-framework-check.json", "stages",
     ["--battle-handoff", "prepared", "--report", "build/reports/battle-handoff-framework-check.json"]],
+  ["battle-media-closure", "check-battle-media.mjs", "battle-media-check.json", "stages"],
   ["io-transactions", "check-framework-io.mjs", "framework-io-check.json", "cases"],
   ["host-io-recovery", "check-game-map-ui.mjs", "game-map-ui-check.json", "tests"],
   ["session-entry-ui", "check-game-entry-ui.mjs", "game-entry-ui-check.json", "tests"],

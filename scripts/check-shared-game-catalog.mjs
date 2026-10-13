@@ -42,7 +42,8 @@ async function stage(name, body) {
   report.stages.push({ name, result: "passed", ...(details ?? {}) });
 }
 try {
-  const { compileOpeningBattle, compileSharedBattleSource } = await module("compiler/battle");
+  const { compileOpeningBattle, compileSharedBattleSource, validateBattleMediaSelection } = await module("compiler/battle");
+  const { readSnapshot, snapshotFile } = await module("compiler/integrity");
   const { compileOpeningPlayable } = await module("compiler/opening-playable");
   const { compileSharedGameCatalog } = await module("compiler/game-catalog");
   const { compileSourceNewGame } = await module("compiler/source-new-game");
@@ -62,18 +63,26 @@ try {
     return value;
   };
 
-  await stage("legacy-source-and-entry-hashes-remain-compatible", async () => {
+  await stage("legacy-source-and-entry-bind-the-verified-media-scope", async () => {
+    const exported = await readSnapshot(resolve(root, "build/battle")), imported = await readSnapshot(resolve(root, "build/import"));
+    const media = JSON.parse(snapshotFile(exported, "battle.json"));
+    validateBattleMediaSelection(media, JSON.parse(snapshotFile(imported, "tables.json")));
     legacy = await compileOpeningBattle(root);
-    assert.equal(legacy.sourceSetHash, baseline.sourceSetHash);
+    assert.equal(legacy.sourceSetHash, media.sourceSetHash);
     assert.equal(legacy.parentSourceSetHash, baseline.parentSourceSetHash);
-    assert.equal(legacy.contentHash, baseline.contentHash);
-    assert.deepEqual(legacy, await packageFile("build/game/opening-battle.json", baseline.contentHash));
+    assert.deepEqual(legacy.encounterPartyIds, media.encounterPartyIds);
+    if (media.adapterVersion === "battle-0.3.0") {
+      assert.equal(legacy.sourceSetHash, baseline.sourceSetHash);
+      assert.equal(legacy.contentHash, baseline.contentHash);
+    }
+    assert.deepEqual(legacy, await packageFile("build/game/opening-battle.json", legacy.contentHash));
     assert.equal(legacy.entryProviders.ownedConditionCheckpoint.conditionType, 607);
     legacyCatalog = await compileOpeningPlayable(root, legacy);
-    assert.equal(legacyCatalog.contentHash, baseline.openingPlayableContentHash);
-    await verifyContent(legacyCatalog);
+    if (media.adapterVersion === "battle-0.3.0") assert.equal(legacyCatalog.contentHash, baseline.openingPlayableContentHash);
+    assert.deepEqual(legacyCatalog, await packageFile("build/game/opening-playable.json", legacyCatalog.contentHash));
     return { sourceSetHash: legacy.sourceSetHash, parentSourceSetHash: legacy.parentSourceSetHash,
-      sourceContentHash: legacy.contentHash, developmentCatalogHash: legacyCatalog.contentHash };
+      sourceContentHash: legacy.contentHash, developmentCatalogHash: legacyCatalog.contentHash,
+      adapterVersion: media.adapterVersion, mediaSelection: media.mediaSelection ?? null };
   });
 
   await stage("shared-source-keeps-requested-content-and-blockers-without-a-seed", async () => {

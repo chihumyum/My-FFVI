@@ -6,6 +6,7 @@ import io
 import json
 import math
 from pathlib import Path
+import re
 import shutil
 import tempfile
 from import_source import REPO, canonical, digest, source_ref, write_json
@@ -97,7 +98,58 @@ def character_rows(tables, requested=()):
     return result
 
 
-def export_battle(source: Path, out: Path, character_ids=(), encounter_ids=()):
+def battle_media_rows(tables, parties, all_monster_media=False, all_background_media=False):
+    """Media scope is independent of encounter selection and story rights.
+
+    The all scope reads the complete source master table, including monsters
+    which are absent from initial party members. The declaration lists masters,
+    not asset rows, bundle numbers or runtime combatants.
+    """
+    if type(all_monster_media) is not bool or type(all_background_media) is not bool:
+        raise ValueError('Invalid battle media selection mode')
+
+    def identity(value, table):
+        if (type(value) is not str or not re.fullmatch(r'[1-9][0-9]*', value) or
+                int(value) > 0x7fffffff):
+            raise ValueError(f'Invalid media source identity {table}:{value}')
+        return int(value)
+
+    def selected(table, values, all_rows):
+        rows = tables[table]
+        for value in values:
+            if len([r for r in rows if r['id'] == str(value)]) != 1:
+                raise ValueError(f'Unresolved {table}:{value}')
+        ids = [identity(r['id'], table) for r in rows] if all_rows else sorted(values)
+        if len(set(ids)) != len(ids):
+            raise ValueError('Duplicate media source identity: ' + table)
+        result = []
+        for value in sorted(ids):
+            found = [r for r in rows if r['id'] == str(value)]
+            if len(found) != 1:
+                raise ValueError(f'Unresolved {table}:{value}')
+            result.append(found[0])
+        return result
+
+    monster_ids = {identity(party[f'monster{i}'], 'monster.csv') for party in parties
+                   for i in range(1, 10) if party[f'monster{i}'] != '0'}
+    background_ids = {identity(party['battle_background_asset_id'], 'battle_background_asset.csv')
+                      for party in parties}
+    monsters = selected('monster.csv', monster_ids, all_monster_media)
+    backgrounds = selected('battle_background_asset.csv', background_ids, all_background_media)
+    selection = None
+    if all_monster_media or all_background_media:
+        selection = {'kind': 'media-selection-v1',
+                     'monsters': {'mode': 'all' if all_monster_media else 'encounters',
+                                  'masterIds': [int(row['id']) for row in monsters]},
+                     'backgrounds': {'mode': 'all' if all_background_media else 'encounters',
+                                     'masterIds': [int(row['id']) for row in backgrounds]}}
+    return monsters, backgrounds, selection
+
+
+def export_battle(source: Path, out: Path, character_ids=(), encounter_ids=(), *,
+                  all_monster_media=False, all_background_media=False):
+    if type(all_monster_media) is not bool or type(all_background_media) is not bool:
+        raise ValueError('Invalid battle media selection mode')
     import UnityPy
     parent = checked_snapshot(REPO / 'build/import')
     project = json.loads(parent['project.json'])
@@ -115,11 +167,19 @@ def export_battle(source: Path, out: Path, character_ids=(), encounter_ids=()):
         return found[0]
     parties = encounter_rows(project, tables, encounter_ids)
     party_ids = [int(party['id']) for party in parties]
-    monsters = [row('monster.csv', party[f'monster{i}']) for party in parties
-                for i in range(1, 10) if int(party[f'monster{i}'])]
+    # The default path deliberately keeps the v0.3 shape and selection behavior.
+    # Expanded media never broadens the source encounter request list above.
+    if all_monster_media or all_background_media:
+        monsters, backgrounds, media_selection = battle_media_rows(
+            tables, parties, all_monster_media, all_background_media)
+    else:
+        monsters = [row('monster.csv', party[f'monster{i}']) for party in parties
+                    for i in range(1, 10) if int(party[f'monster{i}'])]
+        backgrounds = [row('battle_background_asset.csv', p['battle_background_asset_id']) for p in parties]
+        media_selection = None
     characters = character_rows(tables, character_ids)
     names = {'bc_ff6_p022', 'monster_ai', 'battle_script', 'battleextradata', 'misc'}
-    names.update(row('battle_background_asset.csv', p['battle_background_asset_id'])['asset_name'] for p in parties)
+    names.update(background['asset_name'] for background in backgrounds)
     names.update(row('character_asset.csv', c['character_asset_id'])['asset_name'] for c in characters)
     names.update(row('monster_asset.csv', m['monster_asset_id'])['group_name'] for m in monsters)
     files = [one(name) for name in sorted(names)]
@@ -157,11 +217,14 @@ def export_battle(source: Path, out: Path, character_ids=(), encounter_ids=()):
                     **sprite_geometry(sprite, path)}
     for entry in sources:
         if digest(source / entry['file']) != entry['sha256']: raise ValueError('Source changed during export')
-    result = {'formatVersion': 1, 'adapterVersion': 'battle-0.3.0', 'parentSourceSetHash': project['sourceSetHash'],
+    result = {'formatVersion': 1, 'adapterVersion': 'battle-0.4.0' if media_selection else 'battle-0.3.0',
+        'parentSourceSetHash': project['sourceSetHash'],
         'characterIds': [int(c['id']) for c in characters],
         'encounterPartyIds': party_ids,
         'sourceSetHash': hashlib.sha256(canonical(sources).encode()).hexdigest(), 'sources': sources,
         'assets': assets, 'sprites': sprites, 'tableSources': table_sources}
+    if media_selection is not None:
+        result['mediaSelection'] = media_selection
     write_json(out / 'battle.json', result)
     write_json(out / 'snapshot.json', {'formatVersion': 1, 'files': [
         {'file': p.relative_to(out).as_posix(), 'sha256': digest(p)} for p in sorted(out.rglob('*')) if p.is_file()]})
@@ -175,11 +238,17 @@ def main():
                         help='Additional source character media identity; repeatable, does not change the party')
     parser.add_argument('--encounter-id', type=int, action='append', default=[],
                         help='Additional source encounter identity; repeatable, does not unlock story content')
+    parser.add_argument('--all-monster-media', action='store_true',
+                        help='Export media for every source monster master without selecting its encounter')
+    parser.add_argument('--all-background-media', action='store_true',
+                        help='Export every source battle background without selecting its encounter')
     args = parser.parse_args()
     staged = Path(tempfile.mkdtemp(prefix='.battle-', dir=REPO / 'build'))
     target = REPO / 'build/battle'; backup = REPO / 'build/.previous-battle'
     try:
-        result = export_battle(args.source.resolve(), staged, args.character_id, args.encounter_id)
+        result = export_battle(args.source.resolve(), staged, args.character_id, args.encounter_id,
+                              all_monster_media=args.all_monster_media,
+                              all_background_media=args.all_background_media)
         if backup.exists(): raise RuntimeError('Inspect interrupted build/.previous-battle first')
         if target.exists(): target.rename(backup)
         try: staged.rename(target)

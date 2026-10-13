@@ -115,9 +115,17 @@ try {
       escape: { kind: "framework-battle-escape-v1", id: "magic-point-candidate-escape" },
     },
   });
-  assert.equal(runtime.encounters[4], undefined);
+  const expandedMedia = media.mediaSelection?.monsters.mode === "all" && media.mediaSelection?.backgrounds.mode === "all";
+  if (expandedMedia) {
+    assert.ok(runtime.encounters[4]);
+    assert.equal(runtime.diagnostics.some(d => d.partyId === 4 && d.code === "asset-reference"), false);
+    assert.ok(runtime.diagnostics.some(d => d.partyId === 4 && d.kind === "runtime-dependency" &&
+      d.code === "ability-plan" && d.dependency?.id === 696));
+  } else {
+    assert.equal(runtime.encounters[4], undefined);
+    assert.ok(runtime.diagnostics.some(d => d.partyId === 4 && d.code === "asset-reference"));
+  }
   assert.ok(runtime.encounters[274]);
-  assert.ok(runtime.diagnostics.some(d => d.partyId === 4 && d.code === "asset-reference"));
   const { compileConditionResistances } = await load("compiler/condition-resistances");
   const sourceResistances = compileConditionResistances(reader, 749, sourceCatalog.common.conditions.rules.definitions);
   for (const enemy of runtime.encounters[274].enemies) {
@@ -132,8 +140,9 @@ try {
   assert.ok(runtime.diagnostics.some(d => d.partyId === 274 && d.code === "battle-flags" && d.kind === "development-omission"));
   assert.equal(runtime.diagnostics.some(d => ["battle-script", "battle-flags"].includes(d.code) && d.kind === "blocked"), false);
   report.candidateDiagnostics = runtime.diagnostics;
-  stage("source-candidates-bind-resistances-and-retain-media-and-latent-ability-blockers", {
+  stage("source-candidates-respect-declared-media-scope-and-retain-latent-ability-dependencies", {
     requested: selected.requestedPartyIds, report: runtime.report,
+    expandedMedia,
     resistanceGroup: 749, resistanceRows: sourceResistances.sources.map(row => row.source),
   });
 

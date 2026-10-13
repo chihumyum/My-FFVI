@@ -85,7 +85,9 @@ try {
     prepareStart: async (view) => {
       if (startGate) await startGate;
       if (preparationError) throw preparationError;
-      preparedViews++; return { encounterId: view.content.encounterId };
+      const mediaUrls = [...view.mediaUrls];
+      assert.ok(mediaUrls.length > 0, "Prepared encounter has no required media");
+      preparedViews++; return { encounterId: view.content.encounterId, mediaUrls };
     },
     prepareReturn: async (view) => {
       if (preparationError) throw preparationError;

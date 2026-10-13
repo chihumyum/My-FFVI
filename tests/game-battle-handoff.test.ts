@@ -15,7 +15,9 @@ function deferred<T>() {
 /** Real session/world/field/owned/battle implementations. Only asynchronous
  * host resources and fault observations are controlled by the tests. */
 function fixture() {
-  const data = checkpointFixture(), game = new GameSession(data.field, data.battle, 314, { battleHandoff: "prepared" });
+  const data = checkpointFixture();
+  data.battle.common.sprites.synthetic = { file: "synthetic.png", width: 16, height: 16 };
+  const game = new GameSession(data.field, data.battle, 314, { battleHandoff: "prepared" });
   const flow = new GameFlow(game); flow.start(); flow.advance(0, ready);
   const initial = game.checkpoint(), owned = game.state, before = owned.snapshot(), field = game.field;
   field.startEvent("fight");

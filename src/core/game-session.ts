@@ -32,6 +32,7 @@ import type { NewGameFieldLaunch, NewGameFieldPreparation } from "./new-game-fie
 import { FieldFadeState } from "./field-fade.js";
 import { cloneSourcePresentationContext, createSourcePresentationContext, type SourcePresentationContext } from "./source-presentation.js";
 import { assertSourceGameCatalog, assertSourceEntryProfiles } from "./source-catalog.js";
+import { battleMediaUrls } from "./game-content.js";
 import {
   checkpointKeys,
   checkpointInteger,
@@ -82,6 +83,9 @@ export type PreparedSessionBattleStart = {
    * remains private and is checked again before publication. */
   readonly request: SessionBattleRequest;
   readonly content: BattleContent;
+  /** Exact encounter, registered enemies and frozen owned-player media. The
+   * host reads a detached view while this candidate retains its entry lease. */
+  readonly mediaUrls: readonly string[];
   /** Sticky even after an exception: an already published owner may never be
    * treated as a retryable host preparation failure. */
   readonly publicationStarted: boolean;
@@ -505,7 +509,7 @@ export class GameSession {
     validateDependencies: () => void, preparePublication: () => ((beginPublication: () => void) => void), cleanup: () => void,
     outcome?: "victory" | "escaped", failure?: (error: unknown) => void,
   ): PreparedSessionBattleStart | PreparedSessionBattleReturn {
-    const requestView = structuredClone(entry.request);
+    const requestView = structuredClone(entry.request), owned = this.state;
     let publicationStarted = false;
     const operation: PendingBattleHandoff = { status: "prepared", discard: () => {} };
     const isPrepared = () => operation.status === "prepared" && this.pendingBattleHandoff === operation;
@@ -566,6 +570,11 @@ export class GameSession {
     return Object.freeze({ kind, ...(outcome === undefined ? {} : { outcome }),
       get request() { return structuredClone(requestView); },
       get content() { return structuredClone(entry.content); },
+      get mediaUrls() {
+        if (kind === "return") return [];
+        const players = owned.battlePlayers(entry.lease), borrow = owned.battlePlayerBorrow(entry.lease);
+        return battleMediaUrls(entry.content, [...players, ...(borrow?.candidates ?? [])]);
+      },
       get publicationStarted() { return publicationStarted; }, validate, commit, discard,
     }) as PreparedSessionBattleStart | PreparedSessionBattleReturn;
   }

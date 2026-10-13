@@ -1,6 +1,6 @@
 import type { FieldContent } from "../field/types.js";
 import type { WorldCatalog, WorldMapContent } from "../field/world.js";
-import type { BattleCatalog } from "./battle-content.js";
+import type { BattleCatalog, BattleContent, CombatantDefinition } from "./battle-content.js";
 import { verifyContent } from "./content-integrity.js";
 import type { GameCheckpoint, GameRestoreWorld } from "./game-session.js";
 import type { SourceNewGameContent } from "./source-new-game.js";
@@ -281,6 +281,37 @@ function fieldImageUrls(map: FieldContent["map"], characters: FieldContent["char
 
 export function fieldMediaUrls(field: FieldContent): string[] {
   return fieldImageUrls(field.map, field.characters, field.minimap);
+}
+
+/** One encounter's media closure. Registered late enemies and frozen borrowed
+ * players may enter without another host preparation, so their exact poses are
+ * included. Other sprites in the shared source library create no dependency. */
+export function battleMediaUrls(content: BattleContent,
+  players: readonly Pick<CombatantDefinition, "sprites" | "appearance">[] = content.players): string[] {
+  const keys = new Set<string>([content.background]);
+  let appearance = false;
+  for (const unit of [...players, ...content.enemies, ...Object.values(content.participants?.enemyDefinitions ?? {})]) {
+    text(unit.sprites.idle); keys.add(unit.sprites.idle);
+    if (unit.sprites.mount !== null) { text(unit.sprites.mount); keys.add(unit.sprites.mount); }
+    if (unit.appearance) {
+      appearance = true;
+      for (const key of Object.values(unit.appearance.bodySprites)) { text(key); keys.add(key); }
+    }
+  }
+  if (appearance) {
+    if (!content.battleAppearance) throw new Error("Battle appearance media provider is unavailable");
+    for (const key of Object.values(content.battleAppearance.armorSprites)) { text(key); keys.add(key); }
+  }
+  const files = new Set<string>();
+  for (const key of keys) {
+    if (!Object.hasOwn(content.sprites, key)) throw new Error("Missing battle media reference: " + key);
+    const sprite = content.sprites[key]!;
+    text(sprite.file);
+    if (!Number.isInteger(sprite.width) || sprite.width <= 0 || !Number.isInteger(sprite.height) || sprite.height <= 0)
+      throw new Error("Invalid battle media dimensions: " + key);
+    files.add(sprite.file);
+  }
+  return [...files];
 }
 
 export function sessionMediaUrls(field: FieldContent, battle: BattleCatalog): string[] {

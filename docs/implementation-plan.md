@@ -1,6 +1,8 @@
 # 实施计划
 
-当前系统批次 v62：公共姓名消息与敌方状态抗性。消息编译绑定完整来源姓名表，持有状态通过 live/draft 端口为正文、speaker 和全部分页准备同一快照；CT 只投影整条消息居中。敌人编译闭合 `condition_group` 与 condition master 引用，复用现有资格、施加、行动回滚和战斗 lease。35 组受控系统合同通过，独立来源路线仍 incomplete；见 [v62](systems-v62.md)。初始活动状态、特殊 AI、函数38及 native handoff 不因这些增量而放行。
+当前系统批次 v63：独立全敌人/背景媒体范围与按遭遇准备。显式 v0.4 声明扩大媒体选择，默认 v0.3 和六个遭遇保留；同一 lease 的当前/增援敌人、实际借用玩家和身体/魔导姿态构成本场闭包。app 按场加载，无关资源失败不阻断本场，必要失败复用原取消、固定入场重试及一次结算。本批2634项TypeScript测试及36组受控系统合同通过；来源路线仍incomplete；见 [v63](systems-v63.md)。177 个带非零初始状态的 master 仍无新增活动状态准入，函数38的13个能力仍未放行；原场景 camera 继续独立，Web 全游戏目标保持 active，HD-2D 暂停。
+
+此前系统批次 v62：公共姓名消息与敌方状态抗性。消息编译绑定完整来源姓名表，持有状态通过 live/draft 端口为正文、speaker 和全部分页准备同一快照；CT 只投影整条消息居中。敌人编译闭合 `condition_group` 与 condition master 引用，复用现有资格、施加、行动回滚和战斗 lease。35 组受控系统合同通过，独立来源路线仍 incomplete；见 [v62](systems-v62.md)。初始活动状态、特殊 AI、函数38及 native handoff 不因这些增量而放行。
 
 此前 v61：入战与返场阶段合同已通过受控系统骨架验收。原 session/lease/Flow 协调内容和媒体准备、取消、固定入场重试及一次奖励；候选就绪后才发布战斗，返场复用共享状态与字段事务。显式开发规则只 retain-field/omit intro，来源 native 交接仍未知，六个来源战斗请求保持 blocked，浏览器交接尚未验收。见 [v61](systems-v61.md)。
 

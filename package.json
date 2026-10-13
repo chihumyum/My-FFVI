@@ -76,6 +76,7 @@
     "systems:check": "npm run game:build && npm run battle:build && node scripts/check-system-integration.mjs",
     "framework:check": "npm run build && node scripts/check-game-framework.mjs",
     "battle-handoff:check": "npm run build && node scripts/check-game-framework.mjs --battle-handoff prepared --report build/reports/battle-handoff-framework-check.json",
+    "battle-media:check": "npm run build && node scripts/check-battle-media.mjs",
     "framework:verify": "npm run build && node scripts/check-framework-systems.mjs",
     "framework-io:check": "npm run build && node scripts/check-framework-io.mjs && node scripts/check-framework-lifecycle.mjs",
     "framework-entry:check": "npm run build && node scripts/check-game-entry-ui.mjs",

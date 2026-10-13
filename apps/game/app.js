@@ -657,7 +657,7 @@ async function init() {
       await audio.prepare(audioProjection(owner.field), owner.field.pendingAudioTracks);
       const content = candidate.content;
       if (!content.sprites[content.background]) throw new Error("战斗背景资源尚未迁移。");
-      await loadImages(new Set(Object.values(content.sprites).map(sprite => sprite.file)));
+      await loadImages(candidate.mediaUrls);
       return { kind: "battle" };
     },
     prepareReturn: async () => {

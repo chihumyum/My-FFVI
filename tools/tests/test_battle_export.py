@@ -1,9 +1,10 @@
 from pathlib import Path
+from copy import deepcopy
 import sys
 from types import SimpleNamespace as N
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'source_adapter'))
-from export_battle import full_rect_picture, character_rows, encounter_rows, sprite_geometry
+from export_battle import full_rect_picture, character_rows, encounter_rows, sprite_geometry, battle_media_rows
 
 
 class EncounterSelectionTests(unittest.TestCase):
@@ -55,6 +56,64 @@ class CharacterMediaTests(unittest.TestCase):
         tables = self.fixture()
         tables['character_status.csv'].append({'id': '4'})
         with self.assertRaises(ValueError): character_rows(tables)
+
+
+class BattleMediaSelectionTests(unittest.TestCase):
+    def fixture(self):
+        parties = [dict(id='700', battle_background_asset_id='8',
+                        **{f'monster{i}': '0' for i in range(1, 10)})]
+        parties[0]['monster2'] = '31'
+        parties[0]['monster8'] = '31'
+        return {'monster.csv': [{'id': '97'}, {'id': '4'}, {'id': '31'}],
+                'battle_background_asset.csv': [{'id': '9'}, {'id': '8'}]}, parties
+
+    def test_all_media_covers_nonparty_masters_without_broadening_the_encounter(self):
+        tables, parties = self.fixture()
+        before = deepcopy((tables, parties))
+        monsters, backgrounds, selection = battle_media_rows(tables, parties, True, True)
+        self.assertEqual([r['id'] for r in monsters], ['4', '31', '97'])
+        self.assertEqual([r['id'] for r in backgrounds], ['8', '9'])
+        self.assertEqual(selection, {'kind': 'media-selection-v1',
+            'monsters': {'mode': 'all', 'masterIds': [4, 31, 97]},
+            'backgrounds': {'mode': 'all', 'masterIds': [8, 9]}})
+        self.assertEqual((tables, parties), before)
+        self.assertEqual([party['id'] for party in parties], ['700'])
+
+    def test_modes_are_independent_and_default_does_not_add_a_declaration(self):
+        tables, parties = self.fixture()
+        monsters, backgrounds, selection = battle_media_rows(tables, parties)
+        self.assertEqual([r['id'] for r in monsters], ['31'])
+        self.assertEqual([r['id'] for r in backgrounds], ['8'])
+        self.assertIsNone(selection)
+        for all_monsters, all_backgrounds in [(True, False), (False, True)]:
+            _, _, selected = battle_media_rows(tables, parties, all_monsters, all_backgrounds)
+            self.assertEqual(selected['monsters'], {'mode': 'all', 'masterIds': [4, 31, 97]}
+                             if all_monsters else {'mode': 'encounters', 'masterIds': [31]})
+            self.assertEqual(selected['backgrounds'], {'mode': 'all', 'masterIds': [8, 9]}
+                             if all_backgrounds else {'mode': 'encounters', 'masterIds': [8]})
+
+    def test_all_scope_rejects_duplicate_and_invalid_even_unreferenced_master_rows(self):
+        for value in ['0', '-1', '04', '2147483648', 'not-an-id', 4, True]:
+            tables, parties = self.fixture()
+            tables['monster.csv'][0]['id'] = value
+            with self.assertRaisesRegex(ValueError, 'Invalid media source identity'):
+                battle_media_rows(tables, parties, True, False)
+        for table in ['monster.csv', 'battle_background_asset.csv']:
+            tables, parties = self.fixture()
+            tables[table].append(dict(tables[table][0]))
+            with self.assertRaisesRegex(ValueError, 'Duplicate media source identity'):
+                battle_media_rows(tables, parties, True, True)
+
+    def test_expansion_cannot_hide_a_missing_selected_party_reference(self):
+        for field in ['monster8', 'battle_background_asset_id']:
+            tables, parties = self.fixture()
+            parties[0][field] = '999'
+            with self.assertRaisesRegex(ValueError, 'Unresolved'):
+                battle_media_rows(tables, parties, True, True)
+        tables, parties = self.fixture()
+        for all_monsters, all_backgrounds in [(1, False), (True, 'all'), (None, False)]:
+            with self.assertRaisesRegex(ValueError, 'Invalid battle media selection mode'):
+                battle_media_rows(tables, parties, all_monsters, all_backgrounds)
 
 
 class BattleSpriteTests(unittest.TestCase):

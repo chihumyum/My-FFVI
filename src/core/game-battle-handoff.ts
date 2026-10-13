@@ -6,7 +6,7 @@ import type { GameSession, PreparedSessionBattleStart, PreparedSessionBattleRetu
   SessionBattleRequest } from "./game-session.js";
 
 export type GameBattleHandoffKind = "start" | "retry" | "return";
-export type GameBattleStartPresentation = Readonly<Pick<PreparedSessionBattleStart, "kind" | "request" | "content">>;
+export type GameBattleStartPresentation = Readonly<Pick<PreparedSessionBattleStart, "kind" | "request" | "content" | "mediaUrls">>;
 export type GameBattleReturnPresentation = Readonly<Pick<PreparedSessionBattleReturn, "kind" | "request" | "content" | "outcome">>;
 /** Hosts prepare private resources from detached data. They receive no core
  * transaction methods. A rejected prepare releases its own partial resources;
@@ -95,7 +95,8 @@ export class GameBattleHandoff<T> {
         ? await this.host.prepareReturn(Object.freeze({ kind: candidate.kind, outcome: candidate.outcome,
           request: candidate.request, content: candidate.content }))
         : await this.host.prepareStart(Object.freeze({ kind: candidate.kind,
-          request: candidate.request, content: candidate.content })) };
+          request: candidate.request, content: candidate.content,
+          get mediaUrls() { return candidate.mediaUrls; } })) };
       if (!this.isCurrent(attempt)) return this.cancelled(attempt);
       this.validateCandidateIdentity(attempt);
       candidate.validate();

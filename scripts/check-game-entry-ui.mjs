@@ -410,6 +410,20 @@ try {
     assert.equal(owner.battle.content.encounterId, 1000); assert.equal(h.$("battle-loading").hidden, true);
     assert.deepEqual(owner.state.snapshot(), before); assert.equal(owner.state.inBattle, true);
   });
+  await check("an unrelated library image failure does not enter this encounter's preparation dependency set", async () => {
+    const pack = await battlePackages(), unrelated = "/controlled/unrelated-enemy.png";
+    const expanded = structuredClone(pack.battle);
+    expanded.common.sprites.unused = { file: unrelated, width: 64, height: 64 };
+    pack.files.set("/game/battle.json", await seal(expanded));
+    const h = await host(pack); h.failedImages.add(unrelated);
+    await h.ready(); await h.$("start").onclick();
+    const owner = h.api.read().flow.currentSession;
+    assert.equal(owner.field.startEvent("fight"), true); await h.frame(10);
+    await eventually(() => !h.api.read().flow.busy && owner.battle, "Encounter waited for unrelated media");
+    assert.equal(h.calls.images.includes(unrelated), false);
+    assert.equal(owner.battle.content.encounterId, 1000);
+    assert.equal(h.api.read().failed, false); h.boundToCurrent();
+  });
   await check("battle audio decode failure keeps RAF alive and explicit repair retries the same owned field voice", async () => {
     const pack = await battlePackages(), bytes = Uint8Array.from([11, 29, 47, 61]), digest = sha(bytes);
     const track = { ...pack.initial.bgm.tracks[1], file: "/controlled/battle-audio.bin", sha256: digest, loop: null };

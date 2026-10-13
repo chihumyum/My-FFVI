@@ -18,6 +18,7 @@
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
 - [游戏系统框架与连续流程验收](docs/game-framework.md)
+- [v63 批量战斗媒体与本场资源准备](docs/systems-v63.md)
 - [v62 公共姓名消息与敌方状态抗性](docs/systems-v62.md)
 - [v61 共享入战准备、重试与返场](docs/systems-v61.md)
 - [v60 共享游戏目录与入口](docs/systems-v60.md)
@@ -107,11 +108,13 @@ npm run pipeline
 .venv/bin/python tools/source_adapter/export_field.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster"
 npm run game:check
 .venv/bin/python tools/source_adapter/export_battle.py --source "/absolute/path/to/Final.Fantasy.VI.Pixel.Remaster" \
+  --all-monster-media --all-background-media \
   --character-id 2 --character-id 3 --character-id 5 --character-id 6 --character-id 7 \
   --character-id 8 --character-id 11 --character-id 12 --character-id 13 --character-id 15 \
   --character-id 17 --character-id 18 --character-id 19 --character-id 26 --character-id 29 \
   --encounter-id 3002 --encounter-id 3035
 npm run battle-catalog:check
+npm run battle-media:check
 npm run playable:check
 npm run parameters:check
 npm run abilities:check

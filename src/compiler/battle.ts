@@ -56,9 +56,17 @@ const SourceFile = z.object({
   sha256: z.string(),
   bytes: z.number().int(),
 });
+const MediaMasterIds = z.array(z.number().int().positive().max(0x7fffffff)).superRefine((ids, context) => {
+  if (ids.some((id, index) => index > 0 && id <= ids[index - 1]!))
+    context.addIssue({ code: "custom", message: "Media master identities must be unique and strictly sorted" });
+});
+const MediaScope = z.object({ mode: z.enum(["all", "encounters"]), masterIds: MediaMasterIds }).strict();
+const MediaSelection = z.object({
+  kind: z.literal("media-selection-v1"), monsters: MediaScope, backgrounds: MediaScope,
+}).strict();
 const Export = z.object({
   formatVersion: z.literal(1),
-  adapterVersion: z.literal("battle-0.3.0"),
+  adapterVersion: z.enum(["battle-0.3.0", "battle-0.4.0"]),
   characterIds: z.array(z.number().int().positive()),
   parentSourceSetHash: z.string(),
   sourceSetHash: z.string(),
@@ -67,6 +75,13 @@ const Export = z.object({
   assets: z.record(z.string(), Asset),
   sprites: z.record(z.string(), Sprite),
   tableSources: z.record(z.string(), Source),
+  mediaSelection: MediaSelection.optional(),
+}).superRefine((value, context) => {
+  if (value.adapterVersion === "battle-0.3.0" && Object.hasOwn(value, "mediaSelection") ||
+      value.adapterVersion === "battle-0.4.0" && value.mediaSelection === undefined)
+    context.addIssue({ code: "custom", message: "Battle media selection does not match its adapter version" });
+  if (value.mediaSelection && value.mediaSelection.monsters.mode !== "all" && value.mediaSelection.backgrounds.mode !== "all")
+    context.addIssue({ code: "custom", message: "Expanded battle media requires an explicit all-master scope" });
 });
 const Tables = z.record(z.string(), z.array(z.record(z.string(), z.string())));
 type Tables = z.infer<typeof Tables>;
@@ -76,6 +91,90 @@ export type BattleRow = {
   values: Row;
   source: Source & { rowId: string };
 };
+
+/** Verify the media declaration against complete source tables and actual
+ * exported sprite references. No encounter, owned character or AI is admitted
+ * here. The v0.3 path has no new selection fields or table requirements. */
+export function validateBattleMediaSelection(raw: unknown, rawTables: unknown): void {
+  const battle = Export.parse(raw), selection = battle.mediaSelection;
+  if (selection === undefined) return;
+  const tables = Tables.parse(rawTables), indices = new Map<string, Map<number, Row>>();
+  const sourceIdentity = (value: string | undefined, label: string): number => {
+    let id: number;
+    try { id = tableInteger(value); }
+    catch { throw new Error("Invalid media source identity: " + label); }
+    if (id <= 0 || id > 0x7fffffff || value !== String(id))
+      throw new Error("Invalid media source identity: " + label);
+    return id;
+  };
+  const boundSource = (source: Source | undefined, label: string) => {
+    if (!source || !source.file || !source.serializedFile ||
+        !/^-?(0|[1-9]\d*)$/.test(source.objectId) || BigInt(source.objectId) === 0n ||
+        BigInt(source.objectId) < -0x8000000000000000n || BigInt(source.objectId) > 0x7fffffffffffffffn)
+      throw new Error("Invalid battle media source reference: " + label);
+    const files = battle.sources.filter(file => file.file === source.file || file.file.endsWith("/" + source.file));
+    if (files.length !== 1) throw new Error("Unbound battle media source reference: " + label);
+    return files[0]!;
+  };
+  const index = (table: string): Map<number, Row> => {
+    const existing = indices.get(table);
+    if (existing) return existing;
+    const source = battle.tableSources[table];
+    boundSource(source, table);
+    if (!source!.assetPath.endsWith("/" + table)) throw new Error("Changed battle media table source: " + table);
+    const rows = tables[table];
+    if (!rows) throw new Error("Missing battle media source table: " + table);
+    const result = new Map<number, Row>();
+    for (const row of rows) {
+      const id = sourceIdentity(row.id, table);
+      if (result.has(id)) throw new Error("Duplicate battle media source identity: " + table + ":" + id);
+      result.set(id, row);
+    }
+    indices.set(table, result);
+    return result;
+  };
+  const row = (table: string, id: number): Row => {
+    const found = index(table).get(id);
+    if (!found) throw new Error("Unresolved battle media source row: " + table + ":" + id);
+    return found;
+  };
+  if (new Set(battle.encounterPartyIds).size !== battle.encounterPartyIds.length)
+    throw new Error("Duplicate battle media encounter selection");
+  const parties = battle.encounterPartyIds.map(id => row("monster_party.csv", id));
+  const memberIds = new Set<number>(), backgroundIds = new Set<number>();
+  for (const party of parties) {
+    for (let slot = 1; slot <= 9; slot++) {
+      const value = party[`monster${slot}`];
+      if (value !== "0") memberIds.add(sourceIdentity(value, "monster_party.csv.monster" + slot));
+    }
+    backgroundIds.add(sourceIdentity(party.battle_background_asset_id, "monster_party.csv.background"));
+  }
+  const scope = (value: z.infer<typeof MediaScope>, table: string, referenced: Set<number>): Row[] => {
+    for (const id of referenced) row(table, id);
+    const expected = [...(value.mode === "all" ? index(table).keys() : referenced)].sort((a, b) => a - b);
+    if (!expected.length || JSON.stringify(expected) !== JSON.stringify(value.masterIds))
+      throw new Error("Battle media selection disagrees with source masters: " + table);
+    return value.masterIds.map(id => row(table, id));
+  };
+  const sprite = (suffix: string, group: string): void => {
+    if (!group || !/^[a-zA-Z0-9_]+$/.test(group)) throw new Error("Invalid battle media bundle group");
+    const matches = Object.entries(battle.sprites).filter(([path]) => path.toLowerCase().endsWith(suffix.toLowerCase()));
+    if (matches.length !== 1) throw new Error("Unresolved selected battle media sprite: " + suffix);
+    const [path, value] = matches[0]!, file = boundSource(value.source, path);
+    const bundleName = file.file.split("/").at(-1)!.toLowerCase();
+    if (value.source.assetPath !== path || !bundleName.startsWith(group.toLowerCase() + "_assets_all_") ||
+        !bundleName.endsWith(".bundle") || value.file !== "sprites/" + value.sha256 + ".png")
+      throw new Error("Changed selected battle media source binding: " + path);
+  };
+  for (const monster of scope(selection.monsters, "monster.csv", memberIds)) {
+    const asset = row("monster_asset.csv", sourceIdentity(monster.monster_asset_id, "monster.csv.monster_asset_id"));
+    if (!asset.asset_name || !/^[a-zA-Z0-9_]+$/.test(asset.asset_name))
+      throw new Error("Invalid monster media asset name");
+    sprite("/" + asset.group_name + "_" + asset.asset_name + ".png", asset.group_name!);
+  }
+  for (const background of scope(selection.backgrounds, "battle_background_asset.csv", backgroundIds))
+    sprite("/" + background.asset_name + ".png", background.asset_name!);
+}
 
 /** Identity, never array position or first-match, selects a source row. */
 export function battleTableIndex(
@@ -225,6 +324,7 @@ async function compileSourceData(root: string, includeCheckpoint: boolean) {
   const tables = Tables.parse(
     JSON.parse(snapshotFile(base, "tables.json").toString()),
   );
+  validateBattleMediaSelection(battle, tables);
   const {
     row,
     group: tableGroup,
