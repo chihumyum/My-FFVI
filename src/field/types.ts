@@ -36,6 +36,7 @@ import type { DevelopmentProfile } from "../core/development-profile.js";
 import type { FieldTransportationOp } from "../core/field-transportation-command.js";
 import type { FieldMessageTemplate } from "../core/field-message-template.js";
 import type { FrameworkWalkEncounterPolicy } from "../core/walk-encounters.js";
+import type { GameDevelopmentEntry } from "../core/game-development-entry.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -271,6 +272,8 @@ export type FieldContent = {
   /** Explicit development rules, never inferred from native step counters. */
   walkEncounters?: FrameworkWalkEncounterPolicy;
   developmentProfile?: DevelopmentProfile;
+  /** An explicit baseline relocation, never a source new-game route or seed. */
+  developmentEntry?: GameDevelopmentEntry;
   formatVersion: 1;
   kind: "field-development";
   sourceSetHash: string;

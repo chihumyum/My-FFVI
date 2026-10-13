@@ -7,7 +7,9 @@ export async function readSourceBatch(root, manifestPath, compiled = "dist") {
   const { ContentBatchManifest, planContentBatch } = await import(pathToFileURL(resolve(root, compiled, "src/compiler/content-batch.js")));
   const { GameContentRepository } = await import(pathToFileURL(resolve(root, compiled, "src/core/game-content.js")));
   const manifest = ContentBatchManifest.parse(JSON.parse(await readFile(resolve(root, manifestPath), "utf8")));
-  if (manifest.routes.some(route => route.entry !== "source-new-game")) throw new Error("Source batch CLI accepts only source-new-game entries");
+  const entryLane = manifest.routes[0].entry;
+  if (!["source-new-game", "development-map"].includes(entryLane) || manifest.routes.some(route => route.entry !== entryLane))
+    throw new Error("Source batch CLI accepts only source-new-game or development-map entries in one lane");
   const aliases = { "/game/battle.json": "/game/opening-playable.json", "/game/new-game.json": "/game/source-new-game.json" };
   const buildRoot = resolve(root, "build");
   const withinBuild = path => {
@@ -29,7 +31,13 @@ export async function readSourceBatch(root, manifestPath, compiled = "dist") {
     return JSON.parse(await readFile(file, "utf8"));
   };
   const repository = new GameContentRepository(read, manifest.profile, manifest.contentRefs);
-  const { content: entry, catalog, battle } = await repository.sourceNewGame();
+  let entry, catalog, battle;
+  if (entryLane === "development-map") {
+    if (manifest.profile !== "framework") throw new Error("Development map batch requires the framework profile");
+    const opening = await repository.opening();
+    if (!opening.development) throw new Error("Development map batch requires a declared map entry");
+    entry = opening.field; battle = opening.battle; catalog = opening.development.catalog;
+  } else ({ content: entry, catalog, battle } = await repository.sourceNewGame());
   const maps = await Promise.all(manifest.mapIds.map(id => {
     const ref = catalog.maps[id]; if (!ref) throw new Error(`No source package for declared map ${id}`);
     return repository.map(id, catalog);

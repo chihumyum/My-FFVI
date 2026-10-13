@@ -22,7 +22,8 @@ import { compileField } from "./compiler/field.js";
 import { compileOpeningBattle, compileSharedBattleSource } from "./compiler/battle.js";
 import { compileOpeningPlayable } from "./compiler/opening-playable.js";
 import { compileSharedGameCatalog } from "./compiler/game-catalog.js";
-import { compileCorpus, corpusMarkdown } from "./compiler/corpus.js";
+import { compileCorpus, corpusMarkdown, loadCorpus } from "./compiler/corpus.js";
+import { loadSystemMessages } from "./compiler/system-messages.js";
 
 const root = resolve(import.meta.dirname, "../..");
 const repo = root.endsWith(`${sep}dist`) ? dirname(root) : root;
@@ -265,7 +266,36 @@ async function main() {
     const { world } = await loadRegistries();
     const { project } = await loadImport();
     const context = Conditions.parse(extra.length ? JSON.parse(extra[1]!) : {});
-    const binding = project.regions.find((r) => r.id === target);
+    let binding = project.regions.find((r) => r.id === target);
+    if (!binding && world.regions.some((r) => r.id === target)) {
+      // Authored regions nominate a source area; the verified full tables and
+      // messages establish its binding without rewriting an imported project.
+      const facts = world.facts.filter((f) => f.subject === target && f.sourceSetHash === project.sourceSetHash &&
+        (f.status === "observed" || f.status === "verified") && Object.keys(f.when).length === 0);
+      const areas = facts.filter((f) => f.predicate === "source.areaId");
+      const names = facts.filter((f) => f.predicate === "source.nameKey");
+      if (areas.length !== 1 || names.length !== 1 || typeof areas[0]!.value !== "string" ||
+          !/^[1-9]\d*$/.test(areas[0]!.value) || typeof names[0]!.value !== "string")
+        throw new Error("Missing or ambiguous registry source area binding");
+      const corpus = await loadCorpus(repo);
+      if (corpus.manifest.parentSourceSetHash !== project.sourceSetHash)
+        throw new Error("Knowledge corpus/project source mismatch");
+      const rows = (corpus.tables["area.csv"] ?? []).filter((row) => row.id === areas[0]!.value);
+      if (rows.length !== 1 || rows[0]!.area_name !== names[0]!.value)
+        throw new Error("Registry area/message source binding mismatch");
+      const system = await loadSystemMessages(repo, project.sourceSetHash,
+        ImportedProject.shape.sources.parse(corpus.manifest.sources));
+      const localized = system.messages[rows[0]!.area_name!];
+      if (typeof localized !== "string" || !localized.length) throw new Error("Missing source area name");
+      binding = ImportedProject.shape.regions.element.parse({ id: target, areaId: rows[0]!.id,
+        nameKey: rows[0]!.area_name, names: { system_zhc: localized },
+        maps: (corpus.tables["map.csv"] ?? []).filter((row) => row.area_id === rows[0]!.id),
+        worldPhase: "unknown", evidence: [
+          { table: "area.csv", row: rows[0]!.id, sourceSetHash: corpus.sourceSetHash },
+          { table: "map.csv", filter: { area_id: rows[0]!.id }, sourceSetHash: corpus.sourceSetHash },
+          system.source,
+        ] });
+    }
     if (!binding) throw new Error(`Unknown target: ${target}`);
     const enriched = {
       ...world,

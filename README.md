@@ -18,6 +18,7 @@
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
 - [游戏系统框架与连续流程验收](docs/game-framework.md)
+- [v68 来源内容批次与开发地图入口](docs/systems-v68.md)
 - [v67 菜单与读档后连续游玩](docs/systems-v67.md)
 - [v66 可信内容包入口](docs/systems-v66.md)
 - [v65 公共内容执行与战斗决策](docs/systems-v65.md)

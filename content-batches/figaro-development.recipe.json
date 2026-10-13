@@ -1,0 +1,37 @@
+{
+  "kind": "development-content-batch-recipe-v1",
+  "id": "figaro-development",
+  "baseField": "game/narshe.json",
+  "battle": "content-batches/ordinary-battles/battle.json",
+  "world": "framework/world/catalog.json",
+  "startMap": 22,
+  "entrance": 1,
+  "manifest": {
+    "kind": "content-batch-manifest-v1",
+    "id": "figaro-development-roundtrip",
+    "profile": "framework",
+    "mapIds": [22, 23],
+    "roots": [{"kind": "entry", "mapId": 22, "entrance": 1, "continuation": null}],
+    "routes": [{
+      "id": "figaro-roundtrip",
+      "entry": "development-map",
+      "expectedMapId": 22,
+      "requiredMapIds": [22, 23],
+      "requiredEncounterIds": [],
+      "maxTicks": 6000,
+      "inputs": [
+        {"kind": "menu", "command": {"kind": "set-preferences", "preferences": {"mode": "wait", "speedIndex": 3}}},
+        {"kind": "move", "direction": "up"},
+        {"kind": "move", "direction": "up"},
+        {"kind": "move", "direction": "left"},
+        {"kind": "move", "direction": "left"},
+        {"kind": "move", "direction": "left"},
+        {"kind": "save-restore"},
+        {"kind": "menu", "command": {"kind": "change-party", "change": {"kind": "set-row", "position": 0, "row": "back"}}},
+        {"kind": "move", "direction": "up"}
+      ],
+      "choiceAnswers": [],
+      "battleAbilityIds": []
+    }]
+  }
+}

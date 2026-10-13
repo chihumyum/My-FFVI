@@ -1,0 +1,17 @@
+{
+  "kind": "battle-content-batch-declaration-v1",
+  "id": "ordinary-battles",
+  "parentSourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+  "battleSourceSetHash": "d713cd2b9b117321b895f480fbc32c93a1fe630ac269b2de9a40a5a885324856",
+  "baseCatalogRef": {
+    "url": "/game/opening-playable.json",
+    "contentHash": "ec5ef702e875bc3bab635855c1f2026cac4ac39f082860062a97fe4961f1b69f"
+  },
+  "partyIds": [3002, 517, 3362, 3398],
+  "handoff": {
+    "kind": "framework-battle-handoff-v1",
+    "id": "ordinary-battles-v68",
+    "audio": "retain-field",
+    "introduction": "omit"
+  }
+}

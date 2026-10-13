@@ -6,6 +6,7 @@ import type { GameCheckpoint, GameRestoreWorld } from "./game-session.js";
 import type { SourceNewGameContent } from "./source-new-game.js";
 import { assertSourceGameCatalog } from "./source-catalog.js";
 import { parseGameContentRefs, type GameContentProfile, type GameContentRefs } from "./game-content-refs.js";
+import { parseGameDevelopmentEntry, assertGameDevelopmentEntry } from "./game-development-entry.js";
 
 export type { GameContentProfile } from "./game-content-refs.js";
 
@@ -17,7 +18,8 @@ type ContentReader = <T extends HashedContent>(
   parse: (value: unknown) => T,
   expected?: string,
 ) => Promise<T>;
-type OpeningContent = { field: FieldContent; battle: BattleCatalog };
+type OpeningContent = { field: FieldContent; battle: BattleCatalog;
+  development?: { catalog: WorldCatalog; map: WorldMapContent } };
 export type SourceEntryContent = {
   content: SourceNewGameContent;
   catalog: WorldCatalog;
@@ -219,6 +221,8 @@ export class GameContentRepository {
             saved.battleCatalogHash !== initial.battle.contentHash ||
             saved.world.initialHash !== initial.field.contentHash)
           throw new Error("Game checkpoint source identity mismatch");
+        if (initial.development && saved.world.location === null)
+          throw new Error("Development map checkpoint requires a published map");
         result = { initial: initial.field, battle: initial.battle };
       } else {
         throw new Error("Unknown game checkpoint origin");
@@ -242,6 +246,13 @@ export class GameContentRepository {
     ]);
     if (field.sourceSetHash !== battle.common.fieldSourceSetHash)
       throw new Error("Field/battle source mismatch");
+    if (field.developmentEntry !== undefined) {
+      if (this.profile !== "framework") throw new Error("Development map entry requires the framework profile");
+      const entry = parseGameDevelopmentEntry(field.developmentEntry), catalog = await this.readWorld(read);
+      const map = await this.readMap(read, entry.startMap, catalog);
+      await assertGameDevelopmentEntry(field, battle, catalog, map);
+      return { field, battle, development: { catalog, map } };
+    }
     return { field, battle };
   }
 

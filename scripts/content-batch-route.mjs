@@ -13,10 +13,10 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
   const route = candidates[0];
   const load = name => import(pathToFileURL(resolve(root, compiled, "src/core", name + ".js")));
   const [{ GameSession }, { GameFlow }, { GameMapLoader }, { CheckpointStorage }, { GameEventSaveCoordinator },
-    { GameEntryLoader }, { GameBattleHandoff }, { GameCommands },
+    { GameEntryLoader }, { GameBattleHandoff }, { GameCommands }, { prepareGameDevelopmentEntry },
     { NewGameFieldEntry }, { FieldFadeState }, { createSourcePresentationContext }, { contentDigest }] = await Promise.all([
     load("game-session"), load("game-flow"), load("game-map-loader"), load("saved-game"), load("game-event-save"),
-    load("game-entry-loader"), load("game-battle-handoff"), load("game-commands"),
+    load("game-entry-loader"), load("game-battle-handoff"), load("game-commands"), load("game-development-entry"),
     load("new-game-field-entry"), load("field-fade"), load("source-presentation"), load("content-integrity"),
   ]);
   const runtime = { ...controlledAudioRuntime(), battleHandoff: "prepared",
@@ -28,7 +28,8 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
   const receipt = { kind: "content-batch-route-receipt-v1", routeId: route.id,
     manifestHash: plan.manifestHash, dependencyHash: plan.dependencyHash, runtimeHash,
     contentHashes: structuredClone(plan.contentHashes), profile: plan.manifest.profile,
-    lane: route.entry === "source-new-game" ? "source-profile" : "synthetic-controlled",
+    lane: route.entry === "source-new-game" ? "source-profile" :
+      route.entry === "development-map" ? "source-content-development" : "synthetic-controlled",
     result: "blocked", visitedMapIds: [], completedEncounterIds: [], finalMapId: route.expectedMapId,
     checkpointReady: false, saveRestored: false,
     controls: ["10ms headless host; media and audio output immediately ready", "in-memory real checkpoint codec/storage",
@@ -128,11 +129,20 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
       started = startAttempt.commit({ session: game, presentation: { mapId: map.mapId } });
     } else {
       started = await startAttempt.prepare(async context => {
-        const { field, battle } = await repository.opening();
+        const { field, battle, development } = await repository.opening();
         assert.ok(context.isCurrent(), "Route entry was cancelled");
         assert.equal(field.contentHash, plan.contentHashes.entry); assert.equal(battle.contentHash, plan.contentHashes.battle);
-        return { session: new GameSession(field, battle, 314, runtime),
-          presentation: { mapId: field.map.identity.mapId } };
+        let session;
+        if (route.entry === "development-map") {
+          assert.ok(development, "Declared development map entry is missing its trusted dependencies");
+          bound("world", development.catalog); bound(`map:${development.map.mapId}`, development.map);
+          session = await prepareGameDevelopmentEntry(field, battle, development.catalog, development.map, runtime, 314);
+          assert.ok(context.isCurrent(), "Development map entry became obsolete");
+        } else {
+          assert.equal(development, undefined, "A controlled fixture cannot borrow a development map entry");
+          session = new GameSession(field, battle, 314, runtime);
+        }
+        return { session, presentation: { mapId: session.field.content.map.identity.mapId } };
       });
     }
     if (started.status !== "committed") throw started.error ?? new Error("Route entry did not commit: " + started.status);

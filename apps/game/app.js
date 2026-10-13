@@ -4,6 +4,7 @@ import { PartyView } from "./party-view.js";
 import { ChoiceView } from "./choice-view.js";
 import { ShopView } from "./shop-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
+import { prepareGameDevelopmentEntry } from "/runtime/core/game-development-entry.js";
 import { GameFlow } from "/runtime/core/game-flow.js";
 import { GameCommands } from "/runtime/core/game-commands.js";
 import { GameEntryLoader } from "/runtime/core/game-entry-loader.js";
@@ -250,8 +251,11 @@ async function reset() {
       const current = () => { if (!context.isCurrent()) throw new Error("Game entry cancelled"); };
       audio.reset();
       await audio.unlock(); current();
-      const { field, battle } = await contents.opening(); current();
-      const candidate = new GameSession(field, battle, undefined, runtime);
+      const { field, battle, development } = await contents.opening(); current();
+      const candidate = development
+        ? await prepareGameDevelopmentEntry(field, battle, development.catalog, development.map, runtime)
+        : new GameSession(field, battle, undefined, runtime);
+      current();
       if (preferences) candidate.setBattlePreferences(preferences);
       await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks); current();
       await loadImages(fieldMediaUrls(candidate.field.content)); current();

@@ -25,9 +25,68 @@
         "选择一个短镜头并补齐外部模型、动画、材质与音频引用。",
         "确认时间线时钟、后处理、结束与跳过的状态回写。"
       ]
+    },
+    {
+      "id": "figaro",
+      "name": "费加罗城",
+      "aliases": ["Figaro Castle"],
+      "questions": [
+        "世界阶段及剧情可达条件尚未验证；不得把未知剧情旗标初始化为零。",
+        "先验证来源地图22与23的原始入口和双向出口，再按实际内容依赖扩大范围。",
+        "NPC sc_e_0278读取ScenarioFlag1[138/142]；开发基线保留未知值，交互边界单独记录。"
+      ]
     }
   ],
   "facts": [
+    {
+      "id": "figaro:area-binding",
+      "subject": "figaro",
+      "predicate": "source.areaId",
+      "value": "11",
+      "when": {},
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "area.csv:/id/11",
+        "master_assets_all_159cb96e89e23e924e3e0fc0ec6bce68.bundle:sha256=f74afe69fb8350bec9098625524f12870951d314f07cdf0965377ecda6c05f28",
+        "targets/figaro.md"
+      ]
+    },
+    {
+      "id": "figaro:area-name-binding",
+      "subject": "figaro",
+      "predicate": "source.nameKey",
+      "value": "MSG_MAP_NAME_14",
+      "when": {},
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "area.csv:/id/11/area_name",
+        "Assets/GameAssets/Serial/Data/Message/system_zhc.txt:MSG_MAP_NAME_14",
+        "message_assets_all_fde15d81747b2848d05c3e00b62f3c15.bundle:objectId=-861354918745446785:sha256=c8a0d43bf8f7c0bf3e55e418ed022e43b8808e711d72b4459c8d538634afe1b9",
+        "targets/figaro.md"
+      ]
+    },
+    {
+      "id": "figaro:map22-binding",
+      "subject": "figaro",
+      "predicate": "source.map.22",
+      "value": "Map_20051_1; asset_name=map_20051; area_id=11; script_id=22",
+      "when": {},
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": ["map.csv:/id/22", "targets/figaro.md"]
+    },
+    {
+      "id": "figaro:map23-binding",
+      "subject": "figaro",
+      "predicate": "source.map.23",
+      "value": "Map_20051_2; asset_name=map_20051; area_id=11; script_id=23",
+      "when": {},
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": ["map.csv:/id/23", "targets/figaro.md"]
+    },
     {
       "id": "narshe:magitek-condition-reference",
       "subject": "narshe",

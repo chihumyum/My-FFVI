@@ -17,12 +17,15 @@ const compiled = resolve(root, args[1] ?? "dist");
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const runtime = (name) => import(pathToFileURL(resolve(compiled, "src/core", name + ".js")).href);
 const [{ contentDigest }, { GameSession }, { NewGameFieldEntry }, { FieldFadeState },
-  { createSourcePresentationContext }, { CheckpointStorage }, { sourceNewGameFixture }, { checkpointFixture }] =
+  { createSourcePresentationContext }, { CheckpointStorage }, { sourceNewGameFixture }, { checkpointFixture },
+  { contentBatchProgramFixture }, { compileDevelopmentMapEntry }] =
   await Promise.all([
     runtime("content-integrity"), runtime("game-session"), runtime("new-game-field-entry"),
     runtime("field-fade"), runtime("source-presentation"), runtime("saved-game"),
     import(pathToFileURL(resolve(compiled, "tests/fixtures/source-new-game.js")).href),
     import(pathToFileURL(resolve(compiled, "tests/fixtures/checkpoint-game.js")).href),
+    import(pathToFileURL(resolve(compiled, "tests/fixtures/content-batch-program.js")).href),
+    import(pathToFileURL(resolve(compiled, "src/compiler/development-map-entry.js")).href),
   ]);
 const app = await readFile(resolve(root, "apps/game/app.js"), "utf8");
 const audio = await readFile(resolve(root, "apps/game/audio.js"), "utf8");
@@ -35,6 +38,7 @@ const report = { formatVersion: 1, kind: "controlled-game-entry-ui-check", resul
     "Content, DOM, fetch, image decode, WebAudio and renderer/menu widgets are controlled fixtures",
     "Event-save scenarios author a Web barrier and control setItem failure or real digest completion; no session or save coordinator is mocked",
     "Widget constructor bindings and publication are checked; this is not browser pixels, audible output or source-story acceptance",
+    "Development-map checks use two authored synthetic maps; helper observation delegates to the real implementation and establishes no source-region coverage",
   ] };
 await mkdir(resolve(reportPath, ".."), { recursive: true });
 await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n");
@@ -101,6 +105,28 @@ async function battlePackages() {
   fixture.battle.common.sprites.synthetic = { file: "/controlled/battle-preparation.png", width: 32, height: 32 };
   const initial = await seal(fixture.field), battle = await seal(fixture.battle);
   return { initial, battle, files: new Map([["/game/content.json", initial], ["/game/battle.json", battle]]) };
+}
+/** Authored two-map content, not a source-region fixture. Distinct media prove
+ * the app prepares its relocated map instead of the retained baseline map. */
+async function developmentMapPackages() {
+  const { packages } = contentBatchProgramFixture();
+  const { developmentProfile: _profile, ...baseline } = structuredClone(packages.entry);
+  baseline.map.textures = { controlled: "/controlled/development-baseline-map.png" };
+  const baseField = await seal(baseline), battle = await seal(packages.battle);
+  const target = structuredClone(packages.maps[1]);
+  target.map.textures = { controlled: "/controlled/development-target-map.png" };
+  const map = await seal(target), world = structuredClone(packages.catalog);
+  world.maps[String(map.mapId)].contentHash = map.contentHash;
+  const catalog = await seal(world), initial = await compileDevelopmentMapEntry({ baseField, baseBattle: battle, catalog, map, entrance: 1 });
+  const prefix = "/content-packages/development-map", refs = {
+    kind: "game-content-refs-v1", profile: "framework",
+    world: { url: `${prefix}/world.json`, contentHash: catalog.contentHash }, source: null,
+    development: { entry: { url: `${prefix}/entry.json`, contentHash: initial.contentHash },
+      battle: { url: `${prefix}/battle.json`, contentHash: battle.contentHash } },
+  };
+  const files = new Map([["/content-packages/development-map.json", refs], [refs.world.url, catalog],
+    [refs.development.entry.url, initial], [refs.development.battle.url, battle], [catalog.maps[String(map.mapId)].url, map]]);
+  return { initial, battle, catalog, map, baseField, refs, files };
 }
 function eventProgress(owner) {
   return {
@@ -208,7 +234,7 @@ const audioBody = audioModule.body.replace(/\bexport (?=class |function )/g, "")
 
 async function host(pack, { slots = new Map(), failBinding = false, search = "" } = {}) {
   const calls = { json: [], images: [], audio: [], audioDecodes: [], audioStarts: [], views: [],
-    frameCallbacks: [], writes: 0, writeAttempts: 0, audioContexts: 0 };
+    frameCallbacks: [], writes: 0, writeAttempts: 0, audioContexts: 0, developmentEntries: [] };
   const storageFault = { error: null };
   const failedUrls = new Set(), failedImages = new Set(), heldUrls = new Map(), heldImages = new Map();
   const failedAudioDecodes = new Set();
@@ -288,7 +314,14 @@ async function host(pack, { slots = new Map(), failBinding = false, search = "" 
     sync(battle) { if (this.name === "BattleView") this.instance = battle; }
     draw() {} overview() {} keyboard() {} back() { return false; }
   };
-  const context = vm.createContext({ ...coreBindings, ...bindings, document, Image, AudioContext,
+  const observedCore = { ...coreBindings, prepareGameDevelopmentEntry: async (...parameters) => {
+    const candidate = await coreBindings.prepareGameDevelopmentEntry(...parameters);
+    calls.developmentEntries.push({ baselineMap: parameters[0].map.identity.mapId,
+      destinationMap: candidate.field.content.map.identity.mapId,
+      entryHash: parameters[0].contentHash, initialItems: candidate.state.snapshot().items });
+    return candidate;
+  } };
+  const context = vm.createContext({ ...observedCore, ...bindings, document, Image, AudioContext,
     window: { addEventListener(name, fn) { listeners.set(name, fn); } },
     location: { search }, URLSearchParams, Map, WeakSet, Set, structuredClone, crypto: webcrypto,
     console, performance: { now: () => now },
@@ -348,12 +381,24 @@ async function host(pack, { slots = new Map(), failBinding = false, search = "" 
   }
   return { api, ready, frame, sourceStarted, boundToCurrent, observed, calls, slots, storageFault,
     visibility(hidden) { document.hidden = hidden; listeners.get("visibilitychange")(); },
+    key(code) {
+      listeners.get("keydown")({ code, target: nodes.get("game"), repeat: false, preventDefault() {} });
+      listeners.get("keyup")({ code });
+    },
     failedUrls, failedImages, failedAudioDecodes, heldUrls, heldImages, $: (id) => document.getElementById(id) };
 }
 async function check(name, body) { await body(); report.tests.push({ name, pass: true }); }
 function stored(h) {
   return new CheckpointStorage({ getItem: (key) => h.slots.get(key) ?? null,
-    setItem() { throw new Error("The test's save inspector must never write"); } });
+    setItem() { throw new Error("The test's save inspector must never write"); } }, h.api.read().contentProfile);
+}
+async function moveInApp(h, code) {
+  const owner = h.api.read().flow.session, before = { x: owner.field.player.x, y: owner.field.player.y };
+  h.key(code);
+  assert.ok(owner.field.player.motion, "The actual key handler must start admitted movement");
+  for (let i = 0; i < 10 && owner.field.player.motion; i++) await h.frame(50);
+  assert.equal(owner.field.player.motion, null);
+  assert.notDeepEqual({ x: owner.field.player.x, y: owner.field.player.y }, before);
 }
 async function eventSaveFinished(h) {
   await eventually(() => !h.api.read().flow.busy && h.$("event-saving").hidden,
@@ -479,6 +524,126 @@ try {
     assert.match(h.$("entry-error").textContent, /Content identity mismatch/);
     assert.ok(h.calls.json.every(url => url === "/content-packages/custom.json" ||
       url === p.refs.development.entry.url || url === p.refs.development.battle.url));
+  });
+  await check("a synthetic development-map title reads only its trusted references and keeps source start unavailable", async () => {
+    const p = await developmentMapPackages(), h = await host(p, { search: "?package=development-map" });
+    await h.ready();
+    assert.deepEqual(h.calls.json, ["/content-packages/development-map.json"]);
+    assert.equal(h.api.read().contentProfile, "framework"); assert.equal(h.api.read().flow.currentSession, null);
+    assert.equal(h.$("source-start").hidden, true); assert.equal(h.$("source-start").disabled, true);
+    assert.deepEqual(h.calls.developmentEntries, []); assert.deepEqual(h.calls.images, []);
+  });
+  await check("the actual app uses the public development helper and prepares the destination renderer and media", async () => {
+    const p = await developmentMapPackages(), h = await host(p, { search: "?package=development-map" });
+    await h.ready(); await h.$("start").onclick(); h.boundToCurrent();
+    const owner = h.api.read().flow.session;
+    assert.equal(owner.field.content.map.identity.mapId, p.map.mapId);
+    assert.notEqual(owner.field.content.map.identity.mapId, p.baseField.map.identity.mapId);
+    assert.equal(owner.state.initialization, "development-checkpoint");
+    assert.equal(h.calls.developmentEntries.length, 1);
+    assert.deepEqual(h.calls.developmentEntries[0], { baselineMap: 1, destinationMap: 2,
+      entryHash: p.initial.contentHash, initialItems: [{ id: 10, count: 1 }] });
+    assert.equal(h.api.read().renderer.args[1], owner.field.content);
+    assert.equal(h.calls.images.includes("/controlled/development-target-map.png"), true);
+    assert.equal(h.calls.images.includes("/controlled/development-baseline-map.png"), false);
+    const wanted = new Set(["/content-packages/development-map.json", p.refs.world.url,
+      p.refs.development.entry.url, p.refs.development.battle.url, p.catalog.maps[2].url]);
+    assert.ok(h.calls.json.every(url => wanted.has(url)), "No opening or source fallback may initialize a development map");
+  });
+  await check("development-map initialization reaches the actual pause menu and save with the derived entry origin", async () => {
+    const p = await developmentMapPackages(), h = await host(p, { search: "?package=development-map" });
+    await h.ready(); await h.$("start").onclick(); await h.frame(0);
+    const owner = h.api.read().flow.session;
+    assert.equal(owner.field.entrySynchronized, true); assert.equal(owner.menuReady, true); assert.equal(owner.checkpointReady, true);
+    assert.equal(owner.field.eventState.read({ category: "ScenarioFlag1", index: 9 }), 1);
+    assert.deepEqual(owner.state.snapshot().items, [{ id: 10, count: 1 }]);
+    h.$("menu-button").onclick();
+    assert.equal(h.api.read().flow.paused, true); assert.equal(h.api.read().commands.menuReady, true);
+    assert.equal(h.$("pause").hidden, false); assert.equal(h.$("save-game").disabled, false);
+    await h.$("save-game").onclick(); const saved = await stored(h).load(); assert.ok(saved);
+    assert.deepEqual(saved.checkpoint, owner.checkpoint());
+    assert.equal(saved.checkpoint.origin.kind, "development-checkpoint");
+    assert.equal(saved.checkpoint.world.initialHash, p.initial.contentHash);
+    assert.equal(saved.checkpoint.world.location.mapId, 2);
+    assert.equal(saved.checkpoint.world.location.catalogHash, p.catalog.contentHash);
+  });
+  await check("saving away from PointIn and moving again restores that exact position without another relocation or initializer", async () => {
+    const p = await developmentMapPackages(), h = await host(p, { search: "?package=development-map" });
+    await h.ready(); await h.$("start").onclick(); await h.frame(0);
+    await moveInApp(h, "ArrowDown");
+    const old = h.api.read().flow.session;
+    assert.deepEqual([old.field.player.x, old.field.player.y], [1, 2]);
+    h.$("menu-button").onclick(); await h.$("save-game").onclick();
+    const saved = await stored(h).load(), bytes = [...h.slots], writes = h.calls.writes; assert.ok(saved);
+    h.$("resume").onclick(); await moveInApp(h, "ArrowDown");
+    assert.deepEqual([old.field.player.x, old.field.player.y], [1, 3]);
+    h.$("menu-button").onclick(); await h.$("load-game").onclick(); h.boundToCurrent();
+    const restored = h.api.read().flow.session;
+    assert.notEqual(restored, old); assert.equal(h.api.read().flow.paused, true);
+    assert.deepEqual([restored.field.player.x, restored.field.player.y], [1, 2]);
+    assert.notDeepEqual([restored.field.player.x, restored.field.player.y], [p.initial.developmentEntry.pointIn.x, p.initial.developmentEntry.pointIn.y]);
+    assert.deepEqual(restored.checkpoint(), saved.checkpoint);
+    assert.deepEqual(restored.state.snapshot().items, [{ id: 10, count: 1 }]);
+    assert.equal(restored.field.eventState.read({ category: "ScenarioFlag1", index: 9 }), 1);
+    assert.equal(h.calls.developmentEntries.length, 1, "Restore must use the save origin, not the start relocation helper");
+    assert.deepEqual([...h.slots], bytes); assert.equal(h.calls.writes, writes);
+    const time = restored.field.time; await h.frame(50);
+    assert.equal(restored.field.time, time, "The loaded owner remains paused until Continue");
+  });
+  await check("a development-map world pin failure keeps the published owner, pause and stored bytes", async () => {
+    const p = await developmentMapPackages(), h = await host(p, { search: "?package=development-map" });
+    await h.ready(); await h.$("start").onclick(); await h.frame(0);
+    h.$("menu-button").onclick(); await h.$("save-game").onclick();
+    const old = h.api.read().flow.session, checkpoint = old.checkpoint(), bytes = [...h.slots], calls = h.calls.developmentEntries.length;
+    const altered = structuredClone(p.catalog); altered.limitations.push("Controlled changed world");
+    p.files.set(p.refs.world.url, await seal(altered)); h.api.read().contents.clear();
+    await h.$("restart").onclick();
+    assert.equal(h.api.read().flow.session, old); assert.equal(h.api.read().flow.paused, true);
+    assert.equal(h.api.read().failed, false); assert.deepEqual(old.checkpoint(), checkpoint);
+    assert.deepEqual([...h.slots], bytes); assert.equal(h.calls.developmentEntries.length, calls);
+    assert.match(h.$("entry-error").textContent, /Content identity mismatch/); h.boundToCurrent();
+  });
+  await check("a development-map pin failure on restore preserves the live owner instead of reentering the scene", async () => {
+    const p = await developmentMapPackages(), h = await host(p, { search: "?package=development-map" });
+    await h.ready(); await h.$("start").onclick(); await h.frame(0);
+    h.$("menu-button").onclick(); await h.$("save-game").onclick();
+    const old = h.api.read().flow.session, checkpoint = old.checkpoint(), bytes = [...h.slots];
+    const altered = structuredClone(p.map); altered.name = "Controlled changed destination";
+    p.files.set(p.catalog.maps[2].url, await seal(altered)); h.api.read().contents.clear();
+    await h.$("load-game").onclick();
+    assert.equal(h.api.read().flow.session, old); assert.equal(h.api.read().flow.paused, true);
+    assert.equal(h.api.read().failed, false); assert.deepEqual(old.checkpoint(), checkpoint);
+    assert.deepEqual([...h.slots], bytes); assert.equal(h.calls.developmentEntries.length, 1);
+    assert.match(h.$("entry-error").textContent, /存档.*版本不同/); h.boundToCurrent();
+  });
+  await check("signed but invalid embedded world or map pins reject a development-map start without fallback or store writes", async () => {
+    for (const pin of ["worldHash", "mapHash"]) {
+      const p = await developmentMapPackages(), bad = structuredClone(p.initial);
+      bad.developmentEntry[pin] = "0".repeat(64);
+      p.initial = await seal(bad); p.refs.development.entry.contentHash = p.initial.contentHash;
+      p.files.set(p.refs.development.entry.url, p.initial);
+      const slots = new Map([["untouched", "original"]]), h = await host(p, { search: "?package=development-map", slots });
+      await h.ready(); await h.$("start").onclick();
+      assert.equal(h.api.read().flow.currentSession, null); assert.equal(h.api.read().flow.phase, "title");
+      assert.equal(h.api.read().failed, false); assert.match(h.$("entry-error").textContent, /dependency identity mismatch/);
+      assert.deepEqual(h.calls.developmentEntries, []); assert.deepEqual(h.calls.images, []);
+      assert.deepEqual([...slots], [["untouched", "original"]]); assert.equal(h.calls.writeAttempts, 0);
+    }
+  });
+  await check("cancelled development-map media cannot publish its relocated private owner after another start", async () => {
+    const p = await developmentMapPackages(), slots = new Map([["untouched", "original"]]),
+      h = await host(p, { search: "?package=development-map", slots }), held = deferred();
+    await h.ready(); h.heldImages.set("/controlled/development-target-map.png", held);
+    const pending = h.$("start").onclick(); await h.observed("images", "/controlled/development-target-map.png");
+    assert.equal(h.calls.developmentEntries.length, 1); assert.equal(h.api.read().flow.currentSession, null);
+    h.$("cancel-entry-load").onclick(); assert.equal(h.api.read().flow.phase, "title");
+    held.resolve(); h.heldImages.clear(); await pending;
+    assert.equal(h.api.read().flow.currentSession, null); assert.deepEqual([...slots], [["untouched", "original"]]);
+    await h.$("start").onclick(); await h.frame(0); h.boundToCurrent();
+    assert.equal(h.calls.developmentEntries.length, 2);
+    assert.equal(h.api.read().flow.session.field.content.map.identity.mapId, 2);
+    assert.deepEqual(h.api.read().flow.session.state.snapshot().items, [{ id: 10, count: 1 }]);
+    assert.deepEqual([...slots], [["untouched", "original"]]); assert.equal(h.calls.writeAttempts, 0);
   });
   await check("battle media is deferred until the selected encounter and a failed decode retains its request for one explicit retry", async () => {
     const h = await host(await battlePackages()); await h.ready(); await h.$("start").onclick();
@@ -857,7 +1022,7 @@ try {
     assert.equal(h.calls.writes, writeBaseline); assert.equal(h.calls.writeAttempts, attemptBaseline);
   });
   report.runtimeSha256 = Object.fromEntries(await Promise.all([
-    "game-session", "game-flow", "game-commands", "game-entry-loader", "game-content", "game-content-refs", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint", "game-battle-handoff",
+    "game-session", "game-flow", "game-commands", "game-entry-loader", "game-content", "game-content-refs", "game-development-entry", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint", "game-battle-handoff",
   ].map(async (name) => [name, sha(await readFile(resolve(compiled, `src/core/${name}.js`)))])));
   report.result = "passed";
 } catch (error) {

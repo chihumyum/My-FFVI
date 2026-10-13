@@ -5,6 +5,8 @@ import type { BattleCatalog } from "../core/battle-content.js";
 import type { SourceNewGameContent } from "../core/source-new-game.js";
 import { parseGameContentRefs } from "../core/game-content-refs.js";
 import { parseGameMenuCommand } from "../core/game-menu-command.js";
+import { parseGameDevelopmentEntry, validateGameDevelopmentEntryBindings,
+  gameDevelopmentEntryBaseline } from "../core/game-development-entry.js";
 import { hash, canonical } from "./content.js";
 import { analyzeContentDependencies } from "./content-dependencies.js";
 import { analyzeBatchEncounters } from "./content-batch-battle.js";
@@ -46,7 +48,7 @@ export const ContentBatchManifest = z.object({
   contentRefs: contentRefs.optional(),
   mapIds: z.array(id).min(1), roots: z.array(root).min(1),
   routes: z.array(z.object({
-    id: name, entry: z.enum(["source-new-game", "controlled-fixture"]),
+    id: name, entry: z.enum(["source-new-game", "controlled-fixture", "development-map"]),
     expectedMapId: id, requiredMapIds: z.array(id).min(1), requiredEncounterIds: z.array(id),
     maxTicks: z.number().int().positive().max(1000000),
     inputs: z.array(input), choiceAnswers: z.array(z.number().int().nonnegative()),
@@ -102,12 +104,22 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
     throw new Error("Batch source profile cannot omit battle lifecycle scripts");
   if (entry.parentSourceSetHash !== catalog.parentSourceSetHash)
     throw new Error("Batch entry/world source mismatch");
+  let developmentStart: { mapId: number; entrance: number } | null = null;
   if (entry.kind === "source-new-game-content-v1") {
     if (entry.worldCatalogHash !== catalog.contentHash || entry.battleCatalogHash !== battle.contentHash ||
         entry.sourceSetHash !== catalog.sourceSetHash ||
         maps.find(m => m.mapId === entry.entry.mapId)?.contentHash !== entry.mapContentHash)
       throw new Error("Batch source entry binding mismatch");
     if (manifest.routes.some(r => r.entry !== "source-new-game")) throw new Error("Batch entry lane mismatch");
+  } else if (entry.developmentEntry !== undefined) {
+    if (!framework) throw new Error("Batch development entry requires the framework profile");
+    if (manifest.routes.some(r => r.entry !== "development-map")) throw new Error("Batch development entry lane mismatch");
+    const descriptor = parseGameDevelopmentEntry(entry.developmentEntry);
+    const initialMap = maps.find(m => m.mapId === descriptor.startMap);
+    if (!initialMap) throw new Error("Batch development entry start map is not declared");
+    const bound = validateGameDevelopmentEntryBindings(entry, battle, catalog, initialMap);
+    verify(gameDevelopmentEntryBaseline(entry, catalog));
+    developmentStart = { mapId: bound.startMap, entrance: bound.entrance };
   } else {
     if (manifest.routes.some(r => r.entry !== "controlled-fixture") || entry.sourceSetHash !== battle.common.fieldSourceSetHash)
       throw new Error("Batch controlled entry binding mismatch");
@@ -134,9 +146,11 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
     for (const encounterId of route.requiredEncounterIds)
       if (!dependencies.encounterIds.includes(encounterId)) diagnostics.push({ code: "BATCH_ROUTE_OUTSIDE_ENCOUNTERS", reason: `${route.id} requires unscanned encounter ${encounterId}` });
   }
-  const entryMap = entry.kind === "source-new-game-content-v1" ? entry.entry.mapId : entry.map.identity!.mapId;
+  const entryMap = entry.kind === "source-new-game-content-v1" ? entry.entry.mapId :
+    developmentStart?.mapId ?? entry.map.identity!.mapId;
   if (!manifest.roots.some(r => r.mapId === entryMap && (entry.kind !== "source-new-game-content-v1" ||
-      r.kind === "entry" && r.entrance === entry.entry.entrance && r.continuation === entry.entry.reservedScript.name)))
+      r.kind === "entry" && r.entrance === entry.entry.entrance && r.continuation === entry.entry.reservedScript.name) &&
+      (developmentStart === null || r.kind === "entry" && r.entrance === developmentStart.entrance && r.continuation === null)))
     diagnostics.push({ code: "BATCH_ENTRY_UNSCANNED", reason: "The launched entry is absent from dependency roots" });
   const contentHashes: Record<string, string> = { entry: entry.contentHash, world: catalog.contentHash, battle: battle.contentHash,
     ...Object.fromEntries([...maps].sort((a, b) => a.mapId - b.mapId).map(m => [`map:${m.mapId}`, m.contentHash])) };
