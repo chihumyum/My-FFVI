@@ -33,6 +33,9 @@ const server = http.createServer(async (req, res) => {
     } else if (url.pathname === "/game/source-catalog.json") {
       base = resolve(root, "build/game");
       relative = "source-catalog.json";
+    } else if (url.pathname.startsWith("/content-packages/")) {
+      base = resolve(root, "build/content-packages");
+      relative = decodeURIComponent(url.pathname.slice("/content-packages/".length));
     } else if (url.pathname.startsWith("/framework/")) {
       base = resolve(root, "build/framework");
       relative = decodeURIComponent(url.pathname.slice("/framework/".length));

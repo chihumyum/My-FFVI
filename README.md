@@ -18,6 +18,7 @@
 - [按共用能力批量迁移](docs/batch-migration.md)
 - [核心机制现状与优先次序](docs/core-mechanics.md)
 - [游戏系统框架与连续流程验收](docs/game-framework.md)
+- [v66 可信内容包入口](docs/systems-v66.md)
 - [v65 公共内容执行与战斗决策](docs/systems-v65.md)
 - [v64 统一游戏入口与用户命令](docs/systems-v64.md)
 - [v63 批量战斗媒体与本场资源准备](docs/systems-v63.md)

@@ -84,6 +84,8 @@
     "game-commands:check": "npm run build && node scripts/check-game-commands-ui.mjs",
     "event-save:check": "npm run build && node scripts/check-event-save.mjs && node scripts/check-event-save-source.mjs",
     "framework:build": "npm run build && node scripts/build-framework-content.mjs",
+    "content-packages:build": "npm run build && node scripts/build-content-packages.mjs",
+    "content-packages:check": "npm run content-packages:build && node scripts/check-content-packages.mjs",
     "framework-route:check": "npm run framework:build && node scripts/check-framework-route.mjs",
     "field-move-area:check": "npm run build && node scripts/check-field-move-area.mjs",
     "battle-event-context:check": "npm run battle:build && node scripts/check-battle-event-context-native.mjs && node scripts/check-battle-event-context.mjs",

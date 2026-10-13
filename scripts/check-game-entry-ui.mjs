@@ -63,6 +63,21 @@ async function packages() {
   ]);
   return { initial, battle, content, catalog, map, files };
 }
+function referencedPackages(pack, { source = true, development = true, id = "custom" } = {}) {
+  const prefix = `/content-packages/${id}`, files = new Map(pack.files);
+  const reference = (name, payload) => {
+    const url = `${prefix}/${name}.json`; files.set(url, payload);
+    return { url, contentHash: payload.contentHash };
+  };
+  const refs = { kind: "game-content-refs-v1", profile: "source", world: reference("world", pack.catalog),
+    source: source ? { entry: reference("source-entry", pack.content), battle: reference("source-battle", pack.battle) } : null,
+    development: development ? { entry: reference("development-entry", pack.initial),
+      battle: reference("development-battle", pack.files.get("/game/battle.json")) } : null };
+  for (const url of ["/game/content.json", "/game/battle.json", "/game/new-game.json",
+    "/game/source-catalog.json", "/world/catalog.json"]) files.delete(url);
+  files.set(`/content-packages/${id}.json`, refs);
+  return { ...pack, refs, files, packageId: id };
+}
 const beforeEventSave = { category: "ScenarioFlag1", index: 3 };
 const afterEventSave = { category: "ScenarioFlag1", index: 4 };
 async function eventPackages() {
@@ -186,12 +201,12 @@ assert.equal((appModule.body.match(/init\(\)\.catch\(failure\);/g) ?? []).length
   "Capture the real app's one initialization promise without calling init twice");
 const appBody = appModule.body.replace("init().catch(failure);", "globalThis.__init = init().catch(failure);") + `
 globalThis.__entry = {
-  read: () => ({ flow, commands, entryLoader, game, sourceBoot, entryLoad, failed, battleView, inventoryView, renderer, images, battleLoadAttempt }),
+  read: () => ({ flow, commands, entryLoader, contents, contentReady, contentProfile, game, sourceBoot, entryLoad, failed, battleView, inventoryView, renderer, images, battleLoadAttempt }),
   reset, startSourceGame, loadGame, returnToTitle, loadBattle, cancelBattleLoad, frame
 };`;
 const audioBody = audioModule.body.replace(/\bexport (?=class |function )/g, "");
 
-async function host(pack, { slots = new Map(), failBinding = false } = {}) {
+async function host(pack, { slots = new Map(), failBinding = false, search = "" } = {}) {
   const calls = { json: [], images: [], audio: [], audioDecodes: [], audioStarts: [], views: [],
     frameCallbacks: [], writes: 0, writeAttempts: 0, audioContexts: 0 };
   const storageFault = { error: null };
@@ -275,7 +290,7 @@ async function host(pack, { slots = new Map(), failBinding = false } = {}) {
   };
   const context = vm.createContext({ ...coreBindings, ...bindings, document, Image, AudioContext,
     window: { addEventListener(name, fn) { listeners.set(name, fn); } },
-    location: { search: "" }, URLSearchParams, Map, WeakSet, Set, structuredClone, crypto: webcrypto,
+    location: { search }, URLSearchParams, Map, WeakSet, Set, structuredClone, crypto: webcrypto,
     console, performance: { now: () => now },
     requestAnimationFrame(fn) { calls.frameCallbacks.push(fn); },
     localStorage: { getItem: (key) => slots.get(key) ?? null,
@@ -398,6 +413,72 @@ try {
     assert.deepEqual(h.calls.json, []); assert.deepEqual(h.calls.images, []);
     assert.equal(h.$("source-start").disabled, false);
     assert.equal(h.$("start").disabled, false);
+  });
+  await check("a nominated content package loads only its references before publishing any game owner", async () => {
+    const p = referencedPackages(await packages()), h = await host(p, { search: "?package=custom" });
+    await h.ready();
+    assert.deepEqual(h.calls.json, ["/content-packages/custom.json"]);
+    assert.deepEqual(h.calls.images, []); assert.equal(h.api.read().flow.currentSession, null);
+    assert.equal(h.api.read().contentReady, true); assert.equal(h.api.read().contentProfile, "source");
+    assert.equal(h.$("start").textContent, "进入开发片段");
+  });
+  await check("source-only package starts and restores through its pinned roots without a development fallback", async () => {
+    const p = referencedPackages(await packages(), { development: false }), saved = await sourceSave(p);
+    const h = await host(p, { search: "?package=custom", slots: saved.slots }); await h.ready();
+    assert.equal(h.$("start").hidden, true); assert.equal(h.$("start").disabled, true);
+    await h.api.reset(); assert.deepEqual(h.calls.json, ["/content-packages/custom.json"]);
+    await h.$("source-start").onclick(); const old = await h.sourceStarted(); h.boundToCurrent();
+    await h.$("load-start").onclick();
+    assert.notEqual(h.api.read().flow.currentSession, old); h.boundToCurrent();
+    assert.equal(h.api.read().flow.paused, true);
+    assert.deepEqual(h.api.read().flow.session.checkpoint(), saved.checkpoint);
+    const wanted = new Set(["/content-packages/custom.json", p.refs.world.url,
+      p.refs.source.entry.url, p.refs.source.battle.url, p.catalog.maps[p.map.mapId].url]);
+    assert.ok(h.calls.json.every(url => wanted.has(url)), "No legacy root may satisfy a missing custom dependency");
+    assert.equal(h.calls.writeAttempts, 0);
+  });
+  await check("development-only package uses the same entry and save flow while its source entry stays unavailable", async () => {
+    const p = referencedPackages(await packages(), { source: false }), h = await host(p, { search: "?package=custom" });
+    await h.ready(); assert.equal(h.$("source-start").hidden, true); assert.equal(h.$("source-start").disabled, true);
+    await h.api.startSourceGame(); assert.deepEqual(h.calls.json, ["/content-packages/custom.json"]);
+    await h.$("start").onclick(); const old = h.api.read().flow.session; h.boundToCurrent();
+    h.$("menu-button").onclick(); await h.$("save-game").onclick();
+    const checkpoint = old.checkpoint(); await h.$("load-game").onclick();
+    assert.notEqual(h.api.read().flow.session, old); assert.equal(h.api.read().flow.paused, true);
+    assert.deepEqual(h.api.read().flow.session.checkpoint(), checkpoint); h.boundToCurrent();
+    assert.deepEqual(new Set(h.calls.json), new Set(["/content-packages/custom.json",
+      p.refs.development.entry.url, p.refs.development.battle.url]));
+  });
+  await check("invalid package identity cannot load a default entry or touch saved bytes", async () => {
+    const p = await packages(), slots = new Map([["untouched", "original"]]);
+    const h = await host(p, { search: "?package=../source", slots });
+    await assert.rejects(h.ready(), /Invalid content package identity/);
+    assert.deepEqual(h.calls.json, []); assert.equal(h.api.read().flow.currentSession, null);
+    await h.api.reset(); await h.api.startSourceGame();
+    assert.deepEqual(h.calls.json, []); assert.deepEqual([...slots], [["untouched", "original"]]);
+  });
+  await check("explicit profile conflict and malformed references reject the package before gameplay", async () => {
+    for (const malformed of [false, true]) {
+      const p = referencedPackages(await packages());
+      if (malformed) p.files.set("/content-packages/custom.json", { ...p.refs, world: { ...p.refs.world, url: "//other/world.json" } });
+      const h = await host(p, { search: malformed ? "?package=custom" : "?package=custom&profile=framework" });
+      await assert.rejects(h.ready(), malformed ? /Invalid game content reference URL/ : /Content package profile mismatch/);
+      assert.deepEqual(h.calls.json, ["/content-packages/custom.json"]);
+      assert.equal(h.api.read().flow.currentSession, null); assert.equal(h.calls.writeAttempts, 0);
+    }
+  });
+  await check("a custom entry revision fails its host pin and retains the current owner, pause and saved progress", async () => {
+    const p = referencedPackages(await packages(), { source: false }), h = await host(p, { search: "?package=custom" });
+    await h.ready(); await h.$("start").onclick(); h.$("menu-button").onclick(); await h.$("save-game").onclick();
+    const old = h.api.read().flow.session, checkpoint = old.checkpoint(), bytes = [...h.slots];
+    const changed = structuredClone(p.initial); changed.entry.player.x += 1;
+    p.files.set(p.refs.development.entry.url, await seal(changed)); h.api.read().contents.clear();
+    await h.api.reset();
+    assert.equal(h.api.read().flow.session, old); assert.equal(h.api.read().flow.paused, true);
+    assert.deepEqual(old.checkpoint(), checkpoint); assert.deepEqual([...h.slots], bytes);
+    assert.match(h.$("entry-error").textContent, /Content identity mismatch/);
+    assert.ok(h.calls.json.every(url => url === "/content-packages/custom.json" ||
+      url === p.refs.development.entry.url || url === p.refs.development.battle.url));
   });
   await check("battle media is deferred until the selected encounter and a failed decode retains its request for one explicit retry", async () => {
     const h = await host(await battlePackages()); await h.ready(); await h.$("start").onclick();
@@ -776,7 +857,7 @@ try {
     assert.equal(h.calls.writes, writeBaseline); assert.equal(h.calls.writeAttempts, attemptBaseline);
   });
   report.runtimeSha256 = Object.fromEntries(await Promise.all([
-    "game-session", "game-flow", "game-commands", "game-entry-loader", "game-content", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint", "game-battle-handoff",
+    "game-session", "game-flow", "game-commands", "game-entry-loader", "game-content", "game-content-refs", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint", "game-battle-handoff",
   ].map(async (name) => [name, sha(await readFile(resolve(compiled, `src/core/${name}.js`)))])));
   report.result = "passed";
 } catch (error) {

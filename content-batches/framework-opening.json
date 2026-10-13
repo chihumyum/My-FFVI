@@ -2,17 +2,53 @@
   "kind": "content-batch-manifest-v1",
   "id": "framework-opening-to-field",
   "profile": "framework",
-  "mapIds": [609, 3, 178],
-  "roots": [{ "kind": "entry", "mapId": 609, "entrance": 1, "continuation": "sc_e_0001" }],
-  "routes": [{
-    "id": "new-game-to-stable-field",
-    "entry": "source-new-game",
-    "expectedMapId": 3,
-    "requiredMapIds": [609, 3, 178],
-    "requiredEncounterIds": [],
-    "maxTicks": 12000,
-    "inputs": [],
-    "choiceAnswers": [],
-    "battleAbilityIds": []
-  }]
+  "mapIds": [
+    609,
+    3,
+    178
+  ],
+  "roots": [
+    {
+      "kind": "entry",
+      "mapId": 609,
+      "entrance": 1,
+      "continuation": "sc_e_0001"
+    }
+  ],
+  "routes": [
+    {
+      "id": "new-game-to-stable-field",
+      "entry": "source-new-game",
+      "expectedMapId": 3,
+      "requiredMapIds": [
+        609,
+        3,
+        178
+      ],
+      "requiredEncounterIds": [],
+      "maxTicks": 12000,
+      "inputs": [],
+      "choiceAnswers": [],
+      "battleAbilityIds": []
+    }
+  ],
+  "contentRefs": {
+    "development": null,
+    "kind": "game-content-refs-v1",
+    "profile": "framework",
+    "source": {
+      "battle": {
+        "contentHash": "29e767835fcb58181ae347b73e4b7b71406dcd2f01b902d1845aa40dbf629b70",
+        "url": "/content-packages/source/battle.json"
+      },
+      "entry": {
+        "contentHash": "e5bae2d81a215ae339a3ed1f76809d979bc413e4a5cfa2573362eea4736f77e0",
+        "url": "/content-packages/framework/entry.json"
+      }
+    },
+    "world": {
+      "contentHash": "7fee63ad02f49f44c158ab0ca3cbb8739cfa185b5c7918116ae717d693c94c61",
+      "url": "/content-packages/framework/world.json"
+    }
+  }
 }

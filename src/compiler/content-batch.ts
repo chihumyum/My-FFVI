@@ -3,6 +3,7 @@ import type { WorldCatalog, WorldMapContent } from "../field/world.js";
 import type { FieldContent } from "../field/types.js";
 import type { BattleCatalog } from "../core/battle-content.js";
 import type { SourceNewGameContent } from "../core/source-new-game.js";
+import { parseGameContentRefs } from "../core/game-content-refs.js";
 import { hash, canonical } from "./content.js";
 import { analyzeContentDependencies } from "./content-dependencies.js";
 import { analyzeBatchEncounters } from "./content-batch-battle.js";
@@ -18,11 +19,21 @@ const input = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("move"), direction: z.enum(["up", "right", "down", "left"]) }).strict(),
   z.object({ kind: z.literal("confirm") }).strict(),
 ]);
+// The runtime and compiler consume one reference contract. The manifest does
+// not authorize another URL/profile shape or silently fill omitted lanes.
+const contentRefs = z.unknown().transform((value, context) => {
+  try { return parseGameContentRefs(value); }
+  catch (error) {
+    context.addIssue({ code: "custom", message: error instanceof Error ? error.message : String(error) });
+    return z.NEVER;
+  }
+});
 /** Authored routing metadata, never a source-data or saved-state replacement.
  * Inputs are public player actions, dispatched one at a time at stable fields. */
 export const ContentBatchManifest = z.object({
   kind: z.literal("content-batch-manifest-v1"), id: name,
   profile: z.enum(["source", "framework"]),
+  contentRefs: contentRefs.optional(),
   mapIds: z.array(id).min(1), roots: z.array(root).min(1),
   routes: z.array(z.object({
     id: name, entry: z.enum(["source-new-game", "controlled-fixture"]),
@@ -57,6 +68,15 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
     unique(route.battleAbilityIds, "battle input");
   }
   for (const item of [catalog, ...maps, battle, entry]) verify(item);
+  if (manifest.contentRefs) {
+    const refs = manifest.contentRefs;
+    if (refs.profile !== manifest.profile) throw new Error("Batch content references profile mismatch");
+    if (refs.world.contentHash !== catalog.contentHash) throw new Error("Batch world reference/hash mismatch");
+    const lane = entry.kind === "source-new-game-content-v1" ? refs.source : refs.development;
+    if (lane === null) throw new Error("Batch content references omit the required entry lane");
+    if (lane.entry.contentHash !== entry.contentHash || lane.battle.contentHash !== battle.contentHash)
+      throw new Error("Batch entry/battle reference/hash mismatch");
+  }
   if (maps.length !== manifest.mapIds.length || maps.some(m => !manifest.mapIds.includes(m.mapId)))
     throw new Error("Batch packages must match the declared maps exactly");
   const framework = manifest.profile === "framework";
@@ -110,7 +130,8 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
     diagnostics.push({ code: "BATCH_ENTRY_UNSCANNED", reason: "The launched entry is absent from dependency roots" });
   const contentHashes: Record<string, string> = { entry: entry.contentHash, world: catalog.contentHash, battle: battle.contentHash,
     ...Object.fromEntries([...maps].sort((a, b) => a.mapId - b.mapId).map(m => [`map:${m.mapId}`, m.contentHash])) };
-  const dependencyHash = hash({ contentHashes, dependencies, encounters, diagnostics });
+  const dependencyHash = hash({ contentHashes, dependencies, encounters, diagnostics,
+    ...(manifest.contentRefs ? { contentRefs: manifest.contentRefs } : {}) });
   return { kind: "content-batch-plan-v1" as const, manifest, manifestHash: hash(manifest), dependencyHash,
     contentHashes, dependencies, encounters, diagnostics,
     runtimeAdmission: "unassessed" as const, sourceCampaignComplete: false as const };

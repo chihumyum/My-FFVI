@@ -11,6 +11,7 @@ import { GameMapLoader } from "/runtime/core/game-map-loader.js";
 import { GameBattleHandoff } from "/runtime/core/game-battle-handoff.js";
 import { GameEventSaveCoordinator } from "/runtime/core/game-event-save.js";
 import { GameContentRepository, fieldMediaUrls, sourceEntryMediaUrls } from "/runtime/core/game-content.js";
+import { parseGameContentRefs } from "/runtime/core/game-content-refs.js";
 import { NewGameFieldEntry } from "/runtime/core/new-game-field-entry.js";
 import { FieldFadeState, fieldFadeOverlay } from "/runtime/core/field-fade.js";
 import { createSourcePresentationContext } from "/runtime/core/source-presentation.js";
@@ -53,16 +54,18 @@ const attemptedBattleStarts = new WeakSet();
 let hasSave = false,
   hasPreviousSave = false;
 const query = new URLSearchParams(location.search);
-const contentProfile = query.get("profile") === "framework" ? "framework" : "source";
+let contentProfile = query.get("profile") === "framework" ? "framework" : "source";
+let contentReady = !query.has("package");
 const checkpointStorage = () => new CheckpointStorage(localStorage, contentProfile);
 const images = new Map(),
   loading = new WeakSet();
 const audio = new AudioOutput();
-const contents = new GameContentRepository(async (url) => {
+const readGameJson = async (url) => {
   const response = await fetch(url);
   if (!response.ok) throw new Error("游戏内容载入失败，请确认本地内容已经构建。");
   return response.json();
-}, contentProfile);
+};
+let contents = new GameContentRepository(readGameJson, contentProfile);
 const runtime = { battleHandoff: "prepared", audioReadiness: { isReady: (track) => audio.isReady(track) },
   soundPresentation: { isPresented: (voice, track) => audio.isSoundPresented(voice, track) },
   // Source DateTime.Now.Ticks is local wall time. Keep its Int64 as a string.
@@ -237,7 +240,7 @@ function bindSession(candidate, views) {
   showLimitations();
 }
 async function reset() {
-  if (failed || flow.busy) return;
+  if (!contentReady || !contents.hasDevelopmentEntry || failed || flow.busy) return;
   const outgoingOwner = flow.currentSession;
   const operation = beginEntryLoad("new-game", "正在准备开发片段…");
   const preferences = flow.currentSession?.battlePreferences;
@@ -266,7 +269,7 @@ async function reset() {
   } finally { finishEntryLoad(operation); }
 }
 async function startSourceGame() {
-  if (failed || flow.busy || sourceBoot) return;
+  if (!contentReady || !contents.hasSourceEntry || failed || flow.busy || sourceBoot) return;
   const operation = beginEntryLoad("new-game", "正在准备新游戏…");
   try {
     audio.reset();
@@ -663,6 +666,7 @@ function failure(error) {
   $("load-error").hidden = false;
   $("load-error").textContent = String(error.message ?? error);
   $("start").disabled = true;
+  $("source-start").disabled = true;
   $("start").textContent = "载入失败";
   text("status", "发生错误，已停止运行。");
 }
@@ -673,6 +677,19 @@ async function init() {
     // These views borrow immutable media and own no private GPU or audio resources.
     discard: () => {},
   });
+  if (query.has("package")) {
+    const packageId = query.get("package");
+    if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(packageId ?? ""))
+      throw new Error("Invalid content package identity");
+    // The host selects an authored same-origin package. Saved state never
+    // supplies its URLs or changes the declared source/development profile.
+    const refs = parseGameContentRefs(await readGameJson(`/content-packages/${packageId}.json`));
+    if (query.has("profile") && refs.profile !== contentProfile)
+      throw new Error("Content package profile mismatch");
+    contentProfile = refs.profile;
+    contents = new GameContentRepository(readGameJson, contentProfile, refs);
+    contentReady = true;
+  }
   if (
     preview &&
     (!Number.isInteger(preview.mapId) ||
@@ -730,10 +747,14 @@ async function init() {
       "直接检查来源地图、移动和入口事件。沿用开发队伍；未设置未知剧情状态，不代表该地图已从主线可达。",
     );
   }
-  $("start").disabled = false;
-  $("source-start").disabled = false;
+  $("start").hidden = !contents.hasDevelopmentEntry;
+  $("source-start").hidden = !contents.hasSourceEntry;
+  $("restart").hidden = !contents.hasDevelopmentEntry;
+  $("retry").hidden = !contents.hasDevelopmentEntry;
+  $("start").disabled = !contents.hasDevelopmentEntry;
+  $("source-start").disabled = !contents.hasSourceEntry;
   await refreshSaveInfo();
-  text("start", preview ? "进入地图预览" : "进入纳尔谢");
+  text("start", preview ? "进入地图预览" : query.has("package") ? "进入开发片段" : "进入纳尔谢");
   sync();
   text("status", "选择开始游戏或继续本地进度。");
   requestAnimationFrame(frame);
@@ -873,6 +894,9 @@ function syncSaveControls() {
   $("load-previous").disabled = failed || flow.busy || !hasPreviousSave;
   for (const id of ["resume", "restart", "start", "source-start", "return-title"])
     $(id).disabled = failed || flow.busy;
+  $("start").disabled ||= !contentReady || !contents.hasDevelopmentEntry;
+  $("restart").disabled ||= !contentReady || !contents.hasDevelopmentEntry;
+  $("source-start").disabled ||= !contentReady || !contents.hasSourceEntry;
   $("stop-title-return").disabled = failed;
   $("cancel-entry-load").disabled = failed;
   $("save-game").title = owner?.checkpointReady
@@ -959,6 +983,7 @@ async function saveEventProgress() {
   }
 }
 async function loadGame(previous) {
+  if (!contentReady) return;
   if (failed || flow.busy) return;
   const outgoingOwner = flow.currentSession;
   const operation = beginEntryLoad("load", "正在读取进度…");

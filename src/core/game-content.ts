@@ -5,9 +5,13 @@ import { verifyContent } from "./content-integrity.js";
 import type { GameCheckpoint, GameRestoreWorld } from "./game-session.js";
 import type { SourceNewGameContent } from "./source-new-game.js";
 import { assertSourceGameCatalog } from "./source-catalog.js";
+import { parseGameContentRefs, type GameContentProfile, type GameContentRefs } from "./game-content-refs.js";
+
+export type { GameContentProfile } from "./game-content-refs.js";
 
 type HashedContent = { contentHash: string };
-export type GameContentProfile = "source" | "framework";
+type ContentReference = { url: string; contentHash?: string };
+type EntryReferences = { entry: ContentReference; battle: ContentReference };
 type ContentReader = <T extends HashedContent>(
   url: string,
   parse: (value: unknown) => T,
@@ -100,12 +104,42 @@ export class GameContentRepository {
   private readonly cache = new Map<string, Promise<HashedContent>>();
   private readonly worldUrl: string;
   private readonly newGameUrl: string;
+  private readonly references: GameContentRefs | undefined;
 
   constructor(private readonly loadJson: (url: string) => Promise<unknown>,
-    private readonly profile: GameContentProfile = "source") {
+    private readonly profile: GameContentProfile = "source", refs?: GameContentRefs) {
     if (profile !== "source" && profile !== "framework") throw new Error("Unknown game content profile");
+    this.references = refs === undefined ? undefined : parseGameContentRefs(refs);
+    if (this.references && this.references.profile !== profile) throw new Error("Game content references profile mismatch");
     this.worldUrl = profile === "framework" ? "/framework/world/catalog.json" : "/world/catalog.json";
     this.newGameUrl = profile === "framework" ? "/framework/new-game.json" : "/game/new-game.json";
+  }
+
+  get hasSourceEntry(): boolean { return this.references?.source !== null; }
+  get hasDevelopmentEntry(): boolean { return this.references?.development !== null; }
+
+  private worldReference(): ContentReference {
+    return this.references === undefined ? { url: this.worldUrl } : this.references.world;
+  }
+
+  private entryReferences(kind: "source" | "development"): EntryReferences {
+    if (this.references === undefined) return kind === "source"
+      ? { entry: { url: this.newGameUrl }, battle: { url: "/game/source-catalog.json" } }
+      : { entry: { url: "/game/content.json" }, battle: { url: "/game/battle.json" } };
+    const references = this.references[kind];
+    if (references === null) throw new Error("Game content " + kind + " entry is unavailable");
+    return references;
+  }
+
+  private pinnedExpected(reference: ContentReference, expected?: string): string | undefined {
+    if (reference.contentHash !== undefined && expected !== undefined && reference.contentHash !== expected)
+      throw new Error("Game content host pin identity mismatch");
+    return reference.contentHash ?? expected;
+  }
+
+  private readWorld(read: ContentReader): Promise<WorldCatalog> {
+    const reference = this.worldReference();
+    return read(reference.url, (value) => this.profileContent(worldContent(value)), reference.contentHash);
   }
 
   private profileContent<T extends { developmentProfile?: { kind: string; policy: string; sourceContentHash: string }; walkEncounters?: unknown }>(value: T): T {
@@ -126,7 +160,7 @@ export class GameContentRepository {
   }
 
   world(): Promise<WorldCatalog> {
-    return this.operation((read) => read(this.worldUrl, (value) => this.profileContent(worldContent(value))));
+    return this.operation((read) => this.readWorld(read));
   }
 
   map(mapId: number, catalog?: WorldCatalog): Promise<WorldMapContent> {
@@ -136,8 +170,8 @@ export class GameContentRepository {
     return this.operation(async (read) => {
       integer(mapId, 1);
       const world = supplied === undefined
-        ? await read(this.worldUrl, (value) => this.profileContent(worldContent(value)))
-        : this.profileContent(worldContent(await verifyContent(supplied)));
+        ? await this.readWorld(read)
+        : this.profileContent(worldContent(await verifyContent(supplied, this.worldReference().contentHash)));
       return this.readMap(read, mapId, world);
     });
   }
@@ -158,9 +192,17 @@ export class GameContentRepository {
       header(saved.world, saved.world?.kind === "event-world-v1" ? "event-world-v1" : "idle-world-v10");
       text(saved.sourceSetHash); hash(saved.battleCatalogHash); hash(saved.world.initialHash);
       object(saved.origin);
+      if (this.references !== undefined && saved.world.location !== null) {
+        object(saved.world.location); hash(saved.world.location.catalogHash);
+        this.pinnedExpected(this.worldReference(), saved.world.location.catalogHash);
+      }
       let result: RestoreSessionContent;
       if (saved.origin.kind === "source-new-game") {
         hash(saved.origin.sourceContentHash);
+        const references = this.entryReferences("source");
+        this.pinnedExpected(references.entry, saved.origin.sourceContentHash);
+        this.pinnedExpected(references.entry, saved.world.initialHash);
+        this.pinnedExpected(references.battle, saved.battleCatalogHash);
         const initial = await this.readSourceEntry(read, saved.origin.sourceContentHash);
         if (saved.sourceSetHash !== initial.content.parentSourceSetHash ||
             saved.battleCatalogHash !== initial.content.battleCatalogHash ||
@@ -169,6 +211,9 @@ export class GameContentRepository {
         result = { battle: initial.battle, world: { catalog: initial.catalog, map: initial.map,
           source: { content: initial.content, initialMap: initial.map } } };
       } else if (saved.origin.kind === "development-checkpoint") {
+        const references = this.entryReferences("development");
+        this.pinnedExpected(references.entry, saved.world.initialHash);
+        this.pinnedExpected(references.battle, saved.battleCatalogHash);
         const initial = await this.readOpening(read);
         if (saved.sourceSetHash !== initial.field.parentSourceSetHash ||
             saved.battleCatalogHash !== initial.battle.contentHash ||
@@ -181,7 +226,7 @@ export class GameContentRepository {
       if (saved.world.location === null) return result;
       const location = saved.world.location;
       object(location); integer(location.mapId, 1); integer(location.entrance); hash(location.catalogHash);
-      const catalog = result.world?.catalog ?? await read(this.worldUrl, (value) => this.profileContent(worldContent(value)));
+      const catalog = result.world?.catalog ?? await this.readWorld(read);
       if (location.catalogHash !== catalog.contentHash || catalog.parentSourceSetHash !== saved.sourceSetHash)
         throw new Error("Saved map catalog/source identity mismatch");
       const map = await this.readMap(read, location.mapId, catalog);
@@ -190,8 +235,10 @@ export class GameContentRepository {
   }
 
   private async readOpening(read: ContentReader): Promise<OpeningContent> {
+    const references = this.entryReferences("development");
     const [field, battle] = await Promise.all([
-      read("/game/content.json", fieldContent), read("/game/battle.json", battleContent),
+      read(references.entry.url, fieldContent, references.entry.contentHash),
+      read(references.battle.url, battleContent, references.battle.contentHash),
     ]);
     if (field.sourceSetHash !== battle.common.fieldSourceSetHash)
       throw new Error("Field/battle source mismatch");
@@ -213,13 +260,17 @@ export class GameContentRepository {
   }
 
   private async readSourceEntry(read: ContentReader, expected?: string): Promise<SourceEntryContent> {
+    const references = this.entryReferences("source");
+    const entryExpected = this.pinnedExpected(references.entry, expected);
     const [content, catalog, battle] = await Promise.all([
-      read(this.newGameUrl, (value) => this.profileContent(sourceContent(value)), expected),
-      read(this.worldUrl, (value) => this.profileContent(worldContent(value))), read("/game/source-catalog.json", battleContent),
+      read(references.entry.url, (value) => this.profileContent(sourceContent(value)), entryExpected),
+      this.readWorld(read), read(references.battle.url, battleContent, references.battle.contentHash),
     ]);
     // Source-origin restore uses this same entry path, so a matching saved
     // hash cannot turn a development battle policy into source admission.
     assertSourceGameCatalog(battle, this.profile);
+    this.pinnedExpected(references.battle, content.battleCatalogHash);
+    this.pinnedExpected(this.worldReference(), content.worldCatalogHash);
     if (content.battleCatalogHash !== battle.contentHash || content.worldCatalogHash !== catalog.contentHash ||
         content.sourceSetHash !== catalog.sourceSetHash || content.parentSourceSetHash !== catalog.parentSourceSetHash ||
         catalog.maps[String(content.entry.mapId)]?.contentHash !== content.mapContentHash)
