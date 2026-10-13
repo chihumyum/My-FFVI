@@ -30,6 +30,7 @@ const lanes = [
   ["battle-event-lifecycle", "check-battle-lifecycle.mjs", "battle-lifecycle-check.json", "stages"],
   ["battle-event-shared-state", "check-battle-event-state.mjs", "battle-event-state-check.json", "stages"],
   ["battle-dynamic-participants", "check-battle-participants.mjs", "battle-participants-check.json", "stages"],
+  ["battle-party-transition", "check-battle-party-transition.mjs", "battle-party-transition-check.json", "stages"],
   ["multi-map-lifecycle", "check-framework-lifecycle.mjs", "framework-lifecycle-check.json", "stages"],
   ["event-motion-and-recovery", "check-script-motion-integration.mjs", "script-motion-integration-check.json", "stages"],
   ["shared-ownership", "check-system-integration.mjs", "system-integration-check.json", "cases"],

@@ -119,12 +119,20 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
             throw new Error("Battle lifecycle condition rules do not cover the current condition catalog");
           limitations.push("Compiled battle-event instructions require live lifecycle/AI/action/outcome execution evidence.");
           for (const [pc, { op }] of lifecycle.program.instructions.entries()) {
+            if (op.kind === "change-enemy-party") {
+              if (!encounter.participants?.enemyParties?.[String(op.partyId)])
+                block("enemy-party-reference", `Battle event PC ${pc} has no admitted source enemy party ${op.partyId}`);
+              continue;
+            }
             if (op.kind !== "add-enemy") continue;
             const participants = encounter.participants;
             if (!participants || !participants.enemyDefinitions[String(op.monsterId)])
               block("battle-participant-reference", `Battle event PC ${pc} has no admitted enemy master ${op.monsterId}`);
             if (!participants || !participants.slots[String(op.uniqueId)])
               block("battle-participant-reference", `Battle event PC ${pc} has no admitted enemy slot ${op.uniqueId}`);
+            for (const [partyId, party] of Object.entries(participants?.enemyParties ?? {}))
+              if (!party.slots[String(op.uniqueId)])
+                block("battle-participant-reference", `Battle event PC ${pc} slot ${op.uniqueId} is missing from enemy party ${partyId}; all selected phases need an explicit layout`);
           }
         } else if (lifecycle.mode === "development-omission") {
           const omission = sourceDiagnostics.some(d => d.code === "battle-script" && d.kind === "development-omission" &&

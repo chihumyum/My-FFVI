@@ -20,6 +20,7 @@
 - [游戏系统框架与连续流程验收](docs/game-framework.md)
 - [框架系统依赖与下一批实施范围](docs/framework-system-dependencies.md)
 - [通用遭遇内容管线](docs/battle-catalog.md)
+- [v56 多阶段战斗与敌队整体生命周期](docs/systems-v56.md)
 - [v55 动态战斗参与者与内容闭包](docs/systems-v55.md)
 - [v54 战斗与字段共享剧情状态](docs/systems-v54.md)
 - [v53 战斗事件生命周期](docs/systems-v53.md)

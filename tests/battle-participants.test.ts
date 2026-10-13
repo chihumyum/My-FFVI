@@ -21,6 +21,14 @@ function participants() {
   return { content, initial };
 }
 
+function partyParticipants() {
+  const f = participants();
+  f.initial.enemyDefinitions[2000] = { ...structuredClone(f.initial.enemyDefinitions[1000]!), sourceId: 2000 };
+  f.initial.enemyParties = { 513: { members: [{ sourceId: 2000, uniqueId: 3 }, { sourceId: 2000, uniqueId: 7 }],
+    slots: { 3: { x: -40, y: 19, group: 1 }, 7: { x: 31, y: -8, group: 2 } } } };
+  return f;
+}
+
 test("masters, slots and opaque initial instance identities remain separate and detached", () => {
   const f = participants();
   f.initial.enemyDefinitions[2000] = { ...structuredClone(f.initial.enemyDefinitions[1000]!), sourceId: 2000 };
@@ -133,4 +141,61 @@ test("legacy absent content stays static and never acquires a dynamic template r
   const catalog = checkpointFixture().battle;
   const resolved = encounterContent(catalog, Number(Object.keys(catalog.encounters)[0]))!;
   assert.equal(Object.hasOwn(resolved, "participants"), false);
+});
+
+test("optional enemy parties preserve master reuse, sparse source slots and layout ownership", () => {
+  const f = partyParticipants(), parsed = parseBattleParticipantContent(f.initial, f.content.enemies);
+  assert.deepEqual(parsed.enemyParties, f.initial.enemyParties);
+  assert.deepEqual(parsed.enemyParties![513]!.members.map(member => member.uniqueId), [3, 7]);
+  assert.deepEqual(projectBattleParticipantInitial(parsed), f.content.enemies);
+  assert.equal(parsed.initial.length, 2, "Wave members do not enter the current battle");
+  parsed.enemyParties![513]!.members[0]!.sourceId = 1000;
+  parsed.enemyParties![513]!.slots[3]!.x = 900;
+  assert.equal(f.initial.enemyParties![513]!.members[0]!.sourceId, 2000);
+  assert.equal(f.initial.enemyParties![513]!.slots[3]!.x, -40);
+});
+
+test("old participant content does not gain a party property and explicit undefined is invalid", () => {
+  const f = participants();
+  assert.equal(Object.hasOwn(parseBattleParticipantContent(f.initial), "enemyParties"), false);
+  assert.throws(() => parseBattleParticipantContent({ ...f.initial, enemyParties: undefined }));
+});
+
+test("party members need their own exact layout and admitted masters, with no entry-slot fallback", () => {
+  for (const change of [
+    (f: ReturnType<typeof partyParticipants>) => { f.initial.enemyParties![513]!.members[0]!.sourceId = 9999; },
+    (f: ReturnType<typeof partyParticipants>) => { f.initial.enemyParties![513]!.members[0]!.uniqueId = 5; },
+    (f: ReturnType<typeof partyParticipants>) => { f.initial.enemyParties![513]!.members[1]!.uniqueId = 3; },
+    (f: ReturnType<typeof partyParticipants>) => { delete f.initial.enemyParties![513]!.slots[3]; },
+    (f: ReturnType<typeof partyParticipants>) => { f.initial.enemyParties![513]!.members[0]!.uniqueId = 0; },
+    (f: ReturnType<typeof partyParticipants>) => { f.initial.enemyParties![513]!.members[0]!.uniqueId = 10; },
+    (f: ReturnType<typeof partyParticipants>) => { f.initial.enemyParties![513]!.slots[3]!.group = 3; },
+  ]) {
+    const f = partyParticipants(); change(f);
+    assert.throws(() => parseBattleParticipantContent(f.initial));
+  }
+});
+
+test("party keys and source member collections cannot carry aliases, holes or runtime instance state", () => {
+  for (const change of [
+    (f: ReturnType<typeof partyParticipants>) => { f.initial.enemyParties!["0513"] = f.initial.enemyParties![513]!; },
+    (f: ReturnType<typeof partyParticipants>) => { f.initial.enemyParties![0] = f.initial.enemyParties![513]!; },
+    (f: ReturnType<typeof partyParticipants>) => { f.initial.enemyParties![513]!.members = []; },
+    (f: ReturnType<typeof partyParticipants>) => { f.initial.enemyParties![513]!.members = new Array(10); },
+    (f: ReturnType<typeof partyParticipants>) => { delete f.initial.enemyParties![513]!.members[0]; },
+    (f: ReturnType<typeof partyParticipants>) => { Object.assign(f.initial.enemyParties![513]!.members[0]!, { id: "runtime-instance" }); },
+    (f: ReturnType<typeof partyParticipants>) => { Object.assign(f.initial.enemyParties![513]!, { hidden: true }); },
+  ]) {
+    const f = partyParticipants(); change(f);
+    assert.throws(() => parseBattleParticipantContent(f.initial));
+  }
+});
+
+test("shared raw layout objects become independent entry and party projections", () => {
+  const f = partyParticipants();
+  f.initial.enemyParties![513]!.slots[5] = f.initial.slots[5]!;
+  const parsed = parseBattleParticipantContent(f.initial);
+  parsed.enemyParties![513]!.slots[5]!.x++;
+  assert.equal(parsed.slots[5]!.x, 12);
+  assert.equal(f.initial.enemyParties![513]!.slots[5]!.x, 12);
 });

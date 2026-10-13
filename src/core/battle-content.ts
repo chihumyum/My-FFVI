@@ -4,7 +4,7 @@ import type { ParameterValues } from "./parameters.js";
 import type { AbilityProgram, DevelopmentAbilityPlan } from "./ability.js";
 import type { BattleConditionCatalog } from "./battle-conditions.js";
 import type { ElementResistances } from "./elements.js";
-import type { BattleAIProgram } from "./battle-ai.js";
+import type { BattleAIProgram, BattleAISource } from "./battle-ai.js";
 import type { BattleReactionRules } from "./battle-reactions.js";
 import type { GameStateContent } from "./game-state.js";
 import type { BattleAbilityCatalog, BattleAbilityContext, BattleAbilityMember } from "./battle-abilities.js";
@@ -195,6 +195,18 @@ export type BattleEncounterReport = {
   withDevelopmentOmissions: number;
   originalGameExecuted: false;
   entries: { partyId: number; status: "compiled" | "blocked"; enemyCount: number; abilityIds: number[] }[];
+  /** Source annotations, not providers or proof that later native consumers
+   * ignore child metadata. Kept separately from executable participant data. */
+  enemyPartySources?: {
+    rootPartyId: number;
+    partyId: number;
+    source: BattleEncounterDiagnostic["source"];
+    patterns: number[];
+    background: string;
+    metadata: unknown;
+    scriptSource: BattleAISource | null;
+    consumerSemantics: "unverified";
+  }[];
 };
 export type BattleCatalog = {
   kind: "narshe-battle-catalog";

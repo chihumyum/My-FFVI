@@ -103,6 +103,12 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null):
     if (m.mnemonic === "SysCall" && form([], [], [0]) && s[0] === "プレイヤーの状況で戦闘終了")
       op = local(0) ? { kind: "players-ended" }
         : blocked("Player battle-end query requires ScriptLocalVariable[0]");
+    if (m.mnemonic === "SysCall" && form([], [], [0])) {
+      const party = ({ "LB:敵パーティラウンド2": { partyId: 513, hidden: false },
+        "LB:敵パーティラウンド3": { partyId: 514, hidden: false },
+        "LB:敵パーティラウンド4": { partyId: 515, hidden: true } } as Record<string, { partyId: number; hidden: boolean }>)[s[0]!];
+      if (party) op = { kind: "change-enemy-party", ...party };
+    }
     // Format.rValues and Integrator.time are doubles in this build.
     if (m.mnemonic === "Wait" && form([], [0])) op = { kind: "wait", seconds: r[0]! };
     if (["SetFlag", "ResetFlag", "FlipFlag"].includes(m.mnemonic) && form([0], [], [0])) {

@@ -18,6 +18,7 @@ export type BattleEventOp =
   | { kind: "variable-flag"; ref: VariableRef; operation: "set" | "reset" | "flip" }
   | { kind: "wait"; seconds: number }
   | { kind: "add-enemy"; monsterId: number; uniqueId: number }
+  | { kind: "change-enemy-party"; partyId: number; hidden: boolean }
   | { kind: "end-enabled" | "pause" | "interactive" | "enemy-no-act"; enabled: boolean }
   | { kind: "blocked"; reason: string };
 export type BattleEventProgram = {
@@ -33,7 +34,7 @@ export type BattleEventProgram = {
   blockers: string[];
 };
 export type BattleEventWait =
-  | { kind: "blank" | "start" | "action"; clock: number }
+  | { kind: "blank" | "start" | "action" | "enemy-party-entry"; clock: number }
   | { kind: "time"; clock: number; entryTimeSeconds: number }
   | { kind: "enemy-entry"; clock: number; previousNoAct: boolean };
 export type BattleEventState = {
@@ -61,11 +62,13 @@ export type BattleEventContext = {
   /** Joining completion belongs to the content/host entry operation, not to
    * the executor's action queues. The VM remembers the previous enemy gate. */
   enemyEntry?: { noAct: boolean; completed: boolean };
+  enemyPartyEntry?: { completed: boolean };
 };
 export type BattleEventRequest =
   | { kind: "exec-ai" | "sync-ai"; pc: number }
   | { kind: "write-variable"; pc: number; ref: VariableRef; value: number }
   | { kind: "add-enemy"; pc: number; monsterId: number; uniqueId: number }
+  | { kind: "change-enemy-party"; pc: number; partyId: number; hidden: boolean }
   | { kind: "end-enabled" | "pause" | "interactive" | "enemy-no-act"; pc: number; enabled: boolean };
 export type BattleEventAdvance = {
   state: BattleEventState;
@@ -186,6 +189,9 @@ function parseOp(raw: unknown): BattleEventOp {
     case "add-enemy":
       checkpointKeys(value, "kind,monsterId,uniqueId");
       return { kind, monsterId: integer(value.monsterId, 1), uniqueId: integer(value.uniqueId, 1, 9) };
+    case "change-enemy-party":
+      checkpointKeys(value, "kind,partyId,hidden");
+      return { kind, partyId: integer(value.partyId, 1), hidden: boolean(value.hidden) };
     case "end-enabled": case "pause": case "interactive": case "enemy-no-act":
       checkpointKeys(value, "kind,enabled");
       return { kind, enabled: boolean(value.enabled) };
@@ -282,7 +288,7 @@ function parseWait(raw: unknown): BattleEventWait | null {
   if (raw === null) return null;
   checkpointRecord(raw);
   const value = raw as Record<string, unknown>, kind = value.kind;
-  if (kind === "blank" || kind === "start" || kind === "action") {
+  if (kind === "blank" || kind === "start" || kind === "action" || kind === "enemy-party-entry") {
     checkpointKeys(value, "kind,clock");
     return { kind, clock: clockNumber(value.clock) };
   }
@@ -310,7 +316,8 @@ function parseContext(raw: unknown): BattleEventContext {
   const value = record(raw, "clock,timeSeconds,started,aiCoreAlive,actionStaging" +
     (Object.hasOwn(fields, "variables") ? ",variables" : "") +
     (Object.hasOwn(fields, "playersEnded") ? ",playersEnded" : "") +
-    (Object.hasOwn(fields, "enemyEntry") ? ",enemyEntry" : ""));
+    (Object.hasOwn(fields, "enemyEntry") ? ",enemyEntry" : "") +
+    (Object.hasOwn(fields, "enemyPartyEntry") ? ",enemyPartyEntry" : ""));
   let variables: BattleEventContext["variables"];
   if (Object.hasOwn(value, "variables")) {
     const port = record(value.variables, "read");
@@ -323,10 +330,16 @@ function parseContext(raw: unknown): BattleEventContext {
     const entry = record(value.enemyEntry, "noAct,completed");
     enemyEntry = { noAct: boolean(entry.noAct), completed: boolean(entry.completed) };
   }
+  let enemyPartyEntry: BattleEventContext["enemyPartyEntry"];
+  if (Object.hasOwn(value, "enemyPartyEntry")) {
+    const entry = record(value.enemyPartyEntry, "completed");
+    enemyPartyEntry = { completed: boolean(entry.completed) };
+  }
   return { clock: clockNumber(value.clock), timeSeconds: finite(value.timeSeconds, 0),
     started: boolean(value.started), aiCoreAlive: boolean(value.aiCoreAlive), actionStaging: boolean(value.actionStaging),
     ...(variables ? { variables } : {}),
     ...(enemyEntry ? { enemyEntry } : {}),
+    ...(enemyPartyEntry ? { enemyPartyEntry } : {}),
     ...(Object.hasOwn(value, "playersEnded") ? { playersEnded: boolean(value.playersEnded) } : {}) };
 }
 
@@ -370,7 +383,7 @@ export function advanceBattleEvent(
   if (!inRange(state.pc)) fail("PC outside the program range");
   if (state.wait) {
     const expected = { blank: "blank", start: "wait-start", action: "sync-action", time: "wait",
-      "enemy-entry": "add-enemy" }[state.wait.kind];
+      "enemy-entry": "add-enemy", "enemy-party-entry": "change-enemy-party" }[state.wait.kind];
     if (program.instructions[state.pc]?.op.kind !== expected) fail("wait does not match its instruction");
     if (state.wait.clock === context.clock) return { state, requests: [], visited: [] };
   }
@@ -527,6 +540,21 @@ export function advanceBattleEvent(
         next();
         requests.push({ kind: "enemy-no-act", pc, enabled: previousNoAct });
         return result();
+      }
+      case "change-enemy-party": {
+        if (!context.enemyPartyEntry) return fail("Missing battle enemy party entry provider", pc);
+        if (state.wait?.kind !== "enemy-party-entry") {
+          state.status = "waiting";
+          state.wait = { kind: "enemy-party-entry", clock: context.clock };
+          requests.push({ kind: "change-enemy-party", pc, partyId: op.partyId, hidden: op.hidden });
+          return result();
+        }
+        if (!context.enemyPartyEntry.completed) {
+          state.wait.clock = context.clock;
+          return result();
+        }
+        next();
+        break;
       }
       case "end-enabled": case "pause": case "interactive": case "enemy-no-act":
         next();

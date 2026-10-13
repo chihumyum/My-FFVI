@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createBattleParticipantState, parseBattleParticipantState, projectEnemyReplacement,
+import { createBattleParticipantState, parseBattleParticipantState, projectEnemyReplacement, projectEnemyPartyReplacement,
   activeBattleParticipantIds, projectBattleParticipantRewards, assertBattleParticipantStateCurrent,
   type BattleParticipantInitial } from "../src/core/battle-participant-state.js";
 
@@ -167,4 +167,106 @@ test("current membership is detached and no removal is inferred from zero reward
   assert.deepEqual(activeBattleParticipantIds(state), ["enemy:1"]);
   assert.equal(state.entries[0]!.removed, false);
   assert.deepEqual(projectBattleParticipantRewards(state, "all-entered"), { exp: 0, gil: 0 });
+});
+
+test("whole enemy party replacement retires all current slots and preserves noncompact source order", () => {
+  const before = createBattleParticipantState(initial()), frozen = structuredClone(before);
+  const members = [next(9), { ...next(1), sourceId: 25 }, next(4)], request = structuredClone(members);
+  const projected = projectEnemyPartyReplacement(before, members);
+  assert.deepEqual(projected.removedIds, ["enemy:1", "opaque-source-slot"]);
+  assert.deepEqual(projected.joins, [
+    { instanceId: "enemy:dynamic:1", sourceId: 24, uniqueId: 9 },
+    { instanceId: "enemy:dynamic:2", sourceId: 25, uniqueId: 1 },
+    { instanceId: "enemy:dynamic:3", sourceId: 24, uniqueId: 4 },
+  ]);
+  assert.deepEqual(before, frozen); assert.deepEqual(members, request);
+  assert.deepEqual(activeBattleParticipantIds(projected.state), projected.joins.map(join => join.instanceId));
+  assert.equal(projected.state.entries.find(entry => entry.uniqueId === 5)!.removed, true,
+    "A slot absent from the new party also retires");
+  assert.equal(projected.state.nextGeneration, 4);
+  assert.doesNotThrow(() => parseBattleParticipantState(projected.state));
+});
+
+test("same masters across several enemy parties remain distinct historical instances and rewards", () => {
+  const entry = createBattleParticipantState(initial());
+  const one = projectEnemyPartyReplacement(entry, [next(7), next(2)]);
+  const two = projectEnemyPartyReplacement(one.state, [next(2), next(7)]);
+  const three = projectEnemyPartyReplacement(two.state, [next(7)]);
+  assert.deepEqual(two.removedIds, ["enemy:dynamic:1", "enemy:dynamic:2"]);
+  assert.deepEqual(three.removedIds, ["enemy:dynamic:3", "enemy:dynamic:4"]);
+  assert.equal(three.state.nextGeneration, 6);
+  assert.equal(new Set(three.state.entries.map(entry => entry.id)).size, 7);
+  assert.deepEqual(activeBattleParticipantIds(three.state), ["enemy:dynamic:5"]);
+  assert.deepEqual(projectBattleParticipantRewards(three.state, "active-units"), { exp: 19, gil: 23 });
+  assert.deepEqual(projectBattleParticipantRewards(three.state, "all-entered"), { exp: 115, gil: 135 });
+  assert.deepEqual(three.state.entries.slice(0, -1).map(entry => entry.removed), Array(6).fill(true));
+});
+
+test("whole-party and single-slot replacements share one allocator without losing retired history", () => {
+  const entry = createBattleParticipantState(initial()), single = projectEnemyReplacement(entry, next(1));
+  const party = projectEnemyPartyReplacement(single.state, [next(9), next(4)]);
+  assert.deepEqual(party.removedIds, ["opaque-source-slot", "enemy:dynamic:1"]);
+  assert.deepEqual(party.joins.map(join => join.instanceId), ["enemy:dynamic:2", "enemy:dynamic:3"]);
+  const laterSingle = projectEnemyReplacement(party.state, { ...next(9), sourceId: 26 });
+  assert.equal(laterSingle.removedId, "enemy:dynamic:2");
+  assert.equal(laterSingle.instanceId, "enemy:dynamic:4");
+  assert.deepEqual(activeBattleParticipantIds(laterSingle.state), ["enemy:dynamic:3", "enemy:dynamic:4"]);
+  assert.equal(laterSingle.state.entries.length, 6);
+  assert.deepEqual(projectBattleParticipantRewards(laterSingle.state, "all-entered"), { exp: 96, gil: 112 });
+});
+
+test("a late invalid party member never retires an earlier owner or allocates an earlier join", () => {
+  const state = createBattleParticipantState(initial()), before = structuredClone(state);
+  for (const bad of [
+    { ...next(4), sourceId: 0 }, { ...next(4), sourceId: 2147483648 },
+    { ...next(4), uniqueId: 10 }, { ...next(4), uniqueId: 7 },
+    { ...next(4), exp: -1 }, { ...next(4), gil: Infinity }, { ...next(4), hp: 99 },
+  ]) {
+    const members = [next(7), next(2), bad], request = structuredClone(members);
+    assert.throws(() => projectEnemyPartyReplacement(state, members));
+    assert.deepEqual(state, before); assert.deepEqual(members, request);
+  }
+});
+
+test("whole-party input rejects empty, excessive, sparse and duplicate-slot collections", () => {
+  const state = createBattleParticipantState(initial()), before = structuredClone(state);
+  const sparse = [next(1), next(9)]; delete sparse[1];
+  const padded = [next(1)]; Object.assign(padded, { unexpected: true });
+  for (const members of [[], Array.from({ length: 10 }, (_, index) => next(index + 1)),
+    sparse, padded, [next(1), next(1)]]) {
+    assert.throws(() => projectEnemyPartyReplacement(state, members)); assert.deepEqual(state, before);
+  }
+  const full = projectEnemyPartyReplacement(state, Array.from({ length: 9 }, (_, index) => next(index + 1)));
+  assert.equal(activeBattleParticipantIds(full.state).length, 9);
+  assert.equal(full.state.nextGeneration, 10);
+});
+
+test("party rollback/replay restores one allocator reservation and detached publication metadata", () => {
+  const before = createBattleParticipantState(initial()), saved = parseBattleParticipantState(before);
+  const members = [next(9), next(1)], attempt = projectEnemyPartyReplacement(before, members);
+  const replay = projectEnemyPartyReplacement(parseBattleParticipantState(saved), members);
+  assert.deepEqual(attempt, replay);
+  assert.throws(() => assertBattleParticipantStateCurrent(attempt.state, saved), /Stale/);
+  attempt.joins[0]!.sourceId = 99; attempt.removedIds.length = 0;
+  assert.equal(attempt.state.entries[2]!.sourceId, 24);
+  assert.deepEqual(before, saved);
+  const forged = structuredClone(replay.state); forged.nextGeneration = 1;
+  assert.throws(() => projectEnemyPartyReplacement(forged, members), /allocator/);
+  const boundary = structuredClone(saved); boundary.nextGeneration = 2147483647;
+  assert.throws(() => projectEnemyPartyReplacement(boundary, members), /allocator|exhausted/);
+  assert.equal(boundary.entries.length, 2); assert.equal(boundary.nextGeneration, 2147483647);
+});
+
+test("party retirement does not infer death, drops or intermediate rewards", () => {
+  const before = createBattleParticipantState(initial());
+  const nextParty = projectEnemyPartyReplacement(before, [{ sourceId: 17, uniqueId: 5, exp: 0, gil: 0 }]);
+  assert.deepEqual(Object.keys(nextParty).sort(), ["joins", "removedIds", "state"]);
+  assert.deepEqual(Object.keys(nextParty.state.entries[0]!).sort(), ["exp", "gil", "id", "removed", "sourceId", "uniqueId"]);
+  assert.deepEqual(projectBattleParticipantRewards(nextParty.state, "active-units"), { exp: 0, gil: 0 });
+  assert.deepEqual(projectBattleParticipantRewards(nextParty.state, "all-entered"), { exp: 20, gil: 20 });
+  const overflowEntry = createBattleParticipantState([{ ...initial()[0]!, exp: 2147483647 }]);
+  const replacement = projectEnemyPartyReplacement(overflowEntry, [next(7), next(3)]);
+  assert.deepEqual(projectBattleParticipantRewards(replacement.state, "active-units"), { exp: 38, gil: 46 });
+  assert.throws(() => projectBattleParticipantRewards(replacement.state, "all-entered"), /integer/);
+  assert.equal(overflowEntry.entries[0]!.removed, false);
 });

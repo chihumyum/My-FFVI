@@ -467,6 +467,7 @@ export class BattleView {
     const a = battle.action;
     const rowAction = a && battle.actionDefinition(a).presentation === "row";
     for (const actor of [...battle.enemies, ...battle.players]) {
+      if (!battle.isCombatantVisible(actor.id)) continue;
       const p = this.position(actor, battle, layout);
       let x = p.x,
         y = p.y;

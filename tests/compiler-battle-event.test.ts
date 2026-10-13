@@ -354,6 +354,20 @@ test("source enemy entry separates monster master and unique slot; sleep maps to
   assert.deepEqual(input, before); assert.deepEqual(p.source, source);
 });
 
+test("exact registered round selectors compile constants while unknown selectors and operand forms stay blocked", () => {
+  const selectors = ["LB:敵パーティラウンド2", "LB:敵パーティラウンド3", "LB:敵パーティラウンド4"];
+  const p = compileBattleEvent(raw([...selectors.map(selector => ["SysCall", [], [], [selector]] as RawOp), ["Exit"]]), source);
+  assert.deepEqual(p.instructions.slice(0, 3).map(i => i.op), [
+    { kind: "change-enemy-party", partyId: 513, hidden: false },
+    { kind: "change-enemy-party", partyId: 514, hidden: false },
+    { kind: "change-enemy-party", partyId: 515, hidden: true },
+  ]);
+  for (const value of [raw([["SysCall", [], [], ["LB:敵パーティラウンド5"]], ["Exit"]]),
+    raw([["SysCall", [1], [], [selectors[0]!]], ["Exit"]]),
+    raw([["SysCall", [], [1], [selectors[0]!]], ["Exit"]])])
+    assert.equal(compileBattleEvent(value, source).instructions[0]!.op.kind, "blocked");
+});
+
 test("enemy entry keeps unknown operand forms, slots and other participant operations blocked at the original PC", () => {
   for (const mutate of [
     (input: ReturnType<typeof raw>) => { input.Mnemonics[0]!.operands.iValues[0] = 0; },

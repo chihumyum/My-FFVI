@@ -123,6 +123,48 @@ export function projectEnemyReplacement(
   return { state, instanceId, removedId: previous?.id ?? null };
 }
 
+/** Prepare one complete enemy-stage replacement. Every current enemy retires,
+ * including slots absent from the next party. Repeated masters and noncompact
+ * original slots remain separate instances, assigned in supplied source order.
+ * This metadata operation infers no death/drop, player change or intermediate
+ * reward receipt; its caller publishes the complete battle transaction. */
+export function projectEnemyPartyReplacement(
+  raw: BattleParticipantState,
+  members: readonly BattleEnemyReplacement[],
+): {
+  state: BattleParticipantState;
+  removedIds: string[];
+  joins: { instanceId: string; sourceId: number; uniqueId: number }[];
+} {
+  const state = parseBattleParticipantState(raw);
+  if (!Array.isArray(members) || members.length < 1 || members.length > 9 ||
+      Object.keys(members).length !== members.length)
+    throw new Error("Invalid replacement enemy party");
+  const slots = new Set<number>();
+  const next = Array.from(members, (member, index) => {
+    if (!Object.hasOwn(members, index)) throw new Error("Sparse replacement enemy party");
+    const value = replacement(member);
+    if (slots.has(value.uniqueId)) throw new Error("Duplicate replacement enemy party slot");
+    slots.add(value.uniqueId);
+    return value;
+  });
+  // Check the entire reservation before retiring a member or appending history.
+  if (state.nextGeneration > maximum - next.length)
+    throw new Error("Battle participant generation exhausted");
+  const priorIds = new Set(state.entries.map(entry => entry.id));
+  const joins = next.map((member, index) => {
+    const instanceId = dynamicPrefix + (state.nextGeneration + index);
+    if (priorIds.has(instanceId)) throw new Error("Battle participant instance identity collision");
+    return { instanceId, sourceId: member.sourceId, uniqueId: member.uniqueId };
+  });
+  const removedIds = state.entries.filter(entry => !entry.removed).map(entry => entry.id);
+  for (const entry of state.entries) entry.removed = true;
+  state.entries.push(...next.map((member, index) =>
+    ({ id: joins[index]!.instanceId, ...member, removed: false })));
+  state.nextGeneration += next.length;
+  return { state, removedIds, joins };
+}
+
 /** Ordered by actual entry, not by parsed ids or a guessed native accessor order. */
 export function activeBattleParticipantIds(raw: BattleParticipantState): string[] {
   return parseBattleParticipantState(raw).entries.filter(entry => !entry.removed).map(entry => entry.id);

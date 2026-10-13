@@ -9,6 +9,11 @@ export type { BattleParticipantRewardScope } from "./battle-participant-state.js
 /** A master is reusable content, never a current unit or persistent owner. */
 export type EnemyBattleDefinition = Omit<CombatantDefinition, "id" | "placement">;
 export type BattleParticipantSlot = NonNullable<CombatantDefinition["placement"]>;
+export type BattleParticipantEnemyParty = {
+  /** Source members select masters/slots; the battle owner assigns instance IDs. */
+  members: { sourceId: number; uniqueId: number }[];
+  slots: Record<string, BattleParticipantSlot>;
+};
 export type BattleParticipantContent = {
   kind: "battle-participant-content-v1";
   /** Explicit Web slot bounds/layout policy; not a native coordinate certificate. */
@@ -17,6 +22,7 @@ export type BattleParticipantContent = {
   enemyDefinitions: Record<string, EnemyBattleDefinition>;
   slots: Record<string, BattleParticipantSlot>;
   initial: { id: string; sourceId: number; uniqueId: number }[];
+  enemyParties?: Record<string, BattleParticipantEnemyParty>;
 };
 
 function integer(value: unknown, minimum = -0x80000000, maximum = 0x7fffffff): asserts value is number {
@@ -36,6 +42,19 @@ function identityKey(key: string, minimum = 1, maximum = 0x7fffffff): number {
 function ids(raw: unknown): void {
   if (!Array.isArray(raw)) throw new Error("Invalid battle participant references");
   for (const id of Array.from(raw)) integer(id, 1);
+}
+
+function parseSlots(raw: unknown): Record<string, BattleParticipantSlot> {
+  checkpointRecord(raw);
+  const slots: Record<string, BattleParticipantSlot> = {};
+  for (const [key, rawPlacement] of Object.entries(raw as Record<string, unknown>)) {
+    identityKey(key, 1, 9);
+    checkpointKeys(rawPlacement, "x,y,group");
+    const placement = rawPlacement as BattleParticipantSlot;
+    integer(placement.x); integer(placement.y); integer(placement.group, 1, 2);
+    slots[key] = { ...placement };
+  }
+  return slots;
 }
 
 /** Structural content validation. Reached AI paths, effects, media and owned
@@ -108,28 +127,45 @@ export function projectBattleParticipantInitial(content: BattleParticipantConten
     id: entry.id, placement: structuredClone(content.slots[String(entry.uniqueId)]!) }));
 }
 
+/** A phase owns its source layout, not a fallback to the entry party slots. */
+export function parseBattleParticipantEnemyParty(
+  raw: unknown,
+  enemyDefinitions: Readonly<Record<string, EnemyBattleDefinition>>,
+): BattleParticipantEnemyParty {
+  checkpointKeys(raw, "members,slots");
+  const value = raw as BattleParticipantEnemyParty, slots = parseSlots(value.slots);
+  if (!Array.isArray(value.members) || !value.members.length || value.members.length > 9)
+    throw new Error("Invalid battle enemy party member collection");
+  const uniqueIds = new Set<number>();
+  const members = Array.from(value.members, member => {
+    checkpointKeys(member, "sourceId,uniqueId");
+    integer(member.sourceId, 1); integer(member.uniqueId, 1, 9);
+    if (uniqueIds.has(member.uniqueId) || !enemyDefinitions[String(member.sourceId)] || !slots[String(member.uniqueId)])
+      throw new Error("Missing or duplicate battle enemy party binding");
+    uniqueIds.add(member.uniqueId);
+    return { sourceId: member.sourceId, uniqueId: member.uniqueId };
+  });
+  return { members, slots };
+}
+
 /** Missing content is handled by the host as static-only legacy support. This
  * parser never fills a missing master, slot, policy or initial source binding. */
 export function parseBattleParticipantContent(
   raw: unknown,
   initialEnemies?: readonly CombatantDefinition[],
 ): BattleParticipantContent {
-  checkpointKeys(raw, "kind,profile,rewardScope,enemyDefinitions,slots,initial");
+  checkpointRecord(raw);
   const value = raw as BattleParticipantContent;
+  const hasParties = Object.hasOwn(value, "enemyParties");
+  checkpointKeys(raw, "kind,profile,rewardScope,enemyDefinitions,slots,initial" + (hasParties ? ",enemyParties" : ""));
   if (value.kind !== "battle-participant-content-v1" || value.profile !== "web-unique-id-slots-v1" ||
       !["active-units", "all-entered"].includes(value.rewardScope))
     throw new Error("Unsupported battle participant content policy");
-  checkpointRecord(value.enemyDefinitions); checkpointRecord(value.slots);
+  checkpointRecord(value.enemyDefinitions);
   const enemyDefinitions: Record<string, EnemyBattleDefinition> = {};
   for (const [key, rawDefinition] of Object.entries(value.enemyDefinitions))
     enemyDefinitions[key] = definition(rawDefinition, identityKey(key));
-  const slots: Record<string, BattleParticipantSlot> = {};
-  for (const [key, placement] of Object.entries(value.slots)) {
-    identityKey(key, 1, 9);
-    checkpointKeys(placement, "x,y,group");
-    integer(placement.x); integer(placement.y); integer(placement.group, 1, 2);
-    slots[key] = { ...placement };
-  }
+  const slots = parseSlots(value.slots);
   if (!Array.isArray(value.initial) || value.initial.length > 9)
     throw new Error("Invalid initial battle participant collection");
   const seenIds = new Set<string>(), seenSlots = new Set<number>();
@@ -144,6 +180,15 @@ export function parseBattleParticipantContent(
   });
   const result: BattleParticipantContent = { kind: value.kind, profile: value.profile,
     rewardScope: value.rewardScope, enemyDefinitions, slots, initial };
+  if (hasParties) {
+    checkpointRecord(value.enemyParties);
+    const parties: Record<string, BattleParticipantEnemyParty> = {};
+    for (const [key, rawParty] of Object.entries(value.enemyParties!)) {
+      identityKey(key);
+      parties[key] = parseBattleParticipantEnemyParty(rawParty, enemyDefinitions);
+    }
+    result.enemyParties = parties;
+  }
   if (initialEnemies !== undefined && canonical(projectBattleParticipantInitial(result)) !== canonical(initialEnemies))
     throw new Error("Initial battle participant content differs from encounter enemies");
   return result;

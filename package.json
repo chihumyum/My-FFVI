@@ -86,6 +86,7 @@
     "battle-lifecycle:check": "npm run battle:build && node scripts/check-battle-event-native.mjs && node scripts/check-battle-lifecycle.mjs",
     "battle-event-state:check": "npm run battle:build && node scripts/check-battle-event-state-native.mjs && node scripts/check-battle-event-state.mjs",
     "battle-participants:check": "npm run battle:build && node scripts/check-battle-participants-native.mjs && node scripts/check-battle-participants.mjs",
+    "battle-party-transition:check": "npm run battle:build && node scripts/check-battle-party-transition-native.mjs && node scripts/check-battle-party-transition.mjs",
     "character-learning:check": "npm run battle:build && node scripts/check-character-learning-native.mjs && node scripts/check-character-learning.mjs",
     "party-menu:check": "npm run build && node scripts/check-party-menu-ui.mjs",
     "event-interactions:check": "npm run build && node scripts/check-field-choice.mjs && node scripts/check-event-context-branch.mjs && node scripts/check-event-interactions-ui.mjs",

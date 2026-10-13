@@ -43,6 +43,34 @@ function bindRootEntries(f: ReturnType<typeof encounterRuntimeFixture>, entries:
       Animations: [], Segments: [{ Label: "Main", EntryPoint: 0, Count: ops.length }], Mnemonics: ops } };
 }
 
+function waveFixture() {
+  const f = encounterRuntimeFixture(), master = structuredClone(f.tables["monster.csv"]![0]!);
+  master.id = "9103"; master.exp = "29"; master.gill = "31";
+  f.tables["monster.csv"]!.push(master);
+  const child = f.encounter(513, 9103);
+  child.enemies[0]!.slot = 3;
+  child.enemies.push({ ...structuredClone(child.enemies[0]!), slot: 7, x: -33, y: 17, group: 2 });
+  f.input.enemyParties = [{ partyId: 9201, encounter: child }];
+  f.input.development.participants = [{ partyId: 9201, rewardScope: "all-entered", slots: {} }];
+  return { ...f, child };
+}
+
+function bindWaveRoot(f: ReturnType<typeof encounterRuntimeFixture>, partyIds: readonly number[], add?: [number, number]) {
+  bindRootEntries(f, add ? [add] : []);
+  const data = f.input.encounters[0]!.script!.data as {
+    Segments: { Count: number }[];
+    Mnemonics: { mnemonic: string; type: number; operands: { iValues: number[]; rValues: number[]; sValues: string[] } }[];
+  };
+  const exit = data.Mnemonics.pop()!;
+  for (const id of partyIds) {
+    const selector: Record<number, string> = { 513: "LB:敵パーティラウンド2", 514: "LB:敵パーティラウンド3", 515: "LB:敵パーティラウンド4" };
+    assert.ok(selector[id]);
+    data.Mnemonics.push({ mnemonic: "SysCall", type: 1, operands: { iValues: Array(8).fill(0), rValues: Array(8).fill(0),
+      sValues: [selector[id]!, "", "", "", "", "", "", ""] } });
+  }
+  data.Mnemonics.push(exit); data.Segments[0]!.Count = data.Mnemonics.length;
+}
+
 test("static source slots publish an explicit normalized contract without adding reserve units", () => {
   const f = encounterRuntimeFixture(), result = compileBattleEncounterRuntime(f.reader(), f.input);
   const encounter = result.encounters[9201]!;
@@ -267,4 +295,147 @@ test("a complete late root entry requires both compiled reserve content and its 
   assert.equal(result.diagnostics.some(diagnostic => diagnostic.partyId === 9201 && diagnostic.kind === "blocked"), false);
   assert.ok(result.diagnostics.some(diagnostic => diagnostic.partyId === 9201 &&
     diagnostic.code === "participant-policy" && diagnostic.kind === "development-omission"));
+});
+
+test("source enemy parties join the shared master closure without changing entry context or initial units", () => {
+  const f = waveFixture(); bindWaveRoot(f, [513]);
+  const before = JSON.stringify(f.input), result = compileBattleEncounterRuntime(f.reader(), f.input);
+  const encounter = result.encounters[9201]!;
+  assert.ok(encounter);
+  assert.equal(JSON.stringify(f.input), before);
+  assert.equal(encounter.enemies.length, 1);
+  assert.deepEqual(encounter.participants!.enemyParties![513]!.members, [
+    { sourceId: 9103, uniqueId: 3 }, { sourceId: 9103, uniqueId: 7 },
+  ]);
+  assert.deepEqual(encounter.participants!.enemyParties![513]!.slots[7], { x: -33, y: 17, group: 2 });
+  assert.equal(encounter.background, f.input.encounters[0]!.background);
+  assert.equal(encounter.formation, "normal");
+  assert.deepEqual(encounter.rewardPolicy, { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 });
+  assert.equal(result.report.entries.find(entry => entry.partyId === 9201)!.enemyCount, 1);
+  assert.deepEqual(result.drops.monsters.map(monster => monster.id), [9101, 9102, 9103]);
+});
+
+test("wave resources, source binding and raw metadata gaps isolate their destination before publication", () => {
+  for (const cause of ["source", "media", "master", "conflict", "condition", "formation", "flags", "script", "script-binding", "members"] as const) {
+    const f = waveFixture(); bindWaveRoot(f, [513]);
+    if (cause === "source") f.child.source.rowId = "514";
+    if (cause === "media") f.child.enemies[0]!.sprite = "missing-wave-media";
+    if (cause === "master") f.tables["monster.csv"]!.pop();
+    if (cause === "conflict") f.child.enemies.forEach(enemy => {
+      enemy.monsterId = 9101;
+      enemy.ai.data = aiSource([["Nop"], ["SyncAI"], ["StartTable", [0]], ["Act", [10]], ["EndTable"], ["JumpBattleAI", [0]]]);
+    });
+    if (cause === "condition") f.tables["monster.csv"]![2]!.initial_condition = "22";
+    if (cause === "formation") f.child.patterns = [1, 1, 0, 0, 0, 0];
+    if (cause === "flags") {
+      f.child.metadata.battleFlagGroupId = 18;
+      f.child.metadata.battleFlags = [{ source: f.rowSource("battle_flag_group.csv", 19),
+        values: { id: "19", group_id: "18", battle_flag_id: "14" } }];
+    }
+    if (cause === "script") {
+      f.child.metadata.scriptId = 17;
+      f.child.script = { source: { ...f.aiIdentity }, data: {} };
+    }
+    if (cause === "script-binding") f.child.metadata.scriptId = 17;
+    if (cause === "members") f.child.enemies[1]!.slot = 3;
+    const result = compileBattleEncounterRuntime(f.reader(), f.input);
+    assert.equal(result.encounters[9201], undefined, cause);
+    assert.ok(result.encounters[9202], cause);
+    assert.ok(result.diagnostics.some(diagnostic => diagnostic.partyId === 9201 && diagnostic.kind === "blocked"));
+    assert.ok(result.diagnostics.some(diagnostic => diagnostic.code === "enemy-party-reference" && diagnostic.pc === 0));
+    assert.deepEqual(result.report.enemyPartySources![0]!.metadata, f.child.metadata);
+    assert.equal(result.report.enemyPartySources![0]!.consumerSemantics, "unverified");
+    assert.deepEqual(result.drops.monsters.map(monster => monster.id), [9102]);
+  }
+});
+
+test("every wave reference and source policy is checked even if no reserve master is requested", () => {
+  const f = waveFixture(); bindWaveRoot(f, [513, 514]);
+  delete f.input.development.participants;
+  const result = compileBattleEncounterRuntime(f.reader(), f.input);
+  assert.equal(result.encounters[9201], undefined);
+  assert.ok(result.diagnostics.some(diagnostic => diagnostic.code === "enemy-party-reference" && diagnostic.pc === 1 &&
+    diagnostic.dependency?.id === 514));
+  assert.deepEqual(result.diagnostics.filter(diagnostic => diagnostic.code === "participant-policy" && diagnostic.kind === "blocked")
+    .map(diagnostic => diagnostic.pc), [0, 1]);
+});
+
+test("a phase policy cannot invent a child source or rewrite a real source slot", () => {
+  for (const cause of ["missing-source", "source-slot"] as const) {
+    const f = waveFixture(); bindWaveRoot(f, [513]);
+    f.input.development.participants![0]!.enemyParties = cause === "missing-source"
+      ? { 514: { slots: {} } } : { 513: { slots: { 3: { x: 999, y: -8, group: 1 } } } };
+    const result = compileBattleEncounterRuntime(f.reader(), f.input);
+    assert.equal(result.encounters[9201], undefined);
+    assert.ok(result.diagnostics.some(diagnostic => diagnostic.kind === "blocked" &&
+      diagnostic.reason.includes(cause === "missing-source" ? "source party binding" : "source child slot")));
+  }
+});
+
+test("mixed AddEnemy and party changes close the requested slot across every selected phase", () => {
+  const f = waveFixture(); bindWaveRoot(f, [513], [9101, 5]);
+  let result = compileBattleEncounterRuntime(f.reader(), f.input);
+  assert.equal(result.encounters[9201], undefined);
+  assert.ok(result.diagnostics.some(diagnostic => diagnostic.code === "battle-participant-reference" && diagnostic.pc === 0 &&
+    diagnostic.dependency?.id === 513 && diagnostic.reason.includes("all selected phases")));
+  f.input.development.participants![0]!.enemyParties = { 513: { slots: { 5: { x: 40, y: -8, group: 1 } } } };
+  result = compileBattleEncounterRuntime(f.reader(), f.input);
+  assert.ok(result.encounters[9201]);
+  assert.deepEqual(result.encounters[9201]!.participants!.enemyParties![513]!.slots[5], { x: 40, y: -8, group: 1 });
+});
+
+test("child metadata is preserved independently while the explicit Web profile keeps parent presentation and rewards", () => {
+  const f = waveFixture(); bindWaveRoot(f, [513]);
+  f.child.metadata.backgroundId = 2; f.child.metadata.bgmId = 9; f.child.metadata.appearanceProduction = 1;
+  f.child.metadata.notEscape = 2; f.child.metadata.getValue = 12; f.child.patterns = [0, 0, 1, 0, 0, 0];
+  f.child.background = "synthetic-wave-background";
+  f.input.sprites = { ...f.input.sprites, [f.child.background]: { file: "/synthetic/wave-bg.png", width: 32, height: 16 } };
+  const result = compileBattleEncounterRuntime(f.reader(), f.input), entry = result.encounters[9201]!;
+  assert.ok(entry);
+  assert.equal(entry.formation, "normal");
+  assert.equal(entry.background, "synthetic-background");
+  assert.equal(entry.rewardPolicy!.magicPoints, 0);
+  const annotation = result.report.enemyPartySources![0]!;
+  assert.equal(annotation.rootPartyId, 9201); assert.equal(annotation.partyId, 513);
+  assert.deepEqual(annotation.source, f.child.source); assert.deepEqual(annotation.metadata, f.child.metadata);
+  assert.deepEqual(annotation.patterns, f.child.patterns); assert.equal(annotation.consumerSemantics, "unverified");
+  (annotation.metadata as typeof f.child.metadata).getValue = 0;
+  assert.equal(f.child.metadata.getValue, 12);
+  assert.ok(result.diagnostics.some(diagnostic => diagnostic.code === "enemy-party-metadata" && diagnostic.dependency?.id === 513 &&
+    diagnostic.dependency.field === "get_value"));
+});
+
+test("wave drop ownership and conditional AI plans use the existing registries and retain capability gaps", () => {
+  const f = waveFixture(); bindWaveRoot(f, [513]);
+  f.child.enemies.forEach(enemy => { enemy.ai.data = aiSource([
+    ["Nop"], ["SyncAI"], ["StartTable", [0]], ["Act", [12]], ["EndTable"], ["JumpBattleAI", [0]],
+  ]); });
+  const master = f.tables["monster.csv"]![2]!;
+  master.drop_rate = "100"; master.drop_content_id1 = "777"; master.drop_content_id1_value = "2";
+  f.tables["content.csv"]!.push({ id: "777", type_id: "1", type_value: "99" });
+  f.tables["item.csv"]!.push({ id: "99", type_id: "1" });
+  let result = compileBattleEncounterRuntime(f.reader(), f.input);
+  assert.ok(result.encounters[9201]);
+  assert.ok(result.diagnostics.some(diagnostic => diagnostic.code === "ability-plan" && diagnostic.kind === "runtime-dependency" &&
+    diagnostic.reason.includes("Enemy party 513") && diagnostic.pc === 3));
+  assert.deepEqual(result.drops.contents, [{ id: 777, kind: "item" }]);
+  assert.ok(result.report.entries.find(entry => entry.partyId === 9201)!.abilityIds.includes(12));
+  f.tables["content.csv"]![0]!.type_id = "8";
+  result = compileBattleEncounterRuntime(f.reader(), f.input);
+  assert.equal(result.encounters[9201], undefined);
+  assert.ok(result.diagnostics.some(diagnostic => diagnostic.code === "monster-drops" && diagnostic.dependency?.id === 9103));
+});
+
+test("batch analysis keeps party references and cross-phase slot gaps blocked independently of an old green report", () => {
+  const f = waveFixture(); bindWaveRoot(f, [513], [9101, 5]);
+  f.input.development.participants![0]!.enemyParties = { 513: { slots: { 5: { x: 40, y: -8, group: 1 } } } };
+  const catalog = catalogFor(f);
+  delete catalog.encounters[9201]!.participants!.enemyParties![513]!.slots[5];
+  let analysis = analyzeBatchEncounters(catalog, [9201]).encounters[0]!;
+  assert.equal(analysis.status, "blocked");
+  assert.ok(analysis.blockers.some(diagnostic => diagnostic.code === "battle-participant-reference" && diagnostic.reason.includes("PC 0")));
+  delete catalog.encounters[9201]!.participants!.enemyParties![513];
+  analysis = analyzeBatchEncounters(catalog, [9201]).encounters[0]!;
+  assert.equal(analysis.status, "blocked");
+  assert.ok(analysis.blockers.some(diagnostic => diagnostic.code === "enemy-party-reference" && diagnostic.reason.includes("PC 1")));
 });
