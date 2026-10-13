@@ -9,6 +9,12 @@ export type ProtectionBehavior = {
   kind: "physical-protection" | "magic-protection";
   name: string;
   untilType: 2;
+  /** Condition.ConditionGroupId supplies resistance selectors, not additional
+   * active conditions. Recomputed from the current ordered condition list. */
+  resistanceProvider?: {
+    groupId: number;
+    conditions: Record<string, number>;
+  };
 };
 
 function nonnegativeInt32(amount: number) {

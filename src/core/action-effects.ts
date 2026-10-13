@@ -95,6 +95,7 @@ export function projectActionTarget(
               fixed: first.fixedHit,
             },
             random,
+            target.side,
           )
         : conditions.recover(target.conditionIds, first.conditionIds);
     conditionIds = change.currentIds;
@@ -126,6 +127,7 @@ export function projectActionTarget(
     ...(row ? { row } : {}),
   };
   for (const effect of effects) {
+    if (effect.resource === "none") throw new Error("Empty primary calculation requires the joint battle action host");
     if (effect.missed || effect.resource === "condition" || effect.resource === "row" || effect.nullified)
       continue;
     const resource = effect.resource;

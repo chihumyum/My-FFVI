@@ -21,6 +21,7 @@ import { compileChangeBattleRowEffect } from "./battle-row-change.js";
 import { hasProtectionBehavior } from "./protection.js";
 import { hasSpeedBehavior } from "./condition-speed.js";
 import { hasBlindBehavior } from "./condition-blind.js";
+import { compileUserConditionEffect, compileUniqueNoneEffect } from "./ability-user-conditions.js";
 
 type Reader = ConditionReader;
 /** SerialBattleUtility 0x85e170; type and ID arrays recovered from 0x85f000.
@@ -174,6 +175,24 @@ export function compileDevelopmentAbility(
       } catch (error) {
         blockers.push(error instanceof Error ? error.message : String(error));
       }
+    } else if (fn.type === 38) {
+      try {
+        const compiled = compileUserConditionEffect(reader, program, fn);
+        effects.push(compiled.effect);
+        for (const row of compiled.sources)
+          if (!sources.some(existing => existing.source.assetPath === row.source.assetPath &&
+              existing.source.rowId === row.source.rowId)) sources.push(row);
+        // Decode every source site, but only the proven remove path has no
+        // additional incoming behavior/guard. The whole action still has to
+        // close its companion slots, phase, type, range and primary result.
+        if (compiled.effect.operation === "add") blockers.push(
+          compiled.effect.conditionType === 501
+            ? "unresolved user-condition Manipulate guard"
+            : `unresolved user-condition active lifecycle ${compiled.effect.conditionId}`,
+        );
+      } catch (error) {
+        blockers.push(error instanceof Error ? error.message : String(error));
+      }
     } else if (fn.type === 2 && zero(fn.values)) {
       effects.push({ slot: fn.slot, kind: "physical" });
     } else if (fn.type === 3 && v1 === 1 && v2 === 0 && v3 === 0) {
@@ -246,6 +265,11 @@ export function compileDevelopmentAbility(
       zero(fn.values) &&
       ["None", "multiply"].includes(program.process.key)
     ) {
+      if (program.abilityId === 696) {
+        try { effects.push(compileUniqueNoneEffect(program, fn)); }
+        catch (error) { blockers.push(error instanceof Error ? error.message : String(error)); }
+        continue;
+      }
       // FF6 Unique provider has no numeric branch for these two keys, for an
       // ability without an item/equipment carrier. multiply belongs to damage.
       limitations.push(
@@ -260,6 +284,13 @@ export function compileDevelopmentAbility(
   if (!effects.length) blockers.push("no implemented effect");
   const first = effects[0],
     second = effects[1];
+  const userRemovalOnly = effects.length === 2 && first?.kind === "unique-none" &&
+    first.primaryResult === "empty-dictionary" && second?.kind === "user-condition" &&
+    second.operation === "remove" && second.phase === "fixed-parameter" &&
+    second.conditionType === 682 && first.slot < second.slot &&
+    program.range === 5 && program.rules.type_id === 35 && program.rules.system_id === 2;
+  if (effects.some(effect => effect.kind === "user-condition") && !userRemovalOnly)
+    blockers.push("unresolved user-condition whole-action stages or primary result");
   const revival =
     effects.length === 2 &&
     first?.kind === "recover-condition" &&
@@ -276,6 +307,7 @@ export function compileDevelopmentAbility(
   if (
     effects.length > 1 &&
     !revival &&
+    !userRemovalOnly &&
     !effects.every((e) => e.kind === "recovery" && e.calculation === "fixed")
   )
     blockers.push("unresolved multi-effect sequencing");
@@ -356,9 +388,9 @@ export function compileDevelopmentAbility(
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (!defendOnly && !rowOnly && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
+  if (!defendOnly && !rowOnly && !userRemovalOnly && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
-  if (!defendOnly && !rowOnly && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
+  if (!defendOnly && !rowOnly && !userRemovalOnly && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
   if ((ordinaryMagic || loreMagic || protectionSpell || speedSpell) && int(a.ability_lv) !== 0)
     blockers.push("unresolved level-specific ability consumption");
@@ -405,6 +437,10 @@ export function compileDevelopmentAbility(
     attribute = int(a.attribute_id);
   if ([power, cost, wait, attribute].some((v) => v < 0))
     blockers.push("negative ability value");
+  if (userRemovalOnly && ([power, cost, wait, attribute].some(value => value !== 0) ||
+      r.accuracy_rate !== 100 || r.invalid_reflection !== 1 ||
+      r.reaction_type !== 0 || program.forbiddenConditionIds.length || program.elements.length))
+    blockers.push("unresolved user-condition removal action inputs");
   const elements = program.elements;
   if (r.attribute_group_id && elements.length > 1)
     blockers.push("unreviewed source element group enumeration");

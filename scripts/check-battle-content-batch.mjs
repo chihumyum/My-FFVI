@@ -3,18 +3,20 @@
 // This lane verifies shared ownership, not native handoff or story reachability.
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { controlledAudioRuntime } from "./controlled-audio.mjs";
 import { compileBattleContentBatch, buildBattleContentBatch } from "./build-battle-content-batch.mjs";
 
 const root = resolve(import.meta.dirname, ".."), options = new Map(), args = process.argv.slice(2);
 for (let i = 0; i < args.length; i += 2) {
-  assert.ok(["--dist", "--catalog", "--report"].includes(args[i]) && args[i + 1] && !options.has(args[i]),
-    "Use --dist/--catalog/--report <path>");
+  assert.ok(["--dist", "--catalog", "--declaration", "--outcome", "--report"].includes(args[i]) && args[i + 1] && !options.has(args[i]),
+    "Use --dist/--catalog/--declaration/--outcome/--report <value>");
   options.set(args[i], args[i + 1]);
 }
 const compiled = resolve(root, options.get("--dist") ?? "dist");
+const outcome = options.get("--outcome") ?? "victory";
+assert.ok(["victory", "defeat-retry"].includes(outcome), "Unknown battle check outcome");
 const module = name => import(pathToFileURL(resolve(compiled, "src/core", name + ".js")));
 const [{ GameSession }, { GameFlow }, { GameBattleHandoff }, { GameCommands },
   { verifyContent, contentDigest }, { canonical }, { assessBattleHandoff }] = await Promise.all([
@@ -22,7 +24,7 @@ const [{ GameSession }, { GameFlow }, { GameBattleHandoff }, { GameCommands },
 ].map(module));
 const reportPath = resolve(root, options.get("--report") ?? "build/reports/battle-content-batch-check.json");
 const report = { kind: "battle-content-batch-check-v1", lane: "source-battles-with-explicit-development-handoff",
-  result: "running", stages: [], encounters: [],
+  result: "running", stages: [], encounters: [], expectedOutcome: outcome,
   controlledInputs: ["Legacy development checkpoint; no new roster, ability, HP, MP or inventory grants",
     "Private encounter -> exit event driver; no source script, flag, trigger or route edited",
     "Actual available magitek commands 218/222 through GameCommands; fixed replay seed",
@@ -34,10 +36,11 @@ await mkdir(resolve(reportPath, ".."), { recursive: true });
 const stage = (name, detail = {}) => report.stages.push({ step: report.stages.length + 1, name, ...detail });
 try {
   const read = async path => verifyContent(JSON.parse(await readFile(resolve(root, path), "utf8")));
-  const declaration = JSON.parse(await readFile(resolve(root, "content-batches/ordinary-battles.json"), "utf8"));
+  const declaration = JSON.parse(await readFile(resolve(root, options.get("--declaration") ?? "content-batches/ordinary-battles.json"), "utf8"));
   const catalogPath = options.get("--catalog") ?? "build/content-batches/ordinary-battles/battle.json";
   const [catalog, base, field] = await Promise.all([read(catalogPath), read("build" + declaration.baseCatalogRef.url), read("build/game/narshe.json")]);
-  const built = JSON.parse(await readFile(resolve(root, "build/content-batches/ordinary-battles/report.json"), "utf8"));
+  const batchDirectory = dirname(resolve(root, catalogPath));
+  const built = JSON.parse(await readFile(resolve(batchDirectory, "report.json"), "utf8"));
   assert.equal(base.contentHash, declaration.baseCatalogRef.contentHash);
   assert.equal(catalog.contentHash, built.contentHash);
   assert.equal(built.result, "compiled"); assert.equal(built.runtime.withRuntimeDependencies, 0);
@@ -55,6 +58,8 @@ try {
     parentSourceSetHash: built.parentSourceSetHash, battleSourceSetHash: built.battleSourceSetHash,
     partyIds: built.partyIds, originalRequestedPartyIds: built.originalRequestedPartyIds,
     addedDropMonsterIds: built.addedDropMonsterIds, addedDropContentIds: built.addedDropContentIds });
+  if (declaration.entryPolicy) Object.assign(report, { lane: "source-system-probes-with-explicit-development-entry",
+    entryPolicy: declaration.entryPolicy, sourcePoolAdmitted: false });
   stage("source-selection-closed-with-unmodified-base-owned-and-capability-content");
 
   const driver = structuredClone(field), source = { file: "controlled-ordinary-battles",
@@ -122,6 +127,7 @@ try {
     }
     assert.equal((await handoff.start()).status, "committed"); flow.advance(0, host);
     const battle = session.battle, encounter = catalog.encounters[partyId];
+    const entryResources = battle.combatants.map(({ id, hp, mp, conditionIds }) => ({ id, hp, mp, conditionIds: [...conditionIds] }));
     assert.equal(flow.phase, "battle"); assert.equal(battle.content.encounterId, partyId);
     assert.deepEqual(battle.enemies.map(enemy => ({ id: enemy.id, sourceId: enemy.sourceId })),
       encounter.enemies.map(enemy => ({ id: enemy.id, sourceId: enemy.sourceId })));
@@ -138,6 +144,29 @@ try {
         if (target && commands.command(battle, actor.id, abilityId, target.id, command.id)) accepted++;
       }
       flow.advance(10, host);
+    }
+    if (outcome === "defeat-retry") {
+      assert.equal(battle.phase, "defeat", "The declared low-level owner must reach a real, unmodified loss");
+      assert.equal(flow.phase, "defeat"); assert.ok(accepted > 0);
+      assert.deepEqual(session.state.snapshot(), initial, "Defeat cannot publish HP, stock or rewards");
+      assert.equal(battle.reward, null); assert.deepEqual(session.completedEncounters, []);
+      assert.equal(commands.canRetryBattle(battle), true);
+      if (partyId === built.partyIds[0]) {
+        preparationFailure = new Error("Controlled retry media unavailable");
+        assert.equal((await handoff.retry()).status, "failed");
+        assert.equal(session.battle, battle); assert.deepEqual(session.state.snapshot(), initial);
+        preparationFailure = null;
+      }
+      assert.equal((await handoff.retry()).status, "committed"); flow.advance(0, host);
+      assert.notEqual(session.battle, battle); assert.equal(flow.phase, "battle");
+      assert.equal(commands.canRetryBattle(battle), false);
+      assert.deepEqual(session.battle.combatants.map(({ id, hp, mp, conditionIds }) => ({ id, hp, mp, conditionIds })), entryResources);
+      assert.deepEqual(session.state.snapshot(), initial);
+      assert.throws(() => session.checkpoint(), /during battle/);
+      report.encounters.push({ partyId, result: "defeat-retry", acceptedCommands: accepted, ticks,
+        entryResources, retries: 1, ownedUnchanged: true, rewardsGranted: false });
+      stage("source-parameter-loss-preserves-owner-and-retries-the-same-entry", { partyId });
+      continue;
     }
     assert.equal(battle.phase, "victory", "Source party " + partyId + " did not reach victory through owned commands");
     assert.ok(accepted > 0); assert.equal(flow.phase, "victory");
@@ -190,16 +219,18 @@ try {
       dropGrants: receipt.dropPlan.grants, prepares, checkpointRestored: true });
     stage("source-battle-command-victory-return-and-save-binding", { partyId });
   }
-  const blocked = await compileBattleContentBatch(root, { ...declaration, partyIds: [2147483647] });
+  const invalidSelection = { ...declaration, partyIds: [2147483647],
+    ...(declaration.entryPolicy ? { entryPolicy: { ...declaration.entryPolicy, scripts: [], flagGroups: [] } } : {}) };
+  const blocked = await compileBattleContentBatch(root, invalidSelection);
   assert.equal(blocked.catalog, null); assert.equal(blocked.report.result, "blocked");
   assert.ok(blocked.report.diagnostics.some(diagnostic => diagnostic.kind === "blocked"));
   // A rejected selection never republishes an existing completed batch.
   const temporary = await mkdtemp(resolve(root, "build/content-batches/.battle-check-"));
   try {
     const badPath = resolve(temporary, "blocked.json");
-    await writeFile(badPath, JSON.stringify({ ...declaration, partyIds: [2147483647] }));
+    await writeFile(badPath, JSON.stringify(invalidSelection));
     await assert.rejects(() => buildBattleContentBatch({ root, declarationPath: badPath,
-      outDir: "build/content-batches/ordinary-battles" }), error => error.report?.result === "blocked");
+      outDir: batchDirectory }), error => error.report?.result === "blocked");
     assert.equal((await read(catalogPath)).contentHash, catalog.contentHash);
   } finally { await rm(temporary, { recursive: true, force: true }); }
   await assert.rejects(() => compileBattleContentBatch(root, { ...declaration,

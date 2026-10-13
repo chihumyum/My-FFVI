@@ -46,7 +46,7 @@ import {
 } from "./battle-ai.js";
 import { battleAITargetBlocker, planBattleAITarget } from "./battle-ai-targets.js";
 import { battleReaction, validateReactionRules } from "./battle-reactions.js";
-import { projectActionTarget } from "./action-effects.js";
+import { projectActionTargets, type ActionUserConditionResult } from "./action-user-conditions.js";
 import { projectPhysicalRows, validateBattleRow, validateBattleRowCatalog, type PhysicalRowContext } from "./battle-row.js";
 import type { SlowState } from "./condition-speed.js";
 import {
@@ -120,6 +120,8 @@ export type BattleAction = {
   learningAbilityIds?: number[];
   learningByOwner?: { ownedId: string; abilityIds: number[] }[];
   results: { target: string; effects: AbilityEffectResult[] }[];
+  /** Independent caster results; never substituted for target calculation. */
+  userConditionResults?: ActionUserConditionResult[];
 };
 export type BattleReward = {
   exp: number;
@@ -1875,11 +1877,12 @@ export class BattleGame {
         effects: result.effects,
       });
       if (!reaction) continue;
+      const receivedTypeId = this.content.abilities[action.source.id]!.program.rules.type_id;
       const turn = planBattleAIReaction(
         actor.ai!,
         this.aiStates.get(actor.id)!,
         this.aiContext(actor, units),
-        reaction,
+        { ...reaction, ...(receivedTypeId === undefined ? {} : { receivedAbilityTypeId: receivedTypeId }) },
       );
       this.admitAITurn(actor, turn);
       for (const act of turn.acts) {
@@ -1938,25 +1941,26 @@ export class BattleGame {
         action.resolved = true;
         return;
       }
-      const staged = choice.targetIds.map((id) => {
-        const target = this.combatants.find((c) => c.id === id)!;
-        const { state, effects } = projectActionTarget(
+      const projection = projectActionTargets(
           ability.plan!,
           ability.power,
           actor,
-          target,
+          choice.targetIds.map(id => this.combatants.find(c => c.id === id)!),
           this.conditions,
           (min, max) => this.randomInt(min, max),
-          choice.targetIds.length,
           payment,
           ability.plan!.effects.some((effect) => effect.kind === "physical")
-            ? action.source.kind === "ability" ? this.physicalRows(actor, action.source.id, target)
+            ? action.source.kind === "ability" ? target => this.physicalRows(actor, action.source.id, target)
               : (() => { throw new Error("Physical item row providers are unavailable"); })()
             : undefined,
         );
+      const staged = projection.targets.map(({ targetId, state, effects }) => {
+        const target = this.combatants.find(c => c.id === targetId)!;
         const messages: string[] = [];
         for (const effect of effects) {
-          if (effect.resource === "row") {
+          if (effect.resource === "none") {
+            continue;
+          } else if (effect.resource === "row") {
             messages.push(`${target.name} 移到${effect.after === "front" ? "前排" : "后排"}。`);
           } else if (effect.missed) {
             messages.push(
@@ -1996,28 +2000,40 @@ export class BattleGame {
         ...c,
         mp: c.mp - (c === actor ? payment : 0),
         ...staged.find((entry) => entry.target.id === c.id)?.state,
+        ...(c === actor && projection.userResults.length ? { conditionIds: projection.userConditionIds } : {}),
       }));
       const results = staged.map((entry) => ({
         target: entry.target.id,
         effects: entry.effects,
       }));
       const reactions = this.planReactions(action, projected, results);
-      const poison = staged.map((entry) => {
-        const removed = entry.effects.flatMap((effect) =>
+      const userMessages: string[] = [];
+      for (const result of projection.userResults) {
+        for (const id of result.added)
+          if (this.conditions.name(id)) userMessages.push(`${actor.name} 获得${this.conditions.name(id)}状态。`);
+        for (const id of result.removed)
+          if (this.conditions.name(id)) userMessages.push(`${actor.name} 的${this.conditions.name(id)}已解除。`);
+      }
+      const changedIds = [...new Set([...staged.map(entry => entry.target.id),
+        ...(projection.userResults.length ? [actor.id] : [])])];
+      const poison = changedIds.map(id => {
+        const unit = projected.find(c => c.id === id)!;
+        const removed = (staged.find(entry => entry.target.id === id)?.effects ?? []).flatMap((effect) =>
           effect.resource === "condition" ? effect.removed : [],
         );
+        removed.push(...projection.userResults.filter(result => result.ownerId === id).flatMap(result => result.removed));
         const previous = this.poisonStates
-          .get(entry.target.id)!
+          .get(id)!
           .filter((clock) => !removed.includes(clock.conditionId));
         return {
-          id: entry.target.id,
+          id,
           state: this.conditions.reconcilePoisonState(
-            entry.state.conditionIds,
+            unit.conditionIds,
             previous,
             this.atbSpeed,
           ),
-          slow: this.conditions.reconcileSlowState(entry.state.conditionIds,
-            this.slowStates.get(entry.target.id)!.filter((clock) => !removed.includes(clock.conditionId))),
+          slow: this.conditions.reconcileSlowState(unit.conditionIds,
+            this.slowStates.get(id)!.filter((clock) => !removed.includes(clock.conditionId))),
         };
       });
       // One transaction includes effects, enemy parameters, AI PCs, both queues,
@@ -2046,6 +2062,7 @@ export class BattleGame {
         this.observedAbilityIds.push(action.source.id);
       }
       actor.mp -= payment;
+      if (projection.userResults.length) actor.conditionIds = [...projection.userConditionIds];
       for (const next of poison) {
         this.poisonStates.set(next.id, next.state);
         this.slowStates.set(next.id, next.slow);
@@ -2064,6 +2081,7 @@ export class BattleGame {
         }
         for (const message of entry.messages) this.log(message);
       }
+      for (const message of userMessages) this.log(message);
       for (const update of reactions.updates) {
         this.aiStates.set(update.actor, update.turn.state);
         this.combatants.find((c) => c.id === update.actor)!.behavior =
@@ -2073,6 +2091,7 @@ export class BattleGame {
       action.selection = choice.selection;
       action.targetIds = choice.targetIds;
       action.results = results;
+      if (projection.userResults.length) action.userConditionResults = structuredClone(projection.userResults);
       action.resolved = true;
     } catch (error) {
       this.randomState = randomBefore;

@@ -15,6 +15,7 @@ import type { ElementResistances } from "./elements.js";
 import type { DefendEffect } from "./defend.js";
 import type { PhysicalRowContext } from "./battle-row.js";
 import type { ChangeBattleRowEffect, ChangeBattleRowResult } from "./battle-row-change.js";
+import type { UserConditionEffect, UniqueNoneEffect, UniqueNoneEffectResult } from "./ability-user-conditions.js";
 /** Decoded source dispatch, separate from the bounded playability executor. */
 export type AbilityFunction = {
   slot: number;
@@ -37,6 +38,8 @@ export type AbilityProgram = {
 export type AbilityEffect =
   | DefendEffect
   | ChangeBattleRowEffect
+  | UserConditionEffect
+  | UniqueNoneEffect
   | { slot: number; kind: "physical" | "magic" }
   | {
       slot: number;
@@ -76,6 +79,7 @@ export type NumericalEffectResult = {
 export type AbilityEffectResult =
   | NumericalEffectResult
   | ChangeBattleRowResult
+  | UniqueNoneEffectResult
   | {
       slot: number;
       resource: "condition";

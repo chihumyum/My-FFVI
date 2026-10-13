@@ -233,7 +233,8 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         { dependency: { table: "battle_bgm_asset.csv", id: m.bgmId } });
 
       const compileEnemy = (enemy: EnemyBattleSource, slot?: number, childPartyId?: number): EnemyBattleDefinition | null => {
-        const compiled = compileEnemyBattleDefinition(reader, { enemy, abilities: input.abilities,
+        const compiled = compileEnemyBattleDefinition(reader, { enemy,
+          entryPhase: slot === undefined || childPartyId !== undefined ? "late" : "initial", abilities: input.abilities,
           conditions: input.conditions, sprites: input.sprites, name: input.name,
           parameters: input.parameters, physical: input.physical, formationPlan });
         const context = { source: compiled.source ?? encounter.source,
@@ -378,6 +379,9 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         if (!enemyDefinitions[String(op.monsterId)])
           add("blocked", "battle-participant-reference", `Battle event PC ${pc} has no admitted enemy master ${op.monsterId}`,
             { pc, dependency: { table: "monster.csv", id: op.monsterId } });
+        else if (enemyDefinitions[String(op.monsterId)]!.conditionIds.length)
+          add("blocked", "enemy-late-initial-condition", "Dynamic entry cannot reuse the initial battle condition activation phase",
+            { pc, dependency: { table: "monster.csv", id: op.monsterId, field: "initial_condition" } });
         if (!slotIds.has(String(op.uniqueId)))
           add("blocked", "battle-participant-reference", `Battle event PC ${pc} has no admitted enemy slot ${op.uniqueId}`,
             { pc, dependency: { table: "script.csv", id: encounter.metadata.scriptId } });

@@ -14,6 +14,7 @@ import { compileEnemyPhysical } from "./physical-parameters.js";
 import { compileElementResistances } from "./elements.js";
 import { tableInteger as int } from "./table.js";
 import { compileConditionResistances, ConditionResistanceCompilationError } from "./condition-resistances.js";
+import { compileEnemyInitialConditions, InitialConditionCompilationError } from "./initial-conditions.js";
 
 type Reader = {
   row(table: string, id: string | number): BattleRow;
@@ -24,6 +25,7 @@ type Reader = {
 export type EnemyBattleSource = Pick<SourceBattleEncounter["enemies"][number], "monsterId" | "sprite" | "ai">;
 export type EnemyBattleDefinitionInput = {
   enemy: EnemyBattleSource;
+  entryPhase: "initial" | "late";
   abilities: Readonly<Record<string, AbilityDefinition>>;
   conditions: BattleConditionCatalog;
   sprites: Readonly<Record<string, { file: string; width: number; height: number }>>;
@@ -61,8 +63,20 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
     source = found.source;
     if (int(row.id) !== enemy.monsterId || found.source.rowId !== String(enemy.monsterId))
       throw new Error("Changed enemy source identity");
-    for (const key of ["attack_attribute", "attack_plus", "attack_plus_grop", "initial_condition"])
+    for (const key of ["attack_attribute", "attack_plus", "attack_plus_grop"])
       if (int(row[key]) !== 0) throw new Error(`Unimplemented monster ${key}=${row[key]}`);
+    let conditionIds: number[];
+    try {
+      if (int(row.initial_condition) !== 0 && input.entryPhase !== "initial")
+        throw new InitialConditionCompilationError("Nonzero initial conditions require an admitted late-entry initialization phase",
+          { table: "monster.csv", id: enemy.monsterId, field: "initial_condition" });
+      conditionIds = compileEnemyInitialConditions(reader, int(row.initial_condition), input.conditions).conditionIds;
+    } catch (error) {
+      add("blocked", "enemy-initial-condition", `Monster ${enemy.monsterId} initial_condition=${row.initial_condition}: ` +
+        (error instanceof Error ? error.message : String(error)), { dependency: error instanceof InitialConditionCompilationError
+          ? error.dependency : { table: "monster.csv", id: enemy.monsterId, field: "initial_condition" } });
+      return { source, diagnostics, definition: null };
+    }
     let conditionResistances: Record<string, number>;
     try {
       conditionResistances = compileConditionResistances(reader, int(row.resistance_condition),
@@ -113,7 +127,7 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
       level: int(row.lv), attackElements: [],
       elementResistances: compileElementResistances(reader, int(row.resistance_attribute)).resistances,
       physical, ...parameters, exp: int(row.exp), gil: int(row.gill), growthGroup: null,
-      abilities: abilityIds, commands: [], conditionIds: [], conditionResistances, ai,
+      abilities: abilityIds, commands: [], conditionIds, conditionResistances, ai,
       sprites: { idle: enemy.sprite, mount: null },
     } };
   } catch (error) {

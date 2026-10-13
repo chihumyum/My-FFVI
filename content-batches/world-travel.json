@@ -6,11 +6,11 @@
     "development": null,
     "initialized": {
       "battle": {
-        "contentHash": "6e2658ce695a47d7a7e1eddcda779922da0f698f061b3ba3de67c0c4db272a5b",
+        "contentHash": "9290c9522e052add2af07bcc7d3f63f218dfcd1f2f155933902226558cbfa39e",
         "url": "/content-packages/world-travel/battle.json"
       },
       "entry": {
-        "contentHash": "28554081220e830b5caa2993fa7a2473ae6c5fc11bb252f815e67945a22b28f9",
+        "contentHash": "79faa531900e8335489c3e7838edaa6c6200cda2da8b22e2b10ec8dfb0a1bae6",
         "url": "/content-packages/world-travel/entry.json"
       }
     },
@@ -18,7 +18,7 @@
     "profile": "framework",
     "source": null,
     "world": {
-      "contentHash": "3b5c6a49bf8f28beab0ef6038aabe3dfa9d87d5afc9ec62856843950f06a5964",
+      "contentHash": "4648fc903717405b7245af62419645a53de4a675e53f90b61163462778996a94",
       "url": "/content-packages/world-travel/world.json"
     }
   },

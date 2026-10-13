@@ -78,6 +78,19 @@ test("zero group preserves absent tables and exact legacy enemy content", () => 
   assert.equal(result.report.blocked, 0);
 });
 
+test("initial state activates a known source group while the same template cannot grant an unproved late-entry phase", () => {
+  const f = fixture();
+  f.tables["monster.csv"]![0]!.initial_condition = "501";
+  const initial = compileBattleEncounterRuntime(f.reader(), f.input);
+  assert.deepEqual(initial.encounters[9201]!.enemies[0]!.conditionIds, [301]);
+  const enemy = f.input.encounters[0]!.enemies[0]!;
+  const late = compileBattleEncounterRuntime(f.reader(), { ...f.input,
+    reserveEnemies: [{ partyId: 9201, enemy }] });
+  assert.equal(late.encounters[9201], undefined);
+  assert.ok(late.diagnostics.some(diagnostic => diagnostic.partyId === 9201 &&
+    diagnostic.code === "enemy-initial-condition" && /late-entry initialization phase/.test(diagnostic.reason)));
+});
+
 test("same-selector duplicates retain provenance while conflicting duplicates do not guess native enumeration", () => {
   const f = fixture();
   f.tables["condition_group.csv"]!.push({ ...f.tables["condition_group.csv"]![0]!, id: "5004", invocation_rate: "2" });
@@ -116,7 +129,8 @@ test("an admitted resistance never bypasses initial active-condition or physical
     const f = fixture(); f.tables["monster.csv"]![1]![field] = "17";
     const result = compileBattleEncounterRuntime(f.reader(), f.input);
     assert.equal(result.encounters[9202], undefined);
-    assert.ok(result.diagnostics.some(diagnostic => diagnostic.code === "enemy-provider" && diagnostic.reason.includes(field + "=17")));
+    const code = field === "initial_condition" ? "enemy-initial-condition" : "enemy-provider";
+    assert.ok(result.diagnostics.some(diagnostic => diagnostic.code === code && diagnostic.reason.includes(field + "=17")));
   }
 });
 

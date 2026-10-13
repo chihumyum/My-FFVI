@@ -3,11 +3,11 @@
   "id": "world-travel",
   "sourceEntry": {
     "url": "/game/source-new-game.json",
-    "contentHash": "17f546f936b1c4718d049e9eeb698f1368e32ae04ebff0585d586a45c44195e5"
+    "contentHash": "054d81aa8901a4d0024bab182772bb018e42bc223351b7bcb628065b4e10a57d"
   },
   "sourceBattle": {
     "url": "/game/source-catalog.json",
-    "contentHash": "6e8a406f2de60128267eca0c3d3039a77de96c4b183e31f4a8d84c2ea779a926"
+    "contentHash": "d8c5cc15913f27333da3d72446036b8baba908429829265b897287a78912109a"
   },
   "sourceWorld": {
     "url": "/world/catalog.json",

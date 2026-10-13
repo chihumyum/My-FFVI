@@ -1,0 +1,52 @@
+{
+  "kind": "battle-content-batch-declaration-v2",
+  "id": "narshe-battle-systems",
+  "parentSourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+  "battleSourceSetHash": "d713cd2b9b117321b895f480fbc32c93a1fe630ac269b2de9a40a5a885324856",
+  "baseCatalogRef": {
+    "url": "/game/opening-playable.json",
+    "contentHash": "1c5e405447a414b31666df65452a0b68ff1498842a739fb9ca7b7fad2752f8fd"
+  },
+  "partyIds": [
+    129,
+    274,
+    275,
+    276
+  ],
+  "handoff": {
+    "kind": "framework-battle-handoff-v1",
+    "id": "battle-systems-v75",
+    "audio": "retain-field",
+    "introduction": "omit"
+  },
+  "entryPolicy": {
+    "kind": "framework-battle-batch-entry-v1",
+    "id": "battle-systems-v75",
+    "formations": {
+      "kind": "framework-battle-formations-v1",
+      "id": "battle-systems-normal-v75",
+      "weights": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "scripts": [
+      {
+        "id": 8010,
+        "sourceHash": "6d43711f9b9d4125509ae1ac2bcd89c4f77c5c9dde7d02e2bd55c102e808a1ed",
+        "reason": "Authored system probes use ordinary AI turns; this complete source script and its story/effect calls remain omitted, with no source-story admission."
+      }
+    ],
+    "flagGroups": [
+      {
+        "id": 11,
+        "sourceHash": "d184d029dff05c80a2b9e12f149aa6a627fe6c689c780b9a869e42d6bd8bb294",
+        "reason": "Authored system probes retain the exact source flag rows as dependencies; native flag consumers remain unavailable."
+      }
+    ]
+  }
+}

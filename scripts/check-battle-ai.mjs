@@ -16,6 +16,7 @@ import {
   BattleAIError,
   startBattleAI,
   planBattleAITurn,
+  planBattleAIReaction,
   drawBattleAIAbility,
   selectBattleAIAbilities,
 } from "../dist/src/core/battle-ai.js";
@@ -277,13 +278,21 @@ const parameterChecks = [];
   assert.equal(next.state.pc, 1);
   assert.equal(ctx.self.behavior.variables[0], 1);
   ctx.self.mp = 2049;
-  assert.throws(
-    () => planBattleAITurn(program, stage.state, ctx),
-    (e) =>
-      e instanceof BattleAIError &&
-      e.pc === 47 &&
-      /IsCheckReceiveCommand/.test(e.message),
-  );
+  const higher = planBattleAITurn(program, stage.state, ctx);
+  assert.equal(higher.acts.find(act => act.selected).pc, 55);
+  assert.equal(higher.state.receivedAbility, null);
+  for (const typeId of [4, 1, 2, 601, 602, 623, 504]) {
+    const reaction = planBattleAIReaction(program, stage.state, ctx, {
+      counterReady: true, receivedAbilityId: 1, receivedSystemId: 3,
+      receivedAbilityTypeId: typeId,
+    });
+    assert.deepEqual(reaction.acts.map(act => act.pc), [68]);
+    assert.equal(reaction.state.receivedAbility, null);
+  }
+  assert.throws(() => planBattleAIReaction(program, stage.state, ctx, {
+    counterReady: false, receivedAbilityId: 1, receivedSystemId: 3,
+  }), e => e instanceof BattleAIError && e.pc === 47 &&
+    /missing received ability type identity/.test(e.message));
   parameterChecks.push({
     source: program.source,
     constructedCheckpoint: checkpoint,
@@ -291,13 +300,69 @@ const parameterChecks = [];
     intermediateSyncPc: 45,
     lowMpSelectedPc: 62,
     lowMpOutputVariable0: 0,
-    highMpBlockedPc: 47,
+    highMpSelectedPc: 55,
+    receivedTypeSelectors: [4, 1, 2, 601, 602, 623, 504],
+    receivedTypeCounterPc: 68,
+    missingReceivedTypeBlockedPc: 47,
     abilitiesExecuted: false,
     liveParametersUnchanged: true,
   });
 }
-assert.equal(ability(696).plan, null);
-assert.ok(ability(696).blockers.some((s) => s.includes("function type 38")));
+assert.ok(ability(696).plan);
+assert.deepEqual(ability(696).plan.effects.map(effect => effect.kind),
+  ["unique-none", "user-condition"]);
+
+// This source family queries received Ability.TypeId. Both keys use the same
+// consumer, without guessing a command master ID. Two original UltrosIF rows
+// have an out-of-segment target and nonzero reals; they remain explicit stops.
+const receivedCommandInstructions = [];
+for (const asset of assets) {
+  const program = programs.get(asset.source.assetPath.split("/").at(-1));
+  if (!program) continue;
+  for (const [pc, raw] of asset.data.Mnemonics.entries()) {
+    if (!["IsReceiveCommand", "IsCheckReceiveCommand"].includes(raw.mnemonic)) continue;
+    const op = program.instructions[pc].op, values = raw.operands.iValues;
+    const knownForm = raw.type === 1 && values.length >= 2 &&
+      values.slice(2).every(value => value === 0) &&
+      raw.operands.rValues.every(value => value === 0) &&
+      raw.operands.sValues.every(value => value === "") &&
+      values[1] >= program.entry && values[1] < program.end;
+    if (knownForm) assert.deepEqual(op, {
+      kind: "received-ability-branch", field: "typeId", value: values[0], target: values[1],
+    });
+    else assert.equal(op.kind, "blocked");
+    receivedCommandInstructions.push({source: program.source, pc,
+      mnemonic: raw.mnemonic, rawOperands: raw.operands, op});
+  }
+}
+assert.equal(receivedCommandInstructions.length, 186);
+assert.equal(receivedCommandInstructions.filter(site => site.op.kind === "received-ability-branch").length, 184);
+assert.equal(receivedCommandInstructions.filter(site => site.op.kind === "blocked").length, 2);
+const party275 = reader.row("monster_party.csv", 275);
+const monster275 = reader.row("monster.csv", party275.values.monster5);
+const ai275 = reader.row("monster_ai_script.csv", monster275.values.script_id);
+const program275 = programs.get(ai275.values.script_name + ".json");
+assert.ok(program275);
+const receivedContext = context(), initial275 = startBattleAI(program275, receivedContext);
+const baseline275 = structuredClone({initial: initial275, context: receivedContext});
+const normal275 = planBattleAITurn(program275, initial275.state, receivedContext);
+assert.deepEqual(normal275.acts.map(act => [act.pc, act.abilities]), [[7, [1, 530]]]);
+assert.equal(program275.instructions[12].mnemonic, "CounterPlayerAct");
+assert.equal(program275.instructions[12].op.kind, "blocked");
+for (const typeId of [607, 608]) assert.throws(() =>
+  planBattleAIReaction(program275, initial275.state, receivedContext, {
+    counterReady: true, receivedAbilityId: 1, receivedSystemId: 3, receivedAbilityTypeId: typeId,
+  }), e => e instanceof BattleAIError && e.pc === 12 && /CounterPlayerAct/.test(e.message));
+assert.throws(() => planBattleAIReaction(program275, initial275.state, receivedContext, {
+  counterReady: false, receivedAbilityId: 1, receivedSystemId: 3,
+}), e => e instanceof BattleAIError && e.pc === 3 && /missing received ability type identity/.test(e.message));
+assert.deepEqual({initial: initial275, context: receivedContext}, baseline275);
+const receivedCommandChecks = {
+  instructions: receivedCommandInstructions,
+  party275: {source: program275.source, monsterSource: monster275.source,
+    receivedTypeSelectors: [607, 608], normalPc: 7, counterPlayerActBlockedPc: 12,
+    missingReceivedTypeBlockedPc: 3, abilitiesExecuted: false, inputUnchanged: true},
+};
 
 // Check every supplied LoopAct instruction independently of unsupported nearby
 // triggers. This does not turn those complete enemy scripts into runnable AI.
@@ -402,18 +467,28 @@ for (const [name, pc, expected] of [
     };
   };
   assert.deepEqual(run([60000]), run(Array(6000).fill(10)));
-  // The original complete program is still gated, rather than ignoring triggers.
+  // Devoahan's unresolved counter-command trigger remains gated. Aspidochelon's
+  // two received-type queries are now admitted; this controlled host still
+  // supplies opening stats/poses and does not certify the source enemy/region.
   const full = structuredClone(content);
   full.enemies[0].ai = original;
   full.enemies[0].abilities = battleAIAbilities(original);
-  assert.throws(() => new BattleGame(admittedAIProbe(full), 317, undefined, sourceBattleInventory(catalog)), /unsupported AI instruction/);
+  const originalProgramStillBlocked = name === "sc_ai_058_Devoahan.json";
+  if (originalProgramStillBlocked)
+    assert.throws(() => new BattleGame(admittedAIProbe(full), 317, undefined, sourceBattleInventory(catalog)), /CounterActReceiveCommand/);
+  else {
+    assert.equal(name, "sc_ai_0C8_Aspidochelon.json");
+    assert.ok(original.instructions.slice(3, 5).every(i =>
+      i.op.kind === "received-ability-branch" && i.op.field === "typeId"));
+    assert.equal(new BattleGame(admittedAIProbe(full), 317, undefined, sourceBattleInventory(catalog)).phase, "active");
+  }
   loopHostChecks.push({
     source: original.source,
     sourcePc: pc,
     syntheticSurroundingTable: true,
     actions,
     framePartitionReplay: true,
-    originalProgramStillBlocked: true,
+    originalProgramStillBlocked,
   });
   if (loopHostChecks.length === 1)
     await writeFile(
@@ -470,8 +545,12 @@ for (const name of [
   if (name === "sc_ai_157_ShortArm.json") {
     const higher = structuredClone(content);
     higher.enemies[0].hp = 10113;
+    assert.equal(new BattleGame(admittedAIProbe(higher), 239, undefined, sourceBattleInventory(catalog)).phase, "active");
+    const missing = structuredClone(higher);
+    missing.abilities[696].plan = null;
+    missing.abilities[696].blockers = ["Controlled missing ability plan for route admission regression"];
     assert.throws(
-      () => new BattleGame(admittedAIProbe(higher), 239, undefined, sourceBattleInventory(catalog)),
+      () => new BattleGame(admittedAIProbe(missing), 239, undefined, sourceBattleInventory(catalog)),
       (e) =>
         e instanceof BattleAIError &&
         e.pc === 7 &&
@@ -500,8 +579,12 @@ high.enemies.forEach((e, index) => {
 // source monster/drop row and must not masquerade as a complete encounter.
 high.drops = null;
 high.players[0].level = 7;
+assert.equal(new BattleGame(admittedAIProbe(high), 241, undefined, sourceBattleInventory(catalog)).phase, "active");
+const missingHigh = structuredClone(high);
+missingHigh.abilities[696].plan = null;
+missingHigh.abilities[696].blockers = ["Controlled missing ability plan for route admission regression"];
 assert.throws(
-  () => new BattleGame(admittedAIProbe(high), 241, undefined, sourceBattleInventory(catalog)),
+  () => new BattleGame(admittedAIProbe(missingHigh), 241, undefined, sourceBattleInventory(catalog)),
   (e) =>
     e instanceof BattleAIError &&
     e.pc === 10 &&
@@ -520,15 +603,18 @@ const report = {
   rows,
   traces,
   parameterChecks,
+  receivedCommandChecks,
   loopInstructions,
   loopHostChecks,
   hostChecks,
-  highLevelDependencyGate: true,
+  highLevelDependencyGate: { admittedSourceAbility696: true, controlledMissingPlanRejected: true },
   limitations: [
     "decoding-is-not-playable-enemy-or-map-coverage",
     "host-probes-use-opening-parameters-and-poses-with-source-ai",
     "no-confusion-behavior-from-condition-branch-probe",
-    "no-function-38-ability-696-effects",
+    "bounded-function-38-user-condition-plan-does-not-admit-counter-self-targets-or-all-state-behaviors",
+    "received-command-keys-query-ability-type-not-command-id-and-unknown-types-do-not-default-zero",
+    "two-malformed-original-received-command-rows-and-CounterPlayerAct-remain-blocked",
     "only-basic-counter-readiness-and-CounterAct-no-final-or-full-boss-event-support",
     "loop-ability-effects-and-auto-targets-must-pass-existing-admission",
     "loop-host-probes-import-source-instructions-into-explicit-synthetic-normal-tables",

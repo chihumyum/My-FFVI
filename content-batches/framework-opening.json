@@ -38,11 +38,11 @@
     "profile": "framework",
     "source": {
       "battle": {
-        "contentHash": "6e8a406f2de60128267eca0c3d3039a77de96c4b183e31f4a8d84c2ea779a926",
+        "contentHash": "d8c5cc15913f27333da3d72446036b8baba908429829265b897287a78912109a",
         "url": "/content-packages/source/battle.json"
       },
       "entry": {
-        "contentHash": "1860347db68b2ba6c8ad3d36a43202cbc4a9b3629c5c8b084c795893517ca88d",
+        "contentHash": "2a8aa9275713e8aac3f53c5439935f9efeb67e16a48633fd5042533f2f2af094",
         "url": "/content-packages/framework/entry.json"
       }
     },

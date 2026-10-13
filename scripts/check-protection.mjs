@@ -36,6 +36,7 @@ const { catalog } = compileBattleConditionCatalog(reader, corpus.tables["conditi
 const conditions = new BattleConditions(catalog);
 assert.deepEqual(catalog.behaviors.filter((b) => b.kind.endsWith("-protection")).map(({ id, kind, untilType }) => ({ id, kind, untilType })), [
   { id: 22, kind: "magic-protection", untilType: 2 }, { id: 23, kind: "physical-protection", untilType: 2 },
+  { id: 93, kind: "physical-protection", untilType: 2 }, { id: 94, kind: "magic-protection", untilType: 2 },
 ]);
 const ordinaryHit = { accuracy: 100, magicEvasion: 0, fixed: false };
 const noRng = () => assert.fail("Unexpected protection random draw");
@@ -57,7 +58,10 @@ const fieldConditions = new FieldConditions(field);
 for (const id of [22, 23, 93, 94]) {
   assert.throws(() => fieldConditions.validateActive([id]), /Unimplemented active field/); lifecycleProbes++;
 }
-for (const id of [93, 94]) { assert.throws(() => conditions.validateActive([id]), /Unimplemented active battle/); lifecycleProbes++; }
+for (const id of [93, 94]) {
+  conditions.validateActive([id]); lifecycleProbes++;
+  assert.equal(hasProtectionBehavior(reader.row("condition.csv", id)), false);
+}
 const functions = new Set(corpus.tables["function.csv"].filter((r) => r.type_id === "9").map((r) => r.id));
 const groups = corpus.tables["function_group.csv"].filter((r) => [1, 2, 3].some((slot) =>
   functions.has(r[`function${slot}_id`]) && ["22", "23", "93", "94"].includes(r[`function${slot}_value1`])));
@@ -106,12 +110,13 @@ const report = {
   lane: "source-protection-compiler-lifecycle-and-controlled-action-projection", nativeEvidenceHash: hash(native),
   sourceSetHash: corpus.manifest.sourceSetHash,
   conditions: rows.map((r) => ({ id: Number(r.id), type: Number(r.condition_type), untilType: Number(r.until_type),
-    conditionGroup: Number(r.condition_group_id), effectAssetId: Number(r.battle_effect_asset_id), admitted: admittedRows.includes(r) })),
+    conditionGroup: Number(r.condition_group_id), effectAssetId: Number(r.battle_effect_asset_id),
+    activeAdmitted: catalog.behaviors.some((b) => b.id === Number(r.id)), ordinaryApplicationAdmitted: admittedRows.includes(r) })),
   sources: [...rows.map((r) => reader.row("condition.csv", r.id)), ...candidates.flatMap((r) => compileAbilityProgram(reader, Number(r.id)).sources)],
   admittedAbilities: admitted.map((d) => d.id), blockedAbilities: blocked.map((d) => ({ id: d.id, blockers: d.blockers })),
   lifecycleProbes, abilityProbes, damageProbes, publishedProbes,
   originalGameExecuted: false, semanticsVerified: false,
-  blockers: ["special protection providers93/94", "equipment/permanent protection providers", "original condition particle effects327/328",
+  blockers: ["special protection ability-application paths", "equipment/permanent protection providers", "original condition particle effects327/328",
     "source summon/automatic/composite action providers", "original-game-dynamic-oracle"],
 };
 if (!sourceOnly) {
@@ -138,6 +143,7 @@ if (!sourceOnly) {
 }
 await mkdir(root + "build/reports", { recursive: true });
 await writeFile(outputPath, JSON.stringify(report, null, 2) + "\n");
-console.log(JSON.stringify({ sourceOnly, admittedConditions: admittedRows.length, blockedConditions: rows.length - admittedRows.length,
+console.log(JSON.stringify({ sourceOnly, admittedActiveConditions: rows.filter((r) => catalog.behaviors.some((b) => b.id === Number(r.id))).length,
+  ordinaryApplicationConditions: admittedRows.length,
   admittedAbilities: admitted.length, blockedAbilities: blocked.length, lifecycleProbes, abilityProbes, damageProbes, publishedProbes,
   blockers: report.blockers.length, reportSha256: hash(report), originalGameExecuted: false }, null, 2));

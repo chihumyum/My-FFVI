@@ -119,8 +119,11 @@ try {
   if (expandedMedia) {
     assert.ok(runtime.encounters[4]);
     assert.equal(runtime.diagnostics.some(d => d.partyId === 4 && d.code === "asset-reference"), false);
-    assert.ok(runtime.diagnostics.some(d => d.partyId === 4 && d.kind === "runtime-dependency" &&
-      d.code === "ability-plan" && d.dependency?.id === 696));
+    assert.ok(sourceCatalog.common.abilities[696].plan);
+    assert.deepEqual(sourceCatalog.common.abilities[696].plan.effects.map(effect => effect.kind),
+      ["unique-none", "user-condition"]);
+    assert.equal(runtime.diagnostics.some(d => d.partyId === 4 && d.kind === "runtime-dependency" &&
+      d.code === "ability-plan" && d.dependency?.id === 696), false);
   } else {
     assert.equal(runtime.encounters[4], undefined);
     assert.ok(runtime.diagnostics.some(d => d.partyId === 4 && d.code === "asset-reference"));
@@ -134,8 +137,8 @@ try {
   }
   assert.equal(runtime.diagnostics.some(d => d.partyId === 274 &&
     ["enemy-provider", "enemy-condition-resistance"].includes(d.code)), false);
-  assert.ok(runtime.diagnostics.some(d => d.partyId === 274 && d.kind === "runtime-dependency" &&
-    d.code === "ability-plan" && d.dependency?.id === 696));
+  assert.equal(runtime.diagnostics.some(d => d.partyId === 274 && d.kind === "runtime-dependency" &&
+    d.code === "ability-plan" && d.dependency?.id === 696), false);
   assert.ok(runtime.diagnostics.some(d => d.partyId === 274 && d.code === "battle-script" && d.kind === "development-omission"));
   assert.ok(runtime.diagnostics.some(d => d.partyId === 274 && d.code === "battle-flags" && d.kind === "development-omission"));
   assert.equal(runtime.diagnostics.some(d => ["battle-script", "battle-flags"].includes(d.code) && d.kind === "blocked"), false);

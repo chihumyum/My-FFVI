@@ -20,6 +20,198 @@ const context: BattleAIContext = {
   enemies: [{ level: 2 }],
 };
 
+function receivedTypeProgram(mnemonic: string) {
+  return syntheticAI([
+    ["Nop"],
+    ["SyncAI"],
+    [mnemonic, [602, 9]],
+    ["VariableAssign", [0, 1]],
+    ["StartTable", [0]],
+    ["Act", [601]],
+    ["EndTable"],
+    ["JumpBattleAI", [0]],
+    ["Nop"],
+    ["Nop"],
+    ["VariableAssign", [0, 2]],
+    ["CounterAct", [603]],
+    ["JumpBattleAI", [0]],
+  ]);
+}
+
+test("both received-command keys compare the received ability type independently of id and system", () => {
+  for (const mnemonic of ["IsReceiveCommand", "IsCheckReceiveCommand"]) {
+    const program = receivedTypeProgram(mnemonic);
+    assert.deepEqual(program.instructions[2]!.op, {
+      kind: "received-ability-branch", field: "typeId", value: 602, target: 9,
+    });
+    const initial = startBattleAI(program, context);
+    const original = structuredClone(initial);
+    for (const [id, system, typeId, counterReady, hp, marker, pcs] of [
+      [777, 3, 602, true, 100, 2, [11]],
+      [602, 602, 7, true, 100, 1, []],
+      [777, 3, 602, false, 100, 2, []],
+      [777, 3, 602, true, 0, 2, []],
+      [777, 2, 602, true, 100, 2, []],
+    ] as const) {
+      const result = planBattleAIReaction(program, initial.state, {
+        ...context, self: { ...context.self, hp },
+      }, { counterReady, receivedAbilityId: id, receivedSystemId: system,
+        receivedAbilityTypeId: typeId });
+      assert.equal(result.behavior.variables[0], marker);
+      assert.deepEqual(result.acts.map(a => a.pc), pcs);
+      assert.equal(result.state.receivedAbility, null);
+      assert.equal(result.state.actTurn, 0);
+      if (marker === 2) {
+        assert.ok(result.visited.includes(10));
+        assert.ok(!result.visited.includes(9), "jump skips the source label");
+      }
+    }
+    assert.deepEqual(initial, original);
+    assert.equal(context.self.behavior.variables[0], 0);
+  }
+});
+
+test("received-command queries expose native null zero during initialization and normal wake", () => {
+  for (const mnemonic of ["IsReceiveCommand", "IsCheckReceiveCommand"]) {
+    const initialize = syntheticAI([
+      [mnemonic, [0, 2]], ["UnreachableWithoutReceiver"], ["Nop"], ["SyncAI"],
+    ]);
+    assert.equal(startBattleAI(initialize, context).state.pc, 3);
+    const program = syntheticAI([
+      ["Nop"], ["SyncAI"], [mnemonic, [0, 4]],
+      ["UnreachableWithoutReceiver"], ["Nop"], ["StartTable", [0]],
+      ["Act", [601]], ["EndTable"], ["JumpBattleAI", [0]],
+    ]);
+    const initial = startBattleAI(program, context);
+    assert.deepEqual(planBattleAITurn(program, initial.state, context).acts[0]!.abilities, [601]);
+  }
+});
+
+test("SyncAI clears received type and normal progress remains independent from reaction selection", () => {
+  const program = receivedTypeProgram("IsCheckReceiveCommand");
+  const initial = startBattleAI(program, context);
+  const reaction = planBattleAIReaction(program, initial.state, context, {
+    counterReady: true, receivedAbilityId: 777, receivedSystemId: 3,
+    receivedAbilityTypeId: 602,
+  });
+  assert.equal(reaction.state.receivedAbility, null);
+  const nextContext = { ...context, self: { ...context.self, behavior: reaction.behavior } };
+  const normal = planBattleAITurn(program, JSON.parse(JSON.stringify(reaction.state)), nextContext);
+  assert.deepEqual(normal.acts.map(a => a.abilities), [[601]]);
+  assert.equal(normal.behavior.variables[0], 1);
+  assert.equal(reaction.behavior.variables[0], 2);
+  const nextReaction = planBattleAIReaction(program, normal.state, nextContext, {
+    counterReady: true, receivedAbilityId: 777, receivedSystemId: 3,
+    receivedAbilityTypeId: 4,
+  });
+  assert.deepEqual(nextReaction.acts, []);
+  assert.equal(nextReaction.behavior.variables[0], 1);
+  assert.throws(() => planBattleAITurn(program, {
+    ...normal.state, receivedAbility: { id: 777, systemId: 3, typeId: 602 },
+  }, context), /SyncAI retained received ability/);
+});
+
+test("missing received type is unknown only when a type query is reached, never an implicit zero", () => {
+  const program = receivedTypeProgram("IsReceiveCommand");
+  const initial = startBattleAI(program, context);
+  assert.throws(() => planBattleAIReaction(program, initial.state, context, {
+    counterReady: false, receivedAbilityId: 777, receivedSystemId: 3,
+  }), /Mnemonics\/2: missing received ability type identity/);
+  const queryZero = receivedTypeProgram("IsReceiveCommand");
+  const op = queryZero.instructions[2]!.op;
+  assert.equal(op.kind, "received-ability-branch");
+  if (op.kind !== "received-ability-branch") throw new Error("Wrong test op");
+  op.value = 0;
+  assert.throws(() => planBattleAIReaction(queryZero, initial.state, context, {
+    counterReady: false, receivedAbilityId: 777, receivedSystemId: 3,
+  }), /missing received ability type identity/);
+
+  const conditional = syntheticAI([
+    ["Nop"], ["SyncAI"], ["IsMyCondition", [405, 4]],
+    ["IsCheckReceiveCommand", [602, 4]], ["Nop"], ["CounterAct", [603]],
+    ["JumpBattleAI", [0]],
+  ]);
+  const prior = startBattleAI(conditional, context);
+  assert.deepEqual(planBattleAIReaction(conditional, prior.state, {
+    ...context, conditionIds: [405],
+  }, { counterReady: true, receivedAbilityId: 777, receivedSystemId: 3 }).acts[0]!.abilities, [603]);
+  assert.throws(() => planBattleAIReaction(conditional, prior.state, context, {
+    counterReady: true, receivedAbilityId: 777, receivedSystemId: 3,
+  }), /Mnemonics\/3: missing received ability type identity/);
+});
+
+test("received-type selectors preserve the whole signed source comparison domain without command aliases", () => {
+  // These source selector values include several ability types that cannot be
+  // represented by a guessed command-id or small enum whitelist.
+  for (const value of [1, 2, 4, 9, 10, 56, 57, 408, 409, 421, 504, 601, 602,
+    607, 608, 609, 611, 613, 623, 625, 629, 0, 0x7fffffff]) {
+    const program = syntheticAI([
+      ["Nop"], ["SyncAI"], ["IsCheckReceiveCommand", [value, 4]],
+      ["UnreachableOnExactType"], ["Nop"], ["VariableAssign", [2, value]],
+      ["JumpBattleAI", [0]],
+    ]);
+    const initial = startBattleAI(program, context);
+    const result = planBattleAIReaction(program, initial.state, context, {
+      counterReady: false, receivedAbilityId: 777, receivedSystemId: 3,
+      receivedAbilityTypeId: value,
+    });
+    assert.equal(result.behavior.variables[2], value);
+    assert.deepEqual(result.acts, []);
+  }
+  const negativeComparison = syntheticAI([["IsReceiveCommand", [-0x80000000, 0]], ["SyncAI"]]);
+  assert.equal(negativeComparison.instructions[0]!.op.kind, "received-ability-branch");
+  assert.equal(startBattleAI(negativeComparison, context).state.pc, 1);
+});
+
+test("malformed received-command operands stay blocked and related counter actions remain independent", () => {
+  for (const mnemonic of ["IsReceiveCommand", "IsCheckReceiveCommand"]) {
+    for (const [ints, reals, strings] of [
+      [[602], [], []], [[602, 99], [], []], [[602, 0, 1], [], []],
+      [[602, 0], [1], []], [[602, 0], [], ["＝"]],
+      [[0x80000000, 0], [], []],
+    ] as const) {
+      const program = syntheticAI([[mnemonic, [...ints], [...reals], [...strings]], ["SyncAI"]]);
+      assert.equal(program.instructions[0]!.op.kind, "blocked");
+    }
+    const padded = syntheticAI([
+      [mnemonic, [602, 0, 0, 0, 0, 0, 0, 0], Array(8).fill(0), Array(8).fill("")],
+      ["SyncAI"],
+    ]);
+    assert.deepEqual(padded.instructions[0]!.op, {
+      kind: "received-ability-branch", field: "typeId", value: 602, target: 0,
+    });
+    const raw = aiSource([[mnemonic, [602, 0]], ["SyncAI"]]);
+    raw.Mnemonics[0]!.type = 2;
+    assert.equal(compileBattleAI(raw, null).instructions[0]!.op.kind, "blocked");
+  }
+  for (const mnemonic of ["CounterActReceiveCommand", "CounterPlayerAct", "IsReceivedCommand"])
+    assert.equal(syntheticAI([[mnemonic, [602, 603]], ["SyncAI"]]).instructions[0]!.op.kind, "blocked");
+});
+
+test("invalid provided type and late reached faults leave the complete AI input unchanged", () => {
+  const program = receivedTypeProgram("IsCheckReceiveCommand");
+  const initial = startBattleAI(program, context);
+  const baseline = structuredClone({ initial, context });
+  for (const typeId of [-1, Number.NaN, 1.5, 0x80000000])
+    assert.throws(() => planBattleAIReaction(program, initial.state, context, {
+      counterReady: true, receivedAbilityId: 777, receivedSystemId: 3,
+      receivedAbilityTypeId: typeId,
+    }));
+  const late = syntheticAI([
+    ["Nop"], ["SyncAI"], ["VariableAssign", [0, 5]],
+    ["IsCheckReceiveCommand", [602, 5]], ["JumpBattleAI", [0]], ["Nop"],
+    ["CounterAct", [603]], ["CounterPlayerAct", [604]], ["JumpBattleAI", [0]],
+  ]);
+  const lateInitial = startBattleAI(late, context);
+  const lateBaseline = structuredClone(lateInitial);
+  assert.throws(() => planBattleAIReaction(late, lateInitial.state, context, {
+    counterReady: true, receivedAbilityId: 777, receivedSystemId: 3,
+    receivedAbilityTypeId: 602,
+  }), /Mnemonics\/7: unsupported AI instruction.*CounterPlayerAct/);
+  assert.deepEqual(lateInitial, lateBaseline);
+  assert.deepEqual({ initial, context }, baseline);
+});
+
 test("counter readiness draws only its own instructions and preserves the ordinary table position", () => {
   const program = syntheticAI([
     ["Nop"],

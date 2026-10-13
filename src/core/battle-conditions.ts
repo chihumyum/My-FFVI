@@ -97,14 +97,24 @@ export class BattleConditions {
     this.definitions = new Map(
       catalog.rules.definitions.map((d) => [d.id, { ...d }]),
     );
-    this.behaviors = new Map(catalog.behaviors.map((b) => [b.id, { ...b }]));
+    this.behaviors = new Map(catalog.behaviors.map((b) => [b.id, structuredClone(b)]));
     this.hpZeroConditionId = catalog.hpZeroConditionId;
     this.dying = { ...catalog.dying };
     if (this.behaviors.size !== catalog.behaviors.length)
       throw new Error("Duplicate battle condition behavior");
     for (const b of this.behaviors.values()) {
+      if ("resistanceProvider" in b && b.kind !== "physical-protection" && b.kind !== "magic-protection")
+        throw new Error("Unsupported condition resistance provider behavior");
       if (b.kind === "haste" || b.kind === "slow") validateSpeedBehavior(b);
       if (b.kind === "blind") validateBlindBehavior(b);
+      if ((b.kind === "physical-protection" || b.kind === "magic-protection") && b.resistanceProvider !== undefined) {
+        const provider = b.resistanceProvider;
+        if (!provider || !Number.isInteger(provider.groupId) || provider.groupId <= 0 || provider.groupId > 0x7fffffff ||
+            !provider.conditions || typeof provider.conditions !== "object" || Array.isArray(provider.conditions) ||
+            !Object.keys(provider.conditions).length)
+          throw new Error("Invalid protection resistance provider");
+        this.validateResistances(provider.conditions);
+      }
       if (
         (typeof b.name !== "string" || (!b.name && !["magitek", "defend"].includes(b.kind))) ||
         !(b.kind === "defend"
@@ -164,6 +174,25 @@ export class BattleConditions {
     for (const value of Object.values(resistances))
       if (!Number.isInteger(value) || value < 0 || value > 0x7fffffff)
         throw new Error("Invalid condition resistance selector");
+  }
+  /** BattleTempParameter.UpdateParameter 0x75ffc0 reads each active function's
+   * resistance dictionary in order; UpdateDicResistance 0x75fe80 overwrites
+   * earlier duplicate keys. Enemy ConfirmedResistanceCondtionList 0x4af760
+   * gives that temporary dictionary precedence over base resistance. The player
+   * duplicate-key provider is separate and is not admitted by this contract. */
+  effectiveResistances(currentIds: readonly number[], base: Record<string, number>, owner?: "enemy" | "player") {
+    this.validateActive(currentIds);
+    this.validateResistances(base);
+    const temporary: Record<string, number> = {};
+    for (const id of currentIds) {
+      const behavior = this.behaviors.get(id)!;
+      if ((behavior.kind === "physical-protection" || behavior.kind === "magic-protection") && behavior.resistanceProvider)
+        Object.assign(temporary, behavior.resistanceProvider.conditions);
+    }
+    for (const [id, selector] of Object.entries(temporary))
+      if (Object.hasOwn(base, id) && base[id] !== selector && owner !== "enemy")
+        throw new Error("Unresolved player or unknown-owner temporary condition resistance precedence");
+    return { ...base, ...temporary };
   }
   name(id: number) {
     this.validateActive([id]);
@@ -315,10 +344,11 @@ export class BattleConditions {
     incomingId: number,
     hit: { accuracy: number; magicEvasion: number; fixed: boolean },
     randomInt: (min: number, max: number) => number,
+    resistanceOwner?: "enemy" | "player",
   ): ConditionChange {
     this.validateActive(currentIds);
     this.validateActive([incomingId]);
-    this.validateResistances(resistances);
+    const effective = this.effectiveResistances(currentIds, resistances, resistanceOwner);
     const miss = {
       currentIds: [...currentIds],
       added: [],
@@ -330,8 +360,8 @@ export class BattleConditions {
     if (
       !this.rules.isAddable(currentIds, incomingId) ||
       (hit.fixed
-        ? resistances[incomingId] === 1
-        : Object.hasOwn(resistances, incomingId))
+        ? effective[incomingId] === 1
+        : Object.hasOwn(effective, incomingId))
     )
       return miss;
     if (!hit.fixed && !conditionHit(hit.accuracy, hit.magicEvasion, randomInt))

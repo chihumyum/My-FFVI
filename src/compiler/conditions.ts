@@ -2,7 +2,7 @@ import { tableInteger as int } from "./table.js";
 import type { BattleRow } from "./battle.js";
 import type { BattleConditionCatalog } from "../core/battle-conditions.js";
 import { hasDefendBehavior } from "./defend.js";
-import { compileProtectionBehavior } from "./protection.js";
+import { compileProtectionCondition } from "./protection.js";
 import { compileSpeedBehavior } from "./condition-speed.js";
 import { compileBlindBehavior, compileBlindPresentation } from "./condition-blind.js";
 import {
@@ -152,6 +152,7 @@ export function compileBattleConditionCatalog(
 ) {
   const result = compileConditionCatalog(reader, ids);
   const presentationSources: BattleRow[] = [];
+  const providerBlockers: { conditionId: number; reason: string }[] = [];
   const dying = result.catalog.definitions.filter((d) => d.type === 4);
   const threshold = reader.unique(
     "game_constant_int.csv",
@@ -176,8 +177,12 @@ export function compileBattleConditionCatalog(
     behaviors: result.catalog.definitions.flatMap(
       (d): BattleConditionCatalog["behaviors"] => {
         const row = reader.row("condition.csv", d.id);
-        const protection = compileProtectionBehavior(row, name);
-        if (protection) return [protection];
+        const protection = compileProtectionCondition(reader, row, name, result.catalog.definitions);
+        providerBlockers.push(...protection.blockers.map((reason) => ({ conditionId: d.id, reason })));
+        if (protection.behavior) {
+          presentationSources.push(...protection.sources);
+          return [protection.behavior];
+        }
         const speed = compileSpeedBehavior(row, name);
         if (speed) return [speed];
         const blind = compileBlindBehavior(row, name);
@@ -232,7 +237,7 @@ export function compileBattleConditionCatalog(
       },
     ),
   };
-  return { catalog, sources: [...result.sources, threshold, ...presentationSources] };
+  return { catalog, sources: [...result.sources, threshold, ...presentationSources], providerBlockers };
 }
 
 /** Supply the complete condition master ID list from this source snapshot.

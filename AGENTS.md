@@ -26,6 +26,8 @@ Scene changes are recipes, semantic annotations, or versioned asset changes. A s
 
 ## Batch migration priority
 
+2026-10-14 user correction: prioritize the shared gameplay skeleton over isolated details. The v75 common battle increment is bounded; initial status and received-type capability do not admit a whole encounter pool. Close NPC autonomous activity and event ownership as the next complete module, with loading, cancellation and persistence at the existing owner boundaries. Do not turn one remaining battle AI PC or an opening camera instruction into the main workstream.
+
 2026-10-13 renewed user priority: deliver the interactive systems skeleton before expanding regions or decoding more isolated source instructions. The systems playground must use the same repository, session, Flow, map loader, prepared battle handoff, commands and save APIs as the app. Authored demonstration content has its own package and save namespace; it never counts as source-story reachability. Close shared lifecycle defects and verify continuous play, then nominate bulk content work.
 
 Framework work is measured by complete contracts between systems, not by reaching the next unimplemented instruction in the opening. Prioritize one session owner, content loading, transaction boundaries, failure/cancellation/retry and persistence across a continuous loop. Keep source-route probes as separate evidence; do not repeatedly turn their next visual or timing blocker into the main workstream. Validate representative combinations before expanding content batches.

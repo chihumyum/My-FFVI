@@ -5,9 +5,14 @@
   "battleSourceSetHash": "d713cd2b9b117321b895f480fbc32c93a1fe630ac269b2de9a40a5a885324856",
   "baseCatalogRef": {
     "url": "/game/opening-playable.json",
-    "contentHash": "df010f111f99d8133eaddc676f003269bd264e2a9bec6a1a8db44957f5470646"
+    "contentHash": "1c5e405447a414b31666df65452a0b68ff1498842a739fb9ca7b7fad2752f8fd"
   },
-  "partyIds": [3002, 517, 3362, 3398],
+  "partyIds": [
+    3002,
+    517,
+    3362,
+    3398
+  ],
   "handoff": {
     "kind": "framework-battle-handoff-v1",
     "id": "ordinary-battles-v68",

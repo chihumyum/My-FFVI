@@ -15,6 +15,7 @@ import { canonical, hash } from "../dist/src/compiler/content.js";
 import { verifyContent } from "../dist/src/core/content-integrity.js";
 import { validateBattleDropCatalog } from "../dist/src/core/battle-rewards.js";
 import { parseBattleHandoffPolicy } from "../dist/src/core/battle-handoff-content.js";
+import { parseBattleBatchEntryPolicy, compileBattleBatchEntryPolicy } from "../dist/src/compiler/battle-batch-entry.js";
 
 const repository = resolve(import.meta.dirname, "..");
 const digest = /^[a-f0-9]{64}$/;
@@ -26,8 +27,10 @@ function fields(value, expected) {
     "Battle batch fields must be own data");
 }
 export function parseBattleContentBatchDeclaration(raw) {
-  fields(raw, "kind,id,parentSourceSetHash,battleSourceSetHash,baseCatalogRef,partyIds,handoff");
-  assert.equal(raw.kind, "battle-content-batch-declaration-v1");
+  const extended = raw && Object.hasOwn(raw, "entryPolicy");
+  fields(raw, "kind,id,parentSourceSetHash,battleSourceSetHash,baseCatalogRef,partyIds,handoff" +
+    (extended ? ",entryPolicy" : ""));
+  assert.equal(raw.kind, extended ? "battle-content-batch-declaration-v2" : "battle-content-batch-declaration-v1");
   assert.match(raw.id, /^[a-z0-9][a-z0-9-]{0,79}$/);
   assert.match(raw.parentSourceSetHash, digest); assert.match(raw.battleSourceSetHash, digest);
   fields(raw.baseCatalogRef, "url,contentHash");
@@ -36,7 +39,8 @@ export function parseBattleContentBatchDeclaration(raw) {
   assert.ok(Array.isArray(raw.partyIds) && raw.partyIds.length > 0 &&
     raw.partyIds.every(id => Number.isInteger(id) && id > 0 && id <= 0x7fffffff) &&
     new Set(raw.partyIds).size === raw.partyIds.length, "Invalid battle batch party selection");
-  return { ...structuredClone(raw), handoff: parseBattleHandoffPolicy(raw.handoff) };
+  return { ...structuredClone(raw), handoff: parseBattleHandoffPolicy(raw.handoff),
+    ...(extended ? { entryPolicy: parseBattleBatchEntryPolicy(raw.entryPolicy) } : {}) };
 }
 const within = (parent, path) => {
   const child = relative(parent, path);
@@ -109,7 +113,9 @@ export async function compileBattleContentBatch(root, rawDeclaration) {
     requestedPartyIds: descriptors.requestedPartyIds, encounters: descriptors.encounters,
     sourceDiagnostics: descriptors.diagnostics, abilities: base.common.abilities,
     conditions: base.common.conditions, sprites: base.common.sprites,
-    handoff: { policy: declaration.handoff }, development: { scripts: [], flagGroups: [] } });
+    handoff: { policy: declaration.handoff }, development: declaration.entryPolicy
+      ? compileBattleBatchEntryPolicy(declaration.entryPolicy, descriptors.encounters)
+      : { scripts: [], flagGroups: [] } });
   // A source drop rule may extend rewards, but never grants initial stock or
   // fills a missing ownership/capability catalog from another entry.
   for (const content of runtime.drops.contents) {
@@ -140,7 +146,9 @@ export async function compileBattleContentBatch(root, rawDeclaration) {
       enemies: encounter.enemies.map(enemy => ({ sourceId: enemy.monsterId, uniqueId: enemy.slot,
         group: enemy.group, x: enemy.x, y: enemy.y, sprite: enemy.sprite, aiSource: enemy.ai.source })) })),
     initialStateChanged: false, sourceRoutesChanged: false, nativeHandoffVerified: false,
-    sourceGameplayVerified: false, fullGameMigrated: false };
+    sourceGameplayVerified: false, fullGameMigrated: false,
+    ...(declaration.entryPolicy ? { entryPolicy: declaration.entryPolicy,
+      entryScope: "authored-framework-entry-with-source-bound-omissions" } : {}) };
   if (report.result === "blocked") return { catalog: null, report };
   assert.equal(canonical(base.common.drops.weights), canonical(runtime.drops.weights), "Source drop weights conflict with base");
   const drops = { ...structuredClone(base.common.drops),

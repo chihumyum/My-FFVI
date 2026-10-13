@@ -28,7 +28,7 @@ export type BattleAIOp =
   | { kind: "condition"; conditionId: number; target: number }
   | {
       kind: "received-ability-branch";
-      field: "id" | "systemId";
+      field: "id" | "systemId" | "typeId";
       value: number;
       target: number;
     }
@@ -75,7 +75,13 @@ export type BattleAIState = {
   advancedActCount: number;
   guardianActIsDadaluma: boolean;
   /** The current AI wake's source ability; entering SyncAI clears the receiver. */
-  receivedAbility: { id: number; systemId: number } | null;
+  receivedAbility: {
+    id: number;
+    systemId: number;
+    /** IsReceiveCommand/IsCheckReceiveCommand query Ability.TypeId, not a
+     * command master ID. Older callers may omit it until that query is reached. */
+    typeId?: number;
+  } | null;
 };
 export type BattleAIContext = {
   /** Required only by source population-event instructions. Derived from the
@@ -111,6 +117,8 @@ export type BattleAIReaction = {
   counterReady: boolean;
   receivedAbilityId: number;
   receivedSystemId: number;
+  /** Source IActSelectEnemy.GetReceiveAbilityTypeId, independent of commandId. */
+  receivedAbilityTypeId?: number;
 };
 export class BattleAIError extends Error {
   constructor(
@@ -164,6 +172,11 @@ function route(
     guarded(() => int32(state.receivedAbility!.systemId));
     if (state.receivedAbility.id <= 0 || state.receivedAbility.systemId < 0)
       fail("invalid received ability state");
+    if (state.receivedAbility.typeId !== undefined) {
+      guarded(() => int32(state.receivedAbility!.typeId));
+      if (state.receivedAbility.typeId < 0)
+        fail("invalid received ability type identity");
+    }
   }
   const variableIndex = (index: number) => {
     guarded(() => int32(index));
@@ -183,6 +196,11 @@ function route(
       typeof wake.counterReady !== "boolean"
     )
       fail("invalid reaction readiness");
+    if (wake.receivedAbilityTypeId !== undefined) {
+      guarded(() => int32(wake.receivedAbilityTypeId));
+      if (wake.receivedAbilityTypeId < 0)
+        fail("invalid received ability type identity");
+    }
   }
   if (program.blockers.length) fail(program.blockers.join("; "));
   if (
@@ -206,6 +224,9 @@ function route(
       state.receivedAbility = {
         id: wake.receivedAbilityId,
         systemId: wake.receivedSystemId,
+        ...(wake.receivedAbilityTypeId === undefined
+          ? {}
+          : { typeId: wake.receivedAbilityTypeId }),
       };
     state.pc++;
     state.status = "running";
@@ -257,14 +278,21 @@ function route(
           continue;
         }
         break;
-      case "received-ability-branch":
+      case "received-ability-branch": {
         // Source getters 0x15b7e80/0x15b7ea0 return zero for no ability. These
         // predicates have no HP, normal readiness or counter readiness gate.
+        // 0x826290 (both command mnemonics) calls slot 30 -> 0x15b7ca0,
+        // which reads the same received reference's Ability.TypeId, or zero
+        // when null. Missing metadata on an existing reference is unknown.
+        if (op.field === "typeId" && state.receivedAbility !== null &&
+            state.receivedAbility.typeId === undefined)
+          fail("missing received ability type identity");
         if ((state.receivedAbility?.[op.field] ?? 0) === op.value) {
           state.pc = op.target + 1;
           continue;
         }
         break;
+      }
       case "only-alive":
       case "unit-alive-count":
         if (guarded(() => evaluateBattleEventBranch(op, context.events))) {

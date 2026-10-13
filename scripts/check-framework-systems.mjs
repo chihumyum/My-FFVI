@@ -34,6 +34,8 @@ const lanes = [
   ["content-batch-menu-and-restore", "check-content-batch-program.mjs", "content-batch-program-check.json", "tests"],
   ["trusted-content-packages", "check-content-packages.mjs", "content-packages-check.json", "tests"],
   ["ordinary-source-battle-content", "check-battle-content-batch.mjs", "battle-content-batch-check.json", "stages"],
+  ["battle-system-action-transactions", "check-battle-system-extensions.mjs", "battle-system-extensions-check.json", "stages"],
+  ["initial-condition-and-temporary-resistance", "check-initial-protection.mjs", "initial-protection-check.json", "probes"],
   ["source-development-content-route", "check-development-content-batch.mjs", "development-content-batch-check.json", "tests"],
   ["interactive-systems-playground", "check-systems-playground.mjs", "systems-playground-check.json", "tests"],
   ["source-initialized-systems-loop", "check-initialized-systems.mjs", "initialized-systems-check.json", "tests"],
