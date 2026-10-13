@@ -2,6 +2,8 @@ import type { Evidence, FieldEntity, Op, Site } from "../field/types.js";
 import type { WorldCatalog, WorldMapContent } from "../field/world.js";
 import { canonical } from "../core/canonical.js";
 import { parseFrameworkWalkEncounterPolicy } from "../core/walk-encounters.js";
+import { fieldInstructionRequirements, assessFieldRequirements,
+  type FieldRequirement, type FieldAdmissionContext } from "../core/field-content-admission.js";
 
 export type ContentDependencyRoot =
   | { kind: "entry"; mapId: number; entrance: number; continuation: string | null }
@@ -22,11 +24,20 @@ export type ContentDependencyDiagnostic = {
   index?: number;
   source?: Evidence;
 };
+export type ContentProviderRequirement = FieldRequirement & { mapId: number };
+export type ContentProviderAssessment = ReturnType<typeof assessFieldRequirements> & { mapId: number; site: Site };
+/** Optional trusted tooling observations. Content/manifest data never grants
+ * a provider, and script-local flags do not establish a live root context. */
+export type ContentProviderContext = FieldAdmissionContext | ((instruction: {
+  mapId: number; script: string; index: number; op: Op;
+}) => FieldAdmissionContext);
 export type ContentDependencyAnalysis = {
   roots: ContentDependencyRoot[];
   mapIds: number[];
   edges: ContentDependencyEdge[];
   diagnostics: ContentDependencyDiagnostic[];
+  providerRequirements: ContentProviderRequirement[];
+  providerAssessments: ContentProviderAssessment[];
   encounterIds: number[];
   requiredMapIds: number[];
   referenceClosure: "closed" | "incomplete";
@@ -58,6 +69,7 @@ export function analyzeContentDependencies(input: {
   maps: WorldMapContent[];
   roots: ContentDependencyRoot[];
   mapIds: number[];
+  providerContext?: ContentProviderContext;
 }): ContentDependencyAnalysis {
   const { catalog } = input;
   if (catalog.kind !== "world-development" || catalog.formatVersion !== 1 ||
@@ -90,6 +102,7 @@ export function analyzeContentDependencies(input: {
   }
   const declared = new Set(input.mapIds), requiredMaps = new Set<number>(), encounters = new Set<number>();
   const edges: ContentDependencyEdge[] = [], diagnostics: ContentDependencyDiagnostic[] = [];
+  const providerRequirements: ContentProviderRequirement[] = [], providerAssessments: ContentProviderAssessment[] = [];
   const queue: Work[] = [], visited = new Set<string>(), inspectedMaps = new Set<number>();
   const diagnose = (code: string, reason: string, location: Location = {}): void => {
     diagnostics.push({ code, reason, ...location });
@@ -207,6 +220,18 @@ export function analyzeContentDependencies(input: {
     ops.forEach((op, pc) => {
       const from = `${scriptKey(map.mapId, name)}/instruction:${pc}`;
       const at = { mapId: map.mapId, script: name, index: pc, source: op.source };
+      const requirements = fieldInstructionRequirements(op);
+      if (requirements.length) {
+        const site: Site = { script: op.script, index: op.index, source: structuredClone(op.source) };
+        const context = input.providerContext === undefined
+          ? { providers: {}, actorKind: "unknown" as const }
+          : typeof input.providerContext === "function"
+            ? input.providerContext({ mapId: map.mapId, script: name, index: pc, op: structuredClone(op) })
+            : input.providerContext;
+        const assessment = assessFieldRequirements(requirements, structuredClone(context));
+        providerRequirements.push(...requirements.map(requirement => ({ ...requirement, mapId: map.mapId })));
+        providerAssessments.push({ ...assessment, mapId: map.mapId, site });
+      }
       switch (op.kind) {
         case "blocked": diagnose("instruction-blocked", `${op.mnemonic}: ${op.reason}`, at); break;
         case "script-transition":
@@ -260,6 +285,7 @@ export function analyzeContentDependencies(input: {
     }
   }
   return structuredClone({ roots, mapIds: [...declared].sort((a, b) => a - b), edges: stable(edges), diagnostics: stable(diagnostics),
+    providerRequirements: stable(providerRequirements), providerAssessments: stable(providerAssessments),
     encounterIds: [...encounters].sort((a, b) => a - b), requiredMapIds: [...requiredMaps].sort((a, b) => a - b),
     referenceClosure: diagnostics.length ? "incomplete" : "closed", runtimeAdmission: "unassessed",
     limitations: [
@@ -269,6 +295,8 @@ export function analyzeContentDependencies(input: {
       "Encounter edges resolve numeric requests only. encounterIds must be checked against the separately supplied battle catalog and live party/AI admission.",
       "Media decoding, native actor/lifecycle providers, dynamic selectors, current state, transaction execution and save/playthrough compatibility require runtime evidence.",
       "Artifact bytes must be verified by the caller; this analysis validates catalog/map identity links and does not instantiate or execute game owners.",
+      "Provider requirements and assessments describe potential reached instructions separately from reference diagnostics; they neither remove existing blockers nor certify an executed route.",
+      "Provider observations are unknown by default. Tooling may supply explicit runtime facts; map/script metadata does not infer actor bindings, refresh need or the active event root's condition-visual context.",
     ],
   } satisfies ContentDependencyAnalysis);
 }

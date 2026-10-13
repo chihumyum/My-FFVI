@@ -179,11 +179,15 @@ test("blocked instructions, map/group/provider gaps and interaction failures rem
   f.a.map!.groups!.entity_default!.entities.push({ ...f.entity("broken"),
     mapObject: { collision: true, acceptDirection: 15, talkMounts: [""], soundId: 0,
       interaction: { kind: "blocked", reason: "unknown interaction" } } });
-  script(f.a, "init", [{ kind: "blocked", mnemonic: "SysCall", reason: "unresolved selector" }, change(3, "missing")]);
+  script(f.a, "init", [{ kind: "blocked", mnemonic: "SysCall", reason: "unresolved selector" },
+    { kind: "field-recovery", command: { kind: "recover-mp", amount: 5, target: 0,
+      allowUnableFight: false, allowMineralization: false }, dependencies: [] }, change(3, "missing")]);
   const result = f.analyze();
   for (const code of ["map-capability-blocked", "map-provider-blocked", "entity-group-blocked", "interaction-blocked", "instruction-blocked", "script-missing"])
     assert.ok(codes(result).includes(code), code);
   assert.deepEqual(result.requiredMapIds, [2, 3], "A blocked opcode must not discard later known references");
+  assert.equal(result.providerAssessments.find(assessment => assessment.site.script === "init" && assessment.site.index === 1)!.status,
+    "conditional", "Provider facts stay separate from existing source/reference failures");
 });
 
 test("entity trigger and interaction references expand while an explicit null RunScript stays absent", () => {

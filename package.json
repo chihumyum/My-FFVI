@@ -101,6 +101,7 @@
     "battle-entry:check": "npm run battle:build && node scripts/check-battle-entry-native.mjs && node scripts/check-battle-entry.mjs",
     "owned-condition:check": "npm run battle:build && node scripts/check-owned-condition-native.mjs && node scripts/check-owned-condition.mjs",
     "field-recovery:check": "npm run battle:build && .venv/bin/python scripts/check_field_recovery_native_bindings.py && node scripts/check-field-recovery.mjs",
+    "field-content-admission:check": "npm run build && node scripts/check-field-content-admission.mjs",
     "battle-appearance:check": "npm run battle:build && node scripts/check-battle-appearance.mjs --native build/runtime/game/GameAssembly.dll && node scripts/check-battle-appearance-ui.mjs",
     "battle-entry-runtime:check": "npm run battle:build && node scripts/check-battle-entry-runtime-native.mjs && node scripts/check-battle-entry-runtime.mjs",
     "battle-ability-content:check": "npm run battle:build && node scripts/check-battle-ability-content.mjs",

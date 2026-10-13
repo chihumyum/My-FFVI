@@ -24,6 +24,8 @@ import {
 import { executePartyEvent, type FieldPartyPort, type PartyAppearanceCandidate } from "./party.js";
 import { executeOwnedConditionEvent, type FieldOwnedConditionPort } from "./owned-condition.js";
 import { executeFieldRecoveryEvent, type FieldRecoveryPort } from "./field-recovery.js";
+import { fieldInstructionRequirements, assessFieldRequirements,
+  type FieldAdmissionContext } from "./field-content-admission.js";
 import { executeSourcePresentation, cloneSourcePresentationContext, sourcePresentationCheckpoint,
   type SourcePresentationContext, type SourcePresentationPort } from "./source-presentation.js";
 import { canonical } from "./canonical.js";
@@ -291,6 +293,56 @@ export type FieldGameOptions = {
 const contains = (e: FieldEntity, p: Point) =>
   p.x >= e.x && p.x < e.x + e.width && p.y >= e.y && p.y < e.y + e.height;
 export class FieldGame {
+  /** Actual provider composition for one instruction. This does not run its
+   * transaction, resolve target owners, or certify an unexecuted script. */
+  assessInstructionAdmission(op: Op, actorId = "-1001", refreshRequired?: boolean) {
+    const requirements = fieldInstructionRequirements(op);
+    if (!requirements.length)
+      return assessFieldRequirements(requirements, { providers: {}, actorKind: "unknown" });
+    const presence = (available: boolean) => available ? "available" as const : "missing" as const;
+    const actor = this.actors[actorId];
+    const actorKind = actorId === this.cameraActorId ? "camera" as const : this.effectBoard(actorId)
+      ? "effect" as const : actor ? "actor" as const : "none" as const;
+    const cameraMotion = !!this.camera && (op.kind !== "field-script-motion" ||
+      op.command.kind === "lerp" && op.command.layer === 0 && op.command.animation === "");
+    const legacyMove = op.kind === "field-script-motion" && op.command.kind === "move" && !!actor &&
+      !actor.native && !this.options.nativeActorPreparation && !this.options.puppetActors &&
+      !this.content.scriptPuppetContexts && op.command.animation === "" && op.command.speedId !== null;
+    const actorMotion = legacyMove || !!(actor?.native && this.nativeActorProviders && this.camera &&
+      this.content.cameraHost?.callbacks === "fresh-normal-field-v1");
+    const context: FieldAdmissionContext = { actorKind, providers: {
+      inventory: presence(typeof this.options.inventory?.prepare === "function"),
+      recovery: presence(typeof this.options.recovery?.prepare === "function"),
+      ownedConditions: presence(typeof this.options.ownedConditions?.prepare === "function"),
+      party: presence(typeof this.options.party?.prepare === "function"),
+      roster: presence(typeof this.options.roster?.prepare === "function"),
+      treasure: presence(!!this.options.treasure),
+      transportation: presence(!!this.options.transportation),
+      puppetRoster: presence(typeof this.options.puppetRoster?.current === "function"),
+      partyActors: presence(!!this.partyActors),
+      audioReadiness: presence(typeof this.options.audioReadiness?.isReady === "function"),
+      soundPresentation: presence(typeof this.options.soundPresentation?.isPresented === "function"),
+      actorMotion: presence(actorMotion), cameraMotion: presence(cameraMotion), effectMotion: "missing",
+      eventSaveCompletion: "unknown", battleHandoff: "unknown",
+    }, ...(refreshRequired === undefined ? {} : { refreshRequired }) };
+    // A helper's source flag cannot stand in for the active event root.
+    const visual = this.eventRootScript === null ? undefined : this.content.scriptSystemFlags?.[this.eventRootScript];
+    if (visual?.keepBadStatusVisual !== undefined) context.keepBadStatusVisual = visual.keepBadStatusVisual;
+    if (op.kind === "field-sound" && (op.command.kind === "sync" || op.command.kind === "stop")) {
+      try { context.soundVoiceActive = this.se.isPlaying(this.eventState.read({
+        category: "ScriptLocalVariable", index: op.command.handleSlot })); }
+      catch { /* An unknown local bank remains a runtime validation boundary. */ }
+    }
+    return assessFieldRequirements(requirements, context);
+  }
+  private requireInstructionProviders(op: Op, actorId: string, refreshRequired?: boolean): void {
+    // Already rejected source operations retain their original diagnostic.
+    // No provider assessment can turn them into an admitted instruction.
+    if (op.kind === "blocked") return;
+    const admission = this.assessInstructionAdmission(op, actorId, refreshRequired);
+    const blocked = admission.diagnostics.find(diagnostic => diagnostic.status === "blocked");
+    if (blocked) throw new Error(blocked.reason);
+  }
   /** A host preparation dependency, not a new voice or a load command. */
   get pendingBgmTracks() {
     const ids = new Set(this.tasks.filter((task) => !task.done && task.audioWait?.kind === "bgm-ready")
@@ -3079,6 +3131,12 @@ export class FieldGame {
           return;
         }
         t.pc++;
+        try { this.requireInstructionProviders(op, t.actor); }
+        catch (error) {
+          if (op.kind === "field-sound") t.pc--;
+          this.block(error instanceof Error ? error.message : String(error), op);
+          return;
+        }
         try {
           if (
             executeEventControl(
@@ -3141,7 +3199,10 @@ export class FieldGame {
                   this.content.scriptSystemFlags?.[this.eventRootScript ?? t.script]?.keepBadStatusVisual !== false)
                 throw new Error("Roster recovery condition-visual context is unavailable");
               executeRosterLifecycleEvent(op, this.options.roster,
-                (_members, appearance, setDummy) => this.preparePartyAppearance(appearance, setDummy));
+                (_members, appearance, setDummy) => {
+                  this.requireInstructionProviders(op, t.actor, true);
+                  return this.preparePartyAppearance(appearance, setDummy);
+                });
             } catch (error) {
               this.block(
                 error instanceof Error ? error.message : String(error),
@@ -3153,7 +3214,10 @@ export class FieldGame {
           case "party":
             try {
               executePartyEvent(op, this.options.party,
-                (_members, appearance, setDummy) => this.preparePartyAppearance(appearance, setDummy));
+                (_members, appearance, setDummy) => {
+                  this.requireInstructionProviders(op, t.actor, true);
+                  return this.preparePartyAppearance(appearance, setDummy);
+                });
             } catch (error) {
               this.block(
                 error instanceof Error ? error.message : String(error),
@@ -3182,6 +3246,7 @@ export class FieldGame {
             try {
               const prepare: Parameters<typeof executeOwnedConditionEvent>[2] = (steps) => {
                 if (!steps.length) return () => {};
+                this.requireInstructionProviders(op, t.actor, true);
                 const visual = this.content.scriptSystemFlags?.[this.eventRootScript ?? t.script];
                 if (visual?.keepBadStatusVisual !== false)
                   throw new Error("Unknown or unsupported owned condition-visual context");

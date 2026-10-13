@@ -45,6 +45,9 @@ await writeFile(output, JSON.stringify(report, null, 2) + "\n");
 console.log(JSON.stringify({ batch: plan.manifest.id, mode, declaredMaps: plan.manifest.mapIds,
   referencedEncounters: plan.dependencies.encounterIds, diagnostics: plan.diagnostics.length,
   referenceClosure: plan.dependencies.referenceClosure, admission: report.admission?.status ?? "unassessed",
+  providerContracts: { requirements: plan.dependencies.providerRequirements.length,
+    blockedContexts: plan.dependencies.providerAssessments.filter(assessment => assessment.status === "blocked").length,
+    conditionalContexts: plan.dependencies.providerAssessments.filter(assessment => assessment.status === "conditional").length },
   routes: report.runs.map(run => ({ id: run.receipt.routeId, result: run.receipt.result,
     elapsedMs: run.elapsedMs, boundary: run.receipt.boundary })), report: output }, null, 2));
 if (mode === "check" && report.admission?.status !== "passed") process.exitCode = 1;
