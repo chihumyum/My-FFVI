@@ -330,6 +330,23 @@ test("commit exceptions remain the original fatal error and are never offered as
   await assert.rejects(loader.load(), /pending map request/);
 });
 
+test("an owner replaced after world publication is fatal and never returns a committed view", async () => {
+  const f = await fixture(), replacement = checkpointFixture().game;
+  const commit = f.game.world.commit.bind(f.game.world);
+  f.game.world.commit = candidate => {
+    assert.equal(commit(candidate), true);
+    f.flow.start(replacement);
+    return true;
+  };
+  const loader = new GameMapLoader(f.flow, new GameContentRepository(f.read), f.host);
+  await assert.rejects(loader.load(), /Map load owner changed after publication/);
+  assert.equal(f.flow.currentSession, replacement);
+  assert.equal(f.game.world.transitions.length, 1);
+  assert.equal(f.discarded.length, 1);
+  assert.equal(f.flow.busy, false);
+  await assert.rejects(loader.load(), /pending map request/);
+});
+
 test("cleanup failures are diagnostic and do not replace the original preparation error", async () => {
   const f = await fixture(), error = new Error("Original decode failure"), cleanup = new Error("Cleanup fault");
   const discard = f.game.world.discard.bind(f.game.world);

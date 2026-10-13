@@ -154,6 +154,34 @@ test("source and framework preparations compare only their own existing slots", 
   assert.equal(memory.writes, 2);
 });
 
+test("content packages retain independent progress and do not replace legacy slots", async () => {
+  const memory = memoryStorage(), checkpoint = checkpointFixture().game.checkpoint();
+  const source = new CheckpointStorage(memory), framework = new CheckpointStorage(memory, "framework");
+  await source.save(checkpoint, 10); await framework.save(checkpoint, 20);
+  const legacySource = memory.values.get(slotKey), legacyFramework = memory.values.get("ffvi-reweb.framework.checkpoint.v1");
+  const playground = new CheckpointStorage(memory, "framework", "systems-playground");
+  const figaro = new CheckpointStorage(memory, "framework", "figaro-development");
+  const alternate = new CheckpointStorage(memory, "source", "systems-playground");
+  assert.equal(await playground.load(), null);
+  const pending = await playground.prepareSave(checkpoint, 30);
+  await figaro.save(checkpoint, 40); await alternate.save(checkpoint, 50);
+  pending.commit(); await playground.save(checkpoint, 60);
+  assert.equal((await playground.load())!.savedAt, 60);
+  assert.equal((await playground.load(true))!.savedAt, 30);
+  assert.equal((await figaro.load())!.savedAt, 40);
+  assert.equal((await alternate.load())!.savedAt, 50);
+  assert.equal(memory.values.get(slotKey), legacySource);
+  assert.equal(memory.values.get("ffvi-reweb.framework.checkpoint.v1"), legacyFramework);
+  assert.equal((await new CheckpointStorage(memory, "framework", "systems-playground").load())!.savedAt, 60);
+});
+
+test("invalid package namespaces cannot access storage or masquerade as legacy entries", () => {
+  const port = { getItem: () => { assert.fail("Invalid namespace accessed storage"); },
+    setItem: () => { assert.fail("Invalid namespace wrote storage"); } };
+  for (const namespace of ["", "../source", "source/framework", "UPPER", "a".repeat(81), null, 3])
+    assert.throws(() => new CheckpointStorage(port, "framework", namespace as string), /Invalid save namespace/);
+});
+
 test("encoding failures cannot publish a candidate or change the prior slot", async () => {
   const memory = memoryStorage(), store = new CheckpointStorage(memory);
   const checkpoint = checkpointFixture().game.checkpoint();

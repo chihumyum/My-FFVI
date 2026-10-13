@@ -26,6 +26,8 @@ Scene changes are recipes, semantic annotations, or versioned asset changes. A s
 
 ## Batch migration priority
 
+2026-10-13 renewed user priority: deliver the interactive systems skeleton before expanding regions or decoding more isolated source instructions. The systems playground must use the same repository, session, Flow, map loader, prepared battle handoff, commands and save APIs as the app. Authored demonstration content has its own package and save namespace; it never counts as source-story reachability. Close shared lifecycle defects and verify continuous play, then nominate bulk content work.
+
 Framework work is measured by complete contracts between systems, not by reaching the next unimplemented instruction in the opening. Prioritize one session owner, content loading, transaction boundaries, failure/cancellation/retry and persistence across a continuous loop. Keep source-route probes as separate evidence; do not repeatedly turn their next visual or timing blocker into the main workstream. Validate representative combinations before expanding content batches.
 
 The content-batch runner and app must consume the same entry, command, map and prepared battle-handoff APIs. Trusted content-package references, declared menu inputs and continuing after restore are implemented. After the representative shared loop passes, nominate complete content batches and implement their actual gaps as common capabilities. Do not extend framework work with isolated checks or hold this milestone until every special skill or exact presentation provider is recovered.

@@ -1,0 +1,32 @@
+{
+  "kind": "systems-playground-recipe-v1",
+  "id": "systems-playground",
+  "baseField": {"url": "/game/narshe.json", "contentHash": "566698ca0b6c06293daafce903756bd9ae848a8cec81b387c9022787b12bdd31"},
+  "battle": {"url": "/content-batches/ordinary-battles/battle.json", "contentHash": "438c741c00a600087031a8270b9fc82560fd1ce4e1dff27373c4a5928ed2e25e"},
+  "baseWorld": {"url": "/framework/world/catalog.json", "contentHash": "7fee63ad02f49f44c158ab0ca3cbb8739cfa185b5c7918116ae717d693c94c61"},
+  "mapRules": {"url": "/framework/world/maps/3.json", "contentHash": "6d83344229fbed4d43dc9b5e7bd9e833e0a5d237c6b6f48ce914573e78374e0e"},
+  "areaId": 900000,
+  "supplies": {"itemId": 2, "count": 2},
+  "stages": [
+    {
+      "id": 900001,
+      "name": "系统演示 · 第一阶段",
+      "partyId": 3002,
+      "entrance": {"x": 38, "y": 49, "layer": 1, "direction": "up"},
+      "trigger": {"x": 38, "y": 48},
+      "portal": {"x": 39, "y": 48, "mapId": 900002},
+      "before": "欢迎进入系统演示。获得两瓶回复药后，将开始第一场战斗。",
+      "after": "战斗结果已写回队伍。现在可打开菜单使用道具、换装、调整前后排或保存进度。向右一步前往第二阶段。"
+    },
+    {
+      "id": 900002,
+      "name": "系统演示 · 第二阶段",
+      "partyId": 517,
+      "entrance": {"x": 38, "y": 49, "layer": 1, "direction": "up"},
+      "trigger": {"x": 38, "y": 48},
+      "portal": null,
+      "before": "第二阶段沿用当前队伍、装备和库存。向前继续第二场战斗。",
+      "after": "两场战斗已完成。可以继续探索、打开菜单，或保存并读取这份进度。本场景用于演示游戏系统，不代表原版剧情。"
+    }
+  ]
+}

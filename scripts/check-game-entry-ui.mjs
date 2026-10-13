@@ -108,7 +108,7 @@ async function battlePackages() {
 }
 /** Authored two-map content, not a source-region fixture. Distinct media prove
  * the app prepares its relocated map instead of the retained baseline map. */
-async function developmentMapPackages() {
+async function developmentMapPackages(id = "development-map") {
   const { packages } = contentBatchProgramFixture();
   const { developmentProfile: _profile, ...baseline } = structuredClone(packages.entry);
   baseline.map.textures = { controlled: "/controlled/development-baseline-map.png" };
@@ -118,15 +118,15 @@ async function developmentMapPackages() {
   const map = await seal(target), world = structuredClone(packages.catalog);
   world.maps[String(map.mapId)].contentHash = map.contentHash;
   const catalog = await seal(world), initial = await compileDevelopmentMapEntry({ baseField, baseBattle: battle, catalog, map, entrance: 1 });
-  const prefix = "/content-packages/development-map", refs = {
+  const prefix = `/content-packages/${id}`, refs = {
     kind: "game-content-refs-v1", profile: "framework",
     world: { url: `${prefix}/world.json`, contentHash: catalog.contentHash }, source: null,
     development: { entry: { url: `${prefix}/entry.json`, contentHash: initial.contentHash },
       battle: { url: `${prefix}/battle.json`, contentHash: battle.contentHash } },
   };
-  const files = new Map([["/content-packages/development-map.json", refs], [refs.world.url, catalog],
+  const files = new Map([[`/content-packages/${id}.json`, refs], [refs.world.url, catalog],
     [refs.development.entry.url, initial], [refs.development.battle.url, battle], [catalog.maps[String(map.mapId)].url, map]]);
-  return { initial, battle, catalog, map, baseField, refs, files };
+  return { initial, battle, catalog, map, baseField, refs, files, packageId: id };
 }
 function eventProgress(owner) {
   return {
@@ -195,7 +195,7 @@ async function sourceSave(pack) {
   assert.equal(session.checkpointReady, true);
   const slots = new Map();
   await new CheckpointStorage({ getItem: (key) => slots.get(key) ?? null,
-    setItem: (key, value) => slots.set(key, value) }).save(session.checkpoint(), 1000);
+    setItem: (key, value) => slots.set(key, value) }, pack.refs?.profile ?? "source", pack.packageId).save(session.checkpoint(), 1000);
   return { slots, checkpoint: session.checkpoint() };
 }
 
@@ -380,6 +380,7 @@ async function host(pack, { slots = new Map(), failBinding = false, search = "" 
     }
   }
   return { api, ready, frame, sourceStarted, boundToCurrent, observed, calls, slots, storageFault,
+    packageId: new URLSearchParams(search).get("package") ?? undefined,
     visibility(hidden) { document.hidden = hidden; listeners.get("visibilitychange")(); },
     key(code) {
       listeners.get("keydown")({ code, target: nodes.get("game"), repeat: false, preventDefault() {} });
@@ -390,7 +391,7 @@ async function host(pack, { slots = new Map(), failBinding = false, search = "" 
 async function check(name, body) { await body(); report.tests.push({ name, pass: true }); }
 function stored(h) {
   return new CheckpointStorage({ getItem: (key) => h.slots.get(key) ?? null,
-    setItem() { throw new Error("The test's save inspector must never write"); } }, h.api.read().contentProfile);
+    setItem() { throw new Error("The test's save inspector must never write"); } }, h.api.read().contentProfile, h.packageId);
 }
 async function moveInApp(h, code) {
   const owner = h.api.read().flow.session, before = { x: owner.field.player.x, y: owner.field.player.y };
@@ -458,6 +459,9 @@ try {
     assert.deepEqual(h.calls.json, []); assert.deepEqual(h.calls.images, []);
     assert.equal(h.$("source-start").disabled, false);
     assert.equal(h.$("start").disabled, false);
+    assert.match(html, /<a\b[^>]*id="systems-playground-link"[^>]*href="\/game\/\?package=systems-playground"/);
+    assert.equal(h.$("systems-playground-link").hidden, false);
+    assert.equal(h.$("systems-playground-help").hidden, true);
   });
   await check("a nominated content package loads only its references before publishing any game owner", async () => {
     const p = referencedPackages(await packages()), h = await host(p, { search: "?package=custom" });
@@ -532,6 +536,56 @@ try {
     assert.equal(h.api.read().contentProfile, "framework"); assert.equal(h.api.read().flow.currentSession, null);
     assert.equal(h.$("source-start").hidden, true); assert.equal(h.$("source-start").disabled, true);
     assert.deepEqual(h.calls.developmentEntries, []); assert.deepEqual(h.calls.images, []);
+  });
+  await check("the systems playground has an explicit title and instructions without constructing an owner at the title", async () => {
+    const p = await developmentMapPackages("systems-playground"), h = await host(p, { search: "?package=systems-playground" });
+    await h.ready();
+    assert.deepEqual(h.calls.json, ["/content-packages/systems-playground.json"]);
+    assert.equal(h.api.read().contentProfile, "framework"); assert.equal(h.api.read().flow.currentSession, null);
+    assert.equal(h.$("welcome-title").textContent, "游戏系统演示");
+    assert.equal(h.$("start").textContent, "开始系统演示");
+    assert.match(h.$("welcome-description").textContent, /向上.*空格 \/ Enter/);
+    assert.match(h.$("welcome-scope").textContent, /作者编排.*独立本地存档.*保存并恢复.*向右走一步过门.*第二战/);
+    assert.equal(h.$("systems-playground-link").hidden, true);
+    assert.equal(h.$("systems-playground-help").hidden, false);
+    assert.match(html, /id="systems-playground-help"[\s\S]*?向右走一步过门/);
+    assert.equal(h.$("source-start").hidden, true); assert.equal(h.$("source-start").disabled, true);
+    await h.api.startSourceGame(); assert.deepEqual(h.calls.json, ["/content-packages/systems-playground.json"]);
+  });
+  await check("playground save and restore use the selected package slot and preserve ordinary and other package progress", async () => {
+    const p = await developmentMapPackages("systems-playground"), defaults = await sourceSave(await packages());
+    const seed = await coreBindings.prepareGameDevelopmentEntry(p.initial, p.battle, p.catalog, p.map);
+    assert.equal(seed.checkpointReady, true);
+    const slots = new Map(defaults.slots), storage = {
+      getItem: (key) => slots.get(key) ?? null, setItem: (key, value) => slots.set(key, value),
+    };
+    await new CheckpointStorage(storage, "framework").save(seed.checkpoint(), 1000);
+    await new CheckpointStorage(storage, "framework", "another-package").save(seed.checkpoint(), 1001);
+    const before = [...slots], h = await host(p, { search: "?package=systems-playground", slots });
+    await h.ready(); assert.equal(h.$("load-start").hidden, true);
+    assert.equal(await stored(h).load(), null, "No ordinary or other package slot may satisfy this entry");
+    await h.$("start").onclick(); await h.frame(0); h.boundToCurrent();
+    const old = h.api.read().flow.session, oldCommands = h.api.read().commands;
+    h.$("menu-button").onclick(); await h.$("save-game").onclick();
+    const saved = await stored(h).load(); assert.ok(saved);
+    assert.deepEqual(saved.checkpoint, old.checkpoint());
+    assert.equal(slots.size, before.length + 1); assert.equal(h.calls.writes, 1);
+    for (const [key, value] of before) assert.equal(slots.get(key), value);
+    h.$("resume").onclick(); await moveInApp(h, "ArrowDown");
+    h.$("menu-button").onclick(); await h.$("load-game").onclick(); h.boundToCurrent();
+    const restored = h.api.read().flow.session;
+    assert.notEqual(restored, old); assert.equal(h.api.read().flow.paused, true);
+    assert.deepEqual(restored.checkpoint(), saved.checkpoint);
+    assert.equal(oldCommands.menu({ kind: "set-preferences", preferences: { mode: "wait", speedIndex: 2 } }), false);
+    assert.equal(h.calls.writes, 1);
+    for (const [key, value] of before) assert.equal(slots.get(key), value);
+    const other = await host(await developmentMapPackages("empty-package"), { search: "?package=empty-package", slots });
+    await other.ready(); assert.equal(other.$("load-start").hidden, true);
+    assert.equal(await stored(other).load(), null, "A fresh package must not fall back to the playground slot");
+    assert.equal(other.calls.writeAttempts, 0);
+    assert.deepEqual((await new CheckpointStorage(storage).load()).checkpoint, defaults.checkpoint);
+    assert.deepEqual((await new CheckpointStorage(storage, "framework").load()).checkpoint, seed.checkpoint());
+    assert.deepEqual((await new CheckpointStorage(storage, "framework", "another-package").load()).checkpoint, seed.checkpoint());
   });
   await check("the actual app uses the public development helper and prepares the destination renderer and media", async () => {
     const p = await developmentMapPackages(), h = await host(p, { search: "?package=development-map" });

@@ -30,6 +30,7 @@ const lanes = [
   ["trusted-content-packages", "check-content-packages.mjs", "content-packages-check.json", "tests"],
   ["ordinary-source-battle-content", "check-battle-content-batch.mjs", "battle-content-batch-check.json", "stages"],
   ["source-development-content-route", "check-development-content-batch.mjs", "development-content-batch-check.json", "tests"],
+  ["interactive-systems-playground", "check-systems-playground.mjs", "systems-playground-check.json", "tests"],
   ["walking-encounter-loop", "check-walk-encounters.mjs", "walk-encounters-check.json", "stages"],
   ["battle-formation-entry", "check-battle-formations.mjs", "battle-formations-check.json", "stages"],
   ["battle-escape-return", "check-battle-escape.mjs", "battle-escape-check.json", "stages"],

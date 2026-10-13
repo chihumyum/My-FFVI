@@ -55,9 +55,10 @@ const attemptedBattleStarts = new WeakSet();
 let hasSave = false,
   hasPreviousSave = false;
 const query = new URLSearchParams(location.search);
+const systemsPlayground = query.get("package") === "systems-playground";
 let contentProfile = query.get("profile") === "framework" ? "framework" : "source";
 let contentReady = !query.has("package");
-const checkpointStorage = () => new CheckpointStorage(localStorage, contentProfile);
+const checkpointStorage = () => new CheckpointStorage(localStorage, contentProfile, query.get("package") ?? undefined);
 const images = new Map(),
   loading = new WeakSet();
 const audio = new AudioOutput();
@@ -243,7 +244,7 @@ function bindSession(candidate, views) {
 async function reset() {
   if (!contentReady || !contents.hasDevelopmentEntry || failed || flow.busy) return;
   const outgoingOwner = flow.currentSession;
-  const operation = beginEntryLoad("new-game", "正在准备开发片段…");
+  const operation = beginEntryLoad("new-game", systemsPlayground ? "正在准备系统演示…" : "正在准备开发片段…");
   const preferences = flow.currentSession?.battlePreferences;
   let published = false;
   try {
@@ -740,6 +741,13 @@ async function init() {
     text("welcome-scope", "可从故事开头运行；当前开发版采用简化的环境与骑乘演出，剧情与游戏系统仍在迁移中。");
     text("source-start", "从头开始（框架开发版）");
   }
+  if (systemsPlayground) {
+    text("welcome-title", "游戏系统演示");
+    text("welcome-description", "进入后向上走一格，按空格 / Enter 继续对话并进入第一战。");
+    text("welcome-scope", "使用来源开发队伍和作者编排的演示事件，拥有独立本地存档。战后打开暂停菜单，可使用道具、调整队伍、保存并恢复；继续后向右走一步过门，再向上走进入第二战。");
+  }
+  $("systems-playground-link").hidden = systemsPlayground;
+  $("systems-playground-help").hidden = !systemsPlayground;
   if (preview) {
     text("welcome-title", "地图开发预览");
     text(
@@ -758,7 +766,7 @@ async function init() {
   $("start").disabled = !contents.hasDevelopmentEntry;
   $("source-start").disabled = !contents.hasSourceEntry;
   await refreshSaveInfo();
-  text("start", preview ? "进入地图预览" : query.has("package") ? "进入开发片段" : "进入纳尔谢");
+  text("start", preview ? "进入地图预览" : systemsPlayground ? "开始系统演示" : query.has("package") ? "进入开发片段" : "进入纳尔谢");
   sync();
   text("status", "选择开始游戏或继续本地进度。");
   requestAnimationFrame(frame);

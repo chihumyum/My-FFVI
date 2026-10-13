@@ -26,6 +26,7 @@ type Attempt<T> = {
   request: MapTransitionStop;
   requestKey: string;
   ticket: GameFlowTicket;
+  unguard: (() => void) | null;
   cancelled: boolean;
   committing: boolean;
   prepared: PreparedMap | null;
@@ -57,9 +58,15 @@ export class GameMapLoader<T> {
       throw new Error("Map loading requires a started session with a pending map request");
     const requestKey = canonical(request.request);
     const attempt: Attempt<T> = { session, from, request, requestKey,
-      ticket: this.flow.beginOperation("map"), cancelled: false, committing: false,
+      ticket: this.flow.beginOperation("map"), unguard: null, cancelled: false, committing: false,
       prepared: null, presentation: null, cleanupErrors: [] };
     this.active = attempt;
+    // A Flow replacement also revokes private world work during final host
+    // validation. Once publication begins, discard throws and the original
+    // owner/ticket remain in place, as for entry and battle preparation.
+    attempt.unguard = attempt.ticket.onInvalidate(() => {
+      if (attempt.prepared) attempt.session.world.discard(attempt.prepared);
+    });
 
     try {
       const catalog = await this.contents.world();
@@ -91,6 +98,12 @@ export class GameMapLoader<T> {
     if (!committed) return this.isCurrent(attempt)
       ? this.failed(attempt, new Error("Map state changed during preparation; prepare the pending request again"))
       : this.cancelled(attempt);
+    if (this.active !== attempt || attempt.cancelled || !attempt.ticket.isCurrent() ||
+        !this.flow.started || this.flow.currentSession !== session || session.field !== prepared.field) {
+      this.release(attempt);
+      this.cleanup(attempt);
+      throw new Error("Map load owner changed after publication");
+    }
 
     // WorldSession consumed the candidate. Transfer presentation ownership to
     // the caller; no later cancellation may dispose a published presentation.
@@ -103,15 +116,13 @@ export class GameMapLoader<T> {
   cancel(): void {
     const attempt = this.active;
     if (!attempt) return;
+    // Run the world guard before changing the cancellation flag. A refusal
+    // during publication must not unlock or mark the live operation cancelled.
+    attempt.ticket.cancel();
+    attempt.cancelled = true;
     if (attempt.committing) {
-      // WorldSession can cancel during its final validation, but refuses once
-      // owned publication has begun. Do not revoke the ticket before that check.
-      if (attempt.prepared) attempt.session.world.discard(attempt.prepared);
-      attempt.cancelled = true;
-      attempt.ticket.cancel();
       return;
     }
-    attempt.cancelled = true;
     this.release(attempt);
     this.cleanup(attempt);
   }
@@ -125,6 +136,7 @@ export class GameMapLoader<T> {
   }
 
   private release(attempt: Attempt<T>): void {
+    attempt.unguard?.(); attempt.unguard = null;
     attempt.ticket.finish();
     if (this.active === attempt) this.active = null;
   }

@@ -76,6 +76,7 @@
             <button id="start" disabled>正在载入…</button>
             <button id="source-start" disabled>从头开始（开发中）</button>
             <button id="load-start" hidden>继续上次进度</button>
+            <p><a id="systems-playground-link" href="/game/?package=systems-playground">游戏系统演示 · 移动、战斗、奖励与存读档</a></p>
             <p id="save-info" role="status"></p>
             <p id="load-error" role="alert" hidden></p>
           </div>
@@ -207,6 +208,9 @@
         <span>方向键 / WASD 移动</span><span>空格 / Enter 确认</span
         ><span>M 地图 · Esc 暂停</span><a href="/">查看迁移工作台</a>
       </footer>
+      <p id="systems-playground-help" class="muted" hidden>
+        游戏系统演示：向上走进入第一战，空格 / Enter 继续对话。胜利后选“继续前行”，按 Esc 打开菜单，可使用道具、调整队伍、保存并恢复。恢复后选“继续”，向右走一步过门，再向上走进入第二战。演示事件为作者编排，进度单独保存。
+      </p>
       <p id="status" class="muted" aria-live="polite">正在载入地图与角色…</p>
       <p id="music-status" class="muted"></p>
     </main>

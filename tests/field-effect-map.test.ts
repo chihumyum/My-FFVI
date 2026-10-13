@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { WorldSession } from "../src/core/world-session.js";
 import { GameSession } from "../src/core/game-session.js";
+import { GameFlow } from "../src/core/game-flow.js";
+import { GameMapLoader } from "../src/core/game-map-loader.js";
+import { GameContentRepository } from "../src/core/game-content.js";
+import { contentDigest } from "../src/core/content-integrity.js";
 import { EventState } from "../src/core/event-state.js";
 import { createFieldEffectState, type FieldEffectCandidateBatch, type FieldEffectPlan,
   type FieldEffectRuntimeHost, type FieldEffectState } from "../src/core/field-effects.js";
@@ -36,8 +40,9 @@ function fixture(initialEffects = true) {
 function host() {
   const control = { state: createFieldEffectState(), commits: 0, batches: [] as FieldEffectCandidateBatch[],
     discards: 0, generation: 0, failPrepare: false, failValidate: false, failCommit: false, observations: 0,
-    onValidate: null as (() => void) | null };
+    onValidate: null as (() => void) | null, onCommit: null as (() => void) | null };
   const apply = (plans: readonly FieldEffectPlan[]) => {
+    const callback = control.onCommit; control.onCommit = null; callback?.();
     if (control.failCommit) throw new Error("controlled opaque effect publication failed");
     for (const plan of plans) {
       assert.deepEqual(plan.before, control.state);
@@ -83,6 +88,76 @@ function worldFixture(initialEffects = true) {
   return { ...f, ...h, session: world, owner };
 }
 function request(world: WorldSession, id = 2) { world.field.previewMap(id, 1); }
+
+async function loaderFixture() {
+  const f = fixture(false), h = host();
+  const seal = async <T extends { contentHash: string }>(value: T): Promise<T> => {
+    const { contentHash: _, ...payload } = structuredClone(value);
+    return { ...payload, contentHash: await contentDigest(payload) } as T;
+  };
+  const field = await seal(f.field), battle = await seal(f.battle), map = await seal(f.target);
+  f.world.maps[map.mapId]!.contentHash = map.contentHash;
+  const catalog = await seal(f.world), game = new GameSession(field, battle, undefined, { fieldEffects: h.api });
+  game.field.eventState.write({ category: "ScenarioFlag1", index: 8 }, 0);
+  const flow = new GameFlow(game); flow.start();
+  request(game.world);
+  const previous = game.field, owned = game.state.snapshot(), effects = structuredClone(h.control.state);
+  const files = new Map<string, unknown>([["/world/catalog.json", catalog], [catalog.maps[map.mapId]!.url, map]]);
+  let discarded = 0;
+  const presentationHost = { prepare: async (_field: import("../src/core/field.js").FieldGame) => ({ ready: true }),
+    discard: () => { discarded++; } };
+  const loader = new GameMapLoader(flow, new GameContentRepository(async url => {
+    assert.ok(files.has(url)); return files.get(url);
+  }), presentationHost);
+  return { game, flow, loader, previous, owned, effects, presentationHost, ...h, get discarded() { return discarded; } };
+}
+
+test("Flow invalidation in final map validation cancels private world publication", async () => {
+  for (const action of ["title", "replace", "cancel"] as const) {
+    const f = await loaderFixture(), replacement = checkpointFixture().game;
+    const beforeCommits = f.control.commits;
+    // Arm after private preparation: this callback executes inside the final
+    // world commit validation, after the loader's ordinary isCurrent check.
+    const original = f.presentationHost.prepare;
+    f.presentationHost.prepare = async field => {
+      const presentation = await original(field);
+      f.control.onValidate = () => {
+        if (action === "title") f.flow.returnToTitle();
+        else if (action === "replace") f.flow.start(replacement);
+        else f.loader.cancel();
+      };
+      return presentation;
+    };
+    assert.equal((await f.loader.load()).status, "cancelled", action);
+    assert.equal(f.game.field, f.previous);
+    assert.equal(f.game.world.transitions.length, 0);
+    assert.deepEqual(f.game.state.snapshot(), f.owned);
+    assert.deepEqual(f.control.state, f.effects);
+    assert.equal(f.control.commits, beforeCommits);
+    assert.equal(f.discarded, 1); assert.equal(f.flow.busy, false);
+    assert.equal(f.flow.currentSession, action === "replace" ? replacement : f.game);
+    assert.equal(f.flow.started, action !== "title");
+  }
+});
+
+test("map publication refuses owner replacement and cancellation after the owned write begins", async () => {
+  const f = await loaderFixture(), replacement = checkpointFixture().game;
+  const original = f.presentationHost.prepare;
+  f.presentationHost.prepare = async field => {
+    const presentation = await original(field);
+    f.control.onCommit = () => {
+      assert.throws(() => f.flow.start(replacement), /Cannot cancel a map after publication has started/);
+      assert.throws(() => f.flow.returnToTitle(), /Cannot cancel a map after publication has started/);
+      assert.throws(() => f.loader.cancel(), /Cannot cancel a map after publication has started/);
+      assert.equal(f.flow.currentSession, f.game); assert.equal(f.flow.busy, true);
+    };
+    return presentation;
+  };
+  const result = await f.loader.load();
+  assert.equal(result.status, "committed"); assert.equal(f.flow.currentSession, f.game);
+  assert.equal(f.game.world.transitions.length, 1); assert.equal(f.discarded, 0);
+  assert.equal(f.flow.busy, false); assert.notEqual(f.game.field, f.previous);
+});
 
 test("world stages old-map retirement and destination FX in one shared manager publication", () => {
   const f = worldFixture(), old = f.session.field, before = old.fieldEffectsSnapshot!;

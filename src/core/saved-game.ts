@@ -65,9 +65,15 @@ function slot(raw: string): SaveSlot {
 /** One storage write publishes current + prior checkpoint together; failed writes preserve the old slot. */
 export class CheckpointStorage {
   private readonly slotKey: string;
-  constructor(private readonly storage: StoragePort, profile: "source" | "framework" = "source") {
+  constructor(private readonly storage: StoragePort, profile: "source" | "framework" = "source", namespace?: string) {
     if (profile !== "source" && profile !== "framework") throw new Error("Unknown save profile");
-    this.slotKey = profile === "framework" ? "ffvi-reweb.framework.checkpoint.v1" : "ffvi-reweb.checkpoint.v1";
+    if (namespace !== undefined && (typeof namespace !== "string" || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(namespace)))
+      throw new Error("Invalid save namespace");
+    // The host chooses the package namespace. Saved bytes never choose a slot
+    // or change trusted content references; legacy entries retain their keys.
+    this.slotKey = namespace === undefined
+      ? profile === "framework" ? "ffvi-reweb.framework.checkpoint.v1" : "ffvi-reweb.checkpoint.v1"
+      : `ffvi-reweb.${profile}.package.${namespace}.checkpoint.v1`;
   }
   async save(checkpoint: GameCheckpoint, savedAt: number): Promise<void> {
     const prepared = await this.prepareSave(checkpoint, savedAt);
