@@ -66,8 +66,10 @@ test("source ordinary material projection changes layer atomically while preserv
   const puppet = next.actors.find((a) => a.id === "native:puppet:0")!;
   assert.equal(puppet.viewBinding!.properties!.renderLayer, 0);
   assert.deepEqual(puppet.viewBinding!.properties!.mapPixels, { width: 320, height: 256 });
-  assert.equal(puppet.viewBinding!.properties!.water.noiseSpeed, Math.fround(0.05));
-  assert.equal(puppet.viewBinding!.properties!.textures.water, "black");
+  const properties = puppet.viewBinding!.properties!;
+  assert.ok(properties.kind === "native-default-field-view-projection-v1");
+  assert.equal(properties.water.noiseSpeed, Math.fround(0.05));
+  assert.equal(properties.textures.water, "black");
   assert.equal(puppet.direction, "up"); assert.equal(puppet.animation!.snapshot()!.key, "WalkB");
   assert.deepEqual(serial(c), before);
   assert.equal(projectFieldActorView(f.view, 0), null);

@@ -22,6 +22,9 @@ export type WorldMapContent = {
   areaId: number;
   name: string;
   map: FieldContent["map"] | null;
+  /** MapModel's area.map_type predicate, independent of loop or presentation. */
+  entryView?: { mapId: number; isWorld: boolean; loopType: 0 | 1 | 2 | 3;
+    sources: { map: Evidence; area: Evidence } };
   /** Source MapSetup inputs, independent of geometry compilation/admission. */
   partyEntry?: MapPartyEntryDefinition;
   partyEntryBlockers?: ContentIssue[];

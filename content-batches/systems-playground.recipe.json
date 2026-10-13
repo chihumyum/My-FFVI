@@ -3,8 +3,8 @@
   "id": "systems-playground",
   "baseField": {"url": "/game/narshe.json", "contentHash": "566698ca0b6c06293daafce903756bd9ae848a8cec81b387c9022787b12bdd31"},
   "battle": {"url": "/content-batches/ordinary-battles/battle.json", "contentHash": "d14c8166c94efd354a4268c6d1f796762640a7fbb68d138c4c4ef2d0f86ffe27"},
-  "baseWorld": {"url": "/framework/world/catalog.json", "contentHash": "63a73539015e337d232fd7e9dc49b3949f44e28f5bee5176ea6e8f8ab8ccf615"},
-  "mapRules": {"url": "/framework/world/maps/3.json", "contentHash": "6d83344229fbed4d43dc9b5e7bd9e833e0a5d237c6b6f48ce914573e78374e0e"},
+  "baseWorld": {"url": "/framework/world/catalog.json", "contentHash": "aaf8a0ff78db916a69773ed5ba20d18e8e824a1564a8c37f57dc7afa7390ce48"},
+  "mapRules": {"url": "/framework/world/maps/3.json", "contentHash": "3b48119c7a779d4c74d120f1e77465d8a3db362dd9b4188bbf7ad8ce5827d09b"},
   "areaId": 900000,
   "supplies": {"itemId": 2, "count": 2},
   "stages": [

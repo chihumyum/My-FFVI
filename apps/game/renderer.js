@@ -8,6 +8,7 @@ import { assertFieldCompositionRenderTargets, composeFieldNativePixels,
   scaleFieldCompositionPixels } from "/runtime/core/field-native-composition.js";
 import { projectFieldActorView, validateFieldActorViewProjection } from "/runtime/core/field-actor-view.js";
 import { canonical } from "/runtime/core/canonical.js";
+import { canonicalCell, validateFieldMapTopology } from "/runtime/core/field-map-topology.js";
 import { validateFieldEffectBoardMaterial } from "/runtime/core/field-particle-geometry.js";
 import { prepareSourceFieldEffectBoards } from "./field-effect-renderer.js";
 export class Renderer {
@@ -77,6 +78,55 @@ export class Renderer {
       y: m.from.y + (m.to.y - m.from.y) * t,
     };
   }
+  topology(game) {
+    const m = this.content.map, topology = m.topology, host = this.content.cameraHost;
+    if (topology === undefined) {
+      if (host?.loop.horizontal || host?.loop.vertical)
+        throw new Error("循环相机缺少地图拓扑");
+      return null;
+    }
+    validateFieldMapTopology(topology);
+    const { range, loop } = topology;
+    if (range.x + range.width > m.width || range.y + range.height > m.height ||
+        canonical(range) !== canonical(game.collisionRange))
+      throw new Error("地图拓扑与地图范围不符");
+    if (host && (canonical(host.mapRange) !== canonical(range) || canonical(host.loop) !== canonical(loop)))
+      throw new Error("循环相机与地图拓扑不符");
+    return loop.horizontal || loop.vertical ? topology : null;
+  }
+  /** Sampling uses canonical source cells; screen positions use continuous
+   * images. Both Canvas lanes consume the same ordered visible tile set. */
+  *tileCells(layer, cx, cy, width, height, topology, crop = null) {
+    const range = topology?.range ?? crop ?? { x: 0, y: 0, width: layer.width, height: layer.height };
+    if (topology && (range.x + range.width > layer.width || range.y + range.height > layer.height))
+      throw new Error("循环图层未覆盖地图范围");
+    const x0 = Math.floor(cx / 16), y0 = Math.floor(cy / 16),
+      x1 = Math.ceil((cx + width) / 16), y1 = Math.ceil((cy + height) / 16),
+      left = topology?.loop.horizontal ? x0 : Math.max(range.x, 0, x0),
+      right = topology?.loop.horizontal ? x1 : Math.min(range.x + range.width, layer.width, x1),
+      top = topology?.loop.vertical ? y0 : Math.max(range.y, 0, y0),
+      bottom = topology?.loop.vertical ? y1 : Math.min(range.y + range.height, layer.height, y1);
+    if (![left, right, top, bottom].every(Number.isSafeInteger)) throw new Error("地图视口超出可投影范围");
+    for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
+      const source = topology ? canonicalCell(topology, { x, y }) : { x, y };
+      yield { x, y, index: source.y * layer.width + source.x };
+    }
+  }
+  /** All visible periodic images, including viewports wider than one period.
+   * These offsets are transient draw data, never additional actor owners. */
+  periodicOffsets(rect, width, height, topology) {
+    if (!topology) return [{ x: 0, y: 0 }];
+    const axis = (start, size, viewport, period, loop) => {
+      if (!loop) return [0];
+      const first = Math.floor(-(start + size) / period) + 1,
+        last = Math.ceil((viewport - start) / period) - 1;
+      if (![first, last].every(Number.isSafeInteger)) throw new Error("演员周期副本超出可投影范围");
+      return Array.from({ length: Math.max(0, last - first + 1) }, (_, i) => (first + i) * period);
+    };
+    const xs = axis(rect.x, rect.width, width, topology.range.width * 16, topology.loop.horizontal),
+      ys = axis(rect.y, rect.height, height, topology.range.height * 16, topology.loop.vertical);
+    return ys.flatMap((y) => xs.map((x) => ({ x, y })));
+  }
   compositionCanvas(width, height) {
     const canvas = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(width, height)
       : this.canvas.ownerDocument?.createElement("canvas");
@@ -97,38 +147,113 @@ export class Renderer {
     }
     return pixels;
   }
+  /** Deliberate framework world display: original RGBA tiles and current
+   * actor frames on a flat plane, with the source ocean's first texture only.
+   * This does not run the Unity palette/ocean shader or foot-clipping passes. */
+  prepareFrameworkFlatComposition(game, actors, sourceCamera, cx, cy, width, height, topology) {
+    const m = this.content.map, definition = m.nativeComposition;
+    if (definition?.view.kind !== "framework-flat-field-view-v1") return null;
+    if (this.content.developmentProfile?.worldMap !== "framework-world-map-flat-v1")
+      throw new Error("平面世界展示缺少明确的框架策略");
+    validateFieldNativeComposition(definition);
+    assertFieldCompositionRenderTargets(definition);
+    if (!sourceCamera || !this.content.cameraHost || game.fieldEffectsSnapshot != null)
+      throw new Error("平面世界展示缺少相机或包含未支持特效");
+    const view = definition.view, range = this.content.cameraHost.mapRange;
+    if (view.mapSize.width !== range.width || view.mapSize.height !== range.height)
+      throw new Error("平面世界展示范围不符");
+    const projected = [], backgrounds = [];
+    for (const background of view.backgrounds) {
+      const t = background.texture, image = this.images.get(t.url);
+      if (m.textures[t.key] !== t.url || !image ||
+          (image.naturalWidth ?? image.width) !== t.width || (image.naturalHeight ?? image.height) !== t.height)
+        throw new Error("平面世界背景缺少绑定的来源纹理");
+      backgrounds.push({ image, width: t.width, height: t.height });
+    }
+    for (const layer of m.layers) if (!definition.layers.includes(layer.name) || layer.opacity !== 1)
+      throw new Error("平面世界包含未绑定图层");
+    for (const actor of actors) {
+      if (!actor.native) throw new Error("平面世界混入未绑定演员");
+      const entity = actor.native.entity, frame = actor.animation?.frame();
+      if (!frame || actor.asset === null) continue;
+      if (!entity.character || entity.riding || !entity.bodyOpaque || entity.fadeAlpha !== 1)
+        throw new Error("平面世界当前仅支持普通步行演员");
+      validateFieldActorViewProjection(entity.viewBinding?.properties, definition.contextId, entity.layer);
+      if (canonical(entity.viewBinding.properties) !== canonical(projectFieldActorView(view, entity.layer)))
+        throw new Error("平面世界演员材质属于其他地图");
+      const expected = fieldCompositionActorTextures(definition, entity.layer);
+      if (canonical(expected) !== canonical(entity.transparentTextures))
+        throw new Error("平面世界演员纹理绑定属于其他地图");
+      const sprite = this.content.characters[actor.asset]?.sprites[frame.sprite], image = sprite && this.images.get(sprite.file);
+      if (!sprite || !image || (image.naturalWidth ?? image.width) !== sprite.width ||
+          (image.naturalHeight ?? image.height) !== sprite.height) throw new Error("平面世界角色帧缺少来源图像");
+      const point = this.point(actor), x = (point.x + 0.5) * 16 - cx + frame.x,
+        y = (point.y + 0.5) * 16 - cy - frame.y,
+        rect = { x: x - sprite.width * (frame.flip ? 1 - sprite.pivot[0] : sprite.pivot[0]),
+          y: y - sprite.height * (1 - sprite.pivot[1]), width: sprite.width, height: sprite.height };
+      for (const offset of this.periodicOffsets(rect, width, height, topology)) projected.push({
+        actor, frame, sprite, image, x: x + offset.x, y: y + offset.y, row: point.y + offset.y / 16,
+      });
+    }
+    projected.sort((a, b) => a.row - b.row || a.actor.id.localeCompare(b.actor.id));
+    const canvas = this.compositionCanvas(width, height), context = canvas.getContext("2d", { willReadFrequently: true });
+    context.imageSmoothingEnabled = false; context.fillStyle = "#09111b"; context.fillRect(0, 0, width, height);
+    for (const background of backgrounds) {
+      // Screen-fixed source texture repetition is an explicit authored policy.
+      for (let y = 0; y < height; y += background.height) for (let x = 0; x < width; x += background.width)
+        context.drawImage(background.image, x, y);
+    }
+    const prior = this.ctx;
+    try {
+      this.ctx = context;
+      for (const [li, layer] of m.layers.entries()) {
+        this.layer(layer, cx, cy, width, height, game, li, topology);
+        const index = ["BottomLayer", "GroundLayer", "UpperLayer", "CeilLayer"].indexOf(layer.name);
+        for (const p of projected) if (p.actor.layer === index) {
+          context.save(); context.translate(p.x, p.y); context.scale(p.frame.flip ? -1 : 1, 1);
+          context.globalAlpha = p.frame.alpha;
+          context.drawImage(p.image, 0, 0, p.sprite.width, p.sprite.height,
+            -p.sprite.width * p.sprite.pivot[0], -p.sprite.height * (1 - p.sprite.pivot[1]), p.sprite.width, p.sprite.height);
+          context.restore();
+        }
+      }
+    } finally { this.ctx = prior; }
+    for (const kind of view.omissions) if (!this.presentationOmissions.some((entry) => entry.kind === kind))
+      this.presentationOmissions.push({ kind, policy: view.policy });
+    return context.getImageData(0, 0, width, height);
+  }
   /** Native material preparation is complete before drawing to the visible
    * Canvas. Render targets are transient pixels; the existing actors remain
    * the only state owner. Legacy/development actors retain their old lane. */
-  prepareNativeComposition(game, actors, sourceCamera, cx, cy, width, height) {
+  prepareNativeComposition(game, actors, sourceCamera, cx, cy, width, height, topology) {
     const m = this.content.map, definition = m.nativeComposition;
     if (!definition || !Object.values(game.actors).some((actor) => actor.native)) return null;
+    if (definition.view.kind !== "native-default-field-view-v1")
+      throw new Error("普通来源材质不能使用框架平面世界视图");
     validateFieldNativeComposition(definition);
     assertFieldCompositionRenderTargets(definition);
     const host = this.content.cameraHost;
-    if (!sourceCamera || !host || host.loop.horizontal || host.loop.vertical)
-      throw new Error("原生普通材质缺少非循环相机投影");
+    if (!sourceCamera || !host)
+      throw new Error("原生普通材质缺少相机投影");
     const range = host.mapRange, tiles = [], projectedActors = [], omissions = [];
     if (definition.view.mapSize.width !== range.width || definition.view.mapSize.height !== range.height)
       throw new Error("原生材质地图范围与来源不符");
     for (const [li, layer] of m.layers.entries()) {
       if (!definition.layers.includes(layer.name) || layer.opacity !== 1)
         throw new Error("未绑定的原生图层材质");
-      for (let y = Math.max(range.y, 0, Math.floor(cy / 16)); y < Math.min(range.y + range.height, layer.height, Math.ceil((cy + height) / 16)); y++) {
-        for (let x = Math.max(range.x, 0, Math.floor(cx / 16)); x < Math.min(range.x + range.width, layer.width, Math.ceil((cx + width) / 16)); x++) {
-          const raw = layer.data[y * layer.width + x] >>> 0;
-          const gid = (game.tileAnimations.tile(li, y * layer.width + x) ?? raw) & 0x0fffffff;
-          if (!gid) continue;
-          const set = this.sets.find((s) => s.firstgid <= gid);
-          if (!set || set.tilewidth !== 16 || set.tileheight !== 16) throw new Error("未恢复的原生图块尺寸");
-          const n = gid - set.firstgid, image = this.compositionPixels(m.textures[set.image]);
-          tiles.push({ image, layer: layer.name, source: { x: (n % set.columns) * (16 + (set.spacing ?? 0)) + (set.margin ?? 0),
-            y: Math.floor(n / set.columns) * (16 + (set.spacing ?? 0)) + (set.margin ?? 0), width: 16, height: 16 },
-            destination: { x: x * 16 - cx, y: y * 16 - cy, width: 16, height: 16 },
-            flipX: !!(raw & 0x80000000), flipY: !!(raw & 0x40000000), diagonal: !!(raw & 0x20000000),
-            depth: fieldCompositionTileDepth({ layer: layer.name, localRow: y - range.y,
-              mapHeight: range.height, cameraY: sourceCamera.cameraPosition.y }) });
-        }
+      for (const { x, y, index } of this.tileCells(layer, cx, cy, width, height, topology, range)) {
+        const raw = layer.data[index] >>> 0;
+        const gid = (game.tileAnimations.tile(li, index) ?? raw) & 0x0fffffff;
+        if (!gid) continue;
+        const set = this.sets.find((s) => s.firstgid <= gid);
+        if (!set || set.tilewidth !== 16 || set.tileheight !== 16) throw new Error("未恢复的原生图块尺寸");
+        const n = gid - set.firstgid, image = this.compositionPixels(m.textures[set.image]);
+        tiles.push({ image, layer: layer.name, source: { x: (n % set.columns) * (16 + (set.spacing ?? 0)) + (set.margin ?? 0),
+          y: Math.floor(n / set.columns) * (16 + (set.spacing ?? 0)) + (set.margin ?? 0), width: 16, height: 16 },
+          destination: { x: x * 16 - cx, y: y * 16 - cy, width: 16, height: 16 },
+          flipX: !!(raw & 0x80000000), flipY: !!(raw & 0x40000000), diagonal: !!(raw & 0x20000000),
+          depth: fieldCompositionTileDepth({ layer: layer.name, localRow: y - range.y,
+            mapHeight: range.height, cameraY: sourceCamera.cameraPosition.y }) });
       }
     }
     const targets = definition.renderHost ? prepareFieldCompositionTargets(definition, { width, height, tiles })
@@ -150,10 +275,7 @@ export class Renderer {
       const textures = fieldCompositionActorTextures(definition, entity.layer);
       if (entity.transparentTextures.first !== textures.first || entity.transparentTextures.second !== textures.second)
         throw new Error("原生演员的上层纹理属于其他地图或层");
-      const point = this.point(actor), depth = fieldCompositionActorDepth({
-        position: { y: (range.height * 0.5 - 0.5 - (point.y - range.y)) * 16,
-          z: entity.position.z }, frameY: frame.y, cameraY: sourceCamera.cameraPosition.y,
-        clampTileSubY: sourceCamera.clampTileSubY, charaZOffset: actor.native.charaZOffset });
+      const point = this.point(actor);
       const layers = [{ asset: actor.mount ?? actor.asset, frame, crop: 0, lift: 0 }];
       if (entity.riding) {
         if (!actor.mount || !actor.direction) throw new Error("框架骑乘缺少内外层资产或朝向");
@@ -177,15 +299,25 @@ export class Renderer {
           y = (point.y + 0.5) * 16 - cy - pose.y - layer.lift;
         // Source ordinary center anchor; framework rider offset is explicit.
         const left = pose.flip ? x - sprite.width * (1 - sprite.pivot[0]) : x - sprite.width * sprite.pivot[0];
-        projectedActors.push({ image, source: { x: 0, y: 0, width: sprite.width, height: sprite.height - layer.crop },
-          destination: { x: left, y: y - sprite.height * (1 - sprite.pivot[1]), width: sprite.width, height: sprite.height - layer.crop },
-          flipX: pose.flip, flipY: false, diagonal: false, alpha: pose.alpha, depth,
-          first: sampleTarget(textures.first), second: sampleTarget(textures.second) });
+        const destination = { x: left, y: y - sprite.height * (1 - sprite.pivot[1]),
+          width: sprite.width, height: sprite.height - layer.crop };
+        for (const offset of this.periodicOffsets(destination, width, height, topology)) {
+          const row = point.y + offset.y / 16, depth = fieldCompositionActorDepth({
+            position: { y: (range.height * 0.5 - 0.5 - (row - range.y)) * 16,
+              z: entity.position.z }, frameY: frame.y, cameraY: sourceCamera.cameraPosition.y,
+            clampTileSubY: sourceCamera.clampTileSubY, charaZOffset: actor.native.charaZOffset });
+          projectedActors.push({ row, actorId: actor.id, quad: {
+            image, source: { x: 0, y: 0, width: sprite.width, height: sprite.height - layer.crop },
+            destination: { ...destination, x: destination.x + offset.x, y: destination.y + offset.y },
+            flipX: pose.flip, flipY: false, diagonal: false, alpha: pose.alpha, depth,
+            first: sampleTarget(textures.first), second: sampleTarget(textures.second) } });
+        }
       }
     }
     let effects;
     const effectState = game.fieldEffectsSnapshot;
     if (effectState != null) {
+      if (topology) throw new Error("循环地图字段特效缺少周期投影宿主");
       if (typeof this.effectProvider?.prepare !== "function") throw new Error("来源字段特效缺少粒子、材质和离屏纹理渲染宿主");
       const prepared = this.effectProvider.prepare({ state: structuredClone(effectState),
         camera: structuredClone(sourceCamera), width, height });
@@ -196,7 +328,8 @@ export class Renderer {
     }
     const canvas = this.compositionCanvas(width, height), context = canvas.getContext("2d", { willReadFrequently: true });
     this.background(context, sourceCamera, width, height);
-    const output = composeFieldNativePixels({ width, height, tiles, actors: projectedActors, ...(effects ? { effects } : {}),
+    if (topology) projectedActors.sort((a, b) => a.row - b.row || a.actorId.localeCompare(b.actorId));
+    const output = composeFieldNativePixels({ width, height, tiles, actors: projectedActors.map((actor) => actor.quad), ...(effects ? { effects } : {}),
       background: { width, height, data: context.getImageData(0, 0, width, height).data } });
     const imageData = context.createImageData(width, height); imageData.data.set(output.data);
     for (const omission of omissions) if (!this.presentationOmissions.some((prior) =>
@@ -222,7 +355,7 @@ export class Renderer {
           destination.x, destination.y, destination.width, destination.height);
     }
   }
-  sprite(asset, key, a, x, y, crop = 0, lift = 0, pose = null) {
+  spriteFrame(asset, key, a, pose = null) {
     const char = this.content.characters[asset];
     if (!char) throw new Error("缺少角色 " + asset);
     let f = pose;
@@ -245,6 +378,10 @@ export class Renderer {
       if (frame) f = { ...frame, flip: animation.flip !== frame.flip };
     }
     if (!f) throw new Error("空动画");
+    return f;
+  }
+  sprite(asset, key, a, x, y, crop = 0, lift = 0, pose = null) {
+    const char = this.content.characters[asset], f = this.spriteFrame(asset, key, a, pose);
     const s = char.sprites[f.sprite],
       image = this.images.get(s.file);
     if (!image) throw new Error("缺少角色图像");
@@ -266,12 +403,11 @@ export class Renderer {
     );
     c.restore();
   }
-  actor(a, cx, cy) {
+  actor(a, cx, cy, p = this.point(a)) {
     // Fresh factory residents may be active without a selected sprite. A zero
     // direction is a native state, never an invitation to invent a facing.
     if (a.asset === null || a.direction === null || (a.native && !a.animation?.frame())) return;
-    const p = this.point(a),
-      x = (p.x + 0.5) * 16 - cx,
+    const x = (p.x + 0.5) * 16 - cx,
       y = (p.y + 1) * 16 - 2 - cy;
     const key = FACING[a.direction];
     if (a.mount) {
@@ -280,31 +416,49 @@ export class Renderer {
       this.sprite(a.asset, ride, a, x, y, 8, 14);
     } else this.sprite(a.asset, key, a, x, y, 0, 0, a.animation?.frame());
   }
-  layer(l, cx, cy, w, h, game, layerIndex) {
+  actorImages(actors, cx, cy, width, height, topology) {
+    if (!topology) return actors.map((actor) => ({ actor, point: this.point(actor) }));
+    const images = [];
+    for (const actor of actors) {
+      if (actor.asset === null || actor.direction === null || actor.native && !actor.animation?.frame()) continue;
+      const point = this.point(actor), key = FACING[actor.direction],
+        layers = actor.mount ? [
+          { asset: actor.mount, key, crop: 0, lift: 0, pose: null },
+          { asset: actor.asset, key: { WalkL: "RideL", WalkR: "RideR" }[key] ?? key, crop: 8, lift: 14, pose: null },
+        ] : [{ asset: actor.asset, key, crop: 0, lift: 0, pose: actor.animation?.frame() }];
+      const bounds = layers.map((layer) => {
+        const frame = this.spriteFrame(layer.asset, layer.key, actor, layer.pose),
+          sprite = this.content.characters[layer.asset].sprites[frame.sprite];
+        if (!sprite || sprite.height <= layer.crop) throw new Error("角色帧缺少有效图像范围");
+        const x = Math.round((point.x + 0.5) * 16 - cx + frame.x),
+          y = Math.round((point.y + 1) * 16 - 2 - cy - frame.y - layer.lift);
+        return { x: x - sprite.width * (frame.flip ? 1 - sprite.pivot[0] : sprite.pivot[0]),
+          y: y - sprite.height * (1 - sprite.pivot[1]), width: sprite.width, height: sprite.height - layer.crop };
+      });
+      const left = Math.min(...bounds.map((b) => b.x)), top = Math.min(...bounds.map((b) => b.y)),
+        rect = { x: left, y: top, width: Math.max(...bounds.map((b) => b.x + b.width)) - left,
+          height: Math.max(...bounds.map((b) => b.y + b.height)) - top };
+      for (const offset of this.periodicOffsets(rect, width, height, topology))
+        images.push({ actor, point: { x: point.x + offset.x / 16, y: point.y + offset.y / 16 } });
+    }
+    return images.sort((a, b) => a.point.y - b.point.y || a.actor.id.localeCompare(b.actor.id));
+  }
+  layer(l, cx, cy, w, h, game, layerIndex, topology = null) {
     this.ctx.globalAlpha = l.opacity;
-    for (
-      let y = Math.max(0, Math.floor(cy / 16));
-      y < Math.min(l.height, Math.ceil((cy + h) / 16));
-      y++
-    )
-      for (
-        let x = Math.max(0, Math.floor(cx / 16));
-        x < Math.min(l.width, Math.ceil((cx + w) / 16));
-        x++
-      )
-        this.tile(
-          l.data[y * l.width + x] >>> 0,
-          x * 16 - cx,
-          y * 16 - cy,
-          game.time,
-          game.tileAnimations.tile(layerIndex, y * l.width + x),
-        );
+    for (const { x, y, index } of this.tileCells(l, cx, cy, w, h, topology))
+      this.tile(
+        l.data[index] >>> 0,
+        x * 16 - cx,
+        y * 16 - cy,
+        game.time,
+        game.tileAnimations.tile(layerIndex, index),
+      );
     this.ctx.globalAlpha = 1;
   }
   /** Development overview: source map/markers, fitted to the current map range. */
   overview(game) {
     const c = this.ctx,
-      range = game.collisionRange;
+      range = game.collisionRange, topology = this.topology(game);
     const w = this.canvas.width,
       h = this.canvas.height;
     const scale = Math.min(
@@ -363,7 +517,7 @@ export class Renderer {
       c.restore();
     };
     for (const marker of minimapMarkers(game.minimapEntities)) draw(marker);
-    const p = this.point(game.player);
+    const p = topology ? canonicalCell(topology, this.point(game.player)) : this.point(game.player);
     draw(
       { icon: 0, x: p.x + 0.5, y: p.y + 0.5, direction: game.player.direction },
       true,
@@ -378,14 +532,14 @@ export class Renderer {
       p = this.point(game.player),
       w = this.canvas.width,
       h = this.canvas.height,
-      range = game.collisionRange;
+      range = game.collisionRange, topology = this.topology(game);
     const nativeHost = Object.values(game.actors).some((actor) => actor.native) ? m.nativeComposition?.renderHost : undefined;
     if (nativeHost && w * nativeHost.height !== h * nativeHost.width)
       throw new Error("来源字段相机尚未恢复当前宽高比或信箱边界");
     const viewportWidth = nativeHost?.width ?? w, viewportHeight = nativeHost?.height ?? h;
-    const camera = (position, start, length, viewport) =>
+    const camera = (position, start, length, viewport, loop) =>
       Math.round(
-        length * 16 <= viewport
+        loop ? (position + 0.5) * 16 - viewport / 2 : length * 16 <= viewport
           ? start * 16 + (length * 16 - viewport) / 2
           : Math.max(
               start * 16,
@@ -403,14 +557,16 @@ export class Renderer {
     // sourceCamera.renderCell. This full-map Canvas renderer needs no moving
     // Unity mesh cache; clipping uses the actual, already clamped camera root.
     const cx = sourceCamera ? Math.round((sourceCamera.cameraCell.x + 0.5) * 16 - viewportWidth / 2)
-      : camera(p.x + game.cameraOffset.x / 16, range.x, range.width, viewportWidth),
+      : camera(p.x + game.cameraOffset.x / 16, range.x, range.width, viewportWidth, topology?.loop.horizontal),
       cy = sourceCamera ? Math.round((sourceCamera.cameraCell.y + 0.5) * 16 - viewportHeight / 2)
-      : camera(p.y - game.cameraOffset.y / 16, range.y, range.height, viewportHeight);
+      : camera(p.y - game.cameraOffset.y / 16, range.y, range.height, viewportHeight, topology?.loop.vertical);
     const actors = Object.values(game.actors)
       .filter((a) => game.isEntityVisible(a.id) && a.x >= 0 && a.x < m.width && a.y >= 0 && a.y < m.height)
       .sort((a, b) => this.point(a).y - this.point(b).y || a.id.localeCompare(b.id));
-    const native = this.prepareNativeComposition(game, actors, sourceCamera, cx, cy, viewportWidth, viewportHeight);
+    const native = this.prepareFrameworkFlatComposition(game, actors, sourceCamera, cx, cy, viewportWidth, viewportHeight, topology) ??
+      this.prepareNativeComposition(game, actors, sourceCamera, cx, cy, viewportWidth, viewportHeight, topology);
     if (!native && game.fieldEffectsSnapshot != null) throw new Error("来源字段特效需要共享原生颜色与深度缓冲");
+    const actorImages = native ? [] : this.actorImages(actors, cx, cy, w, h, topology);
     c.imageSmoothingEnabled = false;
     if (native) {
       const scaled = scaleFieldCompositionPixels(native, w, h), frame = c.createImageData(w, h);
@@ -418,10 +574,10 @@ export class Renderer {
     }
     else this.background(c, sourceCamera, w, h);
     const drawActors = (layer) => {
-      for (const a of actors) if (a.layer === layer) this.actor(a, cx, cy);
+      for (const { actor, point } of actorImages) if (actor.layer === layer) this.actor(actor, cx, cy, point);
     };
     if (!native) for (const [li, l] of m.layers.entries()) {
-        this.layer(l, cx, cy, w, h, game, li);
+        this.layer(l, cx, cy, w, h, game, li, topology);
         if (l.name === "BottomLayer") drawActors(0);
         if (l.name === "GroundLayer") drawActors(1);
         if (l.name === "UpperLayer") drawActors(2);

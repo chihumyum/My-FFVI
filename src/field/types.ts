@@ -280,6 +280,9 @@ export type FieldContent = {
   parentSourceSetHash: string;
   contentHash: string;
   map: {
+    /** Trusted cell-space topology; no terrain or source-view capability is inferred. */
+    topology?: import("../core/field-map-topology.js").FieldMapTopology;
+    worldTerrain?: import("../core/world-terrain.js").WorldTerrainDefinition;
     nativeComposition?: FieldNativeCompositionDefinition;
     id: string;
     identity?: { mapId: number; areaId: number };
@@ -322,6 +325,8 @@ export type FieldContent = {
    * capability retain their documented actor-bootstrap limitation. */
   scriptPuppetContexts?: Record<string, FieldPuppetScriptContext | null>;
   entry: {
+    /** Source request/selection and actual presentation remain distinct. */
+    viewPlan?: import("../core/map-view.js").MapEntryViewPlan;
     /** Explicit host seed. Missing means unknown, never an implicit clear screen. */
     fade?: FieldFadeInitial;
     /** A source MapSetup/PointIn entry. The host must finish its initializer or

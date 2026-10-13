@@ -42,12 +42,12 @@
         "url": "/content-packages/source/battle.json"
       },
       "entry": {
-        "contentHash": "767accc2da8cd235e8a933c134b3fbb93e31d9038ce713c6ed098d32cdebcfdc",
+        "contentHash": "1860347db68b2ba6c8ad3d36a43202cbc4a9b3629c5c8b084c795893517ca88d",
         "url": "/content-packages/framework/entry.json"
       }
     },
     "world": {
-      "contentHash": "63a73539015e337d232fd7e9dc49b3949f44e28f5bee5176ea6e8f8ab8ccf615",
+      "contentHash": "aaf8a0ff78db916a69773ed5ba20d18e8e824a1564a8c37f57dc7afa7390ce48",
       "url": "/content-packages/framework/world.json"
     }
   }

@@ -1,0 +1,166 @@
+{
+  "kind": "content-batch-manifest-v1",
+  "id": "world-travel-initialized-repeatability-v74",
+  "profile": "framework",
+  "contentRefs": {
+    "development": null,
+    "initialized": {
+      "battle": {
+        "contentHash": "6e2658ce695a47d7a7e1eddcda779922da0f698f061b3ba3de67c0c4db272a5b",
+        "url": "/content-packages/world-travel/battle.json"
+      },
+      "entry": {
+        "contentHash": "28554081220e830b5caa2993fa7a2473ae6c5fc11bb252f815e67945a22b28f9",
+        "url": "/content-packages/world-travel/entry.json"
+      }
+    },
+    "kind": "game-content-refs-v2",
+    "profile": "framework",
+    "source": null,
+    "world": {
+      "contentHash": "3b5c6a49bf8f28beab0ef6038aabe3dfa9d87d5afc9ec62856843950f06a5964",
+      "url": "/content-packages/world-travel/world.json"
+    }
+  },
+  "mapIds": [
+    1,
+    3
+  ],
+  "roots": [
+    {
+      "kind": "entry",
+      "mapId": 1,
+      "entrance": 1,
+      "continuation": "travel_init"
+    }
+  ],
+  "routes": [
+    {
+      "id": "source-exit-author-return-world-battle-menu-restore",
+      "entry": "framework-new-game",
+      "expectedMapId": 1,
+      "requiredMapIds": [
+        1,
+        3
+      ],
+      "requiredEncounterIds": [
+        517
+      ],
+      "maxTicks": 20000,
+      "inputs": [
+        {
+          "kind": "move",
+          "direction": "up"
+        },
+        {
+          "kind": "move",
+          "direction": "up"
+        },
+        {
+          "kind": "move",
+          "direction": "down"
+        },
+        {
+          "kind": "confirm"
+        },
+        {
+          "kind": "move",
+          "direction": "left"
+        },
+        {
+          "kind": "move",
+          "direction": "right"
+        },
+        {
+          "kind": "move",
+          "direction": "left"
+        },
+        {
+          "kind": "move",
+          "direction": "right"
+        },
+        {
+          "kind": "move",
+          "direction": "left"
+        },
+        {
+          "kind": "move",
+          "direction": "right"
+        },
+        {
+          "kind": "move",
+          "direction": "left"
+        },
+        {
+          "kind": "move",
+          "direction": "right"
+        },
+        {
+          "kind": "move",
+          "direction": "left"
+        },
+        {
+          "kind": "move",
+          "direction": "right"
+        },
+        {
+          "kind": "move",
+          "direction": "left"
+        },
+        {
+          "kind": "move",
+          "direction": "right"
+        },
+        {
+          "kind": "move",
+          "direction": "left"
+        },
+        {
+          "kind": "move",
+          "direction": "right"
+        },
+        {
+          "kind": "move",
+          "direction": "left"
+        },
+        {
+          "kind": "move",
+          "direction": "right"
+        },
+        {
+          "kind": "menu",
+          "command": {
+            "kind": "change-party",
+            "change": {
+              "kind": "set-row",
+              "position": 0,
+              "row": "back"
+            }
+          }
+        },
+        {
+          "kind": "save-restore"
+        },
+        {
+          "kind": "menu",
+          "command": {
+            "kind": "change-party",
+            "change": {
+              "kind": "set-row",
+              "position": 0,
+              "row": "front"
+            }
+          }
+        },
+        {
+          "kind": "move",
+          "direction": "left"
+        }
+      ],
+      "choiceAnswers": [],
+      "battleAbilityIds": [
+        1
+      ]
+    }
+  ]
+}

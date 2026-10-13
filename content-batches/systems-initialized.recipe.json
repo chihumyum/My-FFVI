@@ -1,10 +1,10 @@
 {
   "kind": "initialized-systems-recipe-v1",
   "id": "systems-initialized",
-  "sourceEntry": {"url": "/game/source-new-game.json", "contentHash": "92d0b73bde896d0c77ec11ec22e28628c7f5082faac0ed3f59b9544aa26459a8"},
+  "sourceEntry": {"url": "/game/source-new-game.json", "contentHash": "17f546f936b1c4718d049e9eeb698f1368e32ae04ebff0585d586a45c44195e5"},
   "sourceBattle": {"url": "/game/source-catalog.json", "contentHash": "6e8a406f2de60128267eca0c3d3039a77de96c4b183e31f4a8d84c2ea779a926"},
-  "sourceWorld": {"url": "/world/catalog.json", "contentHash": "b3329d95c99a1181e917d09d7e4fb528a13c72f79be45323b75a010534229458"},
-  "sourceMap": {"url": "/world/maps/3.json", "contentHash": "ed36523611ec046d01d5e5f92c14531589899db3b12f62d964f832d5c2b328b2"},
+  "sourceWorld": {"url": "/world/catalog.json", "contentHash": "041d094653778859ce0ef313c5aa9f63e4bafbf3deda920674cf69d917f50702"},
+  "sourceMap": {"url": "/world/maps/3.json", "contentHash": "72e4e76bb22676ee17f89a4c3ae7e5e476a03dd18d3a5ec6584f2e9eaf31cd76"},
   "battleSourceSetHash": "d713cd2b9b117321b895f480fbc32c93a1fe630ac269b2de9a40a5a885324856",
   "handoff": {"kind": "framework-battle-handoff-v1", "id": "systems-initialized-v73", "audio": "retain-field", "introduction": "omit"},
   "mapId": 900101,

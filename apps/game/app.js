@@ -56,6 +56,7 @@ let hasSave = false,
   hasPreviousSave = false;
 const query = new URLSearchParams(location.search);
 const systemsPlayground = query.get("package") === "systems-playground";
+const worldTravel = query.get("package") === "world-travel";
 let contentProfile = query.get("profile") === "framework" ? "framework" : "source";
 let contentReady = !query.has("package");
 const checkpointStorage = () => new CheckpointStorage(localStorage, contentProfile, query.get("package") ?? undefined);
@@ -784,6 +785,13 @@ async function init() {
     text("welcome-scope", "使用新游戏初始化数据与作者编排的演示事件，拥有独立本地存档，不代表原剧情进度。");
     text("systems-playground-help", "游戏系统演示：起点上方是战斗训练，右侧是商店，下方可领取魔石。按方向键面向设施，再按 Enter / 空格交互。按 Esc 打开菜单，可换装、编队、使用道具或魔法、装备魔石和存读档。先升级与回复，再挑战魔法学习训练。");
   }
+  if (worldTravel) {
+    text("welcome-title", "世界旅行演示");
+    text("welcome-description", "探索世界地图、进入纳尔谢，再从入口返回；可随时打开菜单保存旅行进度。");
+    text("welcome-scope", "使用原版地图地形与新游戏初始角色，采用独立演示路线和平面画面，拥有独立本地存档。");
+    text("systems-playground-help", "世界旅行：起点向北一步进入纳尔谢，面向入口南侧按 Enter / 空格返回世界。方向键移动，Esc 打开菜单，可查看队伍、使用道具或魔法、保存和读取进度。");
+  }
+  $("world-travel-link").hidden = worldTravel;
   $("systems-playground-link").hidden = systemsPlayground || contents.hasInitializedEntry;
   $("systems-playground-help").hidden = !systemsPlayground && !contents.hasInitializedEntry;
   if (preview && !contents.hasInitializedEntry) {

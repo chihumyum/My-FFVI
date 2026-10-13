@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { compileFieldNativeFoot } from "../src/compiler/field-native-foot.js";
 import { readFieldNativeFoot, validateFieldNativeFoot, type FieldNativeFootDefinition,
   type FieldNativeFootSource } from "../src/core/field-native-foot.js";
+import { compileWorldTerrain } from "../src/compiler/world-terrain.js";
+import { fieldCameraCellToWorld } from "../src/core/field-camera.js";
+import { worldTerrainFixture } from "./fixtures/world-terrain.js";
 
 const source = (): FieldNativeFootSource => ({ file: "synthetic.bundle", assetPath: "Synthetic/Map/package.json",
   objectId: "-9007199254740999", serializedFile: "synthetic-serialized", sha256: "a".repeat(64) });
@@ -80,4 +83,31 @@ test("unknown definitions, source provenance and non-native numeric positions re
   assert.throws(() => readFieldNativeFoot(undefined as unknown as FieldNativeFootDefinition, { x: 0, y: 0, z: 0 }), /unavailable/);
   for (const x of [NaN, Infinity, -Infinity, Number.MAX_VALUE, "0" as unknown as number])
     assert.throws(() => readFieldNativeFoot(good, { x, y: 0, z: 0 }), /Invalid native foot actor position/);
+});
+
+test("native foot world-position sampling binds the same terrain grid as movement", () => {
+  const input = worldTerrainFixture(), terrain = compileWorldTerrain(input);
+  const foot = compileFieldNativeFoot(input.packageAsset.data, input.packageAsset.source as FieldNativeFootSource, input.mapName, terrain);
+  assert.equal(foot.kindOfFoot, "attribute-grid");
+  assert.equal(Object.hasOwn(foot, "cells"), false);
+  for (const cell of [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 1 }, { x: -1, y: 1 }]) {
+    const position = fieldCameraCellToWorld(input.mapRange, cell, 0);
+    const expected = cell.x === 0 && cell.y === 0 ? 7 : 21;
+    assert.equal(readFieldNativeFoot(foot, position, { terrain, mapRange: input.mapRange }), expected);
+  }
+  assert.throws(() => readFieldNativeFoot(foot, { x: 0, y: 0, z: 0 }), /grid context/);
+  assert.throws(() => readFieldNativeFoot(foot, { x: 0, y: 0, z: 0 },
+    { terrain, mapRange: { ...input.mapRange, width: 4 } }), /map range mismatch/);
+});
+
+test("native foot grid cannot borrow another terrain identity, source package or attribute reference", () => {
+  const input = worldTerrainFixture(), terrain = compileWorldTerrain(input);
+  const foot = compileFieldNativeFoot(input.packageAsset.data, input.packageAsset.source as FieldNativeFootSource, input.mapName, terrain);
+  const other = structuredClone(terrain); other.contentHash = "e".repeat(64);
+  assert.throws(() => readFieldNativeFoot(foot, { x: 0, y: 0, z: 0 }, { terrain: other, mapRange: input.mapRange }), /another source terrain/);
+  const foreign = structuredClone(terrain); foreign.sources.package.objectId = "42";
+  assert.throws(() => validateFieldNativeFoot(foot, input.mapName, foreign), /another source terrain/);
+  const pkg = structuredClone(input.packageAsset.data) as { map: Record<string, unknown>[] };
+  pkg.map[0]!.attribute = "Map_Other/attribute";
+  assert.throws(() => compileFieldNativeFoot(pkg, input.packageAsset.source as FieldNativeFootSource, input.mapName, terrain), /attribute reference/);
 });

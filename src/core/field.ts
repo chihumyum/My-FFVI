@@ -78,7 +78,7 @@ import { executeRosterLifecycleEvent, type FieldRosterPort } from "./roster.js";
 import type { FieldConditionPort } from "./field-conditions.js";
 import { parseFrameworkWalkEncounterPolicy, type FrameworkWalkEncounterPolicy,
   type WalkEncounterPrepared } from "./walk-encounters.js";
-import { projectFieldEntryContext } from "./field-entry-context.js";
+import { projectFieldEntryContext, validateFieldEntryTerrainBinding } from "./field-entry-context.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { validateFieldMoveAreas, fieldMoveAreas, findFieldMoveArea, type FieldMoveArea } from "./field-move-area.js";
 import { StaticAudioState, type AudioSnapshot } from "./static-audio.js";
@@ -122,6 +122,11 @@ import {
   redirectAtSlope,
   type CollisionRange,
 } from "./collision.js";
+import { canonicalCell, projectFieldMapStep, validateFieldMapTopology,
+  type FieldMapTopology, type FieldMapStep } from "./field-map-topology.js";
+import { parseMapEntryViewPlan, type MapEntryViewPlan } from "./map-view.js";
+import { frameworkWorldMapPresentation } from "./development-profile.js";
+import { validateWorldTerrain, worldTerrainCollisionMask } from "./world-terrain.js";
 export const DELTA: Record<Direction, Point> = {
   up: { x: 0, y: -1 },
   right: { x: 1, y: 0 },
@@ -187,6 +192,8 @@ type FieldCheckpointState = {
 };
 export type FieldCheckpoint = FieldCheckpointState & (
   { kind: "idle-field-v10" } | { kind: "event-field-v1"; execution: FieldEventCheckpoint }
+  | { kind: "idle-field-v11"; viewPlan: MapEntryViewPlan }
+  | { kind: "event-field-v2"; viewPlan: MapEntryViewPlan; execution: FieldEventCheckpoint }
 );
 export type GameEventSaveRequest = Readonly<{ id: string; site: Site }>;
 /** Trusted source packages reconstruct this capability. Nothing in a saved
@@ -438,6 +445,7 @@ export class FieldGame {
   readonly tileAnimations: TileAnimationState;
   readonly openTriggers: OpenTriggerState;
   readonly collisionRange: CollisionRange;
+  readonly mapTopology: FieldMapTopology | null;
   private readonly collisionMappings = new Map<number, number[]>();
   readonly actors: Record<string, Actor> = {};
   private nativeActorBindings: FieldActorFactoryBindings | null = null;
@@ -733,6 +741,43 @@ export class FieldGame {
       content.map.height,
       this.entityList,
     );
+    this.mapTopology = content.map.topology ? structuredClone(content.map.topology) : null;
+    if (this.mapTopology) {
+      validateFieldMapTopology(this.mapTopology);
+      if (canonical(this.mapTopology.range) !== canonical(this.collisionRange))
+        throw new Error("Map topology is not bound to the collision range");
+      if (content.cameraHost && (canonical(content.cameraHost.mapRange) !== canonical(this.mapTopology.range) ||
+          canonical(content.cameraHost.loop) !== canonical(this.mapTopology.loop)))
+        throw new Error("Map topology and camera disagree");
+      Object.freeze(this.mapTopology.range); Object.freeze(this.mapTopology.loop); Object.freeze(this.mapTopology);
+    }
+    if (content.map.worldTerrain) {
+      validateWorldTerrain(content.map.worldTerrain);
+      if (content.map.worldTerrain.mapId !== content.map.identity?.mapId ||
+          content.map.worldTerrain.sourceSetHash !== content.sourceSetHash ||
+          content.map.worldTerrain.parentSourceSetHash !== content.parentSourceSetHash ||
+          content.map.worldTerrain.mapName !== content.map.id || content.map.worldTerrain.width !== content.map.width ||
+          content.map.worldTerrain.height !== content.map.height ||
+          !this.mapTopology || this.mapTopology.range.x !== 0 || this.mapTopology.range.y !== 0 ||
+          this.mapTopology.range.width !== content.map.width || this.mapTopology.range.height !== content.map.height ||
+          (content.map.worldTerrain.loopType & 1) !== Number(this.mapTopology.loop.horizontal) ||
+          ((content.map.worldTerrain.loopType >> 1) & 1) !== Number(this.mapTopology.loop.vertical))
+        throw new Error("World terrain is not bound to its map topology");
+    }
+    if (content.map.entryContext?.foot.kind === "source-terrain-grid") {
+      if (!content.map.worldTerrain) throw new Error("Field entry terrain is unavailable");
+      validateFieldEntryTerrainBinding(content.map.entryContext, content.map.worldTerrain, {
+        sourceSetHash: content.sourceSetHash, parentSourceSetHash: content.parentSourceSetHash,
+      });
+    }
+    if (content.entry.viewPlan) {
+      const view = parseMapEntryViewPlan(content.entry.viewPlan);
+      if (view.mapId !== content.map.identity?.mapId || view.presentationViewType !== 0 ||
+          view.presentationPolicy !== null && view.presentationPolicy !== frameworkWorldMapPresentation(content.developmentProfile) ||
+          (view.loop.horizontal || view.loop.vertical) && !this.mapTopology ||
+          this.mapTopology && canonical(view.loop) !== canonical(this.mapTopology.loop))
+        throw new Error("Field map view is not bound to its content and presentation");
+    }
     for (const name of content.map.initialGroups ?? [])
       this.activeGroups.add(name);
     const p = content.entry.player;
@@ -1209,8 +1254,7 @@ export class FieldGame {
     return this.captureCheckpoint();
   }
   private captureCheckpoint(execution?: FieldEventCheckpoint): FieldCheckpoint {
-    return {
-      ...(execution ? { kind: "event-field-v1" as const, execution } : { kind: "idle-field-v10" as const }),
+    const snapshot: FieldCheckpointState = {
       contentHash: this.content.contentHash,
       time: this.time,
       remainder: this.remainder,
@@ -1238,6 +1282,10 @@ export class FieldGame {
       camera: this.cameraSnapshot,
       native: this.nativeCheckpoint(execution !== undefined),
     };
+    const viewPlan = this.content.entry.viewPlan && structuredClone(this.content.entry.viewPlan);
+    if (viewPlan) return execution ? { ...snapshot, kind: "event-field-v2", viewPlan, execution }
+      : { ...snapshot, kind: "idle-field-v11", viewPlan };
+    return execution ? { ...snapshot, kind: "event-field-v1", execution } : { ...snapshot, kind: "idle-field-v10" };
   }
   /** A barrier owns one quiescent main core. Other live coroutine registers
    * need their own codecs before a content package may save through them. */
@@ -1306,13 +1354,18 @@ export class FieldGame {
         Object.values(content.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11)))
       throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
     const s = structuredClone(raw);
+    const continuation = s.kind === "event-field-v1" || s.kind === "event-field-v2";
+    const hasView = s.kind === "idle-field-v11" || s.kind === "event-field-v2";
     checkpointKeys(
       s,
       "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,se,fade,camera,native" +
-        (s.kind === "event-field-v1" ? ",execution" : ""),
+        (continuation ? ",execution" : "") + (hasView ? ",viewPlan" : ""),
     );
-    if (!["idle-field-v10", "event-field-v1"].includes(s.kind) || s.contentHash !== content.contentHash)
+    if (!["idle-field-v10", "idle-field-v11", "event-field-v1", "event-field-v2"].includes(s.kind) || s.contentHash !== content.contentHash)
       throw new Error("Field checkpoint source/version mismatch");
+    if (hasView !== (content.entry.viewPlan !== undefined) || hasView &&
+        canonical(parseMapEntryViewPlan(s.viewPlan)) !== canonical(content.entry.viewPlan))
+      throw new Error("Field checkpoint cannot grant or change map view presentation");
     const transportationProfile = frameworkTransportationPresentation(content.developmentProfile);
     if (transportationProfile && native && options.transportation) {
       if (s.transportationId === null || !s.partyActors)
@@ -1331,7 +1384,7 @@ export class FieldGame {
       throw new Error("Field checkpoint source presentation context mismatch");
     // Only an explicit continuation can preserve an unfinished entry script.
     if (content.entry.synchronization ?
-        s.entrySynchronized !== true && !(s.kind === "event-field-v1" && s.entrySynchronized === false) :
+        s.entrySynchronized !== true && !(continuation && s.entrySynchronized === false) :
         s.entrySynchronized !== null)
       throw new Error("Field checkpoint entry synchronization mismatch");
     checkpointNumber(s.time);
@@ -1404,7 +1457,7 @@ export class FieldGame {
         a.asset !== actor.asset ||
         (a.mount !== actor.mount && a.mount !== content.entry.player.mount) ||
         (a.id === "-1001"
-          ? !content.map.collisions[a.layer]
+          ? !content.map.collisions[a.layer] && !(a.layer === 0 && content.map.worldTerrain)
           : a.layer !== actor.layer)
       )
         throw new Error("Invalid saved actor identity, layer or pose");
@@ -1425,7 +1478,7 @@ export class FieldGame {
     next.nextTask = s.nextTask;
     next.synchronizedEntry = s.entrySynchronized;
     next.entryTaskStarted = s.entrySynchronized === true;
-    if (s.kind === "event-field-v1") {
+    if (continuation) {
       const execution = restoreFieldEventCheckpoint(s.execution, { content, eventState: next.eventState.snapshot(),
         actorIds: Object.keys(next.actors), nextTask: s.nextTask, time: s.time, entrySynchronized: s.entrySynchronized });
       if (s.native?.completedScript) throw new Error("Event continuation cannot also own a completed script");
@@ -1537,6 +1590,16 @@ export class FieldGame {
   private collision(p: Point, layer: number): number | null {
     if (!this.collisionSwitches.mapColliders) return this.dynamicCollision(p, layer);
     if (!inCollisionRange(p, this.collisionRange)) return 0;
+    if (this.content.map.worldTerrain && layer === 0) {
+      try {
+        if (this.transportationId === null) throw new Error("Unknown world terrain transportation");
+        const mask = worldTerrainCollisionMask(this.content.map.worldTerrain, this.transportationId, { x: p.x, y: p.y });
+        const dynamic = this.dynamicCollision(p, layer);
+        return dynamic === null ? null : mask & dynamic;
+      } catch (error) {
+        this.block(error instanceof Error ? error.message : String(error)); return null;
+      }
+    }
     const cell =
       this.content.map.collisions[layer]?.[p.y * this.content.map.width + p.x];
     try {
@@ -1573,7 +1636,7 @@ export class FieldGame {
   private slopeDestination(
     direction: Direction,
     straight: Point,
-  ): Point | null {
+  ): FieldMapStep | null {
     const p = this.player,
       map = this.content.map,
       grid = map.collisions[p.layer];
@@ -1583,8 +1646,16 @@ export class FieldGame {
       direction,
     );
     if (!delta) return null;
-    const to = { x: p.x + delta.x, y: p.y + delta.y };
-    if (!inCollisionRange(to, this.collisionRange)) return null;
+    let plan: FieldMapStep;
+    if (this.mapTopology) {
+      try { plan = projectFieldMapStep(this.mapTopology, p, delta); }
+      catch { return null; }
+    } else {
+      const to = { x: p.x + delta.x, y: p.y + delta.y };
+      if (!inCollisionRange(to, this.collisionRange)) return null;
+      plan = { from: { x: p.x, y: p.y }, destination: to, unwrappedDestination: to, motionDelta: delta };
+    }
+    const to = plan.destination;
     let mapping = this.collisionMappings.get(p.layer);
     if (!mapping) {
       mapping = buildCollisionMapping(
@@ -1592,6 +1663,8 @@ export class FieldGame {
         map.width,
         map.height,
         this.collisionRange,
+        this.mapTopology?.loop.horizontal ?? false,
+        this.mapTopology?.loop.vertical ?? false,
       );
       this.collisionMappings.set(p.layer, mapping);
     }
@@ -1611,7 +1684,7 @@ export class FieldGame {
       const yBit = cell.y === p.y ? (delta.y > 0 ? 8 : 1) : delta.y > 0 ? 1 : 8;
       if (!(mask & xBit) || !(mask & yBit)) return null;
     }
-    return this.occupied([horizontal, vertical, to], p.layer) ? null : to;
+    return this.occupied([horizontal, vertical, to], p.layer) ? null : plan;
   }
   move(direction: Direction): boolean {
     const p = this.player;
@@ -1627,6 +1700,13 @@ export class FieldGame {
     };
     const d = DELTA[direction];
     let to = { x: p.x + d.x, y: p.y + d.y };
+    let motionTo = to;
+    if (this.mapTopology) {
+      try {
+        const step = projectFieldMapStep(this.mapTopology, p, d);
+        to = step.destination; motionTo = step.unwrappedDestination;
+      } catch { return faceBlockedStep(); }
+    }
     const doors = this.entityList.filter(
       (e) =>
         this.collisionSwitches.entityCollision && e.kind === 8 &&
@@ -1667,7 +1747,7 @@ export class FieldGame {
       try {
         const redirected = this.slopeDestination(direction, to);
         if (!redirected) return faceBlockedStep();
-        to = redirected;
+        to = redirected.destination; motionTo = redirected.unwrappedDestination;
       } catch (error) {
         this.block(error instanceof Error ? error.message : String(error));
         return false;
@@ -1691,7 +1771,7 @@ export class FieldGame {
     p.animation = movementAnimation;
     p.motion = {
       from: { x: p.x, y: p.y },
-      to,
+      to: motionTo,
       elapsed: 0,
       duration: 240,
       manual: true,
@@ -1842,7 +1922,12 @@ export class FieldGame {
     if (this.busy || this.player.motion || !this.collisionSwitches.interactiveObservation) return;
     const p = this.player,
       d = DELTA[p.direction],
-      target = { x: p.x + d.x, y: p.y + d.y };
+      rawTarget = { x: p.x + d.x, y: p.y + d.y };
+    let target = rawTarget;
+    if (this.mapTopology) {
+      try { target = canonicalCell(this.mapTopology, rawTarget); }
+      catch { return; }
+    }
     const hits = this.entityList.filter((e) => {
       const properties = e.npc ?? e.mapObject;
       return (
@@ -2168,6 +2253,8 @@ export class FieldGame {
           // on a private candidate. In particular a stale owned step must not
           // publish the native endpoint (or even advance its movement timer).
           const next = prepareFieldActorMotionTick(m, a.animation, 10);
+          const point = this.mapTopology && m.manual && a.id === this.player.id
+            ? canonicalCell(this.mapTopology, next.point) : next.point;
           const step = next.completedSegment && a.id === this.player.id ? this.pendingPlayerStep : null;
           const encounter = next.completedSegment && a.id === this.player.id && m.manual
             ? this.pendingWalkEncounter : null;
@@ -2180,7 +2267,7 @@ export class FieldGame {
             step?.commit();
             // Native properties below are prevalidated accessors onto this same
             // entity. Legacy actors publish their cell only at a completed step.
-            if (a.native || next.completedSegment) { a.x = next.point.x; a.y = next.point.y; }
+            if (a.native || next.completedSegment) { a.x = point.x; a.y = point.y; }
             a.animation = next.animation;
             a.motion = next.motion;
             if (next.completedSegment) {
@@ -2303,6 +2390,8 @@ export class FieldGame {
   get entrySynchronized(): boolean | null { return this.synchronizedEntry; }
   get battleEntryContext(): ReturnType<typeof projectFieldEntryContext> {
     return projectFieldEntryContext(this.content.map.entryContext, {
+      ...(this.content.map.worldTerrain ? { terrain: this.content.map.worldTerrain,
+        sourceSetHash: this.content.sourceSetHash, parentSourceSetHash: this.content.parentSourceSetHash } : {}),
       mapId: this.content.map.identity?.mapId ?? null,
       transportationId: this.transportationId,
       activeGroups: [...this.activeGroups],

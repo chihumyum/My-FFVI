@@ -19,7 +19,8 @@ import { checkpointKeys, checkpointInteger } from "./checkpoint-validation.js";
 import { prepareMapPartyEntry, readMapPartySwitching, type MapPartyEntryPlan } from "./map-party-entry.js";
 import { Transportations } from "./transportation.js";
 import { transportationStayMaps } from "./transportation-state.js";
-import { frameworkTransportationPresentation } from "./development-profile.js";
+import { frameworkTransportationPresentation, frameworkWorldMapPresentation } from "./development-profile.js";
+import { projectMapEntryView, parseMapEntryViewPlan, type MapEntryViewPlan, type MapViewType } from "./map-view.js";
 import type { FieldFadeState } from "./field-fade.js";
 import type { SourceNativeState } from "./source-native-state.js";
 import { prepareSourceNativeMap } from "./source-native-map.js";
@@ -55,6 +56,24 @@ export type WorldCheckpoint = {
   field: FieldCheckpoint;
 };
 
+/** Trusted metadata proves world applicability; presentation never changes the source request. */
+export function worldMapEntryView(target: WorldMapContent, requestedViewType: MapViewType): MapEntryViewPlan | undefined {
+  const definition = target.entryView;
+  if (!definition) {
+    if (requestedViewType !== 0) throw new Error("World-map view applicability is unavailable");
+    return undefined;
+  }
+  checkpointKeys(definition, "mapId,isWorld,loopType,sources");
+  checkpointKeys(definition.sources, "map,area");
+  if (definition.mapId !== target.mapId || definition.loopType !== target.partyEntry?.loopType ||
+      !Object.values(definition.sources).every(source => source && typeof source.file === "string" &&
+        source.file.length && typeof source.assetPath === "string" && source.assetPath.length))
+    throw new Error("Map entry view source binding mismatch");
+  return projectMapEntryView({ mapId: definition.mapId, isWorld: definition.isWorld,
+    loopType: definition.loopType, requestedViewType },
+    definition.isWorld ? frameworkWorldMapPresentation(target.developmentProfile) : undefined);
+}
+
 /** Shared package resolution for map entry and saved-state restoration. Does not execute scripts. */
 export function worldFieldContent(
   catalog: WorldCatalog,
@@ -87,7 +106,9 @@ export function worldFieldContent(
   int32(request.mapId);
   int32(request.entrance);
   int32(target.areaId);
-  if (request.birdview) throw new Error("俯视世界地图视角尚未迁移");
+  const viewPlan = worldMapEntryView(target, request.birdview ? 1 : 0);
+  if (viewPlan && viewPlan.presentationViewType !== 0)
+    throw new Error("Native world-map Bird/FlatBird presentation is not implemented");
   if (target.blockers.length) throw new Error(target.blockers[0]!.reason);
   const map = target.map!,
     group = map.groups?.entity_default;
@@ -180,6 +201,7 @@ export function worldFieldContent(
     ...(catalog.se ? { se: catalog.se } : {}),
     ...(catalog.treasureInventoryLimits ? { treasureInventoryLimits: catalog.treasureInventoryLimits } : {}),
     entry: {
+      ...(viewPlan ? { viewPlan } : {}),
       ...(fade ? { fade: structuredClone(fade) } : {}),
       synchronization: { kind: "map-entry" },
       ...(actorEntry ? { partyActors: actorEntry.plan.checkpoint,
@@ -198,7 +220,7 @@ export function worldFieldContent(
     },
     limitations: [
       ...target.limitations,
-      "普通 PointIn 的队伍入口支持单队伍、已知交通及平面非循环地图；伙伴、多队伍定位和原生负入口恢复仍明确阻塞。",
+      "普通 PointIn 的队伍入口支持单队伍及已知交通；循环世界地图需独立的视图、地形和呈现能力。伙伴、多队伍定位和原生负入口恢复仍明确阻塞。",
       "地图淡出、自动选曲、随机遇敌和完整交通工具生命周期尚未接入。脚本背景音乐和环境音播放/停止已接入。",
       "环境音暂停/变调、SEAD 类别混音、起止宏、空间处理与混响尚未复现。",
     ],
@@ -331,7 +353,8 @@ export class WorldSession {
       snapshot.initialHash !== this.initial.contentHash
     )
       throw new Error("World checkpoint source/version mismatch");
-    if ((snapshot.kind === "event-world-v1") !== (snapshot.field.kind === "event-field-v1"))
+    if ((snapshot.kind === "event-world-v1") !==
+        (snapshot.field.kind === "event-field-v1" || snapshot.field.kind === "event-field-v2"))
       throw new Error("World and field continuation formats disagree");
     let content = this.initial;
     const loc = snapshot.location;
@@ -354,6 +377,10 @@ export class WorldSession {
       const initialActors = this.initial.entry.partyActors;
       let actorEntry: { plan: MapPartyEntryPlan; assets: string[] } | undefined;
       let traveler: Traveler;
+      const savedView = "viewPlan" in snapshot.field ? parseMapEntryViewPlan(snapshot.field.viewPlan) : undefined;
+      const viewPlan = worldMapEntryView(target, savedView?.requestedViewType ?? 0);
+      if (canonical(savedView ?? null) !== canonical(viewPlan ?? null))
+        throw new Error("Saved map view does not match trusted source/presentation metadata");
       if (initialActors && appearance) {
         if (loc.traveler !== null) throw new Error("Duplicate saved native traveler ownership");
         const transportationId = frameworkTransportationPresentation(target.developmentProfile)
@@ -368,7 +395,8 @@ export class WorldSession {
         // supplies immutable identities/riding structure; destination metadata
         // supplies new providers. Saved actors never validate their own origin.
         const plan = prepareMapPartyEntry(appearance.catalog, {
-          definition: target.partyEntry, entrance: loc.entrance, mapViewType: 0,
+          definition: target.partyEntry, entrance: loc.entrance, mapViewType: viewPlan?.presentationViewType ?? 0,
+          ...(viewPlan ? { viewPlan } : {}),
           prior: initialActors, playerVisible: true, party: appearance.current(),
           transportation: new Transportations(catalog.transportation).identity(transportationId),
           canPartySwitching: false,
@@ -390,13 +418,15 @@ export class WorldSession {
       content = worldFieldContent(
         catalog,
         target,
-        { mapId: loc.mapId, entrance: loc.entrance, birdview: false },
+        { mapId: loc.mapId, entrance: loc.entrance, birdview: savedView?.requestedViewType === 1 },
         traveler,
         this.initial.parentSourceSetHash,
         actorEntry,
         this.initial.entry.fade,
         this.initial.cameraHost !== undefined,
       );
+      // FlatBird is an explicit saved request, never inferred from GotoMap's boolean.
+      if (viewPlan) content.entry.viewPlan = viewPlan;
     }
     let nativeDependencies: FieldNativeRestoreDependencies | undefined;
     if (native) {
@@ -509,6 +539,7 @@ export class WorldSession {
       },
     } : undefined;
     const prior = from.partyActorCheckpoint;
+    const viewPlan = worldMapEntryView(target, request.birdview ? 1 : 0);
     let actorEntry: { plan: MapPartyEntryPlan; assets: string[] } | undefined;
     if (prior) {
       const appearance = owned?.ports.partyAppearance;
@@ -534,7 +565,8 @@ export class WorldSession {
         throw new Error("Map transportation switching is not implemented");
       const plan = prepareMapPartyEntry(appearance.catalog, {
         definition: target.partyEntry, entrance: request.entrance,
-        mapViewType: request.birdview ? 1 : 0, prior,
+        mapViewType: viewPlan?.presentationViewType ?? (request.birdview ? 1 : 0), prior,
+        ...(viewPlan ? { viewPlan } : {}),
         playerVisible: from.isEntityVisible(from.player.id), party: appearance.current(),
         transportation: transportation.identity(transport.currentId),
         canPartySwitching: readMapPartySwitching(read),

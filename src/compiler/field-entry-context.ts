@@ -1,5 +1,6 @@
 import { posix } from "node:path";
-import type { FieldEntryContextDefinition } from "../core/field-entry-context.js";
+import { validateFieldEntryTerrainBinding, type FieldEntryContextDefinition } from "../core/field-entry-context.js";
+import { validateWorldTerrain, type WorldTerrainDefinition } from "../core/world-terrain.js";
 import type { Evidence } from "../field/types.js";
 import type { CorpusAsset } from "./corpus.js";
 import { record } from "./content.js";
@@ -26,6 +27,7 @@ function safeReference(value: unknown): string {
  * omit an unsupported object. A missing source group is unknown, never empty. */
 export function compileFieldEntryContext(
   assets: readonly Asset[], tables: Record<string, unknown>, mapId: number,
+  terrain?: WorldTerrainDefinition,
 ): FieldEntryContextDefinition {
   if (!Number.isSafeInteger(mapId) || mapId <= 0) throw new Error("Invalid field entry map identity");
   const maps = array(tables["map.csv"]).map(record).filter((r) => tableId(r.id) === mapId);
@@ -49,7 +51,7 @@ export function compileFieldEntryContext(
   // exclusion area then returns no foot info, which CheckBeast maps to 0.
   // Without that default, absent package Attribute skips AttributeAssetLoad;
   // CreateEncountTask leaves EncountData null and the same check returns 0.
-  const foot: FieldEntryContextDefinition["foot"] = sets.length && monsterSetId > 0
+  let foot: FieldEntryContextDefinition["foot"] = sets.length && monsterSetId > 0
     ? { kind: "uniform-zero", basis: "default-monster-set", monsterSetId, source }
     : attribute === ""
       ? { kind: "uniform-zero", basis: "no-attribute-asset", monsterSetId, source }
@@ -59,6 +61,7 @@ export function compileFieldEntryContext(
   });
   if (map.entity_default !== undefined && map.entity_default !== "") aliases.unshift(["entity_default", map.entity_default]);
   const groups: FieldEntryContextDefinition["groups"] = {};
+  let noExclusionAreas = true;
   for (const [name, ref] of aliases) {
     if (!name || Object.hasOwn(groups, name)) throw new Error("Duplicate source field entry entity group");
     const path = posix.join(posix.dirname(pkg.source.assetPath), safeReference(ref) + ".json");
@@ -73,12 +76,37 @@ export function compileFieldEntryContext(
         for (const rawObject of array(layer.objects)) {
           const properties = entityProperties(record(rawObject).properties), type = properties.object_type;
           if (!Number.isSafeInteger(type) || Number(type) < 0) throw new Error("Unknown source entity object type: " + name);
+          if (Number(type) > 30 || type === 23) noExclusionAreas = false;
           if (type === 9) count++;
         }
       }
       savePointCount = count;
-    } catch (error) { reason = error instanceof Error ? error.message : String(error); }
+    } catch (error) { reason = error instanceof Error ? error.message : String(error); noExclusionAreas = false; }
     groups[name] = { savePointCount, reason, source: { ...groupSource } };
   }
-  return { kind: "field-entry-context-v1", mapId, beastFieldController: "source-singleton", foot, groups };
+  if (terrain && attribute && foot.kind === "unresolved" && monsterSetId === 0) {
+    validateWorldTerrain(terrain, { mapId, mapName: text(row.map_name), width: terrain.width, height: terrain.height });
+    if (terrain.sources.package.file !== pkg.source.file || terrain.sources.package.assetPath !== pkg.source.assetPath ||
+        terrain.sources.package.objectId !== pkg.source.objectId || terrain.sources.package.sha256 !== pkg.source.sha256 ||
+        terrain.sources.package.serializedFile !== pkg.source.serializedFile ||
+        terrain.sources.attribute.assetPath !== posix.join(posix.dirname(pkg.source.assetPath), attribute + ".json"))
+      throw new Error("Field entry terrain source package/attribute mismatch");
+    if (!noExclusionAreas || !aliases.length) {
+      foot = { kind: "unresolved", reason: "Source terrain foot qualification has unresolved non-encounter area membership", source };
+    } else {
+      const typeRowIds: Record<string, number> = {};
+      for (const row of Object.values(terrain.footRows)) {
+        if (Object.hasOwn(typeRowIds, String(row.typeId)))
+          throw new Error("Ambiguous field entry foot TypeId dictionary");
+        typeRowIds[String(row.typeId)] = row.id;
+      }
+      foot = { kind: "source-terrain-grid", basis: "attribute-type-dictionary-no-exclusions", monsterSetId,
+        mapName: terrain.mapName, terrainHash: terrain.contentHash, sourceSetHash: terrain.sourceSetHash,
+        parentSourceSetHash: terrain.parentSourceSetHash, typeRowIds, source };
+    }
+  }
+  const definition: FieldEntryContextDefinition = { kind: "field-entry-context-v1", mapId, beastFieldController: "source-singleton", foot, groups };
+  if (foot.kind === "source-terrain-grid") validateFieldEntryTerrainBinding(definition, terrain!, {
+    sourceSetHash: terrain!.sourceSetHash, parentSourceSetHash: terrain!.parentSourceSetHash });
+  return definition;
 }

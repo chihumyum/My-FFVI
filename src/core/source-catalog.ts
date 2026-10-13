@@ -13,7 +13,8 @@ export function sourceCatalogProfile(profile: DevelopmentProfile | undefined): S
       profile.policy !== "omit-anonymous-environment-particles-v1" ||
       typeof profile.sourceContentHash !== "string" || !/^[a-f0-9]{64}$/.test(profile.sourceContentHash) ||
       !Array.isArray(profile.omissions) ||
-      profile.transportation !== undefined && profile.transportation !== "walking-magitek-framework-v1")
+      profile.transportation !== undefined && profile.transportation !== "walking-magitek-framework-v1" ||
+      profile.worldMap !== undefined && profile.worldMap !== "framework-world-map-flat-v1")
     throw new Error("Source game catalog development profile mismatch");
   return "framework";
 }
@@ -44,7 +45,8 @@ export function assertSourceEntryProfiles(
     const declared = sourceCatalogProfile(dependency.developmentProfile);
     if (declared !== profile || profile === "source" && dependency.walkEncounters !== undefined ||
         profile === "framework" &&
-        dependency.developmentProfile!.transportation !== entry.developmentProfile!.transportation)
+        (dependency.developmentProfile!.transportation !== entry.developmentProfile!.transportation ||
+          dependency.developmentProfile!.worldMap !== entry.developmentProfile!.worldMap))
       throw new Error("Source entry profile mismatch: " + name);
   }
   return profile;

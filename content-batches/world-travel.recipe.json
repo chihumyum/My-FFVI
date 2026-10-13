@@ -1,0 +1,57 @@
+{
+  "kind": "framework-world-travel-recipe-v1",
+  "id": "world-travel",
+  "sourceEntry": {
+    "url": "/game/source-new-game.json",
+    "contentHash": "17f546f936b1c4718d049e9eeb698f1368e32ae04ebff0585d586a45c44195e5"
+  },
+  "sourceBattle": {
+    "url": "/game/source-catalog.json",
+    "contentHash": "6e8a406f2de60128267eca0c3d3039a77de96c4b183e31f4a8d84c2ea779a926"
+  },
+  "sourceWorld": {
+    "url": "/world/catalog.json",
+    "contentHash": "041d094653778859ce0ef313c5aa9f63e4bafbf3deda920674cf69d917f50702"
+  },
+  "sourceMaps": {
+    "world": {
+      "url": "/world/maps/1.json",
+      "contentHash": "c810b50914a6c4cd111b99bb6e1ad98917f9180479acdd4a88dcb535427cbe79"
+    },
+    "location": {
+      "url": "/world/maps/3.json",
+      "contentHash": "72e4e76bb22676ee17f89a4c3ae7e5e476a03dd18d3a5ec6584f2e9eaf31cd76"
+    }
+  },
+  "battleSourceSetHash": "d713cd2b9b117321b895f480fbc32c93a1fe630ac269b2de9a40a5a885324856",
+  "handoff": {
+    "kind": "framework-battle-handoff-v1",
+    "id": "world-travel-v74",
+    "audio": "retain-field",
+    "introduction": "omit"
+  },
+  "worldMapId": 1,
+  "locationMapId": 3,
+  "entrance": 1,
+  "worldExitEntityId": "3",
+  "returnStation": {
+    "x": 38,
+    "y": 62,
+    "layer": 1
+  },
+  "walkEncounters": {
+    "kind": "framework-walk-encounters-v1",
+    "id": "world-travel-v74",
+    "minSteps": 12,
+    "maxSteps": 16,
+    "transportationIds": [
+      1
+    ],
+    "parties": [
+      {
+        "partyId": 517,
+        "weight": 1
+      }
+    ]
+  }
+}

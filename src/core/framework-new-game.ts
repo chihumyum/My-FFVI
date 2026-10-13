@@ -13,7 +13,8 @@ import { validateFieldActorView } from "./field-actor-view.js";
 import { validateFieldNativeFoot } from "./field-native-foot.js";
 import { prepareMapPartyEntry, readMapPartySwitching } from "./map-party-entry.js";
 import { installFreshGameActors, type NativeGameEntryContent } from "./source-new-game.js";
-import { worldFieldContent } from "./world-session.js";
+import { worldFieldContent, worldMapEntryView } from "./world-session.js";
+import type { MapViewType } from "./map-view.js";
 
 /** The source initializer and source route retain their own identities. This
  * entry declares a separate authored map; it grants no source reachability. */
@@ -114,7 +115,7 @@ export function assertFrameworkNewGameBindings(content: FrameworkNewGameContent,
   if (map.nativeCompositionBlockers?.length) throw new Error(map.nativeCompositionBlockers[0]!.reason);
   if (map.nativeFootBlockers?.length) throw new Error(map.nativeFootBlockers[0]!.reason);
   if (!map.nativeFoot) throw new Error("Framework new-game native foot provider is unavailable");
-  validateFieldNativeFoot(map.nativeFoot, map.map.id);
+  validateFieldNativeFoot(map.nativeFoot, map.map.id, map.map.worldTerrain);
 }
 
 function validateInitialAnimationKeys(field: FieldContent, content: FrameworkNewGameContent, state: GameState): void {
@@ -147,15 +148,19 @@ export function prepareFrameworkNewGameField(content: FrameworkNewGameContent, w
   const fresh = createNewGame(definition), catalog = partyPort.catalog, party = partyPort.current();
   const initial = createFrameworkFieldPartyActorCheckpoint({ content, catalog, fresh, party,
     map: map.partyEntry!, playerId: "-1001" });
+  const viewPlan = worldMapEntryView(map, fresh.entry.viewType as MapViewType);
   const plan = prepareMapPartyEntry(catalog, { definition: map.partyEntry!, entrance: content.entry.entrance,
-    mapViewType: fresh.entry.viewType, prior: initial, playerVisible: true, party,
+    mapViewType: viewPlan?.presentationViewType ?? fresh.entry.viewType, prior: initial, playerVisible: true, party,
+    ...(viewPlan ? { viewPlan } : {}),
     transportation: fresh.entry.transportation,
     canPartySwitching: readMapPartySwitching(ref => new EventState(fresh.events).read(ref)) });
   const asset = catalog.assets[plan.checkpoint.context.player.fieldAssetId!];
   if (!asset || plan.checkpoint.context.player.riding) throw new Error("Framework fresh player media is unresolved");
-  const field = worldFieldContent(world, map, { mapId: map.mapId, entrance: content.entry.entrance, birdview: false },
+  const field = worldFieldContent(world, map, { mapId: map.mapId, entrance: content.entry.entrance,
+    birdview: (fresh.entry.viewType as MapViewType) === 1 },
     { asset: asset.asset, mount: "", transportationId: fresh.entry.transportation.id }, content.parentSourceSetHash,
     { plan, assets: Object.values(catalog.assets).map(value => value.asset) }, fade, true);
+  if (viewPlan) field.entry.viewPlan = viewPlan;
   field.contentHash = content.contentHash;
   field.limitations.push("作者地图使用来源初始化后的持有状态；不代表来源新游戏路线或剧情可达性。");
   validateInitialAnimationKeys(field, content, state);

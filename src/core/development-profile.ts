@@ -19,7 +19,14 @@ export type DevelopmentProfile = {
    * parking and riding assets remain authoritative; native control, encounter,
    * audio and boarding presentation providers are not inferred from them. */
   transportation?: "walking-magitek-framework-v1";
+  /** Source world geometry and gameplay with explicitly flat Web presentation. */
+  worldMap?: "framework-world-map-flat-v1";
 };
+
+export function frameworkWorldMapPresentation(profile: DevelopmentProfile | undefined): "framework-world-map-flat-v1" | undefined {
+  return profile?.kind === "framework-development-v1" && profile.worldMap === "framework-world-map-flat-v1"
+    ? profile.worldMap : undefined;
+}
 
 export function frameworkTransportationPresentation(profile: DevelopmentProfile | undefined): "framework-development" | undefined {
   return profile?.kind === "framework-development-v1" &&

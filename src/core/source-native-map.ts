@@ -12,6 +12,7 @@ import type { FieldPartyActorCheckpoint } from "./field-party-actors.js";
 import { fieldPuppetSemiTransparent, fieldPuppetBoundTransparentTextures, projectFieldPuppetActorEffects,
   type FieldPuppetHostActor, type FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import type { MapPartyEntryDefinition, MapPartyEntryPlan } from "./map-party-entry.js";
+import { assertMapEntryViewBinding } from "./map-view.js";
 import { partyActorLeaderOnMapChange, partyActorMapArea, partyMemberFieldAsset, preparePartyActors, type PartyActorCatalog, type PartyActorInstance } from "./party-actors.js";
 import type { PartyAppearanceCandidate } from "./party.js";
 import type { Character } from "../field/types.js";
@@ -104,7 +105,11 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
   validateFieldActorView(view);
   if (!prior || priorCheckpoint.kind !== "field-party-actors-v1" || entry.checkpoint.kind !== "field-party-actors-v1" ||
       catalog.formatVersion !== 1 || catalog.memberCount !== 4 || catalog.partyCount !== 3 ||
-      definition.kind !== "map-party-entry" || definition.formatVersion !== 1 || definition.loopType !== 0)
+      definition.kind !== "map-party-entry" || definition.formatVersion !== 1)
+    throw new Error("Unknown source native map lifecycle");
+  const viewPlan = entry.viewPlan === undefined ? undefined : assertMapEntryViewBinding(entry.viewPlan,
+    { mapId: definition.mapId, loopType: definition.loopType, presentationViewType: 0 });
+  if (definition.loopType !== 0 && !viewPlan?.isWorld)
     throw new Error("Unknown source native map lifecycle");
   same({ width: view.mapSize.width, height: view.mapSize.height }, { width: definition.mapRange.width, height: definition.mapRange.height },
     "Destination native map range/material size mismatch");

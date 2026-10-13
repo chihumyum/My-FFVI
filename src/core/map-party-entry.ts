@@ -5,6 +5,7 @@ import type { TransportationIdentity } from "./transportation.js";
 import type { VariableRef } from "./event-state.js";
 import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
 import { inCollisionRange, validateCollisionRange, type CollisionRange } from "./collision.js";
+import { assertMapEntryViewBinding, type MapEntryViewPlan } from "./map-view.js";
 import { partyActorCameraOffset, partyActorLeaderOnMapChange, partyActorMapArea,
   partyMemberFieldAsset, preparePartyActors, type PartyActorCatalog, type PartyActorContext } from "./party-actors.js";
 
@@ -26,6 +27,9 @@ export type MapPartyEntryInput = {
   /** Negative LoadData.Point selects the distinct native saved-position path. */
   entrance: number;
   mapViewType: number;
+  /** Explicit content-bound world applicability and presentation. The old
+   * normal non-looping path does not acquire a world capability by omission. */
+  viewPlan?: MapEntryViewPlan;
   prior: FieldPartyActorCheckpoint;
   playerVisible: boolean;
   party: PartyAppearanceCandidate;
@@ -45,6 +49,8 @@ export type MapPartyEntryPlan = {
   colliderChanges: { actorId: string; active: boolean }[];
   /** This exact FF6 RemoveCondition constructor registers three empty lists. */
   ownedConditionChanges: [];
+  /** Preserve source/requested view separately from the Web presentation. */
+  viewPlan?: MapEntryViewPlan;
 };
 
 export const mapPartySwitchingFlag: VariableRef = { category: "ScenarioFlag3", index: 45 };
@@ -94,7 +100,10 @@ export function prepareMapPartyEntry(catalog: PartyActorCatalog, input: MapParty
   const def = input.definition;
   checkpointInteger(input.entrance, -0x80000000, 0x7fffffff);
   if (input.entrance < 0) throw new Error("Saved-position map party entry is not implemented");
-  if (input.mapViewType !== 0 || def.loopType !== 0) throw new Error("Map party entry view/loop presentation is not implemented");
+  const viewPlan = input.viewPlan === undefined ? undefined : assertMapEntryViewBinding(input.viewPlan,
+    { mapId: def.mapId, loopType: def.loopType, presentationViewType: input.mapViewType });
+  if (input.mapViewType !== 0 || def.loopType !== 0 && !viewPlan?.isWorld)
+    throw new Error("Map party entry view/loop presentation is not implemented");
   if (typeof input.playerVisible !== "boolean") throw new Error("Unknown map-entry player visibility");
   if (input.canPartySwitching === null || typeof input.canPartySwitching !== "boolean") throw new Error("Unknown map-entry party switching flag");
   if (input.canPartySwitching) throw new Error("Map party placement and switching entry is not implemented");
@@ -122,6 +131,8 @@ export function prepareMapPartyEntry(catalog: PartyActorCatalog, input: MapParty
   if (!transport || transport.typeId !== input.transportation.type || transport.fieldAssetId !== input.transportation.assetId)
     throw new Error("Mismatched destination map transportation");
   const walking = transport.typeId === 1;
+  if (viewPlan?.isWorld && (!walking || context.currentTransport.typeId !== 1))
+    throw new Error("World map party entry requires ordinary walking transportation");
   // FF6's exact front/overlay rule for id6 was separately recovered; type12
   // alone is not sufficient to classify another transport as Magitek armor.
   const armor = transport.id === 6 && transport.typeId === 12 && transport.fieldAssetId === 38;
@@ -173,5 +184,6 @@ export function prepareMapPartyEntry(catalog: PartyActorCatalog, input: MapParty
     movement: { start: { ...position }, destination: { ...position }, elapsed: 0, autoMove: false, cacheActiveEnable: 0, cacheActiveFlag: 0 },
     cameraOffset: partyActorCameraOffset(catalog, walking ? playerAssetCacheId : transport.fieldAssetId, context.camera),
     colliderChanges: structuredClone(projection.colliderChanges), ownedConditionChanges: [],
+    ...(viewPlan === undefined ? {} : { viewPlan }),
   };
 }

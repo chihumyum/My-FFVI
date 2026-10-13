@@ -8,9 +8,13 @@
 
 源码、合成测试、架构和实施记录由 Git 跟踪，并同步至私有仓库 [chihumyum/ffvi-reweb](https://github.com/chihumyum/ffvi-reweb)。原始游戏资源和生成产物保留在本地，不进入仓库。
 
-当前可操作系统入口：[初始化训练场](http://127.0.0.1:4173/game/?package=systems-initialized)。上方训练、右侧商店、下方魔石；按方向键面向设施，再按 Enter / 空格确认，Esc 打开队伍、装备、道具、魔法和保存菜单。角色与持有资源由来源新游戏初始化，训练事件单独编排并使用独立进度槽。完整主线和世界旅行仍待迁移。
+当前可操作系统入口：[初始化训练场](http://127.0.0.1:4173/game/?package=systems-initialized)。上方训练、右侧商店、下方魔石；按方向键面向设施，再按 Enter / 空格确认，Esc 打开队伍、装备、道具、魔法和保存菜单。角色与持有资源由来源新游戏初始化，训练事件单独编排并使用独立进度槽。完整主线仍待迁移。
+
+[世界旅行演示](http://127.0.0.1:4173/game/?package=world-travel) 复用同一会话、切图、战斗、菜单和存读档。起点向北进入纳尔谢，面向入口南侧确认返回世界；世界移动采用真实地形通行与循环边界。导航、遇敌节奏和简化平面画面属于独立演示策略，原剧情可达性仍单独验收。设计与范围见 [世界旅行系统](targets/world-travel.md)。
 
 已有本地来源目录、世界与媒体产物时，使用 `npm run initialized-systems:build` 更新该包，`npm run initialized-systems:check` 验证连续系统和受控界面。运行 `npm run dev` 后可从默认游戏页面的系统演示链接进入。
+
+`npm run content-packages:build` 构建共同内容包；`npm run world-travel:check` 验证世界与地点往返、遭遇战、菜单、保存恢复及循环渲染。来源摘要更新后需要重建并重新绑定配方；旧摘要存档不能默认为新内容的有效进度。
 
 ## 文档入口
 

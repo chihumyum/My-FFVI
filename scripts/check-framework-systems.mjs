@@ -38,6 +38,8 @@ const lanes = [
   ["interactive-systems-playground", "check-systems-playground.mjs", "systems-playground-check.json", "tests"],
   ["source-initialized-systems-loop", "check-initialized-systems.mjs", "initialized-systems-check.json", "tests"],
   ["source-initialized-systems-ui", "check-initialized-systems-ui.mjs", "initialized-systems-ui-check.json", "cases"],
+  ["world-travel-loop", "check-world-travel.mjs", "world-travel-check.json", "stages"],
+  ["field-loop-compositor", "check-field-loop-ui.mjs", "field-loop-ui-check.json", "checks"],
   ["walking-encounter-loop", "check-walk-encounters.mjs", "walk-encounters-check.json", "stages"],
   ["battle-formation-entry", "check-battle-formations.mjs", "battle-formations-check.json", "stages"],
   ["battle-escape-return", "check-battle-escape.mjs", "battle-escape-check.json", "stages"],

@@ -17,6 +17,8 @@ import { compileFieldNativeComposition, loadFieldCompositionRenderHost } from ".
 import { compileFieldNativeAnimationKeys } from "./field-native-appearance.js";
 import { compilePartyActorCatalog } from "./party-actors.js";
 import { compileFieldNativeFoot } from "./field-native-foot.js";
+import { compileWorldMapEntryView, compileWorldTerrain, type WorldMapEntryView } from "./world-terrain.js";
+import type { WorldTerrainDefinition } from "../core/world-terrain.js";
 import { compileFieldPuppetScriptContext } from "./field-puppet-actors.js";
 import { missingFieldPoses } from "../core/character-media.js";
 import { fieldCollisionRange } from "../core/collision.js";
@@ -225,6 +227,10 @@ export async function compileWorld(root: string) {
       messages,
     );
     let map: WorldMapContent["map"] = null;
+    let entryView: WorldMapEntryView | undefined;
+    let worldTerrain: WorldTerrainDefinition | undefined;
+    try { entryView = compileWorldMapEntryView(systemSource.reader, Number(binding.id), sourceFiles); }
+    catch (error) { blockers.push({ reason: error instanceof Error ? error.message : String(error), source }); }
     let nativeFoot: WorldMapContent["nativeFoot"];
     let nativeNpcStandby: WorldMapContent["nativeNpcStandby"];
     const nativeNpcStandbyBlockers: ContentIssue[] = [];
@@ -235,8 +241,18 @@ export async function compileWorld(root: string) {
       const sourcePackage = byId.get(binding.packageId ?? "");
       if (!sourcePackage?.source.objectId || !sourcePackage.source.sha256)
         throw new Error("Native field foot has no bound source map package");
+      const selected = array(record(sourcePackage.data).map).map(record).filter(value => value.name === binding.name);
+      if (entryView?.isWorld && selected.length === 1 && typeof selected[0]!.attribute === "string" && selected[0]!.attribute !== "") {
+        const tile = byId.get(binding.tilemap ?? "");
+        if (!tile) throw new Error("World terrain has no bound source tile geometry");
+        const raw = record(tile.data), width = finite(raw.width), height = finite(raw.height);
+        worldTerrain = compileWorldTerrain({ mapId: Number(binding.id), mapName: binding.name,
+          sourceSetHash: corpus.sourceSetHash, parentSourceSetHash: text(corpus.manifest.parentSourceSetHash), width, height,
+          mapRange: fieldCollisionRange(width, height, groups.entity_default?.entities ?? []),
+          packageAsset: sourcePackage, assets: corpus.assets, tables: corpus.tables, reader: systemSource.reader, sources: sourceFiles });
+      }
       nativeFoot = compileFieldNativeFoot(sourcePackage.data,
-        { ...sourcePackage.source, objectId: sourcePackage.source.objectId, sha256: sourcePackage.source.sha256 }, binding.name);
+        { ...sourcePackage.source, objectId: sourcePackage.source.objectId, sha256: sourcePackage.source.sha256 }, binding.name, worldTerrain);
     } catch (error) {
       nativeFootBlockers.push({ reason: error instanceof Error ? error.message : String(error), source });
     }
@@ -298,10 +314,13 @@ export async function compileWorld(root: string) {
         ...geometryData,
         id: binding.name,
         identity: { mapId: Number(binding.id), areaId: Number(binding.areaId) },
-        entryContext: compileFieldEntryContext(corpus.assets, corpus.tables, Number(binding.id)),
+        entryContext: compileFieldEntryContext(corpus.assets, corpus.tables, Number(binding.id), worldTerrain),
         entities: groups.entity_default?.entities ?? [],
         groups,
         initialGroups: ["entity_default"],
+        ...(worldTerrain ? { worldTerrain } : {}),
+        ...(worldTerrain ? { topology: { range: mapRange,
+          loop: { horizontal: (worldTerrain.loopType & 1) !== 0, vertical: (worldTerrain.loopType & 2) !== 0 } } } : {}),
       };
       if (!groups.entity_default)
         blockers.push({ reason: "Missing default entity group", source });
@@ -425,6 +444,7 @@ export async function compileWorld(root: string) {
       mapId: Number(binding.id),
       areaId: Number(binding.areaId),
       name: binding.name,
+      ...(entryView ? { entryView } : {}),
       map,
       ...(partyEntry ? { partyEntry } : {}),
       partyEntryBlockers,
