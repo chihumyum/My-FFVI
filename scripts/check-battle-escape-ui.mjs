@@ -17,9 +17,9 @@ assert.ok(args.length === 0 || args.length === 2 && args[0] === "--compiled-dir"
   "Usage: check-battle-escape-ui.mjs [--compiled-dir build/test-output]");
 const compiled = resolve(root, args[1] ?? "dist");
 const load = (path) => import(pathToFileURL(resolve(compiled, path)));
-const [{ GameSession }, { GameFlow }, { GameBattleHandoff }, { battleAppearanceQuads }, { projectDevelopmentBattleLayout },
+const [{ GameSession }, { GameFlow }, { GameCommands }, { GameBattleHandoff }, { battleAppearanceQuads }, { projectDevelopmentBattleLayout },
   { walkEncounterFixture, walkHost, winWalkEncounter }, { checkpointFixture }] = await Promise.all([
-  load("src/core/game-session.js"), load("src/core/game-flow.js"), load("src/core/game-battle-handoff.js"),
+  load("src/core/game-session.js"), load("src/core/game-flow.js"), load("src/core/game-commands.js"), load("src/core/game-battle-handoff.js"),
   load("src/core/battle-appearance.js"), load("src/core/battle-layout.js"),
   load("tests/fixtures/walk-encounter-game.js"), load("tests/fixtures/checkpoint-game.js"),
 ]);
@@ -89,7 +89,7 @@ async function fixture({ allowed = true, ready = true, scripted = false, items =
 function host(f) {
   const ids = ["battle-return", "battle-retry", "party", "battle-ui", "battle-result", "battle-result-title",
     "battle-result-text", "battle-levels", "battle-menu", "battle-action", "pause", "welcome", "stop", "dialogue",
-    "map-overview", "minimap-button", "menu-button"];
+    "map-overview", "minimap-button", "menu-button", "equipment-menu", "party-menu", "shop-menu"];
   const elements = new Map(ids.map(id => [id, new Element()]));
   const document = { hidden: false, activeElement: null,
     getElementById(id) { assert.ok(elements.has(id), id); return elements.get(id); },
@@ -105,9 +105,12 @@ function host(f) {
     if (f.flow.currentSession?.battle) view.sync(f.flow.currentSession.battle, !f.flow.inputReady || document.hidden);
     else view.hide();
   };
-  context = vm.createContext({ BattleView, battleAppearanceQuads, projectDevelopmentBattleLayout,
+  context = vm.createContext({ BattleView, GameCommands, battleAppearanceQuads, projectDevelopmentBattleLayout,
     document, canvas, flow: f.flow, battleHandoff: f.handoff, images: new Map(), held: new Map(),
-    equipmentView: emptyView, partyView: emptyView, choiceView: emptyView, shopView: emptyView,
+    choiceView: emptyView,
+    EquipmentView: class { reset() {} render() {} },
+    PartyView: class { reset() {} render() {} },
+    ShopView: class { reset() {} render() {} },
     InventoryView: class { render() {} },
     sync, syncSaveControls() {}, showLimitations() {},
     failure(error) { failures.push(error); }, focus() { canvas.focus(); },
@@ -136,7 +139,9 @@ function host(f) {
     },
     $: id => document.getElementById(id),
   });
-  vm.runInContext(`let game, renderer, minimapRenderer, overviewRenderer, battleView, inventoryView;
+  vm.runInContext(`let game, renderer, minimapRenderer, overviewRenderer, battleView, inventoryView,
+      equipmentView, partyView, shopView, commands;
+    let menuCommandsReady = null;
     let mapLoadFailure = null, battleLoadAttempt = null, mapOpen = false, last = 0, lastMinimapFrame = 0, failed = false;
     ${bindingSource}
     globalThis.__binding = { bindSession, read: () => ({ game, battleView }) };`, context,
@@ -203,7 +208,12 @@ for (const settings of [{ allowed: false }, { scripted: true }]) {
     h.flow.advance(0, state); stale(); assert.equal(battle.escapePending, false);
   }
   h.flow.advance(0, walkHost); h.document.hidden = true;
+  // Actual app visibilitychange revokes the Flow host immediately. This
+  // binding-only harness reports that fact explicitly; visibility restoration
+  // still requires a fresh ready observation rather than inheriting readiness.
+  h.flow.observeHost({ visible: false, mediaReady: false, overlayOpen: false });
   stale(); assert.equal(battle.escapePending, false); h.document.hidden = false;
+  h.flow.advance(0, walkHost);
   const operation = h.flow.beginOperation("save"); stale(); assert.equal(battle.escapePending, false); operation.cancel();
   h.flow.returnToTitle(); stale(); assert.equal(battle.escapePending, false);
   checked.push("actual app request handler rechecks pause, visibility, media, overlay, I/O and title without a redraw");
@@ -236,7 +246,10 @@ for (const settings of [{ allowed: false }, { scripted: true }]) {
   assert.equal(h.$("battle-retry").hidden, true);
   const returnClick = h.$("battle-return").onclick;
   h.flow.pause(true); returnClick(); assert.equal(h.game.battle, battle); h.flow.pause(false);
-  h.document.hidden = true; returnClick(); assert.equal(h.game.battle, battle); h.document.hidden = false;
+  h.document.hidden = true;
+  h.flow.observeHost({ visible: false, mediaReady: false, overlayOpen: false });
+  returnClick(); assert.equal(h.game.battle, battle); h.document.hidden = false;
+  h.flow.advance(0, walkHost);
   returnClick(); assert.equal(h.game.battle, battle); assert.equal(h.flow.phase, "battle-return");
   await h.wait(); assert.equal(h.game.battle, null); assert.equal(h.flow.phase, "exploration");
   assert.equal(h.game.field, field); assert.deepEqual([field.player.x, field.player.y], position);

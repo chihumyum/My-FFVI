@@ -8,12 +8,17 @@ const displayName = (name) => name.replace(/<IC_[A-Z0-9_]+>/g, "");
 
 /** Presentation selection only. Quotes and transactions always use GameSession. */
 export class ShopView {
-  constructor(root, onChange = () => {}) {
+  constructor(root, onChange = () => {}, { commands, owner } = {}) {
+    if (commands !== undefined && (!owner || commands.owner !== owner || typeof commands.tradeShop !== "function" ||
+      typeof commands.closeShop !== "function")) throw new Error("Invalid shop command owner");
     this.root = root;
     this.onChange = onChange;
+    this.commands = commands;
+    this.owner = owner;
     this.reset();
   }
   reset() {
+    this.session = null;
     this.selection = null;
     this.mode = "buy";
     this.quantity = 1;
@@ -28,7 +33,8 @@ export class ShopView {
     const button = node("button", label);
     const session = this.session,
       field = this.field,
-      identity = this.identity;
+      identity = this.identity,
+      commands = this.commands;
     button.type = "button";
     button.setAttribute("data-shop-focus", focusKey);
     button.disabled = disabled || !this.active;
@@ -40,6 +46,8 @@ export class ShopView {
         this.session !== session ||
         this.field !== field ||
         this.identity !== identity ||
+        this.commands !== commands ||
+        (commands && (this.owner !== session || !commands.shopReady)) ||
         session.field !== field ||
         field.currentShop?.id !== identity
       )
@@ -49,9 +57,11 @@ export class ShopView {
     return button;
   }
   back() {
+    const session = this.session, commands = this.commands;
     if (
       !this.active ||
       !this.session ||
+      (commands && (this.owner !== session || !commands.shopReady)) ||
       this.session.field !== this.field ||
       this.field.currentShop?.id !== this.identity
     )
@@ -59,14 +69,16 @@ export class ShopView {
     if (this.selection) {
       this.selection = null;
       this.message = "";
-      this.render(this.session);
+      this.render(session);
     } else {
-      this.session.closeShop();
+      if (commands ? !commands.closeShop() : session.closeShop() === false) return false;
       this.onChange();
     }
     return true;
   }
   render(session, active = true) {
+    const commands = this.commands;
+    active &&= !commands || this.owner === session && commands.shopReady;
     const shop = session.field.currentShop;
     if (!shop) {
       this.reset();
@@ -77,7 +89,7 @@ export class ShopView {
       ? document.activeElement.getAttribute("data-shop-focus")
       : null;
     const wasActive = this.active;
-    const entering = this.field !== session.field || this.identity !== shop.id;
+    const entering = this.session !== session || this.field !== session.field || this.identity !== shop.id;
     if (entering) {
       this.reset();
       this.field = session.field;
@@ -96,7 +108,7 @@ export class ShopView {
         node("h2", "商店"),
         node("p", error.message),
         this.button("离开商店", () => {
-          session.closeShop();
+          if (commands ? !commands.closeShop() : session.closeShop() === false) return;
           this.onChange();
         }),
       );
@@ -155,7 +167,7 @@ export class ShopView {
     }
     tabs.append(
       this.button("离开商店", () => {
-        session.closeShop();
+        if (commands ? !commands.closeShop() : session.closeShop() === false) return;
         this.onChange();
       }),
     );
@@ -213,7 +225,12 @@ export class ShopView {
                     contentId: selected.contentId,
                     count: this.quantity,
                   };
-            const result = session.tradeShop(request);
+            const result = commands ? commands.tradeShop(request) : session.tradeShop(request);
+            if (!result) {
+              this.message = "当前无法交易。";
+              this.render(session);
+              return;
+            }
             this.message = `${this.mode === "buy" ? "购入" : "售出"} ${displayName(selected.name)} × ${result.count}`;
             this.selection = null;
           } catch (error) {

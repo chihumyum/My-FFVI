@@ -3,15 +3,27 @@ export const itemName = (item) =>
 
 /** Presentation reads the same owned state as battle/save; it never edits stock. */
 export class InventoryView {
-  constructor(root, definitions, onUse) {
+  constructor(root, definitions, onUse, { commands, owner } = {}) {
+    if (commands !== undefined && (!owner || commands.owner !== owner || typeof commands.useMenuItem !== "function"))
+      throw new Error("Invalid inventory command owner");
     this.root = root;
     this.definitions = definitions;
     this.onUse = onUse;
+    this.commands = commands;
+    this.owner = owner;
     this.selected = null;
     this.message = "";
   }
   render(session) {
+    if (this.session !== session) {
+      this.selected = null;
+      this.message = "";
+    }
     this.session = session;
+    const commands = this.commands;
+    const current = () => this.session === session && this.commands === commands &&
+      (!commands || this.owner === session && commands.menuReady);
+    const menuReady = session.menuReady && current();
     const find = (id) => this.root.querySelector(`#${id}`);
     const state = session.state.snapshot(),
       players = session.battle?.players ?? session.players;
@@ -45,7 +57,10 @@ export class InventoryView {
       b.type = "button";
       b.textContent = label;
       b.disabled = disabled;
-      b.onclick = handler;
+      b.onclick = () => {
+        if (b.disabled || !current()) return;
+        handler();
+      };
       parent.append(b);
       return b;
     };
@@ -53,7 +68,7 @@ export class InventoryView {
       (i) => i.count > 0 && !this.definitions[i.id].important,
     )) {
       const item = this.definitions[stack.id],
-        targets = session.menuReady
+        targets = menuReady
           ? session.state.menuItemTargets(item.id)
           : [];
       const b = button(
@@ -63,12 +78,12 @@ export class InventoryView {
         () => {
           this.selected = item.id;
           this.message = "";
-          this.render(this.session);
+          this.render(session);
           find("item-targets").querySelector("button:not(:disabled)")?.focus();
         },
       );
       if (!item.uses.menu.plan) b.title = "此道具的菜单使用尚未接入";
-      else if (!session.menuReady) b.title = "请回到地图空闲时使用";
+      else if (!menuReady) b.title = "请回到地图空闲时使用";
       else if (!targets.length) b.title = "没有需要恢复的队员";
     }
     if (!list.childNodes.length) list.textContent = "无";
@@ -80,7 +95,7 @@ export class InventoryView {
       const title = document.createElement("p");
       title.textContent = `${itemName(item)} · 选择队员`;
       targetList.append(title);
-      const targets = session.menuReady
+      const targets = menuReady
         ? session.state.menuItemTargets(item.id)
         : [];
       for (const p of players)
@@ -90,26 +105,29 @@ export class InventoryView {
           !targets.includes(p.id),
           () => {
             try {
-              this.message = this.session.useMenuItem(item.id, p.id)
+              this.message = (commands
+                ? commands.useMenuItem(item.id, p.id)
+                : session.useMenuItem(item.id, p.id))
                 ? `${p.name} 使用了${itemName(item)}。`
                 : "当前无法使用。";
             } catch (error) {
               this.message = "道具使用失败，库存未改变。";
               console.error(error);
             }
-            this.render(this.session);
+            this.render(session);
             this.onUse();
             targetList.querySelector("button:not(:disabled)")?.focus();
           },
         );
       button(targetList, "取消选择", false, () => {
         this.selected = null;
-        this.render(this.session);
+        this.render(session);
       });
     }
     find("item-status").textContent = this.message;
   }
   reset() {
+    this.session = null;
     this.selected = null;
     this.message = "";
   }

@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || (args.length === 2 && args[0] === "--compiled-dir"), "Use --compiled-dir <directory>");
 const compiled = resolve(root, args[1] ?? "dist");
-const names = ["game-map-loader", "saved-game"];
+const names = ["game-map-loader", "game-entry-loader", "game-commands", "saved-game"];
 const output = resolve(root, "build/reports/framework-io-check.json");
 const report = { kind: "framework-io-check-v1", result: "running", cases: [],
   evidence: "real-core-with-synthetic-content-and-controlled-I/O", browserExecuted: false, originalGameExecuted: false };

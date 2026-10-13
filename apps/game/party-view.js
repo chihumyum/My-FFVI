@@ -17,9 +17,13 @@ const button = (label, key, callback, disabled = false) => {
 /** Only UI selection lives here. All roster, row and progression data is read
  * from the current session; even a retained button submits its old baseline. */
 export class PartyView {
-  constructor(root, onChange = () => {}) {
+  constructor(root, onChange = () => {}, { commands, owner } = {}) {
+    if (commands !== undefined && (!owner || commands.owner !== owner || typeof commands.changeParty !== "function"))
+      throw new Error("Invalid party command owner");
     this.root = root;
     this.onChange = onChange;
+    this.commands = commands;
+    this.owner = owner;
     this.reset();
   }
   reset() {
@@ -30,6 +34,10 @@ export class PartyView {
     this.disabled = true;
   }
   render(session, { disabled = false } = {}) {
+    const commands = this.commands;
+    const current = () => this.session === session && this.commands === commands &&
+      (!commands || this.owner === session && commands.menuReady);
+    disabled ||= !!commands && (this.owner !== session || !commands.menuReady);
     if (session !== this.session) {
       this.key = "";
       this.playerId = null;
@@ -51,10 +59,10 @@ export class PartyView {
     const change = (request) => {
       // Recheck the current owner and host gate even when invoked through a
       // callback retained across another render or an asynchronous operation.
-      if (this.session !== session || this.disabled || !session.menuReady) return;
+      if (!current() || this.disabled || !session.menuReady) return;
       let changed = false;
       try {
-        changed = session.changeParty(request);
+        changed = commands ? commands.changeParty(request) : session.changeParty(request);
         this.message = changed ? "编队已更新。" : "编队没有变化。";
       } catch (error) {
         this.message = error instanceof Error && /stale/i.test(error.message)
@@ -71,7 +79,7 @@ export class PartyView {
         card.append(node("p", "空位"));
       } else {
         const select = button(cell.member.name, `member-${cell.member.id}`, () => {
-          if (this.session !== session || this.disabled) return;
+          if (!current() || this.disabled) return;
           this.playerId = cell.member.id;
           this.render(session, { disabled: this.disabled });
         }, disabled);
@@ -103,7 +111,7 @@ export class PartyView {
     selection.append(node("h3", "角色与能力"));
     for (const member of model.roster) {
       const choose = button(member.name, `inspect-${member.id}`, () => {
-        if (this.session !== session || this.disabled) return;
+        if (!current() || this.disabled) return;
         this.playerId = member.id;
         this.render(session, { disabled: this.disabled });
       }, disabled);

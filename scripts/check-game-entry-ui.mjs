@@ -186,12 +186,12 @@ assert.equal((appModule.body.match(/init\(\)\.catch\(failure\);/g) ?? []).length
   "Capture the real app's one initialization promise without calling init twice");
 const appBody = appModule.body.replace("init().catch(failure);", "globalThis.__init = init().catch(failure);") + `
 globalThis.__entry = {
-  read: () => ({ flow, game, sourceBoot, entryLoad, failed, battleView, inventoryView, renderer, images, battleLoadAttempt }),
+  read: () => ({ flow, commands, entryLoader, game, sourceBoot, entryLoad, failed, battleView, inventoryView, renderer, images, battleLoadAttempt }),
   reset, startSourceGame, loadGame, returnToTitle, loadBattle, cancelBattleLoad, frame
 };`;
 const audioBody = audioModule.body.replace(/\bexport (?=class |function )/g, "");
 
-async function host(pack, { slots = new Map() } = {}) {
+async function host(pack, { slots = new Map(), failBinding = false } = {}) {
   const calls = { json: [], images: [], audio: [], audioDecodes: [], audioStarts: [], views: [],
     frameCallbacks: [], writes: 0, writeAttempts: 0, audioContexts: 0 };
   const storageFault = { error: null };
@@ -265,7 +265,10 @@ async function host(pack, { slots = new Map() } = {}) {
   }
   const bindings = {};
   for (const name of viewNames) bindings[name] = class {
-    constructor(...args) { this.args = args; this.common = args[1]; this.name = name; calls.views.push(this); }
+    constructor(...args) {
+      if (failBinding && name === "EquipmentView") throw new Error("Controlled published view binding failure");
+      this.args = args; this.common = args[1]; this.name = name; calls.views.push(this);
+    }
     render() {} reset() {} hide() { if (this.name === "BattleView") this.instance = null; }
     sync(battle) { if (this.name === "BattleView") this.instance = battle; }
     draw() {} overview() {} keyboard() {} back() { return false; }
@@ -322,8 +325,14 @@ async function host(pack, { slots = new Map() } = {}) {
     assert.equal(state.battleView.common, owner.battleCatalog.common,
       "BattleView must consume the newly published session catalog");
     assert.equal(state.inventoryView.args[1], owner.battleCatalog.gameState.items);
+    for (const name of ["InventoryView", "EquipmentView", "PartyView", "ShopView", "BattleView"]) {
+      const view = calls.views.filter(view => view.name === name).at(-1);
+      assert.equal(view.args.at(-1).owner, owner, name + " must bind the exact published owner");
+      assert.equal(view.args.at(-1).commands, state.commands, name + " must share the same command channel");
+    }
   }
   return { api, ready, frame, sourceStarted, boundToCurrent, observed, calls, slots, storageFault,
+    visibility(hidden) { document.hidden = hidden; listeners.get("visibilitychange")(); },
     failedUrls, failedImages, failedAudioDecodes, heldUrls, heldImages, $: (id) => document.getElementById(id) };
 }
 async function check(name, body) { await body(); report.tests.push({ name, pass: true }); }
@@ -523,10 +532,26 @@ try {
     assert.equal(h.api.read().failed, false);
     assert.equal(h.api.read().flow.currentSession, null);
     assert.equal(h.api.read().flow.busy, false);
+    assert.equal(h.$("load-error").hidden, false);
+    assert.equal(h.$("entry-loading").hidden, true);
     assert.equal(h.$("source-start").disabled, false);
     assert.equal(h.calls.json.filter((url) => url === "/game/content.json").length, 1);
     await h.$("source-start").onclick();
     await h.sourceStarted(); h.boundToCurrent();
+  });
+  await check("a widget binding failure after entry publication is fatal and cannot replay the entry", async () => {
+    const h = await host(await packages(), { failBinding: true }); await h.ready();
+    await h.api.reset();
+    const { flow, entryLoader, failed } = h.api.read();
+    assert.equal(failed, true); assert.equal(entryLoader.busy, false);
+    assert.ok(flow.currentSession instanceof GameSession, "A published owner is not rolled back or fabricated again");
+    assert.equal(flow.started, false); assert.equal(flow.phase, "title");
+    assert.equal(h.$("start").disabled, true); assert.equal(h.$("source-start").disabled, true);
+    assert.equal(h.$("load-error").hidden, false);
+    assert.match(h.$("load-error").textContent, /Controlled published view binding failure/);
+    const owner = flow.currentSession, requests = h.calls.json.length;
+    await h.api.reset();
+    assert.equal(flow.currentSession, owner); assert.equal(h.calls.json.length, requests);
   });
   await check("source media failure preserves the current owner and repairing media permits a clean retry", async () => {
     const h = await host(await packages()); await h.ready(); await h.$("start").onclick();
@@ -555,6 +580,38 @@ try {
     assert.deepEqual(h.api.read().flow.currentSession.checkpoint(), saved.checkpoint);
     assert.equal(h.calls.json.includes("/game/content.json"), false);
   });
+  await check("all application command surfaces share the published owner and lose readiness immediately on hiding", async () => {
+    const h = await host(await packages()); await h.ready(); await h.api.reset(); await h.frame();
+    h.boundToCurrent(); h.$("menu-button").onclick();
+    const { flow, commands } = h.api.read(), before = flow.session.checkpoint();
+    assert.equal(commands.menuReady, true);
+    h.visibility(true);
+    assert.equal(commands.menuReady, false, "Visibility revokes the channel before another RAF");
+    assert.equal(commands.settingsReady, false);
+    assert.equal(commands.setBattlePreferences({ mode: "wait", speedIndex: 0 }), false);
+    assert.deepEqual(flow.session.checkpoint(), before);
+    h.visibility(false);
+    assert.equal(commands.menuReady, false, "A returning tab needs a fresh media readiness observation");
+    await h.frame(); assert.equal(commands.menuReady, true);
+    assert.deepEqual(flow.session.checkpoint(), before);
+  });
+  await check("paused restore publishes through the entry loader and obsolete command channels cannot change either owner", async () => {
+    const h = await host(await packages()); await h.ready(); await h.api.reset(); await h.frame();
+    h.$("menu-button").onclick();
+    const old = h.api.read().flow.session, previousCommands = h.api.read().commands;
+    await h.$("save-game").onclick();
+    const before = old.checkpoint();
+    const pending = h.api.loadGame(false);
+    assert.equal(h.api.read().entryLoader.busy, true);
+    assert.equal(previousCommands.setBattlePreferences({ mode: "wait", speedIndex: 0 }), false);
+    await pending; h.boundToCurrent();
+    const { flow, commands, entryLoader } = h.api.read();
+    assert.equal(entryLoader.busy, false); assert.notEqual(flow.session, old);
+    assert.equal(flow.paused, true); assert.equal(commands.menuReady, false);
+    await h.frame(); assert.equal(commands.menuReady, true);
+    assert.equal(previousCommands.setBattlePreferences({ mode: "wait", speedIndex: 0 }), false);
+    assert.deepEqual(old.checkpoint(), before); assert.deepEqual(flow.session.checkpoint(), before);
+  });
   await check("failed restore media preserves the old session and stored bytes, then succeeds on retry", async () => {
     const pack = await packages(), saved = await sourceSave(pack), slots = new Map(saved.slots);
     const h = await host(pack, { slots }); await h.ready(); await h.$("start").onclick();
@@ -565,6 +622,8 @@ try {
     assert.equal(h.api.read().flow.currentSession, old);
     assert.deepEqual(old.checkpoint(), checkpoint); assert.deepEqual([...slots], before);
     assert.equal(h.api.read().flow.busy, false);
+    assert.equal(h.$("entry-error").hidden, false);
+    assert.equal(h.$("entry-loading").hidden, true);
     h.failedImages.clear(); await h.api.loadGame(false); h.boundToCurrent();
     assert.notEqual(h.api.read().flow.currentSession, old);
     assert.deepEqual(h.api.read().flow.currentSession.checkpoint(), saved.checkpoint);
@@ -717,7 +776,7 @@ try {
     assert.equal(h.calls.writes, writeBaseline); assert.equal(h.calls.writeAttempts, attemptBaseline);
   });
   report.runtimeSha256 = Object.fromEntries(await Promise.all([
-    "game-session", "game-flow", "game-content", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint", "game-battle-handoff",
+    "game-session", "game-flow", "game-commands", "game-entry-loader", "game-content", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint", "game-battle-handoff",
   ].map(async (name) => [name, sha(await readFile(resolve(compiled, `src/core/${name}.js`)))])));
   report.result = "passed";
 } catch (error) {

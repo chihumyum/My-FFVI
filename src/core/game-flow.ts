@@ -55,6 +55,9 @@ export class GameFlow {
   /** Shared input admission for UI surfaces that dispatch to a session-owned
    * subsystem directly, such as the battle command menu. */
   get inputReady(): boolean { return this.hostAllowsInput; }
+  /** Pause-menu mutations use the same host facts and operation arbitration,
+   * while gameplay input remains suppressed throughout the pause. */
+  get menuInputReady(): boolean { return this.hostReady && this.isPaused; }
   get phase(): GameFlowPhase {
     if (this.operation) return this.operation.kind === "map" ? "transition"
       : this.operation.kind === "battle-entry" || this.operation.kind === "battle-return" ? this.operation.kind : "loading";
@@ -152,15 +155,21 @@ export class GameFlow {
     if (this.operation !== operation) return false;
     this.operation = null; operation.guards.clear(); return true;
   }
-  private get hostAllowsInput(): boolean {
-    return this.owner !== null && !this.owner.eventSaveRequest && this.hasStarted && !this.isPaused && !this.operation && !!this.host?.visible &&
+  private get hostReady(): boolean {
+    return this.owner !== null && !this.owner.eventSaveRequest && this.hasStarted && !this.operation && !!this.host?.visible &&
       this.host.mediaReady && !this.host.overlayOpen;
   }
-  advance(ms: number, host: GameFlowHostState): void {
-    if (!Number.isFinite(ms) || ms < 0 || ms > 60000) throw new Error("Invalid game flow elapsed time");
+  private get hostAllowsInput(): boolean { return this.hostReady && !this.isPaused; }
+  /** Visibility/readiness changes can revoke input immediately without an
+   * advance(0) that might execute an event or consume a pending handoff. */
+  observeHost(host: GameFlowHostState): void {
     if (!host || [host.visible, host.mediaReady, host.overlayOpen].some((value) => typeof value !== "boolean"))
       throw new Error("Incomplete game flow host state");
     this.host = { visible: host.visible, mediaReady: host.mediaReady, overlayOpen: host.overlayOpen };
+  }
+  advance(ms: number, host: GameFlowHostState): void {
+    if (!Number.isFinite(ms) || ms < 0 || ms > 60000) throw new Error("Invalid game flow elapsed time");
+    this.observeHost(host);
     const owner = this.owner;
     if (!this.hostAllowsInput || !owner) return;
     if (!owner.battle && (owner.field.stop?.kind === "map-transition" || owner.field.stop?.kind === "unsupported")) return;

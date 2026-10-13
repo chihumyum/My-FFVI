@@ -26,7 +26,11 @@ export function battleMenuWaiting(state) {
   }
 }
 export class BattleView {
-  constructor(canvas, content, images, onReturn, onRetry, appearanceQuads, projectLayout, escapeActions) {
+  constructor(canvas, content, images, onReturn, onRetry, appearanceQuads, projectLayout, escapeActions,
+    { commands, owner } = {}) {
+    if (commands !== undefined && (!owner || commands.owner !== owner || ["command", "commandItem", "ownsBattle",
+      "canReturnBattle", "canRetryBattle", "canEscape", "requestEscape"].some(
+        name => typeof commands[name] !== "function"))) throw new Error("Invalid battle command owner");
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.content = content;
@@ -37,6 +41,10 @@ export class BattleView {
       (typeof escapeActions?.canRequest !== "function" || typeof escapeActions?.request !== "function"))
       throw new Error("Invalid battle escape actions");
     this.escapeActions = escapeActions;
+    this.commands = commands;
+    this.owner = owner;
+    this.onReturn = onReturn;
+    this.onRetry = onRetry;
     this.selected = null;
     this.actionSource = null;
     this.commandId = null;
@@ -46,17 +54,15 @@ export class BattleView {
     this.paused = false;
     this.specialInput = null;
     this.revision = 0;
-    $("battle-return").onclick = () => {
-      if (!this.paused && ["victory", "escaped"].includes(this.instance?.phase)) {
-        this.returnError = null;
-        onReturn();
-      }
-    };
-    $("battle-retry").onclick = () => {
-      if (!this.paused && this.instance?.phase === "defeat") onRetry();
-    };
+    $("battle-return").onclick = () => {};
+    $("battle-retry").onclick = () => {};
     this.rows = new Map();
     $("party").replaceChildren();
+  }
+  userReady(battle = this.instance) {
+    return !!battle && this.instance === battle && !this.paused &&
+      (!this.commands || this.owner?.battle === battle && this.commands.ownsBattle(battle) &&
+        this.commands.battleReady);
   }
   hide() {
     this.resetMenu();
@@ -93,7 +99,8 @@ export class BattleView {
     return "command";
   }
   publishClock() {
-    if (!this.instance) return;
+    if (!this.instance || this.commands && (this.owner?.battle !== this.instance ||
+      !this.commands.ownsBattle(this.instance))) return;
     this.instance.setClockInput({
       ...this.instance.timingState.input,
       paused: this.paused,
@@ -109,7 +116,7 @@ export class BattleView {
       throw new Error("Unknown Web special input state");
     if (!this.instance || this.instance.phase !== "active" || this.instance.escapePending || this.selected === null)
       return false;
-    if (state !== null && this.paused) return false;
+    if (state !== null && !this.userReady() || this.commands && !this.commands.ownsBattle(this.instance)) return false;
     this.specialInput = state;
     this.key = "";
     this.sync(this.instance, this.paused);
@@ -119,7 +126,7 @@ export class BattleView {
     return this.instance?.commandMenu(actor.id).find((c) => c.id === commandId)?.usesList ?? true;
   }
   back() {
-    if (this.paused || this.instance?.escapePending || this.specialInput !== null) return false;
+    if (!this.userReady() || this.instance?.escapePending || this.specialInput !== null) return false;
     if (this.actionSource !== null) {
       this.actionSource = null;
       const actor = this.instance?.ready.find((p) => p.id === this.selected);
@@ -137,7 +144,7 @@ export class BattleView {
     return false;
   }
   keyboard(e) {
-    if (this.paused || !this.instance || this.instance.phase !== "active" || this.instance.escapePending) return;
+    if (!this.userReady() || this.instance.phase !== "active" || this.instance.escapePending) return;
     if (
       ![
         "ArrowUp",
@@ -175,12 +182,28 @@ export class BattleView {
     if (typeof paused !== "boolean") throw new Error("Missing battle pause state");
     this.paused = paused;
     if (this.instance !== battle) {
+      for (const row of this.rows.values()) { row.button.disabled = true; row.button.remove(); }
+      this.rows.clear();
       this.content = battle.content;
       this.instance = battle;
       this.returnError = null;
       this.selected = null;
       this.resetMenu();
     }
+    const commandPort = this.commands, owner = this.owner, phase = battle.phase;
+    const current = () => this.instance === battle && this.commands === commandPort &&
+      this.owner === owner && !this.paused && battle.phase === phase;
+    $("battle-return").onclick = () => {
+      if (!current() || !["victory", "escaped"].includes(phase) ||
+        commandPort && !commandPort.canReturnBattle(battle)) return;
+      this.returnError = null;
+      this.onReturn();
+    };
+    $("battle-retry").onclick = () => {
+      if (!current() || phase !== "defeat" || commandPort && !commandPort.canRetryBattle(battle)) return;
+      this.onRetry();
+    };
+    const inputReady = this.userReady(battle);
     const party = $("party"),
       memberIds = new Set(battle.players.map((p) => p.id)),
       readyIds = new Set(
@@ -209,11 +232,12 @@ export class BattleView {
         meter.max = 100;
         button.append(name, hp, meter);
         button.onclick = () => {
-          if (this.paused || this.instance?.escapePending || this.specialInput !== null || this.instance?.phase !== "active" ||
-            !this.instance?.ready.some((member) => member.id === p.id)) return;
+          if (!this.userReady(battle) || this.commands !== commandPort || this.owner !== owner ||
+            battle.escapePending || this.specialInput !== null || battle.phase !== "active" ||
+            !battle.ready.some((member) => member.id === p.id)) return;
           this.selected = p.id;
           this.resetMenu();
-          this.sync(this.instance, this.paused);
+          this.sync(battle, this.paused);
         };
         row = { button, name, hp, meter };
         this.rows.set(p.id, row);
@@ -231,7 +255,7 @@ export class BattleView {
       label(row.hp, `HP ${p.hp} / ${p.maxHp}\nMP ${p.mp} / ${p.maxMp}`);
       row.meter.value = p.atb;
       row.meter.setAttribute("aria-label", p.name + " 行动条");
-      row.button.disabled = paused || battle.escapePending || this.specialInput !== null || !readyIds.has(p.id);
+      row.button.disabled = !inputReady || battle.escapePending || this.specialInput !== null || !readyIds.has(p.id);
       row.button.classList.toggle("selected", p.id === this.selected);
       row.button.classList.toggle("fallen", p.hp === 0);
     }
@@ -324,7 +348,10 @@ export class BattleView {
           : battle.targetChoices(actor.id, this.actionSource.id)
         : [];
     const escapePending = battle.escapePending === true;
-    const canEscape = !!this.escapeActions && battle.canRequestEscape === true && this.escapeActions.canRequest() === true;
+    const escapeActions = this.escapeActions;
+    const hasEscape = !!commandPort || !!escapeActions;
+    const canEscape = commandPort ? commandPort.canEscape(battle) :
+      !!escapeActions && battle.canRequestEscape === true && escapeActions.canRequest() === true;
     const key = JSON.stringify([
       this.selected,
       this.actionSource,
@@ -334,6 +361,7 @@ export class BattleView {
       ready.map((p) => p.id),
       targets,
       paused,
+      inputReady,
       this.specialInput,
       escapePending,
       canEscape,
@@ -352,16 +380,17 @@ export class BattleView {
       : "等待行动条…";
     menu.append(title);
     if (escapePending || this.specialInput !== null) return;
-    if (!actor && !this.escapeActions) return;
+    if (!actor && !hasEscape) return;
     const choices = document.createElement("div");
     choices.className = "battle-choices";
     menu.append(choices);
     const add = (text, disabled, click, needsActor = true) => {
       const b = document.createElement("button");
       b.textContent = text;
-      b.disabled = disabled || paused;
+      b.disabled = disabled || !inputReady;
       b.onclick = () => {
-        if (this.instance !== battle || this.paused || revision !== this.revision ||
+        if (!this.userReady(battle) || this.commands !== commandPort || this.owner !== owner ||
+          b.disabled || revision !== this.revision ||
           battle.phase !== "active" || battle.escapePending ||
           (needsActor && (!actor || !battle.ready.some((p) => p.id === actor.id)))) return;
         click();
@@ -382,11 +411,12 @@ export class BattleView {
         });
         if (command.blockers.length) button.title = command.blockers.join("；");
       }
-      if (this.escapeActions) add("撤退", !canEscape, () => {
+      if (hasEscape) add("撤退", !canEscape, () => {
         // Re-read both the battle and host owner at click time. The button may
         // have been detached, paused or rendered before another queued action.
-        if (!battle.canRequestEscape || !this.escapeActions.canRequest()) return;
-        if (this.escapeActions.request()) {
+        if (!battle.canRequestEscape || (commandPort
+          ? !commandPort.canEscape(battle) : !escapeActions.canRequest())) return;
+        if (commandPort ? commandPort.requestEscape(battle) : escapeActions.request()) {
           this.resetMenu();
           if (this.instance === battle) this.sync(battle, this.paused);
         }
@@ -406,6 +436,7 @@ export class BattleView {
       }
       add("返回", false, () => this.back());
     } else {
+      const actionSource = this.actionSource, commandId = this.commandId;
       for (const choice of targets) {
         const selection = choice.selection;
         const t = battle.combatants.find((c) => c.id === choice.targetIds[0]);
@@ -421,19 +452,13 @@ export class BattleView {
                 (t.hp === 0 ? " · 战斗不能" : "");
         add(text, false, () => {
           if (
-            this.actionSource.kind === "item"
-              ? battle.commandItem(
-                  actor.id,
-                  this.actionSource.id,
-                  selection,
-                  this.commandId,
-                )
-              : battle.command(
-                  actor.id,
-                  this.actionSource.id,
-                  selection,
-                  this.commandId,
-                )
+            actionSource.kind === "item"
+              ? commandPort
+                ? commandPort.commandItem(battle, actor.id, actionSource.id, selection, commandId)
+                : battle.commandItem(actor.id, actionSource.id, selection, commandId)
+              : commandPort
+                ? commandPort.command(battle, actor.id, actionSource.id, selection, commandId)
+                : battle.command(actor.id, actionSource.id, selection, commandId)
           ) {
             this.resetMenu();
             this.selected = null;

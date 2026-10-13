@@ -30,13 +30,18 @@ const button = (label, handler, disabled = false) => {
 
 /** Selection is presentation state. Every preview and change uses the shared owner. */
 export class EquipmentView {
-  constructor(root, onChange = () => {}) {
+  constructor(root, onChange = () => {}, { commands, owner } = {}) {
+    if (commands !== undefined && (!owner || commands.owner !== owner || typeof commands.changeEquipment !== "function"))
+      throw new Error("Invalid equipment command owner");
     this.root = root;
     this.onChange = onChange;
+    this.commands = commands;
+    this.owner = owner;
     this.root.classList.add("equipment-view");
     this.reset();
   }
   reset() {
+    this.session = null;
     this.playerId = null;
     this.slot = 1;
     this.contentId = null;
@@ -44,7 +49,12 @@ export class EquipmentView {
     this.key = "";
   }
   render(session) {
+    if (this.session !== session) this.reset();
     this.session = session;
+    const commands = this.commands;
+    const isCurrent = () => this.session === session && this.commands === commands &&
+      (!commands || this.owner === session && commands.menuReady);
+    const menuReady = session.menuReady && isCurrent();
     const state = session.state.snapshot();
     const catalog = session.battleCatalog.gameState.equipmentSystem?.catalog;
     const players = session.battle?.players ?? session.players;
@@ -63,7 +73,7 @@ export class EquipmentView {
         p.mp,
         ...stats.map(([, value]) => value(p)),
       ]),
-      session.menuReady,
+      menuReady,
       this.playerId,
       this.slot,
       this.contentId,
@@ -83,7 +93,7 @@ export class EquipmentView {
     }
     const inventory = session.state.equipmentInventory;
     const stock = new Map(inventory.map((entry) => [entry.id, entry]));
-    const choices = session.menuReady
+    const choices = menuReady
       ? session.state.equipmentChoices(owned.id, this.slot)
       : [];
     const currentId = owned.equipment[this.slot - 1];
@@ -97,10 +107,11 @@ export class EquipmentView {
     party.setAttribute("aria-label", "选择队员");
     for (const p of state.roster) {
       const select = button(`${p.name} · Lv ${p.level}`, () => {
+        if (!isCurrent()) return;
         this.playerId = p.id;
         this.contentId = null;
         this.message = "";
-        this.render(this.session);
+        this.render(session);
       });
       select.setAttribute("aria-pressed", String(p.id === owned.id));
       select.dataset.equipmentFocus = `player-${p.id}`;
@@ -120,10 +131,11 @@ export class EquipmentView {
     loadout.setAttribute("aria-label", `${owned.name}的装备部位`);
     owned.equipment.forEach((id, index) => {
       const select = button("", () => {
+        if (!isCurrent()) return;
         this.slot = index + 1;
         this.contentId = null;
         this.message = "";
-        this.render(this.session);
+        this.render(session);
       });
       select.className = "equipment-slot";
       select.setAttribute("aria-pressed", String(this.slot === index + 1));
@@ -166,7 +178,7 @@ export class EquipmentView {
 
     const options = node("div", undefined, "equipment-options");
     options.append(node("h4", `${slots[this.slot - 1]} · 选择装备`));
-    if (!session.menuReady) {
+    if (!menuReady) {
       options.append(node("p", "请回到地图空闲时调整装备。"));
     } else if (!choices.some((choice) => choice.changes.length)) {
       options.append(node("p", "当前没有可更换的装备。"));
@@ -185,9 +197,10 @@ export class EquipmentView {
             ? "未装备"
             : `${equipmentName(item)} · 已装备`,
         () => {
+          if (!isCurrent()) return;
           this.contentId = choice.id;
           this.message = "";
-          this.render(this.session);
+          this.render(session);
         },
         !choice.changes.length,
       );
@@ -197,19 +210,19 @@ export class EquipmentView {
     }
     options.append(list);
     if (candidate?.changes.length) {
+      const slot = this.slot;
       const changes = candidate.changes.map(
         (change) =>
           `${slots[change.slot - 1]}：${equipmentName(catalog.definitions[change.from])} → ${equipmentName(catalog.definitions[change.to])}`,
       );
       options.append(node("p", changes.join("\n"), "equipment-changes"));
       const apply = button("应用换装", () => {
+        if (!isCurrent() || !session.menuReady) return;
         let changed = false;
         try {
-          changed = this.session.changeEquipment(
-            owned.id,
-            this.slot,
-            candidate.id,
-          );
+          changed = commands
+            ? commands.changeEquipment(owned.id, slot, candidate.id)
+            : session.changeEquipment(owned.id, slot, candidate.id);
           this.message = changed
             ? `${owned.name}已调整装备。`
             : "当前无法换装，请重新选择。";
@@ -218,7 +231,7 @@ export class EquipmentView {
           console.error(error);
         }
         this.contentId = null;
-        this.render(this.session);
+        this.render(session);
         if (changed) this.onChange();
         this.root
           .querySelector(`[data-equipment-focus="slot-${this.slot}"]`)
@@ -226,8 +239,9 @@ export class EquipmentView {
       });
       apply.dataset.equipmentFocus = "apply";
       const cancel = button("取消", () => {
+        if (!isCurrent()) return;
         this.contentId = null;
-        this.render(this.session);
+        this.render(session);
         this.root
           .querySelector(`[data-equipment-focus="slot-${this.slot}"]`)
           ?.focus();

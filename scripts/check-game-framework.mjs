@@ -36,6 +36,8 @@ await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n");
 try {
   const { GameSession } = await module("game-session");
   const { GameFlow } = await module("game-flow");
+  const { GameCommands } = await module("game-commands");
+  const { GameEntryLoader } = await module("game-entry-loader");
   const { GameBattleHandoff } = await module("game-battle-handoff");
   const { CheckpointStorage, decodeSavedGame } = await module("saved-game");
   const { verifyContent, contentDigest } = await module("content-integrity");
@@ -80,6 +82,8 @@ try {
 
   const sessionRuntime = () => ({ ...controlledAudioRuntime(), ...(preparedHandoff ? { battleHandoff: "prepared" } : {}) });
   const flow = new GameFlow(new GameSession(controlledField, catalog, undefined, sessionRuntime()));
+  let commands = new GameCommands(flow, flow.session);
+  const entries = new GameEntryLoader(flow, { discard: () => {} });
   let startGate = null, preparationError = null, preparedViews = 0, discardedViews = 0;
   const handoff = new GameBattleHandoff(flow, {
     prepareStart: async (view) => {
@@ -150,18 +154,21 @@ try {
   stage("explore-event-confirm-and-single-grant", { itemId: 2, count: count(2) });
 
   const beforeMenu = owned(), leader = beforeMenu.roster[0];
-  assert.equal(game().useMenuItem(2, leader.id), false, "Full-HP target is not a menu effect");
+  assert.equal(flow.pause(true), true);
+  assert.equal(commands.menuReady, true);
+  assert.equal(commands.useMenuItem(2, leader.id), false, "Full-HP target is not a menu effect");
   assert.deepEqual(owned(), beforeMenu, "Rejected use must not consume inventory");
   const choices = game().state.equipmentChoices(leader.id, 1);
   const empty = choices.find((choice) => catalog.gameState.equipmentSystem.catalog.definitions[choice.id].empty);
   assert.ok(empty, "The actual owned empty equipment must be selectable");
   const weapon = leader.equipment[0], stock = structuredClone(beforeMenu.equipmentStock);
-  assert.equal(game().changeEquipment(leader.id, 1, empty.id), true);
+  assert.equal(commands.changeEquipment(leader.id, 1, empty.id), true);
   assert.deepEqual(owned().equipmentStock, stock);
-  assert.equal(game().changeEquipment(leader.id, 1, weapon), true);
-  assert.equal(game().changeEquipment(leader.id, 1, weapon), false);
+  assert.equal(commands.changeEquipment(leader.id, 1, weapon), true);
+  assert.equal(commands.changeEquipment(leader.id, 1, weapon), false);
   assert.deepEqual(owned(), beforeMenu, "Unequip/re-equip must preserve the whole owned state");
-  game().setBattlePreferences({ mode: "wait", speedIndex: 2 });
+  assert.equal(commands.setBattlePreferences({ mode: "wait", speedIndex: 2 }), true);
+  assert.equal(flow.pause(false), true);
   stage("inventory-equipment-and-battle-preference-menu", { weapon, emptyEquipment: empty.id });
 
   for (let n = 0; n < 11; n++) { assert.equal(flow.move("up"), true); tick(240); }
@@ -194,9 +201,9 @@ try {
   assert.equal(battleBeforeLoss.content.encounterId, 3);
   assert.deepEqual(battleBeforeLoss.players.map((player) =>
     battleBeforeLoss.commandMenu(player.id).find((command) => command.id === 26).abilityIds.length), [8, 4, 4]);
-  assert.equal(battleBeforeLoss.command(leader.id, 34, leader.id), false, "An unlearned skill cannot be selected");
-  assert.equal(game().useMenuItem(2, leader.id), false);
-  assert.equal(game().changeEquipment(leader.id, 1, empty.id), false);
+  assert.equal(commands.command(battleBeforeLoss, leader.id, 34, leader.id), false, "An unlearned skill cannot be selected");
+  assert.equal(commands.useMenuItem(2, leader.id), false);
+  assert.equal(commands.changeEquipment(leader.id, 1, empty.id), false);
   assert.equal(flow.continueVictory(), false);
   assert.throws(() => game().checkpoint(), /during battle, movement or an event/);
   stage("real-field-encounter-and-owned-command-entry", { encounterId: 3 });
@@ -222,7 +229,7 @@ try {
     for (const actor of battle.ready) {
       const ally = battle.players.find((p) => p.hp > 0 && p.hp < p.maxHp * 0.6);
       const target = ally ?? battle.targets(actor.id, 218)[0];
-      if (target && battle.command(actor.id, ally ? 222 : 218, target.id)) acceptedCommands++;
+      if (target && commands.command(battle, actor.id, ally ? 222 : 218, target.id)) acceptedCommands++;
     }
     tick();
   }
@@ -285,10 +292,12 @@ try {
   assert.ok(injured, "The actual battle/growth result must provide a Potion target");
   assert.ok(game().state.menuItemTargets(2).includes(injured.id));
   const remainingPotions = count(2) - 1;
-  assert.equal(game().useMenuItem(2, injured.id), true);
+  assert.equal(flow.pause(true), true);
+  assert.equal(commands.useMenuItem(2, injured.id), true);
   assert.equal(owned().roster.find((p) => p.id === injured.id).hp, injured.maxHp);
   assert.equal(count(2), remainingPotions);
-  assert.equal(game().useMenuItem(2, injured.id), false);
+  assert.equal(commands.useMenuItem(2, injured.id), false);
+  assert.equal(flow.pause(false), true);
   assert.equal(count(2), remainingPotions, "A repeated full-HP item confirmation does not consume another Potion");
   stage("field-menu-consumes-one-real-item", { target: injured.id, itemCount: count(2) });
 
@@ -321,13 +330,21 @@ try {
   failedLoad.cancel();
   assert.equal(game(), liveBeforeLoad); assert.deepEqual(game().checkpoint(), liveCheckpoint);
 
-  const load = flow.beginOperation("load");
+  const load = entries.begin("load"), previousCommands = commands;
   const restored = GameSession.restore(saved.checkpoint, controlledField, catalog, undefined, sessionRuntime());
   assert.deepEqual(restored.checkpoint(), savedCheckpoint);
-  assert.equal(load.publish(restored), true);
-  assert.equal(load.publish(liveBeforeLoad), false, "A consumed load ticket cannot reinstall an old session");
+  const loaded = await load.prepare(() => ({ session: restored, presentation: { mapId: restored.field.content.map.id } }));
+  assert.equal(loaded.status, "committed");
+  assert.equal(load.commit({ session: liveBeforeLoad, presentation: {} }).status, "cancelled",
+    "A consumed entry cannot reinstall an old session");
+  commands = new GameCommands(flow, restored);
   assert.equal(game(), restored); assert.equal(flow.move("up"), false, "Load clears old media readiness");
   tick(0); assert.equal(flow.phase, "exploration");
+  assert.equal(flow.pause(true), true);
+  assert.equal(previousCommands.changeEquipment(leader.id, 1, empty.id), false);
+  assert.equal(commands.menuReady, true);
+  assert.deepEqual(game().checkpoint(), savedCheckpoint, "A stale command channel cannot mutate a restored owner");
+  assert.equal(flow.pause(false), true);
   assert.deepEqual(game().battlePreferences, { mode: "wait", speedIndex: 2 });
   assert.equal(count(2), remainingPotions); assert.equal(count(58), 1);
   assert.equal(flow.continueVictory(), false); assert.deepEqual(game().checkpoint(), savedCheckpoint);
@@ -352,7 +369,7 @@ try {
       for (const actor of battle.ready) {
         const ally = battle.players.find(p => p.hp > 0 && p.hp < p.maxHp * 0.6);
         const target = ally ?? battle.targets(actor.id, 218)[0];
-        if (target) battle.command(actor.id, ally ? 222 : 218, target.id);
+        if (target) commands.command(battle, actor.id, ally ? 222 : 218, target.id);
       }
       tick();
     }
@@ -375,9 +392,12 @@ try {
   assert.equal(game(), current); assert.equal(flow.phase, "title");
   const titleCheckpoint = game().checkpoint();
   tick(60000); assert.deepEqual(game().checkpoint(), titleCheckpoint);
-  const restart = flow.beginOperation("load");
+  const restart = entries.begin("load");
   const latest = await storage.load();
-  assert.equal(restart.publish(GameSession.restore(latest.checkpoint, controlledField, catalog, undefined, sessionRuntime()), { paused: true }), true);
+  const resumed = restart.commit({ session: GameSession.restore(latest.checkpoint, controlledField, catalog, undefined, sessionRuntime()),
+    presentation: {}, options: { paused: true } });
+  assert.equal(resumed.status, "committed");
+  commands = new GameCommands(flow, resumed.session);
   assert.equal(flow.phase, "paused"); tick(60000);
   assert.deepEqual(game().checkpoint(), titleCheckpoint);
   assert.equal(flow.pause(false), true); tick(0);

@@ -269,8 +269,10 @@ export class GameSession {
       equipmentAbilities: content.equipmentSystem ? equipmentOwnedAbilities(content.equipmentSystem.catalog, member) : [],
     }), magicLearningValue: content.characterInitializations?.[id] ? member.magicLearningValue : null };
   }
-  changeParty(request: PartyMenuRequest): boolean {
-    if (!this.menuReady) return false;
+  changeParty(request: PartyMenuRequest, stillAdmitted?: () => boolean): boolean {
+    if (stillAdmitted !== undefined && typeof stillAdmitted !== "function")
+      throw new Error("Invalid party menu admission predicate");
+    if (!this.menuReady || stillAdmitted !== undefined && stillAdmitted() !== true) return false;
     const field = this.field, transaction = this.state.preparePartyMenu(request);
     if (!transaction.changed) return false;
     const publish = field.prepareMenuPartyAppearance(transaction.appearance);
@@ -279,6 +281,9 @@ export class GameSession {
     publish.validate();
     if (this.field !== field || !this.menuReady) throw new Error("Field changed during party menu preparation");
     transaction.validate();
+    // A fallible appearance provider may synchronously replace the Flow owner,
+    // return to title or revoke host readiness. Recheck before either publish.
+    if (stillAdmitted !== undefined && stillAdmitted() !== true) return false;
     transaction.commit();
     publish();
     return true;
