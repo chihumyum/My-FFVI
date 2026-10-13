@@ -342,3 +342,34 @@ test("script batch admission requires complete current source condition metadata
     assert.ok(result.diagnostics.some(d => d.code === "battle-lifecycle" && /condition/.test(d.reason)));
   }
 });
+
+test("source enemy entry separates monster master and unique slot; sleep maps to its own enemy gate", () => {
+  const input = raw([["BattleAddEnemy", [341, 8]], ["BattleSleepEnemy", [-2]],
+    ["BattleSleepEnemy", [0]], ["Exit"]]);
+  const before = structuredClone(input), p = compileBattleEvent(input, source);
+  assert.deepEqual(p.instructions.map(instruction => instruction.op), [
+    { kind: "add-enemy", monsterId: 341, uniqueId: 8 },
+    { kind: "enemy-no-act", enabled: true }, { kind: "enemy-no-act", enabled: false }, { kind: "exit" },
+  ]);
+  assert.deepEqual(input, before); assert.deepEqual(p.source, source);
+});
+
+test("enemy entry keeps unknown operand forms, slots and other participant operations blocked at the original PC", () => {
+  for (const mutate of [
+    (input: ReturnType<typeof raw>) => { input.Mnemonics[0]!.operands.iValues[0] = 0; },
+    (input: ReturnType<typeof raw>) => { input.Mnemonics[0]!.operands.iValues[1] = 10; },
+    (input: ReturnType<typeof raw>) => { input.Mnemonics[0]!.operands.iValues[1] = 1.5; },
+    (input: ReturnType<typeof raw>) => { input.Mnemonics[0]!.operands.iValues[7] = 1; },
+    (input: ReturnType<typeof raw>) => { input.Mnemonics[0]!.operands.rValues[3] = 1; },
+    (input: ReturnType<typeof raw>) => { input.Mnemonics[0]!.operands.sValues[3] = "not-empty"; },
+    (input: ReturnType<typeof raw>) => { input.Mnemonics[0]!.mnemonic = "BattleAddFellow"; },
+    (input: ReturnType<typeof raw>) => { input.Mnemonics[0]!.type = 2; },
+  ]) {
+    const input = raw([["BattleAddEnemy", [341, 8]], ["Exit"]]); mutate(input);
+    const compiled = compileBattleEvent(input, source);
+    assert.equal(compiled.instructions[0]!.op.kind, "blocked");
+    assert.throws(() => assertBattleEventExecutable(compiled), /Mnemonics\/0/);
+  }
+  const sleep = raw([["BattleSleepEnemy", [1, 1]], ["Exit"]]);
+  assert.equal(compileBattleEvent(sleep, source).instructions[0]!.op.kind, "blocked");
+});

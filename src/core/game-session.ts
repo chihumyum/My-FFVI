@@ -520,9 +520,10 @@ export class GameSession {
   retryBattle(): boolean {
     if (this.battle?.phase !== "defeat") return false;
     if (!this.battleLease) throw new Error("Missing battle state ownership");
+    const { participants: _mutableParticipants, ...content } = this.battle.content;
     this.battle = new BattleGame(
-      { ...this.battle.content, rewardPolicy: this.state.battleRewardPolicy(this.battleLease),
-        lifecycle: this.battle.lifecycleDefinition },
+      { ...content, rewardPolicy: this.state.battleRewardPolicy(this.battleLease),
+        lifecycle: this.battle.lifecycleDefinition, ...this.battle.participantEntryContent },
       this.currentSeed,
       this.state.battlePlayers(this.battleLease),
       this.state.battleInventory(this.battleLease),

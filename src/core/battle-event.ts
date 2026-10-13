@@ -17,7 +17,8 @@ export type BattleEventOp =
   | { kind: "variable-branch"; left: VariableRef; operator: Operator; right: EventValue; target: number }
   | { kind: "variable-flag"; ref: VariableRef; operation: "set" | "reset" | "flip" }
   | { kind: "wait"; seconds: number }
-  | { kind: "end-enabled" | "pause" | "interactive"; enabled: boolean }
+  | { kind: "add-enemy"; monsterId: number; uniqueId: number }
+  | { kind: "end-enabled" | "pause" | "interactive" | "enemy-no-act"; enabled: boolean }
   | { kind: "blocked"; reason: string };
 export type BattleEventProgram = {
   kind: "battle-event-v1";
@@ -33,7 +34,8 @@ export type BattleEventProgram = {
 };
 export type BattleEventWait =
   | { kind: "blank" | "start" | "action"; clock: number }
-  | { kind: "time"; clock: number; entryTimeSeconds: number };
+  | { kind: "time"; clock: number; entryTimeSeconds: number }
+  | { kind: "enemy-entry"; clock: number; previousNoAct: boolean };
 export type BattleEventState = {
   pc: number;
   stack: number[];
@@ -56,11 +58,15 @@ export type BattleEventContext = {
   variables?: { read(ref: VariableRef): number };
   /** A source query of the current players, not an HP-derived VM cache. */
   playersEnded?: boolean;
+  /** Joining completion belongs to the content/host entry operation, not to
+   * the executor's action queues. The VM remembers the previous enemy gate. */
+  enemyEntry?: { noAct: boolean; completed: boolean };
 };
 export type BattleEventRequest =
   | { kind: "exec-ai" | "sync-ai"; pc: number }
   | { kind: "write-variable"; pc: number; ref: VariableRef; value: number }
-  | { kind: "end-enabled" | "pause" | "interactive"; pc: number; enabled: boolean };
+  | { kind: "add-enemy"; pc: number; monsterId: number; uniqueId: number }
+  | { kind: "end-enabled" | "pause" | "interactive" | "enemy-no-act"; pc: number; enabled: boolean };
 export type BattleEventAdvance = {
   state: BattleEventState;
   /** At most one request. Prepare/apply it inside the BattleGame frame, then
@@ -177,7 +183,10 @@ function parseOp(raw: unknown): BattleEventOp {
     case "wait":
       checkpointKeys(value, "kind,seconds");
       return { kind, seconds: finite(value.seconds) };
-    case "end-enabled": case "pause": case "interactive":
+    case "add-enemy":
+      checkpointKeys(value, "kind,monsterId,uniqueId");
+      return { kind, monsterId: integer(value.monsterId, 1), uniqueId: integer(value.uniqueId, 1, 9) };
+    case "end-enabled": case "pause": case "interactive": case "enemy-no-act":
       checkpointKeys(value, "kind,enabled");
       return { kind, enabled: boolean(value.enabled) };
     case "blocked":
@@ -281,6 +290,10 @@ function parseWait(raw: unknown): BattleEventWait | null {
     checkpointKeys(value, "kind,clock,entryTimeSeconds");
     return { kind, clock: clockNumber(value.clock), entryTimeSeconds: finite(value.entryTimeSeconds, 0) };
   }
+  if (kind === "enemy-entry") {
+    checkpointKeys(value, "kind,clock,previousNoAct");
+    return { kind, clock: clockNumber(value.clock), previousNoAct: boolean(value.previousNoAct) };
+  }
   throw new Error("Invalid battle event wait kind");
 }
 function parseState(raw: unknown): BattleEventState {
@@ -296,7 +309,8 @@ function parseContext(raw: unknown): BattleEventContext {
   const fields = raw as Record<string, unknown>;
   const value = record(raw, "clock,timeSeconds,started,aiCoreAlive,actionStaging" +
     (Object.hasOwn(fields, "variables") ? ",variables" : "") +
-    (Object.hasOwn(fields, "playersEnded") ? ",playersEnded" : ""));
+    (Object.hasOwn(fields, "playersEnded") ? ",playersEnded" : "") +
+    (Object.hasOwn(fields, "enemyEntry") ? ",enemyEntry" : ""));
   let variables: BattleEventContext["variables"];
   if (Object.hasOwn(value, "variables")) {
     const port = record(value.variables, "read");
@@ -304,9 +318,15 @@ function parseContext(raw: unknown): BattleEventContext {
     const owner = port as { read(ref: VariableRef): number }, read = owner.read;
     variables = { read: ref => read.call(owner, ref) };
   }
+  let enemyEntry: BattleEventContext["enemyEntry"];
+  if (Object.hasOwn(value, "enemyEntry")) {
+    const entry = record(value.enemyEntry, "noAct,completed");
+    enemyEntry = { noAct: boolean(entry.noAct), completed: boolean(entry.completed) };
+  }
   return { clock: clockNumber(value.clock), timeSeconds: finite(value.timeSeconds, 0),
     started: boolean(value.started), aiCoreAlive: boolean(value.aiCoreAlive), actionStaging: boolean(value.actionStaging),
     ...(variables ? { variables } : {}),
+    ...(enemyEntry ? { enemyEntry } : {}),
     ...(Object.hasOwn(value, "playersEnded") ? { playersEnded: boolean(value.playersEnded) } : {}) };
 }
 
@@ -349,7 +369,8 @@ export function advanceBattleEvent(
   }
   if (!inRange(state.pc)) fail("PC outside the program range");
   if (state.wait) {
-    const expected = { blank: "blank", start: "wait-start", action: "sync-action", time: "wait" }[state.wait.kind];
+    const expected = { blank: "blank", start: "wait-start", action: "sync-action", time: "wait",
+      "enemy-entry": "add-enemy" }[state.wait.kind];
     if (program.instructions[state.pc]?.op.kind !== expected) fail("wait does not match its instruction");
     if (state.wait.clock === context.clock) return { state, requests: [], visited: [] };
   }
@@ -490,7 +511,24 @@ export function advanceBattleEvent(
         next();
         requests.push({ kind: "exec-ai", pc });
         return result();
-      case "end-enabled": case "pause": case "interactive":
+      case "add-enemy": {
+        if (!context.enemyEntry) return fail("Missing battle enemy entry provider", pc);
+        if (state.wait?.kind !== "enemy-entry") {
+          state.status = "waiting";
+          state.wait = { kind: "enemy-entry", clock: context.clock, previousNoAct: context.enemyEntry.noAct };
+          requests.push({ kind: "add-enemy", pc, monsterId: op.monsterId, uniqueId: op.uniqueId });
+          return result();
+        }
+        if (!context.enemyEntry.completed) {
+          state.wait.clock = context.clock;
+          return result();
+        }
+        const previousNoAct = state.wait.previousNoAct;
+        next();
+        requests.push({ kind: "enemy-no-act", pc, enabled: previousNoAct });
+        return result();
+      }
+      case "end-enabled": case "pause": case "interactive": case "enemy-no-act":
         next();
         requests.push({ kind: op.kind, enabled: op.enabled, pc });
         return result();

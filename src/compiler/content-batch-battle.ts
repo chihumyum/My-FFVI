@@ -8,6 +8,7 @@ import { validateBattleDropCatalog } from "../core/battle-rewards.js";
 import { validateBattleEventRules } from "../core/battle-event-context.js";
 import { canonical } from "../core/canonical.js";
 import { battleAIAbilities } from "./battle-ai.js";
+import { parseBattleParticipantContent, type EnemyBattleDefinition } from "../core/battle-participants.js";
 
 export type BatchBattleDiagnostic = {
   code: string;
@@ -79,11 +80,19 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
     else if (compiled.length === 0 || !catalog.encounterDiagnostics)
       conditional("compiler-evidence-missing", "Source/runtime encounter compilation diagnostics are not available");
     const abilityIds = new Set<number>();
+    let enemyDefinitions: readonly EnemyBattleDefinition[] = [];
     let formationOptions: ("normal" | "opposed")[] = [];
     if (!encounter) block("missing-encounter", `Battle catalog has no encounter ${id}`);
     else {
       if (catalog.kind !== "narshe-battle-catalog" || encounter.encounterId !== id)
         block("encounter-identity", "Encounter dictionary key and compiled identity disagree");
+      enemyDefinitions = encounter.enemies;
+      checked("battle-participant-content", () => {
+        if (Object.hasOwn(catalog.common, "participants")) throw new Error("Battle participants must belong to an encounter");
+        if (encounter.participants === undefined) return; // Legacy is static-only.
+        const participants = parseBattleParticipantContent(encounter.participants, encounter.enemies);
+        enemyDefinitions = Object.values(participants.enemyDefinitions);
+      });
       checked("encounter-formation", () => { formationOptions = encounterFormationOptions(encounter); });
       checked("encounter-escape", () => {
         if (Object.hasOwn(catalog.common, "escapePolicy")) throw new Error("Escape policy must belong to an encounter");
@@ -109,6 +118,14 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
             !rules.conditions.some(rule => rule.id === definition.id && rule.type === definition.type)))
             throw new Error("Battle lifecycle condition rules do not cover the current condition catalog");
           limitations.push("Compiled battle-event instructions require live lifecycle/AI/action/outcome execution evidence.");
+          for (const [pc, { op }] of lifecycle.program.instructions.entries()) {
+            if (op.kind !== "add-enemy") continue;
+            const participants = encounter.participants;
+            if (!participants || !participants.enemyDefinitions[String(op.monsterId)])
+              block("battle-participant-reference", `Battle event PC ${pc} has no admitted enemy master ${op.monsterId}`);
+            if (!participants || !participants.slots[String(op.uniqueId)])
+              block("battle-participant-reference", `Battle event PC ${pc} has no admitted enemy slot ${op.uniqueId}`);
+          }
         } else if (lifecycle.mode === "development-omission") {
           const omission = sourceDiagnostics.some(d => d.code === "battle-script" && d.kind === "development-omission" &&
             d.dependency?.table === "script.csv" && d.dependency.id === lifecycle.scriptId && d.reason === lifecycle.reason);
@@ -127,7 +144,8 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
         }
       });
       if (!encounter.enemies.length || encounter.enemies.length > 9 ||
-          new Set(encounter.enemies.map(enemy => enemy.id)).size !== encounter.enemies.length)
+          new Set(encounter.enemies.map(enemy => enemy.id)).size !== encounter.enemies.length ||
+          encounter.enemies.some(enemy => typeof enemy.id !== "string" || !enemy.id))
         block("enemy-identity", "Missing, duplicate or excessive enemy identities");
       if (compiled[0]?.status === "compiled" && compiled[0].enemyCount !== encounter.enemies.length)
         block("compiler-report", "Compiled enemy count disagrees with the encounter definition");
@@ -155,7 +173,7 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
       else checked("reward-reference", () => {
         const drops = catalog.common.drops!;
         validateBattleDropCatalog(drops);
-        for (const enemy of encounter.enemies) {
+        for (const enemy of enemyDefinitions) {
           const monster = drops.monsters.find(monster => monster.id === enemy.sourceId);
           if (!monster)
             throw new Error(`Missing drop definition for monster ${enemy.sourceId}`);
@@ -169,9 +187,10 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
           }
         }
       });
-      for (const enemy of encounter.enemies) {
-        if (!identity(enemy.sourceId) || !enemy.id || enemy.side !== "enemy")
-          block("enemy-identity", `Invalid enemy identity ${enemy.id}`);
+      for (const enemy of enemyDefinitions) {
+        const label = "id" in enemy && typeof enemy.id === "string" ? enemy.id : `master:${enemy.sourceId}`;
+        if (!identity(enemy.sourceId) || enemy.side !== "enemy")
+          block("enemy-identity", `Invalid enemy identity ${label}`);
         media(enemy.sprites.idle);
         if (enemy.sprites.mount !== null) media(enemy.sprites.mount);
         checked("enemy-condition", () => {
@@ -179,24 +198,24 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
           conditions?.validateResistances(enemy.conditionResistances);
         });
         const ai = enemy.ai;
-        if (!ai) { block("ai-reference", `Enemy ${enemy.id} has no AI program`); continue; }
+        if (!ai) { block("ai-reference", `Enemy ${label} has no AI program`); continue; }
         if (ai.kind !== "battle-ai-v4" || !Number.isInteger(ai.entry) || !Number.isInteger(ai.end) ||
             ai.entry < 0 || ai.end <= ai.entry || ai.end > ai.instructions.length || ai.blockers.length)
-          block("ai-entry", `Enemy ${enemy.id}: ${ai.blockers.join("; ") || "invalid AI segment"}`);
+          block("ai-entry", `Enemy ${label}: ${ai.blockers.join("; ") || "invalid AI segment"}`);
         const refs = battleAIAbilities(ai);
         for (const abilityId of [...enemy.abilities, ...refs]) abilityIds.add(abilityId);
         for (const abilityId of refs)
           if (!enemy.abilities.includes(abilityId))
-            block("enemy-ability-reference", `Enemy ${enemy.id} does not own its AI ability ${abilityId}`, abilityId);
+            block("enemy-ability-reference", `Enemy ${label} does not own its AI ability ${abilityId}`, abilityId);
         for (const [pc, instruction] of ai.instructions.entries()) {
           const op = instruction.op;
           if ("target" in op && (!Number.isInteger(op.target) || op.target < ai.entry || op.target >= ai.end))
-            block("ai-target", `Enemy ${enemy.id} PC ${pc} has an invalid branch target`);
-          if (op.kind === "blocked") conditional("ai-instruction", `Enemy ${enemy.id} PC ${pc}: ${op.reason}`);
+            block("ai-target", `Enemy ${label} PC ${pc} has an invalid branch target`);
+          if (op.kind === "blocked") conditional("ai-instruction", `Enemy ${label} PC ${pc}: ${op.reason}`);
           if (op.kind === "condition") checked("ai-condition", () => conditions?.validateReferences([op.conditionId]));
           if (op.kind === "only-alive" || op.kind === "unit-alive-count") {
             if (!catalog.common.battleEvents)
-              conditional("ai-event-provider", `Enemy ${enemy.id} PC ${pc} requires current unit event rules`);
+              conditional("ai-event-provider", `Enemy ${label} PC ${pc} requires current unit event rules`);
             else checked("ai-event-provider", () => validateBattleEventRules(catalog.common.battleEvents!));
           }
         }

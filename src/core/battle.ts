@@ -80,6 +80,9 @@ import { advanceBattleEvent, createBattleEventState, BattleEventError, type Batt
 import { parseBattleLifecycle, type BattleLifecycle } from "./battle-lifecycle.js";
 import { battleEventUnitEnded } from "./battle-event-context.js";
 import { BattleEventSharedState, type BattleEventSharedSnapshot } from "./battle-event-shared.js";
+import { parseBattleParticipantContent, type BattleParticipantContent } from "./battle-participants.js";
+import { createBattleParticipantState, projectEnemyReplacement, projectBattleParticipantRewards,
+  type BattleParticipantState } from "./battle-participant-state.js";
 
 export type Combatant = CombatantDefinition & {
   maxHp: number;
@@ -155,8 +158,11 @@ export class BattleGame {
   private readonly lifecycle: BattleLifecycle;
   private eventState: BattleEventState | null = null;
   private readonly eventShared: BattleEventSharedState | null;
+  private readonly participantContent: BattleParticipantContent | null;
+  private readonly entryEnemies: CombatantDefinition[];
+  private participantState: BattleParticipantState;
   private eventControls = { aiStarted: false, aiAliveLastSync: false, endEnabled: true,
-    interactive: true, updateEnabled: true };
+    interactive: true, updateEnabled: true, enemyNoAct: false };
   private escapeRequested = false;
   private currentPreferences: BattlePreferences;
   private clockInput = {
@@ -206,8 +212,20 @@ export class BattleGame {
     this.rewardPolicy = Object.freeze(parseBattleRewardPolicy(content.rewardPolicy === undefined
       ? { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 } : content.rewardPolicy));
     this.lifecycle = parseBattleLifecycle(content.lifecycle ?? { kind: "battle-lifecycle-v1", mode: "none" });
+    this.entryEnemies = structuredClone(content.enemies);
+    this.participantContent = content.participants === undefined ? null
+      : parseBattleParticipantContent(content.participants, this.entryEnemies);
+    this.participantState = createBattleParticipantState(this.entryEnemies.map((unit, index) => ({
+      id: unit.id, sourceId: unit.sourceId, exp: unit.exp, gil: unit.gil,
+      uniqueId: this.participantContent?.initial.find(entry => entry.id === unit.id)?.uniqueId ?? index + 1,
+    })));
     this.eventShared = eventShared === undefined ? null : new BattleEventSharedState(eventShared);
     if (this.lifecycle.mode === "script") this.eventState = createBattleEventState(this.lifecycle.program);
+    if (this.lifecycle.mode === "script") for (const [pc, { op }] of this.lifecycle.program.instructions.entries()) {
+      if (op.kind === "add-enemy" && (!this.participantContent ||
+          !this.participantContent.enemyDefinitions[op.monsterId] || !this.participantContent.slots[op.uniqueId]))
+        throw new BattleEventError(this.lifecycle.program.source, pc, "Missing admitted battle enemy entry definition or slot");
+    }
     this.randomState = seed || 1;
     this.currentPreferences = parseBattlePreferences(content.timing);
     if (initialPreferences !== undefined)
@@ -284,6 +302,8 @@ export class BattleGame {
       this.costOwners.set(player.id, { side: "player", catalog, loadout });
     }
     this.validateConditionState();
+    if (this.participantContent)
+      this.validateConditionState(Object.values(this.participantContent.enemyDefinitions));
     this.reconcileAppearances();
     if (this.usesSourceQualification)
       for (const player of this.players) {
@@ -701,8 +721,8 @@ export class BattleGame {
             action,
           );
   }
-  private validateConditionState() {
-    for (const c of this.combatants) {
+  private validateConditionState(units: readonly Omit<CombatantDefinition, "id" | "placement">[] = this.combatants) {
+    for (const c of units) {
       validateBattleRow(c.row);
       if (c.side === "enemy" && c.row !== "front") throw new Error("Unresolved enemy battle row");
       this.conditions.validateActive(c.conditionIds);
@@ -846,8 +866,8 @@ export class BattleGame {
         rules: this.content.battleEvents,
         selfId: actor.id,
         units: units.map((c) => ({ id: c.id, side: c.side, conditionIds: [...c.conditionIds],
-          // The admitted host has a fixed unit collection. Enemy removal and
-          // staged ActType.FinalAttack are separate, still-unavailable lanes.
+          // Retired instances and their AI owners have left this live roster.
+          // Staged ActType.FinalAttack remains a separate unavailable lane.
           removed: false })),
         finalAttackFirstTargetSide: null,
       } } : {}),
@@ -865,6 +885,64 @@ export class BattleGame {
   }
   get eventSharedEntry(): BattleEventSharedSnapshot | undefined { return this.eventShared?.entry; }
   get eventSharedReturn() { return this.eventShared?.prepareReturn() ?? null; }
+  get participantExecution(): BattleParticipantState { return structuredClone(this.participantState); }
+  /** The entry roster and reserve definitions are fixed for defeat/retry. */
+  get participantEntryContent(): Pick<BattleContent, "enemies" | "participants"> {
+    return { enemies: structuredClone(this.entryEnemies),
+      ...(this.participantContent ? { participants: structuredClone(this.participantContent) } : {}) };
+  }
+  private addEnemy(monsterId: number, uniqueId: number): void {
+    const definition = this.participantContent?.enemyDefinitions[monsterId],
+      placement = this.participantContent?.slots[uniqueId];
+    if (!definition || !placement) throw new Error("Missing admitted battle enemy entry definition or slot");
+    const planned = projectEnemyReplacement(this.participantState,
+      { sourceId: monsterId, uniqueId, exp: definition.exp, gil: definition.gil });
+    if (this.combatants.some(unit => unit.id === planned.instanceId)) throw new Error("Duplicate battle identity");
+    const unit: Combatant = { ...structuredClone(definition), id: planned.instanceId,
+      placement: structuredClone(placement), maxHp: definition.hp, maxMp: definition.mp,
+      atb: 0, queued: false, behavior: initialEnemyBehavior() };
+    this.validateConditionState([unit]);
+    validateElements(unit.attackElements);
+    validateElementResistances(unit.elementResistances);
+    if (this.content.drops !== null && !this.content.drops.monsters.some(row => row.id === monsterId))
+      throw new Error("Missing enemy drop definition");
+    Object.assign(unit, this.conditions.settleLife(unit.hp, unit.conditionIds, false));
+    const nextUnits = this.combatants.filter(current => current.id !== planned.removedId).concat(unit);
+    if (!unit.ai) throw new BattleAIError(null, 0, "missing enemy AI program");
+    const started = startBattleAI(unit.ai, this.aiContext(unit, nextUnits));
+    const context = this.aiContext(unit, nextUnits);
+    context.self.behavior = started.behavior;
+    this.admitAITurn(unit, planBattleAITurn(unit.ai, started.state, context));
+    unit.behavior = started.behavior;
+    const poison = this.conditions.reconcilePoisonState(unit.conditionIds, [], this.atbSpeed),
+      slow = this.conditions.reconcileSlowState(unit.conditionIds, []);
+    unit.atb = unit.hp === 0 ? 0 : this.randomInt(this.content.initialAtb.enemy[0], this.content.initialAtb.enemy[1]);
+    // The Web host preloads all admitted dependencies. Removal and joining
+    // publish together; the source loads asynchronously between those steps.
+    // A retired instance can never alias the replacement's queued selection.
+    if (planned.removedId !== null) {
+      const removedId = planned.removedId;
+      this.queue = this.queue.filter(action => action.actor !== removedId);
+      this.reactions = this.reactions.filter(action => action.actor !== removedId);
+      if (this.action && (this.action.actor === removedId || this.action.targetIds.includes(removedId))) {
+        const action = this.action, actor = this.combatants.find(current => current.id === action.actor);
+        this.action = null;
+        if (actor) this.finishActorAction(actor, action.kind);
+      }
+      this.aiStates.delete(removedId);
+      this.poisonStates.delete(removedId);
+      this.slowStates.delete(removedId);
+      this.dropDead.delete(removedId);
+    }
+    this.combatants.splice(0, this.combatants.length, ...nextUnits);
+    this.participantState = planned.state;
+    this.aiStates.set(unit.id, started.state);
+    this.poisonStates.set(unit.id, poison);
+    this.slowStates.set(unit.id, slow);
+    this.observeDropLife(unit);
+    this.eventControls.enemyNoAct = true;
+    this.log(`${unit.name} 加入战斗。`);
+  }
   private startEnemyAI(): void {
     if ([...this.aiStates.values()].some(state => state.status !== "exited"))
       throw new Error("Battle AI cores are already running");
@@ -893,6 +971,7 @@ export class BattleGame {
         // Source IsNowAttackStaging includes staged/interrupt actions, but not
         // ordinary queued turns. The queues remain owned by this BattleGame.
         actionStaging: this.action !== null || this.reactions.length > 0,
+        enemyEntry: { noAct: this.eventControls.enemyNoAct, completed: true },
         ...(this.eventShared ? { variables: { read: (ref) => this.eventShared!.read(ref) } } : {}),
         ...(program.instructions.some(({ op }) => op.kind === "players-ended") ? {
           playersEnded: this.eventPlayersEnded(),
@@ -911,6 +990,8 @@ export class BattleGame {
             case "end-enabled": this.eventControls.endEnabled = request.enabled; break;
             case "pause": this.eventControls.updateEnabled = !request.enabled; break;
             case "interactive": this.eventControls.interactive = request.enabled; break;
+            case "enemy-no-act": this.eventControls.enemyNoAct = request.enabled; break;
+            case "add-enemy": this.addEnemy(request.monsterId, request.uniqueId); break;
             case "write-variable":
               if (!this.eventShared) throw new Error("Missing shared battle event state");
               this.eventShared.write(request.ref, request.value);
@@ -1219,6 +1300,8 @@ export class BattleGame {
     // One failed simulation step consumes neither logical time nor randomness.
     // Definitions/media/AI programs stay shared; only mutable runtime values are copied.
     const before = {
+      unitOwners: [...this.combatants],
+      participantState: structuredClone(this.participantState),
       units: this.combatants.map((c) => ({
         ...c,
         conditionIds: [...c.conditionIds],
@@ -1251,8 +1334,10 @@ export class BattleGame {
       this.step();
       this.reconcileAppearances();
     } catch (error) {
+      this.combatants.splice(0, this.combatants.length, ...before.unitOwners);
       for (const [index, unit] of before.units.entries())
         Object.assign(this.combatants[index]!, unit);
+      this.participantState = before.participantState;
       this.action = before.action;
       this.queue = before.queue;
       this.reactions = before.reactions;
@@ -1325,7 +1410,7 @@ export class BattleGame {
                 seconds: 0.01,
               }),
           );
-        if (!this.escapeRequested && c.side === "enemy" && c.atb >= 100 &&
+        if (!this.escapeRequested && !this.eventControls.enemyNoAct && c.side === "enemy" && c.atb >= 100 &&
             this.aiStates.get(c.id)?.status === "waiting") {
           if (!this.players.some((p) => p.hp > 0)) break;
           this.decideEnemyAction(c);
@@ -1718,8 +1803,8 @@ export class BattleGame {
       ...structuredClone(c),
       conditionIds: this.conditions.battleEnd(c.conditionIds),
     }));
-    const exp = this.enemies.reduce((sum, c) => sum + c.exp, 0),
-      gil = this.enemies.reduce((sum, c) => sum + c.gil, 0);
+    const { exp, gil } = projectBattleParticipantRewards(this.participantState,
+      this.participantContent?.rewardScope ?? "active-units");
     const recipients = players.filter((c) => c.hp > 0),
       each = Math.trunc(exp / Math.max(1, recipients.length));
     const levels: BattleReward["levels"] = [];

@@ -21,6 +21,24 @@ import {
 } from "../dist/src/core/battle-ai.js";
 import { initialEnemyBehavior } from "../dist/src/core/enemy-behavior.js";
 import { BattleGame } from "../dist/src/core/battle.js";
+import { enemyBattleDefinition } from "../dist/src/core/battle-participants.js";
+
+// These hosts deliberately change enemy definitions to isolate AI behavior.
+// Rebuild their declared static templates and retain the original raw slots;
+// a stale source participant binding must not be bypassed by the runtime.
+function admittedAIProbe(content) {
+  if (!content.participants) return content;
+  const entry = content.participants;
+  return { ...content, participants: { ...entry,
+    enemyDefinitions: Object.fromEntries(content.enemies.map(enemy =>
+      [enemy.sourceId, enemyBattleDefinition(enemy)])),
+    initial: content.enemies.map(enemy => {
+      const binding = entry.initial.find(binding => binding.id === enemy.id);
+      assert.ok(binding, "Missing original raw slot for controlled AI host");
+      return { ...binding, sourceId: enemy.sourceId };
+    }),
+  } };
+}
 import { controlledBattleContent as encounterContent } from "./battle-probe-context.mjs";
 import { hash } from "../dist/src/compiler/content.js";
 
@@ -356,7 +374,7 @@ for (const [name, pc, expected] of [
   });
   content.initialAtb = { player: [0, 0], enemy: [100, 100] };
   for (const id of enemy.abilities) content.abilities[id] = ability(id);
-  const b = new BattleGame(content, 317, undefined, sourceBattleInventory(catalog));
+  const b = new BattleGame(admittedAIProbe(content), 317, undefined, sourceBattleInventory(catalog));
   const actions = [];
   for (let i = 0; i < expected.length; i++) {
     b.advance(10);
@@ -373,7 +391,7 @@ for (const [name, pc, expected] of [
   }
   assert.deepEqual(b.pendingActions, []);
   const run = (parts) => {
-    const battle = new BattleGame(content, 317, undefined, sourceBattleInventory(catalog));
+    const battle = new BattleGame(admittedAIProbe(content), 317, undefined, sourceBattleInventory(catalog));
     for (const dt of parts) battle.advance(dt);
     return {
       units: battle.combatants,
@@ -388,7 +406,7 @@ for (const [name, pc, expected] of [
   const full = structuredClone(content);
   full.enemies[0].ai = original;
   full.enemies[0].abilities = battleAIAbilities(original);
-  assert.throws(() => new BattleGame(full, 317, undefined, sourceBattleInventory(catalog)), /unsupported AI instruction/);
+  assert.throws(() => new BattleGame(admittedAIProbe(full), 317, undefined, sourceBattleInventory(catalog)), /unsupported AI instruction/);
   loopHostChecks.push({
     source: original.source,
     sourcePc: pc,
@@ -429,7 +447,7 @@ for (const name of [
   content.initialAtb = { player: [0, 0], enemy: [100, 100] };
   for (const id of enemy.abilities) content.abilities[id] = ability(id);
   function run(parts) {
-    const battle = new BattleGame(content, 239, undefined, sourceBattleInventory(catalog));
+    const battle = new BattleGame(admittedAIProbe(content), 239, undefined, sourceBattleInventory(catalog));
     for (const ms of parts) battle.advance(ms);
     return {
       combatants: battle.combatants,
@@ -453,7 +471,7 @@ for (const name of [
     const higher = structuredClone(content);
     higher.enemies[0].hp = 10113;
     assert.throws(
-      () => new BattleGame(higher, 239, undefined, sourceBattleInventory(catalog)),
+      () => new BattleGame(admittedAIProbe(higher), 239, undefined, sourceBattleInventory(catalog)),
       (e) =>
         e instanceof BattleAIError &&
         e.pc === 7 &&
@@ -475,15 +493,15 @@ const high = structuredClone(encounterContent(catalog, 42));
 assert.ok(
   high.enemies.some((e) => e.ai.source.assetPath.endsWith("SilverLobo.json")),
 );
-high.enemies.forEach((e) => {
-  e.sourceId = 987654;
+high.enemies.forEach((e, index) => {
+  e.sourceId = 987654 + index;
 });
 // This intentionally changed identity probes AI dispatch only. It has no
 // source monster/drop row and must not masquerade as a complete encounter.
 high.drops = null;
 high.players[0].level = 7;
 assert.throws(
-  () => new BattleGame(high, 241, undefined, sourceBattleInventory(catalog)),
+  () => new BattleGame(admittedAIProbe(high), 241, undefined, sourceBattleInventory(catalog)),
   (e) =>
     e instanceof BattleAIError &&
     e.pc === 10 &&

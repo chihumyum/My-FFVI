@@ -9,11 +9,7 @@ import type { PhysicalLimits } from "../core/physical-parameters.js";
 import type { PhysicalParameters } from "../core/physical.js";
 import type { BattleRow } from "./battle.js";
 import type { BattleEncounterDiagnostic as SourceDiagnostic, SourceBattleEncounter } from "./battle-encounters.js";
-import { battleAIAbilities, compileBattleAI } from "./battle-ai.js";
 import { compileBattleDropCatalog } from "./battle-rewards.js";
-import { compileElementResistances } from "./elements.js";
-import { compileEnemyParameters } from "./parameters.js";
-import { compileEnemyPhysical } from "./physical-parameters.js";
 import { tableInteger as int } from "./table.js";
 import { createBattleFormationPlan, type BattleFormationPlan,
   type FrameworkBattleFormationPolicy } from "../core/battle-formations.js";
@@ -22,6 +18,10 @@ import { compileBattleRewardPolicy } from "./battle-result.js";
 import type { BattleRewardPolicy } from "../core/battle-result.js";
 import { compileBattleEvent } from "./battle-event.js";
 import { parseBattleLifecycle, type BattleLifecycle } from "../core/battle-lifecycle.js";
+import { parseBattleParticipantContent, type BattleParticipantContent,
+  type BattleParticipantSlot, type BattleParticipantRewardScope, type EnemyBattleDefinition } from "../core/battle-participants.js";
+import { compileEnemyBattleDefinition, type EnemyBattleSource } from "./enemy-battle-definition.js";
+import { canonical } from "../core/canonical.js";
 
 type Reader = {
   row(table: string, id: string | number): BattleRow;
@@ -39,6 +39,9 @@ export type BattleEncounterRuntimeInput = {
   name(key: string): string;
   parameters: { temporary: ParameterValues; limits: ParameterLimits };
   physical: { temporary: PhysicalParameters; limits: PhysicalLimits };
+  /** Explicitly selected late master resources, not live units or story unlocks.
+   * partyId scopes the destination encounter; it is not a BattleAddEnemy operand. */
+  reserveEnemies?: readonly { partyId: number; enemy: EnemyBattleSource }[];
   /** Explicit source-bound regression omissions, never runtime permissions to
    * execute an unimplemented script or a new flag group. */
   development: {
@@ -46,6 +49,10 @@ export type BattleEncounterRuntimeInput = {
     formations?: FrameworkBattleFormationPolicy;
     /** Opt-in ordinary-field retreat, never source escape RNG or timing. */
     escape?: FrameworkBattleEscapePolicy;
+    /** Dynamic source reward accounting and presentation are not inferred from
+     * an exported master. The Web integration policy is explicitly authored. */
+    participants?: readonly { partyId: number; rewardScope: BattleParticipantRewardScope;
+      slots: Record<string, BattleParticipantSlot> }[];
     scripts: readonly { id: number; source: BattleAISource; reason: string }[];
     flagGroups: readonly { id: number; rows: readonly BattleRow[]; reason: string }[];
   };
@@ -61,17 +68,23 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
  * Shared rule corruption (for example missing drop weights) still fails the batch. */
 export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncounterRuntimeInput) {
   const requested = [...input.requestedPartyIds];
+  const reserves = input.reserveEnemies ?? [], policies = input.development.participants ?? [];
   if (!requested.length || requested.some((id) => !identity(id)) ||
       new Set(requested).size !== requested.length ||
       new Set(input.encounters.map((e) => e.partyId)).size !== input.encounters.length ||
       input.encounters.some((e) => !requested.includes(e.partyId)) ||
-      input.sourceDiagnostics.some((d) => !requested.includes(d.partyId)))
+      input.sourceDiagnostics.some((d) => !requested.includes(d.partyId)) ||
+      !Array.isArray(reserves) || reserves.some(entry => !requested.includes(entry.partyId) || !identity(entry.enemy.monsterId)) ||
+      new Set(reserves.map(entry => `${entry.partyId}:${entry.enemy.monsterId}`)).size !== reserves.length ||
+      !Array.isArray(policies) || policies.some(entry => !requested.includes(entry.partyId)) ||
+      new Set(policies.map(entry => entry.partyId)).size !== policies.length)
     throw new Error("Invalid runtime encounter selection");
   const diagnostics: BattleEncounterDiagnostic[] = input.sourceDiagnostics.map((d) => ({ ...d, kind: "blocked" }));
   const encounters: Record<string, BattleEncounter> = {};
   const entries: BattleEncounterReport["entries"] = [];
   const drops = compileBattleDropCatalog(reader,
-    [...new Set(input.encounters.flatMap((e) => e.enemies.map((m) => m.monsterId)))]);
+    [...new Set([...input.encounters.flatMap((e) => e.enemies.map((m) => m.monsterId)),
+      ...reserves.map(entry => entry.enemy.monsterId)])]);
 
   for (const encounter of input.encounters) {
     const partyId = encounter.partyId, start = diagnostics.length;
@@ -88,6 +101,10 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         throw new Error("Missing or invalid battle sprite: " + key);
     };
     const enemies: CombatantDefinition[] = [];
+    const enemyDefinitions: Record<string, EnemyBattleDefinition> = {};
+    const selectedReserves = reserves.filter(entry => entry.partyId === partyId);
+    const participantPolicy = policies.find(entry => entry.partyId === partyId);
+    let participants: BattleParticipantContent | undefined;
     let formationPlan: BattleFormationPlan | null = null;
     let escapePolicy: FrameworkBattleEscapePolicy | undefined;
     let rewardPolicy: BattleRewardPolicy | undefined;
@@ -175,73 +192,84 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       else if (m.bgmId) add("development-omission", "battle-bgm", "Source battle BGM is not played",
         { dependency: { table: "battle_bgm_asset.csv", id: m.bgmId } });
 
-      for (const enemy of encounter.enemies) {
-        let rowSource: BattleRow["source"] = encounter.source;
-        try {
-          media(enemy.sprite);
-          const found = reader.row("monster.csv", enemy.monsterId), r = found.values;
-          rowSource = found.source;
-          if (int(r.id) !== enemy.monsterId || found.source.rowId !== String(enemy.monsterId))
-            throw new Error("Changed enemy source identity");
-          for (const key of ["attack_attribute", "attack_plus", "attack_plus_grop", "resistance_condition", "initial_condition"])
-            if (int(r[key]) !== 0) throw new Error(`Unimplemented monster ${key}=${r[key]}`);
-          const parameters = compileEnemyParameters(reader, enemy.monsterId,
-            input.parameters.temporary, input.parameters.limits).confirmed;
-          const physical = compileEnemyPhysical(reader, enemy.monsterId,
-            input.physical.temporary, input.physical.limits).confirmed;
-          if (!identity(int(r.lv)) || parameters.hp <= 0 || int(r.exp) < 0 || int(r.gill) < 0)
-            throw new Error("Invalid initial enemy level, life or rewards");
-          const ai = compileBattleAI(enemy.ai.data, enemy.ai.source);
-          if (ai.blockers.length) throw new Error("Unresolved AI entry: " + ai.blockers.join("; "));
-          const abilityIds = battleAIAbilities(ai);
-          const context = { enemySlot: enemy.slot, source: rowSource };
-          for (const [pc, instruction] of ai.instructions.entries()) {
-            const op = instruction.op;
-            if (op.kind === "blocked") add("runtime-dependency", "ai-instruction", op.reason, { ...context, pc });
-            if (op.kind === "condition" && !input.conditions.rules.definitions.some((c) => c.id === op.conditionId))
-              add("blocked", "ai-condition", `Missing AI condition ${op.conditionId}`, { ...context, pc,
-                dependency: { table: "condition.csv", id: op.conditionId } });
-            if (!["act", "counter-act", "loop-act"].includes(op.kind)) continue;
-            if (!("abilities" in op)) continue;
-            for (const id of op.abilities) {
-              const ability = input.abilities[id];
-              const dependency = { table: "ability.csv", id };
-              if (!ability || ability.id !== id) add("blocked", "ability-reference", `Missing AI ability ${id}`, { ...context, pc, dependency });
-              else if (!ability.plan) add("runtime-dependency", "ability-plan",
-                `Ability ${id}: ${ability.blockers.join("; ") || "unimplemented plan"}`, { ...context, pc, dependency });
-              else if (![3, 7].includes(ability.program.range) || ability.plan.targeting.life !== "alive")
-                add("runtime-dependency", "automatic-target", `Unimplemented automatic target range for ability ${id}`, { ...context, pc, dependency });
-              else if (ability.plan.targeting.normalFormationOnly && formationPlan &&
-                (formationPlan.kind === "fixed" ? formationPlan.pattern !== 1
-                  : formationPlan.patterns[2] === 1 && formationPlan.policy.weights[2] > 0))
-                add("runtime-dependency", "ability-formation", `Unimplemented formation for ability ${id}`, { ...context, pc, dependency });
-            }
-          }
-          for (const failure of drops.blockers.filter((d) => d.monsterId === enemy.monsterId))
-            add("blocked", "monster-drops", failure.reason, { ...context,
-              dependency: { table: "monster.csv", id: enemy.monsterId } });
-          enemies.push({
-            id: `enemy:${enemy.slot}`, sourceId: enemy.monsterId, name: input.name(r.mes_id_name!),
-            side: "enemy", row: "front", level: int(r.lv), attackElements: [],
-            elementResistances: compileElementResistances(reader, int(r.resistance_attribute)).resistances,
-            physical, ...parameters, exp: int(r.exp), gil: int(r.gill), growthGroup: null,
-            abilities: abilityIds, commands: [], conditionIds: [], conditionResistances: {}, ai,
-            placement: { x: enemy.x, y: enemy.y, group: enemy.group }, sprites: { idle: enemy.sprite, mount: null },
-          });
-        } catch (error) {
-          add("blocked", "enemy-provider", message(error), { source: rowSource, enemySlot: enemy.slot,
-            dependency: { table: "monster.csv", id: enemy.monsterId } });
+      const compileEnemy = (enemy: EnemyBattleSource, slot?: number): EnemyBattleDefinition | null => {
+        const compiled = compileEnemyBattleDefinition(reader, { enemy, abilities: input.abilities,
+          conditions: input.conditions, sprites: input.sprites, name: input.name,
+          parameters: input.parameters, physical: input.physical, formationPlan });
+        const context = { source: compiled.source ?? encounter.source,
+          ...(slot === undefined ? {} : { enemySlot: slot }) };
+        for (const diagnostic of compiled.diagnostics) {
+          const { kind, code, reason, ...extra } = diagnostic;
+          add(kind, code, reason, { ...context, ...extra });
         }
+        for (const failure of drops.blockers.filter(diagnostic => diagnostic.monsterId === enemy.monsterId))
+          add("blocked", "monster-drops", failure.reason, { ...context,
+            dependency: { table: "monster.csv", id: enemy.monsterId } });
+        if (!compiled.definition) return null;
+        const previous = enemyDefinitions[String(enemy.monsterId)];
+        if (previous && canonical(previous) !== canonical(compiled.definition)) {
+          add("blocked", "enemy-template-identity", "Conflicting definitions for the same enemy master", { ...context,
+            dependency: { table: "monster.csv", id: enemy.monsterId } });
+          return null;
+        }
+        enemyDefinitions[String(enemy.monsterId)] = compiled.definition;
+        return compiled.definition;
+      };
+      for (const enemy of encounter.enemies) {
+        const definition = compileEnemy(enemy, enemy.slot);
+        if (definition) enemies.push({ ...structuredClone(definition), id: `enemy:${enemy.slot}`,
+          placement: { x: enemy.x, y: enemy.y, group: enemy.group } });
+      }
+      for (const reserve of selectedReserves) compileEnemy(reserve.enemy);
+      const dynamicEntries = lifecycle?.mode === "script" ? lifecycle.program.instructions.flatMap(({ op }, pc) =>
+        op.kind === "add-enemy" ? [{ op, pc }] : []) : [];
+      const slotIds = new Set(encounter.enemies.map(enemy => String(enemy.slot)));
+      if (participantPolicy) for (const key of Object.keys(participantPolicy.slots)) slotIds.add(key);
+      for (const { op, pc } of dynamicEntries) {
+        if (!enemyDefinitions[String(op.monsterId)])
+          add("blocked", "battle-participant-reference", `Battle event PC ${pc} has no admitted enemy master ${op.monsterId}`,
+            { pc, dependency: { table: "monster.csv", id: op.monsterId } });
+        if (!slotIds.has(String(op.uniqueId)))
+          add("blocked", "battle-participant-reference", `Battle event PC ${pc} has no admitted enemy slot ${op.uniqueId}`,
+            { pc, dependency: { table: "script.csv", id: encounter.metadata.scriptId } });
+      }
+      if ((selectedReserves.length || dynamicEntries.length) && !participantPolicy) {
+        if (!dynamicEntries.length)
+          block("participant-policy", "Late enemy templates require an explicit Web slot and reward policy");
+        else for (const { pc } of dynamicEntries)
+          add("blocked", "participant-policy", "Dynamic enemy entry requires an explicit Web slot and reward policy",
+            { pc, dependency: { table: "script.csv", id: encounter.metadata.scriptId } });
+      }
+      else {
+        try {
+          const slots: Record<string, BattleParticipantSlot> = {};
+          for (const enemy of encounter.enemies)
+            slots[String(enemy.slot)] = { x: enemy.x, y: enemy.y, group: enemy.group };
+          if (participantPolicy) {
+            for (const [key, placement] of Object.entries<BattleParticipantSlot>(participantPolicy.slots)) {
+              if (slots[key] && canonical(slots[key]) !== canonical(placement))
+                throw new Error("Participant policy changes an initial enemy slot");
+              slots[key] = structuredClone(placement);
+            }
+            add("development-omission", "participant-policy",
+              `Authored web-unique-id-slots-v1 bounds/layout and ${participantPolicy.rewardScope} reward scope; native dynamic layout and accounting remain unverified`);
+          }
+          participants = parseBattleParticipantContent({ kind: "battle-participant-content-v1",
+            profile: "web-unique-id-slots-v1", rewardScope: participantPolicy?.rewardScope ?? "active-units",
+            enemyDefinitions, slots,
+            initial: encounter.enemies.map(enemy => ({ id: `enemy:${enemy.slot}`, sourceId: enemy.monsterId, uniqueId: enemy.slot })),
+          }, enemies);
+        } catch (error) { block("participant-content", message(error)); }
       }
     } catch (error) { block("encounter-provider", message(error)); }
     const blocked = diagnostics.slice(start).some((d) => d.kind === "blocked") ||
       input.sourceDiagnostics.some((d) => d.partyId === partyId);
-    if (!blocked && formationPlan && rewardPolicy && lifecycle) encounters[partyId] = { encounterId: partyId, enemies,
-      background: encounter.background, formationPlan, rewardPolicy, lifecycle,
+    if (!blocked && formationPlan && rewardPolicy && lifecycle && participants) encounters[partyId] = { encounterId: partyId, enemies,
+      background: encounter.background, formationPlan, rewardPolicy, lifecycle, participants,
       ...(escapePolicy ? { escapePolicy } : {}),
       formation: formationPlan.kind === "development" ? null : formationPlan.pattern === 3 ? "opposed" : "normal" };
     entries.push({ partyId, status: blocked ? "blocked" : "compiled", enemyCount: encounter.enemies.length,
-      abilityIds: [...new Set(enemies.flatMap((e) => e.abilities))].sort((a, b) => a - b) });
+      abilityIds: [...new Set(Object.values(enemyDefinitions).flatMap(definition => definition.abilities))].sort((a, b) => a - b) });
   }
   for (const partyId of requested) if (!entries.some((e) => e.partyId === partyId)) {
     if (!diagnostics.some((d) => d.partyId === partyId && d.kind === "blocked"))
@@ -250,7 +278,8 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     entries.push({ partyId, status: "blocked", enemyCount: 0, abilityIds: [] });
   }
   entries.sort((a, b) => a.partyId - b.partyId);
-  const publishedMonsterIds = new Set(Object.values(encounters).flatMap((e) => e.enemies.map((m) => m.sourceId)));
+  const publishedMonsterIds = new Set(Object.values(encounters).flatMap(encounter =>
+    Object.values(encounter.participants!.enemyDefinitions).map(definition => definition.sourceId)));
   const monsters = drops.catalog.monsters.filter((m) => publishedMonsterIds.has(m.id));
   const contentIds = new Set(monsters.flatMap((m) => m.slots.flatMap((s, i) =>
     m.rate > 0 && drops.catalog.weights[i]! > 0 && s.contentId ? [s.contentId] : [])));

@@ -97,6 +97,9 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null):
       op = { kind: "end-enabled", enabled: i[0] !== 0 };
     if (m.mnemonic === "BattlePause" && form([0])) op = { kind: "pause", enabled: i[0] !== 0 };
     if (m.mnemonic === "BattleInteractive" && form([0])) op = { kind: "interactive", enabled: i[0] !== 0 };
+    if (m.mnemonic === "BattleSleepEnemy" && form([0])) op = { kind: "enemy-no-act", enabled: i[0] !== 0 };
+    if (m.mnemonic === "BattleAddEnemy" && form([0, 1]) && i[0]! > 0 && i[1]! >= 1 && i[1]! <= 9)
+      op = { kind: "add-enemy", monsterId: i[0]!, uniqueId: i[1]! };
     if (m.mnemonic === "SysCall" && form([], [], [0]) && s[0] === "プレイヤーの状況で戦闘終了")
       op = local(0) ? { kind: "players-ended" }
         : blocked("Player battle-end query requires ScriptLocalVariable[0]");
