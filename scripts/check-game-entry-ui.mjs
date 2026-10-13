@@ -459,7 +459,7 @@ try {
     assert.deepEqual(h.calls.json, []); assert.deepEqual(h.calls.images, []);
     assert.equal(h.$("source-start").disabled, false);
     assert.equal(h.$("start").disabled, false);
-    assert.match(html, /<a\b[^>]*id="systems-playground-link"[^>]*href="\/game\/\?package=systems-playground"/);
+    assert.match(html, /<a\b[^>]*id="systems-playground-link"[^>]*href="\/game\/\?package=systems-initialized"/);
     assert.equal(h.$("systems-playground-link").hidden, false);
     assert.equal(h.$("systems-playground-help").hidden, true);
   });

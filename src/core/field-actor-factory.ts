@@ -9,6 +9,8 @@ import { fieldPuppetBoundTransparentTextures } from "./field-puppet-effects.js";
 import { validateFieldActorViewProjection } from "./field-actor-view.js";
 import type { MapPartyEntryDefinition } from "./map-party-entry.js";
 import type { NewGamePlan } from "./new-game.js";
+import type { FrameworkNewGameContent } from "./framework-new-game.js";
+import { sourceCatalogProfile } from "./source-catalog.js";
 import type { PartyAppearanceCandidate } from "./party.js";
 import { initialPartyActorResidents, initialPartyActorSaveState, partyActorMapArea,
   partyMemberFieldAsset, type PartyActorCatalog } from "./party-actors.js";
@@ -64,18 +66,39 @@ export function validateFieldActorFactory(factory: FieldActorFactoryCatalog): vo
 /** CreateFieldPartyEntities/CreateFieldCharacterEntities + SetPartyCharacterAsset,
  * before PointIn/MapSetup. The caller MUST then run prepareMapPartyEntry; this is
  * deliberately not a player position or a development-checkpoint replacement. */
-export function createFreshFieldPartyActorCheckpoint(input: {
+type FreshFieldPartyActorCheckpointInput = {
   factory: FieldActorFactoryCatalog;
   catalog: PartyActorCatalog;
   fresh: NewGamePlan;
   party: PartyAppearanceCandidate;
   map: MapPartyEntryDefinition;
   playerId: string;
+};
+
+export function createFreshFieldPartyActorCheckpoint(input: FreshFieldPartyActorCheckpointInput): FieldPartyActorCheckpoint {
+  if (input.map.mapId !== input.fresh.entry.mapId)
+    throw new Error("Invalid fresh native field actor initialization");
+  return createInitializedFieldPartyActorCheckpoint(input);
+}
+
+/** An authored route is explicitly distinct from the source new-game route.
+ * Only its placement changes; initialized ownership is checked identically. */
+export function createFrameworkFieldPartyActorCheckpoint(input: Omit<FreshFieldPartyActorCheckpointInput, "factory"> & {
+  content: FrameworkNewGameContent;
 }): FieldPartyActorCheckpoint {
+  if (input.content.kind !== "framework-new-game-content-v1" ||
+      sourceCatalogProfile(input.content.developmentProfile) !== "framework" ||
+      input.content.entry.mapId !== input.map.mapId ||
+      input.map.pointIns.filter(point => point.id === input.content.entry.entrance).length !== 1)
+    throw new Error("Invalid framework native field actor initialization");
+  return createInitializedFieldPartyActorCheckpoint({ ...input, factory: input.content.factory });
+}
+
+function createInitializedFieldPartyActorCheckpoint(input: FreshFieldPartyActorCheckpointInput): FieldPartyActorCheckpoint {
   const { factory, catalog, fresh, party, map, playerId } = input;
   validateFieldActorFactory(factory);
   if (!playerId || fresh.kind !== "source-new-game-plan-v1" || fresh.stage !== "after-data-create-before-field-load" ||
-      map.mapId !== fresh.entry.mapId || map.kind !== "map-party-entry" || fresh.entry.viewType !== 0 ||
+      map.kind !== "map-party-entry" || fresh.entry.viewType !== 0 ||
       catalog.memberCount !== 4 || catalog.partyCount !== 3 || !Array.isArray(party.parties) || party.parties.length !== 3)
     throw new Error("Invalid fresh native field actor initialization");
   // Initial ownership comes from the source DataInitialize candidate. Merely

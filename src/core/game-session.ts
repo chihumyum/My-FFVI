@@ -32,6 +32,9 @@ import { canonical } from "./canonical.js";
 import { WalkEncounterState, type WalkEncounterSnapshot } from "./walk-encounters.js";
 import { prepareSourceNewGameField, installSourceNewGameActors, validateSourceNewGameLaunch,
   type SourceNewGameContent } from "./source-new-game.js";
+import { assertFrameworkNewGameBindings, prepareFrameworkNewGameField, installFrameworkNewGameActors,
+  type FrameworkNewGameContent } from "./framework-new-game.js";
+import { verifyContent } from "./content-integrity.js";
 import type { NewGameFieldLaunch, NewGameFieldPreparation } from "./new-game-field-entry.js";
 import { FieldFadeState } from "./field-fade.js";
 import { cloneSourcePresentationContext, createSourcePresentationContext, type SourcePresentationContext } from "./source-presentation.js";
@@ -47,7 +50,8 @@ type GameCheckpointBase = {
   kind: "game-checkpoint";
   sourceSetHash: string;
   battleCatalogHash: string;
-  origin: { kind: "development-checkpoint" } | { kind: "source-new-game"; sourceContentHash: string };
+  origin: { kind: "development-checkpoint" } | { kind: "source-new-game"; sourceContentHash: string }
+    | { kind: "framework-new-game"; entryContentHash: string };
   seed: number;
   encounterSerial: number;
   remainder: number;
@@ -57,7 +61,7 @@ type GameCheckpointBase = {
 };
 /** Version 4 is read-only compatibility for content without walk encounters. */
 export type GameCheckpoint = GameCheckpointBase & (
-  { formatVersion: 4 } | { formatVersion: 5; walkEncounters: WalkEncounterSnapshot }
+  { formatVersion: 4 } | { formatVersion: 5 | 6; walkEncounters: WalkEncounterSnapshot }
 );
 /** External observations are rebound by the host on load, never trusted from saves. */
 export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
@@ -68,10 +72,11 @@ export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort; fieldEff
   /** Host wall-clock observation for source parking timestamps; recorded as an
    * exact decimal Int64, never sampled by deterministic core state. */
   transportationTimestamp?: () => string };
-type FreshSession = { content: SourceNewGameContent; state: GameState; events: EventState;
-  map: WorldMapContent; fade: FieldFadeState; presentation: SourcePresentationContext; restoring?: true };
+type FreshSession = { content: SourceNewGameContent | FrameworkNewGameContent; state: GameState; events: EventState;
+  map: WorldMapContent; fade?: FieldFadeState; presentation: SourcePresentationContext; restoring?: true };
 export type GameRestoreWorld = { catalog: WorldCatalog; map: WorldMapContent;
-  source?: { content: SourceNewGameContent; initialMap: WorldMapContent } };
+  source?: { content: SourceNewGameContent; initialMap: WorldMapContent };
+  initialized?: { content: FrameworkNewGameContent; initialMap: WorldMapContent } };
 export type PreparedGameEventSave = {
   checkpoint: GameCheckpoint;
   validate(): void;
@@ -137,6 +142,7 @@ export class GameSession {
   private readonly walkEncounters: WalkEncounterState;
   private encounterFailure: { request: NonNullable<GameSession["field"]["stop"]>; message: string } | null = null;
   private freshEntry: { content: SourceNewGameContent; launched: boolean } | null = null;
+  private initializedEntry: FrameworkNewGameContent | null = null;
   static prepareNewGame(content: SourceNewGameContent, world: WorldCatalog, map: WorldMapContent,
     battle: BattleCatalog, fade: FieldFadeState, presentation: SourcePresentationContext,
     runtime: GameSessionRuntime = {}, seed = 20261010): GameSession {
@@ -152,6 +158,27 @@ export class GameSession {
       events, map, fade: fade.fork(), presentation: context });
     session.setBattlePreferences(prepared.fresh.battlePreferences);
     return session;
+  }
+  /** Source DataInitialize owns the initial domains; an independently declared
+   * framework map owns placement. Neither route nor legacy save is rewritten. */
+  static async prepareFrameworkNewGame(content: FrameworkNewGameContent, world: WorldCatalog, map: WorldMapContent,
+    battle: BattleCatalog, runtime: GameSessionRuntime = {}, seed = 20261010): Promise<GameSession> {
+    const input = structuredClone({ content, world, map, battle }), host = { ...runtime };
+    if (!input.battle.gameState.sourceNewGame) throw new Error("Missing framework source initializer");
+    await Promise.all([verifyContent(input.content), verifyContent(input.world), verifyContent(input.map), verifyContent(input.battle),
+      verifyContent({ ...input.battle.gameState.sourceNewGame, contentHash: input.content.initializerHash })]);
+    assertFrameworkNewGameBindings(input.content, input.world, input.map, input.battle);
+    const state = GameState.createNewGame(input.battle.gameState, input.battle.common.players,
+      input.battle.contentHash, input.battle.common.conditions);
+    const prepared = prepareFrameworkNewGameField(input.content, input.world, input.map, input.battle, state);
+    const events = new EventState(prepared.fresh.events); events.clearMap(input.map.mapId);
+    const presentation = createSourcePresentationContext({ kind: "title-new-game",
+      titleCleanupComplete: true, openingCallbackStarted: false });
+    const game = new GameSession(prepared.field, input.battle, seed, host,
+      { content: input.content, state, events, map: input.map, presentation });
+    game.field.startMapEntry(input.map.initializer ?? null);
+    game.setBattlePreferences(prepared.fresh.battlePreferences);
+    return game;
   }
   newGamePreparation(fieldUiReady: boolean): NewGameFieldPreparation {
     const fresh = this.freshEntry;
@@ -231,8 +258,13 @@ export class GameSession {
       ...(fresh.content.developmentProfile ? { developmentProfile: fresh.content.developmentProfile } : {}),
     } : undefined);
     if (fresh) {
-      if (!fresh.restoring) installSourceNewGameActors(this.field, fresh.content, this.state, fresh.map);
-      this.freshEntry = { content: structuredClone(fresh.content), launched: fresh.restoring === true };
+      if (fresh.content.kind === "framework-new-game-content-v1") {
+        if (!fresh.restoring) installFrameworkNewGameActors(this.field, fresh.content, this.state, fresh.map);
+        this.initializedEntry = structuredClone(fresh.content);
+      } else {
+        if (!fresh.restoring) installSourceNewGameActors(this.field, fresh.content, this.state, fresh.map);
+        this.freshEntry = { content: structuredClone(fresh.content), launched: fresh.restoring === true };
+      }
     }
   }
   get battlePreferences(): BattlePreferences {
@@ -439,11 +471,12 @@ export class GameSession {
   }
   private captureCheckpoint(world: WorldCheckpoint): GameCheckpoint {
     return {
-      formatVersion: 5,
+      formatVersion: this.initializedEntry ? 6 : 5,
       kind: "game-checkpoint",
       sourceSetHash: this.field.content.parentSourceSetHash,
       battleCatalogHash: this.battleCatalog.contentHash,
       origin: this.freshEntry ? { kind: "source-new-game", sourceContentHash: this.freshEntry.content.contentHash }
+        : this.initializedEntry ? { kind: "framework-new-game", entryContentHash: this.initializedEntry.contentHash }
         : { kind: "development-checkpoint" },
       seed: this.seed,
       encounterSerial: this.encounterSerial,
@@ -496,14 +529,14 @@ export class GameSession {
     runtime: GameSessionRuntime = {},
   ): GameSession {
     const s = structuredClone(raw);
-    if (s.formatVersion !== 4 && s.formatVersion !== 5) throw new Error("Game checkpoint source/version mismatch");
+    if (s.formatVersion !== 4 && s.formatVersion !== 5 && s.formatVersion !== 6) throw new Error("Game checkpoint source/version mismatch");
     checkpointKeys(
       s,
       "formatVersion,kind,sourceSetHash,battleCatalogHash,origin,seed,encounterSerial,remainder,battlePreferences,owned,world" +
-        (s.formatVersion === 5 ? ",walkEncounters" : ""),
+        (s.formatVersion === 4 ? "" : ",walkEncounters"),
     );
     if (
-      (s.formatVersion !== 4 && s.formatVersion !== 5) ||
+      (s.formatVersion !== 4 && s.formatVersion !== 5 && s.formatVersion !== 6) ||
       s.kind !== "game-checkpoint" ||
       s.battleCatalogHash !== battle.contentHash
     )
@@ -512,8 +545,28 @@ export class GameSession {
     checkpointInteger(s.encounterSerial);
     checkpointNumber(s.remainder, 0, 10);
     if (s.remainder >= 10) throw new Error("Invalid session remainder");
+    if ((s.formatVersion === 6) !== (s.origin?.kind === "framework-new-game"))
+      throw new Error("Checkpoint initialization version/origin mismatch");
     let next: GameSession;
-    if (s.origin?.kind === "source-new-game") {
+    if (s.origin?.kind === "framework-new-game") {
+      checkpointKeys(s.origin, "kind,entryContentHash");
+      const initialized = world?.initialized;
+      if (!world || !initialized || world.source || initialized.content.contentHash !== s.origin.entryContentHash ||
+          initialized.content.contentHash !== s.world.initialHash ||
+          initialized.content.parentSourceSetHash !== s.sourceSetHash || s.owned.initialization !== "source-new-game")
+        throw new Error("Framework new-game restore requires its trusted initializer/world dependencies");
+      assertFrameworkNewGameBindings(initialized.content, world.catalog, initialized.initialMap, battle);
+      assertSourceEntryProfiles(initialized.content, world.catalog, initialized.initialMap, world.map);
+      const state = GameState.createNewGame(battle.gameState, battle.common.players, battle.contentHash, battle.common.conditions);
+      const fade = s.world.field.fade === null ? undefined : FieldFadeState.restore(s.world.field.fade);
+      const prepared = prepareFrameworkNewGameField(initialized.content, world.catalog, initialized.initialMap, battle, state,
+        fade?.projection ?? undefined);
+      const presentation = createSourcePresentationContext({ kind: "title-new-game",
+        titleCleanupComplete: true, openingCallbackStarted: false });
+      next = new GameSession(prepared.field, battle, s.seed, runtime, { content: initialized.content, state,
+        events: new EventState(s.world.field.eventState), map: initialized.initialMap,
+        ...(fade ? { fade } : {}), presentation, restoring: true });
+    } else if (s.origin?.kind === "source-new-game") {
       checkpointKeys(s.origin, "kind,sourceContentHash");
       const source = world?.source;
       if (!source || !world || source.content.contentHash !== s.origin.sourceContentHash ||
@@ -553,8 +606,9 @@ export class GameSession {
     next.state.restore(s.owned);
     if (s.encounterSerial !== s.owned.completedBattles.length)
       throw new Error("Saved encounter sequence disagrees with settled battles");
-    next.world.restore(s.world, world?.catalog, world?.map, s.origin.kind === "source-new-game" ? world!.source : undefined);
-    if (s.formatVersion === 5) next.walkEncounters.restore(s.walkEncounters);
+    next.world.restore(s.world, world?.catalog, world?.map,
+      s.origin.kind === "source-new-game" ? world!.source : s.origin.kind === "framework-new-game" ? world!.initialized : undefined);
+    if (s.formatVersion !== 4) next.walkEncounters.restore(s.walkEncounters);
     else if (initial?.walkEncounters || next.field.content.walkEncounters)
       throw new Error("Legacy checkpoint has no walking encounter state");
     if (next.field.content.walkEncounters)

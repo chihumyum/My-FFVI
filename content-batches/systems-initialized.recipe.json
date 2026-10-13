@@ -1,0 +1,18 @@
+{
+  "kind": "initialized-systems-recipe-v1",
+  "id": "systems-initialized",
+  "sourceEntry": {"url": "/game/source-new-game.json", "contentHash": "92d0b73bde896d0c77ec11ec22e28628c7f5082faac0ed3f59b9544aa26459a8"},
+  "sourceBattle": {"url": "/game/source-catalog.json", "contentHash": "6e8a406f2de60128267eca0c3d3039a77de96c4b183e31f4a8d84c2ea779a926"},
+  "sourceWorld": {"url": "/world/catalog.json", "contentHash": "b3329d95c99a1181e917d09d7e4fb528a13c72f79be45323b75a010534229458"},
+  "sourceMap": {"url": "/world/maps/3.json", "contentHash": "ed36523611ec046d01d5e5f92c14531589899db3b12f62d964f832d5c2b328b2"},
+  "battleSourceSetHash": "d713cd2b9b117321b895f480fbc32c93a1fe630ac269b2de9a40a5a885324856",
+  "handoff": {"kind": "framework-battle-handoff-v1", "id": "systems-initialized-v73", "audio": "retain-field", "introduction": "omit"},
+  "mapId": 900101,
+  "areaId": 900100,
+  "name": "游戏系统演示 · 初始化训练场",
+  "trainingNote": "先升级与回复，再挑战魔法学习训练。",
+  "entrance": {"x": 38, "y": 49, "layer": 1, "direction": "up"},
+  "training": {"x": 38, "y": 48, "learningPartyId": 3398, "growthPartyId": 517},
+  "shop": {"x": 39, "y": 49, "groupId": 2},
+  "magicStone": {"x": 38, "y": 50, "contentId": 73}
+}

@@ -30,7 +30,8 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     manifestHash: plan.manifestHash, dependencyHash: plan.dependencyHash, runtimeHash,
     contentHashes: structuredClone(plan.contentHashes), profile: plan.manifest.profile,
     lane: route.entry === "source-new-game" ? "source-profile" :
-      route.entry === "development-map" ? "source-content-development" : "synthetic-controlled",
+      route.entry === "development-map" ? "source-content-development" :
+      route.entry === "framework-new-game" ? "framework-initialized" : "synthetic-controlled",
     result: "blocked", visitedMapIds: [], completedEncounterIds: [], finalMapId: route.expectedMapId,
     checkpointReady: false, saveRestored: false,
     controls: ["10ms headless host; media and audio output immediately ready", "in-memory real checkpoint codec/storage",
@@ -111,7 +112,18 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     await boundMaps.world();
     const startAttempt = entries.begin("new-game");
     let started;
-    if (route.entry === "source-new-game") {
+    if (route.entry === "framework-new-game") {
+      started = await startAttempt.prepare(async context => {
+        const { content, catalog, map, battle } = await repository.initializedNewGame();
+        assert.ok(context.isCurrent(), "Initialized framework route entry was cancelled");
+        assert.equal(content.contentHash, plan.contentHashes.entry);
+        assert.equal(battle.contentHash, plan.contentHashes.battle);
+        bound("world", catalog); bound(`map:${map.mapId}`, map);
+        const session = await GameSession.prepareFrameworkNewGame(content, catalog, map, battle, runtime, 314);
+        assert.ok(context.isCurrent(), "Initialized framework route entry became obsolete");
+        return { session, presentation: { mapId: map.mapId } };
+      });
+    } else if (route.entry === "source-new-game") {
       // This path deliberately does not fetch the legacy opening field package.
       const { content, catalog, map, battle } = await repository.sourceNewGame();
       assert.equal(content.contentHash, plan.contentHashes.entry);

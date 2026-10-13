@@ -173,7 +173,7 @@ function cancelEntryLoad() {
   audio.reset();
   $("welcome").hidden = flow.started;
   if (flow.started) { sync(); if (flow.paused) $("resume").focus(); else focus(); }
-  else $("source-start").focus();
+  else $(contents.hasInitializedEntry || contents.hasDevelopmentEntry ? "start" : "source-start").focus();
 }
 function prepareSessionViews(candidate) {
   const next = candidate.field.content;
@@ -242,6 +242,7 @@ function bindSession(candidate, views) {
   showLimitations();
 }
 async function reset() {
+  if (contents.hasInitializedEntry) return startInitializedGame();
   if (!contentReady || !contents.hasDevelopmentEntry || failed || flow.busy) return;
   const outgoingOwner = flow.currentSession;
   const operation = beginEntryLoad("new-game", systemsPlayground ? "正在准备系统演示…" : "正在准备开发片段…");
@@ -267,6 +268,37 @@ async function reset() {
     published = true;
     bindSession(result.session, result.presentation);
     if (preview) game.previewMap(preview.mapId, preview.entrance);
+    focus(); sync();
+  } catch (error) {
+    if (published || entryLoad === operation && flow.currentSession !== outgoingOwner) failure(error);
+    else entryLoadFailed(operation, error);
+  } finally { finishEntryLoad(operation); }
+}
+async function startInitializedGame() {
+  if (!contentReady || !contents.hasInitializedEntry || failed || flow.busy) return;
+  const outgoingOwner = flow.currentSession;
+  const operation = beginEntryLoad("new-game", "正在准备系统演示…");
+  const preferences = flow.currentSession?.battlePreferences;
+  let published = false;
+  try {
+    const result = await operation.prepare(async (context) => {
+      const current = () => { if (!context.isCurrent()) throw new Error("Game entry cancelled"); };
+      audio.reset();
+      await audio.unlock(); current();
+      const { content, catalog, map, battle } = await contents.initializedNewGame(); current();
+      // The entry declares a real initializer and an authored route. It does
+      // not borrow the source title/fade launch or seed a development save.
+      const candidate = await GameSession.prepareFrameworkNewGame(content, catalog, map, battle, runtime);
+      current();
+      if (preferences) candidate.setBattlePreferences(preferences);
+      await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks); current();
+      await loadImages(fieldMediaUrls(candidate.field.content)); current();
+      return { session: candidate, presentation: prepareSessionViews(candidate) };
+    });
+    if (result.status === "cancelled") return;
+    if (result.status === "failed") { entryLoadFailed(operation, result.error); return; }
+    published = true;
+    bindSession(result.session, result.presentation);
     focus(); sync();
   } catch (error) {
     if (published || entryLoad === operation && flow.currentSession !== outgoingOwner) failure(error);
@@ -746,9 +778,15 @@ async function init() {
     text("welcome-description", "进入后向上走一格，按空格 / Enter 继续对话并进入第一战。");
     text("welcome-scope", "使用来源开发队伍和作者编排的演示事件，拥有独立本地存档。战后打开暂停菜单，可使用道具、调整队伍、保存并恢复；继续后向右走一步过门，再向上走进入第二战。");
   }
-  $("systems-playground-link").hidden = systemsPlayground;
-  $("systems-playground-help").hidden = !systemsPlayground;
-  if (preview) {
+  if (contents.hasInitializedEntry) {
+    text("welcome-title", "游戏系统演示");
+    text("welcome-description", "购买道具、装备魔石并练习战斗；探索时可打开暂停菜单，查看学习进度、保存和恢复。");
+    text("welcome-scope", "使用新游戏初始化数据与作者编排的演示事件，拥有独立本地存档，不代表原剧情进度。");
+    text("systems-playground-help", "游戏系统演示：起点上方是战斗训练，右侧是商店，下方可领取魔石。按方向键面向设施，再按 Enter / 空格交互。按 Esc 打开菜单，可换装、编队、使用道具或魔法、装备魔石和存读档。先升级与回复，再挑战魔法学习训练。");
+  }
+  $("systems-playground-link").hidden = systemsPlayground || contents.hasInitializedEntry;
+  $("systems-playground-help").hidden = !systemsPlayground && !contents.hasInitializedEntry;
+  if (preview && !contents.hasInitializedEntry) {
     text("welcome-title", "地图开发预览");
     text(
       "welcome-description",
@@ -759,14 +797,15 @@ async function init() {
       "直接检查来源地图、移动和入口事件。沿用开发队伍；未设置未知剧情状态，不代表该地图已从主线可达。",
     );
   }
-  $("start").hidden = !contents.hasDevelopmentEntry;
+  const canStart = contents.hasDevelopmentEntry || contents.hasInitializedEntry;
+  $("start").hidden = !canStart;
   $("source-start").hidden = !contents.hasSourceEntry;
-  $("restart").hidden = !contents.hasDevelopmentEntry;
-  $("retry").hidden = !contents.hasDevelopmentEntry;
-  $("start").disabled = !contents.hasDevelopmentEntry;
+  $("restart").hidden = !canStart;
+  $("retry").hidden = !canStart;
+  $("start").disabled = !canStart;
   $("source-start").disabled = !contents.hasSourceEntry;
   await refreshSaveInfo();
-  text("start", preview ? "进入地图预览" : systemsPlayground ? "开始系统演示" : query.has("package") ? "进入开发片段" : "进入纳尔谢");
+  text("start", contents.hasInitializedEntry || systemsPlayground ? "开始系统演示" : preview ? "进入地图预览" : query.has("package") ? "进入开发片段" : "进入纳尔谢");
   sync();
   text("status", "选择开始游戏或继续本地进度。");
   requestAnimationFrame(frame);
@@ -906,8 +945,8 @@ function syncSaveControls() {
   $("load-previous").disabled = failed || flow.busy || !hasPreviousSave;
   for (const id of ["resume", "restart", "start", "source-start", "return-title"])
     $(id).disabled = failed || flow.busy;
-  $("start").disabled ||= !contentReady || !contents.hasDevelopmentEntry;
-  $("restart").disabled ||= !contentReady || !contents.hasDevelopmentEntry;
+  $("start").disabled ||= !contentReady || !(contents.hasDevelopmentEntry || contents.hasInitializedEntry);
+  $("restart").disabled ||= !contentReady || !(contents.hasDevelopmentEntry || contents.hasInitializedEntry);
   $("source-start").disabled ||= !contentReady || !contents.hasSourceEntry;
   $("stop-title-return").disabled = failed;
   $("cancel-entry-load").disabled = failed;

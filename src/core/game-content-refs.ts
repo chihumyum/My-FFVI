@@ -3,13 +3,18 @@
 export type GameContentProfile = "source" | "framework";
 export type GameContentRef = { url: string; contentHash: string };
 export type GameEntryRefs = { entry: GameContentRef; battle: GameContentRef };
-export type GameContentRefs = {
+export type GameContentRefsV1 = {
   kind: "game-content-refs-v1";
   profile: GameContentProfile;
   world: GameContentRef;
   source: GameEntryRefs | null;
   development: GameEntryRefs | null;
 };
+export type GameContentRefsV2 = Omit<GameContentRefsV1, "kind"> & {
+  kind: "game-content-refs-v2";
+  initialized: GameEntryRefs | null;
+};
+export type GameContentRefs = GameContentRefsV1 | GameContentRefsV2;
 
 function plainObject(raw: object): boolean {
   const prototype: unknown = Object.getPrototypeOf(raw);
@@ -56,11 +61,24 @@ function entryReferences(raw: unknown): GameEntryRefs | null {
 /** All fields are explicit. No custom reference inherits a default location,
  * entry, profile or pin. The returned tree contains detached plain data. */
 export function parseGameContentRefs(raw: unknown): GameContentRefs {
-  const value = record(raw, ["kind", "profile", "world", "source", "development"]);
-  if (value.kind !== "game-content-refs-v1" || (value.profile !== "source" && value.profile !== "framework"))
+  // Inspect an own data descriptor; a discriminator getter never executes.
+  const kind = raw && typeof raw === "object" ? Object.getOwnPropertyDescriptor(raw, "kind") : undefined;
+  const initializedVersion = kind && "value" in kind && kind.value === "game-content-refs-v2";
+  const value = record(raw, ["kind", "profile", "world", "source", "development",
+    ...(initializedVersion ? ["initialized"] : [])]);
+  if ((!initializedVersion && value.kind !== "game-content-refs-v1") ||
+      (value.profile !== "source" && value.profile !== "framework"))
     throw new Error("Invalid game content references kind/profile");
   const world = reference(value.world), source = entryReferences(value.source),
     development = entryReferences(value.development);
+  if (initializedVersion) {
+    const initialized = entryReferences(value.initialized);
+    if (initialized !== null && value.profile !== "framework")
+      throw new Error("Initialized game content references require framework profile");
+    if (source === null && development === null && initialized === null)
+      throw new Error("Game content references require an entry");
+    return { kind: "game-content-refs-v2", profile: value.profile, world, source, development, initialized };
+  }
   if (source === null && development === null) throw new Error("Game content references require an entry");
   return { kind: "game-content-refs-v1", profile: value.profile, world, source, development };
 }

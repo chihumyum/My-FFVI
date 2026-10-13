@@ -11,7 +11,7 @@ export type ContentBatchRouteProgram = {
 
 export type ContentBatchRouteSpec = {
   id: string;
-  entry: "source-new-game" | "controlled-fixture" | "development-map";
+  entry: "source-new-game" | "controlled-fixture" | "development-map" | "framework-new-game";
   expectedMapId: number;
   requiredMapIds: number[];
   requiredEncounterIds: number[];
@@ -25,7 +25,7 @@ export type ContentBatchRouteReceipt = {
   dependencyHash: string;
   runtimeHash: string;
   contentHashes: Record<string, string>;
-  lane: "source-profile" | "synthetic-controlled" | "source-content-development";
+  lane: "source-profile" | "synthetic-controlled" | "source-content-development" | "framework-initialized";
   profile: "source" | "framework";
   result: "completed" | "blocked" | "failed";
   visitedMapIds: number[];
@@ -78,7 +78,7 @@ const program = z.object({
 }).strict();
 const routeSpec = z.object({
   id: text,
-  entry: z.enum(["source-new-game", "controlled-fixture", "development-map"]),
+  entry: z.enum(["source-new-game", "controlled-fixture", "development-map", "framework-new-game"]),
   expectedMapId: identity,
   requiredMapIds: z.array(identity),
   requiredEncounterIds: z.array(identity),
@@ -91,7 +91,7 @@ const receipt = z.object({
   dependencyHash: digest,
   runtimeHash: digest,
   contentHashes,
-  lane: z.enum(["source-profile", "synthetic-controlled", "source-content-development"]),
+  lane: z.enum(["source-profile", "synthetic-controlled", "source-content-development", "framework-initialized"]),
   profile,
   result: z.enum(["completed", "blocked", "failed"]),
   visitedMapIds: z.array(identity),
@@ -166,6 +166,8 @@ export function assessContentBatchAdmission(raw: ContentBatchAdmissionInput): Co
     if (repeatedRoutes.has(spec.id)) fail("duplicate-route-id", `Route identity ${spec.id} is not unique`);
     if (spec.entry === "development-map" && input.profile !== "framework")
       fail("development-route-profile", "Development map routes require the framework profile");
+    if (spec.entry === "framework-new-game" && input.profile !== "framework")
+      fail("initialized-route-profile", "Initialized framework routes require the framework profile");
     for (const id of duplicates(spec.requiredMapIds))
       fail("duplicate-required-map", `Required map ${id} is listed more than once`);
     for (const id of duplicates(spec.requiredEncounterIds))
@@ -189,7 +191,8 @@ export function assessContentBatchAdmission(raw: ContentBatchAdmissionInput): Co
             input.contentHashes[key] !== found.contentHashes[key])
           fail("content-hash-mismatch", `Content dependency ${key} is missing, extra or changed`);
       const expectedLane = spec.entry === "source-new-game" ? "source-profile" :
-        spec.entry === "development-map" ? "source-content-development" : "synthetic-controlled";
+        spec.entry === "development-map" ? "source-content-development" :
+        spec.entry === "framework-new-game" ? "framework-initialized" : "synthetic-controlled";
       if (found.lane !== expectedLane)
         fail("route-lane-mismatch", `${spec.entry} requires ${expectedLane} evidence`);
       if (found.result !== "completed")

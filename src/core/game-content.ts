@@ -1,12 +1,13 @@
 import type { FieldContent } from "../field/types.js";
 import type { WorldCatalog, WorldMapContent } from "../field/world.js";
 import type { BattleCatalog, BattleContent, CombatantDefinition } from "./battle-content.js";
-import { verifyContent } from "./content-integrity.js";
+import { verifyContent, contentDigest } from "./content-integrity.js";
 import type { GameCheckpoint, GameRestoreWorld } from "./game-session.js";
 import type { SourceNewGameContent } from "./source-new-game.js";
 import { assertSourceGameCatalog } from "./source-catalog.js";
 import { parseGameContentRefs, type GameContentProfile, type GameContentRefs } from "./game-content-refs.js";
 import { parseGameDevelopmentEntry, assertGameDevelopmentEntry } from "./game-development-entry.js";
+import { assertFrameworkNewGameBindings, parseFrameworkNewGameContent, type FrameworkNewGameContent } from "./framework-new-game.js";
 
 export type { GameContentProfile } from "./game-content-refs.js";
 
@@ -26,6 +27,7 @@ export type SourceEntryContent = {
   map: WorldMapContent;
   battle: BattleCatalog;
 };
+export type InitializedEntryContent = Omit<SourceEntryContent, "content"> & { content: FrameworkNewGameContent };
 export type RestoreSessionContent = {
   initial?: FieldContent;
   battle: BattleCatalog;
@@ -99,6 +101,9 @@ function sourceContent(value: unknown): SourceNewGameContent {
   integer(value.entry.fallbackScript.id, 1); text(value.entry.fallbackScript.name);
   return value as SourceNewGameContent;
 }
+function initializedContent(value: unknown): FrameworkNewGameContent {
+  return parseFrameworkNewGameContent(value);
+}
 
 /** Fetches and verifies content only. It never creates sessions, runs scripts,
  * publishes a map, or decodes media. Returned objects are detached from caches. */
@@ -119,12 +124,20 @@ export class GameContentRepository {
 
   get hasSourceEntry(): boolean { return this.references?.source !== null; }
   get hasDevelopmentEntry(): boolean { return this.references?.development !== null; }
+  get hasInitializedEntry(): boolean {
+    return this.references?.kind === "game-content-refs-v2" && this.references.initialized !== null;
+  }
 
   private worldReference(): ContentReference {
     return this.references === undefined ? { url: this.worldUrl } : this.references.world;
   }
 
-  private entryReferences(kind: "source" | "development"): EntryReferences {
+  private entryReferences(kind: "source" | "development" | "initialized"): EntryReferences {
+    if (kind === "initialized") {
+      if (this.profile !== "framework" || this.references?.kind !== "game-content-refs-v2" ||
+          this.references.initialized === null) throw new Error("Game content initialized entry is unavailable");
+      return this.references.initialized;
+    }
     if (this.references === undefined) return kind === "source"
       ? { entry: { url: this.newGameUrl }, battle: { url: "/game/source-catalog.json" } }
       : { entry: { url: "/game/content.json" }, battle: { url: "/game/battle.json" } };
@@ -181,6 +194,9 @@ export class GameContentRepository {
   sourceNewGame(): Promise<SourceEntryContent> {
     return this.operation((read) => this.readSourceEntry(read));
   }
+  initializedNewGame(): Promise<InitializedEntryContent> {
+    return this.operation(read => this.readInitializedEntry(read));
+  }
 
   async restoreWorld(checkpoint: GameCheckpoint): Promise<GameRestoreWorld | undefined> {
     return (await this.restoreSessionContent(checkpoint)).world;
@@ -190,7 +206,8 @@ export class GameContentRepository {
     const saved = structuredClone(checkpoint);
     return this.operation(async (read) => {
       header(saved, "game-checkpoint");
-      if (saved.formatVersion !== 4 && saved.formatVersion !== 5) throw new Error("Game checkpoint version mismatch");
+      if (saved.formatVersion !== 4 && saved.formatVersion !== 5 && saved.formatVersion !== 6)
+        throw new Error("Game checkpoint version mismatch");
       header(saved.world, saved.world?.kind === "event-world-v1" ? "event-world-v1" : "idle-world-v10");
       text(saved.sourceSetHash); hash(saved.battleCatalogHash); hash(saved.world.initialHash);
       object(saved.origin);
@@ -199,7 +216,21 @@ export class GameContentRepository {
         this.pinnedExpected(this.worldReference(), saved.world.location.catalogHash);
       }
       let result: RestoreSessionContent;
-      if (saved.origin.kind === "source-new-game") {
+      if (saved.origin.kind === "framework-new-game") {
+        if (saved.formatVersion !== 6) throw new Error("Initialized checkpoint version mismatch");
+        hash(saved.origin.entryContentHash);
+        const references = this.entryReferences("initialized");
+        this.pinnedExpected(references.entry, saved.origin.entryContentHash);
+        this.pinnedExpected(references.entry, saved.world.initialHash);
+        this.pinnedExpected(references.battle, saved.battleCatalogHash);
+        const initial = await this.readInitializedEntry(read, saved.origin.entryContentHash);
+        if (saved.sourceSetHash !== initial.content.parentSourceSetHash ||
+            saved.battleCatalogHash !== initial.content.battleCatalogHash || saved.world.initialHash !== initial.content.contentHash)
+          throw new Error("Initialized game checkpoint identity mismatch");
+        result = { battle: initial.battle, world: { catalog: initial.catalog, map: initial.map,
+          initialized: { content: initial.content, initialMap: initial.map } } };
+      } else if (saved.origin.kind === "source-new-game") {
+        if (saved.formatVersion === 6) throw new Error("Source checkpoint version/origin mismatch");
         hash(saved.origin.sourceContentHash);
         const references = this.entryReferences("source");
         this.pinnedExpected(references.entry, saved.origin.sourceContentHash);
@@ -213,6 +244,7 @@ export class GameContentRepository {
         result = { battle: initial.battle, world: { catalog: initial.catalog, map: initial.map,
           source: { content: initial.content, initialMap: initial.map } } };
       } else if (saved.origin.kind === "development-checkpoint") {
+        if (saved.formatVersion === 6) throw new Error("Development checkpoint version/origin mismatch");
         const references = this.entryReferences("development");
         this.pinnedExpected(references.entry, saved.world.initialHash);
         this.pinnedExpected(references.battle, saved.battleCatalogHash);
@@ -291,6 +323,22 @@ export class GameContentRepository {
     if (map.map === null || !Array.isArray(map.scripts[script.name]) ||
         map.scriptPuppetContexts?.[script.name]?.scriptHash !== script.contentHash)
       throw new Error("Fresh game entry/script dependency mismatch");
+    return { content, catalog, map, battle };
+  }
+  private async readInitializedEntry(read: ContentReader, expected?: string): Promise<InitializedEntryContent> {
+    const references = this.entryReferences("initialized");
+    const [content, catalog, battle] = await Promise.all([
+      read(references.entry.url, value => this.profileContent(initializedContent(value)),
+        this.pinnedExpected(references.entry, expected)),
+      this.readWorld(read), read(references.battle.url, battleContent, references.battle.contentHash),
+    ]);
+    this.pinnedExpected(references.battle, content.battleCatalogHash);
+    this.pinnedExpected(this.worldReference(), content.worldCatalogHash);
+    const map = await this.readMap(read, content.entry.mapId, catalog);
+    assertFrameworkNewGameBindings(content, catalog, map, battle);
+    if (!battle.gameState.sourceNewGame ||
+        await contentDigest(battle.gameState.sourceNewGame) !== content.initializerHash)
+      throw new Error("Initialized game initializer/hash mismatch");
     return { content, catalog, map, battle };
   }
 

@@ -8,8 +8,8 @@ export async function readSourceBatch(root, manifestPath, compiled = "dist") {
   const { GameContentRepository } = await import(pathToFileURL(resolve(root, compiled, "src/core/game-content.js")));
   const manifest = ContentBatchManifest.parse(JSON.parse(await readFile(resolve(root, manifestPath), "utf8")));
   const entryLane = manifest.routes[0].entry;
-  if (!["source-new-game", "development-map"].includes(entryLane) || manifest.routes.some(route => route.entry !== entryLane))
-    throw new Error("Source batch CLI accepts only source-new-game or development-map entries in one lane");
+  if (!["source-new-game", "development-map", "framework-new-game"].includes(entryLane) || manifest.routes.some(route => route.entry !== entryLane))
+    throw new Error("Batch CLI accepts only a single declared source, development-map or initialized framework entry lane");
   const aliases = { "/game/battle.json": "/game/opening-playable.json", "/game/new-game.json": "/game/source-new-game.json" };
   const buildRoot = resolve(root, "build");
   const withinBuild = path => {
@@ -37,6 +37,9 @@ export async function readSourceBatch(root, manifestPath, compiled = "dist") {
     const opening = await repository.opening();
     if (!opening.development) throw new Error("Development map batch requires a declared map entry");
     entry = opening.field; battle = opening.battle; catalog = opening.development.catalog;
+  } else if (entryLane === "framework-new-game") {
+    if (manifest.profile !== "framework") throw new Error("Initialized batch requires the framework profile");
+    ({ content: entry, catalog, battle } = await repository.initializedNewGame());
   } else ({ content: entry, catalog, battle } = await repository.sourceNewGame());
   const maps = await Promise.all(manifest.mapIds.map(id => {
     const ref = catalog.maps[id]; if (!ref) throw new Error(`No source package for declared map ${id}`);

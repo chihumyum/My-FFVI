@@ -186,7 +186,7 @@ test("a legacy source manifest still uses the old default URLs and aliases", asy
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 
-test("the file adapter cannot turn a development lane into the source-only CLI", async () => {
+test("the file adapter rejects undeclared fixture execution lanes", async () => {
   const f = await filesFixture();
   try {
     await writeJson(join(f.root, "manifest.json"), { ...f.manifest, contentRefs: {
@@ -194,7 +194,7 @@ test("the file adapter cannot turn a development lane into the source-only CLI",
     await assert.rejects(readBatch(f.root), /source|entry.*(?:missing|unavailable|disabled)|lane/i);
     await writeJson(join(f.root, "manifest.json"), { ...f.manifest,
       routes: f.manifest.routes.map(route => ({ ...route, entry: "controlled-fixture" })) });
-    await assert.rejects(readBatch(f.root), /only source-new-game/);
+    await assert.rejects(readBatch(f.root), /single declared source, development-map or initialized framework entry lane/);
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 

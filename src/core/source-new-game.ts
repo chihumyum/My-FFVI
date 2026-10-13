@@ -20,8 +20,7 @@ import type { DevelopmentProfile } from "./development-profile.js";
 
 /** Binds the differently scoped source manifests explicitly. The battle
  * package's development-field fingerprint is never relabelled as the corpus. */
-export type SourceNewGameContent = {
-  kind: "source-new-game-content-v1";
+export type NativeGameEntryContent = {
   contentHash: string;
   developmentProfile?: DevelopmentProfile;
   sourceSetHash: string;
@@ -29,11 +28,15 @@ export type SourceNewGameContent = {
   battleCatalogHash: string;
   worldCatalogHash: string;
   mapContentHash: string;
-  entry: NewGameFieldEntryDefinition;
+  entry: { mapId: number; entrance: number };
   factory: FieldActorFactoryCatalog;
   puppetCatalog: FieldPuppetActorCatalog;
   view: FieldActorViewDefinition;
   animationKeys: FieldNativeAnimationKeys;
+};
+export type SourceNewGameContent = NativeGameEntryContent & {
+  kind: "source-new-game-content-v1";
+  entry: NewGameFieldEntryDefinition;
 };
 
 export function prepareSourceNewGameField(content: SourceNewGameContent, world: WorldCatalog,
@@ -75,6 +78,13 @@ export function prepareSourceNewGameField(content: SourceNewGameContent, world: 
 /** Called after real MapSetup and media preparation and before the reserved
  * script. No second actor list survives installation in FieldGame. */
 export function installSourceNewGameActors(field: FieldGame, content: SourceNewGameContent,
+  state: GameState, map: WorldMapContent): void {
+  installFreshGameActors(field, content, state, map);
+}
+
+/** Both explicitly admitted entry lanes install into the existing field actor
+ * owner. Route admission remains in their separate preparation wrappers. */
+export function installFreshGameActors(field: FieldGame, content: NativeGameEntryContent,
   state: GameState, map: WorldMapContent): void {
   const party = state.fieldPartyAppearance, checkpoint = field.partyActorCheckpoint, camera = field.cameraSnapshot;
   if (!party || !checkpoint || !camera || !map.partyEntry || !field.content.cameraHost)

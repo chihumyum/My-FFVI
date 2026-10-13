@@ -8,6 +8,10 @@
 
 源码、合成测试、架构和实施记录由 Git 跟踪，并同步至私有仓库 [chihumyum/ffvi-reweb](https://github.com/chihumyum/ffvi-reweb)。原始游戏资源和生成产物保留在本地，不进入仓库。
 
+当前可操作系统入口：[初始化训练场](http://127.0.0.1:4173/game/?package=systems-initialized)。上方训练、右侧商店、下方魔石；按方向键面向设施，再按 Enter / 空格确认，Esc 打开队伍、装备、道具、魔法和保存菜单。角色与持有资源由来源新游戏初始化，训练事件单独编排并使用独立进度槽。完整主线和世界旅行仍待迁移。
+
+已有本地来源目录、世界与媒体产物时，使用 `npm run initialized-systems:build` 更新该包，`npm run initialized-systems:check` 验证连续系统和受控界面。运行 `npm run dev` 后可从默认游戏页面的系统演示链接进入。
+
 ## 文档入口
 
 - [完整架构](docs/architecture.md)
@@ -19,6 +23,8 @@
 - [核心机制现状与优先次序](docs/core-mechanics.md)
 - [游戏系统框架与连续流程验收](docs/game-framework.md)
 - [当前完整系统推进顺序](docs/systems-roadmap.md)
+- [v73 来源初始化的可操作系统入口](docs/systems-v73.md)
+- [v72 商店、魔石与成长闭环](docs/systems-v72.md)
 - [v71 字段魔法系统](docs/systems-v71.md)
 - [v70 完整持有名册与三组编队](docs/systems-v70.md)
 - [v69 可操作的游戏系统骨架](docs/systems-v69.md)

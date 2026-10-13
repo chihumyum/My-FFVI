@@ -24,7 +24,7 @@ import type { FieldFadeState } from "./field-fade.js";
 import type { SourceNativeState } from "./source-native-state.js";
 import { prepareSourceNativeMap } from "./source-native-map.js";
 import { prepareNativeFieldProviders } from "./field-native-providers.js";
-import type { SourceNewGameContent } from "./source-new-game.js";
+import type { NativeGameEntryContent } from "./source-new-game.js";
 import { assertSourceEntryProfiles, type SourceEntryProfileDependency } from "./source-catalog.js";
 import { FieldEffects, type FieldEffectCandidate, type FieldEffectCandidatePrepared } from "./field-effects.js";
 import { FieldEffectMap } from "./field-effect-map.js";
@@ -317,7 +317,7 @@ export class WorldSession {
     snapshot: WorldCheckpoint,
     catalog?: WorldCatalog,
     target?: WorldMapContent,
-    native?: { content: SourceNewGameContent; initialMap: WorldMapContent },
+    native?: { content: NativeGameEntryContent; initialMap: WorldMapContent },
   ): void {
     if (this.commitInProgress) throw new Error("Cannot restore during map publication");
     if (this.sourceOrigin) {
