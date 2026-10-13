@@ -22,6 +22,7 @@ import { parseBattleRewardPolicy, type BattleRewardPolicy } from "./battle-resul
 import { parseBattleLifecycle, type BattleLifecycle } from "./battle-lifecycle.js";
 import { parseBattleParticipantContent, type BattleParticipantContent } from "./battle-participants.js";
 import { parseBattlePlayerPlan, type BattlePlayerPlan } from "./battle-player-participants.js";
+import { parseBattleHandoffContent, type BattleHandoffContent } from "./battle-handoff-content.js";
 
 export type BattleQualificationContext = Omit<BattleAbilityContext, "conditionIds" | "partySize"> & {
   /** Source mode enforces qualification. The explicit development mode keeps
@@ -57,6 +58,8 @@ export type BattleContent = {
   rewardPolicy?: BattleRewardPolicy;
   /** New source catalogs always bind the event program or an explicit omission. */
   lifecycle?: BattleLifecycle;
+  /** Optional declarations and an explicit handoff policy, not native admission. */
+  handoff?: BattleHandoffContent;
   /** Reusable enemy content is separate from the current battle unit owner. */
   participants?: BattleParticipantContent;
   playerParticipants?: BattlePlayerPlan;
@@ -157,6 +160,7 @@ export type BattleEncounter = Pick<
   escapePolicy?: FrameworkBattleEscapePolicy;
   rewardPolicy?: BattleRewardPolicy;
   lifecycle?: BattleLifecycle;
+  handoff?: BattleHandoffContent;
   participants?: BattleParticipantContent;
   playerParticipants?: BattlePlayerPlan;
 };
@@ -210,6 +214,8 @@ export type BattleEncounterReport = {
     scriptSource: BattleAISource | null;
     consumerSemantics: "unverified";
   }[];
+  /** Opt-in handoff declarations also survive when another lane blocks the encounter. */
+  handoffSources?: { partyId: number; content: BattleHandoffContent }[];
 };
 export type BattleCatalog = {
   kind: "narshe-battle-catalog";
@@ -228,13 +234,14 @@ export function encounterContent(
   if (Object.hasOwn(catalog.common, "escapePolicy")) throw new Error("Escape policy must belong to an encounter");
   if (Object.hasOwn(catalog.common, "rewardPolicy")) throw new Error("Reward policy must belong to an encounter");
   if (Object.hasOwn(catalog.common, "lifecycle")) throw new Error("Battle lifecycle must belong to an encounter");
+  if (Object.hasOwn(catalog.common, "handoff")) throw new Error("Battle handoff must belong to an encounter");
   if (Object.hasOwn(catalog.common, "participants")) throw new Error("Battle participants must belong to an encounter");
   if (Object.hasOwn(catalog.common, "playerParticipants")) throw new Error("Battle player participants must belong to an encounter");
   const encounter = catalog.encounters[String(id)];
   if (!encounter) return null;
   if (encounter.encounterId !== id) throw new Error("Inconsistent battle encounter identity");
   const options = encounterFormationOptions(encounter);
-  const { formationPlan, escapePolicy, rewardPolicy, lifecycle, participants, playerParticipants, ...definition } = encounter;
+  const { formationPlan, escapePolicy, rewardPolicy, lifecycle, handoff, participants, playerParticipants, ...definition } = encounter;
   const escape = escapePolicy === undefined ? {} : { escapePolicy: parseBattleEscapePolicy(escapePolicy) };
   if (rewardPolicy === undefined && catalog.gameState.characterInitializations)
     throw new Error("Source encounter lacks battle reward policy");
@@ -245,13 +252,14 @@ export function encounterContent(
   if (catalog.gameState.characterInitializations && parsedLifecycle?.mode === "script" && parsedLifecycle.program.source === null)
     throw new Error("Source encounter battle lifecycle lacks source identity");
   const event = parsedLifecycle === undefined ? {} : { lifecycle: parsedLifecycle };
+  const handoffContent = handoff === undefined ? {} : { handoff: parseBattleHandoffContent(handoff, id) };
   const units = participants === undefined ? {} : { participants: parseBattleParticipantContent(participants, encounter.enemies) };
   const playerPlan = playerParticipants === undefined ? {} : { playerParticipants: parseBattlePlayerPlan(playerParticipants) };
   if (!formationPlan)
-    return { ...catalog.common, ...definition, ...escape, ...rewards, ...event, ...units, ...playerPlan,
+    return { ...catalog.common, ...definition, ...escape, ...rewards, ...event, ...handoffContent, ...units, ...playerPlan,
       formation: options[0]!, contentHash: catalog.contentHash };
   const choice = selectBattleFormation(formationPlan, seed);
-  return { ...catalog.common, ...definition, ...escape, ...rewards, ...event, ...units, ...playerPlan, formation: choice.formation, formationChoice: choice,
+  return { ...catalog.common, ...definition, ...escape, ...rewards, ...event, ...handoffContent, ...units, ...playerPlan, formation: choice.formation, formationChoice: choice,
     contentHash: catalog.contentHash };
 }
 export type AbilityDefinition = {

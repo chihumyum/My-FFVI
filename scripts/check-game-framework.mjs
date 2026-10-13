@@ -11,11 +11,13 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const args = process.argv.slice(2);
 const options = new Map();
 for (let i = 0; i < args.length; i += 2) {
-  assert.ok(["--dist", "--field", "--catalog", "--report"].includes(args[i]) && args[i + 1] &&
-    !args[i + 1].startsWith("--") && !options.has(args[i]), "Use --dist/--field/--catalog/--report <path>");
+  assert.ok(["--dist", "--field", "--catalog", "--report", "--battle-handoff"].includes(args[i]) && args[i + 1] &&
+    !args[i + 1].startsWith("--") && !options.has(args[i]), "Use --dist/--field/--catalog/--report <path>, --battle-handoff prepared");
   options.set(args[i], args[i + 1]);
 }
 const compiled = resolve(root, options.get("--dist") ?? "dist");
+const preparedHandoff = options.has("--battle-handoff");
+assert.ok(!preparedHandoff || options.get("--battle-handoff") === "prepared", "Unknown battle handoff mode");
 const reportPath = resolve(root, options.get("--report") ?? "build/reports/game-framework-check.json");
 const module = (name) => import(pathToFileURL(resolve(compiled, "src/core", name + ".js")));
 const report = {
@@ -34,6 +36,7 @@ await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n");
 try {
   const { GameSession } = await module("game-session");
   const { GameFlow } = await module("game-flow");
+  const { GameBattleHandoff } = await module("game-battle-handoff");
   const { CheckpointStorage, decodeSavedGame } = await module("saved-game");
   const { verifyContent, contentDigest } = await module("content-integrity");
   const readContent = async (path) => verifyContent(JSON.parse(await readFile(resolve(root, path), "utf8")));
@@ -59,6 +62,12 @@ try {
       dependencies: [{ table: "content.csv", id: 2 }, { table: "item.csv", id: 1 }], script: script + "_grant", index: 1, source },
     { kind: "exit", script: script + "_grant", index: 2, source },
   ];
+  if (preparedHandoff) {
+    const next = script + "_second_battle", after = next + "_after";
+    controlledField.scripts[next] = [{ kind: "encounter", party: 3, continuation: after, script: next, index: 0, source }];
+    controlledField.scripts[after] = [{ kind: "exit", script: after, index: 0, source }];
+    controlledField.scriptLocals = { ...controlledField.scriptLocals, [next]: null, [after]: null };
+  }
   controlledField.scriptLocals = { ...controlledField.scriptLocals, [script]: null, [script + "_grant"]: null };
   controlledField.scriptTransitionMetadata = { ...controlledField.scriptTransitionMetadata,
     [script]: { customAnimations: "none" }, [script + "_grant"]: { customAnimations: "none" } };
@@ -69,7 +78,21 @@ try {
   Object.assign(report, { sourceSetHash: field.parentSourceSetHash, fieldHash: field.contentHash,
     controlledFieldHash: controlledField.contentHash, battleCatalogHash: catalog.contentHash, profile: catalog.common.profile });
 
-  const flow = new GameFlow(new GameSession(controlledField, catalog, undefined, controlledAudioRuntime()));
+  const sessionRuntime = () => ({ ...controlledAudioRuntime(), ...(preparedHandoff ? { battleHandoff: "prepared" } : {}) });
+  const flow = new GameFlow(new GameSession(controlledField, catalog, undefined, sessionRuntime()));
+  let startGate = null, preparationError = null, preparedViews = 0, discardedViews = 0;
+  const handoff = new GameBattleHandoff(flow, {
+    prepareStart: async (view) => {
+      if (startGate) await startGate;
+      if (preparationError) throw preparationError;
+      preparedViews++; return { encounterId: view.content.encounterId };
+    },
+    prepareReturn: async (view) => {
+      if (preparationError) throw preparationError;
+      preparedViews++; return { encounterId: view.content.encounterId };
+    },
+    discard: () => { discardedViews++; },
+  });
   const host = { visible: true, mediaReady: true, overlayOpen: false };
   const game = () => flow.session;
   const owned = () => game().state.snapshot();
@@ -140,10 +163,29 @@ try {
   stage("inventory-equipment-and-battle-preference-menu", { weapon, emptyEquipment: empty.id });
 
   for (let n = 0; n < 11; n++) { assert.equal(flow.move("up"), true); tick(240); }
-  for (let n = 0; n < 12000 && !game().battle; n++) {
+  for (let n = 0; n < 12000 && !game().battle && !(preparedHandoff && game().field.stop?.kind === "encounter"); n++) {
     assert.notEqual(flow.phase, "blocked", game().field.stop?.message);
     if (game().field.dialogue) flow.confirm();
     tick();
+  }
+  if (preparedHandoff) {
+    const request = game().field.stop, before = owned(), fieldTime = game().field.time;
+    let release; startGate = new Promise(resolve => { release = resolve; });
+    const pending = handoff.start();
+    assert.equal(game().battle, null); assert.equal(game().state.inBattle, true);
+    tick(60000); game().advance(60000);
+    assert.equal(game().field.time, fieldTime); assert.deepEqual(owned(), before);
+    handoff.cancel(); release();
+    assert.equal((await pending).status, "cancelled"); startGate = null;
+    assert.equal(game().field.stop, request); assert.equal(game().state.inBattle, false);
+    assert.deepEqual(owned(), before); assert.equal(game().battle, null);
+    stage("cancelled-entry-drops-time-and-retains-the-exact-source-request");
+    preparationError = new Error("Controlled battle media preparation failure");
+    const failedEntry = await handoff.start(); assert.equal(failedEntry.status, "failed");
+    assert.equal(game().field.stop, request); assert.equal(game().state.inBattle, false);
+    assert.deepEqual(owned(), before); preparationError = null;
+    assert.equal((await handoff.start()).status, "committed"); tick(0);
+    stage("failed-entry-retries-without-selecting-another-encounter");
   }
   assert.equal(flow.phase, "battle");
   const battleBeforeLoss = game().battle, beforeBattle = owned();
@@ -162,7 +204,8 @@ try {
   assert.equal(flow.continueVictory(), false);
   assert.deepEqual(owned(), beforeBattle, "Defeat must not commit battle HP, rewards, growth or stock");
   assert.deepEqual(game().completedEncounters, []);
-  assert.equal(flow.retryBattle(), true);
+  if (preparedHandoff) assert.equal((await handoff.retry()).status, "committed");
+  else assert.equal(flow.retryBattle(), true);
   assert.equal(flow.retryBattle(), false, "Only a defeated battle can be retried");
   assert.equal(flow.phase, "battle");
   assert.notEqual(game().battle, battleBeforeLoss);
@@ -194,14 +237,24 @@ try {
   assert.ok(continuationOps);
   try {
     delete returnScripts[continuation];
-    assert.throws(() => flow.continueVictory(), /Missing battle continuation/);
+    if (preparedHandoff) {
+      const refused = await handoff.return(); assert.equal(refused.status, "failed");
+      assert.match(refused.error.message, /Missing battle continuation/);
+    } else assert.throws(() => flow.continueVictory(), /Missing battle continuation/);
     assert.equal(game().battle, pendingBattle); assert.equal(game().field.stop, pendingStop);
     assert.deepEqual(game().battle.reward, reward);
     assert.deepEqual(owned(), beforeBattle, "A failed return cannot publish any reward, stock or growth");
     assert.deepEqual(game().completedEncounters, []);
   } finally { returnScripts[continuation] = continuationOps; }
   stage("failed-victory-return-preserves-reward-and-owner");
-  assert.equal(flow.continueVictory(), true);
+  if (preparedHandoff) {
+    preparationError = new Error("Controlled field return media failure");
+    assert.equal((await handoff.return()).status, "failed");
+    assert.equal(game().battle, pendingBattle); assert.deepEqual(owned(), beforeBattle);
+    preparationError = null;
+    assert.equal((await handoff.return()).status, "committed"); tick(0);
+    stage("return-media-failure-preserves-the-terminal-battle-and-receipt");
+  } else assert.equal(flow.continueVictory(), true);
   const awarded = owned();
   assert.ok(reward.dropPlan, "The actual source reward provider must be available");
   const potionDrops = reward.dropPlan.grants.filter((grant) => grant.kind === "grant-item" && grant.id === 2)
@@ -267,7 +320,7 @@ try {
   assert.equal(game(), liveBeforeLoad); assert.deepEqual(game().checkpoint(), liveCheckpoint);
 
   const load = flow.beginOperation("load");
-  const restored = GameSession.restore(saved.checkpoint, controlledField, catalog, undefined, controlledAudioRuntime());
+  const restored = GameSession.restore(saved.checkpoint, controlledField, catalog, undefined, sessionRuntime());
   assert.deepEqual(restored.checkpoint(), savedCheckpoint);
   assert.equal(load.publish(restored), true);
   assert.equal(load.publish(liveBeforeLoad), false, "A consumed load ticket cannot reinstall an old session");
@@ -289,26 +342,55 @@ try {
   assert.deepEqual((await storage.load()).checkpoint, finalCheckpoint);
   stage("continue-after-restore-without-retrigger-or-double-reward");
 
+  if (preparedHandoff) {
+    assert.equal(game().field.startEvent(script + "_second_battle"), true); tick();
+    assert.equal(game().battle, null); assert.equal((await handoff.start()).status, "committed"); tick(0);
+    for (let n = 0; n < 12000 && game().battle.phase === "active"; n++) {
+      const battle = game().battle;
+      for (const actor of battle.ready) {
+        const ally = battle.players.find(p => p.hp > 0 && p.hp < p.maxHp * 0.6);
+        const target = ally ?? battle.targets(actor.id, 218)[0];
+        if (target) battle.command(actor.id, ally ? 222 : 218, target.id);
+      }
+      tick();
+    }
+    assert.equal(game().battle.phase, "victory");
+    assert.equal((await handoff.return()).status, "committed"); tick(0); stable();
+    assert.deepEqual(game().completedEncounters, [3, 3]);
+    assert.equal(owned().completedBattles.length, 2);
+    const second = game().checkpoint(), save = flow.beginOperation("save");
+    await storage.save(second, 3); save.finish();
+    const loaded = await storage.load();
+    const candidate = GameSession.restore(loaded.checkpoint, controlledField, catalog, undefined, sessionRuntime());
+    assert.deepEqual(candidate.checkpoint(), second);
+    report.secondBattle = { completedBattles: 2, checkpointHash: await contentDigest(second) };
+    stage("restored-owner-enters-and-settles-another-battle-on-the-same-contract");
+  }
+
   const pending = flow.beginOperation("load"), current = game();
   flow.returnToTitle();
   assert.equal(pending.isCurrent(), false); assert.equal(pending.publish(savedOwner), false);
   assert.equal(game(), current); assert.equal(flow.phase, "title");
-  tick(60000); assert.deepEqual(game().checkpoint(), finalCheckpoint);
+  const titleCheckpoint = game().checkpoint();
+  tick(60000); assert.deepEqual(game().checkpoint(), titleCheckpoint);
   const restart = flow.beginOperation("load");
   const latest = await storage.load();
-  assert.equal(restart.publish(GameSession.restore(latest.checkpoint, controlledField, catalog, undefined, controlledAudioRuntime()), { paused: true }), true);
+  assert.equal(restart.publish(GameSession.restore(latest.checkpoint, controlledField, catalog, undefined, sessionRuntime()), { paused: true }), true);
   assert.equal(flow.phase, "paused"); tick(60000);
-  assert.deepEqual(game().checkpoint(), finalCheckpoint);
+  assert.deepEqual(game().checkpoint(), titleCheckpoint);
   assert.equal(flow.pause(false), true); tick(0);
   assert.equal(flow.move("down"), true); tick(240);
   assert.equal(flow.phase, "exploration"); assert.equal(game().battle, null);
-  assert.equal(game().gil, savedCheckpoint.owned.gil); assert.deepEqual(game().completedEncounters, [3]);
+  assert.equal(game().gil, titleCheckpoint.owned.gil);
+  assert.deepEqual(game().completedEncounters, preparedHandoff ? [3, 3] : [3]);
   stage("title-cancels-stale-load-and-paused-restore-continues");
 
   // The controlled event never escapes the private copy or changes source qualification.
   assert.equal(field.scripts[script], undefined);
   await verifyContent(field); await verifyContent(controlledField); await verifyContent(catalog);
   Object.assign(report, { result: "pass", stageCount: report.stages.length,
+    battleHandoff: preparedHandoff ? { mode: "prepared", preparedViews, discardedViews,
+      compatibilityPolicy: "explicit-development-checkpoint", sourceNativeHandoffVerified: false } : { mode: "synchronous-compatibility" },
     final: { gil: game().gil, levels: owned().roster.map((p) => p.level), items: owned().items,
       completedEncounters: [...game().completedEncounters], preferences: game().battlePreferences },
     originalRuntimeOracle: false, storyCoverageExpanded: false, completeMigration: false });

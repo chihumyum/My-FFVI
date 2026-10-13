@@ -34,10 +34,12 @@ test("session rejects unmet template entry before borrowing inventory or publish
   const session = new GameSession(field, battle);
   const before = session.state.snapshot();
   session.field.startEvent("fight");
+  const request = session.field.stop;
   session.advance(10);
   assert.equal(session.battle, null);
-  assert.equal(session.field.stop!.kind, "unsupported");
-  assert.match(session.field.stop!.message, /来源战斗入口/);
+  assert.equal(session.field.stop, request);
+  assert.equal(session.field.stop!.kind, "encounter");
+  assert.match(session.encounterPreparationError!, /来源战斗入口/);
   assert.deepEqual(session.state.snapshot(), before);
   // A leaked lease would reject an otherwise valid field transaction.
   session.state.fieldInventory.prepare({ kind: "grant-gil", amount: 1 }).commit();

@@ -105,6 +105,7 @@ function setup({ transition = false, play = false, mediaWait = null } = {}) {
   const context = vm.createContext({
     $, flow, game: session.field, audio, audioProjection, mapLoader: loader, contents,
     sourceBoot: null, entryLoad: null, mapLoadFailure: null, eventSaver: null, eventSaveFailure: null,
+    battleHandoff: null, battleLoadAttempt: null, attemptedBattleStarts: new WeakSet(),
     attemptedEventSaves: new WeakSet(), failed: false, mapOpen: false,
     last: 0, lastMinimapFrame: 0, held: new Map(), loading: new WeakSet(),
     document: { hidden: false }, canvas: $("canvas"), renderer: { draw() {} },

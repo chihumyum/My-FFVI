@@ -266,6 +266,7 @@ test("retry, field return and save use the same admitted lifecycle and publish i
   const saved = JSON.parse(JSON.stringify(session.checkpoint()));
   const restored = GameSession.restore(saved, session.field.content, f.battle,
     { catalog: f.world, map: f.map, source: { content: f.content, initialMap: f.map } });
+  assert.deepEqual(restored.checkpoint().origin, saved.origin);
   assert.deepEqual(restored.state.snapshot(), session.state.snapshot());
   assert.equal(restored.state.snapshot().completedBattles.length, 1);
 });

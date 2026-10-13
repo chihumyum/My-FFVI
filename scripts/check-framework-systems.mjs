@@ -16,6 +16,8 @@ const run = promisify(execFile);
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const lanes = [
   ["session-loop", "check-game-framework.mjs", "game-framework-check.json", "stages"],
+  ["battle-handoff-loop", "check-game-framework.mjs", "battle-handoff-framework-check.json", "stages",
+    ["--battle-handoff", "prepared", "--report", "build/reports/battle-handoff-framework-check.json"]],
   ["io-transactions", "check-framework-io.mjs", "framework-io-check.json", "cases"],
   ["host-io-recovery", "check-game-map-ui.mjs", "game-map-ui-check.json", "tests"],
   ["session-entry-ui", "check-game-entry-ui.mjs", "game-entry-ui-check.json", "tests"],
@@ -62,11 +64,11 @@ await mkdir(resolve(output, ".."), { recursive: true });
 await writeFile(output, JSON.stringify(report, null, 2) + "\n");
 try {
   report.runtimeSha256 = await runtimeDigest(root);
-  for (const [id, script, artifact, countKey] of lanes) {
+  for (const [id, script, artifact, countKey, arguments_ = []] of lanes) {
     const path = resolve(root, "build/reports", artifact);
     await rm(path, { force: true });
     console.log("Checking " + id);
-    const { stdout, stderr } = await run(process.execPath, [resolve(root, "scripts", script)],
+    const { stdout, stderr } = await run(process.execPath, [resolve(root, "scripts", script), ...arguments_],
       { cwd: root, maxBuffer: 8 * 1024 * 1024 });
     await writeFile(resolve(root, "build/reports/framework-suite-" + id + ".log"), stdout + stderr);
     const bytes = await readFile(path), result = JSON.parse(bytes);

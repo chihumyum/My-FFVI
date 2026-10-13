@@ -24,12 +24,15 @@ import { parseBattleParticipantContent, parseBattleParticipantEnemyParty, type B
 import { compileEnemyBattleDefinition, type EnemyBattleSource } from "./enemy-battle-definition.js";
 import { canonical } from "../core/canonical.js";
 import { checkpointKeys } from "../core/checkpoint-validation.js";
+import { parseBattleHandoffPolicy, type BattleHandoffContent, type FrameworkBattleHandoffPolicy } from "../core/battle-handoff-content.js";
+import { compileBattleHandoffContent, BattleHandoffDependencyError, type BattleHandoffMusicLookup } from "./battle-handoff.js";
 
 type Reader = {
   row(table: string, id: string | number): BattleRow;
   unique(table: string, key: string, value: string): BattleRow;
   group(table: string, key: string, value: string | number): BattleRow[];
   matching(table: string, key: string, value: string | number): BattleRow[];
+  handoffMusic?: BattleHandoffMusicLookup;
 };
 export type BattleEncounterRuntimeInput = {
   requestedPartyIds: readonly number[];
@@ -47,6 +50,9 @@ export type BattleEncounterRuntimeInput = {
   /** Destination root identity and the source party to swap into that battle.
    * The child is content, not another encounter/session or executable root. */
   enemyParties?: readonly { partyId: number; encounter: SourceBattleEncounter }[];
+  /** Opt-in only: preserve old catalogs byte-for-byte when absent. A null
+   * policy records source declarations without granting a handoff behavior. */
+  handoff?: { policy: FrameworkBattleHandoffPolicy | null };
   /** Explicit source-bound regression omissions, never runtime permissions to
    * execute an unimplemented script or a new flag group. */
   development: {
@@ -92,6 +98,12 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
   const diagnostics: BattleEncounterDiagnostic[] = input.sourceDiagnostics.map((d) => ({ ...d, kind: "blocked" }));
   const encounters: Record<string, BattleEncounter> = {};
   const entries: BattleEncounterReport["entries"] = [];
+  const handoffSources: NonNullable<BattleEncounterReport["handoffSources"]> = [];
+  let handoffPolicy: FrameworkBattleHandoffPolicy | null | undefined;
+  if (input.handoff !== undefined) {
+    checkpointKeys(input.handoff, "policy");
+    handoffPolicy = input.handoff.policy === null ? null : parseBattleHandoffPolicy(input.handoff.policy);
+  }
   const drops = compileBattleDropCatalog(reader,
     [...new Set([...input.encounters.flatMap((e) => e.enemies.map((m) => m.monsterId)),
       ...reserves.map(entry => entry.enemy.monsterId),
@@ -122,10 +134,25 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     let escapePolicy: FrameworkBattleEscapePolicy | undefined;
     let rewardPolicy: BattleRewardPolicy | undefined;
     let lifecycle: BattleLifecycle | undefined;
+    let handoff: BattleHandoffContent | undefined;
     try {
       const m = encounter.metadata;
       if (!encounter.source || encounter.source.rowId !== String(partyId) || !m)
         throw new Error("Invalid runtime encounter source binding");
+      if (handoffPolicy !== undefined) {
+        try {
+          handoff = compileBattleHandoffContent(reader, encounter, handoffPolicy);
+          handoffSources.push({ partyId, content: structuredClone(handoff) });
+          for (const dependency of handoff.source.dependencies) if (dependency.binding === "unresolved")
+            add(handoffPolicy ? "development-omission" : "runtime-dependency", "battle-handoff-bgm-unresolved",
+              dependency.reason, { dependency: { table: dependency.table, id: dependency.id } });
+          if (handoffPolicy) add("development-omission", "battle-handoff-policy",
+            `Authored ${handoffPolicy.id} retains field audio and omits the battle introduction; native music, introduction and escape are not admitted`);
+        } catch (error) {
+          add("blocked", "battle-handoff-dependency", message(error), error instanceof BattleHandoffDependencyError
+            ? { dependency: error.dependency } : {});
+        }
+      }
       try {
         const enabled = encounter.patterns.flatMap((value, index) => value ? [index + 1] : []);
         const fixed = enabled.length === 1 && [1, 3].includes(enabled[0]!);
@@ -399,7 +426,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       input.sourceDiagnostics.some((d) => d.partyId === partyId);
     if (!blocked && formationPlan && rewardPolicy && lifecycle && participants) encounters[partyId] = { encounterId: partyId, enemies,
       background: encounter.background, formationPlan, rewardPolicy, lifecycle, participants,
-      ...(escapePolicy ? { escapePolicy } : {}),
+      ...(escapePolicy ? { escapePolicy } : {}), ...(handoff ? { handoff } : {}),
       formation: formationPlan.kind === "development" ? null : formationPlan.pattern === 3 ? "opposed" : "normal" };
     entries.push({ partyId, status: blocked ? "blocked" : "compiled", enemyCount: encounter.enemies.length,
       abilityIds: [...new Set(Object.values(enemyDefinitions).flatMap(definition => definition.abilities))].sort((a, b) => a - b) });
@@ -427,6 +454,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     partyId: child.partyId, source: structuredClone(child.source), patterns: [...child.patterns],
     background: child.background, metadata: structuredClone(child.metadata),
     scriptSource: child.script?.source ? structuredClone(child.script.source) : null, consumerSemantics: "unverified" }));
+  if (input.handoff !== undefined) report.handoffSources = handoffSources;
   return { encounters, diagnostics, report, drops: { ...drops.catalog, monsters,
     contents: drops.catalog.contents.filter((c) => contentIds.has(c.id)) } };
 }

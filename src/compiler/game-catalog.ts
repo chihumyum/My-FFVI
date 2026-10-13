@@ -23,6 +23,8 @@ import { createNewGame } from "../core/new-game.js";
 import { compileFieldConditionCatalog } from "./field-conditions.js";
 import { firstJoinLevelAdjustments } from "../core/character-growth.js";
 import { compileEquipmentCatalog } from "./equipment.js";
+import { createBattleHandoffMusicLookup } from "./battle-handoff.js";
+import { loadSystemSource } from "./system-source.js";
 import type {
   BattleContent,
   BattleCatalog,
@@ -236,9 +238,14 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
     definition.battleRequirements!.forbiddenConditionTypes =
       definition.battleRequirements!.forbiddenConditionTypes.filter((type) => type !== 607);
   }
+  // Source.tables is a selected capability closure and cannot establish that
+  // an unselected music row is absent. Resolve optional handoff declarations
+  // against the existing complete, verified source reader instead.
+  const handoffSystem = await loadSystemSource(root, source.parentSourceSetHash);
   const reader: GameCatalogModules["reader"] = { ...parameterReader,
     matching: (table, key, value) => Object.values(source.tables[table] ?? {})
       .filter((r) => r.values[key] === String(value)),
+    handoffMusic: createBattleHandoffMusicLookup(handoffSystem.tables, handoffSystem.reader),
   };
   const runtimeInput: GameCatalogModules["runtimeInput"] = {
     requestedPartyIds: source.encounterPartyIds, encounters: source.encounters,

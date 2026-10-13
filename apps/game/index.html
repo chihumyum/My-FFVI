@@ -179,6 +179,15 @@
             ><button id="battle-retry">重试战斗</button>
           </div>
         </section>
+        <section id="battle-loading" class="overlay" aria-label="战斗准备" aria-live="polite" hidden>
+          <div class="panel">
+            <h2 id="battle-loading-message">正在准备战斗…</h2>
+            <p id="battle-loading-error"></p>
+            <button id="retry-battle-load" hidden>重试准备</button>
+            <button id="cancel-battle-load">取消准备</button>
+            <button id="battle-load-title">返回标题</button>
+          </div>
+        </section>
         <section id="stop" class="overlay" hidden>
           <div class="panel">
             <h2 id="stop-title">片段结束</h2>

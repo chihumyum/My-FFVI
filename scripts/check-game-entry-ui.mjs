@@ -80,6 +80,13 @@ async function eventPackages() {
   const initial = await seal(fixture.field), battle = await seal(fixture.battle);
   return { initial, battle, files: new Map([["/game/content.json", initial], ["/game/battle.json", battle]]) };
 }
+async function battlePackages() {
+  const fixture = checkpointFixture();
+  fixture.field.map.textures = { controlled: "/controlled/development-entry.png" };
+  fixture.battle.common.sprites.synthetic = { file: "/controlled/battle-preparation.png", width: 32, height: 32 };
+  const initial = await seal(fixture.field), battle = await seal(fixture.battle);
+  return { initial, battle, files: new Map([["/game/content.json", initial], ["/game/battle.json", battle]]) };
+}
 function eventProgress(owner) {
   return {
     before: owner.field.eventState.read(beforeEventSave),
@@ -179,15 +186,17 @@ assert.equal((appModule.body.match(/init\(\)\.catch\(failure\);/g) ?? []).length
   "Capture the real app's one initialization promise without calling init twice");
 const appBody = appModule.body.replace("init().catch(failure);", "globalThis.__init = init().catch(failure);") + `
 globalThis.__entry = {
-  read: () => ({ flow, game, sourceBoot, entryLoad, failed, battleView, inventoryView, renderer }),
-  reset, startSourceGame, loadGame, returnToTitle, frame
+  read: () => ({ flow, game, sourceBoot, entryLoad, failed, battleView, inventoryView, renderer, images, battleLoadAttempt }),
+  reset, startSourceGame, loadGame, returnToTitle, loadBattle, cancelBattleLoad, frame
 };`;
 const audioBody = audioModule.body.replace(/\bexport (?=class |function )/g, "");
 
 async function host(pack, { slots = new Map() } = {}) {
-  const calls = { json: [], images: [], views: [], frameCallbacks: [], writes: 0, writeAttempts: 0, audioContexts: 0 };
+  const calls = { json: [], images: [], audio: [], audioDecodes: [], audioStarts: [], views: [],
+    frameCallbacks: [], writes: 0, writeAttempts: 0, audioContexts: 0 };
   const storageFault = { error: null };
   const failedUrls = new Set(), failedImages = new Set(), heldUrls = new Map(), heldImages = new Map();
+  const failedAudioDecodes = new Set();
   const observedRequests = new Map();
   const nodes = new Map(), listeners = new Map();
   let now = 0;
@@ -222,13 +231,27 @@ async function host(pack, { slots = new Map() } = {}) {
   }
   for (const match of html.matchAll(/<([a-z][\w-]*)\b([^>]*\bid="([^"]+)"[^>]*)>/gi))
     nodes.set(match[3], node(match[1], match[3], match[2]));
-  const inertNode = () => ({ connect() {}, disconnect() {}, gain: { value: 0 } });
+  const inertNode = () => ({ connect() {}, disconnect() {}, gain: { value: 0,
+    cancelScheduledValues() {}, setValueAtTime() {}, linearRampToValueAtTime() {} } });
   class AudioContext {
     constructor() { calls.audioContexts++; this.currentTime = 0; this.destination = {}; }
     createGain() { return inertNode(); }
     createAnalyser() { return { ...inertNode(), getFloatTimeDomainData(wave) { wave.fill(0); } }; }
+    createBufferSource() {
+      return { connect() {}, disconnect() {}, stop() {}, start(_when, offset) {
+        calls.audioStarts.push({ sha256: this.buffer.sourceSha256, offset });
+      } };
+    }
     async resume() {} async suspend() {}
-    async decodeAudioData() { throw new Error("No synthetic startup audio dependency was declared"); }
+    async decodeAudioData(raw) {
+      const digest = sha(Buffer.from(raw)), fixture = [...(pack.audio?.values() ?? [])]
+        .find(value => value.track.sha256 === digest);
+      assert.ok(fixture, "No synthetic startup audio dependency was declared");
+      record("audioDecodes", digest);
+      if (failedAudioDecodes.has(digest)) throw new Error("Controlled audio decode failure: " + digest);
+      return { numberOfChannels: fixture.track.channels, duration: fixture.track.frames / fixture.track.sampleRate,
+        sampleRate: fixture.track.sampleRate, sourceSha256: digest };
+    }
   }
   class Image {
     set src(value) { this.file = value; }
@@ -243,7 +266,9 @@ async function host(pack, { slots = new Map() } = {}) {
   const bindings = {};
   for (const name of viewNames) bindings[name] = class {
     constructor(...args) { this.args = args; this.common = args[1]; this.name = name; calls.views.push(this); }
-    render() {} reset() {} hide() {} sync() {} draw() {} overview() {} keyboard() {} back() { return false; }
+    render() {} reset() {} hide() { if (this.name === "BattleView") this.instance = null; }
+    sync(battle) { if (this.name === "BattleView") this.instance = battle; }
+    draw() {} overview() {} keyboard() {} back() { return false; }
   };
   const context = vm.createContext({ ...coreBindings, ...bindings, document, Image, AudioContext,
     window: { addEventListener(name, fn) { listeners.set(name, fn); } },
@@ -257,9 +282,11 @@ async function host(pack, { slots = new Map() } = {}) {
         calls.writes++; slots.set(key, value);
       } },
     async fetch(url) {
-      record("json", url);
+      const binary = pack.audio?.get(url);
+      record(binary ? "audio" : "json", url);
       const wait = heldUrls.get(url); if (wait) await wait.promise;
       if (failedUrls.has(url)) return { ok: false, status: 503 };
+      if (binary) return { ok: true, arrayBuffer: async () => Uint8Array.from(binary.bytes).buffer };
       assert.ok(pack.files.has(url), "Unexpected content dependency: " + url);
       return { ok: true, json: async () => structuredClone(pack.files.get(url)) };
     },
@@ -297,7 +324,7 @@ async function host(pack, { slots = new Map() } = {}) {
     assert.equal(state.inventoryView.args[1], owner.battleCatalog.gameState.items);
   }
   return { api, ready, frame, sourceStarted, boundToCurrent, observed, calls, slots, storageFault,
-    failedUrls, failedImages, heldUrls, heldImages, $: (id) => document.getElementById(id) };
+    failedUrls, failedImages, failedAudioDecodes, heldUrls, heldImages, $: (id) => document.getElementById(id) };
 }
 async function check(name, body) { await body(); report.tests.push({ name, pass: true }); }
 function stored(h) {
@@ -362,6 +389,112 @@ try {
     assert.deepEqual(h.calls.json, []); assert.deepEqual(h.calls.images, []);
     assert.equal(h.$("source-start").disabled, false);
     assert.equal(h.$("start").disabled, false);
+  });
+  await check("battle media is deferred until the selected encounter and a failed decode retains its request for one explicit retry", async () => {
+    const h = await host(await battlePackages()); await h.ready(); await h.$("start").onclick();
+    const owner = h.api.read().flow.session, before = owner.state.snapshot();
+    assert.equal(h.calls.images.includes("/controlled/battle-preparation.png"), false);
+    h.failedImages.add("/controlled/battle-preparation.png");
+    assert.equal(owner.field.startEvent("fight"), true); const request = owner.field.stop;
+    await h.frame(10);
+    await eventually(() => h.api.read().battleLoadAttempt?.error, "Battle media failure was not exposed");
+    assert.equal(owner.battle, null); assert.equal(owner.state.inBattle, false);
+    assert.equal(owner.field.stop, request); assert.deepEqual(owner.state.snapshot(), before);
+    assert.equal(h.$("battle-loading").hidden, false); assert.equal(h.$("retry-battle-load").disabled, false);
+    const attempts = h.calls.images.filter(url => url === "/controlled/battle-preparation.png").length;
+    await h.frame(50); await h.frame(50);
+    assert.equal(h.calls.images.filter(url => url === "/controlled/battle-preparation.png").length, attempts,
+      "RAF cannot repeatedly retry failed preparation");
+    h.failedImages.delete("/controlled/battle-preparation.png"); h.$("retry-battle-load").onclick();
+    await eventually(() => !h.api.read().flow.busy && owner.battle, "Explicit battle preparation retry did not publish");
+    assert.equal(owner.battle.content.encounterId, 1000); assert.equal(h.$("battle-loading").hidden, true);
+    assert.deepEqual(owner.state.snapshot(), before); assert.equal(owner.state.inBattle, true);
+  });
+  await check("battle audio decode failure keeps RAF alive and explicit repair retries the same owned field voice", async () => {
+    const pack = await battlePackages(), bytes = Uint8Array.from([11, 29, 47, 61]), digest = sha(bytes);
+    const track = { ...pack.initial.bgm.tracks[1], file: "/controlled/battle-audio.bin", sha256: digest, loop: null };
+    pack.initial.bgm.tracks[1] = track;
+    const script = "audioFight", source = { file: "synthetic", assetPath: "battle-audio-handoff" };
+    pack.initial.scripts[script] = [
+      { kind: "bgm-play", track: 1, channel: 0, fade: 0, seek: 1.25, script, index: 0, source },
+      { kind: "encounter", party: 1000, continuation: "after", script, index: 1, source },
+    ];
+    pack.initial = await seal(pack.initial); pack.files.set("/game/content.json", pack.initial);
+    pack.audio = new Map([[track.file, { bytes, track }]]);
+    const h = await host(pack); await h.ready(); await h.$("start").onclick();
+    const owner = h.api.read().flow.session, before = owner.state.snapshot();
+    h.failedAudioDecodes.add(digest);
+    assert.equal(owner.field.startEvent(script), true); const request = owner.field.stop;
+    const fieldTime = owner.field.time, audioBefore = owner.field.bgm.snapshot();
+    await h.frame(10);
+    await eventually(() => h.api.read().battleLoadAttempt?.error, "Audio preparation failure was not exposed");
+    assert.equal(h.api.read().failed, false); assert.equal(owner.field.stop, request);
+    assert.equal(owner.battle, null); assert.equal(owner.state.inBattle, false); assert.deepEqual(owner.state.snapshot(), before);
+    assert.match(String(h.api.read().battleLoadAttempt.error), /Controlled audio decode failure/);
+    assert.equal(h.$("battle-loading").hidden, false); assert.equal(h.$("retry-battle-load").disabled, false);
+    await h.frame(50); await h.frame(50);
+    assert.equal(owner.field.time, fieldTime); assert.deepEqual(owner.field.bgm.snapshot(), audioBefore);
+    assert.deepEqual(h.calls.audio, [track.file]); assert.deepEqual(h.calls.audioDecodes, [digest]);
+    h.failedAudioDecodes.delete(digest); h.$("retry-battle-load").onclick();
+    await eventually(() => !h.api.read().flow.busy && owner.battle, "Repair did not prepare the same encounter's audio");
+    assert.equal(owner.field.stop, request); assert.equal(owner.battle.content.encounterId, 1000);
+    assert.equal(owner.field.time, fieldTime); assert.deepEqual(owner.field.bgm.snapshot(), audioBefore);
+    assert.deepEqual(h.calls.audio, [track.file, track.file]); assert.deepEqual(h.calls.audioDecodes, [digest, digest]);
+    assert.equal(h.calls.audioContexts, 1); assert.equal(owner.state.inBattle, true); assert.deepEqual(owner.state.snapshot(), before);
+    assert.equal(h.$("battle-loading").hidden, true); await h.frame(10);
+    assert.equal(h.api.read().failed, false); assert.equal(h.calls.audioStarts.length, 1);
+    assert.equal(h.calls.audioStarts[0].sha256, digest);
+    assert.ok(Math.abs(h.calls.audioStarts[0].offset - (1.25 + (owner.field.bgm.time - audioBefore.time) / 1000)) < 1e-9,
+      "The existing field clock, including its seek, remains the audio position owner");
+    h.boundToCurrent();
+  });
+  await check("title cancellation of an unresolved battle image frees the lease and late completion cannot replace the next session", async () => {
+    const h = await host(await battlePackages()); await h.ready(); await h.$("start").onclick();
+    const owner = h.api.read().flow.session, before = owner.state.snapshot(), wait = deferred();
+    h.heldImages.set("/controlled/battle-preparation.png", wait);
+    assert.equal(owner.field.startEvent("fight"), true); const request = owner.field.stop;
+    await h.frame(10); await h.observed("images", "/controlled/battle-preparation.png");
+    assert.equal(owner.battle, null); assert.equal(owner.state.inBattle, true);
+    const time = owner.field.time; await h.frame(50); assert.equal(owner.field.time, time);
+    h.$("battle-load-title").onclick();
+    assert.equal(owner.state.inBattle, false); assert.equal(owner.field.stop, request);
+    assert.deepEqual(owner.state.snapshot(), before); assert.equal(h.api.read().flow.phase, "title");
+    await h.$("start").onclick(); const next = h.api.read().flow.session;
+    assert.notEqual(next, owner); wait.resolve(); h.heldImages.clear();
+    await eventually(() => h.calls.images.includes("/controlled/battle-preparation.png"), "Held image was not attempted");
+    await new Promise(setImmediate); await h.frame(10);
+    assert.equal(h.api.read().flow.session, next); assert.equal(next.battle, null);
+    assert.equal(owner.battle, null); assert.deepEqual(owner.state.snapshot(), before); h.boundToCurrent();
+  });
+  await check("return media failure keeps the terminal battle and one receipt until explicit retry, then the field save is stable", async () => {
+    const h = await host(await battlePackages()); await h.ready(); await h.$("start").onclick();
+    const owner = h.api.read().flow.session;
+    assert.equal(owner.field.startEvent("fight"), true); await h.frame(10);
+    await eventually(() => !h.api.read().flow.busy && owner.battle, "Battle entry did not complete");
+    const before = owner.state.snapshot();
+    for (let i = 0; i < 1500 && owner.battle.phase === "active"; i++) {
+      for (const actor of owner.battle.ready) {
+        const target = owner.battle.targets(actor.id, 10)[0];
+        if (target) owner.battle.command(actor.id, 10, target.id);
+      }
+      await h.frame(50);
+    }
+    assert.equal(owner.battle.phase, "victory"); const terminal = owner.battle;
+    h.api.read().images.delete("synthetic.png"); h.failedImages.add("synthetic.png");
+    await h.api.loadBattle(owner, "return");
+    assert.equal(owner.battle, terminal); assert.equal(owner.state.inBattle, true);
+    assert.deepEqual(owner.state.snapshot(), before); assert.equal(owner.completedEncounters.length, 0);
+    assert.equal(h.$("battle-loading").hidden, false);
+    h.failedImages.delete("synthetic.png"); h.$("retry-battle-load").onclick();
+    await eventually(() => !h.api.read().flow.busy && owner.battle === null, "Field return retry did not complete");
+    assert.equal(owner.state.inBattle, false); assert.equal(owner.completedEncounters.length, 1);
+    const awarded = owner.state.snapshot(); assert.equal(owner.continueVictory(), false);
+    assert.deepEqual(owner.state.snapshot(), awarded);
+    // Handoff resets the RAF origin; the first frame anchors the clock and
+    // the next logical frame resumes the held field continuation.
+    await h.frame(10); await h.frame(10);
+    assert.equal(owner.checkpointReady, true); assert.equal(owner.checkpoint().owned.completedBattles.length, 1);
+    assert.equal(h.$("battle-loading").hidden, true); assert.equal(h.api.read().failed, false);
   });
   await check("an unavailable legacy checkpoint does not participate in source startup", async () => {
     const h = await host(await packages()); await h.ready(); h.failedUrls.add("/game/content.json");
@@ -570,7 +703,7 @@ try {
     assert.equal(h.calls.writes, writeBaseline); assert.equal(h.calls.writeAttempts, attemptBaseline);
   });
   report.runtimeSha256 = Object.fromEntries(await Promise.all([
-    "game-session", "game-flow", "game-content", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint",
+    "game-session", "game-flow", "game-content", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint", "game-battle-handoff",
   ].map(async (name) => [name, sha(await readFile(resolve(compiled, `src/core/${name}.js`)))])));
   report.result = "passed";
 } catch (error) {

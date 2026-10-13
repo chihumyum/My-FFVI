@@ -3,16 +3,20 @@ import type { FieldChoiceAnswer } from "./field-choice.js";
 import { GameSession } from "./game-session.js";
 
 export type GameFlowPhase = "title" | "loading" | "paused" | "exploration" | "event" | "dialogue" | "choice" | "shop" |
-  "battle" | "victory" | "defeat" | "escaped" | "transition" | "blocked";
-export type GameFlowOperation = "new-game" | "load" | "save" | "map";
+  "battle-entry" | "battle-return" | "battle" | "victory" | "defeat" | "escaped" | "transition" | "blocked";
+export type GameFlowOperation = "new-game" | "load" | "save" | "map" | "battle-entry" | "battle-return";
 export type GameFlowHostState = { visible: boolean; mediaReady: boolean; overlayOpen: boolean };
 export type GameFlowStartOptions = { paused?: boolean };
 export type GameFlowTicket = {
   isCurrent(): boolean;
+  /** Before cancellation or owner replacement; throwing preserves the ticket.
+   * Successful completion via finish does not invoke these guards. */
+  onInvalidate(guard: () => void): () => void;
   finish(): boolean;
   cancel(): void;
   publish(session: GameSession, options?: GameFlowStartOptions): boolean;
 };
+type FlowOperation = { kind: GameFlowOperation; invalidating: boolean; guards: Set<() => void> };
 
 function pauseOption(options: GameFlowStartOptions): boolean {
   if (!options || (options.paused !== undefined && typeof options.paused !== "boolean")) throw new Error("Invalid game flow start options");
@@ -32,7 +36,7 @@ export class GameFlow {
   private owner: GameSession | null;
   private hasStarted = false;
   private isPaused = false;
-  private operation: { kind: GameFlowOperation } | null = null;
+  private operation: FlowOperation | null = null;
   private host: GameFlowHostState | null = null;
 
   constructor(session?: GameSession) {
@@ -52,7 +56,8 @@ export class GameFlow {
    * subsystem directly, such as the battle command menu. */
   get inputReady(): boolean { return this.hostAllowsInput; }
   get phase(): GameFlowPhase {
-    if (this.operation) return this.operation.kind === "map" ? "transition" : "loading";
+    if (this.operation) return this.operation.kind === "map" ? "transition"
+      : this.operation.kind === "battle-entry" || this.operation.kind === "battle-return" ? this.operation.kind : "loading";
     if (!this.hasStarted || !this.owner) return "title";
     if (this.isPaused) return "paused";
     const battle = this.owner.battle;
@@ -74,13 +79,13 @@ export class GameFlow {
     // Validate before invalidating a pending load, including an empty title's
     // first load. A failed explicit start must leave that operation retryable.
     requireSession(next); const paused = pauseOption(options);
-    this.operation = null;
+    this.invalidateOperation();
     this.owner = next; this.hasStarted = true; this.isPaused = paused;
     // A new owner cannot inherit readiness for the previous owner's media.
     this.host = null;
   }
   returnToTitle(): void {
-    this.operation = null; this.hasStarted = false; this.isPaused = false; this.host = null;
+    this.invalidateOperation(); this.hasStarted = false; this.isPaused = false; this.host = null;
   }
   pause(value: boolean): boolean {
     if (typeof value !== "boolean") throw new Error("Invalid game flow pause value");
@@ -88,29 +93,64 @@ export class GameFlow {
     this.isPaused = value; return true;
   }
   beginOperation(kind: GameFlowOperation): GameFlowTicket {
-    if (!["new-game", "load", "save", "map"].includes(kind)) throw new Error("Unknown game flow operation");
+    if (!["new-game", "load", "save", "map", "battle-entry", "battle-return"].includes(kind))
+      throw new Error("Unknown game flow operation");
     if (this.operation) throw new Error("A game flow operation is already in progress");
-    if (!this.owner && (kind === "save" || kind === "map"))
-      throw new Error("Game flow save/map operation requires a GameSession owner");
-    const operation = { kind }; this.operation = operation;
+    if (!this.owner && (kind === "save" || kind === "map" || kind === "battle-entry" || kind === "battle-return"))
+      throw new Error("Game flow save/map/battle operation requires a GameSession owner");
+    const operation: FlowOperation = { kind, invalidating: false, guards: new Set() }; this.operation = operation;
     const isCurrent = () => this.operation === operation;
     const finish = (): boolean => {
       if (!isCurrent()) return false;
-      this.operation = null; return true;
+      if (operation.invalidating) throw new Error("Cannot finish a game flow operation during invalidation");
+      this.operation = null; operation.guards.clear(); return true;
     };
     return Object.freeze({
-      isCurrent, finish, cancel: () => { finish(); },
+      isCurrent, finish,
+      onInvalidate: (guard: () => void): (() => void) => {
+        if (typeof guard !== "function") throw new Error("Invalid game flow invalidation guard");
+        if (!isCurrent()) return () => {};
+        if (operation.invalidating) throw new Error("Cannot register a game flow guard during invalidation");
+        operation.guards.add(guard);
+        return () => { operation.guards.delete(guard); };
+      },
+      cancel: () => { this.invalidateOperation(operation); },
       publish: (session: GameSession, options: GameFlowStartOptions = {}): boolean => {
         if (!isCurrent()) return false;
+        if (operation.invalidating) throw new Error("Cannot publish a game flow owner during invalidation");
         requireSession(session); const paused = pauseOption(options);
         // Option evaluation cannot let an obsolete asynchronous ticket replace
         // an owner installed by a later operation or explicit start.
         if (!isCurrent()) return false;
+        this.runInvalidationGuards(operation);
+        if (!isCurrent()) return false;
         this.operation = null; this.owner = session;
+        operation.guards.clear();
         this.hasStarted = true; this.isPaused = paused; this.host = null;
         return true;
       },
     });
+  }
+  private runInvalidationGuards(operation: FlowOperation): void {
+    if (this.operation !== operation) return;
+    if (operation.invalidating) throw new Error("Reentrant game flow operation invalidation");
+    const owner = this.owner;
+    operation.invalidating = true;
+    try {
+      for (const guard of [...operation.guards]) {
+        if (!operation.guards.has(guard)) continue;
+        guard();
+        if (this.operation !== operation || this.owner !== owner)
+          throw new Error("Game flow owner changed during operation invalidation");
+      }
+    } finally { operation.invalidating = false; }
+  }
+  private invalidateOperation(expected?: FlowOperation): boolean {
+    const operation = this.operation;
+    if (!operation || expected !== undefined && expected !== operation) return false;
+    this.runInvalidationGuards(operation);
+    if (this.operation !== operation) return false;
+    this.operation = null; operation.guards.clear(); return true;
   }
   private get hostAllowsInput(): boolean {
     return this.owner !== null && !this.owner.eventSaveRequest && this.hasStarted && !this.isPaused && !this.operation && !!this.host?.visible &&

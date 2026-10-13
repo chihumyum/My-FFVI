@@ -4,11 +4,15 @@ import { cyclingAI } from "./battle-ai.js";
 import { GameSession } from "../../src/core/game-session.js";
 import { NewGameFieldEntry } from "../../src/core/new-game-field-entry.js";
 import { createNewGame } from "../../src/core/new-game.js";
+import { battleTableIndex } from "../../src/compiler/battle.js";
+import { compileBattleHandoffContent } from "../../src/compiler/battle-handoff.js";
 import type { BattleAbilityCatalog } from "../../src/core/battle-abilities.js";
+import type { DevelopmentProfile } from "../../src/core/development-profile.js";
 
-/** Controlled, source-shaped new-game/session host. This authorizes no story
+/** Controlled framework new-game/session host. This authorizes no story
  * acquisition: source8, ability74, the opponent and skill effects are authored
- * test inputs. The separate source checker binds the actual FFVI catalog. */
+ * test inputs. It uses the source initializer/actor owners with an explicit
+ * development handoff, and makes no native handoff or story parity claim. */
 export function characterLearningSessionFixture() {
   const f = sourceNewGameFixture(), learning = characterLearningFixture();
   const id = f.battle.common.players[0]!.id;
@@ -72,6 +76,25 @@ export function characterLearningSessionFixture() {
     transportations: initial.transportation.definitions.map(({ id, type }) => ({ id, type })),
   };
   const encounter = Object.values(f.battle.encounters)[0]!;
+  // Bind the handoff to actual authored rows in this fixture, never invented
+  // original-game provenance or a default policy inferred from catalog names.
+  const handoffTables = {
+    "monster_party.csv": [{ id: String(encounter.encounterId), battle_background_asset_id: "1",
+      battle_bgm_asset_id: "0", appearance_production: "0", not_escape: "0" }],
+    "battle_background_asset.csv": [{ id: "1", asset_name: encounter.background }],
+  };
+  const handoffReader = battleTableIndex(handoffTables, Object.fromEntries(
+    Object.keys(handoffTables).map((table, index) => [table, {
+      file: "tests/fixtures/character-learning-session.ts", serializedFile: "controlled-character-learning",
+      objectId: String(90071992547409937n + BigInt(index)), assetPath: "controlled/character-learning/" + table,
+    }])));
+  encounter.handoff = compileBattleHandoffContent(handoffReader, {
+    partyId: encounter.encounterId, source: handoffReader.row("monster_party.csv", encounter.encounterId).source,
+    patterns: [1, 0, 0, 0, 0, 0], enemies: [], script: null, background: encounter.background,
+    metadata: { backgroundId: 1, bgmId: 0, appearanceProduction: 0, notEscape: 0,
+      battleFlagGroupId: 0, battleFlags: [], getAp: 0, getValue: 0, scriptId: 0 },
+  }, { kind: "framework-battle-handoff-v1", id: "controlled-character-learning",
+    audio: "retain-field", introduction: "omit" });
   encounter.enemies = [encounter.enemies[0]!];
   encounter.enemies[0]!.abilities = [142];
   encounter.enemies[0]!.ai = cyclingAI([142]);
@@ -84,6 +107,12 @@ export function characterLearningSessionFixture() {
   f.map.scriptPuppetContexts!.learning = { ...f.map.scriptPuppetContexts!.reserved!, scriptHash: "d".repeat(64) };
   f.map.scripts["after-learning"] = [{ kind: "exit", script: "after-learning", index: 0, source: f.source }];
   f.map.scriptPuppetContexts!["after-learning"] = { ...f.map.scriptPuppetContexts!.reserved!, scriptHash: "e".repeat(64) };
+  const profile: DevelopmentProfile = { kind: "framework-development-v1",
+    policy: "omit-anonymous-environment-particles-v1", sourceContentHash: "f".repeat(64), omissions: [] };
+  f.content.developmentProfile = structuredClone(profile);
+  f.world.developmentProfile = structuredClone(profile);
+  f.map.developmentProfile = structuredClone(profile);
+  f.content.contentHash = "controlled-character-learning-framework";
   const entry = new NewGameFieldEntry(f.content.entry, f.presentation);
   const start = entry.prepareStart(f.fade, { active: true, callbacks: "absent" }); start.commit();
   let fade = start.fade; fade.advance(0.5);
@@ -94,5 +123,5 @@ export function characterLearningSessionFixture() {
     game.launchNewGame(launch.launch); launch.commit(); game.advance(10);
     return game;
   };
-  return { ...f, learning, id, make, plan: createNewGame(initial) };
+  return { ...f, learning, id, make, plan: createNewGame(initial), handoffTables, handoffReader };
 }

@@ -1,9 +1,10 @@
 import type { FieldContent } from "../field/types.js";
-import type { GameEventSaveRequest } from "./field.js";
-import { encounterContent, battleDefinitionBlocker, type BattleCatalog } from "./battle-content.js";
+import type { GameEventSaveRequest, FieldGame, Stop } from "./field.js";
+import { encounterContent, battleDefinitionBlocker, type BattleCatalog, type BattleContent } from "./battle-content.js";
 import { BattleGame } from "./battle.js";
 import { EventState } from "./event-state.js";
-import { battleEventSharedSnapshot } from "./battle-event-shared.js";
+import { battleEventSharedSnapshot, type BattleEventSharedSnapshot } from "./battle-event-shared.js";
+import { assessBattleHandoff } from "./battle-handoff-content.js";
 import type { AudioReadinessPort } from "./audio-readiness.js";
 import type { FieldSoundPresentation } from "./field-sound-presentation.js";
 import type { FieldEffectRuntimeHost } from "./field-effects.js";
@@ -56,6 +57,9 @@ export type GameCheckpoint = GameCheckpointBase & (
 /** External observations are rebound by the host on load, never trusted from saves. */
 export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
+  /** Host prepares battle and return media before committing the same session
+   * candidate used by the synchronous development compatibility adapter. */
+  battleHandoff?: "prepared";
   /** Host wall-clock observation for source parking timestamps; recorded as an
    * exact decimal Int64, never sampled by deterministic core state. */
   transportationTimestamp?: () => string };
@@ -70,6 +74,32 @@ export type PreparedGameEventSave = {
   commitWith(write: () => void): void;
   discard(): void;
 };
+export type SessionBattleRequest = Stop & { kind: "encounter" };
+export type SessionBattleReturnRequest = { outcome: "victory" | "escaped"; request: SessionBattleRequest };
+export type PreparedSessionBattleStart = {
+  readonly kind: "start" | "retry";
+  /** Every read is detached; the suspended field request's actual reference
+   * remains private and is checked again before publication. */
+  readonly request: SessionBattleRequest;
+  readonly content: BattleContent;
+  /** Sticky even after an exception: an already published owner may never be
+   * treated as a retryable host preparation failure. */
+  readonly publicationStarted: boolean;
+  validate(): void;
+  commit(): boolean;
+  discard(): void;
+};
+export type PreparedSessionBattleReturn = Omit<PreparedSessionBattleStart, "kind"> & {
+  readonly kind: "return";
+  readonly outcome: "victory" | "escaped";
+};
+type BattleEntry = { field: FieldGame; request: SessionBattleRequest; lease: BattleLease;
+  content: BattleContent; seed: number; shared: BattleEventSharedSnapshot };
+type PendingBattleHandoff = { status: "prepared" | "publishing" | "consumed" | "discarded"; discard(): void };
+class StaleSessionBattleHandoff extends Error {
+  constructor() { super("Stale session battle handoff"); }
+}
+function isBattleRequest(stop: Stop | null): stop is SessionBattleRequest { return stop?.kind === "encounter"; }
 
 /** Owns the encounter handoff and consumes rewards exactly once. No renderer state drives progression. */
 export class GameSession {
@@ -89,8 +119,11 @@ export class GameSession {
     return this.state.completedEncounters;
   }
   private battleLease: BattleLease | null = null;
+  private battleEntry: BattleEntry | null = null;
+  private pendingBattleHandoff: PendingBattleHandoff | null = null;
+  private battleHandoffPreparing = false;
+  private readonly preparedBattleHandoff: boolean;
   private encounterSerial = 0;
-  private currentSeed = 0;
   private remainder = 0;
   private currentBattlePreferences: BattlePreferences;
   private readonly walkEncounters: WalkEncounterState;
@@ -139,6 +172,9 @@ export class GameSession {
     fresh?: FreshSession,
   ) {
     checkpointInteger(seed, 0, 0xffffffff);
+    if (runtime.battleHandoff !== undefined && runtime.battleHandoff !== "prepared")
+      throw new Error("Invalid session battle handoff mode");
+    this.preparedBattleHandoff = runtime.battleHandoff === "prepared";
     this.walkEncounters = new WalkEncounterState(seed);
     this.currentBattlePreferences = parseBattlePreferences(battleCatalog.common.timing);
     if (!fresh && field.sourceSetHash !== battleCatalog.common.fieldSourceSetHash)
@@ -406,6 +442,11 @@ export class GameSession {
   advance(ms: number) {
     if (!Number.isFinite(ms) || ms < 0 || ms > 60000)
       throw new Error("Invalid session elapsed time");
+    if (this.battleHandoffPreparing || this.pendingBattleHandoff ||
+        this.preparedBattleHandoff && !this.battle && this.field.stop?.kind === "encounter") {
+      this.remainder = 0;
+      return;
+    }
     if (this.eventSaveRequest || this.encounterPreparationError) return;
     this.remainder += ms;
     while (this.remainder >= 10) {
@@ -420,7 +461,10 @@ export class GameSession {
         continue;
       }
       this.field.advance(10);
-      if (this.field.stop?.kind === "encounter") this.startEncounter();
+      if (this.field.stop?.kind === "encounter") {
+        if (this.preparedBattleHandoff) { this.remainder = 0; return; }
+        this.startEncounter();
+      }
       if (this.encounterPreparationError) { this.remainder = 0; return; }
     }
   }
@@ -431,77 +475,189 @@ export class GameSession {
     return failed && failed.request === this.field.stop ? failed.message : null;
   }
   retryEncounterPreparation(): boolean {
+    if (this.preparedBattleHandoff) return false;
     if (!this.encounterPreparationError || this.battle || this.battleLease || this.state.inBattle) return false;
     this.encounterFailure = null;
     this.startEncounter();
     return this.battle !== null;
   }
-  private startEncounter(): void {
+  get battleStartRequest(): SessionBattleRequest | null {
     const request = this.field.stop;
-    if (request?.kind !== "encounter" || this.battle || this.encounterPreparationError) return;
+    return !this.battle && isBattleRequest(request) ? structuredClone(request) : null;
+  }
+  get battleReturnRequest(): SessionBattleReturnRequest | null {
+    const request = this.field.stop;
+    if (!isBattleRequest(request)) return null;
+    const outcome = this.battle?.previewVictory() ? "victory" : this.battle?.previewEscape() ? "escaped" : null;
+    return outcome === null ? null : { outcome, request: structuredClone(request) };
+  }
+  private fieldBattleFingerprint(field: FieldGame): string {
+    return canonical({ request: field.stop, events: field.eventState.snapshot(), entry: field.battleEntryContext.state,
+      time: field.time, fade: field.fader.snapshot() });
+  }
+  private rememberEncounterFailure(field: FieldGame, request: SessionBattleRequest, error: unknown): void {
+    if (this.field === field && field.stop === request && !this.battle)
+      this.encounterFailure = { request, message: error instanceof Error ? error.message : String(error) };
+  }
+  private createBattleHandoff(
+    kind: "start" | "retry" | "return", entry: BattleEntry, isCurrent: () => boolean,
+    validateDependencies: () => void, preparePublication: () => ((beginPublication: () => void) => void), cleanup: () => void,
+    outcome?: "victory" | "escaped", failure?: (error: unknown) => void,
+  ): PreparedSessionBattleStart | PreparedSessionBattleReturn {
+    const requestView = structuredClone(entry.request);
+    let publicationStarted = false;
+    const operation: PendingBattleHandoff = { status: "prepared", discard: () => {} };
+    const isPrepared = () => operation.status === "prepared" && this.pendingBattleHandoff === operation;
+    const current = () => {
+      if (!isPrepared()) return false;
+      const same = isCurrent();
+      return same && isPrepared();
+    };
+    const validate = () => {
+      if (!current()) throw new StaleSessionBattleHandoff();
+      validateDependencies();
+      // Read-only actor validators can trigger host cancellation. They never
+      // authorize publishing a candidate whose own ticket has since expired.
+      if (!current()) throw new StaleSessionBattleHandoff();
+    };
+    const release = () => {
+      if (this.pendingBattleHandoff !== operation) return;
+      this.pendingBattleHandoff = null;
+      cleanup();
+    };
+    const discard = () => {
+      if (operation.status === "publishing") throw new Error("Battle handoff publication has started");
+      if (operation.status !== "prepared") return;
+      operation.status = "discarded";
+      release();
+    };
+    operation.discard = discard;
+    const commit = (): boolean => {
+      if (!isPrepared()) return false;
+      if (!current()) { discard(); return false; }
+      try {
+        validate();
+        const publish = preparePublication();
+        validate();
+        publish(() => {
+          // A field commitWith performs its final actor/shared checks before
+          // invoking owned publication. Cancellation remains valid through
+          // those checks and becomes irreversible immediately before writes.
+          if (!current()) throw new StaleSessionBattleHandoff();
+          operation.status = "publishing";
+          publicationStarted = true;
+        });
+        if (operation.status !== "publishing") throw new Error("Battle handoff did not publish its owned transaction");
+        operation.status = "consumed";
+        if (this.pendingBattleHandoff === operation) this.pendingBattleHandoff = null;
+        return true;
+      } catch (error) {
+        if (operation.status === "discarded") return false;
+        operation.status = "discarded";
+        release();
+        if (error instanceof StaleSessionBattleHandoff) return false;
+        failure?.(error);
+        throw error;
+      }
+    };
+    this.pendingBattleHandoff = operation;
+    this.remainder = 0;
+    return Object.freeze({ kind, ...(outcome === undefined ? {} : { outcome }),
+      get request() { return structuredClone(requestView); },
+      get content() { return structuredClone(entry.content); },
+      get publicationStarted() { return publicationStarted; }, validate, commit, discard,
+    }) as PreparedSessionBattleStart | PreparedSessionBattleReturn;
+  }
+  private constructBattle(entry: BattleEntry): BattleGame {
+    const content = structuredClone(entry.content);
+    return new BattleGame(content, entry.seed, this.state.battlePlayers(entry.lease), this.state.battleInventory(entry.lease),
+      this.state.battleProgression(entry.lease, content.experience), this.currentBattlePreferences,
+      structuredClone(entry.shared), this.state.battlePlayerBorrow(entry.lease));
+  }
+  prepareBattleStart(): PreparedSessionBattleStart | null {
+    const field = this.field, request = field.stop;
+    if (!isBattleRequest(request) || this.battle || this.pendingBattleHandoff || this.battleHandoffPreparing) return null;
+    if (this.battleLease || this.state.inBattle) throw new Error("Battle start requires an unleased shared owner");
+    this.battleHandoffPreparing = true;
     let lease: BattleLease | null = null;
     try {
+      const before = this.fieldBattleFingerprint(field);
       const seed = (this.seed + Math.imul(this.encounterSerial, 0x9e3779b1)) >>> 0;
       let content = encounterContent(this.battleCatalog, request.party!, seed);
       if (!content) {
         const reasons = this.battleCatalog.encounterDiagnostics
-          ?.filter((entry) => entry.partyId === request.party && entry.kind === "blocked")
-          .map((entry) => `${entry.code}: ${entry.reason}`) ?? [];
+          ?.filter((item) => item.partyId === request.party && item.kind === "blocked")
+          .map((item) => `${item.code}: ${item.reason}`) ?? [];
         throw new Error(`Battle content is unavailable for encounter ${request.party}` +
           (reasons.length ? ` (${reasons.join("; ")})` : ""));
       }
       if (content.battleEntry && content.qualificationContext?.mode === "source") {
-        const entry = projectBattleFieldState(content.battleEntry, this.field.battleEntryContext.state,
+        const projected = projectBattleFieldState(content.battleEntry, field.battleEntryContext.state,
           this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
-        if (entry.invalidContentIds === null || entry.blockers.length)
-          throw new Error(entry.blockers.join("; ") || "Unknown battle field exclusions");
+        if (projected.invalidContentIds === null || projected.blockers.length)
+          throw new Error(projected.blockers.join("; ") || "Unknown battle field exclusions");
         content = { ...content, qualificationContext: { ...content.qualificationContext,
-          invalidContentIds: entry.invalidContentIds, conditionContext: "current" } };
+          invalidContentIds: projected.invalidContentIds, conditionContext: "current" } };
       }
-      // A scripted encounter currently has a victory continuation only. Never
-      // let a catalog-level development policy bypass its story result branch.
       if (content.escapePolicy && request.returnTo?.kind !== "field-idle") {
         const { escapePolicy: _, ...scripted } = content;
         content = scripted;
       }
+      const profile = !this.freshEntry ? "development-checkpoint" :
+        this.freshEntry.content.developmentProfile ? "framework" : "source";
+      const handoff = assessBattleHandoff(content.handoff, profile);
+      if (handoff.status === "blocked") throw new Error(handoff.reason);
       if (this.state.battlePartyBlocker) throw new Error(this.state.battlePartyBlocker);
       const blocker = battleDefinitionBlocker(this.state.partyPlayers(), content.qualificationContext, content.conditions);
       if (blocker) throw new Error(blocker);
+      if (this.field !== field || field.stop !== request || this.fieldBattleFingerprint(field) !== before)
+        throw new StaleSessionBattleHandoff();
       lease = this.state.openBattle(content.encounterId, content.rewardPolicy, content.playerParticipants);
-      const battle = new BattleGame(content, seed, this.state.battlePlayers(lease), this.state.battleInventory(lease),
-        this.state.battleProgression(lease, content.experience), this.currentBattlePreferences,
-        battleEventSharedSnapshot(this.field.eventState), this.state.battlePlayerBorrow(lease));
-      this.battle = battle;
-      this.battleLease = lease;
-      this.currentSeed = seed;
-      this.encounterSerial++;
+      const ownedLease = lease;
+      this.battleLease = ownedLease;
+      const entry: BattleEntry = { field, request, lease: ownedLease, seed,
+        content: structuredClone(content), shared: battleEventSharedSnapshot(field.eventState) };
+      const ownedBefore = canonical(this.state.snapshot());
       this.encounterFailure = null;
+      return this.createBattleHandoff("start", entry,
+        () => this.field === field && field.stop === request && !this.battle && this.battleLease === ownedLease &&
+          this.fieldBattleFingerprint(field) === before && canonical(this.state.snapshot()) === ownedBefore,
+        () => { this.state.battlePlayers(ownedLease); },
+        () => {
+          const battle = this.constructBattle(entry);
+          return beginPublication => {
+            beginPublication();
+            this.battle = battle; this.battleEntry = entry;
+            this.encounterSerial++; this.encounterFailure = null;
+          };
+        },
+        () => {
+          if (this.battleLease === ownedLease && !this.battle) {
+            this.state.cancelBattle(ownedLease); this.battleLease = null;
+          }
+        }, undefined, error => this.rememberEncounterFailure(field, request, error),
+      ) as PreparedSessionBattleStart;
     } catch (error) {
-      if (lease) this.state.cancelBattle(lease);
-      const message = error instanceof Error ? error.message : String(error);
-      if (request.returnTo?.kind === "field-idle") this.encounterFailure = { request, message };
-      else this.field.stop = { kind: "unsupported", message, site: request.site };
-    }
+      if (lease && this.battleLease === lease && !this.battle) {
+        this.state.cancelBattle(lease); this.battleLease = null;
+      }
+      if (!(error instanceof StaleSessionBattleHandoff)) this.rememberEncounterFailure(field, request, error);
+      throw error;
+    } finally { this.battleHandoffPreparing = false; }
+  }
+  private startEncounter(): void {
+    if (this.encounterPreparationError) return;
+    // The compatibility path publishes synchronously, so the remaining
+    // admitted logical ticks still belong to this advance call. Prepared
+    // handoffs discard host wait time and never restore this remainder.
+    const remaining = this.remainder;
+    try { if (this.prepareBattleStart()?.commit()) this.remainder = remaining; }
+    catch { /* The same pending request and preparation error are retained. */ }
   }
 
   continueVictory(): boolean {
-    const result = this.battle?.previewVictory();
-    if (!result) return false;
-    if (!this.battleLease) throw new Error("Missing battle state ownership");
-    const commit = this.state.prepareVictory(this.battleLease, result);
-    const resume = this.field.prepareEncounterReturn(
-      this.battle!.content.encounterId,
-      commit.fieldState,
-      this.battle!.eventSharedReturn,
-    );
-    // Prepare source actors against the post-victory owner, then validate both
-    // before publishing rewards, poses, camera or continuation tasks.
-    commit.validate();
-    resume.commitWith(commit);
-    this.battle!.takeVictory();
-    this.battleLease = null;
-    this.battle = null;
-    return true;
+    if (this.preparedBattleHandoff) return false;
+    return this.battleReturnRequest?.outcome === "victory" ? this.prepareBattleReturn()?.commit() ?? false : false;
   }
   get canEscape(): boolean {
     return this.field.stop?.kind === "encounter" && this.field.stop.returnTo?.kind === "field-idle" &&
@@ -509,36 +665,53 @@ export class GameSession {
   }
   requestEscape(): boolean { return this.canEscape ? this.battle!.requestEscape() : false; }
   continueEscape(): boolean {
-    const result = this.battle?.previewEscape();
-    if (!result) return false;
-    if (!this.battleLease || this.field.stop?.kind !== "encounter" ||
-        this.field.stop.returnTo?.kind !== "field-idle" || this.field.stop.continuation !== undefined)
-      throw new Error("Escape requires an owned ordinary field encounter");
-    const commit = this.state.prepareEscape(this.battleLease, result);
-    const resume = this.field.prepareEncounterReturn(this.battle!.content.encounterId, commit.fieldState,
-      this.battle!.eventSharedReturn);
-    commit.validate();
-    resume.commitWith(commit);
-    this.battle!.takeEscape();
-    this.battleLease = null;
-    this.battle = null;
-    return true;
+    if (this.preparedBattleHandoff) return false;
+    return this.battleReturnRequest?.outcome === "escaped" ? this.prepareBattleReturn()?.commit() ?? false : false;
   }
   retryBattle(): boolean {
-    if (this.battle?.phase !== "defeat") return false;
-    if (!this.battleLease) throw new Error("Missing battle state ownership");
-    const { participants: _mutableParticipants, playerParticipants: _mutablePlayers, ...content } = this.battle.content;
-    this.battle = new BattleGame(
-      { ...content, rewardPolicy: this.state.battleRewardPolicy(this.battleLease),
-        lifecycle: this.battle.lifecycleDefinition, ...this.battle.participantEntryContent, ...this.battle.playerEntryContent },
-      this.currentSeed,
-      this.state.battlePlayers(this.battleLease),
-      this.state.battleInventory(this.battleLease),
-      this.state.battleProgression(this.battleLease, this.battle.content.experience),
-      this.currentBattlePreferences,
-      this.battle.eventSharedEntry,
-      this.state.battlePlayerBorrow(this.battleLease),
-    );
-    return true;
+    if (this.preparedBattleHandoff) return false;
+    return this.prepareBattleRetry()?.commit() ?? false;
+  }
+  prepareBattleRetry(): PreparedSessionBattleStart | null {
+    const battle = this.battle, entry = this.battleEntry;
+    if (battle?.phase !== "defeat" || this.pendingBattleHandoff || this.battleHandoffPreparing) return null;
+    if (!entry || this.battleLease !== entry.lease) throw new Error("Missing battle state ownership");
+    const before = this.fieldBattleFingerprint(entry.field), units = canonical(battle.combatants);
+    return this.createBattleHandoff("retry", entry,
+      () => this.field === entry.field && entry.field.stop === entry.request && this.battle === battle &&
+        battle.phase === "defeat" && this.battleLease === entry.lease && this.battleEntry === entry &&
+        this.fieldBattleFingerprint(entry.field) === before && canonical(battle.combatants) === units,
+      () => { this.state.battlePlayers(entry.lease); },
+      () => { const retried = this.constructBattle(entry); return beginPublication => { beginPublication(); this.battle = retried; }; }, () => {},
+    ) as PreparedSessionBattleStart;
+  }
+  prepareBattleReturn(): PreparedSessionBattleReturn | null {
+    const field = this.field, request = field.stop, battle = this.battle, entry = this.battleEntry;
+    const outcome = this.battleReturnRequest?.outcome;
+    if (!battle || !outcome || !isBattleRequest(request) || this.pendingBattleHandoff || this.battleHandoffPreparing) return null;
+    if (!entry || this.battleLease !== entry.lease) throw new Error("Missing battle state ownership");
+    if (outcome === "escaped" && (request.returnTo?.kind !== "field-idle" || request.continuation !== undefined))
+      throw new Error("Escape requires an owned ordinary field encounter");
+    this.battleHandoffPreparing = true;
+    try {
+      const currentResult = () => outcome === "victory" ? battle.previewVictory() : battle.previewEscape();
+      const before = canonical({ result: currentResult(), shared: battle.eventSharedReturn });
+      const owned = outcome === "victory" ? this.state.prepareVictory(entry.lease, battle.previewVictory()!) :
+        this.state.prepareEscape(entry.lease, battle.previewEscape()!);
+      const resume = field.prepareEncounterReturn(entry.content.encounterId, owned.fieldState, battle.eventSharedReturn);
+      return this.createBattleHandoff("return", entry,
+        () => this.field === field && field.stop === request && request === entry.request && field === entry.field &&
+          this.battle === battle && this.battleLease === entry.lease && this.battleEntry === entry &&
+          canonical({ result: currentResult(), shared: battle.eventSharedReturn }) === before,
+        () => { owned.validate(); resume.validate(); },
+        () => beginPublication => {
+          let published = false;
+          resume.commitWith(() => { owned.validate(); beginPublication(); owned(); published = true; });
+          if (!published) throw new Error("Battle return did not publish its owned transaction");
+          if (outcome === "victory") battle.takeVictory(); else battle.takeEscape();
+          this.battleLease = null; this.battle = null; this.battleEntry = null;
+        }, () => {}, outcome,
+      ) as PreparedSessionBattleReturn;
+    } finally { this.battleHandoffPreparing = false; }
   }
 }

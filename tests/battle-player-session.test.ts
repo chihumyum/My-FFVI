@@ -144,6 +144,7 @@ test("defeat retries the frozen held pool and initial party despite mutable cont
 test("an unheld source identity is a pre-entry blocker and cannot borrow source1 as a fallback", () => {
   const f = playerSessionFixture([{ kind: "add-player", sourceId: 9999 }]), game = new GameSession(f.field, f.battle, 313);
   const before = game.state.snapshot(); game.field.startEvent("fight"); game.advance(10);
-  assert.equal(game.battle, null); assert.equal(game.field.stop?.kind, "unsupported");
+  assert.equal(game.battle, null); assert.equal(game.field.stop?.kind, "encounter");
+  assert.ok(game.encounterPreparationError);
   assert.deepEqual(game.state.snapshot(), before);
 });

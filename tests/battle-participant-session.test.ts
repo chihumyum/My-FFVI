@@ -105,9 +105,11 @@ test("invalid future entry dependency rejects the whole encounter before it cons
   const f = participantSessionFixture(); delete f.battle.encounters[1000]!.participants!.enemyDefinitions[72];
   const game = new GameSession(f.field, f.battle, 43), before = game.state.snapshot();
   game.field.startEvent("fight");
+  const request = game.field.stop;
   game.advance(10);
-  assert.equal(game.field.stop?.kind, "unsupported");
-  assert.match((game.field.stop as { message: string }).message, /admitted.*entry/);
+  assert.equal(game.field.stop, request);
+  assert.equal(game.field.stop?.kind, "encounter");
+  assert.match(game.encounterPreparationError!, /admitted.*entry/);
   assert.equal(game.battle, null); assert.deepEqual(game.state.snapshot(), before);
 });
 

@@ -41,7 +41,7 @@ test("positive magic points require a progression owner and an actual counter be
   assert.throws(() => state.battleRewardPolicy(lease), /Stale battle lease/);
 });
 
-test("source policy is copied at encounter decode and frozen for the live battle and owned lease", () => {
+test("encounter reward policy is copied at decode and frozen for the live battle and owned lease", () => {
   const f = fixture(), detached = encounterContent(f.battle, 1000)!;
   detached.rewardPolicy!.magicPoints = 99;
   assert.equal(f.battle.encounters[1000]!.rewardPolicy!.magicPoints, 5);
@@ -77,6 +77,7 @@ test("failed field return leaves magic points unclaimed and retry publishes them
   const snapshot = JSON.parse(JSON.stringify(session.checkpoint()));
   const restored = GameSession.restore(snapshot, session.field.content, f.battle,
     { catalog: f.world, map: f.map, source: { content: f.content, initialMap: f.map } });
+  assert.deepEqual(restored.checkpoint().origin, snapshot.origin);
   assert.equal(restored.characterMenu(f.id).magicLearningValue, 5);
   restored.field.startEvent("learning"); restored.advance(10);
   assert.equal(restored.battle!.players[0]!.magicLearningValue, 5);

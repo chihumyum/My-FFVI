@@ -6,8 +6,9 @@ import { ShopView } from "./shop-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
 import { GameFlow } from "/runtime/core/game-flow.js";
 import { GameMapLoader } from "/runtime/core/game-map-loader.js";
+import { GameBattleHandoff } from "/runtime/core/game-battle-handoff.js";
 import { GameEventSaveCoordinator } from "/runtime/core/game-event-save.js";
-import { GameContentRepository, fieldMediaUrls, sessionMediaUrls, sourceEntryMediaUrls } from "/runtime/core/game-content.js";
+import { GameContentRepository, fieldMediaUrls, sourceEntryMediaUrls } from "/runtime/core/game-content.js";
 import { NewGameFieldEntry } from "/runtime/core/new-game-field-entry.js";
 import { FieldFadeState, fieldFadeOverlay } from "/runtime/core/field-fade.js";
 import { createSourcePresentationContext } from "/runtime/core/source-presentation.js";
@@ -21,6 +22,7 @@ const $ = (id) => document.getElementById(id),
   canvas = $("game");
 let flow,
   mapLoader,
+  battleHandoff,
   game,
   renderer,
   minimapRenderer,
@@ -38,9 +40,11 @@ let flow,
 let sourceBoot = null;
 let entryLoad = null;
 let mapLoadFailure = null;
+let battleLoadAttempt = null;
 let eventSaver = null;
 let eventSaveFailure = null;
 const attemptedEventSaves = new WeakSet();
+const attemptedBattleStarts = new WeakSet();
 let hasSave = false,
   hasPreviousSave = false;
 const query = new URLSearchParams(location.search);
@@ -54,7 +58,7 @@ const contents = new GameContentRepository(async (url) => {
   if (!response.ok) throw new Error("游戏内容载入失败，请确认本地内容已经构建。");
   return response.json();
 }, contentProfile);
-const runtime = { audioReadiness: { isReady: (track) => audio.isReady(track) },
+const runtime = { battleHandoff: "prepared", audioReadiness: { isReady: (track) => audio.isReady(track) },
   soundPresentation: { isPresented: (voice, track) => audio.isSoundPresented(voice, track) },
   // Source DateTime.Now.Ticks is local wall time. Keep its Int64 as a string.
   transportationTimestamp: () => { const now = new Date();
@@ -169,6 +173,8 @@ function prepareSessionViews(candidate) {
 // Content and media are prepared privately before the flow ticket publishes.
 // Once published, view-binding failures are fatal; never retry the committed entry.
 function bindSession(candidate, views) {
+  battleHandoff?.cancel();
+  battleLoadAttempt = null;
   game = candidate.field;
   renderer = views.field;
   minimapRenderer = views.minimap;
@@ -183,23 +189,9 @@ function bindSession(candidate, views) {
   battleView = new BattleView(canvas, candidate.battleCatalog.common, images,
     () => {
       if (!battleOwnerReady()) return;
-      const returningBattle = candidate.battle, phase = returningBattle?.phase;
-      try {
-        const resumed = phase === "escaped" ? flow.continueEscape() :
-          phase === "victory" ? flow.continueVictory() : false;
-        if (resumed) { sync(); focus(); }
-      } catch (error) {
-        // Only an uncommitted return can be retried. Once the battle lease is
-        // released, a later renderer/focus error must not re-enter settlement.
-        if (flow.currentSession === candidate && candidate.battle === returningBattle &&
-          candidate.state.inBattle && ["victory", "escaped"].includes(phase) &&
-          returningBattle.phase === phase && battleView?.instance === returningBattle) {
-          try { battleView.showReturnError(returningBattle); }
-          catch (presentationError) { failure(presentationError); }
-        } else failure(error);
-      }
+      if (["victory", "escaped"].includes(candidate.battle?.phase)) loadBattle(candidate, "return");
     },
-    () => { if (battleOwnerReady() && flow.retryBattle()) { sync(); focus(); } },
+    () => { if (battleOwnerReady()) loadBattle(candidate, "retry"); },
     battleAppearanceQuads, projectDevelopmentBattleLayout, {
       canRequest: () => battleOwnerReady() && flow.canEscape,
       request: () => {
@@ -235,7 +227,7 @@ async function reset() {
     const candidate = new GameSession(field, battle, undefined, runtime);
     if (preferences) candidate.setBattlePreferences(preferences);
     await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks);
-    await loadImages(sessionMediaUrls(candidate.field.content, candidate.battleCatalog));
+    await loadImages(fieldMediaUrls(candidate.field.content));
     if (!operation.isCurrent()) return;
     const views = prepareSessionViews(candidate);
     if (!operation.publish(candidate)) return;
@@ -272,7 +264,7 @@ async function startSourceGame() {
     held.clear();
     text("status", "正在准备新游戏…");
     if (!map.map) throw new Error("新游戏地图几何未完成。");
-    await loadImages(sourceEntryMediaUrls(entryContent));
+    await loadImages(sourceEntryMediaUrls(entryContent, { includeBattle: false }));
     if (sourceBoot !== boot || !operation.isCurrent()) return;
     boot.ready = true;
   } catch (error) {
@@ -306,6 +298,8 @@ function advanceSourceBoot(seconds) {
 }
 function returnToTitle() {
   mapLoader.cancel();
+  battleHandoff?.cancel();
+  battleLoadAttempt = null;
   eventSaver?.cancel();
   eventSaveFailure = null;
   mapLoadFailure = null;
@@ -316,7 +310,7 @@ function returnToTitle() {
   held.clear();
   mapOpen = false;
   last = 0;
-  for (const id of ["pause", "stop", "dialogue", "map-overview", "minimap-button", "shop-menu", "event-saving"])
+  for (const id of ["pause", "stop", "dialogue", "map-overview", "minimap-button", "shop-menu", "event-saving", "battle-loading"])
     $(id).hidden = true;
   battleView?.hide();
   shopView?.reset();
@@ -337,6 +331,7 @@ function text(id, value) {
 }
 function sync() {
   syncEventSave();
+  syncBattleLoad();
   if (!flow.started || !game) {
     choiceView?.reset(); shopView?.reset();
     $("map-button").disabled = true;
@@ -390,7 +385,7 @@ function sync() {
     $("dialogue").dataset.window = game.messageWindow.manual?.window ?? "frame";
     $("dialogue").dataset.anchor = game.messageWindow.manual?.anchor ?? "bottom";
   }
-  $("stop").hidden = !game.stop;
+  $("stop").hidden = !game.stop || battleLoadAttempt?.session === flow.currentSession;
   $("retry-map").hidden = !mapFailure;
   $("retry-map").disabled = failed || flow.busy;
   const encounterFailure = flow.session.encounterPreparationError;
@@ -493,8 +488,15 @@ $("restart").onclick = reset;
 $("retry").onclick = reset;
 $("retry-encounter").onclick = () => {
   if (failed || !flow.started || flow.busy) return;
-  try { flow.retryEncounterPreparation(); sync(); focus(); } catch (error) { failure(error); }
+  loadBattle(flow.session, "start");
 };
+$("retry-battle-load").onclick = () => {
+  const attempt = battleLoadAttempt;
+  if (attempt && attempt.session === flow.currentSession && !attempt.running && !flow.busy)
+    loadBattle(attempt.session, attempt.kind);
+};
+$("cancel-battle-load").onclick = cancelBattleLoad;
+$("battle-load-title").onclick = returnToTitle;
 $("retry-map").onclick = () => {
   if (failed || !flow.started || flow.busy || mapLoadFailure?.session !== flow.session || mapLoadFailure.request !== game.stop) return;
   try {
@@ -544,7 +546,8 @@ function frame(now) {
     if (sourceBoot && !document.hidden) advanceSourceBoot(dt / 1000);
     // The current I/O operation owns candidate media failures. Polling a
     // shared failed decode from the outgoing field would bypass map retry.
-    const ready = flow.started && !flow.busy && game.stop?.kind !== "map-transition" &&
+    const battlePreparing = battleLoadAttempt?.session === flow.currentSession;
+    const ready = flow.started && !flow.busy && !battlePreparing && game.stop?.kind !== "map-transition" &&
       audio.ready(audioProjection(game), game.pendingAudioTracks);
     flow.advance(dt, { visible: !document.hidden, mediaReady: ready, overlayOpen: mapOpen });
     if (flow.started && !sourceBoot) {
@@ -553,10 +556,15 @@ function frame(now) {
       if (held.size) flow.move([...held.values()].at(-1));
       if (game.stop?.kind === "map-transition" && !loading.has(game.stop))
         loadMap(flow.session);
+      if (!flow.busy && !flow.session.battle && game.stop?.kind === "encounter" &&
+          !attemptedBattleStarts.has(game.stop)) {
+        attemptedBattleStarts.add(game.stop);
+        loadBattle(flow.session, "start");
+      }
       sync();
     }
     const projection = flow.started ? audioProjection(game) : [];
-    const audioReady = flow.started && !flow.busy && game.stop?.kind !== "map-transition" &&
+    const audioReady = flow.started && !flow.busy && !battlePreparing && game.stop?.kind !== "map-transition" &&
       audio.ready(projection, game.pendingAudioTracks);
     audio.project(
       projection,
@@ -592,7 +600,9 @@ function frame(now) {
 }
 function failure(error) {
   failed = true;
-  flow?.returnToTitle();
+  try { battleHandoff?.cancel(); } catch { /* Preserve the original failure. */ }
+  battleLoadAttempt = null;
+  try { flow?.returnToTitle(); } catch { /* An in-progress publication cannot be cancelled; preserve the fatal error. */ }
   if (entryLoad) finishEntryLoad(entryLoad);
   // Cleanup failure must not hide the original error or resume a broken loop.
   try { audio.reset(); } catch { /* The game is already stopped. */ }
@@ -607,6 +617,7 @@ function failure(error) {
     "map-overview",
     "minimap-button",
     "event-saving",
+    "battle-loading",
   ])
     $(id).hidden = true;
   $("menu-button").disabled = true;
@@ -638,6 +649,24 @@ async function init() {
       return new Renderer(canvas, field.content, images);
     },
     // Renderers only reference shared immutable images; they have no private GPU resources.
+    discard: () => {},
+  });
+  battleHandoff = new GameBattleHandoff(flow, {
+    prepareStart: async (candidate) => {
+      const owner = flow.session;
+      await audio.prepare(audioProjection(owner.field), owner.field.pendingAudioTracks);
+      const content = candidate.content;
+      if (!content.sprites[content.background]) throw new Error("战斗背景资源尚未迁移。");
+      await loadImages(new Set(Object.values(content.sprites).map(sprite => sprite.file)));
+      return { kind: "battle" };
+    },
+    prepareReturn: async () => {
+      const field = flow.session.field;
+      await audio.prepare(audioProjection(field), field.pendingAudioTracks);
+      await loadImages(fieldMediaUrls(field.content));
+      return { kind: "field", renderer: new Renderer(canvas, field.content, images) };
+    },
+    // Prepared views borrow the image cache and own no audio or GPU state.
     discard: () => {},
   });
   equipmentView = new EquipmentView($("equipment-menu"), () => {
@@ -706,6 +735,66 @@ async function loadImages(urls) {
         images.set(url, img);
       }),
   );
+}
+function syncBattleLoad() {
+  const attempt = battleLoadAttempt;
+  const current = attempt && flow.started && flow.currentSession === attempt.session;
+  $("battle-loading").hidden = !current;
+  if (!current) return;
+  text("battle-loading-message", attempt.running
+    ? attempt.kind === "return" ? "正在返回探索…" : "正在准备战斗…"
+    : attempt.cancelled ? "准备已取消" : "准备失败，可以重试");
+  text("battle-loading-error", attempt.error?.message ?? (attempt.error ? String(attempt.error) : ""));
+  $("retry-battle-load").hidden = attempt.running;
+  $("retry-battle-load").disabled = failed || flow.busy;
+  $("cancel-battle-load").hidden = !attempt.running;
+}
+function cancelBattleLoad() {
+  const attempt = battleLoadAttempt;
+  if (!attempt || !attempt.running || attempt.session !== flow.currentSession) return;
+  battleHandoff.cancel();
+  attempt.running = false;
+  attempt.cancelled = true;
+  sync(); syncSaveControls();
+}
+async function loadBattle(owner, kind) {
+  if (failed || !flow.started || flow.busy || flow.currentSession !== owner) return;
+  const previous = battleLoadAttempt;
+  const attempt = { session: owner, kind, running: true, cancelled: false, error: null };
+  battleLoadAttempt = attempt;
+  held.clear();
+  try {
+    // The same audio owner recorded the failed decode. An explicit retry
+    // clears that failure and reprojects the held field clock after readiness.
+    if (previous?.session === owner && previous.error) audio.reset();
+    const pending = kind === "return" ? battleHandoff.return() :
+      kind === "retry" ? battleHandoff.retry() : battleHandoff.start();
+    sync(); syncSaveControls();
+    const result = await pending;
+    if (battleLoadAttempt !== attempt || !flow.started || flow.currentSession !== owner) return;
+    attempt.running = false;
+    if (result.status === "cancelled") {
+      attempt.cancelled = true; sync(); return;
+    }
+    if (result.status === "failed") {
+      attempt.error = result.error; sync(); return;
+    }
+    // Publication has completed. A presentation error here must never replay
+    // the request, lease, source continuation or battle settlement.
+    battleLoadAttempt = null;
+    if (result.presentation.kind === "field") {
+      game = owner.field;
+      renderer = result.presentation.renderer;
+      setupMapViews(game.content);
+    }
+    last = 0;
+    sync();
+    if (!flow.paused && !document.hidden) focus();
+  } catch (error) {
+    failure(error);
+  } finally {
+    syncSaveControls();
+  }
 }
 async function loadMap(owner) {
   if (flow.busy || flow.session !== owner || owner.field.stop?.kind !== "map-transition") return;
@@ -866,7 +955,7 @@ async function loadGame(previous) {
       runtime,
     );
     await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks);
-    await loadImages(sessionMediaUrls(candidate.field.content, candidate.battleCatalog));
+    await loadImages(fieldMediaUrls(candidate.field.content));
     if (!operation.isCurrent()) return;
     const views = prepareSessionViews(candidate);
     if (!operation.publish(candidate, { paused: true })) return;

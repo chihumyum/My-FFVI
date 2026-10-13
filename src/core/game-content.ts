@@ -294,10 +294,10 @@ export function openingMediaUrls(field: FieldContent, battle: BattleCatalog): st
   return sessionMediaUrls(field, battle);
 }
 
-export function sourceEntryMediaUrls(entry: SourceEntryContent): string[] {
+export function sourceEntryMediaUrls(entry: SourceEntryContent, { includeBattle = true }: { includeBattle?: boolean } = {}): string[] {
   if (entry.map.map === null) throw new Error("Fresh game entry map media is unavailable");
   return [...new Set([
     ...fieldImageUrls(entry.map.map, entry.catalog.characters, entry.catalog.minimap),
-    ...Object.values(entry.battle.common.sprites).map((sprite) => sprite.file),
+    ...(includeBattle ? Object.values(entry.battle.common.sprites).map((sprite) => sprite.file) : []),
   ])];
 }

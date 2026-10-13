@@ -6,6 +6,8 @@ import { GameSession } from "../src/core/game-session.js";
 import { encounterContent } from "../src/core/battle-content.js";
 import { projectCharacterMenu } from "../src/core/character-menu.js";
 import { equipmentOwnedAbilities } from "../src/core/equipment.js";
+import { assessBattleHandoff } from "../src/core/battle-handoff-content.js";
+import { assertSourceEntryProfiles } from "../src/core/source-catalog.js";
 import { characterLearningSessionFixture } from "./fixtures/character-learning-session.js";
 
 const createState = (f: ReturnType<typeof characterLearningSessionFixture>) =>
@@ -31,8 +33,16 @@ function menu(f: ReturnType<typeof characterLearningSessionFixture>, state: Game
     equipmentAbilities: equipmentOwnedAbilities(f.battle.gameState.equipmentSystem!.catalog, member) });
 }
 
-test("fresh native session settles learning, returns to the same actor owner and saves its next-battle qualification", () => {
+test("framework fresh session settles learning, returns to the same actor owner and saves its next-battle qualification", () => {
   const f = characterLearningSessionFixture(), session = f.make();
+  assert.equal(assertSourceEntryProfiles(f.content, f.world, f.map), "framework");
+  const handoff = encounterContent(f.battle, 1000)!.handoff!;
+  assert.deepEqual(handoff.source.dependencies.map(({ table, id, source }) => ({ table, id, source })),
+    Object.keys(f.handoffTables).map(table => {
+      const row = f.handoffReader.row(table, table === "monster_party.csv" ? 1000 : 1);
+      return { table, id: Number(row.values.id), source: row.source };
+    }));
+  assert.equal(assessBattleHandoff(handoff, "source").status, "blocked");
   const before = session.state.snapshot();
   const actor = session.field.player;
   assert.equal(session.characterMenu(f.id).abilities!.find((a) => a.id === 142)!.skillLevel, 0);
@@ -50,8 +60,10 @@ test("fresh native session settles learning, returns to the same actor owner and
   assert.deepEqual(session.state.snapshot().learnedAbilityIds, before.learnedAbilityIds);
   assert.equal(session.checkpointReady, true);
   const saved = JSON.parse(JSON.stringify(session.checkpoint()));
+  assert.deepEqual(saved.origin, { kind: "source-new-game", sourceContentHash: f.content.contentHash });
   const restored = GameSession.restore(saved, session.field.content, f.battle,
     { catalog: f.world, map: f.map, source: { content: f.content, initialMap: f.map } });
+  assert.deepEqual(restored.checkpoint().origin, saved.origin);
   assert.deepEqual(restored.state.snapshot(), session.state.snapshot());
   assert.equal(restored.characterMenu(f.id).abilities!.find((a) => a.id === 142)!.skillLevel, 100);
   restored.field.startEvent("learning"); restored.advance(10);
@@ -59,7 +71,7 @@ test("fresh native session settles learning, returns to the same actor owner and
   assert.equal(restored.battle!.canUse(f.id, 142, 17), true);
 });
 
-test("a missing battle continuation cannot publish learning or rewards in a fresh native session", () => {
+test("a missing battle continuation cannot publish learning or rewards in a framework fresh session", () => {
   const f = characterLearningSessionFixture(); delete f.map.scripts["after-learning"];
   const session = f.make(), before = session.state.snapshot();
   session.field.startEvent("learning"); session.advance(10);
@@ -71,6 +83,22 @@ test("a missing battle continuation cannot publish learning or rewards in a fres
   assert.deepEqual(structuredClone(session.field.player), actor);
   assert.equal(session.battle.phase, "victory");
   assert.equal(session.checkpointReady, false);
+});
+
+test("controlled learning handoff still rejects a source origin or a missing framework policy without opening a lease", () => {
+  for (const missing of ["framework-origin", "handoff-policy"] as const) {
+    const f = characterLearningSessionFixture();
+    if (missing === "framework-origin") {
+      delete f.content.developmentProfile; delete f.world.developmentProfile; delete f.map.developmentProfile;
+    } else delete f.battle.encounters[1000]!.handoff;
+    const session = f.make(), before = session.state.snapshot();
+    session.field.startEvent("learning"); session.advance(10);
+    assert.equal(session.field.stop?.kind, "encounter");
+    assert.match(session.encounterPreparationError!, missing === "framework-origin" ?
+      /verified native contract/ : /explicit content policy/);
+    assert.equal(session.battle, null); assert.equal(session.state.inBattle, false);
+    assert.deepEqual(session.state.snapshot(), before);
+  }
 });
 
 test("one source state settles learning, projects the menu, restores and admits the skill next battle", () => {

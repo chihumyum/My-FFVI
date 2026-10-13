@@ -208,7 +208,8 @@ for (const [label, mutateBattle, mutateField, pattern] of [
   const blocked = new GameSession(alteredField, alteredBattle, undefined, controlledAudioRuntime()), before = blocked.state.snapshot();
   enterBattle(blocked, alteredField);
   assert.equal(blocked.battle, null, label); assert.equal(blocked.state.inBattle, false, label);
-  assert.match(blocked.field.stop.message, pattern, label);
+  assert.equal(blocked.field.stop.kind, "encounter", label + " retains the pending request");
+  assert.match(blocked.encounterPreparationError, pattern, label);
   assert.deepEqual(blocked.state.snapshot(), before, label + " cannot leave a lease or mutate ownership");
   cases.push({ name: label + " rejects source battle entry atomically" });
 }

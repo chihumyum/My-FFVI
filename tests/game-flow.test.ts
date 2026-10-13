@@ -362,8 +362,9 @@ test("unavailable encounter becomes a stable blocker before any shared-state lea
   assert.equal(flow.phase, "event");
   flow.advance(10, readyHost);
   assert.equal(flow.phase, "blocked");
-  assert.match(game.field.stop!.message, /encounter 1000/);
-  assert.match(game.field.stop!.message, /battle-script: Battle script lifecycle is not implemented/);
+  assert.equal(game.field.stop?.kind, "encounter");
+  assert.match(game.encounterPreparationError!, /encounter 1000/);
+  assert.match(game.encounterPreparationError!, /battle-script: Battle script lifecycle is not implemented/);
   assert.equal(game.battle, null);
   assert.equal(game.state.inBattle, false);
   assert.deepEqual(game.state.snapshot(), before);

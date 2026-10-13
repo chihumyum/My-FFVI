@@ -182,9 +182,12 @@ test("empty parties stay blocked while a rear party enters battle without losing
     assert.equal(game.state.snapshot().party.selectedSlot, slot);
     const before = game.state.snapshot();
     game.field.startEvent("fight");
+    const request = game.field.stop;
     game.advance(10);
     if (slot === 1) {
-      assert.equal(game.field.stop?.kind, "unsupported");
+      assert.equal(game.field.stop, request);
+      assert.equal(game.field.stop?.kind, "encounter");
+      assert.ok(game.encounterPreparationError);
       assert.equal(game.battle, null);
       assert.equal(game.state.inBattle, false);
     } else {
