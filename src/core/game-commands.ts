@@ -5,6 +5,7 @@ import type { BattlePreferences } from "./battle-preferences.js";
 import type { TargetSelection } from "./battle-targets.js";
 import type { PartyMenuRequest } from "./party-menu.js";
 import type { ShopTradePlan, ShopTradeRequest } from "./shop.js";
+import { parseGameMenuCommand, type GameMenuCommand } from "./game-menu-command.js";
 
 /** User command admission, bound to the exact published session. This gateway
  * owns no resources, menu model, clock or transaction; existing subsystem
@@ -31,6 +32,20 @@ export class GameCommands {
    * user-command readiness, but never to an old retry or replacement battle. */
   ownsBattle(battle: BattleGame): boolean {
     return battle instanceof BattleGame && this.current && this.owner.battle === battle;
+  }
+  menu(command: GameMenuCommand): boolean {
+    const input = parseGameMenuCommand(command);
+    switch (input.kind) {
+      case "use-item": return this.useMenuItem(input.itemId, input.targetId);
+      case "change-equipment": return this.changeEquipment(input.playerId, input.slot, input.contentId);
+      case "set-preferences": return this.setBattlePreferences(input.preferences);
+      case "change-party": {
+        if (!this.menuReady) return false;
+        const model = this.owner.partyMenu();
+        if (!model.editable) return false;
+        return this.changeParty({ expected: model.expected, change: input.change });
+      }
+    }
   }
   useMenuItem(id: number, targetId: string): boolean {
     return this.menuReady ? this.owner.useMenuItem(id, targetId) : false;

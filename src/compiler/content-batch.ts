@@ -4,6 +4,7 @@ import type { FieldContent } from "../field/types.js";
 import type { BattleCatalog } from "../core/battle-content.js";
 import type { SourceNewGameContent } from "../core/source-new-game.js";
 import { parseGameContentRefs } from "../core/game-content-refs.js";
+import { parseGameMenuCommand } from "../core/game-menu-command.js";
 import { hash, canonical } from "./content.js";
 import { analyzeContentDependencies } from "./content-dependencies.js";
 import { analyzeBatchEncounters } from "./content-batch-battle.js";
@@ -15,9 +16,18 @@ const root = z.discriminatedUnion("kind", [
     continuation: name.nullable() }).strict(),
   z.object({ kind: z.literal("script"), mapId: id, script: name }).strict(),
 ]);
+const menuCommand = z.unknown().transform((value, context) => {
+  try { return parseGameMenuCommand(value); }
+  catch (error) {
+    context.addIssue({ code: "custom", message: error instanceof Error ? error.message : String(error) });
+    return z.NEVER;
+  }
+});
 const input = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("move"), direction: z.enum(["up", "right", "down", "left"]) }).strict(),
   z.object({ kind: z.literal("confirm") }).strict(),
+  z.object({ kind: z.literal("menu"), command: menuCommand }).strict(),
+  z.object({ kind: z.literal("save-restore") }).strict(),
 ]);
 // The runtime and compiler consume one reference contract. The manifest does
 // not authorize another URL/profile shape or silently fill omitted lanes.
@@ -130,8 +140,13 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
     diagnostics.push({ code: "BATCH_ENTRY_UNSCANNED", reason: "The launched entry is absent from dependency roots" });
   const contentHashes: Record<string, string> = { entry: entry.contentHash, world: catalog.contentHash, battle: battle.contentHash,
     ...Object.fromEntries([...maps].sort((a, b) => a.mapId - b.mapId).map(m => [`map:${m.mapId}`, m.contentHash])) };
+  // Legacy routes keep their dependency identity. Extended programs bind the
+  // actual ordered commands, not only their aggregate execution counts.
+  const routePrograms = manifest.routes.some(r => r.inputs.some(i => i.kind === "menu" || i.kind === "save-restore")) ?
+    manifest.routes.map(({ id, inputs }) => ({ id, inputs })) : null;
   const dependencyHash = hash({ contentHashes, dependencies, encounters, diagnostics,
-    ...(manifest.contentRefs ? { contentRefs: manifest.contentRefs } : {}) });
+    ...(manifest.contentRefs ? { contentRefs: manifest.contentRefs } : {}),
+    ...(routePrograms ? { routePrograms } : {}) });
   return { kind: "content-batch-plan-v1" as const, manifest, manifestHash: hash(manifest), dependencyHash,
     contentHashes, dependencies, encounters, diagnostics,
     runtimeAdmission: "unassessed" as const, sourceCampaignComplete: false as const };

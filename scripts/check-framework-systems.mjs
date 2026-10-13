@@ -26,6 +26,7 @@ const lanes = [
   ["battle-ai-target-transactions", "check-battle-ai-targets.mjs", "battle-ai-targets-check.json", "stages"],
   ["event-save-continuation", "check-event-save.mjs", "event-save-check.json", "tests"],
   ["content-batch-pipeline", "check-content-batch-pipeline.mjs", "content-batch-pipeline-check.json", "tests"],
+  ["content-batch-menu-and-restore", "check-content-batch-program.mjs", "content-batch-program-check.json", "tests"],
   ["trusted-content-packages", "check-content-packages.mjs", "content-packages-check.json", "tests"],
   ["walking-encounter-loop", "check-walk-encounters.mjs", "walk-encounters-check.json", "stages"],
   ["battle-formation-entry", "check-battle-formations.mjs", "battle-formations-check.json", "stages"],

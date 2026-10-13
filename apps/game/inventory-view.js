@@ -4,7 +4,7 @@ export const itemName = (item) =>
 /** Presentation reads the same owned state as battle/save; it never edits stock. */
 export class InventoryView {
   constructor(root, definitions, onUse, { commands, owner } = {}) {
-    if (commands !== undefined && (!owner || commands.owner !== owner || typeof commands.useMenuItem !== "function"))
+    if (commands !== undefined && (!owner || commands.owner !== owner || typeof commands.menu !== "function"))
       throw new Error("Invalid inventory command owner");
     this.root = root;
     this.definitions = definitions;
@@ -106,7 +106,7 @@ export class InventoryView {
           () => {
             try {
               this.message = (commands
-                ? commands.useMenuItem(item.id, p.id)
+                ? commands.menu({ kind: "use-item", itemId: item.id, targetId: p.id })
                 : session.useMenuItem(item.id, p.id))
                 ? `${p.name} 使用了${itemName(item)}。`
                 : "当前无法使用。";

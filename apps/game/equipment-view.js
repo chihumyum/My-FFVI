@@ -31,7 +31,7 @@ const button = (label, handler, disabled = false) => {
 /** Selection is presentation state. Every preview and change uses the shared owner. */
 export class EquipmentView {
   constructor(root, onChange = () => {}, { commands, owner } = {}) {
-    if (commands !== undefined && (!owner || commands.owner !== owner || typeof commands.changeEquipment !== "function"))
+    if (commands !== undefined && (!owner || commands.owner !== owner || typeof commands.menu !== "function"))
       throw new Error("Invalid equipment command owner");
     this.root = root;
     this.onChange = onChange;
@@ -221,7 +221,7 @@ export class EquipmentView {
         let changed = false;
         try {
           changed = commands
-            ? commands.changeEquipment(owned.id, slot, candidate.id)
+            ? commands.menu({ kind: "change-equipment", playerId: owned.id, slot, contentId: candidate.id })
             : session.changeEquipment(owned.id, slot, candidate.id);
           this.message = changed
             ? `${owned.name}已调整装备。`

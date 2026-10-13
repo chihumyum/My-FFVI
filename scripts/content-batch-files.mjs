@@ -39,6 +39,19 @@ export async function readSourceBatch(root, manifestPath, compiled = "dist") {
 }
 
 export function batchRouteSpecs(manifest) {
-  return manifest.routes.map(({ id, entry, expectedMapId, requiredMapIds, requiredEncounterIds }) =>
-    ({ id, entry, expectedMapId, requiredMapIds, requiredEncounterIds }));
+  return manifest.routes.map(({ id, entry, expectedMapId, requiredMapIds, requiredEncounterIds, inputs }) => {
+    const spec = { id, entry, expectedMapId,
+      requiredMapIds: [...requiredMapIds], requiredEncounterIds: [...requiredEncounterIds] };
+    if (inputs.some(input => input.kind === "menu" || input.kind === "save-restore")) {
+      const firstRestore = inputs.findIndex(input => input.kind === "save-restore");
+      spec.program = {
+        inputCount: inputs.length,
+        menuCount: inputs.filter(input => input.kind === "menu").length,
+        restoreCount: inputs.filter(input => input.kind === "save-restore").length + 1,
+        postRestoreInputCount: firstRestore === -1 ? 0 :
+          inputs.slice(firstRestore + 1).filter(input => input.kind !== "save-restore").length,
+      };
+    }
+    return spec;
+  });
 }

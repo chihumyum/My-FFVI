@@ -551,12 +551,12 @@ $("resume").onclick = () => pause(false);
 $("menu-button").onclick = () => pause(!flow.paused);
 $("battle-mode").onchange = () => {
   if (!commands?.settingsReady) return;
-  commands.setBattlePreferences({ ...flow.session.battlePreferences, mode: $("battle-mode").value });
+  commands.menu({ kind: "set-preferences", preferences: { ...flow.session.battlePreferences, mode: $("battle-mode").value } });
   sync();
 };
 $("battle-speed").onchange = () => {
   if (!commands?.settingsReady) return;
-  commands.setBattlePreferences({ ...flow.session.battlePreferences, speedIndex: Number($("battle-speed").value) });
+  commands.menu({ kind: "set-preferences", preferences: { ...flow.session.battlePreferences, speedIndex: Number($("battle-speed").value) } });
   sync();
 };
 $("save-game").onclick = saveGame;

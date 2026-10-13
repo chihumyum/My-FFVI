@@ -82,6 +82,7 @@
     "framework-io:check": "npm run build && node scripts/check-framework-io.mjs && node scripts/check-framework-lifecycle.mjs",
     "framework-entry:check": "npm run build && node scripts/check-game-entry-ui.mjs",
     "game-commands:check": "npm run build && node scripts/check-game-commands-ui.mjs",
+    "batch-program:check": "npm run build && node scripts/check-content-batch-program.mjs",
     "event-save:check": "npm run build && node scripts/check-event-save.mjs && node scripts/check-event-save-source.mjs",
     "framework:build": "npm run build && node scripts/build-framework-content.mjs",
     "content-packages:build": "npm run build && node scripts/build-content-packages.mjs",

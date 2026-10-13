@@ -1,11 +1,21 @@
 import { z } from "zod";
 
+/** Completed declared inputs, including intermediate restore commands. The
+ * mandatory final save/restore is counted only in restoreCount. */
+export type ContentBatchRouteProgram = {
+  inputCount: number;
+  menuCount: number;
+  restoreCount: number;
+  postRestoreInputCount: number;
+};
+
 export type ContentBatchRouteSpec = {
   id: string;
   entry: "source-new-game" | "controlled-fixture";
   expectedMapId: number;
   requiredMapIds: number[];
   requiredEncounterIds: number[];
+  program?: ContentBatchRouteProgram;
 };
 
 export type ContentBatchRouteReceipt = {
@@ -25,6 +35,7 @@ export type ContentBatchRouteReceipt = {
   saveRestored: boolean;
   controls: string[];
   boundary: unknown | null;
+  program?: ContentBatchRouteProgram;
 };
 
 export type ContentBatchAdmissionBlocker = { code: string; reason: string };
@@ -61,12 +72,17 @@ const profile = z.enum(["source", "framework"]);
 const contentHashes = z.record(text, digest).refine((value) => Object.keys(value).length > 0,
   "Content dependencies must be explicit and nonempty");
 const blocker = z.object({ code: text, reason: text }).strict();
+const count = z.number().int().nonnegative();
+const program = z.object({
+  inputCount: count, menuCount: count, restoreCount: count, postRestoreInputCount: count,
+}).strict();
 const routeSpec = z.object({
   id: text,
   entry: z.enum(["source-new-game", "controlled-fixture"]),
   expectedMapId: identity,
   requiredMapIds: z.array(identity),
   requiredEncounterIds: z.array(identity),
+  program: program.extend({ restoreCount: count.min(1) }).optional(),
 }).strict();
 const receipt = z.object({
   kind: z.literal("content-batch-route-receipt-v1"),
@@ -87,6 +103,7 @@ const receipt = z.object({
   // Missing/undefined is not a successful null boundary. Only JSON belongs in
   // a portable receipt; a class instance or callback is not execution evidence.
   boundary: z.json(),
+  program: program.optional(),
 }).strict();
 const inputSchema = z.object({
   manifestHash: digest,
@@ -187,6 +204,14 @@ export function assessContentBatchAdmission(raw: ContentBatchAdmissionInput): Co
         fail("checkpoint-not-ready", "The route did not finish at a stable checkpoint");
       if (!found.saveRestored)
         fail("save-not-restored", "The route did not save and restore its continuation");
+      if (spec.program !== undefined) {
+        if (found.program === undefined)
+          fail("missing-route-program", "No completed input/restore counts were supplied for the declared program");
+        else for (const key of ["inputCount", "menuCount", "restoreCount", "postRestoreInputCount"] as const)
+          if (found.program[key] !== spec.program[key])
+            fail("route-program-mismatch", `Completed ${key} differs from the declared program`);
+      } else if (found.program !== undefined)
+        fail("unexpected-route-program", "Program evidence cannot widen a route without a declared program");
     }
     blockers.push(...failures.map((failure) => ({ code: failure.code, reason: `${spec.id}: ${failure.reason}` })));
     return { id: spec.id, entry: spec.entry, status: failures.length ? "blocked" : "passed", blockers: failures };

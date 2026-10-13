@@ -22,6 +22,9 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
   const runtime = { ...controlledAudioRuntime(), battleHandoff: "prepared",
     transportationTimestamp: () => "639273600000000000" };
   const host = { visible: true, mediaReady: true, overlayOpen: false };
+  const extended = route.inputs.some(input => input.kind === "menu" || input.kind === "save-restore");
+  const program = { inputCount: 0, menuCount: 0, restoreCount: 0, postRestoreInputCount: 0 };
+  let restoredDuringProgram = false;
   const receipt = { kind: "content-batch-route-receipt-v1", routeId: route.id,
     manifestHash: plan.manifestHash, dependencyHash: plan.dependencyHash, runtimeHash,
     contentHashes: structuredClone(plan.contentHashes), profile: plan.manifest.profile,
@@ -31,7 +34,9 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     controls: ["10ms headless host; media and audio output immediately ready", "in-memory real checkpoint codec/storage",
       "GameEntryLoader entry/restore, prepared GameBattleHandoff and owner-bound GameCommands",
       "fixed explicit transportation timestamp", "manifest player inputs, choice answers and battle abilities",
-      "pause-menu readiness only; no undeclared menu mutation"], boundary: null };
+      extended ? "only declared menu mutations and stable-field restore relays"
+        : "pause-menu readiness only; no undeclared menu mutation"], boundary: null,
+    ...(extended ? { program } : {}) };
   const trace = [], flow = new GameFlow();
   const entries = new GameEntryLoader(flow, { discard: () => {} });
   const execution = { entry: "GameEntryLoader", battleHandoff: "prepared", commands: "GameCommands",
@@ -136,7 +141,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     assert.equal(commandChannel.settingsReady, false, "An entry clears previous media readiness");
     flow.advance(0, host); visit(); trace.push({ kind: "start", mapId: receipt.finalMapId,
       entry: "GameEntryLoader", battleHandoff: "prepared", commandOwnerBound: commandChannel.owner === current() });
-    const owner = current(), state = owner.state, world = owner.world;
+    let owner = current(), state = owner.state, world = owner.world;
     maps = new GameMapLoader(flow, boundMaps, {
       prepare: async field => { assert.notEqual(field, current().field); return null; }, discard: () => {},
     });
@@ -144,6 +149,71 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     const storage = new CheckpointStorage({ getItem: key => bytes.get(key) ?? null,
       setItem: (key, value) => bytes.set(key, value) }, "framework");
     saves = new GameEventSaveCoordinator(flow, storage);
+    // Final and declared mid-route restores use the same storage, trusted
+    // Repository, runtime options and entry publication transaction. A restore
+    // never replays field initialization or grants another battle result.
+    const saveRestore = async final => {
+      const previous = current(), previousState = previous.state, previousWorld = previous.world,
+        previousCommands = commandChannel, previousPaused = flow.paused;
+      assert.equal(previous.checkpointReady, true);
+      assert.equal(flow.pause(true), true);
+      const checkpoint = previous.checkpoint(), digest = await contentDigest(checkpoint);
+      checkpointHash = digest;
+      const saveTicket = flow.beginOperation("save");
+      try {
+        const prepared = await storage.prepareSave(checkpoint, ticks);
+        assert.equal(saveTicket.isCurrent(), true); prepared.commit(); assert.equal(saveTicket.finish(), true);
+      } catch (error) {
+        saveTicket.cancel();
+        assert.equal(current(), previous); assert.equal(await contentDigest(previous.checkpoint()), digest);
+        assert.equal(flow.pause(previousPaused), true); flow.observeHost(host);
+        throw error;
+      }
+      const loadAttempt = entries.begin("load");
+      const loaded = await loadAttempt.prepare(async context => {
+        const saved = await storage.load(); assert.ok(saved);
+        assert.ok(context.isCurrent(), "Route restore was cancelled");
+        const packages = await repository.restoreSessionContent(saved.checkpoint);
+        assert.ok(context.isCurrent(), "Route restore content became obsolete");
+        bound("battle", packages.battle);
+        if (packages.initial) bound("entry", packages.initial);
+        if (packages.world) {
+          bound("world", packages.world.catalog); bound(`map:${packages.world.map.mapId}`, packages.world.map);
+          if (packages.world.source) {
+            bound("entry", packages.world.source.content);
+            bound(`map:${packages.world.source.initialMap.mapId}`, packages.world.source.initialMap);
+          }
+        }
+        const restored = GameSession.restore(saved.checkpoint, packages.initial, packages.battle, packages.world, runtime);
+        assert.equal(await contentDigest(restored.checkpoint()), digest, "Restore replayed or lost state");
+        return { session: restored, presentation: { mapId: receipt.finalMapId }, options: { paused: true } };
+      });
+      if (loaded.status !== "committed") {
+        assert.equal(current(), previous); assert.equal(current().state, previousState); assert.equal(current().world, previousWorld);
+        assert.equal(await contentDigest(previous.checkpoint()), digest, "Failed restore changed the published owner");
+        assert.equal(flow.pause(previousPaused), true); flow.observeHost(host);
+        trace.push({ kind: "save-restore-failed", final, status: loaded.status, ownerRetained: true,
+          checkpointHash: digest, paused: flow.paused });
+        receipt.boundary = { kind: "save-restore", status: loaded.status, reason: String(loaded.error ?? loaded.status) };
+        return false;
+      }
+      execution.loadsCommitted++;
+      owner = loaded.session; state = owner.state; world = owner.world;
+      commandChannel = new GameCommands(flow, owner);
+      assert.equal(flow.paused, true); assert.equal(commandChannel.menuReady, false);
+      assert.equal(previousCommands.setBattlePreferences(previous.battlePreferences), false);
+      assert.equal(await contentDigest(previous.checkpoint()), digest);
+      assert.equal(await contentDigest(owner.checkpoint()), digest, "An obsolete command cannot edit the restored owner");
+      execution.staleCommandChannelsRejected++;
+      flow.observeHost(host); assert.equal(commandChannel.menuReady, true);
+      assert.equal(flow.pause(final), true); flow.observeHost(host);
+      visit(); program.restoreCount++;
+      trace.push({ kind: "save-restore", checkpointHash: digest, menuReady: commandChannel.menuReady,
+        entry: "GameEntryLoader", paused: flow.paused, staleCommandsRejected: true,
+        ...(extended ? { final, inputIndex: final ? null : inputIndex,
+          continued: !final, ownerRebound: commandChannel.owner === owner, completedBattles: state.snapshot().completedBattles.length } : {}) });
+      return true;
+    };
     let seenBattle = null;
     while (ticks < route.maxTicks) {
       assert.equal(current(), owner); assert.equal(current().state, state); assert.equal(current().world, world);
@@ -221,8 +291,31 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
       } else if (game.checkpointReady) {
         const input = route.inputs[inputIndex];
         if (input) {
-          const accepted = input.kind === "move" ? flow.move(input.direction) : flow.confirm();
+          let accepted;
+          if (input.kind === "save-restore") {
+            accepted = await saveRestore(false);
+            if (!accepted) break;
+            restoredDuringProgram = true;
+          } else if (input.kind === "menu") {
+            const menuOwner = current(), paused = flow.paused;
+            assert.equal(flow.pause(true), true); assert.equal(commandChannel.menuReady, true);
+            const before = await contentDigest(menuOwner.checkpoint());
+            try {
+              accepted = commandChannel.menu(input.command);
+              if (!accepted) assert.equal(await contentDigest(menuOwner.checkpoint()), before,
+                "A rejected declared menu command cannot change owned state");
+            } finally {
+              assert.equal(current(), menuOwner); assert.equal(flow.pause(paused), true); flow.observeHost(host);
+            }
+            if (accepted) program.menuCount++;
+            trace.push({ kind: "menu-command", inputIndex, command: structuredClone(input.command),
+              accepted, ownerBound: commandChannel.owner === menuOwner, pauseRestored: flow.paused === paused });
+          } else if (input.kind === "move") accepted = flow.move(input.direction);
+          else if (input.kind === "confirm") accepted = flow.confirm();
+          else throw new Error("Unknown declared route input: " + input.kind);
           if (!accepted) { receipt.boundary = { kind: "rejected-player-input", inputIndex, input }; break; }
+          program.inputCount++;
+          if (restoredDuringProgram && input.kind !== "save-restore") program.postRestoreInputCount++;
           trace.push({ kind: "input", inputIndex, input }); inputIndex++;
         } else {
           const missingMaps = route.requiredMapIds.filter(id => !receipt.visitedMapIds.includes(id));
@@ -234,41 +327,9 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
           assert.equal(flow.pause(true), true); assert.equal(commandChannel.menuReady, true);
           trace.push({ kind: "menu-ready", ownerBound: commandChannel.owner === game, commandReady: true,
             mutation: "none", phase: flow.phase });
-          const checkpoint = game.checkpoint(); checkpointHash = await contentDigest(checkpoint);
-          const saveTicket = flow.beginOperation("save"), prepared = await storage.prepareSave(checkpoint, ticks);
-          assert.equal(saveTicket.isCurrent(), true); prepared.commit(); assert.equal(saveTicket.finish(), true);
-          const previousCommands = commandChannel, loadAttempt = entries.begin("load");
-          const loaded = await loadAttempt.prepare(async context => {
-            const saved = await storage.load(); assert.ok(saved);
-            assert.ok(context.isCurrent(), "Route restore was cancelled");
-            const packages = await repository.restoreSessionContent(saved.checkpoint);
-            assert.ok(context.isCurrent(), "Route restore content became obsolete");
-            bound("battle", packages.battle);
-            if (packages.initial) bound("entry", packages.initial);
-            if (packages.world) {
-              bound("world", packages.world.catalog); bound(`map:${packages.world.map.mapId}`, packages.world.map);
-              if (packages.world.source) {
-                bound("entry", packages.world.source.content);
-                bound(`map:${packages.world.source.initialMap.mapId}`, packages.world.source.initialMap);
-              }
-            }
-            const restored = GameSession.restore(saved.checkpoint, packages.initial, packages.battle, packages.world, runtime);
-            assert.equal(await contentDigest(restored.checkpoint()), checkpointHash, "Restore replayed or lost state");
-            return { session: restored, presentation: { mapId: receipt.finalMapId }, options: { paused: true } };
-          });
-          if (loaded.status !== "committed") throw loaded.error ?? new Error("Route restore did not commit: " + loaded.status);
-          execution.loadsCommitted++;
-          const restored = loaded.session;
-          commandChannel = new GameCommands(flow, restored);
-          assert.equal(flow.paused, true); assert.equal(commandChannel.menuReady, false);
-          assert.equal(previousCommands.setBattlePreferences(game.battlePreferences), false);
-          assert.equal(await contentDigest(game.checkpoint()), checkpointHash);
-          assert.equal(await contentDigest(restored.checkpoint()), checkpointHash, "An obsolete command cannot edit the restored owner");
-          execution.staleCommandChannelsRejected++;
-          flow.advance(0, host); assert.equal(commandChannel.menuReady, true);
+          if (!await saveRestore(true)) break;
           receipt.saveRestored = true; receipt.result = "completed";
-          trace.push({ kind: "save-restore", checkpointHash, menuReady: commandChannel.menuReady,
-            entry: "GameEntryLoader", paused: flow.paused, staleCommandsRejected: true }); break;
+          break;
         }
       }
       tick();
