@@ -169,6 +169,7 @@ export class GameSession {
         party: this.state.fieldParty,
         roster: this.state.fieldRoster,
         ownedConditions: this.state.fieldOwnedConditions,
+        recovery: this.state.fieldRecovery,
         ...(this.state.fieldTransportation ? { transportation: this.state.fieldTransportation } : {}),
         shop: this.state.fieldShop,
         walkEncounters: { prepareStep: (mapId, policy) => this.walkEncounters.prepareStep(mapId, policy) },

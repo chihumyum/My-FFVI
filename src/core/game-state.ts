@@ -86,6 +86,8 @@ import { projectTransportationState, type FieldTransportationPort,
   type FieldTransportationTransaction, type TransportationStateCommand } from "./transportation-state.js";
 import { projectOwnedCondition, type FieldOwnedConditionPort,
   type OwnedConditionCommand, type OwnedConditionTransaction } from "./owned-condition.js";
+import { projectFieldRecovery, type FieldRecoveryCommand,
+  type FieldRecoveryPort, type FieldRecoveryTransaction } from "./field-recovery.js";
 import {
   growCharacter,
   initialCharacterGrowth,
@@ -268,6 +270,9 @@ export class GameState {
   };
   readonly fieldOwnedConditions: FieldOwnedConditionPort = {
     prepare: (command) => this.prepareOwnedConditionEvent(command),
+  };
+  readonly fieldRecovery: FieldRecoveryPort = {
+    prepare: (command) => this.prepareFieldRecovery(command),
   };
   /** Whole-roster source identities and the selected four Corps cells. */
   readonly fieldPuppetRoster: FieldPuppetRosterPort = {
@@ -1061,6 +1066,30 @@ export class GameState {
       this.revision++;
     } };
   }
+  private projectFieldRecoveryState(data: GameStateSnapshot, command: FieldRecoveryCommand) {
+    const next = structuredClone(data);
+    const preview = projectFieldRecovery(next.roster, next.party, command, this.conditions);
+    next.roster = preview.roster;
+    this.validate(next);
+    return { next, targets: [...preview.targets], steps: preview.steps.map(step => {
+      // Every source-ordered refresh candidate must be a valid owned state,
+      // including unchanged targets. Presentation reads only this projection.
+      const intermediate = { ...next, roster: step.roster };
+      this.validate(intermediate);
+      return { targetId: step.targetId, appearance: this.projectPartyAppearance(intermediate),
+        setDummy: false as const, affectLeader: true as const };
+    }) };
+  }
+  private prepareFieldRecovery(command: FieldRecoveryCommand): FieldRecoveryTransaction {
+    this.requireIdle();
+    const { next, ...projection } = this.projectFieldRecoveryState(this.data, command), revision = this.revision;
+    return { ...projection, commit: () => {
+      this.requireIdle();
+      if (this.revision !== revision) throw new Error("Stale field recovery transaction");
+      this.data = next;
+      this.revision++;
+    } };
+  }
   /** Map initialization runs against this private draft. Publishing rebinds the
    * same ports to live state so later events keep a single state owner. */
   prepareFieldState(): {
@@ -1070,6 +1099,7 @@ export class GameState {
       party: FieldPartyPort;
       roster: FieldRosterPort;
       ownedConditions: FieldOwnedConditionPort;
+      recovery: FieldRecoveryPort;
       puppetRoster: FieldPuppetRosterPort;
       transportation?: FieldTransportationPort;
       shop: { validate(groupId: number): void };
@@ -1184,6 +1214,21 @@ export class GameState {
         } };
       },
     };
+    const recovery: FieldRecoveryPort = {
+      prepare: (command) => {
+        if (published) return this.prepareFieldRecovery(command);
+        this.requireIdle();
+        if (this.revision !== revision) throw new Error("Stale candidate field recovery owner");
+        const { next, ...projection } = this.projectFieldRecoveryState(data, command), version = generation;
+        return { ...projection, commit: () => {
+          this.requireIdle();
+          if (transportationPublishing || published || generation !== version || this.revision !== revision)
+            throw new Error("Stale candidate field recovery transaction");
+          data = next;
+          generation++;
+        } };
+      },
+    };
     const transportation: FieldTransportationPort | undefined = data.nativeState && this.content.sourceNewGame ? {
       catalog: structuredClone(this.content.sourceNewGame.transportation),
       read: () => this.readTransportations(published ? this.data : data),
@@ -1222,6 +1267,7 @@ export class GameState {
         party,
         roster,
         ownedConditions,
+        recovery,
         puppetRoster: { current: () => this.projectPuppetRoster(published ? this.data : data) },
         ...(transportation ? { transportation } : {}),
         shop: { validate: (groupId) => { this.projectShopOptions(published ? this.data : data, groupId); } },

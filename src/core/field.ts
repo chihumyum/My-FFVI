@@ -23,6 +23,7 @@ import {
 } from "./inventory-event.js";
 import { executePartyEvent, type FieldPartyPort, type PartyAppearanceCandidate } from "./party.js";
 import { executeOwnedConditionEvent, type FieldOwnedConditionPort } from "./owned-condition.js";
+import { executeFieldRecoveryEvent, type FieldRecoveryPort } from "./field-recovery.js";
 import { executeSourcePresentation, cloneSourcePresentationContext, sourcePresentationCheckpoint,
   type SourcePresentationContext, type SourcePresentationPort } from "./source-presentation.js";
 import { canonical } from "./canonical.js";
@@ -272,6 +273,7 @@ export type FieldGameOptions = {
   /** Read-only admission before any shop greeting or interaction is published. */
   shop?: { validate(groupId: number): void };
   ownedConditions?: FieldOwnedConditionPort;
+  recovery?: FieldRecoveryPort;
   inventory?: FieldInventoryPort;
   treasure?: FieldTreasurePort;
   party?: FieldPartyPort;
@@ -3176,15 +3178,18 @@ export class FieldGame {
             }
             break;
           case "owned-condition":
+          case "field-recovery":
             try {
-              executeOwnedConditionEvent(op, this.options.ownedConditions, (steps) => {
+              const prepare: Parameters<typeof executeOwnedConditionEvent>[2] = (steps) => {
                 if (!steps.length) return () => {};
                 const visual = this.content.scriptSystemFlags?.[this.eventRootScript ?? t.script];
                 if (visual?.keepBadStatusVisual !== false)
                   throw new Error("Unknown or unsupported owned condition-visual context");
                 if (!this.partyActors) throw new Error("Party actor refresh is unavailable");
                 return this.partyActors.prepareSequence(steps, this.partyRenderer());
-              });
+              };
+              if (op.kind === "owned-condition") executeOwnedConditionEvent(op, this.options.ownedConditions, prepare);
+              else executeFieldRecoveryEvent(op, this.options.recovery, prepare);
             } catch (error) {
               this.block(error instanceof Error ? error.message : String(error), op);
               return;

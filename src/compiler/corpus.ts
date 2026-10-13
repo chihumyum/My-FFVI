@@ -65,7 +65,7 @@ function owner(name: string): string {
   )
     return "entity-and-animation";
   if (/^(Msg|Select)/.test(name)) return "dialogue-and-ui";
-  if (/^(GetItem|RemoveItem|RemoveGil)$/.test(name))
+  if (/^(GetItem|RemoveItem|RemoveGil|RecoveryHP|RecoveryMP|AddCondition|RemoveCondition)$/.test(name))
     return "inventory-and-owned-state";
   if (/^(PlaySE|StopSE|SyncSE|PlayBGM|StopBGM|FadeBGM|Volume)/.test(name))
     return "audio";

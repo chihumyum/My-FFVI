@@ -10,6 +10,7 @@ import type { PartyActorContext } from "../core/party-actors.js";
 import type { TreasureBoxRequest, TreasureInventoryDefinition, TreasureInventoryLimits } from "../core/treasure-inventory.js";
 import type { TreasureTaskMessages } from "../core/treasure-task.js";
 import type { OwnedConditionEventOp } from "../core/owned-condition.js";
+import type { FieldRecoveryEventOp } from "../core/field-recovery.js";
 import type { FieldEntryContextDefinition } from "../core/field-entry-context.js";
 import type { SourcePresentationOp } from "../core/source-presentation.js";
 import type { AudioReadinessOp } from "../core/audio-readiness.js";
@@ -184,6 +185,7 @@ export type Op = Site &
     | RosterLifecycleEventOp
     | FieldTransportationOp
     | OwnedConditionEventOp
+    | FieldRecoveryEventOp
     | SourcePresentationOp
     | AudioReadinessOp
     | FieldSoundOp

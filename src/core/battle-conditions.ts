@@ -193,6 +193,12 @@ export class BattleConditions {
     this.validateActive(ids);
     return ids.map((id) => this.definitions.get(id)!.type);
   }
+  /** Identity-only predicate read. This does not admit active effects, life
+   * behavior or persistence for a known but unported master condition. */
+  referenceTypes(ids: readonly number[]): number[] {
+    this.validateReferences(ids);
+    return ids.map((id) => this.definitions.get(id)!.type);
+  }
   private speedBehaviors(): SpeedBehavior[] {
     return [...this.behaviors.values()].filter((b): b is SpeedBehavior =>
       b.kind === "haste" || b.kind === "slow");

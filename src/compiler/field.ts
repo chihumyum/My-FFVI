@@ -20,6 +20,7 @@ import { compileNarsheMapEntrySeed } from "./map-party-entry.js";
 import { compileFieldTransportationInstruction, fieldTransportationMnemonics, fieldTransportationSelectors } from "./field-transportation.js";
 import { compilePartyEvent } from "./party.js";
 import { compileOwnedConditionInstruction } from "./owned-condition.js";
+import { compileFieldRecoveryInstruction } from "./field-recovery.js";
 import { compileSourcePresentationInstruction, sourcePresentationSelectors } from "./source-presentation.js";
 import { compileAudioReadinessInstruction } from "./audio-readiness.js";
 import { compileFieldSoundInstruction, fieldSoundMnemonics } from "./field-sound.js";
@@ -220,6 +221,10 @@ export function decodeFieldOp(
   }
   if (name === "AddCondition" || name === "RemoveCondition") {
     try { return { ...site, ...compileOwnedConditionInstruction(raw, tables) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "RecoveryHP" || name === "RecoveryMP") {
+    try { return { ...site, ...compileFieldRecoveryInstruction(raw, tables) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if (
