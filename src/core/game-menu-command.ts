@@ -1,7 +1,7 @@
 import { parseBattlePreferences, type BattlePreferences } from "./battle-preferences.js";
 import { checkpointInteger } from "./checkpoint-validation.js";
 import type { PartyMenuChange } from "./party-menu.js";
-import type { PartyPosition } from "./party.js";
+import type { PartyPosition, PartySlotIndex } from "./party.js";
 
 /** Explicit user inputs. Inventory, equipment, party and preferences retain
  * their existing owners and context-dependent qualification rules. */
@@ -60,6 +60,17 @@ function partyChange(raw: unknown): PartyMenuChange {
     keys(value, "kind,position,row");
     if (value.row !== "front" && value.row !== "back") throw new Error("Invalid party menu row");
     return { kind: "set-row", position: integer(value.position, 0, 3) as PartyPosition, row: value.row };
+  }
+  if (kind(value) === "set-member") {
+    keys(value, "kind,slot,position,ownedId,row");
+    if (value.row !== "front" && value.row !== "back") throw new Error("Invalid party menu row");
+    return { kind: "set-member", slot: integer(value.slot, 0, 2) as PartySlotIndex,
+      position: integer(value.position, 0, 3) as PartyPosition,
+      ownedId: value.ownedId === null ? null : ownedId(value.ownedId), row: value.row };
+  }
+  if (kind(value) === "select-slot") {
+    keys(value, "kind,slot");
+    return { kind: "select-slot", slot: integer(value.slot, 0, 2) as PartySlotIndex };
   }
   throw new Error("Unknown party menu change");
 }

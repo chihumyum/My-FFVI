@@ -23,6 +23,8 @@ const lanes = [
   ["host-io-recovery", "check-game-map-ui.mjs", "game-map-ui-check.json", "tests"],
   ["session-entry-ui", "check-game-entry-ui.mjs", "game-entry-ui-check.json", "tests"],
   ["shared-command-ui", "check-game-commands-ui.mjs", "game-commands-ui-check.json", "tests"],
+  ["party-organization-owner-loop", "check-party-organization.mjs", "party-organization-check.json", "tests"],
+  ["party-organization-ui", "check-party-menu-ui.mjs", "party-menu-ui-check.json", "cases"],
   ["battle-ai-target-transactions", "check-battle-ai-targets.mjs", "battle-ai-targets-check.json", "stages"],
   ["event-save-continuation", "check-event-save.mjs", "event-save-check.json", "tests"],
   ["content-batch-pipeline", "check-content-batch-pipeline.mjs", "content-batch-pipeline-check.json", "tests"],

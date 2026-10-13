@@ -13,6 +13,25 @@ const button = (label, key, callback, disabled = false) => {
   element.onclick = callback;
   return element;
 };
+const partyError = (error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/stale/i.test(message)) return "编队已变化，请重新选择。";
+  if (/battle definition|战斗动作|战斗能力/i.test(message))
+    return "所选成员的战斗能力尚未迁移，原编队已保留。";
+  if (/appearance|bitmap|media|character asset/i.test(message))
+    return "所选成员的地图外观尚未接入，原编队已保留。";
+  if (/unavailable|disabled|unowned/i.test(message))
+    return "请选择已持有且可用的角色，原编队已保留。";
+  if (/empty|last member|retain a member|nonempty|non-empty/i.test(message))
+    return "当前队伍至少保留一名可用成员，原编队已保留。";
+  return "当前无法调整编队，原编队已保留。";
+};
+const slotBlocker = (message) => {
+  if (!message) return null;
+  if (/empty|nonempty|non-empty|没有成员/i.test(message)) return "该编组为空，请先选入至少一名可用角色。";
+  if (/unavailable|disabled|不可编组/i.test(message)) return "该编组含不可用角色，请先换出。";
+  return message;
+};
 
 /** Only UI selection lives here. All roster, row and progression data is read
  * from the current session; even a retained button submits its old baseline. */
@@ -28,6 +47,7 @@ export class PartyView {
   }
   reset() {
     this.playerId = null;
+    this.slot = null;
     this.message = "";
     this.key = "";
     this.session = null;
@@ -41,6 +61,7 @@ export class PartyView {
     if (session !== this.session) {
       this.key = "";
       this.playerId = null;
+      this.slot = null;
       this.message = "";
     }
     this.session = session;
@@ -49,12 +70,13 @@ export class PartyView {
     if (!model.roster.some((member) => member.id === this.playerId))
       this.playerId = model.cells.find((cell) => cell.id !== null)?.id ?? model.roster[0]?.id ?? null;
     const character = this.playerId === null ? null : session.characterMenu(this.playerId);
-    const key = JSON.stringify([model, character, disabled, this.message]);
+    this.slot ??= model.selectedSlot;
+    const key = JSON.stringify([model, character, disabled, this.message, this.slot]);
     if (key === this.key) return;
     this.key = key;
     const focused = this.root.contains(document.activeElement)
       ? document.activeElement.dataset.partyFocus : null;
-    this.root.replaceChildren(node("h3", "当前队伍"));
+    this.root.replaceChildren(node("h3", "保存编组"));
     const canEdit = !disabled && model.editable;
     const change = (request) => {
       // Recheck the current owner and host gate even when invoked through a
@@ -64,17 +86,57 @@ export class PartyView {
       try {
         changed = commands ? commands.changeParty(request) : session.changeParty(request);
         this.message = changed ? "编队已更新。" : "编队没有变化。";
-      } catch (error) {
-        this.message = error instanceof Error && /stale/i.test(error.message)
-          ? "编队已变化，请重新选择。" : "当前无法调整编队，原编队已保留。";
-      }
+      } catch (error) { this.message = partyError(error); }
+      // A rejected select change must revert its DOM value to the owned model,
+      // even when the same error was already displayed on the previous attempt.
+      this.key = "";
       this.render(session, { disabled: this.disabled });
       if (changed) this.onChange();
     };
+    const groups = node("div", undefined, "party-menu-groups");
+    for (const slot of model.slots) {
+      const browse = button(`编组 ${slot.index + 1}${slot.index === model.selectedSlot ? " · 当前队伍" : ""}`,
+        `browse-slot-${slot.index}`, () => {
+          if (!current() || this.disabled) return;
+          this.slot = slot.index;
+          this.message = "";
+          this.render(session, { disabled: this.disabled });
+        }, disabled);
+      browse.setAttribute("aria-pressed", String(slot.index === this.slot));
+      groups.append(browse);
+    }
+    this.root.append(groups);
+    const viewed = model.slots[this.slot], active = this.slot === model.selectedSlot;
+    const members = viewed.cells.filter((cell) => cell.id !== null).length;
+    this.root.append(node("p", `正在编辑编组 ${this.slot + 1}${active ? "（当前队伍）" : ""}。`, "party-menu-note"));
+    this.root.append(button(active ? "已是当前队伍" : "设为当前队伍", `select-slot-${this.slot}`,
+      () => change({ expected: model.expected, change: { kind: "select-slot", slot: viewed.index } }),
+      !canEdit || active || !!viewed.blocker));
     const cells = node("div", undefined, "party-menu-cells");
-    for (const cell of model.cells) {
+    for (const cell of viewed.cells) {
       const card = node("article", undefined, "party-menu-cell");
       card.append(node("h4", `位置 ${cell.position + 1}`));
+      const label = node("label", "成员", "party-menu-member-choice");
+      const selection = node("select");
+      selection.setAttribute("aria-label", `编组 ${this.slot + 1} 位置 ${cell.position + 1} 成员`);
+      selection.dataset.partyFocus = `assign-${this.slot}-${cell.position}`;
+      selection.disabled = !canEdit;
+      const empty = node("option", "空位（移出成员）");
+      empty.value = "";
+      empty.disabled = active && members === 1 && cell.id !== null;
+      selection.append(empty);
+      for (const member of model.roster.filter((member) => member.enabled)) {
+        const option = node("option", member.name);
+        option.value = member.id;
+        option.disabled = viewed.cells.some((other) => other.position !== cell.position && other.id === member.id);
+        selection.append(option);
+      }
+      selection.value = cell.member?.enabled ? cell.id : "";
+      const slot = this.slot;
+      selection.onchange = () => change({ expected: model.expected, change: { kind: "set-member",
+        slot, position: cell.position, ownedId: selection.value || null, row: cell.row } });
+      label.append(selection);
+      card.append(label);
       if (!cell.member) {
         card.append(node("p", "空位"));
       } else {
@@ -87,15 +149,18 @@ export class PartyView {
         card.append(select, node("p", `Lv ${cell.member.level} · ${cell.row === "front" ? "前排" : "后排"}`),
           node("p", `HP ${cell.member.hp}/${cell.member.maxHp} · MP ${cell.member.mp}/${cell.member.maxMp}`));
         const actions = node("div", undefined, "party-menu-actions");
-        for (const [label, direction] of [["上移", -1], ["下移", 1]]) {
-          const to = cell.position + direction;
-          actions.append(button(label, `swap-${cell.position}-${to}`, () => change({
-            expected: model.expected, change: { kind: "swap", from: cell.position, to },
-          }), !canEdit || to < 0 || to > 3));
+        if (active) {
+          for (const [label, direction] of [["上移", -1], ["下移", 1]]) {
+            const to = cell.position + direction;
+            actions.append(button(label, `swap-${cell.position}-${to}`, () => change({
+              expected: model.expected, change: { kind: "swap", from: cell.position, to },
+            }), !canEdit || to < 0 || to > 3));
+          }
         }
         actions.append(button(cell.row === "front" ? "改为后排" : "改为前排", `row-${cell.position}`, () => change({
-          expected: model.expected, change: { kind: "set-row", position: cell.position,
-            row: cell.row === "front" ? "back" : "front" },
+          expected: model.expected, change: active ? { kind: "set-row", position: cell.position,
+            row: cell.row === "front" ? "back" : "front" } : { kind: "set-member", slot,
+            position: cell.position, ownedId: cell.id, row: cell.row === "front" ? "back" : "front" },
         }), !canEdit));
         card.append(actions);
       }
@@ -103,6 +168,8 @@ export class PartyView {
     }
     this.root.append(cells);
     if (model.blocker) this.root.append(node("p", model.blocker, "party-menu-note"));
+    if (!active && viewed.blocker) this.root.append(node("p", slotBlocker(viewed.blocker), "party-menu-note"));
+    this.root.append(node("p", "这里调整 Web 菜单编组；探索和战斗使用当前队伍。", "party-menu-note"));
     const status = node("p", this.message, "party-menu-status");
     status.setAttribute("role", "status");
     this.root.append(status);

@@ -2,7 +2,9 @@
 .party-menu-cells { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
 .party-menu-cell { border: 1px solid #7778; border-radius: 0.4rem; padding: 0.75rem; }
 .party-menu-cell h4, .party-menu-cell p, .party-menu-character p { margin: 0 0 0.6rem; }
-.party-menu-actions, .party-menu-members { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.party-menu-actions, .party-menu-members, .party-menu-groups { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.party-menu-member-choice { display: grid; gap: 0.3rem; margin-bottom: 0.6rem; }
+.party-menu-member-choice select { width: 100%; }
 .party-menu-members h3 { flex-basis: 100%; margin: 0; }
 #party-menu button[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 2px; }
 .party-menu-note, .party-menu-status { margin: 0; font-size: 0.9rem; }

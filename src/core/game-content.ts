@@ -345,14 +345,11 @@ export function fieldMediaUrls(field: FieldContent): string[] {
   return fieldImageUrls(field.map, field.characters, field.minimap);
 }
 
-/** One encounter's media closure. Registered late enemies and frozen borrowed
- * players may enter without another host preparation, so their exact poses are
- * included. Other sprites in the shared source library create no dependency. */
-export function battleMediaUrls(content: BattleContent,
-  players: readonly Pick<CombatantDefinition, "sprites" | "appearance">[] = content.players): string[] {
-  const keys = new Set<string>([content.background]);
+function battleUnitMediaKeys(content: Pick<BattleContent, "sprites" | "battleAppearance">,
+  units: readonly Pick<CombatantDefinition, "sprites" | "appearance">[]): Set<string> {
+  const keys = new Set<string>();
   let appearance = false;
-  for (const unit of [...players, ...content.enemies, ...Object.values(content.participants?.enemyDefinitions ?? {})]) {
+  for (const unit of units) {
     text(unit.sprites.idle); keys.add(unit.sprites.idle);
     if (unit.sprites.mount !== null) { text(unit.sprites.mount); keys.add(unit.sprites.mount); }
     if (unit.appearance) {
@@ -364,16 +361,34 @@ export function battleMediaUrls(content: BattleContent,
     if (!content.battleAppearance) throw new Error("Battle appearance media provider is unavailable");
     for (const key of Object.values(content.battleAppearance.armorSprites)) { text(key); keys.add(key); }
   }
+  return keys;
+}
+function battleSpriteFiles(sprites: BattleContent["sprites"], keys: Iterable<string>): string[] {
   const files = new Set<string>();
   for (const key of keys) {
-    if (!Object.hasOwn(content.sprites, key)) throw new Error("Missing battle media reference: " + key);
-    const sprite = content.sprites[key]!;
+    if (!Object.hasOwn(sprites, key)) throw new Error("Missing battle media reference: " + key);
+    const sprite = sprites[key]!;
     text(sprite.file);
     if (!Number.isInteger(sprite.width) || sprite.width <= 0 || !Number.isInteger(sprite.height) || sprite.height <= 0)
       throw new Error("Invalid battle media dimensions: " + key);
     files.add(sprite.file);
   }
   return [...files];
+}
+
+/** The same required unit poses serve roster preparation and actual battles.
+ * A menu has no encounter/background; it cannot invent one to check members. */
+export function battleUnitMediaUrls(content: Pick<BattleContent, "sprites" | "battleAppearance">,
+  units: readonly Pick<CombatantDefinition, "sprites" | "appearance">[]): string[] {
+  return battleSpriteFiles(content.sprites, battleUnitMediaKeys(content, units));
+}
+
+/** One encounter's media closure, including registered late enemies and frozen
+ * borrowed players. Unused shared templates create no dependency. */
+export function battleMediaUrls(content: BattleContent,
+  players: readonly Pick<CombatantDefinition, "sprites" | "appearance">[] = content.players): string[] {
+  return battleSpriteFiles(content.sprites, [content.background, ...battleUnitMediaKeys(content,
+    [...players, ...content.enemies, ...Object.values(content.participants?.enemyDefinitions ?? {})])]);
 }
 
 export function sessionMediaUrls(field: FieldContent, battle: BattleCatalog): string[] {

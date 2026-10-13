@@ -1,7 +1,7 @@
 import type { FieldContent } from "../field/types.js";
 import type { GameEventSaveRequest, FieldGame, Stop } from "./field.js";
 import { encounterContent, battleDefinitionBlocker, type BattleCatalog, type BattleContent } from "./battle-content.js";
-import { BattleGame } from "./battle.js";
+import { BattleGame, type Combatant } from "./battle.js";
 import { EventState } from "./event-state.js";
 import { battleEventSharedSnapshot, type BattleEventSharedSnapshot } from "./battle-event-shared.js";
 import { assessBattleHandoff } from "./battle-handoff-content.js";
@@ -11,7 +11,10 @@ import type { FieldEffectRuntimeHost } from "./field-effects.js";
 import type { ShopTradeRequest } from "./shop.js";
 import { projectPartyMenu, type PartyMenuRequest } from "./party-menu.js";
 import { projectCharacterMenu } from "./character-menu.js";
-import { equipmentOwnedAbilities } from "./equipment.js";
+import { equipmentAvailability, equipmentOwnedAbilities } from "./equipment.js";
+import { projectBattleAbilities } from "./battle-abilities.js";
+import { projectBattleItemMenu } from "./battle-entry.js";
+import { BattleConditions } from "./battle-conditions.js";
 import { projectBattleFieldState } from "./field-battle-entry.js";
 import {
   parseBattlePreferences,
@@ -32,7 +35,7 @@ import type { NewGameFieldLaunch, NewGameFieldPreparation } from "./new-game-fie
 import { FieldFadeState } from "./field-fade.js";
 import { cloneSourcePresentationContext, createSourcePresentationContext, type SourcePresentationContext } from "./source-presentation.js";
 import { assertSourceGameCatalog, assertSourceEntryProfiles } from "./source-catalog.js";
-import { battleMediaUrls } from "./game-content.js";
+import { battleMediaUrls, battleUnitMediaUrls } from "./game-content.js";
 import {
   checkpointKeys,
   checkpointInteger,
@@ -254,8 +257,68 @@ export class GameSession {
   }
   partyMenu() {
     const owned = this.state.snapshot(), model = projectPartyMenu(owned.party, owned.roster);
+    // Future group dependencies affect selection, not editing its held cells.
+    // Reads never create an actor candidate or acquire a battle lease.
+    if (this.menuReady) for (const slot of model.slots) {
+      if (slot.blocker) continue;
+      try { this.requirePartyMenuBattleDependencies(this.state.partyPlayers({ ...owned.party, selectedSlot: slot.index })); }
+      catch (error) { slot.blocker = error instanceof Error ? error.message : String(error); }
+    }
     const blocker = model.blocker ?? (!this.menuReady ? "请在地图空闲时调整编队。" : this.field.partyMenuBlocker);
     return { ...model, blocker, editable: blocker === null };
+  }
+  /** Check the selected participants using the same owned projection and pure
+   * qualification/media contracts as battle entry. This chooses no encounter,
+   * runs no AI/action and does not grant a missing source capability. */
+  private requirePartyMenuBattleDependencies(players: readonly Combatant[]): void {
+    const common = this.battleCatalog.common, owned = this.state.snapshot(), system = this.battleCatalog.gameState.equipmentSystem;
+    let context = common.qualificationContext;
+    if (context?.mode === "source" && common.battleEntry) {
+      const field = projectBattleFieldState(common.battleEntry, this.field.battleEntryContext.state,
+        this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
+      if (field.invalidContentIds === null || field.blockers.length)
+        throw new Error(field.blockers.join("; ") || "Unknown battle field exclusions");
+      context = { ...context, invalidContentIds: field.invalidContentIds, conditionContext: "current" };
+    }
+    const blocker = battleDefinitionBlocker(players, context, common.conditions);
+    if (blocker) throw new Error(blocker);
+    const conditions = new BattleConditions(common.conditions);
+    battleUnitMediaUrls(common, players);
+    for (const player of players) {
+      conditions.validateActive(player.conditionIds); conditions.validateResistances(player.conditionResistances);
+      const member = owned.roster.find(member => member.id === player.id);
+      if (!member || !member.enabled || player.side !== "player" || player.sourceId !== member.sourceId)
+        throw new Error("Party menu requires an enabled owned battle participant");
+      let supported = false;
+      if (context?.mode === "source") {
+        if (!common.battleAbilities || !player.ownedAbilities)
+          throw new Error("Source party member lacks owned battle command bindings");
+        const passives = system ? equipmentOwnedAbilities(system.catalog, member) : [];
+        const inventory = system && common.battleEntry ? projectBattleItemMenu(common.battleEntry, {
+          sourceId: member.sourceId, equipment: member.equipment,
+          inventory: [...owned.items.map(item => ({ ...item, equipped: 0 })),
+            ...equipmentAvailability(system.catalog, owned.roster.filter(member => member.enabled), owned.equipmentStock)],
+        }, system.catalog) : null;
+        const qualification = projectBattleAbilities(common.battleAbilities, player.ownedAbilities, {
+          conditionIds: context.conditionContext === "current" ? player.conditionIds : null,
+          battleType: context.battleType, magicLearningValue: player.magicLearningValue ?? context.magicLearningValue,
+          invalidContentIds: context.invalidContentIds, itemMenuAvailable: inventory?.available ?? null,
+          partySize: players.length,
+        }, passives);
+        // A known temporary source exclusion is different from an unresolved
+        // provider. Unknown optional skills remain visible in the existing menu.
+        supported = qualification.entries.some(entry => entry.released !== null && entry.available !== null &&
+          entry.blockers.length === 0 && common.commands[entry.commandId]?.kind === "ability" &&
+          entry.abilityIds.some(id => common.abilities[id]?.plan !== null && common.abilities[id]?.plan !== undefined));
+        if (!supported && qualification.blockers.length)
+          throw new Error(`角色 ${player.name} 的战斗命令依赖尚未接入：${qualification.blockers.join("; ")}`);
+      } else {
+        for (const id of player.commands) if (!common.commands[id]) throw new Error("Unknown party member battle command: " + id);
+        supported = player.commands.some(id => common.commands[id]?.kind === "ability" &&
+          common.commands[id]!.abilityIds.some(abilityId => player.abilities.includes(abilityId) && common.abilities[abilityId]?.plan));
+      }
+      if (!supported) throw new Error(`角色 ${player.name} 没有已接入的战斗命令`);
+    }
   }
   characterMenu(id: string) {
     const member = this.state.snapshot().roster.find((candidate) => candidate.id === id);
@@ -275,12 +338,15 @@ export class GameSession {
     if (!this.menuReady || stillAdmitted !== undefined && stillAdmitted() !== true) return false;
     const field = this.field, transaction = this.state.preparePartyMenu(request);
     if (!transaction.changed) return false;
+    const checkParticipants = transaction.activeChanged && (request.change.kind === "set-member" || request.change.kind === "select-slot");
+    if (checkParticipants) this.requirePartyMenuBattleDependencies(transaction.candidatePlayers);
     const publish = field.prepareMenuPartyAppearance(transaction.appearance);
     // Both owners finish fallible preparation before either is published. The
     // existing renderer publication writes prepared state without owned reads.
     publish.validate();
     if (this.field !== field || !this.menuReady) throw new Error("Field changed during party menu preparation");
     transaction.validate();
+    if (checkParticipants) this.requirePartyMenuBattleDependencies(transaction.candidatePlayers);
     // A fallible appearance provider may synchronously replace the Flow owner,
     // return to title or revoke host readiness. Recheck before either publish.
     if (stillAdmitted !== undefined && stillAdmitted() !== true) return false;

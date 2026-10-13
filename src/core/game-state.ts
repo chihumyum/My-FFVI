@@ -962,12 +962,14 @@ export class GameState {
       },
     };
   }
-  /** Current-party menu editing is separate from source script organization:
-   * it cannot select a different saved party, add members or reset their rows. */
+  /** Menu organization changes only saved cells and the selected group. It
+   * never performs the source Join/Unlock lifecycle or changes owned resources. */
   preparePartyMenu(request: PartyMenuRequest) {
     this.requireIdle();
     const next = this.snapshot(), revision = this.revision;
-    const preview = previewPartyMenu(next.party, next.roster, structuredClone(request));
+    const preview = previewPartyMenu(next.party, next.roster, request);
+    const activeChanged = next.party.selectedSlot !== preview.state.selectedSlot ||
+      canonical(activePartyMembers(next.party)) !== canonical(preview.activeMembers);
     next.party = preview.state;
     this.validate(next);
     let consumed = false;
@@ -975,10 +977,19 @@ export class GameState {
       this.requireIdle();
       if (consumed || this.revision !== revision) throw new Error("Stale party menu transaction");
     };
+    const project = (member: OwnedCharacter, row: "front" | "back") => this.projectOwnedBattlePlayer(member, row);
     return {
       changed: preview.changed,
+      activeChanged,
       activeMembers: preview.activeMembers,
       appearance: this.projectPartyAppearance(next),
+      /** Projection from the same private candidate, without opening a lease
+       * or changing the fixed entry of any current battle. */
+      get candidatePlayers(): Combatant[] {
+        validate();
+        return activePartyMembers(next.party).map(({ id, row }) =>
+          project(next.roster.find(member => member.id === id)!, row));
+      },
       validate,
       commit: () => {
         validate(); consumed = true;
@@ -1408,8 +1419,9 @@ export class GameState {
     if (missing) return "角色的战斗动作与表现尚未迁移：" + this.data.roster.find((p) => p.id === missing.id)!.name;
     return null;
   }
-  partyPlayers(): Combatant[] {
-    return this.activeParty.map(({ id, row }) =>
+  partyPlayers(party: PartyState = this.data.party): Combatant[] {
+    validatePartyState(party, this.data.roster);
+    return activePartyMembers(party).map(({ id, row }) =>
       this.projectOwnedBattlePlayer(this.data.roster.find((p) => p.id === id)!, row));
   }
   private projectOwnedBattlePlayer(p: OwnedCharacter, row: "front" | "back"): Combatant {

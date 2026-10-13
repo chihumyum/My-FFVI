@@ -18,6 +18,13 @@ const roster = [
 const request = (game: GameSession, change: PartyMenuRequest["change"]): PartyMenuRequest =>
   ({ expected: game.partyMenu().expected, change });
 
+/** Authored positive dependency, not a fallback for a missing source sprite. */
+function organizationFixture() {
+  const f = partyMenuFixture();
+  f.battle.common.sprites.synthetic = { file: "/synthetic/party-battle.png", width: 16, height: 16 };
+  return f;
+}
+
 test("menu swap carries member rows and keeps other saved parties and empty positions", () => {
   const party = fixtureParty(["a", "b"]);
   party.slots[0][1].row = "back";
@@ -245,4 +252,156 @@ test("unowned character details fail and missing source abilities stay unknown r
   assert.equal(view.commands, null);
   assert.equal(view.experienceToNextLevel, 5);
   assert.deepEqual(game.checkpoint(), before);
+});
+
+test("held reserves replace a current member and inactive groups retain explicit sparse rows", () => {
+  const party = fixtureParty(["a", "b"]), before = structuredClone(party), members = structuredClone(roster);
+  party.slots[2][3].row = "back"; before.slots[2][3].row = "back";
+  const replaced = previewPartyMenu(party, members, { expected: party,
+    change: { kind: "set-member", slot: 0, position: 1, ownedId: "reserve", row: "back" } });
+  assert.deepEqual(replaced.activeMembers, [{ id: "a", index: 0, row: "front" }, { id: "reserve", index: 1, row: "back" }]);
+  assert.deepEqual(replaced.state.slots.slice(1), party.slots.slice(1));
+  const stored = previewPartyMenu(replaced.state, members, { expected: replaced.state,
+    change: { kind: "set-member", slot: 2, position: 3, ownedId: "b", row: "back" } });
+  assert.equal(stored.state.selectedSlot, 0); assert.deepEqual(stored.state.slots[2][3], { id: "b", row: "back" });
+  const selected = previewPartyMenu(stored.state, members, { expected: stored.state, change: { kind: "select-slot", slot: 2 } });
+  assert.deepEqual(selected.activeMembers, [{ id: "b", index: 3, row: "back" }]);
+  assert.deepEqual(party, before); assert.deepEqual(members, roster);
+});
+
+test("organization rejects unowned, disabled, same-group duplicates and an empty current group atomically", () => {
+  const party = fixtureParty(["a", "b"]), members = structuredClone(roster); members[2]!.enabled = false;
+  const before = structuredClone(party);
+  const invalid: PartyMenuRequest["change"][] = [
+    { kind: "set-member", slot: 0, position: 0, ownedId: "not-held", row: "front" },
+    { kind: "set-member", slot: 0, position: 0, ownedId: "reserve", row: "front" },
+    { kind: "set-member", slot: 0, position: 0, ownedId: "b", row: "back" },
+    { kind: "select-slot", slot: 1 },
+  ];
+  for (const change of invalid) assert.throws(() => previewPartyMenu(party, members, { expected: party, change }));
+  assert.deepEqual(party, before);
+  const one = fixtureParty(["a"]);
+  assert.throws(() => previewPartyMenu(one, members, { expected: one,
+    change: { kind: "set-member", slot: 0, position: 0, ownedId: null, row: "back" } }), /retain a member/);
+  party.slots[1][0].id = "reserve";
+  assert.throws(() => previewPartyMenu(party, members, { expected: party, change: { kind: "select-slot", slot: 1 } }), /unavailable/);
+  const clear = previewPartyMenu(party, roster, { expected: party,
+    change: { kind: "set-member", slot: 1, position: 0, ownedId: null, row: "back" } });
+  assert.deepEqual(clear.state.slots[1][0], { id: null, row: "back" }); assert.equal(clear.state.selectedSlot, 0);
+});
+
+test("all saved groups belong to the stale baseline and sparse or accessor requests cannot mutate input", () => {
+  const party = fixtureParty(["a", "b"]), stale = structuredClone(party), before = structuredClone(party);
+  stale.slots[2][3].row = "back";
+  assert.throws(() => previewPartyMenu(party, roster, { expected: stale,
+    change: { kind: "set-member", slot: 1, position: 1, ownedId: "reserve", row: "front" } }), /Stale/);
+  const sparse = structuredClone(party); delete (sparse.slots[2] as unknown[])[1];
+  assert.throws(() => previewPartyMenu(party, roster, { expected: sparse, change: { kind: "select-slot", slot: 0 } }), /complete saved slots/);
+  let reads = 0;
+  const change = { slot: 1, position: 2, ownedId: "reserve", row: "front", get kind() { reads++; return "set-member"; } };
+  assert.throws(() => previewPartyMenu(party, roster, { expected: party, change } as PartyMenuRequest), /data fields/);
+  assert.equal(reads, 0); assert.deepEqual(party, before);
+});
+
+test("three-group menu views are detached and distinguish saved empty groups from unavailable owners", () => {
+  const party = fixtureParty(["a"]); party.slots[1][3] = { id: "reserve", row: "back" };
+  const members = structuredClone(roster); members[2]!.enabled = false;
+  const view = projectPartyMenu(party, members), before = structuredClone(party);
+  assert.equal(view.slots.length, 3); assert.deepEqual(view.slots.map(slot => slot.index), [0, 1, 2]);
+  assert.equal(view.slots[0]!.blocker, null); assert.match(view.slots[1]!.blocker!, /不可编组/);
+  assert.match(view.slots[2]!.blocker!, /没有成员/);
+  view.cells[0]!.row = "back"; view.slots[1]!.cells[3]!.member!.hp = 1;
+  assert.equal(view.slots[0]!.cells[0]!.row, "front"); assert.deepEqual(party, before); assert.deepEqual(members[2]!.hp, 30);
+});
+
+test("member removal creates a held reserve, group selection keeps resources and sparse actor identity through restore", () => {
+  const { game, field, battle } = organizationFixture(), before = game.state.snapshot(), time = game.field.time;
+  assert.equal(game.changeParty(request(game, { kind: "set-member", slot: 0, position: 1, ownedId: null, row: "back" })), true);
+  assert.deepEqual(game.state.activeParty, [{ id: "a", index: 0, row: "front" }]);
+  assert.equal(game.changeParty(request(game, { kind: "set-member", slot: 2, position: 3, ownedId: "b", row: "back" })), true);
+  assert.equal(game.state.snapshot().party.selectedSlot, 0);
+  assert.equal(game.changeParty(request(game, { kind: "select-slot", slot: 2 })), true);
+  assert.deepEqual(game.state.activeParty, [{ id: "b", index: 3, row: "back" }]);
+  assert.equal(game.field.player.asset, "bravo"); assert.equal(game.field.partyActorCheckpoint!.context.leaderIndex, 3);
+  const after = game.state.snapshot(); assert.deepEqual(after.roster, before.roster);
+  for (const key of ["items", "equipmentStock", "gil", "totalGil", "releasedJobIds", "learnedAbilityIds", "characterNames", "completedBattles"] as const)
+    assert.deepEqual(after[key], before[key]);
+  assert.equal(game.field.time, time);
+  const saved = game.checkpoint(), restored = GameSession.restore(saved, field, battle);
+  assert.deepEqual(restored.checkpoint(), saved); assert.deepEqual(restored.state.activeParty, game.state.activeParty);
+  restored.field.startEvent("fight"); restored.advance(10);
+  assert.deepEqual(restored.battle!.players.map(({ id, row }) => ({ id, row })), [{ id: "b", row: "back" }]);
+  assert.equal(restored.changeParty(request(restored, { kind: "select-slot", slot: 0 })), false);
+  assert.deepEqual(restored.state.snapshot(), saved.owned);
+});
+
+test("inactive metadata edits keep actor context joint and media or final-validator failures publish neither owner", () => {
+  for (const fault of ["media", "final"] as const) {
+    const { game, field } = organizationFixture(), before = game.checkpoint();
+    let preparations = 0;
+    const original = game.field.prepareMenuPartyAppearance.bind(game.field);
+    game.field.prepareMenuPartyAppearance = appearance => {
+      preparations++; const candidate = original(appearance);
+      if (fault === "final") candidate.validate = () => { throw new Error("Controlled final group context rejection"); };
+      return candidate;
+    };
+    // The unchanged active leader is still rendered during the shared context
+    // transaction. An inactive member's future media is not required here.
+    if (fault === "media") delete field.characters.alpha;
+    assert.throws(() => game.changeParty(request(game,
+      { kind: "set-member", slot: 1, position: 0, ownedId: "b", row: "back" })), /media|context rejection/);
+    assert.equal(preparations, 1); assert.deepEqual(game.checkpoint(), before);
+  }
+});
+
+test("inactive editing does not require future battle media, selection does, and old sorting stays compatible", () => {
+  const { game } = partyMenuFixture(), before = game.state.snapshot();
+  assert.equal(game.changeParty(request(game, { kind: "set-member", slot: 1, position: 2, ownedId: "b", row: "back" })), true);
+  assert.deepEqual(game.state.snapshot().roster, before.roster);
+  const stored = game.checkpoint(); assert.match(game.partyMenu().slots[1]!.blocker!, /battle media/);
+  assert.throws(() => game.changeParty(request(game, { kind: "select-slot", slot: 1 })), /battle media/);
+  assert.deepEqual(game.checkpoint(), stored);
+  assert.equal(game.changeParty(request(game, { kind: "swap", from: 0, to: 1 })), true);
+  assert.equal(game.changeParty(request(game, { kind: "set-row", position: 0, row: "back" })), true);
+});
+
+test("source qualification never uses legacy defaults when an owned command binding is missing", () => {
+  const { game, battle } = organizationFixture();
+  assert.equal(game.changeParty(request(game, { kind: "set-member", slot: 1, position: 1, ownedId: "b", row: "front" })), true);
+  battle.common.qualificationContext = { mode: "source", conditionContext: "current", battleType: 0,
+    invalidContentIds: [], itemMenuAvailable: true, magicLearningValue: 0 };
+  const before = game.checkpoint();
+  assert.throws(() => game.changeParty(request(game, { kind: "select-slot", slot: 1 })), /Source party member lacks owned/);
+  assert.deepEqual(game.checkpoint(), before);
+  assert.equal(game.changeParty(request(game, { kind: "swap", from: 0, to: 1 })), true,
+    "The old bounded menu sorting contract does not gain new source qualification requirements");
+});
+
+test("late battle metadata removal or revision changes invalidate the complete new membership transaction", () => {
+  for (const fault of ["command", "revision"] as const) {
+    const { game, battle } = organizationFixture(), before = game.checkpoint();
+    const prepare = game.field.prepareMenuPartyAppearance.bind(game.field);
+    game.field.prepareMenuPartyAppearance = appearance => {
+      const candidate = prepare(appearance);
+      if (fault === "command") delete battle.common.commands[100];
+      else game.state.fieldInventory.prepare({ kind: "grant-item", id: 10, count: 1 }).commit();
+      return candidate;
+    };
+    assert.throws(() => game.changeParty(request(game,
+      { kind: "set-member", slot: 0, position: 1, ownedId: null, row: "back" })), /battle command|Stale/);
+    assert.deepEqual(game.state.snapshot().party, before.owned.party);
+    assert.deepEqual(game.state.snapshot().roster, before.owned.roster);
+    assert.deepEqual(game.field.partyActorCheckpoint, before.world.field.partyActors);
+  }
+});
+
+test("candidate player views are detached, stale transactions do not override any saved group", () => {
+  const { game } = organizationFixture(), before = game.state.snapshot();
+  const prepared = game.state.preparePartyMenu(request(game,
+    { kind: "set-member", slot: 0, position: 1, ownedId: null, row: "back" }));
+  assert.equal(prepared.activeChanged, true); const players = prepared.candidatePlayers;
+  players[0]!.hp = 1; assert.equal(prepared.candidatePlayers[0]!.hp, before.roster[0]!.hp);
+  game.state.fieldParty.prepare({ kind: "select-slot", slot: 0, refreshActors: false }).commit();
+  assert.throws(() => prepared.candidatePlayers, /Stale/); assert.throws(prepared.commit, /Stale/);
+  assert.deepEqual(game.state.snapshot().party, before.party);
 });

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { battleMediaUrls } from "../src/core/game-content.js";
+import { battleMediaUrls, battleUnitMediaUrls } from "../src/core/game-content.js";
+import type { BattleContent } from "../src/core/battle-content.js";
 import { GameSession } from "../src/core/game-session.js";
 import { GameFlow } from "../src/core/game-flow.js";
 import { GameBattleHandoff } from "../src/core/game-battle-handoff.js";
@@ -12,6 +13,21 @@ import { appearanceFixture } from "./fixtures/battle-appearance.js";
 
 const sprite = (file: string) => ({ file, width: 32, height: 32 });
 const ready = { visible: true, mediaReady: true, overlayOpen: false };
+
+test("candidate party media excludes absent encounters but enforces the same actual unit pose closure", () => {
+  const content = fixture(), appearance = appearanceFixture();
+  const player = { ...content.players[0]!, sprites: { idle: "idle", mount: null }, appearance: appearance.actor };
+  const common: Pick<BattleContent, "sprites" | "battleAppearance"> = { sprites: { idle: sprite("idle.png"), ...Object.fromEntries(Object.entries(appearance.sprites)
+    .map(([key, geometry]) => [key, { file: key + ".png", width: geometry.width, height: geometry.height }])) },
+    battleAppearance: appearance.catalog };
+  const files = battleUnitMediaUrls(common, [player]);
+  assert.deepEqual(new Set(files), new Set(["idle.png", ...Object.keys(appearance.sprites).map(key => key + ".png")]));
+  assert.deepEqual(battleUnitMediaUrls({ sprites: {} }, []), []);
+  assert.throws(() => battleUnitMediaUrls({ sprites: common.sprites }, [player]), /appearance media provider/);
+  const missing = appearance.actor.bodySprites.walk1!;
+  const altered = structuredClone(common); delete altered.sprites[missing];
+  assert.throws(() => battleUnitMediaUrls(altered, [player]), /Missing battle media reference/);
+});
 
 test("encounter media includes registered late enemies and deduplicates files without reading unrelated library entries", () => {
   const content = participantFixture(), late = content.participants!.enemyDefinitions[341]!;
