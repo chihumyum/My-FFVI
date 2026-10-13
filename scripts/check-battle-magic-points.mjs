@@ -1,5 +1,5 @@
 // Source reward policy with an explicitly controlled encounter substitution.
-// The source candidates remain blocked; this runs the actual shared session,
+// The source candidates retain independent capability gaps; this runs the actual shared session,
 // combat actions, owned settlement and save/restore without editing exports.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -116,15 +116,25 @@ try {
     },
   });
   assert.equal(runtime.encounters[4], undefined);
-  assert.equal(runtime.encounters[274], undefined);
+  assert.ok(runtime.encounters[274]);
   assert.ok(runtime.diagnostics.some(d => d.partyId === 4 && d.code === "asset-reference"));
-  assert.ok(runtime.diagnostics.some(d => d.partyId === 274 && d.code === "enemy-provider" && /resistance_condition=749/.test(d.reason)));
+  const { compileConditionResistances } = await load("compiler/condition-resistances");
+  const sourceResistances = compileConditionResistances(reader, 749, sourceCatalog.common.conditions.rules.definitions);
+  for (const enemy of runtime.encounters[274].enemies) {
+    assert.equal(enemy.sourceId, 249);
+    assert.deepEqual(enemy.conditionResistances, sourceResistances.resistances);
+  }
+  assert.equal(runtime.diagnostics.some(d => d.partyId === 274 &&
+    ["enemy-provider", "enemy-condition-resistance"].includes(d.code)), false);
+  assert.ok(runtime.diagnostics.some(d => d.partyId === 274 && d.kind === "runtime-dependency" &&
+    d.code === "ability-plan" && d.dependency?.id === 696));
   assert.ok(runtime.diagnostics.some(d => d.partyId === 274 && d.code === "battle-script" && d.kind === "development-omission"));
   assert.ok(runtime.diagnostics.some(d => d.partyId === 274 && d.code === "battle-flags" && d.kind === "development-omission"));
   assert.equal(runtime.diagnostics.some(d => ["battle-script", "battle-flags"].includes(d.code) && d.kind === "blocked"), false);
   report.candidateDiagnostics = runtime.diagnostics;
-  stage("source-candidates-retain-unrelated-media-and-condition-blockers", {
+  stage("source-candidates-bind-resistances-and-retain-media-and-latent-ability-blockers", {
     requested: selected.requestedPartyIds, report: runtime.report,
+    resistanceGroup: 749, resistanceRows: sourceResistances.sources.map(row => row.source),
   });
 
   const row = reader.row("monster_party.csv", 4);

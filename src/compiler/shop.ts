@@ -252,7 +252,7 @@ export function compileShopInteraction(
   const message = (value: unknown) => {
     if (value == null || value === "") return null;
     if (typeof value !== "string") throw new Error("Invalid shop message key");
-    return compileMessage(value, messages);
+    return compileMessage(value, messages, tables["character_default_name.csv"]);
   };
   return {
     kind: "shop",

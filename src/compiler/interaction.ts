@@ -97,7 +97,7 @@ export function compileInteraction(
           throw new Error("Unsupported talk character change");
         interaction = {
           kind: "talk",
-          message: compileMessage(z.string().parse(p.message_key), messages),
+          message: compileMessage(z.string().parse(p.message_key), messages, tables["character_default_name.csv"]),
         };
       } else if (action === "Shop") {
         interaction = compileShopInteraction(p, tables, messages);

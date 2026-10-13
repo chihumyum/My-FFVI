@@ -88,6 +88,9 @@ import { projectOwnedCondition, type FieldOwnedConditionPort,
   type OwnedConditionCommand, type OwnedConditionTransaction } from "./owned-condition.js";
 import { projectFieldRecovery, type FieldRecoveryCommand,
   type FieldRecoveryPort, type FieldRecoveryTransaction } from "./field-recovery.js";
+import { projectOwnedMessageNames, type FieldMessageNamesPort,
+  type PreparedFieldMessageNames } from "./owned-message-names.js";
+import type { CharacterMessageNameRef } from "./field-message-template.js";
 import {
   growCharacter,
   initialCharacterGrowth,
@@ -277,6 +280,15 @@ export class GameState {
   /** Whole-roster source identities and the selected four Corps cells. */
   readonly fieldPuppetRoster: FieldPuppetRosterPort = {
     current: () => this.projectPuppetRoster(this.data),
+  };
+  /** Character macros read the complete held roster, including disabled or
+   * off-party owners, through its existing source/tag binding. */
+  readonly fieldMessageNames: FieldMessageNamesPort = {
+    prepare: (refs) => {
+      const data = this.data, revision = this.revision;
+      return this.prepareMessageNames(data, refs,
+        () => !this.transportationPublication && this.data === data && this.revision === revision);
+    },
   };
   /** Source fresh/restore only. A development checkpoint never invents the
    * complete parking payload from its current selected transport identity. */
@@ -1101,6 +1113,7 @@ export class GameState {
       ownedConditions: FieldOwnedConditionPort;
       recovery: FieldRecoveryPort;
       puppetRoster: FieldPuppetRosterPort;
+      messageNames: FieldMessageNamesPort;
       transportation?: FieldTransportationPort;
       shop: { validate(groupId: number): void };
       fieldSteps?: FieldConditionPort;
@@ -1269,6 +1282,13 @@ export class GameState {
         ownedConditions,
         recovery,
         puppetRoster: { current: () => this.projectPuppetRoster(published ? this.data : data) },
+        messageNames: { prepare: (refs) => {
+          if (published) return this.fieldMessageNames.prepare(refs);
+          const version = generation, current = data;
+          return this.prepareMessageNames(current, refs,
+            () => !transportationPublishing && !this.transportationPublication && !published &&
+              generation === version && data === current && this.revision === revision);
+        } },
         ...(transportation ? { transportation } : {}),
         shop: { validate: (groupId) => { this.projectShopOptions(published ? this.data : data, groupId); } },
         ...(this.fieldConditions ? { fieldSteps } : {}),
@@ -1295,6 +1315,23 @@ export class GameState {
   }
   private projectPuppetRoster(data: GameStateSnapshot) {
     return projectFieldPuppetRoster(data.roster, data.party, this.ownedConditionDefinitions);
+  }
+  private prepareMessageNames(data: GameStateSnapshot, refs: readonly CharacterMessageNameRef[],
+    current: () => boolean): PreparedFieldMessageNames {
+    const validate = () => {
+      if (!current()) throw new Error("Stale field message names projection");
+    };
+    validate();
+    const names = projectOwnedMessageNames({
+      roster: data.roster.map(({ id, sourceId, name }) => ({ id, sourceId, name })),
+      bindings: data.roster.flatMap(member => {
+        const template = this.content.characterInitializations?.[member.id];
+        return template && template.nameTag !== null
+          ? [{ id: member.id, sourceId: template.initial.sourceId, tag: template.nameTag }] : [];
+      }),
+      characterNames: data.characterNames,
+    }, refs);
+    return Object.freeze({ get names() { return [...names]; }, validate });
   }
   private projectPartyAppearance(data: GameStateSnapshot): PartyAppearanceCandidate {
     const parties = data.party.slots.map((slot) => slot.flatMap((cell, index): PartyActorMember[] => {

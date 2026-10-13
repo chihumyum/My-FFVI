@@ -147,7 +147,7 @@ export function decodeFieldOp(
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if (name === "Msg" && [0, 3].includes(i[0]!) && r[0] === 0) {
-    try { return { ...site, ...compileManualMessageInstruction(raw, messages, context) }; }
+    try { return { ...site, ...compileManualMessageInstruction(raw, messages, context, tables["character_default_name.csv"]) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if (name === "MsgClose" || name === "Msg") {
@@ -476,6 +476,10 @@ export async function compileField(root: string): Promise<FieldContent> {
   const tables = record(
     JSON.parse(snapshotFile(imported, "tables.json").toString()),
   );
+  // The opening import is a selected table closure. Message substitutions
+  // require the complete verified name namespace, independently of ownership.
+  const systemSource = await loadSystemSource(root, project.sourceSetHash);
+  tables["character_default_name.csv"] = systemSource.tables["character_default_name.csv"];
   const assets = project.narshe.assets;
   const asset = (name: string) => {
     const found = Object.values(assets).filter((a) =>
@@ -695,7 +699,6 @@ export async function compileField(root: string): Promise<FieldContent> {
     .map(record)
     .filter((row) => row.map_name === project.narshe.mapName);
   if (mapRows.length !== 1) throw new Error("Ambiguous opening map identity");
-  const systemSource = await loadSystemSource(root, project.sourceSetHash);
   const transportationCatalog = compileTransportationCatalog(systemSource.reader,
     systemSource.tables["transportation.csv"]!.map((r) => tableId(r.id))).catalog;
   const transportation = compileNarsheTransportationCheckpoint(transportationCatalog, systemSource.assets);

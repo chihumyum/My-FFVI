@@ -1,7 +1,7 @@
 import type { FieldContent, Op, Site } from "../field/types.js";
 
 export const fieldProviders = Object.freeze([
-  "inventory", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
+  "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorMotion", "cameraMotion", "effectMotion",
   "eventSaveCompletion", "battleHandoff",
 ] as const);
@@ -39,6 +39,7 @@ export type FieldContentRequirements = {
 
 const codes: Record<FieldCapability, string> = {
   inventory: "FIELD_INVENTORY_PROVIDER", recovery: "FIELD_RECOVERY_PROVIDER",
+  messageNames: "FIELD_MESSAGE_NAMES_PROVIDER",
   ownedConditions: "FIELD_OWNED_CONDITIONS_PROVIDER", party: "FIELD_PARTY_PROVIDER",
   roster: "FIELD_ROSTER_PROVIDER", treasure: "FIELD_TREASURE_PROVIDER",
   transportation: "FIELD_TRANSPORTATION_PROVIDER", puppetRoster: "FIELD_PUPPET_ROSTER_PROVIDER",
@@ -131,6 +132,9 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     if (conditionVisual) add("conditionVisual", "Unknown or unsupported owned condition-visual context", "refresh");
   };
   switch (op.kind) {
+    case "message":
+      if (op.template !== undefined) add("messageNames", "Source message character name owner is unavailable");
+      break;
     case "inventory": add("inventory", "Field inventory state is unavailable"); break;
     case "field-recovery": {
       add("recovery", "Field recovery owned state is unavailable");

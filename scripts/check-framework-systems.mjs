@@ -42,6 +42,7 @@ const lanes = [
   ["field-content-admission", "check-field-content-admission.mjs", "field-content-admission-check.json", "stages"],
   ["shared-game-catalog", "check-shared-game-catalog.mjs", "shared-game-catalog-check.json", "stages"],
   ["manual-dialogue-and-save", "check-field-manual-message.mjs", "field-manual-message-check.json", "controlledJourney.stages"],
+  ["owned-dialogue-names", "check-field-message-names.mjs", "field-message-names-check.json", "stages"],
   ["dialogue-choice-ui", "check-event-interactions-ui.mjs", "event-interaction-ui-check.json", "checks"],
   ["battle-command-ui", "check-battle-abilities-ui.mjs", "battle-abilities-ui-check.json", "checked"],
   ["battle-command-persistence", "check-battle-row-change.mjs", "battle-row-change-check.json", "stages"],

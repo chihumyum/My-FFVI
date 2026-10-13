@@ -129,23 +129,34 @@ for (const { entity, group, map, mapIds } of records.values()) {
     } else game.advance(10);
   }
   if (interaction.interaction.kind === "talk") {
-    assert.equal(game.stop, null);
-    assert.equal(game.busy, false);
-    assert.deepEqual(messages, [
-      {
-        key: interaction.interaction.message.key,
-        hash: hash(interaction.interaction.message.text),
-      },
-    ]);
-    assert.deepEqual([game.player.x, game.player.y], before.player);
-    if (entity.npc)
-      assert.equal(
-        game.actors[entity.id].direction,
-        entity.npc.eyeContact && !entity.npc.turnAround
-          ? side
-          : before.direction,
-      );
-    if (entityKind === 5) assert.equal(game.actors[entity.id], undefined);
+    if (interaction.interaction.message.template) {
+      // This isolated FieldGame deliberately has no held-character owner.
+      // A source-bound name dependency must stop before changing the NPC or
+      // publishing a window; localized defaults are not a probe provider.
+      assert.match(game.stop?.message ?? "", /character name owner is unavailable/);
+      assert.equal(game.messageWindow, null);
+      assert.deepEqual(messages, []);
+      assert.deepEqual([game.player.x, game.player.y], before.player);
+      assert.equal(game.actors[entity.id]?.direction ?? null, before.direction);
+    } else {
+      assert.equal(game.stop, null);
+      assert.equal(game.busy, false);
+      assert.deepEqual(messages, [
+        {
+          key: interaction.interaction.message.key,
+          hash: hash(interaction.interaction.message.text),
+        },
+      ]);
+      assert.deepEqual([game.player.x, game.player.y], before.player);
+      if (entity.npc)
+        assert.equal(
+          game.actors[entity.id].direction,
+          entity.npc.eyeContact && !entity.npc.turnAround
+            ? side
+            : before.direction,
+        );
+      if (entityKind === 5) assert.equal(game.actors[entity.id], undefined);
+    }
   }
   runs.push({
     ...identity,
@@ -251,6 +262,7 @@ const report = {
   entrances,
   contextRuns,
   limitations: [
+    "Isolated fields have no held-character name owner; typed character-name Talk dependencies are explicitly blocked without a default-name fallback.",
     "Isolated interaction probes use exact source actions and scripts, controlled adjacent player positions, and unknown story flags.",
     "They omit other source entities and initialization; blocked dependencies and unknown flags remain failures to complete the action.",
     "Entrance checks load actual default groups and initializers but do not establish story reachability, target approachability, image rendering or original parity.",

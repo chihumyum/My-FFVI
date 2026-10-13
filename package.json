@@ -139,6 +139,7 @@
     "source-native-state:check": "npm run build && node scripts/check-source-native-state.mjs",
     "source-message:check": "npm run build && node scripts/check-source-message.mjs",
     "field-manual-message:check": "npm run build && node scripts/check-field-manual-message.mjs",
+    "field-message-names:check": "npm run build && node scripts/check-field-message-names.mjs",
     "field-background:check": "npm run build && node scripts/check-field-background.mjs",
     "field-party-actor-transactions:check": "npm run build && node scripts/check-field-party-actor-transactions.mjs",
     "field-native-appearance:check": "npm run build && node scripts/check-field-native-appearance-native.mjs && node scripts/check-field-native-appearance.mjs",

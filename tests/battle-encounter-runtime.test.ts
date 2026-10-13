@@ -36,7 +36,7 @@ test("a missing monster removes only its encounter and retains dependency diagno
   assert.deepEqual(result.drops.monsters.map((m) => m.id), [9101]);
 });
 
-test("unknown initial conditions and physical providers block their record without changing the supported one", () => {
+test("unknown initial conditions, physical providers and resistance groups block only their dependent record", () => {
   for (const field of ["initial_condition", "attack_plus", "resistance_condition"]) {
     const f = encounterRuntimeFixture(); f.tables["monster.csv"]![1]![field] = "22";
     const result = compileBattleEncounterRuntime(f.reader(), f.input);

@@ -34,6 +34,7 @@ import type { FieldNativePosition } from "../core/field-native-position.js";
 import type { FieldNativeCompositionDefinition } from "../core/field-native-composition.js";
 import type { DevelopmentProfile } from "../core/development-profile.js";
 import type { FieldTransportationOp } from "../core/field-transportation-command.js";
+import type { FieldMessageTemplate } from "../core/field-message-template.js";
 import type { FrameworkWalkEncounterPolicy } from "../core/walk-encounters.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
@@ -49,6 +50,9 @@ export type FieldMessage = {
   speaker: string;
   /** Source MessageParser CT tag; absence retains the ordinary layout. */
   alignment?: "center";
+  /** Requires a prepared live owned-name view before publishing this window.
+   * text/speaker retain source strings solely for template shape validation. */
+  template?: FieldMessageTemplate;
 };
 /** Ordinary source Msg document. Other message managers and inline waits do
  * not share this manual, explicitly paginated capability. */

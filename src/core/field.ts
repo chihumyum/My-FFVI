@@ -29,6 +29,9 @@ import { fieldInstructionRequirements, assessFieldRequirements,
 import { executeSourcePresentation, cloneSourcePresentationContext, sourcePresentationCheckpoint,
   type SourcePresentationContext, type SourcePresentationPort } from "./source-presentation.js";
 import { canonical } from "./canonical.js";
+import { MESSAGE_VALUE_PATTERN, parseFieldMessageTemplate, fieldMessageNameReferences,
+  fieldMessageTemplateSource, resolveFieldMessageTemplate } from "./field-message-template.js";
+import type { FieldMessageNamesPort } from "./owned-message-names.js";
 import { prepareBattleEventSharedReturn, type BattleEventSharedReturn } from "./battle-event-shared.js";
 import { captureFieldEventCheckpoint, restoreFieldEventCheckpoint,
   type FieldEventCheckpoint } from "./field-event-checkpoint.js";
@@ -277,6 +280,9 @@ export type FieldGameOptions = {
   ownedConditions?: FieldOwnedConditionPort;
   recovery?: FieldRecoveryPort;
   inventory?: FieldInventoryPort;
+  /** Resolves source name references from the session's live or private draft
+   * owner; the field never creates a separate name register. */
+  messageNames?: FieldMessageNamesPort;
   treasure?: FieldTreasurePort;
   party?: FieldPartyPort;
   roster?: FieldRosterPort;
@@ -312,6 +318,7 @@ export class FieldGame {
       this.content.cameraHost?.callbacks === "fresh-normal-field-v1");
     const context: FieldAdmissionContext = { actorKind, providers: {
       inventory: presence(typeof this.options.inventory?.prepare === "function"),
+      messageNames: presence(typeof this.options.messageNames?.prepare === "function"),
       recovery: presence(typeof this.options.recovery?.prepare === "function"),
       ownedConditions: presence(typeof this.options.ownedConditions?.prepare === "function"),
       party: presence(typeof this.options.party?.prepare === "function"),
@@ -654,8 +661,15 @@ export class FieldGame {
     const shop = this.shopTask;
     if (!shop || shop.stage !== "open" || this.stop) return false;
     if (shop.close) {
-      shop.stage = "farewell";
-      this.dialogue = { ...shop.close, task: shop.id };
+      try {
+        const presentation = this.prepareMessagePresentation(shop.close);
+        presentation.validate();
+        shop.stage = "farewell";
+        this.dialogue = { ...presentation.message, task: shop.id };
+      } catch (error) {
+        this.block(error instanceof Error ? error.message : String(error));
+        return false;
+      }
     } else {
       this.shopTask = null;
       this.pump();
@@ -976,9 +990,10 @@ export class FieldGame {
     // Validate the entire selected branch before its first grant/open, including
     // messages beyond the next suspension. Unused script-chest reward templates
     // may be absent; they never authorize a message-producing explicit caller.
+    const messageViews = new Map<string, ReturnType<FieldGame["prepareMessagePresentation"]>>();
     for (const effect of [...next.effects, ...next.state.remaining]) {
       if (effect.kind === "message") {
-        resolveMessage(effect.key);
+        messageViews.set(effect.key, this.prepareMessagePresentation(resolveMessage(effect.key)));
         if (this.messageWindow && this.messageWindow.task !== t.id)
           throw new Error("Concurrent source message windows are not implemented");
       }
@@ -1008,6 +1023,7 @@ export class FieldGame {
     }
     // Commit the owner before publishing task progress, presentation or flags.
     // No asynchronous dependency is evaluated inside this publication boundary.
+    for (const view of messageViews.values()) view.validate();
     transaction?.commit();
     for (const effect of next.effects) {
       switch (effect.kind) {
@@ -1031,7 +1047,7 @@ export class FieldGame {
         case "grant": case "set-message-value": break;
         case "scene-state": this.treasureSceneState = effect.state; break;
         case "message":
-          this.dialogue = { ...resolveMessage(effect.key), task: t.id };
+          this.dialogue = { ...messageViews.get(effect.key)!.message, task: t.id };
           this.retainedMessage = null;
           pending.closeMessage = effect.close;
           pending.messageAvailableAt = this.time + 10;
@@ -1924,6 +1940,21 @@ export class FieldGame {
         return;
       }
     }
+    let openingMessage: ReturnType<FieldGame["prepareMessagePresentation"]> | null = null;
+    try {
+      if (action.kind === "talk") openingMessage = this.prepareMessagePresentation(action.message);
+      else if (action.kind === "shop") {
+        if (action.start) openingMessage = this.prepareMessagePresentation(action.start);
+        // Farewell is a required continuation of this interaction. Admit its
+        // dependencies before allowing transactions; closeShop prepares a new
+        // view from the current owner instead of retaining these entry names.
+        if (action.close) this.prepareMessagePresentation(action.close).validate();
+      }
+      openingMessage?.validate();
+    } catch (error) {
+      this.block(error instanceof Error ? error.message : String(error), site);
+      return;
+    }
     this.interaction = {
       entityId: e.id,
       restoreDirection:
@@ -1968,8 +1999,8 @@ export class FieldGame {
         stage: action.start ? "greeting" : "open",
         close: action.close ? { ...action.close } : null,
       };
-      if (action.start) this.dialogue = { ...action.start, task: id };
-    } else this.dialogue = { ...action.message, task: 0 };
+      if (openingMessage) this.dialogue = { ...openingMessage.message, task: id };
+    } else this.dialogue = { ...openingMessage!.message, task: 0 };
   }
   /** Source selection callbacks write the shared zero-based result. Only the
    * issuing task may consume completion, on its next ordinary logical clock;
@@ -1998,6 +2029,35 @@ export class FieldGame {
     if (typeof publish !== "function") throw new Error("Invalid ordinary message host transaction");
     return publish;
   }
+  /** Source text and its typed references are one content record. Prepare a
+   * detached name view, then validate it together with the window publication;
+   * neither the renderer nor a cached field value resolves character names. */
+  private prepareMessagePresentation(message: FieldMessage, pages: readonly string[] = [message.text]) {
+    if (typeof message.key !== "string" || !message.key || typeof message.speaker !== "string" ||
+        !Array.isArray(pages) || pages.some(page => typeof page !== "string") ||
+        message.text !== pages[0] || (message.alignment !== undefined && message.alignment !== "center"))
+      throw new Error("Invalid field message presentation");
+    const identity = canonical({ message, pages }), beforeWindow = this.messageWindow, beforeTime = this.time;
+    const validateContent = () => {
+      if (canonical({ message, pages }) !== identity || this.messageWindow !== beforeWindow || this.time !== beforeTime)
+        throw new Error("Stale field message content preparation");
+    };
+    const raw = message.template, plain: FieldMessage = { key: message.key, text: message.text, speaker: message.speaker,
+      ...(message.alignment === undefined ? {} : { alignment: message.alignment }) };
+    if (raw === undefined) {
+      if ([...pages, message.speaker].some(value => [...value.matchAll(MESSAGE_VALUE_PATTERN)].length))
+        throw new Error("Source message value requires a compiled template");
+      return { message: structuredClone(plain), pages: [...pages], validate: validateContent };
+    }
+    const template = parseFieldMessageTemplate(raw), source = fieldMessageTemplateSource(template);
+    if (canonical(source.pages) !== canonical(pages) || source.speaker !== message.speaker)
+      throw new Error("Source message template/text binding mismatch");
+    if (!this.options.messageNames) throw new Error("Source message character name owner is unavailable");
+    const names = this.options.messageNames.prepare(fieldMessageNameReferences(template));
+    const resolved = resolveFieldMessageTemplate(template, names.names);
+    return { message: { ...structuredClone(plain), text: resolved.pages[0]!, speaker: resolved.speaker },
+      pages: resolved.pages, validate: () => { validateContent(); names.validate(); } };
+  }
   private beginManualDialogue(op: Extract<Op, { kind: "message" }>, task: Task): void {
     const manual = op.manual;
     if (!manual || !Array.isArray(manual.pages) || manual.pages.length === 0 ||
@@ -2007,12 +2067,13 @@ export class FieldGame {
       throw new Error("Invalid ordinary source Msg document");
     if (this.sourceMessage.active || this.shopTask || this.treasureSceneState === "message")
       throw new Error("Ordinary source Msg conflicts with an occupied message manager");
-    const before = this.messageWindow, prepared: Dialogue = { key: op.key, speaker: op.speaker,
-      text: manual.pages[0]!, task: task.id,
-      manual: { ...structuredClone(manual), page: 0, availableAt: this.time + 10,
+    const before = this.messageWindow, presentation = this.prepareMessagePresentation(op, manual.pages),
+      prepared: Dialogue = { ...presentation.message, task: task.id,
+      manual: { ...structuredClone(manual), pages: presentation.pages, page: 0, availableAt: this.time + 10,
         site: { script: op.script, index: op.index, source: structuredClone(op.source) } } },
       publish = this.prepareDialogueMask(8);
     if (this.messageWindow !== before) throw new Error("Stale ordinary source Msg preparation");
+    presentation.validate();
     publish();
     this.retainedMessage = null;
     this.dialogue = prepared;
@@ -3760,12 +3821,11 @@ export class FieldGame {
               return;
             }
             if (this.sourceMessage.active) { this.block("Source message window is already occupied", op); return; }
-            this.dialogue = {
-              speaker: op.speaker,
-              text: op.text,
-              key: op.key,
-              task: t.id,
-            };
+            try {
+              const presentation = this.prepareMessagePresentation(op);
+              presentation.validate();
+              this.dialogue = { ...presentation.message, task: t.id };
+            } catch (error) { t.pc--; this.block(error instanceof Error ? error.message : String(error), op); }
             return;
           case "encounter":
             if (this.hasUnfinishedInterpolation()) {

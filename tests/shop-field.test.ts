@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { FieldGame } from "../src/core/field.js";
 import { EventState } from "../src/core/event-state.js";
 import { compileEntityGroup } from "../src/compiler/entity-group.js";
+import { compileMessage } from "../src/compiler/message.js";
+import { sourceNativeStateFixture } from "./fixtures/source-native-state.js";
 import type { FieldContent } from "../src/field/types.js";
 
 function fixture(start = "HELLO", close = "BYE") {
@@ -226,4 +228,41 @@ test("missing or rejected shop owner blocks atomically before greeting or facing
     assert.equal(game.actors["8"]!.direction, "left");
     assert.equal(game.checkpointReady, false);
   }
+});
+
+test("an unavailable mandatory farewell name blocks shop entry before transactions or facing changes", () => {
+  const { content, options } = fixture("", "BYE"), owner = sourceNativeStateFixture().fresh();
+  const action = content.map.entities[0]!.npc!.interaction;
+  assert.equal(action.kind, "shop");
+  if (action.kind !== "shop") throw new Error("Missing controlled shop");
+  action.close = compileMessage("BYE", { story_mes_zhc: { BYE: "Goodbye (UNHELD_TAG)" },
+    story_cha_zhc: { BYE: "" } }, [{ id: "2", character_id: "3", tag_name: "UNHELD_TAG" }]);
+  const before = owner.snapshot(), game = new FieldGame(content, EventState.initialized(), undefined, undefined,
+    { ...options, messageNames: owner.fieldMessageNames });
+  game.confirm();
+  assert.match(game.stop?.message ?? "", /Missing owned message character: 3/);
+  assert.equal(game.currentShop, null); assert.equal(game.messageWindow, null);
+  assert.equal(game.actors["8"]!.direction, "left");
+  assert.deepEqual(owner.snapshot(), before);
+});
+
+test("shop farewell reads the current owned name instead of retaining the greeting snapshot", () => {
+  const { content, options } = fixture(), owner = sourceNativeStateFixture().fresh();
+  const action = content.map.entities[0]!.npc!.interaction;
+  if (action.kind !== "shop") throw new Error("Missing controlled shop");
+  const rows = [{ id: "1", character_id: "2", tag_name: "OWNER_TAG" }];
+  action.start = compileMessage("HELLO", { story_mes_zhc: { HELLO: "Welcome (OWNER_TAG)" },
+    story_cha_zhc: { HELLO: "(OWNER_TAG)" } }, rows);
+  action.close = compileMessage("BYE", { story_mes_zhc: { BYE: "Goodbye (OWNER_TAG)" },
+    story_cha_zhc: { BYE: "(OWNER_TAG)" } }, rows);
+  const game = new FieldGame(content, EventState.initialized(), undefined, undefined,
+    { ...options, messageNames: owner.fieldMessageNames });
+  game.confirm(); assert.equal(game.dialogue?.text, "Welcome SYNTHETIC_OWNER");
+  game.confirm(); assert.ok(game.currentShop);
+  const saved = owner.snapshot(); saved.roster[0]!.name = "Renamed owner";
+  saved.characterNames.OWNER_TAG = "Renamed owner"; owner.restore(saved);
+  assert.equal(game.closeShop(), true);
+  assert.equal(game.dialogue?.text, "Goodbye Renamed owner");
+  assert.equal(game.dialogue?.speaker, "Renamed owner");
+  game.confirm(); assert.equal(game.checkpointReady, true);
 });

@@ -168,7 +168,7 @@ test("ordinary scripted treasure does not require its unused placeholder reward,
 
 test("message compiler blocks missing names, stale substitutions and unimplemented controls before a task can publish", () => {
   assert.throws(() => compileTreasureTaskMessages(taskDefinition(), taskMessages(), {}), /Missing/);
-  for (const text of ["(UNKNOWN)", "(NUM)", "<WAIT>hello", "hello<CT>", "<CT><CT>hello", "hello\\c"]) {
+  for (const text of ["(UNKNOWN)", "(NUM)", "<WAIT>hello", "hello\\c"]) {
     const messages = taskMessages(); messages.story_mes_zhc.SYNTHETIC_TREASURE = text;
     assert.throws(() => compileTreasureTaskMessages(taskDefinition(), messages, taskSystemMessages), /Unsupported|unsupported/);
   }
@@ -176,4 +176,12 @@ test("message compiler blocks missing names, stale substitutions and unimplement
   assert.throws(() => compileTreasureTaskMessages(taskDefinition(), messages, taskSystemMessages), /substitution/);
   assert.throws(() => compileTreasureTaskMessages(taskDefinition(), taskMessages(), { SYN_ITEM: "<WAIT>thing" }), /control/);
   assert.throws(() => compileTreasureTaskMessages(taskDefinition(), taskMessages(), { SYN_ITEM: "<IC_BAG><IC_ROD>thing" }), /substitution/);
+});
+
+test("treasure substitutions use shared whole-message CT alignment regardless of control position", () => {
+  for (const text of ["(ITEM_N)<CT>", "<CT><CT>(ITEM_N)"]) {
+    const messages = taskMessages(); messages.story_mes_zhc.SYNTHETIC_TREASURE = text;
+    assert.deepEqual(compileTreasureTaskMessages(taskDefinition(), messages, taskSystemMessages).reward,
+      { key: "SYNTHETIC_TREASURE", text: "Sample medicine", speaker: "", alignment: "center" });
+  }
 });

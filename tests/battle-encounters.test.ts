@@ -17,8 +17,8 @@ function party(id: number, pattern = 1): Record<string, string> {
 function fixture() {
   const tables: Record<string, Record<string, string>[]> = {
     "monster_party.csv": [party(77), party(91, 3)],
-    "monster.csv": [{ id: "11", monster_asset_id: "100", script_id: "200", resistance_attribute: "0" },
-      { id: "12", monster_asset_id: "101", script_id: "201", resistance_attribute: "0" }],
+    "monster.csv": [{ id: "11", monster_asset_id: "100", script_id: "200", resistance_attribute: "0", resistance_condition: "0" },
+      { id: "12", monster_asset_id: "101", script_id: "201", resistance_attribute: "0", resistance_condition: "0" }],
     "monster_asset.csv": [{ id: "100", group_name: "MN_RED", asset_name: "C00" },
       { id: "101", group_name: "MN_BLUE", asset_name: "C01" }],
     "monster_ai_script.csv": [{ id: "200", script_name: "red_ai" }, { id: "201", script_name: "blue_ai" }],
@@ -91,6 +91,23 @@ test("zero script/group references are explicit absence and do not resolve row z
   assert.equal(result.encounters[0]!.script, null);
   assert.deepEqual(result.encounters[0]!.metadata.battleFlags, []);
   assert.equal(f.calls.includes("battle_script"), false);
+});
+
+test("enemy resistance references join the shared source row closure without admitting active conditions", () => {
+  const f = fixture(); f.tables["monster.csv"]![0]!.resistance_condition = "601";
+  f.tables["condition_group.csv"] = [{ id: "9001", group_id: "601", condition_id: "608", type_id: "1", invocation_rate: "0" }];
+  f.tables["condition.csv"] = [{ id: "608", condition_type: "608", overlapped_type: "0", erase_condition_group_id: "3" }];
+  for (const table of ["condition_group.csv", "condition.csv"])
+    f.sources[table] = { ...f.sources["monster.csv"]!, assetPath: "synthetic/" + table };
+  const reader = f.reader(), result = compileBattleEncounterSources(reader, f.input([77]));
+  assert.deepEqual(result.diagnostics, []); assert.equal(result.encounters.length, 1);
+  assert.equal(reader.selected["condition_group.csv"]![9001]!.source.rowId, "9001");
+  assert.equal(reader.selected["condition.csv"]![608]!.source.rowId, "608");
+  f.tables["monster_party.csv"]![1]!.monster2 = "0";
+  f.tables["condition.csv"] = [];
+  const missing = f.compile(); assert.deepEqual(missing.encounters.map(encounter => encounter.partyId), [91]);
+  assert.equal(missing.diagnostics[0]!.code, "condition-resistance-reference");
+  assert.deepEqual(missing.diagnostics[0]!.dependency, { table: "condition.csv", id: 608 });
 });
 
 test("pattern six and multiple eligible patterns remain source data without an import-time choice", () => {

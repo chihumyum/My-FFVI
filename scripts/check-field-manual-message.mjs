@@ -15,6 +15,8 @@ const compiled = resolve(root, args[1] ?? "dist"),
 const { loadCorpus } = await module("compiler/corpus"), { decodeFieldOp } = await module("compiler/field"),
   { compileManualMessageInstruction } = await module("compiler/message"), { GameSession } = await module("core/game-session"),
   { GameFlow } = await module("core/game-flow"), { hash } = await module("compiler/content");
+const { loadSystemSource } = await module("compiler/system-source"),
+  { fieldMessageNameReferences } = await module("core/field-message-template");
 const { choiceFixture, choiceDefinition, choiceAssign, choiceExit, choiceVariable } =
   await import(pathToFileURL(resolve(compiled, "tests/fixtures/field-choice.js")).href);
 await mkdir(root + "build/reports", { recursive: true });
@@ -43,6 +45,22 @@ assert.equal(pageType, "b803000000c3");
 const corpus = await loadCorpus(root), plan = JSON.parse(await readFile(root + "build/reports/corpus-plan.json", "utf8"));
 assert.equal(plan.sourceSetHash, corpus.sourceSetHash);
 assert.equal(corpus.manifest.sources.find(row => row.file === "GameAssembly.dll")?.sha256, native.nativeSha256);
+const systemSource = await loadSystemSource(root, corpus.manifest.parentSourceSetHash),
+  nameRows = corpus.tables["character_default_name.csv"];
+assert.equal(systemSource.sourceSetHash, corpus.sourceSetHash);
+assert.equal(nameRows.length, 14);
+assert.deepEqual(systemSource.tables["character_default_name.csv"], nameRows);
+const sourceNameRows = nameRows.map(value => {
+  const row = systemSource.reader.row("character_default_name.csv", value.id);
+  assert.deepEqual(row.values, value);
+  assert.match(row.source.objectId, /^-?(?:0|[1-9]\d*)$/);
+  return { rowId: Number(value.id), sourceId: Number(value.character_id), tag: value.tag_name, source: row.source };
+});
+const bindRef = ref => {
+  const row = sourceNameRows.find(value => value.rowId === ref.rowId);
+  assert.equal(row?.tag, ref.tag); assert.equal(row?.sourceId, ref.sourceId);
+  return { ...ref, source: row.source };
+};
 const fieldIds = new Set(plan.scripts.filter(script => script.domain === "field").map(script => script.id)),
   accepted = [], blocked = [], samples = [];
 let sites = 0;
@@ -54,17 +72,20 @@ for (const asset of corpus.assets.filter(asset => asset.kind === "script" && fie
     const context = { nextMnemonic: instructions[index + 1]?.mnemonic ?? null },
       site = { script: asset.data.Name, index, source: { ...asset.source, pointer: `/Mnemonics/${index}` } };
     let op;
-    try { op = compileManualMessageInstruction(raw, corpus.messages, context); }
+    try { op = compileManualMessageInstruction(raw, corpus.messages, context, nameRows); }
     catch (error) { blocked.push({ ...site, reason: error.message }); continue; }
     assert.deepEqual(decodeFieldOp(raw, site, corpus.messages, corpus.tables, context), { ...site, ...op });
     accepted.push({ ...site, instructionHash: hash(raw), key: op.key, speakerHash: hash(op.speaker),
-      pageHashes: op.manual.pages.map(hash), window: op.manual.window, anchor: op.manual.anchor, after: op.manual.after });
+      pageHashes: op.manual.pages.map(hash), window: op.manual.window, anchor: op.manual.anchor, after: op.manual.after,
+      alignment: op.alignment ?? "left", nameReferences: op.template ? fieldMessageNameReferences(op.template).map(bindRef) : [] });
     samples.push({ site, op });
   }
 }
 assert.equal(sites, 4615);
-const paged = samples.find(sample => sample.op.manual.pages.length > 1 && sample.op.manual.window === "frame" && sample.op.manual.after === "close"),
-  windowless = samples.find(sample => sample.op.manual.window === "none" && sample.op.manual.after === "close");
+// This older journey deliberately retains its static-dialogue scope. Dynamic
+// source names use the real owned provider in check-field-message-names.mjs.
+const paged = samples.find(sample => !sample.op.template && sample.op.manual.pages.length > 1 && sample.op.manual.window === "frame" && sample.op.manual.after === "close"),
+  windowless = samples.find(sample => !sample.op.template && sample.op.manual.window === "none" && sample.op.manual.after === "close");
 assert.ok(paged, "A real explicit-page framed message is required");
 assert.ok(windowless, "A real windowless synchronous message is required");
 const prompt = compileManualMessageInstruction({ type: 1, mnemonic: "Msg", operands: {
@@ -133,6 +154,11 @@ const report = { kind: "field-manual-message-check", lane: "source compilation a
   sourceSetHash: corpus.sourceSetHash, sourceSites: sites, admitted: accepted.length, blocked: blocked.length,
   admittedWindows: Object.fromEntries(["frame", "none"].map(window => [window, accepted.filter(row => row.window === window).length])),
   explicitPageSites: accepted.filter(row => row.pageHashes.length > 1).length,
+  typedNameSites: accepted.filter(row => row.nameReferences.length).length,
+  typedNameReferences: accepted.reduce((sum, row) => sum + row.nameReferences.length, 0),
+  centeredSites: accepted.filter(row => row.alignment === "center").length,
+  sourceNameTable: { table: "character_default_name.csv", rows: sourceNameRows },
+  syntaxOnly: true, sourceGameplayVerified: false,
   sourceCalls: accepted, blockers: blocked, nativeReceipt: { file: "source-message-native-check.json", sha256: sha(nativeBytes),
     methods: native.methods.length, rawMethods: native.rawMethods.length, pageTypeRva: "0x3759d0", pageTypeBytes: pageType },
   controlledJourney: { sourceSamples: [paged.site, windowless.site],
@@ -140,9 +166,11 @@ const report = { kind: "field-manual-message-check", lane: "source compilation a
   appProjection: { sourceSha256: sha(appBytes), cases: 4, browser: false },
   originalGameExecuted: false, semanticsVerified: false,
   limitations: ["Not source-story reachability or complete game migration", "Web confirmation and page layout; native UI frame/font parity unverified",
-    "Positive/negative timing, WAIT/AUTO/PRESS, dynamic text and other message families are outside this manual capability",
+    "Typed name references still require a live held owner; syntax acceptance does not establish that dependency or story reachability",
+    "Positive/negative timing, WAIT/AUTO/PRESS, other message values and other message families remain outside this manual capability",
     "Existing asynchronous source-message capability remains separately checked"] };
 await writeFile(root + "build/reports/field-manual-message-check.json", JSON.stringify(report, null, 2) + "\n");
 console.log(JSON.stringify({ sourceSites: sites, admitted: accepted.length, blocked: blocked.length,
   explicitPageSites: report.explicitPageSites, windows: report.admittedWindows, stages: stages.length,
+  typedNameSites: report.typedNameSites, centeredSites: report.centeredSites,
   appProjectionCases: 4, originalGameExecuted: false }));

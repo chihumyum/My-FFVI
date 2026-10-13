@@ -2,6 +2,7 @@ import { z } from "zod";
 import { int32 } from "../core/script-integer.js";
 import { validateSourceMessageDocument, type SourceMessageDocument, type SourceMessageOp } from "../core/source-message.js";
 import { record } from "./content.js";
+import { MESSAGE_VALUE_PATTERN } from "../core/field-message-template.js";
 
 /** WaitContent.Parse has an explicit switch, not a general hexadecimal parser.
  * 00 and unknown suffixes take its one-second fallback. Keep unknown tags gated. */
@@ -32,6 +33,8 @@ export function compileSourceMessageDocument(raw: string): SourceMessageDocument
   }
   const centered = /<CT>/i.test(text);
   text = text.replaceAll(/<CT>/gi, "");
+  if ([...text.matchAll(MESSAGE_VALUE_PATTERN)].length)
+    throw new Error("Source automatic message value substitution is unresolved");
   const result: SourceMessageDocument = { kind: "source-message-document-v1", text,
     alignment: centered ? "center" : "left", autoPage: true, tailWaitSeconds };
   validateSourceMessageDocument(result);

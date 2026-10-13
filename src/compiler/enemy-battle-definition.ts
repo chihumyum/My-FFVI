@@ -1,4 +1,4 @@
-import type { BattleConditionCatalog } from "../core/battle-conditions.js";
+import { BattleConditions, type BattleConditionCatalog } from "../core/battle-conditions.js";
 import type { AbilityDefinition, BattleEncounterDiagnostic } from "../core/battle-content.js";
 import type { EnemyBattleDefinition } from "../core/battle-participants.js";
 import type { BattleFormationPlan } from "../core/battle-formations.js";
@@ -12,6 +12,7 @@ import { compileEnemyParameters } from "./parameters.js";
 import { compileEnemyPhysical } from "./physical-parameters.js";
 import { compileElementResistances } from "./elements.js";
 import { tableInteger as int } from "./table.js";
+import { compileConditionResistances, ConditionResistanceCompilationError } from "./condition-resistances.js";
 
 type Reader = {
   row(table: string, id: string | number): BattleRow;
@@ -59,8 +60,20 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
     source = found.source;
     if (int(row.id) !== enemy.monsterId || found.source.rowId !== String(enemy.monsterId))
       throw new Error("Changed enemy source identity");
-    for (const key of ["attack_attribute", "attack_plus", "attack_plus_grop", "resistance_condition", "initial_condition"])
+    for (const key of ["attack_attribute", "attack_plus", "attack_plus_grop", "initial_condition"])
       if (int(row[key]) !== 0) throw new Error(`Unimplemented monster ${key}=${row[key]}`);
+    let conditionResistances: Record<string, number>;
+    try {
+      conditionResistances = compileConditionResistances(reader, int(row.resistance_condition),
+        input.conditions.rules.definitions).resistances;
+      if (Object.keys(conditionResistances).length) new BattleConditions(input.conditions).validateResistances(conditionResistances);
+    } catch (error) {
+      add("blocked", "enemy-condition-resistance", `Monster ${enemy.monsterId} resistance_condition=${row.resistance_condition}: ` +
+        (error instanceof Error ? error.message : String(error)),
+        { dependency: error instanceof ConditionResistanceCompilationError ? error.dependency
+          : { table: "monster.csv", id: enemy.monsterId } });
+      return { source, diagnostics, definition: null };
+    }
     const parameters = compileEnemyParameters(reader, enemy.monsterId,
       input.parameters.temporary, input.parameters.limits).confirmed;
     const physical = compileEnemyPhysical(reader, enemy.monsterId,
@@ -95,7 +108,7 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
       level: int(row.lv), attackElements: [],
       elementResistances: compileElementResistances(reader, int(row.resistance_attribute)).resistances,
       physical, ...parameters, exp: int(row.exp), gil: int(row.gill), growthGroup: null,
-      abilities: abilityIds, commands: [], conditionIds: [], conditionResistances: {}, ai,
+      abilities: abilityIds, commands: [], conditionIds: [], conditionResistances, ai,
       sprites: { idle: enemy.sprite, mount: null },
     } };
   } catch (error) {

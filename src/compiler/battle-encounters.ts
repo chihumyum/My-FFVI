@@ -2,6 +2,7 @@ import type { BattleAISource } from "../core/battle-ai.js";
 import type { BattleRow } from "./battle.js";
 import { battleAIAbilities, compileBattleAI } from "./battle-ai.js";
 import { compileElementResistances } from "./elements.js";
+import { compileConditionResistances, ConditionResistanceCompilationError } from "./condition-resistances.js";
 import { tableInteger } from "./table.js";
 import type { BattleFormationPatterns } from "../core/battle-formations.js";
 
@@ -145,6 +146,13 @@ export function compileBattleEncounterSources(reader: Reader, input: BattleEncou
         const id = number(`monster${slot}`);
         if (!id) continue;
         const monster = row("monster.csv", id);
+        const resistanceGroup = tableNumber(monster, "monster.csv", "resistance_condition");
+        try { compileConditionResistances(reader, resistanceGroup); }
+        catch (error) {
+          throw new EncounterFailure("condition-resistance-reference", reason(error), monster.source,
+            error instanceof ConditionResistanceCompilationError ? error.dependency
+              : { table: "monster.csv", id, field: "resistance_condition" });
+        }
         const spriteId = tableNumber(monster, "monster.csv", "monster_asset_id", 1);
         const media = row("monster_asset.csv", spriteId);
         const aiId = tableNumber(monster, "monster.csv", "script_id", 1);

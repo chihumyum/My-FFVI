@@ -34,7 +34,7 @@ test("ordinary Msg compiles explicit pages, static speaker, source windows and a
 });
 
 test("manual compiler preserves gates for dynamic text, timing, other message families and missing context", () => {
-  for (const text of ["a<WAIT01>b", "<AUTO_P>", "a<PRESS>b", "<NAME_A>", "<CT>text", "<P>a", "a<P>", "a<P><P>b", "", "a\\p"])
+  for (const text of ["a<WAIT01>b", "<AUTO_P>", "a<PRESS>b", "<NAME_A>", "<P>a", "a<P>", "a<P><P>b", "", "a\\p"])
     assert.throws(() => manual(text), /control|empty/);
   for (const window of [1, 2, 4]) assert.throws(() => compileManualMessageInstruction(raw(window), messages(), { nextMnemonic: "Exit" }));
   for (const seconds of [-1, .01]) assert.throws(() => compileManualMessageInstruction(raw(0, 0, seconds), messages(), { nextMnemonic: "Exit" }));

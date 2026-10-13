@@ -203,6 +203,7 @@ export class GameSession {
           sourcePresentation: { context: () => structuredClone(fresh.presentation) } } : {}),
         puppetRoster: this.state.fieldPuppetRoster,
         inventory: this.state.fieldInventory,
+        messageNames: this.state.fieldMessageNames,
         treasure: this.state.fieldTreasure,
         party: this.state.fieldParty,
         roster: this.state.fieldRoster,

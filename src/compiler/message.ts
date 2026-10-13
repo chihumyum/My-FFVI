@@ -2,19 +2,23 @@ import { z } from "zod";
 import type { FieldManualMessage, FieldMessage } from "../field/types.js";
 import { int32 } from "../core/script-integer.js";
 import { record } from "./content.js";
+import { compileFieldMessageTemplate } from "./message-template.js";
 
 /** Script messages and NPC Talk actions share the same localized message source. */
 export function compileMessage(
   key: string,
   messages: Record<string, unknown>,
+  characterNames?: unknown,
 ): FieldMessage {
   const text = record(messages.story_mes_zhc ?? {})[key],
     speaker = record(messages.story_cha_zhc ?? {})[key];
   if (!key || typeof text !== "string" || typeof speaker !== "string")
     throw new Error("Missing localized message or speaker");
-  if (/<|\\(?!n)/.test(text) || /<|\\/.test(speaker))
+  const centered = /<CT>/i.test(text), plain = text.replace(/<CT>/gi, "");
+  if (/<|\\(?!n)/.test(plain) || /<|\\/.test(speaker))
     throw new Error("Message contains an unsupported inline control");
-  return { key, text: text.replaceAll("\\n", "\n"), speaker };
+  const decoded = plain.replaceAll("\\n", "\n"), template = compileFieldMessageTemplate([decoded], speaker, characterNames);
+  return { key, text: decoded, speaker, ...(centered ? { alignment: "center" } : {}), ...(template ? { template } : {}) };
 }
 
 /** Source Msg's ordinary controller: frame/no-frame, manual completion, and
@@ -23,6 +27,7 @@ export function compileManualMessageInstruction(
   raw: unknown,
   messages: Record<string, unknown>,
   context?: { nextMnemonic: string | null },
+  characterNames?: unknown,
 ): { kind: "message"; manual: FieldManualMessage } & FieldMessage {
   const instruction = record(raw), operands = record(instruction.operands);
   if (instruction.mnemonic !== "Msg" || instruction.type !== 1)
@@ -40,13 +45,18 @@ export function compileManualMessageInstruction(
     speaker = record(messages.story_cha_zhc ?? {})[key];
   if (!key || typeof text !== "string" || typeof speaker !== "string")
     throw new Error("Missing localized message or speaker");
+  // Center is selected once for the complete content list, before SetContent;
+  // explicit P pages share that alignment. Other controls remain blockers.
+  const centered = /<CT>/i.test(text), plain = text.replace(/<CT>/gi, "");
   // NewPageTagRegex is <(?i)P(?-i)>. Other controls remain explicit blockers;
   // stripping them would change input, timing or runtime substitution.
-  const pages = text.split(/<P>/i).map(page => page.replaceAll("\\n", "\n"));
+  const pages = plain.split(/<P>/i).map(page => page.replaceAll("\\n", "\n"));
   if (pages.some(page => !page || /<|\\|[\u0000-\u0009\u000b-\u001f\u007f]/.test(page)) ||
       /<|\\|[\u0000-\u001f\u007f]/.test(speaker))
     throw new Error("Ordinary source Msg contains an unsupported inline control or empty page");
-  return { kind: "message", key, speaker, text: pages[0]!, manual: {
+  const template = compileFieldMessageTemplate(pages, speaker, characterNames);
+  return { kind: "message", key, speaker, text: pages[0]!, ...(centered ? { alignment: "center" } : {}),
+    ...(template ? { template } : {}), manual: {
     pages, window: ints[0] === 0 ? "frame" : "none",
     anchor: (["top", "middle", "bottom"] as const)[ints[1]!]!,
     after: context.nextMnemonic === "Msg" ? "message" : context.nextMnemonic === "Select" ? "choice" : "close",
