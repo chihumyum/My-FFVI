@@ -6,6 +6,8 @@ import type { FieldActorViewDefinition } from "../core/field-actor-view.js";
 import type { FieldNativeAnimationKeys } from "../core/field-native-appearance.js";
 import type { FieldNativeFootDefinition } from "../core/field-native-foot.js";
 import type { DevelopmentProfile } from "../core/development-profile.js";
+import type { FrameworkFlatFieldViewDefinition } from "../core/field-actor-view.js";
+import type { FieldNativeCompositionDefinition } from "../core/field-native-composition.js";
 
 export type ContentIssue = { reason: string; source: Evidence };
 export type WorldMapContent = {
@@ -39,6 +41,12 @@ export type WorldMapContent = {
    * alone does not admit that map's entity or lifecycle dependencies. */
   actorView?: FieldActorViewDefinition;
   actorViewBlockers?: ContentIssue[];
+  /** Explicit alternative display. Strict source view/blockers are retained. */
+  frameworkPresentation?: {
+    kind: "framework-ordinary-field-presentation-v1";
+    view: FrameworkFlatFieldViewDefinition;
+    composition: FieldNativeCompositionDefinition;
+  };
   nativeCompositionBlockers?: ContentIssue[];
   nativeFoot?: FieldNativeFootDefinition;
   nativeFootBlockers?: ContentIssue[];

@@ -801,8 +801,15 @@ async function init() {
     text("welcome-scope", "使用原版地图地形与新游戏初始角色，采用独立演示路线和平面画面，拥有独立本地存档。");
     text("systems-playground-help", "世界旅行：起点向北一步进入纳尔谢，面向入口南侧按 Enter / 空格返回世界。方向键移动，Esc 打开菜单，可查看队伍、使用道具或魔法、保存和读取进度。");
   }
+  if (packageId === "figaro-initialized") {
+    text("welcome-title", "费加罗 · 来源内容批次");
+    text("welcome-description", "探索两张相连地图，与原 NPC 对话；菜单可保存、读取后继续。");
+    text("welcome-scope", "保留原地图、NPC、对白与出口。使用新游戏初始队伍，并直接放置到这里测试；不代表原剧情已经到达费加罗。拥有独立本地进度。");
+    text("systems-playground-help", "方向键移动，Enter / 空格与面前的角色交谈；Esc 打开队伍、装备、物品和保存菜单。两张地图保留原出口，可往返并读档继续。");
+  }
   for (const [id, active] of [["systems-playground-link", packageId === "systems-initialized"],
-    ["world-travel-link", worldTravel], ["source-sample-link", packageId === null]]) {
+    ["world-travel-link", worldTravel], ["source-content-link", packageId === "figaro-initialized"],
+    ["source-sample-link", packageId === null]]) {
     $(id).setAttribute("aria-current", active ? "page" : "false");
   }
   $("systems-playground-help").hidden = !systemsPlayground && !contents.hasInitializedEntry;

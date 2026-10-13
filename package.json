@@ -183,7 +183,9 @@
     "field-particle-appearance:check": "npm run build && node scripts/check-field-particle-appearance-native.mjs && node scripts/check-field-particle-appearance.mjs",
     "skeleton:plan": "node scripts/check-game-skeleton.mjs --plan",
     "skeleton:check": "npm run build && node scripts/check-game-skeleton.mjs",
-    "npc-routes:plan": "npm run build && node dist/src/cli.js npc-routes"
+    "npc-routes:plan": "npm run build && node dist/src/cli.js npc-routes",
+    "source-content:build": "npm run build && node scripts/build-initialized-content-batch.mjs",
+    "source-content:check": "npm run build && node scripts/check-initialized-content-batch.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

@@ -1,0 +1,57 @@
+{
+  "kind": "initialized-source-map-recipe-v1",
+  "id": "figaro-initialized",
+  "sourceEntry": {
+    "url": "/game/source-new-game.json",
+    "contentHash": "054d81aa8901a4d0024bab182772bb018e42bc223351b7bcb628065b4e10a57d"
+  },
+  "sourceBattle": {
+    "url": "/game/source-catalog.json",
+    "contentHash": "d8c5cc15913f27333da3d72446036b8baba908429829265b897287a78912109a"
+  },
+  "sourceWorld": {
+    "url": "/world/catalog.json",
+    "contentHash": "041d094653778859ce0ef313c5aa9f63e4bafbf3deda920674cf69d917f50702"
+  },
+  "startMap": 22,
+  "entrance": 1,
+  "presentation": "framework-ordinary-field-flat-v1",
+  "manifest": {
+    "kind": "content-batch-manifest-v1",
+    "id": "figaro-initialized-source-interaction",
+    "profile": "framework",
+    "mapIds": [22, 23],
+    "roots": [{"kind": "entry", "mapId": 22, "entrance": 1, "continuation": "sc_map_20051_1"}],
+    "routes": [{
+      "id": "figaro-source-npc-roundtrip",
+      "entry": "framework-new-game",
+      "expectedMapId": 22,
+      "requiredMapIds": [22, 23],
+      "requiredEncounterIds": [],
+      "maxTicks": 10000,
+      "inputs": [
+        {"kind": "move", "direction": "up"},
+        {"kind": "move", "direction": "up"},
+        {"kind": "move", "direction": "left"},
+        {"kind": "move", "direction": "left"},
+        {"kind": "move", "direction": "left"},
+        {"kind": "move", "direction": "left"},
+        {"kind": "move", "direction": "left"},
+        {"kind": "move", "direction": "left"},
+        {"kind": "move", "direction": "down"},
+        {"kind": "move", "direction": "left"},
+        {"kind": "move", "direction": "up"},
+        {"kind": "confirm"},
+        {"kind": "menu", "command": {"kind": "set-preferences", "preferences": {"mode": "wait", "speedIndex": 3}}},
+        {"kind": "save-restore"},
+        {"kind": "move", "direction": "right"},
+        {"kind": "move", "direction": "right"},
+        {"kind": "move", "direction": "right"},
+        {"kind": "move", "direction": "right"},
+        {"kind": "move", "direction": "up"}
+      ],
+      "choiceAnswers": [],
+      "battleAbilityIds": []
+    }]
+  }
+}

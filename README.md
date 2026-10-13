@@ -8,6 +8,8 @@
 
 [本轮交付](docs/systems-v76.md)：默认系统入口、六组公共合同和七条连续检查通过；后续按实际内容批次需要推进公共机制。
 
+当前接续 [v77 来源内容批次](docs/source-content-v77.md)：[费加罗内容](http://127.0.0.1:4173/game/?package=figaro-initialized) 保留原地图、NPC、对白、出口和碰撞，使用来源初始化及明确的开发起始放置。通用普通地图呈现适配器不清除原版材质缺口，完整剧情与依赖准入继续独立记录。
+
 **执行顺序：先迁移 Web 版，通过原版一致性验收，再调查 HD-2D，最后制作重制内容。** 现有歌剧效果按原版迁移；HD-2D 文档和契约目前仅作后续设计保留。
 
 源码、合成测试、架构和实施记录由 Git 跟踪，并同步至私有仓库 [chihumyum/ffvi-reweb](https://github.com/chihumyum/ffvi-reweb)。原始游戏资源和生成产物保留在本地，不进入仓库。
@@ -21,6 +23,8 @@
 `npm run content-packages:build` 构建共同内容包；`npm run world-travel:check` 验证世界与地点往返、遭遇战、菜单、保存恢复及循环渲染。来源摘要更新后需要重建并重新绑定配方；旧摘要存档不能默认为新内容的有效进度。
 
 `npm run npc-routes:plan` 按地图包内身份批量绑定 NPC 路线，保留完整原指令、依赖和未知能力；也可追加 `-- 3` 只检查 map3。该接口是内容生产数据层，尚不授予 NPC 自主执行或原剧情可玩覆盖。
+
+`npm run source-content:build` 从 `content-batches/figaro-initialized.recipe.json` 构建独立来源地点包；`npm run source-content:check` 验证原 NPC 对话、真实 Renderer 接线、切图失败/取消/重试、存取和恢复后续行。通用生产器接受其它显式配方，地图未走分支和批次外出口仍保留诊断。
 
 ## 文档入口
 

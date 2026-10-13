@@ -15,6 +15,7 @@ import { prepareMapPartyEntry, readMapPartySwitching } from "./map-party-entry.j
 import { installFreshGameActors, type NativeGameEntryContent } from "./source-new-game.js";
 import { worldFieldContent, worldMapEntryView } from "./world-session.js";
 import type { MapViewType } from "./map-view.js";
+import { resolveFieldPresentation } from "./field-presentation.js";
 
 /** The source initializer and source route retain their own identities. This
  * entry declares a separate authored map; it grants no source reachability. */
@@ -107,12 +108,12 @@ export function assertFrameworkNewGameBindings(content: FrameworkNewGameContent,
   if (point.x !== entity.x || point.y !== entity.y || point.layer !== entity.layer ||
       point.direction !== entity.direction || canonical(point.source) !== canonical(entity.source))
     throw new Error("Framework new-game PointIn source mismatch");
-  if (!map.actorView || map.actorViewBlockers?.length || canonical(entry.view) !== canonical(map.actorView) ||
+  const presentation = resolveFieldPresentation(map);
+  if (canonical(entry.view) !== canonical(presentation.view) ||
       !map.cameraHost || map.cameraHostBlockers?.length ||
       !world.nativeAnimationKeys || canonical(entry.animationKeys) !== canonical(world.nativeAnimationKeys))
     throw new Error("Framework new-game actor/camera/animation provider is unavailable");
   if (map.partyEntryBlockers?.length) throw new Error(map.partyEntryBlockers[0]!.reason);
-  if (map.nativeCompositionBlockers?.length) throw new Error(map.nativeCompositionBlockers[0]!.reason);
   if (map.nativeFootBlockers?.length) throw new Error(map.nativeFootBlockers[0]!.reason);
   if (!map.nativeFoot) throw new Error("Framework new-game native foot provider is unavailable");
   validateFieldNativeFoot(map.nativeFoot, map.map.id, map.map.worldTerrain);
@@ -170,10 +171,11 @@ export function prepareFrameworkNewGameField(content: FrameworkNewGameContent, w
 export function installFrameworkNewGameActors(field: FieldGame, content: FrameworkNewGameContent,
   state: GameState, map: WorldMapContent): void {
   const entry = parseFrameworkNewGameContent(content);
+  const presentation = resolveFieldPresentation(map);
   if (field.content.contentHash !== entry.contentHash || field.content.map.identity?.mapId !== entry.entry.mapId ||
       map.mapId !== entry.entry.mapId || map.contentHash !== entry.mapContentHash ||
       state.initialization !== "source-new-game" || state.catalogHash !== entry.battleCatalogHash ||
-      !map.actorView || canonical(entry.view) !== canonical(map.actorView) ||
+      canonical(entry.view) !== canonical(presentation.view) ||
       assertSourceEntryProfiles(entry, map, field.content) !== "framework")
     throw new Error("Framework new-game actor installation identity mismatch");
   validateInitialAnimationKeys(field.content, entry, state);

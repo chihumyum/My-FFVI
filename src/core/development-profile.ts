@@ -21,11 +21,19 @@ export type DevelopmentProfile = {
   transportation?: "walking-magitek-framework-v1";
   /** Source world geometry and gameplay with explicitly flat Web presentation. */
   worldMap?: "framework-world-map-flat-v1";
+  /** Ordinary source maps with explicit static RGBA character/layer display.
+   * This does not grant native group-material or water-shader acceptance. */
+  fieldPresentation?: "framework-ordinary-field-flat-v1";
 };
 
 export function frameworkWorldMapPresentation(profile: DevelopmentProfile | undefined): "framework-world-map-flat-v1" | undefined {
   return profile?.kind === "framework-development-v1" && profile.worldMap === "framework-world-map-flat-v1"
     ? profile.worldMap : undefined;
+}
+
+export function frameworkOrdinaryFieldPresentation(profile: DevelopmentProfile | undefined): "framework-ordinary-field-flat-v1" | undefined {
+  return profile?.kind === "framework-development-v1" && profile.fieldPresentation === "framework-ordinary-field-flat-v1"
+    ? profile.fieldPresentation : undefined;
 }
 
 export function frameworkTransportationPresentation(profile: DevelopmentProfile | undefined): "framework-development" | undefined {

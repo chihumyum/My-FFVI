@@ -1,6 +1,6 @@
 import { canonical } from "./canonical.js";
 import type { Evidence } from "../field/types.js";
-export type FieldActorViewSource = Evidence & { objectId: string; sha256: string };
+export type FieldActorViewSource = Evidence & { objectId: string; sha256: string; serializedFile?: string };
 
 /** The ordinary native branch is still a material write. Keeping the complete
  * inputs separate from the Canvas consumer prevents a renderer omission from
@@ -36,18 +36,21 @@ export type FrameworkFlatFieldBackground = {
   source: FieldActorViewSource;
   texture: { key: string; url: string; width: number; height: number; sha256: string; source: FieldActorViewSource };
 };
+export type FrameworkFlatFieldViewPolicy =
+  | "framework-world-map-flat-v1"
+  | "framework-ordinary-field-flat-v1";
 export type FrameworkFlatFieldViewDefinition = {
   kind: "framework-flat-field-view-v1";
-  policy: "framework-world-map-flat-v1";
+  policy: FrameworkFlatFieldViewPolicy;
   contextId: string;
   sources: { source: FieldActorViewSource; contentHash: string }[];
   mapSize: { width: number; height: number };
   backgrounds: FrameworkFlatFieldBackground[];
-  omissions: ("dynamic-palette" | "ocean-shader" | "perspective-world-view")[];
+  omissions: ("dynamic-palette" | "ocean-shader" | "perspective-world-view" | "ordinary-group-materials")[];
 };
 export type FrameworkFlatFieldViewProjection = {
   kind: "framework-flat-field-view-projection-v1";
-  policy: "framework-world-map-flat-v1";
+  policy: FrameworkFlatFieldViewPolicy;
   contextId: string;
   sourceHashes: string[];
   unityLayer: number;
@@ -61,18 +64,22 @@ export type FieldActorViewProjection = NativeFieldActorViewProjection | Framewor
 const digest = (s: unknown): s is string => typeof s === "string" && /^[a-f0-9]{64}$/.test(s);
 function sourceIdentity(source: FieldActorViewSource): boolean {
   return !!source && typeof source.file === "string" && !!source.file && typeof source.assetPath === "string" &&
-    !!source.assetPath && typeof source.objectId === "string" && /^-?\d+$/.test(source.objectId) && digest(source.sha256);
+    !!source.assetPath && typeof source.objectId === "string" && /^-?\d+$/.test(source.objectId) && digest(source.sha256) &&
+    (source.serializedFile === undefined || typeof source.serializedFile === "string" && !!source.serializedFile);
 }
 function flatView(definition: FrameworkFlatFieldViewDefinition): void {
-  if (definition.policy !== "framework-world-map-flat-v1" || !digest(definition.contextId) ||
+  const world = definition.policy === "framework-world-map-flat-v1";
+  const ordinary = definition.policy === "framework-ordinary-field-flat-v1";
+  if ((!world && !ordinary) || !digest(definition.contextId) ||
       !Array.isArray(definition.sources) || definition.sources.length !== 2 ||
       definition.sources.some((s) => !sourceIdentity(s.source) || !digest(s.contentHash)) ||
       !definition.mapSize || ![definition.mapSize.width, definition.mapSize.height].every((n) =>
         Number.isSafeInteger(n) && n > 0 && n <= 0x7fffffff / 16) ||
       !Array.isArray(definition.backgrounds) || !Array.isArray(definition.omissions) ||
       new Set(definition.omissions).size !== definition.omissions.length ||
-      !definition.omissions.includes("perspective-world-view") || definition.omissions.some((s) =>
-        !["dynamic-palette", "ocean-shader", "perspective-world-view"].includes(s)))
+      (world && (!definition.omissions.includes("perspective-world-view") || definition.omissions.some((s) =>
+        !["dynamic-palette", "ocean-shader", "perspective-world-view"].includes(s)))) ||
+      (ordinary && (definition.backgrounds.length !== 0 || canonical(definition.omissions) !== '["ordinary-group-materials"]')))
     throw new Error("Invalid framework flat field view");
   const ids = new Set<number>(), keys = new Set<string>();
   for (const b of definition.backgrounds) {
@@ -149,7 +156,8 @@ export function projectFieldActorView(definition: FieldActorViewDefinition, laye
 
 export function validateFieldActorViewProjection(value: FieldActorViewProjection, contextId: string, layer: number): void {
   if (value?.kind === "framework-flat-field-view-projection-v1") {
-    if (value.policy !== "framework-world-map-flat-v1" || value.contextId !== contextId || !digest(contextId) ||
+    if (!["framework-world-map-flat-v1", "framework-ordinary-field-flat-v1"].includes(value.policy) ||
+        value.contextId !== contextId || !digest(contextId) ||
         value.unityLayer !== layer || ![9, 10, 11, 12].includes(layer) || value.renderLayer !== layer * 2 - 18 ||
         value.material !== "source-sprite-rgba" || !Array.isArray(value.sourceHashes) || value.sourceHashes.length !== 2 ||
         value.sourceHashes.some((s) => !digest(s)) || !value.mapPixels ||

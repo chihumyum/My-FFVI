@@ -25,6 +25,7 @@ import type { FieldFadeState } from "./field-fade.js";
 import type { SourceNativeState } from "./source-native-state.js";
 import { prepareSourceNativeMap } from "./source-native-map.js";
 import { prepareNativeFieldProviders } from "./field-native-providers.js";
+import { resolveFieldPresentation } from "./field-presentation.js";
 import type { NativeGameEntryContent } from "./source-new-game.js";
 import { assertSourceEntryProfiles, type SourceEntryProfileDependency } from "./source-catalog.js";
 import { FieldEffects, type FieldEffectCandidate, type FieldEffectCandidatePrepared } from "./field-effects.js";
@@ -110,6 +111,7 @@ export function worldFieldContent(
   if (viewPlan && viewPlan.presentationViewType !== 0)
     throw new Error("Native world-map Bird/FlatBird presentation is not implemented");
   if (target.blockers.length) throw new Error(target.blockers[0]!.reason);
+  const selectedPresentation = target.frameworkPresentation && actorEntry ? resolveFieldPresentation(target) : null;
   const map = target.map!,
     group = map.groups?.entity_default;
   if (map.backgrounds?.length && !sourceCamera)
@@ -178,6 +180,7 @@ export function worldFieldContent(
       ...map,
       entities: group.entities,
       initialGroups: ["entity_default"],
+      ...(selectedPresentation?.composition ? { nativeComposition: selectedPresentation.composition } : {}),
       ...(actorEntry ? { partyActorCamera: actorEntry.plan.checkpoint.context.camera } : {}),
     },
     scripts: target.scripts,
@@ -431,12 +434,13 @@ export class WorldSession {
     let nativeDependencies: FieldNativeRestoreDependencies | undefined;
     if (native) {
       const map = loc === null ? native.initialMap : target;
-      if (!map?.actorView || map.actorViewBlockers?.length || map.nativeFootBlockers?.length ||
+      if (!map || map.nativeFootBlockers?.length ||
           !catalog?.nativeAnimationKeys || canonical(catalog.nativeAnimationKeys) !== canonical(native.content.animationKeys))
         throw new Error("Saved native map view/foot/animation source dependencies are unavailable");
+      const presentation = resolveFieldPresentation(map);
       nativeDependencies = { factory: native.content.factory, catalog: native.content.puppetCatalog,
         animationKeys: native.content.animationKeys, controlContext: { worldMapScript: false, callback: "absent" },
-        providers: (field) => prepareNativeFieldProviders(field, map.actorView!, map.nativeFoot) };
+        providers: (field) => prepareNativeFieldProviders(field, presentation.view, map.nativeFoot) };
     }
     if (this.effectMap?.hasHistory) throw new Error("Field effect manager history cannot be restored without its particle/RNG codec");
     const effectMap = this.effectOwner ? new FieldEffectMap(String(this.nextEffectScope), this.effectOwner, []) : null;
@@ -606,19 +610,20 @@ export class WorldSession {
       );
       destinationField = field;
       if (nativeActors) {
-        if (!prior || !actorEntry || !target.partyEntry || !target.actorView || target.actorViewBlockers?.length ||
+        if (!prior || !actorEntry || !target.partyEntry ||
             !owned?.ports.partyAppearance || !nativeRuntime || !catalog.nativeAnimationKeys ||
             canonical(nativeRuntime.animationKeys) !== canonical(catalog.nativeAnimationKeys))
           throw new Error(target.actorViewBlockers?.[0]?.reason ?? "Native map actor source dependencies are unavailable");
         if (target.nativeFootBlockers?.length) throw new Error(target.nativeFootBlockers[0]!.reason);
-        const providers = prepareNativeFieldProviders(field, target.actorView, target.nativeFoot);
+        const presentation = resolveFieldPresentation(target);
+        const providers = prepareNativeFieldProviders(field, presentation.view, target.nativeFoot);
         const candidate = prepareSourceNativeMap({ prior: nativeActors, priorCheckpoint: prior,
           ...(from.content.map.nativeComposition ? { priorComposition: from.content.map.nativeComposition } : {}),
           entry: actorEntry.plan, definition: target.partyEntry, catalog: owned.ports.partyAppearance.catalog,
           party: owned.ports.partyAppearance.current(),
           characters: field.content.characters, animationKeys: catalog.nativeAnimationKeys,
           ...(field.transportationPresentation ? { transportationPresentation: field.transportationPresentation } : {}),
-          view: target.actorView, providers: providers() });
+          view: presentation.view, providers: providers() });
         field.installNativeActors(candidate, nativeRuntime.catalog, providers, nativeRuntime.controlContext,
           catalog.nativeAnimationKeys, nativeRuntime.mapLifecycle);
       }

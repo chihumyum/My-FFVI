@@ -6,6 +6,7 @@ import type { WorldCatalog, WorldMapContent } from "../field/world.js";
 import { assertSourceGameCatalog } from "../core/source-catalog.js";
 import { contentDigest, verifyContent } from "../core/content-integrity.js";
 import { canonical, hash } from "./content.js";
+import { resolveFieldPresentation } from "../core/field-presentation.js";
 
 export type FrameworkNewGameInput = {
   sourceEntry: SourceNewGameContent;
@@ -34,8 +35,9 @@ export async function compileFrameworkNewGame(input: FrameworkNewGameInput): Pro
     throw new Error("Framework entry source dependency mismatch");
   if (canonical(battle.gameState) !== canonical(sourceBattle.gameState))
     throw new Error("Framework entry cannot change the source initializer or owned catalogs");
-  if (!battle.gameState.sourceNewGame || !world.developmentProfile || !map.actorView || !world.nativeAnimationKeys)
+  if (!battle.gameState.sourceNewGame || !world.developmentProfile || !world.nativeAnimationKeys)
     throw new Error("Framework entry requires initialized state and native field providers");
+  const presentation = resolveFieldPresentation(map);
   const value: Omit<FrameworkNewGameContent, "contentHash"> = {
     kind: "framework-new-game-content-v1",
     sourceSetHash: world.sourceSetHash, parentSourceSetHash: world.parentSourceSetHash,
@@ -44,7 +46,7 @@ export async function compileFrameworkNewGame(input: FrameworkNewGameInput): Pro
     developmentProfile: { ...structuredClone(world.developmentProfile), sourceContentHash: sourceEntry.contentHash,
       omissions: [] },
     entry: { mapId: map.mapId, entrance }, factory: structuredClone(sourceEntry.factory),
-    puppetCatalog: structuredClone(sourceEntry.puppetCatalog), view: structuredClone(map.actorView),
+    puppetCatalog: structuredClone(sourceEntry.puppetCatalog), view: structuredClone(presentation.view),
     animationKeys: structuredClone(world.nativeAnimationKeys),
     provenance: { kind: "source-initializer-authored-map-v1", sourceEntryHash: sourceEntry.contentHash,
       sourceMapHash: sourceMap.contentHash },

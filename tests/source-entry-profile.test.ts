@@ -60,6 +60,25 @@ test("an invalid explicit dependency cannot borrow a valid entry's framework aut
     /profile mismatch: world/);
 });
 
+test("ordinary flat display authority must match the entry and every map dependency", () => {
+  const dep = (letter: string) => ({ developmentProfile: {
+    ...profile(letter), fieldPresentation: "framework-ordinary-field-flat-v1" as const,
+  } });
+  const deps = { entry: dep("a"), world: dep("b"), initialMap: dep("c"), destinationMap: dep("d") };
+  assert.equal(assertSourceEntryProfiles(deps.entry, deps.world, deps.initialMap, deps.destinationMap), "framework");
+  for (const key of ["world", "initialMap", "destinationMap"] as const) {
+    const missing = structuredClone(deps);
+    delete (missing[key].developmentProfile as DevelopmentProfile).fieldPresentation;
+    const before = structuredClone(missing);
+    assert.throws(() => assertSourceEntryProfiles(missing.entry, missing.world, missing.initialMap, missing.destinationMap),
+      /profile mismatch/, key);
+    assert.deepEqual(missing, before);
+  }
+  const inherited = { developmentProfile: profile("c") };
+  assert.throws(() => assertSourceEntryProfiles(deps.entry, deps.world, inherited), /profile mismatch/);
+  assert.throws(() => assertSourceEntryProfiles({}, {}, deps.initialMap), /profile mismatch/);
+});
+
 async function seal<T extends { contentHash: string }>(value: T): Promise<T> {
   const { contentHash: _, ...payload } = JSON.parse(JSON.stringify(value)) as T;
   return { ...payload, contentHash: await contentDigest(payload) } as T;

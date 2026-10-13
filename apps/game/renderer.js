@@ -147,14 +147,18 @@ export class Renderer {
     }
     return pixels;
   }
-  /** Deliberate framework world display: original RGBA tiles and current
-   * actor frames on a flat plane, with the source ocean's first texture only.
-   * This does not run the Unity palette/ocean shader or foot-clipping passes. */
+  /** Explicit flat source display uses the selected package policy and actual
+   * current actor frames. The policy preserves its native presentation gaps. */
   prepareFrameworkFlatComposition(game, actors, sourceCamera, cx, cy, width, height, topology) {
     const m = this.content.map, definition = m.nativeComposition;
     if (definition?.view.kind !== "framework-flat-field-view-v1") return null;
-    if (this.content.developmentProfile?.worldMap !== "framework-world-map-flat-v1")
-      throw new Error("平面世界展示缺少明确的框架策略");
+    const policy = definition.view.policy;
+    if (policy === "framework-world-map-flat-v1"
+      ? this.content.developmentProfile?.worldMap !== policy || this.content.entry.viewPlan?.isWorld !== true
+      : policy !== "framework-ordinary-field-flat-v1" ||
+        this.content.developmentProfile?.fieldPresentation !== policy || this.content.entry.viewPlan?.isWorld !== false)
+      throw new Error(policy === "framework-world-map-flat-v1"
+        ? "平面世界展示缺少明确的框架策略" : "二维展示缺少与当前地图一致的框架策略");
     validateFieldNativeComposition(definition);
     assertFieldCompositionRenderTargets(definition);
     if (!sourceCamera || !this.content.cameraHost || game.fieldEffectsSnapshot != null)
