@@ -19,8 +19,9 @@ import { Recipe } from "./remaster/recipes.js";
 import { readSnapshot, snapshotFile } from "./compiler/integrity.js";
 
 import { compileField } from "./compiler/field.js";
-import { compileOpeningBattle } from "./compiler/battle.js";
+import { compileOpeningBattle, compileSharedBattleSource } from "./compiler/battle.js";
 import { compileOpeningPlayable } from "./compiler/opening-playable.js";
+import { compileSharedGameCatalog } from "./compiler/game-catalog.js";
 import { compileCorpus, corpusMarkdown } from "./compiler/corpus.js";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -174,6 +175,25 @@ async function main() {
         2,
       ),
     );
+    return;
+  }
+  if (command === "catalog") {
+    const source = await compileSharedBattleSource(repo);
+    const out = resolve(repo, "build/game");
+    await mkdir(out, { recursive: true });
+    // The source artifact is independent of any development entry composer.
+    await writeFile(resolve(out, "source-battle.json.tmp"), canonical(source) + "\n");
+    await rename(resolve(out, "source-battle.json.tmp"), resolve(out, "source-battle.json"));
+    const catalog = await compileSharedGameCatalog(repo, source);
+    await writeFile(resolve(out, "source-catalog.json.tmp"), canonical(catalog) + "\n");
+    await rename(resolve(out, "source-catalog.json.tmp"), resolve(out, "source-catalog.json"));
+    const report = { kind: "shared-source-catalog-compilation-v1", sourceContentHash: source.contentHash,
+      catalogContentHash: catalog.contentHash, report: catalog.encounterReport,
+      diagnostics: catalog.encounterDiagnostics, originalGameExecuted: false, fullGameMigration: false };
+    await mkdir(resolve(repo, "build/reports"), { recursive: true });
+    await writeFile(resolve(repo, "build/reports/shared-source-catalog.json"), canonical(report) + "\n");
+    console.log(JSON.stringify({ output: "build/game/source-catalog.json", contentHash: catalog.contentHash,
+      report: catalog.encounterReport, initialParty: catalog.common.players.length }));
     return;
   }
   if (command === "battle") {

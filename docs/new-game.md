@@ -1,5 +1,7 @@
 # 来源新游戏初始化（v27）
 
+当前集成状态以 [v60](systems-v60.md) 和 [游戏系统框架](game-framework.md) 为准：新游戏已使用共享来源目录，能够创建真实会话并执行已有来源前导，完整来源路线仍受后续能力阻塞。目录不含开发检查点种子，来源存档绑定新目录；旧开发入口保持独立。下文保留 v27 初始化模块交付时的历史边界，不能将当时的“尚未发布”或具体停止位置当作当前进度。
+
 本批恢复了 `NewGameWindowController.InitSelect → UserDataManager.Initialize → DataInitializeManager.Create` 的数据初始化，输出可重复、独立、可序列化的候选计划；v27 将真实空装备 Count 和绑定式 fresh 工厂接入共享 GameState。**尚未发布可玩的新游戏会话。** 计划的边界是 `after-data-create-before-field-load`：原生地图载入和开场脚本尚未执行，字段同步状态保持 `false`。
 
 现有纳尔谢入口仍是开发检查点。它的地图 3、交通身份 6、普通魔导状态 607（本版条件行 53）以及经过前导证明的旗标种子，不能反向用于真正新游戏。新模块没有 `initialOwnedConditions` 或检查点种子参数；恢复存档也不调用初始化器来补零。

@@ -9,13 +9,17 @@ import { verifyContent } from "../core/content-integrity.js";
 import type { SourceNewGameContent } from "../core/source-new-game.js";
 import type { BattleCatalog } from "../core/battle-content.js";
 import type { WorldCatalog, WorldMapContent } from "../field/world.js";
+import { assertSourceGameCatalog } from "../core/source-catalog.js";
 
-export async function compileSourceNewGame(root: string): Promise<SourceNewGameContent> {
+export async function compileSourceNewGame(root: string, suppliedCatalog?: BattleCatalog): Promise<SourceNewGameContent> {
   const [corpus, battle, world] = await Promise.all([
     loadCorpus(root),
-    readFile(root + "/build/game/opening-playable.json", "utf8").then((s) => verifyContent(JSON.parse(s) as BattleCatalog)),
+    suppliedCatalog === undefined
+      ? readFile(root + "/build/game/source-catalog.json", "utf8").then((s) => verifyContent(JSON.parse(s) as BattleCatalog))
+      : verifyContent(structuredClone(suppliedCatalog)),
     readFile(root + "/build/world/catalog.json", "utf8").then((s) => verifyContent(JSON.parse(s) as WorldCatalog)),
   ]);
+  assertSourceGameCatalog(battle);
   if (!battle.gameState.sourceNewGame || !world.nativeAnimationKeys || world.sourceSetHash !== corpus.sourceSetHash ||
       world.parentSourceSetHash !== corpus.manifest.parentSourceSetHash)
     throw new Error("New-game build requires current source-bound battle/world packages");

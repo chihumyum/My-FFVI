@@ -31,7 +31,7 @@ const load = async (file, expected) => {
   packages.push({ file, contentHash: value.contentHash, sha256: sha(bytes) }); return value;
 };
 const content = await load("build/game/source-new-game.json");
-const battle = await load("build/game/opening-playable.json", content.battleCatalogHash);
+const battle = await load("build/game/source-catalog.json", content.battleCatalogHash);
 const world = await load("build/world/catalog.json", content.worldCatalogHash);
 const map = await load(`build/world/maps/${content.entry.mapId}.json`, content.mapContentHash);
 assert.equal(map.sourceSetHash, world.sourceSetHash); assert.equal(content.sourceSetHash, world.sourceSetHash);

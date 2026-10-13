@@ -30,6 +30,7 @@ import { prepareSourceNewGameField, installSourceNewGameActors, validateSourceNe
 import type { NewGameFieldLaunch, NewGameFieldPreparation } from "./new-game-field-entry.js";
 import { FieldFadeState } from "./field-fade.js";
 import { cloneSourcePresentationContext, createSourcePresentationContext, type SourcePresentationContext } from "./source-presentation.js";
+import { assertSourceGameCatalog, assertSourceEntryProfiles } from "./source-catalog.js";
 import {
   checkpointKeys,
   checkpointInteger,
@@ -98,6 +99,7 @@ export class GameSession {
   static prepareNewGame(content: SourceNewGameContent, world: WorldCatalog, map: WorldMapContent,
     battle: BattleCatalog, fade: FieldFadeState, presentation: SourcePresentationContext,
     runtime: GameSessionRuntime = {}, seed = 20261010): GameSession {
+    assertSourceGameCatalog(battle, assertSourceEntryProfiles(content, world, map));
     const state = GameState.createNewGame(battle.gameState, battle.common.players, battle.contentHash, battle.common.conditions);
     const prepared = prepareSourceNewGameField(content, world, map, battle, state, fade.projection ?? undefined);
     const context = cloneSourcePresentationContext(presentation);
@@ -179,10 +181,13 @@ export class GameSession {
       },
       prepare: () => this.state.prepareFieldState(),
       nativeState: () => this.state.nativeState,
-    }, fresh?.fade, fresh?.restoring === true);
+    }, fresh?.fade, fresh?.restoring === true, fresh ? {
+      catalogHash: fresh.content.worldCatalogHash,
+      ...(fresh.content.developmentProfile ? { developmentProfile: fresh.content.developmentProfile } : {}),
+    } : undefined);
     if (fresh) {
       if (!fresh.restoring) installSourceNewGameActors(this.field, fresh.content, this.state, fresh.map);
-      this.freshEntry = { content: fresh.content, launched: fresh.restoring === true };
+      this.freshEntry = { content: structuredClone(fresh.content), launched: fresh.restoring === true };
     }
   }
   get battlePreferences(): BattlePreferences {
@@ -355,6 +360,7 @@ export class GameSession {
           source.content.contentHash !== s.world.initialHash ||
           source.content.parentSourceSetHash !== s.sourceSetHash || s.owned.initialization !== "source-new-game")
         throw new Error("Source new-game restore requires trusted native actor/world checkpoint dependencies");
+      assertSourceGameCatalog(battle, assertSourceEntryProfiles(source.content, world.catalog, source.initialMap, world.map));
       // A source checkpoint depends on its trusted entry map, never a legacy
       // opening field supplied by an older caller. Reject effect publication
       // before creating any native actor or external host during restoration.

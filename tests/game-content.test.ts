@@ -93,7 +93,7 @@ async function freshFixture() {
     battleCatalogHash: battle.contentHash, origin: { kind: "source-new-game", sourceContentHash: content.contentHash } };
   saved.world.initialHash = content.contentHash;
   const files = new Map<string, unknown>([
-    ["/game/new-game.json", content], ["/game/battle.json", battle],
+    ["/game/new-game.json", content], ["/game/source-catalog.json", battle],
     ["/world/catalog.json", catalog], [catalog.maps[String(map.mapId)]!.url, map],
   ]);
   return { content, catalog, map, battle, saved, files };
@@ -107,7 +107,7 @@ async function bindFreshBattle(f: Awaited<ReturnType<typeof freshFixture>>, defi
   saved.origin = { kind: "source-new-game", sourceContentHash: content.contentHash };
   saved.world.initialHash = content.contentHash;
   const files = new Map(f.files);
-  files.set("/game/battle.json", battle);
+  files.set("/game/source-catalog.json", battle);
   files.set("/game/new-game.json", content);
   return { ...f, battle, content, saved, files };
 }
@@ -277,6 +277,31 @@ test("fresh entry binds source, world, battle, map and reserved script without r
   assert.deepEqual(await repo.sourceNewGame(), expected);
 });
 
+test("source entry and restore require their dedicated catalog even when the old opening URL is available", async () => {
+  const f = await freshFixture();
+  f.files.delete("/game/source-catalog.json");
+  f.files.set("/game/battle.json", f.battle);
+  const host = loader(f.files), repo = new GameContentRepository(host.read);
+  await assert.rejects(repo.sourceNewGame(), /Missing fixture: \/game\/source-catalog\.json/);
+  await assert.rejects(repo.restoreSessionContent(f.saved), /Missing fixture: \/game\/source-catalog\.json/);
+  assert.equal(host.calls.includes("/game/battle.json"), false);
+  assert.equal(host.calls.includes("/game/content.json"), false);
+});
+
+test("source catalog admission rejects a held development seed after all package hashes are deliberately rebound", async () => {
+  for (const seed of [[], [{ id: "1", conditionIds: [9007] }]]) {
+    const f = await freshFixture(), battle = structuredClone(f.battle);
+    battle.gameState.initialOwnedConditions = seed;
+    const bound = await bindFreshBattle(f, battle), host = loader(bound.files), repo = new GameContentRepository(host.read);
+    const before = structuredClone(bound.battle);
+    await assert.rejects(repo.sourceNewGame(), /owned-condition seed/);
+    await assert.rejects(repo.restoreSessionContent(bound.saved), /owned-condition seed/);
+    assert.equal(host.calls.includes(bound.catalog.maps[String(bound.map.mapId)]!.url), false);
+    assert.equal(host.calls.includes("/game/battle.json"), false);
+    assert.deepEqual(bound.battle, before);
+  }
+});
+
 test("source new game and restore reject authored formation selection with matching package identities", async () => {
   const f = await freshFixture(), battle = structuredClone(f.battle);
   const encounter = Object.values(battle.encounters)[0]!;
@@ -404,11 +429,11 @@ test("source restore content supplies battle and trusted world without construct
 test("source restore rejects a mismatched battle and retries the repaired dependency without clearing caches", async () => {
   const f = await freshFixture(), host = loader(f.files), repo = new GameContentRepository(host.read);
   const differentBattle = await seal({ ...f.battle, limitations: ["different signed battle package"] });
-  f.files.set("/game/battle.json", differentBattle);
+  f.files.set("/game/source-catalog.json", differentBattle);
   await assert.rejects(repo.restoreSessionContent(f.saved), /source\/content binding mismatch/);
-  f.files.set("/game/battle.json", f.battle);
+  f.files.set("/game/source-catalog.json", f.battle);
   assert.deepEqual((await repo.restoreSessionContent(f.saved)).battle, f.battle);
-  assert.equal(host.calls.filter((url) => url === "/game/battle.json").length, 2);
+  assert.equal(host.calls.filter((url) => url === "/game/source-catalog.json").length, 2);
   assert.equal(host.calls.includes("/game/content.json"), false);
   const wrongSave = structuredClone(f.saved); wrongSave.battleCatalogHash = differentBattle.contentHash;
   await assert.rejects(repo.restoreSessionContent(wrongSave), /checkpoint source identity mismatch/);

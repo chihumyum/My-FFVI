@@ -21,13 +21,23 @@ export function sourceNewGameFixture() {
   const { encounterId, formation, enemies, background, contentHash: _, ...common } = rawBattle;
   common.players = [owner.player];
   common.conditions = owner.conditions;
-  const battle: BattleCatalog = {
+  const developmentBattle: BattleCatalog = {
     kind: "narshe-battle-catalog", contentHash: "controlled-fresh-battle", common,
     encounters: { [encounterId]: { encounterId, formation, enemies, background,
       rewardPolicy: { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 },
       lifecycle: { kind: "battle-lifecycle-v1", mode: "none" } } },
     gameState: { ...owner.content, partyActors: actor.partyCatalog },
   };
+  // Explicit source fixture composition. Keep the legacy checkpoint intact as
+  // a separate result; no reader or source runtime may strip a submitted seed.
+  const battle = structuredClone(developmentBattle);
+  battle.contentHash = "controlled-source-battle";
+  delete battle.gameState.initialOwnedConditions;
+  battle.common.players = battle.common.players.map((player, index) => {
+    const member = owner.plan.owned.roster[index]!;
+    return { ...player, id: member.id, sourceId: member.sourceId, name: member.name,
+      level: member.level, exp: member.exp, hp: member.hp, mp: member.mp, conditionIds: [...member.conditionIds] };
+  });
   const source = { file: "synthetic", assetPath: "source-new-game-integration" };
   const ops = (script: string, values: Instruction<Op>[]): Op[] => values.map((value, index) =>
     ({ ...value, script, index, source }) as Op);
@@ -67,7 +77,7 @@ export function sourceNewGameFixture() {
   };
   const world: WorldCatalog = { formatVersion: 1, kind: "world-development",
     sourceSetHash: map.sourceSetHash, parentSourceSetHash: map.parentSourceSetHash,
-    mediaSourceSetHash: map.mediaSourceSetHash, contentHash: "controlled-world",
+    mediaSourceSetHash: map.mediaSourceSetHash, contentHash: "a".repeat(64),
     maps: { [map.mapId]: { contentHash: map.contentHash, url: "/controlled-map.json", name: map.name,
       areaId: map.areaId, geometryReady: true, defaultGroupReady: true, blockers: [] } },
     characters: actor.characters, characterIssues: {}, limitations: [],
@@ -90,5 +100,5 @@ export function sourceNewGameFixture() {
     titleCleanupComplete: true, openingCallbackStarted: false });
   const fade = new FieldFadeState({ imageColor: { r: 0, g: 0, b: 0, a: 1 },
     rendererColor: { r: 1, g: 1, b: 1, a: 0 }, raycastTarget: false });
-  return { content, world, map, battle, presentation, fade, plan: owner.plan, source };
+  return { content, world, map, battle, developmentBattle, presentation, fade, plan: owner.plan, source };
 }

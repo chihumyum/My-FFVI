@@ -38,7 +38,7 @@ function fixture(options: { strict?: boolean; runtime?: GameSessionRuntime } = {
   }
   f.content.animationKeys = structuredClone(f.world.nativeAnimationKeys!);
   const profile: DevelopmentProfile = { kind: "framework-development-v1",
-    policy: "omit-anonymous-environment-particles-v1", sourceContentHash: "controlled-transport-parent",
+    policy: "omit-anonymous-environment-particles-v1", sourceContentHash: "a".repeat(64),
     omissions: [], transportation: "walking-magitek-framework-v1" };
   if (!options.strict) {
     f.content.developmentProfile = structuredClone(profile);

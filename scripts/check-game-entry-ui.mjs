@@ -49,13 +49,15 @@ async function packages() {
   const map = await seal(fresh.map);
   fresh.world.maps[String(map.mapId)].contentHash = map.contentHash;
   const catalog = await seal(fresh.world), battle = await seal(fresh.battle);
+  const developmentBattle = await seal(fresh.developmentBattle ?? fresh.battle);
   const content = await seal({ ...fresh.content, battleCatalogHash: battle.contentHash,
     worldCatalogHash: catalog.contentHash, mapContentHash: map.contentHash });
   development.field.sourceSetHash = battle.common.fieldSourceSetHash;
   development.field.map.textures = { controlled: "/controlled/development-entry.png" };
   const initial = await seal(development.field);
   const files = new Map([
-    ["/game/content.json", initial], ["/game/battle.json", battle],
+    ["/game/content.json", initial], ["/game/battle.json", developmentBattle],
+    ["/game/source-catalog.json", battle],
     ["/game/new-game.json", content], ["/world/catalog.json", catalog],
     [catalog.maps[String(map.mapId)].url, map],
   ]);

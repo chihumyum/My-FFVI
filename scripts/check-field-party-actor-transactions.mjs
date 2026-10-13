@@ -59,7 +59,7 @@ try {
 
   stage = "bind-source-and-current-packages";
   const source = await readPackage("build/game/source-new-game.json");
-  const battle = await readPackage("build/game/opening-playable.json", source.battleCatalogHash);
+  const battle = await readPackage("build/game/source-catalog.json", source.battleCatalogHash);
   const world = await readPackage("build/world/catalog.json", source.worldCatalogHash);
   const indexed = world.maps[String(source.entry.mapId)];
   assert.ok(indexed); assert.match(indexed.url, /^\/world\/maps\/[0-9]+\.json$/);

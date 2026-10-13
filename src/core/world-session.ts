@@ -25,6 +25,7 @@ import type { SourceNativeState } from "./source-native-state.js";
 import { prepareSourceNativeMap } from "./source-native-map.js";
 import { prepareNativeFieldProviders } from "./field-native-providers.js";
 import type { SourceNewGameContent } from "./source-new-game.js";
+import { assertSourceEntryProfiles, type SourceEntryProfileDependency } from "./source-catalog.js";
 import { FieldEffects, type FieldEffectCandidate, type FieldEffectCandidatePrepared } from "./field-effects.js";
 import { FieldEffectMap } from "./field-effect-map.js";
 export type WorldStateOwner = {
@@ -32,6 +33,10 @@ export type WorldStateOwner = {
   prepare(): { ports: FieldGameOptions; commit(): boolean };
   nativeState?(): SourceNativeState | null;
 };
+
+/** Captured content identity for a source-origin session, not another state
+ * owner or permission granted by the next map's own metadata. */
+export type SourceWorldOrigin = Pick<SourceEntryProfileDependency, "developmentProfile"> & { catalogHash: string };
 
 type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount"> & {
   transportationId: number | null;
@@ -232,6 +237,7 @@ export class WorldSession {
   private prepared = new Map<PreparedMap, Ownership>();
   private commitInProgress: MapCommit | null = null;
   private catalogHash: string | null = null;
+  private readonly sourceOrigin: SourceWorldOrigin | null;
   private readonly effectOwner: FieldEffects | null;
   private effectMap: FieldEffectMap | null;
   private nextEffectScope = 1;
@@ -250,7 +256,17 @@ export class WorldSession {
     private readonly owned?: WorldStateOwner,
     initialFade?: FieldFadeState,
     restoringNative = false,
+    sourceOrigin?: SourceWorldOrigin,
   ) {
+    this.sourceOrigin = sourceOrigin === undefined ? null : structuredClone(sourceOrigin);
+    if (this.sourceOrigin) {
+      checkpointKeys(this.sourceOrigin, Object.hasOwn(this.sourceOrigin, "developmentProfile")
+        ? "catalogHash,developmentProfile" : "catalogHash");
+      if (typeof this.sourceOrigin.catalogHash !== "string" || !/^[a-f0-9]{64}$/.test(this.sourceOrigin.catalogHash))
+        throw new Error("Invalid source world catalog hash");
+      assertSourceEntryProfiles(this.sourceOrigin, this.sourceOrigin, initial);
+      this.catalogHash = this.sourceOrigin.catalogHash;
+    }
     // The explicit candidate capability admits the ordinary clear/load branch.
     // Standalone hosts keep their prior map/save gates. A manager survives empty
     // maps too: allocation IDs and off-map positions do not restart per map.
@@ -304,6 +320,11 @@ export class WorldSession {
     native?: { content: SourceNewGameContent; initialMap: WorldMapContent },
   ): void {
     if (this.commitInProgress) throw new Error("Cannot restore during map publication");
+    if (this.sourceOrigin) {
+      if (!catalog || catalog.contentHash !== this.sourceOrigin.catalogHash)
+        throw new Error("Source world catalog changed during the session");
+      assertSourceEntryProfiles(this.sourceOrigin, catalog, native?.initialMap ?? this.sourceOrigin, target);
+    }
     checkpointKeys(snapshot, "kind,initialHash,location,field");
     if (
       !["idle-world-v10", "event-world-v1"].includes(snapshot.kind) ||
@@ -402,7 +423,7 @@ export class WorldSession {
     this.nextEffectScope++;
     this.current = next;
     this.location = structuredClone(loc);
-    this.catalogHash = loc?.catalogHash ?? null;
+    this.catalogHash = loc?.catalogHash ?? this.sourceOrigin?.catalogHash ?? null;
     this.transitions.length = 0;
   }
   prepare(catalog: WorldCatalog, target: WorldMapContent): PreparedMap {
@@ -411,6 +432,11 @@ export class WorldSession {
       stop = from.stop;
     if (stop?.kind !== "map-transition")
       throw new Error("No pending map transition");
+    if (this.sourceOrigin) {
+      if (catalog.contentHash !== this.sourceOrigin.catalogHash)
+        throw new Error("Source world catalog changed during the session");
+      assertSourceEntryProfiles(this.sourceOrigin, catalog, this.sourceOrigin, target);
+    }
     const fromActors = this.actorState(from), fromFade = canonical(from.fader.snapshot()),
       fromCamera = canonical(from.cameraSnapshot), fromPresentation = from.sourcePresentationContext;
     const effectBlocker = from.effectMapHandoffBlocker;

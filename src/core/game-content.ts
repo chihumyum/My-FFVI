@@ -4,6 +4,7 @@ import type { BattleCatalog } from "./battle-content.js";
 import { verifyContent } from "./content-integrity.js";
 import type { GameCheckpoint, GameRestoreWorld } from "./game-session.js";
 import type { SourceNewGameContent } from "./source-new-game.js";
+import { assertSourceGameCatalog } from "./source-catalog.js";
 
 type HashedContent = { contentHash: string };
 export type GameContentProfile = "source" | "framework";
@@ -214,19 +215,11 @@ export class GameContentRepository {
   private async readSourceEntry(read: ContentReader, expected?: string): Promise<SourceEntryContent> {
     const [content, catalog, battle] = await Promise.all([
       read(this.newGameUrl, (value) => this.profileContent(sourceContent(value)), expected),
-      read(this.worldUrl, (value) => this.profileContent(worldContent(value))), read("/game/battle.json", battleContent),
+      read(this.worldUrl, (value) => this.profileContent(worldContent(value))), read("/game/source-catalog.json", battleContent),
     ]);
     // Source-origin restore uses this same entry path, so a matching saved
     // hash cannot turn a development battle policy into source admission.
-    if (this.profile === "source") {
-      const encounters = Object.values(battle.encounters);
-      if (encounters.some(e => e.formationPlan?.kind === "development"))
-        throw new Error("Source new game cannot use development formation selection");
-      if (Object.hasOwn(battle.common, "escapePolicy") || encounters.some(e => e.escapePolicy !== undefined))
-        throw new Error("Source new game cannot use development escape policy");
-      if (Object.hasOwn(battle.common, "lifecycle") || encounters.some(e => e.lifecycle?.mode === "development-omission"))
-        throw new Error("Source new game cannot use an omitted or misplaced battle lifecycle");
-    }
+    assertSourceGameCatalog(battle, this.profile);
     if (content.battleCatalogHash !== battle.contentHash || content.worldCatalogHash !== catalog.contentHash ||
         content.sourceSetHash !== catalog.sourceSetHash || content.parentSourceSetHash !== catalog.parentSourceSetHash ||
         catalog.maps[String(content.entry.mapId)]?.contentHash !== content.mapContentHash)

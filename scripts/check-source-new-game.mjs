@@ -62,7 +62,7 @@ try {
   stage = "verify-source-packages";
   const content = await readPackage("build/game/source-new-game.json");
   const world = await readPackage("build/world/catalog.json", content.worldCatalogHash);
-  const battle = await readPackage("build/game/opening-playable.json", content.battleCatalogHash);
+  const battle = await readPackage("build/game/source-catalog.json", content.battleCatalogHash);
   const indexed = world.maps[String(content.entry.mapId)];
   assert.ok(indexed);
   assert.match(indexed.url, /^\/world\/maps\/[0-9]+\.json$/);

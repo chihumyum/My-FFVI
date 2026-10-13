@@ -36,8 +36,8 @@ test("fresh preparation retains complete origin and native metadata without deve
   assert.deepEqual(saved.roster.map((member) => member.conditionIds), [[]]);
   assert.deepEqual(game.state.fieldPuppetRoster.current(), { owned: [{ ownedId: 1, sourceId: 2,
     enabled: true, conditionTypes: [] }], party: [1, 0, 0, 0] });
-  const development = new GameState(f.battle.gameState, f.battle.common.players,
-    f.battle.contentHash, f.battle.common.conditions);
+  const development = new GameState(f.developmentBattle.gameState, f.developmentBattle.common.players,
+    f.developmentBattle.contentHash, f.developmentBattle.common.conditions);
   assert.deepEqual(development.fieldPuppetRoster.current().owned[0]!.conditionTypes, [607]);
   assert.equal(development.initialization, "development-checkpoint");
   assert.equal(development.nativeState, null);

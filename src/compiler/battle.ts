@@ -15,7 +15,7 @@ import { compileObservedLearning } from "./character-learning.js";
 import type { CharacterGrowthPlan } from "../core/character-growth.js";
 import { compilePartyActorCatalog } from "./party-actors.js";
 import { compileTransportationCatalog } from "./transportation.js";
-import { compileBattleEntryCatalog, compileNarsheOwnedConditionCheckpoint } from "./battle-entry.js";
+import { compileBattleSourceEntry } from "./battle-source-entry.js";
 import { compileBattleAppearance } from "./battle-appearance.js";
 import { compileAbilityProgram } from "./ability.js";
 import { compileEquipmentAbilityCost } from "./ability-cost.js";
@@ -140,8 +140,28 @@ export function battleTableIndex(
   return { row, matching, unique, group, selected };
 }
 
-/** Source data for the opening encounter; does not certify runtime support. */
+/** Shared source definitions; no checkpoint state or development omissions. */
+export async function compileSharedBattleSource(root: string) {
+  const { result } = await compileSourceData(root, false);
+  return { ...result, contentHash: hash(result) };
+}
+
+export type SharedBattleSource = Awaited<ReturnType<typeof compileSharedBattleSource>>;
+
+/** Compatibility adapter for the existing, explicitly seeded opening profile.
+ * The checkpoint remains mandatory, including in this function's return type. */
 export async function compileOpeningBattle(root: string) {
+  const { result, checkpoint } = await compileSourceData(root, true);
+  if (!checkpoint) throw new Error("Missing development owned-condition checkpoint");
+  const legacy = { ...result, entryProviders: {
+    ...result.entryProviders, ownedConditionCheckpoint: checkpoint,
+  } };
+  return { ...legacy, contentHash: hash(legacy) };
+}
+
+/** Keep selection, source closure and diagnostics identical in both paths.
+ * Only the compatibility path requests the separate checkpoint proof. */
+async function compileSourceData(root: string, includeCheckpoint: boolean) {
   const base = await readSnapshot(root + "/build/import");
   const extra = await readSnapshot(root + "/build/battle");
   const project = ImportedProject.parse(
@@ -552,10 +572,10 @@ export async function compileOpeningBattle(root: string) {
       asset.source[key as keyof typeof asset.source] === reactionSource.source[key as keyof typeof reactionSource.source]));
   if (entryMisc.length !== 1 || hash(entryMisc[0]!.data) !== hash(reactionSource.data))
     throw new Error("Battle entry miscellaneous source mismatch");
-  const entryProviders = {
-    ...compileBattleEntryCatalog({ row }, tables, entryMisc[0]!),
-    ownedConditionCheckpoint: compileNarsheOwnedConditionCheckpoint({ row }, tables, corpus.assets),
-  };
+  const { providers: entryProviders, checkpoint } = compileBattleSourceEntry(
+    { row }, tables, entryMisc[0]!,
+    includeCheckpoint ? "development-checkpoint" : "shared", corpus.assets,
+  );
   const appearanceMisc = entryMisc[0]!;
   if (typeof appearanceMisc.source.objectId !== "string") throw new Error("Missing battle appearance source object identity");
   const battleAppearance = compileBattleAppearance({ row, matching, unique }, {
@@ -601,5 +621,5 @@ export async function compileOpeningBattle(root: string) {
       "Battle AI, damage, rewards and presentation are not executable yet.",
     ],
   };
-  return { ...result, contentHash: hash(result) };
+  return { result, checkpoint };
 }
