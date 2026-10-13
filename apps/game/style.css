@@ -290,6 +290,15 @@ a {
   margin-left: auto;
   text-decoration: none;
 }
+.package-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px 20px;
+  margin-top: 20px;
+}
+.package-links a { margin: 0; text-decoration: underline; }
+.package-links [aria-current="page"] { color: #fff; font-weight: bold; }
 #status {
   font-size: 12px;
 }

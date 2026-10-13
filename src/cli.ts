@@ -5,6 +5,7 @@ import {
   CapabilityRegistry,
   Conditions,
   ImportedProject,
+  Hash,
   Registry,
   type TargetReport,
 } from "./contracts.js";
@@ -24,6 +25,7 @@ import { compileOpeningPlayable } from "./compiler/opening-playable.js";
 import { compileSharedGameCatalog } from "./compiler/game-catalog.js";
 import { compileCorpus, corpusMarkdown, loadCorpus } from "./compiler/corpus.js";
 import { loadSystemMessages } from "./compiler/system-messages.js";
+import { compileFieldNpcRoutes } from "./compiler/field-npc-route.js";
 
 const root = resolve(import.meta.dirname, "../..");
 const repo = root.endsWith(`${sep}dist`) ? dirname(root) : root;
@@ -139,6 +141,52 @@ async function main() {
   if (command === "validate") {
     await loadRegistries();
     console.log("Registry identities and contracts valid");
+    return;
+  }
+  if (command === "npc-routes") {
+    const selector = process.argv[3] ?? "all";
+    if (selector !== "all" && !/^[1-9][0-9]*$/.test(selector))
+      throw new Error("NPC route plan expects all or a positive map ID");
+    const corpus = await loadCorpus(repo);
+    const parentSourceSetHash = Hash.parse(corpus.manifest.parentSourceSetHash);
+    const routeCorpus = { ...corpus, manifest: { ...corpus.manifest, parentSourceSetHash } };
+    const ids = (corpus.tables["map.csv"] ?? []).map(row => row.id!);
+    if (ids.some(id => !/^[1-9][0-9]*$/.test(id) || !Number.isSafeInteger(Number(id)) || Number(id) > 2147483647))
+      throw new Error("Invalid source map identity");
+    if (new Set(ids).size !== ids.length)
+      throw new Error("Duplicate source map identity");
+    if (selector !== "all" && !ids.includes(selector))
+      throw new Error(`Unknown source map: ${selector}`);
+    const selected = selector === "all" ? ids : [selector];
+    const maps = selected.sort((a, b) => Number(a) - Number(b))
+      .map(id => compileFieldNpcRoutes(routeCorpus, Number(id)));
+    const summary = {
+      mapsAnalyzed: maps.length,
+      mapsWithDeclaredRoutes: maps.filter(map => map.report.parse.declared > 0).length,
+      declaredRoutes: maps.reduce((sum, map) => sum + map.report.parse.declared, 0),
+      parsedRoutes: maps.reduce((sum, map) => sum + map.report.parse.parsed, 0),
+      invalidRoutes: maps.reduce((sum, map) => sum + map.report.parse.invalid, 0),
+      unresolvedBindings: maps.reduce((sum, map) => sum + map.report.binding.blocked, 0),
+    };
+    const report = {
+      kind: "field-npc-route-batch-plan-v1",
+      sourceSetHash: corpus.sourceSetHash,
+      parentSourceSetHash,
+      selector, summary, maps,
+      evidence: "source-structure-and-package-local-binding",
+      executionConsumer: "not-implemented",
+      playableMapCoverage: "not-assessed",
+      fullGameMigration: false,
+    };
+    const out = resolve(repo, "build/reports", selector === "all"
+      ? "npc-routes-plan.json" : `npc-routes-map-${selector}.json`);
+    await mkdir(dirname(out), { recursive: true });
+    await writeFile(out + ".tmp", canonical(report) + "\n");
+    await rename(out + ".tmp", out);
+    console.log(JSON.stringify({ ...summary,
+      executionConsumer: report.executionConsumer,
+      output: selector === "all" ? "build/reports/npc-routes-plan.json"
+        : `build/reports/npc-routes-map-${selector}.json` }, null, 2));
     return;
   }
   if (command === "corpus") {

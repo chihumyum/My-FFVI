@@ -1,0 +1,39 @@
+# 游戏骨架门禁
+
+本门禁验证已支持内容的完整连续流程：标题开始、探索与事件、战斗和返场、持有菜单与经济成长、保存恢复，以及恢复后的新输入。实际状态仍由 GameSession、GameState、WorldSession 和 BattleGame 持有；门禁只重新执行现有检查器，不新增游戏 owner。
+
+入口为 [check-game-skeleton.mjs](../scripts/check-game-skeleton.mjs)。它将七个代表性检查器归为六个公共系统组，保持日常验证紧凑；完整 framework suite 的细分回归继续独立保留。
+
+| 检查器 | 实际调用与范围 | 证据边界 |
+| --- | --- | --- |
+| check-game-entry-ui.mjs | 当前 app 的显式入口、仓库/EntryLoader、失败取消、暂停读档与命令重新绑定 | 受控 DOM、网络、解码、音频和表现 |
+| check-initialized-systems-ui.mjs | 本轮默认 /game/ 入口、真实初始化 owner、实际菜单和存读档处理器 | DOM 与媒体受控，Renderer/BattleView 绘图是 host doubles |
+| check-systems-playground.mjs | 页面使用的实际包；移动触发事件、两次战斗、道具/装备/编队/字段魔法、切图及恢复后续行 | 独立作者路线与开发基线，公共 owner 实际执行 |
+| check-game-framework.mjs --battle-handoff prepared | 入战/返场准备失败与取消、败北固定重试、一次奖励、存取及下一战 | 明确开发交接策略，受控内容与媒体 |
+| check-initialized-systems.mjs | 来源初始化的持有域、作者设施、商店、魔石装备、战斗成长、保存恢复和新输入 | 不改原初始化，不授予来源故事到达资格 |
+| check-world-travel.mjs | 真实世界几何和walking地形、来源出口进入地点、作者回程、世界遇敌与奖励、菜单存取和后续输入 | 平面呈现和遇敌节奏为显式开发策略；地点只验证导航 |
+| check-content-batch-program.mjs | 公共 runner 的声明菜单、中途恢复、恢复后跨图再战及错误输入拒绝 | 合成内容验证接口；具体来源批次另行准入 |
+
+六组是入口/会话、地图/事件/切图、战斗往返、持有菜单/经济/成长、存读档续行和批量内容接口。报告逐组列出必需检查器及未完成项；加载、发布和操作仍走 GameEntryLoader、GameMapLoader、GameBattleHandoff、GameCommands 和 CheckpointStorage。
+
+## 运行与失败
+
+先使用现有命令准备编译结果和实际内容包。本门禁不会隐式构建、改内容或补缺失依赖。
+
+    node scripts/check-game-skeleton.mjs --list
+    node scripts/check-game-skeleton.mjs --plan
+    node scripts/check-game-skeleton.mjs
+
+--list 与 --plan 只输出计划，不运行检查器、不计算 runtimeDigest、不写报告。可用 --compiled-dir、--content-dir 和 --report build/reports/<name>.json 指定输入与主报告。实际执行串行运行全部七个检查器；没有读取旧报告获得通过的模式。
+
+主报告默认是 build/reports/game-skeleton-check.json，逐项结果及日志保留在 build/reports/game-skeleton/。四个支持独立输出的检查器直接写入该目录；另外三个仍使用原固定产物 game-entry-ui-check.json、initialized-systems-ui-check.json 和 content-batch-program-check.json，本门禁先删除旧结果、新执行，再保留此次报告。不要与完整 framework suite 或这三个固定输出检查器并行运行。门禁自身通过独立 lock 避免重叠调用。
+
+运行前、每项前后和最终均核对同一个 runtimeDigest，覆盖所选编译目录的 core/tests、app 和 scripts。每项必须成功退出、生成正确 kind 的新报告、明确 pass/passed，并存在已执行场景。摘要、原始控制条件、实际公共 API 和本次结果各自留证。任一失败立即终止；当前项 failed，后续项 not-run。运行时变化使整体 invalidated，不能取得骨架通过或内容填充准备完成。
+
+## 放行含义
+
+六组通过且运行时一致时，报告给出 skeletonContracts.status=passed、readyForDeclaredContentBatches=true：现有公共接口可以承载声明内容批次的接入与验证。此结果不替具体批次授予执行资格。
+
+wholeSourceBatchAdmission 仍为 not-assessed；来源完整剧情、实际浏览器、原版执行和全迁移分别留证。受控 DOM/Canvas 或 Renderer double 不会将 browserVerified 置 true，作者地图和回程不改写来源故事。未恢复的 NPC 自主路线、车辆或其他能力继续显式准入，按实际内容需求整块推进；不静默跳过，也不把所有特殊细节设为已支持骨架的前置。
+
+本页描述门禁合同，最终结果以本次新报告为准。完整 Web 迁移 goal 保持 active，HD-2D 后置。

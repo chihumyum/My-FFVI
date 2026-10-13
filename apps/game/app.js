@@ -13,6 +13,7 @@ import { GameBattleHandoff } from "/runtime/core/game-battle-handoff.js";
 import { GameEventSaveCoordinator } from "/runtime/core/game-event-save.js";
 import { GameContentRepository, fieldMediaUrls, sourceEntryMediaUrls } from "/runtime/core/game-content.js";
 import { parseGameContentRefs } from "/runtime/core/game-content-refs.js";
+import { selectGamePackage } from "/runtime/core/game-package-selection.js";
 import { NewGameFieldEntry } from "/runtime/core/new-game-field-entry.js";
 import { FieldFadeState, fieldFadeOverlay } from "/runtime/core/field-fade.js";
 import { createSourcePresentationContext } from "/runtime/core/source-presentation.js";
@@ -55,11 +56,11 @@ const attemptedBattleStarts = new WeakSet();
 let hasSave = false,
   hasPreviousSave = false;
 const query = new URLSearchParams(location.search);
-const systemsPlayground = query.get("package") === "systems-playground";
-const worldTravel = query.get("package") === "world-travel";
-let contentProfile = query.get("profile") === "framework" ? "framework" : "source";
-let contentReady = !query.has("package");
-const checkpointStorage = () => new CheckpointStorage(localStorage, contentProfile, query.get("package") ?? undefined);
+let packageSelection = null;
+let systemsPlayground = false, worldTravel = false;
+let contentProfile = "source";
+let contentReady = false;
+const checkpointStorage = () => new CheckpointStorage(localStorage, contentProfile, packageSelection?.packageId ?? undefined);
 const images = new Map(),
   loading = new WeakSet();
 const audio = new AudioOutput();
@@ -715,14 +716,18 @@ async function init() {
     // These views borrow immutable media and own no private GPU or audio resources.
     discard: () => {},
   });
-  if (query.has("package")) {
-    const packageId = query.get("package");
-    if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(packageId ?? ""))
-      throw new Error("Invalid content package identity");
+  packageSelection = selectGamePackage(location.search);
+  const { packageId } = packageSelection;
+  systemsPlayground = packageId === "systems-playground";
+  worldTravel = packageId === "world-travel";
+  contentProfile = packageSelection.profile;
+  contents = new GameContentRepository(readGameJson, contentProfile);
+  contentReady = packageId === null;
+  if (packageId !== null) {
     // The host selects an authored same-origin package. Saved state never
     // supplies its URLs or changes the declared source/development profile.
     const refs = parseGameContentRefs(await readGameJson(`/content-packages/${packageId}.json`));
-    if (query.has("profile") && refs.profile !== contentProfile)
+    if (packageSelection.explicitProfile && refs.profile !== contentProfile)
       throw new Error("Content package profile mismatch");
     contentProfile = refs.profile;
     contents = new GameContentRepository(readGameJson, contentProfile, refs);
@@ -770,6 +775,11 @@ async function init() {
     sync();
     if (!game.choice) focus();
   });
+  if (!contents.hasInitializedEntry) {
+    text("welcome-title", "FINAL FANTASY VI · 原迁移样本");
+    text("welcome-description", "从故事开头运行，或进入纳尔谢开发片段。");
+    text("welcome-scope", "原版剧情迁移尚未完成，遇到未实现内容会明确停止；本地进度与系统版、世界旅行各自独立。");
+  }
   if (contentProfile === "framework") {
     text("welcome-scope", "可从故事开头运行；当前开发版采用简化的环境与骑乘演出，剧情与游戏系统仍在迁移中。");
     text("source-start", "从头开始（框架开发版）");
@@ -791,8 +801,10 @@ async function init() {
     text("welcome-scope", "使用原版地图地形与新游戏初始角色，采用独立演示路线和平面画面，拥有独立本地存档。");
     text("systems-playground-help", "世界旅行：起点向北一步进入纳尔谢，面向入口南侧按 Enter / 空格返回世界。方向键移动，Esc 打开菜单，可查看队伍、使用道具或魔法、保存和读取进度。");
   }
-  $("world-travel-link").hidden = worldTravel;
-  $("systems-playground-link").hidden = systemsPlayground || contents.hasInitializedEntry;
+  for (const [id, active] of [["systems-playground-link", packageId === "systems-initialized"],
+    ["world-travel-link", worldTravel], ["source-sample-link", packageId === null]]) {
+    $(id).setAttribute("aria-current", active ? "page" : "false");
+  }
   $("systems-playground-help").hidden = !systemsPlayground && !contents.hasInitializedEntry;
   if (preview && !contents.hasInitializedEntry) {
     text("welcome-title", "地图开发预览");
@@ -813,7 +825,7 @@ async function init() {
   $("start").disabled = !canStart;
   $("source-start").disabled = !contents.hasSourceEntry;
   await refreshSaveInfo();
-  text("start", contents.hasInitializedEntry || systemsPlayground ? "开始系统演示" : preview ? "进入地图预览" : query.has("package") ? "进入开发片段" : "进入纳尔谢");
+  text("start", worldTravel ? "开始世界旅行" : contents.hasInitializedEntry || systemsPlayground ? "开始系统演示" : preview ? "进入地图预览" : packageId !== null ? "进入开发片段" : "进入纳尔谢");
   sync();
   text("status", "选择开始游戏或继续本地进度。");
   requestAnimationFrame(frame);

@@ -180,7 +180,10 @@
     "field-particle-rendering:check": "npm run build && node scripts/check-field-particle-geometry-native.mjs && node scripts/check-field-particle-geometry-rendering.mjs",
     "field-particle-geometry:check": "npm run build && node scripts/check-field-particle-geometry-native.mjs && node scripts/check-field-particle-geometry.mjs && node scripts/check-field-particle-geometry-ui.mjs",
     "field-particle-array:check": "npm run build && node scripts/check-field-particle-array-native.mjs && node scripts/check-field-particle-array.mjs",
-    "field-particle-appearance:check": "npm run build && node scripts/check-field-particle-appearance-native.mjs && node scripts/check-field-particle-appearance.mjs"
+    "field-particle-appearance:check": "npm run build && node scripts/check-field-particle-appearance-native.mjs && node scripts/check-field-particle-appearance.mjs",
+    "skeleton:plan": "node scripts/check-game-skeleton.mjs --plan",
+    "skeleton:check": "npm run build && node scripts/check-game-skeleton.mjs",
+    "npc-routes:plan": "npm run build && node dist/src/cli.js npc-routes"
   },
   "dependencies": {
     "zod": "4.6.5"

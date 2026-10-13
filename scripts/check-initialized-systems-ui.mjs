@@ -73,7 +73,7 @@ async function until(predicate, message) {
   }
 }
 
-async function host(pack, { slots = new Map() } = {}) {
+async function host(pack, { slots = new Map(), search = "?package=" + pack.packageId } = {}) {
   const calls = { json: [], images: [], views: [], frames: [], writes: 0 };
   const failedUrls = new Set(), heldUrls = new Map(), failedImages = new Set(), heldImages = new Map();
   const listeners = new Map(), nodes = new Map();
@@ -156,7 +156,7 @@ async function host(pack, { slots = new Map() } = {}) {
   }
   const context = vm.createContext({ ...core, document, Image, AudioContext, Renderer, BattleView,
     window: { addEventListener(name, callback) { listeners.set(name, callback); } },
-    location: { search: "?package=" + pack.packageId }, URLSearchParams, structuredClone, crypto: webcrypto,
+    location: { search }, URLSearchParams, structuredClone, crypto: webcrypto,
     console, performance: { now: () => now }, requestAnimationFrame(callback) { calls.frames.push(callback); },
     localStorage: { getItem: key => slots.get(key) ?? null,
       setItem(key, value) { calls.writes++; slots.set(key, value); } },
@@ -218,7 +218,7 @@ async function seal(value) {
 
 // Fixture composition and assertions follow below. They exercise the same
 // pinned initialized entry as the app; no legacy owner is patched into one.
-async function packages() {
+async function packages(packageId = "controlled-initialized-ui") {
   const { frameworkNewGameFixture } = await load("tests/fixtures/framework-new-game.js");
   const { compileFrameworkNewGame } = await load("src/compiler/framework-new-game.js");
   const { itemFixture } = await load("tests/fixtures/items.js");
@@ -285,7 +285,7 @@ async function packages() {
   f.sourceEntry = await seal({ ...f.sourceEntry, battleCatalogHash: f.sourceBattle.contentHash });
   f.content = await compileFrameworkNewGame({ sourceEntry: f.sourceEntry, sourceBattle: f.sourceBattle,
     sourceMap: f.sourceMap, world: f.world, map: f.map, battle: f.battle, entrance: point.id });
-  const packageId = "controlled-initialized-ui", prefix = "/content-packages/" + packageId;
+  const prefix = "/content-packages/" + packageId;
   const refs = { kind: "game-content-refs-v2", profile: "framework",
     world: { url: prefix + "/world.json", contentHash: f.world.contentHash }, source: null, development: null,
     initialized: { entry: { url: prefix + "/entry.json", contentHash: f.content.contentHash },
@@ -347,6 +347,49 @@ async function win(h, pack) {
 }
 
 try {
+  await check("bare title selects the systems package and exposes honest independent entry links", async () => {
+    const pack = await packages("systems-initialized"), h = await host(pack, { search: "" });
+    assert.deepEqual(h.calls.json, ["/content-packages/systems-initialized.json"]);
+    assert.equal(h.api.read().flow.currentSession, null);
+    assert.equal(h.$("start").textContent, "开始系统演示");
+    assert.equal(h.$("source-start").hidden, true); assert.equal(h.$("source-start").disabled, true);
+    assert.equal(h.$("systems-playground-link").getAttribute("aria-current"), "page");
+    for (const [id, href] of [["systems-playground-link", "/game/?package=systems-initialized"],
+      ["world-travel-link", "/game/?package=world-travel"], ["source-sample-link", "/game/?profile=source"]]) {
+      assert.equal(h.$(id).hidden, false);
+      assert.ok(html.includes(`id="${id}" href="${href}"`));
+    }
+    assert.match(html, /原迁移样本（未完成）/);
+    assert.match(h.$("welcome-scope").textContent, /不代表原剧情/);
+    await start(h); assert.equal(h.api.read().sourceBoot, null);
+  });
+  await check("default and explicit systems titles restore one slot while travel and source slots stay isolated", async () => {
+    const pack = await packages("systems-initialized"), h = await host(pack, { search: "" });
+    const owner = await start(h); await pauseMenu(h); await h.click(h.$("save-game"));
+    const saved = owner.checkpoint(), oldCommands = h.api.read().commands;
+    await h.click(h.$("return-title"));
+    const explicit = await host(pack, { slots: h.slots });
+    assert.equal(explicit.$("load-start").hidden, false);
+    await explicit.click(explicit.$("load-start"));
+    const restored = explicit.bound();
+    assert.notEqual(restored, owner); assert.deepEqual(restored.checkpoint(), saved);
+    assert.equal(oldCommands.menu({ kind: "change-magic-stone", playerId: pack.playerId, contentId: 0 }), false);
+
+    const travelPack = await packages("world-travel"), travel = await host(travelPack, { slots: h.slots });
+    assert.equal(travel.$("start").textContent, "开始世界旅行");
+    assert.equal(travel.$("source-start").hidden, true);
+    assert.equal(travel.$("world-travel-link").getAttribute("aria-current"), "page");
+    assert.equal(travel.$("load-start").hidden, true);
+    await start(travel); await pauseMenu(travel); await travel.click(travel.$("save-game"));
+    const inspector = { getItem: key => h.slots.get(key) ?? null,
+      setItem() { throw new Error("Inspector cannot write"); } };
+    const systemsSave = await new CheckpointStorage(inspector, "framework", "systems-initialized").load();
+    assert.deepEqual(systemsSave.checkpoint, saved);
+    assert.equal((await new CheckpointStorage(inspector, "framework", "world-travel").load()).checkpoint.origin.entryContentHash,
+      travelPack.content.contentHash);
+    assert.equal(await new CheckpointStorage(inspector, "source").load(), null);
+    assert.equal(h.slots.size, 2);
+  });
   await check("initialized-only title has no owner and offers its declared start without legacy/source fallback", async () => {
     const pack = await packages(), h = await host(pack);
     assert.deepEqual(h.calls.json, ["/content-packages/" + pack.packageId + ".json"]);

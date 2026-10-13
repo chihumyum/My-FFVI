@@ -26,7 +26,7 @@ Scene changes are recipes, semantic annotations, or versioned asset changes. A s
 
 ## Batch migration priority
 
-2026-10-14 user correction: prioritize the shared gameplay skeleton over isolated details. The v75 common battle increment is bounded; initial status and received-type capability do not admit a whole encounter pool. Close NPC autonomous activity and event ownership as the next complete module, with loading, cancellation and persistence at the existing owner boundaries. Do not turn one remaining battle AI PC or an opening camera instruction into the main workstream.
+2026-10-14 renewed user correction: deliver the overall gameplay skeleton first and stop spending the main effort on isolated details. The default app entry must expose the supported systems loop. Use `npm run skeleton:check` to assess complete shared flows, then nominate content batches from their grouped capability gaps. The larger `framework:verify` suite remains a regression tool, not an ever-growing prerequisite to start content work. NPC route data interfaces may be built in parallel; native controller investigation, individual AI PCs, exact cameras and visual providers must not hold this skeleton milestone open. Source capabilities and runnable story coverage remain independent.
 
 2026-10-13 renewed user priority: deliver the interactive systems skeleton before expanding regions or decoding more isolated source instructions. The systems playground must use the same repository, session, Flow, map loader, prepared battle handoff, commands and save APIs as the app. Authored demonstration content has its own package and save namespace; it never counts as source-story reachability. Close shared lifecycle defects and verify continuous play, then nominate bulk content work.
 

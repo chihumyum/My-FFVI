@@ -4,19 +4,23 @@
 
 当前优先公共游戏骨架：同一会话串联标题、探索与事件、入战准备、败北重试、结算与返场、队伍和物品菜单、存读档，并以内容依赖闭包组织后续批量导入。纳尔谢及已接入战斗用于连续回归，歌剧仍是后续来源迁移样本；全游戏迁移尚未完成。项目同时维护内容编译、世界知识、语义资源与独立验收。
 
-[v75 公共战斗模块](docs/systems-v75.md) 接入初始状态、当前状态派生的临时抗性、收到能力类型的 AI 判断与施加者/目标的联合动作事务。批次开发入口显式绑定来源摘要，完整敌队池有缺口时仍拒绝整批发布。系统计划见 [推进表](docs/systems-roadmap.md)，用 `npm run battle-systems:check` 重跑状态与动作探针。
+[整体游戏骨架](docs/game-skeleton.md) 以同一公共运行时贯通入口、探索/事件、战斗往返、队伍/经济/成长、存读档和批量内容。`npm run skeleton:check` 验证代表性完整流程；`npm run skeleton:plan` 查看范围。完整细项回归保留为 `npm run framework:verify`，来源剧情与全游戏迁移单独验收。
+
+[本轮交付](docs/systems-v76.md)：默认系统入口、六组公共合同和七条连续检查通过；后续按实际内容批次需要推进公共机制。
 
 **执行顺序：先迁移 Web 版，通过原版一致性验收，再调查 HD-2D，最后制作重制内容。** 现有歌剧效果按原版迁移；HD-2D 文档和契约目前仅作后续设计保留。
 
 源码、合成测试、架构和实施记录由 Git 跟踪，并同步至私有仓库 [chihumyum/ffvi-reweb](https://github.com/chihumyum/ffvi-reweb)。原始游戏资源和生成产物保留在本地，不进入仓库。
 
-当前可操作系统入口：[初始化训练场](http://127.0.0.1:4173/game/?package=systems-initialized)。上方训练、右侧商店、下方魔石；按方向键面向设施，再按 Enter / 空格确认，Esc 打开队伍、装备、道具、魔法和保存菜单。角色与持有资源由来源新游戏初始化，训练事件单独编排并使用独立进度槽。完整主线仍待迁移。
+默认可操作入口：[系统版](http://127.0.0.1:4173/game/)。上方训练、右侧商店、下方魔石；按方向键面向设施，再按 Enter / 空格确认，Esc 打开队伍、装备、道具、魔法和保存菜单。角色与持有资源由来源新游戏初始化，训练事件单独编排并使用独立进度槽。标题可切换世界旅行和原迁移样本，完整主线仍待迁移。
 
 [世界旅行演示](http://127.0.0.1:4173/game/?package=world-travel) 复用同一会话、切图、战斗、菜单和存读档。起点向北进入纳尔谢，面向入口南侧确认返回世界；世界移动采用真实地形通行与循环边界。导航、遇敌节奏和简化平面画面属于独立演示策略，原剧情可达性仍单独验收。设计与范围见 [世界旅行系统](targets/world-travel.md)。
 
-已有本地来源目录、世界与媒体产物时，使用 `npm run initialized-systems:build` 更新该包，`npm run initialized-systems:check` 验证连续系统和受控界面。运行 `npm run dev` 后可从默认游戏页面的系统演示链接进入。
+已有本地来源目录、世界与媒体产物时，使用 `npm run initialized-systems:build` 更新系统包，`npm run initialized-systems:check` 验证连续系统和受控界面。运行 `npm run dev` 后打开默认游戏页面。
 
 `npm run content-packages:build` 构建共同内容包；`npm run world-travel:check` 验证世界与地点往返、遭遇战、菜单、保存恢复及循环渲染。来源摘要更新后需要重建并重新绑定配方；旧摘要存档不能默认为新内容的有效进度。
+
+`npm run npc-routes:plan` 按地图包内身份批量绑定 NPC 路线，保留完整原指令、依赖和未知能力；也可追加 `-- 3` 只检查 map3。该接口是内容生产数据层，尚不授予 NPC 自主执行或原剧情可玩覆盖。
 
 ## 文档入口
 
@@ -29,6 +33,7 @@
 - [核心机制现状与优先次序](docs/core-mechanics.md)
 - [游戏系统框架与连续流程验收](docs/game-framework.md)
 - [当前完整系统推进顺序](docs/systems-roadmap.md)
+- [可执行整体骨架与门禁](docs/game-skeleton.md)
 - [v73 来源初始化的可操作系统入口](docs/systems-v73.md)
 - [v72 商店、魔石与成长闭环](docs/systems-v72.md)
 - [v71 字段魔法系统](docs/systems-v71.md)

@@ -232,7 +232,9 @@ globalThis.__entry = {
 };`;
 const audioBody = audioModule.body.replace(/\bexport (?=class |function )/g, "");
 
-async function host(pack, { slots = new Map(), failBinding = false, search = "" } = {}) {
+// Legacy source scenarios remain explicit now that the bare title selects the
+// initialized systems package. That default is exercised by its actual-app checker.
+async function host(pack, { slots = new Map(), failBinding = false, search = "?profile=source" } = {}) {
   const calls = { json: [], images: [], audio: [], audioDecodes: [], audioStarts: [], views: [],
     frameCallbacks: [], writes: 0, writeAttempts: 0, audioContexts: 0, developmentEntries: [] };
   const storageFault = { error: null };
@@ -546,7 +548,7 @@ try {
     assert.equal(h.$("start").textContent, "开始系统演示");
     assert.match(h.$("welcome-description").textContent, /向上.*空格 \/ Enter/);
     assert.match(h.$("welcome-scope").textContent, /作者编排.*独立本地存档.*保存并恢复.*向右走一步过门.*第二战/);
-    assert.equal(h.$("systems-playground-link").hidden, true);
+    assert.equal(h.$("systems-playground-link").hidden, false);
     assert.equal(h.$("systems-playground-help").hidden, false);
     assert.match(html, /id="systems-playground-help"[\s\S]*?向右走一步过门/);
     assert.equal(h.$("source-start").hidden, true); assert.equal(h.$("source-start").disabled, true);
@@ -1076,7 +1078,7 @@ try {
     assert.equal(h.calls.writes, writeBaseline); assert.equal(h.calls.writeAttempts, attemptBaseline);
   });
   report.runtimeSha256 = Object.fromEntries(await Promise.all([
-    "game-session", "game-flow", "game-commands", "game-entry-loader", "game-content", "game-content-refs", "game-development-entry", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint", "game-battle-handoff",
+    "game-session", "game-flow", "game-commands", "game-entry-loader", "game-content", "game-content-refs", "game-package-selection", "game-development-entry", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint", "game-battle-handoff",
   ].map(async (name) => [name, sha(await readFile(resolve(compiled, `src/core/${name}.js`)))])));
   report.result = "passed";
 } catch (error) {
