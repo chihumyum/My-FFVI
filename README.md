@@ -6,7 +6,7 @@
 
 [整体游戏骨架](docs/game-skeleton.md) 以同一公共运行时贯通入口、探索/事件、战斗往返、队伍/经济/成长、存读档和批量内容。`npm run skeleton:check` 验证代表性完整流程；`npm run skeleton:plan` 查看范围。完整细项回归保留为 `npm run framework:verify`，来源剧情与全游戏迁移单独验收。
 
-[本轮交付](docs/systems-v81.md)：来源世界、入口和派生包进入同一候选链，配方依赖通过审计绑定到本次编译；完整闭包验证后一次发布。新游戏和读档固定内容版本，运行中的切图、图像和音频保持同一版本。默认入口和六组连续系统验收继续使用同一运行时。详见 [公共内容管线](docs/content-package-pipeline.md)。
+[本轮骨架收口](docs/systems-v82.md)：默认入口使用同一会话贯通探索、事件、战斗、奖励、菜单、成长和存读档；批量内容使用已有编译与运行接口。未接入的 NPC 活动分支收拢到本地候选，后续按整批内容需求推进公共能力。来源世界、入口和派生包继续使用 [v81 公共内容管线](docs/content-package-pipeline.md)，运行中的地图与媒体固定内容版本。
 
 [内容版本与旧进度](docs/content-versions.md) 保留完整 JSON 和图声闭包，恢复旧版本后继续使用其地图、事件与战斗，再次存读档。共享导出之前先运行 `npm run content-history:archive`；正常公共包与来源地点构建自动保留旧新版本，旧存档不改写为新初始化。
 
