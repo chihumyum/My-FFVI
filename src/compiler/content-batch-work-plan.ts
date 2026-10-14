@@ -156,6 +156,8 @@ const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
   treasure: "owned-menus-economy-and-growth",
   transportation: "map-event-and-travel",
   puppetRoster: "owned-menus-economy-and-growth",
+  sourceLeader: "map-event-and-travel",
+  scriptShop: "owned-menus-economy-and-growth",
   partyActors: "map-event-and-travel",
   audioReadiness: "map-event-and-travel",
   soundPresentation: "map-event-and-travel",

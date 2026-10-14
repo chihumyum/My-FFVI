@@ -74,7 +74,9 @@ export class GameCommands {
   tradeShop(request: ShopTradeRequest): ShopTradePlan | null {
     return this.shopReady ? this.owner.tradeShop(request) : null;
   }
-  closeShop(): boolean { return this.shopReady ? this.owner.closeShop() : false; }
+  closeShop(expectedVisitId?: number): boolean {
+    return this.shopReady ? this.owner.closeShop(expectedVisitId) : false;
+  }
   command(battle: BattleGame, actorId: string, abilityId: number,
     target: string | TargetSelection, commandId?: number | null): boolean {
     return this.battleReady && this.ownsBattle(battle) ? battle.command(actorId, abilityId, target, commandId) : false;

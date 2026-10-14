@@ -285,7 +285,7 @@ test("dialogue and shop phases reflect the field owner through trading and farew
   assert.equal(game.tradeShop({ kind: "buy", productId: 1001, count: 1 }).totalPrice, 30);
   assert.deepEqual(game.state.snapshot().items, [{ id: 10, count: 1 }]);
   assert.equal(game.state.snapshot().gil, 60);
-  assert.equal(game.closeShop(), true);
+  assert.equal(game.closeShop(game.field.currentShop?.id), true);
   assert.equal(flow.phase, "dialogue");
   assert.equal(game.field.dialogue!.key, "GOODBYE");
   assert.equal(flow.confirm(), true);

@@ -154,11 +154,15 @@ test("shop commands require active host input and retain real inventory/gil tran
   const commands = new GameCommands(f.flow, f.game);
   f.flow.confirm(); f.flow.confirm(); assert.ok(f.game.field.currentShop);
   const before = f.game.state.snapshot(), shop = f.game.field.currentShop;
+  assert.equal(f.game.closeShop(), false);
+  assert.equal(commands.closeShop(shop.id + 1), false);
+  assert.deepEqual(f.game.state.snapshot(), before);
+  assert.equal(f.game.field.currentShop?.id, shop.id);
   for (const host of [{ ...readyHost, visible: false }, { ...readyHost, mediaReady: false },
     { ...readyHost, overlayOpen: true }]) {
     f.flow.observeHost(host);
     assert.equal(commands.tradeShop({ kind: "buy", productId: 1001, count: 1 }), null);
-    assert.equal(commands.closeShop(), false);
+    assert.equal(commands.closeShop(shop.id), false);
     assert.deepEqual(f.game.state.snapshot(), before); assert.deepEqual(f.game.field.currentShop, shop);
   }
   f.flow.observeHost(readyHost); f.flow.pause(true);
@@ -167,7 +171,7 @@ test("shop commands require active host input and retain real inventory/gil tran
   const result = commands.tradeShop({ kind: "buy", productId: 1001, count: 1 });
   assert.equal(result?.totalPrice, 30); assert.equal(f.game.state.snapshot().gil, 60);
   assert.deepEqual(f.game.state.snapshot().items, [{ id: 10, count: 1 }]);
-  assert.equal(commands.closeShop(), true); assert.equal(commands.closeShop(), false);
+  assert.equal(commands.closeShop(shop.id), true); assert.equal(commands.closeShop(shop.id), false);
   assert.equal(f.game.field.dialogue?.key, "GOODBYE");
 });
 

@@ -16,6 +16,12 @@ export type EventContextBranchOp =
       kind: "branch-player-direction";
       /** North, east, south, west source label addresses. Zero is a valid label. */
       targets: readonly [number, number, number, number];
+    }
+  | {
+      kind: "branch-leader";
+      /** OwnedCharacterData.characterStatusId, not an owned identity. */
+      sourceId: number;
+      target: number;
     };
 
 export type EventContextBranchInput = {
@@ -26,6 +32,12 @@ export type EventContextBranchInput = {
   /** The actual player, not the current task actor. Null is a known source zero
    * direction; an omitted/undefined value means the provider is unavailable. */
   playerDirection?: Direction | null;
+  /** Exact SaveMapData.playableCharacterCorpsId position. BranchByLeader uses
+   * Nullable<int>.Value and GetMemberData directly; null, an empty cell or -1
+   * is an error. The host reads the current native map owner's savedLeaderIndex
+   * together with the shared Corps/owned snapshot; this input stores no leader
+   * state and does not select a replacement occupied cell. */
+  playableCharacterCorpsId?: number | null;
 };
 
 function address(value: number): number {
@@ -39,12 +51,10 @@ function inRange(value: number, range: FieldTaskRange): void {
     throw new Error("Event context branch leaves the source task range");
 }
 
-function characterPresent(
-  sourceId: number,
-  scope: "current-party" | "enabled-roster",
-  roster: FieldPuppetRosterRead | undefined,
-): boolean {
-  if (int32(sourceId) <= 0) throw new Error("Invalid source character identity");
+function corpsMembers(roster: FieldPuppetRosterRead | undefined): {
+  roster: FieldPuppetRosterRead;
+  byOwnedId: Map<number, FieldPuppetRosterRead["owned"][number]>;
+} {
   if (!roster || !Array.isArray(roster.owned) || !Array.isArray(roster.party) ||
       roster.party.length !== 4)
     throw new Error("Missing event context branch roster provider");
@@ -62,18 +72,28 @@ function characterPresent(
       throw new Error("Unresolved event context branch corps identity");
     if (ownedId !== 0) occupied.add(ownedId);
   }
+  return { roster, byOwnedId };
+}
+
+function characterPresent(
+  sourceId: number,
+  scope: "current-party" | "enabled-roster",
+  roster: FieldPuppetRosterRead | undefined,
+): boolean {
+  if (int32(sourceId) <= 0) throw new Error("Invalid source character identity");
+  const members = corpsMembers(roster);
   if (scope === "current-party") {
     // GetMemberData matches Corps.CharacterId to Owned.Id without enabled filtering.
-    return roster.party.some((ownedId) => byOwnedId.get(ownedId)?.sourceId === sourceId);
+    return members.roster.party.some((ownedId) => members.byOwnedId.get(ownedId)?.sourceId === sourceId);
   }
   if (scope === "enabled-roster") {
     // GetOwnedCharactersClone(false) filters IsEnableCorps before copying members.
-    return roster.owned.some((member) => member.enabled && member.sourceId === sourceId);
+    return members.roster.owned.some((member) => member.enabled && member.sourceId === sourceId);
   }
   throw new Error("Unsupported event context branch roster scope");
 }
 
-/** Both source instructions return Next. JumpCommon writes the label address;
+/** These source instructions return Next. JumpCommon writes the label address;
  * Core.Clock then calls ForwardStep, so the next executable address is label+1.
  * Validation completes before returning a replacement cursor to the host. */
 export function prepareEventContextBranch(
@@ -105,6 +125,22 @@ export function prepareEventContextBranch(
           !Object.hasOwn(directions, direction)))
         throw new Error("Missing or unsupported actual player direction");
       target = op.targets[direction === null ? 2 : directions[direction]]!;
+      break;
+    }
+    case "branch-leader": {
+      if (int32(op.sourceId) <= 0) throw new Error("Invalid source character identity");
+      address(op.target);
+      const position = input.playableCharacterCorpsId;
+      if (position === null || position === undefined)
+        throw new Error("Missing source playable character Corps position");
+      if (int32(position) < 0 || position > 3)
+        throw new Error("Invalid source playable character Corps position");
+      const members = corpsMembers(input.roster);
+      // BranchByLeader 0xb44010 calls GetMemberData(position), then dereferences
+      // characterStatusId even when the Corps/owned lookup returned null.
+      const member = members.byOwnedId.get(members.roster.party[position]!);
+      if (!member) throw new Error("Source leader Corps position has no owned member");
+      if (member.sourceId === op.sourceId) target = op.target;
       break;
     }
     default:

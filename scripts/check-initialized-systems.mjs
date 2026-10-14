@@ -91,7 +91,7 @@ try {
   assert.ok(product); const beforeShop = game.state.snapshot();
   assert.ok(commands.tradeShop({ kind: "buy", productId: product.id, count: 2 }));
   assert.equal(game.gil, beforeShop.gil - product.buy * 2);
-  assert.equal(commands.closeShop(), true); flow.advance(10, host);
+  assert.equal(commands.closeShop(game.field.currentShop?.id), true); flow.advance(10, host);
   assert.equal(game.field.currentShop, null); assert.equal(game.checkpointReady, true);
   passed("native-field-object-shop-source-product-pricing-and-close");
 

@@ -244,6 +244,8 @@ type Task = {
   range: FieldTaskRange;
   lastClock: number;
   puppetWait: Extract<Op, { kind: "exec-puppets" | "finish-puppets" }> | null;
+  scriptShop: { id: number; pc: number; op: Extract<Op, { kind: "field-script-shop" }>;
+    identity: string; closed: boolean } | null;
   fadeWait: Extract<Op, { kind: "field-fade" }> | null;
   cameraLerp: { op: Site; command: FieldCameraLerp;
     progress: FieldCameraLerpProgress } | null;
@@ -372,6 +374,8 @@ export class FieldGame {
       treasure: presence(!!this.options.treasure),
       transportation: presence(!!this.options.transportation),
       puppetRoster: presence(typeof this.options.puppetRoster?.current === "function"),
+      sourceLeader: presence(typeof this.options.puppetActors?.read === "function"),
+      scriptShop: presence(typeof this.options.shop?.validate === "function"),
       partyActors: presence(!!this.partyActors),
       audioReadiness: presence(typeof this.options.audioReadiness?.isReady === "function"),
       soundPresentation: presence(typeof this.options.soundPresentation?.isPresented === "function"),
@@ -706,6 +710,7 @@ export class FieldGame {
     entityId: string;
     stage: "greeting" | "open" | "farewell";
     close: FieldMessage | null;
+    scriptTaskId?: number;
   } | null = null;
   /** Only the open window authorizes a transaction. Greeting/farewell remain
    * busy field states but cannot buy, sell, or be closed a second time. */
@@ -715,9 +720,23 @@ export class FieldGame {
       ? { id: shop.id, groupId: shop.groupId, entityId: shop.entityId }
       : null;
   }
-  closeShop(): boolean {
+  closeShop(expectedVisitId?: number): boolean {
     const shop = this.shopTask;
-    if (!shop || shop.stage !== "open" || this.stop) return false;
+    if (!Number.isSafeInteger(expectedVisitId) || !shop || shop.id !== expectedVisitId ||
+        shop.stage !== "open" || this.stop) return false;
+    if (shop.scriptTaskId !== undefined) {
+      const task = this.tasks.find(candidate => candidate.id === shop.scriptTaskId), pending = task?.scriptShop;
+      if (!task || task.done || !pending || pending.closed || pending.id !== shop.id ||
+          task.pc !== pending.pc || pending.op.groupId !== shop.groupId ||
+          canonical(this.content.scripts[task.script]?.[pending.pc]) !== pending.identity) {
+        this.block("Source shop lost its suspended script owner");
+        return false;
+      }
+      pending.closed = true;
+      this.shopTask = null;
+      this.pump();
+      return true;
+    }
     if (shop.close) {
       try {
         const presentation = this.prepareMessagePresentation(shop.close);
@@ -2821,7 +2840,7 @@ export class FieldGame {
     // treasure coroutines are not cores and keep their existing owner.
     this.tasks = this.tasks.filter((other) => other === t || other.treasureRoot);
     Object.assign(t, plan, { stack: [], wait: 0, state: "ready", lastClock: this.time,
-      puppetWait: null, fadeWait: null, cameraLerp: null, scriptMove: null, scriptLerp: null, remaining: 0, move: null,
+      puppetWait: null, scriptShop: null, fadeWait: null, cameraLerp: null, scriptMove: null, scriptLerp: null, remaining: 0, move: null,
       animationWait: false, audioWait: null, soundWait: null, treasure: null, done: false });
   }
   private restoreHookedScript(main: Task): void {
@@ -2897,6 +2916,7 @@ export class FieldGame {
       range: { min: 0, max: (this.content.scripts[script]?.length ?? 0) - 1 },
       lastClock: -1,
       puppetWait: null,
+      scriptShop: null,
       fadeWait: null,
       cameraLerp: null,
       scriptMove: null,
@@ -3394,7 +3414,7 @@ export class FieldGame {
     // frame. Discover it after that registration, without re-clocking a core.
     const main = this.tasks.find((t) => t.slot === null && !t.treasureRoot);
     if (main) this.clockTask(main, frameDeltaSeconds);
-    if (this.stop || this.pendingEventSave) return;
+    if (this.stop || this.pendingEventSave || this.shopTask) return;
     for (let slot = 0; slot < 32; slot++) {
       const task = this.tasks.find((t) => !t.done && t.slot === slot);
       if (task) this.clockTask(task, frameDeltaSeconds);
@@ -3451,7 +3471,7 @@ export class FieldGame {
     this.finishMapEntry();
   }
   private clockTask(t: Task, frameDeltaSeconds: number): void {
-    if (t.done || t.state !== "ready" || t.lastClock === this.time ||
+    if (this.shopTask || t.done || t.state !== "ready" || t.lastClock === this.time ||
         t.wait > 0 || this.dialogue?.task === t.id ||
         (this.pendingChoice?.task === t && this.pendingChoice.answer === null)) return;
     t.lastClock = this.time;
@@ -3654,14 +3674,43 @@ export class FieldGame {
             break;
           case "branch-character":
           case "branch-player-direction":
+          case "branch-leader":
             try {
+              const leaderContext = op.kind === "branch-leader" ? this.options.puppetActors?.read().context : undefined;
+              const roster = op.kind === "branch-character" || op.kind === "branch-leader"
+                ? this.options.puppetRoster?.current() : undefined;
+              if (op.kind === "branch-leader" && (!leaderContext || !roster ||
+                  canonical(leaderContext.party) !== canonical(roster.party)))
+                throw new Error("Source leader branch requires the current map and Corps owners");
               const next = prepareEventContextBranch(op, { nextPc: t.pc, range: t.range,
-                ...(op.kind === "branch-character"
-                  ? (this.options.puppetRoster ? { roster: this.options.puppetRoster.current() } : {})
-                  : { playerDirection: this.player.direction }) });
+                ...(roster ? { roster } : {}),
+                ...(op.kind === "branch-player-direction" ? { playerDirection: this.player.direction } : {}),
+                ...(leaderContext ? { playableCharacterCorpsId: leaderContext.savedLeaderIndex } : {}) });
               t.pc = next.pc;
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
+          case "field-script-shop": {
+            try {
+              const pending = t.scriptShop;
+              if (pending) {
+                if (pending.pc !== t.pc - 1 || canonical(op) !== pending.identity || !pending.closed)
+                  throw new Error("Source script shop continuation changed or is still open");
+                t.scriptShop = null;
+                break;
+              }
+              if (!this.options.shop || !Number.isSafeInteger(op.groupId) || op.groupId <= 0 ||
+                  typeof op.selector !== "string" || !op.selector || this.shopTask || this.pendingChoice ||
+                  this.sourceMessage.active || this.messageWindow || this.treasureSceneState !== "player")
+                throw new Error("Source script shop is missing its shared owner or conflicts with an interaction");
+              this.options.shop.validate(op.groupId);
+              const id = this.nextTask++, pc = t.pc - 1;
+              t.scriptShop = { id, pc, op, identity: canonical(op), closed: false };
+              this.shopTask = { id, groupId: op.groupId, entityId: this.interaction?.entityId ?? t.actor,
+                stage: "open", close: null, scriptTaskId: t.id };
+              t.pc--;
+              return;
+            } catch (error) { t.pc--; this.block(error instanceof Error ? error.message : String(error), op); return; }
+          }
           case "field-party-query":
             try {
               const next = prepareFieldPartyQuery(op, { nextPc: t.pc, range: t.range,

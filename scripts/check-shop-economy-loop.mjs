@@ -236,7 +236,7 @@ try {
   assert.equal(oldCommands.closeShop(), false); assert.deepEqual(newOwner.state.snapshot(), before);
   assert.deepEqual(newOwner.field.currentShop, shop); assert.deepEqual(oldOwner.state.snapshot(), oldState);
   assert.equal(newCommands.tradeShop({ kind: "buy", productId: 1001, count: 1 }).countAfter, 1);
-  assert.equal(newCommands.closeShop(), true); assert.equal(newCommands.closeShop(), false);
+  assert.equal(newCommands.closeShop(newOwner.field.currentShop?.id), true); assert.equal(newCommands.closeShop(newOwner.field.currentShop?.id), false);
   const farewellState = newOwner.state.snapshot();
   assert.equal(newCommands.tradeShop({ kind: "buy", productId: 1001, count: 1 }), null);
   assert.deepEqual(newOwner.state.snapshot(), farewellState);

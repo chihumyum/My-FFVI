@@ -8,6 +8,7 @@ import { compileManualMessageInstruction } from "./message.js";
 import { compileSourceMessageInstruction } from "./source-message.js";
 import { compileFieldChoiceInstruction, type FieldChoiceCompileContext } from "./field-choice.js";
 import { compileEventContextBranchInstruction, eventContextBranchMnemonics } from "./event-context-branch.js";
+import { compileFieldScriptShopInstruction, fieldScriptShopSelectors } from "./field-script-shop.js";
 import { compileFieldPartyQueryInstruction, fieldPartyQueryMnemonics } from "./field-party-queries.js";
 import { compileEventScriptTransitionInstruction, compileEventScriptTransitionMetadata } from "./event-script-transition.js";
 import { tableId } from "./table-id.js";
@@ -147,6 +148,10 @@ export function decodeFieldOp(
   }
   const o = record(m.operands), i = list(o.iValues).map(integer),
     r = list(o.rValues).map(Number), s = list(o.sValues).map(string);
+  if (name === "SysCall" && fieldScriptShopSelectors.includes(s[0]!)) {
+    try { return { ...site, ...compileFieldScriptShopInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (Object.hasOwn(m, "type") && fieldActorVisibilityMnemonics.some((mnemonic) => mnemonic === name)) {
     try { return { ...site, ...compileFieldActorVisibilityInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }

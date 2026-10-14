@@ -289,7 +289,7 @@ export function analyzeContentDependencies(input: {
   }
   function instructionTarget(map: WorldMapContent, name: string, ops: Op[], pc: number, target: number, op: Op): void {
     let valid = integer(target) && target < ops.length;
-    if (op.kind === "call" || op.kind === "branch-character" || op.kind === "branch-player-direction" || op.kind === "field-party-query")
+    if (op.kind === "call" || op.kind === "branch-character" || op.kind === "branch-leader" || op.kind === "branch-player-direction" || op.kind === "field-party-query")
       valid &&= target + 1 < ops.length;
     if (op.kind === "puppet") valid &&= ops.slice(target).some((next) => next.kind === "exit");
     edge(`${scriptKey(map.mapId, name)}/instruction:${pc}`, "instruction", target,
@@ -337,7 +337,7 @@ export function analyzeContentDependencies(input: {
           break;
         case "change-map": referenceEntry(from, { kind: "entry", ...op.request }, op); break;
         case "entities": referenceGroup(from, map, op.group, op); break;
-        case "call": case "jump": case "branch": case "branch-character": case "field-party-query": case "puppet":
+        case "call": case "jump": case "branch": case "branch-character": case "branch-leader": case "field-party-query": case "puppet":
           instructionTarget(map, name, ops, pc, op.target, op); break;
         case "branch-player-direction":
           for (const target of op.targets) instructionTarget(map, name, ops, pc, target, op);

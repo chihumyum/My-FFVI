@@ -71,7 +71,7 @@ export class ShopView {
       this.message = "";
       this.render(session);
     } else {
-      if (commands ? !commands.closeShop() : session.closeShop() === false) return false;
+      if (commands ? !commands.closeShop(this.identity) : session.closeShop(this.identity) === false) return false;
       this.onChange();
     }
     return true;
@@ -108,7 +108,7 @@ export class ShopView {
         node("h2", "商店"),
         node("p", error.message),
         this.button("离开商店", () => {
-          if (commands ? !commands.closeShop() : session.closeShop() === false) return;
+          if (commands ? !commands.closeShop(shop.id) : session.closeShop(shop.id) === false) return;
           this.onChange();
         }),
       );
@@ -167,7 +167,7 @@ export class ShopView {
     }
     tabs.append(
       this.button("离开商店", () => {
-        if (commands ? !commands.closeShop() : session.closeShop() === false) return;
+        if (commands ? !commands.closeShop(shop.id) : session.closeShop(shop.id) === false) return;
         this.onChange();
       }),
     );

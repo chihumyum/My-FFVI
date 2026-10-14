@@ -149,7 +149,8 @@ const session = {
     count += request.count;
     return { count: request.count };
   },
-  closeShop() {
+  closeShop(expectedVisitId) {
+    if (this.field.currentShop?.id !== expectedVisitId) return false;
     closeCalls++;
     this.field.currentShop = null;
     return true;

@@ -16,6 +16,8 @@
 
 六组是入口/会话、地图/事件/切图、战斗往返、持有菜单/经济/成长、存读档续行和批量内容接口。报告逐组列出必需检查器及未完成项；加载、发布和操作仍走 GameEntryLoader、GameMapLoader、GameBattleHandoff、GameCommands 和 CheckpointStorage。
 
+商店关闭也遵循交互身份：界面及批次 runner 捕获访问 ID，使用 `closeShop(expectedVisitId)`；旧访问和缺少身份的请求被拒绝。脚本服务在关闭后从原任务继续，不另建事件或库存 owner。具体变更与证据边界见 [v92](systems-v92.md)。
+
 ## 运行与失败
 
 已有本地来源导出和编译输入后，`npm run skeleton:build` 通过 [统一候选管线](content-package-pipeline.md) 构建公共内容包，`npm run skeleton:check` 先构建再执行本门禁，`npm run dev` 提供默认可操作系统入口。整批候选成功前不替换旧集合，独立内容批次保留；原资源与配方身份不匹配仍停止，不能补造依赖。

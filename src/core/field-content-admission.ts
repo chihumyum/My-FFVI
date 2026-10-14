@@ -3,7 +3,7 @@ import type { FieldContent, Op, Site } from "../field/types.js";
 export const fieldProviders = Object.freeze([
   "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
-  "eventSaveCompletion", "battleHandoff",
+  "eventSaveCompletion", "battleHandoff", "sourceLeader", "scriptShop",
 ] as const);
 export type FieldProvider = typeof fieldProviders[number];
 export type FieldProviderStatus = "available" | "missing" | "unknown";
@@ -47,6 +47,7 @@ const codes: Record<FieldCapability, string> = {
   soundPresentation: "FIELD_SOUND_PRESENTATION_PROVIDER", actorControl: "FIELD_ACTOR_CONTROL_PROVIDER", actorMotion: "FIELD_ACTOR_MOTION_PROVIDER",
   cameraMotion: "FIELD_CAMERA_MOTION_PROVIDER", effectMotion: "FIELD_EFFECT_MOTION_PROVIDER",
   eventSaveCompletion: "FIELD_EVENT_SAVE_COMPLETION", battleHandoff: "FIELD_BATTLE_HANDOFF",
+  sourceLeader: "FIELD_SOURCE_LEADER_PROVIDER", scriptShop: "FIELD_SCRIPT_SHOP_PROVIDER",
   conditionVisual: "FIELD_CONDITION_VISUAL_CONTEXT", scriptMotion: "FIELD_SCRIPT_MOTION_PROVIDER",
 };
 
@@ -168,6 +169,11 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       add("partyActors", "Transportation requires the shared owned, native actor and camera providers");
       break;
     case "branch-character": add("puppetRoster", "Missing event context branch roster provider"); break;
+    case "branch-leader":
+      add("puppetRoster", "Missing source leader Corps/owned provider");
+      add("sourceLeader", "Missing current source map leader index provider");
+      break;
+    case "field-script-shop": add("scriptShop", "Missing shared script shop lifecycle provider"); break;
     case "field-party-query": add("puppetRoster", "Missing field party query roster provider"); break;
     case "field-sound": {
       const command = commandOf(op);

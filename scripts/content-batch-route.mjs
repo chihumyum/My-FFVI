@@ -546,7 +546,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
         }
         let result;
         try {
-          result = input.kind === "shop" ? channel.tradeShop(input.request) : channel.closeShop();
+          result = input.kind === "shop" ? channel.tradeShop(input.request) : channel.closeShop(shop.id);
         } catch (error) {
           assert.equal(await contentDigest(state.snapshot()), before, "A rejected shop transaction cannot partly publish");
           throw error;

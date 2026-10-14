@@ -1,5 +1,6 @@
 /** Browser-safe field content: no Unity readers or renderer dependencies in the runtime. */
 import type { EventControlOp, ScriptLocals, VariableRef } from "../core/event-state.js";
+import type { FieldScriptShopOp } from "../core/field-script-shop.js";
 import type { MinimapMedia } from "../core/minimap.js";
 import type { AudioMedia } from "../core/static-audio.js";
 import type { InventoryEventOp } from "../core/inventory-event.js";
@@ -203,6 +204,7 @@ export type Op = Site &
     | FieldScriptMotionOp
     | SourceMessageOp
     | FieldChoiceOp
+    | FieldScriptShopOp
     | EventContextBranchOp
     | FieldPartyQueryOp
     | EventScriptTransitionOp

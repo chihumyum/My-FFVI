@@ -384,8 +384,8 @@ if (!sourceOnly) {
         }),
       /available quantity/,
     );
-  assert.equal(session.closeShop(), true);
-  assert.equal(session.closeShop(), false);
+  assert.equal(session.closeShop(session.field.currentShop?.id), true);
+  assert.equal(session.closeShop(session.field.currentShop?.id), false);
   assert.ok(game.dialogue);
   assert.equal(session.checkpointReady, false);
   assert.throws(() => session.checkpoint(), /Cannot save/);

@@ -463,9 +463,9 @@ export class GameSession {
     transaction.commit();
     return transaction.plan;
   }
-  closeShop(): boolean {
+  closeShop(expectedVisitId?: number): boolean {
     if (this.battle || this.battleLease || this.state.inBattle) return false;
-    return this.field.closeShop();
+    return this.field.closeShop(expectedVisitId);
   }
   checkpoint(): GameCheckpoint {
     if (!this.checkpointReady)

@@ -4,7 +4,7 @@ import { int32 } from "../core/script-integer.js";
 import { record } from "./content.js";
 
 export const eventContextBranchMnemonics = [
-  "BranchByCharacter", "BranchByPlayerDirection",
+  "BranchByCharacter", "BranchByPlayerDirection", "BranchByLeader",
 ] as const;
 
 /** Source Format.type=1 forms only; unsupported operands remain explicit stops
@@ -35,6 +35,10 @@ export function compileEventContextBranchInstruction(raw: unknown): EventContext
       if (ints.slice(0, 4).some((value) => value < 0))
         throw new Error("Unsupported source player-direction branch address");
       return { kind: "branch-player-direction", targets: [ints[0]!, ints[1]!, ints[2]!, ints[3]!] };
+    case "BranchByLeader":
+      if (ints[0]! <= 0 || ints[1]! < 0 || ints.slice(2).some((value) => value !== 0))
+        throw new Error("Unsupported source leader branch operands");
+      return { kind: "branch-leader", sourceId: ints[0]!, target: ints[1]! };
     default:
       throw new Error("Unknown event context branch mnemonic: " + instruction.mnemonic);
   }

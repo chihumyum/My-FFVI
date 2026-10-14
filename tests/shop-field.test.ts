@@ -7,6 +7,8 @@ import { compileMessage } from "../src/compiler/message.js";
 import { sourceNativeStateFixture } from "./fixtures/source-native-state.js";
 import type { FieldContent } from "../src/field/types.js";
 
+const shopVisitId = (game: FieldGame) => game.currentShop?.id;
+
 function fixture(start = "HELLO", close = "BYE") {
   const source = { file: "synthetic", assetPath: "shop" };
   const tables = {
@@ -140,7 +142,7 @@ test("ShopNPC uses the ordinary actor path and retains collision/facing behavior
   game.confirm();
   assert.equal(game.actors["8"]!.direction, "down");
   game.confirm();
-  game.closeShop();
+  game.closeShop(shopVisitId(game));
   game.confirm();
   assert.equal(game.actors["8"]!.direction, "left");
 });
@@ -151,7 +153,7 @@ test("greeting precedes the transaction window and farewell precedes idle save r
   assert.equal(validated(), 1);
   assert.equal(game.dialogue!.key, "HELLO");
   assert.equal(game.currentShop, null);
-  assert.equal(game.closeShop(), false);
+  assert.equal(game.closeShop(shopVisitId(game)), false);
   assert.throws(() => game.checkpoint(), /Cannot save/);
   game.confirm();
   assert.equal(game.dialogue, null);
@@ -164,8 +166,8 @@ test("greeting precedes the transaction window and farewell precedes idle save r
   game.confirm();
   game.advance(100);
   assert.equal(game.currentShop!.id, shop.id);
-  assert.equal(game.closeShop(), true);
-  assert.equal(game.closeShop(), false);
+  assert.equal(game.closeShop(shopVisitId(game)), true);
+  assert.equal(game.closeShop(shopVisitId(game)), false);
   assert.equal(game.currentShop, null);
   assert.equal(game.dialogue!.key, "BYE");
   assert.throws(() => game.checkpoint(), /Cannot save/);
@@ -186,9 +188,9 @@ test("open shop prevents movement, unrelated event starts and map handoff", () =
   assert.equal(game.move("right"), false);
   assert.equal(game.startEvent("another"), false);
   assert.throws(() => game.previewMap(1, 1), /during an event/);
-  assert.equal(game.closeShop(), true);
+  assert.equal(game.closeShop(shopVisitId(game)), true);
   assert.equal(game.checkpointReady, true);
-  assert.equal(game.closeShop(), false);
+  assert.equal(game.closeShop(shopVisitId(game)), false);
   assert.equal(game.startEvent("another"), true);
 });
 
@@ -198,7 +200,7 @@ test("a stopped field withdraws the shop transaction window and stays unsaveable
   assert.ok(game.currentShop);
   game.stop = { kind: "unsupported", message: "Controlled field failure", site: null };
   assert.equal(game.currentShop, null);
-  assert.equal(game.closeShop(), false);
+  assert.equal(game.closeShop(shopVisitId(game)), false);
   assert.equal(game.checkpointReady, false);
 });
 
@@ -261,7 +263,7 @@ test("shop farewell reads the current owned name instead of retaining the greeti
   game.confirm(); assert.ok(game.currentShop);
   const saved = owner.snapshot(); saved.roster[0]!.name = "Renamed owner";
   saved.characterNames.OWNER_TAG = "Renamed owner"; owner.restore(saved);
-  assert.equal(game.closeShop(), true);
+  assert.equal(game.closeShop(shopVisitId(game)), true);
   assert.equal(game.dialogue?.text, "Goodbye Renamed owner");
   assert.equal(game.dialogue?.speaker, "Renamed owner");
   game.confirm(); assert.equal(game.checkpointReady, true);
