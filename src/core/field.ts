@@ -299,7 +299,12 @@ export type FieldGameOptions = {
   fieldSteps?: FieldConditionPort;
   /** One session-owned development scheduler; this field keeps only a pending
    * transaction for its currently moving player, never a second RNG/counter. */
-  walkEncounters?: { prepareStep(mapId: number, policy: FrameworkWalkEncounterPolicy): WalkEncounterPrepared };
+  walkEncounters?: {
+    /** Map admission requires this read-only query. Standalone movement-only
+     * adapters keep their existing prepareStep contract. */
+    assertPolicy?(mapId: number, policy: FrameworkWalkEncounterPolicy | null): void;
+    prepareStep(mapId: number, policy: FrameworkWalkEncounterPolicy): WalkEncounterPrepared;
+  };
   partyAppearance?: { catalog: PartyActorCatalog; current(): PartyAppearanceCandidate };
   transportation?: FieldTransportationPort;
   transportationTimestamp?: () => string;

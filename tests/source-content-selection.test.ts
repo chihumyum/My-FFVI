@@ -67,6 +67,17 @@ test("one selection captures all real recipe byte pins in declared order without
   });
 });
 
+test("explicit source walking recipes share selection pinning and cannot replace the bulk directory producer",async()=>{
+  await fixture(async f=>{
+    const value={...f.recipes[1],kind:'initialized-source-map-recipe-v2',walking:{kind:'initialized-source-walking-v1',maps:[]}};
+    const bytes=encode(value);await writeFile(resolve(f.root,recipePaths[1]!),bytes);
+    f.selection.recipes[1].sha256=sha(bytes);await f.save();
+    const result=await load({root:f.root,path:selectionPath});assert.equal(result.items[1]!.sha256,sha(bytes));
+    await writeFile(resolve(f.root,recipePaths[1]!),encode({...value,id:'source-battle-directory'}));
+    await assert.rejects(explicit(f.root,recipePaths),/reserved/);
+  });
+});
+
 test("legacy explicit recipe paths share preflight, permit an empty batch and bind actual ordered bytes",async()=>{
   await fixture(async f=>{
     const result=await explicit(f.root,recipePaths);
@@ -104,7 +115,7 @@ test("package and manifest ownership are unique across all recipes and reserved 
   await fixture(async f=>{
     for(const value of [recipe("first-region"),recipe("second-region","first-region-routes"),
       ...["source","framework","development","figaro-development","systems-playground","systems-initialized","world-travel",
-        "base","ordinary-battles","source-prerequisites","linked-source-prerequisites","../escape","UpperCase"].map(id=>recipe(id))]){
+        "base","ordinary-battles","source-battle-directory","source-prerequisites","linked-source-prerequisites","../escape","UpperCase"].map(id=>recipe(id))]){
       await writeFile(resolve(f.root,recipePaths[1]!),encode(value));
       await assert.rejects(explicit(f.root,recipePaths),/Duplicate|reserved|Unsafe/);
     }

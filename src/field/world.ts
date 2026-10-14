@@ -5,6 +5,7 @@ import type { TransportationCatalog } from "../core/transportation.js";
 import type { FieldActorViewDefinition } from "../core/field-actor-view.js";
 import type { FieldNativeAnimationKeys } from "../core/field-native-appearance.js";
 import type { FieldNativeFootDefinition } from "../core/field-native-foot.js";
+import type { SourceWalkPolicyBinding } from "../core/source-walk-policy-content.js";
 import type { DevelopmentProfile } from "../core/development-profile.js";
 import type { FrameworkFlatFieldViewDefinition } from "../core/field-actor-view.js";
 import type { FieldNativeCompositionDefinition } from "../core/field-native-composition.js";
@@ -34,6 +35,9 @@ export type WorldMapContent = {
   developmentOmissions?: FieldContent["developmentOmissions"];
   walkEncounters?: FieldContent["walkEncounters"];
   sourceWalkEncounters?: SourceWalkEncounterDependencies;
+  /** Explicit Web scheduler derived from the retained source set and this
+   * package's complete battle pool. This is not native timing evidence. */
+  frameworkWalkBinding?: SourceWalkPolicyBinding;
   mapId: number;
   areaId: number;
   name: string;

@@ -243,6 +243,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
       return true;
     };
     let seenBattle = null;
+    const ordinaryReturns=new Map();
     while (ticks < route.maxTicks) {
       assert.equal(current(), owner); assert.equal(current().state, state); assert.equal(current().world, world);
       const game = current(), field = game.field;
@@ -268,7 +269,8 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
         visit(); trace.push({ kind: "map", from, to: receipt.finalMapId }); tick(); continue;
       }
       if (!game.battle && field.stop?.kind === "encounter") {
-        const request = field.stop, before = await contentDigest(state.snapshot()), result = await handoff.start();
+        const request = field.stop, before = await contentDigest(state.snapshot()),
+          position={x:field.player.x,y:field.player.y,layer:field.player.layer},result = await handoff.start();
         if (result.status !== "committed") {
           assert.equal(game.battle, null); assert.equal(field.stop, request);
           assert.equal(await contentDigest(state.snapshot()), before);
@@ -276,6 +278,11 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
         }
         execution.committedStarts++;
         assert.equal(result.session, owner); assert.equal(result.request, request);
+        if(request.returnTo?.kind==='field-idle'){
+          assert.ok(game.battle);ordinaryReturns.set(game.battle,{field,position});
+          trace.push({kind:'ordinary-walking-entry',id:game.battle.content.encounterId,position,
+            sourceSetBound:field.content.walkEncounters!==undefined});
+        }
         flow.advance(0, host); tick(); continue;
       }
       const battle = game.battle;
@@ -292,6 +299,13 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
             receipt.boundary = { kind: "battle-return", status: result.status, reason: String(result.error ?? result.status) }; break;
           }
           execution.committedReturns++;
+          const ordinary=ordinaryReturns.get(battle);
+          if(ordinary){
+            assert.equal(game.field,ordinary.field,'Ordinary battle must return to the same published field');
+            assert.deepEqual({x:game.field.player.x,y:game.field.player.y,layer:game.field.player.layer},ordinary.position,
+              'Ordinary return must not reinitialize or relocate the player');
+            trace.push({kind:'ordinary-walking-return',id,position:ordinary.position,sameField:true,positionRetained:true});
+          }
           const returned = await contentDigest(state.snapshot());
           await assert.rejects(handoff.return(), /pending encounter or terminal battle/);
           assert.equal(await contentDigest(state.snapshot()), returned, "Duplicate return cannot settle another reward");

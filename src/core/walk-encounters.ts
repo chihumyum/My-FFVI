@@ -124,10 +124,14 @@ export class WalkEncounterState {
   }
 
   /** Validates a known binding without installing a new map or consuming RNG. */
-  assertPolicy(mapId: number, rawPolicy: FrameworkWalkEncounterPolicy): void {
+  assertPolicy(mapId: number, rawPolicy: FrameworkWalkEncounterPolicy | null): void {
     identity(mapId, "walk map identity");
-    const policy = parseFrameworkWalkEncounterPolicy(rawPolicy);
     const bound = this.value.maps.find((map) => map.mapId === mapId);
+    if (rawPolicy === null) {
+      if (bound) throw new Error(`Walk encounter policy binding mismatch for map ${mapId}`);
+      return;
+    }
+    const policy = parseFrameworkWalkEncounterPolicy(rawPolicy);
     if (bound && canonical(bound.policy) !== canonical(policy))
       throw new Error(`Walk encounter policy binding mismatch for map ${mapId}`);
   }

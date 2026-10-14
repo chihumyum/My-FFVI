@@ -153,6 +153,20 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     ...['systems-playground','systems-initialized','world-travel','figaro-development'].map(name=>
       resolveRecipe('content-batches/'+name+'.recipe.json')),
     ...selection.items.map(item=>resolveRecipe(item.path))]);
+  let sourceBattleDirectory;
+  {
+    const declaration=await recipe('content-batches/source-battle-directory.policy.json');
+    const {compileSourceBattleDirectory}=await import('./source-battle-directory.mjs');
+    const catalog=await sourceRead('/world/catalog.json');
+    const maps=await Promise.all(Object.values(catalog.maps).map(ref=>sourceRead(ref.url)));
+    sourceBattleDirectory=await compileSourceBattleDirectory({root,compiledDir,world:{catalog,maps},
+      baseCatalog:await sourceRead('/game/source-catalog.json'),policy:declaration.value});
+    for(const [name,value] of [['strict',sourceBattleDirectory.strictCatalog],
+      ['framework',sourceBattleDirectory.frameworkCatalog],['requests',sourceBattleDirectory.requests]])
+      put('/content-packages/source-battle-directory/'+name+'.json',value);
+    put('/content-packages/source-battle-directory/build-report.json',sourceBattleDirectory.report);
+    reports.push({id:'source-battle-directory',report:sourceBattleDirectory.report});
+  }
   // Parallel pure preparation; no producer writes the live registry or an
   // independent battle cache. Derived packages read this build's battle body.
   const derived=await Promise.all([
@@ -161,7 +175,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     compileInitializedSystems(root,initRecipe.value,initRecipe.sha256,{dist:compiledDir,readJson:candidateRead}),
     compileWorldTravel(root,travelRecipe.value,travelRecipe.sha256,{dist:compiledDir,readJson:candidateRead}),
     ...sourceRecipes.map(item=>compileInitializedContentBatch(root,item.value,item.sha256,
-      {dist:compiledDir,readJson:candidateRead})),
+      {dist:compiledDir,readJson:candidateRead,sourceBattleDirectory})),
   ]);
   for(const [index,id] of ['figaro-development','systems-playground','systems-initialized','world-travel'].entries())append(id,derived[index]);
   for(const [index,item] of sourceRecipes.entries())append(item.value.id,derived[index+4]);

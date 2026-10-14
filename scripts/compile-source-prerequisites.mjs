@@ -5,7 +5,12 @@ import { isAbsolute, posix, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const repository = resolve(import.meta.dirname, "..");
-const SNAPSHOTS = ["corpus", "battle", "field", "world-media", "field-background-media", "map-ui", "bgm", "environment", "se"];
+const SNAPSHOTS = ["import", "corpus", "battle", "field", "world-media", "field-background-media", "map-ui", "bgm", "environment", "se"];
+// Both ordinary and whole-world battle producers read these exact existing
+// proofs through compileGameCatalogModules. They belong to the same candidate
+// input fence as the source snapshots, not the mutable general report domain.
+const CATALOG_EVIDENCE = ["build/reports/v71-esper-native-complete/complete.json",
+  "build/reports/v71-esper-native-complete/856d80.c"];
 const HASH = /^[a-f0-9]{64}$/;
 const sha = value => createHash("sha256").update(value).digest("hex");
 const digest = value => sha(JSON.stringify(value));
@@ -139,6 +144,7 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
     for (const item of manifest.files) await add(resolve(path, item.file), item.sha256);
   }
   await add(resolve(root, "build/game/source-catalog.json"));
+  for(const path of CATALOG_EVIDENCE)await add(resolve(root,path));
   const hosts = new Map();
   for (const source of api.ordinaryFieldCompositionRenderHost().sources) {
     if (hosts.has(source.file) && hosts.get(source.file) !== source.sha256) throw new Error("Ambiguous original composition input");
@@ -194,7 +200,7 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
     }
   }
   if (!seen.has(resolve(lock.compiledDir, "src"))) throw new Error("Missing source prerequisite compiler directory");
-  for (const path of ["build/game/source-catalog.json", "build/runtime/game/FINAL FANTASY VI_Data/level0",
+  for (const path of [...CATALOG_EVIDENCE,"build/game/source-catalog.json", "build/runtime/game/FINAL FANTASY VI_Data/level0",
     "build/runtime/game/FINAL FANTASY VI_Data/globalgamemanagers"])
     if (!lock.files.some(item => filePath(root, item.path) === resolve(root, path)))
       throw new Error("Missing source prerequisite dependency: " + path);

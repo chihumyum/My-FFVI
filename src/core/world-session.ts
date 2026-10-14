@@ -248,6 +248,7 @@ type Ownership = {
   fade: string;
   camera: string;
   publishPresentation(): void;
+  validateWalkPolicy(): void;
   walkFieldState?: string;
   catalogHash: string;
   owned?: { commit(): boolean };
@@ -471,6 +472,23 @@ export class WorldSession {
         throw new Error("Source world catalog changed during the session");
       assertSourceEntryProfiles(this.sourceOrigin, catalog, this.sourceOrigin, target);
     }
+    const walkOwner = this.owned?.current.walkEncounters;
+    const walkMapId = target.mapId;
+    const walkPolicy = structuredClone(target.walkEncounters ?? null);
+    const walkPolicyIdentity = canonical(walkPolicy);
+    const validateWalkBinding = () => {
+      if (this.owned?.current.walkEncounters !== walkOwner)
+        throw new Error("Walking map admission requires the bound scheduler policy query");
+      if (!walkOwner?.assertPolicy) {
+        if (walkPolicy !== null)
+          throw new Error("Walking map admission requires the bound scheduler policy query");
+        return;
+      }
+      walkOwner.assertPolicy(walkMapId, walkPolicy);
+    };
+    // This query does not install an unused map or draw RNG. Reject a changed
+    // visited-map policy before preparing any owned, actor or effect candidate.
+    validateWalkBinding();
     const fromActors = this.actorState(from), fromFade = canonical(from.fader.snapshot()),
       fromCamera = canonical(from.cameraSnapshot), fromPresentation = from.sourcePresentationContext;
     const effectBlocker = from.effectMapHandoffBlocker;
@@ -515,12 +533,17 @@ export class WorldSession {
       throw new Error("Unbound candidate map presentation context");
     let presentationPublished = false;
     let destinationField: FieldGame | null = null;
-    const walkOwner = this.owned?.current.walkEncounters;
     const requirePublishedWalkOwner = () => {
       if (!presentationPublished || this.current !== destinationField)
         throw new Error("Walking encounters require the published current map");
     };
     const walkEncounters: FieldGameOptions["walkEncounters"] = walkOwner ? {
+      assertPolicy: (mapId, policy) => {
+        requirePublishedWalkOwner();
+        if (!walkOwner.assertPolicy)
+          throw new Error("Walking map admission requires the bound scheduler policy query");
+        walkOwner.assertPolicy(mapId, policy);
+      },
       prepareStep: (mapId, policy) => {
         requirePublishedWalkOwner();
         const candidate = walkOwner.prepareStep(mapId, policy);
@@ -646,6 +669,11 @@ export class WorldSession {
         fade: fromFade,
         camera: fromCamera,
         publishPresentation: () => { presentationPublished = true; },
+        validateWalkPolicy: () => {
+          if (canonical(field.content.walkEncounters ?? null) !== walkPolicyIdentity)
+            throw new Error("Walking map candidate policy changed before publication");
+          validateWalkBinding();
+        },
         ...(content.walkEncounters ? { walkFieldState: this.effectFieldState(field) } : {}),
         catalogHash: catalog.contentHash,
         ...(owned ? { owned } : {}),
@@ -747,7 +775,7 @@ export class WorldSession {
     ownership?.effects?.candidate.discard();
   }
   private isCurrent(ownership: Ownership, value: PreparedMap): boolean {
-    return ownership.from === this.current && ownership.stop === this.current.stop && value.request === ownership.stop &&
+    const current = ownership.from === this.current && ownership.stop === this.current.stop && value.request === ownership.stop &&
       ownership.request === canonical(this.current.stop.request) &&
       ownership.state === canonical(this.current.eventState.snapshot()) &&
       ownership.bgm === canonical(this.current.bgm.snapshot()) &&
@@ -759,6 +787,8 @@ export class WorldSession {
       ownership.camera === canonical(this.current.cameraSnapshot) &&
       (ownership.walkFieldState === undefined || ownership.walkFieldState === this.effectFieldState(value.field)) &&
       (!ownership.effects || ownership.effects.fieldState === this.effectFieldState(value.field));
+    if (current) ownership.validateWalkPolicy();
+    return current;
   }
   private effectFieldState(field: FieldGame): string {
     return canonical({ time: field.time, busy: field.busy, stop: field.stop,

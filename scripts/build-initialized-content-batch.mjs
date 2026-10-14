@@ -23,16 +23,20 @@ async function modules(root, dist) {
     "compiler/framework-field-presentation", "compiler/framework-new-game", "compiler/content-batch",
     "compiler/corpus", "compiler/map-package", "compiler/field-native-composition", "compiler/content",
     "core/content-integrity", "core/game-content", "core/game-content-refs", "core/source-catalog",
+    "compiler/source-walk-policy",
   ].map(load)));
 }
 
 /** All source references are verified before derivation. The manifest supplies
  * player inputs, not replacement scripts, flags, actors, rewards or assets. */
-export async function compileInitializedContentBatch(root, raw, recipeSha256, { dist = "dist", readJson } = {}) {
+export async function compileInitializedContentBatch(root, raw, recipeSha256,
+  { dist = "dist", readJson, sourceBattleDirectory } = {}) {
   root = resolve(root); const api = await modules(root, dist), build = resolve(root, "build");
-  fields(raw, "kind,id,sourceEntry,sourceBattle,sourceWorld,startMap,entrance,presentation,manifest");
+  const walkingVariant=raw?.kind==='initialized-source-map-recipe-v2';
+  fields(raw, "kind,id,sourceEntry,sourceBattle,sourceWorld,startMap,entrance,presentation,manifest"+
+    (walkingVariant?',walking':''));
   const recipe = structuredClone(raw);
-  assert.equal(recipe.kind, "initialized-source-map-recipe-v1");
+  assert.ok(['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2'].includes(recipe.kind));
   assert.match(recipe.id, /^[a-z0-9][a-z0-9-]{0,79}$/); assert.match(recipeSha256, digest);
   assert.ok(Number.isInteger(recipe.startMap) && recipe.startMap > 0 && recipe.startMap <= 0x7fffffff);
   assert.ok(Number.isInteger(recipe.entrance) && recipe.entrance >= 0 && recipe.entrance <= 0x7fffffff);
@@ -57,6 +61,29 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256, { 
   assert.equal(sourceEntry.worldCatalogHash, sourceWorld.contentHash);
   for (const value of [sourceEntry, sourceWorld]) assert.equal(value.developmentProfile, undefined);
   api.assertSourceGameCatalog(sourceBattle);
+  const battle=structuredClone(walkingVariant?sourceBattleDirectory?.frameworkCatalog:sourceBattle);
+  assert.ok(battle,'Source walking batch requires this candidate\'s bulk battle directory');
+  await api.verifyContent(battle);api.assertSourceGameCatalog(battle,'framework');
+  assert.equal(api.canonical(battle.gameState),api.canonical(sourceBattle.gameState),
+    'Bulk enemy compilation cannot change the source initializer or owned catalogs');
+  const {drops:_sourceDrops,...sourceCommon}=sourceBattle.common,
+    {drops:_derivedDrops,...derivedCommon}=battle.common;
+  assert.equal(api.canonical(sourceCommon),api.canonical(derivedCommon),'Bulk enemy compilation changed shared battle rules');
+  const walking=new Map();
+  if(walkingVariant){
+    await Promise.all([sourceBattleDirectory.requests,sourceBattleDirectory.report].map(value=>api.verifyContent(value)));
+    assert.equal(sourceBattleDirectory.report.baselineHash,sourceBattle.contentHash,'Bulk directory baseline mismatch');
+    assert.equal(sourceBattleDirectory.report.frameworkCatalogHash,battle.contentHash,'Bulk directory catalog mismatch');
+    assert.equal(sourceBattleDirectory.report.requestsHash,sourceBattleDirectory.requests.contentHash,'Bulk directory requests mismatch');
+    assert.equal(sourceBattleDirectory.requests.sourceRequests.worldCatalogHash,sourceWorld.contentHash,'Bulk directory world mismatch');
+    fields(recipe.walking,'kind,maps');assert.equal(recipe.walking.kind,'initialized-source-walking-v1');
+    assert.ok(Array.isArray(recipe.walking.maps)&&recipe.walking.maps.length>0);
+    for(const item of recipe.walking.maps){
+      fields(item,'mapId,declaration');assert.ok(initialManifest.mapIds.includes(item.mapId));
+      assert.ok(!walking.has(item.mapId),'Duplicate source walking map declaration');
+      walking.set(item.mapId,item.declaration);
+    }
+  }
   const sourcePins = initialManifest.mapIds.map(mapId => {
     const index = sourceWorld.maps[String(mapId)]; assert.ok(index, "Missing original map " + mapId);
     return { mapId, url: index.url, contentHash: index.contentHash };
@@ -77,10 +104,21 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256, { 
   const seal = value => { const { contentHash: _, ...body } = value; return { ...body, contentHash: api.hash(body) }; };
   const profile = sourceContentHash => ({ kind: "framework-development-v1", policy: "omit-anonymous-environment-particles-v1",
     sourceContentHash, omissions: [], fieldPresentation: recipe.presentation });
-  const prefix = "/content-packages/" + recipe.id, presentations = [];
+  const prefix = "/content-packages/" + recipe.id, presentations = [], walkingResults=[];
   const maps = sourceMaps.map(sourceMap => {
     const map = structuredClone(sourceMap);
     map.developmentProfile = profile(sourceMap.contentHash);
+    if(walking.has(map.mapId)){
+      assert.ok(map.sourceWalkEncounters,'Missing retained source walking metadata');
+      assert.equal(map.walkEncounters,undefined,'Source map cannot already carry an authored scheduler');
+      const result=api.compileSourceWalkPolicy({mapId:map.mapId,source:map.sourceWalkEncounters,catalog:battle,
+        declaration:walking.get(map.mapId)});
+      walkingResults.push(result);
+      assert.equal(result.status,'ready','Entire source encounter pool must be executable before enabling walking: '+
+        api.canonical(result.diagnostics));
+      assert.ok(result.policy&&result.binding);
+      map.walkEncounters=result.policy;map.frameworkWalkBinding=result.binding;
+    }
     try {
       assert.ok(map.map && map.partyEntry && map.cameraHost && map.entryView);
       assert.equal(map.entryView.isWorld, false, "Ordinary presentation cannot grant world-map identity");
@@ -102,7 +140,8 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256, { 
     }
     // Derived fields are top-level only. Every original payload field is kept
     // exactly, including original view/provider diagnostics and script metadata.
-    const { developmentProfile: _profile, frameworkPresentation: _presentation, ...unchanged } = map;
+    const unchanged=structuredClone(map);delete unchanged.developmentProfile;delete unchanged.frameworkPresentation;
+    if(walking.has(map.mapId)){delete unchanged.walkEncounters;delete unchanged.frameworkWalkBinding;}
     assert.equal(api.canonical(unchanged), api.canonical(sourceMap));
     return seal(map);
   });
@@ -113,7 +152,7 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256, { 
   };
   // The remaining catalog identities remain visible. They are not silently
   // converted to this profile or admitted through an unvisited source exit.
-  const catalog = seal(catalogDraft), battle = structuredClone(sourceBattle);
+  const catalog = seal(catalogDraft);
   const sourceMap = sourceMaps.find(map => map.mapId === recipe.startMap), map = maps.find(map => map.mapId === recipe.startMap);
   assert.ok(sourceMap && map);
   assert.ok(initialManifest.roots.some(value => value.kind === "entry" && value.mapId === map.mapId &&
@@ -138,6 +177,9 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256, { 
   const report = { kind: "initialized-source-map-build-v1", package: recipe.id, recipeSha256,
     refs, manifestHash: plan.manifestHash, initializerHash: entry.initializerHash,
     sourceInputs: { entry: recipe.sourceEntry, battle: recipe.sourceBattle, world: recipe.sourceWorld, maps: sourcePins },
+    ...(walkingVariant?{walking:walkingResults,battleDirectory:{
+      catalogHash:battle.contentHash,requestsHash:sourceBattleDirectory.requests.contentHash,
+      reportHash:sourceBattleDirectory.report.contentHash},nativeWalkingRulesVerified:false}:{}),
     relocation: { kind: "source-initializer-authored-map-v1", mapId: recipe.startMap, entrance: recipe.entrance,
       sourceStoryReachability: "unverified" },
     maps: maps.map(value => ({ mapId: value.mapId, contentHash: value.contentHash })), presentations,
@@ -145,7 +187,8 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256, { 
     originalMapPayloadsChanged: false, originalPackagesChanged: false, originalInitializerChanged: false,
     storyFlagsChanged: false, ownedCatalogsChanged: false, sourceCampaignComplete: false,
     browserVerified: false, originalGameExecuted: false,
-    limitations: ["Only entry relocation and the declared ordinary Canvas material policy are authored.",
+    limitations: [walkingVariant?'Entry relocation, flat presentation, Web step counts and source rates as Web weights are explicit development policies.'
+      :"Only entry relocation and the declared ordinary Canvas material policy are authored.",
       "Every original map entity, event, exit, collision and foot provider is retained, including blockers.",
       "Original entries outside the declared map batch remain indexed but are not granted this initialized profile.",
       "Compilation and reference analysis do not prove route execution or original story reachability."] };

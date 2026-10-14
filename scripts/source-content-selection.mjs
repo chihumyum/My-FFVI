@@ -9,6 +9,7 @@ export const SOURCE_CONTENT_RESERVED_PACKAGE_IDS=Object.freeze([
   'source','framework','development',
   'figaro-development','systems-playground','systems-initialized','world-travel',
   'base','ordinary-battles','source-prerequisites','linked-source-prerequisites',
+  'source-battle-directory',
 ]);
 const packageId=/^[a-z0-9][a-z0-9-]{0,79}$/;
 const manifestId=/^[a-z0-9][a-z0-9-]{0,159}$/;
@@ -108,7 +109,8 @@ async function recipes(read,requests,reserved){
     const input=await read(request.path);
     if(request.sha256!==undefined&&input.sha256!==request.sha256)throw new Error('Source recipe SHA256 mismatch: '+request.path);
     const value=input.value;
-    if(!value||typeof value!=='object'||Array.isArray(value)||value.kind!=='initialized-source-map-recipe-v1')
+    if(!value||typeof value!=='object'||Array.isArray(value)||
+      !['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2'].includes(value.kind))
       throw new Error('Unsupported source recipe kind: '+request.path);
     if(typeof value.id!=='string'||!packageId.test(value.id)||reserved.has(value.id))
       throw new Error('Unsafe or reserved source recipe package identity: '+String(value.id));

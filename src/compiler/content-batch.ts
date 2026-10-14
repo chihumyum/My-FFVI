@@ -11,6 +11,7 @@ import { parseGameDevelopmentEntry, validateGameDevelopmentEntryBindings,
 import { hash, canonical } from "./content.js";
 import { analyzeContentDependencies } from "./content-dependencies.js";
 import { analyzeBatchEncounters } from "./content-batch-battle.js";
+import { assertSourceWalkPolicyBinding } from "./source-walk-policy.js";
 
 const id = z.number().int().positive().max(0x7fffffff);
 const name = z.string().min(1).max(160);
@@ -102,6 +103,12 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
   if (maps.length !== manifest.mapIds.length || maps.some(m => !manifest.mapIds.includes(m.mapId)))
     throw new Error("Batch packages must match the declared maps exactly");
   const framework = manifest.profile === "framework";
+  for (const map of maps) if (map.frameworkWalkBinding !== undefined) {
+    if (!framework || !map.sourceWalkEncounters || !map.walkEncounters)
+      throw new Error("Source walking binding requires explicit framework source metadata and policy");
+    assertSourceWalkPolicyBinding({ mapId: map.mapId, source: map.sourceWalkEncounters,
+      catalog: battle, binding: map.frameworkWalkBinding, policy: map.walkEncounters });
+  }
   for (const item of [catalog, ...maps, entry])
     if ((item.developmentProfile?.kind === "framework-development-v1") !== framework ||
         !framework && "walkEncounters" in item && item.walkEncounters !== undefined)

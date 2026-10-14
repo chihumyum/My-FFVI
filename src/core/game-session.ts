@@ -246,7 +246,10 @@ export class GameSession {
         recovery: this.state.fieldRecovery,
         ...(this.state.fieldTransportation ? { transportation: this.state.fieldTransportation } : {}),
         shop: this.state.fieldShop,
-        walkEncounters: { prepareStep: (mapId, policy) => this.walkEncounters.prepareStep(mapId, policy) },
+        walkEncounters: {
+          assertPolicy: (mapId, policy) => this.walkEncounters.assertPolicy(mapId, policy),
+          prepareStep: (mapId, policy) => this.walkEncounters.prepareStep(mapId, policy),
+        },
         ...(battleCatalog.gameState.fieldConditions ? { fieldSteps: this.state.fieldSteps } : {}),
         ...(this.state.fieldPartyAppearance ? { partyAppearance: this.state.fieldPartyAppearance } : {}),
         movementBlocker: (transportationId, manual) => this.state.fieldMoveBlocker(transportationId, manual),
@@ -611,8 +614,11 @@ export class GameSession {
     if (s.formatVersion !== 4) next.walkEncounters.restore(s.walkEncounters);
     else if (initial?.walkEncounters || next.field.content.walkEncounters)
       throw new Error("Legacy checkpoint has no walking encounter state");
-    if (next.field.content.walkEncounters)
-      next.walkEncounters.assertPolicy(next.field.content.map.identity!.mapId, next.field.content.walkEncounters);
+    const walkMapId = next.field.content.map.identity?.mapId;
+    if (walkMapId !== undefined)
+      next.walkEncounters.assertPolicy(walkMapId, next.field.content.walkEncounters ?? null);
+    else if (next.field.content.walkEncounters || s.formatVersion !== 4 && s.walkEncounters.maps.length)
+      throw new Error("Saved walking encounters require a bound current map identity");
     next.encounterSerial = s.encounterSerial;
     next.remainder = s.remainder;
     return next;

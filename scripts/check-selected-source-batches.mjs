@@ -54,7 +54,7 @@ export async function checkSelectedSourceBatches({root=repository,compiledDir='d
     report.compiledDirectory=relative(root,compiled);report.contentDirectory=relative(root,content);
     const load=name=>import(pathToFileURL(resolve(compiled,'src',name+'.js')).href);
     const api=Object.assign({},...await Promise.all(['core/game-content','core/game-content-refs','core/content-integrity','core/canonical',
-      'compiler/content-batch','compiler/content-batch-work-set'].map(load)));
+      'compiler/content-batch','compiler/content-batch-work-set','compiler/source-walk-policy'].map(load)));
     const read=async url=>{
       assert.match(url,jsonURL,'Only this published collection supplies JSON dependencies');
       const logical=resolve(content,url.slice('/content-packages/'.length)),file=await realpath(logical);
@@ -125,6 +125,26 @@ export async function checkSelectedSourceBatches({root=repository,compiledDir='d
       assert.equal(built.sourceInputs.world.contentHash,sourceWorld.contentHash);
       assert.equal(bundle.catalog.developmentProfile.sourceContentHash,sourceWorld.contentHash);
       assert.equal(built.sourceInputs.battle.contentHash,sourceRefs.source.battle.contentHash);
+      const walkingMaps=new Map();
+      if(built.walking!==undefined){
+        assert.equal(built.nativeWalkingRulesVerified,false);assert.ok(Array.isArray(built.walking));
+        assert.ok(built.battleDirectory,'Walking package must name the shared bulk directory');
+        const directory=await api.verifyContent(await read('/content-packages/source-battle-directory/framework.json'));
+        assert.equal(directory.contentHash,built.battleDirectory.catalogHash);
+        assert.equal(directory.contentHash,bundle.battle.contentHash);
+        const requests=await api.verifyContent(await read('/content-packages/source-battle-directory/requests.json'));
+        assert.equal(requests.contentHash,built.battleDirectory.requestsHash);
+        const directoryReport=await api.verifyContent(await read('/content-packages/source-battle-directory/build-report.json'),
+          built.battleDirectory.reportHash);
+        assert.equal(directoryReport.frameworkCatalogHash,directory.contentHash);
+        assert.equal(directoryReport.requestsHash,requests.contentHash);
+        assert.equal(directoryReport.baselineHash,sourceRefs.source.battle.contentHash);
+        assert.equal(requests.sourceRequests.worldCatalogHash,sourceWorld.contentHash);
+        for(const result of built.walking){
+          assert.equal(result.status,'ready');assert.ok(!walkingMaps.has(result.binding.mapId));
+          walkingMaps.set(result.binding.mapId,result);
+        }
+      }
       const row={packageId:batch.packageId,label:batch.label,manifestHash:plan.manifestHash,dependencyHash:plan.dependencyHash,
         contentHashes:plan.contentHashes,diagnostics:plan.diagnostics,referenceClosure:plan.dependencies.referenceClosure,
         providerRequirements:plan.dependencies.providerRequirements,providerAssessments:plan.dependencies.providerAssessments,
@@ -138,9 +158,20 @@ export async function checkSelectedSourceBatches({root=repository,compiledDir='d
         assert.equal(sourcePin[0].contentHash,original.contentHash);
         const {contentHash:_sourceHash,...sourceBody}=original;
         const {contentHash:_derivedHash,developmentProfile:_profile,frameworkPresentation:_presentation,...derivedBody}=map;
+        if(walkingMaps.has(map.mapId)){
+          const result=walkingMaps.get(map.mapId);
+          assert.equal(api.canonical(result.source),api.canonical(original.sourceWalkEncounters));
+          assert.equal(api.canonical(result.binding),api.canonical(map.frameworkWalkBinding));
+          assert.equal(api.canonical(result.policy),api.canonical(map.walkEncounters));
+          api.assertSourceWalkPolicyBinding({mapId:map.mapId,source:original.sourceWalkEncounters,
+            catalog:bundle.battle,binding:map.frameworkWalkBinding,policy:map.walkEncounters});
+          delete derivedBody.walkEncounters;delete derivedBody.frameworkWalkBinding;
+        }
         assert.equal(api.canonical(derivedBody),api.canonical(sourceBody),'Source map payload changed: '+batch.packageId+'/'+map.mapId);
         row.maps.push({mapId:map.mapId,sourceHash:original.contentHash,derivedHash:map.contentHash,fullPayloadPreserved:true});
       }
+      assert.ok([...walkingMaps.keys()].every(id=>maps.some(map=>map.mapId===id)),
+        'Walking build record names a map outside this package');
       report.tests.push({name:batch.packageId+': exact selected content and complete original map payloads',passed:true});
       prepared.push({batch,plan,repository,row});
     }

@@ -122,7 +122,7 @@ async function lockedDirectory(work: (root: string, lock: InputLock) => Promise<
   };
   try {
     const sources = [{ file: "synthetic-source", sha256: "a".repeat(64) }], sourceSetHash = hash(sources), parentSourceSetHash = "b".repeat(64);
-    for (const name of ["corpus", "battle", "field", "world-media", "field-background-media", "map-ui", "bgm", "environment", "se"]) {
+    for (const name of ["import", "corpus", "battle", "field", "world-media", "field-background-media", "map-ui", "bgm", "environment", "se"]) {
       const dir = "build/" + name; directories.push(dir);
       const file = name === "corpus" ? "corpus.json" : "media.json";
       const body = name === "corpus" ? JSON.stringify({ sources, sourceSetHash, parentSourceSetHash }) : JSON.stringify({ controlled: name });
@@ -130,6 +130,8 @@ async function lockedDirectory(work: (root: string, lock: InputLock) => Promise<
       await write(dir + "/snapshot.json", JSON.stringify({ formatVersion: 1, files: [{ file, sha256: sha(body) }] }));
     }
     await write("build/game/source-catalog.json", JSON.stringify({ controlled: "catalog" }));
+    await write("build/reports/v71-esper-native-complete/complete.json", JSON.stringify({controlled:'existing catalog proof'}));
+    await write("build/reports/v71-esper-native-complete/856d80.c", "synthetic bound constructor proof\n");
     await write("build/runtime/game/FINAL FANTASY VI_Data/level0", "synthetic boot source");
     await write("build/runtime/game/FINAL FANTASY VI_Data/globalgamemanagers", "synthetic managers source");
     await write("compiled/src/compiler.js", "export const synthetic = true;\n"); directories.push("compiled/src");
@@ -168,6 +170,27 @@ test("source input lock refuses stale bytes, directory additions and changed com
     if (change === "compiler") await writeFile(resolve(root, "compiled/src/compiler.js"), "export const stale = true;");
     if (change === "addition") await writeFile(resolve(root, "build/corpus/unlisted.json"), "{}");
     await assert.rejects(api.validateSourcePrerequisiteInputs(lock, { root }), /changed/);
+  });
+});
+
+test("battle source imports and consumed catalog proofs share the final candidate input fence", async () => {
+  const api=await loadLock(),paths=['build/import/media.json',
+    'build/reports/v71-esper-native-complete/complete.json','build/reports/v71-esper-native-complete/856d80.c'];
+  for(const path of paths)await lockedDirectory(async(root,lock)=>{
+    assert.equal(await api.validateSourcePrerequisiteInputs(lock,{root}),true);
+    await writeFile(resolve(root,path),'Changed after battle candidate compilation');
+    await assert.rejects(api.validateSourcePrerequisiteInputs(lock,{root}),/changed/);
+  });
+  await lockedDirectory(async(root,lock)=>{
+    const withoutImport=structuredClone(lock);withoutImport.directories=withoutImport.directories.filter(dir=>dir.path!=='build/import');
+    await assert.rejects(api.validateSourcePrerequisiteInputs(withoutImport,{root}),/Missing.*snapshot directory/);
+    for(const path of paths.slice(1)){
+      const missing=structuredClone(lock);missing.files=missing.files.filter(file=>file.path!==path);
+      await assert.rejects(api.validateSourcePrerequisiteInputs(missing,{root}),/Missing.*dependency/);
+    }
+    const path=resolve(root,paths[2]!),replacement=resolve(root,'same-proof.c');
+    await writeFile(replacement,await readFile(path));await rm(path);await symlink(replacement,path);
+    await assert.rejects(api.validateSourcePrerequisiteInputs(lock,{root}),/path\/size changed/);
   });
 });
 
