@@ -38,6 +38,105 @@ function facingTarget(field, input, canonicalCell) {
   return hits.length === 1 && hits[0].id === input.entityId ? hits[0] : null;
 }
 
+function declaredBattleReferences(battle, program) {
+  const refs = new Map();
+  for (const rule of program.rules) {
+    const targets = rule.target.kind === "side" ? rule.target.members : [rule.target];
+    for (const [role, identity] of [["actor", rule.actor], ...targets.map(target => ["target", target])]) {
+      const matches = battle.combatants.filter(unit => unit.id === identity.id);
+      assert.equal(matches.length, 1, `Declared battle ${role} was never present: ${identity.id}`);
+      const unit = matches[0];
+      assert.equal(unit.sourceId, identity.sourceId, `Declared battle ${role} source identity changed: ${identity.id}`);
+      if (role === "actor") assert.equal(unit.side, "player", "Declared battle actor must be an owned player");
+      refs.set(identity.id, unit);
+    }
+    const command = battle.content.commands[rule.commandId];
+    assert.ok(command && command.kind === rule.action.kind, "Declared battle command identity or kind changed");
+    assert.ok(battle.commandMenu(rule.actor.id).some(entry => entry.id === rule.commandId),
+      "Declared battle command is not owned or released by its exact actor");
+    if (rule.action.kind === "ability")
+      assert.ok(command.abilityIds.includes(rule.action.abilityId) && battle.content.abilities[rule.action.abilityId],
+        "Declared ability does not belong to its exact command");
+    else assert.ok(battle.items[rule.action.itemId], "Declared battle item is unknown");
+    if (rule.target.kind === "side") {
+      const actual = battle.combatants.filter(unit => unit.side === rule.target.side)
+        .map(unit => ({ id: unit.id, sourceId: unit.sourceId })).sort((a, b) => a.id.localeCompare(b.id));
+      assert.deepEqual([...targets].sort((a, b) => a.id.localeCompare(b.id)), actual,
+        "Declared side does not bind the complete original live member domain");
+    }
+  }
+  return refs;
+}
+
+/** Select one explicitly declared gesture for one ready player. No effect,
+ * resource, target substitution or readiness is owned by this input driver. */
+function declaredBattleInput(battle, program, refs, actor, channel) {
+  const skippedTargets = [];
+  const rules = program.rules.map((rule, ruleIndex) => ({ rule, ruleIndex }))
+    .filter(({ rule }) => rule.actor.id === actor.id);
+  assert.ok(rules.length, `Ready player has no declared battle inputs: ${actor.id}`);
+  for (const { rule, ruleIndex } of rules) {
+    assert.equal(actor, refs.get(rule.actor.id), "Declared battle actor instance changed");
+    assert.equal(actor.sourceId, rule.actor.sourceId, "Declared battle actor source changed");
+    const identities = rule.target.kind === "side" ? rule.target.members : [rule.target], targets = [];
+    for (const identity of identities) {
+      const target = battle.combatants.find(unit => unit.id === identity.id);
+      assert.equal(target, refs.get(identity.id), "Declared battle target instance disappeared or changed");
+      assert.equal(target.sourceId, identity.sourceId, "Declared battle target source changed");
+      // Exit is an independent core projection, never guessed from absent target
+      // choices, zero HP, an ability ID or a source condition name.
+      const exited = target.side === "enemy" && typeof battle.enemyExitState === "function"
+        ? battle.enemyExitState(target.id) : null;
+      if (rule.target.ended === "skip" && (target.hp <= 0 || exited?.kind === "escaped")) {
+        skippedTargets.push({ ruleIndex, target: structuredClone(identity),
+          reason: exited?.kind === "escaped" ? "escaped" : "dead", exit: structuredClone(exited) }); continue;
+      }
+      targets.push(target);
+    }
+    if (!targets.length) continue;
+    if (rule.when.kind === "target-resource-below") {
+      const below = targets.some(target => { const maximum = rule.when.resource === "hp" ? target.maxHp : target.maxMp;
+        return maximum > 0 && target[rule.when.resource] * 100 < maximum * rule.when.percent; });
+      if (!below) continue;
+      if (rule.avoidPendingRecovery) {
+        const pending = [...battle.pendingActions, ...(battle.action && !battle.action.resolved ? [battle.action] : [])];
+        const covered = pending.some(action => {
+          const plan = action.source.kind === "ability" ? battle.content.abilities[action.source.id]?.plan
+            : battle.items[action.source.id]?.uses.battle.plan;
+          return plan?.effects.some(effect => effect.kind === "recovery" && effect.resource === rule.when.resource) &&
+            action.targetIds.some(id => targets.some(target => target.id === id));
+        });
+        if (covered) continue;
+      }
+    }
+    if (rule.minimumActorMp !== undefined && actor.mp < rule.minimumActorMp) continue;
+    if (rule.minimumItemCount !== undefined &&
+        (battle.inventory.find(stack => stack.id === rule.action.itemId)?.available ?? 0) < rule.minimumItemCount) continue;
+    const menu = battle.commandMenu(actor.id).find(entry => entry.id === rule.commandId);
+    assert.ok(menu?.available && menu.kind === rule.action.kind, "Selected battle command is unavailable for its declared actor");
+    const choices = rule.action.kind === "ability"
+      ? battle.targetChoices(actor.id, rule.action.abilityId)
+      : battle.itemTargetChoices(actor.id, rule.action.itemId);
+    const choice = choices.find(choice => rule.target.kind === "side"
+      ? choice.selection.kind === "side" && choice.selection.side === rule.target.side &&
+        JSON.stringify([...choice.targetIds].sort()) === JSON.stringify(targets.map(target => target.id).sort())
+      : choice.selection.kind === "single" && choice.selection.id === targets[0].id &&
+        choice.targetIds.length === 1 && choice.targetIds[0] === targets[0].id);
+    assert.ok(choice, "Selected battle target is not a legal exact single target or complete declared side");
+    const before = { actor: { hp: actor.hp, mp: actor.mp }, target: rule.target.kind === "side"
+      ? { members: targets.map(target => ({ id: target.id, hp: target.hp, mp: target.mp })) }
+      : { hp: targets[0].hp, mp: targets[0].mp },
+      inventory: battle.inventory };
+    const accepted = rule.action.kind === "ability"
+      ? channel.command(battle, actor.id, rule.action.abilityId, choice.selection, rule.commandId)
+      : channel.commandItem(battle, actor.id, rule.action.itemId, choice.selection, rule.commandId);
+    assert.equal(accepted, true, "Selected declared battle input was rejected; no fallback is permitted");
+    return { ruleIndex, rule: structuredClone(rule), before, selection: structuredClone(choice.selection),
+      skippedTargets, ownerBound: channel.ownsBattle(battle) };
+  }
+  return null;
+}
+
 export async function runContentBatchRoute({ root, compiled = "dist", plan: suppliedPlan, routeId, repository, runtimeHash,
   captureFinalState = false }) {
   assert.equal(typeof captureFinalState, "boolean", "Final state capture must be an explicit boolean");
@@ -279,7 +378,12 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
           continued: !final, ownerRebound: commandChannel.owner === owner, completedBattles: state.snapshot().completedBattles.length } : {}) });
       return true;
     };
-    let seenBattle = null;
+    let seenBattle = null, battleProgram = null, battleRefs = null;
+    const actionStarts = new WeakSet(), actionResolutions = new WeakSet();
+    const battleUnits = battle => battle.combatants.map(unit => ({ id: unit.id, sourceId: unit.sourceId,
+      side: unit.side, hp: unit.hp, maxHp: unit.maxHp, mp: unit.mp, maxMp: unit.maxMp,
+      conditionIds: [...unit.conditionIds], exit: unit.side === "enemy" && typeof battle.enemyExitState === "function"
+        ? battle.enemyExitState(unit.id) : null }));
     const ordinaryReturns=new Map();
     while (ticks < route.maxTicks) {
       assert.equal(current(), owner); assert.equal(current().state, state); assert.equal(current().world, world);
@@ -339,9 +443,39 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
       if (battle) {
         assert.ok(plan.dependencies.encounterIds.includes(battle.content.encounterId),
           "Route reached an encounter outside the scanned dependencies");
-        if (battle !== seenBattle) { trace.push({ kind: "battle", id: battle.content.encounterId }); seenBattle = battle; }
+        if (battle !== seenBattle) {
+          trace.push({ kind: "battle", id: battle.content.encounterId }); seenBattle = battle;
+          if (route.battleInputs) {
+            battleProgram = route.battleInputs.find(input => input.encounterId === battle.content.encounterId);
+            assert.ok(battleProgram, "Encounter has no exact declared battle input program");
+            try { battleRefs = declaredBattleReferences(battle, battleProgram); }
+            catch (error) {
+              receipt.boundary = { kind: "rejected-battle-input", encounterId: battle.content.encounterId,
+                reason: String(error.message ?? error) }; break;
+            }
+          }
+        }
+        if (route.battleInputs && battle.action) {
+          const action = battle.action;
+          if (!actionStarts.has(action)) {
+            actionStarts.add(action);
+            trace.push({ kind: "declared-battle-action-start", encounterId: battle.content.encounterId,
+              battleSerial: game.state.snapshot().completedBattles.length, time: battle.time,
+              action: structuredClone(action) });
+          }
+          if (action.resolved && !actionResolutions.has(action)) {
+            actionResolutions.add(action);
+            trace.push({ kind: "declared-battle-action-resolved", encounterId: battle.content.encounterId,
+              battleSerial: game.state.snapshot().completedBattles.length, time: battle.time,
+              action: structuredClone(action), units: battleUnits(battle), inventory: battle.inventory });
+          }
+        }
         if (battle.phase === "victory") {
           const id = battle.content.encounterId, before = game.gil;
+          if (route.battleInputs) trace.push({ kind: "declared-battle-outcome", encounterId: id,
+            battleSerial: game.state.snapshot().completedBattles.length, phase: battle.phase,
+            units: battleUnits(battle), inventory: battle.inventory,
+            participants: battle.participantExecution, reward: structuredClone(battle.reward) });
           assert.equal(commandChannel.canReturnBattle(battle), true);
           const result = await handoff.return();
           if (result.status !== "committed") {
@@ -365,11 +499,28 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
             completedBattles: state.snapshot().completedBattles.length, duplicateReturnRejected: true }); tick(); continue;
         }
         if (battle.phase === "defeat") { receipt.boundary = { kind: "defeat", encounterId: battle.content.encounterId }; break; }
-        if (route.battleAbilityIds.length === 0) { receipt.boundary = { kind: "missing-battle-input", encounterId: battle.content.encounterId }; break; }
-        for (const actor of battle.ready) {
-          for (const abilityId of route.battleAbilityIds) {
-            const target = battle.targetChoices(actor.id, abilityId)[0];
-            if (target && commandChannel.command(battle, actor.id, abilityId, target.selection)) { commands++; break; }
+        if (route.battleInputs) {
+          for (const actor of battle.ready) {
+            let dispatched;
+            try { dispatched = declaredBattleInput(battle, battleProgram, battleRefs, actor, commandChannel); }
+            catch (error) {
+              receipt.boundary = { kind: "rejected-battle-input", encounterId: battle.content.encounterId,
+                actorId: actor.id, reason: String(error.message ?? error) }; break;
+            }
+            if (dispatched) {
+              commands++;
+              trace.push({ kind: "declared-battle-input", encounterId: battle.content.encounterId,
+                battleSerial: game.state.snapshot().completedBattles.length, time: battle.time, ...dispatched });
+            }
+          }
+          if (receipt.boundary) break;
+        } else {
+          if (route.battleAbilityIds.length === 0) { receipt.boundary = { kind: "missing-battle-input", encounterId: battle.content.encounterId }; break; }
+          for (const actor of battle.ready) {
+            for (const abilityId of route.battleAbilityIds) {
+              const target = battle.targetChoices(actor.id, abilityId)[0];
+              if (target && commandChannel.command(battle, actor.id, abilityId, target.selection)) { commands++; break; }
+            }
           }
         }
       } else if (field.choice) {
@@ -425,6 +576,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
             const menuOwner = current(), paused = flow.paused;
             assert.equal(flow.pause(true), true); assert.equal(commandChannel.menuReady, true);
             const before = await contentDigest(menuOwner.checkpoint());
+            const beforeOwned = route.battleInputs ? structuredClone(menuOwner.state.snapshot()) : null;
             try {
               accepted = commandChannel.menu(input.command);
               if (!accepted) assert.equal(await contentDigest(menuOwner.checkpoint()), before,
@@ -434,7 +586,8 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
             }
             if (accepted) program.menuCount++;
             trace.push({ kind: "menu-command", inputIndex, command: structuredClone(input.command),
-              accepted, ownerBound: commandChannel.owner === menuOwner, pauseRestored: flow.paused === paused });
+              accepted, ownerBound: commandChannel.owner === menuOwner, pauseRestored: flow.paused === paused,
+              ...(route.battleInputs ? { beforeOwned, afterOwned: structuredClone(menuOwner.state.snapshot()) } : {}) });
           } else if (input.kind === "move" || input.kind === "face") {
             const before = position(field.player), beforeMotion = field.player.motion;
             if (input.kind === "face" && !facingTarget(field, input, canonicalCell)) {

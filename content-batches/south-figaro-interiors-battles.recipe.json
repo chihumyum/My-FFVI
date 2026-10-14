@@ -1,0 +1,6737 @@
+{
+  "kind": "initialized-source-map-recipe-v3",
+  "id": "south-figaro-interiors-battles",
+  "sourceEntry": {
+    "url": "/game/source-new-game.json",
+    "contentHash": "054d81aa8901a4d0024bab182772bb018e42bc223351b7bcb628065b4e10a57d"
+  },
+  "sourceBattle": {
+    "url": "/game/source-catalog.json",
+    "contentHash": "d8c5cc15913f27333da3d72446036b8baba908429829265b897287a78912109a"
+  },
+  "sourceWorld": {
+    "url": "/world/catalog.json",
+    "contentHash": "041d094653778859ce0ef313c5aa9f63e4bafbf3deda920674cf69d917f50702"
+  },
+  "startMap": 228,
+  "entrance": 2,
+  "presentation": "framework-ordinary-field-flat-v1",
+  "manifest": {
+    "kind": "content-batch-manifest-v1",
+    "id": "south-figaro-interiors-battles-source-route",
+    "profile": "framework",
+    "mapIds": [
+      228,
+      229,
+      230,
+      231,
+      233,
+      234,
+      235,
+      236
+    ],
+    "roots": [
+      {
+        "kind": "entry",
+        "mapId": 228,
+        "entrance": 2,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 229,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 230,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 231,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 233,
+        "entrance": 1,
+        "continuation": "sc_map_20361_14"
+      },
+      {
+        "kind": "entry",
+        "mapId": 234,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 235,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 236,
+        "entrance": 1,
+        "continuation": null
+      }
+    ],
+    "routes": [
+      {
+        "id": "source-interiors-complete-walking-pool",
+        "entry": "framework-new-game",
+        "expectedMapId": 228,
+        "requiredMapIds": [
+          228,
+          229,
+          230,
+          231,
+          233,
+          234,
+          235,
+          236
+        ],
+        "requiredEncounterIds": [
+          126,
+          374,
+          375
+        ],
+        "maxTicks": 120000,
+        "inputs": [
+          {
+            "kind": "menu",
+            "command": {
+              "kind": "change-party",
+              "change": {
+                "kind": "set-row",
+                "position": 0,
+                "row": "back"
+              }
+            }
+          },
+          {
+            "kind": "menu",
+            "command": {
+              "kind": "change-party",
+              "change": {
+                "kind": "set-row",
+                "position": 1,
+                "row": "back"
+              }
+            }
+          },
+          {
+            "kind": "menu",
+            "command": {
+              "kind": "change-party",
+              "change": {
+                "kind": "set-row",
+                "position": 2,
+                "row": "back"
+              }
+            }
+          },
+          {
+            "kind": "menu",
+            "command": {
+              "kind": "set-preferences",
+              "preferences": {
+                "mode": "wait",
+                "speedIndex": 3
+              }
+            }
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "face",
+            "direction": "left",
+            "mapId": 230,
+            "entityId": "entity_default:0:2"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "face",
+            "direction": "left",
+            "mapId": 230,
+            "entityId": "entity_default:0:2"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "face",
+            "direction": "right",
+            "mapId": 230,
+            "entityId": "entity_default:0:3"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "face",
+            "direction": "right",
+            "mapId": 233,
+            "entityId": "6"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "face",
+            "direction": "down",
+            "mapId": 233,
+            "entityId": "7"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "face",
+            "direction": "right",
+            "mapId": 233,
+            "entityId": "8"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "face",
+            "direction": "right",
+            "mapId": 234,
+            "entityId": "entity_default:0:6"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "face",
+            "direction": "left",
+            "mapId": 234,
+            "entityId": "entity_default:0:7"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "face",
+            "direction": "up",
+            "mapId": 234,
+            "entityId": "entity_default:0:8"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "face",
+            "direction": "up",
+            "mapId": 234,
+            "entityId": "entity_default:0:9"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "face",
+            "direction": "left",
+            "mapId": 235,
+            "entityId": "entity_default:0:2"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "face",
+            "direction": "down",
+            "mapId": 235,
+            "entityId": "entity_default:0:3"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "face",
+            "direction": "up",
+            "mapId": 235,
+            "entityId": "entity_default:0:4"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "menu",
+            "command": {
+              "kind": "change-equipment",
+              "playerId": "player:31",
+              "slot": 1,
+              "contentId": 105
+            }
+          },
+          {
+            "kind": "menu",
+            "command": {
+              "kind": "change-equipment",
+              "playerId": "player:1",
+              "slot": 3,
+              "contentId": 247
+            }
+          },
+          {
+            "kind": "menu",
+            "command": {
+              "kind": "change-equipment",
+              "playerId": "player:1",
+              "slot": 2,
+              "contentId": 202
+            }
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "menu",
+            "command": {
+              "kind": "use-ability",
+              "actorId": "player:1",
+              "abilityId": 31,
+              "selection": {
+                "kind": "all"
+              }
+            }
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "menu",
+            "command": {
+              "kind": "use-ability",
+              "actorId": "player:1",
+              "abilityId": 31,
+              "selection": {
+                "kind": "all"
+              }
+            }
+          },
+          {
+            "kind": "menu",
+            "command": {
+              "kind": "use-item",
+              "itemId": 6,
+              "targetId": "player:1"
+            }
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "menu",
+            "command": {
+              "kind": "use-ability",
+              "actorId": "player:1",
+              "abilityId": 31,
+              "selection": {
+                "kind": "all"
+              }
+            }
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "menu",
+            "command": {
+              "kind": "use-ability",
+              "actorId": "player:1",
+              "abilityId": 31,
+              "selection": {
+                "kind": "all"
+              }
+            }
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          }
+        ],
+        "choiceAnswers": [],
+        "battleAbilityIds": [],
+        "battleInputs": [
+          {
+            "encounterId": 126,
+            "rules": [
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:1",
+                  "sourceId": 1,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:31",
+                  "sourceId": 31,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:32",
+                  "sourceId": 32,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:1",
+                  "sourceId": 1,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:31",
+                  "sourceId": 31,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:32",
+                  "sourceId": 32,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:1",
+                  "sourceId": 1,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:31",
+                  "sourceId": 31,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:32",
+                  "sourceId": 32,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 7,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 31
+                },
+                "target": {
+                  "kind": "side",
+                  "side": "player",
+                  "members": [
+                    {
+                      "id": "player:1",
+                      "sourceId": 1
+                    },
+                    {
+                      "id": "player:31",
+                      "sourceId": 31
+                    },
+                    {
+                      "id": "player:32",
+                      "sourceId": 32
+                    }
+                  ],
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 30
+                },
+                "minimumActorMp": 5,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 7,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 40
+                },
+                "target": {
+                  "kind": "side",
+                  "side": "enemy",
+                  "members": [
+                    {
+                      "id": "enemy:2",
+                      "sourceId": 18
+                    },
+                    {
+                      "id": "enemy:5",
+                      "sourceId": 18
+                    },
+                    {
+                      "id": "enemy:8",
+                      "sourceId": 18
+                    }
+                  ],
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                },
+                "minimumActorMp": 4
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:2",
+                  "sourceId": 18,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:5",
+                  "sourceId": 18,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:8",
+                  "sourceId": 18,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:2",
+                  "sourceId": 18,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:5",
+                  "sourceId": 18,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:8",
+                  "sourceId": 18,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:2",
+                  "sourceId": 18,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:5",
+                  "sourceId": 18,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:8",
+                  "sourceId": 18,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              }
+            ]
+          },
+          {
+            "encounterId": 374,
+            "rules": [
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:1",
+                  "sourceId": 1,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:31",
+                  "sourceId": 31,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:32",
+                  "sourceId": 32,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:1",
+                  "sourceId": 1,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:31",
+                  "sourceId": 31,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:32",
+                  "sourceId": 32,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:1",
+                  "sourceId": 1,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:31",
+                  "sourceId": 31,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:32",
+                  "sourceId": 32,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 7,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 31
+                },
+                "target": {
+                  "kind": "side",
+                  "side": "player",
+                  "members": [
+                    {
+                      "id": "player:1",
+                      "sourceId": 1
+                    },
+                    {
+                      "id": "player:31",
+                      "sourceId": 31
+                    },
+                    {
+                      "id": "player:32",
+                      "sourceId": 32
+                    }
+                  ],
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 30
+                },
+                "minimumActorMp": 5,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 7,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 40
+                },
+                "target": {
+                  "kind": "side",
+                  "side": "enemy",
+                  "members": [
+                    {
+                      "id": "enemy:1",
+                      "sourceId": 114
+                    },
+                    {
+                      "id": "enemy:6",
+                      "sourceId": 114
+                    },
+                    {
+                      "id": "enemy:7",
+                      "sourceId": 18
+                    }
+                  ],
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                },
+                "minimumActorMp": 4
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:1",
+                  "sourceId": 114,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:6",
+                  "sourceId": 114,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:7",
+                  "sourceId": 18,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:1",
+                  "sourceId": 114,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:6",
+                  "sourceId": 114,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:7",
+                  "sourceId": 18,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:1",
+                  "sourceId": 114,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:6",
+                  "sourceId": 114,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:7",
+                  "sourceId": 18,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              }
+            ]
+          },
+          {
+            "encounterId": 375,
+            "rules": [
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:1",
+                  "sourceId": 1,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:31",
+                  "sourceId": 31,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:32",
+                  "sourceId": 32,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:1",
+                  "sourceId": 1,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:31",
+                  "sourceId": 31,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:32",
+                  "sourceId": 32,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:1",
+                  "sourceId": 1,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:31",
+                  "sourceId": 31,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 3,
+                "action": {
+                  "kind": "item",
+                  "itemId": 4
+                },
+                "target": {
+                  "id": "player:32",
+                  "sourceId": 32,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 25
+                },
+                "minimumItemCount": 1,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 7,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 31
+                },
+                "target": {
+                  "kind": "side",
+                  "side": "player",
+                  "members": [
+                    {
+                      "id": "player:1",
+                      "sourceId": 1
+                    },
+                    {
+                      "id": "player:31",
+                      "sourceId": 31
+                    },
+                    {
+                      "id": "player:32",
+                      "sourceId": 32
+                    }
+                  ],
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-resource-below",
+                  "resource": "hp",
+                  "percent": 30
+                },
+                "minimumActorMp": 5,
+                "avoidPendingRecovery": true
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 7,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 40
+                },
+                "target": {
+                  "kind": "side",
+                  "side": "enemy",
+                  "members": [
+                    {
+                      "id": "enemy:1",
+                      "sourceId": 114
+                    },
+                    {
+                      "id": "enemy:3",
+                      "sourceId": 114
+                    }
+                  ],
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                },
+                "minimumActorMp": 4
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:1",
+                  "sourceId": 114,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:1",
+                  "sourceId": 1
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:3",
+                  "sourceId": 114,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:1",
+                  "sourceId": 114,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:31",
+                  "sourceId": 31
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:3",
+                  "sourceId": 114,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:1",
+                  "sourceId": 114,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              },
+              {
+                "actor": {
+                  "id": "player:32",
+                  "sourceId": 32
+                },
+                "commandId": 1,
+                "action": {
+                  "kind": "ability",
+                  "abilityId": 1
+                },
+                "target": {
+                  "id": "enemy:3",
+                  "sourceId": 114,
+                  "ended": "skip"
+                },
+                "when": {
+                  "kind": "target-alive"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "battleCatalogSelection": "shared-framework-directory-v1",
+  "sourceAreaScope": null,
+  "walking": {
+    "kind": "initialized-source-walking-v1",
+    "maps": [
+      {
+        "mapId": 234,
+        "declaration": {
+          "kind": "framework-source-set-walk-v1",
+          "id": "south-figaro-complete-set154-walk-v1",
+          "minSteps": 200,
+          "maxSteps": 200,
+          "transportationIds": [
+            1
+          ],
+          "weighting": "source-rate-as-web-weight-v1"
+        }
+      }
+    ]
+  }
+}

@@ -61,7 +61,10 @@ export function compileEnemyInitialConditions(reader: ConditionReader, groupId: 
     }
     if (ids.size > 1) throw new Error("Unresolved multiple enemy initial condition activation order");
     const conditionIds = [...ids];
-    new BattleConditions(catalog).validateActive(conditionIds);
+    const conditions = new BattleConditions(catalog);
+    conditions.validateActive(conditionIds);
+    if (conditions.isEscaped(conditionIds))
+      throw new Error("Source initial Escape component lifecycle is not admitted");
     return { conditionIds, sources };
   } catch (error) {
     throw new InitialConditionCompilationError(error instanceof Error ? error.message : String(error), dependency);

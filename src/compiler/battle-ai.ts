@@ -231,6 +231,20 @@ export function compileBattleAI(
           weights: r,
         };
       if (
+        m.mnemonic === "CounterActReceiveCommand" &&
+        i.length >= 2 && i[0]! >= 0 && i.slice(1).every(id => id > 0) &&
+        s.length === 0 && r.length === i.length && r[0] === 0 &&
+        r.every(weight => weight >= 0 && Number.isFinite(Math.fround(weight))) &&
+        Number.isFinite(r.map(Math.fround).reduce((sum, weight) => Math.fround(sum + weight), 0)) &&
+        r.some(weight => Math.fround(weight) > 0)
+      )
+        // GetIndex(bc,1) 0x821bf0 uses the entire weighted array, ignoring
+        // startIndex in its weighted path. The proven zero first weight is
+        // the selector placeholder; removing only that zero preserves every
+        // candidate, f32 draw boundary and the final-slot fallback.
+        op = { kind: "counter-received-command", receivedTypeId: i[0]!, targeting: "automatic",
+          abilities: i.slice(1), weights: r.slice(1) };
+      if (
         m.mnemonic === "LoopAct" &&
         i.length &&
         i.every((id) => id > 0) &&
@@ -259,7 +273,7 @@ export function battleAIAbilities(program: BattleAIProgram): number[] {
   return [
     ...new Set(
       program.instructions.flatMap(({ op }) =>
-        op.kind === "act" || op.kind === "loop-act" || op.kind === "counter-act"
+        op.kind === "act" || op.kind === "loop-act" || op.kind === "counter-act" || op.kind === "counter-received-command"
           ? op.abilities
           : [],
       ),

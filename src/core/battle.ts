@@ -43,9 +43,12 @@ import {
   startBattleAI,
   type BattleAIState,
   type BattleAITurn,
+  type BattleAICounterTargeting,
 } from "./battle-ai.js";
 import { battleAITargetBlocker, planBattleAITarget } from "./battle-ai-targets.js";
 import { battleReaction, validateReactionRules } from "./battle-reactions.js";
+import { proposeForcedEscape, proposeRandomAbilityDispatch,
+  type RandomAbilityDispatchPlan } from "./battle-derived-actions.js";
 import { projectActionTargets, type ActionUserConditionResult } from "./action-user-conditions.js";
 import { projectPhysicalRows, validateBattleRow, validateBattleRowCatalog, type PhysicalRowContext } from "./battle-row.js";
 import type { SlowState } from "./condition-speed.js";
@@ -106,7 +109,10 @@ export type BattleStatProjection = Omit<ParameterValues, "hp" | "mp"> &
     "maxHp" | "maxMp" | "physical" | "attackElements" | "elementResistances"
   >;
 export type BattleAction = {
-  kind: "normal" | "loop" | "counter";
+  kind: "normal" | "loop" | "counter" | "derived";
+  /** Legacy CounterAct captures the attacker; command-conditioned interrupts
+   * pass a null target to the native controller and use automatic selection. */
+  targeting?: BattleAICounterTargeting;
   actor: string;
   selection: TargetSelection;
   targetIds: string[];
@@ -201,6 +207,10 @@ export class BattleGame {
   private observedAbilityIds: number[] = [];
   private dropRegistrations: number[] = [];
   private dropDead = new Set<string>();
+  /** Participation history survives battle-end condition cleanup. HP and
+   * active conditions remain on the original combatant, never on this record. */
+  private enemyExits = new Map<string, { kind: "escaped"; conditionId: number }>();
+  private rewardRegisteredInstances = new Set<string>();
   constructor(
     readonly content: BattleContent,
     seed: number,
@@ -368,6 +378,8 @@ export class BattleGame {
     for (const item of Object.values(this.items))
       this.conditions.validateReferences(item.forbiddenConditionIds);
     for (const c of this.combatants) {
+      if (this.conditions.isEscaped(c.conditionIds))
+        throw new Error("Source initial Escape component lifecycle is not admitted");
       validateElements(c.attackElements);
       validateElementResistances(c.elementResistances);
     }
@@ -404,13 +416,22 @@ export class BattleGame {
   get enemies() {
     return this.combatants.filter((c) => c.side === "enemy");
   }
+  enemyExitState(id: string): { kind: "escaped"; conditionId: number } | null {
+    const exit = this.enemyExits.get(id);
+    return exit ? { ...exit } : null;
+  }
+  private get activeCombatants() {
+    return this.combatants.filter(unit => !this.enemyExits.has(unit.id));
+  }
   get registeredDropMonsters(): readonly number[] {
     return [...this.dropRegistrations];
   }
   /** UnableFight.Start calls SetLotMonster, once per start, including another
    * start after revival. Two enemies sharing a master identity remain two rolls. */
   private observeDropLife(unit: Combatant) {
-    if (unit.side !== "enemy" || this.content.drops === null) return;
+    if (unit.side !== "enemy") return;
+    if (this.conditions.isUnableFight(unit.conditionIds)) this.rewardRegisteredInstances.add(unit.id);
+    if (this.content.drops === null) return;
     if (!this.conditions.isUnableFight(unit.conditionIds)) this.dropDead.delete(unit.id);
     else if (!this.dropDead.has(unit.id)) {
       this.dropDead.add(unit.id);
@@ -704,7 +725,7 @@ export class BattleGame {
     return battleTargetChoices(
       item.uses.battle.plan.targeting,
       actor,
-      this.combatants,
+      this.activeCombatants,
       this.content.formation,
     ).filter((choice) =>
       choice.targetIds.every((id) => this.players.some((p) => p.id === id)),
@@ -859,6 +880,9 @@ export class BattleGame {
       !ability?.plan ||
       !this.qualifiedAbility(actor, abilityId) ||
       actor.hp <= 0 ||
+      this.enemyExits.has(actor.id) ||
+      ability.plan.effects.some(effect =>
+        (effect.kind === "random-ability" || effect.kind === "forced-escape") && actor.side !== "enemy") ||
       !cost || (actor.side === "player" && actor.mp < cost.mp) ||
       (ability.plan.targeting.normalFormationOnly &&
         this.content.formation !== "normal")
@@ -956,7 +980,7 @@ export class BattleGame {
   }
   isCombatantVisible(id: string): boolean {
     if (!this.combatants.some(unit => unit.id === id)) throw new Error("Unknown battle combatant");
-    return !this.hiddenEnemyIds.has(id);
+    return !this.hiddenEnemyIds.has(id) && !this.enemyExits.has(id);
   }
   /** The entry roster and reserve definitions are fixed for defeat/retry. */
   get participantEntryContent(): Pick<BattleContent, "enemies" | "participants"> {
@@ -1133,6 +1157,8 @@ export class BattleGame {
     return unit;
   }
   private prepareEnemyEntry(unit: Combatant, nextUnits: readonly Combatant[]) {
+    if (this.conditions.isEscaped(unit.conditionIds))
+      throw new Error("Source initial Escape component lifecycle is not admitted");
     if (!unit.ai) throw new BattleAIError(null, 0, "missing enemy AI program");
     const started = startBattleAI(unit.ai, this.aiContext(unit, nextUnits));
     const context = this.aiContext(unit, nextUnits);
@@ -1292,6 +1318,7 @@ export class BattleGame {
     let alive = false;
     const actionsEnded = !this.action && !this.queue.length && !this.reactions.length;
     for (const [id, state] of this.aiStates) {
+      if (this.enemyExits.has(id)) continue;
       if (state.status === "exited") continue;
       const actor = this.enemies.find(enemy => enemy.id === id);
       if (!actor) throw new Error("Battle event AI core has no unit owner");
@@ -1360,8 +1387,11 @@ export class BattleGame {
             act.pc,
             `unimplemented ability ${id}: ${ability?.blockers.join("; ") ?? "missing definition"}`,
           );
+        const targeting = act.kind === "counter-act" ? act.targeting ?? "received-actor" : null;
+        if (targeting !== null && targeting !== "received-actor" && targeting !== "automatic")
+          fail(act.pc, "invalid counter target provider");
         const targetBlocker = battleAITargetBlocker(ability!.program.range,
-          ability!.plan!.targeting, act.kind === "counter-act" ? "counter" : "normal");
+          ability!.plan!.targeting, targeting === "received-actor" ? "counter" : "normal");
         if (targetBlocker)
           fail(
             act.pc,
@@ -1399,7 +1429,7 @@ export class BattleGame {
           // eligibility. In particular, an enemy corpse still in the current
           // list can be the initial random ally, and range 8 collapses to a
           // single only when the raw player list contains one instance.
-          const choice = planBattleAITarget({ actor, units: this.combatants,
+          const choice = planBattleAITarget({ actor, units: this.activeCombatants,
             eligiblePlayers: this.players.filter(player => player.hp > 0),
             range: ability.program.range, rule: ability.plan!.targeting,
             formation: this.content.formation }, (min, max) => this.randomInt(min, max));
@@ -1447,6 +1477,7 @@ export class BattleGame {
     if (this.events.length > 80) this.events.shift();
   }
   targetChoices(actorId: string, abilityId: number): TargetChoice[] {
+    if (this.enemyExits.has(actorId)) return [];
     const actor = this.combatants.find((c) => c.id === actorId),
       ability = this.content.abilities[abilityId];
     if (
@@ -1464,7 +1495,7 @@ export class BattleGame {
     return battleTargetChoices(
       ability.plan.targeting,
       actor,
-      this.combatants,
+      this.activeCombatants,
       this.content.formation,
     );
   }
@@ -1518,9 +1549,14 @@ export class BattleGame {
     choice: TargetChoice,
     commandId: number | null = null,
     kind: BattleAction["kind"] = "normal",
+    targeting?: BattleAICounterTargeting,
   ): BattleAction {
+    if (targeting !== undefined && (kind !== "counter" ||
+        targeting !== "received-actor" && targeting !== "automatic"))
+      throw new Error("Invalid interrupt target provider");
     return {
       kind,
+      ...(targeting === undefined ? {} : { targeting }),
       actor: actor.id,
       selection: structuredClone(choice.selection),
       targetIds: [...choice.targetIds],
@@ -1529,7 +1565,7 @@ export class BattleGame {
       // ActDecision 0x1587aa0 routes Interrupt directly to the executor;
       // it never enters Progress.SetActData/GetChantingTime.
       charge:
-        kind === "counter"
+        kind === "counter" || kind === "derived"
           ? 0
           : chantingSeconds({
               actor: actor.side,
@@ -1607,6 +1643,8 @@ export class BattleGame {
       observedAbilityIds: [...this.observedAbilityIds],
       dropRegistrations: [...this.dropRegistrations],
       dropDead: new Set(this.dropDead),
+      enemyExits: structuredClone(this.enemyExits),
+      rewardRegisteredInstances: new Set(this.rewardRegisteredInstances),
       events: [...this.events],
       time: this.time,
       random: this.randomState,
@@ -1636,6 +1674,8 @@ export class BattleGame {
       this.action = before.action;
       this.queue = before.queue;
       this.reactions = before.reactions;
+      this.enemyExits = before.enemyExits;
+      this.rewardRegisteredInstances = before.rewardRegisteredInstances;
       this.aiStates = before.ai;
       this.eventState = before.eventState;
       this.eventControls = before.eventControls;
@@ -1692,7 +1732,7 @@ export class BattleGame {
           this.atbSpeed,
         );
       for (const c of this.combatants) {
-        if (c.hp <= 0 || c.queued) continue;
+        if (c.hp <= 0 || c.queued || this.enemyExits.has(c.id)) continue;
         if (c.atb < 100)
           c.atb = Math.fround(
             c.atb +
@@ -1771,7 +1811,7 @@ export class BattleGame {
   }
   private advanceConditions(seconds: number) {
     // Prepare all actors before publishing any HP, lifetime, queue or log change.
-    const staged = this.combatants.map((actor) => {
+    const staged = this.activeCombatants.map((actor) => {
       const result = this.conditions.advancePoison({
         conditionIds: actor.conditionIds,
         state: this.poisonStates.get(actor.id)!,
@@ -1839,7 +1879,11 @@ export class BattleGame {
       }));
   }
   private actionTargetChoices(action: BattleAction) {
-    if (action.kind === "counter") return this.counterTargetChoices(this.combatants);
+    if (action.targeting !== undefined && (action.kind !== "counter" ||
+        action.targeting !== "received-actor" && action.targeting !== "automatic"))
+      throw new Error("Invalid interrupt target provider");
+    if (action.kind === "counter" && action.targeting !== "automatic")
+      return this.counterTargetChoices(this.activeCombatants);
     if (action.source.kind === "item") return this.itemTargetChoices(action.actor, action.source.id);
     const actor = this.combatants.find(unit => unit.id === action.actor),
       ability = this.content.abilities[action.source.id];
@@ -1851,7 +1895,7 @@ export class BattleGame {
     // instance to a newly added unit that happens to occupy its old slot.
     const mode = action.selection.kind;
     return battleTargetChoices({ ...ability.plan.targeting, modes: [mode], defaultMode: mode },
-      actor, this.combatants, this.content.formation);
+      actor, this.activeCombatants, this.content.formation);
   }
   private planReactions(
     action: BattleAction,
@@ -1864,6 +1908,7 @@ export class BattleGame {
     for (const result of results) {
       const actor = units.find((c) => c.id === result.target)!;
       if (actor.side !== "enemy") continue;
+      if (this.enemyExits.has(actor.id) || this.conditions.isEscaped(actor.conditionIds)) continue;
       if (this.aiStates.get(actor.id)?.status !== "waiting") continue;
       if (action.source.kind === "item")
         throw new Error("Unimplemented enemy item reaction");
@@ -1891,9 +1936,17 @@ export class BattleGame {
           float: (min, max) =>
             Math.fround(min + this.randomUnit() * (max - min)),
         })) {
-          const choice = this.counterTargetChoices(units).find(
-            (c) => c.targetIds[0] === action.actor,
-          );
+          const targeting = act.kind === "counter-act" ? act.targeting ?? "received-actor" : null;
+          if (targeting === null) throw new Error("Reaction emitted a noninterrupt action");
+          const ability = this.content.abilities[id]!;
+          const active = units.filter(unit => !this.enemyExits.has(unit.id) &&
+            !this.conditions.isEscaped(unit.conditionIds));
+          const choice = targeting === "automatic"
+            ? planBattleAITarget({ actor, units: active,
+                eligiblePlayers: active.filter(unit => unit.side === "player" && unit.hp > 0),
+                range: ability.program.range, rule: ability.plan!.targeting,
+                formation: this.content.formation }, (min, max) => this.randomInt(min, max))
+            : this.counterTargetChoices(active).find((c) => c.targetIds[0] === action.actor);
           if (!choice)
             throw new BattleAIError(
               actor.ai!.source,
@@ -1907,6 +1960,7 @@ export class BattleGame {
               choice,
               null,
               "counter",
+              targeting === "automatic" ? targeting : undefined,
             ),
           );
         }
@@ -1914,6 +1968,64 @@ export class BattleGame {
       updates.push({ actor: actor.id, turn });
     }
     return { updates, decisions };
+  }
+  /** Parent calculations and child queue proposals stay private until every
+   * target, receiver, condition and dependency of the action has admitted. */
+  private projectDerivedAction(action: BattleAction, actor: Combatant, choice: TargetChoice,
+    children: BattleAction[], payment: number): ReturnType<typeof projectActionTargets> {
+    const ability = this.actionDefinition(action), effect = ability.plan!.effects[0]!;
+    if (actor.side !== "enemy" || ability.plan!.effects.length !== 1 || payment !== 0)
+      throw new Error("Unresolved derived-action actor/composition/payment");
+    if (effect.kind === "forced-escape") {
+      proposeForcedEscape(effect, { actorId: actor.id, actorSide: actor.side, targetIds: choice.targetIds });
+      if (effect.conditionId !== this.conditions.escapeConditionId)
+        throw new Error("Escape condition identity differs from the source catalog");
+      const change = this.conditions.forceEnemyEscape(actor.conditionIds);
+      if (!change.currentIds.includes(effect.conditionId)) throw new Error("Escape condition conflict did not admit departure");
+      return { targets: [{ targetId: actor.id,
+        state: { hp: actor.hp, mp: actor.mp, conditionIds: change.currentIds },
+        effects: [{ slot: effect.slot, resource: "condition", recovery: false,
+          added: change.added, removed: change.removed, missed: false }] }],
+        userConditionIds: [...actor.conditionIds], userResults: [] };
+    }
+    if (effect.kind !== "random-ability") throw new Error("Invalid derived-action plan");
+    const ready = this.randomChildReadiness(actor, effect, choice);
+    const selected = proposeRandomAbilityDispatch(effect, ready, (min, max) => this.randomInt(min, max)),
+      child = this.content.abilities[selected.abilityId]!,
+      target = this.derivedChildTarget(actor, effect, child, choice);
+    children.push(this.createAction(actor, child, target, null, "derived"));
+    return { targets: choice.targetIds.map(targetId => {
+      const unit = this.combatants.find(candidate => candidate.id === targetId)!;
+      return { targetId, state: { hp: unit.hp, mp: unit.mp, conditionIds: [...unit.conditionIds] },
+        effects: [{ slot: effect.slot, resource: "hp" as const, recovery: false, amount: 0, missed: false }] };
+    }), userConditionIds: [...actor.conditionIds], userResults: [] };
+  }
+  private randomChildReadiness(actor: Combatant, effect: RandomAbilityDispatchPlan, parent: TargetChoice): number[] {
+    const ids = [...new Set(effect.rows.map(row => row.abilityId))];
+    for (const id of ids) {
+      const ability = this.content.abilities[id];
+      if (!ability?.plan || !actor.abilities.includes(id) || !this.canUse(actor.id, id, null) ||
+          ability.cost !== 0 || ability.plan.effects.some(part => part.kind === "random-ability") ||
+          ability.plan.effects.some(part => part.kind === "physical") && !actor.physical)
+        throw new Error(`Unresolved random-ability child ${id}`);
+      this.derivedChildTarget(actor, effect, ability, parent);
+    }
+    return ids;
+  }
+  private derivedChildTarget(actor: Combatant, effect: RandomAbilityDispatchPlan,
+    child: AbilityDefinition, parent: TargetChoice): TargetChoice {
+    if (!child.plan || parent.selection.kind !== "single" || parent.targetIds.length !== 1)
+      throw new Error("Unresolved derived child parent target scope");
+    const blocker = battleAITargetBlocker(child.program.range, child.plan.targeting, "normal", this.content.formation);
+    if (blocker) throw new Error(blocker);
+    const selection = effect.retarget && child.program.range === 5
+      ? { kind: "single" as const, id: actor.id } : parent.selection;
+    if (effect.retarget && ![3, 5, 7].includes(child.program.range))
+      throw new Error("Unresolved derived default target provider");
+    const choice = battleTargetChoices(child.plan.targeting, actor, this.activeCombatants, this.content.formation)
+      .find(candidate => sameTargetSelection(candidate.selection, selection));
+    if (!choice) throw new Error("Derived child target is not currently eligible");
+    return choice;
   }
   private resolve(action: BattleAction) {
     const actor = this.combatants.find((c) => c.id === action.actor)!;
@@ -1941,7 +2053,11 @@ export class BattleGame {
         action.resolved = true;
         return;
       }
-      const projection = projectActionTargets(
+      const derived: BattleAction[] = [];
+      const first = ability.plan.effects[0];
+      const projection = first?.kind === "random-ability" || first?.kind === "forced-escape"
+        ? this.projectDerivedAction(action, actor, choice, derived, payment)
+        : projectActionTargets(
           ability.plan!,
           ability.power,
           actor,
@@ -2079,6 +2195,14 @@ export class BattleGame {
             (a) => a.actor !== entry.target.id,
           );
         }
+        if (this.conditions.isEscaped(entry.target.conditionIds) && !this.enemyExits.has(entry.target.id)) {
+          if (entry.target.side !== "enemy") throw new Error("Player escape needs its own admitted lifecycle");
+          this.enemyExits.set(entry.target.id, { kind: "escaped", conditionId: this.conditions.escapeConditionId });
+          entry.target.atb = 0;
+          entry.target.queued = false;
+          this.queue = this.queue.filter(pending => pending.actor !== entry.target.id);
+          this.reactions = this.reactions.filter(pending => pending.actor !== entry.target.id);
+        }
         for (const message of entry.messages) this.log(message);
       }
       for (const message of userMessages) this.log(message);
@@ -2087,7 +2211,9 @@ export class BattleGame {
         this.combatants.find((c) => c.id === update.actor)!.behavior =
           update.turn.behavior;
       }
-      this.reactions.push(...reactions.decisions);
+      // Function46 enqueues its child during HitCalc, before the parent's
+      // completed result wakes receivers. Both preparations commit together.
+      this.reactions.push(...derived, ...reactions.decisions);
       action.selection = choice.selection;
       action.targetIds = choice.targetIds;
       action.results = results;
@@ -2105,7 +2231,7 @@ export class BattleGame {
     // Native Integrator and battle updates are separate Unity components; their
     // relative frame order is not certified. The VM runs while progress waits.
     this.advanceEvent();
-    if (this.action) return;
+    if (this.action || this.reactions[0]?.kind === "derived") return;
     for (const c of this.combatants) {
       Object.assign(c, this.conditions.settleLife(c.hp, c.conditionIds, false));
       this.observeDropLife(c);
@@ -2129,16 +2255,19 @@ export class BattleGame {
     // Normal source judgment uses !mainCore.IsReady for victory. Player defeat
     // above is independent of that flag and takes precedence in the same frame.
     if (this.eventState && this.eventState.status !== "exited") return;
-    if (this.eventState && this.enemies.some((c) => c.hp > 0))
+    if (this.eventState && this.enemies.some((c) => c.hp > 0 && !this.enemyExits.has(c.id)))
       throw new Error("Battle event victory with live enemies requires an admitted result provider");
-    if (this.enemies.some((c) => c.hp > 0)) return;
+    if (this.enemies.some((c) => c.hp > 0 && !this.enemyExits.has(c.id))) return;
     // Missing growth for a later recipient must not leave an earlier recipient
     // upgraded, or publish a victory whose reward cannot be collected.
     const players = this.settlementPlayers().map((c) => ({
       ...structuredClone(c),
       conditionIds: this.conditions.battleEnd(c.conditionIds),
     }));
-    const { exp, gil } = projectBattleParticipantRewards(this.participantState,
+    const rewardState = { ...this.participantState, entries: this.participantState.entries.map(entry =>
+      this.enemyExits.has(entry.id) && !this.rewardRegisteredInstances.has(entry.id)
+        ? { ...entry, exp: 0, gil: 0 } : entry) };
+    const { exp, gil } = projectBattleParticipantRewards(rewardState,
       this.participantContent?.rewardScope ?? "active-units");
     const recipients = players.filter((c) => c.hp > 0),
       each = Math.trunc(exp / Math.max(1, recipients.length));

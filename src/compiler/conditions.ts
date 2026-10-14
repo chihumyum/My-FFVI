@@ -66,6 +66,22 @@ export function hasSilenceBehavior(row: BattleRow): boolean {
   return hasPassiveBehavior(row, 6, 2);
 }
 
+/** Source Escape is a system-4 behavior, not death or an ordinary status
+ * calculation. Preserve its target/game-over distinction and erase group. */
+export function hasEscapeBehavior(row: Pick<BattleRow, "values">): boolean {
+  const v = row.values;
+  return int(v.condition_type) === 3 && int(v.system_type) === 4 &&
+    int(v.target_type) === 1 && int(v.until_type) === 2 &&
+    int(v.resistance_decision) === 1 && int(v.attack_target) === 1 &&
+    int(v.erase_condition_group_id) === 33 &&
+    ["until_value", "overlapped_type", "invalid_type", "condition_group_id",
+      "parameter_group_id", "attribute_group_id", "species_group_id",
+      "rate_type1", "rate_type2", "rate_value1", "rate_value2", "recovery_invalid",
+      "game_over_target", "state_cover_unavailable", "damage_number",
+      "battle_effect_asset_id", "battle_effect_shadow_cloning", "field_se_asset_id", "icon_id",
+    ].every((key) => int(v[key]) === 0);
+}
+
 /** Madou Start/Remove changes armor rendering and the effect posture size.
  * Its active admission also requires the separate battle appearance host. */
 export function hasMagitekBehavior(row: Pick<BattleRow, "values">): boolean {
@@ -208,7 +224,10 @@ export function compileBattleConditionCatalog(
           presentationSources.push(...poison.sources);
           return [poison.behavior];
         }
-        return hasDefendBehavior(row)
+        return hasEscapeBehavior(row)
+          ? [{ id: d.id, kind: "escape", untilType: 2,
+              name: row.values.mes_id_name === "None" ? "" : name(row.values.mes_id_name!) }]
+          : hasDefendBehavior(row)
           ? [{ id: d.id, kind: "defend", untilType: 1,
               name: row.values.mes_id_name === "None" ? "" : name(row.values.mes_id_name!) }]
           : hasSilenceBehavior(row)

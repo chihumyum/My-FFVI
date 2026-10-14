@@ -406,7 +406,8 @@ assert.equal(loopInstructions.length, 97);
 
 // Only the source instruction and its ability definitions are imported here.
 // The surrounding normal table is an explicitly synthetic mechanism harness;
-// unimplemented CounterActReceiveCommand/other source triggers remain blocked.
+// Source command-conditioned interrupts are decoded; their complete ability
+// dependencies and unrelated source triggers keep their own admission gates.
 const loopHostChecks = [];
 for (const [name, pc, expected] of [
   ["sc_ai_058_Devoahan.json", 9, [462, 1, 1]],
@@ -467,15 +468,31 @@ for (const [name, pc, expected] of [
     };
   };
   assert.deepEqual(run([60000]), run(Array(6000).fill(10)));
-  // Devoahan's unresolved counter-command trigger remains gated. Aspidochelon's
+  // Devoahan's type-637 ability dependencies remain gated. Aspidochelon's
   // two received-type queries are now admitted; this controlled host still
   // supplies opening stats/poses and does not certify the source enemy/region.
   const full = structuredClone(content);
   full.enemies[0].ai = original;
   full.enemies[0].abilities = battleAIAbilities(original);
+  for (const id of full.enemies[0].abilities) full.abilities[id] = ability(id);
   const originalProgramStillBlocked = name === "sc_ai_058_Devoahan.json";
-  if (originalProgramStillBlocked)
-    assert.throws(() => new BattleGame(admittedAIProbe(full), 317, undefined, sourceBattleInventory(catalog)), /CounterActReceiveCommand/);
+  if (originalProgramStillBlocked) {
+    assert.deepEqual(original.instructions[4].op, {
+      kind: "counter-received-command", receivedTypeId: 2, targeting: "automatic",
+      abilities: [173, 696], weights: [35, 65],
+    });
+    for (const id of [173, 187]) {
+      assert.equal(full.abilities[id].plan, null);
+      assert.deepEqual(full.abilities[id].blockers, ["unresolved ability type 637"]);
+    }
+    // Ordinary readiness does not execute the new receiver. Source-owned
+    // Fire triggers selector 2 and reaches the actual remaining ability gate.
+    full.initialAtb = { player: [100, 100], enemy: [0, 0] };
+    const receiver = new BattleGame(admittedAIProbe(full), 317, undefined, sourceBattleInventory(catalog));
+    assert.equal(receiver.phase, "active");
+    assert.ok(receiver.command(receiver.players[0].id, 40, enemy.id, 7));
+    assert.throws(() => receiver.advance(6000), /unimplemented ability 173: unresolved ability type 637/);
+  }
   else {
     assert.equal(name, "sc_ai_0C8_Aspidochelon.json");
     assert.ok(original.instructions.slice(3, 5).every(i =>

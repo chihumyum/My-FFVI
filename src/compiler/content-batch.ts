@@ -45,6 +45,37 @@ const input = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("leave-shop"), groupId: id }).strict(),
   z.object({ kind: z.literal("save-restore") }).strict(),
 ]);
+const battleIdentity = z.object({ id: name.refine(value => value.trim() === value), sourceId: id }).strict();
+const battleTarget = z.union([
+  battleIdentity.extend({ ended: z.literal("skip") }).strict(),
+  z.object({ kind: z.literal("side"), side: z.enum(["player", "enemy"]),
+    members: z.array(battleIdentity).min(1), ended: z.literal("skip") }).strict(),
+]);
+// This is a declared player-input policy, not another battle executor. Every
+// target retains its original identity, including after death or withdrawal.
+const battleRule = z.object({
+  actor: battleIdentity,
+  commandId: id,
+  action: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("ability"), abilityId: id }).strict(),
+    z.object({ kind: z.literal("item"), itemId: id }).strict(),
+  ]),
+  target: battleTarget,
+  when: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("target-alive") }).strict(),
+    z.object({ kind: z.literal("target-resource-below"), resource: z.enum(["hp", "mp"]),
+      percent: z.number().int().min(1).max(100) }).strict(),
+  ]),
+  minimumActorMp: z.number().int().nonnegative().max(0x7fffffff).optional(),
+  minimumItemCount: id.optional(),
+  avoidPendingRecovery: z.literal(true).optional(),
+}).strict().superRefine((rule, context) => {
+  if (rule.minimumItemCount !== undefined && rule.action.kind !== "item")
+    context.addIssue({ code: "custom", message: "Item stock condition requires an item action" });
+  if (rule.avoidPendingRecovery && rule.when.kind !== "target-resource-below")
+    context.addIssue({ code: "custom", message: "Pending recovery guard requires an explicit resource condition" });
+});
+const battleInputs = z.array(z.object({ encounterId: id, rules: z.array(battleRule).min(1) }).strict()).min(1);
 // The runtime and compiler consume one reference contract. The manifest does
 // not authorize another URL/profile shape or silently fill omitted lanes.
 const contentRefs = z.unknown().transform((value, context) => {
@@ -67,6 +98,7 @@ export const ContentBatchManifest = z.object({
     maxTicks: z.number().int().positive().max(1000000),
     inputs: z.array(input), choiceAnswers: z.array(z.number().int().nonnegative()),
     battleAbilityIds: z.array(id),
+    battleInputs: battleInputs.optional(),
   }).strict()).min(1),
 }).strict();
 export type ContentBatchManifest = z.infer<typeof ContentBatchManifest>;
@@ -92,6 +124,13 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
   for (const route of manifest.routes) {
     unique(route.requiredMapIds, "route map"); unique(route.requiredEncounterIds, "route encounter");
     unique(route.battleAbilityIds, "battle input");
+    if (route.battleInputs) {
+      if (route.battleAbilityIds.length) throw new Error("Declared battle inputs cannot mix with legacy ability selection");
+      unique(route.battleInputs.map(input => input.encounterId), "battle input encounter");
+      if (canonical(route.battleInputs.map(input => input.encounterId).sort((a, b) => a - b)) !==
+          canonical([...route.requiredEncounterIds].sort((a, b) => a - b)))
+        throw new Error("Declared battle inputs must cover the exact required encounters");
+    }
   }
   for (const item of [catalog, ...maps, battle, entry]) verify(item);
   if (manifest.contentRefs) {
@@ -162,6 +201,34 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
   }
   const dependencies = analyzeContentDependencies({ catalog, maps, roots: manifest.roots, mapIds: manifest.mapIds });
   const encounters = analyzeBatchEncounters(battle, dependencies.encounterIds);
+  for (const route of manifest.routes) for (const program of route.battleInputs ?? []) {
+    const encounter = battle.encounters[program.encounterId];
+    if (!encounter || !dependencies.encounterIds.includes(program.encounterId))
+      throw new Error("Declared battle input encounter is outside the scanned content");
+    const players = battle.gameState.battleDefinitions ?? battle.common.players;
+    const identities = [...players, ...encounter.enemies];
+    for (const rule of program.rules) {
+      const actor = players.find(player => player.id === rule.actor.id && player.sourceId === rule.actor.sourceId);
+      const targets = "members" in rule.target ? rule.target.members : [rule.target];
+      unique(targets.map(target => target.id), "battle target member");
+      const targetKnown = targets.every(target => identities.some(unit => unit.id === target.id && unit.sourceId === target.sourceId));
+      const command = battle.common.commands[rule.commandId];
+      if (!actor || !targetKnown) throw new Error("Declared battle input actor or target identity is unknown");
+      if ("members" in rule.target) {
+        const side = rule.target.side === "enemy" ? encounter.enemies : battle.common.players;
+        if (canonical([...targets].sort((a, b) => a.id.localeCompare(b.id))) !==
+            canonical(side.map(unit => ({ id: unit.id, sourceId: unit.sourceId })).sort((a, b) => a.id.localeCompare(b.id))))
+          throw new Error("Declared battle side must bind every original member exactly");
+      }
+      if (!command || command.kind !== rule.action.kind)
+        throw new Error("Declared battle input command identity or kind is unknown");
+      if (rule.action.kind === "ability" && (!battle.common.abilities[rule.action.abilityId] ||
+          !command.abilityIds.includes(rule.action.abilityId)))
+        throw new Error("Declared battle input ability does not belong to its command");
+      if (rule.action.kind === "item" && !battle.gameState.items[rule.action.itemId])
+        throw new Error("Declared battle input item identity is unknown");
+    }
+  }
   const diagnostics: { code: string; reason: string }[] = [...dependencies.diagnostics, ...encounters.diagnostics];
   const coveredMaps = new Set(manifest.routes.flatMap(r => r.requiredMapIds));
   const coveredEncounters = new Set(manifest.routes.flatMap(r => r.requiredEncounterIds));
@@ -192,7 +259,11 @@ export function planContentBatch(raw: unknown, packages: ContentBatchPackages) {
     manifest.routes.map(({ id, inputs }) => ({ id, inputs })) : null;
   const dependencyHash = hash({ contentHashes, dependencies, encounters, diagnostics,
     ...(manifest.contentRefs ? { contentRefs: manifest.contentRefs } : {}),
-    ...(routePrograms ? { routePrograms } : {}) });
+    ...(routePrograms ? { routePrograms } : {}),
+    ...(manifest.routes.some(route => route.battleInputs) ? {
+      battlePrograms: manifest.routes.filter(route => route.battleInputs)
+        .map(({ id, battleInputs }) => ({ id, battleInputs })),
+    } : {}) });
   return { kind: "content-batch-plan-v1" as const, manifest, manifestHash: hash(manifest), dependencyHash,
     contentHashes, dependencies, encounters, diagnostics,
     runtimeAdmission: "unassessed" as const, sourceCampaignComplete: false as const };

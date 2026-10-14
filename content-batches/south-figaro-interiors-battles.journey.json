@@ -1,0 +1,387 @@
+{
+  "kind": "source-interiors-battles-journey-contract-v1",
+  "packageId": "south-figaro-interiors-battles",
+  "routeId": "source-interiors-complete-walking-pool",
+  "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+  "parentSourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+  "programHash": "a749a9091fe46751b182056d10f7ee13a45777aa10e6611b5e29c1337a8eedbe",
+  "mapIds": [
+    228,
+    229,
+    230,
+    231,
+    233,
+    234,
+    235,
+    236
+  ],
+  "treasures": [
+    {
+      "mapId": 230,
+      "entityId": "entity_default:0:2",
+      "flagId": 27,
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_11/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "6162276247968856764",
+        "pointer": "/layers/0/objects/2",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "faceInputIndex": 38,
+      "confirmInputIndex": 39,
+      "restoreInputIndex": 40
+    },
+    {
+      "mapId": 230,
+      "entityId": "entity_default:0:3",
+      "flagId": 28,
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_11/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "6162276247968856764",
+        "pointer": "/layers/0/objects/3",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "faceInputIndex": 60,
+      "confirmInputIndex": 61,
+      "restoreInputIndex": 62
+    },
+    {
+      "mapId": 233,
+      "entityId": "6",
+      "flagId": 29,
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_14/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "8870869115297657479",
+        "pointer": "/layers/0/objects/4",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "faceInputIndex": 113,
+      "confirmInputIndex": 114,
+      "restoreInputIndex": 115
+    },
+    {
+      "mapId": 233,
+      "entityId": "7",
+      "flagId": 30,
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_14/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "8870869115297657479",
+        "pointer": "/layers/0/objects/5",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "faceInputIndex": 126,
+      "confirmInputIndex": 127,
+      "restoreInputIndex": 128
+    },
+    {
+      "mapId": 233,
+      "entityId": "8",
+      "flagId": 31,
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_14/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "8870869115297657479",
+        "pointer": "/layers/0/objects/6",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "faceInputIndex": 139,
+      "confirmInputIndex": 140,
+      "restoreInputIndex": 141
+    },
+    {
+      "mapId": 234,
+      "entityId": "entity_default:0:6",
+      "flagId": 33,
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_15/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "-6053547871422737698",
+        "pointer": "/layers/0/objects/6",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "faceInputIndex": 177,
+      "confirmInputIndex": 178,
+      "restoreInputIndex": 179
+    },
+    {
+      "mapId": 234,
+      "entityId": "entity_default:0:7",
+      "flagId": 34,
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_15/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "-6053547871422737698",
+        "pointer": "/layers/0/objects/7",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "faceInputIndex": 227,
+      "confirmInputIndex": 228,
+      "restoreInputIndex": 229
+    },
+    {
+      "mapId": 234,
+      "entityId": "entity_default:0:8",
+      "flagId": 35,
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_15/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "-6053547871422737698",
+        "pointer": "/layers/0/objects/8",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "faceInputIndex": 291,
+      "confirmInputIndex": 292,
+      "restoreInputIndex": 293
+    },
+    {
+      "mapId": 234,
+      "entityId": "entity_default:0:9",
+      "flagId": 36,
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_15/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "-6053547871422737698",
+        "pointer": "/layers/0/objects/9",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "faceInputIndex": 295,
+      "confirmInputIndex": 296,
+      "restoreInputIndex": 297
+    },
+    {
+      "mapId": 235,
+      "entityId": "entity_default:0:2",
+      "flagId": 37,
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_16/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "4704542790606340174",
+        "pointer": "/layers/0/objects/2",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "faceInputIndex": 363,
+      "confirmInputIndex": 364,
+      "restoreInputIndex": 365
+    },
+    {
+      "mapId": 235,
+      "entityId": "entity_default:0:3",
+      "flagId": 38,
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_16/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "4704542790606340174",
+        "pointer": "/layers/0/objects/3",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "faceInputIndex": 393,
+      "confirmInputIndex": 394,
+      "restoreInputIndex": 395
+    },
+    {
+      "mapId": 235,
+      "entityId": "entity_default:0:4",
+      "flagId": 39,
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_16/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "4704542790606340174",
+        "pointer": "/layers/0/objects/4",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "faceInputIndex": 398,
+      "confirmInputIndex": 399,
+      "restoreInputIndex": 400
+    }
+  ],
+  "emptyRevisit": {
+    "mapId": 230,
+    "entityId": "entity_default:0:2",
+    "flagId": 27,
+    "firstFaceInputIndex": 38,
+    "firstConfirmInputIndex": 39,
+    "firstRestoreInputIndex": 40,
+    "repeatFaceInputIndex": 41,
+    "repeatConfirmInputIndex": 42,
+    "repeatRestoreInputIndex": 43
+  },
+  "unassessedEmptyBranch": {
+    "mapId": 233,
+    "flagId": 32,
+    "expectedValue": 0,
+    "sourceScript": "sc_map_20361_14"
+  },
+  "limitations": [
+    "Player inputs replay the explicit initialized source placement, not original campaign reachability.",
+    "Flag32 empty-box branch and walking/battle source requirements remain unassessed."
+  ],
+  "battleProgramHash": "abb51f744964a13fac3887ed72035a2d2854dba6df1c18ffc5c48ea3d7839c72",
+  "baseJourney": {
+    "recipe": "south-figaro-interiors.recipe.json",
+    "routeId": "source-interiors-full-loop-and-treasures",
+    "programHash": "288358b15f344f1ed46c5bfc3cd263adcd7b0f38ac531747ab85c51716744ad0",
+    "unchanged": true
+  },
+  "walking": {
+    "mapId": 234,
+    "monsterSetId": 154,
+    "sourceSlots": [
+      {
+        "slot": 1,
+        "partyId": 375,
+        "rawRate": "80"
+      },
+      {
+        "slot": 2,
+        "partyId": 374,
+        "rawRate": "80"
+      },
+      {
+        "slot": 3,
+        "partyId": 126,
+        "rawRate": "80"
+      },
+      {
+        "slot": 4,
+        "partyId": 126,
+        "rawRate": "16"
+      }
+    ],
+    "declaration": {
+      "kind": "framework-source-set-walk-v1",
+      "id": "south-figaro-complete-set154-walk-v1",
+      "minSteps": 200,
+      "maxSteps": 200,
+      "transportationIds": [
+        1
+      ],
+      "weighting": "source-rate-as-web-weight-v1"
+    },
+    "expectedEncounterSequence": [
+      374,
+      375,
+      374,
+      375,
+      126
+    ],
+    "nativeRulesVerified": false
+  },
+  "loop": {
+    "insertBeforeBaseInputIndex": 563,
+    "position": {
+      "mapId": 234,
+      "x": 20,
+      "y": 32,
+      "layer": 1
+    },
+    "directions": [
+      "up",
+      "down"
+    ],
+    "pairs": 334,
+    "restoresEveryPairs": 50
+  },
+  "acceptance": {
+    "expectedMapId": 228,
+    "requiredMapIds": [
+      228,
+      229,
+      230,
+      231,
+      233,
+      234,
+      235,
+      236
+    ],
+    "requiredEncounterIds": [
+      126,
+      374,
+      375
+    ],
+    "expectedVictories": 5,
+    "sourceStoryReachability": "unassessed",
+    "nativeParity": false,
+    "browserVerified": false
+  },
+  "inputStrategy": {
+    "kind": "declared-player-check-policy-v1",
+    "backRowPlayerIds": [
+      "player:1",
+      "player:31",
+      "player:32"
+    ],
+    "frontRowPlayerIds": [],
+    "equipment": [
+      {
+        "playerId": "player:31",
+        "slot": 1,
+        "contentId": 105
+      },
+      {
+        "playerId": "player:1",
+        "slot": 3,
+        "contentId": 247
+      },
+      {
+        "playerId": "player:1",
+        "slot": 2,
+        "contentId": 202
+      }
+    ],
+    "healing": "source field Cure31/all after each of the first four battles; one source Ether6 after second return; battle Cure31 complete player side below30%, item4 below25%",
+    "offense": "source Fire40 explicit complete enemy side; exact Fight1 targets",
+    "pendingRecovery": "observe actual pendingActions and active unresolved action; skip overlapping recovery without predicting HP",
+    "notGameAI": true,
+    "fieldRecovery": [
+      {
+        "afterEncounter": 374,
+        "abilityId": 31,
+        "selection": {
+          "kind": "all"
+        },
+        "inputIndex": 436
+      },
+      {
+        "afterEncounter": 375,
+        "abilityId": 31,
+        "selection": {
+          "kind": "all"
+        },
+        "itemId": 6,
+        "inputIndex": 639,
+        "etherInputIndex": 640
+      },
+      {
+        "afterEncounter": 374,
+        "abilityId": 31,
+        "selection": {
+          "kind": "all"
+        },
+        "inputIndex": 843
+      },
+      {
+        "afterEncounter": 375,
+        "abilityId": 31,
+        "selection": {
+          "kind": "all"
+        },
+        "inputIndex": 1046
+      }
+    ]
+  }
+}

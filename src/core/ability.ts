@@ -16,6 +16,7 @@ import type { DefendEffect } from "./defend.js";
 import type { PhysicalRowContext } from "./battle-row.js";
 import type { ChangeBattleRowEffect, ChangeBattleRowResult } from "./battle-row-change.js";
 import type { UserConditionEffect, UniqueNoneEffect, UniqueNoneEffectResult } from "./ability-user-conditions.js";
+import type { BattleDerivedActionPlan } from "./battle-derived-actions.js";
 /** Decoded source dispatch, separate from the bounded playability executor. */
 export type AbilityFunction = {
   slot: number;
@@ -36,6 +37,7 @@ export type AbilityProgram = {
   elements: number[];
 };
 export type AbilityEffect =
+  | BattleDerivedActionPlan
   | DefendEffect
   | ChangeBattleRowEffect
   | UserConditionEffect

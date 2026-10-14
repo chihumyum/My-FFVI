@@ -54,6 +54,8 @@ export type BattleAIOp =
   | { kind: "mode-branch"; value: number; equal: boolean; target: number }
   | { kind: "start-table"; tableId: number | null }
   | { kind: "act" | "counter-act"; abilities: number[]; weights: number[] }
+  | { kind: "counter-received-command"; receivedTypeId: number; targeting: "automatic";
+      abilities: number[]; weights: number[] }
   | { kind: "loop-act"; abilities: number[]; counts: number[] }
   | { kind: "blocked"; reason: string };
 export type BattleAIInstruction = { mnemonic: string; op: BattleAIOp };
@@ -98,11 +100,16 @@ export type BattleAIContext = {
   players: readonly { level: number }[];
   enemies: readonly { level: number }[];
 };
+export type BattleAICounterTargeting = "received-actor" | "automatic";
 export type BattleAIAct = {
   pc: number;
   selected: boolean;
 } & (
-  | { kind: "act" | "counter-act"; abilities: number[]; weights: number[] }
+  | { kind: "act"; abilities: number[]; weights: number[] }
+  | { kind: "counter-act"; abilities: number[]; weights: number[];
+      /** Undefined preserves the existing explicit-attacker CounterAct lane.
+       * Source CounterActReceiveCommand always declares automatic targeting. */
+      targeting?: BattleAICounterTargeting }
   | { kind: "loop-act"; abilities: number[]; counts: number[] }
 );
 export type BattleAITurn = {
@@ -390,6 +397,23 @@ function route(
             weights: [...op.weights],
           });
         break;
+      case "counter-received-command": {
+        // 0x81f730: slot1 counter readiness, living HP, then slot30 reads the
+        // received Ability.TypeId. Unlike CounterAct, no system2/5 exclusion
+        // or explicit attacker appears here: slot16 receives a NULL target,
+        // and SetActData 0x15b9d80 delegates to ordinary automatic targeting.
+        if (typeof wake === "string" || !wake.counterReady || context.self.hp <= 0) break;
+        guarded(() => int32(op.receivedTypeId));
+        if (op.receivedTypeId < 0 || op.targeting !== "automatic")
+          fail("invalid received-command counter instruction");
+        const received = state.receivedAbility;
+        if (received === null || received.typeId === undefined)
+          return fail("missing received ability type identity");
+        if (received.typeId === op.receivedTypeId)
+          acts.push({ kind: "counter-act", pc: state.pc, selected: true,
+            targeting: "automatic", abilities: [...op.abilities], weights: [...op.weights] });
+        break;
+      }
       case "loop-act":
         if (normalReady) {
           guarded(() => validateBattleAILoop(op));

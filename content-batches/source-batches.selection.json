@@ -16,6 +16,11 @@
       "path": "content-batches/south-figaro-area.recipe.json",
       "sha256": "6af28fa758c8659c58b6c21c82adce522cfad30884cad121e7ead8ac9cb75960",
       "label": "南费加罗镇完整来源范围（剧情未准入）"
+    },
+    {
+      "path": "content-batches/south-figaro-interiors-battles.recipe.json",
+      "sha256": "d94dd9d44f1cf61e27aab6cee48c60f5c8aaf0a0506b0ee849c0342328c0fd57",
+      "label": "南费加罗室内完整普通遇敌池"
     }
   ]
 }

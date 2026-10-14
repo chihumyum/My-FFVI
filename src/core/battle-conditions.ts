@@ -43,6 +43,9 @@ export type BattleConditionCatalog = {
   behaviors: WithConditionResistanceProvider<
     | { id: number; kind: "defend"; name: string; untilType: 1 }
     | { id: number; kind: "silence"; name: string; untilType: 2 }
+    /** Escape owns action/target eligibility, never HP or death registration.
+     * The host publishes its enemy-only lifecycle after the complete action. */
+    | { id: number; kind: "escape"; name: string; untilType: 2 }
     | ProtectionBehavior
     | SpeedBehavior
     | BlindBehavior
@@ -123,12 +126,15 @@ export class BattleConditions {
         this.validateResistances(provider.conditions);
       }
       if (
-        (typeof b.name !== "string" || (!b.name && !["magitek", "defend"].includes(b.kind))) ||
+        (typeof b.name !== "string" || (!b.name && !["magitek", "defend", "escape"].includes(b.kind))) ||
         !(b.kind === "defend"
           ? b.untilType === 1 && this.definitions.get(b.id)?.type === 1 &&
             this.definitions.get(b.id)?.overlapped === false
           : b.kind === "silence"
           ? b.untilType === 2 && this.definitions.get(b.id)?.type === 6
+          : b.kind === "escape"
+          ? b.untilType === 2 && this.definitions.get(b.id)?.type === 3 &&
+            this.definitions.get(b.id)?.overlapped === false
           : b.kind === "physical-protection" || b.kind === "magic-protection"
           ? b.untilType === 2 && this.definitions.get(b.id)?.overlapped === false &&
             this.definitions.get(b.id)?.type === (b.kind === "physical-protection" ? physicalProtectionType : magicProtectionType)
@@ -208,6 +214,31 @@ export class BattleConditions {
   isUnableFight(ids: readonly number[]) {
     this.validateActive(ids);
     return ids.some((id) => this.behaviors.get(id)!.kind === "unable-fight");
+  }
+  get escapeConditionId(): number {
+    const candidates = [...this.definitions.values()].filter((definition) => definition.type === 3);
+    if (candidates.length !== 1 || this.behaviors.get(candidates[0]!.id)?.kind !== "escape")
+      throw new Error("Missing or ambiguous Escape condition provider");
+    return candidates[0]!.id;
+  }
+  isEscaped(ids: readonly number[]): boolean {
+    this.validateActive(ids);
+    return ids.some((id) => this.behaviors.get(id)!.kind === "escape");
+  }
+  /** Function16.ExecuteEscape -> InterruptAddCondition 0x4582c0 uses Contains,
+   * then Add/Conflict/CheckConditionFunction. It has no hit, resistance or RNG
+   * stage. Enemy/self qualification and publication remain the caller's job. */
+  forceEnemyEscape(currentIds: readonly number[]): ConditionChange {
+    this.validateActive(currentIds);
+    const incomingId = this.escapeConditionId;
+    if (currentIds.includes(incomingId))
+      return { currentIds: [...currentIds], added: [], removed: [], missed: false };
+    const result = this.rules.resolveConflict({
+      currentIds: [...currentIds, incomingId], equipmentIds: [], incomingId,
+    });
+    this.validateActive(result.currentIds);
+    return { currentIds: result.currentIds, added: [incomingId],
+      removed: result.removed.map((removed) => removed.id), missed: false };
   }
   /** Stable owned/checkpoint state must already contain the result of its
    * actual death identity's conflict pass. Do not silently repair saves or

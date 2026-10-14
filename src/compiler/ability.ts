@@ -22,6 +22,7 @@ import { hasProtectionBehavior } from "./protection.js";
 import { hasSpeedBehavior } from "./condition-speed.js";
 import { hasBlindBehavior } from "./condition-blind.js";
 import { compileUserConditionEffect, compileUniqueNoneEffect } from "./ability-user-conditions.js";
+import { compileBattleDerivedAction } from "./battle-derived-actions.js";
 
 type Reader = ConditionReader;
 /** SerialBattleUtility 0x85e170; type and ID arrays recovered from 0x85f000.
@@ -163,6 +164,17 @@ export function compileDevelopmentAbility(
     const [v1, v2, v3] = fn.values;
     if (fn.series !== 0) {
       blockers.push(`slot ${fn.slot}: unresolved series ${fn.series}`);
+    } else if (fn.type === 16 || fn.type === 46) {
+      try {
+        const compiled = compileBattleDerivedAction(reader, program);
+        if (compiled.dispatch) effects.push(compiled.dispatch);
+        blockers.push(...compiled.blockers);
+        for (const row of compiled.sources)
+          if (!sources.some(existing => existing.source.assetPath === row.source.assetPath &&
+              existing.source.rowId === row.source.rowId)) sources.push(row);
+      } catch (error) {
+        blockers.push(error instanceof Error ? error.message : String(error));
+      }
     } else if (fn.type === 15) {
       try {
         effects.push(compileDefendEffect(reader, program).effect);
@@ -329,6 +341,8 @@ export function compileDevelopmentAbility(
   const physicalOnly = effects.length === 1 && effects[0]!.kind === "physical";
   const defendOnly = effects.length === 1 && effects[0]!.kind === "defend";
   const rowOnly = effects.length === 1 && effects[0]!.kind === "change-row";
+  const forcedEscapeOnly = effects.length === 1 && first?.kind === "forced-escape";
+  const randomAbilityOnly = effects.length === 1 && first?.kind === "random-ability";
   const conditionOnly =
     effects.length === 1 &&
     ["add-condition", "recover-condition", "defend"].includes(effects[0]!.kind);
@@ -388,9 +402,9 @@ export function compileDevelopmentAbility(
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (!defendOnly && !rowOnly && !userRemovalOnly && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
+  if (!defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
-  if (!defendOnly && !rowOnly && !userRemovalOnly && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
+  if (!defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
   if ((ordinaryMagic || loreMagic || protectionSpell || speedSpell) && int(a.ability_lv) !== 0)
     blockers.push("unresolved level-specific ability consumption");
@@ -437,6 +451,15 @@ export function compileDevelopmentAbility(
     attribute = int(a.attribute_id);
   if ([power, cost, wait, attribute].some((v) => v < 0))
     blockers.push("negative ability value");
+  if ((forcedEscapeOnly || randomAbilityOnly) &&
+      ([power, cost, wait, attribute].some(value => value !== 0) ||
+       r.accuracy_rate !== 100 || r.invalid_reflection !== 1 || r.reaction_type !== 0 ||
+       program.elements.length))
+    blockers.push("unresolved derived-action scalar or reaction inputs");
+  if (randomAbilityOnly)
+    limitations.push("random child plans, zero child costs, live actor qualification and native default-target domains require complete host admission before drawing");
+  if (forcedEscapeOnly)
+    limitations.push("forced enemy self escape adds source type3; retirement, pending actions, historical reward registrations and battle judgment require the shared action host");
   if (userRemovalOnly && ([power, cost, wait, attribute].some(value => value !== 0) ||
       r.accuracy_rate !== 100 || r.invalid_reflection !== 1 ||
       r.reaction_type !== 0 || program.forbiddenConditionIds.length || program.elements.length))

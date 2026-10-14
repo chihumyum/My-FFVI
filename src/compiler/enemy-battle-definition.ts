@@ -98,21 +98,49 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
     const ai = compileBattleAI(enemy.ai.data, enemy.ai.source);
     if (ai.blockers.length) throw new Error("Unresolved AI entry: " + ai.blockers.join("; "));
     const abilityIds = battleAIAbilities(ai);
+    const dependencyAbilities = (id: number, pc: number, ancestors: readonly number[] = []): number[] => {
+      if (ancestors.includes(id)) {
+        add("runtime-dependency", "random-ability-cycle", `Random ability dependency cycle at ${id}`,
+          { pc, dependency: { table: "ability.csv", id } });
+        return [];
+      }
+      const definition = input.abilities[id], children = definition?.plan?.effects.flatMap(effect => {
+        if (effect.kind !== "random-ability") return [];
+        if (![1, 3, 5, 6, 7, 14, 20, 21].includes(definition!.program.range))
+          add("runtime-dependency", "random-ability-parent-target", `Unresolved random-ability parent scope ${definition!.program.range}`,
+            { pc, dependency: { table: "ability.csv", id } });
+        for (const row of effect.rows) {
+          const child = input.abilities[row.abilityId];
+          if (child && (child.cost !== 0 || child.plan?.effects.some(part => part.kind === "random-ability")))
+            add("runtime-dependency", "random-ability-child", `Unresolved random-ability child ${row.abilityId}`,
+              { pc, dependency: { table: "ability.csv", id: row.abilityId } });
+          if (effect.retarget && child && ![3, 5, 7].includes(child.program.range))
+            add("runtime-dependency", "random-ability-child-target", `Unresolved derived target range for ability ${row.abilityId}`,
+              { pc, dependency: { table: "ability.csv", id: row.abilityId } });
+          if (!effect.retarget && child?.program.range === 5 && definition!.program.range !== 5)
+            add("runtime-dependency", "random-ability-child-target", `Unresolved inherited self target for ability ${row.abilityId}`,
+              { pc, dependency: { table: "ability.csv", id: row.abilityId } });
+        }
+        return effect.rows.map(row => row.abilityId);
+      }) ?? [];
+      return [...new Set([id, ...children.flatMap(child => dependencyAbilities(child, pc, [...ancestors, id]))])];
+    };
     for (const [pc, instruction] of ai.instructions.entries()) {
       const op = instruction.op;
       if (op.kind === "blocked") add("runtime-dependency", "ai-instruction", op.reason, { pc });
       if (op.kind === "condition" && !input.conditions.rules.definitions.some(condition => condition.id === op.conditionId))
         add("blocked", "ai-condition", `Missing AI condition ${op.conditionId}`,
           { pc, dependency: { table: "condition.csv", id: op.conditionId } });
-      if (!("abilities" in op) || !["act", "counter-act", "loop-act"].includes(op.kind)) continue;
-      for (const id of op.abilities) {
+      if (!("abilities" in op) || !["act", "counter-act", "loop-act", "counter-received-command"].includes(op.kind)) continue;
+      for (const id of [...new Set(op.abilities.flatMap(id => dependencyAbilities(id, pc)))]) {
+        if (!abilityIds.includes(id)) abilityIds.push(id);
         const ability = input.abilities[id], dependency = { table: "ability.csv", id };
         if (!ability || ability.id !== id) add("blocked", "ability-reference", `Missing AI ability ${id}`, { pc, dependency });
         else if (!ability.plan) add("runtime-dependency", "ability-plan",
           `Ability ${id}: ${ability.blockers.join("; ") || "unimplemented plan"}`, { pc, dependency });
         else {
           const targetBlocker = battleAITargetBlocker(ability.program.range, ability.plan.targeting,
-            op.kind === "counter-act" ? "counter" : "normal");
+            op.kind === "counter-act" && op.abilities.includes(id) ? "counter" : "normal");
           if (targetBlocker)
             add("runtime-dependency", "automatic-target", `Ability ${id}: ${targetBlocker}`, { pc, dependency });
           else if (ability.plan.targeting.normalFormationOnly && formationPlan &&
