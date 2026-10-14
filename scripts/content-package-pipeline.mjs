@@ -10,7 +10,7 @@ import {loadSourceContentSelection,loadSourceRecipePaths} from './source-content
 import {runtimeDigest} from './runtime-digest.mjs';
 import {compileSourcePrerequisites,validateSourcePrerequisiteInputs} from './compile-source-prerequisites.mjs';
 import {linkSourcePrerequisites} from './link-source-prerequisites.mjs';
-import {resolveSourceRecipeInputs,createSourceWalkEvidenceReader} from './source-recipe-inputs.mjs';
+import {resolveSourceRecipeInputs,resolveCompiledBattleReference,createSourceWalkEvidenceReader} from './source-recipe-inputs.mjs';
 
 const repository=resolve(import.meta.dirname,'..');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -137,16 +137,30 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
   for(const [url,value] of linked.payloads)payloads.set(url,value);
   reports.push({id:'source-prerequisites',report:prerequisites.report},{id:'linked-source-prerequisites',report:linked.report});
   const ordinary=await recipe('content-batches/ordinary-battles.json');
+  const battleRebindings=[...prerequisites.battleRebindings];
+  const ordinaryReference=await resolveCompiledBattleReference({root,compiledDir,
+    reference:ordinary.value.baseCatalogRef,readCurrentJson:readJson,readCandidateJson:sourceRead,battleRebindings});
+  const ordinaryDeclaration={...ordinary.value,baseCatalogRef:ordinaryReference.reference};
+  if(ordinaryReference.report)rebindings.push({id:'ordinary-battles',kind:'battle-declaration-inputs-v1',
+    recipePath:ordinary.path,recipeSha256:ordinary.sha256,battleCapabilityRebindings:[ordinaryReference.report]});
   const [base,battles]=await Promise.all([
-    compileBaseContentPackages({root,readJson:sourceRead}),compileBattleContentBatch(root,ordinary.value,{readJson:sourceRead})]);
+    compileBaseContentPackages({root,readJson:sourceRead}),compileBattleContentBatch(root,ordinaryDeclaration,{readJson:sourceRead})]);
   assert.ok(battles.catalog,'Ordinary battle content candidate is blocked');append('base',base);
+  const {verifyContent,hash}=Object.assign({},...await Promise.all([
+    import(pathToFileURL(resolve(root,compiledDir,'src/core/content-integrity.js')).href),
+    import(pathToFileURL(resolve(root,compiledDir,'src/compiler/content.js')).href)]));
+  const previousOrdinary=await verifyContent(structuredClone(await readJson('/content-batches/ordinary-battles/battle.json')));
+  battleRebindings.push({kind:'compiled-battle-rebinding-v1',url:'/content-batches/ordinary-battles/battle.json',
+    previousHash:previousOrdinary.contentHash,candidateHash:battles.catalog.contentHash,
+    compilerDigest:prerequisites.inputs.compilerDigest,sourceContentHash:battles.catalog.common.sourceContentHash,
+    fieldSourceSetHash:battles.catalog.common.fieldSourceSetHash,gameStateHash:hash(battles.catalog.gameState)});
   const candidateRead=async url=>url==='/content-batches/ordinary-battles/battle.json'
     ? structuredClone(battles.catalog):sourceRead(url);
   const sourceWalkEvidence=createSourceWalkEvidenceReader({root,compiledDir});
   const resolveRecipe=async path=>{
     const original=await recipe(path);
     const resolved=await resolveSourceRecipeInputs({root,compiledDir,recipePath:path,recipeBytes:original.raw,
-      readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence});
+      readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence,battleRebindings});
     rebindings.push(resolved.report);return {...original,value:resolved.recipe};
   };
   const [playRecipe,initRecipe,travelRecipe,developmentRecipe,...sourceRecipes]=await Promise.all([
@@ -196,7 +210,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
   const sourceSelection={...selectionBody,contentHash:await contentDigest(selectionBody)};
   put('/content-packages/source-batches/selection.json',sourceSelection);
   reports.push({id:'source-batch-selection',report:sourceSelection});
-  return {payloads,reports,recipes,rebindings,sourceInputs:prerequisites.inputs,sourceSelection,
+  return {payloads,reports,recipes,rebindings,sourceInputs:prerequisites.inputs,sourceSelection,battleRebindings,
     validateInputs:async()=>{
       await validateSourcePrerequisiteInputs(prerequisites.inputs,{root});
       assert.equal(await runtimeDigest(root,resolve(root,compiledDir)),preparedRuntime,
@@ -232,6 +246,7 @@ export async function publishContentPackages({root=repository,compiledDir='dist'
     report.producers=candidate.reports??[];
     if(candidate.sourceSelection)report.sourceSelection=candidate.sourceSelection;
     report.recipeRebindings=candidate.rebindings??[];
+    report.battleCapabilityRebindings=candidate.battleRebindings??[];
     if(candidate.sourceInputs)report.sourceInputLock={kind:candidate.sourceInputs.kind,
       compilerDigest:candidate.sourceInputs.compilerDigest,files:candidate.sourceInputs.files.length,
       directories:candidate.sourceInputs.directories.length};

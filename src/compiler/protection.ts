@@ -2,7 +2,7 @@ import type { ProtectionBehavior } from "../core/protection.js";
 import { magicProtectionType, physicalProtectionType } from "../core/protection.js";
 import type { BattleRow } from "./battle.js";
 import type { ConditionDefinition } from "../core/conditions.js";
-import { compileConditionResistances } from "./condition-resistances.js";
+import { compileConditionResistanceProvider } from "./condition-resistance-provider.js";
 import { tableInteger as int } from "./table.js";
 
 function hasProtectionLifecycle(row: Pick<BattleRow, "values">): boolean {
@@ -48,22 +48,11 @@ function protectionBehavior(row: Pick<BattleRow, "values">, name: (key: string) 
  * as a resistance dictionary (45b450 -> 4dbaf0), never as active membership.
  * Unknown providers leave this master row inactive in the bounded catalog. */
 export function compileProtectionCondition(
-  reader: Parameters<typeof compileConditionResistances>[0],
+  reader: Parameters<typeof compileConditionResistanceProvider>[0],
   row: BattleRow,
   name: (key: string) => string,
   definitions: readonly ConditionDefinition[],
 ): { behavior: ProtectionBehavior | null; sources: BattleRow[]; blockers: string[] } {
-  const ordinary = compileProtectionBehavior(row, name);
-  if (ordinary) return { behavior: ordinary, sources: [], blockers: [] };
-  const groupId = int(row.values.condition_group_id);
-  if (groupId <= 0 || groupId > 0x7fffffff || !hasProtectionLifecycle(row))
-    return { behavior: null, sources: [], blockers: [] };
-  try {
-    const provider = compileConditionResistances(reader, groupId, definitions);
-    const behavior = protectionBehavior(row, name);
-    return { behavior: { ...behavior, resistanceProvider: { groupId, conditions: provider.resistances } },
-      sources: provider.sources, blockers: [] };
-  } catch (error) {
-    return { behavior: null, sources: [], blockers: [error instanceof Error ? error.message : String(error)] };
-  }
+  return compileConditionResistanceProvider(reader, row,
+    hasProtectionLifecycle(row) ? protectionBehavior(row, name) : null, definitions);
 }

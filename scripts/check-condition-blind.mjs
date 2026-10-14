@@ -45,8 +45,17 @@ assert.equal(blind.condition_group_id, '0'); assert.equal(sourceRows[1].conditio
 assert.deepEqual([Number(effect.id), Number(effect.position_type), Number(effect.se_asset_id)], [70, 5, 274]);
 const { catalog, sources } = compileBattleConditionCatalog(reader, corpus.tables['condition.csv'].map((r) => Number(r.id)), name);
 const conditions = new BattleConditions(catalog);
-assert.deepEqual(catalog.behaviors.filter((b) => b.kind === 'blind'), compiled.filter(Boolean));
-assert.throws(() => conditions.validateActive([89]), /Unimplemented active/);
+assert.deepEqual(Object.keys(sourceRows[1]).filter((key) => sourceRows[1][key] !== blind[key]).sort(),
+  ['condition_group_id', 'erase_condition_group_id', 'id']);
+const providerRows = corpus.tables['condition_group.csv'].filter((r) => r.group_id === sourceRows[1].condition_group_id);
+assert.deepEqual(providerRows.map((r) => [Number(r.condition_id), Number(r.type_id)]), [[9, 1]]);
+const provider = { groupId: Number(sourceRows[1].condition_group_id),
+  conditions: Object.fromEntries(providerRows.map((r) => [r.condition_id, Number(r.type_id)])) };
+const active = [...compiled.filter(Boolean), { ...compiled[0], id: Number(sourceRows[1].id),
+  name: name(sourceRows[1].mes_id_name), resistanceProvider: provider }];
+assert.deepEqual(catalog.behaviors.filter((b) => b.kind === 'blind'), active);
+conditions.validateActive([89]);
+for (const row of providerRows) assert.ok(sources.some((r) => r.source.assetPath.endsWith('/condition_group.csv') && r.values.id === row.id));
 assert.ok(sources.some((r) => r.source.assetPath.endsWith('/battle_effect_asset.csv') && r.values.id === effect.id));
 assert.ok(sources.some((r) => r.source.assetPath.endsWith('/se_asset.csv') && r.values.id === effect.se_asset_id));
 const field = new FieldConditions(compileFieldConditionCatalog(reader, catalog, [1, 6]).catalog);
@@ -58,6 +67,20 @@ assert.ok(sourceMisc[0].data.change_character_condition_list.every((r) => Number
 
 const ordinaryHit = { accuracy: 100, magicEvasion: 0, fixed: false }, noRng = () => assert.fail('Unexpected random draw');
 let lifecycleProbes = 0, abilityProbes = 0, numericProbes = 0;
+const providerState = [89], providerBase = { 9: 0, 6: 1 };
+assert.deepEqual(conditions.effectiveResistances(providerState, providerBase, 'enemy'), { 9: 1, 6: 1 }); lifecycleProbes++;
+for (const fixed of [false, true]) {
+  assert.deepEqual(conditions.add(providerState, providerBase, 9, { ...ordinaryHit, fixed }, noRng, 'enemy'),
+    { currentIds: [89], added: [], removed: [], missed: true }); lifecycleProbes++;
+}
+assert.deepEqual(conditions.recover(providerState, [9]).currentIds, [89]); lifecycleProbes++;
+const providerRemoved = conditions.recover(providerState, [89]).currentIds;
+assert.deepEqual(providerRemoved, []); lifecycleProbes++;
+assert.deepEqual(conditions.effectiveResistances(providerRemoved, providerBase, 'enemy'), providerBase); lifecycleProbes++;
+assert.deepEqual(conditions.settleLife(0, providerState, false).conditionIds, [5]); lifecycleProbes++;
+assert.deepEqual(conditions.battleEnd(providerState), [89]); lifecycleProbes++;
+assert.deepEqual(conditions.types(providerState), [9]); lifecycleProbes++;
+assert.deepEqual(providerState, [89]); assert.deepEqual(providerBase, { 9: 0, 6: 1 }); lifecycleProbes++;
 assert.deepEqual(conditions.add([53], {}, 9, ordinaryHit, () => 0).currentIds, [53, 9]); lifecycleProbes++;
 assert.equal(conditions.add([53, 9], {}, 9, ordinaryHit, noRng).missed, true); lifecycleProbes++;
 for (const resistance of [0, 1, 2]) {
@@ -135,6 +158,8 @@ for (const accuracy of [0, 1, 3, 80, 100, 203, 204, 254, 255, 300]) for (const a
 
 const report = { kind: 'condition-blind-source', sourceOnly, sourceSetHash: corpus.manifest.parentSourceSetHash,
   nativeReportSha256: hash(native), messageSource: system.source, conditions: sourceRows, effect,
+  ordinaryApplicationIds: compiled.filter(Boolean).map((b) => b.id), activeConditionIds: active.map((b) => b.id),
+  activeResistanceProvider: provider,
   fieldAppearance: { source: sourceMisc[0].source, rules: sourceMisc[0].data.change_character_condition_list },
   sources: [...sources, ...definitions.flatMap((d) => compileAbilityProgram(reader, d.id).sources)],
   admittedAbilities: admitted.map((d) => d.id), blockedAbilities: blocked.map((d) => ({ id: d.id, blockers: d.blockers })),
@@ -151,7 +176,7 @@ if (!sourceOnly) {
   assert.equal(published.common.profile, 'narshe-playability-v35');
   assert.equal(published.common.sourceContentHash, source.contentHash); assert.equal(source.nativeProfile.sha256, native.nativeSha256);
   for (const d of definitions) { assert.deepEqual(published.common.abilities[d.id].plan, d.plan); assert.deepEqual(published.common.abilities[d.id].blockers, d.blockers); report.publishedProbes++; }
-  assert.deepEqual(published.common.conditions.behaviors.filter((b) => b.kind === 'blind'), compiled.filter(Boolean)); report.publishedProbes++;
+  assert.deepEqual(published.common.conditions.behaviors.filter((b) => b.kind === 'blind'), active); report.publishedProbes++;
   const create = () => new GameState(published.gameState, published.common.players, published.contentHash, published.common.conditions);
   const state = create(), initial = state.snapshot(), snapshot = structuredClone(initial), target = snapshot.roster[0];
   target.conditionIds.push(9);
@@ -178,6 +203,6 @@ if (!sourceOnly) {
   assert.deepEqual(published, original); report.contentHash = published.contentHash;
 }
 await writeFile(outputPath, JSON.stringify(report, null, 2) + '\n');
-console.log(JSON.stringify({ sourceOnly, admittedConditions: 1, blockedConditions: 1, admittedAbilities: admitted.length,
+console.log(JSON.stringify({ sourceOnly, admittedConditions: active.length, ordinaryApplicationConditions: 1, blockedFieldConditions: 1, admittedAbilities: admitted.length,
   blockedAbilities: blocked.length, lifecycleProbes, abilityProbes, numericProbes, publishedProbes: report.publishedProbes,
   hostProbes: report.hostProbes.length, reportSha256: hash(report), originalGameExecuted: false }, null, 2));

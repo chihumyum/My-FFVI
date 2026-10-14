@@ -13,18 +13,28 @@ import type { SourceWalkEncounterDependencies } from "../src/field/world.js";
 
 type Ref = { url: string; contentHash: string };
 type Recipe = { kind: string; id: string; [key: string]: unknown };
+type BattleRebinding = { kind: "compiled-battle-rebinding-v1"; url: string; previousHash: string;
+  candidateHash: string; compilerDigest: string; sourceContentHash: string; fieldSourceSetHash: string; gameStateHash: string };
+type BattleRebindingReport = BattleRebinding & { profile: string;
+  sourceIdentityBefore: { physicalSourceCount: number; physicalSourceHash: string };
+  sourceIdentityAfter: { physicalSourceCount: number; physicalSourceHash: string } };
 type Inputs = { recipePath: string; recipeBytes: Uint8Array | string;
   readCurrentJson: (url: string) => Promise<unknown>; readCandidateJson: (url: string) => Promise<unknown>;
-  sourceWalkEvidence?: (map: WorldMapContent) => Promise<SourceWalkEncounterDependencies> };
+  sourceWalkEvidence?: (map: WorldMapContent) => Promise<SourceWalkEncounterDependencies>;
+  battleRebindings?: BattleRebinding[] };
 type Result = { recipe: Recipe; report: { kind: string; id: string; recipeSha256: string;
   changes: { pointer: string; role: string; url: string; oldHash: string; newHash: string }[];
   dependencyRebindings: { pointer: string; role: string; url: string; mapId: number; oldHash: string; newHash: string }[];
   sourceIdentities: { role: string; profile: string; physicalSourceHash: string; mediaBindingsHash: string }[];
-  sourceEvidenceEnrichments: { role: string; mapId: number; physicalSourceBefore: {count: number}; physicalSourceAfter: {count: number} }[] } };
+  sourceEvidenceEnrichments: { role: string; mapId: number; physicalSourceBefore: {count: number}; physicalSourceAfter: {count: number} }[];
+  battleCapabilityRebindings: (BattleRebindingReport & { pointer: string; role: string })[] } };
 const script = pathToFileURL(resolve(process.cwd(), "scripts/source-recipe-inputs.mjs")).href;
 const compiledDir = fileURLToPath(new URL("../", import.meta.url));
 const run = async (input: Inputs): Promise<Result> =>
   (await import(script)).resolveSourceRecipeInputs({ ...input, compiledDir });
+const resolveBattle = async (input: Pick<Inputs, "readCurrentJson" | "readCandidateJson" | "battleRebindings"> &
+  { reference: Ref }): Promise<{ reference: Ref; report: BattleRebindingReport | null }> =>
+  (await import(script)).resolveCompiledBattleReference({ ...input, compiledDir });
 async function seal<T extends { contentHash: string }>(value: T): Promise<T> {
   const { contentHash: _, ...payload } = structuredClone(value);
   return { ...payload, contentHash: await contentDigest(payload) } as T;
@@ -232,6 +242,120 @@ test("battle and base-field hashes stay fixed while only the framework source de
   candidate.set(urls.baseWorld, await seal({ ...newWorld, developmentProfile: {
     ...newWorld.developmentProfile, transportation: "walking-magitek-framework-v1" } }));
   await assert.rejects(run(input), /Source identity\/profile\/media changed/);
+});
+
+async function battleCapabilityFixture() {
+  const f = await fixture();
+  const before: typeof f.battle = await seal({ ...f.battle, common: { ...f.battle.common,
+    sourceContentHash: "a".repeat(64), fieldSourceSetHash: "b".repeat(64),
+    sprites: { ...f.battle.common.sprites, controlled: { file: "/battle/controlled.png", width: 16, height: 16 } } } });
+  const after = await seal({ ...before, common: { ...before.common,
+    limitations: [...before.common.limitations, "Controlled compiler capability metadata"],
+    conditions: { ...before.common.conditions, source: { file: "controlled-condition.bundle", assetPath: "condition.csv",
+      objectId: "-9007199254740997", serializedFile: "controlled-condition", sha256: "e".repeat(64) } } } });
+  const proof: BattleRebinding = { kind: "compiled-battle-rebinding-v1", url: f.urls.sourceBattle,
+    previousHash: before.contentHash, candidateHash: after.contentHash, compilerDigest: "c".repeat(64),
+    sourceContentHash: before.common.sourceContentHash, fieldSourceSetHash: before.common.fieldSourceSetHash,
+    gameStateHash: await contentDigest(before.gameState) };
+  f.current.set(f.urls.sourceBattle, before); f.candidate.set(f.urls.sourceBattle, after);
+  f.current.set(f.urls.sourceEntry, await seal({ ...f.oldEntry, battleCatalogHash: before.contentHash }));
+  f.candidate.set(f.urls.sourceEntry, await seal({ ...f.newEntry, battleCatalogHash: after.contentHash }));
+  (f.recipe.sourceBattle as Ref).contentHash = before.contentHash;
+  (f.recipe.sourceEntry as Ref).contentHash = (f.current.get(f.urls.sourceEntry) as Ref).contentHash;
+  const input = (): Inputs => ({ ...f.input(), battleRebindings: [proof] });
+  return { ...f, before, after, proof, authorizedInput: input };
+}
+
+test("an exact compiler proof rebinds catalog capabilities and siblings while preserving both source identities", async () => {
+  const f = await battleCapabilityFixture(), raw = encode(f.recipe);
+  const original = canonical({ current: [...f.current], candidate: [...f.candidate], recipe: f.recipe, proof: f.proof });
+  await assert.rejects(run(f.input()), /retain sourceBattle content unchanged/);
+  const output = await run({ ...f.authorizedInput(), recipeBytes: raw });
+  assert.equal((output.recipe.sourceBattle as Ref).contentHash, f.after.contentHash);
+  assert.equal((output.recipe.sourceEntry as Ref).contentHash, (f.candidate.get(f.urls.sourceEntry) as Ref).contentHash);
+  assert.equal(output.report.recipeSha256, hashBytes(raw));
+  assert.equal(output.report.battleCapabilityRebindings.length, 1);
+  const report = output.report.battleCapabilityRebindings[0]!;
+  assert.equal(report.pointer, "/sourceBattle"); assert.equal(report.role, "sourceBattle");
+  assert.equal(report.previousHash, f.before.contentHash); assert.equal(report.candidateHash, f.after.contentHash);
+  assert.equal(report.compilerDigest, f.proof.compilerDigest); assert.equal(report.gameStateHash, f.proof.gameStateHash);
+  assert.ok(report.sourceIdentityAfter.physicalSourceCount > report.sourceIdentityBefore.physicalSourceCount);
+  assert.notEqual(report.sourceIdentityBefore.physicalSourceHash, report.sourceIdentityAfter.physicalSourceHash);
+  assert.equal(output.report.sourceIdentities.find(row => row.role === "sourceBattle")!.physicalSourceHash,
+    report.sourceIdentityBefore.physicalSourceHash, "Old evidence is not normalized to candidate evidence");
+  report.sourceIdentityAfter.physicalSourceCount = -1;
+  assert.equal(canonical({ current: [...f.current], candidate: [...f.candidate], recipe: f.recipe, proof: f.proof }), original);
+  assert.equal(hashBytes(raw), output.report.recipeSha256);
+  f.candidate.set(f.urls.sourceEntry, await seal({ ...f.newEntry, battleCatalogHash: f.before.contentHash }));
+  await assert.rejects(run(f.authorizedInput()), /Entry\/battle dependency mismatch/);
+});
+
+test("the ordinary base reference helper shares exact proof admission and returns detached unchanged references", async () => {
+  const f = await battleCapabilityFixture(), url = "/game/opening-playable.json";
+  const reference = { url, contentHash: f.before.contentHash }, proof = { ...f.proof, url };
+  const readCurrentJson = async (actual: string) => { assert.equal(actual, url); return f.before; };
+  const unchanged = await resolveBattle({ reference, readCurrentJson, readCandidateJson: readCurrentJson });
+  assert.deepEqual(unchanged.reference, reference); assert.notEqual(unchanged.reference, reference);
+  assert.equal(unchanged.report, null);
+  const input = { reference, readCurrentJson, readCandidateJson: async (actual: string) => {
+    assert.equal(actual, url); return f.after;
+  } };
+  await assert.rejects(resolveBattle(input), /retain battle content unchanged/);
+  const output = await resolveBattle({ ...input, battleRebindings: [proof] });
+  assert.deepEqual(output.reference, { url, contentHash: f.after.contentHash });
+  assert.equal(output.report!.compilerDigest, proof.compilerDigest);
+  output.reference.contentHash = "f".repeat(64); output.report!.compilerDigest = "f".repeat(64);
+  assert.equal(reference.contentHash, f.before.contentHash); assert.equal(proof.compilerDigest, f.proof.compilerDigest);
+  await assert.rejects(resolveBattle({ ...input, battleRebindings: [f.proof] }), /retain battle content unchanged/,
+    "A source catalog proof cannot authorize a different logical catalog URL");
+});
+
+test("compiled catalog proof never authorizes source, owner, profile or media changes", async () => {
+  const f = await battleCapabilityFixture();
+  const cases: { mutate: (value: typeof f.after) => void; error: RegExp }[] = [
+    { mutate: value => { value.common.sourceContentHash = "d".repeat(64); }, error: /source content mismatch/ },
+    { mutate: value => { value.common.fieldSourceSetHash = "d".repeat(64); }, error: /field source mismatch/ },
+    { mutate: value => { value.gameState.initialGil++; }, error: /owned initializer mismatch/ },
+    { mutate: value => { value.gameState.sourceNewGame!.gil++; }, error: /owned initializer mismatch/ },
+    { mutate: value => { value.common.profile = "foreign" as typeof value.common.profile; }, error: /common profile changed/ },
+    { mutate: value => { Object.assign(value, { developmentProfile: frameworkProfile(f.before.contentHash) }); },
+      error: /source\/profile\/media identity changed/ },
+    { mutate: value => { Object.assign(value, { parentSourceSetHash: "d".repeat(64) }); },
+      error: /source\/profile\/media identity changed/ },
+    { mutate: value => { value.common.sprites.changed = { file: "/battle/different.png", width: 16, height: 16 }; },
+      error: /media bindings changed/ },
+    { mutate: value => { const key = Object.keys(value.common.sprites)[0]!; value.common.sprites[key]!.width++; },
+      error: /media bindings changed/ },
+  ];
+  for (const entry of cases) {
+    const value = structuredClone(f.after); entry.mutate(value); const after = await seal(value);
+    f.candidate.set(f.urls.sourceBattle, after);
+    const proof = { ...f.proof, candidateHash: after.contentHash }, original = canonical({ after, proof });
+    await assert.rejects(run({ ...f.input(), battleRebindings: [proof] }), entry.error);
+    assert.equal(canonical({ after, proof }), original);
+  }
+});
+
+test("wrong, ambiguous or malformed compiler proof cannot weaken old pins or payload validation", async () => {
+  const f = await battleCapabilityFixture(), original = canonical({ proof: f.proof, recipe: f.recipe });
+  for (const key of ["previousHash", "candidateHash", "sourceContentHash", "fieldSourceSetHash", "gameStateHash"] as const)
+    await assert.rejects(run({ ...f.input(), battleRebindings: [{ ...f.proof, [key]: "d".repeat(64) }] }), /mismatch/);
+  const malformed: unknown[] = [
+    [{ ...f.proof, compilerDigest: "not-a-digest" }], [{ ...f.proof, url: "/game/../source-catalog.json" }],
+    [{ ...f.proof, sourceAdmission: true }], [{ ...f.proof, kind: "guessed-proof" }], [f.proof, f.proof],
+    new Array(1), [Object.defineProperty({ ...f.proof }, "compilerDigest", { enumerable: true, get() {
+      throw new Error("Getter must not be read");
+    } })],
+  ];
+  for (const battleRebindings of malformed)
+    await assert.rejects(run({ ...f.input(), battleRebindings: battleRebindings as BattleRebinding[] }),
+      /compiled battle|Battle rebindings/);
+  assert.equal(canonical({ proof: f.proof, recipe: f.recipe }), original);
+  const badPin = structuredClone(f.recipe); (badPin.sourceBattle as Ref).contentHash = "d".repeat(64);
+  await assert.rejects(run({ ...f.authorizedInput(), recipeBytes: encode(badPin) }), /identity mismatch/);
+  const unsealed = structuredClone(f.after); unsealed.common.limitations.push("Late mutation");
+  f.candidate.set(f.urls.sourceBattle, unsealed);
+  await assert.rejects(run(f.authorizedInput()), /payload changed/);
 });
 
 test("unpinned development strings remain unchanged without invented pins, reads or mutations", async () => {

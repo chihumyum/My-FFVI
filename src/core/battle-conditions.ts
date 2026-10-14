@@ -26,6 +26,13 @@ import {
 export type { PoisonState, PoisonTick } from "./condition-poison.js";
 export type { SlowState } from "./condition-speed.js";
 
+/** The generic condition Init provider, independent of the behavior's numeric
+ * effect. Active identities remain the only owner of these temporary values. */
+export type BattleConditionResistanceProvider = NonNullable<ProtectionBehavior["resistanceProvider"]>;
+export type WithConditionResistanceProvider<T> = T & {
+  resistanceProvider?: BattleConditionResistanceProvider;
+};
+
 /** Only behavior functions whose state dependencies are implemented are admitted.
  * The full master catalog remains available for references and conflict rules. */
 export type BattleConditionCatalog = {
@@ -33,7 +40,7 @@ export type BattleConditionCatalog = {
   /** Identity passed by the source HP controller, distinct from condition type. */
   hpZeroConditionId: number;
   dying: { conditionId: number; thresholdDivisor: number };
-  behaviors: (
+  behaviors: WithConditionResistanceProvider<
     | { id: number; kind: "defend"; name: string; untilType: 1 }
     | { id: number; kind: "silence"; name: string; untilType: 2 }
     | ProtectionBehavior
@@ -51,7 +58,7 @@ export type BattleConditionCatalog = {
         untilType: 3;
         hpDivisor: number;
       }
-  )[];
+  >[];
 };
 export type ConditionChange = {
   currentIds: number[];
@@ -103,16 +110,16 @@ export class BattleConditions {
     if (this.behaviors.size !== catalog.behaviors.length)
       throw new Error("Duplicate battle condition behavior");
     for (const b of this.behaviors.values()) {
-      if ("resistanceProvider" in b && b.kind !== "physical-protection" && b.kind !== "magic-protection")
+      if ("resistanceProvider" in b && !["physical-protection", "magic-protection", "haste", "slow", "blind", "poison"].includes(b.kind))
         throw new Error("Unsupported condition resistance provider behavior");
       if (b.kind === "haste" || b.kind === "slow") validateSpeedBehavior(b);
       if (b.kind === "blind") validateBlindBehavior(b);
-      if ((b.kind === "physical-protection" || b.kind === "magic-protection") && b.resistanceProvider !== undefined) {
+      if (b.resistanceProvider !== undefined) {
         const provider = b.resistanceProvider;
         if (!provider || !Number.isInteger(provider.groupId) || provider.groupId <= 0 || provider.groupId > 0x7fffffff ||
             !provider.conditions || typeof provider.conditions !== "object" || Array.isArray(provider.conditions) ||
             !Object.keys(provider.conditions).length)
-          throw new Error("Invalid protection resistance provider");
+          throw new Error("Invalid condition resistance provider");
         this.validateResistances(provider.conditions);
       }
       if (
@@ -186,7 +193,7 @@ export class BattleConditions {
     const temporary: Record<string, number> = {};
     for (const id of currentIds) {
       const behavior = this.behaviors.get(id)!;
-      if ((behavior.kind === "physical-protection" || behavior.kind === "magic-protection") && behavior.resistanceProvider)
+      if (behavior.resistanceProvider)
         Object.assign(temporary, behavior.resistanceProvider.conditions);
     }
     for (const [id, selector] of Object.entries(temporary))

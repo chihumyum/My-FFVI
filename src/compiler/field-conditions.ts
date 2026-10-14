@@ -22,22 +22,34 @@ export function compileFieldConditionCatalog(
   // application/appearance is not admitted; a checkpoint cannot inject them
   // as passive statuses and carry them into another encounter.
   const behaviors = battle.behaviors.filter((behavior) =>
-    !["defend", "physical-protection", "magic-protection", "haste", "slow"].includes(behavior.kind)).map(
-    (behavior): FieldConditionCatalog["behaviors"][number] => {
+    !["defend", "physical-protection", "magic-protection", "haste", "slow"].includes(behavior.kind)).flatMap(
+    (behavior): FieldConditionCatalog["behaviors"] => {
       const row = reader.row("condition.csv", behavior.id);
       sources.push(row);
+      // A separately admitted battle function does not grant field persistence.
+      // Keep its master definition/reference, but expose no active field behavior.
+      // Only the known generic dictionary differs; malformed ordinary lifecycle
+      // data must still fail instead of becoming an implicit omission.
+      if ((behavior.kind === "blind" || behavior.kind === "poison") && behavior.resistanceProvider !== undefined) {
+        const ordinary = { ...row, values: { ...row.values, condition_group_id: "0" } };
+        if (behavior.resistanceProvider.groupId <= 0 ||
+            int(row.values.condition_group_id) !== behavior.resistanceProvider.groupId ||
+            !(behavior.kind === "blind" ? hasBlindBehavior(ordinary) : hasPoisonBehavior(ordinary)))
+          throw new Error("Changed battle-only condition provider");
+        return [];
+      }
       const damage = int(row.values.damage_number);
       const soundId = int(row.values.field_se_asset_id);
       if (behavior.kind === "poison") {
         if (!hasPoisonBehavior(row) || soundId < 0)
           throw new Error("Unresolved field poison provider");
         if (soundId > 0) sources.push(reader.row("se_asset.csv", soundId));
-        return {
+        return [{
           id: behavior.id,
           kind: "poison",
           hpDivisor: damage,
           soundId,
-        };
+        }];
       }
       if (damage !== 0 || soundId !== 0)
         throw new Error("Unresolved active field condition provider");
@@ -45,7 +57,7 @@ export function compileFieldConditionCatalog(
         throw new Error("Unresolved field Magitek condition provider");
       if (behavior.kind === "blind" && !hasBlindBehavior(row))
         throw new Error("Unresolved field Blind condition provider");
-      return { id: behavior.id, kind: "none" };
+      return [{ id: behavior.id, kind: "none" }];
     },
   );
   const dyingRows = battle.rules.definitions.filter((d) => d.type === 4);

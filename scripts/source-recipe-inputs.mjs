@@ -8,6 +8,7 @@ import {pathToFileURL} from 'node:url';
 const repository=resolve(import.meta.dirname,'..');
 const digest=/^[a-f0-9]{64}$/;
 const logicalURL=/^\/(?:world|game|framework)\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.json$/;
+const jsonURL=/^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.json$/;
 const ordinaryBattle='/content-batches/ordinary-battles/battle.json';
 const roles={sourceEntry:'source-new-game-content-v1',sourceBattle:'narshe-battle-catalog',
   sourceWorld:'world-development',sourceMap:'world-map-development',
@@ -86,6 +87,35 @@ function requiredString(value,field){
   assert.ok(typeof value==='string'&&value.length>0,'Missing source identity: '+field);return value;
 }
 
+function dataFields(value,keys,label){
+  assert.ok(plain(value),'Invalid '+label);
+  const own=Reflect.ownKeys(value);
+  assert.ok(own.every(key=>typeof key==='string'),'Invalid '+label+' fields');
+  assert.deepEqual(own.sort(),[...keys].sort(),'Invalid '+label+' fields');
+  for(const descriptor of Object.values(Object.getOwnPropertyDescriptors(value)))
+    assert.ok(descriptor.enumerable&&Object.hasOwn(descriptor,'value'),label+' must contain own data fields');
+  return value;
+}
+
+function parseBattleRebindings(raw=[]){
+  assert.ok(Array.isArray(raw),'Battle rebindings must be an array');
+  assert.equal(Reflect.ownKeys(raw).length,raw.length+1,'Battle rebindings must be dense own data');
+  const result=new Map();
+  for(let index=0;index<raw.length;index++){
+    const descriptor=Object.getOwnPropertyDescriptor(raw,String(index));
+    assert.ok(descriptor?.enumerable&&Object.hasOwn(descriptor,'value'),'Battle rebindings must be dense own data');
+    const value=dataFields(descriptor.value,['kind','url','previousHash','candidateHash','compilerDigest',
+      'sourceContentHash','fieldSourceSetHash','gameStateHash'],'compiled battle rebinding');
+    assert.equal(value.kind,'compiled-battle-rebinding-v1','Unknown compiled battle rebinding');
+    assert.ok(typeof value.url==='string'&&jsonURL.test(value.url),'Invalid compiled battle rebinding URL');
+    for(const key of ['previousHash','candidateHash','compilerDigest','sourceContentHash','fieldSourceSetHash','gameStateHash'])
+      assert.ok(typeof value[key]==='string'&&digest.test(value[key]),'Invalid compiled battle rebinding '+key);
+    assert.ok(!result.has(value.url),'Ambiguous compiled battle rebinding: '+value.url);
+    result.set(value.url,structuredClone(value));
+  }
+  return result;
+}
+
 function identities(value,canonical,sourceCatalogProfile){
   const physical=new Map(),media=[];
   function scan(node,path=[]){
@@ -149,6 +179,58 @@ function validateDocument(value,ref){
   }
 }
 
+function compiledBattleRebinding(before,after,ref,proofs,canonical,sourceCatalogProfile){
+  if(before.contentHash===after.contentHash)return null;
+  const proof=proofs.get(ref.url);
+  assert.ok(proof,'This batch must retain '+ref.role+' content unchanged');
+  assert.equal(proof.previousHash,before.contentHash,'Compiled battle previous hash mismatch');
+  assert.equal(proof.candidateHash,after.contentHash,'Compiled battle candidate hash mismatch');
+  for(const value of [before,after]){
+    assert.equal(value.common.sourceContentHash,proof.sourceContentHash,'Compiled battle source content mismatch');
+    assert.equal(value.common.fieldSourceSetHash,proof.fieldSourceSetHash,'Compiled battle field source mismatch');
+    assert.equal(sha(canonical(value.gameState)),proof.gameStateHash,'Compiled battle owned initializer mismatch');
+  }
+  assert.equal(canonical(before.gameState),canonical(after.gameState),'Compiled battle owned initializer changed');
+  assert.equal(before.common.kind,after.common.kind,'Compiled battle common kind changed');
+  assert.equal(before.common.profile,after.common.profile,'Compiled battle common profile changed');
+  assert.equal(canonical(before.common.sprites),canonical(after.common.sprites),'Compiled battle media bindings changed');
+  const sourceIdentityBefore=identities(before,canonical,sourceCatalogProfile),
+    sourceIdentityAfter=identities(after,canonical,sourceCatalogProfile);
+  // New compiler capability metadata may add or replace explicit SourceRefs.
+  // Keep both identities in the report rather than normalizing their counts or
+  // hashes to pretend the physical evidence stayed identical. Every other
+  // source/profile/media identity must still be exactly preserved.
+  const invariant=({physicalSourceCount:_,physicalSourceHash:__,...identity})=>identity;
+  assert.equal(canonical(invariant(sourceIdentityBefore)),canonical(invariant(sourceIdentityAfter)),
+    'Compiled battle source/profile/media identity changed');
+  return {...proof,profile:sourceIdentityAfter.profile,sourceIdentityBefore,sourceIdentityAfter};
+}
+
+/** The proof is supplied by the trusted same-candidate compiler, never by a
+ * recipe or save. It binds an exact URL and old/new body hashes; this helper
+ * grants no source gameplay readiness and performs no save migration. */
+export async function resolveCompiledBattleReference({reference,readCurrentJson,readCandidateJson,
+    battleRebindings,root=repository,compiledDir='dist'}){
+  dataFields(reference,['url','contentHash'],'compiled battle reference');
+  assert.ok(typeof reference.url==='string'&&jsonURL.test(reference.url),'Invalid compiled battle reference URL');
+  assert.ok(typeof reference.contentHash==='string'&&digest.test(reference.contentHash),'Invalid compiled battle reference hash');
+  assert.equal(typeof readCurrentJson,'function');assert.equal(typeof readCandidateJson,'function');
+  const ref={...structuredClone(reference),role:'battle',kind:'narshe-battle-catalog'},
+    proofs=parseBattleRebindings(battleRebindings);
+  const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src/core',name+'.js')).href);
+  const [{canonical},{verifyContent},{sourceCatalogProfile}]=await Promise.all([
+    load('canonical'),load('content-integrity'),load('source-catalog')]);
+  const before=structuredClone(await readCurrentJson(ref.url));
+  assert.ok(plain(before),'Missing content for '+ref.url);
+  await verifyContent(before,ref.contentHash);
+  const after=structuredClone(await readCandidateJson(ref.url));
+  assert.ok(plain(after),'Missing content for '+ref.url);
+  await verifyContent(after);
+  validateDocument(before,ref);validateDocument(after,ref);
+  const report=compiledBattleRebinding(before,after,ref,proofs,canonical,sourceCatalogProfile);
+  return {reference:{url:ref.url,contentHash:after.contentHash},report};
+}
+
 /** One fresh source-table reader per collection preparation. Only the small
  * table index is retained; the source corpus is not kept by every recipe. */
 export function createSourceWalkEvidenceReader({root=repository,compiledDir='dist'}={}){
@@ -172,12 +254,13 @@ export function createSourceWalkEvidenceReader({root=repository,compiledDir='dis
  * before asynchronous verification. Callers retain byte/path freshness checks
  * and complete package validation at their publication boundary. */
 export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurrentJson,readCandidateJson,
-    root=repository,compiledDir='dist',sourceWalkEvidence}){
+    root=repository,compiledDir='dist',sourceWalkEvidence,battleRebindings}){
   assert.ok(typeof recipePath==='string'&&recipePath.length>0,'Missing original recipe path');
   assert.equal(typeof readCurrentJson,'function');assert.equal(typeof readCandidateJson,'function');
-  const recipe=recipeJSON(recipeBytes),refs=declaredReferences(recipe);
+  const recipe=recipeJSON(recipeBytes),refs=declaredReferences(recipe),proofs=parseBattleRebindings(battleRebindings);
   const report={kind:'source-recipe-inputs-v1',id:recipe.id,recipeKind:recipe.kind,recipePath,
-    recipeSha256:sha(recipeBytes),changes:[],dependencyRebindings:[],sourceIdentities:[],sourceEvidenceEnrichments:[]};
+    recipeSha256:sha(recipeBytes),changes:[],dependencyRebindings:[],sourceIdentities:[],sourceEvidenceEnrichments:[],
+    battleCapabilityRebindings:[]};
   if(refs.length===0)return {recipe,report};
   const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src/core',name+'.js')).href);
   const [{canonical},{verifyContent},{sourceCatalogProfile}]=await Promise.all([
@@ -281,8 +364,11 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
     const comparison=await comparableWalkingEvidence(before,comparisonAfter,ref.role,ref.url);
     const oldIdentity=identities(comparison.before,canonical,sourceCatalogProfile),
       newIdentity=identities(comparison.after,canonical,sourceCatalogProfile);
-    assert.equal(canonical(oldIdentity),canonical(newIdentity),'Source identity/profile/media changed: '+ref.role);
-    if(ref.kind==='narshe-battle-catalog'||ref.kind==='field-development')
+    const battleRebinding=ref.kind==='narshe-battle-catalog'
+      ?compiledBattleRebinding(before,after,ref,proofs,canonical,sourceCatalogProfile):null;
+    if(battleRebinding)report.battleCapabilityRebindings.push({pointer:ref.pointer,role:ref.role,...battleRebinding});
+    else assert.equal(canonical(oldIdentity),canonical(newIdentity),'Source identity/profile/media changed: '+ref.role);
+    if(ref.kind==='field-development')
       assert.equal(after.contentHash,before.contentHash,'This batch must retain '+ref.role+' content unchanged');
     if(ref.kind==='source-new-game-content-v1'){
       const semantic=value=>{const copy=structuredClone(value);

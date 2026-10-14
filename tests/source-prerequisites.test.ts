@@ -130,6 +130,7 @@ async function lockedDirectory(work: (root: string, lock: InputLock) => Promise<
       await write(dir + "/snapshot.json", JSON.stringify({ formatVersion: 1, files: [{ file, sha256: sha(body) }] }));
     }
     await write("build/game/source-catalog.json", JSON.stringify({ controlled: "catalog" }));
+    await write("build/game/opening-playable.json", JSON.stringify({ controlled: "development catalog" }));
     await write("build/reports/v71-esper-native-complete/complete.json", JSON.stringify({controlled:'existing catalog proof'}));
     await write("build/reports/v71-esper-native-complete/856d80.c", "synthetic bound constructor proof\n");
     await write("build/runtime/game/FINAL FANTASY VI_Data/level0", "synthetic boot source");
@@ -173,8 +174,8 @@ test("source input lock refuses stale bytes, directory additions and changed com
   });
 });
 
-test("battle source imports and consumed catalog proofs share the final candidate input fence", async () => {
-  const api=await loadLock(),paths=['build/import/media.json',
+test("battle imports, previous capability catalogs and consumed proofs share the final candidate input fence", async () => {
+  const api=await loadLock(),paths=['build/import/media.json','build/game/opening-playable.json',
     'build/reports/v71-esper-native-complete/complete.json','build/reports/v71-esper-native-complete/856d80.c'];
   for(const path of paths)await lockedDirectory(async(root,lock)=>{
     assert.equal(await api.validateSourcePrerequisiteInputs(lock,{root}),true);

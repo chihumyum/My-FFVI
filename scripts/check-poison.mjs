@@ -17,6 +17,7 @@ import {
 import { hash } from "../dist/src/compiler/content.js";
 import { verifyContent } from "../dist/src/core/content-integrity.js";
 import { BattleConditions } from "../dist/src/core/battle-conditions.js";
+import { FieldConditions } from "../dist/src/core/field-conditions.js";
 import { BattleGame } from "../dist/src/core/battle.js";
 import { GameState } from "../dist/src/core/game-state.js";
 import { sourceBattleContent as encounterContent, controlledBattleContent } from "./battle-probe-context.mjs";
@@ -100,7 +101,17 @@ assert.equal(hasPoisonBehavior(poisonRows[0]), true);
 assert.equal(hasPoisonBehavior(poisonRows[1]), false);
 assert.equal(poisonRows[1].values.condition_group_id, "1303");
 assert.deepEqual(conditions.poisonIds([4, 10]), [10]);
-assert.throws(() => conditions.validateActive([88]), /Unimplemented active/);
+assert.deepEqual(conditions.poisonIds([4, 88]), [88]);
+assert.deepEqual(Object.keys(poisonRows[1].values).filter((key) => poisonRows[1].values[key] !== poisonRows[0].values[key]).sort(),
+  ["condition_group_id", "erase_condition_group_id", "id"]);
+const providerRows = tables["condition_group.csv"].filter((r) => r.group_id === poisonRows[1].values.condition_group_id);
+assert.deepEqual(providerRows.map((r) => [Number(r.condition_id), Number(r.type_id)]), [[10, 1]]);
+const provider = { groupId: Number(poisonRows[1].values.condition_group_id),
+  conditions: Object.fromEntries(providerRows.map((r) => [r.condition_id, Number(r.type_id)])) };
+assert.deepEqual(catalog.common.conditions.behaviors.find((b) => b.id === 88).resistanceProvider, provider);
+const field = new FieldConditions(catalog.gameState.fieldConditions);
+field.validateActive([10]);
+assert.throws(() => field.validateActive([88]), /Unimplemented active field/);
 for (const id of [15, 16])
   assert.throws(() => conditions.validateActive([id]), /Unimplemented active/);
 assert.equal(row("condition.csv", 10).values.until_type, "3");
@@ -136,6 +147,28 @@ for (const a of poisonAbilities) {
   for (const f of a.program.functions) row("function.csv", f.functionId);
 }
 const cases = [];
+const providerState = [88], providerBase = { 10: 0, 6: 1 };
+const noRng = () => assert.fail("Unexpected temporary poison resistance draw");
+assert.deepEqual(conditions.effectiveResistances(providerState, providerBase, "enemy"), { 10: 1, 6: 1 });
+for (const fixed of [false, true]) {
+  assert.deepEqual(conditions.add(providerState, providerBase, 10, { fixed, accuracy: 255, magicEvasion: 0 }, noRng, "enemy"),
+    { currentIds: [88], added: [], removed: [], missed: true });
+}
+const providerClock = conditions.reconcilePoisonState(providerState, [], 1);
+assert.deepEqual(providerClock, [{ conditionId: 88, elapsedSeconds: 0, thresholdSeconds: 8 }]);
+const providerTick = conditions.advancePoison({ conditionIds: providerState, state: providerClock,
+  hp: 160, maxHp: 160, elementResistances: {}, seconds: 8, atbSpeed: 1, isTimeStopped: false });
+assert.equal(providerTick.hp, 150); assert.equal(providerTick.ticks[0].conditionId, 88);
+assert.deepEqual(conditions.recover(providerState, [10]).currentIds, [88]);
+const providerRemoved = conditions.recover(providerState, [88]).currentIds;
+assert.deepEqual(providerRemoved, []);
+assert.deepEqual(conditions.effectiveResistances(providerRemoved, providerBase, "enemy"), providerBase);
+assert.deepEqual(conditions.reconcilePoisonState(providerRemoved, providerTick.state, 1), []);
+assert.deepEqual(conditions.settleLife(0, providerState, false).conditionIds, [5]);
+assert.deepEqual(conditions.battleEnd(providerState), [88]);
+assert.deepEqual(providerState, [88]); assert.deepEqual(providerBase, { 10: 0, 6: 1 });
+cases.push({ kind: "source-active-poison-provider", conditionId: 88, provider, tick: providerTick,
+  ordinaryApplicationAdmitted: false, fieldPersistenceAdmitted: false });
 for (const a of admitted) {
   const [effect] = a.plan.effects;
   assert.equal(a.plan.effects.length, 1);
@@ -357,6 +390,8 @@ const report = {
   nativeReceiptSha256: sha(nativeBytes),
   nativeSemanticsVerified: false,
   poisonRows,
+  activeConditionIds: [10, 88],
+  ordinaryApplicationIds: [10],
   admittedAbilityIds: admitted.map((a) => a.id),
   blockedAbilities: poisonAbilities
     .filter((a) => !a.plan)

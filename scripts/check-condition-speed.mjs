@@ -51,14 +51,39 @@ const stopIds = corpus.tables['condition.csv'].filter((r) => r.condition_type ==
 assert.deepEqual(stopIds, [26]);
 const { catalog, sources } = compileBattleConditionCatalog(reader, corpus.tables['condition.csv'].map((r) => Number(r.id)), name);
 const conditions = new BattleConditions(catalog);
-assert.deepEqual(catalog.behaviors.filter((b) => ['haste', 'slow'].includes(b.kind)), compiled.filter(Boolean));
-for (const id of [95, ...stopIds]) assert.throws(() => conditions.validateActive([id]), /Unimplemented active/);
+// Ordinary application stays group-zero. The active-state host separately
+// consumes the generic Init dictionary without replacing the source identity.
+assert.deepEqual(Object.keys(sourceRows[2]).filter((key) => sourceRows[2][key] !== sourceRows[0][key]).sort(),
+  ['condition_group_id', 'erase_condition_group_id', 'id']);
+const providerRows = corpus.tables['condition_group.csv'].filter((r) => r.group_id === sourceRows[2].condition_group_id);
+assert.deepEqual(providerRows.map((r) => [Number(r.condition_id), Number(r.type_id)]), [[21, 1], [25, 1]]);
+const provider = { groupId: Number(sourceRows[2].condition_group_id),
+  conditions: Object.fromEntries(providerRows.map((r) => [r.condition_id, Number(r.type_id)])) };
+const active = [...compiled.filter(Boolean), { ...compiled[0], id: Number(sourceRows[2].id),
+  name: name(sourceRows[2].mes_id_name), resistanceProvider: provider }];
+assert.deepEqual(catalog.behaviors.filter((b) => ['haste', 'slow'].includes(b.kind)), active);
+conditions.validateActive([95]);
+for (const row of providerRows) assert.ok(sources.some((r) => r.source.assetPath.endsWith('/condition_group.csv') && r.values.id === row.id));
+for (const id of stopIds) assert.throws(() => conditions.validateActive([id]), /Unimplemented active/);
 const field = new FieldConditions(compileFieldConditionCatalog(reader, catalog, [6]).catalog);
 for (const id of [21, 25, 95, ...stopIds]) assert.throws(() => field.validateActive([id]), /Unimplemented active field/);
 
 const noRng = () => assert.fail('Unexpected speed random draw');
 const ordinaryHit = { accuracy: 100, magicEvasion: 0, fixed: false };
 let lifecycleProbes = 0, clockProbes = 0, abilityProbes = 0;
+const providerState = [95], providerBase = { 21: 0, 25: 0, 6: 1 };
+assert.deepEqual(conditions.effectiveResistances(providerState, providerBase, 'enemy'), { 21: 1, 25: 1, 6: 1 }); lifecycleProbes++;
+for (const id of [21, 25]) for (const fixed of [false, true]) {
+  assert.deepEqual(conditions.add(providerState, providerBase, id, { ...ordinaryHit, fixed }, noRng, 'enemy'),
+    { currentIds: [95], added: [], removed: [], missed: true }); lifecycleProbes++;
+}
+assert.deepEqual(conditions.recover(providerState, [21, 25]).currentIds, [95]); lifecycleProbes++;
+const providerRemoved = conditions.recover(providerState, [95]).currentIds;
+assert.deepEqual(providerRemoved, []); lifecycleProbes++;
+assert.deepEqual(conditions.effectiveResistances(providerRemoved, providerBase, 'enemy'), providerBase); lifecycleProbes++;
+assert.deepEqual(conditions.settleLife(0, providerState, false).conditionIds, [5]); lifecycleProbes++;
+assert.deepEqual(conditions.battleEnd(providerState), []); lifecycleProbes++;
+assert.deepEqual(providerState, [95]); assert.deepEqual(providerBase, { 21: 0, 25: 0, 6: 1 }); lifecycleProbes++;
 for (const [id, opposite] of [[21, 25], [25, 21]]) {
   const before = [53];
   const first = conditions.add(before, {}, id, ordinaryHit, () => 0);
@@ -84,7 +109,7 @@ f=lambda v:struct.unpack('<f',struct.pack('<f',v))[0]
 c={r['key_name']:int(r['value1']) for r in t['game_constant_int.csv']}
 rows={int(r['id']):r for r in t['condition.csv']};out=[]
 rules=dict(coefficient=c['ATP_COEFFICIENT'],enemyCoefficient=c['ENEMY_ATP_COEFFICIENT'],total=c['ATB_TOTAL_AMOUNT'],maxHighSpeed=c['MAX_HIGH_SPEED'],maxLowSpeed=c['MAX_LOW_SPEED'])
-for ids in [[],[21],[25],[21,25]]:
+for ids in [[],[21],[25],[21,25],[95]]:
  types=[int(rows[i]['condition_type']) for i in ids]
  percent=100+sum(int(rows[i]['rate_value1'])*(1 if int(rows[i]['condition_type'])==15 else -1) for i in ids)
  modifier=(2 if 15 in types else 1)*(0.5 if 16 in types else 1)
@@ -153,6 +178,8 @@ for (const d of admitted) {
 }
 const report = { kind: 'condition-speed-source', sourceOnly, sourceSetHash: corpus.manifest.parentSourceSetHash,
   nativeReportSha256: hash(native), messageSource: system.source, conditions: sourceRows,
+  ordinaryApplicationIds: compiled.filter(Boolean).map((b) => b.id), activeConditionIds: active.map((b) => b.id),
+  activeResistanceProvider: provider,
   sources: [...sources, ...definitions.flatMap((d) => compileAbilityProgram(reader, d.id).sources)],
   admittedAbilities: admitted.map((d) => d.id), blockedAbilities: blocked.map((d) => ({ id: d.id, blockers: d.blockers })),
   probes: expected.probes, lifecycleProbes, clockProbes, abilityProbes, publishedProbes: 0, hostProbes: [],
@@ -171,7 +198,7 @@ if (!sourceOnly) {
     assert.deepEqual(published.common.abilities[d.id].plan, d.plan);
     assert.deepEqual(published.common.abilities[d.id].blockers, d.blockers); report.publishedProbes++;
   }
-  assert.deepEqual(published.common.conditions.behaviors.filter((b) => ['haste', 'slow'].includes(b.kind)), compiled.filter(Boolean));
+  assert.deepEqual(published.common.conditions.behaviors.filter((b) => ['haste', 'slow'].includes(b.kind)), active);
   assert.deepEqual(published.common.atb, expected.rules); report.publishedProbes += 2;
   const state = new GameState(published.gameState, published.common.players, published.contentHash, published.common.conditions);
   const before = state.snapshot(), entry = Number(Object.keys(published.encounters)[0]);
@@ -203,6 +230,6 @@ if (!sourceOnly) {
   report.contentHash = published.contentHash; report.sourceContentHash = source.contentHash;
 }
 await writeFile(outputPath, JSON.stringify(report, null, 2) + '\n');
-console.log(JSON.stringify({ sourceOnly, conditions: 2, blockedConditions: 1, admittedAbilities: admitted.length,
+console.log(JSON.stringify({ sourceOnly, conditions: active.length, ordinaryApplicationConditions: 2, blockedConditions: stopIds.length, admittedAbilities: admitted.length,
   blockedAbilities: blocked.length, lifecycleProbes, clockProbes, abilityProbes, publishedProbes: report.publishedProbes,
   hostProbes: report.hostProbes.length, reportSha256: hash(report), originalGameExecuted: false }, null, 2));

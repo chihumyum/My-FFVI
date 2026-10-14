@@ -105,11 +105,13 @@ async function readLockedJson(inputs, root, path) {
 
 async function modules(compiledDir) {
   const load = name => import(pathToFileURL(resolve(compiledDir, "src", name + ".js")).href);
-  const [content, integrity, world, newGame, framework, sourceCatalog, composition] = await Promise.all([
+  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable] = await Promise.all([
     load("compiler/content"), load("core/content-integrity"), load("compiler/world"), load("compiler/source-new-game"),
     load("compiler/framework-content"), load("core/source-catalog"), load("core/field-native-composition"),
+    load("compiler/battle"), load("compiler/game-catalog"), load("compiler/opening-playable"),
   ]);
-  return { ...content, ...integrity, ...world, ...newGame, ...framework, ...sourceCatalog, ...composition };
+  return { ...content, ...integrity, ...world, ...newGame, ...framework, ...sourceCatalog, ...composition,
+    ...battle, ...catalog, ...playable };
 }
 
 /** Capture exactly the current compiler's input domain. Raw-source exports
@@ -144,6 +146,7 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
     for (const item of manifest.files) await add(resolve(path, item.file), item.sha256);
   }
   await add(resolve(root, "build/game/source-catalog.json"));
+  await add(resolve(root, "build/game/opening-playable.json"));
   for(const path of CATALOG_EVIDENCE)await add(resolve(root,path));
   const hosts = new Map();
   for (const source of api.ordinaryFieldCompositionRenderHost().sources) {
@@ -200,7 +203,7 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
     }
   }
   if (!seen.has(resolve(lock.compiledDir, "src"))) throw new Error("Missing source prerequisite compiler directory");
-  for (const path of [...CATALOG_EVIDENCE,"build/game/source-catalog.json", "build/runtime/game/FINAL FANTASY VI_Data/level0",
+  for (const path of [...CATALOG_EVIDENCE,"build/game/source-catalog.json", "build/game/opening-playable.json", "build/runtime/game/FINAL FANTASY VI_Data/level0",
     "build/runtime/game/FINAL FANTASY VI_Data/globalgamemanagers"])
     if (!lock.files.some(item => filePath(root, item.path) === resolve(root, path)))
       throw new Error("Missing source prerequisite dependency: " + path);
@@ -212,16 +215,37 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
   return true;
 }
 
-/** Pure upstream DAG: source world -> source new game -> explicit framework
+/** Pure upstream DAG: current battle capabilities -> source world/new game -> explicit framework
  * derivation. It never writes packages, generated recipes, reports or archives. */
 export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist" } = {}) {
   root = resolve(root);
   const inputs = await captureSourcePrerequisiteInputs({ root, compiledDir });
   const api = await modules(inputs.compiledDir);
-  const [battle, field] = await Promise.all([
-    readLockedJson(inputs, root, "build/game/source-catalog.json"), readLockedJson(inputs, root, "build/field/field.json"),
+  const [previousBattle, previousDevelopment, field] = await Promise.all([
+    readLockedJson(inputs, root, "build/game/source-catalog.json"),
+    readLockedJson(inputs, root, "build/game/opening-playable.json"),
+    readLockedJson(inputs, root, "build/field/field.json"),
+  ]);
+  await api.verifyContent(previousBattle); api.assertSourceGameCatalog(previousBattle);
+  await api.verifyContent(previousDevelopment);
+  const [source, opening] = await Promise.all([api.compileSharedBattleSource(root), api.compileOpeningBattle(root)]);
+  const [battle, development] = await Promise.all([
+    api.compileSharedGameCatalog(root, source), api.compileOpeningPlayable(root, opening),
   ]);
   await api.verifyContent(battle); api.assertSourceGameCatalog(battle);
+  await api.verifyContent(development);
+  const battleRebindings = [];
+  for (const [url, before, after] of [["/game/source-catalog.json", previousBattle, battle],
+    ["/game/opening-playable.json", previousDevelopment, development]]) {
+    if (before.common.sourceContentHash !== after.common.sourceContentHash ||
+        before.common.fieldSourceSetHash !== after.common.fieldSourceSetHash ||
+        api.canonical(before.gameState) !== api.canonical(after.gameState))
+      throw new Error("Battle capability rebuild changed source identity or owned initialization: " + url);
+    battleRebindings.push({ kind: "compiled-battle-rebinding-v1", url,
+      previousHash: before.contentHash, candidateHash: after.contentHash, compilerDigest: inputs.compilerDigest,
+      sourceContentHash: after.common.sourceContentHash, fieldSourceSetHash: after.common.fieldSourceSetHash,
+      gameStateHash: api.hash(after.gameState) });
+  }
   if (field.parentSourceSetHash !== inputs.parentSourceSetHash || api.hash(field.sources) !== field.sourceSetHash ||
       battle.common.fieldSourceSetHash !== field.sourceSetHash)
     throw new Error("Source prerequisite battle/field source mismatch");
@@ -231,31 +255,32 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
   const strict = await api.compileWorld(root);
   const entry = await api.compileSourceNewGame(root, battle, strict);
   const framework = api.compileFrameworkContent(strict.catalog, strict.maps, entry);
-  const payloads = new Map([["/world/catalog.json", strict.catalog], ["/game/source-new-game.json", entry],
+  const payloads = new Map([["/game/source-catalog.json", battle], ["/game/opening-playable.json", development],
+    ["/world/catalog.json", strict.catalog], ["/game/source-new-game.json", entry],
     ["/framework/world/catalog.json", framework.catalog], ["/framework/new-game.json", framework.entry]]);
   for (const map of strict.maps) payloads.set(`/world/maps/${map.mapId}.json`, map);
   for (const map of framework.maps) payloads.set(`/framework/world/maps/${map.mapId}.json`, map);
   await validateSourcePrerequisiteInputs(inputs, { root });
   const report = { kind: "source-prerequisite-candidate-v1", published: false,
     sourceSetHash: inputs.sourceSetHash, parentSourceSetHash: inputs.parentSourceSetHash, compilerDigest: inputs.compilerDigest,
-    stages: [{ name: "capture-inputs", status: "passed" }, { name: "strict-source-battle-reuse", status: "passed" },
+    stages: [{ name: "capture-inputs", status: "passed" }, { name: "battle-capability-rebuild", status: "passed" },
       { name: "source-world", status: "passed" }, { name: "source-new-game", status: "passed" },
       { name: "framework-derivation", status: "passed" }, { name: "revalidate-inputs", status: "passed" }],
-    battle: { mode: "verified-reuse", expectedSourceFields },
+    battle: { mode: "same-candidate-rebuild", expectedSourceFields, dependencyRebindings: battleRebindings },
     strict: { catalogHash: strict.catalog.contentHash, entryHash: entry.contentHash, maps: strict.maps.length,
       mapsWithBlockers: strict.maps.filter(map => map.blockers.length).length },
     framework: framework.report,
     inputScope: { snapshotRoots: SNAPSHOTS.map(name => "build/" + name), files: inputs.files.length,
       originalFiles: inputs.files.filter(file => file.path.startsWith("build/runtime/game/")).map(file => file.path),
-      nativeReceiptFiles: [], originalSourceFilesVerified: "composition-host-only", rawExports: "snapshot-and-source-manifest-bound" },
+      nativeReceiptFiles: [...CATALOG_EVIDENCE], originalSourceFilesVerified: "composition-host-only", rawExports: "snapshot-and-source-manifest-bound" },
     payloads: [...payloads].map(([url, content]) => ({ url, contentHash: content.contentHash })),
     sourceGameplayAdmitted: false, browserVerified: false, nativeVerified: false,
-    limitations: ["The current strict source battle catalog is reused and fingerprint-locked, not recompiled.",
+    limitations: ["Battle catalogs are rebuilt by the current compiler from the same locked source inputs; owned initialization is unchanged.",
       "All indexed source maps and unresolved diagnostics are retained; candidate compilation is not gameplay admission.",
       "Only the directly consumed original composition host files are byte-checked here. Other original sources remain bound by verified export manifests.",
       "The publication owner must revalidate this input lock and explicitly rebind dependent recipes before its single publication."],
   };
-  return { payloads, report, inputs };
+  return { payloads, report, inputs, battleRebindings };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

@@ -3,8 +3,9 @@ import type { BattleRow } from "./battle.js";
 import type { BattleConditionCatalog } from "../core/battle-conditions.js";
 import { hasDefendBehavior } from "./defend.js";
 import { compileProtectionCondition } from "./protection.js";
-import { compileSpeedBehavior } from "./condition-speed.js";
-import { compileBlindBehavior, compileBlindPresentation } from "./condition-blind.js";
+import { compileSpeedCondition } from "./condition-speed.js";
+import { compileBlindCondition, compileBlindPresentation } from "./condition-blind.js";
+import { compileConditionResistanceProvider } from "./condition-resistance-provider.js";
 import {
   ConditionRules,
   type ConditionCatalog,
@@ -79,10 +80,9 @@ export function hasMagitekBehavior(row: Pick<BattleRow, "values">): boolean {
     ].every((key) => int(v[key]) === 0);
 }
 
-/** Ordinary FF6 poison. Row 88's condition-group provider is not equivalent
- * to the ordinary row and remains blocked. Field steps remain a host blocker
- * while this battle behavior persists; damage_number is not battle damage. */
-export function hasPoisonBehavior(row: BattleRow): boolean {
+/** Poison's numeric/lifecycle contract; the generic resistance dictionary is
+ * compiled separately for active states. damage_number is not battle damage. */
+function hasPoisonLifecycle(row: BattleRow): boolean {
   const v = row.values;
   return (
     int(v.condition_type) === 10 &&
@@ -98,7 +98,6 @@ export function hasPoisonBehavior(row: BattleRow): boolean {
       "overlapped_type",
       "invalid_type",
       "target_type",
-      "condition_group_id",
       "parameter_group_id",
       "attribute_group_id",
       "species_group_id",
@@ -110,6 +109,11 @@ export function hasPoisonBehavior(row: BattleRow): boolean {
       "state_cover_unavailable",
     ].every((key) => int(v[key]) === 0)
   );
+}
+
+/** Keep ordinary ability application distinct from provider-bearing states. */
+export function hasPoisonBehavior(row: BattleRow): boolean {
+  return hasPoisonLifecycle(row) && int(row.values.condition_group_id) === 0;
 }
 
 export function hasUnableFightBehavior(row: BattleRow): boolean {
@@ -183,12 +187,26 @@ export function compileBattleConditionCatalog(
           presentationSources.push(...protection.sources);
           return [protection.behavior];
         }
-        const speed = compileSpeedBehavior(row, name);
-        if (speed) return [speed];
-        const blind = compileBlindBehavior(row, name);
-        if (blind) {
-          presentationSources.push(...compileBlindPresentation(reader, blind));
-          return [blind];
+        const speed = compileSpeedCondition(reader, row, name, result.catalog.definitions);
+        providerBlockers.push(...speed.blockers.map((reason) => ({ conditionId: d.id, reason })));
+        if (speed.behavior) {
+          presentationSources.push(...speed.sources);
+          return [speed.behavior];
+        }
+        const blind = compileBlindCondition(reader, row, name, result.catalog.definitions);
+        providerBlockers.push(...blind.blockers.map((reason) => ({ conditionId: d.id, reason })));
+        if (blind.behavior) {
+          presentationSources.push(...blind.sources, ...compileBlindPresentation(reader, blind.behavior));
+          return [blind.behavior];
+        }
+        const poison = compileConditionResistanceProvider(reader, row, hasPoisonLifecycle(row) ? {
+          id: d.id, kind: "poison" as const, name: name(row.values.mes_id_name!),
+          untilType: 3 as const, hpDivisor: int(row.values.rate_value1),
+        } : null, result.catalog.definitions);
+        providerBlockers.push(...poison.blockers.map((reason) => ({ conditionId: d.id, reason })));
+        if (poison.behavior) {
+          presentationSources.push(...poison.sources);
+          return [poison.behavior];
         }
         return hasDefendBehavior(row)
           ? [{ id: d.id, kind: "defend", untilType: 1,
@@ -220,17 +238,7 @@ export function compileBattleConditionCatalog(
                     untilType: 3,
                   },
                 ]
-              : hasPoisonBehavior(row)
-                ? [
-                    {
-                      id: d.id,
-                      kind: "poison",
-                      name: name(row.values.mes_id_name!),
-                      untilType: 3,
-                      hpDivisor: int(row.values.rate_value1),
-                    },
-                  ]
-                : hasMagitekBehavior(row)
+              : hasMagitekBehavior(row)
                   ? [{ id: d.id, kind: "magitek", untilType: 3,
                     name: row.values.mes_id_name === "None" ? "" : name(row.values.mes_id_name!) }]
                   : [];
