@@ -31,6 +31,7 @@ import { compileFieldFadeInstruction } from "./field-fade.js";
 import { compileFieldCameraInstruction, compileFieldCameraMotionInstruction, fieldCameraSelectors } from "./field-camera.js";
 import { compileFieldScriptMotionInstruction, fieldScriptMotionMnemonics } from "./field-script-motion.js";
 import { compileFieldNativePosition } from "./field-native-position.js";
+import { compileFieldActorVisibilityInstruction, fieldActorVisibilityMnemonics } from "./field-actor-visibility.js";
 import { DEVELOPMENT_TRANSPARENT_FADE } from "../core/field-fade.js";
 import { loadSystemSource } from "./system-source.js";
 import { compileTransportationCatalog, compileNarsheTransportationCheckpoint } from "./transportation.js";
@@ -146,6 +147,10 @@ export function decodeFieldOp(
   }
   const o = record(m.operands), i = list(o.iValues).map(integer),
     r = list(o.rValues).map(Number), s = list(o.sValues).map(string);
+  if (Object.hasOwn(m, "type") && fieldActorVisibilityMnemonics.some((mnemonic) => mnemonic === name)) {
+    try { return { ...site, ...compileFieldActorVisibilityInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (fieldTransportationMnemonics.some((mnemonic) => mnemonic === name) ||
       name === "SysCall" && fieldTransportationSelectors.includes(s[0]!)) {
     try { return { ...site, ...compileFieldTransportationInstruction(raw) }; }
@@ -405,7 +410,11 @@ export function decodeFieldOp(
       } catch { /* Ordinary character admission does not grant dummy admission. */ }
       return { ...site, kind: "position", x: nativeCommand.x, y: nativeCommand.y, animation: nativeCommand.animation,
         nativeCommand, ...(cameraCommand ? { cameraCommand } : {}) };
-    } catch { /* Older development fixtures retain their bounded decoder below. */ }
+    } catch (error) {
+      if (Object.hasOwn(m, "type")) return blocked(error instanceof Error ? error.message : String(error));
+      // Older authored fixtures without a source instruction type retain their
+      // bounded decoder. A rejected source command cannot use this fallback.
+    }
   }
   if (
     name === "SetPos" &&

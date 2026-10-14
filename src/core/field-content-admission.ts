@@ -2,7 +2,7 @@ import type { FieldContent, Op, Site } from "../field/types.js";
 
 export const fieldProviders = Object.freeze([
   "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
-  "partyActors", "audioReadiness", "soundPresentation", "actorMotion", "cameraMotion", "effectMotion",
+  "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
   "eventSaveCompletion", "battleHandoff",
 ] as const);
 export type FieldProvider = typeof fieldProviders[number];
@@ -44,7 +44,7 @@ const codes: Record<FieldCapability, string> = {
   roster: "FIELD_ROSTER_PROVIDER", treasure: "FIELD_TREASURE_PROVIDER",
   transportation: "FIELD_TRANSPORTATION_PROVIDER", puppetRoster: "FIELD_PUPPET_ROSTER_PROVIDER",
   partyActors: "FIELD_PARTY_ACTORS_PROVIDER", audioReadiness: "FIELD_AUDIO_READINESS_PROVIDER",
-  soundPresentation: "FIELD_SOUND_PRESENTATION_PROVIDER", actorMotion: "FIELD_ACTOR_MOTION_PROVIDER",
+  soundPresentation: "FIELD_SOUND_PRESENTATION_PROVIDER", actorControl: "FIELD_ACTOR_CONTROL_PROVIDER", actorMotion: "FIELD_ACTOR_MOTION_PROVIDER",
   cameraMotion: "FIELD_CAMERA_MOTION_PROVIDER", effectMotion: "FIELD_EFFECT_MOTION_PROVIDER",
   eventSaveCompletion: "FIELD_EVENT_SAVE_COMPLETION", battleHandoff: "FIELD_BATTLE_HANDOFF",
   conditionVisual: "FIELD_CONDITION_VISUAL_CONTEXT", scriptMotion: "FIELD_SCRIPT_MOTION_PROVIDER",
@@ -132,6 +132,11 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     if (conditionVisual) add("conditionVisual", "Unknown or unsupported owned condition-visual context", "refresh");
   };
   switch (op.kind) {
+    case "actor-visibility": add("actorControl", "Source actor visibility requires its bound control owner"); break;
+    case "position":
+      if (op.nativeCommand?.mode === 1)
+        add("actorControl", "Source relative SetPos requires its bound actor and exact selector owner");
+      break;
     case "message":
       if (op.template !== undefined) add("messageNames", "Source message character name owner is unavailable");
       break;

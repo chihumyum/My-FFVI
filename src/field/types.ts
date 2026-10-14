@@ -234,6 +234,7 @@ export type Op = Site &
         nativeCommand?: FieldNativePosition;
         /** Independent source admission when the runtime binding is dummy 0. */
         cameraCommand?: FieldCameraSetPosition }
+    | { kind: "actor-visibility"; visible: boolean }
     | {
         kind: "move";
         direction: Direction;

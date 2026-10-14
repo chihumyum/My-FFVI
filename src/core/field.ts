@@ -331,6 +331,12 @@ export class FieldGame {
       !this.content.scriptPuppetContexts && op.command.animation === "" && op.command.speedId !== null;
     const actorMotion = legacyMove || !!(actor?.native && this.nativeActorProviders && this.camera &&
       this.content.cameraHost?.callbacks === "fresh-normal-field-v1");
+    const actorControl = op.kind === "actor-visibility"
+      ? actorKind === "camera" ? !!this.camera : actorKind === "effect" ? !!this.effects
+        : actor?.native ? !!this.options.puppetActors
+          : !!actor && !this.options.nativeActorPreparation && !this.options.puppetActors && !this.content.scriptPuppetContexts
+      : !!(actor?.native && this.nativeActorProviders && this.camera && this.options.puppetActors &&
+        this.content.cameraHost?.callbacks === "fresh-normal-field-v1");
     const context: FieldAdmissionContext = { actorKind, providers: {
       inventory: presence(typeof this.options.inventory?.prepare === "function"),
       messageNames: presence(typeof this.options.messageNames?.prepare === "function"),
@@ -344,6 +350,7 @@ export class FieldGame {
       partyActors: presence(!!this.partyActors),
       audioReadiness: presence(typeof this.options.audioReadiness?.isReady === "function"),
       soundPresentation: presence(typeof this.options.soundPresentation?.isPresented === "function"),
+      actorControl: presence(actorControl),
       actorMotion: presence(actorMotion), cameraMotion: presence(cameraMotion), effectMotion: "missing",
       eventSaveCompletion: "unknown", battleHandoff: "unknown",
     }, ...(refreshRequired === undefined ? {} : { refreshRequired }) };
@@ -1907,6 +1914,64 @@ export class FieldGame {
     const plan = prepareFieldScriptMove(move, from, { loop: this.content.cameraHost!.loop, magnification: 1 });
     this.publishScriptMove(actor, move, plan);
     return "wait";
+  }
+  /** Source actor commands prepare against the existing owner. Selector aliases
+   * never become a second actor, and positioning never grants visibility. */
+  private prepareActorControl(actorId: string, op: Extract<Op, { kind: "position" | "actor-visibility" }>): () => void {
+    const actor = this.actors[actorId];
+    if (op.kind === "actor-visibility") {
+      if (typeof op.visible !== "boolean") throw new Error("Invalid source actor visibility");
+      const visible = op.visible;
+      if (this.effectBoard(actorId)) {
+        const next = this.effects!.prepare([{ kind: "visibility", id: actorId, visible, duration: 0 }]);
+        return () => next.commit();
+      }
+      if (this.camera && actorId === this.cameraActorId) {
+        const next = this.camera.prepareVisibility(visible);
+        return () => next.commit();
+      }
+      if (this.tileAnimations.has(actorId)) throw new Error("Tile animation visibility lifecycle is not implemented");
+      if (!actor) throw new Error("Source actor visibility requires its bound owner");
+      if (actor.native) {
+        const port = this.options.puppetActors;
+        if (!port) throw new Error("Source actor visibility host is unavailable");
+        return port.prepare({ leaderId: null, assignments: null,
+          effects: [{ kind: visible ? "show" : "hide", actor: actor.id }] });
+      }
+      if (this.options.nativeActorPreparation || this.options.puppetActors || this.content.scriptPuppetContexts)
+        throw new Error("Source actor visibility requires its native owner");
+      const hidden = this.hiddenEntities.has(actorId);
+      let committed = false;
+      return () => {
+        if (committed || this.actors[actorId] !== actor || this.hiddenEntities.has(actorId) !== hidden)
+          throw new Error("Stale actor visibility transaction");
+        if (visible) this.hiddenEntities.delete(actorId); else this.hiddenEntities.add(actorId);
+        committed = true;
+      };
+    }
+    if (!actor?.native || !op.nativeCommand || !this.nativeActorProviders || !this.camera ||
+        this.content.cameraHost?.callbacks !== "fresh-normal-field-v1" ||
+        op.x !== op.nativeCommand.x || op.y !== op.nativeCommand.y || op.animation !== op.nativeCommand.animation)
+      throw new Error("Source actor SetPos operands or callback host are unavailable");
+    const command = structuredClone(op.nativeCommand), port = this.options.puppetActors;
+    let referenceActorId: string | undefined;
+    const resolveReference = () => {
+      if (command.mode !== 1) return undefined;
+      if (!port || this.options.puppetActors !== port)
+        throw new Error("Source relative SetPos selector owner is unavailable");
+      const { catalog, context } = port.read();
+      const resolved = resolveFieldPuppetActor(catalog, context, command.referenceEntityId);
+      if (resolved.actor === null) throw new Error("Source relative SetPos reference entity is unavailable");
+      return resolved.actor;
+    };
+    referenceActorId = resolveReference();
+    return prepareNativeFieldActorProjection({
+      readActors: () => this.actors, readProviders: this.nativeActorProviders,
+      readCamera: () => { const state = this.camera!.snapshot();
+        return { id: this.cameraActorId, position: state.dummy.position, layer: state.dummy.layer }; },
+    }, (snapshot, providers) => projectNativeFieldPosition(snapshot, providers, actor.id, command,
+      this.content.cameraHost!.mapRange, "source-absent", referenceActorId),
+    () => { if (resolveReference() !== referenceActorId) throw new Error("Stale source relative SetPos selector"); });
   }
   confirm(): void {
     // Confirm is not a choice response. Even an answered request waits for its
@@ -3598,9 +3663,10 @@ export class FieldGame {
             try {
               const host = this.options.puppetActors, lifecycle = this.puppetLifecycle;
               const effect = this.effectBoard(op.actor);
-              const nextKind = this.content.scripts[t.script]?.[op.target + 1]?.kind;
+              const nextOp = this.content.scripts[t.script]?.[op.target + 1], nextKind = nextOp?.kind;
               const plan = host && lifecycle && !effect ? projectFieldPuppetActorEntry({ ...host.read(), script: lifecycle.script,
-                entityId: Number(op.actor), nextMnemonic: nextKind === "hide" ? "Hide" : nextKind ?? "unknown",
+                entityId: Number(op.actor), nextMnemonic: nextKind === "hide" ||
+                  nextOp?.kind === "actor-visibility" && !nextOp.visible ? "Hide" : nextKind ?? "unknown",
                 leaderId: lifecycle.leaderId, assignments: lifecycle.assignments }) : null;
               if (plan?.skipEntry) {
                 const publish = host!.prepare(plan);
@@ -3725,21 +3791,11 @@ export class FieldGame {
             }
             if (actor.native) {
               try {
-                if (!op.nativeCommand || !this.nativeActorProviders || !this.camera ||
-                    this.content.cameraHost?.callbacks !== "fresh-normal-field-v1" ||
-                    op.x !== op.nativeCommand.x || op.y !== op.nativeCommand.y || op.animation !== op.nativeCommand.animation)
-                  throw new Error("Source actor SetPos operands or callback host are unavailable");
-                const command = structuredClone(op.nativeCommand);
-                prepareNativeFieldActorProjection({
-                  readActors: () => this.actors, readProviders: this.nativeActorProviders,
-                  readCamera: () => { const state = this.camera!.snapshot();
-                    return { id: this.cameraActorId, position: state.dummy.position, layer: state.dummy.layer }; },
-                }, (snapshot, providers) => projectNativeFieldPosition(snapshot, providers, actor.id, command,
-                  this.content.cameraHost!.mapRange, "source-absent"))();
+                this.prepareActorControl(actor.id, op)();
               } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
               break;
             }
-            if (op.nativeCommand && (!([0, 3].includes(op.nativeCommand.layer)) ||
+            if (op.nativeCommand && ("mode" in op.nativeCommand || !([0, 3].includes(op.nativeCommand.layer)) ||
                 !["", "Default", "WalkL"].includes(op.animation))) {
               this.block("Source SetPos requires the native actor host", op); return;
             }
@@ -3760,6 +3816,10 @@ export class FieldGame {
             // The mounted development renderer still derives its pose from facing.
             if (!actor.animation && op.animation === "WalkL")
               actor.direction = "left";
+            break;
+          case "actor-visibility":
+            try { this.prepareActorControl(t.actor, op)(); }
+            catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
           case "field-camera":
             try {

@@ -261,7 +261,7 @@ test("accept direction is the NPC-to-player side; transportation, hidden state a
 
 test("script interaction runs the shared VM and player root, initializes locals and retains NPC facing until all work ends", () => {
   const game = fixture({ action_id: 2, script_id: 11 }, [
-    raw("SetPos", [3, 3]),
+    { ...raw("SetPos", [3, 3]), type: 2 },
     raw("Msg", [0, 0], ["greeting"]),
     raw("Wait", [], [], [0.1]),
     raw("SetFlag", [5], ["ScenarioFlag1"]),

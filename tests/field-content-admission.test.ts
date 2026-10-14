@@ -23,6 +23,21 @@ const motion = (kind: "move" | "lerp" = "move"): Op => op("field-script-motion",
   : { kind, x: 1, y: 2, layer: 0, duration: 1, arcHeight: 0, animation: "" } });
 const assess = (instruction: Op, c = context()) => assessFieldRequirements(fieldInstructionRequirements(instruction), c);
 
+test("decoded actor controls retain unknown and missing owners as capability requirements", () => {
+  for (const instruction of [op("actor-visibility", { visible: true }), op("position", {
+    x: 1, y: 2, animation: "", nativeCommand: { mode: 1, referenceEntityId: -1001,
+      x: 1, y: 2, layer: 0, animation: "" },
+  })]) {
+    assert.equal(assess(instruction).status, "conditional");
+    assert.equal(assess(instruction, context({ providers: { actorControl: "missing" } })).status, "blocked");
+    const present = context({ providers: { actorControl: "available" }, actorKind: "actor" });
+    assert.equal(assess(instruction, present).status, "ready");
+    assert.deepEqual(fieldInstructionRequirements(instruction).map(r => r.capability), ["actorControl"]);
+  }
+  assert.deepEqual(fieldInstructionRequirements(op("position", { x: 1, y: 2, animation: "",
+    nativeCommand: { x: 1, y: 2, layer: 0, animation: "" } })), []);
+});
+
 test("persistent ports belong to actual instruction families, not a blanket map prerequisite", () => {
   for (const [instruction, provider] of [
     [op("inventory", { command: { kind: "grant-gil", amount: 1 } }), "inventory"],

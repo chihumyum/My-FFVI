@@ -4,21 +4,33 @@ import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
 import { requireFieldTransportPose } from "./field-transport-pose.js";
 import { projectFieldPuppetActorEffects, type FieldPuppetHostProviders, type FieldPuppetHostSnapshot } from "./field-puppet-effects.js";
 
-/** Absolute source SetPos (mode 0). Layer 0 preserves Z; 1..3 select the
- * source's three kLayerValues. Mode 1 needs a separately resolved entity. */
+/** Mode 0 retains its original four-field shape for existing content/saves.
+ * Mode 1's source selector is distinct from the resolved native instance key. */
 export type FieldNativePosition = {
+  x: number; y: number; layer: 0 | 1 | 2 | 3; animation: string;
+  mode?: never; referenceEntityId?: never;
+} | {
+  mode: 1; referenceEntityId: number;
   x: number; y: number; layer: 0 | 1 | 2 | 3; animation: string;
 };
 
 export function projectNativeFieldPosition(snapshot: FieldPuppetHostSnapshot,
   providers: FieldPuppetHostProviders, actorId: string, command: FieldNativePosition,
-  map: FieldCameraMapRange, callback: "source-absent"): FieldPuppetHostSnapshot {
-  checkpointKeys(command, "x,y,layer,animation");
+  map: FieldCameraMapRange, callback: "source-absent",
+  referenceActorId?: string | null): FieldPuppetHostSnapshot {
+  checkpointKeys(command, command.mode === 1 ? "mode,referenceEntityId,x,y,layer,animation" : "x,y,layer,animation");
   checkpointInteger(command.x, -0x80000000, 0x7fffffff);
   checkpointInteger(command.y, -0x80000000, 0x7fffffff);
   checkpointInteger(command.layer, 0, 3);
   if (typeof command.animation !== "string" || callback !== "source-absent")
     throw new Error("Unbound source actor SetPos callback or animation");
+  if (command.mode === 1) {
+    checkpointInteger(command.referenceEntityId, -0x80000000, 0x7fffffff);
+    if (typeof referenceActorId !== "string" || referenceActorId.length === 0)
+      throw new Error("Source relative SetPos reference entity is absent or unresolved");
+  } else if (referenceActorId !== undefined) {
+    throw new Error("Absolute source SetPos cannot consume a relative reference binding");
+  }
   // Use the shared actor validation and detached playback projection. Neither
   // position, layer, nor CueAnimation may partially reach the existing owner.
   let next = projectFieldPuppetActorEffects([], snapshot, providers);
@@ -28,12 +40,29 @@ export function projectNativeFieldPosition(snapshot: FieldPuppetHostSnapshot,
   const logicalLayer = command.layer === 0
     ? [349, 249, 149].indexOf(Math.trunc(Math.fround(target.position.z))) : command.layer - 1;
   if (logicalLayer < 0) throw new Error("Source actor SetPos cannot preserve this source Z layer");
-  const current = fieldCameraWorldToCell(map, { x: target.position.x, y: target.position.y });
-  // ConversionMapRangeCell performs Int32 subtraction before checking each
-  // axis. A kept axis is floored by WorldPositionToCellPosition, not untouched.
-  const x = (command.x - map.x) | 0, y = (command.y - map.y) | 0;
-  target.position = fieldCameraCellToWorld(map,
-    { x: x < 0 ? current.x : x, y: y < 0 ? current.y : y }, logicalLayer);
+  let cell: { x: number; y: number };
+  if (command.mode === 1) {
+    // Puppet.SetPos resolves i4 with GetEntity, floors that entity's world
+    // position to map-local cells, then adds the two Int32 offsets as floats.
+    // It does not subtract mapRange again or use mode 0's negative sentinel.
+    const reference = next.actors.find((actor) => actor.id === referenceActorId)
+      ?? (next.camera?.id === referenceActorId ? next.camera : null);
+    if (!reference) throw new Error("Source relative SetPos reference entity is absent or unresolved");
+    const anchor = fieldCameraWorldToCell(map, { x: reference.position.x, y: reference.position.y });
+    cell = { x: Math.fround(Math.fround(command.x) + Math.fround(anchor.x)),
+      y: Math.fround(Math.fround(command.y) + Math.fround(anchor.y)) };
+  } else {
+    const current = fieldCameraWorldToCell(map, { x: target.position.x, y: target.position.y });
+    // ConversionMapRangeCell performs Int32 subtraction before checking each
+    // axis. A kept axis is floored by WorldPositionToCellPosition, not untouched.
+    const x = (command.x - map.x) | 0, y = (command.y - map.y) | 0;
+    cell = { x: x < 0 ? current.x : x, y: y < 0 ? current.y : y };
+  }
+  // MoveEntityLayerWithWorldPosition uses the destination actor's current Z,
+  // even when the relative reference is on another layer.
+  target.position = fieldCameraCellToWorld(map, cell, logicalLayer);
+  if (![target.position.x, target.position.y, target.position.z].every(Number.isFinite))
+    throw new Error("Source actor SetPos coordinate overflow");
   if (command.layer !== 0) {
     target.layer = command.layer + 8;
     next = projectFieldPuppetActorEffects([
