@@ -121,8 +121,17 @@ function declaredBattleInput(battle, program, refs, actor, channel) {
 }
 
 export async function runContentBatchRoute({ root, compiled = "dist", plan: suppliedPlan, routeId, repository, runtimeHash,
-  captureFinalState = false }) {
+  captureFinalState = false, continuation = null }) {
   assert.equal(typeof captureFinalState, "boolean", "Final state capture must be an explicit boolean");
+  // A continuation is independently identified evidence. It must never borrow
+  // the new-game lane or be admitted as a route started from initialization.
+  const resumed = continuation === null ? null : structuredClone(continuation);
+  if (resumed) {
+    assert.deepEqual(Object.keys(resumed).sort(), ["checkpoint", "checkpointHash", "predecessorRouteId"]);
+    assert.equal(typeof resumed.predecessorRouteId, "string");
+    assert.ok(resumed.predecessorRouteId.length > 0);
+    assert.match(resumed.checkpointHash, /^[a-f0-9]{64}$/);
+  }
   // Capture the entire nominated route before any await. A caller supplies only
   // its ID, never a different input program borrowing the manifest's identity.
   const plan = structuredClone(suppliedPlan), candidates = plan.manifest.routes.filter(route => route.id === routeId);
@@ -146,7 +155,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
   const receipt = { kind: "content-batch-route-receipt-v1", routeId: route.id,
     manifestHash: plan.manifestHash, dependencyHash: plan.dependencyHash, runtimeHash,
     contentHashes: structuredClone(plan.contentHashes), profile: plan.manifest.profile,
-    lane: route.entry === "source-new-game" ? "source-profile" :
+    lane: resumed ? "story-checkpoint-continuation" : route.entry === "source-new-game" ? "source-profile" :
       route.entry === "development-map" ? "source-content-development" :
       route.entry === "framework-new-game" ? "framework-initialized" : "synthetic-controlled",
     result: "blocked", visitedMapIds: [], completedEncounterIds: [], finalMapId: route.expectedMapId,
@@ -163,7 +172,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     entriesCommitted: 0, loadsCommitted: 0, preparedStarts: 0, committedStarts: 0,
     preparedReturns: 0, committedReturns: 0, duplicateReturnsRejected: 0, staleCommandChannelsRejected: 0 };
   let commandChannel = null, maps = null, saves = null;
-  let initialOwned = null, pendingDoor = null;
+  let initialOwned = null, firstStableCheckpoint = null, pendingDoor = null;
   let ticks = 0, inputIndex = 0, answerIndex = 0, commands = 0, checkpointHash = null;
   const current = () => flow.session;
   const completeInput = input => {
@@ -228,9 +237,33 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     // catalog until their first transition. Every later map read is rechecked
     // before WorldSession prepares or publishes any state.
     await boundMaps.world();
-    const startAttempt = entries.begin("new-game");
+    const startAttempt = entries.begin(resumed ? "load" : "new-game");
     let started;
-    if (route.entry === "framework-new-game") {
+    if (resumed) {
+      assert.equal(await contentDigest(resumed.checkpoint), resumed.checkpointHash, "Continuation checkpoint changed");
+      started = await startAttempt.prepare(async context => {
+        const packages = await repository.restoreSessionContent(resumed.checkpoint);
+        assert.ok(context.isCurrent(), "Story continuation restore was cancelled");
+        bound("battle", packages.battle);
+        if (packages.initial) bound("entry", packages.initial);
+        if (packages.world) {
+          bound("world", packages.world.catalog); bound(`map:${packages.world.map.mapId}`, packages.world.map);
+          if (packages.world.source) {
+            bound("entry", packages.world.source.content);
+            bound(`map:${packages.world.source.initialMap.mapId}`, packages.world.source.initialMap);
+          }
+          if (packages.world.initialized) {
+            bound("entry", packages.world.initialized.content);
+            bound(`map:${packages.world.initialized.initialMap.mapId}`, packages.world.initialized.initialMap);
+          }
+        }
+        const session = GameSession.restore(resumed.checkpoint, packages.initial, packages.battle, packages.world, runtime);
+        assert.equal(await contentDigest(session.checkpoint()), resumed.checkpointHash, "Story continuation replayed initialization");
+        return { session, presentation: { mapId: session.field.content.map.identity.mapId } };
+      });
+      trace.push({ kind: "story-continuation", predecessorRouteId: resumed.predecessorRouteId,
+        checkpointHash: resumed.checkpointHash, entry: "GameEntryLoader", initializationReplayed: false });
+    } else if (route.entry === "framework-new-game") {
       started = await startAttempt.prepare(async context => {
         const { content, catalog, map, battle } = await repository.initializedNewGame();
         assert.ok(context.isCurrent(), "Initialized framework route entry was cancelled");
@@ -329,6 +362,10 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
           if (packages.world.source) {
             bound("entry", packages.world.source.content);
             bound(`map:${packages.world.source.initialMap.mapId}`, packages.world.source.initialMap);
+          }
+          if (packages.world.initialized) {
+            bound("entry", packages.world.initialized.content);
+            bound(`map:${packages.world.initialized.initialMap.mapId}`, packages.world.initialized.initialMap);
           }
         }
         const restored = GameSession.restore(saved.checkpoint, packages.initial, packages.battle, packages.world, runtime);
@@ -552,6 +589,8 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
           ownerBound: channel.owner === shopOwner, accepted, result: structuredClone(result) });
         completeInput(input);
       } else if (game.checkpointReady) {
+        if (captureFinalState && firstStableCheckpoint === null)
+          firstStableCheckpoint = structuredClone(game.checkpoint());
         const input = route.inputs[inputIndex];
         if (input) {
           let accepted;
@@ -650,7 +689,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
   }
   receipt.completedEncounterIds = [...new Set(receipt.completedEncounterIds)];
   return { receipt, trace, execution, elapsedMs: ticks * 10, commands, checkpointHash,
-    ...(captureFinalState ? { finalState: structuredClone({ initialOwned,
+    ...(captureFinalState ? { finalState: structuredClone({ initialOwned, firstStableCheckpoint,
       finalOwned: flow.hasSession ? current().state.snapshot() : null,
       checkpoint: flow.hasSession && current().checkpointReady ? current().checkpoint() : null }) } : {}) };
 }

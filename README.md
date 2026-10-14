@@ -38,6 +38,8 @@
 
 [批量服务](docs/systems-v93.md) 使用同一交互和经济系统接入六张来源店铺、八个柜台。`npm run source-services:check` 重放固定玩家输入，检查交易、原消息、关闭及恢复后续行；[来源店铺入口](http://127.0.0.1:4173/game/?package=south-figaro-services-40) 是明确的 Web 开发放置，仍保留全部56图及135个入口的来源范围。
 
+[全量剧情批量迁移](docs/story-bulk-migration.md) 用 `npm run story:check` 一次转换全部原始程序，直接消费统一产物在共用 VM 成组执行，规划完整来源世界的缺口，并验证前段真实检查点驱动后段及奖励不重复。全量转换、受控程序执行、声明路线和原主线可达性分别记录；完整 Web 迁移尚未完成。
+
 `npm run content-packages:build` 构建共同内容包；`npm run world-travel:check` 验证世界与地点往返、遭遇战、菜单、保存恢复及循环渲染。来源摘要更新后需要重建并重新绑定配方；旧摘要存档不能默认为新内容的有效进度。
 
 `npm run npc-routes:plan` 按地图包内身份批量绑定 NPC 路线，保留完整原指令、依赖和未知能力；也可追加 `-- 3` 只检查 map3。该接口是内容生产数据层，尚不授予 NPC 自主执行或原剧情可玩覆盖。
