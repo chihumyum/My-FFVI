@@ -28,7 +28,7 @@ async function modules(root, dist) {
 
 /** All source references are verified before derivation. The manifest supplies
  * player inputs, not replacement scripts, flags, actors, rewards or assets. */
-export async function compileInitializedContentBatch(root, raw, recipeSha256, { dist = "dist" } = {}) {
+export async function compileInitializedContentBatch(root, raw, recipeSha256, { dist = "dist", readJson } = {}) {
   root = resolve(root); const api = await modules(root, dist), build = resolve(root, "build");
   fields(raw, "kind,id,sourceEntry,sourceBattle,sourceWorld,startMap,entrance,presentation,manifest");
   const recipe = structuredClone(raw);
@@ -45,6 +45,7 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256, { 
   const read = async ref => {
     fields(ref, "url,contentHash"); assert.match(ref.url, /^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.json$/);
     assert.match(ref.contentHash, digest);
+    if (readJson) return api.verifyContent(structuredClone(await readJson(ref.url)), ref.contentHash);
     const path = await realpath(resolve(build, ref.url.slice(1))); assert.ok(within(build, path), "Source must remain inside build");
     return api.verifyContent(JSON.parse(await readFile(path, "utf8")), ref.contentHash);
   };

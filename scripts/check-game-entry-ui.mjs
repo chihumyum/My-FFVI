@@ -61,6 +61,7 @@ async function packages() {
   const content = await seal({ ...fresh.content, battleCatalogHash: battle.contentHash,
     worldCatalogHash: catalog.contentHash, mapContentHash: map.contentHash });
   development.field.sourceSetHash = battle.common.fieldSourceSetHash;
+  development.field.parentSourceSetHash = catalog.parentSourceSetHash;
   development.field.map.textures = { controlled: "/controlled/development-entry.png" };
   const initial = await seal(development.field);
   const files = new Map([
@@ -145,10 +146,17 @@ async function developmentMapPackages(id = "development-map") {
   const { packages } = contentBatchProgramFixture();
   const { developmentProfile: _profile, ...baseline } = structuredClone(packages.entry);
   baseline.map.textures = { controlled: "/controlled/development-baseline-map.png" };
+  // The old mechanism fixture permits a relative synthetic sprite URL.
+  // This nominated package authors canonical archive URLs before sealing it.
+  for (const character of Object.values(baseline.characters)) for (const sprite of Object.values(character.sprites)) {
+    sprite.file = "/controlled/development-character.png";
+    sprite.sha256 = sha(controlledPng([101, 139, 173, 255]));
+  }
   const baseField = await seal(baseline), battle = await seal(packages.battle);
   const target = structuredClone(packages.maps[1]);
   target.map.textures = { controlled: "/controlled/development-target-map.png" };
   const map = await seal(target), world = structuredClone(packages.catalog);
+  world.characters = structuredClone(baseField.characters);
   world.maps[String(map.mapId)].contentHash = map.contentHash;
   const catalog = await seal(world), initial = await compileDevelopmentMapEntry({ baseField, baseBattle: battle, catalog, map, entrance: 1 });
   const prefix = `/content-packages/${id}`, refs = {
@@ -158,8 +166,30 @@ async function developmentMapPackages(id = "development-map") {
       battle: { url: `${prefix}/battle.json`, contentHash: battle.contentHash } },
   };
   const files = new Map([[`/content-packages/${id}.json`, refs], [refs.world.url, catalog],
-    [refs.development.entry.url, initial], [refs.development.battle.url, battle], [catalog.maps[String(map.mapId)].url, map]]);
-  return { initial, battle, catalog, map, baseField, refs, files, packageId: id };
+    [refs.development.entry.url, initial], [refs.development.battle.url, battle],
+    ...packages.maps.map(value => [catalog.maps[String(value.mapId)].url, value.mapId === map.mapId ? map : value])]);
+  return withDevelopmentMapArchive({ initial, battle, catalog, map, baseField, refs, files, packageId: id });
+}
+/** An authored package index and original JSON bodies, not a fake History API.
+ * Every indexed map is retained; the controlled PNG fixture stays separate
+ * from the app's actual SHA verification and Image decoding boundaries. */
+async function withDevelopmentMapArchive(pack) {
+  const { packageId, refs, files } = pack;
+  const bindings = Object.fromEntries([...files].filter(([url, value]) => !url.startsWith("/content-releases/") &&
+    /^[a-f0-9]{64}$/.test(value.contentHash)).map(([url, value]) => [url, value.contentHash]));
+  const png = controlledPng([101, 139, 173, 255]), pngHash = sha(png);
+  const urls = [...coreBindings.fieldMediaUrls(pack.initial), ...coreBindings.fieldMediaUrls({ map: pack.map.map,
+    characters: pack.catalog.characters, minimap: pack.map.minimap }), ...Object.values(pack.battle.common.sprites).map(sprite => sprite.file)];
+  const mediaBindings = Object.fromEntries(urls.map(url => [url, { sha256: pngHash, extension: "png" }]));
+  const release = { id: await contentDigest({ packageId, refs, bindings, mediaBindings }),
+    sourceSetHash: pack.catalog.parentSourceSetHash, refs, bindings, mediaBindings };
+  const index = await seal({ kind: "game-content-release-index-v1", packageId, profile: refs.profile,
+    objectRoot: "/content-releases", currentReleaseId: release.id, releases: [release] });
+  for (const [url, hash] of Object.entries(bindings)) files.set(`/content-releases/objects/${hash}.json`, files.get(url));
+  const indexUrl = `/content-releases/packages/${packageId}.json`; files.set(indexUrl, index);
+  const media = new Map(urls.map(url => [url, { bytes: png, sha256: pngHash }]));
+  media.set(`/content-releases/media/${pngHash}.png`, { bytes: png, sha256: pngHash });
+  return { ...pack, files, media, release, index, indexUrl, pngHash };
 }
 // Valid redistributable PNG bytes, with differing release contents at identical
 // logical URLs. Image decoding below remains an explicit controlled boundary.
@@ -467,7 +497,7 @@ async function host(pack, { slots = new Map(), failBinding = false, search = "?p
   }
   function boundToCurrent() {
     const state = api.read(), owner = state.flow.currentSession;
-    assert.ok(owner);
+    assert.ok(owner, nodes.get("entry-error").textContent || nodes.get("load-error").textContent);
     assert.equal(state.game, owner.field);
     assert.equal(state.battleView.common, owner.battleCatalog.common,
       "BattleView must consume the newly published session catalog");
@@ -513,14 +543,9 @@ function assertReleaseBinding(h, p, label) {
   assert.equal(state.contentHistory.current, state.contents, "Configured current repository is never replaced by an archive");
   assert.equal(owner.battleCatalog.contentHash, p[label].battle.contentHash);
   assert.equal(state.contentSessions.contextFor(owner).repository, state.contentSessions.repository);
-  if (label === "old") {
-    assert.notEqual(state.contentSessions.repository, state.contents);
-    assert.equal(state.contentSessions.release.release.id, p.old.release.id);
-    assert.notEqual(state.images, state.currentImages);
-  } else {
-    assert.equal(state.contentSessions.repository, state.contents);
-    assert.equal(state.contentSessions.release, null); assert.equal(state.images, state.currentImages);
-  }
+  assert.notEqual(state.contentSessions.repository, state.contents);
+  assert.equal(state.contentSessions.release.release.id, p[label].release.id);
+  assert.notEqual(state.images, state.currentImages);
   assert.equal(state.images.get(p.mediaFiles.character).sourceSha256, p[label + "ImageHash"]);
   assert.equal(state.renderer.args[2], state.images); h.boundToCurrent();
 }
@@ -620,7 +645,7 @@ try {
     assert.notEqual(h.api.read().flow.session, old); assert.equal(h.api.read().flow.paused, true);
     assert.deepEqual(h.api.read().flow.session.checkpoint(), checkpoint); h.boundToCurrent();
     assert.deepEqual(new Set(h.calls.json), new Set(["/content-packages/custom.json",
-      p.refs.development.entry.url, p.refs.development.battle.url, "/content-releases/packages/custom.json",
+      "/content-releases/packages/custom.json", `/content-releases/objects/${p.refs.world.contentHash}.json`,
       `/content-releases/objects/${p.refs.development.entry.contentHash}.json`,
       `/content-releases/objects/${p.refs.development.battle.contentHash}.json`]));
   });
@@ -647,13 +672,13 @@ try {
     await h.ready(); await h.$("start").onclick(); h.$("menu-button").onclick(); await h.$("save-game").onclick();
     const old = h.api.read().flow.session, checkpoint = old.checkpoint(), bytes = [...h.slots];
     const changed = structuredClone(p.initial); changed.entry.player.x += 1;
-    p.files.set(p.refs.development.entry.url, await seal(changed)); h.api.read().contents.clear();
+    p.files.set(`/content-releases/objects/${p.refs.development.entry.contentHash}.json`, await seal(changed));
     await h.api.reset();
     assert.equal(h.api.read().flow.session, old); assert.equal(h.api.read().flow.paused, true);
     assert.deepEqual(old.checkpoint(), checkpoint); assert.deepEqual([...h.slots], bytes);
     assert.match(h.$("entry-error").textContent, /Content identity mismatch/);
     assert.ok(h.calls.json.every(url => url === "/content-packages/custom.json" ||
-      url === p.refs.development.entry.url || url === p.refs.development.battle.url));
+      url === "/content-releases/packages/custom.json" || url.startsWith("/content-releases/objects/")));
   });
   await check("a synthetic development-map title reads only its trusted references and keeps source start unavailable", async () => {
     const p = await developmentMapPackages(), h = await host(p, { search: "?package=development-map" });
@@ -724,10 +749,10 @@ try {
     assert.deepEqual(h.calls.developmentEntries[0], { baselineMap: 1, destinationMap: 2,
       entryHash: p.initial.contentHash, initialItems: [{ id: 10, count: 1 }] });
     assert.equal(h.api.read().renderer.args[1], owner.field.content);
-    assert.equal(h.calls.images.includes("/controlled/development-target-map.png"), true);
-    assert.equal(h.calls.images.includes("/controlled/development-baseline-map.png"), false);
-    const wanted = new Set(["/content-packages/development-map.json", p.refs.world.url,
-      p.refs.development.entry.url, p.refs.development.battle.url, p.catalog.maps[2].url]);
+    assert.equal(h.api.read().images.has("/controlled/development-target-map.png"), true);
+    assert.equal(h.api.read().images.has("/controlled/development-baseline-map.png"), false);
+    const wanted = new Set(["/content-packages/development-map.json", p.indexUrl,
+      ...Object.values(p.release.bindings).map(hash => `/content-releases/objects/${hash}.json`)]);
     assert.ok(h.calls.json.every(url => wanted.has(url)), "No opening or source fallback may initialize a development map");
   });
   await check("development-map initialization reaches the actual pause menu and save with the derived entry origin", async () => {
@@ -776,7 +801,7 @@ try {
     h.$("menu-button").onclick(); await h.$("save-game").onclick();
     const old = h.api.read().flow.session, checkpoint = old.checkpoint(), bytes = [...h.slots], calls = h.calls.developmentEntries.length;
     const altered = structuredClone(p.catalog); altered.limitations.push("Controlled changed world");
-    p.files.set(p.refs.world.url, await seal(altered)); h.api.read().contents.clear();
+    p.files.set(`/content-releases/objects/${p.refs.world.contentHash}.json`, await seal(altered));
     await h.$("restart").onclick();
     assert.equal(h.api.read().flow.session, old); assert.equal(h.api.read().flow.paused, true);
     assert.equal(h.api.read().failed, false); assert.deepEqual(old.checkpoint(), checkpoint);
@@ -789,7 +814,7 @@ try {
     h.$("menu-button").onclick(); await h.$("save-game").onclick();
     const old = h.api.read().flow.session, checkpoint = old.checkpoint(), bytes = [...h.slots];
     const altered = structuredClone(p.map); altered.name = "Controlled changed destination";
-    p.files.set(p.catalog.maps[2].url, await seal(altered)); h.api.read().contents.clear();
+    p.files.set(`/content-releases/objects/${p.catalog.maps[2].contentHash}.json`, await seal(altered));
     await h.$("load-game").onclick();
     assert.equal(h.api.read().flow.session, old); assert.equal(h.api.read().flow.paused, true);
     assert.equal(h.api.read().failed, false); assert.deepEqual(old.checkpoint(), checkpoint);
@@ -802,6 +827,7 @@ try {
       bad.developmentEntry[pin] = "0".repeat(64);
       p.initial = await seal(bad); p.refs.development.entry.contentHash = p.initial.contentHash;
       p.files.set(p.refs.development.entry.url, p.initial);
+      await withDevelopmentMapArchive(p);
       const slots = new Map([["untouched", "original"]]), h = await host(p, { search: "?package=development-map", slots });
       await h.ready(); await h.$("start").onclick();
       assert.equal(h.api.read().flow.currentSession, null); assert.equal(h.api.read().flow.phase, "title");
@@ -813,8 +839,8 @@ try {
   await check("cancelled development-map media cannot publish its relocated private owner after another start", async () => {
     const p = await developmentMapPackages(), slots = new Map([["untouched", "original"]]),
       h = await host(p, { search: "?package=development-map", slots }), held = deferred();
-    await h.ready(); h.heldImages.set("/controlled/development-target-map.png", held);
-    const pending = h.$("start").onclick(); await h.observed("images", "/controlled/development-target-map.png");
+    await h.ready(); h.heldImages.set("sha256:" + p.pngHash, held);
+    const pending = h.$("start").onclick(); await h.observed("imageBytes", p.pngHash);
     assert.equal(h.calls.developmentEntries.length, 1); assert.equal(h.api.read().flow.currentSession, null);
     h.$("cancel-entry-load").onclick(); assert.equal(h.api.read().flow.phase, "title");
     held.resolve(); h.heldImages.clear(); await pending;
@@ -1285,13 +1311,13 @@ try {
   await check("historical PNG digest mismatch rejects before Blob publication and retry never borrows the current image cache", async () => {
     const p = await historicalPackages(), h = await host(p, { slots: p.slots, search: `?package=${p.packageId}` });
     await h.ready(); const owner = await startCurrentRelease(h); h.$("menu-button").onclick();
-    const before = owner.checkpoint(), images = h.api.read().images, savedBytes = [...h.slots];
+    const before = owner.checkpoint(), images = h.api.read().images, savedBytes = [...h.slots], blobs = h.calls.objectUrls.length;
     const original = p.media.get(p.oldImageUrl);
     p.media.set(p.oldImageUrl, { ...original, bytes: controlledPng([1, 2, 3, 255]) });
     await h.$("load-game").onclick();
     assert.equal(h.api.read().flow.session, owner); assertReleaseBinding(h, p, "current");
     assert.deepEqual(owner.checkpoint(), before); assert.equal(h.api.read().images, images);
-    assert.deepEqual([...h.slots], savedBytes); assert.equal(h.calls.objectUrls.length, 0);
+    assert.deepEqual([...h.slots], savedBytes); assert.equal(h.calls.objectUrls.length, blobs);
     assert.match(h.$("save-status").textContent, /摘要不匹配/);
     p.media.set(p.oldImageUrl, original); await h.$("load-game").onclick(); assertReleaseBinding(h, p, "old");
     assert.deepEqual(new Set(h.calls.revokedUrls), new Set(h.calls.objectUrls));

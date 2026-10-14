@@ -163,6 +163,7 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       add("partyActors", "Transportation requires the shared owned, native actor and camera providers");
       break;
     case "branch-character": add("puppetRoster", "Missing event context branch roster provider"); break;
+    case "field-party-query": add("puppetRoster", "Missing field party query roster provider"); break;
     case "field-sound": {
       const command = commandOf(op);
       if (command.kind === "play" || command.kind === "ready") add("audioReadiness", "Missing SE resource readiness provider");

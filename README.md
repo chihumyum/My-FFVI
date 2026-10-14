@@ -6,7 +6,7 @@
 
 [整体游戏骨架](docs/game-skeleton.md) 以同一公共运行时贯通入口、探索/事件、战斗往返、队伍/经济/成长、存读档和批量内容。`npm run skeleton:check` 验证代表性完整流程；`npm run skeleton:plan` 查看范围。完整细项回归保留为 `npm run framework:verify`，来源剧情与全游戏迁移单独验收。
 
-[本轮交付](docs/systems-v80.md)：整体游戏骨架与公共内容生产使用统一边界；独立生产器并行准备候选，所有内容包及依赖验证完成后一次发布，中途失败保留原集合。默认入口和六组连续系统验收继续使用同一运行时。详见 [公共内容管线](docs/content-package-pipeline.md)。
+[本轮交付](docs/systems-v81.md)：来源世界、入口和派生包进入同一候选链，配方依赖通过审计绑定到本次编译；完整闭包验证后一次发布。新游戏和读档固定内容版本，运行中的切图、图像和音频保持同一版本。默认入口和六组连续系统验收继续使用同一运行时。详见 [公共内容管线](docs/content-package-pipeline.md)。
 
 [内容版本与旧进度](docs/content-versions.md) 保留完整 JSON 和图声闭包，恢复旧版本后继续使用其地图、事件与战斗，再次存读档。共享导出之前先运行 `npm run content-history:archive`；正常公共包与来源地点构建自动保留旧新版本，旧存档不改写为新初始化。
 
@@ -20,7 +20,7 @@
 
 [世界旅行演示](http://127.0.0.1:4173/game/?package=world-travel) 复用同一会话、切图、战斗、菜单和存读档。起点向北进入纳尔谢，面向入口南侧确认返回世界；世界移动采用真实地形通行与循环边界。导航、遇敌节奏和简化平面画面属于独立演示策略，原剧情可达性仍单独验收。设计与范围见 [世界旅行系统](targets/world-travel.md)。
 
-已有本地来源目录、世界与媒体产物时，使用 `npm run skeleton:build` 更新公共系统包，`npm run skeleton:check` 构建并验证六组连续合同。运行 `npm run dev` 后打开默认游戏页面。单独内容包重建保留其它已发布批次。
+已有本地来源快照、来源战斗目录与媒体产物时，使用 `npm run skeleton:build` 编译完整世界、入口与公共系统包，`npm run skeleton:check` 构建并验证六组连续合同。运行 `npm run dev` 后打开默认游戏页面。未由当前声明配方生产的独立包保留；已运行会话继续使用其启动版本。
 
 `npm run systems:plan -- <manifest.json>` 按公共系统归并整批依赖和诊断；省略参数时检查已构建的费加罗批次。`npm run batch:check -- <manifest.json>` 默认验证当前骨架证据，再实际运行该批次声明路线；完整来源依赖未闭合时仍阻塞。详细回归可显式选择 `--framework-scope full-suite`。
 

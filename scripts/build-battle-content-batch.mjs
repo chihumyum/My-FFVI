@@ -67,12 +67,18 @@ const summarize = (entries, diagnostics) => ({
 /** Complete source readers resolve selected data; the declared base alone
  * supplies executable abilities, conditions, media and owned content. A blocked
  * selection returns its diagnostics and no replacement/fallback catalog. */
-export async function compileBattleContentBatch(root, rawDeclaration) {
+export async function compileBattleContentBatch(root, rawDeclaration, {readJson} = {}) {
   root = resolve(root);
   const declaration = parseBattleContentBatchDeclaration(rawDeclaration);
-  const build = resolve(root, "build"), basePath = await realpath(resolve(build, declaration.baseCatalogRef.url.slice(1)));
-  assert.ok(within(build, basePath), "Battle base must be inside build");
-  const base = await verifyContent(JSON.parse(await readFile(basePath, "utf8")), declaration.baseCatalogRef.contentHash);
+  const build = resolve(root, "build");
+  let rawBase;
+  if (readJson) rawBase = structuredClone(await readJson(declaration.baseCatalogRef.url));
+  else {
+    const basePath = await realpath(resolve(build, declaration.baseCatalogRef.url.slice(1)));
+    assert.ok(within(build, basePath), "Battle base must be inside build");
+    rawBase = JSON.parse(await readFile(basePath, "utf8"));
+  }
+  const base = await verifyContent(rawBase, declaration.baseCatalogRef.contentHash);
   assert.equal(base.kind, "narshe-battle-catalog");
   assert.ok(base.common && base.gameState && base.encounters && base.encounterReport);
   const [source, snapshot] = await Promise.all([compileSharedBattleSource(root), readSnapshot(resolve(root, "build/battle"))]);

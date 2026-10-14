@@ -1,12 +1,13 @@
 // The public source batch shares the same immutable release boundary as the
 // basic package pipeline. Private outputs never change public release indexes.
 import assert from 'node:assert/strict';
-import {mkdir,writeFile} from 'node:fs/promises';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {archivePublishedContentPackages} from './archive-content-release.mjs';
 import {buildInitializedContentBatch} from './build-initialized-content-batch.mjs';
 import {acquireContentPackageLock} from './content-package-lock.mjs';
+import {publishContentPackages} from './content-package-pipeline.mjs';
 
 const repository=resolve(import.meta.dirname,'..');
 
@@ -14,6 +15,22 @@ export async function buildVersionedSourceContent({root=repository,
   recipePath='content-batches/figaro-initialized.recipe.json',out='build/content-packages',dist='dist'}={}){
   root=resolve(root);
   const publicOutput=resolve(root,out)===resolve(root,'build/content-packages');
+  if(publicOutput){
+    const report=await publishContentPackages({root,compiledDir:dist,sourceRecipePaths:[recipePath],
+      reportPath:'build/reports/versioned-source-content-build.json'});
+    const producer=report.producers.find(item=>item.report?.kind==='initialized-source-map-build-v1');
+    assert.ok(producer,'Source recipe has no candidate producer');
+    const id=producer.report.package,read=async name=>JSON.parse(await readFile(
+      resolve(root,'build/content-packages',id,name+'.json'),'utf8'));
+    const [entry,battle,catalog,manifest]=await Promise.all(['entry','battle','world','manifest'].map(read));
+    const maps=await Promise.all(manifest.mapIds.map(mapId=>read('maps/'+mapId)));
+    const {planContentBatch}=await import(pathToFileURL(resolve(root,dist,'src/compiler/content-batch.js')).href);
+    const refs=producer.report.refs,payloads=new Map([[refs.world.url,catalog],
+      [refs.initialized.entry.url,entry],[refs.initialized.battle.url,battle],
+      ...maps.map(map=>[catalog.maps[String(map.mapId)].url,map])]);
+    return {report,result:{entry,battle,catalog,maps,manifest,refs,payloads,
+      report:producer.report,plan:planContentBatch(manifest,{entry,battle,catalog,maps})}};
+  }
   const report={kind:'versioned-source-content-build-v1',result:'running',recipePath,out,dist,
     publication:publicOutput?'archived-public-package':'private-output',stages:[],
     sourceGameplayAdmitted:false,sourceCampaignComplete:false};
@@ -55,6 +72,6 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).hr
   const {result,report}=await buildVersionedSourceContent(options);
   console.log(JSON.stringify({package:result.report.package,profile:'framework',mapIds:result.manifest.mapIds,
     entryHash:result.entry.contentHash,initializerHash:result.entry.initializerHash,
-    diagnostics:result.plan.diagnostics.length,sourceCampaignComplete:false,publication:report.publication,
+    diagnostics:result.plan.diagnostics.length,sourceCampaignComplete:false,publication:report.publication??'archived-public-package',
     refs:(options.out??'build/content-packages')+'/'+result.report.package+'.json'}));
 }

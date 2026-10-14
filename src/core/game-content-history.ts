@@ -1,6 +1,7 @@
 import { GameContentRepository, type RestoreSessionContent } from "./game-content.js";
 import { parseGameContentRefs, type GameContentProfile, type GameContentRefs } from "./game-content-refs.js";
 import { verifyContent } from "./content-integrity.js";
+import { canonical } from "./canonical.js";
 import type { GameCheckpoint } from "./game-session.js";
 import { gameContentCheckpointIdentity, parseGameContentReleaseIndex, resolveGameContentReleaseObject,
   selectGameContentRelease, type SelectedGameContentRelease } from "./game-content-release.js";
@@ -18,6 +19,32 @@ export type GameContentHistoryRestore = {
   repository: GameContentRepository;
   release: SelectedGameContentRelease | null;
 };
+export type GameContentHistoryCurrent = {
+  repository: GameContentRepository;
+  /** null is only the explicit legacy host without declared package pins. */
+  release: SelectedGameContentRelease | null;
+};
+export type GameContentHistoryRestoreOptions = { pinCurrent?: boolean };
+
+function currentRestorePin(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    throw new Error("Invalid game content history restore options");
+  const prototype = Object.getPrototypeOf(raw);
+  if (prototype !== null) {
+    const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor");
+    if (Object.getPrototypeOf(prototype) !== null || !constructor || !("value" in constructor) ||
+        typeof constructor.value !== "function" ||
+        Object.getOwnPropertyDescriptor(constructor.value, "prototype")?.value !== prototype ||
+        Function.prototype.toString.call(constructor.value) !== Function.prototype.toString.call(Object))
+      throw new Error("Invalid game content history restore options");
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(raw);
+  if (Reflect.ownKeys(raw).some(key => key !== "pinCurrent") ||
+      Object.values(descriptors).some(value => !("value" in value) || !value.enumerable) ||
+      descriptors.pinCurrent && typeof descriptors.pinCurrent.value !== "boolean")
+    throw new Error("Invalid game content history restore options");
+  return descriptors.pinCurrent?.value ?? false;
+}
 
 /** Content selection and I/O only. Restore still uses the existing Repository,
  * Session and entry publication boundary. No save is upgraded or reinitialized.
@@ -45,7 +72,40 @@ export class GameContentHistory {
     this.loadJson = options.loadJson;
   }
 
-  async restoreSessionContent(checkpoint: GameCheckpoint): Promise<GameContentHistoryRestore> {
+  /** Prepare a fixed current-content context. Selecting a package never falls
+   * back to mutable URLs or an older release when its archive is unavailable.
+   * This method publishes no owner or active-content pointer; the returned
+   * context belongs to the host's existing private entry candidate. */
+  async openCurrent(): Promise<GameContentHistoryCurrent> {
+    const declared = this.current.declaredReferences, refs = this.refs;
+    if (this.packageId === undefined) {
+      if (declared !== undefined)
+        throw new Error("Declared current content requires a trusted package history");
+      return { repository: this.current, release: null };
+    }
+    if (refs === undefined || declared === undefined || canonical(refs) !== canonical(declared))
+      throw new Error("Current repository declared references mismatch");
+    const indexPayload = structuredClone(await this.loadJson(`/content-releases/packages/${this.packageId}.json`));
+    const index = parseGameContentReleaseIndex(await verifyContent(indexPayload as { contentHash: string }));
+    if (index.packageId !== this.packageId || index.profile !== this.profile)
+      throw new Error("Game content history namespace/profile mismatch");
+    const selected = selectGameContentRelease(index, { kind: "current" });
+    if (canonical(selected.release.refs) !== canonical(refs))
+      throw new Error("Current game content release references mismatch");
+    const repository = new GameContentRepository(async logicalUrl => {
+      const reference = resolveGameContentReleaseObject(selected, logicalUrl);
+      const payload = structuredClone(await this.loadJson(reference.url));
+      return verifyContent(payload as { contentHash: string }, reference.contentHash);
+    }, this.profile, refs);
+    const world = await repository.world();
+    if (world.parentSourceSetHash !== selected.release.sourceSetHash)
+      throw new Error("Current game content release source identity mismatch");
+    return { repository, release: structuredClone(selected) };
+  }
+
+  async restoreSessionContent(checkpoint: GameCheckpoint,
+    options: GameContentHistoryRestoreOptions = {}): Promise<GameContentHistoryRestore> {
+    const pinCurrent = currentRestorePin(options);
     // Capture before I/O. A later caller mutation cannot change the selected
     // content or reinterpret the checkpoint used by this preparation.
     const saved = structuredClone(checkpoint), identity = gameContentCheckpointIdentity(saved);
@@ -58,6 +118,10 @@ export class GameContentHistory {
     if (currentMatch) {
       // A current-release I/O, source or capability error remains that error.
       // It does not authorize a search for a different playable definition.
+      if (pinCurrent) {
+        const selected = await this.openCurrent();
+        return { content: await selected.repository.restoreSessionContent(saved), ...selected };
+      }
       return { content: await this.current.restoreSessionContent(saved), repository: this.current, release: null };
     }
     if (this.packageId === undefined)

@@ -47,8 +47,10 @@ export async function compileBaseContentPackages({ root = repository, readJson }
     const repository = new GameContentRepository(async url => {
       if (url.startsWith("/content-packages/")) {
         const payload = payloads.get(url);
-        if (!payload) throw new Error("Missing declared package payload: " + url);
-        return payload;
+        if (payload) return payload;
+        if (readJson && /^\/content-packages\/(?:source|framework)\/maps\/[1-9][0-9]*\.json$/.test(url))
+          return verifyContent(structuredClone(await readJson(url)));
+        throw new Error("Missing declared package payload: " + url);
       }
       if (!/^\/(?:world|framework)\/[a-zA-Z0-9/_-]+\.json$/.test(url))
         throw new Error("Unexpected source dependency: " + url);

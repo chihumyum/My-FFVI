@@ -8,6 +8,7 @@ import { compileManualMessageInstruction } from "./message.js";
 import { compileSourceMessageInstruction } from "./source-message.js";
 import { compileFieldChoiceInstruction, type FieldChoiceCompileContext } from "./field-choice.js";
 import { compileEventContextBranchInstruction, eventContextBranchMnemonics } from "./event-context-branch.js";
+import { compileFieldPartyQueryInstruction, fieldPartyQueryMnemonics } from "./field-party-queries.js";
 import { compileEventScriptTransitionInstruction, compileEventScriptTransitionMetadata } from "./event-script-transition.js";
 import { tableId } from "./table-id.js";
 import { loadMinimapMedia } from "./map-ui.js";
@@ -133,6 +134,10 @@ export function decodeFieldOp(
   }
   if (name === "ChangeScript") {
     try { return { ...site, ...compileEventScriptTransitionInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (fieldPartyQueryMnemonics.some(mnemonic => mnemonic === name)) {
+    try { return { ...site, ...compileFieldPartyQueryInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if (fieldScriptMotionMnemonics.some(mnemonic => mnemonic === name)) {

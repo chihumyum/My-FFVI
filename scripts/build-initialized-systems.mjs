@@ -27,10 +27,11 @@ async function modules(root, dist) {
   return Object.assign({}, ...results);
 }
 
-export async function compileInitializedSystems(root, rawRecipe, recipeSha256, { dist = "dist" } = {}) {
-  root = resolve(root); const api = await modules(root, dist), build = resolve(root, "build");
+export async function compileInitializedSystems(root, rawRecipe, recipeSha256, { dist = "dist", readJson } = {}) {
   fields(rawRecipe, "kind,id,sourceEntry,sourceBattle,sourceWorld,sourceMap,battleSourceSetHash,handoff,mapId,areaId,name,trainingNote,entrance,training,shop,magicStone");
   const recipe = structuredClone(rawRecipe);
+  assert.ok(readJson === undefined || typeof readJson === "function", "Invalid candidate content reader");
+  root = resolve(root); const api = await modules(root, dist), build = resolve(root, "build");
   assert.equal(recipe.kind, "initialized-systems-recipe-v1"); assert.equal(recipe.id, "systems-initialized");
   assert.match(recipeSha256, digest); assert.match(recipe.battleSourceSetHash, digest);
   integer(recipe.mapId, 1); integer(recipe.areaId, 1);
@@ -40,8 +41,13 @@ export async function compileInitializedSystems(root, rawRecipe, recipeSha256, {
   const read = async ref => {
     fields(ref, "url,contentHash"); assert.match(ref.url, /^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.json$/);
     assert.match(ref.contentHash, digest);
-    const path = await realpath(resolve(build, ref.url.slice(1))); assert.ok(within(build, path));
-    return api.verifyContent(JSON.parse(await readFile(path, "utf8")), ref.contentHash);
+    let value;
+    if (readJson) value = structuredClone(await readJson(ref.url));
+    else {
+      const path = await realpath(resolve(build, ref.url.slice(1))); assert.ok(within(build, path));
+      value = JSON.parse(await readFile(path, "utf8"));
+    }
+    return api.verifyContent(value, ref.contentHash);
   };
   const [sourceEntry, sourceBattle, sourceWorld, sourceMap] = await Promise.all(
     [recipe.sourceEntry, recipe.sourceBattle, recipe.sourceWorld, recipe.sourceMap].map(read));
@@ -75,7 +81,7 @@ export async function compileInitializedSystems(root, rawRecipe, recipeSha256, {
   const declaration = { kind: "battle-content-batch-declaration-v1", id: recipe.id,
     parentSourceSetHash: sourceEntry.parentSourceSetHash, battleSourceSetHash: recipe.battleSourceSetHash,
     baseCatalogRef: recipe.sourceBattle, partyIds: selectedParties, handoff: recipe.handoff };
-  const selected = await compileBattleContentBatch(root, declaration);
+  const selected = await compileBattleContentBatch(root, declaration, { readJson });
   if (!selected.catalog) { const error = new Error("Initialized system battles are blocked"); error.report = selected.report; throw error; }
   const rows = sourceBattle.common.battleEntry.maps.filter(row => row.id === sourceMap.mapId);
   assert.equal(rows.length, 1, "Source map qualification is ambiguous or absent");

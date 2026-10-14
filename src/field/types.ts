@@ -27,6 +27,7 @@ import type { FieldBackgroundLayer } from "../core/field-background.js";
 import type { SourceMessageOp } from "../core/source-message.js";
 import type { FieldChoiceOp } from "../core/field-choice.js";
 import type { EventContextBranchOp } from "../core/event-context-branch.js";
+import type { FieldPartyQueryOp } from "../core/field-party-queries.js";
 import type { EventScriptTransitionOp, EventScriptTransitionMetadata } from "../core/event-script-transition.js";
 import type { FieldEffectBoardDefinition, FieldEffectCatalog } from "../core/field-effects.js";
 import type { FieldNativeNpcDefinition, FieldNativeNpcStandby } from "../core/field-native-npc.js";
@@ -203,6 +204,7 @@ export type Op = Site &
     | SourceMessageOp
     | FieldChoiceOp
     | EventContextBranchOp
+    | FieldPartyQueryOp
     | EventScriptTransitionOp
     | { kind: "entities"; group: string }
     | { kind: "change-map"; request: MapRequest }

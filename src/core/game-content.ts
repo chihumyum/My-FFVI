@@ -143,6 +143,11 @@ export class GameContentRepository {
   get hasInitializedEntry(): boolean {
     return this.references?.kind === "game-content-refs-v2" && this.references.initialized !== null;
   }
+  /** Host-declared pins only. Legacy default URLs have no declared package;
+   * exposing them here would invent an archive identity. */
+  get declaredReferences(): GameContentRefs | undefined {
+    return this.references === undefined ? undefined : structuredClone(this.references);
+  }
 
   private worldReference(): ContentReference {
     return this.references === undefined ? { url: this.worldUrl } : this.references.world;

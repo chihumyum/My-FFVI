@@ -272,16 +272,17 @@ async function reset() {
       const current = () => { if (!context.isCurrent()) throw new Error("Game entry cancelled"); };
       audio.reset();
       await audio.unlock(); current();
-      const { field, battle, development } = await contents.opening(); current();
+      const { repository, release } = await contentHistory.openCurrent(); current();
+      const { field, battle, development } = await repository.opening(); current();
       const candidate = development
         ? await prepareGameDevelopmentEntry(field, battle, development.catalog, development.map, runtime)
         : new GameSession(field, battle, undefined, runtime);
       current();
       if (preferences) candidate.setBattlePreferences(preferences);
-      contentSessions.registerCandidate(candidate, contents);
-      const nextImages = imagesFor(contents);
-      await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks, track => audioFile(null, track)); current();
-      await loadImages(fieldMediaUrls(candidate.field.content), null, nextImages); current();
+      contentSessions.registerCandidate(candidate, repository, release);
+      const nextImages = imagesFor(repository);
+      await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks, track => audioFile(release, track)); current();
+      await loadImages(fieldMediaUrls(candidate.field.content), release, nextImages); current();
       return { session: candidate, presentation: prepareSessionViews(candidate, nextImages) };
     });
     if (result.status === "cancelled") return;
@@ -306,16 +307,17 @@ async function startInitializedGame() {
       const current = () => { if (!context.isCurrent()) throw new Error("Game entry cancelled"); };
       audio.reset();
       await audio.unlock(); current();
-      const { content, catalog, map, battle } = await contents.initializedNewGame(); current();
+      const { repository, release } = await contentHistory.openCurrent(); current();
+      const { content, catalog, map, battle } = await repository.initializedNewGame(); current();
       // The entry declares a real initializer and an authored route. It does
       // not borrow the source title/fade launch or seed a development save.
       const candidate = await GameSession.prepareFrameworkNewGame(content, catalog, map, battle, runtime);
       current();
       if (preferences) candidate.setBattlePreferences(preferences);
-      contentSessions.registerCandidate(candidate, contents);
-      const nextImages = imagesFor(contents);
-      await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks, track => audioFile(null, track)); current();
-      await loadImages(fieldMediaUrls(candidate.field.content), null, nextImages); current();
+      contentSessions.registerCandidate(candidate, repository, release);
+      const nextImages = imagesFor(repository);
+      await audio.prepare(audioProjection(candidate.field), candidate.field.pendingAudioTracks, track => audioFile(release, track)); current();
+      await loadImages(fieldMediaUrls(candidate.field.content), release, nextImages); current();
       return { session: candidate, presentation: prepareSessionViews(candidate, nextImages) };
     });
     if (result.status === "cancelled") return;
@@ -335,7 +337,9 @@ async function startSourceGame() {
     audio.reset();
     await audio.unlock();
     if (!operation.isCurrent()) return;
-    const entryContent = await contents.sourceNewGame();
+    const { repository, release } = await contentHistory.openCurrent();
+    if (!operation.isCurrent()) return;
+    const entryContent = await repository.sourceNewGame();
     const { content: bundle, catalog, map, battle } = entryContent;
     if (!operation.isCurrent()) return;
     const presentation = createSourcePresentationContext({ kind: "title-new-game",
@@ -347,13 +351,13 @@ async function startSourceGame() {
     const start = entry.prepareStart(titleFade, { active: true, callbacks: "absent" });
     start.commit();
     if (!operation.isCurrent()) return;
-    const boot = { bundle, battle, presentation, entry, fade: start.fade, ready: false, catalog, map, operation,
+    const boot = { bundle, battle, presentation, entry, fade: start.fade, ready: false, catalog, map, operation, repository, release,
       outgoingOwner: flow.currentSession };
     sourceBoot = boot;
     held.clear();
     text("status", "正在准备新游戏…");
     if (!map.map) throw new Error("新游戏地图几何未完成。");
-    await loadImages(sourceEntryMediaUrls(entryContent, { includeBattle: false }), null, imagesFor(contents));
+    await loadImages(sourceEntryMediaUrls(entryContent, { includeBattle: false }), release, imagesFor(repository));
     if (sourceBoot !== boot || !operation.isCurrent()) return;
     boot.ready = true;
   } catch (error) {
@@ -371,8 +375,8 @@ function advanceSourceBoot(seconds) {
     if (boot.entry.phase !== "field-preparing" || !boot.ready) return;
     const candidate = GameSession.prepareNewGame(boot.bundle, boot.catalog, boot.map, boot.battle,
       boot.fade, boot.presentation, runtime);
-    contentSessions.registerCandidate(candidate, contents);
-    const views = prepareSessionViews(candidate, imagesFor(contents));
+    contentSessions.registerCandidate(candidate, boot.repository, boot.release);
+    const views = prepareSessionViews(candidate, imagesFor(boot.repository));
     const launch = boot.entry.prepareLaunch(boot.fade, candidate.newGamePreparation(true));
     candidate.launchNewGame(launch.launch);
     launch.commit();
@@ -1116,7 +1120,7 @@ async function loadGame(previous) {
       audio.reset();
       const saved = await checkpointStorage().load(previous); current();
       if (!saved) throw new Error("尚无此本地进度。");
-      const restored = await contentHistory.restoreSessionContent(saved.checkpoint); current();
+      const restored = await contentHistory.restoreSessionContent(saved.checkpoint, { pinCurrent: true }); current();
       const { initial, battle, world } = restored.content;
       const candidate = GameSession.restore(saved.checkpoint, initial, battle, world, runtime);
       contentSessions.registerCandidate(candidate, restored.repository, restored.release);

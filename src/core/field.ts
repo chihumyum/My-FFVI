@@ -47,6 +47,7 @@ import { SourceMessageState, sourceMessageUpdateMask, type SourceMessageEffect }
 import { createFieldChoiceRequest, resolveFieldChoiceAnswer, type FieldChoiceAnswer,
   type FieldChoiceRequest } from "./field-choice.js";
 import { prepareEventContextBranch } from "./event-context-branch.js";
+import { prepareFieldPartyQuery } from "./field-party-queries.js";
 import { prepareEventScriptTransition } from "./event-script-transition.js";
 import type { FieldPuppetRosterPort, FieldPuppetRosterRead } from "./field-puppet-roster.js";
 import { createNativeFieldActorProjection, createNativeFieldActorProjections, createNativeFieldPuppetActorsPort, readNativeFieldActors,
@@ -3365,6 +3366,13 @@ export class FieldGame {
                 ...(op.kind === "branch-character"
                   ? (this.options.puppetRoster ? { roster: this.options.puppetRoster.current() } : {})
                   : { playerDirection: this.player.direction }) });
+              t.pc = next.pc;
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
+          case "field-party-query":
+            try {
+              const next = prepareFieldPartyQuery(op, { nextPc: t.pc, range: t.range,
+                ...(this.options.puppetRoster ? { roster: this.options.puppetRoster.current() } : {}) });
               t.pc = next.pc;
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;

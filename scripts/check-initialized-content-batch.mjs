@@ -16,8 +16,8 @@ for(let i=0;i<args.length;i++){
 }
 const load=name=>import(pathToFileURL(resolve(root,compiled,'src/core',name+'.js')));
 const initialRuntimeHash=await runtimeDigest(root,compiled);
-const [{GameContentRepository},{GameSession},{GameFlow},{GameEntryLoader},{GameMapLoader},{GameCommands},
- {CheckpointStorage},{contentDigest},{canonical}]=await Promise.all(['game-content','game-session','game-flow','game-entry-loader',
+const [{GameContentRepository,assertGameWorldMapIdentity},{GameSession},{GameFlow},{GameEntryLoader},{GameMapLoader},{GameCommands},
+ {CheckpointStorage},{contentDigest,verifyContent},{canonical}]=await Promise.all(['game-content','game-session','game-flow','game-entry-loader',
  'game-map-loader','game-commands','saved-game','content-integrity','canonical'].map(load));
 const output=resolve(root,reportPath),base=resolve(root,directory),tests=[];
 const report={kind:'initialized-content-batch-check-v1',result:'running',runtimeSha256:initialRuntimeHash,tests,evidence:{lane:'framework-initialized-source-content',
@@ -39,9 +39,34 @@ try{
  assert.equal(repository.hasInitializedEntry,true);assert.equal(repository.hasSourceEntry,false);assert.equal(repository.hasDevelopmentEntry,false);
  assert.ok(bundle.catalog.maps['22']&&bundle.catalog.maps['23']);
  const maps=await Promise.all([22,23].map(id=>repository.map(id,bundle.catalog)));
+ // Compare against this package's pinned source compilation. The independent
+ // legacy /build/world output may belong to an older compiler generation.
+ const buildReport=await read('/content-packages/figaro-initialized/build-report.json');
+ const expectedSourceWorld=bundle.catalog.developmentProfile.sourceContentHash;
+ assert.equal(buildReport.sourceInputs.world.contentHash,expectedSourceWorld);
+ let sourceRepository,sourceWorld,sourceRefs;
+ try{
+  sourceRefs=await readJSON(resolve(base,'source.json'));
+ }catch(error){if(error.code!=='ENOENT')throw error;}
+ if(sourceRefs){
+  assert.equal(sourceRefs.world.contentHash,expectedSourceWorld,'Source package generation mismatch');
+  sourceRepository=new GameContentRepository(read,'source',sourceRefs);
+  sourceWorld=await sourceRepository.world();
+ }else{
+  // Private standalone batches declare their exact external source pins.
+  // An unavailable/wrong body fails verification rather than choosing a newer one.
+  const ref=buildReport.sourceInputs.world;
+  assert.equal(ref.url,'/world/catalog.json');
+  sourceWorld=await verifyContent(await readJSON(resolve(root,'build/world/catalog.json')),expectedSourceWorld);
+ }
  const retained=['scripts','scriptLocals','scriptPuppetContexts','scriptSystemFlags','scriptTransitionMetadata','initializer','nativeFoot'];
  for(const map of maps){
-  const source=await readJSON(resolve(root,'build/world/maps',map.mapId+'.json'));
+  const index=sourceWorld.maps[String(map.mapId)];assert.ok(index);
+  if(!sourceRepository)assert.equal(index.url,'/world/maps/'+map.mapId+'.json');
+  const source=sourceRepository?await sourceRepository.map(map.mapId,sourceWorld):
+   await verifyContent(await readJSON(resolve(root,'build/world/maps',map.mapId+'.json')),index.contentHash);
+  assertGameWorldMapIdentity(map.mapId,sourceWorld,source);
+  assert.equal(index.contentHash,buildReport.sourceInputs.maps.find(row=>row.mapId===map.mapId)?.contentHash);
   for(const key of retained)assert.equal(canonical(map[key]),canonical(source[key]),'Original source content changed: '+key);
   for(const key of ['groups','entities','collisions','entryContext','layers','textures','tilesets','source'])
    assert.equal(canonical(map.map[key]),canonical(source.map[key]),'Original source map changed: '+key);
@@ -166,7 +191,10 @@ try{
  const plan=planContentBatch(manifest,{entry:bundle.content,catalog:bundle.catalog,battle:bundle.battle,maps}),batchRepository=repository,runtimeHash=await runtimeDigest(root,compiled);
  assert.equal(plan.dependencies.referenceClosure,'incomplete');
  assert.ok(plan.diagnostics.some(row=>row.code==='map-outside-batch'));
- assert.ok(plan.diagnostics.some(row=>row.code==='instruction-blocked'));
+ // The shared member-count query has closed the selected batch's last
+ // undecoded instruction. Full outside-map and presentation closure stays gated.
+ assert.equal(plan.diagnostics.filter(row=>row.code==='instruction-blocked').length,0);
+ assert.ok(plan.diagnostics.some(row=>row.code==='map-provider-blocked'));
  const routeId=plan.manifest.routes[0].id,run=await runContentBatchRoute({root,compiled,plan,routeId,repository:batchRepository,runtimeHash});
  assert.equal(run.receipt.result,'completed',JSON.stringify(run.receipt));assert.equal(run.receipt.lane,'framework-initialized');
  assert.deepEqual(run.receipt.visitedMapIds,[22,23]);assert.equal(run.receipt.finalMapId,22);

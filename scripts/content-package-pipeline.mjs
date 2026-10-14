@@ -6,6 +6,9 @@ import {isAbsolute,relative,resolve,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {archivePublishedContentPackages} from './archive-content-release.mjs';
 import {acquireContentPackageLock} from './content-package-lock.mjs';
+import {compileSourcePrerequisites,validateSourcePrerequisiteInputs} from './compile-source-prerequisites.mjs';
+import {linkSourcePrerequisites} from './link-source-prerequisites.mjs';
+import {resolveSourceRecipeInputs} from './source-recipe-inputs.mjs';
 
 const repository=resolve(import.meta.dirname,'..');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -88,18 +91,25 @@ async function validatePublicCAS(root,candidateHistory){
   return checked;
 }
 
-export async function compileSharedContentPackages({root=repository,readJson}={}){
+export async function compileSharedContentPackages({root=repository,compiledDir='dist',readJson,
+  sourceRecipePaths=['content-batches/figaro-initialized.recipe.json']}={}){
   root=resolve(root);
+  // Several existing producers still import the repository's default emitted
+  // modules. Do not claim another compiler lock covers that mixed runtime.
+  assert.equal(await realpath(resolve(root,compiledDir)),await realpath(resolve(repository,'dist')),
+    'Shared public compilation requires the repository dist modules');
   readJson??=inputReader(root).json;
   const [{compileBaseContentPackages},{compileDevelopmentContentBatch},{compileSystemsPlayground},
-    {compileBattleContentBatch},{compileInitializedSystems},{compileWorldTravel}]=await Promise.all([
+    {compileBattleContentBatch},{compileInitializedSystems},{compileWorldTravel},{compileInitializedContentBatch}]=await Promise.all([
     import('./build-content-packages.mjs'),import('./build-development-content-batch.mjs'),
     import('./build-systems-playground.mjs'),import('./build-battle-content-batch.mjs'),
     import('./build-initialized-systems.mjs'),import('./build-world-travel.mjs'),
+    import('./build-initialized-content-batch.mjs'),
   ]);
-  const recipes=new Map(),payloads=new Map(),reports=[];
-  const recipe=async name=>{const file=resolve(root,'content-batches',name),raw=await readFile(file);
-    recipes.set(file,sha(raw));return {value:JSON.parse(raw.toString()),sha256:sha(raw)};};
+  const recipes=new Map(),payloads=new Map(),reports=[],rebindings=[];
+  const recipe=async path=>{const file=resolve(root,path),raw=await readFile(file);
+    assert.ok(within(resolve(root,'content-batches'),file),'Recipe must be inside content-batches');
+    recipes.set(file,sha(raw));return {path,raw,value:JSON.parse(raw.toString()),sha256:sha(raw)};};
   const append=(id,result)=>{
     for(const [url,value] of result.payloads){assert.match(url,packageURL);
       assert.ok(!payloads.has(url),'Conflicting candidate payload: '+url);payloads.set(url,value);}
@@ -109,30 +119,46 @@ export async function compileSharedContentPackages({root=repository,readJson}={}
     if(id!=='base')payloads.set('/content-packages/'+id+'/build-report.json',result.report);
     reports.push({id,report:result.report});
   };
-  const ordinary=await recipe('ordinary-battles.json');
+  const prerequisites=await compileSourcePrerequisites({root,compiledDir});
+  const linked=await linkSourcePrerequisites({root,compiledDir,payloads:prerequisites.payloads});
+  const sourceRead=async url=>linked.inputs.has(url)?structuredClone(linked.inputs.get(url)):readJson(url);
+  for(const [url,value] of linked.payloads)payloads.set(url,value);
+  reports.push({id:'source-prerequisites',report:prerequisites.report},{id:'linked-source-prerequisites',report:linked.report});
+  const ordinary=await recipe('content-batches/ordinary-battles.json');
   const [base,battles]=await Promise.all([
-    compileBaseContentPackages({root,readJson}),compileBattleContentBatch(root,ordinary.value)]);
+    compileBaseContentPackages({root,readJson:sourceRead}),compileBattleContentBatch(root,ordinary.value,{readJson:sourceRead})]);
   assert.ok(battles.catalog,'Ordinary battle content candidate is blocked');append('base',base);
   const candidateRead=async url=>url==='/content-batches/ordinary-battles/battle.json'
-    ? structuredClone(battles.catalog):readJson(url);
-  const [playRecipe,initRecipe,travelRecipe]=await Promise.all([
-    recipe('systems-playground.recipe.json'),recipe('systems-initialized.recipe.json'),recipe('world-travel.recipe.json')]);
-  await recipe('figaro-development.recipe.json');
+    ? structuredClone(battles.catalog):sourceRead(url);
+  const resolveRecipe=async path=>{
+    const original=await recipe(path);
+    const resolved=await resolveSourceRecipeInputs({root,compiledDir,recipePath:path,recipeBytes:original.raw,
+      readCurrentJson:readJson,readCandidateJson:candidateRead});
+    rebindings.push(resolved.report);return {...original,value:resolved.recipe};
+  };
+  const [playRecipe,initRecipe,travelRecipe,developmentRecipe,...sourceRecipes]=await Promise.all([
+    ...['systems-playground','systems-initialized','world-travel','figaro-development'].map(name=>
+      resolveRecipe('content-batches/'+name+'.recipe.json')),
+    ...sourceRecipePaths.map(resolveRecipe)]);
   // Parallel pure preparation; no producer writes the live registry or an
   // independent battle cache. Derived packages read this build's battle body.
   const derived=await Promise.all([
-    compileDevelopmentContentBatch({root,readJson:candidateRead}),
+    compileDevelopmentContentBatch({root,readJson:candidateRead,recipe:developmentRecipe.value,recipeSha256:developmentRecipe.sha256}),
     compileSystemsPlayground(root,playRecipe.value,playRecipe.sha256,{readJson:candidateRead}),
-    compileInitializedSystems(root,initRecipe.value,initRecipe.sha256),
-    compileWorldTravel(root,travelRecipe.value,travelRecipe.sha256),
+    compileInitializedSystems(root,initRecipe.value,initRecipe.sha256,{dist:compiledDir,readJson:candidateRead}),
+    compileWorldTravel(root,travelRecipe.value,travelRecipe.sha256,{dist:compiledDir,readJson:candidateRead}),
+    ...sourceRecipes.map(item=>compileInitializedContentBatch(root,item.value,item.sha256,
+      {dist:compiledDir,readJson:candidateRead})),
   ]);
   for(const [index,id] of ['figaro-development','systems-playground','systems-initialized','world-travel'].entries())append(id,derived[index]);
+  for(const [index,item] of sourceRecipes.entries())append(item.value.id,derived[index+4]);
   reports.push({id:'ordinary-battles',report:battles.report});
-  return {payloads,reports,recipes};
+  return {payloads,reports,recipes,rebindings,sourceInputs:prerequisites.inputs,
+    validateInputs:()=>validateSourcePrerequisiteInputs(prerequisites.inputs,{root})};
 }
 
 export async function publishContentPackages({root=repository,compiledDir='dist',compile=compileSharedContentPackages,
-  archive=archivePublishedContentPackages,reportPath='build/reports/versioned-content-package-build.json'}={}){
+  archive=archivePublishedContentPackages,reportPath='build/reports/versioned-content-package-build.json',sourceRecipePaths}={}){
   root=await realpath(resolve(root));const build=resolve(root,'build'),target=resolve(build,'content-packages');
   const backup=resolve(build,'.previous-package-collection');
   const output=resolve(root,reportPath);
@@ -152,9 +178,13 @@ export async function publishContentPackages({root=repository,compiledDir='dist'
     try{await stat(backup);throw new Error('Inspect interrupted content package collection publication');}
     catch(error){if(error.code!=='ENOENT')throw error;}
     const previousFingerprint=await fingerprint(target),reader=inputReader(root);
-    const candidate=await stage('compile-private-candidate',()=>compile({root,readJson:url=>reader.json(url)}));
+    const candidate=await stage('compile-private-candidate',()=>compile({root,compiledDir,sourceRecipePaths,readJson:url=>reader.json(url)}));
     assert.ok(candidate?.payloads instanceof Map&&candidate.payloads.size>0,'Content candidate has no payloads');
     report.producers=candidate.reports??[];
+    report.recipeRebindings=candidate.rebindings??[];
+    if(candidate.sourceInputs)report.sourceInputLock={kind:candidate.sourceInputs.kind,
+      compilerDigest:candidate.sourceInputs.compilerDigest,files:candidate.sourceInputs.files.length,
+      directories:candidate.sourceInputs.directories.length};
     const api=Object.assign({},...await Promise.all(['core/game-content','core/game-content-refs','core/content-integrity','core/canonical'].map(name=>
       import(pathToFileURL(resolve(root,compiledDir,'src',name+'.js')).href))));
     staged=await mkdtemp(resolve(build,'.package-candidate-'));
@@ -211,6 +241,7 @@ export async function publishContentPackages({root=repository,compiledDir='dist'
     report.before=await stage('archive-published-before-publication',()=>archive({root,compiledDir,packageDirectory:target}));
     report.retainedCASObjects=await stage('validate-retained-CAS-compatibility',()=>validatePublicCAS(root,candidateHistory));
     await stage('validate-unchanged-inputs',async()=>{
+      if(candidate.validateInputs)await candidate.validateInputs();
       await reader.validate();
       for(const [file,digest] of candidate.recipes??[])assert.equal(sha(await readFile(file)),digest,
         'Recipe changed during candidate preparation');

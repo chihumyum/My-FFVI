@@ -156,14 +156,17 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
     get src() { return this.file; }
     async decode() {
       calls.images.push(this.file);
-      const hold = heldImages.get(this.file); if (hold) await hold.promise;
-      if (failedImages.has(this.file)) throw new Error("Controlled image failure: " + this.file);
+      let digest = null;
       if (this.file.startsWith("blob:")) {
         const blob = blobs.get(this.file); assert.ok(blob, "Decode requires its live Blob URL");
         const bytes = Buffer.from(await blob.arrayBuffer());
         assert.deepEqual([...bytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
-        calls.imageBytes.push(sha(bytes));
+        digest = sha(bytes); calls.imageBytes.push(digest);
       }
+      const hold = heldImages.get(this.file) ?? heldImages.get(`sha256:${digest}`); if (hold) await hold.promise;
+      if (failedImages.has(this.file) || failedImages.has(`sha256:${digest}`))
+        throw new Error("Controlled image failure: " + this.file);
+      this.sourceSha256 = digest;
       this.width = this.naturalWidth = 32; this.height = this.naturalHeight = 32;
     }
   }
@@ -489,7 +492,8 @@ try {
     assert.equal(checkpoint.formatVersion, 6);
     assert.deepEqual(checkpoint.origin, { kind: "framework-new-game", entryContentHash: pack.content.contentHash });
     assert.equal(h.calls.json.some(url => url.startsWith("/game/")), false);
-    assert.ok(h.calls.images.includes(pack.fieldImage));
+    assert.ok(h.api.read().images.has(pack.fieldImage));
+    assert.equal(h.api.read().contentSessions.release.release.id, pack.release.id);
     assert.equal(owner.magicStoneMenu(pack.playerId).available, true);
     report.entry = { contentHash: pack.content.contentHash, battleHash: pack.battle.contentHash,
       worldHash: pack.world.contentHash, mapHash: pack.map.contentHash, origin: checkpoint.origin };
@@ -537,7 +541,7 @@ try {
   });
   await check("first-entry download failure leaves no owner and retry can publish the initialized entry", async () => {
     const pack = await packages(), h = await host(pack);
-    h.failedUrls.add(pack.refs.initialized.entry.url);
+    h.failedUrls.add(`/content-releases/objects/${pack.refs.initialized.entry.contentHash}.json`);
     await h.click(h.$("start"));
     assert.equal(h.api.read().flow.currentSession, null); assert.equal(h.api.read().flow.busy, false);
     assert.equal(h.$("load-error").hidden, false);
@@ -548,7 +552,7 @@ try {
     await pauseMenu(h); const before = owner.state.snapshot();
     // Evict only a presentation cache value to exercise the actual decoder.
     h.api.read().images.clear();
-    h.failedImages.add(pack.fieldImage);
+    h.failedImages.add(`sha256:${pack.pngHash}`);
     await h.click(h.$("restart"));
     assert.equal(h.api.read().flow.currentSession, owner); assert.equal(h.api.read().flow.paused, true);
     assert.deepEqual(owner.state.snapshot(), before);
@@ -557,12 +561,12 @@ try {
   });
   await check("cancelled late media completion cannot publish, unlock or replace the next initialized attempt", async () => {
     const pack = await packages(), h = await host(pack), held = deferred();
-    h.heldImages.set(pack.fieldImage, held);
+    h.heldImages.set(`sha256:${pack.pngHash}`, held);
     const old = h.$("start").onclick();
-    await until(() => h.calls.images.includes(pack.fieldImage), "First attempt never prepared media");
+    await until(() => h.calls.imageBytes.includes(pack.pngHash), "First attempt never prepared media");
     await h.click(h.$("cancel-entry-load"));
     assert.equal(h.api.read().flow.currentSession, null); assert.equal(h.api.read().flow.busy, false);
-    h.heldImages.delete(pack.fieldImage);
+    h.heldImages.delete(`sha256:${pack.pngHash}`);
     const owner = await start(h); const before = owner.state.snapshot();
     held.resolve(); await old;
     h.healthy(); assert.equal(h.bound(), owner); assert.deepEqual(owner.state.snapshot(), before);
@@ -571,13 +575,14 @@ try {
     const pack = await packages(), h = await host(pack), owner = await start(h), held = deferred();
     await pauseMenu(h); const before = owner.state.snapshot(), commands = h.api.read().commands;
     h.api.read().contents.clear();
-    h.heldUrls.set(pack.refs.initialized.entry.url, held);
-    const count = h.calls.json.filter(url => url === pack.refs.initialized.entry.url).length;
+    const entryUrl = `/content-releases/objects/${pack.refs.initialized.entry.contentHash}.json`;
+    h.heldUrls.set(entryUrl, held);
+    const count = h.calls.json.filter(url => url === entryUrl).length;
     const old = h.$("restart").onclick();
-    await until(() => h.calls.json.filter(url => url === pack.refs.initialized.entry.url).length > count,
+    await until(() => h.calls.json.filter(url => url === entryUrl).length > count,
       "Replacement attempt never requested entry");
     await h.click(h.$("cancel-entry-load"));
-    h.heldUrls.delete(pack.refs.initialized.entry.url);
+    h.heldUrls.delete(entryUrl);
     held.reject(new Error("Controlled obsolete read failure")); await old;
     h.healthy(); assert.equal(h.bound(), owner); assert.deepEqual(owner.state.snapshot(), before);
     assert.equal(h.api.read().commands, commands); assert.equal(h.api.read().flow.paused, true);

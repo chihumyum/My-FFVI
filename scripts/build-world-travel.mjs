@@ -29,10 +29,11 @@ async function modules(root, dist) {
   ].map(load)));
 }
 
-export async function compileWorldTravel(root, raw, recipeSha256, { dist = "dist" } = {}) {
-  root = resolve(root); const api = await modules(root, dist), build = resolve(root, "build");
+export async function compileWorldTravel(root, raw, recipeSha256, { dist = "dist", readJson } = {}) {
   fields(raw, "kind,id,sourceEntry,sourceBattle,sourceWorld,sourceMaps,battleSourceSetHash,handoff,worldMapId,locationMapId,entrance,worldExitEntityId,returnStation,walkEncounters");
   const recipe = structuredClone(raw);
+  assert.ok(readJson === undefined || typeof readJson === "function", "Invalid candidate content reader");
+  root = resolve(root); const api = await modules(root, dist), build = resolve(root, "build");
   assert.equal(recipe.kind, "framework-world-travel-recipe-v1"); assert.equal(recipe.id, "world-travel");
   assert.match(recipeSha256, digest); assert.match(recipe.battleSourceSetHash, digest);
   assert.ok(Number.isInteger(recipe.worldMapId) && recipe.worldMapId > 0);
@@ -43,8 +44,14 @@ export async function compileWorldTravel(root, raw, recipeSha256, { dist = "dist
   const seal = value => { const { contentHash: _, ...body } = value; return { ...body, contentHash: api.hash(body) }; };
   const read = async ref => {
     fields(ref, "url,contentHash"); assert.match(ref.url, /^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.json$/);
-    assert.match(ref.contentHash, digest); const path = await realpath(resolve(build, ref.url.slice(1)));
-    assert.ok(within(build, path)); return api.verifyContent(JSON.parse(await readFile(path, "utf8")), ref.contentHash);
+    assert.match(ref.contentHash, digest);
+    let value;
+    if (readJson) value = structuredClone(await readJson(ref.url));
+    else {
+      const path = await realpath(resolve(build, ref.url.slice(1))); assert.ok(within(build, path));
+      value = JSON.parse(await readFile(path, "utf8"));
+    }
+    return api.verifyContent(value, ref.contentHash);
   };
   const [sourceEntry, sourceBattle, sourceWorld, sourceWorldMap, sourceLocation] = await Promise.all([
     recipe.sourceEntry, recipe.sourceBattle, recipe.sourceWorld, recipe.sourceMaps.world, recipe.sourceMaps.location,
@@ -88,7 +95,7 @@ export async function compileWorldTravel(root, raw, recipeSha256, { dist = "dist
     kind: "battle-content-batch-declaration-v1", id: recipe.id,
     parentSourceSetHash: sourceEntry.parentSourceSetHash, battleSourceSetHash: recipe.battleSourceSetHash,
     baseCatalogRef: recipe.sourceBattle, partyIds: walk.parties.map(p => p.partyId), handoff: recipe.handoff,
-  });
+  }, { readJson });
   if (!selected.catalog) { const error = new Error("World travel battles are blocked"); error.report = selected.report; throw error; }
   const battle = selected.catalog;
   assert.equal(api.canonical(battle.gameState), api.canonical(sourceBattle.gameState));
