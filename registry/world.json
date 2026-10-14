@@ -32,8 +32,9 @@
       "aliases": ["South Figaro"],
       "questions": [
         "地点关联只由area.csv行8及来源名称证明；各地图的故事时期与原版可达条件仍未知。",
-        "八张室内地图以同一来源内容生产器成批接入；完整外部出口和未走路线继续保留。",
-        "地图234来源monster_set_id154的全部敌队依赖须保留；Web步行遇敌节奏与抽选规则尚未授予。"
+        "area8的56张来源地图含多个表示与默认出口连通分量；故事时期及分量之间的剧情关系不能由区域身份推断。",
+        "完整来源批次保留全部地图、入口、外部出口和未走路线；目录编译与实际剧情可玩分别留证。",
+        "地图53/234来源monster_set_id154的全部敌队依赖须保留；选择共用战斗目录不授予Web步行遇敌节奏或抽选规则。"
       ]
     },
     {
@@ -57,6 +58,16 @@
       "status": "observed",
       "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
       "evidence": ["area.csv:/id/8", "targets/south-figaro.md"]
+    },
+    {
+      "id": "south-figaro:source-map-count",
+      "subject": "south-figaro",
+      "predicate": "source.areaMapCount",
+      "value": "56",
+      "when": {},
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": ["map.csv:/area_id/8", "targets/south-figaro.md"]
     },
     {
       "id": "south-figaro:area-name-binding",

@@ -31,6 +31,113 @@ function parseArgs(args){
     reportPath:options.get('--report')??'build/reports/selected-source-batches-check.json'};
 }
 
+function recipeKind(built){
+  assert.ok(built&&typeof built==='object'&&!Array.isArray(built),'Missing initialized build record');
+  assert.equal(built.kind,'initialized-source-map-build-v1','Unknown initialized build record');
+  const kind=built.recipeKind;
+  if(kind!==undefined)assert.ok(['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2',
+    'initialized-source-map-recipe-v3'].includes(kind),'Unknown initialized source recipe kind');
+  if(kind==='initialized-source-map-recipe-v3'){
+    assert.ok(Object.hasOwn(built,'battleCatalogSelection'),'Version 3 build must declare its battle catalog selection');
+    assert.ok(Object.hasOwn(built,'sourceAreaScopeReceipt'),'Version 3 build must declare its source area scope receipt');
+  }
+  return kind;
+}
+
+/** Compare the complete selected catalog, independently of whether walking
+ * was enabled. Catalog presence and conditional definitions grant no runtime
+ * readiness; all plans/diagnostics remain with the ordinary batch analyzer. */
+export async function validateSelectedSourceCatalogBinding(input,{root=repository,compiledDir='dist'}={}){
+  const {built,battle,sourceBattle,sourceWorld,directory,requests,directoryReport}=structuredClone(input);
+  const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src/core',name+'.js')).href);
+  const [{canonical},{verifyContent},{assertSourceGameCatalog}]=await Promise.all([
+    load('canonical'),load('content-integrity'),load('source-catalog')]);
+  const kind=recipeKind(built),hasDirectory=built.battleDirectory!==undefined,hasWalking=built.walking!==undefined,
+    declared=built.battleCatalogSelection;
+  assert.ok(declared===undefined||declared==='source-baseline-v1'||declared==='shared-framework-directory-v1',
+    'Unknown selected source battle catalog');
+  if(hasWalking){
+    assert.ok(Array.isArray(built.walking)&&built.walking.length>0,'Walking build must retain its actual enabled map records');
+    assert.equal(built.nativeWalkingRulesVerified,false,'Walking framework policy cannot claim native rule verification');
+  }else assert.equal(built.nativeWalkingRulesVerified,undefined,'A non-walking build cannot declare walking verification');
+  if(kind==='initialized-source-map-recipe-v1')assert.ok(!hasDirectory&&!hasWalking&&declared===undefined,
+    'Version 1 build cannot select a bulk battle directory');
+  if(kind==='initialized-source-map-recipe-v2')assert.ok(hasWalking&&hasDirectory&&declared===undefined,
+    'Version 2 build must retain its walking directory binding');
+  if(kind===undefined&&hasWalking)assert.ok(hasDirectory,'Legacy walking build must retain its directory binding');
+  if(kind!=='initialized-source-map-recipe-v3'&&declared!==undefined)
+    throw new Error('Explicit battle catalog selection requires a version 3 build');
+  if(hasDirectory&&!hasWalking)assert.equal(declared,'shared-framework-directory-v1',
+    'Directory without walking requires an explicit version 3 selection');
+  if(declared==='shared-framework-directory-v1')assert.ok(hasDirectory,'Selected shared battle directory is missing');
+  if(declared==='source-baseline-v1')assert.equal(hasDirectory,false,'Source baseline cannot carry a hidden directory binding');
+  await Promise.all([sourceBattle,battle,sourceWorld].map(value=>verifyContent(value)));
+  assert.equal(sourceWorld.kind,'world-development','Unknown source world catalog');
+  assert.equal(sourceWorld.developmentProfile,undefined,'Source world cannot carry a framework profile');
+  assert.equal(sourceBattle.developmentProfile,undefined,'Source baseline cannot carry a framework profile');
+  assertSourceGameCatalog(sourceBattle);
+  // fieldSourceSetHash names the field export subset. The world catalog names
+  // the complete corpus, so equality between these distinct sets is not an
+  // identity invariant. Entry/catalog pins and the directory's world/parent
+  // chain independently bind their actual source domains below.
+  if(!hasDirectory){
+    assert.equal(canonical(battle),canonical(sourceBattle),'Selected source baseline catalog changed');
+    return {selection:'source-baseline-v1',catalogHash:battle.contentHash,baselineHash:sourceBattle.contentHash};
+  }
+  keys(built.battleDirectory,'catalogHash,requestsHash,reportHash');
+  for(const value of Object.values(built.battleDirectory))assert.match(value,digest);
+  assert.ok(directory&&requests&&directoryReport,'Missing published shared battle directory dependencies');
+  await verifyContent(directory,built.battleDirectory.catalogHash);
+  await verifyContent(requests,built.battleDirectory.requestsHash);
+  await verifyContent(directoryReport,built.battleDirectory.reportHash);
+  assert.equal(requests.kind,'source-battle-directory-requests-v1');
+  assert.equal(directoryReport.kind,'source-battle-directory-build-v1');
+  await verifyContent(requests.sourceRequests);
+  assert.equal(directoryReport.frameworkCatalogHash,directory.contentHash);
+  assert.equal(directoryReport.requestsHash,requests.contentHash);
+  assert.equal(directoryReport.baselineHash,sourceBattle.contentHash);
+  assert.equal(requests.sourceRequests.worldCatalogHash,sourceWorld.contentHash,'Directory request world identity changed');
+  assert.equal(directoryReport.sourceSetHash,sourceWorld.sourceSetHash,'Directory corpus identity changed');
+  assert.equal(directoryReport.parentSourceSetHash,sourceWorld.parentSourceSetHash,'Directory parent source changed');
+  assert.equal(requests.parentSourceSetHash,sourceWorld.parentSourceSetHash,'Directory request parent source changed');
+  assert.equal(canonical(battle),canonical(directory),'Selected battle catalog is not the complete published shared directory');
+  assert.equal(canonical(directory.gameState),canonical(sourceBattle.gameState),'Directory changed the owned source initializer');
+  const {drops:_baselineDrops,...baselineCommon}=sourceBattle.common,{drops:_directoryDrops,...directoryCommon}=directory.common;
+  assert.equal(canonical(directoryCommon),canonical(baselineCommon),'Directory changed shared source battle rules');
+  assertSourceGameCatalog(directory,'framework');
+  return {selection:'shared-framework-directory-v1',catalogHash:directory.contentHash,baselineHash:sourceBattle.contentHash,
+    directory:structuredClone(built.battleDirectory)};
+}
+
+/** The scope receipt is static source evidence only. Reconstruct it from the
+ * trusted published source world and every original map, never derived maps
+ * or routes which happened to complete. An absent/null claim grants no scope. */
+export async function validateSelectedSourceAreaBinding(input,{root=repository,compiledDir='dist'}={}){
+  const {built,sourceWorld,sourceMaps}=structuredClone(input),kind=recipeKind(built),receipt=built.sourceAreaScopeReceipt;
+  if(receipt===undefined){
+    assert.notEqual(kind,'initialized-source-map-recipe-v3','Missing version 3 source area scope receipt');return null;
+  }
+  if(receipt===null)return null;
+  assert.equal(kind,'initialized-source-map-recipe-v3','Source area scope requires a version 3 build');
+  const {parseSourceAreaScope,validateSourceAreaScope}=await import(pathToFileURL(
+    resolve(root,compiledDir,'src/compiler/source-area-scope.js')).href);
+  const scope=parseSourceAreaScope(receipt.scope);
+  validateSourceAreaScope(receipt,{scope,catalog:sourceWorld,maps:sourceMaps});
+  assert.ok(Array.isArray(built.sourceInputs?.maps)&&built.sourceInputs.maps.length===sourceMaps.length,
+    'Source area build pins omit original maps');
+  const pins=new Map();
+  for(const item of built.sourceInputs.maps){
+    assert.ok(!pins.has(item.mapId),'Source area build pins duplicate a map');pins.set(item.mapId,item);
+  }
+  for(const map of sourceMaps){
+    const pin=pins.get(map.mapId),index=sourceWorld.maps[String(map.mapId)];
+    assert.ok(pin&&index,'Source area map lacks its published pin');
+    assert.equal(pin.url,index.url,'Source area build pin URL changed');
+    assert.equal(pin.contentHash,map.contentHash,'Source area build pin content changed');
+  }
+  return receipt;
+}
+
 export async function checkSelectedSourceBatches({root=repository,compiledDir='dist',contentDir='build/content-packages',
   reportPath='build/reports/selected-source-batches-check.json'}={}){
   root=await realpath(resolve(root));
@@ -106,6 +213,7 @@ export async function checkSelectedSourceBatches({root=repository,compiledDir='d
     const sourceRefs=api.parseGameContentRefs(await read('/content-packages/source.json'));
     assert.equal(sourceRefs.profile,'source');assert.ok(sourceRefs.source,'Published collection requires its strict source lane');
     const sourceRepository=new api.GameContentRepository(read,'source',sourceRefs),sourceWorld=await sourceRepository.world();
+    const sourceBattle=await api.verifyContent(await read(sourceRefs.source.battle.url),sourceRefs.source.battle.contentHash);
     const prepared=[];
     for(const batch of work.batches){
       const prefix='/content-packages/'+batch.packageId,refs=api.parseGameContentRefs(await read(prefix+'.json'));
@@ -125,21 +233,17 @@ export async function checkSelectedSourceBatches({root=repository,compiledDir='d
       assert.equal(built.sourceInputs.world.contentHash,sourceWorld.contentHash);
       assert.equal(bundle.catalog.developmentProfile.sourceContentHash,sourceWorld.contentHash);
       assert.equal(built.sourceInputs.battle.contentHash,sourceRefs.source.battle.contentHash);
+      let directory,requests,directoryReport;
+      if(built.battleDirectory!==undefined){
+        directory=await api.verifyContent(await read('/content-packages/source-battle-directory/framework.json'));
+        requests=await api.verifyContent(await read('/content-packages/source-battle-directory/requests.json'));
+        directoryReport=await api.verifyContent(await read('/content-packages/source-battle-directory/build-report.json'));
+      }
+      const battleCatalogBinding=await validateSelectedSourceCatalogBinding({built,battle:bundle.battle,sourceBattle,sourceWorld,
+        directory,requests,directoryReport},{root,compiledDir:compiled});
       const walkingMaps=new Map();
       if(built.walking!==undefined){
         assert.equal(built.nativeWalkingRulesVerified,false);assert.ok(Array.isArray(built.walking));
-        assert.ok(built.battleDirectory,'Walking package must name the shared bulk directory');
-        const directory=await api.verifyContent(await read('/content-packages/source-battle-directory/framework.json'));
-        assert.equal(directory.contentHash,built.battleDirectory.catalogHash);
-        assert.equal(directory.contentHash,bundle.battle.contentHash);
-        const requests=await api.verifyContent(await read('/content-packages/source-battle-directory/requests.json'));
-        assert.equal(requests.contentHash,built.battleDirectory.requestsHash);
-        const directoryReport=await api.verifyContent(await read('/content-packages/source-battle-directory/build-report.json'),
-          built.battleDirectory.reportHash);
-        assert.equal(directoryReport.frameworkCatalogHash,directory.contentHash);
-        assert.equal(directoryReport.requestsHash,requests.contentHash);
-        assert.equal(directoryReport.baselineHash,sourceRefs.source.battle.contentHash);
-        assert.equal(requests.sourceRequests.worldCatalogHash,sourceWorld.contentHash);
         for(const result of built.walking){
           assert.equal(result.status,'ready');assert.ok(!walkingMaps.has(result.binding.mapId));
           walkingMaps.set(result.binding.mapId,result);
@@ -148,10 +252,12 @@ export async function checkSelectedSourceBatches({root=repository,compiledDir='d
       const row={packageId:batch.packageId,label:batch.label,manifestHash:plan.manifestHash,dependencyHash:plan.dependencyHash,
         contentHashes:plan.contentHashes,diagnostics:plan.diagnostics,referenceClosure:plan.dependencies.referenceClosure,
         providerRequirements:plan.dependencies.providerRequirements,providerAssessments:plan.dependencies.providerAssessments,
-        maps:[],routes:manifest.routes.map(route=>({id:route.id,status:'not-run'}))};
+        battleCatalogBinding,sourceAreaScopeReceipt:null,maps:[],routes:manifest.routes.map(route=>({id:route.id,status:'not-run'}))};
       report.batches.push(row);
+      const originals=[];
       for(const map of maps){
         const original=await sourceRepository.map(map.mapId,sourceWorld);
+        originals.push(original);
         assert.equal(original.developmentProfile,undefined);assert.equal(original.frameworkPresentation,undefined);
         assert.equal(map.developmentProfile.sourceContentHash,original.contentHash);
         const sourcePin=built.sourceInputs.maps.filter(item=>item.mapId===map.mapId);assert.equal(sourcePin.length,1);
@@ -170,6 +276,8 @@ export async function checkSelectedSourceBatches({root=repository,compiledDir='d
         assert.equal(api.canonical(derivedBody),api.canonical(sourceBody),'Source map payload changed: '+batch.packageId+'/'+map.mapId);
         row.maps.push({mapId:map.mapId,sourceHash:original.contentHash,derivedHash:map.contentHash,fullPayloadPreserved:true});
       }
+      row.sourceAreaScopeReceipt=await validateSelectedSourceAreaBinding({built,sourceWorld,sourceMaps:originals},
+        {root,compiledDir:compiled});
       assert.ok([...walkingMaps.keys()].every(id=>maps.some(map=>map.mapId===id)),
         'Walking build record names a map outside this package');
       report.tests.push({name:batch.packageId+': exact selected content and complete original map payloads',passed:true});

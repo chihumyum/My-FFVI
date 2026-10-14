@@ -24,6 +24,7 @@ async function modules(root, dist) {
     "compiler/corpus", "compiler/map-package", "compiler/field-native-composition", "compiler/content",
     "core/content-integrity", "core/game-content", "core/game-content-refs", "core/source-catalog",
     "compiler/source-walk-policy",
+    "compiler/initialized-battle-binding", "compiler/source-area-scope",
   ].map(load)));
 }
 
@@ -32,11 +33,12 @@ async function modules(root, dist) {
 export async function compileInitializedContentBatch(root, raw, recipeSha256,
   { dist = "dist", readJson, sourceBattleDirectory } = {}) {
   root = resolve(root); const api = await modules(root, dist), build = resolve(root, "build");
-  const walkingVariant=raw?.kind==='initialized-source-map-recipe-v2';
+  const directoryVariant=raw?.kind==='initialized-source-map-recipe-v3';
+  const walkingVariant=raw?.kind==='initialized-source-map-recipe-v2'||directoryVariant&&raw.walking!==null;
   fields(raw, "kind,id,sourceEntry,sourceBattle,sourceWorld,startMap,entrance,presentation,manifest"+
-    (walkingVariant?',walking':''));
+    (directoryVariant?',battleCatalogSelection,sourceAreaScope,walking':walkingVariant?',walking':''));
   const recipe = structuredClone(raw);
-  assert.ok(['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2'].includes(recipe.kind));
+  assert.ok(['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2','initialized-source-map-recipe-v3'].includes(recipe.kind));
   assert.match(recipe.id, /^[a-z0-9][a-z0-9-]{0,79}$/); assert.match(recipeSha256, digest);
   assert.ok(Number.isInteger(recipe.startMap) && recipe.startMap > 0 && recipe.startMap <= 0x7fffffff);
   assert.ok(Number.isInteger(recipe.entrance) && recipe.entrance >= 0 && recipe.entrance <= 0x7fffffff);
@@ -61,21 +63,15 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
   assert.equal(sourceEntry.worldCatalogHash, sourceWorld.contentHash);
   for (const value of [sourceEntry, sourceWorld]) assert.equal(value.developmentProfile, undefined);
   api.assertSourceGameCatalog(sourceBattle);
-  const battle=structuredClone(walkingVariant?sourceBattleDirectory?.frameworkCatalog:sourceBattle);
-  assert.ok(battle,'Source walking batch requires this candidate\'s bulk battle directory');
-  await api.verifyContent(battle);api.assertSourceGameCatalog(battle,'framework');
-  assert.equal(api.canonical(battle.gameState),api.canonical(sourceBattle.gameState),
-    'Bulk enemy compilation cannot change the source initializer or owned catalogs');
-  const {drops:_sourceDrops,...sourceCommon}=sourceBattle.common,
-    {drops:_derivedDrops,...derivedCommon}=battle.common;
-  assert.equal(api.canonical(sourceCommon),api.canonical(derivedCommon),'Bulk enemy compilation changed shared battle rules');
+  const battleCatalogSelection=directoryVariant?recipe.battleCatalogSelection:
+    walkingVariant?'shared-framework-directory-v1':'source-baseline-v1';
+  if(walkingVariant)assert.equal(battleCatalogSelection,'shared-framework-directory-v1',
+    'Source walking requires the shared directory, never a filtered baseline pool');
+  const selected=await api.selectInitializedBattleCatalog({selection:battleCatalogSelection,
+    sourceBattle,sourceWorld,...(sourceBattleDirectory===undefined?{}:{directory:sourceBattleDirectory})});
+  const battle=selected.catalog;
   const walking=new Map();
   if(walkingVariant){
-    await Promise.all([sourceBattleDirectory.requests,sourceBattleDirectory.report].map(value=>api.verifyContent(value)));
-    assert.equal(sourceBattleDirectory.report.baselineHash,sourceBattle.contentHash,'Bulk directory baseline mismatch');
-    assert.equal(sourceBattleDirectory.report.frameworkCatalogHash,battle.contentHash,'Bulk directory catalog mismatch');
-    assert.equal(sourceBattleDirectory.report.requestsHash,sourceBattleDirectory.requests.contentHash,'Bulk directory requests mismatch');
-    assert.equal(sourceBattleDirectory.requests.sourceRequests.worldCatalogHash,sourceWorld.contentHash,'Bulk directory world mismatch');
     fields(recipe.walking,'kind,maps');assert.equal(recipe.walking.kind,'initialized-source-walking-v1');
     assert.ok(Array.isArray(recipe.walking.maps)&&recipe.walking.maps.length>0);
     for(const item of recipe.walking.maps){
@@ -95,6 +91,8 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
     assert.equal(map.parentSourceSetHash, sourceWorld.parentSourceSetHash);
     assert.equal(map.mediaSourceSetHash, sourceWorld.mediaSourceSetHash);
   }
+  const sourceAreaScopeReceipt=directoryVariant&&recipe.sourceAreaScope!==null
+    ? await api.deriveSourceAreaScope({scope:recipe.sourceAreaScope,catalog:sourceWorld,maps:sourceMaps}):null;
   const corpus = await api.loadCorpus(root);
   assert.equal(corpus.sourceSetHash, sourceWorld.sourceSetHash);
   assert.equal(corpus.manifest.parentSourceSetHash, sourceWorld.parentSourceSetHash);
@@ -174,12 +172,12 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
     return payloads.get(url);
   }, "framework", refs);
   const loaded = await repo.initializedNewGame(); assert.equal(loaded.map.contentHash, map.contentHash);
-  const report = { kind: "initialized-source-map-build-v1", package: recipe.id, recipeSha256,
+  const report = { kind: "initialized-source-map-build-v1", package: recipe.id, recipeKind:recipe.kind, recipeSha256,
     refs, manifestHash: plan.manifestHash, initializerHash: entry.initializerHash,
     sourceInputs: { entry: recipe.sourceEntry, battle: recipe.sourceBattle, world: recipe.sourceWorld, maps: sourcePins },
-    ...(walkingVariant?{walking:walkingResults,battleDirectory:{
-      catalogHash:battle.contentHash,requestsHash:sourceBattleDirectory.requests.contentHash,
-      reportHash:sourceBattleDirectory.report.contentHash},nativeWalkingRulesVerified:false}:{}),
+    ...(directoryVariant?{battleCatalogSelection,sourceAreaScopeReceipt}:{}),
+    ...(selected.directoryBinding===null?{}:{battleDirectory:selected.directoryBinding}),
+    ...(walkingVariant?{walking:walkingResults,nativeWalkingRulesVerified:false}:{}),
     relocation: { kind: "source-initializer-authored-map-v1", mapId: recipe.startMap, entrance: recipe.entrance,
       sourceStoryReachability: "unverified" },
     maps: maps.map(value => ({ mapId: value.mapId, contentHash: value.contentHash })), presentations,
@@ -188,9 +186,11 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
     storyFlagsChanged: false, ownedCatalogsChanged: false, sourceCampaignComplete: false,
     browserVerified: false, originalGameExecuted: false,
     limitations: [walkingVariant?'Entry relocation, flat presentation, Web step counts and source rates as Web weights are explicit development policies.'
-      :"Only entry relocation and the declared ordinary Canvas material policy are authored.",
+      :selected.directoryBinding===null?"Only entry relocation and the declared ordinary Canvas material policy are authored."
+        :"Entry relocation, ordinary Canvas materials and shared-directory Web battle policies are explicitly selected; walking is not enabled.",
       "Every original map entity, event, exit, collision and foot provider is retained, including blockers.",
       "Original entries outside the declared map batch remain indexed but are not granted this initialized profile.",
+      ...(sourceAreaScopeReceipt===null?[]:["Every source map variant in the declared area is included; world phase and story applicability remain unknown."]),
       "Compilation and reference analysis do not prove route execution or original story reachability."] };
   return { entry, battle, catalog, maps, refs, manifest, plan, payloads, report };
 }

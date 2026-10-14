@@ -78,6 +78,20 @@ test("explicit source walking recipes share selection pinning and cannot replace
   });
 });
 
+test("independent directory and whole-area recipes retain their exact declared bytes without enabling walking",async()=>{
+  await fixture(async f=>{
+    const value={...f.recipes[1],kind:'initialized-source-map-recipe-v3',
+      battleCatalogSelection:'shared-framework-directory-v1',
+      sourceAreaScope:{kind:'source-area-scope-v1',areaId:8},walking:null};
+    const bytes=encode(value);await writeFile(resolve(f.root,recipePaths[1]!),bytes);
+    f.selection.recipes[1].sha256=sha(bytes);await f.save();
+    const before=await files(f.root),result=await load({root:f.root,path:selectionPath});
+    assert.equal(result.items[1]!.sha256,sha(bytes));
+    assert.deepEqual(await files(f.root),before);
+    assert.deepEqual(JSON.parse(await readFile(resolve(f.root,recipePaths[1]!),"utf8")),value);
+  });
+});
+
 test("legacy explicit recipe paths share preflight, permit an empty batch and bind actual ordered bytes",async()=>{
   await fixture(async f=>{
     const result=await explicit(f.root,recipePaths);

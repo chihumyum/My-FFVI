@@ -110,7 +110,7 @@ async function recipes(read,requests,reserved){
     if(request.sha256!==undefined&&input.sha256!==request.sha256)throw new Error('Source recipe SHA256 mismatch: '+request.path);
     const value=input.value;
     if(!value||typeof value!=='object'||Array.isArray(value)||
-      !['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2'].includes(value.kind))
+      !['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2','initialized-source-map-recipe-v3'].includes(value.kind))
       throw new Error('Unsupported source recipe kind: '+request.path);
     if(typeof value.id!=='string'||!packageId.test(value.id)||reserved.has(value.id))
       throw new Error('Unsafe or reserved source recipe package identity: '+String(value.id));

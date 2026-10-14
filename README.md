@@ -8,6 +8,8 @@
 
 [批量来源接入](docs/source-content-v83.md)：费加罗与八张南费加罗室内地图由同一选择清单、来源初始化及生产器成批编译发布；统一工作单保留全部依赖和未知项。[共用敌队目录与遇敌接口](docs/systems-v84.md) 保留完整来源敌组，并将显式 Web 遇敌策略绑定到同一会话、切图和存档；原版遇敌节奏仍未验收。地点包的声明路线与完整来源剧情分别检查。
 
+[完整区域接入](docs/source-content-v87.md) 将战斗目录选择与步行调度分开，地点包直接消费同候选的共用敌队目录。南费加罗全部56份来源地图和135个入口由区域范围收据约束，不过滤失败地图或推断故事时期；完整数据接入与实际路线验证分别留证。入口为[南费加罗完整来源范围](http://127.0.0.1:4173/game/?package=south-figaro-area)，使用明确的室内开发放置，完整剧情尚未准入。
+
 [内容版本与旧进度](docs/content-versions.md) 保留完整 JSON 和图声闭包，恢复旧版本后继续使用其地图、事件与战斗，再次存读档。共享导出之前先运行 `npm run content-history:archive`；正常公共包与来源地点构建自动保留旧新版本，旧存档不改写为新初始化。
 
 已接入 [v77 来源内容批次](docs/source-content-v77.md)：[费加罗内容](http://127.0.0.1:4173/game/?package=figaro-initialized) 保留原地图、NPC、对白、出口和碰撞，使用来源初始化及明确的开发起始放置。通用普通地图呈现适配器不清除原版材质缺口，完整剧情与依赖准入继续独立记录。
@@ -24,7 +26,7 @@
 
 `npm run systems:plan -- <manifest.json>` 按公共系统归并整批依赖和诊断；省略参数时检查已构建的费加罗批次。`npm run batch:check -- <manifest.json>` 默认验证当前骨架证据，再实际运行该批次声明路线；完整来源依赖未闭合时仍阻塞。详细回归可显式选择 `--framework-scope full-suite`。
 
-默认批量选择为 `content-batches/source-batches.selection.json`；`npm run source-batches:check` 对照实际发布的选择与统一工作单并重跑两批声明路线。[南费加罗室内入口](http://127.0.0.1:4173/game/?package=south-figaro-interiors) 使用来源 PointIn 开发放置，完整剧情与剩余依赖继续单独验收。
+默认批量选择为 `content-batches/source-batches.selection.json`；`npm run source-batches:check` 对照实际发布的选择与统一工作单并重跑声明路线，独立核对完整原地图、敌队目录及区域范围。[南费加罗室内入口](http://127.0.0.1:4173/game/?package=south-figaro-interiors) 继续保留自己的内容版本和进度；完整剧情与剩余依赖单独验收。
 
 `npm run content-packages:build` 构建共同内容包；`npm run world-travel:check` 验证世界与地点往返、遭遇战、菜单、保存恢复及循环渲染。来源摘要更新后需要重建并重新绑定配方；旧摘要存档不能默认为新内容的有效进度。
 

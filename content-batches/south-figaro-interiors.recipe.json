@@ -1,5 +1,5 @@
 {
-  "kind": "initialized-source-map-recipe-v1",
+  "kind": "initialized-source-map-recipe-v3",
   "id": "south-figaro-interiors",
   "sourceEntry": {
     "url": "/game/source-new-game.json",
@@ -122,5 +122,8 @@
         "battleAbilityIds": []
       }
     ]
-  }
+  },
+  "battleCatalogSelection": "shared-framework-directory-v1",
+  "sourceAreaScope": null,
+  "walking": null
 }

@@ -9,8 +9,13 @@
     },
     {
       "path": "content-batches/south-figaro-interiors.recipe.json",
-      "sha256": "09f099f9e93fe0559d7ffc65b723c51859203dcd62f126132c7fabcdf36b3a55",
+      "sha256": "9172416323128d8df2bb84bcc94a42ad3c7ad8b4def87d1c6cd6da3662ee9277",
       "label": "南费加罗镇室内来源内容"
+    },
+    {
+      "path": "content-batches/south-figaro-area.recipe.json",
+      "sha256": "0b0d27ccb178cac447c4a75a48ed967938fbf760c87c716d95999d6a0e118ea9",
+      "label": "南费加罗镇完整来源范围（剧情未准入）"
     }
   ]
 }
