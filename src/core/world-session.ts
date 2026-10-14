@@ -12,6 +12,8 @@ import {
 import { missingFieldPoses } from "./character-media.js";
 import { canonical } from "./canonical.js";
 import { fieldNpcGroupBlockers } from "./field-npc-activity-host.js";
+import { fieldRelayGroupBlockers } from "./field-relay-policy.js";
+import { bindPassiveEffects, passiveEffectsGroupBlockers } from "./field-passive-effects-host.js";
 import { fieldCollisionRange, inCollisionRange } from "./collision.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState } from "./static-audio.js";
@@ -118,7 +120,8 @@ export function worldFieldContent(
   if (map.backgrounds?.length && !sourceCamera)
     throw new Error("Source background requires a bound camera host");
   if (!group) throw new Error("Missing default entity group");
-  const groupBlockers = fieldNpcGroupBlockers(group, target.frameworkNpcActivity);
+  const groupBlockers = passiveEffectsGroupBlockers({ ...group, blockers: fieldRelayGroupBlockers({ ...group,
+    blockers: fieldNpcGroupBlockers(group, target.frameworkNpcActivity) }, target.frameworkRelayInteraction) }, target.frameworkPassiveEffects);
   if (groupBlockers.length) throw new Error(groupBlockers[0]!.reason);
   if (group.entities.some((e) => e.kind === 18) || catalog.minimap)
     requireMinimapMedia(group.entities, catalog.minimap);
@@ -198,6 +201,8 @@ export function worldFieldContent(
     ...(sourceCamera && target.cameraHost ? { cameraHost: target.cameraHost } : {}),
     ...(sourceCamera && target.nativeNpcStandby ? { nativeNpcStandby: target.nativeNpcStandby } : {}),
     ...(sourceCamera && target.frameworkNpcActivity ? { frameworkNpcActivity: target.frameworkNpcActivity } : {}),
+    ...(sourceCamera && target.frameworkRelayInteraction ? { frameworkRelayInteraction: target.frameworkRelayInteraction } : {}),
+    ...(sourceCamera && target.frameworkPassiveEffects ? { frameworkPassiveEffects: target.frameworkPassiveEffects } : {}),
     ...(sourceCamera && target.fieldEffects ? { fieldEffects: target.fieldEffects } : {}),
     ...(sourceCamera && target.scriptPuppetContexts ? { scriptPuppetContexts: target.scriptPuppetContexts } : {}),
     ...(catalog.playerFactory ? { playerFactory: structuredClone(catalog.playerFactory) } : {}),
@@ -301,7 +306,8 @@ export class WorldSession {
     // Standalone hosts keep their prior map/save gates. A manager survives empty
     // maps too: allocation IDs and off-map positions do not restart per map.
     const effectHost = owned?.current.fieldEffects;
-    const hasEffects = initial.map.entities.some((entity) => entity.kind === 11);
+    const passiveEffects = bindPassiveEffects(initial),
+      hasEffects = initial.map.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id));
     if (hasEffects && owned?.current.nativeActorPreparation)
       throw new Error("Initial native field effects require whole-session transactional publication");
     if (effectHost?.beginCandidate && typeof effectHost.observe !== "function")
@@ -310,7 +316,7 @@ export class WorldSession {
       ? new FieldEffects(initial.fieldEffects ?? { media: {} }, effectHost) : null;
     const candidate = hasEffects ? this.effectOwner?.fork() : undefined;
     this.effectMap = this.effectOwner ? new FieldEffectMap("0", candidate ?? this.effectOwner,
-      initial.map.entities.filter((entity) => entity.kind === 11).map((entity) => entity.id)) : null;
+      initial.map.entities.filter((entity) => entity.kind === 11 && !passiveEffects.has(entity.id)).map((entity) => entity.id)) : null;
     try {
       const field: FieldGame = new FieldGame(
         initial,
@@ -501,7 +507,8 @@ export class WorldSession {
       fromCamera = canonical(from.cameraSnapshot), fromPresentation = from.sourcePresentationContext;
     const effectBlocker = from.effectMapHandoffBlocker;
     if (effectBlocker) throw new Error(effectBlocker);
-    if (!this.effectOwner && Object.values(target.map?.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11)))
+    const passiveEffects = target.map ? bindPassiveEffects({ ...target, map: target.map }) : new Set<string>();
+    if (!this.effectOwner && Object.values(target.map?.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id))))
       throw new Error("Destination field-effect particle allocation requires a transactional map lifecycle provider");
     const nativeActors = from.nativeActorCandidate, nativeRuntime = from.nativeActorRuntime;
     const nativeState = this.owned?.nativeState?.();
@@ -620,7 +627,7 @@ export class WorldSession {
     try {
       if (effectCandidate) this.effectMap!.prepareRetirement(effectCandidate);
       const effectMap = effectCandidate ? new FieldEffectMap(String(this.nextEffectScope), effectCandidate,
-        content.map.entities.filter((entity) => entity.kind === 11).map((entity) => entity.id)) : null;
+        content.map.entities.filter((entity) => entity.kind === 11 && !bindPassiveEffects(content).has(entity.id)).map((entity) => entity.id)) : null;
       const field: FieldGame = new FieldGame(
         content,
         state,

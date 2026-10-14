@@ -6,6 +6,7 @@ import { compileNpc } from "./npc.js";
 import { compileFieldEffectBoard, fieldEffectCompilationBlockers } from "./field-effects.js";
 import { compileFieldNativeNpc } from "./field-native-npc.js";
 import { compileFieldMoveArea } from "./field-move-area.js";
+import { compileFieldRelay } from "./field-relay.js";
 import { compileInteraction, compileInteractionEligibility } from "./interaction.js";
 import { compileTreasureInventoryDefinition, compileTreasureInteraction, compileTreasureTaskMessages } from "./treasure-inventory.js";
 import type {
@@ -244,11 +245,17 @@ export function compileEntityGroup(
         const id = entityId ? String(entityId) : `${name}:${li}:${oi}`;
         const moveArea = kind === 13 ? compileFieldMoveArea({ group: name, entityId: id, layer: layerId,
           object: o, properties: p, source }) : undefined;
+        let relay: FieldEntity["relay"];
+        if (kind === 16) {
+          try { relay = compileFieldRelay({ group: name, entityId: id, layer: layerId, object: o, properties: p, source }); }
+          catch (error) { issue(error instanceof Error ? error.message : String(error)); }
+        }
         const nativeNpc = compileFieldNativeNpc({ group: name, object: o,
           entity: { id, kind, layer: layerId, source }, properties: p, tables });
         entities.push({
           id,
           ...(moveArea ? { moveArea } : {}),
+          ...(relay ? { relay } : {}),
           ...(nativeNpc.definition ? { nativeNpc: nativeNpc.definition } : {}),
           ...(nativeNpc.blockers.length ? { nativeNpcBlockers: nativeNpc.blockers } : {}),
           objectId: integer(p.object_id ?? 0),

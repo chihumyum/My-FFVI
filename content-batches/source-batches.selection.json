@@ -21,6 +21,36 @@
       "path": "content-batches/south-figaro-interiors-battles.recipe.json",
       "sha256": "d94dd9d44f1cf61e27aab6cee48c60f5c8aaf0a0506b0ee849c0342328c0fd57",
       "label": "南费加罗室内完整普通遇敌池"
+    },
+    {
+      "path": "content-batches/south-figaro-services-40.recipe.json",
+      "sha256": "6a59dfd39521adc81968e7c812a53dcdc8737269bf1917726a5843649565053e",
+      "label": "南费加罗来源服务 40（开发放置）"
+    },
+    {
+      "path": "content-batches/south-figaro-services-59.recipe.json",
+      "sha256": "b45a0e0020956d6427972d43db1fd470e735e3bba82696d793bcc9ec78db7f17",
+      "label": "南费加罗来源服务 59（开发放置）"
+    },
+    {
+      "path": "content-batches/south-figaro-services-62.recipe.json",
+      "sha256": "38d776fc3bcbd2e224a140e4f3f608e9648089d392bbe38951478c00c0566612",
+      "label": "南费加罗来源服务 62（开发放置）"
+    },
+    {
+      "path": "content-batches/south-figaro-services-221.recipe.json",
+      "sha256": "c3c3a75e767323c3561669f9f49c048f009b74334ad05c5e34363c36b1e5e68f",
+      "label": "南费加罗来源服务 221（开发放置）"
+    },
+    {
+      "path": "content-batches/south-figaro-services-240.recipe.json",
+      "sha256": "4b638aa3804d20c6fa2ade1d63e3a158cd0f104abdd8254a57edd3772b2bc535",
+      "label": "南费加罗来源服务 240（开发放置）"
+    },
+    {
+      "path": "content-batches/south-figaro-services-243.recipe.json",
+      "sha256": "f6b43d45b3648505b2505e2c563acd9f29e6e33760f8246393c411df313de137",
+      "label": "南费加罗来源服务 243（开发放置）"
     }
   ]
 }

@@ -5,37 +5,20 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { controlledAudioRuntime } from "./controlled-audio.mjs";
 
-const directions = { up: [0, -1], right: [1, 0], down: [0, 1], left: [-1, 0] };
-const acceptFacing = { up: 4, right: 8, down: 1, left: 2 };
 const contactDirection = { up: 1, right: 2, down: 4, left: 8 };
 const position = player => ({ x: player.x, y: player.y, layer: player.layer });
 
-/** A facing declaration names one live interaction in the front cell. This
- * checks the public projections, never moves an entity or dispatches its VM. */
-function facingTarget(field, input, canonicalCell) {
+/** A facing declaration consumes Field's same read-only target projection as
+ * confirm, including declared counter relays. It never dispatches the VM. */
+function facingTarget(field, input) {
   if (field.content.map.identity?.mapId !== input.mapId) return null;
   if (!field.collisionState.interactiveObservation || field.player.motion) return null;
-  const player = field.player, delta = directions[input.direction];
-  let cell = { x: player.x + delta[0], y: player.y + delta[1] };
-  if (field.content.map.topology) {
-    try { cell = canonicalCell(field.content.map.topology, cell); }
-    catch { return null; }
-  }
-  const hits = field.entities.filter(entity => {
-    const properties = entity.npc ?? entity.mapObject, actor = field.actors[entity.id];
-    if (![5, 6, 7, 17].includes(entity.kind) || !properties ||
-        ["none", "blocked"].includes(properties.interaction.kind) ||
-        !field.isEntityVisible(entity.id) || (actor?.layer ?? entity.layer) !== player.layer ||
-        !(properties.acceptDirection & acceptFacing[input.direction]) ||
-        !properties.talkMounts.includes(player.mount ?? "")) return false;
-    if (properties.interaction.kind === "script" &&
-        (!properties.interaction.script || !field.content.scripts[properties.interaction.script])) return false;
-    if (entity.kind === 6 || entity.kind === 17)
-      return !!actor && actor.x === cell.x && actor.y === cell.y;
-    return cell.x >= entity.x && cell.x < entity.x + entity.width &&
-      cell.y >= entity.y && cell.y < entity.y + entity.height;
-  });
-  return hits.length === 1 && hits[0].id === input.entityId ? hits[0] : null;
+  const entity = field.interactionTarget(input.direction), properties = entity?.npc ?? entity?.mapObject;
+  if (!entity || entity.id !== input.entityId || !properties || ["none", "blocked"].includes(properties.interaction.kind))
+    return null;
+  if (properties.interaction.kind === "script" &&
+      (!properties.interaction.script || !field.content.scripts[properties.interaction.script])) return null;
+  return entity;
 }
 
 function declaredBattleReferences(battle, program) {
@@ -148,10 +131,10 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
   const load = name => import(pathToFileURL(resolve(root, compiled, "src/core", name + ".js")));
   const [{ GameSession }, { GameFlow }, { GameMapLoader }, { CheckpointStorage }, { GameEventSaveCoordinator },
     { GameEntryLoader }, { GameBattleHandoff }, { GameCommands }, { prepareGameDevelopmentEntry },
-    { NewGameFieldEntry }, { FieldFadeState }, { createSourcePresentationContext }, { contentDigest }, { canonicalCell }] = await Promise.all([
+    { NewGameFieldEntry }, { FieldFadeState }, { createSourcePresentationContext }, { contentDigest }] = await Promise.all([
     load("game-session"), load("game-flow"), load("game-map-loader"), load("saved-game"), load("game-event-save"),
     load("game-entry-loader"), load("game-battle-handoff"), load("game-commands"), load("game-development-entry"),
-    load("new-game-field-entry"), load("field-fade"), load("source-presentation"), load("content-integrity"), load("field-map-topology"),
+    load("new-game-field-entry"), load("field-fade"), load("source-presentation"), load("content-integrity"),
   ]);
   const runtime = { ...controlledAudioRuntime(), battleHandoff: "prepared",
     transportationTimestamp: () => "639273600000000000" };
@@ -528,6 +511,10 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
         if (answer === undefined) { receipt.boundary = { kind: "missing-choice-input", requestId: field.choice.id }; break; }
         assert.equal(flow.choose(field.choice.id, answer), true);
       } else if (field.dialogue) {
+        const message = field.dialogue;
+        trace.push({ kind: "message-confirm", mapId: receipt.finalMapId, taskId: message.task,
+          key: message.key, speaker: message.speaker, text: message.text,
+          documentHash: await contentDigest({ key: message.key, speaker: message.speaker, text: message.text }) });
         assert.equal(flow.confirm(), true);
       } else if (field.currentShop) {
         const input = route.inputs[inputIndex], shop = field.currentShop;
@@ -590,7 +577,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
               ...(route.battleInputs ? { beforeOwned, afterOwned: structuredClone(menuOwner.state.snapshot()) } : {}) });
           } else if (input.kind === "move" || input.kind === "face") {
             const before = position(field.player), beforeMotion = field.player.motion;
-            if (input.kind === "face" && !facingTarget(field, input, canonicalCell)) {
+            if (input.kind === "face" && !facingTarget(field, input)) {
               receipt.boundary = { kind: "rejected-face-input", inputIndex, input,
                 reason: "live-facing-target-unavailable" }; break;
             }
@@ -599,7 +586,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
             if (input.kind === "face") {
               accepted = result.kind === "facing" && beforeMotion === null && field.player.motion === null &&
                 field.player.x === before.x && field.player.y === before.y && field.player.layer === before.layer &&
-                field.player.direction === input.direction && facingTarget(field, input, canonicalCell) !== null;
+                field.player.direction === input.direction && facingTarget(field, input) !== null;
             } else {
               accepted = result.kind === "movement" || result.kind === "door";
               if (result.kind === "door") {

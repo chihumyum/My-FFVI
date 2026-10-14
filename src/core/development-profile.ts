@@ -25,6 +25,10 @@ export type DevelopmentProfile = {
    * This does not grant native group-material or water-shader acceptance. */
   fieldPresentation?: "framework-ordinary-field-flat-v1";
   npcActivity?: "framework-npc-area-v1";
+  /** Explicit Web counter-range observer; source observer diagnostics remain. */
+  relayInteraction?: "framework-relay-interaction-v1";
+  /** Source-bound, anonymous decorative boards keep their original diagnostics. */
+  passiveEffects?: "framework-passive-field-effects-v1";
 };
 
 export function frameworkWorldMapPresentation(profile: DevelopmentProfile | undefined): "framework-world-map-flat-v1" | undefined {

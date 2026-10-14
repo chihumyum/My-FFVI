@@ -25,7 +25,7 @@ async function modules(root, dist) {
     "core/content-integrity", "core/game-content", "core/game-content-refs", "core/source-catalog",
     "compiler/source-walk-policy",
     "compiler/initialized-battle-binding", "compiler/source-area-scope",
-    "compiler/field-npc-activity", "core/field-npc-activity-source",
+    "compiler/field-npc-activity", "core/field-npc-activity-source", "compiler/field-services",
   ].map(load)));
 }
 
@@ -34,13 +34,14 @@ async function modules(root, dist) {
 export async function compileInitializedContentBatch(root, raw, recipeSha256,
   { dist = "dist", readJson, sourceBattleDirectory } = {}) {
   root = resolve(root); const api = await modules(root, dist), build = resolve(root, "build");
-  const npcVariant=raw?.kind==='initialized-source-map-recipe-v4';
+  const serviceVariant=raw?.kind==='initialized-source-map-recipe-v5';
+  const npcVariant=raw?.kind==='initialized-source-map-recipe-v4'||serviceVariant;
   const directoryVariant=raw?.kind==='initialized-source-map-recipe-v3'||npcVariant;
   const walkingVariant=raw?.kind==='initialized-source-map-recipe-v2'||directoryVariant&&raw.walking!==null;
   fields(raw, "kind,id,sourceEntry,sourceBattle,sourceWorld,startMap,entrance,presentation,manifest"+
-    (directoryVariant?',battleCatalogSelection,sourceAreaScope,walking':walkingVariant?',walking':'')+(npcVariant?',npcActivity':''));
+    (directoryVariant?',battleCatalogSelection,sourceAreaScope,walking':walkingVariant?',walking':'')+(npcVariant?',npcActivity':'')+(serviceVariant?',fieldServices':''));
   const recipe = structuredClone(raw);
-  assert.ok(['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2','initialized-source-map-recipe-v3','initialized-source-map-recipe-v4'].includes(recipe.kind));
+  assert.ok(['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2','initialized-source-map-recipe-v3','initialized-source-map-recipe-v4','initialized-source-map-recipe-v5'].includes(recipe.kind));
   assert.match(recipe.id, /^[a-z0-9][a-z0-9-]{0,79}$/); assert.match(recipeSha256, digest);
   assert.ok(Number.isInteger(recipe.startMap) && recipe.startMap > 0 && recipe.startMap <= 0x7fffffff);
   assert.ok(Number.isInteger(recipe.entrance) && recipe.entrance >= 0 && recipe.entrance <= 0x7fffffff);
@@ -80,6 +81,18 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
     api.parseFrameworkNpcActivityDeclaration({...recipe.npcActivity,kind:'framework-npc-area-declaration-v1',sourceHash:'0'.repeat(64)});
     npcTemplate=structuredClone(recipe.npcActivity);
   }
+  const serviceMaps=new Set();
+  if(serviceVariant){
+    fields(recipe.fieldServices,'kind,relayInteraction,passiveEffects,mapIds');
+    assert.equal(recipe.fieldServices.kind,'framework-field-services-declaration-v1');
+    assert.equal(recipe.fieldServices.relayInteraction,'framework-relay-interaction-v1');
+    assert.equal(recipe.fieldServices.passiveEffects,'framework-passive-field-effects-v1');
+    assert.ok(Array.isArray(recipe.fieldServices.mapIds)&&recipe.fieldServices.mapIds.length);
+    for(const mapId of recipe.fieldServices.mapIds){
+      assert.ok(initialManifest.mapIds.includes(mapId)&&!serviceMaps.has(mapId),'Unbound or duplicate service map');
+      serviceMaps.add(mapId);
+    }
+  }
   if(walkingVariant){
     fields(recipe.walking,'kind,maps');assert.equal(recipe.walking.kind,'initialized-source-walking-v1');
     assert.ok(Array.isArray(recipe.walking.maps)&&recipe.walking.maps.length>0);
@@ -111,10 +124,18 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
   const seal = value => { const { contentHash: _, ...body } = value; return { ...body, contentHash: api.hash(body) }; };
   const profile = sourceContentHash => ({ kind: "framework-development-v1", policy: "omit-anonymous-environment-particles-v1",
     sourceContentHash, omissions: [], fieldPresentation: recipe.presentation,...(npcVariant?{npcActivity:npcTemplate.policy}:{}) });
-  const prefix = "/content-packages/" + recipe.id, presentations = [], walkingResults=[],npcResults=[];
+  const prefix = "/content-packages/" + recipe.id, presentations = [], walkingResults=[],npcResults=[],serviceResults=[];
   const maps = sourceMaps.map(sourceMap => {
     const map = structuredClone(sourceMap);
     map.developmentProfile = profile(sourceMap.contentHash);
+    if(serviceMaps.has(map.mapId)){
+      map.developmentProfile.relayInteraction=recipe.fieldServices.relayInteraction;
+      map.developmentProfile.passiveEffects=recipe.fieldServices.passiveEffects;
+      const relay=api.deriveFrameworkRelayHost(sourceMap),passive=api.deriveFrameworkPassiveEffectsHost(sourceMap,corpus.assets);
+      map.frameworkRelayInteraction=relay;if(passive.host)map.frameworkPassiveEffects=passive.host;
+      serviceResults.push({mapId:map.mapId,relays:relay.bindings.length,passiveEffects:passive.host?.bindings.length??0,
+        diagnostics:passive.diagnostics,nativeRulesVerified:false});
+    }
     if(npcVariant){
       assert.equal(sourceMap.frameworkNpcActivity,undefined,'Original source map cannot carry an authored NPC controller host');
       const inventory=api.compileFieldNpcActivitySources(corpus,map.mapId),npcBindings=[],diagnostics=structuredClone(inventory.diagnostics);
@@ -165,6 +186,7 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
     // exactly, including original view/provider diagnostics and script metadata.
     const unchanged=structuredClone(map);delete unchanged.developmentProfile;delete unchanged.frameworkPresentation;
     if(npcVariant)delete unchanged.frameworkNpcActivity;
+    if(serviceMaps.has(map.mapId)){delete unchanged.frameworkRelayInteraction;delete unchanged.frameworkPassiveEffects;}
     if(walking.has(map.mapId)){delete unchanged.walkEncounters;delete unchanged.frameworkWalkBinding;}
     assert.equal(api.canonical(unchanged), api.canonical(sourceMap));
     return seal(map);
@@ -204,6 +226,7 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
     ...(directoryVariant?{battleCatalogSelection,sourceAreaScopeReceipt}:{}),
     ...(selected.directoryBinding===null?{}:{battleDirectory:selected.directoryBinding}),
     ...(walkingVariant?{walking:walkingResults,nativeWalkingRulesVerified:false}:{}),
+    ...(serviceVariant?{fieldServices:{declaration:recipe.fieldServices,maps:serviceResults,nativeRulesVerified:false}}:{}),
     ...(npcVariant?{npcActivity:{template:npcTemplate,maps:npcResults,nativeRulesVerified:false,
       counts:{maps:npcResults.length,declared:npcResults.reduce((sum,value)=>sum+value.counts.declared,0),
         derived:npcResults.reduce((sum,value)=>sum+value.counts.derived,0),

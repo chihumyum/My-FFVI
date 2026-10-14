@@ -70,6 +70,8 @@ export type WorldMapContent = {
   nativeFootBlockers?: ContentIssue[];
   nativeNpcStandby?: FieldContent["nativeNpcStandby"];
   frameworkNpcActivity?: FieldContent["frameworkNpcActivity"];
+  frameworkRelayInteraction?: FieldContent["frameworkRelayInteraction"];
+  frameworkPassiveEffects?: NonNullable<FieldContent["frameworkPassiveEffects"]>;
   nativeNpcStandbyBlockers?: ContentIssue[];
   fieldEffects?: FieldContent["fieldEffects"];
   initializer: string | null;

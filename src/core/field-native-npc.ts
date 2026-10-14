@@ -133,10 +133,21 @@ export function fieldNativeNpcSelectorBinding(definition: FieldNativeNpcDefiniti
 export function fieldNativeNpcPosition(definition: FieldNativeNpcDefinition, map: FieldCameraMapRange,
   standbyAnchorPosition?: { x: number; y: number }): { x: number; y: number; z: number } {
   validateFieldNativeNpc(definition);
+  return fieldNativeMapObjectPosition(definition.geometry, map, standbyAnchorPosition);
+}
+
+/** Shared ParseMapObject placement from original signed pixel rectangles.
+ * Relay widths/heights remain raw source dimensions, not synthetic NPC cells. */
+export function fieldNativeMapObjectPosition(object: {
+  x: number; y: number; width: number; height: number; layer: number;
+}, map: FieldCameraMapRange, standbyAnchorPosition?: { x: number; y: number }): { x: number; y: number; z: number } {
+  checkpointKeys(object, "x,y,width,height,layer");
+  for (const value of [object.x, object.y]) checkpointInteger(value, -0x80000000, 0x7fffffff);
+  for (const value of [object.width, object.height]) checkpointInteger(value, 1, 0x7fffffff);
+  checkpointInteger(object.layer, 0, 3);
   checkpointKeys(map, "x,y,width,height");
   for (const value of [map.x, map.y]) checkpointInteger(value, -0x80000000, 0x7fffffff);
   for (const value of [map.width, map.height]) checkpointInteger(value, 1, 0x7ffffff);
-  const object = definition.geometry;
   // Original TileMapObjectData and mapRange arithmetic is signed int32 before
   // its conversion to float. Reject overflow rather than silently use doubles.
   const integer = (value: number) => { checkpointInteger(value, -0x80000000, 0x7fffffff); return value; };

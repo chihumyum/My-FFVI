@@ -110,8 +110,21 @@ async function recipes(read,requests,reserved){
     if(request.sha256!==undefined&&input.sha256!==request.sha256)throw new Error('Source recipe SHA256 mismatch: '+request.path);
     const value=input.value;
     if(!value||typeof value!=='object'||Array.isArray(value)||
-      !['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2','initialized-source-map-recipe-v3','initialized-source-map-recipe-v4'].includes(value.kind))
+      !['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2','initialized-source-map-recipe-v3','initialized-source-map-recipe-v4','initialized-source-map-recipe-v5'].includes(value.kind))
       throw new Error('Unsupported source recipe kind: '+request.path);
+    if(value.kind!=='initialized-source-map-recipe-v5'&&Object.hasOwn(value,'fieldServices'))
+      throw new Error('Field services require an explicit version 5 source recipe');
+    if(value.kind==='initialized-source-map-recipe-v5'){
+      const services=record(value.fieldServices,['kind','relayInteraction','passiveEffects','mapIds']);
+      if(services.kind!=='framework-field-services-declaration-v1'||
+        services.relayInteraction!=='framework-relay-interaction-v1'||
+        services.passiveEffects!=='framework-passive-field-effects-v1')
+        throw new Error('Unsupported source field services declaration');
+      const ids=dense(services.mapIds,1);
+      if(ids.some(id=>!Number.isSafeInteger(id)||id<=0||id>0x7fffffff)||new Set(ids).size!==ids.length||
+        !Array.isArray(value.manifest?.mapIds)||ids.some(id=>!value.manifest.mapIds.includes(id)))
+        throw new Error('Unbound or duplicate source field service map');
+    }
     if(typeof value.id!=='string'||!packageId.test(value.id)||reserved.has(value.id))
       throw new Error('Unsafe or reserved source recipe package identity: '+String(value.id));
     if(!value.manifest||typeof value.manifest!=='object'||Array.isArray(value.manifest)||

@@ -97,6 +97,24 @@ export type MapObjectProperties = InteractionProperties & {
   /** Assetless FieldMapObjectDefault has no sprite, but still has a collider. */
   collision: boolean;
 };
+/** Source kind 16 is an independently registered range contributor. It has no
+ * target selector. Placement requires the live map/parent coordinate owner. */
+export type FieldRelayDefinition = {
+  kind: "source-field-relay-v1";
+  group: string;
+  entityId: string;
+  sourceEntityId: number;
+  objectId: number;
+  /** Tiled editor identity, distinct from the native property ObjectId. */
+  editorObjectId: number;
+  layer: number;
+  rawGeometry: { x: number; y: number; width: number; height: number };
+  /** Retained editor binding; it does not grant a sprite or material provider. */
+  editorGid: number;
+  horizontalCellLimit: number;
+  verticalCellLimit: number;
+  source: Evidence & { objectId: string; pointer: string; serializedFile: string; sha256: string };
+};
 export type FieldEntity = Point & {
   id: string;
   objectId?: number;
@@ -108,6 +126,8 @@ export type FieldEntity = Point & {
   effect?: FieldEffectBoardDefinition;
   /** Immutable source region consumed by autonomous NPC controllers. */
   moveArea?: FieldMoveAreaDefinition;
+  /** Geometry alone never grants the source interaction observer. */
+  relay?: FieldRelayDefinition;
   mapObject?: MapObjectProperties;
   /** Source property reward; native entityId may be zero for anonymous objects. */
   treasure?: TreasureInventoryDefinition;
@@ -274,6 +294,8 @@ export type Tileset = {
   tiles?: { id: number; animation?: { tileid: number; duration: number }[] }[];
 };
 export type FieldContent = {
+  frameworkPassiveEffects?: import("../core/field-passive-effects-host.js").FieldPassiveEffectsHost;
+  frameworkRelayInteraction?: import("../core/field-relay-policy.js").FieldRelayInteractionHost;
   frameworkNpcActivity?: import("../core/field-npc-activity-host.js").FieldNpcActivityHost;
   /** Explicit development rules, never inferred from native step counters. */
   walkEncounters?: FrameworkWalkEncounterPolicy;

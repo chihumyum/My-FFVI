@@ -28,7 +28,7 @@ flowchart TD
 | 操作 | 公共入口 | 交付要求 |
 | --- | --- | --- |
 | 新游戏与恢复 | `GameEntryLoader` | 内容与媒体在私有候选中准备，成功才替换会话。 |
-| 移动与交互 | `GameFlow.move` / `confirm` / `choose` | 输入统一门控，事件和剧情仍由 Field 持有。 |
+| 移动与交互 | `GameFlow.directionInput` / `confirm` / `choose` | 输入统一门控，事件和剧情仍由 Field 持有；只读目标投影与确认共用规则。 |
 | 菜单与战斗输入 | `GameCommands` | 命令绑定当前会话；旧界面不能修改替换后的 owner。 |
 | 切图与战斗往返 | `GameMapLoader` / `GameBattleHandoff` | 失败、取消、重试和结算复用原事务；奖励只提交一次。 |
 | 保存与继续 | `CheckpointStorage` / `GameEntryLoader` | 内容身份校验、恢复后继续输入，不重跑初始化。 |

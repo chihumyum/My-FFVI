@@ -147,6 +147,27 @@ test("ShopNPC uses the ordinary actor path and retains collision/facing behavior
   assert.equal(game.actors["8"]!.direction, "left");
 });
 
+test("interaction target previews share confirm eligibility without publishing a greeting or turning either actor", () => {
+  const { game, validated } = fixture(), before = game.checkpoint();
+  assert.equal(game.interactionTarget("up")?.id, "8");
+  assert.equal(game.interactionTarget("right"), null);
+  assert.deepEqual(game.checkpoint(), before);
+  assert.equal(validated(), 0);
+  assert.equal(game.currentShop, null);
+  assert.equal(game.dialogue, null);
+  game.confirm();
+  assert.equal(validated(), 1);
+  assert.equal(game.dialogue!.key, "HELLO");
+  assert.equal(game.interactionTarget(), null, "An active greeting cannot authorize another facing target");
+});
+
+test("invalid projected directions reject without blocking or editing the current field", () => {
+  const { game } = fixture(), before = game.checkpoint();
+  assert.throws(() => game.interactionTarget("diagonal" as never), /Unknown interaction direction/);
+  assert.equal(game.stop, null);
+  assert.deepEqual(game.checkpoint(), before);
+});
+
 test("greeting precedes the transaction window and farewell precedes idle save readiness", () => {
   const { game, validated, content, options } = fixture();
   game.confirm();

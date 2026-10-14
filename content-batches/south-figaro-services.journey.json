@@ -1,0 +1,306 @@
+{
+  "kind": "source-services-journey-contract-v1",
+  "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+  "parentSourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+  "areaId": 8,
+  "mapIds": [
+    40,
+    59,
+    62,
+    221,
+    240,
+    243
+  ],
+  "areaMapIds": [
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    219,
+    220,
+    221,
+    222,
+    223,
+    224,
+    225,
+    226,
+    227,
+    228,
+    229,
+    230,
+    231,
+    232,
+    233,
+    234,
+    235,
+    236,
+    237,
+    238,
+    239,
+    240,
+    241,
+    242,
+    243,
+    244,
+    245,
+    246
+  ],
+  "pointInCount": 135,
+  "worldPhase": "unknown",
+  "counterReachability": "declared Web PointIn relocation",
+  "sourceStoryReachability": false,
+  "shops": [
+    {
+      "packageId": "south-figaro-services-40",
+      "routeId": "source-counter-40-1-trade-restore-and-continuation",
+      "mapId": 40,
+      "entityId": "6",
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20071/Map_20071_2/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20071_assets_all_9498d85acbeda5d328435604441a1c54.bundle",
+        "objectId": "-3698702730357515003",
+        "pointer": "/layers/0/objects/5",
+        "serializedFile": "CAB-21163b23d0f483a042002fbc43019612",
+        "sha256": "c22de8741a0f9c5be4f213321bc295aa3dcf8add69a8cffc41b5d629ab791d1d"
+      },
+      "script": null,
+      "groupIds": [
+        5
+      ],
+      "normalGroupId": 5,
+      "productId": 27,
+      "contentId": 275,
+      "standingPoint": {
+        "x": 9,
+        "y": 11,
+        "layer": 2,
+        "direction": "left"
+      },
+      "programHash": "df5abf0e0ad009b872e0d3b50a6c32ca9e370ac381227db1d32e6218ae8c47b1"
+    },
+    {
+      "packageId": "south-figaro-services-59",
+      "routeId": "source-counter-59-1-trade-restore-and-continuation",
+      "mapId": 59,
+      "entityId": "7",
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20071/Map_20071_21/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20071_assets_all_9498d85acbeda5d328435604441a1c54.bundle",
+        "objectId": "1556133200402480622",
+        "pointer": "/layers/1/objects/6",
+        "serializedFile": "CAB-21163b23d0f483a042002fbc43019612",
+        "sha256": "c22de8741a0f9c5be4f213321bc295aa3dcf8add69a8cffc41b5d629ab791d1d"
+      },
+      "script": null,
+      "groupIds": [
+        3
+      ],
+      "normalGroupId": 3,
+      "productId": 14,
+      "contentId": 94,
+      "standingPoint": {
+        "x": 6,
+        "y": 13,
+        "layer": 2,
+        "direction": "up"
+      },
+      "programHash": "eb61143731fbdd4ec02355a5971eb4bea0acf86a41c22f1cdeae22b8f1e924bf"
+    },
+    {
+      "packageId": "south-figaro-services-59",
+      "routeId": "source-counter-59-2-trade-restore-and-continuation",
+      "mapId": 59,
+      "entityId": "8",
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20071/Map_20071_21/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20071_assets_all_9498d85acbeda5d328435604441a1c54.bundle",
+        "objectId": "1556133200402480622",
+        "pointer": "/layers/1/objects/7",
+        "serializedFile": "CAB-21163b23d0f483a042002fbc43019612",
+        "sha256": "c22de8741a0f9c5be4f213321bc295aa3dcf8add69a8cffc41b5d629ab791d1d"
+      },
+      "script": null,
+      "groupIds": [
+        4
+      ],
+      "normalGroupId": 4,
+      "productId": 22,
+      "contentId": 217,
+      "standingPoint": {
+        "x": 17,
+        "y": 14,
+        "layer": 2,
+        "direction": "up"
+      },
+      "programHash": "890ad4e2b12e6c290c650540ad056bdb0328440e77233c0fb01c97d29f77f423"
+    },
+    {
+      "packageId": "south-figaro-services-62",
+      "routeId": "source-counter-62-1-trade-restore-and-continuation",
+      "mapId": 62,
+      "entityId": "5",
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20071/Map_20071_24/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20071_assets_all_9498d85acbeda5d328435604441a1c54.bundle",
+        "objectId": "8526548933870963433",
+        "pointer": "/layers/0/objects/4",
+        "serializedFile": "CAB-21163b23d0f483a042002fbc43019612",
+        "sha256": "c22de8741a0f9c5be4f213321bc295aa3dcf8add69a8cffc41b5d629ab791d1d"
+      },
+      "script": null,
+      "groupIds": [
+        6
+      ],
+      "normalGroupId": 6,
+      "productId": 31,
+      "contentId": 2,
+      "standingPoint": {
+        "x": 8,
+        "y": 11,
+        "layer": 2,
+        "direction": "up"
+      },
+      "programHash": "da943fe192a6f403f150058bec51303e85c1b0f77c7bde5f9f85e53fe1047872"
+    },
+    {
+      "packageId": "south-figaro-services-221",
+      "routeId": "source-counter-221-1-trade-restore-and-continuation",
+      "mapId": 221,
+      "entityId": "entity_default:0:7",
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_2/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "1187083914059674586",
+        "pointer": "/layers/0/objects/7",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "script": "sc_npc_20361_2_1",
+      "groupIds": [
+        66,
+        91
+      ],
+      "normalGroupId": 66,
+      "productId": 441,
+      "contentId": 275,
+      "standingPoint": {
+        "x": 51,
+        "y": 13,
+        "layer": 2,
+        "direction": "up"
+      },
+      "programHash": "c9cfe416c11f4fddf07e3fff97f71657852bbb90863a5a0798b96a75909a3a06"
+    },
+    {
+      "packageId": "south-figaro-services-240",
+      "routeId": "source-counter-240-1-trade-restore-and-continuation",
+      "mapId": 240,
+      "entityId": "entity_default:1:7",
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_21/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "-4250720080895972928",
+        "pointer": "/layers/1/objects/7",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "script": "sc_npc_20361_21_1",
+      "groupIds": [
+        64,
+        89
+      ],
+      "normalGroupId": 64,
+      "productId": 430,
+      "contentId": 124,
+      "standingPoint": {
+        "x": 103,
+        "y": 13,
+        "layer": 2,
+        "direction": "up"
+      },
+      "programHash": "a394663fba8dc62124950838e66467dedfb982fd330ade1f6b525a8e7ea4b034"
+    },
+    {
+      "packageId": "south-figaro-services-240",
+      "routeId": "source-counter-240-2-trade-restore-and-continuation",
+      "mapId": 240,
+      "entityId": "entity_default:1:8",
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_21/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "-4250720080895972928",
+        "pointer": "/layers/1/objects/8",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "script": "sc_npc_20361_21_2",
+      "groupIds": [
+        65,
+        90
+      ],
+      "normalGroupId": 65,
+      "productId": 435,
+      "contentId": 224,
+      "standingPoint": {
+        "x": 114,
+        "y": 14,
+        "layer": 2,
+        "direction": "up"
+      },
+      "programHash": "e57234ae5432f74427d74d941f57b2aeaf612710a8edd86073fbc967198b43ed"
+    },
+    {
+      "packageId": "south-figaro-services-243",
+      "routeId": "source-counter-243-1-trade-restore-and-continuation",
+      "mapId": 243,
+      "entityId": "entity_default:0:5",
+      "source": {
+        "assetPath": "Assets/GameAssets/Serial/Res/Map/Map_20361/Map_20361_24/entity_default.json",
+        "file": "FINAL FANTASY VI_Data/StreamingAssets/aa/StandaloneWindows64/map_20361_assets_all_f4770f1a29b6a582e20bfbb10dd5de85.bundle",
+        "objectId": "-6912758728426266966",
+        "pointer": "/layers/0/objects/5",
+        "serializedFile": "CAB-ef727727b8eaea5ca21b18dae079da19",
+        "sha256": "d7541d5d203b22c2926ae339ef2bf8b7ad0e6e7c28d8abe26c47290e6f77d36d"
+      },
+      "script": "sc_npc_20361_24_1",
+      "groupIds": [
+        67,
+        92
+      ],
+      "normalGroupId": 67,
+      "productId": 451,
+      "contentId": 13,
+      "standingPoint": {
+        "x": 106,
+        "y": 54,
+        "layer": 2,
+        "direction": "up"
+      },
+      "programHash": "6d10fba4845df55c6eedeaa822b4cd97eb4a0ab024e026a1d06f73513832fdbe"
+    }
+  ]
+}

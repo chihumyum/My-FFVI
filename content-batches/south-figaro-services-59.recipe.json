@@ -1,0 +1,1131 @@
+{
+  "kind": "initialized-source-map-recipe-v5",
+  "id": "south-figaro-services-59",
+  "sourceEntry": {
+    "url": "/game/source-new-game.json",
+    "contentHash": "054d81aa8901a4d0024bab182772bb018e42bc223351b7bcb628065b4e10a57d"
+  },
+  "sourceBattle": {
+    "url": "/game/source-catalog.json",
+    "contentHash": "d8c5cc15913f27333da3d72446036b8baba908429829265b897287a78912109a"
+  },
+  "sourceWorld": {
+    "url": "/world/catalog.json",
+    "contentHash": "041d094653778859ce0ef313c5aa9f63e4bafbf3deda920674cf69d917f50702"
+  },
+  "startMap": 59,
+  "entrance": 1,
+  "presentation": "framework-ordinary-field-flat-v1",
+  "manifest": {
+    "kind": "content-batch-manifest-v1",
+    "id": "south-figaro-services-59-source-routes",
+    "profile": "framework",
+    "mapIds": [
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      219,
+      220,
+      221,
+      222,
+      223,
+      224,
+      225,
+      226,
+      227,
+      228,
+      229,
+      230,
+      231,
+      232,
+      233,
+      234,
+      235,
+      236,
+      237,
+      238,
+      239,
+      240,
+      241,
+      242,
+      243,
+      244,
+      245,
+      246
+    ],
+    "roots": [
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 1,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 2,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 3,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 4,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 5,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 6,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 7,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 8,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 9,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 10,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 11,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 12,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 13,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 14,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 38,
+        "entrance": 15,
+        "continuation": "sc_map_20070"
+      },
+      {
+        "kind": "entry",
+        "mapId": 39,
+        "entrance": 1,
+        "continuation": "sc_map_20071_1"
+      },
+      {
+        "kind": "entry",
+        "mapId": 40,
+        "entrance": 1,
+        "continuation": "sc_map_20071_2"
+      },
+      {
+        "kind": "entry",
+        "mapId": 40,
+        "entrance": 2,
+        "continuation": "sc_map_20071_2"
+      },
+      {
+        "kind": "entry",
+        "mapId": 41,
+        "entrance": 1,
+        "continuation": "sc_map_20071_3"
+      },
+      {
+        "kind": "entry",
+        "mapId": 41,
+        "entrance": 2,
+        "continuation": "sc_map_20071_3"
+      },
+      {
+        "kind": "entry",
+        "mapId": 42,
+        "entrance": 1,
+        "continuation": "sc_map_20071_4"
+      },
+      {
+        "kind": "entry",
+        "mapId": 42,
+        "entrance": 2,
+        "continuation": "sc_map_20071_4"
+      },
+      {
+        "kind": "entry",
+        "mapId": 42,
+        "entrance": 3,
+        "continuation": "sc_map_20071_4"
+      },
+      {
+        "kind": "entry",
+        "mapId": 43,
+        "entrance": 1,
+        "continuation": "sc_map_20071_5"
+      },
+      {
+        "kind": "entry",
+        "mapId": 44,
+        "entrance": 1,
+        "continuation": "sc_map_20071_6"
+      },
+      {
+        "kind": "entry",
+        "mapId": 44,
+        "entrance": 2,
+        "continuation": "sc_map_20071_6"
+      },
+      {
+        "kind": "entry",
+        "mapId": 44,
+        "entrance": 3,
+        "continuation": "sc_map_20071_6"
+      },
+      {
+        "kind": "entry",
+        "mapId": 45,
+        "entrance": 1,
+        "continuation": "sc_map_20071_7"
+      },
+      {
+        "kind": "entry",
+        "mapId": 45,
+        "entrance": 2,
+        "continuation": "sc_map_20071_7"
+      },
+      {
+        "kind": "entry",
+        "mapId": 45,
+        "entrance": 3,
+        "continuation": "sc_map_20071_7"
+      },
+      {
+        "kind": "entry",
+        "mapId": 46,
+        "entrance": 1,
+        "continuation": "sc_map_20071_8"
+      },
+      {
+        "kind": "entry",
+        "mapId": 46,
+        "entrance": 2,
+        "continuation": "sc_map_20071_8"
+      },
+      {
+        "kind": "entry",
+        "mapId": 47,
+        "entrance": 1,
+        "continuation": "sc_map_20071_9"
+      },
+      {
+        "kind": "entry",
+        "mapId": 47,
+        "entrance": 2,
+        "continuation": "sc_map_20071_9"
+      },
+      {
+        "kind": "entry",
+        "mapId": 48,
+        "entrance": 1,
+        "continuation": "sc_map_20071_10"
+      },
+      {
+        "kind": "entry",
+        "mapId": 48,
+        "entrance": 2,
+        "continuation": "sc_map_20071_10"
+      },
+      {
+        "kind": "entry",
+        "mapId": 48,
+        "entrance": 3,
+        "continuation": "sc_map_20071_10"
+      },
+      {
+        "kind": "entry",
+        "mapId": 48,
+        "entrance": 4,
+        "continuation": "sc_map_20071_10"
+      },
+      {
+        "kind": "entry",
+        "mapId": 48,
+        "entrance": 5,
+        "continuation": "sc_map_20071_10"
+      },
+      {
+        "kind": "entry",
+        "mapId": 49,
+        "entrance": 1,
+        "continuation": "sc_map_20071_11"
+      },
+      {
+        "kind": "entry",
+        "mapId": 50,
+        "entrance": 1,
+        "continuation": "sc_map_20071_12"
+      },
+      {
+        "kind": "entry",
+        "mapId": 51,
+        "entrance": 1,
+        "continuation": "sc_map_20071_13"
+      },
+      {
+        "kind": "entry",
+        "mapId": 52,
+        "entrance": 1,
+        "continuation": "sc_map_20071_14"
+      },
+      {
+        "kind": "entry",
+        "mapId": 52,
+        "entrance": 2,
+        "continuation": "sc_map_20071_14"
+      },
+      {
+        "kind": "entry",
+        "mapId": 53,
+        "entrance": 1,
+        "continuation": "sc_map_20071_15"
+      },
+      {
+        "kind": "entry",
+        "mapId": 53,
+        "entrance": 2,
+        "continuation": "sc_map_20071_15"
+      },
+      {
+        "kind": "entry",
+        "mapId": 53,
+        "entrance": 3,
+        "continuation": "sc_map_20071_15"
+      },
+      {
+        "kind": "entry",
+        "mapId": 54,
+        "entrance": 1,
+        "continuation": "sc_map_20071_16"
+      },
+      {
+        "kind": "entry",
+        "mapId": 55,
+        "entrance": 1,
+        "continuation": "sc_map_20071_17"
+      },
+      {
+        "kind": "entry",
+        "mapId": 55,
+        "entrance": 2,
+        "continuation": "sc_map_20071_17"
+      },
+      {
+        "kind": "entry",
+        "mapId": 56,
+        "entrance": 1,
+        "continuation": "sc_map_20071_18"
+      },
+      {
+        "kind": "entry",
+        "mapId": 57,
+        "entrance": 1,
+        "continuation": "sc_map_20071_19"
+      },
+      {
+        "kind": "entry",
+        "mapId": 57,
+        "entrance": 2,
+        "continuation": "sc_map_20071_19"
+      },
+      {
+        "kind": "entry",
+        "mapId": 58,
+        "entrance": 1,
+        "continuation": "sc_map_20071_20"
+      },
+      {
+        "kind": "entry",
+        "mapId": 58,
+        "entrance": 2,
+        "continuation": "sc_map_20071_20"
+      },
+      {
+        "kind": "entry",
+        "mapId": 59,
+        "entrance": 1,
+        "continuation": "sc_map_20071_21"
+      },
+      {
+        "kind": "entry",
+        "mapId": 59,
+        "entrance": 2,
+        "continuation": "sc_map_20071_21"
+      },
+      {
+        "kind": "entry",
+        "mapId": 60,
+        "entrance": 1,
+        "continuation": "sc_map_20071_22"
+      },
+      {
+        "kind": "entry",
+        "mapId": 60,
+        "entrance": 2,
+        "continuation": "sc_map_20071_22"
+      },
+      {
+        "kind": "entry",
+        "mapId": 60,
+        "entrance": 3,
+        "continuation": "sc_map_20071_22"
+      },
+      {
+        "kind": "entry",
+        "mapId": 61,
+        "entrance": 1,
+        "continuation": "sc_map_20071_23"
+      },
+      {
+        "kind": "entry",
+        "mapId": 61,
+        "entrance": 2,
+        "continuation": "sc_map_20071_23"
+      },
+      {
+        "kind": "entry",
+        "mapId": 62,
+        "entrance": 1,
+        "continuation": "sc_map_20071_24"
+      },
+      {
+        "kind": "entry",
+        "mapId": 63,
+        "entrance": 1,
+        "continuation": "sc_map_20071_25"
+      },
+      {
+        "kind": "entry",
+        "mapId": 63,
+        "entrance": 2,
+        "continuation": "sc_map_20071_25"
+      },
+      {
+        "kind": "entry",
+        "mapId": 64,
+        "entrance": 1,
+        "continuation": "sc_map_20071_26"
+      },
+      {
+        "kind": "entry",
+        "mapId": 65,
+        "entrance": 1,
+        "continuation": "sc_map_20071_27"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 1,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 2,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 3,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 4,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 5,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 6,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 7,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 8,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 9,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 10,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 11,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 12,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 13,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 14,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 219,
+        "entrance": 15,
+        "continuation": "sc_map_20360"
+      },
+      {
+        "kind": "entry",
+        "mapId": 220,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 221,
+        "entrance": 1,
+        "continuation": "sc_map_20361_2"
+      },
+      {
+        "kind": "entry",
+        "mapId": 221,
+        "entrance": 2,
+        "continuation": "sc_map_20361_2"
+      },
+      {
+        "kind": "entry",
+        "mapId": 222,
+        "entrance": 1,
+        "continuation": "sc_map_20361_3"
+      },
+      {
+        "kind": "entry",
+        "mapId": 222,
+        "entrance": 2,
+        "continuation": "sc_map_20361_3"
+      },
+      {
+        "kind": "entry",
+        "mapId": 223,
+        "entrance": 1,
+        "continuation": "sc_map_20361_4"
+      },
+      {
+        "kind": "entry",
+        "mapId": 223,
+        "entrance": 2,
+        "continuation": "sc_map_20361_4"
+      },
+      {
+        "kind": "entry",
+        "mapId": 223,
+        "entrance": 3,
+        "continuation": "sc_map_20361_4"
+      },
+      {
+        "kind": "entry",
+        "mapId": 224,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 225,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 225,
+        "entrance": 2,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 225,
+        "entrance": 3,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 226,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 226,
+        "entrance": 2,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 226,
+        "entrance": 3,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 227,
+        "entrance": 1,
+        "continuation": "sc_map_20361_8"
+      },
+      {
+        "kind": "entry",
+        "mapId": 227,
+        "entrance": 2,
+        "continuation": "sc_map_20361_8"
+      },
+      {
+        "kind": "entry",
+        "mapId": 228,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 228,
+        "entrance": 2,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 229,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 229,
+        "entrance": 2,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 229,
+        "entrance": 3,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 229,
+        "entrance": 4,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 229,
+        "entrance": 5,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 230,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 231,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 232,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 233,
+        "entrance": 1,
+        "continuation": "sc_map_20361_14"
+      },
+      {
+        "kind": "entry",
+        "mapId": 233,
+        "entrance": 2,
+        "continuation": "sc_map_20361_14"
+      },
+      {
+        "kind": "entry",
+        "mapId": 234,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 234,
+        "entrance": 2,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 234,
+        "entrance": 3,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 235,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 236,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 236,
+        "entrance": 2,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 237,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 238,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 238,
+        "entrance": 2,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 239,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 239,
+        "entrance": 2,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 240,
+        "entrance": 1,
+        "continuation": "sc_map_20361_21"
+      },
+      {
+        "kind": "entry",
+        "mapId": 240,
+        "entrance": 2,
+        "continuation": "sc_map_20361_21"
+      },
+      {
+        "kind": "entry",
+        "mapId": 241,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 241,
+        "entrance": 2,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 241,
+        "entrance": 3,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 242,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 242,
+        "entrance": 2,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 243,
+        "entrance": 1,
+        "continuation": "sc_map_20361_24"
+      },
+      {
+        "kind": "entry",
+        "mapId": 244,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 244,
+        "entrance": 2,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 245,
+        "entrance": 1,
+        "continuation": null
+      },
+      {
+        "kind": "entry",
+        "mapId": 246,
+        "entrance": 1,
+        "continuation": "sc_map_20361_27"
+      },
+      {
+        "kind": "entry",
+        "mapId": 246,
+        "entrance": 2,
+        "continuation": "sc_map_20361_27"
+      }
+    ],
+    "routes": [
+      {
+        "id": "source-counter-59-1-trade-restore-and-continuation",
+        "entry": "framework-new-game",
+        "expectedMapId": 59,
+        "requiredMapIds": [
+          59
+        ],
+        "requiredEncounterIds": [],
+        "maxTicks": 10000,
+        "inputs": [
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "shop",
+            "groupId": 3,
+            "request": {
+              "kind": "buy",
+              "productId": 14,
+              "count": 1
+            }
+          },
+          {
+            "kind": "leave-shop",
+            "groupId": 3
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "shop",
+            "groupId": 3,
+            "request": {
+              "kind": "sell",
+              "contentId": 94,
+              "count": 1
+            }
+          },
+          {
+            "kind": "leave-shop",
+            "groupId": 3
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "leave-shop",
+            "groupId": 3
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          }
+        ],
+        "choiceAnswers": [],
+        "battleAbilityIds": []
+      },
+      {
+        "id": "source-counter-59-2-trade-restore-and-continuation",
+        "entry": "framework-new-game",
+        "expectedMapId": 59,
+        "requiredMapIds": [
+          59
+        ],
+        "requiredEncounterIds": [],
+        "maxTicks": 10000,
+        "inputs": [
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "shop",
+            "groupId": 4,
+            "request": {
+              "kind": "buy",
+              "productId": 22,
+              "count": 1
+            }
+          },
+          {
+            "kind": "leave-shop",
+            "groupId": 4
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "shop",
+            "groupId": 4,
+            "request": {
+              "kind": "sell",
+              "contentId": 217,
+              "count": 1
+            }
+          },
+          {
+            "kind": "leave-shop",
+            "groupId": 4
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "leave-shop",
+            "groupId": 4
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          }
+        ],
+        "choiceAnswers": [],
+        "battleAbilityIds": []
+      }
+    ]
+  },
+  "battleCatalogSelection": "shared-framework-directory-v1",
+  "sourceAreaScope": {
+    "kind": "source-area-scope-v1",
+    "areaId": 8
+  },
+  "walking": null,
+  "npcActivity": {
+    "kind": "framework-npc-area-template-v1",
+    "policy": "framework-npc-area-v1",
+    "missingFirstInterval": "source-ctor-true",
+    "random": "web-xorshift32-v1",
+    "collision": "actor-grid-reservations-v1",
+    "schedule": "fixed-step-source-order-v1",
+    "takeover": "pause-autonomous-motion-v1",
+    "reason": "Use all retained Area NPC source parameters in the declared Web activity host; original dialogue, event and story applicability gaps remain visible."
+  },
+  "fieldServices": {
+    "kind": "framework-field-services-declaration-v1",
+    "relayInteraction": "framework-relay-interaction-v1",
+    "passiveEffects": "framework-passive-field-effects-v1",
+    "mapIds": [
+      40,
+      59,
+      62,
+      221,
+      240,
+      243
+    ]
+  }
+}

@@ -75,7 +75,11 @@ import { captureFieldNpcActivities, restoreFieldNpcActivities,
   type FieldNpcActivitiesCheckpoint, type RestoredFieldNpcActivities } from "./field-npc-activity-checkpoint.js";
 import { projectFieldPuppetCollision, projectFieldPuppetActorEffects, type FieldPuppetCollisionState, type FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import type { FieldPuppetActorCatalog, FieldPuppetActorContext, FieldPuppetControlContext } from "./field-puppet-actors.js";
-import type { PartyActorPlan } from "./party-actors.js";
+import { partyActorMapArea, type PartyActorPlan } from "./party-actors.js";
+import { bindFieldRelays, fieldRelayGroupBlockers } from "./field-relay-policy.js";
+import { bindPassiveEffects, passiveEffectsGroupBlockers } from "./field-passive-effects-host.js";
+import { projectFieldRelaySearchRanges, canFieldRelayInteractToEntityPosition } from "./field-relay-interaction.js";
+import { fieldNativeMapObjectPosition } from "./field-native-npc.js";
 import type { FieldTreasurePort } from "./treasure-port.js";
 import { treasureFlagRef, validateTreasureInventory, type TreasureBoxRequest } from "./treasure-inventory.js";
 import { createTreasureTask, advanceTreasureTask, type TreasureTaskState, type TreasureTaskInput } from "./treasure-task.js";
@@ -632,6 +636,8 @@ export class FieldGame {
   private readonly openedTreasures = new Set<string>();
   readonly activeGroups = new Set<string>();
   private readonly entityList: FieldEntity[];
+  private readonly passiveEffects: ReturnType<typeof bindPassiveEffects>;
+  private readonly relayBindings: ReturnType<typeof bindFieldRelays>;
   private readonly defaultProperties: readonly FieldEntity[];
   private currentProperties: readonly FieldEntity[];
   get entities(): readonly FieldEntity[] {
@@ -791,6 +797,8 @@ export class FieldGame {
       checkpointInteger(this.transportationId, 1, 0x7fffffff);
     this.tileAnimations = new TileAnimationState(content.map);
     this.openTriggers = new OpenTriggerState(this.tileAnimations);
+    this.passiveEffects = bindPassiveEffects(content);
+    this.relayBindings = bindFieldRelays(content);
     this.entityList = [...content.map.entities];
     validateFieldMoveAreas(this.entityList);
     const groups = content.map.groups,
@@ -884,10 +892,10 @@ export class FieldGame {
     // publish. Native CreateMapEntity creates default first; ordering among
     // event groups is not yet bound, so no event-group FX can be lazily added.
     const eventEffects = Object.entries(groups ?? {}).some(([name, group]) =>
-      name !== "entity_default" && group.entities.some((entity) => entity.kind === 11));
+      name !== "entity_default" && group.entities.some((entity) => entity.kind === 11 && !this.passiveEffects.has(entity.id)));
     if (eventEffects) throw new Error("Event-group field effect creation order/lifecycle is unresolved");
-    const sourceEffects = this.defaultProperties.filter((entity) => entity.kind === 11);
-    if (this.entityList.filter((entity) => entity.kind === 11).some((entity) => !sourceEffects.includes(entity)))
+    const sourceEffects = this.defaultProperties.filter((entity) => entity.kind === 11 && !this.passiveEffects.has(entity.id));
+    if (this.entityList.filter((entity) => entity.kind === 11 && !this.passiveEffects.has(entity.id)).some((entity) => !sourceEffects.includes(entity)))
       throw new Error("Field effect pool is not bound to the source default group");
     this.effects = null;
     if (sourceEffects.length) {
@@ -955,7 +963,9 @@ export class FieldGame {
       !(this.npcBindings.has(entity.id) && reason === "Native NPC autonomous movement controller is unresolved"));
   }
   private groupBlockers(group: NonNullable<FieldContent["map"]["groups"]>[string]) {
-    return fieldNpcGroupBlockers(group, this.content.frameworkNpcActivity);
+    return passiveEffectsGroupBlockers({ ...group, blockers: fieldRelayGroupBlockers({ ...group,
+      blockers: fieldNpcGroupBlockers(group, this.content.frameworkNpcActivity) }, this.content.frameworkRelayInteraction) },
+      this.content.frameworkPassiveEffects);
   }
   private prepareNpcActivities(actors: readonly Actor[], restored?: RestoredFieldNpcActivities,
     entities: readonly FieldEntity[] = this.entityList): Map<string, NpcActivityRuntime> {
@@ -1061,7 +1071,7 @@ export class FieldGame {
     const treasures = this.prepareTreasureInitialization(group.entities);
     const activities = this.prepareNpcActivities(Object.values(actors), undefined, [...this.entityList, ...group.entities]);
     const effectSetup = this.effects?.prepare([{ kind: "setup", registeredBoards:
-      this.defaultProperties.filter((entity) => entity.kind === 11).map((entity) => entity.id), groupUpdate: true }]);
+      this.defaultProperties.filter((entity) => entity.kind === 11 && !this.passiveEffects.has(entity.id)).map((entity) => entity.id), groupUpdate: true }]);
     const properties = [...this.defaultProperties, ...group.entities];
     const publish = () => {
       // register validates a private cells/regions draft before its two pointer
@@ -1500,8 +1510,9 @@ export class FieldGame {
   ): FieldGame {
     if (options.puppetActors)
       throw new Error("Source puppet host checkpoints require a bound actor/camera/collision codec");
-    if (options.fieldEffectMap?.hasHistory || content.map.entities.some((entity) => entity.kind === 11) ||
-        Object.values(content.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11)))
+    const passiveEffects = bindPassiveEffects(content);
+    if (options.fieldEffectMap?.hasHistory || content.map.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id)) ||
+        Object.values(content.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id))))
       throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
     const s = structuredClone(raw);
     const hasActivities = s.kind === "idle-field-v12" || s.kind === "event-field-v3";
@@ -1661,7 +1672,7 @@ export class FieldGame {
     if (!group || this.activeGroups.has(name) || this.groupBlockers(group).length)
       throw new Error("Unknown or blocked saved native entity group");
     validateFieldMoveAreas([...this.entityList, ...group.entities]);
-    if (group.entities.some((entity) => entity.kind === 11 || entity.kind === 15))
+    if (group.entities.some((entity) => entity.kind === 11 && !this.passiveEffects.has(entity.id) || entity.kind === 15))
       throw new Error("Saved native group has unresolved effect/camera lifecycle");
     if (group.entities.some((entity) => entity.kind === 18)) requireMinimapMedia(group.entities, this.content.minimap);
     const ids = new Set([this.player.id, ...this.entityList.map((entity) => entity.id)]);
@@ -2191,6 +2202,99 @@ export class FieldGame {
       this.content.cameraHost!.mapRange, "source-absent", referenceActorId),
     () => { if (resolveReference() !== referenceActorId) throw new Error("Stale source relative SetPos selector"); });
   }
+  /** The scoped Web observer reads the current registration order and the
+   * existing native actors. Immutable host bindings never become a second
+   * live actor collection or a guessed link from a relay to a shopkeeper. */
+  private relayInteractionTarget(target: Point, direction: Direction): FieldEntity | null | undefined {
+    const host = this.content.frameworkRelayInteraction;
+    if (!host) return undefined;
+    const relays = this.entityList.filter(entity => entity.kind === 16);
+    if (!relays.length) return undefined;
+    const player = this.player, native = player.native;
+    if (!native || !this.content.cameraHost || native.entity.moving || native.entity.riding ||
+        player.mount || native.entity.direction !== player.direction || !DELTA[direction])
+      throw new Error("Relay interaction requires the stationary walking native player");
+    // Validate against live trusted content before touching an interaction.
+    const currentBindings = bindFieldRelays(this.content);
+    if (canonical([...currentBindings]) !== canonical([...this.relayBindings]))
+      throw new Error("Relay interaction host changed after field creation");
+    const range = this.content.cameraHost.mapRange,
+      parentContext = host.parentContext,
+      placements = relays.map(entity => {
+        const definition = currentBindings.get(entity.id);
+        if (!definition || canonical(definition) !== canonical(entity.relay))
+          throw new Error("Registered relay lost its source geometry binding");
+        return {
+          worldPosition: fieldNativeMapObjectPosition({ ...definition.rawGeometry, layer: definition.layer }, range,
+            this.content.nativeNpcStandby ? fieldNativeNpcStandbyPosition(this.content.nativeNpcStandby) : undefined),
+          horizontalCellLimit: definition.horizontalCellLimit,
+          verticalCellLimit: definition.verticalCellLimit,
+        };
+      }),
+      searchRanges = projectFieldRelaySearchRanges({ playerLocalPosition: native.entity.position,
+        registeredRelays: placements, parentContext }).searchRanges,
+      loop = this.content.cameraHost.loop,
+      mapArea = partyActorMapArea(range.width, range.height, (loop.horizontal ? 1 : 0) + (loop.vertical ? 2 : 0));
+    const colocated: FieldEntity[] = [], front: FieldEntity[] = [];
+    for (const entity of this.entityList) {
+      if (![5, 6, 7, 17].includes(entity.kind) ||
+          entity.kind === 7 && entity.mapObject?.collision === false && this.openedTreasures.has(entity.id)) continue;
+      const properties = entity.npc ?? entity.mapObject, actor = this.actors[entity.id];
+      if (!this.isEntityVisible(entity.id) || (actor?.layer ?? entity.layer) !== player.layer ||
+          (properties ? properties.interaction.kind === "none" : !entity.script) ||
+          properties && (!(properties.acceptDirection & ACTION_SIDE[OPPOSITE[direction]]) ||
+            properties.interaction.kind !== "blocked" && !properties.talkMounts.includes(player.mount ?? ""))) continue;
+      if (entity.kind !== 6 && entity.kind !== 17) {
+        if (contains(entity, target)) front.push(entity);
+        continue;
+      }
+      if (!actor?.native) throw new Error("Relay target has no current native actor position");
+      const position = actor.native.entity.position;
+      if (position.z !== native.entity.position.z || !canFieldRelayInteractToEntityPosition({
+        playerLocalPosition: native.entity.position, targetLocalPosition: position,
+        playerDirection: direction, objectType: entity.kind, searchRanges, mapArea, parentContext,
+      })) continue;
+      if (entity.nativeNpc?.controller !== "wait" || actor.motion || actor.native.entity.moving)
+        throw new Error("Relay moving-target observer is outside the declared known-Wait scope");
+      if (position.x === native.entity.position.x && position.y === native.entity.position.y) colocated.push(entity);
+      else front.push(entity);
+    }
+    return colocated[0] ?? front[0] ?? null;
+  }
+  /** Read-only target projection for the same direction/confirm command path.
+   * A requested facing can be inspected before its actual animation commits;
+   * this never turns an actor, opens a service or starts an event task. */
+  interactionTarget(direction: Direction = this.player.direction): FieldEntity | null {
+    if (!DELTA[direction]) throw new Error("Unknown interaction direction");
+    if (this.busy || this.player.motion || !this.collisionSwitches.interactiveObservation) return null;
+    const p = this.player, d = DELTA[direction], rawTarget = { x: p.x + d.x, y: p.y + d.y };
+    let target = rawTarget;
+    if (this.mapTopology) {
+      try { target = canonicalCell(this.mapTopology, rawTarget); }
+      catch { return null; }
+    }
+    const relayTarget = this.relayInteractionTarget(target, direction);
+    if (relayTarget !== undefined) return relayTarget;
+    const hits = this.entityList.filter((e) => {
+      const properties = e.npc ?? e.mapObject;
+      return (
+        (e.kind === 6 || e.kind === 17 || e.kind === 5 || e.kind === 7) &&
+        !(e.kind === 7 && e.mapObject?.collision === false && this.openedTreasures.has(e.id)) &&
+        this.isEntityVisible(e.id) && (this.actors[e.id]?.layer ?? e.layer) === p.layer &&
+        (properties ? properties.interaction.kind !== "none" : !!e.script) &&
+        (e.kind === 6 || e.kind === 17
+          ? !!this.actors[e.id] && (this.actors[e.id]!.x === target.x && this.actors[e.id]!.y === target.y ||
+            this.npcActivities.has(e.id) && this.actors[e.id]!.motion !== null &&
+            [this.actors[e.id]!.motion!.from, this.actors[e.id]!.motion!.to]
+              .some(cell => cell.x === target.x && cell.y === target.y))
+          : contains(e, target)) &&
+        (!properties || !!(properties.acceptDirection & ACTION_SIDE[OPPOSITE[direction]]) &&
+          (properties.interaction.kind === "blocked" || properties.talkMounts.includes(p.mount ?? "")))
+      );
+    });
+    if (hits.length > 1) throw new Error("同格交互目标不明确");
+    return hits[0] ?? null;
+  }
   confirm(): void {
     // Confirm is not a choice response. Even an answered request waits for its
     // own interpreter clock before another input can dismiss the next message.
@@ -2254,45 +2358,13 @@ export class FieldGame {
       return;
     }
     if (this.busy || this.player.motion || !this.collisionSwitches.interactiveObservation) return;
-    const p = this.player,
-      d = DELTA[p.direction],
-      rawTarget = { x: p.x + d.x, y: p.y + d.y };
-    let target = rawTarget;
-    if (this.mapTopology) {
-      try { target = canonicalCell(this.mapTopology, rawTarget); }
-      catch { return; }
-    }
-    const hits = this.entityList.filter((e) => {
-      const properties = e.npc ?? e.mapObject;
-      return (
-        (e.kind === 6 || e.kind === 17 || e.kind === 5 || e.kind === 7) &&
-        !(
-          e.kind === 7 &&
-          e.mapObject?.collision === false &&
-          this.openedTreasures.has(e.id)
-        ) &&
-        this.isEntityVisible(e.id) &&
-        (this.actors[e.id]?.layer ?? e.layer) === p.layer &&
-        (properties ? properties.interaction.kind !== "none" : !!e.script) &&
-        (e.kind === 6 || e.kind === 17
-          ? !!this.actors[e.id] && (this.actors[e.id]!.x === target.x && this.actors[e.id]!.y === target.y ||
-            this.npcActivities.has(e.id) && this.actors[e.id]!.motion !== null &&
-            [this.actors[e.id]!.motion!.from, this.actors[e.id]!.motion!.to]
-              .some(cell => cell.x === target.x && cell.y === target.y))
-          : contains(e, target)) &&
-        (!properties ||
-          (!!(
-            properties.acceptDirection & ACTION_SIDE[OPPOSITE[p.direction]]
-          ) &&
-            (properties.interaction.kind === "blocked" ||
-              properties.talkMounts.includes(p.mount ?? ""))))
-      );
-    });
-    if (hits.length > 1) {
-      this.block("同格交互目标不明确");
+    const p = this.player;
+    let e: FieldEntity | null;
+    try { e = this.interactionTarget(); }
+    catch (error) {
+      this.block(error instanceof Error ? error.message : String(error));
       return;
     }
-    const e = hits[0];
     if (!e) return;
     const site = {
         script: e.script ?? "field-interaction",
