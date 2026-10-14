@@ -120,6 +120,2518 @@
         ],
         "choiceAnswers": [],
         "battleAbilityIds": []
+      },
+      {
+        "id": "source-interiors-full-loop-and-treasures",
+        "entry": "framework-new-game",
+        "expectedMapId": 228,
+        "requiredMapIds": [
+          228,
+          229,
+          230,
+          231,
+          233,
+          234,
+          235,
+          236
+        ],
+        "requiredEncounterIds": [],
+        "maxTicks": 40000,
+        "inputs": [
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "face",
+            "direction": "left",
+            "mapId": 230,
+            "entityId": "entity_default:0:2"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "face",
+            "direction": "left",
+            "mapId": 230,
+            "entityId": "entity_default:0:2"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "face",
+            "direction": "right",
+            "mapId": 230,
+            "entityId": "entity_default:0:3"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "face",
+            "direction": "right",
+            "mapId": 233,
+            "entityId": "6"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "face",
+            "direction": "down",
+            "mapId": 233,
+            "entityId": "7"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "face",
+            "direction": "right",
+            "mapId": 233,
+            "entityId": "8"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "face",
+            "direction": "right",
+            "mapId": 234,
+            "entityId": "entity_default:0:6"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "face",
+            "direction": "left",
+            "mapId": 234,
+            "entityId": "entity_default:0:7"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "face",
+            "direction": "up",
+            "mapId": 234,
+            "entityId": "entity_default:0:8"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "face",
+            "direction": "up",
+            "mapId": 234,
+            "entityId": "entity_default:0:9"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "face",
+            "direction": "left",
+            "mapId": 235,
+            "entityId": "entity_default:0:2"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "face",
+            "direction": "down",
+            "mapId": 235,
+            "entityId": "entity_default:0:3"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "face",
+            "direction": "up",
+            "mapId": 235,
+            "entityId": "entity_default:0:4"
+          },
+          {
+            "kind": "confirm"
+          },
+          {
+            "kind": "save-restore"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "right"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "down"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "left"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          },
+          {
+            "kind": "move",
+            "direction": "up"
+          }
+        ],
+        "choiceAnswers": [],
+        "battleAbilityIds": []
       }
     ]
   },

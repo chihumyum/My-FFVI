@@ -1,5 +1,6 @@
 import type { Direction } from "../field/types.js";
 import type { FieldChoiceAnswer } from "./field-choice.js";
+import type { FieldDirectionInputResult } from "./field.js";
 import { GameSession } from "./game-session.js";
 
 export type GameFlowPhase = "title" | "loading" | "paused" | "exploration" | "event" | "dialogue" | "choice" | "shop" |
@@ -181,6 +182,16 @@ export class GameFlow {
     const owner = this.owner;
     if (!this.hostAllowsInput || !owner || owner.battle) return false;
     return owner.field.move(direction);
+  }
+  directionInput(direction: Direction): FieldDirectionInputResult {
+    if (!["up", "right", "down", "left"].includes(direction)) throw new Error("Invalid game flow direction");
+    const owner = this.owner;
+    if (!this.hostAllowsInput || !owner || owner.battle || this.phase !== "exploration")
+      return { kind: "rejected" };
+    const field = owner.field, result = field.directionInput(direction);
+    if (this.owner !== owner || owner.field !== field || !this.hostAllowsInput)
+      return { kind: "rejected" };
+    return result;
   }
   /** True means eligible input was dispatched; the field owner decides whether
    * a nearby object or a waiting dialogue actually accepts the confirmation. */

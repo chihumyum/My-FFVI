@@ -159,6 +159,9 @@ const OPPOSITE: Record<Direction, Direction> = {
   down: "up",
 };
 export type Motion = FieldActorMotion;
+export type FieldDirectionInputResult = { kind: "movement" } |
+  { kind: "door"; entityId: string; regionId: string } |
+  { kind: "facing" } | { kind: "rejected" };
 export type Actor = Point & {
   id: string;
   layer: number | null;
@@ -1876,16 +1879,32 @@ export class FieldGame {
     return this.occupied([horizontal, vertical, to], p.layer) ? null : plan;
   }
   move(direction: Direction): boolean {
+    return this.directionInput(direction).kind === "movement";
+  }
+  /** One real direction gesture. Its result distinguishes a started step
+   * from the same gesture's source door contact or blocked-cell facing. */
+  directionInput(direction: Direction): FieldDirectionInputResult {
+    if (!Object.hasOwn(DELTA, direction)) throw new Error("Invalid field direction");
     const p = this.player;
-    if (this.busy || p.motion || this.movementBlocker) return false;
-    p.direction = direction;
-    const faceBlockedStep = (): false => {
+    if (this.busy || p.motion || this.movementBlocker) return { kind: "rejected" };
+    const prepareFace = () => {
+      const animation = p.animation?.clone() ?? null;
+      animation?.look(direction);
+      animation?.frame();
+      return animation;
+    };
+    const publishFace = (animation: ActorAnimation | null) => {
+      p.direction = direction; p.animation = animation;
+    };
+    const faceBlockedStep = (): FieldDirectionInputResult => {
+      if (this.stop) return { kind: "rejected" };
       try {
-        p.animation?.look(direction);
+        publishFace(prepareFace());
       } catch (error) {
         this.block(error instanceof Error ? error.message : String(error));
+        return { kind: "rejected" };
       }
-      return false;
+      return { kind: "facing" };
     };
     const d = DELTA[direction];
     let to = { x: p.x + d.x, y: p.y + d.y };
@@ -1907,26 +1926,31 @@ export class FieldGame {
     if (doors.length) {
       const e = doors[0]!,
         site: Site = { script: "open-trigger", index: 0, source: e.source };
-      if (doors.length > 1)
+      if (doors.length > 1) {
         this.block("同格开门触发器的接触顺序尚未恢复", site);
-      else
+        return { kind: "rejected" };
+      } else
         try {
-          if (
-            this.openTriggers.start(e, this.entityList, direction) &&
-            e.openTrigger!.soundId > 0
-          )
+          // Complete fallible pose preparation before starting source tiles
+          // and collision. A missing sprite cannot leave a half-open door.
+          const animation = prepareFace(), started = this.openTriggers.start(e, this.entityList, direction);
+          if (started && e.openTrigger!.soundId > 0)
             this.presentationOmissions.push({
               site,
               kind: "sound",
               soundId: e.openTrigger!.soundId,
             });
+          publishFace(animation);
+          if (started) return { kind: "door", entityId: e.id,
+            regionId: this.openTriggers.snapshot().pending!.region };
+          return { kind: "facing" };
         } catch (error) {
           this.block(
             error instanceof Error ? error.message : String(error),
             site,
           );
+          return { kind: "rejected" };
         }
-      return faceBlockedStep();
     }
     const fromMask = this.collision(p, p.layer),
       toMask = this.collision(to, p.layer);
@@ -1939,7 +1963,7 @@ export class FieldGame {
         to = redirected.destination; motionTo = redirected.unwrappedDestination;
       } catch (error) {
         this.block(error instanceof Error ? error.message : String(error));
-        return false;
+        return { kind: "rejected" };
       }
     }
     if (this.occupied([to], p.layer)) return faceBlockedStep();
@@ -1953,10 +1977,11 @@ export class FieldGame {
       encounter = this.prepareWalkEncounterStep();
     } catch (error) {
       this.block(error instanceof Error ? error.message : String(error));
-      return false;
+      return { kind: "rejected" };
     }
     this.pendingPlayerStep = step;
     this.pendingWalkEncounter = encounter;
+    p.direction = direction;
     p.animation = movementAnimation;
     p.motion = {
       from: { x: p.x, y: p.y },
@@ -1965,7 +1990,7 @@ export class FieldGame {
       duration: 240,
       manual: true,
     };
-    return true;
+    return { kind: "movement" };
   }
   get movementBlocker(): string | null {
     return this.options.movementBlocker?.(this.transportationId, true) ?? null;

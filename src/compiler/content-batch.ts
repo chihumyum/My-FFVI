@@ -33,6 +33,10 @@ const shopRequest = z.discriminatedUnion("kind", [
 ]);
 const input = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("move"), direction: z.enum(["up", "right", "down", "left"]) }).strict(),
+  // Facing is a declared interaction input, never a successful move through
+  // an arbitrary wall. Its live target is checked by the same route driver.
+  z.object({ kind: z.literal("face"), direction: z.enum(["up", "right", "down", "left"]),
+    mapId: id, entityId: name.refine(value => value.trim() === value, "Invalid facing entity identity") }).strict(),
   z.object({ kind: z.literal("confirm") }).strict(),
   z.object({ kind: z.literal("menu"), command: menuCommand }).strict(),
   // Shops remain field interactions. A menu command does not authorize a

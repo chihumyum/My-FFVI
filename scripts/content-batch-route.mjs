@@ -5,7 +5,42 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { controlledAudioRuntime } from "./controlled-audio.mjs";
 
-export async function runContentBatchRoute({ root, compiled = "dist", plan: suppliedPlan, routeId, repository, runtimeHash }) {
+const directions = { up: [0, -1], right: [1, 0], down: [0, 1], left: [-1, 0] };
+const acceptFacing = { up: 4, right: 8, down: 1, left: 2 };
+const contactDirection = { up: 1, right: 2, down: 4, left: 8 };
+const position = player => ({ x: player.x, y: player.y, layer: player.layer });
+
+/** A facing declaration names one live interaction in the front cell. This
+ * checks the public projections, never moves an entity or dispatches its VM. */
+function facingTarget(field, input, canonicalCell) {
+  if (field.content.map.identity?.mapId !== input.mapId) return null;
+  if (!field.collisionState.interactiveObservation || field.player.motion) return null;
+  const player = field.player, delta = directions[input.direction];
+  let cell = { x: player.x + delta[0], y: player.y + delta[1] };
+  if (field.content.map.topology) {
+    try { cell = canonicalCell(field.content.map.topology, cell); }
+    catch { return null; }
+  }
+  const hits = field.entities.filter(entity => {
+    const properties = entity.npc ?? entity.mapObject, actor = field.actors[entity.id];
+    if (![5, 6, 7, 17].includes(entity.kind) || !properties ||
+        ["none", "blocked"].includes(properties.interaction.kind) ||
+        !field.isEntityVisible(entity.id) || (actor?.layer ?? entity.layer) !== player.layer ||
+        !(properties.acceptDirection & acceptFacing[input.direction]) ||
+        !properties.talkMounts.includes(player.mount ?? "")) return false;
+    if (properties.interaction.kind === "script" &&
+        (!properties.interaction.script || !field.content.scripts[properties.interaction.script])) return false;
+    if (entity.kind === 6 || entity.kind === 17)
+      return !!actor && actor.x === cell.x && actor.y === cell.y;
+    return cell.x >= entity.x && cell.x < entity.x + entity.width &&
+      cell.y >= entity.y && cell.y < entity.y + entity.height;
+  });
+  return hits.length === 1 && hits[0].id === input.entityId ? hits[0] : null;
+}
+
+export async function runContentBatchRoute({ root, compiled = "dist", plan: suppliedPlan, routeId, repository, runtimeHash,
+  captureFinalState = false }) {
+  assert.equal(typeof captureFinalState, "boolean", "Final state capture must be an explicit boolean");
   // Capture the entire nominated route before any await. A caller supplies only
   // its ID, never a different input program borrowing the manifest's identity.
   const plan = structuredClone(suppliedPlan), candidates = plan.manifest.routes.filter(route => route.id === routeId);
@@ -14,10 +49,10 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
   const load = name => import(pathToFileURL(resolve(root, compiled, "src/core", name + ".js")));
   const [{ GameSession }, { GameFlow }, { GameMapLoader }, { CheckpointStorage }, { GameEventSaveCoordinator },
     { GameEntryLoader }, { GameBattleHandoff }, { GameCommands }, { prepareGameDevelopmentEntry },
-    { NewGameFieldEntry }, { FieldFadeState }, { createSourcePresentationContext }, { contentDigest }] = await Promise.all([
+    { NewGameFieldEntry }, { FieldFadeState }, { createSourcePresentationContext }, { contentDigest }, { canonicalCell }] = await Promise.all([
     load("game-session"), load("game-flow"), load("game-map-loader"), load("saved-game"), load("game-event-save"),
     load("game-entry-loader"), load("game-battle-handoff"), load("game-commands"), load("game-development-entry"),
-    load("new-game-field-entry"), load("field-fade"), load("source-presentation"), load("content-integrity"),
+    load("new-game-field-entry"), load("field-fade"), load("source-presentation"), load("content-integrity"), load("field-map-topology"),
   ]);
   const runtime = { ...controlledAudioRuntime(), battleHandoff: "prepared",
     transportationTimestamp: () => "639273600000000000" };
@@ -46,6 +81,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     entriesCommitted: 0, loadsCommitted: 0, preparedStarts: 0, committedStarts: 0,
     preparedReturns: 0, committedReturns: 0, duplicateReturnsRejected: 0, staleCommandChannelsRejected: 0 };
   let commandChannel = null, maps = null, saves = null;
+  let initialOwned = null, pendingDoor = null;
   let ticks = 0, inputIndex = 0, answerIndex = 0, commands = 0, checkpointHash = null;
   const current = () => flow.session;
   const completeInput = input => {
@@ -165,6 +201,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     }
     if (started.status !== "committed") throw started.error ?? new Error("Route entry did not commit: " + started.status);
     execution.entriesCommitted++;
+    if (captureFinalState) initialOwned = structuredClone(started.session.state.snapshot());
     commandChannel = new GameCommands(flow, started.session);
     assert.equal(commandChannel.settingsReady, false, "An entry clears previous media readiness");
     flow.advance(0, host); visit(); trace.push({ kind: "start", mapId: receipt.finalMapId,
@@ -253,6 +290,19 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
         trace.push({ kind: "event-save", mapId: receipt.finalMapId }); tick(); continue;
       }
       if (field.stop?.kind === "unsupported") { receipt.boundary = structuredClone(field.stop); break; }
+      if (pendingDoor) {
+        assert.equal(game, pendingDoor.owner, "A door cannot transfer the session owner");
+        assert.equal(field, pendingDoor.field, "A door must finish in its existing field");
+        if (game.checkpointReady) {
+          assert.equal(field.player.motion, null);
+          assert.deepEqual(position(field.player), pendingDoor.position, "Door opening cannot move the player");
+          assert.ok(field.checkpoint().doors.opened.includes(pendingDoor.entityId), "Declared door did not finish");
+          assert.equal(field.tileAnimations.isPlaying(pendingDoor.regionId), false);
+          trace.push({ kind: "door-complete", inputIndex: pendingDoor.inputIndex, mapId: pendingDoor.mapId,
+            entityId: pendingDoor.entityId, regionId: pendingDoor.regionId, ownerRetained: true });
+          pendingDoor = null;
+        }
+      }
       if (field.stop?.kind === "map-transition") {
         const request = field.stop.request, from = receipt.finalMapId;
         if (!plan.manifest.mapIds.includes(request.mapId)) {
@@ -385,7 +435,36 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
             if (accepted) program.menuCount++;
             trace.push({ kind: "menu-command", inputIndex, command: structuredClone(input.command),
               accepted, ownerBound: commandChannel.owner === menuOwner, pauseRestored: flow.paused === paused });
-          } else if (input.kind === "move") accepted = flow.move(input.direction);
+          } else if (input.kind === "move" || input.kind === "face") {
+            const before = position(field.player), beforeMotion = field.player.motion;
+            if (input.kind === "face" && !facingTarget(field, input, canonicalCell)) {
+              receipt.boundary = { kind: "rejected-face-input", inputIndex, input,
+                reason: "live-facing-target-unavailable" }; break;
+            }
+            const result = flow.directionInput(input.direction);
+            assert.equal(current(), game); assert.equal(game.field, field);
+            if (input.kind === "face") {
+              accepted = result.kind === "facing" && beforeMotion === null && field.player.motion === null &&
+                field.player.x === before.x && field.player.y === before.y && field.player.layer === before.layer &&
+                field.player.direction === input.direction && facingTarget(field, input, canonicalCell) !== null;
+            } else {
+              accepted = result.kind === "movement" || result.kind === "door";
+              if (result.kind === "door") {
+                const entity = field.entities.find(entity => entity.id === result.entityId);
+                const region = field.entities.find(entity => entity.id === result.regionId);
+                assert.ok(entity?.kind === 8 && field.isEntityVisible(entity.id) && region?.kind === 1 &&
+                  entity.openTrigger?.linkObject === (region.objectId ?? 0) &&
+                  (entity.openTrigger.direction & contactDirection[input.direction]), "Unbound source door contact");
+                assert.equal(field.player.motion, null); assert.deepEqual(position(field.player), before);
+                assert.equal(field.busy, true, "A door input must await its existing owner");
+                pendingDoor = { owner: game, field, position: before, inputIndex,
+                  mapId: receipt.finalMapId, entityId: entity.id, regionId: region.id };
+                receipt.controls.push(`door-contact map:${receipt.finalMapId} entity:${entity.id} region:${region.id}`);
+              }
+            }
+            trace.push({ kind: "direction-input", inputIndex, input: structuredClone(input),
+              result: structuredClone(result), before, after: position(field.player), accepted });
+          }
           else if (input.kind === "confirm") accepted = flow.confirm();
           else if (input.kind === "shop" || input.kind === "leave-shop") {
             receipt.boundary = { kind: "rejected-shop-input", inputIndex, input, reason: "no-open-shop" }; break;
@@ -430,5 +509,8 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     receipt.checkpointReady = current().checkpointReady;
   }
   receipt.completedEncounterIds = [...new Set(receipt.completedEncounterIds)];
-  return { receipt, trace, execution, elapsedMs: ticks * 10, commands, checkpointHash };
+  return { receipt, trace, execution, elapsedMs: ticks * 10, commands, checkpointHash,
+    ...(captureFinalState ? { finalState: structuredClone({ initialOwned,
+      finalOwned: flow.hasSession ? current().state.snapshot() : null,
+      checkpoint: flow.hasSession && current().checkpointReady ? current().checkpoint() : null }) } : {}) };
 }
