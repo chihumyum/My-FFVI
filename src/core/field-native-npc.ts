@@ -6,11 +6,11 @@ import type { FieldCameraMapRange } from "./field-camera.js";
 import type { NativeFieldActorData } from "./field-native-actors.js";
 import { fieldPuppetBoundTransparentTextures, type FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import type { Character, Direction, Evidence } from "../field/types.js";
+import { parseNpcActivityProgram, type FieldNpcActivityProgram } from "./field-npc-activity.js";
 
 /** Mapobject is a separate master domain from party field-character assets.
  * source identifies the referring map object; media has its own source binding. */
-export type FieldNativeNpcDefinition = {
-  kind: "native-map-npc-v1";
+type FieldNativeNpcBody = {
   group: string;
   /** PropertyEntity.EntityId is a script selector; zero is anonymous. */
   sourceEntityId: number;
@@ -23,9 +23,14 @@ export type FieldNativeNpcDefinition = {
   direction: Direction;
   asset: { id: number; asset: string; animationAsset: string; shadowType: 0 | 1; source: Evidence };
   updateAttribute: 2 | 10;
-  controller: "wait";
   turnAround: boolean;
 };
+export type FieldNativeNpcDefinition = FieldNativeNpcBody & (
+  { kind: "native-map-npc-v1"; controller: "wait" }
+  | { kind: "framework-map-npc-v1"; controller: "area"; activitySourceHash: string;
+      policyHash: string; program: FieldNpcActivityProgram }
+);
+export type FieldFrameworkAreaNpcDefinition = Extract<FieldNativeNpcDefinition, { controller: "area" }>;
 export type FieldNativeNpcScope = NonNullable<NativeFieldActorData["scope"]>;
 export type FieldNativeNpcStandby = {
   kind: "native-map-npc-standby-v1";
@@ -57,6 +62,9 @@ export type FieldNativeNpcGroupInput = {
   mapRange: FieldCameraMapRange;
   providers: FieldPuppetHostProviders;
   existingActorIds: readonly string[];
+  /** A trusted content profile selects this Web host. A source definition or
+   * saved state cannot grant its scheduling/collision policy. */
+  activityPolicy?: "framework-npc-area-v1";
   /** CreateOutOfRangeMapPosition reads this world-space transform. It is not
    * the persistent residents' offMapPosition. Missing is not zero. */
   standbyAnchorPosition?: { x: number; y: number };
@@ -77,9 +85,10 @@ function finite(value: number): number {
   return f(value);
 }
 export function validateFieldNativeNpc(definition: FieldNativeNpcDefinition): void {
-  if (!definition || definition.kind !== "native-map-npc-v1" || typeof definition.group !== "string" || !definition.group ||
+  if (!definition || !((definition.kind === "native-map-npc-v1" && definition.controller === "wait") ||
+      (definition.kind === "framework-map-npc-v1" && definition.controller === "area")) || typeof definition.group !== "string" || !definition.group ||
       typeof definition.entityId !== "string" || !definition.entityId ||
-      ![6, 17].includes(definition.objectType) || definition.controller !== "wait" ||
+      ![6, 17].includes(definition.objectType) ||
       typeof definition.turnAround !== "boolean" ||
       ![2, 10].includes(definition.updateAttribute) ||
       !Object.hasOwn(directions, definition.sourceDirection) || directions[definition.sourceDirection] !== definition.direction)
@@ -103,6 +112,13 @@ export function validateFieldNativeNpc(definition: FieldNativeNpcDefinition): vo
       definition.asset.animationAsset !== definition.asset.asset.toUpperCase() ||
       ![0, 1].includes(definition.asset.shadowType))
     throw new Error("Unbound native NPC map-object media");
+  if (definition.controller === "area") {
+    const program = parseNpcActivityProgram(definition.program);
+    if (!/^[a-f0-9]{64}$/.test(definition.activitySourceHash) || !/^[a-f0-9]{64}$/.test(definition.policyHash) ||
+        program.actorId !== definition.entityId || program.group !== definition.group ||
+        program.layer !== definition.geometry.layer || program.updateAttribute !== definition.updateAttribute)
+      throw new Error("Unbound framework NPC activity definition");
+  }
 }
 
 /** GetFieldEntity(0) returns the camera dummy before searching map entities.
@@ -155,6 +171,8 @@ export function prepareFieldNativeNpcGroup(input: FieldNativeNpcGroupInput): { a
   let group: string | null = null;
   const actors = input.definitions.map((definition): NativeFieldActorData => {
     validateFieldNativeNpc(definition);
+    if (definition.controller === "area" && input.activityPolicy !== "framework-npc-area-v1")
+      throw new Error("Framework NPC activity requires its trusted content host");
     if (group !== null && group !== definition.group) throw new Error("Native NPC candidate mixes entity groups");
     group = definition.group;
     if (ids.has(definition.entityId)) throw new Error("Native NPC actor identity already exists: " + definition.entityId);

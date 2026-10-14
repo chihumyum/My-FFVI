@@ -3,10 +3,11 @@ import { canonical } from "./canonical.js";
 import { checkpointInteger, checkpointKeys, checkpointNumber, checkpointSameIds } from "./checkpoint-validation.js";
 import { validateFieldActorFactory, type FieldActorFactoryBindings, type FieldActorFactoryCatalog } from "./field-actor-factory.js";
 import { validateFieldActorViewProjection } from "./field-actor-view.js";
-import type { FieldCameraMapRange } from "./field-camera.js";
+import { fieldCameraCellToWorld, type FieldCameraMapRange } from "./field-camera.js";
 import type { FieldPartyActorCheckpoint } from "./field-party-actors.js";
-import { createNativeFieldActorProjection, type NativeFieldActor, type NativeFieldActorData,
-  type NativeFieldMotion } from "./field-native-actors.js";
+import { createNativeFieldActorProjection, type NativeFieldActor, type NativeFieldActorData } from "./field-native-actors.js";
+import type { FieldActorMotion } from "./field-script-motion.js";
+import { sourceNpcSecondsPerCell } from "./field-npc-activity.js";
 import { fieldNativeNpcSelectorBinding, type FieldNativeNpcDefinition } from "./field-native-npc.js";
 import { fieldPuppetBoundTransparentTextures, type FieldPuppetHostActor,
   type FieldPuppetHostProviders } from "./field-puppet-effects.js";
@@ -30,14 +31,30 @@ export type FieldNativeActorCheckpoint = {
   view: { map: string; layer: number } | null;
   transparentTextures: { first: string | null; second: string | null };
 };
+export type FieldNativeAutonomousMotionBinding = {
+  definitionHash: string;
+  /** NPC MoveSpeed enum, deliberately separate from Puppet Move speedId. */
+  sourceSpeedEnum: number;
+  commandId: number;
+  /** Derived from the trusted activity program; ordinary NPC magnification is 1. */
+  secondsPerCell: number;
+};
+export type FieldNativeActorMotionCheckpoint = FieldNativeActorCheckpoint & {
+  motion: { definitionHash: string; commandId: number; state: FieldActorMotion };
+};
 export type FieldNativeCheckpoint = {
   kind: "native-field-actors-checkpoint-v1";
   actors: FieldNativeActorCheckpoint[];
+} | {
+  kind: "native-field-actors-checkpoint-v2";
+  /** Idle rows keep their exact v1 shape; only authorized moving NPCs add the
+   * existing Actor.motion register and its correlation with controller state. */
+  actors: (FieldNativeActorCheckpoint | FieldNativeActorMotionCheckpoint)[];
 };
 export type FieldNativeCheckpointOwner = Readonly<Record<string, {
   readonly id: string;
   readonly native?: NativeFieldActorData;
-  readonly motion: NativeFieldMotion | null;
+  readonly motion: FieldActorMotion | null;
   readonly steps: number;
 }>>;
 /** All inputs are reconstructed from hash-checked content and the separately
@@ -54,6 +71,11 @@ export type FieldNativeCheckpointContext = {
   characters: Readonly<Record<string, Character>>;
   npcs: readonly FieldNativeNpcDefinition[];
   providers: FieldPuppetHostProviders;
+  /** Rebuilt from trusted activity/program/pending state, never saved actor
+   * rows. The Field host checks exact instance/epoch, active group, policy and
+   * program speed, and rejects event-held leases before preparing this map.
+   * Only currently pending autonomous commands belong here; idle grants fail. */
+  autonomousMotions?: Readonly<Record<string, FieldNativeAutonomousMotionBinding>>;
   transportationPresentation?: FieldTransportActorPresentation;
   /** A retained off-map instance may still reference a previous map material.
    * Without that trusted definition the checkpoint is explicitly unavailable. */
@@ -76,6 +98,74 @@ function float32(value: number, label: string): void {
 }
 function bool(value: unknown): void {
   if (typeof value !== "boolean") throw new Error("Invalid native actor checkpoint boolean");
+}
+function dataRecord(raw: unknown, fields?: string): Record<string, unknown> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Invalid autonomous motion checkpoint record");
+  const descriptors = Object.getOwnPropertyDescriptors(raw), keys = Reflect.ownKeys(raw), expected = fields?.split(",");
+  if (keys.some(key => typeof key !== "string") ||
+      Object.values(descriptors).some(descriptor => !("value" in descriptor) || !descriptor.enumerable) ||
+      expected && (keys.length !== expected.length || expected.some(key => !Object.hasOwn(descriptors, key))))
+    throw new Error("Invalid autonomous motion checkpoint fields");
+  return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]));
+}
+function autonomousBindings(context: FieldNativeCheckpointContext, expected: readonly BoundActor[]):
+  Map<string, FieldNativeAutonomousMotionBinding> {
+  const result = new Map<string, FieldNativeAutonomousMotionBinding>();
+  if (context.autonomousMotions === undefined) return result;
+  const byId = new Map(expected.map(actor => [actor.id, actor]));
+  for (const [id, raw] of Object.entries(dataRecord(context.autonomousMotions))) {
+    const bound = byId.get(id), value = dataRecord(raw, "definitionHash,sourceSpeedEnum,commandId,secondsPerCell");
+    if (bound?.metadata.scope?.kind !== "map-npc" || bound.metadata.scope.entityId !== id)
+      throw new Error("Autonomous motion requires a trusted map NPC scope");
+    if (typeof value.definitionHash !== "string" || !/^[a-f0-9]{64}$/.test(value.definitionHash))
+      throw new Error("Invalid autonomous motion definition binding");
+    checkpointInteger(value.commandId as number, 1);
+    checkpointInteger(value.sourceSpeedEnum as number, 0, 8);
+    checkpointNumber(value.secondsPerCell as number, Number.MIN_VALUE, Number.MAX_SAFE_INTEGER / 1000);
+    if (value.secondsPerCell !== sourceNpcSecondsPerCell(value.sourceSpeedEnum as Parameters<typeof sourceNpcSecondsPerCell>[0]))
+      throw new Error("Autonomous motion timing differs from its trusted source NPC speed enum");
+    result.set(id, { definitionHash: value.definitionHash, commandId: value.commandId as number,
+      sourceSpeedEnum: value.sourceSpeedEnum as number, secondsPerCell: value.secondsPerCell as number });
+  }
+  return result;
+}
+function autonomousMotion(raw: unknown, binding: FieldNativeAutonomousMotionBinding,
+  row: FieldNativeActorCheckpoint, context: FieldNativeCheckpointContext): FieldNativeActorMotionCheckpoint["motion"] {
+  const value = dataRecord(raw, "definitionHash,commandId,state");
+  if (value.definitionHash !== binding.definitionHash || value.commandId !== binding.commandId)
+    throw new Error("Autonomous motion command binding changed");
+  const state = dataRecord(value.state, "from,to,elapsed,duration,manual"),
+    from = dataRecord(state.from, "x,y"), to = dataRecord(state.to, "x,y");
+  for (const point of [from, to]) for (const coordinate of Object.values(point)) {
+    float32(coordinate as number, "motion coordinate");
+    checkpointInteger(coordinate as number, -0x80000000, 0x7fffffff);
+  }
+  const dx = (to.x as number) - (from.x as number), dy = (to.y as number) - (from.y as number);
+  if (state.manual !== false || Math.abs(dx) + Math.abs(dy) !== 1 || dx !== 0 && dy !== 0)
+    throw new Error("Autonomous motion must be one cardinal non-manual cell");
+  const direction: Direction = dx === 1 ? "right" : dx === -1 ? "left" : dy === 1 ? "down" : "up";
+  const duration = binding.secondsPerCell * 1000;
+  if (typeof state.duration !== "number" || state.duration !== duration)
+    throw new Error("Autonomous motion duration does not match the trusted NPC speed");
+  checkpointInteger(state.elapsed as number);
+  if ((state.elapsed as number) % 10 !== 0 || (state.elapsed as number) >= duration)
+    throw new Error("Autonomous motion elapsed is not a pending field clock");
+  const npc = context.npcs.find(npc => npc.entityId === row.id);
+  const positionFields = dataRecord(row.position, "x,y,z");
+  if (!npc || row.layer !== npc.geometry.layer + 9 || positionFields.z !== f(349 - npc.geometry.layer * 100) ||
+      row.direction !== direction)
+    throw new Error("Autonomous motion pose does not match its trusted NPC layer/direction");
+  const ratio = (state.elapsed as number) / duration;
+  const point = { x: (from.x as number) + dx * ratio, y: (from.y as number) + dy * ratio };
+  // Same float32 transform as the unique native Actor.x/y accessors. These
+  // runtime coordinates corroborate the retained motion; they are no new owner.
+  const position = fieldCameraCellToWorld(context.mapRange, { x: f(f(point.x) - context.mapRange.x),
+    y: f(f(point.y) - context.mapRange.y) }, 0);
+  if (positionFields.x !== position.x || positionFields.y !== position.y)
+    throw new Error("Autonomous motion position does not match its elapsed projection");
+  return { definitionHash: binding.definitionHash, commandId: binding.commandId,
+    state: { from: { x: from.x as number, y: from.y as number }, to: { x: to.x as number, y: to.y as number },
+      elapsed: state.elapsed as number, duration, manual: false } };
 }
 function expectedActors(context: FieldNativeCheckpointContext): BoundActor[] {
   if (!context || !context.characters || !context.providers || !context.bindings ||
@@ -173,8 +263,10 @@ function material(row: FieldNativeActorCheckpoint, context: FieldNativeCheckpoin
   return { map: row.view.map, layer: row.view.layer, properties: structuredClone(properties) };
 }
 
-function restoreActor(row: FieldNativeActorCheckpoint, expected: BoundActor, context: FieldNativeCheckpointContext): NativeFieldActor {
-  checkpointKeys(row, "id,position,layer,direction,animation,visible,fadeAlpha,bodyOpaque,shadowVisible,steps,view,transparentTextures");
+function restoreActor(row: FieldNativeActorCheckpoint | FieldNativeActorMotionCheckpoint, expected: BoundActor,
+  context: FieldNativeCheckpointContext, binding?: FieldNativeAutonomousMotionBinding): NativeFieldActor {
+  checkpointKeys(row, "id,position,layer,direction,animation,visible,fadeAlpha,bodyOpaque,shadowVisible,steps,view,transparentTextures" +
+    (binding === undefined ? "" : ",motion"));
   if (row.id !== expected.id) throw new Error("Native actor checkpoint identity changed");
   checkpointKeys(row.position, "x,y,z");
   for (const value of Object.values(row.position)) float32(value, "position");
@@ -185,6 +277,8 @@ function restoreActor(row: FieldNativeActorCheckpoint, expected: BoundActor, con
   for (const value of [row.visible, row.bodyOpaque, row.shadowVisible]) bool(value);
   float32(row.fadeAlpha, "alpha"); checkpointNumber(row.fadeAlpha, 0, 1); checkpointInteger(row.steps);
   if (expected.media === null && row.animation !== null) throw new Error("Saved animation grants missing source media");
+  const motion = binding === undefined ? null
+    : autonomousMotion((row as FieldNativeActorMotionCheckpoint).motion, binding, row, context).state;
   const animation = expected.media && new ActorAnimation(expected.media);
   if (animation) {
     animation.restore(row.animation);
@@ -198,6 +292,7 @@ function restoreActor(row: FieldNativeActorCheckpoint, expected: BoundActor, con
   const actor = createNativeFieldActorProjection({ ...structuredClone(expected.metadata), entity }, context.mapRange, context.partyCatalog,
     context.transportationPresentation);
   actor.steps = row.steps;
+  actor.motion = motion;
   return actor;
 }
 
@@ -205,24 +300,51 @@ function restoreActor(row: FieldNativeActorCheckpoint, expected: BoundActor, con
  * complete candidate. No lifecycle, Look/Cue, controller init or source script
  * is replayed. Camera and all other owners are deliberately absent here. */
 export function restoreFieldNativeCheckpoint(raw: FieldNativeCheckpoint, context: FieldNativeCheckpointContext): NativeFieldActor[] {
-  const saved = structuredClone(raw), expected = expectedActors(context);
+  const expected = expectedActors(context), bindings = autonomousBindings(context, expected);
+  const fields = dataRecord(raw, "kind,actors");
+  if (fields.kind === "native-field-actors-checkpoint-v2") {
+    if (!Array.isArray(fields.actors) || fields.actors.length !== expected.length)
+      throw new Error("Invalid autonomous motion checkpoint actors");
+    const descriptors = Object.getOwnPropertyDescriptors(fields.actors);
+    if (Reflect.ownKeys(fields.actors).length !== expected.length + 1)
+      throw new Error("Invalid autonomous motion checkpoint actor fields");
+    for (let index = 0; index < expected.length; index++) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor || !("value" in descriptor) || !descriptor.enumerable)
+        throw new Error("Invalid autonomous motion checkpoint actor fields");
+      const row = descriptor.value;
+      const actor = dataRecord(row);
+      if (Object.hasOwn(actor, "motion")) {
+        const binding = bindings.get(actor.id as string);
+        if (!binding) throw new Error("Unbound autonomous motion checkpoint");
+        // Inspect new fields before clone; saved accessors cannot impersonate
+        // controller authority or trigger reads while preparing a candidate.
+        autonomousMotion(actor.motion, binding, actor as unknown as FieldNativeActorMotionCheckpoint, context);
+      }
+    }
+  }
+  const saved = structuredClone(raw);
   checkpointKeys(saved, "kind,actors");
-  if (saved.kind !== "native-field-actors-checkpoint-v1" || !Array.isArray(saved.actors))
+  if ((saved.kind !== "native-field-actors-checkpoint-v1" && saved.kind !== "native-field-actors-checkpoint-v2") || !Array.isArray(saved.actors))
     throw new Error("Unknown native field actor checkpoint");
+  if ((saved.kind === "native-field-actors-checkpoint-v2") !== (bindings.size > 0))
+    throw new Error("Autonomous motion checkpoint authorization changed");
   checkpointSameIds(saved.actors.map((a) => a?.id), expected.map((a) => a.id));
   const byId = new Map(saved.actors.map((a) => [a.id, a]));
-  return expected.map((bound) => restoreActor(byId.get(bound.id)!, bound, context));
+  return expected.map((bound) => restoreActor(byId.get(bound.id)!, bound, context, bindings.get(bound.id)));
 }
 
 /** Read the unique live owner, validate all source dependencies and round-trip
  * admission before returning a detached JSON payload. Failure writes nothing. */
 export function captureFieldNativeCheckpoint(owner: FieldNativeCheckpointOwner, context: FieldNativeCheckpointContext): FieldNativeCheckpoint {
   if (!owner || typeof owner !== "object" || Array.isArray(owner)) throw new Error("Missing native field actor owner");
-  const expected = expectedActors(context);
+  const expected = expectedActors(context), bindings = autonomousBindings(context, expected);
   checkpointSameIds(Object.keys(owner), expected.map((a) => a.id));
-  const rows = expected.map((bound): FieldNativeActorCheckpoint => {
+  const rows = expected.map((bound): FieldNativeActorCheckpoint | FieldNativeActorMotionCheckpoint => {
     const actor = owner[bound.id]!, native = actor.native, entity = native?.entity;
-    if (actor.id !== bound.id || !native || !entity || entity.id !== bound.id || actor.motion !== null || entity.moving !== false)
+    const binding = bindings.get(bound.id);
+    if (actor.id !== bound.id || !native || !entity || entity.id !== bound.id ||
+        entity.moving !== (actor.motion !== null) || (actor.motion !== null) !== (binding !== undefined))
       throw new Error("Cannot checkpoint a moving, legacy or misidentified native actor");
     if (entity.character !== true || entity.riding !== bound.riding || entity.riderAssetId !== bound.riderAssetId ||
         entity.childEntityObject !== bound.childEntityObject || entity.rideOnEntity !== bound.rideOnEntity)
@@ -232,15 +354,19 @@ export function captureFieldNativeCheckpoint(owner: FieldNativeCheckpointOwner, 
     if ((entity.animation === null) !== (bound.media === null) || entity.animation !== null &&
         (!(entity.animation instanceof ActorAnimation) || canonical(entity.animation.character) !== canonical(bound.media)))
       throw new Error("Native checkpoint media does not match the trusted asset");
-    const row: FieldNativeActorCheckpoint = { id: bound.id, position: { ...entity.position }, layer: entity.layer,
+    const idleRow: FieldNativeActorCheckpoint = { id: bound.id, position: { ...entity.position }, layer: entity.layer,
       direction: entity.direction, animation: entity.animation?.snapshot() ?? null, visible: entity.visible,
       fadeAlpha: entity.fadeAlpha, bodyOpaque: entity.bodyOpaque, shadowVisible: entity.shadowVisible, steps: actor.steps,
       view: entity.viewBinding && { map: entity.viewBinding.map, layer: entity.viewBinding.layer },
       transparentTextures: { ...entity.transparentTextures } };
-    const recovered = restoreActor(row, bound, context);
+    const row = binding === undefined ? idleRow : { ...idleRow,
+      motion: autonomousMotion({ definitionHash: binding.definitionHash, commandId: binding.commandId, state: actor.motion },
+        binding, idleRow, context) };
+    const recovered = restoreActor(row, bound, context, binding);
     if (canonical(recovered.native.entity.viewBinding) !== canonical(entity.viewBinding))
       throw new Error("Native checkpoint material properties are not source-bound");
     return row;
   });
-  return { kind: "native-field-actors-checkpoint-v1", actors: rows };
+  return bindings.size > 0 ? { kind: "native-field-actors-checkpoint-v2", actors: rows }
+    : { kind: "native-field-actors-checkpoint-v1", actors: rows };
 }

@@ -25,6 +25,7 @@ async function modules(root, dist) {
     "core/content-integrity", "core/game-content", "core/game-content-refs", "core/source-catalog",
     "compiler/source-walk-policy",
     "compiler/initialized-battle-binding", "compiler/source-area-scope",
+    "compiler/field-npc-activity", "core/field-npc-activity-source",
   ].map(load)));
 }
 
@@ -33,12 +34,13 @@ async function modules(root, dist) {
 export async function compileInitializedContentBatch(root, raw, recipeSha256,
   { dist = "dist", readJson, sourceBattleDirectory } = {}) {
   root = resolve(root); const api = await modules(root, dist), build = resolve(root, "build");
-  const directoryVariant=raw?.kind==='initialized-source-map-recipe-v3';
+  const npcVariant=raw?.kind==='initialized-source-map-recipe-v4';
+  const directoryVariant=raw?.kind==='initialized-source-map-recipe-v3'||npcVariant;
   const walkingVariant=raw?.kind==='initialized-source-map-recipe-v2'||directoryVariant&&raw.walking!==null;
   fields(raw, "kind,id,sourceEntry,sourceBattle,sourceWorld,startMap,entrance,presentation,manifest"+
-    (directoryVariant?',battleCatalogSelection,sourceAreaScope,walking':walkingVariant?',walking':''));
+    (directoryVariant?',battleCatalogSelection,sourceAreaScope,walking':walkingVariant?',walking':'')+(npcVariant?',npcActivity':''));
   const recipe = structuredClone(raw);
-  assert.ok(['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2','initialized-source-map-recipe-v3'].includes(recipe.kind));
+  assert.ok(['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2','initialized-source-map-recipe-v3','initialized-source-map-recipe-v4'].includes(recipe.kind));
   assert.match(recipe.id, /^[a-z0-9][a-z0-9-]{0,79}$/); assert.match(recipeSha256, digest);
   assert.ok(Number.isInteger(recipe.startMap) && recipe.startMap > 0 && recipe.startMap <= 0x7fffffff);
   assert.ok(Number.isInteger(recipe.entrance) && recipe.entrance >= 0 && recipe.entrance <= 0x7fffffff);
@@ -71,6 +73,13 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
     sourceBattle,sourceWorld,...(sourceBattleDirectory===undefined?{}:{directory:sourceBattleDirectory})});
   const battle=selected.catalog;
   const walking=new Map();
+  let npcTemplate=null;
+  if(npcVariant){
+    fields(recipe.npcActivity,'kind,policy,missingFirstInterval,random,collision,schedule,takeover,reason');
+    assert.equal(recipe.npcActivity.kind,'framework-npc-area-template-v1');
+    api.parseFrameworkNpcActivityDeclaration({...recipe.npcActivity,kind:'framework-npc-area-declaration-v1',sourceHash:'0'.repeat(64)});
+    npcTemplate=structuredClone(recipe.npcActivity);
+  }
   if(walkingVariant){
     fields(recipe.walking,'kind,maps');assert.equal(recipe.walking.kind,'initialized-source-walking-v1');
     assert.ok(Array.isArray(recipe.walking.maps)&&recipe.walking.maps.length>0);
@@ -101,11 +110,27 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
   const renderHost = await api.loadFieldCompositionRenderHost(root, sources);
   const seal = value => { const { contentHash: _, ...body } = value; return { ...body, contentHash: api.hash(body) }; };
   const profile = sourceContentHash => ({ kind: "framework-development-v1", policy: "omit-anonymous-environment-particles-v1",
-    sourceContentHash, omissions: [], fieldPresentation: recipe.presentation });
-  const prefix = "/content-packages/" + recipe.id, presentations = [], walkingResults=[];
+    sourceContentHash, omissions: [], fieldPresentation: recipe.presentation,...(npcVariant?{npcActivity:npcTemplate.policy}:{}) });
+  const prefix = "/content-packages/" + recipe.id, presentations = [], walkingResults=[],npcResults=[];
   const maps = sourceMaps.map(sourceMap => {
     const map = structuredClone(sourceMap);
     map.developmentProfile = profile(sourceMap.contentHash);
+    if(npcVariant){
+      assert.equal(sourceMap.frameworkNpcActivity,undefined,'Original source map cannot carry an authored NPC controller host');
+      const inventory=api.compileFieldNpcActivitySources(corpus,map.mapId),npcBindings=[],diagnostics=structuredClone(inventory.diagnostics);
+      for(const source of inventory.definitions){
+        try{npcBindings.push(api.deriveFrameworkNpcActivity(source,{...npcTemplate,
+          kind:'framework-npc-area-declaration-v1',sourceHash:source.contentHash}));}
+        catch(error){diagnostics.push({code:'framework-npc-area-derivation',reason:String(error.message??error),source:source.source});}
+      }
+      const limitations=[...new Set([...inventory.definitions.flatMap(source=>source.nativeGaps),
+        'Web Area activity leaves every original dialogue, event, provider and story-reachability blocker visible.'])];
+      map.frameworkNpcActivity={kind:'framework-npc-area-host-v1',policy:npcTemplate.policy,
+        sourceMapHash:sourceMap.contentHash,sourceSetHash:sourceMap.sourceSetHash,parentSourceSetHash:sourceMap.parentSourceSetHash,
+        bindings:npcBindings,diagnostics,limitations,nativeRulesVerified:false};
+      npcResults.push({mapId:map.mapId,sourceMapHash:sourceMap.contentHash,sources:inventory.definitions,
+        counts:{...inventory.counts,derived:npcBindings.length},diagnostics});
+    }
     if(walking.has(map.mapId)){
       assert.ok(map.sourceWalkEncounters,'Missing retained source walking metadata');
       assert.equal(map.walkEncounters,undefined,'Source map cannot already carry an authored scheduler');
@@ -139,6 +164,7 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
     // Derived fields are top-level only. Every original payload field is kept
     // exactly, including original view/provider diagnostics and script metadata.
     const unchanged=structuredClone(map);delete unchanged.developmentProfile;delete unchanged.frameworkPresentation;
+    if(npcVariant)delete unchanged.frameworkNpcActivity;
     if(walking.has(map.mapId)){delete unchanged.walkEncounters;delete unchanged.frameworkWalkBinding;}
     assert.equal(api.canonical(unchanged), api.canonical(sourceMap));
     return seal(map);
@@ -178,6 +204,10 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
     ...(directoryVariant?{battleCatalogSelection,sourceAreaScopeReceipt}:{}),
     ...(selected.directoryBinding===null?{}:{battleDirectory:selected.directoryBinding}),
     ...(walkingVariant?{walking:walkingResults,nativeWalkingRulesVerified:false}:{}),
+    ...(npcVariant?{npcActivity:{template:npcTemplate,maps:npcResults,nativeRulesVerified:false,
+      counts:{maps:npcResults.length,declared:npcResults.reduce((sum,value)=>sum+value.counts.declared,0),
+        derived:npcResults.reduce((sum,value)=>sum+value.counts.derived,0),
+        blocked:npcResults.reduce((sum,value)=>sum+value.counts.declared-value.counts.derived,0)}}}:{}),
     relocation: { kind: "source-initializer-authored-map-v1", mapId: recipe.startMap, entrance: recipe.entrance,
       sourceStoryReachability: "unverified" },
     maps: maps.map(value => ({ mapId: value.mapId, contentHash: value.contentHash })), presentations,
@@ -191,6 +221,7 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
       "Every original map entity, event, exit, collision and foot provider is retained, including blockers.",
       "Original entries outside the declared map batch remain indexed but are not granted this initialized profile.",
       ...(sourceAreaScopeReceipt===null?[]:["Every source map variant in the declared area is included; world phase and story applicability remain unknown."]),
+      ...(npcVariant?["Area NPC source records and original blockers are retained; scheduling, randomness, collision and takeover use the explicit Web host policy."]:[]),
       "Compilation and reference analysis do not prove route execution or original story reachability."] };
   return { entry, battle, catalog, maps, refs, manifest, plan, payloads, report };
 }

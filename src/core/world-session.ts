@@ -11,6 +11,7 @@ import {
 } from "./field.js";
 import { missingFieldPoses } from "./character-media.js";
 import { canonical } from "./canonical.js";
+import { fieldNpcGroupBlockers } from "./field-npc-activity-host.js";
 import { fieldCollisionRange, inCollisionRange } from "./collision.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState } from "./static-audio.js";
@@ -117,7 +118,8 @@ export function worldFieldContent(
   if (map.backgrounds?.length && !sourceCamera)
     throw new Error("Source background requires a bound camera host");
   if (!group) throw new Error("Missing default entity group");
-  if (group.blockers.length) throw new Error(group.blockers[0]!.reason);
+  const groupBlockers = fieldNpcGroupBlockers(group, target.frameworkNpcActivity);
+  if (groupBlockers.length) throw new Error(groupBlockers[0]!.reason);
   if (group.entities.some((e) => e.kind === 18) || catalog.minimap)
     requireMinimapMedia(group.entities, catalog.minimap);
   if (group.entities.some((e) => e.id === "-1001"))
@@ -195,6 +197,7 @@ export function worldFieldContent(
     // previews cannot acquire a native camera lifecycle just by loading it.
     ...(sourceCamera && target.cameraHost ? { cameraHost: target.cameraHost } : {}),
     ...(sourceCamera && target.nativeNpcStandby ? { nativeNpcStandby: target.nativeNpcStandby } : {}),
+    ...(sourceCamera && target.frameworkNpcActivity ? { frameworkNpcActivity: target.frameworkNpcActivity } : {}),
     ...(sourceCamera && target.fieldEffects ? { fieldEffects: target.fieldEffects } : {}),
     ...(sourceCamera && target.scriptPuppetContexts ? { scriptPuppetContexts: target.scriptPuppetContexts } : {}),
     ...(catalog.playerFactory ? { playerFactory: structuredClone(catalog.playerFactory) } : {}),
@@ -250,6 +253,7 @@ type Ownership = {
   publishPresentation(): void;
   validateWalkPolicy(): void;
   walkFieldState?: string;
+  npcFieldState?: string;
   catalogHash: string;
   owned?: { commit(): boolean };
   effects?: { candidate: FieldEffectCandidate; publication: FieldEffectCandidatePrepared; map: FieldEffectMap; fieldState: string };
@@ -308,17 +312,19 @@ export class WorldSession {
     this.effectMap = this.effectOwner ? new FieldEffectMap("0", candidate ?? this.effectOwner,
       initial.map.entities.filter((entity) => entity.kind === 11).map((entity) => entity.id)) : null;
     try {
-      this.current = new FieldGame(
+      const field: FieldGame = new FieldGame(
         initial,
         state,
         undefined,
         undefined,
-        { ...(owned?.current ?? {}), ...(this.effectMap ? { fieldEffectMap: this.effectMap } : {}),
+        { ...(owned?.current ?? {}), npcActivityClock: () => this.current === field,
+          ...(this.effectMap ? { fieldEffectMap: this.effectMap } : {}),
           ...(initial.playerFactory ? { playerVisibility: initial.playerFactory.capability } : {}) },
         initialFade,
         undefined,
         restoringNative,
       );
+      this.current = field;
       if (candidate) { candidate.seal().commit(); this.effectMap!.publish(this.effectOwner!); }
     } catch (error) { candidate?.discard(); throw error; }
   }
@@ -358,7 +364,8 @@ export class WorldSession {
     )
       throw new Error("World checkpoint source/version mismatch");
     if ((snapshot.kind === "event-world-v1") !==
-        (snapshot.field.kind === "event-field-v1" || snapshot.field.kind === "event-field-v2"))
+        (snapshot.field.kind === "event-field-v1" || snapshot.field.kind === "event-field-v2" ||
+          snapshot.field.kind === "event-field-v3"))
       throw new Error("World and field continuation formats disagree");
     let content = this.initial;
     const loc = snapshot.location;
@@ -445,10 +452,11 @@ export class WorldSession {
     }
     if (this.effectMap?.hasHistory) throw new Error("Field effect manager history cannot be restored without its particle/RNG codec");
     const effectMap = this.effectOwner ? new FieldEffectMap(String(this.nextEffectScope), this.effectOwner, []) : null;
-    const next = FieldGame.restore(
+    const next: FieldGame = FieldGame.restore(
       content,
       snapshot.field,
-      { ...(this.owned?.current ?? {}), ...(effectMap ? { fieldEffectMap: effectMap } : {}),
+      { ...(this.owned?.current ?? {}), npcActivityClock: () => this.current === next,
+        ...(effectMap ? { fieldEffectMap: effectMap } : {}),
         ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}) },
       nativeDependencies,
     );
@@ -613,12 +621,13 @@ export class WorldSession {
       if (effectCandidate) this.effectMap!.prepareRetirement(effectCandidate);
       const effectMap = effectCandidate ? new FieldEffectMap(String(this.nextEffectScope), effectCandidate,
         content.map.entities.filter((entity) => entity.kind === 11).map((entity) => entity.id)) : null;
-      const field = new FieldGame(
+      const field: FieldGame = new FieldGame(
         content,
         state,
         new StaticAudioState(bgm),
         new StaticAudioState(environment),
-        { ...(owned?.ports ?? {}), ...(nativeActors ? { nativeActorPreparation: true } : {}),
+        { ...(owned?.ports ?? {}), npcActivityClock: () => this.current === field,
+          ...(nativeActors ? { nativeActorPreparation: true } : {}),
           ...(walkEncounters ? { walkEncounters } : {}),
           ...(effectMap ? { fieldEffectMap: effectMap } : {}),
           ...(sourcePresentation ? { sourcePresentation } : {}),
@@ -675,6 +684,7 @@ export class WorldSession {
           validateWalkBinding();
         },
         ...(content.walkEncounters ? { walkFieldState: this.effectFieldState(field) } : {}),
+        ...(content.frameworkNpcActivity ? { npcFieldState: this.effectFieldState(field) } : {}),
         catalogHash: catalog.contentHash,
         ...(owned ? { owned } : {}),
         ...(effectPublication ? { effects: { candidate: effectCandidate!, publication: effectPublication,
@@ -786,6 +796,7 @@ export class WorldSession {
       ownership.fade === canonical(this.current.fader.snapshot()) &&
       ownership.camera === canonical(this.current.cameraSnapshot) &&
       (ownership.walkFieldState === undefined || ownership.walkFieldState === this.effectFieldState(value.field)) &&
+      (ownership.npcFieldState === undefined || ownership.npcFieldState === this.effectFieldState(value.field)) &&
       (!ownership.effects || ownership.effects.fieldState === this.effectFieldState(value.field));
     if (current) ownership.validateWalkPolicy();
     return current;
@@ -793,6 +804,7 @@ export class WorldSession {
   private effectFieldState(field: FieldGame): string {
     return canonical({ time: field.time, busy: field.busy, stop: field.stop,
       state: field.eventState.snapshot(), actors: this.actorState(field), effects: field.fieldEffectsSnapshot,
+      ...(field.content.frameworkNpcActivity ? { npcPolicy: field.content.frameworkNpcActivity } : {}),
       fade: field.fader.snapshot(), camera: field.cameraSnapshot, bgm: field.bgm.snapshot(), environment: field.environment.snapshot(), se: field.se.snapshot() });
   }
   private requireActorPresentation(plan: MapPartyEntryPlan): void {

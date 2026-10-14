@@ -69,6 +69,7 @@ export type WorldMapContent = {
   nativeFoot?: FieldNativeFootDefinition;
   nativeFootBlockers?: ContentIssue[];
   nativeNpcStandby?: FieldContent["nativeNpcStandby"];
+  frameworkNpcActivity?: FieldContent["frameworkNpcActivity"];
   nativeNpcStandbyBlockers?: ContentIssue[];
   fieldEffects?: FieldContent["fieldEffects"];
   initializer: string | null;

@@ -63,7 +63,16 @@ import { FieldEffectMap } from "./field-effect-map.js";
 import { fieldPuppetContextFromActors, type FieldActorFactoryCandidate, type FieldActorFactoryBindings, type FieldActorFactoryCatalog } from "./field-actor-factory.js";
 import { captureFieldNativeCheckpoint, restoreFieldNativeCheckpoint,
   type FieldNativeCheckpoint, type FieldNativeCheckpointContext } from "./field-native-checkpoint.js";
-import { prepareFieldNativeNpcGroup, fieldNativeNpcRetirement, fieldNativeNpcStandbyPosition, fieldNativeNpcSelectorBinding } from "./field-native-npc.js";
+import { prepareFieldNativeNpcGroup, fieldNativeNpcRetirement, fieldNativeNpcStandbyPosition, fieldNativeNpcSelectorBinding,
+  type FieldNativeNpcDefinition } from "./field-native-npc.js";
+import { bindFieldNpcActivities, fieldNpcGroupBlockers } from "./field-npc-activity-host.js";
+import type { FrameworkNpcActivityBinding } from "./field-npc-activity-source.js";
+import { createNpcActivity, prepareNpcActivity, settleNpcActivity, completeNpcActivity,
+  acquireNpcActivity, releaseNpcActivity, sourceNpcSecondsPerCell,
+  type FieldNpcActivityState, type FieldNpcActivityTicket, type FieldNpcActivityLease,
+  type FieldNpcActivityInput } from "./field-npc-activity.js";
+import { captureFieldNpcActivities, restoreFieldNpcActivities,
+  type FieldNpcActivitiesCheckpoint, type RestoredFieldNpcActivities } from "./field-npc-activity-checkpoint.js";
 import { projectFieldPuppetCollision, projectFieldPuppetActorEffects, type FieldPuppetCollisionState, type FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import type { FieldPuppetActorCatalog, FieldPuppetActorContext, FieldPuppetControlContext } from "./field-puppet-actors.js";
 import type { PartyActorPlan } from "./party-actors.js";
@@ -91,7 +100,7 @@ import { projectPlayerVisibility } from "./player-visibility.js";
 import { FieldFadeState, type FieldFadeSnapshot } from "./field-fade.js";
 import { FieldCameraHost, type FieldCameraViewport } from "./field-camera-host.js";
 import type { FieldCameraState, FieldCameraLerp, FieldCameraLerpProgress } from "./field-camera.js";
-import { fieldCameraWorldToCell } from "./field-camera.js";
+import { fieldCameraWorldToCell, fieldCameraCellToWorld } from "./field-camera.js";
 import { projectFieldPuppetInitialization, projectFieldPuppetActorEntry, resolveFieldPuppetActor,
   fieldPuppetAssignments, type FieldPuppetActorsPort, type FieldPuppetScriptContext } from "./field-puppet-actors.js";
 import {
@@ -162,6 +171,14 @@ export type Actor = Point & {
   native?: NativeFieldActorData;
 };
 type PlacedActor = Actor & { layer: number; direction: Direction; asset: string };
+type NpcActivityRuntime = {
+  actor: Actor; binding: FrameworkNpcActivityBinding; state: FieldNpcActivityState;
+  motion: Motion | null; ticket: FieldNpcActivityTicket | null;
+};
+function freezeNpcMotion(motion: Motion | null): Motion | null {
+  if (motion) { Object.freeze(motion.from); Object.freeze(motion.to); Object.freeze(motion); }
+  return motion;
+}
 type FieldCheckpointState = {
   contentHash: string;
   time: number;
@@ -197,6 +214,8 @@ export type FieldCheckpoint = FieldCheckpointState & (
   { kind: "idle-field-v10" } | { kind: "event-field-v1"; execution: FieldEventCheckpoint }
   | { kind: "idle-field-v11"; viewPlan: MapEntryViewPlan }
   | { kind: "event-field-v2"; viewPlan: MapEntryViewPlan; execution: FieldEventCheckpoint }
+  | { kind: "idle-field-v12"; viewPlan?: MapEntryViewPlan; npcActivities: FieldNpcActivitiesCheckpoint }
+  | { kind: "event-field-v3"; viewPlan?: MapEntryViewPlan; npcActivities: FieldNpcActivitiesCheckpoint; execution: FieldEventCheckpoint }
 );
 export type GameEventSaveRequest = Readonly<{ id: string; site: Site }>;
 /** Trusted source packages reconstruct this capability. Nothing in a saved
@@ -276,6 +295,9 @@ export type FieldGameOptions = {
   /** The private source-session candidate installs native actors before any
    * script/input. Suppresses temporary legacy NPC creation in that candidate. */
   nativeActorPreparation?: true;
+  /** Exact World field identity; private/discarded/retired maps cannot clock
+   * autonomous actors even when a stale caller retains the Field instance. */
+  npcActivityClock?: () => boolean;
   sourceMessageEffects?: { prepare(effects: readonly SourceMessageEffect[]): () => void };
   puppetActors?: FieldPuppetActorsPort;
   puppetRoster?: FieldPuppetRosterPort;
@@ -463,6 +485,12 @@ export class FieldGame {
   readonly mapTopology: FieldMapTopology | null;
   private readonly collisionMappings = new Map<number, number[]>();
   readonly actors: Record<string, Actor> = {};
+  private readonly npcBindings: Map<string, FrameworkNpcActivityBinding>;
+  private readonly npcActivities = new Map<string, NpcActivityRuntime>();
+  private nextNpcEvent = 1;
+  get npcActivitySnapshot(): Record<string, FieldNpcActivityState> {
+    return structuredClone(Object.fromEntries([...this.npcActivities].map(([id, value]) => [id, value.state])));
+  }
   private nativeActorBindings: FieldActorFactoryBindings | null = null;
   private nativeActorProviders: (() => FieldPuppetHostProviders) | null = null;
   private nativeRuntime: { catalog: FieldPuppetActorCatalog; animationKeys: FieldNativeAnimationKeys | null;
@@ -498,7 +526,7 @@ export class FieldGame {
         id: actor.id, motion: actor.motion, steps: actor.steps, fieldAssetId: actor.native!.fieldAssetId,
         charaZOffset: actor.native!.charaZOffset, mapObjectAsset: actor.native!.mapObjectAsset ?? null,
         scope: actor.native!.scope ?? null, updateAttribute: actor.native!.updateAttribute ?? null,
-      })) });
+      })), npcActivities: this.npcActivitySnapshot });
   }
   private collisionSwitches: FieldPuppetCollisionState = projectFieldPuppetCollision(true);
   private entityUpdateMask = 3;
@@ -529,9 +557,9 @@ export class FieldGame {
         player.layer !== this.player.layer || player.direction !== this.player.direction || player.asset !== this.player.asset)
       throw new Error("Native factory player disagrees with prepared PointIn");
     const lifecycle = mapLifecycle ? structuredClone(mapLifecycle) : null;
-    const groups = new Set(this.entityList.filter((entity) => [6, 17].includes(entity.kind)).map((entity) => entity.nativeNpc?.group));
+    const groups = new Set(this.entityList.filter((entity) => [6, 17].includes(entity.kind)).map((entity) => this.npcDefinition(entity)?.group));
     for (const group of groups) {
-      const entities = this.entityList.filter((entity) => [6, 17].includes(entity.kind) && entity.nativeNpc?.group === group);
+      const entities = this.entityList.filter((entity) => [6, 17].includes(entity.kind) && this.npcDefinition(entity)?.group === group);
       projected.push(...this.prepareNativeNpcActors(entities, group, projected.map((actor) => actor.id), lifecycle, providers()));
     }
     this.publishNativeActors(projected, candidate.bindings, catalog, providers, controlContext, animationKeys, lifecycle);
@@ -541,7 +569,7 @@ export class FieldGame {
   private publishNativeActors(projected: NativeFieldActor[], sourceBindings: FieldActorFactoryBindings,
     catalog: FieldPuppetActorCatalog, providers: () => FieldPuppetHostProviders,
     controlContext: FieldPuppetControlContext, animationKeys: FieldNativeAnimationKeys | undefined,
-    lifecycle: NonNullable<FieldGame["nativeRuntime"]>["mapLifecycle"]): void {
+    lifecycle: NonNullable<FieldGame["nativeRuntime"]>["mapLifecycle"], restored?: RestoredFieldNpcActivities): void {
     const bindings = structuredClone(sourceBindings), puppetCatalog = structuredClone(catalog);
     const detachedActors = Object.fromEntries(projected.map((actor) => [actor.id, actor]));
     let published = false;
@@ -553,8 +581,9 @@ export class FieldGame {
       readContext: () => ({ catalog: puppetCatalog, checkpoint: this.partyActors!.checkpoint(), bindings,
         ...this.options.puppetRoster!.current(), entities: this.entityList.filter((e) => (published ? this.actors : detachedActors)[e.id])
           .flatMap((e) => {
-            if (!e.nativeNpc) throw new Error("Native map selector requires its source NPC identity");
-            const binding = fieldNativeNpcSelectorBinding(e.nativeNpc);
+            const definition = this.npcDefinition(e);
+            if (!definition) throw new Error("Native map selector requires its source NPC identity");
+            const binding = fieldNativeNpcSelectorBinding(definition);
             return binding ? [binding] : [];
           }), restorePartyInstruction: "absent" }),
       controlContext: () => structuredClone(controlContext),
@@ -572,11 +601,13 @@ export class FieldGame {
     // Reject missing/ambiguous alias and resident bindings while every new
     // object is still private. A failed installation cannot replace the player.
     port.read();
+    const activities = this.prepareNpcActivities(projected, restored);
     for (const actor of projected) { this.actors[actor.id] = actor; this.hiddenEntities.delete(actor.id); }
     this.nativeActorBindings = bindings;
     this.nativeActorProviders = providers;
     this.nativeRuntime = { catalog: puppetCatalog, controlContext: structuredClone(controlContext),
       animationKeys: animationKeys ? structuredClone(animationKeys) : null, mapLifecycle: lifecycle };
+    for (const [id, activity] of activities) this.npcActivities.set(id, activity);
     published = true;
     this.options.puppetActors = port;
     this.options.sourceMessageEffects = { prepare: (effects) => {
@@ -664,6 +695,7 @@ export class FieldGame {
     entityId: string;
     restoreDirection: Direction | null;
     waitUntil: number;
+    activity?: { record: NpcActivityRuntime; lease: FieldNpcActivityLease; motion: Motion | null };
   } | null = null;
   private shopTask: {
     id: number;
@@ -710,6 +742,9 @@ export class FieldGame {
     restoringNative = false,
     readonly se: FieldSoundState = new FieldSoundState(),
   ) {
+    this.npcBindings = bindFieldNpcActivities(content);
+    if (this.npcBindings.size && !options.nativeActorPreparation)
+      throw new Error("Framework NPC activities require the native actor owner");
     cloneSourcePresentationContext(options.sourcePresentation?.context() ?? null);
     if (options.playerVisibility !== undefined) {
       checkpointKeys(options.playerVisibility, "childEntityObject");
@@ -890,6 +925,67 @@ export class FieldGame {
         };
     return actors;
   }
+  private npcDefinition(entity: FieldEntity): FieldNativeNpcDefinition | null | undefined {
+    return this.npcBindings.get(entity.id)?.definition ?? entity.nativeNpc;
+  }
+  private npcBlockers(entity: FieldEntity): readonly string[] {
+    return (entity.nativeNpcBlockers ?? []).filter(reason =>
+      !(this.npcBindings.has(entity.id) && reason === "Native NPC autonomous movement controller is unresolved"));
+  }
+  private groupBlockers(group: NonNullable<FieldContent["map"]["groups"]>[string]) {
+    return fieldNpcGroupBlockers(group, this.content.frameworkNpcActivity);
+  }
+  private prepareNpcActivities(actors: readonly Actor[], restored?: RestoredFieldNpcActivities,
+    entities: readonly FieldEntity[] = this.entityList): Map<string, NpcActivityRuntime> {
+    const records = new Map<string, NpcActivityRuntime>();
+    const candidates = new Map(actors.map(actor => [actor.id, actor]));
+    for (const entity of entities) {
+      const actor = candidates.get(entity.id);
+      if (!actor) continue;
+      const binding = this.npcBindings.get(actor.id);
+      if (!binding) continue;
+      const area = findFieldMoveArea(entities, binding.source.parameters.linkObjectId!, this.content.cameraHost!.mapRange);
+      if (!actor.native || actor.layer !== binding.program.layer || !area ||
+          canonical(area.moveArea) !== canonical(binding.program.moveArea))
+        throw new Error("NPC activity is not bound to its active source Area and native actor");
+      const saved = restored?.activities[actor.id];
+      if (restored && !saved) throw new Error("Restored NPC activity domain is incomplete");
+      const seed = parseInt(binding.program.definitionHash.slice(0, 8), 16) || 1;
+      const state = saved?.state ?? createNpcActivity(binding.program, { generation: this.choiceNamespace, seed,
+        initialDelayMs: binding.program.firstInterval
+          ? parseInt(binding.program.definitionHash.slice(8, 16), 16) / 0xffffffff * binding.program.baseIntervalMs : 0 });
+      if (!saved && actor.motion) throw new Error("Fresh NPC activity cannot adopt another movement owner");
+      actor.motion = freezeNpcMotion(actor.motion);
+      records.set(actor.id, { actor, binding, state, motion: actor.motion, ticket: saved?.ticket ?? null });
+    }
+    captureFieldNpcActivities(Object.fromEntries([...records].map(([id, r]) => [id,
+      { program: r.binding.program, state: r.state, actor: r.actor }])));
+    return records;
+  }
+  private assertNpcActivity(record: NpcActivityRuntime): void {
+    const { actor, binding, state, ticket, motion } = record;
+    if (this.npcActivities.get(actor.id) !== record || this.actors[actor.id] !== actor ||
+        this.npcBindings.get(actor.id) !== binding || !this.activeGroups.has(binding.program.group) ||
+        actor.motion !== motion || (state.pending !== null) !== (motion !== null) ||
+        (state.pending !== null) !== (ticket !== null) || ticket &&
+        (ticket.actorId !== actor.id || ticket.definitionHash !== state.definitionHash ||
+          ticket.generation !== state.generation || ticket.commandId !== state.pending!.commandId ||
+          ticket.revision !== state.pending!.revision))
+      throw new Error("Stale NPC activity Field, actor or movement authority");
+  }
+  private isAutonomousMotion(actor: Actor): boolean {
+    if (!actor.motion) return false;
+    const record = this.npcActivities.get(actor.id);
+    if (!record || record.state.holder) return false;
+    this.assertNpcActivity(record);
+    return true;
+  }
+  private npcCheckpointRecords() {
+    return Object.fromEntries([...this.npcActivities].map(([id, r]) => {
+      this.assertNpcActivity(r);
+      return [id, { program: r.binding.program, state: r.state, actor: r.actor }];
+    }));
+  }
   private prepareNativeNpcActors(entities: readonly FieldEntity[], group: string | undefined,
     existingActorIds: readonly string[], lifecycle: NonNullable<FieldGame["nativeRuntime"]>["mapLifecycle"],
     providers: FieldPuppetHostProviders): NativeFieldActor[] {
@@ -898,8 +994,8 @@ export class FieldGame {
     if (!lifecycle || !this.content.cameraHost || !this.options.partyAppearance)
       throw new Error("Native map-local actor factory is unresolved");
     const definitions = npcs.map((entity) => {
-      if (entity.nativeNpcBlockers?.length) throw new Error(entity.nativeNpcBlockers[0]!);
-      const definition = entity.nativeNpc;
+      if (this.npcBlockers(entity).length) throw new Error(this.npcBlockers(entity)[0]!);
+      const definition = this.npcDefinition(entity);
       if (!definition || definition.entityId !== entity.id || definition.group !== group ||
           definition.objectType !== entity.kind || definition.asset.asset !== entity.asset ||
           definition.geometry.layer !== entity.layer || canonical(definition.source) !== canonical(entity.source))
@@ -908,6 +1004,7 @@ export class FieldGame {
     });
     return prepareFieldNativeNpcGroup({ definitions, factory: lifecycle.factory, characters: this.content.characters,
       mapRange: this.content.cameraHost.mapRange, providers, existingActorIds,
+      ...(this.content.frameworkNpcActivity ? { activityPolicy: this.content.frameworkNpcActivity.policy } : {}),
       ...(this.content.nativeNpcStandby ? { standbyAnchorPosition: fieldNativeNpcStandbyPosition(this.content.nativeNpcStandby) } : {}),
     }).actors.map((actor) => createNativeFieldActorProjection(actor, this.content.cameraHost!.mapRange,
       this.options.partyAppearance!.catalog, this.transportationPresentation));
@@ -918,8 +1015,9 @@ export class FieldGame {
     if (!group) throw new Error(`缺少实体组 ${name}`);
     if (this.activeGroups.has(name))
       throw new Error(`重复实体组激活尚未恢复：${name}`);
-    if (group.blockers.length)
-      throw new Error(`${name}：${group.blockers[0]!.reason}`);
+    const blockers = this.groupBlockers(group);
+    if (blockers.length)
+      throw new Error(`${name}：${blockers[0]!.reason}`);
     validateFieldMoveAreas([...this.entityList, ...group.entities]);
     if (this.camera && group.entities.some((entity) => entity.kind === 15))
       throw new Error("Camera ChangeOffset trigger provider is unresolved");
@@ -939,6 +1037,7 @@ export class FieldGame {
         this.nativeRuntime!.mapLifecycle, this.nativeActorProviders!()).map((actor) => [actor.id, actor]))
       : this.createActors(group.entities);
     const treasures = this.prepareTreasureInitialization(group.entities);
+    const activities = this.prepareNpcActivities(Object.values(actors), undefined, [...this.entityList, ...group.entities]);
     const effectSetup = this.effects?.prepare([{ kind: "setup", registeredBoards:
       this.defaultProperties.filter((entity) => entity.kind === 11).map((entity) => entity.id), groupUpdate: true }]);
     const properties = [...this.defaultProperties, ...group.entities];
@@ -949,6 +1048,7 @@ export class FieldGame {
       this.entityList.push(...group.entities);
       this.initializeTreasures(treasures);
       Object.assign(this.actors, actors);
+      for (const [id, activity] of activities) this.npcActivities.set(id, activity);
       this.activeGroups.add(name);
       this.currentProperties = properties;
       return true;
@@ -1222,7 +1322,7 @@ export class FieldGame {
       !this.fieldActivityBusy &&
       !this.fader.active &&
       !this.interaction &&
-      Object.values(this.actors).every((a) => a.motion === null)
+      Object.values(this.actors).every((a) => a.motion === null || this.isAutonomousMotion(a))
     );
   }
   get menuReady(): boolean { return !this.stop && this.idleFieldReady; }
@@ -1233,12 +1333,12 @@ export class FieldGame {
     return cloneSourcePresentationContext(this.options.sourcePresentation?.context() ?? null);
   }
   private nativeCheckpointContext(bindings: FieldActorFactoryBindings, factory: FieldActorFactoryCatalog,
-    providers: FieldPuppetHostProviders): FieldNativeCheckpointContext {
+    providers: FieldPuppetHostProviders, autonomousMotions?: FieldNativeCheckpointContext["autonomousMotions"]): FieldNativeCheckpointContext {
     if (!this.partyActors || !this.options.partyAppearance || !this.content.cameraHost)
       throw new Error("Native checkpoint requires bound party, media and camera owners");
     const npcs = this.entityList.filter((entity) => [6, 17].includes(entity.kind)).map((entity) => {
-      const npc = entity.nativeNpc;
-      if (entity.nativeNpcBlockers?.length || !npc || npc.entityId !== entity.id ||
+      const npc = this.npcDefinition(entity);
+      if (this.npcBlockers(entity).length || !npc || npc.entityId !== entity.id ||
           npc.objectType !== entity.kind || npc.asset.asset !== entity.asset || npc.geometry.layer !== entity.layer ||
           canonical(npc.source) !== canonical(entity.source) || !this.activeGroups.has(npc.group))
         throw new Error("Native checkpoint NPC is not bound to an active source group");
@@ -1247,6 +1347,7 @@ export class FieldGame {
     return { mapRange: this.content.cameraHost.mapRange, bindings, factory,
       partyCatalog: this.options.partyAppearance.catalog, partyCheckpoint: this.partyActors.checkpoint(),
       characters: this.content.characters, npcs, providers,
+      ...(autonomousMotions ? { autonomousMotions } : {}),
       ...(this.transportationPresentation ? { transportationPresentation: this.transportationPresentation } : {}) };
   }
   private nativeCheckpoint(continuation = false): FieldCheckpoint["native"] {
@@ -1257,8 +1358,15 @@ export class FieldGame {
     if (lifecycle && ((!continuation && !lifecycle.finished) ||
         canonical(lifecycle.script) !== canonical(this.content.scriptPuppetContexts?.[lifecycle.name])))
       throw new Error("Native script lifecycle is not stably bound to its source");
+    const autonomousMotions = Object.fromEntries([...this.npcActivities].flatMap(([id, r]) => {
+      this.assertNpcActivity(r);
+      if (r.state.holder) throw new Error("Event-held NPC activity cannot be checkpointed");
+      return r.state.pending ? [[id, { definitionHash: r.binding.program.definitionHash,
+        sourceSpeedEnum: r.binding.program.sourceSpeedEnum, commandId: r.state.pending.commandId,
+        secondsPerCell: sourceNpcSecondsPerCell(r.binding.program.sourceSpeedEnum) }]] : [];
+    }));
     return { actors: captureFieldNativeCheckpoint(this.actors, this.nativeCheckpointContext(
-      this.nativeActorBindings, this.nativeRuntime.mapLifecycle.factory, this.nativeActorProviders())),
+      this.nativeActorBindings, this.nativeRuntime.mapLifecycle.factory, this.nativeActorProviders(), autonomousMotions)),
       collision: { ...this.collisionSwitches }, updateMask: this.entityUpdateMask,
       cameraOffset: { ...this.cameraOffset }, completedScript: lifecycle?.finished ? {
         name: lifecycle.name, leaderId: lifecycle.leaderId, assignments: [...lifecycle.assignments] } : null };
@@ -1269,6 +1377,8 @@ export class FieldGame {
     return this.captureCheckpoint();
   }
   private captureCheckpoint(execution?: FieldEventCheckpoint): FieldCheckpoint {
+    const npcActivities = this.content.frameworkNpcActivity
+      ? captureFieldNpcActivities(this.npcCheckpointRecords()) : undefined;
     const snapshot: FieldCheckpointState = {
       contentHash: this.content.contentHash,
       time: this.time,
@@ -1298,6 +1408,9 @@ export class FieldGame {
       native: this.nativeCheckpoint(execution !== undefined),
     };
     const viewPlan = this.content.entry.viewPlan && structuredClone(this.content.entry.viewPlan);
+    if (npcActivities) return execution ? { ...snapshot, kind: "event-field-v3", npcActivities,
+      ...(viewPlan ? { viewPlan } : {}), execution } : { ...snapshot, kind: "idle-field-v12", npcActivities,
+      ...(viewPlan ? { viewPlan } : {}) };
     if (viewPlan) return execution ? { ...snapshot, kind: "event-field-v2", viewPlan, execution }
       : { ...snapshot, kind: "idle-field-v11", viewPlan };
     return execution ? { ...snapshot, kind: "event-field-v1", execution } : { ...snapshot, kind: "idle-field-v10" };
@@ -1311,7 +1424,7 @@ export class FieldGame {
         this.fader.active || this.sourceMessage.active || this.messageWindow ||
         this.pendingChoice || this.shopTask || this.treasureSceneState !== "player" ||
         this.openTriggers.busy || this.interaction || this.pendingPlayerStep ||
-        Object.values(this.actors).some((actor) => actor.motion !== null) ||
+        Object.values(this.actors).some((actor) => actor.motion !== null && !this.isAutonomousMotion(actor)) ||
         this.tasks.some((other) => other !== task && !other.done) ||
         task.done || task.slot !== null || task.treasureRoot || task.state !== "ready" ||
         task.wait !== 0 || task.puppetWait || task.fadeWait || task.cameraLerp ||
@@ -1369,17 +1482,19 @@ export class FieldGame {
         Object.values(content.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11)))
       throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
     const s = structuredClone(raw);
-    const continuation = s.kind === "event-field-v1" || s.kind === "event-field-v2";
-    const hasView = s.kind === "idle-field-v11" || s.kind === "event-field-v2";
+    const hasActivities = s.kind === "idle-field-v12" || s.kind === "event-field-v3";
+    const continuation = s.kind === "event-field-v1" || s.kind === "event-field-v2" || s.kind === "event-field-v3";
+    const hasView = s.kind === "idle-field-v11" || s.kind === "event-field-v2" || hasActivities && Object.hasOwn(s, "viewPlan");
     checkpointKeys(
       s,
       "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,se,fade,camera,native" +
-        (continuation ? ",execution" : "") + (hasView ? ",viewPlan" : ""),
+        (continuation ? ",execution" : "") + (hasView ? ",viewPlan" : "") + (hasActivities ? ",npcActivities" : ""),
     );
-    if (!["idle-field-v10", "idle-field-v11", "event-field-v1", "event-field-v2"].includes(s.kind) || s.contentHash !== content.contentHash)
+    if (!["idle-field-v10", "idle-field-v11", "idle-field-v12", "event-field-v1", "event-field-v2", "event-field-v3"].includes(s.kind) ||
+        s.contentHash !== content.contentHash || hasActivities !== (content.frameworkNpcActivity !== undefined))
       throw new Error("Field checkpoint source/version mismatch");
     if (hasView !== (content.entry.viewPlan !== undefined) || hasView &&
-        canonical(parseMapEntryViewPlan(s.viewPlan)) !== canonical(content.entry.viewPlan))
+        canonical(parseMapEntryViewPlan((s as { viewPlan?: MapEntryViewPlan }).viewPlan)) !== canonical(content.entry.viewPlan))
       throw new Error("Field checkpoint cannot grant or change map view presentation");
     const transportationProfile = frameworkTransportationPresentation(content.developmentProfile);
     if (transportationProfile && native && options.transportation) {
@@ -1441,7 +1556,11 @@ export class FieldGame {
       next.requirePlayerMedia(media.asset, media.mount);
       Object.assign(next.player, media);
     } else if (s.partyActors !== null) throw new Error("Unbound saved party appearances");
-    if (native) next.restoreNativeOwner(s.native!, native);
+    const restoredActivities = hasActivities ? restoreFieldNpcActivities(Object.fromEntries(next.entityList.flatMap(e => {
+      const binding = next.npcBindings.get(e.id); return binding ? [[e.id, binding.program]] : [];
+    })), (s as Extract<FieldCheckpoint, { kind: "idle-field-v12" | "event-field-v3" }>).npcActivities,
+    { generation: next.choiceNamespace }) : undefined;
+    if (native) next.restoreNativeOwner(s.native!, native, restoredActivities);
     checkpointIds(s.hiddenEntities);
     if (s.hiddenEntities.some((id) => !next.hasEntity(id) || (next.camera && id === next.cameraActorId) || next.actors[id]?.native))
       throw new Error("Unknown hidden saved entity");
@@ -1517,7 +1636,7 @@ export class FieldGame {
    * ActivateGroup/Init/Look and source event callbacks must not run here. */
   private restoreNativeGroup(name: string): void {
     const group = this.content.map.groups?.[name];
-    if (!group || this.activeGroups.has(name) || group.blockers.length)
+    if (!group || this.activeGroups.has(name) || this.groupBlockers(group).length)
       throw new Error("Unknown or blocked saved native entity group");
     validateFieldMoveAreas([...this.entityList, ...group.entities]);
     if (group.entities.some((entity) => entity.kind === 11 || entity.kind === 15))
@@ -1533,7 +1652,8 @@ export class FieldGame {
     this.activeGroups.add(name);
     this.currentProperties = [...this.defaultProperties, ...group.entities];
   }
-  private restoreNativeOwner(saved: NonNullable<FieldCheckpoint["native"]>, source: FieldNativeRestoreDependencies): void {
+  private restoreNativeOwner(saved: NonNullable<FieldCheckpoint["native"]>, source: FieldNativeRestoreDependencies,
+    restoredActivities?: RestoredFieldNpcActivities): void {
     checkpointKeys(saved, "actors,collision,updateMask,cameraOffset,completedScript");
     checkpointKeys(saved.collision, "mapColliders,entityCollision,interactiveObservation");
     if (canonical(saved.collision) !== canonical(projectFieldPuppetCollision(saved.collision.mapColliders)))
@@ -1564,9 +1684,9 @@ export class FieldGame {
     }
     const providers = source.providers(this);
     const actors = restoreFieldNativeCheckpoint(saved.actors,
-      this.nativeCheckpointContext(bindings, source.factory, providers()));
+      this.nativeCheckpointContext(bindings, source.factory, providers(), restoredActivities?.autonomousMotions));
     this.publishNativeActors(actors, bindings, source.catalog, providers, source.controlContext,
-      source.animationKeys, { factory: structuredClone(source.factory) });
+      source.animationKeys, { factory: structuredClone(source.factory) }, restoredActivities);
     this.collisionSwitches = { ...saved.collision };
     this.entityUpdateMask = saved.updateMask;
     this.mapScrollOffset = Object.freeze({ ...saved.cameraOffset });
@@ -1626,7 +1746,7 @@ export class FieldGame {
       return null;
     }
   }
-  private occupied(points: Point[], layer: number): boolean {
+  private occupied(points: Point[], layer: number, exceptActorId: string = this.player.id): boolean {
     if (!this.collisionSwitches.entityCollision) return false;
     return (
       this.entityList.some(
@@ -1639,14 +1759,68 @@ export class FieldGame {
       ) ||
       Object.values(this.actors).some(
         (a) =>
-          a.id !== this.player.id &&
+          a.id !== exceptActorId &&
           this.isEntityVisible(a.id) &&
           this.entityList.find((e) => e.id === a.id)?.npc?.collision !==
             false &&
           a.layer === layer &&
-          points.some((p) => a.x === p.x && a.y === p.y),
+          points.some((p) => a.x === p.x && a.y === p.y ||
+            this.npcActivities.has(a.id) && a.motion !== null &&
+            [a.motion.from, a.motion.to].some(cell => cell.x === p.x && cell.y === p.y) ||
+            exceptActorId !== this.player.id && a.id === this.player.id && a.motion !== null &&
+            [a.motion.from, a.motion.to].some(cell => cell.x === p.x && cell.y === p.y)),
       )
     );
+  }
+  private npcActivityInput(record: NpcActivityRuntime): FieldNpcActivityInput {
+    const actor = record.actor, range = this.content.cameraHost!.mapRange;
+    if (!actor.native || actor.direction === null || actor.layer === null)
+      throw new Error("NPC activity lost its native pose");
+    return { worldPosition: { x: actor.native.entity.position.x, y: actor.native.entity.position.y },
+      direction: actor.direction, motionActive: actor.motion !== null, dtMs: 10,
+      updateMask: this.entityUpdateMask,
+      destinations: Object.fromEntries(Object.entries(DELTA).map(([direction, delta]) => {
+        const point = fieldCameraCellToWorld(range, { x: actor.x - range.x + delta.x,
+          y: actor.y - range.y + delta.y }, actor.layer!);
+        return [direction, { x: point.x, y: point.y }];
+      })) as Record<Direction, Point> };
+  }
+  private advanceNpcActivity(record: NpcActivityRuntime): void {
+    this.assertNpcActivity(record);
+    const { actor, binding, state } = record, program = binding.program;
+    if (state.holder || (this.entityUpdateMask & program.updateAttribute) === 0) return;
+    if (actor.motion) {
+      const next = prepareFieldActorMotionTick(actor.motion, actor.animation, 10);
+      const nextState = next.completedRoute ? completeNpcActivity(program, state, record.ticket!) : state;
+      this.assertNpcActivity(record);
+      actor.x = next.point.x; actor.y = next.point.y; actor.animation = next.animation;
+      actor.motion = freezeNpcMotion(next.motion); record.motion = actor.motion; record.state = nextState;
+      if (next.completedRoute) { record.ticket = null; actor.steps++; }
+      return;
+    }
+    if (!Number.isInteger(actor.x) || !Number.isInteger(actor.y))
+      throw new Error("NPC activity requires a settled cell before a new move");
+    const input = this.npcActivityInput(record), proposal = prepareNpcActivity(program, state, input);
+    let outcome: "idle" | "started" | "blocked" = "idle", motion: Motion | null = null,
+      animation = actor.animation?.clone() ?? null, direction = actor.direction;
+    if (proposal.intent) {
+      const intent = proposal.intent, delta = DELTA[intent.direction], from = { x: actor.x, y: actor.y },
+        to = { x: from.x + delta.x, y: from.y + delta.y };
+      const fromMask = this.collision(from, program.layer), toMask = this.collision(to, program.layer);
+      if (fromMask === null || toMask === null) throw new Error("NPC collision provider is unresolved");
+      if (!(fromMask & BIT[intent.direction]) || !(toMask & BIT[OPPOSITE[intent.direction]]) ||
+          this.occupied([to], program.layer, actor.id)) outcome = "blocked";
+      else {
+        const seconds = sourceNpcSecondsPerCell(intent.sourceSpeedEnum);
+        animation?.move(intent.direction, seconds);
+        motion = { from, to, elapsed: 0, duration: seconds * 1000, manual: false };
+        direction = intent.direction; outcome = "started";
+      }
+    } else if (animation?.playing) animation.advance(10);
+    const settlement = settleNpcActivity(program, proposal, outcome, state, this.npcActivityInput(record));
+    this.assertNpcActivity(record);
+    record.state = settlement.state; record.ticket = settlement.ticket;
+    record.motion = freezeNpcMotion(motion); actor.motion = record.motion; actor.animation = animation; actor.direction = direction;
   }
   private slopeDestination(
     direction: Direction,
@@ -2057,8 +2231,10 @@ export class FieldGame {
         (this.actors[e.id]?.layer ?? e.layer) === p.layer &&
         (properties ? properties.interaction.kind !== "none" : !!e.script) &&
         (e.kind === 6 || e.kind === 17
-          ? this.actors[e.id]?.x === target.x &&
-            this.actors[e.id]?.y === target.y
+          ? !!this.actors[e.id] && (this.actors[e.id]!.x === target.x && this.actors[e.id]!.y === target.y ||
+            this.npcActivities.has(e.id) && this.actors[e.id]!.motion !== null &&
+            [this.actors[e.id]!.motion!.from, this.actors[e.id]!.motion!.to]
+              .some(cell => cell.x === target.x && cell.y === target.y))
           : contains(e, target)) &&
         (!properties ||
           (!!(
@@ -2091,7 +2267,8 @@ export class FieldGame {
       this.block(action.reason, site);
       return;
     }
-    if (npc && (npc.moveType !== 0 || actor?.motion)) {
+    const activity = actor && this.npcActivities.get(actor.id);
+    if (npc && (npc.moveType !== 0 || actor?.motion) && !activity) {
       this.block("此 NPC 的移动控制器尚未迁移", site);
       return;
     }
@@ -2142,6 +2319,8 @@ export class FieldGame {
       }
     }
     let openingMessage: ReturnType<FieldGame["prepareMessagePresentation"]> | null = null;
+    let acquisition: ReturnType<typeof acquireNpcActivity> | null = null,
+      interactionAnimation = actor?.animation?.clone() ?? null;
     try {
       if (action.kind === "talk") openingMessage = this.prepareMessagePresentation(action.message);
       else if (action.kind === "shop") {
@@ -2152,6 +2331,12 @@ export class FieldGame {
         if (action.close) this.prepareMessagePresentation(action.close).validate();
       }
       openingMessage?.validate();
+      if (activity) {
+        this.assertNpcActivity(activity);
+        acquisition = acquireNpcActivity(activity.binding.program, activity.state,
+          `npc-event:${this.choiceNamespace}:${this.nextNpcEvent}`);
+      }
+      if (npc?.eyeContact && actor) interactionAnimation?.look(OPPOSITE[p.direction]);
     } catch (error) {
       this.block(error instanceof Error ? error.message : String(error), site);
       return;
@@ -2164,18 +2349,12 @@ export class FieldGame {
       waitUntil:
         this.time +
         (action.kind === "script" && action.script === null ? 10 : 0),
+      ...(activity && acquisition ? { activity: { record: activity, lease: acquisition.lease, motion: actor!.motion } } : {}),
     };
+    if (activity && acquisition) { activity.state = acquisition.state; this.nextNpcEvent++; }
     if (npc?.eyeContact && actor) {
       actor.direction = OPPOSITE[p.direction];
-      try {
-        actor.animation?.look(actor.direction);
-      } catch (error) {
-        this.block(
-          error instanceof Error ? error.message : String(error),
-          site,
-        );
-        return;
-      }
+      actor.animation = interactionAnimation;
     }
     if (properties.soundId > 0 && action.kind !== "treasure")
       this.presentationOmissions.push({
@@ -2305,16 +2484,27 @@ export class FieldGame {
   }
   private finishInteraction(): void {
     if (!this.interaction || this.busy) return;
-    const { entityId, restoreDirection } = this.interaction;
-    if (restoreDirection && this.actors[entityId]) {
-      this.actors[entityId]!.direction = restoreDirection;
-      try {
-        this.actors[entityId]!.animation?.look(restoreDirection);
-      } catch (error) {
-        this.block(error instanceof Error ? error.message : String(error));
-      }
-    }
-    this.interaction = null;
+    const { entityId, restoreDirection, activity } = this.interaction, actor = this.actors[entityId];
+    try {
+      const animation = actor?.animation?.clone() ?? null;
+      let direction = restoreDirection;
+      let settlement: ReturnType<typeof releaseNpcActivity> | null = null;
+      if (activity) {
+        this.assertNpcActivity(activity.record);
+        if (actor !== activity.record.actor || actor.motion !== activity.motion)
+          throw new Error("NPC event replaced its paused movement owner");
+        settlement = releaseNpcActivity(activity.record.binding.program, activity.record.state, activity.lease);
+        if (settlement.state.pending) {
+          direction = settlement.state.pending.direction;
+          animation?.move(direction, sourceNpcSecondsPerCell(activity.record.binding.program.sourceSpeedEnum));
+          animation?.linkToMovement(actor.motion!.elapsed / actor.motion!.duration);
+          animation?.frame();
+        } else if (direction) animation?.look(direction);
+      } else if (direction) animation?.look(direction);
+      if (actor && direction) { actor.direction = direction; actor.animation = animation; }
+      if (activity && settlement) { activity.record.state = settlement.state; activity.record.ticket = settlement.ticket; }
+      this.interaction = null;
+    } catch (error) { this.block(error instanceof Error ? error.message : String(error)); }
   }
   /** Integer 10 ms simulation steps make render-frame partitioning irrelevant. */
   advance(milliseconds: number): void {
@@ -2324,6 +2514,7 @@ export class FieldGame {
       milliseconds > 60000
     )
       throw new Error("Invalid elapsed time");
+    if (this.content.frameworkNpcActivity && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
     if (this.pendingEventSave) return;
     this.remainder += milliseconds;
     while (this.remainder >= 10) {
@@ -2349,13 +2540,20 @@ export class FieldGame {
       this.sourceMessage.advance(0.01);
       let entered = false;
       let walkParty: number | null = null;
-      for (const a of Object.values(this.actors)) {
+      // Integer-like object keys are numerically reordered by JavaScript.
+      // Keep legacy actor order, then use the source group/object insertion
+      // order retained by the controller Map for competing NPC reservations.
+      const tickActors = [...Object.values(this.actors).filter(actor => !this.npcActivities.has(actor.id)),
+        ...[...this.npcActivities.values()].map(record => record.actor)];
+      for (const a of tickActors) {
         // Source fresh player, party puppets and residents have attribute 2.
         // Map NPC SetProperty can choose 10 and needs a distinct factory host.
         // Message group 8 has mask 9; event group 12 has mask 3. Camera (10),
         // tile animation (42), VM and the global fader continue separately.
         if (a.native && (this.entityUpdateMask & (a.native.updateAttribute ?? 2)) === 0) continue;
         try {
+          const activity = this.npcActivities.get(a.id);
+          if (activity) { this.advanceNpcActivity(activity); continue; }
           const m = a.motion;
           if (!m) {
             if (a.animation?.playing) {
@@ -2701,7 +2899,7 @@ export class FieldGame {
   }
   private hasUnfinishedNativeEncounterActivity(): boolean {
     return !!(this.pendingChoice || this.messageWindow || this.sourceMessage.active || this.shopTask ||
-      this.treasureHandoffBlocked() || Object.values(this.actors).some((actor) => actor.motion !== null));
+      this.treasureHandoffBlocked() || Object.values(this.actors).some((actor) => actor.motion !== null && !this.isAutonomousMotion(actor)));
   }
   /** Validate the handoff before consuming rewards. The commit only schedules
    * the continuation; normal simulation, not reward publication, runs its code. */

@@ -1,5 +1,5 @@
 {
-  "kind": "initialized-source-map-recipe-v3",
+  "kind": "initialized-source-map-recipe-v4",
   "id": "south-figaro-area",
   "sourceEntry": {
     "url": "/game/source-new-game.json",
@@ -938,5 +938,15 @@
     "kind": "source-area-scope-v1",
     "areaId": 8
   },
-  "walking": null
+  "walking": null,
+  "npcActivity": {
+    "kind": "framework-npc-area-template-v1",
+    "policy": "framework-npc-area-v1",
+    "missingFirstInterval": "source-ctor-true",
+    "random": "web-xorshift32-v1",
+    "collision": "actor-grid-reservations-v1",
+    "schedule": "fixed-step-source-order-v1",
+    "takeover": "pause-autonomous-motion-v1",
+    "reason": "Use all retained Area NPC source parameters in the declared Web activity host; original dialogue, event and story applicability gaps remain visible."
+  }
 }

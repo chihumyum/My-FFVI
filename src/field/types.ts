@@ -272,6 +272,7 @@ export type Tileset = {
   tiles?: { id: number; animation?: { tileid: number; duration: number }[] }[];
 };
 export type FieldContent = {
+  frameworkNpcActivity?: import("../core/field-npc-activity-host.js").FieldNpcActivityHost;
   /** Explicit development rules, never inferred from native step counters. */
   walkEncounters?: FrameworkWalkEncounterPolicy;
   developmentProfile?: DevelopmentProfile;

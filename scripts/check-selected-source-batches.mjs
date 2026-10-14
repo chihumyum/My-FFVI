@@ -36,8 +36,8 @@ function recipeKind(built){
   assert.equal(built.kind,'initialized-source-map-build-v1','Unknown initialized build record');
   const kind=built.recipeKind;
   if(kind!==undefined)assert.ok(['initialized-source-map-recipe-v1','initialized-source-map-recipe-v2',
-    'initialized-source-map-recipe-v3'].includes(kind),'Unknown initialized source recipe kind');
-  if(kind==='initialized-source-map-recipe-v3'){
+    'initialized-source-map-recipe-v3','initialized-source-map-recipe-v4'].includes(kind),'Unknown initialized source recipe kind');
+  if(kind==='initialized-source-map-recipe-v3'||kind==='initialized-source-map-recipe-v4'){
     assert.ok(Object.hasOwn(built,'battleCatalogSelection'),'Version 3 build must declare its battle catalog selection');
     assert.ok(Object.hasOwn(built,'sourceAreaScopeReceipt'),'Version 3 build must declare its source area scope receipt');
   }
@@ -65,7 +65,7 @@ export async function validateSelectedSourceCatalogBinding(input,{root=repositor
   if(kind==='initialized-source-map-recipe-v2')assert.ok(hasWalking&&hasDirectory&&declared===undefined,
     'Version 2 build must retain its walking directory binding');
   if(kind===undefined&&hasWalking)assert.ok(hasDirectory,'Legacy walking build must retain its directory binding');
-  if(kind!=='initialized-source-map-recipe-v3'&&declared!==undefined)
+  if(!['initialized-source-map-recipe-v3','initialized-source-map-recipe-v4'].includes(kind)&&declared!==undefined)
     throw new Error('Explicit battle catalog selection requires a version 3 build');
   if(hasDirectory&&!hasWalking)assert.equal(declared,'shared-framework-directory-v1',
     'Directory without walking requires an explicit version 3 selection');
@@ -115,10 +115,10 @@ export async function validateSelectedSourceCatalogBinding(input,{root=repositor
 export async function validateSelectedSourceAreaBinding(input,{root=repository,compiledDir='dist'}={}){
   const {built,sourceWorld,sourceMaps}=structuredClone(input),kind=recipeKind(built),receipt=built.sourceAreaScopeReceipt;
   if(receipt===undefined){
-    assert.notEqual(kind,'initialized-source-map-recipe-v3','Missing version 3 source area scope receipt');return null;
+    assert.ok(!['initialized-source-map-recipe-v3','initialized-source-map-recipe-v4'].includes(kind),'Missing complete source area scope receipt');return null;
   }
   if(receipt===null)return null;
-  assert.equal(kind,'initialized-source-map-recipe-v3','Source area scope requires a version 3 build');
+  assert.ok(['initialized-source-map-recipe-v3','initialized-source-map-recipe-v4'].includes(kind),'Source area scope requires a version 3 or 4 build');
   const {parseSourceAreaScope,validateSourceAreaScope}=await import(pathToFileURL(
     resolve(root,compiledDir,'src/compiler/source-area-scope.js')).href);
   const scope=parseSourceAreaScope(receipt.scope);
@@ -136,6 +136,64 @@ export async function validateSelectedSourceAreaBinding(input,{root=repository,c
     assert.equal(pin.contentHash,map.contentHash,'Source area build pin content changed');
   }
   return receipt;
+}
+
+/** Recompile the entire package-local inventory from verified source snapshots.
+ * No route, saved state, active group subset or successful derivation can stand
+ * in for the complete map's source records and unresolved dependencies. */
+export async function validateSelectedSourceNpcActivityBinding(input,{root=repository,compiledDir='dist'}={}){
+  const {built,maps,sourceMaps}=structuredClone(input),kind=recipeKind(built);
+  if(kind!=='initialized-source-map-recipe-v4'){
+    assert.equal(built.npcActivity,undefined,'NPC host requires its explicit version 4 declaration');
+    assert.ok(maps.every(map=>map.frameworkNpcActivity===undefined),'Hidden NPC host in an older recipe');return null;
+  }
+  keys(built.npcActivity,'template,maps,nativeRulesVerified,counts');
+  assert.equal(built.npcActivity.nativeRulesVerified,false);
+  const template=built.npcActivity.template;
+  keys(template,'kind,policy,missingFirstInterval,random,collision,schedule,takeover,reason');
+  assert.equal(template.kind,'framework-npc-area-template-v1');
+  const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src',name+'.js')).href);
+  const api=Object.assign({},...await Promise.all(['compiler/corpus','compiler/field-npc-activity',
+    'compiler/content','core/field-npc-activity-source','core/content-integrity'].map(load)));
+  api.parseFrameworkNpcActivityDeclaration({...template,kind:'framework-npc-area-declaration-v1',sourceHash:'0'.repeat(64)});
+  const corpus=await api.loadCorpus(root),originals=new Map(sourceMaps.map(map=>[map.mapId,map]));
+  assert.equal(originals.size,sourceMaps.length);assert.equal(maps.length,sourceMaps.length);
+  assert.equal(new Set(maps.map(map=>map.mapId)).size,maps.length,'Duplicate derived NPC map identity');
+  assert.ok(Array.isArray(built.npcActivity.maps)&&built.npcActivity.maps.length===maps.length,'Incomplete NPC map inventory');
+  const records=new Map(built.npcActivity.maps.map(value=>[value.mapId,value]));
+  assert.equal(records.size,maps.length,'Duplicate NPC map inventory');
+  let declared=0,derived=0;
+  for(const map of maps){
+    const original=originals.get(map.mapId),record=records.get(map.mapId);assert.ok(original&&record);
+    await Promise.all([original,map].map(value=>api.verifyContent(value)));
+    assert.equal(original.developmentProfile,undefined);assert.equal(original.frameworkNpcActivity,undefined);
+    assert.equal(original.sourceSetHash,corpus.sourceSetHash);assert.equal(original.parentSourceSetHash,corpus.manifest.parentSourceSetHash);
+    keys(record,'mapId,sourceMapHash,sources,counts,diagnostics');assert.equal(record.sourceMapHash,original.contentHash);
+    const inventory=api.compileFieldNpcActivitySources(corpus,map.mapId),bindings=[],diagnostics=structuredClone(inventory.diagnostics);
+    for(const source of inventory.definitions){
+      try{bindings.push(api.deriveFrameworkNpcActivity(source,{...template,kind:'framework-npc-area-declaration-v1',sourceHash:source.contentHash}));}
+      catch(error){diagnostics.push({code:'framework-npc-area-derivation',reason:String(error.message??error),source:source.source});}
+    }
+    assert.equal(api.canonical(record.sources),api.canonical(inventory.definitions),'NPC source inventory omitted or changed a record');
+    assert.equal(api.canonical(record.counts),api.canonical({...inventory.counts,derived:bindings.length}));
+    assert.equal(api.canonical(record.diagnostics),api.canonical(diagnostics));
+    const host=map.frameworkNpcActivity;assert.ok(host,'Missing declared NPC host sidecar');
+    keys(host,'kind,policy,sourceMapHash,sourceSetHash,parentSourceSetHash,bindings,diagnostics,limitations,nativeRulesVerified');
+    assert.equal(host.kind,'framework-npc-area-host-v1');assert.equal(host.policy,template.policy);
+    assert.equal(host.sourceMapHash,original.contentHash);assert.equal(host.sourceSetHash,corpus.sourceSetHash);
+    assert.equal(host.parentSourceSetHash,corpus.manifest.parentSourceSetHash);assert.equal(host.nativeRulesVerified,false);
+    assert.equal(map.developmentProfile.npcActivity,template.policy);
+    assert.equal(api.canonical(host.bindings),api.canonical(bindings),'NPC policy/program/source hash relation changed');
+    for(const binding of host.bindings)api.validateFrameworkNpcActivityBinding(binding);
+    assert.equal(api.canonical(host.diagnostics),api.canonical(diagnostics));
+    const limitations=[...new Set([...inventory.definitions.flatMap(source=>source.nativeGaps),
+      'Web Area activity leaves every original dialogue, event, provider and story-reachability blocker visible.'])];
+    assert.equal(api.canonical(host.limitations),api.canonical(limitations));
+    declared+=inventory.definitions.length;derived+=bindings.length;
+  }
+  const counts={maps:maps.length,declared,derived,blocked:declared-derived};
+  assert.equal(api.canonical(built.npcActivity.counts),api.canonical(counts));
+  return {...counts,policy:template.policy,nativeRulesVerified:false};
 }
 
 export async function checkSelectedSourceBatches({root=repository,compiledDir='dist',contentDir='build/content-packages',
@@ -252,7 +310,7 @@ export async function checkSelectedSourceBatches({root=repository,compiledDir='d
       const row={packageId:batch.packageId,label:batch.label,manifestHash:plan.manifestHash,dependencyHash:plan.dependencyHash,
         contentHashes:plan.contentHashes,diagnostics:plan.diagnostics,referenceClosure:plan.dependencies.referenceClosure,
         providerRequirements:plan.dependencies.providerRequirements,providerAssessments:plan.dependencies.providerAssessments,
-        battleCatalogBinding,sourceAreaScopeReceipt:null,maps:[],routes:manifest.routes.map(route=>({id:route.id,status:'not-run'}))};
+        battleCatalogBinding,sourceAreaScopeReceipt:null,npcActivityBinding:null,maps:[],routes:manifest.routes.map(route=>({id:route.id,status:'not-run'}))};
       report.batches.push(row);
       const originals=[];
       for(const map of maps){
@@ -273,11 +331,13 @@ export async function checkSelectedSourceBatches({root=repository,compiledDir='d
             catalog:bundle.battle,binding:map.frameworkWalkBinding,policy:map.walkEncounters});
           delete derivedBody.walkEncounters;delete derivedBody.frameworkWalkBinding;
         }
+        if(recipeKind(built)==='initialized-source-map-recipe-v4')delete derivedBody.frameworkNpcActivity;
         assert.equal(api.canonical(derivedBody),api.canonical(sourceBody),'Source map payload changed: '+batch.packageId+'/'+map.mapId);
         row.maps.push({mapId:map.mapId,sourceHash:original.contentHash,derivedHash:map.contentHash,fullPayloadPreserved:true});
       }
       row.sourceAreaScopeReceipt=await validateSelectedSourceAreaBinding({built,sourceWorld,sourceMaps:originals},
         {root,compiledDir:compiled});
+      row.npcActivityBinding=await validateSelectedSourceNpcActivityBinding({built,maps,sourceMaps:originals},{root,compiledDir:compiled});
       assert.ok([...walkingMaps.keys()].every(id=>maps.some(map=>map.mapId===id)),
         'Walking build record names a map outside this package');
       report.tests.push({name:batch.packageId+': exact selected content and complete original map payloads',passed:true});
