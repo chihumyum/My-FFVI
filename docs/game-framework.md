@@ -2,11 +2,45 @@
 
 当前按 [整体系统骨架](game-skeleton.md) 与 [系统推进计划](systems-roadmap.md) 执行：默认可玩入口、单一状态所有权、完整连续流程和批量内容接口优先。既有实现继续使用，个别来源表现或特殊机制不扩大骨架前置清单。历史交付记录见各 `systems-v*.md`。
 
+## 当前可用骨架
+
+默认 `/game/` 是骨架交付入口。启动、探索、事件、战斗返场、菜单和存读档已接通；地图往返与批量路线使用相同公共接口。训练内容用于检验系统组合，完整来源剧情另行迁移。
+
+```mermaid
+flowchart TD
+  App[浏览器输入与音画] --> Flow[GameFlow：主循环与流程门控]
+  Flow --> Session[GameSession：当前游戏会话]
+  Commands[GameCommands：菜单与战斗命令] --> Session
+  Session --> World[WorldSession / FieldGame：探索与事件]
+  Session --> Battle[BattleGame：战斗副本]
+  Session --> State[GameState：角色、队伍、物品与成长]
+  Battle --> Handoff[GameBattleHandoff：结算与返场]
+  Handoff --> Session
+  Content[统一内容包] --> Repository[GameContentRepository]
+  Repository --> Entry[GameEntryLoader / GameMapLoader]
+  Entry --> Session
+  Session --> Save[CheckpointStorage：保存与恢复]
+  Save --> Entry
+```
+
+这张图表示现有模块的接线，不新增状态所有者。每帧仍只有 `GameFlow.advance` 推进时间；战斗、菜单和地图读写同一持久状态。新增内容填写版本化地图、事件、角色和敌队数据，不复制会话或创建另一套演示内核。
+
+| 操作 | 公共入口 | 交付要求 |
+| --- | --- | --- |
+| 新游戏与恢复 | `GameEntryLoader` | 内容与媒体在私有候选中准备，成功才替换会话。 |
+| 移动与交互 | `GameFlow.move` / `confirm` / `choose` | 输入统一门控，事件和剧情仍由 Field 持有。 |
+| 菜单与战斗输入 | `GameCommands` | 命令绑定当前会话；旧界面不能修改替换后的 owner。 |
+| 切图与战斗往返 | `GameMapLoader` / `GameBattleHandoff` | 失败、取消、重试和结算复用原事务；奖励只提交一次。 |
+| 保存与继续 | `CheckpointStorage` / `GameEntryLoader` | 内容身份校验、恢复后继续输入，不重跑初始化。 |
+| 批量接入 | compiler / `runContentBatchRoute` | 同一候选、一次发布；缺少能力保留完整诊断。 |
+
+2026-10-14 本次重新执行七个代表性检查器，六组公共系统合同和112个连续用例通过；运行时摘要保持 `2047e3057239d4b2fb1f785e573d0223cfa82b0d68bc6b8e930e84b5009b350e`。本地新报告为 `build/reports/v86-skeleton-check.json`。此次没有新增玩法规则；NPC 未集成工作已保存到 ignored WIP。基础骨架收口，下一阶段交付单位为整批内容接入，只有批次实际需要的共用能力才进入实现。
+
 ## 框架完成的边界
 
 骨架按系统之间的契约验收：谁持有状态、谁推进时间、异步准备何时发布、剧情任务如何等待和取消、战斗如何归还状态、保存如何重建会话。代表性连续流程通过后，同类内容应当仅通过编译后的数据接入；不要求先复原每一条特殊技能或每一种表现细节。
 
-框架验收、内容批次验收和全游戏迁移验收分别记录。每个内容批次仍须闭合自身依赖，缺少的机制作为共用系统增量实现；不能把未知指令当空操作，也不能让一个尚未使用的特殊机制阻塞全部内容。编译成功、连续运行和原版一致性分别提供证据。当前先完成骨架和代表性系统组合，区域扩展仍等待本阶段交付。
+框架验收、内容批次验收和全游戏迁移验收分别记录。每个内容批次仍须闭合自身依赖，缺少的机制作为共用系统增量实现；不能把未知指令当空操作，也不能让一个尚未使用的特殊机制阻塞全部内容。编译成功、连续运行和原版一致性分别提供证据。现有代表性系统组合已经通过，来源内容扩展按批次推进；实际浏览器、原版对照和完整剧情尚未验收。
 
 ## 一套游戏状态
 
