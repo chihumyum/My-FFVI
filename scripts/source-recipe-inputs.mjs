@@ -149,21 +149,62 @@ function validateDocument(value,ref){
   }
 }
 
+/** One fresh source-table reader per collection preparation. Only the small
+ * table index is retained; the source corpus is not kept by every recipe. */
+export function createSourceWalkEvidenceReader({root=repository,compiledDir='dist'}={}){
+  let source=null;
+  return async map=>{
+    const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src/compiler',name+'.js')).href);
+    const [{loadSystemSource},{compileSourceWalkEncounterDependencies}]=await Promise.all([
+      load('system-source'),load('world')]);
+    source??=(async()=>{
+      const loaded=await loadSystemSource(root,map.parentSourceSetHash);
+      return {reader:loaded.reader,sourceSetHash:loaded.sourceSetHash,parentSourceSetHash:loaded.manifest.parentSourceSetHash};
+    })();
+    const data=await source;
+    assert.equal(data.sourceSetHash,map.sourceSetHash,'Walking evidence corpus identity mismatch');
+    assert.equal(data.parentSourceSetHash,map.parentSourceSetHash,'Walking evidence parent identity mismatch');
+    return compileSourceWalkEncounterDependencies(data.reader,map.mapId);
+  };
+}
+
 /** Readers return parsed JSON for the same logical URL. Each value is detached
  * before asynchronous verification. Callers retain byte/path freshness checks
  * and complete package validation at their publication boundary. */
 export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurrentJson,readCandidateJson,
-    root=repository,compiledDir='dist'}){
+    root=repository,compiledDir='dist',sourceWalkEvidence}){
   assert.ok(typeof recipePath==='string'&&recipePath.length>0,'Missing original recipe path');
   assert.equal(typeof readCurrentJson,'function');assert.equal(typeof readCandidateJson,'function');
   const recipe=recipeJSON(recipeBytes),refs=declaredReferences(recipe);
   const report={kind:'source-recipe-inputs-v1',id:recipe.id,recipeKind:recipe.kind,recipePath,
-    recipeSha256:sha(recipeBytes),changes:[],dependencyRebindings:[],sourceIdentities:[]};
+    recipeSha256:sha(recipeBytes),changes:[],dependencyRebindings:[],sourceIdentities:[],sourceEvidenceEnrichments:[]};
   if(refs.length===0)return {recipe,report};
   const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src/core',name+'.js')).href);
   const [{canonical},{verifyContent},{sourceCatalogProfile}]=await Promise.all([
     load('canonical'),load('content-integrity'),load('source-catalog')]);
   const oldCache=new Map(),newCache=new Map(),documents=new Map(),omissionMaps=new Map();
+  sourceWalkEvidence??=createSourceWalkEvidenceReader({root,compiledDir});
+  async function comparableWalkingEvidence(before,after,role,url){
+    if(before.sourceWalkEncounters===undefined&&after.sourceWalkEncounters===undefined)return {before,after};
+    assert.equal(before.kind,'world-map-development','Walking evidence requires a source map');
+    assert.equal(after.kind,'world-map-development','Walking evidence requires a source map');
+    assert.ok(after.sourceWalkEncounters!==undefined,'Walking source evidence cannot be removed');
+    for(const value of [before,after])if(value.sourceWalkEncounters!==undefined){
+      const expected=await sourceWalkEvidence(value);
+      assert.equal(canonical(value.sourceWalkEncounters),canonical(expected),
+        'Walking source evidence differs from the verified original table rows');
+    }
+    const originalBefore=identities(before,canonical,sourceCatalogProfile),originalAfter=identities(after,canonical,sourceCatalogProfile);
+    const comparisonBefore=structuredClone(before),comparisonAfter=structuredClone(after);
+    delete comparisonBefore.sourceWalkEncounters;delete comparisonAfter.sourceWalkEncounters;
+    report.sourceEvidenceEnrichments.push({role,url,mapId:after.mapId,
+      before:before.sourceWalkEncounters===undefined?null:sha(canonical(before.sourceWalkEncounters)),
+      after:sha(canonical(after.sourceWalkEncounters)),
+      physicalSourceBefore:{count:originalBefore.physicalSourceCount,hash:originalBefore.physicalSourceHash},
+      physicalSourceAfter:{count:originalAfter.physicalSourceCount,hash:originalAfter.physicalSourceHash},
+      evidence:'exact metadata reconstructed from verified original map/monster-set table rows; no walking execution grant'});
+    return {before:comparisonBefore,after:comparisonAfter};
+  }
   async function read(reader,cache,url,expected){
     if(!cache.has(url))cache.set(url,(async()=>{
       const value=structuredClone(await reader(url));assert.ok(plain(value),'Missing content for '+url);
@@ -183,8 +224,9 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
         assert.ok(value.developmentProfile===undefined&&value.frameworkPresentation===undefined&&
           value.walkEncounters===undefined&&!(value.developmentOmissions?.length),'Omission requires a strict source map');
       }
-      assert.equal(canonical(identities(before,canonical,sourceCatalogProfile)),
-        canonical(identities(after,canonical,sourceCatalogProfile)),'Omission source identity/profile/media changed');
+      const comparison=await comparableWalkingEvidence(before,after,'omission source map',url);
+      assert.equal(canonical(identities(comparison.before,canonical,sourceCatalogProfile)),
+        canonical(identities(comparison.after,canonical,sourceCatalogProfile)),'Omission source identity/profile/media changed');
       return {url,before,after};
     })());
     return omissionMaps.get(mapId);
@@ -236,7 +278,9 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
     const after=await read(readCandidateJson,newCache,ref.url);
     validateDocument(before,ref);validateDocument(after,ref);
     const comparisonAfter=await comparableAfter(before,after,ref);
-    const oldIdentity=identities(before,canonical,sourceCatalogProfile),newIdentity=identities(comparisonAfter,canonical,sourceCatalogProfile);
+    const comparison=await comparableWalkingEvidence(before,comparisonAfter,ref.role,ref.url);
+    const oldIdentity=identities(comparison.before,canonical,sourceCatalogProfile),
+      newIdentity=identities(comparison.after,canonical,sourceCatalogProfile);
     assert.equal(canonical(oldIdentity),canonical(newIdentity),'Source identity/profile/media changed: '+ref.role);
     if(ref.kind==='narshe-battle-catalog'||ref.kind==='field-development')
       assert.equal(after.contentHash,before.contentHash,'This batch must retain '+ref.role+' content unchanged');

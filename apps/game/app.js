@@ -299,7 +299,8 @@ async function reset() {
 async function startInitializedGame() {
   if (!contentReady || !contents.hasInitializedEntry || failed || flow.busy) return;
   const outgoingOwner = flow.currentSession;
-  const operation = beginEntryLoad("new-game", "正在准备系统演示…");
+  const operation = beginEntryLoad("new-game", packageSelection?.packageId === "systems-initialized"
+    ? "正在准备系统演示…" : worldTravel ? "正在准备世界旅行…" : "正在准备来源地点…");
   const preferences = flow.currentSession?.battlePreferences;
   let published = false;
   try {
@@ -822,10 +823,16 @@ async function init() {
     text("welcome-scope", "使用来源开发队伍和作者编排的演示事件，拥有独立本地存档。战后打开暂停菜单，可使用道具、调整队伍、保存并恢复；继续后向右走一步过门，再向上走进入第二战。");
   }
   if (contents.hasInitializedEntry) {
-    text("welcome-title", "游戏系统演示");
-    text("welcome-description", "购买道具、装备魔石并练习战斗；探索时可打开暂停菜单，查看学习进度、保存和恢复。");
-    text("welcome-scope", "使用新游戏初始化数据与作者编排的演示事件，拥有独立本地存档，不代表原剧情进度。");
-    text("systems-playground-help", "游戏系统演示：起点上方是战斗训练，右侧是商店，下方可领取魔石。按方向键面向设施，再按 Enter / 空格交互。按 Esc 打开菜单，可换装、编队、使用道具或魔法、装备魔石和存读档。先升级与回复，再挑战魔法学习训练。");
+    text("welcome-title", "来源地点 · 内容批次");
+    text("welcome-description", "探索来源地点，使用方向键移动并与面前的角色交谈；可打开菜单保存和读取进度。");
+    text("welcome-scope", "使用新游戏初始化数据与明确的起始地点，完整剧情和部分玩法仍在迁移。各内容包的本地进度独立。");
+    text("systems-playground-help", "方向键移动，Enter / 空格与面前的角色交谈；Esc 打开队伍、装备、物品和保存菜单。读取进度后可继续探索。");
+    if (packageId === "systems-initialized") {
+      text("welcome-title", "游戏系统演示");
+      text("welcome-description", "购买道具、装备魔石并练习战斗；探索时可打开暂停菜单，查看学习进度、保存和恢复。");
+      text("welcome-scope", "使用新游戏初始化数据与作者编排的演示事件，拥有独立本地存档，不代表原剧情进度。");
+      text("systems-playground-help", "游戏系统演示：起点上方是战斗训练，右侧是商店，下方可领取魔石。按方向键面向设施，再按 Enter / 空格交互。按 Esc 打开菜单，可换装、编队、使用道具或魔法、装备魔石和存读档。先升级与回复，再挑战魔法学习训练。");
+    }
   }
   if (worldTravel) {
     text("welcome-title", "世界旅行演示");
@@ -864,7 +871,7 @@ async function init() {
   $("start").disabled = !canStart;
   $("source-start").disabled = !contents.hasSourceEntry;
   await refreshSaveInfo();
-  text("start", worldTravel ? "开始世界旅行" : contents.hasInitializedEntry || systemsPlayground ? "开始系统演示" : preview ? "进入地图预览" : packageId !== null ? "进入开发片段" : "进入纳尔谢");
+  text("start", worldTravel ? "开始世界旅行" : packageId === "systems-initialized" || systemsPlayground ? "开始系统演示" : contents.hasInitializedEntry ? "进入来源地点" : preview ? "进入地图预览" : packageId !== null ? "进入开发片段" : "进入纳尔谢");
   sync();
   text("status", "选择开始游戏或继续本地进度。");
   requestAnimationFrame(frame);

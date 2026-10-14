@@ -84,6 +84,8 @@ const systemDetails: Record<ContentBatchSystem, {
  * Unknown compiler codes remain visible under unclassified. */
 const diagnosticOwners: Readonly<Record<string, ContentBatchSystem>> = {
   "map-outside-batch": "content-batch-interface",
+  "source-walk-encounter-policy-unimplemented": "map-event-and-travel",
+  "source-walk-encounter-binding-invalid": "map-event-and-travel",
   "map-missing": "map-event-and-travel",
   "walk-encounter-policy-invalid": "map-event-and-travel",
   "map-capability-blocked": "map-event-and-travel",

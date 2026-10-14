@@ -188,6 +188,7 @@
     "npc-routes:plan": "npm run build && node dist/src/cli.js npc-routes",
     "source-content:build": "npm run build && node scripts/build-versioned-source-content.mjs",
     "source-content:check": "npm run build && node scripts/check-initialized-content-batch.mjs",
+    "source-batches:check": "npm run build && node scripts/check-selected-source-batches.mjs",
     "content-history:archive": "npm run build && node scripts/archive-content-release.mjs",
     "content-history:check": "npm run build && node scripts/check-content-release-session.mjs && node scripts/check-audio-release-ui.mjs && node scripts/check-game-entry-ui.mjs"
   },

@@ -10,6 +10,19 @@ import type { FrameworkFlatFieldViewDefinition } from "../core/field-actor-view.
 import type { FieldNativeCompositionDefinition } from "../core/field-native-composition.js";
 
 export type ContentIssue = { reason: string; source: Evidence };
+export type SourceWalkEncounterRowEvidence = Evidence & { rowId?: string; serializedFile?: string };
+/** Source references only. Rates are observations, never runtime weights or
+ * permission to implement native encounter timing/lottery. */
+export type SourceWalkEncounterDependencies = {
+  kind: "source-walk-encounter-dependencies-v1";
+  mapId: number;
+  map: { source: SourceWalkEncounterRowEvidence; values: Record<string, string> };
+  monsterSetId: number | null;
+  set: { source: SourceWalkEncounterRowEvidence; values: Record<string, string> } | null;
+  slots: { index: number; partyId: number | null; rawPartyId: string | null;
+    rate: number | null; rawRate: string | null; source: SourceWalkEncounterRowEvidence }[];
+  blockers: { code: "source-walk-encounter-binding-invalid"; reason: string; source: Evidence }[];
+};
 export type WorldMapContent = {
   formatVersion: 1;
   kind: "world-map-development";
@@ -20,6 +33,7 @@ export type WorldMapContent = {
   developmentProfile?: DevelopmentProfile;
   developmentOmissions?: FieldContent["developmentOmissions"];
   walkEncounters?: FieldContent["walkEncounters"];
+  sourceWalkEncounters?: SourceWalkEncounterDependencies;
   mapId: number;
   areaId: number;
   name: string;

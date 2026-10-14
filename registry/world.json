@@ -27,6 +27,16 @@
       ]
     },
     {
+      "id": "south-figaro",
+      "name": "南费加罗镇",
+      "aliases": ["South Figaro"],
+      "questions": [
+        "地点关联只由area.csv行8及来源名称证明；各地图的故事时期与原版可达条件仍未知。",
+        "八张室内地图以同一来源内容生产器成批接入；完整外部出口和未走路线继续保留。",
+        "地图234来源monster_set_id154的全部敌队依赖须保留；Web步行遇敌节奏与抽选规则尚未授予。"
+      ]
+    },
+    {
       "id": "figaro",
       "name": "费加罗城",
       "aliases": ["Figaro Castle"],
@@ -38,6 +48,30 @@
     }
   ],
   "facts": [
+    {
+      "id": "south-figaro:area-binding",
+      "subject": "south-figaro",
+      "predicate": "source.areaId",
+      "value": "8",
+      "when": {},
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": ["area.csv:/id/8", "targets/south-figaro.md"]
+    },
+    {
+      "id": "south-figaro:area-name-binding",
+      "subject": "south-figaro",
+      "predicate": "source.nameKey",
+      "value": "MSG_MAP_NAME_11",
+      "when": {},
+      "status": "observed",
+      "sourceSetHash": "6638e4e4f46835754f17c376a253da6de7a1996cab5e9fda71ff09cddace8965",
+      "evidence": [
+        "area.csv:/id/8/area_name",
+        "Assets/GameAssets/Serial/Data/Message/system_zhc.txt:MSG_MAP_NAME_11",
+        "targets/south-figaro.md"
+      ]
+    },
     {
       "id": "figaro:area-binding",
       "subject": "figaro",

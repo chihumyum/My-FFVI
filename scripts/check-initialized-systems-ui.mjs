@@ -478,7 +478,7 @@ try {
     assert.deepEqual(h.calls.json, ["/content-packages/" + pack.packageId + ".json"]);
     assert.equal(h.api.read().flow.currentSession, null);
     assert.equal(h.$("start").hidden, false); assert.equal(h.$("start").disabled, false);
-    assert.equal(h.$("start").textContent, "开始系统演示");
+    assert.equal(h.$("start").textContent, "进入来源地点");
     assert.equal(h.$("source-start").hidden, true); assert.equal(h.$("source-start").disabled, true);
     assert.equal(h.$("restart").hidden, false); assert.equal(h.$("retry").hidden, false);
     await h.frame(); assert.equal(h.api.read().flow.currentSession, null);

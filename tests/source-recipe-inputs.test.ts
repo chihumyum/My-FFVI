@@ -7,15 +7,20 @@ import { contentDigest, verifyContent } from "../src/core/content-integrity.js";
 import { canonical } from "../src/core/canonical.js";
 import type { WorldCatalog, WorldMapContent } from "../src/field/world.js";
 import { sourceNewGameFixture } from "./fixtures/source-new-game.js";
+import { compileSourceWalkEncounterDependencies } from "../src/compiler/world.js";
+import type { BattleRow } from "../src/compiler/battle.js";
+import type { SourceWalkEncounterDependencies } from "../src/field/world.js";
 
 type Ref = { url: string; contentHash: string };
 type Recipe = { kind: string; id: string; [key: string]: unknown };
 type Inputs = { recipePath: string; recipeBytes: Uint8Array | string;
-  readCurrentJson: (url: string) => Promise<unknown>; readCandidateJson: (url: string) => Promise<unknown> };
+  readCurrentJson: (url: string) => Promise<unknown>; readCandidateJson: (url: string) => Promise<unknown>;
+  sourceWalkEvidence?: (map: WorldMapContent) => Promise<SourceWalkEncounterDependencies> };
 type Result = { recipe: Recipe; report: { kind: string; id: string; recipeSha256: string;
   changes: { pointer: string; role: string; url: string; oldHash: string; newHash: string }[];
   dependencyRebindings: { pointer: string; role: string; url: string; mapId: number; oldHash: string; newHash: string }[];
-  sourceIdentities: { role: string; profile: string; physicalSourceHash: string; mediaBindingsHash: string }[] } };
+  sourceIdentities: { role: string; profile: string; physicalSourceHash: string; mediaBindingsHash: string }[];
+  sourceEvidenceEnrichments: { role: string; mapId: number; physicalSourceBefore: {count: number}; physicalSourceAfter: {count: number} }[] } };
 const script = pathToFileURL(resolve(process.cwd(), "scripts/source-recipe-inputs.mjs")).href;
 const compiledDir = fileURLToPath(new URL("../", import.meta.url));
 const run = async (input: Inputs): Promise<Result> =>
@@ -58,6 +63,56 @@ async function fixture() {
     readCurrentJson: async url => current.get(url), readCandidateJson: async url => candidate.get(url) });
   return { current, candidate, recipe, input, urls, oldMap, newMap, oldWorld, newWorld, oldEntry, newEntry, battle };
 }
+
+async function walkingFixture() {
+  const f = await fixture();
+  const row = (table: string, id: number, values: Record<string,string>): BattleRow => ({values,
+    source: {file:"controlled-master.bundle",assetPath:table,objectId:"-9007199254740997",serializedFile:"controlled-master",rowId:String(id)} });
+  const master = row("map.csv",f.newMap.mapId,{id:String(f.newMap.mapId),monster_set_id:"11",encount_area_grid_id:"0"});
+  const set = row("monster_set.csv",11,{id:"11",...Object.fromEntries(Array.from({length:16},(_,i)=>[
+    ["monster_set"+(i+1),i===0?"375":"0"],["monster_set"+(i+1)+"_rate","0"]]).flat())});
+  const expected = compileSourceWalkEncounterDependencies({row(table,id){
+    if(table==="map.csv"&&Number(id)===f.newMap.mapId)return master;
+    if(table==="monster_set.csv"&&Number(id)===11)return set;
+    throw new Error("Missing controlled table row");
+  }},f.newMap.mapId);
+  const update = async (raw: WorldMapContent) => {
+    const map = await seal(raw),world = await seal({...f.newWorld,maps:{...f.newWorld.maps,
+      [map.mapId]:{...f.newWorld.maps[map.mapId]!,contentHash:map.contentHash}}});
+    const entry = await seal({...f.newEntry,mapContentHash:map.contentHash,worldCatalogHash:world.contentHash});
+    f.candidate.set(f.urls.sourceMap,map);f.candidate.set(f.urls.sourceWorld,world);f.candidate.set(f.urls.sourceEntry,entry);
+  };
+  await update({...f.newMap,sourceWalkEncounters:expected});
+  const input = (): Inputs => ({...f.input(),sourceWalkEvidence:async map=>{
+    assert.equal(map.mapId,f.newMap.mapId);return structuredClone(expected);
+  }});
+  return {...f,expected,update,walkingInput:input};
+}
+
+test("new walking source evidence only enriches identities after exact original table-row reconstruction", async () => {
+  const f = await walkingFixture(),before=structuredClone({current:f.current,candidate:f.candidate,recipe:f.recipe});
+  const result=await run(f.walkingInput());
+  assert.equal(result.report.sourceEvidenceEnrichments.length,1);
+  const proof=result.report.sourceEvidenceEnrichments[0]!;
+  assert.equal(proof.role,"sourceMap");assert.equal(proof.mapId,f.newMap.mapId);
+  assert.ok(proof.physicalSourceAfter.count>proof.physicalSourceBefore.count);
+  assert.equal((result.recipe.sourceMap as Ref).contentHash,(f.candidate.get(f.urls.sourceMap) as WorldMapContent).contentHash);
+  assert.deepEqual({current:f.current,candidate:f.candidate,recipe:f.recipe},before);
+});
+
+test("resealed walking rates, table references or unrelated physical assets cannot borrow evidence enrichment", async () => {
+  const f=await walkingFixture();
+  for(const change of [
+    (map:WorldMapContent)=>{map.sourceWalkEncounters!.set!.values.monster_set1_rate="1";map.sourceWalkEncounters!.slots[0]!.rawRate="1";map.sourceWalkEncounters!.slots[0]!.rate=1;},
+    (map:WorldMapContent)=>{map.sourceWalkEncounters!.set!.source.objectId="99999";},
+  ]) {
+    const map={...structuredClone(f.newMap),sourceWalkEncounters:structuredClone(f.expected)};change(map);await f.update(map);
+    await assert.rejects(run(f.walkingInput()),/differs from the verified original table rows/);
+  }
+  const map={...structuredClone(f.newMap),sourceWalkEncounters:structuredClone(f.expected)};
+  map.map!.source.objectId="99999";await f.update(map);
+  await assert.rejects(run(f.walkingInput()),/Source identity\/profile\/media changed/);
+});
 
 test("declared source pins rebind a new compiled program and dependency closure without editing callers", async () => {
   const f = await fixture(), linked = "/content-packages/source/maps/" + f.newMap.mapId + ".json";

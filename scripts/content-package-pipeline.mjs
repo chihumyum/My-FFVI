@@ -6,9 +6,11 @@ import {isAbsolute,relative,resolve,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {archivePublishedContentPackages} from './archive-content-release.mjs';
 import {acquireContentPackageLock} from './content-package-lock.mjs';
+import {loadSourceContentSelection,loadSourceRecipePaths} from './source-content-selection.mjs';
+import {runtimeDigest} from './runtime-digest.mjs';
 import {compileSourcePrerequisites,validateSourcePrerequisiteInputs} from './compile-source-prerequisites.mjs';
 import {linkSourcePrerequisites} from './link-source-prerequisites.mjs';
-import {resolveSourceRecipeInputs} from './source-recipe-inputs.mjs';
+import {resolveSourceRecipeInputs,createSourceWalkEvidenceReader} from './source-recipe-inputs.mjs';
 
 const repository=resolve(import.meta.dirname,'..');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -92,12 +94,20 @@ async function validatePublicCAS(root,candidateHistory){
 }
 
 export async function compileSharedContentPackages({root=repository,compiledDir='dist',readJson,
-  sourceRecipePaths=['content-batches/figaro-initialized.recipe.json']}={}){
-  root=resolve(root);
+  sourceRecipePaths,sourceSelectionPath}={}){
+  root=await realpath(resolve(root));
   // Several existing producers still import the repository's default emitted
   // modules. Do not claim another compiler lock covers that mixed runtime.
   assert.equal(await realpath(resolve(root,compiledDir)),await realpath(resolve(repository,'dist')),
     'Shared public compilation requires the repository dist modules');
+  assert.ok(sourceRecipePaths===undefined||sourceSelectionPath===undefined,
+    'Choose one source selection or the legacy explicit recipe paths');
+  const selection=sourceRecipePaths===undefined
+    ? await loadSourceContentSelection({root,path:sourceSelectionPath??'content-batches/source-batches.selection.json',
+      reservedPackageIds:['source-batches','source-batch-selection']})
+    : await loadSourceRecipePaths({root,paths:sourceRecipePaths,
+      reservedPackageIds:['source-batches','source-batch-selection']});
+  const preparedRuntime=await runtimeDigest(root,resolve(root,compiledDir));
   readJson??=inputReader(root).json;
   const [{compileBaseContentPackages},{compileDevelopmentContentBatch},{compileSystemsPlayground},
     {compileBattleContentBatch},{compileInitializedSystems},{compileWorldTravel},{compileInitializedContentBatch}]=await Promise.all([
@@ -106,17 +116,19 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     import('./build-initialized-systems.mjs'),import('./build-world-travel.mjs'),
     import('./build-initialized-content-batch.mjs'),
   ]);
-  const recipes=new Map(),payloads=new Map(),reports=[],rebindings=[];
+  const recipes=new Map(selection.inputFiles),payloads=new Map(),reports=[],rebindings=[];
   const recipe=async path=>{const file=resolve(root,path),raw=await readFile(file);
     assert.ok(within(resolve(root,'content-batches'),file),'Recipe must be inside content-batches');
+    if(recipes.has(file))assert.equal(sha(raw),recipes.get(file),'Selected recipe changed before compilation: '+path);
     recipes.set(file,sha(raw));return {path,raw,value:JSON.parse(raw.toString()),sha256:sha(raw)};};
+  const put=(url,value)=>{assert.match(url,packageURL);
+    assert.ok(!payloads.has(url),'Conflicting candidate payload: '+url);payloads.set(url,value);};
   const append=(id,result)=>{
-    for(const [url,value] of result.payloads){assert.match(url,packageURL);
-      assert.ok(!payloads.has(url),'Conflicting candidate payload: '+url);payloads.set(url,value);}
-    if(result.refs instanceof Map)for(const [name,refs] of result.refs)payloads.set('/content-packages/'+name+'.json',refs);
-    else if(result.refs)payloads.set('/content-packages/'+id+'.json',result.refs);
-    if(result.manifest)payloads.set('/content-packages/'+id+'/manifest.json',result.manifest);
-    if(id!=='base')payloads.set('/content-packages/'+id+'/build-report.json',result.report);
+    for(const [url,value] of result.payloads)put(url,value);
+    if(result.refs instanceof Map)for(const [name,refs] of result.refs)put('/content-packages/'+name+'.json',refs);
+    else if(result.refs)put('/content-packages/'+id+'.json',result.refs);
+    if(result.manifest)put('/content-packages/'+id+'/manifest.json',result.manifest);
+    if(id!=='base')put('/content-packages/'+id+'/build-report.json',result.report);
     reports.push({id,report:result.report});
   };
   const prerequisites=await compileSourcePrerequisites({root,compiledDir});
@@ -130,16 +142,17 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
   assert.ok(battles.catalog,'Ordinary battle content candidate is blocked');append('base',base);
   const candidateRead=async url=>url==='/content-batches/ordinary-battles/battle.json'
     ? structuredClone(battles.catalog):sourceRead(url);
+  const sourceWalkEvidence=createSourceWalkEvidenceReader({root,compiledDir});
   const resolveRecipe=async path=>{
     const original=await recipe(path);
     const resolved=await resolveSourceRecipeInputs({root,compiledDir,recipePath:path,recipeBytes:original.raw,
-      readCurrentJson:readJson,readCandidateJson:candidateRead});
+      readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence});
     rebindings.push(resolved.report);return {...original,value:resolved.recipe};
   };
   const [playRecipe,initRecipe,travelRecipe,developmentRecipe,...sourceRecipes]=await Promise.all([
     ...['systems-playground','systems-initialized','world-travel','figaro-development'].map(name=>
       resolveRecipe('content-batches/'+name+'.recipe.json')),
-    ...sourceRecipePaths.map(resolveRecipe)]);
+    ...selection.items.map(item=>resolveRecipe(item.path))]);
   // Parallel pure preparation; no producer writes the live registry or an
   // independent battle cache. Derived packages read this build's battle body.
   const derived=await Promise.all([
@@ -153,12 +166,33 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
   for(const [index,id] of ['figaro-development','systems-playground','systems-initialized','world-travel'].entries())append(id,derived[index]);
   for(const [index,item] of sourceRecipes.entries())append(item.value.id,derived[index+4]);
   reports.push({id:'ordinary-battles',report:battles.report});
-  return {payloads,reports,recipes,rebindings,sourceInputs:prerequisites.inputs,
-    validateInputs:()=>validateSourcePrerequisiteInputs(prerequisites.inputs,{root})};
+  let sourceWorkSet=null;
+  if(selection.items.length){
+    const {projectContentBatchWorkSet}=await import(pathToFileURL(
+      resolve(root,compiledDir,'src/compiler/content-batch-work-set.js')).href);
+    sourceWorkSet=projectContentBatchWorkSet({selection:{id:selection.id,sha256:selection.sha256},
+      runtimeSha256:preparedRuntime,batches:selection.items.map((item,index)=>({
+        packageId:item.id,label:item.label,recipePath:item.path,recipeSha256:item.sha256,plan:derived[index+4].plan}))});
+    put('/content-packages/source-batches/work-plan.json',sourceWorkSet);
+  }
+  const selectionBody={kind:'source-content-selection-receipt-v1',id:selection.id,path:selection.path,
+    sha256:selection.sha256,items:selection.items,
+    workPlan:sourceWorkSet?{url:'/content-packages/source-batches/work-plan.json',contentHash:sourceWorkSet.contentHash}:null};
+  const {contentDigest}=await import(pathToFileURL(resolve(root,compiledDir,'src/core/content-integrity.js')).href);
+  const sourceSelection={...selectionBody,contentHash:await contentDigest(selectionBody)};
+  put('/content-packages/source-batches/selection.json',sourceSelection);
+  reports.push({id:'source-batch-selection',report:sourceSelection});
+  return {payloads,reports,recipes,rebindings,sourceInputs:prerequisites.inputs,sourceSelection,
+    validateInputs:async()=>{
+      await validateSourcePrerequisiteInputs(prerequisites.inputs,{root});
+      assert.equal(await runtimeDigest(root,resolve(root,compiledDir)),preparedRuntime,
+        'Runtime changed while compiling the selected source batches');
+    }};
 }
 
 export async function publishContentPackages({root=repository,compiledDir='dist',compile=compileSharedContentPackages,
-  archive=archivePublishedContentPackages,reportPath='build/reports/versioned-content-package-build.json',sourceRecipePaths}={}){
+  archive=archivePublishedContentPackages,reportPath='build/reports/versioned-content-package-build.json',
+  sourceRecipePaths,sourceSelectionPath}={}){
   root=await realpath(resolve(root));const build=resolve(root,'build'),target=resolve(build,'content-packages');
   const backup=resolve(build,'.previous-package-collection');
   const output=resolve(root,reportPath);
@@ -178,9 +212,11 @@ export async function publishContentPackages({root=repository,compiledDir='dist'
     try{await stat(backup);throw new Error('Inspect interrupted content package collection publication');}
     catch(error){if(error.code!=='ENOENT')throw error;}
     const previousFingerprint=await fingerprint(target),reader=inputReader(root);
-    const candidate=await stage('compile-private-candidate',()=>compile({root,compiledDir,sourceRecipePaths,readJson:url=>reader.json(url)}));
+    const candidate=await stage('compile-private-candidate',()=>compile({root,compiledDir,sourceRecipePaths,sourceSelectionPath,
+      readJson:url=>reader.json(url)}));
     assert.ok(candidate?.payloads instanceof Map&&candidate.payloads.size>0,'Content candidate has no payloads');
     report.producers=candidate.reports??[];
+    if(candidate.sourceSelection)report.sourceSelection=candidate.sourceSelection;
     report.recipeRebindings=candidate.rebindings??[];
     if(candidate.sourceInputs)report.sourceInputLock={kind:candidate.sourceInputs.kind,
       compilerDigest:candidate.sourceInputs.compilerDigest,files:candidate.sourceInputs.files.length,

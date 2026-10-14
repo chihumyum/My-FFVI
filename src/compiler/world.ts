@@ -32,16 +32,74 @@ import { loadSystemMessages } from "./system-messages.js";
 import { compileTreasureInventoryLimits } from "./treasure-inventory.js";
 import { compileFieldEntryContext } from "./field-entry-context.js";
 import type { Character, Evidence, Op, Sprite } from "../field/types.js";
+import type { BattleRow } from "./battle.js";
 import type {
   WorldMapContent,
   WorldCatalog,
   ContentIssue,
+  SourceWalkEncounterDependencies,
 } from "../field/world.js";
 
 const array = (v: unknown) => z.array(z.unknown()).parse(v);
 const text = (v: unknown) => z.string().parse(v);
 const finite = (v: unknown) => z.number().finite().parse(v);
 const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+/** Preserve the entire selected set, including zero-rate slots and malformed
+ * fields. No source walking scheduler or probability model is inferred. */
+export function compileSourceWalkEncounterDependencies(reader: { row(table: string, id: string | number): BattleRow },
+  mapId: number): SourceWalkEncounterDependencies {
+  const fallback: Evidence = { file: "map.csv", assetPath: "map.csv", pointer: `/id/${mapId}` };
+  const result: SourceWalkEncounterDependencies = { kind: "source-walk-encounter-dependencies-v1", mapId,
+    map: { source: fallback, values: { id: String(mapId) } }, monsterSetId: null,
+    set: null, slots: [], blockers: [] };
+  const issue = (reason: string, source: Evidence) => result.blockers.push({ code: "source-walk-encounter-binding-invalid", reason, source });
+  const parse = (raw: string | undefined, label: string, source: Evidence): number | null => {
+    try { const value = tableId(raw); if (value < 0) throw new Error("Negative source value"); return value; }
+    catch { issue(`Invalid or missing source walking ${label}: ${String(raw)}`, source); return null; }
+  };
+  let master: BattleRow;
+  try {
+    master = reader.row("map.csv", mapId);
+    result.map = { source: { ...structuredClone(master.source), pointer: `/id/${master.source.rowId}` },
+      values: structuredClone(master.values) };
+    if (tableId(master.values.id) !== mapId) issue("Source walking map row identity mismatch", master.source);
+  } catch (error) {
+    issue(`Source walking map master is unavailable: ${String(error instanceof Error ? error.message : error)}`, fallback);
+    return result;
+  }
+  if (master.values.encount_area_grid_id !== undefined) {
+    const gridId = parse(master.values.encount_area_grid_id, "encount_area_grid_id", master.source);
+    if (gridId !== null && gridId > 0)
+      issue("Source area-grid walking encounter dependencies are not compiled", result.map.source);
+  }
+  const setId = parse(master.values.monster_set_id, "monster_set_id", master.source);
+  result.monsterSetId = setId;
+  if (setId === null || setId === 0) return result;
+  let set: BattleRow;
+  try {
+    set = reader.row("monster_set.csv", setId);
+    result.set = { source: { ...structuredClone(set.source), pointer: `/id/${set.source.rowId}` }, values: structuredClone(set.values) };
+    if (tableId(set.values.id) !== setId) issue("Source walking monster-set row identity mismatch", set.source);
+  } catch (error) {
+    issue(`Source walking monster-set master ${setId} is unavailable: ${String(error instanceof Error ? error.message : error)}`, master.source);
+    return result;
+  }
+  const indices = [...new Set([...Array.from({ length: 16 }, (_, i) => i + 1),
+    ...Object.keys(set.values).flatMap(key => {
+      const match = /^monster_set([1-9]\d*)(?:_rate)?$/.exec(key);
+      return match && Number.isSafeInteger(Number(match[1])) && Number(match[1]) <= 0x7fffffff ? [Number(match[1])] : [];
+    })])].sort((a, b) => a - b);
+  for (const index of indices) {
+    const rawPartyId = set.values[`monster_set${index}`], rawRate = set.values[`monster_set${index}_rate`];
+    const source = { ...set.source, pointer: `/id/${set.source.rowId}/monster_set${index}` };
+    if (index > 16) issue("Source walking slot is outside the reviewed master schema", source);
+    const partyId = parse(rawPartyId, `slot ${index} party`, source), rate = parse(rawRate, `slot ${index} rate`, source);
+    result.slots.push({ index, partyId, rawPartyId: rawPartyId ?? null, rate, rawRate: rawRate ?? null, source });
+    if (partyId === 0 && rate !== null && rate > 0) issue("Source walking positive rate refers to unresolved party zero", source);
+  }
+  return result;
+}
 
 /** Individual unsupported animations stay absent and diagnosed; usable poses retain the same source. */
 export function compileWorldCharacter(
@@ -435,6 +493,7 @@ export async function compileWorld(root: string) {
             });
         }
       }
+    const sourceWalkEncounters = compileSourceWalkEncounterDependencies(systemSource.reader, Number(binding.id));
     const value: Omit<WorldMapContent, "contentHash"> = {
       formatVersion: 1,
       kind: "world-map-development",
@@ -444,6 +503,7 @@ export async function compileWorld(root: string) {
       mapId: Number(binding.id),
       areaId: Number(binding.areaId),
       name: binding.name,
+      sourceWalkEncounters,
       ...(entryView ? { entryView } : {}),
       map,
       ...(partyEntry ? { partyEntry } : {}),
@@ -470,6 +530,8 @@ export async function compileWorld(root: string) {
       ].sort(),
       blockers,
       limitations: [
+        ...(sourceWalkEncounters.monsterSetId !== 0 || sourceWalkEncounters.blockers.length > 0
+          ? ["Source walking encounter policy is unimplemented; rates are retained without runtime timing or lottery."] : []),
         "Package compilation does not establish story reachability or original parity.",
         "Unsupported entity groups, instructions and media remain executable stops.",
         "OpenTrigger contact uses the development grid controller; source SE requests are recorded in the muted sound lane.",

@@ -1,5 +1,6 @@
 import type { Evidence, FieldEntity, Op, Site } from "../field/types.js";
-import type { WorldCatalog, WorldMapContent } from "../field/world.js";
+import type { SourceWalkEncounterDependencies, SourceWalkEncounterRowEvidence, WorldCatalog, WorldMapContent } from "../field/world.js";
+import { tableId } from "./table-id.js";
 import { canonical } from "../core/canonical.js";
 import { parseFrameworkWalkEncounterPolicy } from "../core/walk-encounters.js";
 import { fieldInstructionRequirements, assessFieldRequirements,
@@ -58,6 +59,57 @@ function stable<T>(values: Iterable<T>): T[] {
 }
 function sourceOf(site?: Site | Evidence): Evidence | undefined {
   return site && "source" in site ? site.source : site;
+}
+
+/** Check decoded values against retained source rows without treating a rate
+ * as probability or a zero rate as permission to omit a referenced party. */
+export function validateSourceWalkEncounterDependencies(value: SourceWalkEncounterDependencies, mapId: number): void {
+  const parsed = (raw: string | null | undefined): number | null => {
+    try { const n = tableId(raw); return n >= 0 ? n : null; } catch { return null; }
+  };
+  const evidence = (source: Evidence): boolean => !!source && text(source.file) && text(source.assetPath) &&
+    (source.objectId === undefined || typeof source.objectId === "string" && /^-?\d+$/.test(source.objectId));
+  const rowEvidence = (source: SourceWalkEncounterRowEvidence, id: number): boolean =>
+    evidence(source) && source.rowId === String(id) && text(source.serializedFile);
+  const rawRow = (values: Record<string, string>): boolean => !!values && typeof values === "object" &&
+    !Array.isArray(values) && Object.values(values).every(raw => typeof raw === "string");
+  if (!value || value.kind !== "source-walk-encounter-dependencies-v1" || value.mapId !== mapId ||
+      !Array.isArray(value.slots) || !Array.isArray(value.blockers) || !value.map || !evidence(value.map.source) ||
+      !rawRow(value.map.values) || parsed(value.map.values.id) !== mapId ||
+      !rowEvidence(value.map.source, mapId) ||
+      parsed(value.map.values.monster_set_id) !== value.monsterSetId ||
+      value.blockers.some(blocker => blocker.code !== "source-walk-encounter-binding-invalid" || !text(blocker.reason) || !evidence(blocker.source)))
+    throw new Error("Source walking dependency header/raw binding mismatch");
+  if (value.map.values.encount_area_grid_id !== undefined &&
+      (parsed(value.map.values.encount_area_grid_id) === null || parsed(value.map.values.encount_area_grid_id)! > 0) &&
+      !value.blockers.length)
+    throw new Error("Source walking area-grid dependency diagnostic is missing");
+  if (value.monsterSetId === null || value.monsterSetId === 0) {
+    if (value.set !== null || value.slots.length || value.monsterSetId === null && !value.blockers.length)
+      throw new Error("Source walking empty/unknown set binding mismatch");
+    return;
+  }
+  if (!integer(value.monsterSetId, 1)) throw new Error("Invalid source walking monster-set identity");
+  if (value.set === null) {
+    if (!value.blockers.length || value.slots.length) throw new Error("Missing source walking set diagnostic");
+    return;
+  }
+  if (!rowEvidence(value.set.source, value.monsterSetId) || !rawRow(value.set.values) || parsed(value.set.values.id) !== value.monsterSetId ||
+      value.slots.length < 16) throw new Error("Source walking monster-set row/slot binding mismatch");
+  let previous = 0;
+  for (const [offset, slot] of value.slots.entries()) {
+    if (!integer(slot.index, 1) || slot.index <= previous || offset < 16 && slot.index !== offset + 1 ||
+        slot.index > 16 && !value.blockers.length || !rowEvidence(slot.source, value.monsterSetId) ||
+        slot.source.file !== value.set.source.file || slot.source.assetPath !== value.set.source.assetPath ||
+        slot.source.objectId !== value.set.source.objectId || slot.source.serializedFile !== value.set.source.serializedFile ||
+        slot.source.pointer !== `/id/${value.set.source.rowId}/monster_set${slot.index}` ||
+        (slot.rawPartyId ?? undefined) !== value.set.values[`monster_set${slot.index}`] ||
+        (slot.rawRate ?? undefined) !== value.set.values[`monster_set${slot.index}_rate`] ||
+        parsed(slot.rawPartyId) !== slot.partyId || parsed(slot.rawRate) !== slot.rate ||
+        (slot.partyId === null || slot.rate === null) && !value.blockers.length)
+      throw new Error("Source walking slot/raw binding mismatch");
+    previous = slot.index;
+  }
 }
 
 /** A conservative graph of references exposed by compiled packages. It does
@@ -130,6 +182,37 @@ export function analyzeContentDependencies(input: {
     const map = maps.get(mapId)!;
     if (!inspectedMaps.has(mapId)) {
       inspectedMaps.add(mapId);
+      if (map.sourceWalkEncounters !== undefined) {
+        const source = map.sourceWalkEncounters;
+        // A malformed rate or row/header must not erase the valid party
+        // references still present in its retained raw set. Admission remains
+        // blocked below; these edges only describe the source dependency.
+        if (source?.set?.values && typeof source.set.values === "object") for (const key of Object.keys(source.set.values)) {
+          const match = /^monster_set([1-9]\d*)$/.exec(key);
+          if (!match) continue;
+          const index = Number(match[1]);
+          try {
+            const partyId = tableId(source.set.values[key]);
+            if (partyId <= 0) continue;
+            encounters.add(partyId);
+            const site = source.set.source ? { ...source.set.source,
+              pointer: `${source.set.source.pointer ?? `/id/${source.monsterSetId}`}/monster_set${index}` } : undefined;
+            edge(`${mapKey(mapId)}/source-walk-encounters/slot:${index}`, "encounter", partyId, `encounter:${partyId}`, "resolved", site);
+          } catch { /* The raw field and the invalid-binding diagnostic remain. */ }
+        }
+        try {
+          validateSourceWalkEncounterDependencies(source, mapId);
+          for (const blocker of source.blockers)
+            diagnose(blocker.code, blocker.reason, { mapId, source: blocker.source });
+          if (source.monsterSetId !== null && source.monsterSetId > 0)
+            diagnose("source-walk-encounter-policy-unimplemented",
+              "Source walking encounter timing and lottery have no admitted runtime policy; source rates are retained as observations",
+              { mapId, source: source.map.source });
+        } catch (error) {
+          diagnose("source-walk-encounter-binding-invalid", error instanceof Error ? error.message : String(error),
+            { mapId, source: source?.map?.source });
+        }
+      }
       if (map.walkEncounters !== undefined) {
         try {
           const policy = parseFrameworkWalkEncounterPolicy(map.walkEncounters);

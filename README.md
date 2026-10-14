@@ -6,7 +6,7 @@
 
 [整体游戏骨架](docs/game-skeleton.md) 以同一公共运行时贯通入口、探索/事件、战斗往返、队伍/经济/成长、存读档和批量内容。`npm run skeleton:check` 验证代表性完整流程；`npm run skeleton:plan` 查看范围。完整细项回归保留为 `npm run framework:verify`，来源剧情与全游戏迁移单独验收。
 
-[本轮骨架收口](docs/systems-v82.md)：默认入口使用同一会话贯通探索、事件、战斗、奖励、菜单、成长和存读档；批量内容使用已有编译与运行接口。未接入的 NPC 活动分支收拢到本地候选，后续按整批内容需求推进公共能力。来源世界、入口和派生包继续使用 [v81 公共内容管线](docs/content-package-pipeline.md)，运行中的地图与媒体固定内容版本。
+[本轮批量来源接入](docs/source-content-v83.md)：费加罗与八张南费加罗室内地图由同一选择清单、来源初始化及生产器成批编译发布；统一工作单保留全部依赖和未知项。来源步行敌组也进入依赖分析，时机与抽选仍待实现。[骨架收口](docs/systems-v82.md) 的公共运行接口和独立验收范围保持不变。
 
 [内容版本与旧进度](docs/content-versions.md) 保留完整 JSON 和图声闭包，恢复旧版本后继续使用其地图、事件与战斗，再次存读档。共享导出之前先运行 `npm run content-history:archive`；正常公共包与来源地点构建自动保留旧新版本，旧存档不改写为新初始化。
 
@@ -23,6 +23,8 @@
 已有本地来源快照、来源战斗目录与媒体产物时，使用 `npm run skeleton:build` 编译完整世界、入口与公共系统包，`npm run skeleton:check` 构建并验证六组连续合同。运行 `npm run dev` 后打开默认游戏页面。未由当前声明配方生产的独立包保留；已运行会话继续使用其启动版本。
 
 `npm run systems:plan -- <manifest.json>` 按公共系统归并整批依赖和诊断；省略参数时检查已构建的费加罗批次。`npm run batch:check -- <manifest.json>` 默认验证当前骨架证据，再实际运行该批次声明路线；完整来源依赖未闭合时仍阻塞。详细回归可显式选择 `--framework-scope full-suite`。
+
+默认批量选择为 `content-batches/source-batches.selection.json`；`npm run source-batches:check` 对照实际发布的选择与统一工作单并重跑两批声明路线。[南费加罗室内入口](http://127.0.0.1:4173/game/?package=south-figaro-interiors) 使用来源 PointIn 开发放置，完整剧情与剩余依赖继续单独验收。
 
 `npm run content-packages:build` 构建共同内容包；`npm run world-travel:check` 验证世界与地点往返、遭遇战、菜单、保存恢复及循环渲染。来源摘要更新后需要重建并重新绑定配方；旧摘要存档不能默认为新内容的有效进度。
 
