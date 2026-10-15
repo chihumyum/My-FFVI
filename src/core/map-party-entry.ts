@@ -3,6 +3,7 @@ import type { FieldPartyActorCheckpoint } from "./field-party-actors.js";
 import type { PartyAppearanceCandidate } from "./party.js";
 import type { TransportationIdentity } from "./transportation.js";
 import type { VariableRef } from "./event-state.js";
+import { assertRetainedWorldTransportation, type RetainedWorldTransportationEntry } from "./world-transportation-entry.js";
 import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
 import { inCollisionRange, validateCollisionRange, type CollisionRange } from "./collision.js";
 import { assertMapEntryViewBinding, type MapEntryViewPlan } from "./map-view.js";
@@ -32,6 +33,7 @@ export type MapPartyEntryInput = {
   viewPlan?: MapEntryViewPlan;
   /** Trusted alternative resolver, never loop bits or checkpoint data alone. */
   ordinaryPeriodicPresentation?: "framework-ordinary-field-flat-v1";
+  retainedWorldTransportation?: RetainedWorldTransportationEntry;
   prior: FieldPartyActorCheckpoint;
   playerVisible: boolean;
   party: PartyAppearanceCandidate;
@@ -136,8 +138,8 @@ export function prepareMapPartyEntry(catalog: PartyActorCatalog, input: MapParty
   if (!transport || transport.typeId !== input.transportation.type || transport.fieldAssetId !== input.transportation.assetId)
     throw new Error("Mismatched destination map transportation");
   const walking = transport.typeId === 1;
-  if (viewPlan?.isWorld && (!walking || context.currentTransport.typeId !== 1))
-    throw new Error("World map party entry requires ordinary walking transportation");
+  assertRetainedWorldTransportation({ ...(input.retainedWorldTransportation === undefined ? {} : { declaration: input.retainedWorldTransportation }),
+    ...(viewPlan ? { viewPlan } : {}), prior: context.currentTransport, selected: input.transportation });
   // FF6's exact front/overlay rule for id6 was separately recovered; type12
   // alone is not sufficient to classify another transport as Magitek armor.
   const armor = transport.id === 6 && transport.typeId === 12 && transport.fieldAssetId === 38;

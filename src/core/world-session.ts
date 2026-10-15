@@ -1,3 +1,5 @@
+import { flatNpcGroupBlockers } from "./field-npc-flat-projection.js";
+import { validateRetainedWorldTransportationPolicy, type RetainedWorldTransportationEntry } from "./world-transportation-entry.js";
 import type { FieldContent } from "../field/types.js";
 import type { WorldCatalog, WorldMapContent } from "../field/world.js";
 import { EventState, UnknownEventValue, int32, type VariableRef } from "./event-state.js";
@@ -126,7 +128,7 @@ export function worldFieldContent(
     throw new Error("Source background requires a bound camera host");
   if (!group) throw new Error("Missing default entity group");
   const passiveBlockers = passiveEffectsGroupBlockers({ ...group, blockers: fieldRelayGroupBlockers({ ...group,
-    blockers: fieldNpcGroupBlockers(group, target.frameworkNpcActivity) }, target.frameworkRelayInteraction) }, target.frameworkPassiveEffects);
+    blockers: flatNpcGroupBlockers({ ...group, blockers: fieldNpcGroupBlockers(group, target.frameworkNpcActivity) }, target.frameworkNpcFlat) }, target.frameworkRelayInteraction) }, target.frameworkPassiveEffects);
   const groupBlockers = logicalEffectsGroupBlockers({ ...group, blockers: passiveBlockers }, target);
   if (groupBlockers.length) throw new Error(groupBlockers[0]!.reason);
   if (group.entities.some((e) => e.kind === 18) || catalog.minimap)
@@ -207,6 +209,7 @@ export function worldFieldContent(
     ...(sourceCamera && target.cameraHost ? { cameraHost: target.cameraHost } : {}),
     ...(sourceCamera && target.npcRoutes ? { npcRoutes: target.npcRoutes } : {}),
     ...(sourceCamera && target.nativeNpcStandby ? { nativeNpcStandby: target.nativeNpcStandby } : {}),
+    ...(sourceCamera && target.frameworkNpcFlat ? { frameworkNpcFlat: target.frameworkNpcFlat } : {}),
     ...(sourceCamera && target.frameworkNpcActivity ? { frameworkNpcActivity: target.frameworkNpcActivity } : {}),
     ...(sourceCamera && target.frameworkRelayInteraction ? { frameworkRelayInteraction: target.frameworkRelayInteraction } : {}),
     ...(sourceCamera && target.frameworkPassiveEffects ? { frameworkPassiveEffects: target.frameworkPassiveEffects } : {}),
@@ -444,6 +447,7 @@ export class WorldSession {
         // supplies immutable identities/riding structure; destination metadata
         // supplies new providers. Saved actors never validate their own origin.
         const plan = prepareMapPartyEntry(appearance.catalog, {
+          ...this.retainedTransportationPresentation(target, "source-reconstruction"),
           ...periodicEntryPresentation(target), definition: target.partyEntry, entrance: loc.entrance, mapViewType: viewPlan?.presentationViewType ?? 0,
           ...(viewPlan ? { viewPlan } : {}),
           prior: initialActors, playerVisible: true, party: appearance.current(),
@@ -644,6 +648,7 @@ export class WorldSession {
         return presentationHost.prepare(effects);
       },
     } : undefined;
+    const retainedPolicy = this.owned?.current.retainedWorldTransportation;
     const prior = from.partyActorCheckpoint;
     const viewPlan = worldMapEntryView(target, request.birdview ? 1 : 0);
     let actorEntry: { plan: MapPartyEntryPlan; assets: string[] } | undefined;
@@ -670,6 +675,7 @@ export class WorldSession {
       if (transport.currentId !== from.transportationId)
         throw new Error("Map transportation switching is not implemented");
       const plan = prepareMapPartyEntry(appearance.catalog, {
+        ...this.retainedTransportationPresentation(target, "live-entry"),
         ...periodicEntryPresentation(target), definition: target.partyEntry, entrance: request.entrance,
         mapViewType: viewPlan?.presentationViewType ?? (request.birdview ? 1 : 0), prior,
         ...(viewPlan ? { viewPlan } : {}),
@@ -760,6 +766,8 @@ export class WorldSession {
         candidateStory: canonical(field.storyRuntimeSnapshot), candidateStoryOrigin: canonical(field.storyTimerOrigin ?? null),
         publishPresentation: () => { presentationPublished = true; },
         validateWalkPolicy: () => {
+          if (this.owned?.current.retainedWorldTransportation !== retainedPolicy)
+            throw new Error("Retained world transportation policy changed before publication");
           if (canonical(field.content.walkEncounters ?? null) !== walkPolicyIdentity)
             throw new Error("Walking map candidate policy changed before publication");
           validateWalkBinding();
@@ -892,6 +900,18 @@ export class WorldSession {
       ...(field.content.frameworkNpcActivity ? { npcPolicy: field.content.frameworkNpcActivity } : {}),
       fade: field.fader.snapshot(), camera: field.cameraSnapshot, bgm: field.bgm.snapshot(), environment: field.environment.snapshot(), se: field.se.snapshot() });
   }
+  private retainedTransportationPresentation(target: WorldMapContent, mode: RetainedWorldTransportationEntry["mode"]):
+      { retainedWorldTransportation?: RetainedWorldTransportationEntry } {
+    const policy = this.owned?.current.retainedWorldTransportation;
+    validateRetainedWorldTransportationPolicy(policy);
+    if (policy === undefined || !target.entryView?.isWorld) return {};
+    // An unused optional runtime policy cannot add requirements to a legacy
+    // walking-only package. Without BOTH trusted content declarations this
+    // supplies no new capability; the existing walking gate still rejects armor.
+    if (!frameworkTransportationPresentation(target.developmentProfile) ||
+        frameworkWorldMapPresentation(target.developmentProfile) !== "framework-world-map-flat-v1") return {};
+    return { retainedWorldTransportation: { policy, mode } };
+  }
   private requireActorPresentation(plan: MapPartyEntryPlan): void {
     if (plan.colliderChanges.length)
       throw new Error("Conditional map party collision is not supported by this field host");
@@ -902,6 +922,7 @@ export class WorldSession {
     const p = field.player;
     return canonical({ prior: field.partyActorCheckpoint,
       native: field.nativeActorStateFingerprint,
+      ...(field.sourceEventActivation ? { eventActivation: field.sourceEventActivation } : {}),
       nativeRuntime: field.nativeActorRuntime, cameraOffset: field.cameraOffset,
       collision: field.collisionState, updateMask: field.updateAttributeMask,
       player: { x: p.x, y: p.y, layer: p.layer, direction: p.direction,

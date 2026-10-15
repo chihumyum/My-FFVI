@@ -1,3 +1,5 @@
+import { captureFieldEventActivation, restoreFieldEventActivation, type FieldEventActivationCheckpoint } from "./field-event-activation.js";
+import { bindFieldNpcFlatProjections, flatNpcGroupBlockers, flatNpcInteractionLayer } from "./field-npc-flat-projection.js";
 import { captureAssignedRoutes, restoreAssignedRoutes, type AssignedRoutesCheckpoint, type RestoredAssignedRoute } from './field-assigned-route-checkpoint.js';
 import { WEB_ASSIGNED_ROUTE_POLICY, compileAssignedRouteProgram, createAssignedRouteCursor, settleAssignedRouteCursor, searchAssignedRouteGrid, assignedRouteLineClear, type WebAssignedRoutePolicy, type AssignedRouteProgram, type AssignedRouteCursor } from './field-assigned-route.js';
 import { parseFieldNpcRouteCatalog } from './field-npc-route.js';
@@ -297,6 +299,10 @@ type Task = {
   remaining: number;
   move: Extract<Op, { kind: "move" }> | null;
   animationWait: boolean;
+  animationRepeat: { op: Extract<Op, { kind: "animation-play" }>; fingerprint: string;
+    script: string; program: Op[]; webPC: number; actorId: string; actor: Actor | undefined;
+    nativeEntity: NonNullable<Actor["native"]>["entity"] | null; sourceEntity: FieldEntity | undefined;
+    registers: FieldCoreRegisters } | null;
   audioWait: Extract<Op, { kind: "bgm-ready" | "bgm-sync" }> | null;
   bgmReplay: { op: Extract<Op, { kind: "bgm-replay" }>; handle: StaticAudioReplay } | null;
   /** Source first-clock yield; no pending save or independent save owner. */
@@ -349,6 +355,7 @@ export type PreparedFieldSourceEncounter = {
 };
 export type FieldGameOptions = {
   /** Explicit Web controller, never native search/raycast admission. */
+  retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation;
   assignedNpcRoutes?: WebAssignedRoutePolicy;
   /** Trusted explicit Web selection policy; absent remains native-unknown. */
   sourceEncounter?: FieldSourceEncounterPort;
@@ -599,9 +606,13 @@ export class FieldGame {
   private readonly visibilityJournal: { ticket: number | null; phase: "queued" | "applied";
     site: Site; actorId: string; atMilliseconds: number; visible: boolean; durationSeconds: number; delaySeconds: number }[] = [];
   get actorVisibilityExecutions() { return structuredClone(this.visibilityJournal); }
+  private readonly finiteAnimationJournal: { phase: "started" | "replayed" | "completed";
+    site: Site; actorId: string; repeatCount: number; remaining: number; atMilliseconds: number }[] = [];
+  get finiteAnimationExecutions() { return structuredClone(this.finiteAnimationJournal); }
   get actorVisibilityBusy(): boolean {
     return this.visibilityTimers.length > 0 || Object.values(this.actors).some(actor => actor.native && actorFadeActive(actor.native.entity));
   }
+  private readonly flatNpcBindings: ReturnType<typeof bindFieldNpcFlatProjections>;
   private readonly npcBindings: Map<string, FrameworkNpcActivityBinding>;
   private readonly npcActivities = new Map<string, NpcActivityRuntime>();
   private nextNpcEvent = 1;
@@ -834,7 +845,8 @@ export class FieldGame {
         id: actor.id, motion: actor.motion, steps: actor.steps, fieldAssetId: actor.native!.fieldAssetId,
         charaZOffset: actor.native!.charaZOffset, mapAnimation: actor.native!.mapAnimation ?? null, mapObjectAsset: actor.native!.mapObjectAsset ?? null,
         scope: actor.native!.scope ?? null, updateAttribute: actor.native!.updateAttribute ?? null,
-      })), npcActivities: this.npcActivitySnapshot, assignedRoutes: this.assignedRouteSnapshot });
+      })), npcActivities: this.npcActivitySnapshot, assignedRoutes: this.assignedRouteSnapshot,
+      ...(this.eventActivation ? { eventActivation: this.eventActivation } : {}) });
   }
   private collisionSwitches: FieldPuppetCollisionState = projectFieldPuppetCollision(true);
   private entityUpdateMask = 3;
@@ -1037,6 +1049,10 @@ export class FieldGame {
   /** Execute owns SystemFlags for the whole event. ChangeScript replaces only
    * processing/name/custom animations and must not adopt the target flags. */
   private eventRootScript: string | null = null;
+  private eventActivation: FieldEventActivationCheckpoint | null = null;
+  get sourceEventActivation(): FieldEventActivationCheckpoint | null {
+    return this.eventActivation && structuredClone(this.eventActivation);
+  }
   private scriptHook: { script: string; pc: number; range: FieldTaskRange;
     locals: ScriptLocalFrame } | null = null;
   private puppetLifecycle: { name: string; script: FieldPuppetScriptContext; leaderId: number | null;
@@ -1124,8 +1140,9 @@ export class FieldGame {
       if (this.timerState.active) this.timerOrigin = this.timerState.active.binding.mapContentHash === content.contentHash
         ? fieldTimerOriginContent(content) : options.storyTimerOrigin;
     } else if (options.storyRuntimeSeed || options.storyTimerOrigin) throw new Error("Story runtime host profile is unavailable");
+    this.flatNpcBindings = bindFieldNpcFlatProjections(content);
     this.npcBindings = bindFieldNpcActivities(content);
-    if (this.npcBindings.size && !options.nativeActorPreparation)
+    if ((this.npcBindings.size || this.flatNpcBindings.size) && !options.nativeActorPreparation)
       throw new Error("Framework NPC activities require the native actor owner");
     cloneSourcePresentationContext(options.sourcePresentation?.context() ?? null);
     if (options.playerVisibility !== undefined) {
@@ -1329,15 +1346,16 @@ export class FieldGame {
     return actors;
   }
   private npcDefinition(entity: FieldEntity): FieldNativeNpcDefinition | null | undefined {
-    return this.npcBindings.get(entity.id)?.definition ?? entity.nativeNpc;
+    return this.npcBindings.get(entity.id)?.definition ?? this.flatNpcBindings.get(entity.id)?.definition ?? entity.nativeNpc;
   }
   private npcBlockers(entity: FieldEntity): readonly string[] {
     return (entity.nativeNpcBlockers ?? []).filter(reason =>
-      !(this.npcBindings.has(entity.id) && reason === "Native NPC autonomous movement controller is unresolved"));
+      !(this.npcBindings.has(entity.id) && reason === "Native NPC autonomous movement controller is unresolved") &&
+      !(this.flatNpcBindings.has(entity.id) && reason === "Native NPC birdview/cross-layer provider is unresolved"));
   }
   private groupBlockers(group: NonNullable<FieldContent["map"]["groups"]>[string]) {
     const blockers = passiveEffectsGroupBlockers({ ...group, blockers: fieldRelayGroupBlockers({ ...group,
-      blockers: fieldNpcGroupBlockers(group, this.content.frameworkNpcActivity) }, this.content.frameworkRelayInteraction) },
+      blockers: flatNpcGroupBlockers({ ...group, blockers: fieldNpcGroupBlockers(group, this.content.frameworkNpcActivity) }, this.content.frameworkNpcFlat) }, this.content.frameworkRelayInteraction) },
       this.content.frameworkPassiveEffects);
     return mapAnimationGroupBlockers({ ...group, blockers: logicalEffectsGroupBlockers({ ...group, blockers }, this.content) }, this.content);
   }
@@ -1624,6 +1642,7 @@ export class FieldGame {
           this.eventState.beginScript(this.content.scriptLocals?.[effect.name] ?? null);
           publishScript!();
           this.eventRootScript = effect.name;
+          this.eventActivation = null;
           this.scriptHook = null;
           this.tasks.push(this.task(effect.name, 0, "-1001"));
           break;
@@ -2012,6 +2031,7 @@ export class FieldGame {
       stack: [...task.stack], actor: task.actor, sourceEntityId: task.sourceEntityId, range: { ...task.range },
       ...(fieldUsesCoreRegisters(this.content) ? { generalRegisters: parseFieldCoreRegisters(task.generalRegisters) } : {}) },
       eventRootScript: this.eventRootScript,
+      ...(this.eventActivation ? { eventActivation: structuredClone(this.eventActivation) } : {}),
       scriptHook: this.scriptHook && { script: this.scriptHook.script, pc: this.scriptHook.pc,
         range: { ...this.scriptHook.range }, locals: this.eventState.exportScriptLocalFrame(this.scriptHook.locals) },
       puppetLifecycle: lifecycle && { name: lifecycle.name, leaderId: lifecycle.leaderId,
@@ -2205,6 +2225,7 @@ export class FieldGame {
         ...(main.generalRegisters ? { generalRegisters: parseFieldCoreRegisters(main.generalRegisters) } : {}) });
       next.tasks = [task];
       next.eventRootScript = execution.eventRootScript;
+      next.eventActivation = execution.eventActivation ? Object.freeze(execution.eventActivation) : null;
       next.scriptHook = execution.scriptHook && { ...execution.scriptHook,
         locals: next.eventState.importScriptLocalFrame(execution.scriptHook.locals) };
       next.puppetLifecycle = execution.puppetLifecycle && { ...execution.puppetLifecycle,
@@ -2861,7 +2882,7 @@ export class FieldGame {
       if (![5, 6, 7, 10, 17].includes(entity.kind) ||
           entity.kind === 7 && entity.mapObject?.collision === false && this.openedTreasures.has(entity.id)) continue;
       const properties = entity.npc ?? entity.mapObject, actor = this.actors[entity.id];
-      if (!this.isEntityVisible(entity.id) || (actor?.layer ?? entity.layer) !== player.layer ||
+      if (!this.isEntityVisible(entity.id) || !flatNpcInteractionLayer(this.flatNpcBindings.get(entity.id), actor?.layer ?? entity.layer, player.layer) ||
           (properties ? properties.interaction.kind === "none" : !entity.script) ||
           properties && (!(properties.acceptDirection & ACTION_SIDE[OPPOSITE[direction]]) ||
             properties.interaction.kind !== "blocked" && !properties.talkMounts.includes(player.mount ?? ""))) continue;
@@ -2871,7 +2892,7 @@ export class FieldGame {
       }
       if (!actor?.native) throw new Error("Relay target has no current native actor position");
       const position = actor.native.entity.position;
-      if (position.z !== native.entity.position.z || !canFieldRelayInteractToEntityPosition({
+      if ((!this.flatNpcBindings.get(entity.id)?.allLayerTarget && position.z !== native.entity.position.z) || !canFieldRelayInteractToEntityPosition({
         playerLocalPosition: native.entity.position, targetLocalPosition: position,
         playerDirection: direction, objectType: entity.kind, searchRanges, mapArea, parentContext,
       })) continue;
@@ -2901,7 +2922,7 @@ export class FieldGame {
       return (
         (e.kind === 6 || e.kind === 17 || e.kind === 5 || e.kind === 7 || e.kind === 10) &&
         !(e.kind === 7 && e.mapObject?.collision === false && this.openedTreasures.has(e.id)) &&
-        this.isEntityVisible(e.id) && (this.actors[e.id]?.layer ?? e.layer) === p.layer &&
+        this.isEntityVisible(e.id) && flatNpcInteractionLayer(this.flatNpcBindings.get(e.id), this.actors[e.id]?.layer ?? e.layer, p.layer) &&
         (properties ? properties.interaction.kind !== "none" : !!e.script) &&
         (e.kind === 6 || e.kind === 17
           ? !!this.actors[e.id] && (this.actors[e.id]!.x === target.x && this.actors[e.id]!.y === target.y ||
@@ -3264,12 +3285,14 @@ export class FieldGame {
       milliseconds > 60000
     )
       throw new Error("Invalid elapsed time");
-    if ((this.content.frameworkNpcActivity || this.assignedRoutes.size > 0) && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
+    if ((this.content.frameworkNpcActivity || this.assignedRoutes.size > 0 || this.tasks.some(task => !task.done && task.animationRepeat)) && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
     if (this.pendingEventSave) return;
     this.remainder += milliseconds;
     while (this.remainder >= 10) {
       this.remainder -= 10;
       if (this.stop || this.pendingEventSave) continue;
+      try { for (const task of this.tasks) if (!task.done && task.animationRepeat) this.assertFiniteAnimation(task); }
+      catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       try { if (!this.soundReady) continue; }
       catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       let effects: FieldEffectPrepared | undefined;
@@ -3293,7 +3316,7 @@ export class FieldGame {
       try { this.cameraShakeState?.advance(); }
       catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       this.advanceStoryTimer(10, this.messageWindow || this.choicePending || this.sourceMessage.active ? "message"
-        : this.openTriggers.busy || this.treasureSceneState === "message" ? "gimmick" : this.fieldActivityBusy ? "event" : "player");
+        : this.openTriggers.busy || this.treasureSceneState === "message" ? "gimmick" : this.fieldActivityBusy ? this.eventActivation ? "gimmick" : "event" : "player");
       this.sourceMessage.advance(0.01);
       // Use the same post-message update mask as the existing actor loop.
       // Actor animation and this callback-free scalar fade commute within the
@@ -3448,7 +3471,7 @@ export class FieldGame {
       this.block("缺少事件脚本");
       return true;
     }
-    this.beginRoot(e.script);
+    this.beginRoot(e.script, undefined, e);
     return true;
   }
   /** Runs a package-provided event through the same VM as map triggers. */
@@ -3512,8 +3535,13 @@ export class FieldGame {
       },
     };
   }
-  private beginRoot(script: string, publishStory?: () => void): void {
+  private beginRoot(script: string, publishStory?: () => void, entity?: FieldEntity): void {
+    let activation: FieldEventActivationCheckpoint | null = null;
     try {
+      if (entity?.eventActivation) {
+        activation = captureFieldEventActivation(entity);
+        restoreFieldEventActivation(activation, this.content, script);
+      }
       if (this.coreRegisterPublishing) throw new Error("Core publication is in progress");
       if (this.hasUnfinishedInterpolation())
         throw new Error("Starting a script cannot discard unfinished source interpolation registers");
@@ -3530,6 +3558,7 @@ export class FieldGame {
       return;
     }
     this.eventRootScript = script;
+    this.eventActivation = activation && Object.freeze(activation);
     this.scriptHook = null;
     this.tasks = [this.task(script, 0, "-1001")];
     this.pump();
@@ -3575,7 +3604,7 @@ export class FieldGame {
     Object.assign(t, plan, { stack: [], wait: 0, state: "ready", lastClock: this.time,
       generalRegisters: initialFieldCoreRegisters(),
       puppetWait: null, scriptShop: null, fadeWait: null, colorFadeWait: null, flashWait: null, cameraPath: null, cameraLerp: null, scriptMove: null, scriptLerp: null, remaining: 0, move: null,
-      animationWait: false, audioWait: null, bgmReplay: null, autoSaveWait: null, sourceMessageWait: null, soundWait: null, treasure: null, done: false });
+      animationWait: false, animationRepeat: null, audioWait: null, bgmReplay: null, autoSaveWait: null, sourceMessageWait: null, soundWait: null, treasure: null, done: false });
   }
   private restoreHookedScript(main: Task): void {
     const hook = this.scriptHook!;
@@ -3662,6 +3691,7 @@ export class FieldGame {
       remaining: 0,
       move: null,
       animationWait: false,
+      animationRepeat: null,
       audioWait: null,
       bgmReplay: null,
       autoSaveWait: null,
@@ -3700,7 +3730,7 @@ export class FieldGame {
     const fingerprint = () => canonical({ actors: this.nativeActorStateFingerprint, camera: this.cameraSnapshot,
       event: this.eventState.snapshot(), time: this.time,
       fade: this.fader.snapshot(), collision: this.collisionSwitches, mask: this.entityUpdateMask,
-      root: this.eventRootScript, lifecycle: this.puppetLifecycle, party: this.partyActorCheckpoint,
+      root: this.eventRootScript, activation: this.eventActivation, lifecycle: this.puppetLifecycle, party: this.partyActorCheckpoint,
       op, command, task: { script: task.script, pc: task.pc, done: task.done, generalRegisters: task.generalRegisters },
       map: { sourceSetHash: this.content.sourceSetHash, parentSourceSetHash: this.content.parentSourceSetHash,
         identity: this.content.map.identity ?? null, cameraHost: this.content.cameraHost ?? null,
@@ -3819,7 +3849,7 @@ export class FieldGame {
     );
     new EventState(this.eventState.snapshot()).beginScript(locals);
     const shared = eventShared ? prepareBattleEventSharedReturn(this.eventState, eventShared) : null;
-    const fingerprint = () => canonical({ stop: this.stop, event: this.eventState.snapshot(), lifecycle: this.puppetLifecycle,
+    const fingerprint = () => canonical({ stop: this.stop, event: this.eventState.snapshot(), activation: this.eventActivation, lifecycle: this.puppetLifecycle,
       camera: this.cameraSnapshot, collision: this.collisionSwitches, updateMask: this.entityUpdateMask,
       offset: this.mapScrollOffset, time: this.time, remainder: this.remainder,
       script: this.content.scripts[continuation], locals: this.content.scriptLocals?.[continuation] ?? null });
@@ -3844,6 +3874,7 @@ export class FieldGame {
     const publish = () => {
       this.eventState.beginScript(locals);
       this.eventRootScript = continuation;
+      this.eventActivation = null;
       this.scriptHook = null;
       this.tasks = [nextTask];
       this.nextTask = taskId + 1;
@@ -3883,7 +3914,7 @@ export class FieldGame {
     const fingerprint = () => canonical({ event: this.eventState.snapshot(), lifecycle: this.puppetLifecycle,
       camera: this.cameraSnapshot, collision: this.collisionSwitches, updateMask: this.entityUpdateMask,
       offset: this.mapScrollOffset, time: this.time, remainder: this.remainder, nextTask: this.nextTask,
-      eventRootScript: this.eventRootScript, tasks: this.tasks, stop: this.stop,
+      eventRootScript: this.eventRootScript, eventActivation: this.eventActivation, tasks: this.tasks, stop: this.stop,
       native: this.nativeActorStateFingerprint,
       actors: Object.values(this.actors).map(actor => ({ id: actor.id, x: actor.x, y: actor.y,
         layer: actor.layer, direction: actor.direction, asset: actor.asset, mount: actor.mount,
@@ -4330,9 +4361,39 @@ export class FieldGame {
       // Ready cores get this frame before main termination cancels their next
       // clock. Awake entries never start merely because main has ended.
       for (const task of this.tasks) if (task.slot !== null) task.done = true;
+      this.eventActivation = null;
     }
     this.finishInteraction();
     this.finishMapEntry();
+  }
+  private assertFiniteAnimation(task: Task): void {
+    const pending = task.animationRepeat;
+    if (!pending || !task.animationWait || task.script !== pending.script || task.pc !== pending.webPC + 1 ||
+        this.content.scripts[pending.script] !== pending.program || pending.program[pending.webPC] !== pending.op ||
+        canonical(pending.op) !== pending.fingerprint || task.actor !== pending.actorId ||
+        this.actors[pending.actorId] !== pending.actor || (pending.actor?.native?.entity ?? null) !== pending.nativeEntity ||
+        pending.sourceEntity && !this.entityList.includes(pending.sourceEntity))
+      throw new Error("Stale finite PlayAnim task, instruction or actor identity");
+    if (task.generalRegisters !== pending.registers || task.generalRegisters.i[0] !== 0 ||
+        task.generalRegisters.i[1] !== pending.op.repeatCount || task.generalRegisters.i[7] !== 0)
+      throw new Error("Stale finite PlayAnim Core register binding");
+    checkpointInteger(task.generalRegisters.i[6]!, 1, pending.op.repeatCount);
+  }
+  private playTaskAnimation(task: Task, op: Extract<Op, { kind: "animation-play" }>, replay: boolean): void {
+    const actor = this.actors[task.actor];
+    if (this.effectBoard(task.actor)) {
+      this.effects!.prepare([{ kind: "play", id: task.actor,
+        loopLimit: fieldEffectAnimationLoopLimit(op.loop ? 1 : 0) }]).commit();
+    } else if (actor) {
+      if (actor.mount && (!actor.native || !this.transportationPresentation))
+        throw new Error("Mounted actor animation dispatch is not implemented");
+      if (!actor.animation) throw new Error("Missing actor animation media " + actor.asset);
+      const animation = actor.animation.clone();
+      if (replay) animation.replayEntity(op.animation, op.speed);
+      else animation.play(op.animation, op.loop, op.speed);
+      actor.animation = animation;
+    } else if (replay) this.tileAnimations.replayEntity(task.actor, op.loop, op.speed);
+    else this.tileAnimations.play(task.actor, op.loop, op.speed);
   }
   private clockTask(t: Task, frameDeltaSeconds: number): void {
     if (this.shopTask || t.done || t.state !== "ready" || t.lastClock === this.time ||
@@ -4397,6 +4458,23 @@ export class FieldGame {
               : this.effectBoard(t.actor) ? this.effectPlaying(t.actor) : this.tileAnimations.isPlaying(t.actor)
           )
             return;
+          if (t.animationRepeat) {
+            const pending = t.animationRepeat;
+            try {
+              this.assertFiniteAnimation(t);
+              const count = t.generalRegisters.i[6]! - 1;
+              const registers = projectFieldCoreSlots(t.generalRegisters, { i: { 6: count } });
+              // A failed media/owner preparation cannot decrement the existing
+              // Core bank. Publish the bank only after the animation commits.
+              if (count > 0) this.playTaskAnimation(t, pending.op, true);
+              t.generalRegisters = registers; pending.registers = registers;
+              this.finiteAnimationJournal.push({ phase: count > 0 ? "replayed" : "completed",
+                site: structuredClone(pending.op), actorId: t.actor,
+                repeatCount: pending.op.repeatCount!, remaining: count, atMilliseconds: this.time });
+              if (count > 0) return;
+              t.animationRepeat = null;
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), pending.op); return; }
+          }
           t.animationWait = false;
         }
         if (t.puppetWait) {
@@ -4752,15 +4830,33 @@ export class FieldGame {
           case "animation-cue":
           case "animation-play":
             try {
-              if (this.effectBoard(t.actor)) {
-                // Puppet.PlayAnim maps accepted i1 0/1 to mode 0, and -1 to
-                // mode 1. The board override ignores key/speed/flip. Its Cue
-                // override is source-proven empty; the particle owns playback.
-                if (op.kind === "animation-play") {
-                  this.effects!.prepare([{ kind: "play", id: t.actor,
-                    loopLimit: fieldEffectAnimationLoopLimit(op.loop ? 1 : 0) }]).commit();
-                  t.animationWait = !op.loop;
+              if (op.kind === "animation-play") {
+                let repeat: Task["animationRepeat"] = null;
+                if (op.repeatCount !== undefined) {
+                  checkpointInteger(op.repeatCount, 2, 0x7fffffff);
+                  if (op.loop) throw new Error("A finite PlayAnim cannot also request an unbounded loop");
+                  const program = this.content.scripts[t.script], webPC = t.pc - 1;
+                  if (!program || program[webPC] !== op) throw new Error("Finite PlayAnim lost its actual Web instruction binding");
+                  repeat = { op, fingerprint: canonical(op), script: t.script, program, webPC, actorId: t.actor,
+                    actor, nativeEntity: actor?.native?.entity ?? null,
+                    sourceEntity: this.entityList.find(entity => entity.id === t.actor),
+                    registers: projectFieldCoreSlots(t.generalRegisters, {
+                      i: { 0: 0, 1: op.repeatCount, 6: op.repeatCount, 7: 0 }, r: { 3: t.generalRegisters.r[0]! },
+                    }) };
                 }
+                this.playTaskAnimation(t, op, false);
+                t.animationWait = !op.loop;
+                t.animationRepeat = repeat;
+                if (repeat) {
+                  t.generalRegisters = repeat.registers;
+                  this.finiteAnimationJournal.push({ phase: "started", site: structuredClone(op), actorId: t.actor,
+                    repeatCount: op.repeatCount!, remaining: repeat.registers.i[6]!, atMilliseconds: this.time });
+                }
+                break;
+              }
+              if (this.effectBoard(t.actor)) {
+                // The source board Cue override is proven empty. Its existing
+                // field-effect owner continues to hold playback and completion.
               } else if (actor) {
                 if (actor.mount && (!actor.native || !this.transportationPresentation))
                   throw new Error(
@@ -4771,17 +4867,9 @@ export class FieldGame {
                     "Missing actor animation media " + actor.asset,
                   );
                 const animation = actor.animation.clone();
-                if (op.kind === "animation-cue")
-                  animation.cue(op.animation, op.frame);
-                else animation.play(op.animation, op.loop, op.speed);
+                animation.cue(op.animation, op.frame);
                 actor.animation = animation;
-                t.animationWait = op.kind === "animation-play" && !op.loop;
-              } else if (op.kind === "animation-cue")
-                this.tileAnimations.cue(t.actor, op.frame);
-              else {
-                this.tileAnimations.play(t.actor, op.loop, op.speed);
-                t.animationWait = !op.loop;
-              }
+              } else this.tileAnimations.cue(t.actor, op.frame);
             } catch (error) {
               this.block(
                 error instanceof Error ? error.message : String(error),

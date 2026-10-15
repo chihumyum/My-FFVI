@@ -1,3 +1,4 @@
+import { deriveFrameworkNpcFlatContent, type FrameworkNpcFlatAssessment } from "./framework-npc-flat-projection.js";
 import { canonical, hash } from "./content.js";
 import { fieldEffectCompilationBlockers } from "./field-effects.js";
 import { fieldEffectBoardBlockers, type FieldEffectCatalog } from "../core/field-effects.js";
@@ -9,6 +10,7 @@ import type { EntityGroup, Evidence, FieldEntity } from "../field/types.js";
 import type { ContentIssue, WorldCatalog, WorldMapContent } from "../field/world.js";
 import { deriveFrameworkPeriodicContent, type FrameworkPeriodicAssessment } from "./framework-periodic-presentation.js";
 import { WEB_FIELD_MAP_ANIMATION } from "../core/field-map-animation.js";
+import { deriveFrameworkNpcAreaContent, type FrameworkNpcAreaAssessment, type FrameworkNpcAreaReport } from "./framework-npc-area.js";
 
 export type LogicalFieldEffectsDeclaration = {
   kind: "web-logical-field-effects-declaration-v1";
@@ -20,6 +22,8 @@ export type FrameworkContentOptions = {
   mapAnimatedEntities?: typeof WEB_FIELD_MAP_ANIMATION;
   logicalFieldEffects?: { catalog: FieldEffectCatalog; declaration: LogicalFieldEffectsDeclaration };
   periodicPresentations?: readonly FrameworkPeriodicAssessment[];
+  npcAreaAssessments?: readonly FrameworkNpcAreaAssessment[];
+  npcFlatAssessments?: readonly FrameworkNpcFlatAssessment[];
 };
 
 export type FrameworkContentRetained = {
@@ -41,6 +45,8 @@ export type FrameworkContentReport = {
   retained: FrameworkContentRetained[];
   logicalFieldEffects?: { declaration: LogicalFieldEffectsDeclaration; groups: number; additionalOmissions: 0; nativeParity: false };
   periodicReport?: { maps: FrameworkPeriodicAssessment[]; compiled: number; unready: number; sourceGameplayAdmitted: false };
+  npcActivity?: FrameworkNpcAreaReport;
+  npcProjection?: {maps:number;declared:number;derived:number;unready:number;nativeParity:false};
   transportation: { capability: NonNullable<DevelopmentProfile["transportation"]>; limitations: string[] };
 };
 export type FrameworkContent = {
@@ -178,7 +184,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (!initial || strictEntry.mapContentHash !== initial.contentHash)
     throw new Error("Framework strict entry/map binding mismatch");
 
-  if (Object.keys(options).some(key => key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "mapAnimatedEntities"))
+  if (Object.keys(options).some(key => key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments"))
     throw new Error("Unknown framework derivation option");
   if (options.mapAnimatedEntities !== undefined && options.mapAnimatedEntities !== WEB_FIELD_MAP_ANIMATION)
     throw new Error("Unknown framework animated map entity policy");
@@ -273,8 +279,17 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
       sourceEntryHash: strictEntry.contentHash, catalogHash: derivedCatalog.contentHash, entryHash: entry.contentHash,
       maps: maps.map((map) => ({ mapId: map.mapId, sourceContentHash: map.developmentProfile.sourceContentHash,
         contentHash: map.contentHash })), omissions: structuredClone(omissions), retained } };
-  if (options.periodicPresentations === undefined) return result;
-  if (!Array.isArray(options.periodicPresentations)) throw new Error("Invalid complete periodic presentation assessments");
-  const periodic = deriveFrameworkPeriodicContent(result, options.periodicPresentations);
-  return { ...periodic, report: { ...periodic.report, periodicReport: structuredClone(periodic.periodicReport) } };
+  let composed = result;
+  if (options.periodicPresentations !== undefined) {
+    if (!Array.isArray(options.periodicPresentations)) throw new Error("Invalid complete periodic presentation assessments");
+    const periodic = deriveFrameworkPeriodicContent(composed, options.periodicPresentations);
+    composed = { ...periodic, report: { ...periodic.report, periodicReport: structuredClone(periodic.periodicReport) } };
+  }
+  if (options.npcAreaAssessments !== undefined) {
+    if (!Array.isArray(options.npcAreaAssessments)) throw new Error("Invalid complete NPC Area assessments");
+    composed = deriveFrameworkNpcAreaContent(composed, strictMaps, options.npcAreaAssessments);
+  }
+  if (options.npcFlatAssessments === undefined) return composed;
+  if (!Array.isArray(options.npcFlatAssessments)) throw new Error("Invalid complete NPC flat assessments");
+  return deriveFrameworkNpcFlatContent(composed, strictMaps, options.npcFlatAssessments);
 }

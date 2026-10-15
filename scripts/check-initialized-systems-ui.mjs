@@ -178,7 +178,7 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
   }
   class Renderer {
     constructor(...args) { this.args = args; calls.views.push(this); }
-    draw() {} overview() {}
+    draw(game) { this.game = game; } overview() {}
   }
   class BattleView {
     constructor(...args) { this.args = args; this.common = args[1]; this.instance = null; calls.views.push(this); }
@@ -395,6 +395,33 @@ async function packages(packageId = "controlled-initialized-ui", sourceEncounter
     f.map.developmentProfile.mapAnimatedEntities="web-field-animated-map-entities-v1";
     f.world.developmentProfile.mapAnimatedEntities="web-field-animated-map-entities-v1";
   }
+  if(packageId === "controlled-flat-npc") {
+    for(const value of [f.map,f.world,f.sourceMap,f.sourceEntry]){value.sourceSetHash=sha("controlled-flat-npc-corpus");value.parentSourceSetHash=sha("controlled-flat-npc-parent");}
+    f.sourceMap=await seal(f.sourceMap);f.sourceEntry=await seal({...f.sourceEntry,mapContentHash:f.sourceMap.contentHash});
+    const {compileFieldNativeNpc}=await load("src/compiler/field-native-npc.js");
+    const source={file:"synthetic-flat-npc.bundle",assetPath:"Room/entities.json",pointer:"/layers/0/objects/0"},
+      asset=Object.keys(f.world.characters)[0],raw={x:point.x*16,y:point.y*16,width:16,height:16,properties:Object.entries({
+        object_type:6,entity_id:500,asset_id:77,direction:4,move_type:0,all_layers:true,birdview_puppet:false,
+        affected:false,visible_minimap:false,collision:true,turn_around:false,move_while_display_message:false
+      }).map(([name,value])=>({name,value}))};
+    const properties=Object.fromEntries(raw.properties.map(p=>[p.name,p.value]));
+    Object.assign(clerk,{id:"500",kind:6,layer:1,asset,direction:"down",source,
+      npc:{...clerk.mapObject,moveType:0,pushed:false,eyeContact:false,turnAround:false},
+      nativeNpcBlockers:["Native NPC birdview/cross-layer provider is unresolved"]});delete clerk.mapObject;
+    const definition=compileFieldNativeNpc({group:"entity_default",object:raw,entity:clerk,properties,
+      tables:{"mapobject.csv":[{id:"77",asset_name:asset,shadow_type:"0"}]},flatProjection:"web-source-npc-flat-projection-v1"}).definition;
+    assert.ok(definition);f.map.map.groups.entity_default.blockers.push({reason:"Unsupported cross-layer or birdview NPC",source});
+    f.map.developmentProfile.npcProjection="web-source-npc-flat-projection-v1";f.world.developmentProfile.npcProjection="web-source-npc-flat-projection-v1";
+    f.map.frameworkNpcFlat={kind:"web-source-npc-flat-host-v1",policy:"web-source-npc-flat-projection-v1",
+      sourceMapHash:f.map.developmentProfile.sourceContentHash,sourceSetHash:f.map.sourceSetHash,parentSourceSetHash:f.map.parentSourceSetHash,
+      bindings:[{entity:structuredClone(clerk),rawObject:raw,definition,allLayerTarget:true,birdviewPuppet:false}],diagnostics:[],nativeParity:false};
+  }
+  if(packageId === "controlled-finite-animation") {
+    const {compileFieldFiniteAnimationInstruction} = await load("src/compiler/field-play-animation.js");
+    scripts["ui-acquire"] = site("ui-acquire", [compileFieldFiniteAnimationInstruction({type:2,mnemonic:"PlayAnim",operands:{
+      iValues:[0,3,0,0,0,0,0,0],rValues:[.25,0,0,0,0,0,0,0],sValues:["Default","","","","","","",""]}}),
+      {kind:"inventory",command:{kind:"grant-item",id:itemId,count:1},result:null,dependencies:[]},{kind:"exit"}]);
+  }
   f.map = await seal(f.map); f.battle = await seal(f.battle);
   f.world.maps[String(f.map.mapId)].contentHash = f.map.contentHash;
   f.world = await seal(f.world);
@@ -590,6 +617,51 @@ async function logicalEffectsPackages(packageId = "controlled-logical-effects") 
   media.set(`/content-releases/media/${pngHash}.png`, png);
   return { ...f, content, world, battle, map, worldMap: target, maps, packageId, refs, files, media,
     release, indexUrl, pngHash };
+}
+async function worldTransportPackages(packageId = "controlled-world-transport") {
+  const { worldTransportSessionFixture } = await load("tests/fixtures/world-transport-session.js");
+  const { compileFrameworkNewGame } = await load("src/compiler/framework-new-game.js");
+  const f = await worldTransportSessionFixture(), png = controlledPng(), pngHash = sha(png);
+  for(const encounter of Object.values(f.battle.encounters))
+    f.battle.common.sprites[encounter.background]={file:"/controlled/world-transport-battle.png",width:32,height:32};
+  for (const character of Object.values(f.world.characters)) for (const sprite of Object.values(character.sprites)) {
+    sprite.file = "/controlled/world-transport-actor.png"; sprite.sha256 = pngHash;
+  }
+  for (const sprite of Object.values(f.battle.common.sprites)) sprite.file = "/controlled/world-transport-battle.png";
+  const maps = [];
+  for (const original of f.maps) {
+    const value = structuredClone(original);
+    value.map.textures = { controlled: "/controlled/world-transport-field-" + value.mapId + ".png" };
+    maps.push(await seal(value));
+  }
+  const [map, target] = maps, worldDraft = structuredClone(f.world);
+  for (const value of maps) worldDraft.maps[String(value.mapId)].contentHash = value.contentHash;
+  const world = await seal(worldDraft), battle = await seal(f.battle), content = await compileFrameworkNewGame({
+    sourceEntry: f.sourceEntry, sourceBattle: f.sourceBattle, sourceMap: f.sourceMap, world, map, battle,
+    entrance: map.partyEntry.pointIns[0].id });
+  const prefix = "/content-packages/" + packageId, refs = { kind: "game-content-refs-v2", profile: "framework",
+    world: { url: prefix + "/world.json", contentHash: world.contentHash }, source: null, development: null,
+    initialized: { entry: { url: prefix + "/entry.json", contentHash: content.contentHash },
+      battle: { url: prefix + "/battle.json", contentHash: battle.contentHash } } };
+  const files = new Map([["/content-packages/" + packageId + ".json", refs], [refs.world.url, world],
+    [refs.initialized.entry.url, content], [refs.initialized.battle.url, battle],
+    ...maps.map(value => [world.maps[String(value.mapId)].url, value])]);
+  const bindings = Object.fromEntries([...files].filter(([, value]) => /^[a-f0-9]{64}$/.test(value.contentHash))
+    .map(([url, value]) => [url, value.contentHash]));
+  const mediaBindings = Object.fromEntries([...new Set([...maps.flatMap(value => core.fieldMediaUrls({ map: value.map,
+    characters: world.characters, minimap: value.minimap })), ...Object.values(battle.common.sprites).map(sprite => sprite.file)])]
+    .map(url => [url, { sha256: pngHash, extension: "png" }]));
+  const release = { id: await contentDigest({ packageId, refs, bindings, mediaBindings }),
+    sourceSetHash: content.parentSourceSetHash, refs, bindings, mediaBindings };
+  const indexUrl = `/content-releases/packages/${packageId}.json`, index = await seal({
+    kind: "game-content-release-index-v1", packageId, profile: "framework", objectRoot: "/content-releases",
+    currentReleaseId: release.id, releases: [release] });
+  for (const [url, hash] of Object.entries(bindings)) files.set(`/content-releases/objects/${hash}.json`, files.get(url));
+  files.set(indexUrl, index);
+  const media = new Map(Object.keys(mediaBindings).map(url => [url, png]));
+  media.set(`/content-releases/media/${pngHash}.png`, png);
+  return { ...f, content, world, battle, map, worldMap: target, maps, packageId, refs, files, media,
+    release, indexUrl, pngHash, attackId:10, attackCommandId:100 };
 }
 function assertActivity(h, field) {
   assert.equal(h.activityPorts.length, 1, "Whole actual app creates one runtime activity port");
@@ -1001,6 +1073,66 @@ try {
     await win(h,pack);assert.equal(restored.field.actors["500"],battleActor);assert.equal(battleActor.native.entity,battleEntity);
     assert.equal(restored.state.snapshot().completedBattles.length,1);assert.equal(restored.continueVictory(),false);
     report.animatedMapEntityLifecycle={actualApp:true,actualRepository:true,actualCommands:true,actorId:"500",policy:"web-field-animated-map-entities-v1",sourceDirection:15,savedPlayback:playback,storageWrites:h.calls.writes,battleAnimationPaused:true,onceBattleSettlement:true,sourceStoryReachability:false,nativeParity:false};
+  });
+  await check("production retained Magitek world policy shares map rollback, battle return and save/load owners", async () => {
+    const pack=await worldTransportPackages(),h=await host(pack),owner=await start(h),first=owner.field;
+    const policy=h.api.runtime.retainedWorldTransportation;
+    assert.equal(policy,"web-retained-walking-magitek-world-entry-v1");
+    assert.equal(Reflect.get(owner.world,"owned").current.retainedWorldTransportation,policy);
+    assert.equal(first.startEvent("board"),true);await activityIdle(h,owner);
+    assert.equal(first.transportationId,6);const parked=structuredClone(owner.state.snapshot().nativeState.ownedTransportations);
+    const oldInner=first.partyActorCheckpoint.context.player.riderFieldAssetId;
+    assert.notEqual(oldInner,38);h.api.read().images.clear();h.failedImages.add(`sha256:${pack.pngHash}`);
+    await move(h,"right");for(let i=0;i<40&&h.$("retry-map").hidden;i++)await h.frame();
+    assert.equal(h.$("retry-map").hidden,false);assert.equal(owner.field,first);
+    assert.deepEqual(owner.state.snapshot().nativeState.ownedTransportations,parked);
+    h.failedImages.clear();await h.click(h.$("retry-map"));
+    for(let i=0;i<100&&owner.field===first;i++)await h.frame();await activityIdle(h,owner);
+    assert.equal(owner.field.content.map.identity.mapId,pack.worldMap.mapId);assert.equal(owner.field.transportationId,6);
+    assert.equal(owner.field.partyActorCheckpoint.context.player.fieldAssetId,38);
+    assert.notEqual(owner.field.partyActorCheckpoint.context.player.riderFieldAssetId,38);
+    assert.deepEqual(owner.state.snapshot().nativeState.ownedTransportations,parked);
+    assert.equal(owner.field.startEvent("world-fight"),true);await win(h,pack);
+    assert.equal(owner.state.snapshot().completedBattles.length,1);assert.equal(owner.field.transportationId,6);
+    await pauseMenu(h);const saved=owner.checkpoint();await h.click(h.$("save-game"));await h.click(h.$("load-game"));
+    const restored=h.bound();assert.notEqual(restored,owner);assert.deepEqual(restored.checkpoint(),saved);
+    assert.equal(Reflect.get(restored.world,"owned").current.retainedWorldTransportation,policy);
+    await resume(h);const worldField=restored.field;assert.equal(worldField.startEvent("world-return"),true);
+    for(let i=0;i<100&&restored.field===worldField;i++)await h.frame();await activityIdle(h,restored);
+    assert.equal(restored.field.content.map.identity.mapId,pack.map.mapId);assert.equal(restored.field.transportationId,6);
+    assert.deepEqual(restored.state.snapshot().nativeState.ownedTransportations,parked);
+    report.retainedWorldTransportationLifecycle={policy,actualApp:true,actualRepository:true,actualMapLoader:true,
+      actualBattleHandoff:true,mediaFailureRetainedOwner:true,completedBattles:1,sourceStoryReachability:false,nativeParity:false,
+      parkingRecords:parked,storageWrites:h.calls.writes};
+  });
+  await check("explicit flat NPC uses the actual app renderer, cross-layer shop interaction and the original saved actor layer",async()=>{
+    const pack=await packages("controlled-flat-npc"),h=await host(pack),owner=await start(h),actor=owner.field.actors["500"],entity=actor.native.entity;
+    assert.equal(owner.field.player.layer,0);assert.equal(actor.layer,1);assert.equal(entity.layer,10);
+    h.$("game").focus();h.key("Space");await h.frame();assert.equal(owner.field.currentShop?.groupId,pack.groupId);
+    await h.click(button(h,"shop-menu","离开商店"));await h.frame();assert.equal(owner.field.actors["500"],actor);assert.equal(actor.native.entity,entity);
+    await pauseMenu(h);await h.click(h.$("save-game"));const before=owner.checkpoint(),oldCommands=h.api.read().commands;
+    await h.click(h.$("load-game"));await h.frame();const restored=h.bound();assert.notEqual(restored,owner);assert.equal(restored.field.actors["500"].layer,1);
+    assert.deepEqual(restored.field.actors["500"].native.entity.position,entity.position);assert.equal(restored.field.content.developmentProfile.npcProjection,"web-source-npc-flat-projection-v1");
+    assert.equal(oldCommands.menu({kind:"set-preferences",preferences:{mode:"wait",speedIndex:1}}),false);
+    await resume(h);h.$("game").focus();h.key("Space");await h.frame();assert.equal(restored.field.currentShop?.groupId,pack.groupId);
+    await h.click(button(h,"shop-menu","离开商店"));await h.frame();assert.equal(restored.field.actors["500"].layer,1);
+    report.flatNpcLifecycle={actualApp:true,actualRepository:true,actualCommands:true,actualRenderer:true,before:before.world.field.kind,sourceLayer:1,playerLayer:0,nativeParity:false};
+  });
+  await check("finite source operand playback uses actual app input/RAF, pauses with visibility and saves only after its one continuation",async()=>{
+    const pack=await packages("controlled-finite-animation"),h=await host(pack),owner=await start(h);
+    const count=()=>owner.state.snapshot().items.find(row=>row.id===pack.itemId)?.count??0,before=count();
+    await move(h,"right");assert.ok(owner.field.finiteAnimationExecutions.length);assert.equal(owner.field.checkpointReady,false);
+    const actor=owner.field.player,entity=actor.native.entity,paused={time:owner.field.time,animation:actor.animation.snapshot(),trace:owner.field.finiteAnimationExecutions};
+    h.visibility(true);await h.frame(80);assert.deepEqual({time:owner.field.time,animation:actor.animation.snapshot(),trace:owner.field.finiteAnimationExecutions},paused);
+    h.visibility(false);await resume(h);for(let i=0;i<600&&owner.field.busy&&!owner.field.stop;i++)await h.frame(40);
+    assert.equal(owner.field.stop,null);assert.equal(owner.field.busy,false);assert.equal(owner.field.player,actor);assert.equal(actor.native.entity,entity);
+    assert.deepEqual(owner.field.finiteAnimationExecutions.map(row=>row.phase),["started","replayed","replayed","completed"]);assert.equal(count(),before+1);
+    assert.equal(h.api.read().renderer.game,owner.field);await pauseMenu(h);const saved=owner.checkpoint();
+    await h.click(h.$("save-game"));await h.click(h.$("load-game"));const restored=h.bound();assert.notEqual(restored,owner);assert.deepEqual(restored.checkpoint(),saved);
+    assert.deepEqual(restored.field.finiteAnimationExecutions,[]);await resume(h);await h.frame(80);
+    assert.equal(restored.state.snapshot().items.find(row=>row.id===pack.itemId)?.count??0,before+1);
+    assert.deepEqual(restored.field.finiteAnimationExecutions,[]);report.finiteAnimationLifecycle={actualApp:true,actualRepository:true,actualCommands:true,actualRAF:true,
+      completedRepeatInstructions:1,actualPlayCalls:3,storageWrites:h.calls.writes,pausedByVisibility:true,sourceStoryReachability:false,nativeParity:false};
   });
   assert.equal(await runtimeDigest(root, compiled), runtimeBefore, "Runtime changed during actual app checks");
   assert.equal(sha(await readFile(new URL(import.meta.url))), sha(checkerBefore), "App checker changed during checks");

@@ -1,3 +1,4 @@
+import {parseFrameworkNpcFlatAddition,comparableFrameworkNpcFlatAddition} from './framework-npc-flat-evidence.mjs';
 // Rebind declared recipe inputs to one private source compilation. This does
 // not edit recipes, rebuild inputs, or confer gameplay/source admission.
 import assert from 'node:assert/strict';
@@ -6,6 +7,8 @@ import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createSourceMapAnimationEvidenceReader,compareSourceMapAnimationAddition} from './source-map-animation-evidence.mjs';
+import {parseSourceEventActivationAddition,createSourceEventActivationEvidenceReader,compareSourceEventActivationAddition,sourceEventActivationChanged} from './source-event-activation-evidence.mjs';
+import {parseFrameworkNpcAreaAddition,comparableFrameworkNpcAreaAddition} from './framework-npc-area-evidence.mjs';
 
 const repository=resolve(import.meta.dirname,'..');
 const digest=/^[a-f0-9]{64}$/;
@@ -413,7 +416,8 @@ async function npcRouteAdditionDeclaration(raw,root,compiledDir){
  * before asynchronous verification. Callers retain byte/path freshness checks
  * and complete package validation at their publication boundary. */
 export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurrentJson,readCandidateJson,
-    root=repository,compiledDir='dist',sourceWalkEvidence,battleRebindings,frameworkProfileUpgrade,sourceMapAnimationAddition,sourceMapAnimationEvidence,sourceNpcRoutesAddition,sourceNpcRouteEvidence}){
+    root=repository,compiledDir='dist',sourceWalkEvidence,battleRebindings,frameworkProfileUpgrade,sourceMapAnimationAddition,sourceMapAnimationEvidence,sourceNpcRoutesAddition,sourceNpcRouteEvidence,
+    frameworkNpcAreaAddition,frameworkNpcAreaEvidence,sourceEventActivationAddition,sourceEventActivationEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence}){
   assert.ok(typeof recipePath==='string'&&recipePath.length>0,'Missing original recipe path');
   assert.equal(typeof readCurrentJson,'function');assert.equal(typeof readCandidateJson,'function');
   const recipe=recipeJSON(recipeBytes),refs=declaredReferences(recipe),proofs=parseBattleRebindings(battleRebindings);
@@ -421,9 +425,16 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
     recipeSha256:sha(recipeBytes),changes:[],dependencyRebindings:[],sourceIdentities:[],sourceEvidenceEnrichments:[],
     battleCapabilityRebindings:[],frameworkProfileUpgrades:[],sourceMapAnimationAdditions:[],sourceNpcRouteAdditions:[]};
   const frameworkUpgrade=await frameworkUpgradeDeclaration(frameworkProfileUpgrade,root,compiledDir);
+  const eventActivationAddition=parseSourceEventActivationAddition(sourceEventActivationAddition);
+  if(eventActivationAddition)report.sourceEventActivationAdditions=[];
+  const eventActivationEvidence=sourceEventActivationEvidence??(eventActivationAddition?createSourceEventActivationEvidenceReader({root,compiledDir}):undefined);
   const animationAddition=await mapAnimationAdditionDeclaration(sourceMapAnimationAddition,root,compiledDir);
   sourceMapAnimationEvidence??=createSourceMapAnimationEvidenceReader({root,compiledDir});
   const npcRouteAddition=await npcRouteAdditionDeclaration(sourceNpcRoutesAddition,root,compiledDir);
+  const npcAreaAddition=parseFrameworkNpcAreaAddition(frameworkNpcAreaAddition);
+  if(npcAreaAddition)report.frameworkNpcAreaAdditions=[];
+  const npcFlatAddition=parseFrameworkNpcFlatAddition(frameworkNpcFlatAddition);
+  if(npcFlatAddition)report.frameworkNpcFlatAdditions=[];
   if(refs.length===0)return {recipe,report};
   const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src/core',name+'.js')).href);
   const [{canonical},{verifyContent},{sourceCatalogProfile}]=await Promise.all([
@@ -564,18 +575,40 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
     const before=await read(readCurrentJson,oldCache,ref.url,ref.contentHash);
     const after=await read(readCandidateJson,newCache,ref.url);
     validateDocument(before,ref);validateDocument(after,ref);
-    let animationAfter=after;
+    let eventAfter=after;
+    if(['world-development','world-map-development'].includes(after.kind)){
+      if(sourceEventActivationChanged(before,after,canonical))assert.ok(eventActivationAddition,'Source event activation addition proof is required');
+      if(eventActivationAddition){
+        assert.equal(after.sourceSetHash,eventActivationAddition.sourceSetHash,'Event activation source mismatch');
+        assert.equal(after.parentSourceSetHash,eventActivationAddition.parentSourceSetHash,'Event activation parent mismatch');
+        const evidence=await eventActivationEvidence(after),result=compareSourceEventActivationAddition(before,after,evidence,eventActivationAddition);
+        eventAfter=result.after;
+        if(result.audit)report.sourceEventActivationAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,
+          previousHash:before.contentHash,candidateHash:after.contentHash,...result.audit,
+          sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile)});
+      }
+    }
+    let animationAfter=eventAfter;
     if(animationAddition&&['world-development','world-map-development'].includes(after.kind)){
       assert.equal(after.sourceSetHash,animationAddition.sourceSetHash,'Animation source addition source mismatch');
       assert.equal(after.parentSourceSetHash,animationAddition.parentSourceSetHash,'Animation source addition parent mismatch');
-      const evidence=await sourceMapAnimationEvidence(after),result=compareSourceMapAnimationAddition(before,after,evidence,animationAddition);
+      const evidence=await sourceMapAnimationEvidence(after),result=compareSourceMapAnimationAddition(before,eventAfter,evidence,animationAddition);
       animationAfter=result.after;
       if(result.audit)report.sourceMapAnimationAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,
         previousHash:before.contentHash,candidateHash:after.contentHash,...result.audit,
         sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile)});
     }
     const omissionsAfter=await comparableAfter(before,animationAfter,ref);
-    const upgraded=comparableFrameworkUpgrade(before,omissionsAfter,ref,frameworkUpgrade,canonical);
+    const npcArea=await comparableFrameworkNpcAreaAddition({before,after:omissionsAfter,proof:npcAreaAddition,
+      evidence:frameworkNpcAreaEvidence,canonical});
+    if(npcArea.addition)report.frameworkNpcAreaAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,
+      previousHash:before.contentHash,candidateHash:after.contentHash,...npcArea.addition,
+      sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),
+      sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile)});
+    const npcFlat=await comparableFrameworkNpcFlatAddition({before,after:npcArea.after,proof:npcFlatAddition,evidence:frameworkNpcFlatEvidence,canonical});
+    if(npcFlat.addition)report.frameworkNpcFlatAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,previousHash:before.contentHash,candidateHash:after.contentHash,...npcFlat.addition,
+      sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile)});
+    const upgraded=comparableFrameworkUpgrade(before,npcFlat.after,ref,frameworkUpgrade,canonical);
     const comparisonAfter=upgraded.after;
     const routed=await comparableNpcRoutes(before,comparisonAfter,ref.role,ref.url,before,after);
     const comparison=await comparableWalkingEvidence(routed.before,routed.after,ref.role,ref.url);

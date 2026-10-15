@@ -1,3 +1,4 @@
+import {createFrameworkNpcFlatAddition,createFrameworkNpcFlatEvidenceReader} from './framework-npc-flat-evidence.mjs';
 // Prepare the entire collection privately; producers own no gameplay state.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -8,10 +9,13 @@ import {archivePublishedContentPackages} from './archive-content-release.mjs';
 import {acquireContentPackageLock} from './content-package-lock.mjs';
 import {loadSourceContentSelection,loadSourceRecipePaths} from './source-content-selection.mjs';
 import {runtimeDigest} from './runtime-digest.mjs';
+import {webSourceFrameworkInputs} from './source-web-framework-inputs.mjs';
 import {compileSourcePrerequisites,validateSourcePrerequisiteInputs} from './compile-source-prerequisites.mjs';
 import {linkSourcePrerequisites} from './link-source-prerequisites.mjs';
+import {createSourceEventActivationEvidenceReader} from './source-event-activation-evidence.mjs';
 import {createSourceMapAnimationEvidenceReader} from './source-map-animation-evidence.mjs';
 import {resolveSourceRecipeInputs,resolveCompiledBattleReference,createSourceWalkEvidenceReader,createSourceNpcRouteEvidenceReader} from './source-recipe-inputs.mjs';
+import {createFrameworkNpcAreaAddition,createFrameworkNpcAreaEvidenceReader} from './framework-npc-area-evidence.mjs';
 
 const repository=resolve(import.meta.dirname,'..');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -94,10 +98,10 @@ async function validatePublicCAS(root,candidateHistory){
   return checked;
 }
 
+const sourceFrameworkDefaults=webSourceFrameworkInputs();
 export async function compileSharedContentPackages({root=repository,compiledDir='dist',readJson,
-  sourceRecipePaths,sourceSelectionPath,periodicMaps={kind:'web-source-periodic-presentation-input-v1',
-    reason:'Explicit playable Web framework: fixed flat presentation for the complete source periodic-map family; strict diagnostics retained.'},logicalFieldEffects={kind:'web-logical-field-effects-input-v1',
-    input:'build/field-effect-media',reason:'Explicit playable Web framework: retain proven all-loop board logic while deferring particle/material/minimap display.'}}={}){
+  sourceRecipePaths,sourceSelectionPath,npcAreas=sourceFrameworkDefaults.npcAreas,npcFlat=sourceFrameworkDefaults.npcFlat,
+  periodicMaps=sourceFrameworkDefaults.periodicMaps,logicalFieldEffects=sourceFrameworkDefaults.logicalFieldEffects}={}){
   root=await realpath(resolve(root));
   // Several existing producers still import the repository's default emitted
   // modules. Do not claim another compiler lock covers that mixed runtime.
@@ -134,8 +138,8 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     if(id!=='base')put('/content-packages/'+id+'/build-report.json',result.report);
     reports.push({id,report:result.report});
   };
-  const prerequisites=await compileSourcePrerequisites({root,compiledDir,logicalFieldEffects,periodicMaps,
-    mapAnimatedEntities:'web-field-animated-map-entities-v1'});
+  const prerequisites=await compileSourcePrerequisites({root,compiledDir,logicalFieldEffects,periodicMaps,npcAreas,npcFlat,
+    mapAnimatedEntities:sourceFrameworkDefaults.mapAnimatedEntities});
   const linked=await linkSourcePrerequisites({root,compiledDir,payloads:prerequisites.payloads,frameworkOptions:prerequisites.frameworkOptions});
   const sourceRead=async url=>linked.inputs.has(url)?structuredClone(linked.inputs.get(url)):readJson(url);
   for(const [url,value] of linked.payloads)payloads.set(url,value);
@@ -161,16 +165,31 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
   const candidateRead=async url=>url==='/content-batches/ordinary-battles/battle.json'
     ? structuredClone(battles.catalog):sourceRead(url);
   const sourceWalkEvidence=createSourceWalkEvidenceReader({root,compiledDir});
+  const sourceEventActivationEvidence=createSourceEventActivationEvidenceReader({root,compiledDir});
   const sourceMapAnimationEvidence=createSourceMapAnimationEvidenceReader({root,compiledDir});
   const sourceNpcRouteEvidence=createSourceNpcRouteEvidenceReader({root,compiledDir});
+  const frameworkNpcAreaAddition=prerequisites.frameworkOptions.npcAreaAssessments?createFrameworkNpcAreaAddition({
+    compilerDigest:prerequisites.inputs.compilerDigest,assessments:prerequisites.frameworkOptions.npcAreaAssessments,
+    catalog:await sourceRead('/framework/world/catalog.json'),entry:await sourceRead('/framework/new-game.json')}):undefined;
+  const frameworkNpcAreaEvidence=frameworkNpcAreaAddition?createFrameworkNpcAreaEvidenceReader({root,compiledDir,
+    readSourceWorld:()=>sourceRead('/world/catalog.json'),readSourceMap:async mapId=>{
+      const catalog=await sourceRead('/world/catalog.json');return sourceRead(catalog.maps[String(mapId)].url);}}):undefined;
+  const frameworkNpcFlatAddition=prerequisites.frameworkOptions.npcFlatAssessments?createFrameworkNpcFlatAddition({compilerDigest:prerequisites.inputs.compilerDigest,assessments:prerequisites.frameworkOptions.npcFlatAssessments,
+    catalog:await sourceRead('/framework/world/catalog.json'),entry:await sourceRead('/framework/new-game.json')}):undefined;
+  const frameworkNpcFlatEvidence=frameworkNpcFlatAddition?createFrameworkNpcFlatEvidenceReader({root,compiledDir,readSourceWorld:()=>sourceRead('/world/catalog.json'),
+    readSourceMap:async mapId=>{const catalog=await sourceRead('/world/catalog.json');return sourceRead(catalog.maps[String(mapId)].url);}}):undefined;
   const resolveRecipe=async path=>{
     const original=await recipe(path);
     const resolved=await resolveSourceRecipeInputs({root,compiledDir,recipePath:path,recipeBytes:original.raw,
       readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence,battleRebindings,sourceMapAnimationEvidence,sourceNpcRouteEvidence,
+      sourceEventActivationEvidence,sourceEventActivationAddition:{kind:'compiled-source-event-activation-addition-v1',
+        compilerDigest:prerequisites.inputs.compilerDigest,sourceSetHash:prerequisites.inputs.sourceSetHash,
+        parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
       sourceMapAnimationAddition:{kind:'compiled-source-map-animation-import-addition-v1',compilerDigest:prerequisites.inputs.compilerDigest,
         sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
       sourceNpcRoutesAddition:{kind:'compiled-source-npc-route-evidence-addition-v1',compilerDigest:prerequisites.inputs.compilerDigest,
         sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
+      frameworkNpcAreaAddition,frameworkNpcAreaEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,
       frameworkProfileUpgrade:{kind:'compiled-framework-profile-upgrade-v4',
         compilerDigest:prerequisites.inputs.compilerDigest,markers:{
           storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1',mapAnimatedEntities:'web-field-animated-map-entities-v1',

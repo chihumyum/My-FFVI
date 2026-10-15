@@ -25,7 +25,7 @@ async function modules(root, dist) {
     "core/content-integrity", "core/game-content", "core/game-content-refs", "core/source-catalog", "core/development-profile",
     "compiler/source-walk-policy",
     "compiler/initialized-battle-binding", "compiler/source-area-scope",
-    "compiler/field-npc-activity", "core/field-npc-activity-source", "compiler/field-services",
+    "compiler/field-npc-activity", "core/field-npc-activity-source", "compiler/field-services", "compiler/framework-npc-area",
   ].map(load)));
 }
 
@@ -138,19 +138,9 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
     }
     if(npcVariant){
       assert.equal(sourceMap.frameworkNpcActivity,undefined,'Original source map cannot carry an authored NPC controller host');
-      const inventory=api.compileFieldNpcActivitySources(corpus,map.mapId),npcBindings=[],diagnostics=structuredClone(inventory.diagnostics);
-      for(const source of inventory.definitions){
-        try{npcBindings.push(api.deriveFrameworkNpcActivity(source,{...npcTemplate,
-          kind:'framework-npc-area-declaration-v1',sourceHash:source.contentHash}));}
-        catch(error){diagnostics.push({code:'framework-npc-area-derivation',reason:String(error.message??error),source:source.source});}
-      }
-      const limitations=[...new Set([...inventory.definitions.flatMap(source=>source.nativeGaps),
-        'Web Area activity leaves every original dialogue, event, provider and story-reachability blocker visible.'])];
-      map.frameworkNpcActivity={kind:'framework-npc-area-host-v1',policy:npcTemplate.policy,
-        sourceMapHash:sourceMap.contentHash,sourceSetHash:sourceMap.sourceSetHash,parentSourceSetHash:sourceMap.parentSourceSetHash,
-        bindings:npcBindings,diagnostics,limitations,nativeRulesVerified:false};
-      npcResults.push({mapId:map.mapId,sourceMapHash:sourceMap.contentHash,sources:inventory.definitions,
-        counts:{...inventory.counts,derived:npcBindings.length},diagnostics});
+      const assessment=api.assessFrameworkNpcAreaMap(corpus,sourceMap,npcTemplate);
+      map.frameworkNpcActivity=assessment.host;
+      npcResults.push(assessment.record);
     }
     if(walking.has(map.mapId)){
       assert.ok(map.sourceWalkEncounters,'Missing retained source walking metadata');

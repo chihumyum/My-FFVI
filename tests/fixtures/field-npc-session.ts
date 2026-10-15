@@ -1,3 +1,4 @@
+import { assessFrameworkNpcFlatMap } from "../../src/compiler/framework-npc-flat-projection.js";
 import { hash } from "../../src/compiler/content.js";
 import { compileEntityGroup } from "../../src/compiler/entity-group.js";
 import { compileFieldNpcActivitySources, deriveFrameworkNpcActivity,
@@ -26,6 +27,7 @@ async function seal<T extends { contentHash: string }>(value: T): Promise<T> {
  * is explicitly Web policy; this fixture grants no original story coverage. */
 export async function fieldNpcSessionFixture(options: {
   interaction?: "talk" | "script";
+  flatNpc?: { allLayers: boolean; birdview: boolean; layer: 0|1|2|3 };
   obstacle?: boolean;
   messageUpdates?: boolean;
   missingMovingAnimation?: boolean;
@@ -45,11 +47,11 @@ export async function fieldNpcSessionFixture(options: {
     // The missing-move-media fixture retains an admitted initial stopped pose.
     // Its negative dependency is encountered only when this Area selects a move.
     direction: options.missingMovingAnimation ? 4 : 8, move_type: moveType,
-    affected: false, all_layers: false, birdview_puppet: false, visible_minimap: false,
+    affected: false, all_layers: moveType===0 && !!options.flatNpc?.allLayers, birdview_puppet: moveType===0 && !!options.flatNpc?.birdview, visible_minimap: false,
     move_while_display_message: options.messageUpdates ?? false, turn_around: true,
     idling: false, eye_contact: false, pushed: false, collision: true,
     move_speed_id: 2, move_interval_id: 5, move_step: 2, first_interval: false, link_object_id: 700,
-    action_id: moveType === 0 ? 0 : options.interaction === "script" ? 2 : 1,
+    action_id: moveType === 0 ? options.flatNpc ? 1 : 0 : options.interaction === "script" ? 2 : 1,
     script_id: moveType !== 0 && options.interaction === "script" ? 10 : 0,
     message_key: "CONTROLLED_NPC_TALK", target_character_status_id: 0, se_id: 0,
     accept_action_direction: 15, gimmick: false, target_transportation_ids: "", talk_target_transportation_ids: "",
@@ -69,7 +71,8 @@ export async function fieldNpcSessionFixture(options: {
         properties: properties(npcProperties(602, 0)) }]),
     ];
     assets.push({ id: "group-" + mapId, kind: "data", source: source(`Room${mapId}/entity_default.json`, index * 2 + 1),
-      data: { layers: [{ name: "BottomObject", objects }] } },
+      data: { layers: options.flatNpc && options.flatNpc.layer!==0 ? [{name:"BottomObject",objects:objects.slice(0,2)},
+        {name:["BottomObject","GroundObject","UpperObject","CeilObject"][options.flatNpc.layer],objects:objects.slice(2)}] : [{ name: "BottomObject", objects }] } },
     { id: "tilemap-" + mapId, kind: "data", source: source(`Room${mapId}/tilemap.json`, index * 2 + 2),
       data: { width: 20, height: 16 } });
   }
@@ -86,7 +89,7 @@ export async function fieldNpcSessionFixture(options: {
       story_cha_zhc: { CONTROLLED_NPC_TALK: "Controlled NPC" } } };
   const mapContents: Record<number, WorldMapContent> = {};
   const profile = { kind: "framework-development-v1" as const, policy: "omit-anonymous-environment-particles-v1" as const,
-    sourceContentHash: "f".repeat(64), omissions: [], npcActivity: "framework-npc-area-v1" as const };
+    sourceContentHash: "f".repeat(64), omissions: [], ...(options.flatNpc?{npcProjection:"web-source-npc-flat-projection-v1" as const}:{}), npcActivity: "framework-npc-area-v1" as const };
   for (const mapId of maps) {
     const compiled = compileFieldNpcActivitySources(corpus, mapId), definition = compiled.definitions[0];
     if (!definition || compiled.counts.bound !== 1 || compiled.diagnostics.length)
@@ -137,6 +140,12 @@ export async function fieldNpcSessionFixture(options: {
     map.frameworkNpcActivity = { kind: "framework-npc-area-host-v1", policy: "framework-npc-area-v1",
       sourceMapHash: profile.sourceContentHash, sourceSetHash, parentSourceSetHash: parentHash, bindings: [binding],
       diagnostics: compiled.diagnostics, limitations: binding.limitations, nativeRulesVerified: false };
+    if(options.flatNpc){
+      const strict=structuredClone(map);delete strict.developmentProfile;delete strict.frameworkNpcActivity;
+      const sourceMap=await seal(strict),assessment=assessFrameworkNpcFlatMap(corpus,sourceMap,"Controlled authored flat NPC lifecycle; no original story reachability.");
+      if(assessment.host.bindings.length!==1)throw new Error("Controlled flat NPC unready: "+JSON.stringify(assessment.host.diagnostics));
+      map.developmentProfile!.sourceContentHash=sourceMap.contentHash;map.frameworkNpcActivity!.sourceMapHash=sourceMap.contentHash;map.frameworkNpcFlat=assessment.host;
+    }
     mapContents[mapId] = await seal(map);
   }
   const world = structuredClone(f.world);

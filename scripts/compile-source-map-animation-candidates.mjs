@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { runtimeDigest } from './runtime-digest.mjs';
 import { compileSourcePrerequisites } from './compile-source-prerequisites.mjs';
+import { webSourceFrameworkInputs } from './source-web-framework-inputs.mjs';
 import { linkSourcePrerequisites } from './link-source-prerequisites.mjs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -12,10 +13,7 @@ for (let i = 0; i < args.length; i += 2)
     assert.ok(['--root', '--compiled-dir', '--output'].includes(args[i]) && args[i + 1] && !args[i + 1].startsWith('--'), 'Unknown or missing option value');
 const runtimeRoot = resolve(import.meta.dirname, '..'), root = resolve(option('--root') ?? runtimeRoot), out = resolve(root, option('--output') ?? 'build/source-map-animation-candidate'), compiledDir = resolve(root, option('--compiled-dir') ?? 'dist'), sha = b => createHash('sha256').update(b).digest('hex');
 const runtimeBefore = await runtimeDigest(runtimeRoot, compiledDir);
-const result = await compileSourcePrerequisites({ root, compiledDir,
-    mapAnimatedEntities: 'web-field-animated-map-entities-v1',
-    logicalFieldEffects: { kind: 'web-logical-field-effects-input-v1', input: 'build/field-effect-media', reason: 'Whole-source private map animation lifecycle candidate, same existing explicit FX policy.' },
-    periodicMaps: { kind: 'web-source-periodic-presentation-input-v1', reason: 'Retain v100 whole periodic cohort in this private animation candidate.' } });
+const result = await compileSourcePrerequisites({ root, compiledDir, ...webSourceFrameworkInputs() });
 console.log('pure source prerequisite compiled');
 const linked = await linkSourcePrerequisites({ root, compiledDir, payloads: result.payloads, frameworkOptions: result.frameworkOptions });
 assert.equal(await runtimeDigest(runtimeRoot, compiledDir), runtimeBefore, 'Runtime changed during private source compilation');

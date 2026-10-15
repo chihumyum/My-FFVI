@@ -1,4 +1,5 @@
 import { compileFieldAssignedRouteInstruction } from './field-assigned-route.js';
+import { compileFieldFiniteAnimationInstruction } from './field-play-animation.js';
 import { decodeSourceSystemFlags, type SourceFormatFlagImportBinding } from "./source-system-flags.js";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
@@ -327,6 +328,10 @@ export function decodeFieldOp(
       animation: s[0] ?? "",
       frame: Math.fround(r[0]!),
     };
+  if (name === "PlayAnim" && m.type === 2 && i[1]! > 1) {
+    try { return { ...site, ...compileFieldFiniteAnimationInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (
     name === "PlayAnim" &&
     m.type === 2 &&

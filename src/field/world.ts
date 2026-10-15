@@ -78,6 +78,7 @@ export type WorldMapContent = {
   nativeNpcStandby?: FieldContent["nativeNpcStandby"];
   npcRoutes?: FieldContent["npcRoutes"];
   frameworkNpcActivity?: FieldContent["frameworkNpcActivity"];
+  frameworkNpcFlat?: FieldContent["frameworkNpcFlat"];
   frameworkRelayInteraction?: FieldContent["frameworkRelayInteraction"];
   frameworkPassiveEffects?: NonNullable<FieldContent["frameworkPassiveEffects"]>;
   nativeNpcStandbyBlockers?: ContentIssue[];

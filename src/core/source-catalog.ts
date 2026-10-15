@@ -17,6 +17,7 @@ export function sourceCatalogProfile(profile: DevelopmentProfile | undefined): S
       profile.worldMap !== undefined && profile.worldMap !== "framework-world-map-flat-v1" ||
       profile.fieldPresentation !== undefined && profile.fieldPresentation !== "framework-ordinary-field-flat-v1" ||
       profile.storyRuntime !== undefined && profile.storyRuntime !== "web-field-story-runtime-v1" ||
+      profile.npcProjection !== undefined && profile.npcProjection !== "web-source-npc-flat-projection-v1" ||
       profile.mapAnimatedEntities !== undefined && profile.mapAnimatedEntities !== "web-field-animated-map-entities-v1" ||
       profile.autoSave !== undefined && profile.autoSave !== "web-field-autosave-barrier-v1" ||
       profile.logicalFieldEffects !== undefined && profile.logicalFieldEffects !== "web-logical-all-loop-field-effects-v1")
@@ -54,6 +55,7 @@ export function assertSourceEntryProfiles(
           dependency.developmentProfile!.worldMap !== entry.developmentProfile!.worldMap ||
           dependency.developmentProfile!.fieldPresentation !== entry.developmentProfile!.fieldPresentation ||
           dependency.developmentProfile!.storyRuntime !== entry.developmentProfile!.storyRuntime ||
+          dependency.developmentProfile!.npcProjection !== entry.developmentProfile!.npcProjection ||
           dependency.developmentProfile!.mapAnimatedEntities !== entry.developmentProfile!.mapAnimatedEntities ||
           dependency.developmentProfile!.autoSave !== entry.developmentProfile!.autoSave ||
           dependency.developmentProfile!.logicalFieldEffects !== entry.developmentProfile!.logicalFieldEffects))

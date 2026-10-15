@@ -1,3 +1,4 @@
+import { validateRetainedWorldTransportationPolicy } from "./world-transportation-entry.js";
 import { WEB_SOURCE_ENCOUNTER_POLICY, selectWebSourceEncounter, type WebSourceEncounterPolicy } from "./source-encounter-entry.js";
 import { sourceEncounterCandidates } from "./source-encounter.js";
 import type { FieldContent } from "../field/types.js";
@@ -68,7 +69,7 @@ export type GameCheckpoint = GameCheckpointBase & (
   { formatVersion: 4 } | { formatVersion: 5 | 6; walkEncounters: WalkEncounterSnapshot }
 );
 /** External observations are rebound by the host on load, never trusted from saves. */
-export type GameSessionRuntime = { assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
+export type GameSessionRuntime = { retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
   sourceMessageSequence?: NonNullable<FieldGameOptions["sourceMessageSequence"]>;
   conditionLeaderActivity?: NonNullable<FieldGameOptions["conditionLeaderActivity"]>;
@@ -221,6 +222,7 @@ export class GameSession {
       throw new Error('Unknown assigned NPC route policy');
     if (runtime.sourceEncounterPolicy !== undefined && runtime.sourceEncounterPolicy !== WEB_SOURCE_ENCOUNTER_POLICY)
       throw new Error("Unknown source encounter runtime policy");
+    validateRetainedWorldTransportationPolicy(runtime.retainedWorldTransportation);
     this.preparedBattleHandoff = runtime.battleHandoff === "prepared";
     this.walkEncounters = new WalkEncounterState(seed);
     this.currentBattlePreferences = parseBattlePreferences(battleCatalog.common.timing);

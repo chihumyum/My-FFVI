@@ -1,3 +1,4 @@
+import { restoreFieldEventActivation, type FieldEventActivationCheckpoint } from "./field-event-activation.js";
 import type { FieldContent, Op } from "../field/types.js";
 import { canonical } from "./canonical.js";
 import { checkpointIds, checkpointInteger, checkpointKeys, checkpointNumber } from "./checkpoint-validation.js";
@@ -8,7 +9,8 @@ import { assertFieldEventSaveAdmission } from "./field-auto-save.js";
 import { fieldUsesCoreRegisters, parseFieldCoreRegisters, type FieldCoreRegisters } from "./field-core-registers.js";
 
 export type FieldEventCheckpoint = {
-  kind: "field-event-continuation-v1" | "field-event-continuation-v2";
+  kind: "field-event-continuation-v1" | "field-event-continuation-v2" | "field-event-continuation-v3";
+  eventActivation?: FieldEventActivationCheckpoint;
   contentHash: string;
   /** Web program-array address, which need not equal the source Site.index. */
   barrier: { script: string; pc: number };
@@ -110,9 +112,11 @@ function localFramePath(content: FieldContent, first: string, current: string, d
  * It restores lastClock to field.time so the next ordinary tick resumes once. */
 export function captureFieldEventCheckpoint(input: FieldEventCheckpointInput,
   context: FieldEventCheckpointContext): FieldEventCheckpoint {
-  checkpointKeys(input, "barrier,main,eventRootScript,scriptHook,puppetLifecycle,cameraEventActive,entryTaskStarted");
+  checkpointKeys(input, "barrier,main,eventRootScript,scriptHook,puppetLifecycle,cameraEventActive,entryTaskStarted" +
+    (Object.hasOwn(input, "eventActivation") ? ",eventActivation" : ""));
   return restoreFieldEventCheckpoint({ ...input,
-    kind: fieldUsesCoreRegisters(context.content) ? "field-event-continuation-v2" : "field-event-continuation-v1",
+    kind: Object.hasOwn(input, "eventActivation") ? "field-event-continuation-v3"
+      : fieldUsesCoreRegisters(context.content) ? "field-event-continuation-v2" : "field-event-continuation-v1",
     contentHash: context.content.contentHash }, context);
 }
 
@@ -120,11 +124,15 @@ export function captureFieldEventCheckpoint(input: FieldEventCheckpointInput,
  * executes a barrier, begins a script, grants an item, or initializes actors. */
 export function restoreFieldEventCheckpoint(raw: unknown,
   context: FieldEventCheckpointContext): FieldEventCheckpoint {
-  checkpointKeys(raw, "kind,contentHash,barrier,main,eventRootScript,scriptHook,puppetLifecycle,cameraEventActive,entryTaskStarted");
+  const activated = typeof raw === "object" && raw !== null &&
+    Object.hasOwn(raw, "eventActivation");
+  checkpointKeys(raw, "kind,contentHash,barrier,main,eventRootScript,scriptHook,puppetLifecycle,cameraEventActive,entryTaskStarted" +
+    (activated ? ",eventActivation" : ""));
   const saved = structuredClone(raw) as FieldEventCheckpoint;
   name(context.content.contentHash);
   const registers = fieldUsesCoreRegisters(context.content);
-  if (saved.kind !== (registers ? "field-event-continuation-v2" : "field-event-continuation-v1") ||
+  if (saved.kind !== (activated ? "field-event-continuation-v3"
+      : registers ? "field-event-continuation-v2" : "field-event-continuation-v1") ||
       saved.contentHash !== context.content.contentHash)
     throw new Error("Event continuation content/version mismatch");
   checkpointInteger(context.nextTask, 1);
@@ -157,6 +165,7 @@ export function restoreFieldEventCheckpoint(raw: unknown,
     address(call.target, ops); address(call.target + 1, ops);
   }
   instructions(context.content, saved.eventRootScript);
+  if (activated) saved.eventActivation = restoreFieldEventActivation(saved.eventActivation, context.content, saved.eventRootScript);
   validateBank(context.content, main.script, context.eventState.scriptLabels, context.eventState.script, false);
   if (saved.eventRootScript !== main.script) {
     transitionMetadata(context.content, saved.eventRootScript);

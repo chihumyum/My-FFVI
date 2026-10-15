@@ -124,6 +124,7 @@ export type FieldRelayDefinition = {
   source: Evidence & { objectId: string; pointer: string; serializedFile: string; sha256: string };
 };
 export type FieldEntity = Point & {
+  eventActivation?: import("../core/field-event-activation.js").FieldEventActivationDefinition;
   mapAnimation?: import("../core/field-map-animation.js").FieldMapAnimationDefinition;
   mapAnimationBlockers?: string[];
   id: string;
@@ -285,6 +286,8 @@ export type Op = Site &
         animation: string;
         speed: number;
         loop: boolean;
+        /** Source positive i1 > 1; the existing VM task waits for each play. */
+        repeatCount?: number;
       }
     | ({ kind: "message"; manual?: FieldManualMessage } & FieldMessage)
     | SourceEncounterOp
@@ -312,6 +315,7 @@ export type Tileset = {
 export type FieldContent = {
   frameworkPassiveEffects?: import("../core/field-passive-effects-host.js").FieldPassiveEffectsHost;
   frameworkRelayInteraction?: import("../core/field-relay-policy.js").FieldRelayInteractionHost;
+  frameworkNpcFlat?: import("../core/field-npc-flat-projection.js").FieldNpcFlatHost;
   frameworkNpcActivity?: import("../core/field-npc-activity-host.js").FieldNpcActivityHost;
   /** Explicit development rules, never inferred from native step counters. */
   walkEncounters?: FrameworkWalkEncounterPolicy;

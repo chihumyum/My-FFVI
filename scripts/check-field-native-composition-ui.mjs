@@ -319,5 +319,27 @@ run("foreign source entity refuses draw before publishing an image",()=>{
  const t=animatedFixture();t.animated.native.mapAnimation.source.pointer="/layers/0/objects/99";
  assert.throws(()=>t.renderer.draw(t.game),/Web显示策略/);assert.equal(t.canvas.puts,0);
 });
+run("actual Renderer reads first Cue/Play and later direct replay from the same native ActorAnimation owner",()=>{
+ const t=fixture(),actor=t.player,entity=actor.native.entity,animation=actor.animation,c=animation.character,base=c.animations.Default;
+ c.animations.FiniteA={...base,duration:.125,mode:0,next:"FiniteB",frames:base.frames.map(frame=>({...frame,x:0}))};
+ c.animations.FiniteB={...base,duration:.125,mode:0,next:"FiniteA",frames:base.frames.map(frame=>({...frame,x:4}))};
+ animation.play("FiniteA",false,1);assert.equal(animation.snapshot().key,"FiniteB");let before=animation.snapshot();t.renderer.draw(t.game);
+ const first=t.canvas.getContext().data.slice();assert.deepEqual(animation.snapshot(),before);
+ animation.advance(130);animation.replayEntity("FiniteA",1);assert.equal(animation.snapshot().key,"FiniteA");before=animation.snapshot();t.renderer.draw(t.game);
+ assert.notDeepEqual(t.canvas.getContext().data,first);assert.deepEqual(animation.snapshot(),before);assert.equal(actor.native.entity,entity);assert.equal(actor.animation,animation);assert.equal(entity.animation,animation);
+});
+const {compileFieldNativeNpc}=await load("src/compiler/field-native-npc.js"),{prepareFieldNativeNpcGroup}=await load("src/core/field-native-npc.js");
+run("explicit birdview NPC flat lane draws through the same Renderer with source layer and the same native animation owner",()=>{
+ const t=fixture(),source={file:"controlled-flat-npc.bundle",assetPath:"Room/entities.json",pointer:"/layers/0/objects/0"},asset=Object.keys(t.f.characters)[0],
+   entity={id:"603",kind:6,layer:1,source},raw={x:64,y:80,width:16,height:16},properties={object_type:6,entity_id:603,asset_id:77,direction:4,move_type:0,birdview_puppet:true,all_layers:false};
+ const result=compileFieldNativeNpc({group:"entity_default",object:raw,entity,properties,tables:{"mapobject.csv":[{id:"77",asset_name:asset,shadow_type:"0"}]},flatProjection:"web-source-npc-flat-projection-v1"});assert.ok(result.definition);
+ const metadata=prepareFieldNativeNpcGroup({definitions:[result.definition],factory:t.f.factory,characters:t.f.characters,mapRange:t.f.map.mapRange,providers:t.f.input.providers,existingActorIds:Object.keys(t.actors),standbyAnchorPosition:{x:30000,y:30000}}).actors[0],
+   actor=createNativeFieldActorProjection(metadata,t.f.map.mapRange,t.f.partyCatalog),native=actor.native.entity,animation=actor.animation;
+ t.actors[actor.id]=actor;t.player.native.entity.visible=false;t.content.developmentProfile={npcProjection:"web-source-npc-flat-projection-v1"};
+ t.renderer.draw(t.game);const visible=t.canvas.getContext().data.slice();assert(visible.some((v,i)=>i%4===0&&v===255));
+ assert.equal(actor.layer,1);assert.equal(native.layer,10);assert.equal(native.position.z,249);assert.equal(actor.native.entity,native);assert.equal(actor.animation,animation);
+ native.visible=false;t.renderer.draw(t.game);assert.notDeepEqual(t.canvas.getContext().data,visible);native.visible=true;t.renderer.draw(t.game);assert.deepEqual(t.canvas.getContext().data,visible);
+ assert.equal(actor.native.entity,native);assert.equal(actor.animation,animation);
+});
 const report={kind:"animated-map-entity-actual-renderer-v1",passed:tests.length,tests,controlledCanvas:true,browserVerified:false,nativeParity:false};
 await writeFile(resolve(root, "build/reports/field-native-composition-ui-check.json"),JSON.stringify(report,null,2)+"\n");console.log(JSON.stringify({passed:tests.length,controlledCanvas:true,browserVerified:false}));

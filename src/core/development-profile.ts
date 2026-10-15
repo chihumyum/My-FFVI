@@ -26,6 +26,7 @@ export type DevelopmentProfile = {
   fieldPresentation?: "framework-ordinary-field-flat-v1";
   mapAnimatedEntities?: "web-field-animated-map-entities-v1";
   npcActivity?: "framework-npc-area-v1";
+  npcProjection?: "web-source-npc-flat-projection-v1";
   /** Explicit Web counter-range observer; source observer diagnostics remain. */
   relayInteraction?: "framework-relay-interaction-v1";
   /** Source-bound, anonymous decorative boards keep their original diagnostics. */

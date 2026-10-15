@@ -92,6 +92,7 @@ let contents = new GameContentRepository(readGameJson, contentProfile);
 const runtime = {
   // Source slots and entry ordering are retained; this seed mapping and
   // deferred media-first publication are explicit Web policies, not Unity RNG.
+  retainedWorldTransportation: "web-retained-walking-magitek-world-entry-v1",
   assignedNpcRoutes: "web-assigned-npc-route-grid-v1",
   sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY, sourceMessageSequence: createWebFieldMessageSequencePort(),
   // Explicit flat Web component/ancestor policy, rebound from each candidate's

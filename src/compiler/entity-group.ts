@@ -2,6 +2,7 @@ import { z } from "zod";
 import { record } from "./content.js";
 import { tableId } from "./table-id.js";
 import { MINIMAP_ICON_TYPES } from "../core/minimap.js";
+import { compileFieldEventActivation } from "./field-event-activation.js";
 import { compileFieldMapAnimation } from "./field-map-animation.js";
 import { NATIVE_MAP_ANIMATION_HOST } from "../core/field-map-animation.js";
 import { compileNpc } from "./npc.js";
@@ -42,9 +43,10 @@ export function compileEntityGroup(
   tables: Record<string, unknown>,
   messages: Record<string, unknown> = {},
   tileSize = 16,
-  importProfile?: "source-map-animation-legacy-audit-v1",
+  importProfile?: "source-map-animation-legacy-audit-v1" | "source-event-activation-legacy-audit-v1",
 ): EntityGroup {
   const legacyAnimation = importProfile === "source-map-animation-legacy-audit-v1";
+  const legacyEventActivation = importProfile === "source-event-activation-legacy-audit-v1";
   const entities: FieldEntity[] = [],
     blockers: EntityGroup["blockers"] = [];
   const data = record(asset.data);
@@ -141,7 +143,7 @@ export function compileEntityGroup(
         if (
           kind === 2 &&
           (p.action_id !== 2 ||
-            Number(p.gimmick ?? 0) !== 0 ||
+            ((legacyEventActivation || p.gimmick !== true) && Number(p.gimmick ?? 0) !== 0) ||
             String(p.target_transportation_ids ?? "") !== "")
         )
           issue("Unsupported event activation condition");
@@ -257,10 +259,12 @@ export function compileEntityGroup(
         const mapAnimation = legacyAnimation ? { definition: null, blockers: [] } : compileFieldMapAnimation({ group: name, object: o,
           entity: { id, kind, layer: layerId, source }, properties: p, tables });
         if (kind === 10 && !legacyAnimation) { issue(NATIVE_MAP_ANIMATION_HOST); mapAnimation.blockers.forEach(issue); }
+        const eventActivation = legacyEventActivation ? null : compileFieldEventActivation(name, p, script, source);
         const nativeNpc = compileFieldNativeNpc({ group: name, object: o,
           entity: { id, kind, layer: layerId, source }, properties: p, tables });
         entities.push({
           id,
+          ...(eventActivation ? { eventActivation } : {}),
           ...(moveArea ? { moveArea } : {}),
           ...(relay ? { relay } : {}),
           ...(mapAnimation.definition ? { mapAnimation: mapAnimation.definition } : {}),

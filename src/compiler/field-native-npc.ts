@@ -23,6 +23,8 @@ export function compileFieldNativeNpc(input: {
   entity: Pick<FieldEntity, "id" | "kind" | "layer" | "source">;
   properties: Record<string, unknown>;
   tables: Record<string, unknown>;
+  /** Explicit Web caller option; strict source compilation never passes it. */
+  flatProjection?: "web-source-npc-flat-projection-v1";
 }): { definition: FieldNativeNpcDefinition | null; blockers: string[] } {
   const { group, object, entity, properties: p, tables } = input;
   if (entity.kind !== 6 && entity.kind !== 17) return { definition: null, blockers: [] };
@@ -41,7 +43,8 @@ export function compileFieldNativeNpc(input: {
     };
     if (integer(p.move_type ?? 0, "movement controller") !== 0) blockers.push("Native NPC autonomous movement controller is unresolved");
     if (bool("affected")) blockers.push("Native NPC screen-effect stencil is unresolved");
-    if (bool("birdview_puppet") || bool("all_layers")) blockers.push("Native NPC birdview/cross-layer provider is unresolved");
+    if (input.flatProjection !== undefined && input.flatProjection !== "web-source-npc-flat-projection-v1") throw new Error("Unknown NPC flat projection policy");
+    if ((bool("birdview_puppet") || bool("all_layers")) && input.flatProjection === undefined) blockers.push("Native NPC birdview/cross-layer provider is unresolved");
     if (bool("visible_minimap")) blockers.push("Native NPC minimap sprite provider is unresolved");
     if (integer(object.rotation ?? 0, "rotation") !== 0 || object.visible === false || object.polygon || object.polyline)
       blockers.push("Native NPC transformed object geometry is unresolved");

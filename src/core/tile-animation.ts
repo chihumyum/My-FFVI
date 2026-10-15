@@ -188,6 +188,16 @@ export class TileAnimationState {
       this.settings(this.cells.get(k)!, loop, f(1 / f(speed)));
     r.playing = true;
   }
+  /** Later finite Puppet clocks call Entity.PlayAnimation directly. Native
+   * PlaySetting/PermitAnimation do not Cue/Reset the UV elapsed/count owner. */
+  replayEntity(id: string, loop: boolean, speed: number): void {
+    const scale = f(1 / f(speed));
+    if (!Number.isFinite(speed) || speed <= 0 || !Number.isFinite(scale) || scale <= 0)
+      throw new Error("Invalid tile animation repeat speed");
+    const region = this.region(id);
+    for (const k of region.cells) this.settings(this.cells.get(k)!, loop, scale);
+    region.playing = true;
+  }
   /** OpenTrigger calls the nullable overload directly: no cue/reset, source loop, scale 1. */
   playDefault(id: string): void {
     const r = this.region(id);

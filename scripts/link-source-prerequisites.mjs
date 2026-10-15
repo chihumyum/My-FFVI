@@ -64,6 +64,8 @@ export async function linkSourcePrerequisites({root=repository,compiledDir='dist
     originalEntryHash:originalEntry.contentHash,linkedEntryHash:entry.contentHash,
     frameworkWorldHash:frameworkWorld.contentHash,frameworkEntryHash:frameworkEntry.contentHash,
     logicalFieldEffects:framework.report.logicalFieldEffects??null,
+    ...(framework.report.npcProjection?{npcProjection:structuredClone(framework.report.npcProjection)}:{}),
+    ...(framework.report.npcActivity?{npcActivity:structuredClone(framework.report.npcActivity)}:{}),
     ...(framework.report.periodicReport?{periodicReport:structuredClone(framework.report.periodicReport)}:{}),
     originalPayloadsChanged:false,sourceGameplayAdmitted:false,fullGameMigration:false}};
 }

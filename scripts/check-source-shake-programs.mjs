@@ -25,12 +25,12 @@ const [{loadCorpus},{loadSystemMessages},{compileStoryCorpus},{hash,canonical},{
  {compileFieldPuppetScriptContext},{bindSourceFormatFlags},{decodeScriptLocals,decodeConditionVisualFlag},
  {compileEventScriptTransitionMetadata},{createWebFieldMessageSequencePort},{createWebFlatConditionLeaderActivityPort},
  {WEB_SOURCE_ENCOUNTER_POLICY,selectWebSourceEncounter},{FRAMEWORK_STORY_RUNTIME_DECLARATIONS},
- {sourceEncounterCandidates},{analyzeBatchEncounters},{createWebFieldCameraShakePolicy}]=await Promise.all([
+ {sourceEncounterCandidates},{analyzeBatchEncounters},{createWebFieldCameraShakePolicy},{createWebLogicalFieldEffectsHost},{WEB_ASSIGNED_ROUTE_POLICY},{WEB_RETAINED_WORLD_TRANSPORTATION}]=await Promise.all([
  'compiler/corpus','compiler/system-messages','compiler/story-corpus','compiler/content','core/game-content','core/game-content-refs',
  'compiler/framework-new-game','core/game-session','core/game-flow','core/game-commands','core/game-battle-handoff','core/saved-game',
  'compiler/field-puppet-actors','compiler/source-system-flags','compiler/field','compiler/event-script-transition',
  'core/source-message-sequence','core/field-condition-activity','core/source-encounter-entry','core/development-profile',
- 'core/source-encounter','compiler/content-batch-battle','core/field-camera-shake'].map(load));
+ 'core/source-encounter','compiler/content-batch-battle','core/field-camera-shake','core/field-logical-effects','core/field-assigned-route','core/world-transportation-entry'].map(load));
 const files=new Map(),read=async path=>{const absolute=resolve(root,path),bytes=await readFile(absolute);files.set(absolute,sha(bytes));return JSON.parse(bytes);};
 const verified=value=>{const {contentHash,...body}=value;assert.equal(hash(body),contentHash,'Content digest mismatch');return value;};
 const readJson=async url=>{assert.match(url,/^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.json$/);return read('build'+url);};
@@ -182,7 +182,7 @@ async function execute(group,lane,seed,prefix){const binding=await build(group,l
  if(binding.buildError)return{...input,result:'entry-provider-blocked',stage:'framework-entry-binding',error:binding.buildError,sourceInitializationAttempted:false,
   sourceMapHash:binding.sourceMap.contentHash,sourceInitializer:binding.sourceMap.initializer,sourceMapBlockers:binding.sourceMap.blockers,programBindings:binding.programBindings};
  const presented=new Set(),frames=[],requests=[],commands=[],choices=[],messages=[];
- const runtime={sourceEncounterPolicy:WEB_SOURCE_ENCOUNTER_POLICY,cameraShake:createWebFieldCameraShakePolicy(),battleHandoff:'prepared',sourceMessageSequence:createWebFieldMessageSequencePort(),
+ const runtime={transportationTimestamp:()=>'639273600000000000',sourceEncounterPolicy:WEB_SOURCE_ENCOUNTER_POLICY,cameraShake:createWebFieldCameraShakePolicy(),fieldEffects:createWebLogicalFieldEffectsHost(),assignedNpcRoutes:WEB_ASSIGNED_ROUTE_POLICY,retainedWorldTransportation:WEB_RETAINED_WORLD_TRANSPORTATION,battleHandoff:'prepared',sourceMessageSequence:createWebFieldMessageSequencePort(),
   conditionLeaderActivity:createWebFlatConditionLeaderActivityPort(),audioReadiness:{isReady:track=>audioBindings.has(hash(track))},
   soundPresentation:{isPresented:(voice,track)=>audioBindings.has(hash(track))&&presented.has(canonical({id:voice.id,track:voice.track,started:voice.started}))}};
  let game,flow,channel,stage='initialization',elapsed=0,frontier=null,error=null,saved=null,battles=0;

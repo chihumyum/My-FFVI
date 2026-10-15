@@ -105,15 +105,16 @@ async function readLockedJson(inputs, root, path) {
 
 async function modules(compiledDir) {
   const load = name => import(pathToFileURL(resolve(compiledDir, "src", name + ".js")).href);
-  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost] = await Promise.all([
+  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost, npcArea, npcFlat] = await Promise.all([
     load("compiler/content"), load("core/content-integrity"), load("compiler/world"), load("compiler/source-new-game"),
     load("compiler/framework-content"), load("core/source-catalog"), load("core/field-native-composition"),
     load("compiler/battle"), load("compiler/game-catalog"), load("compiler/opening-playable"), load("compiler/field-logical-effects"),
     load("compiler/corpus"), load("compiler/map-package"), load("compiler/field-background"),
     load("compiler/framework-periodic-presentation"), load("compiler/field-native-composition"),
+    load("compiler/framework-npc-area"), load("compiler/framework-npc-flat-projection"),
   ]);
   return { ...content, ...integrity, ...world, ...newGame, ...framework, ...sourceCatalog, ...composition,
-    ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost };
+    ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost, ...npcArea, ...npcFlat };
 }
 
 /** Explicit Web producer input, not a source/save capability grant. */
@@ -140,6 +141,28 @@ export function sourcePeriodicMapsInput(raw) {
       typeof descriptors.reason.value!=="string" || !descriptors.reason.value.trim())
     throw new Error("Invalid periodic maps input declaration");
   return {kind:descriptors.kind.value,reason:descriptors.reason.value};
+}
+
+/** Fixed existing Web Area policy for the complete source domain. It is a
+ * trusted producer option, never an authored map list or a saved capability. */
+export function sourceNpcAreasInput(raw) {
+  if (raw === undefined) return undefined;
+  exact(raw, "kind,reason", "NPC Areas input");
+  const descriptors = Object.getOwnPropertyDescriptors(raw);
+  if (Reflect.ownKeys(raw).length !== 2 || Object.values(descriptors).some(d => !d.enumerable || !Object.hasOwn(d, "value")) ||
+      descriptors.kind.value !== "web-source-npc-area-input-v1" || typeof descriptors.reason.value !== "string" || !descriptors.reason.value.trim())
+    throw new Error("Invalid NPC Areas input declaration");
+  return { kind: descriptors.kind.value, reason: descriptors.reason.value };
+}
+
+/** Explicit whole-source Web projection; no authored map/selector list. */
+export function sourceNpcFlatInput(raw) {
+  exact(raw,"kind,reason","NPC flat input");
+  const d=Object.getOwnPropertyDescriptors(raw);
+  if(Reflect.ownKeys(raw).length!==2 || Object.values(d).some(v=>!v.enumerable||!Object.hasOwn(v,"value")) ||
+    d.kind.value!=="web-source-npc-flat-input-v1" || typeof d.reason.value!=="string" || !d.reason.value.trim())
+    throw new Error("Invalid NPC flat input declaration");
+  return {kind:d.kind.value,reason:d.reason.value};
 }
 
 /** Capture exactly the current compiler's input domain. Raw-source exports
@@ -287,10 +310,12 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
 
 /** Pure upstream DAG: current battle capabilities -> source world/new game -> explicit framework
  * derivation. It never writes packages, generated recipes, reports or archives. */
-export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, mapAnimatedEntities } = {}) {
+export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, mapAnimatedEntities, npcAreas, npcFlat } = {}) {
   if (mapAnimatedEntities !== undefined && mapAnimatedEntities !== "web-field-animated-map-entities-v1")
     throw new Error("Unknown source framework animated map entity policy");
   const periodicDeclaration = sourcePeriodicMapsInput(periodicMaps);
+  const npcDeclaration = sourceNpcAreasInput(npcAreas);
+  const flatDeclaration = npcFlat === undefined ? undefined : sourceNpcFlatInput(npcFlat);
   root = resolve(root);
   const inputs = await captureSourcePrerequisiteInputs({ root, compiledDir, logicalFieldEffects });
   const api = await modules(inputs.compiledDir);
@@ -379,6 +404,26 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
       compiled:assessments.filter(row=>row.presentation).length,unready:assessments.filter(row=>!row.presentation).length,
       pureCompilations:1,sourceGameplayAdmitted:false,nativeParity:false};
   }
+  let npcReport = null;
+  if (npcDeclaration) {
+    const corpus = await api.loadCorpus(root);
+    if (corpus.sourceSetHash !== inputs.sourceSetHash || corpus.manifest.parentSourceSetHash !== inputs.parentSourceSetHash)
+      throw new Error("NPC Areas corpus/input-lock identity mismatch");
+    const template = api.frameworkNpcAreaTemplate(npcDeclaration.reason);
+    frameworkOptions.npcAreaAssessments = api.assessFrameworkNpcAreaWorld(corpus, strict.catalog, strict.maps, template);
+    npcReport = { declaration: npcDeclaration, template, assessmentsHash: api.hash(frameworkOptions.npcAreaAssessments),
+      maps: frameworkOptions.npcAreaAssessments.length,
+      declared: frameworkOptions.npcAreaAssessments.reduce((sum, a) => sum + a.record.counts.declared, 0),
+      derived: frameworkOptions.npcAreaAssessments.reduce((sum, a) => sum + a.record.counts.derived, 0),
+      pureCompilations: 1, sourceGameplayAdmitted: false, nativeParity: false };
+    npcReport.unready = npcReport.declared - npcReport.derived;
+  }
+  let npcFlatReport = null;
+  if (flatDeclaration) {
+    const corpus=await api.loadCorpus(root);
+    frameworkOptions.npcFlatAssessments=api.assessFrameworkNpcFlatWorld(corpus,strict.catalog,strict.maps,flatDeclaration.reason);
+    npcFlatReport={declaration:flatDeclaration,maps:frameworkOptions.npcFlatAssessments.length,assessmentsHash:api.hash(frameworkOptions.npcFlatAssessments),nativeParity:false};
+  }
   const framework = api.compileFrameworkContent(strict.catalog, strict.maps, entry,frameworkOptions);
   const payloads = new Map([["/game/source-catalog.json", battle], ["/game/opening-playable.json", development],
     ["/world/catalog.json", strict.catalog], ["/game/source-new-game.json", entry],
@@ -395,6 +440,8 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
     strict: { catalogHash: strict.catalog.contentHash, entryHash: entry.contentHash, maps: strict.maps.length,
       mapsWithBlockers: strict.maps.filter(map => map.blockers.length).length },
     framework: framework.report, logicalFieldEffects: logicalReport, ...(periodicReport?{periodicMaps:periodicReport}:{}),
+    ...(npcReport ? { npcAreas: npcReport } : {}),
+    ...(npcFlatReport ? { npcProjection: npcFlatReport } : {}),
     inputScope: { snapshotRoots: SNAPSHOTS.map(name => "build/" + name), files: inputs.files.length,
       originalFiles: inputs.files.filter(file => file.path.startsWith("build/runtime/game/")).map(file => file.path),
       nativeReceiptFiles: [...CATALOG_EVIDENCE], originalSourceFilesVerified: logicalReport ? "whole-corpus" : "composition-host-only", rawExports: "snapshot-and-source-manifest-bound" },

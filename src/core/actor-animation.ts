@@ -153,6 +153,17 @@ export class ActorAnimation {
   playEntity(key: string, loop: boolean): void {
     this.start(key, loop ? 1 : 0, 1);
   }
+  /** A later Puppet repeat invokes Entity.PlayAnimation directly, without
+   * repeating the first-clock Cue(-1). The same actor owns all playback. */
+  replayEntity(key: string, speed: number): void {
+    speed = f(speed);
+    const scale = f(1 / speed);
+    if (!(speed > 0) || !Number.isFinite(speed) || !(scale > 0) || !Number.isFinite(scale))
+      throw new Error("Invalid actor animation repeat speed");
+    const next = this.clone();
+    next.start(key, 0, scale);
+    this.state = next.state;
+  }
   stop(position = 1): void {
     if (!Number.isFinite(f(position)))
       throw new Error("Invalid actor animation stop");

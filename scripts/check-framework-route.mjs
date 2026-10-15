@@ -38,6 +38,7 @@ assert.match(appBytes.toString(), /fieldEffects: createWebLogicalFieldEffectsHos
 assert.match(appBytes.toString(), /sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY/);
 assert.match(appBytes.toString(), /cameraShake: createWebFieldCameraShakePolicy\(\)/);
 assert.match(appBytes.toString(), /assignedNpcRoutes: "web-assigned-npc-route-grid-v1"/);
+assert.match(appBytes.toString(), /retainedWorldTransportation: "web-retained-walking-magitek-world-entry-v1"/);
 const policyModuleSha256 = createHash("sha256").update(await readFile(resolve(runtime, "src/core/source-message-sequence.js"))).digest("hex");
 const directory = resolve(root, options.get("--content") ?? "build/content-packages");
 const consumed = new Map(), runtimeSha256 = await runtimeDigest(root, runtime);
@@ -69,6 +70,7 @@ const messageContext = sourceMessageSequence.prepare().context;
 const game = GameSession.prepareNewGame(content, catalog, map, battle, fade, presentation,
   { sourceMessageSequence, conditionLeaderActivity: createWebFlatConditionLeaderActivityPort(),
     fieldEffects: createWebLogicalFieldEffectsHost(), sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY,
+    retainedWorldTransportation: "web-retained-walking-magitek-world-entry-v1",
     cameraShake: createWebFieldCameraShakePolicy(), assignedNpcRoutes: "web-assigned-npc-route-grid-v1",
     battleHandoff: "prepared", audioReadiness: { isReady: () => true }, soundPresentation: { isPresented: () => true },
     transportationTimestamp: () => "639273600000000000" });
@@ -102,6 +104,7 @@ const report = { kind: "framework-source-route-check-v1", result: "running", pro
   runtimeSha256, contentRefs: refs, messageContext, policyModuleSha256, messagePolicy: "createWebFieldMessageSequencePort (same production module as app)",
   runtimePolicies: { conditionLeaderActivity: "createWebFlatConditionLeaderActivityPort", fieldEffects: "createWebLogicalFieldEffectsHost",
     sourceEncounter: WEB_SOURCE_ENCOUNTER_POLICY, cameraShake: "createWebFieldCameraShakePolicy",
+    retainedWorldTransportation: "web-retained-walking-magitek-world-entry-v1",
     assignedNpcRoutes: "web-assigned-npc-route-grid-v1", battleHandoff: "prepared", sameProductionModulesAsApp: true },
   sourceCampaignComplete: false, browserVerified: false,
   entryHash: content.contentHash, catalogHash: catalog.contentHash, battleHash: battle.contentHash,

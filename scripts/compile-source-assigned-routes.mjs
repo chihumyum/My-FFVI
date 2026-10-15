@@ -4,6 +4,7 @@ import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {compileSourcePrerequisites} from './compile-source-prerequisites.mjs';
+import {webSourceFrameworkInputs} from './source-web-framework-inputs.mjs';
 import {runtimeDigest} from './runtime-digest.mjs';
 const options={root:resolve(import.meta.dirname,'..'),compiled:'dist',output:'build/reports/source-assigned-route-candidate',battle:'build/game/source-catalog.json'},args=process.argv.slice(2),seen=new Set();
 while(args.length){const key=args.shift();assert.ok(['--root','--compiled','--output','--battle'].includes(key)&&args[0]&&!seen.has(key));seen.add(key);options[key.slice(2)]=args.shift();}
@@ -14,10 +15,7 @@ const runtime=await runtimeDigest(view,compiled),snapshot=await loadCorpus(root)
 assert.equal(hash(Object.fromEntries(Object.entries(battle).filter(([key])=>key!=='contentHash'))),battle.contentHash);
 // Use exactly the public prerequisite producer and its complete source/media
 // input lock. The fixed Web policies are the public collection declarations.
-const prerequisites=await compileSourcePrerequisites({root,compiledDir:compiled,
- mapAnimatedEntities:'web-field-animated-map-entities-v1',
- logicalFieldEffects:{kind:'web-logical-field-effects-input-v1',input:'build/field-effect-media',reason:'Explicit playable Web framework: retain proven all-loop board logic while deferring particle/material/minimap display.'},
- periodicMaps:{kind:'web-source-periodic-presentation-input-v1',reason:'Explicit playable Web framework: fixed flat presentation for the complete source periodic-map family; strict diagnostics retained.'}});
+const prerequisites=await compileSourcePrerequisites({root,compiledDir:compiled,...webSourceFrameworkInputs()});
 const payloads=prerequisites.payloads,strictCatalog=payloads.get('/world/catalog.json'),frameworkCatalog=payloads.get('/framework/world/catalog.json');
 assert.ok(strictCatalog&&frameworkCatalog);const strict={catalog:strictCatalog,maps:Object.values(strictCatalog.maps).map(row=>payloads.get(row.url))},
  entry=payloads.get('/game/source-new-game.json'),freshBattle=payloads.get('/game/source-catalog.json'),

@@ -155,7 +155,7 @@ export async function validateSelectedSourceNpcActivityBinding(input,{root=repos
   assert.equal(template.kind,'framework-npc-area-template-v1');
   const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src',name+'.js')).href);
   const api=Object.assign({},...await Promise.all(['compiler/corpus','compiler/field-npc-activity',
-    'compiler/content','core/field-npc-activity-source','core/content-integrity'].map(load)));
+    'compiler/content','core/field-npc-activity-source','core/content-integrity','compiler/framework-npc-area'].map(load)));
   api.parseFrameworkNpcActivityDeclaration({...template,kind:'framework-npc-area-declaration-v1',sourceHash:'0'.repeat(64)});
   const corpus=await api.loadCorpus(root),originals=new Map(sourceMaps.map(map=>[map.mapId,map]));
   assert.equal(originals.size,sourceMaps.length);assert.equal(maps.length,sourceMaps.length);
@@ -170,26 +170,11 @@ export async function validateSelectedSourceNpcActivityBinding(input,{root=repos
     assert.equal(original.developmentProfile,undefined);assert.equal(original.frameworkNpcActivity,undefined);
     assert.equal(original.sourceSetHash,corpus.sourceSetHash);assert.equal(original.parentSourceSetHash,corpus.manifest.parentSourceSetHash);
     keys(record,'mapId,sourceMapHash,sources,counts,diagnostics');assert.equal(record.sourceMapHash,original.contentHash);
-    const inventory=api.compileFieldNpcActivitySources(corpus,map.mapId),bindings=[],diagnostics=structuredClone(inventory.diagnostics);
-    for(const source of inventory.definitions){
-      try{bindings.push(api.deriveFrameworkNpcActivity(source,{...template,kind:'framework-npc-area-declaration-v1',sourceHash:source.contentHash}));}
-      catch(error){diagnostics.push({code:'framework-npc-area-derivation',reason:String(error.message??error),source:source.source});}
-    }
-    assert.equal(api.canonical(record.sources),api.canonical(inventory.definitions),'NPC source inventory omitted or changed a record');
-    assert.equal(api.canonical(record.counts),api.canonical({...inventory.counts,derived:bindings.length}));
-    assert.equal(api.canonical(record.diagnostics),api.canonical(diagnostics));
-    const host=map.frameworkNpcActivity;assert.ok(host,'Missing declared NPC host sidecar');
-    keys(host,'kind,policy,sourceMapHash,sourceSetHash,parentSourceSetHash,bindings,diagnostics,limitations,nativeRulesVerified');
-    assert.equal(host.kind,'framework-npc-area-host-v1');assert.equal(host.policy,template.policy);
-    assert.equal(host.sourceMapHash,original.contentHash);assert.equal(host.sourceSetHash,corpus.sourceSetHash);
-    assert.equal(host.parentSourceSetHash,corpus.manifest.parentSourceSetHash);assert.equal(host.nativeRulesVerified,false);
+    const assessment=api.assessFrameworkNpcAreaMap(corpus,original,template);
+    assert.equal(api.canonical(record),api.canonical(assessment.record),'NPC complete source assessment changed');
+    assert.equal(api.canonical(map.frameworkNpcActivity),api.canonical(assessment.host),'NPC policy/program/source binding changed');
     assert.equal(map.developmentProfile.npcActivity,template.policy);
-    assert.equal(api.canonical(host.bindings),api.canonical(bindings),'NPC policy/program/source hash relation changed');
-    for(const binding of host.bindings)api.validateFrameworkNpcActivityBinding(binding);
-    assert.equal(api.canonical(host.diagnostics),api.canonical(diagnostics));
-    const limitations=[...new Set([...inventory.definitions.flatMap(source=>source.nativeGaps),
-      'Web Area activity leaves every original dialogue, event, provider and story-reachability blocker visible.'])];
-    assert.equal(api.canonical(host.limitations),api.canonical(limitations));
+    const inventory={definitions:assessment.record.sources},bindings=assessment.host.bindings;
     declared+=inventory.definitions.length;derived+=bindings.length;
   }
   const counts={maps:maps.length,declared,derived,blocked:declared-derived};

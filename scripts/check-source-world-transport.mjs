@@ -1,0 +1,99 @@
+import assert from 'node:assert/strict';
+import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import {resolve,dirname} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {createHash} from 'node:crypto';
+import {runtimeDigest} from './runtime-digest.mjs';
+const options={root:resolve(import.meta.dirname,'..'),compiled:'dist','candidate-dir':'build/reports/source-assigned-route-candidate',report:'build/reports/source-world-transport-check.json'},args=process.argv.slice(2),seen=new Set();
+while(args.length){const key=args.shift();assert.ok(['--root','--compiled','--candidate-dir','--report'].includes(key)&&args[0]&&!seen.has(key));seen.add(key);options[key.slice(2)]=args.shift();}
+const root=resolve(options.root),view=resolve(import.meta.dirname,'..'),compiled=resolve(root,options.compiled),candidateDir=resolve(root,options['candidate-dir']),reportPath=resolve(root,options.report),load=n=>import(pathToFileURL(resolve(compiled,'src',n+'.js'))),sha=b=>createHash('sha256').update(b).digest('hex');
+assert.ok(reportPath.startsWith(resolve(root,'build')+'/'));await mkdir(dirname(reportPath),{recursive:true});
+const [{hash,canonical},{loadCorpus},{GameSession},{GameFlow},{compileFrameworkNewGame},{createWebFieldMessageSequencePort},{createWebFlatConditionLeaderActivityPort},{WEB_ASSIGNED_ROUTE_POLICY},{compileAssignedRouteProgram},{compileFieldPuppetScriptContext},{createWebLogicalFieldEffectsHost},{WEB_RETAINED_WORLD_TRANSPORTATION},{prepareMapPartyEntry},{projectMapEntryView},{GameState},{createNewGame},{createFreshFieldPartyActorCheckpoint},{loadSystemSource},{fieldTransportationSelectors},{createWebFieldCameraShakePolicy},{Transportations},{EventState}]=await Promise.all(['compiler/content','compiler/corpus','core/game-session','core/game-flow','compiler/framework-new-game','core/source-message-sequence','core/field-condition-activity','core/field-assigned-route','core/field-assigned-route','compiler/field-puppet-actors','core/field-logical-effects','core/world-transportation-entry','core/map-party-entry','core/map-view','core/game-state','core/new-game','core/field-actor-factory','compiler/system-source','compiler/field-transportation','core/field-camera-shake'].concat(['core/transportation','core/event-state']).map(load));
+const runtime=await runtimeDigest(view,compiled),inputFiles={},read=async name=>{const bytes=await readFile(resolve(candidateDir,name+'.json'));inputFiles[name]=sha(bytes);return JSON.parse(bytes);},receipt=await read('receipt');
+const verify=v=>{const{contentHash,...body}=v;assert.equal(hash(body),contentHash);return v;};verify(receipt);assert.equal(receipt.runtime,runtime,'Candidate/runtime generation differs');
+const snapshot=await loadCorpus(root);assert.equal(hash(snapshot),receipt.sourceDigest);let ir=await read('ir');assert.equal(ir.contentHash,receipt.irHash);assert.equal(inputFiles.ir,receipt.outputHashes.ir);
+const allCounts=ir.counts,mapBindings=ir.analysis.maps,dependencies=ir.analysis.dependencies;
+const classify=i=>{const name=i.raw.mnemonic,selector=i.raw.operands?.sValues?.[0]??'';
+ if(['SetVehicle','RideVehicleNPC'].includes(name)||name==='SysCall'&&fieldTransportationSelectors.includes(selector))return'declared-transportation';
+ if(/Vehicle|AirShip|Bird|Boat|Transportation/.test(name)||name==='SysCall'&&/乗り物|飛空/.test(selector))return'lexical-related-only';return null;};
+const worldIds=new Set(snapshot.tables['map.csv'].filter(m=>snapshot.tables['area.csv'].find(a=>a.id===m.area_id)?.map_type==='0').map(m=>Number(m.id)));
+const incoming=i=>i.raw.mnemonic==='ChangeMap'&&worldIds.has(i.raw.operands?.iValues?.[0]);
+const selectedIds=new Set(ir.scripts.filter(p=>p.instructions.some(i=>classify(i)||incoming(i))).map(p=>p.id));
+for(const m of mapBindings)if(worldIds.has(Number(m.id))&&m.initializer)selectedIds.add(m.initializer);
+const roots=ir.scripts.filter(p=>selectedIds.has(p.id));
+const programs=new Map(ir.scripts.map(p=>[p.id,p])),sites=roots.flatMap(p=>p.instructions.filter(i=>classify(i)||incoming(i)).map(i=>({program:p.id,rawHash:p.rawHash,category:classify(i)??'world-incoming-change-map',incomingWorld:incoming(i),...i}))),bindings=[];
+for(const rootProgram of roots)for(const map of mapBindings)for(const[alias,id]of Object.entries({...map.residentScripts,...map.scriptAliases}))if(id===rootProgram.id)bindings.push({id:rootProgram.id,mapId:Number(map.id),alias,initializer:map.initializer,initializerName:map.initializerName});
+const selectedMapIds=new Set([...worldIds,...bindings.map(b=>b.mapId)]);let strict=await read('strict');assert.equal(inputFiles.strict,receipt.outputHashes.strict);const sourceWorld=strict.catalog,sourceMaps=new Map(strict.maps.filter(m=>selectedMapIds.has(m.mapId)).map(m=>[m.mapId,m])),sourceInitialMap=strict.maps.find(m=>m.mapId===sourceWorld.initialMapId); // source entry provides exact initial map below
+const entry=await read('entry');const initialMap=strict.maps.find(m=>m.mapId===entry.entry.mapId);assert.ok(initialMap);strict=null;
+let framework=await read('framework');assert.equal(inputFiles.framework,receipt.outputHashes.framework);const world=framework.catalog,maps=new Map(framework.maps.filter(m=>selectedMapIds.has(m.mapId)).map(m=>[m.mapId,m]));framework=null;
+const battle=await read('battle');assert.equal(inputFiles.battle,receipt.outputHashes.battle);ir=null;global.gc?.();
+const system=await loadSystemSource(root,snapshot.manifest.parentSourceSetHash),masterRows=snapshot.tables['transportation.csv'].map(r=>system.reader.row('transportation.csv',r.id)),
+ groupRows=[...new Set(masterRows.map(r=>r.values.transportation_group_id))].map(id=>system.reader.row('transportation_group.csv',id)),
+ assetRows=masterRows.filter(r=>Number(r.values.asset_id)>0).map(r=>system.reader.row('field_character_asset.csv',r.values.asset_id));
+const state=new GameState(battle.gameState,battle.common.players,battle.contentHash,battle.common.conditions,"new-game"),appearance=state.fieldPartyAppearance;
+assert.ok(appearance&&initialMap.partyEntry);const fresh=createNewGame(battle.gameState.sourceNewGame),
+ initialActors=createFreshFieldPartyActorCheckpoint({factory:entry.factory,catalog:appearance.catalog,fresh,party:appearance.current(),map:initialMap.partyEntry,playerId:'world-transport-matrix-player'}),
+ transports=new Transportations(world.transportation),sourceEvents=new EventState(fresh.events),availability=transports.availability(ref=>sourceEvents.read(ref));
+const matrix=[];
+for(const mapId of [...worldIds].sort((a,b)=>a-b)){const map=maps.get(mapId),sourceMap=sourceMaps.get(mapId),view=map?.entryView;
+ for(const row of masterRows){const identity=transports.identity(Number(row.values.id)),prior=structuredClone(initialActors);
+ prior.context.currentTransport={id:identity.id,typeId:identity.type,fieldAssetId:identity.assetId};
+ let identityProjection=null,identityError=null,actorProjection=null,actorError=null;
+ try{identityProjection=transports.projectMapEntry({currentId:identity.id,loadId:transports.pointInIdentity().id,mapId,stayMapIds:fresh.nativeInitialization.parkedTransportationMapIds,availability});}catch(e){identityError=e.message;}
+ try{assert.ok(map?.partyEntry&&view,'Missing exact source world PointIn/definition');const entrance=map.partyEntry.pointIns[0]?.id;assert.ok(Number.isInteger(entrance),'No source PointIn');
+ const plan=prepareMapPartyEntry(appearance.catalog,{definition:map.partyEntry,entrance,mapViewType:0,
+   viewPlan:projectMapEntryView({mapId,isWorld:view.isWorld,loopType:view.loopType,requestedViewType:0},'framework-world-map-flat-v1'),
+   retainedWorldTransportation:{policy:WEB_RETAINED_WORLD_TRANSPORTATION,mode:'live-entry'},prior,party:appearance.current(),playerVisible:true,transportation:identity,canPartySwitching:false});
+ actorProjection={transportation:plan.checkpoint.context.currentTransport,player:plan.player,cache:plan.checkpoint.playerAssetCacheId,cameraOffset:plan.cameraOffset};}catch(e){actorError=e.message;}
+ matrix.push({mapId,identity,sourceRow:row,view,strictMapHash:sourceMap?.contentHash??null,frameworkMapHash:map?.contentHash??null,
+  originalInitializer:map?.initializer??null,partyEntry:map?.partyEntry??null,partyEntryBlockers:map?.partyEntryBlockers??[],
+  collision:map?.map?{layers:Object.keys(map.map.collisions??{}),digest:hash(map.map.collisions),worldTerrain:map.map.worldTerrain?{digest:hash(map.map.worldTerrain),kind:map.map.worldTerrain.kind}:null}:null,
+  foot:map?.map?.entryContext?.foot??null,nativeFoot:map?.nativeFoot??null,mapBlockers:map?.blockers??[],
+  actualFreshSourceAvailability:availability[String(identity.id)],identityProjection,identityError,actorProjection,actorError,
+  scope:'Pure parameter mechanism with explicitly assumed retained prior identity and ordinary single-party caller. Actual source availability shown separately; no flag/state mutation, VM entry or story reachability is granted.'});
+ }}
+const closure=ids=>{const queue=[...ids],seen=new Set(),missing=[];while(queue.length){const id=queue.shift();if(seen.has(id))continue;seen.add(id);if(!programs.has(id)){missing.push(id);continue;}for(const edge of dependencies.filter(e=>e.site.asset===id))if(edge.kind==='script')for(const candidate of edge.candidates??[])queue.push(candidate);}return{programs:[...seen].filter(id=>programs.has(id)).sort().map(id=>programs.get(id)),missing,dependencies:dependencies.filter(e=>seen.has(e.site.asset))};};
+const worldNamespaces=mapBindings.filter(m=>worldIds.has(Number(m.id))).map(m=>({map:m,namespace:{...m.residentScripts,...m.scriptAliases},completeNamespaceClosure:closure(Object.values({...m.residentScripts,...m.scriptAliases}))}));
+const report={kind:'source-world-transport-complete-family-v1',result:'running',runtime,sourceDigest:receipt.sourceDigest,
+ sourceSetHash:receipt.sourceSetHash,parentSourceSetHash:receipt.parentSourceSetHash,inputFiles,
+ counts:{...allCounts,sourceWorldMaps:worldIds.size,transportationIdentities:masterRows.length,identityMatrixPairs:matrix.length,
+  familyPhysicalPrograms:roots.filter(p=>p.instructions.some(i=>classify(i))).length,
+  declaredSites:sites.filter(i=>i.category==='declared-transportation').length,lexicalOnlySites:sites.filter(i=>i.category==='lexical-related-only').length,
+  worldIncomingSites:sites.filter(i=>i.incomingWorld).length,worldIncomingPrograms:roots.filter(p=>p.instructions.some(incoming)).length,
+  completeSelectedPrograms:roots.length,nonFieldOrUnbound:roots.filter(p=>p.domain!=='field'||!bindings.some(b=>b.id===p.id)).length,
+  logicalRootBindings:bindings.length,sourceMaps:selectedMapIds.size},masterRows,groupRows,assetRows,matrix,worldNamespaces,allSites:sites,
+ allDependencyAnalysis:dependencies,unexecutedPrograms:roots.filter(p=>p.domain!=='field'||!bindings.some(b=>b.id===p.id)),programs:[],
+ sourceStoryReachability:false,runtimeAdmission:'unassessed',nativeParity:false,sourceCampaignComplete:false,
+ policies:{worldTransportation:WEB_RETAINED_WORLD_TRANSPORTATION,assigned:WEB_ASSIGNED_ROUTE_POLICY,message:'shared-production-Web-explicit-pages',camera:'shared production Web bounded shake'},
+ limitations:['All original bodies, namespaces, source flags and owned initializer remain unchanged in both runtime lanes.',
+ 'Controlled entry replaces only initialization with an explicit authored Exit over the same source geometry/entities. Original caller/actor/phase remains unassessed.',
+ 'All 16 world-area maps and eight source transportation identities remain in the pure matrix, including missing PointIn/geometry/FootInfo.',
+ 'Retained walking/Magitek uses the existing parking/release/actors and collision owners. Other vehicle/flight/symbol controller families remain blocked.',
+ 'Every bound whole program is attempted. A map/encounter request is a boundary, not a completed journey. Choice exploration is bounded to16 prefixes/depth8.',
+ 'Controlled renderer/audio ACK is declared; no browser/native pixels, native world parity, or source campaign completion acceptance.']};
+const seal=v=>{const{contentHash:_,...body}=v;return{...body,contentHash:hash(body)};},ready={visible:true,mediaReady:true,overlayOpen:false};
+async function build(binding,lane){const original=maps.get(binding.mapId);assert.ok(original);const map=structuredClone(original),catalog=structuredClone(world);let entrance=map.partyEntry?.pointIns[0]?.id;if(!Number.isInteger(entrance))throw new Error('Original map has no exact PointIn entry');
+ if(lane==='controlled-entry'){const name='__web_route_audit_entry';assert.ok(!Object.hasOwn(map.scripts,name));map.scripts[name]=[{kind:'exit',script:name,index:0,source:{file:'scripts/check-source-assigned-routes.mjs',assetPath:'authored-controlled-entry'}}];map.initializer=name;map.scriptLocals??={};map.scriptLocals[name]=null;const misc=snapshot.assets.filter(a=>a.source.assetPath.endsWith('/serial_misc_assets.json'));assert.equal(misc.length,1);map.scriptPuppetContexts??={};map.scriptPuppetContexts[name]=compileFieldPuppetScriptContext({SystemFlag:{SkipInitialize:1,KeepPlayerPuppet:0,KeepBadStatusVisual:0,RidingVehicle:0},Mnemonics:[{type:1,mnemonic:'Exit',operands:{iValues:Array(8).fill(0),rValues:Array(8).fill(0),sValues:Array(8).fill('')}}]},misc[0].data);map.scriptSystemFlags??={};map.scriptSystemFlags[name]={keepBadStatusVisual:false};map.scriptTransitionMetadata??={};map.scriptTransitionMetadata[name]={customAnimations:'none'};}
+ const sealedMap=seal(map);catalog.maps[String(map.mapId)].contentHash=sealedMap.contentHash;const sealedWorld=seal(catalog),content=await compileFrameworkNewGame({sourceEntry:entry,sourceBattle:battle,sourceMap:initialMap,world:sealedWorld,map:sealedMap,battle,entrance});return{map:sealedMap,world:sealedWorld,content};}
+async function execute(binding,lane,prefix){let game,flow,stage='source-initialization',elapsed=0,frontier=null,error=null,checkpoint=null,built=null;const confirmations=[],choices=[],presented=new Set();
+ try{built=await build(binding,lane);const runtimeOptions={retainedWorldTransportation:WEB_RETAINED_WORLD_TRANSPORTATION,cameraShake:createWebFieldCameraShakePolicy(),transportationTimestamp:()=>'638000000000000001',fieldEffects:createWebLogicalFieldEffectsHost(),assignedNpcRoutes:WEB_ASSIGNED_ROUTE_POLICY,sourceMessageSequence:createWebFieldMessageSequencePort(),conditionLeaderActivity:createWebFlatConditionLeaderActivityPort(),battleHandoff:'prepared',sourceEncounterPolicy:'web-source-encounter-uniform-slots-v1',audioReadiness:{isReady:()=>true},soundPresentation:{isPresented:()=>true}};
+ game=await GameSession.prepareFrameworkNewGame(built.content,built.world,built.map,battle,runtimeOptions,314);flow=new GameFlow(game);flow.start();flow.advance(0,ready);
+ async function step(){if(game.field.choice){if(choices.length>=prefix.length){frontier={kind:'choice',options:game.field.choice.options.length};return false;}const answer=prefix[choices.length],request=structuredClone(game.field.choice);assert.equal(flow.choose(request.id,answer),true);choices.push({request,answer});}
+ else if(game.field.dialogue&&(!game.field.dialogue.manual||game.field.time>=game.field.dialogue.manual.availableAt)){confirmations.push({time:game.field.time,key:game.field.dialogue.key});flow.confirm();}else if(game.field.sourceMessage.projection?.acceptsInput){confirmations.push({time:game.field.time,sourceMessage:true});flow.confirm();}
+ flow.advance(10,ready);elapsed+=10;return true;}
+ while(!game.field.stop&&!game.checkpointReady&&elapsed<30000&&!frontier)if(!await step())break;
+ if(!frontier&&!game.field.stop&&game.checkpointReady){stage='complete-source-program';if(!(lane==='original-initializer'&&built.map.initializer===binding.alias)){if(!game.field.startEvent(binding.alias))throw Error('Source whole-program event is not available at this entry barrier');}}
+ else if(!frontier&&!game.field.stop)frontier={kind:'initialization-budget'};
+ while(stage==='complete-source-program'&&!frontier&&!game.field.stop&&elapsed<90000){const routes=game.field.assignedRouteSnapshot;
+ if(!game.field.busy&&(routes.length===0||routes.every(row=>row.cursor.cycles>=1))){if(game.checkpointReady){const saved=game.checkpoint(),restored=GameSession.restore(saved,undefined,battle,{catalog:built.world,map:built.map,initialized:{content:built.content,initialMap:built.map}},runtimeOptions);assert.deepEqual(restored.checkpoint(),saved);checkpoint={hash:hash(saved),activeRoutes:routes.length,restored:true};}frontier=routes.length?{kind:'loop-cycle-boundary'}:null;break;}
+ if(!await step())break;}
+ if(!frontier&&!checkpoint&&!game.field.stop)frontier={kind:'logical-clock-budget',milliseconds:elapsed};
+ }catch(e){if(e.code==='ERR_ASSERTION')throw e;error={message:e.message,stack:e.stack};}
+ const stop=game?.field.stop??null;return{lane,choicePrefix:prefix,stage,result:error?'explicit-provider-error':stop?'blocked':checkpoint?.activeRoutes?'looped-and-restored':checkpoint?'completed-and-restored':frontier?'bounded-frontier':'unfinished',error,frontier,elapsed,confirmations,choices,checkpoint,sourceMapHash:sourceMaps.get(binding.mapId)?.contentHash,actualInitializer:built?.map.initializer,originalInitializer:maps.get(binding.mapId)?.initializer,stop,transportationExecutions:game?.field.transportationExecutions??[],routeExecutions:game?.field.assignedRouteExecutions??[],activeRoutes:game?.field.assignedRouteSnapshot??[],ownedSnapshot:game?.state.snapshot()??null,sourceStoryReachability:false};}
+try{for(const binding of bindings.filter(b=>programs.get(b.id)?.domain==='field')){const runs=[];for(const lane of['original-initializer','controlled-entry']){const queue=[[]];for(let i=0;i<queue.length&&i<16;i++){const run=await execute(binding,lane,queue[i]);runs.push(run);if(run.frontier?.kind==='choice'&&queue[i].length<8)for(let a=0;a<run.frontier.options;a++)queue.push([...queue[i],a]);}}
+ const program=programs.get(binding.id),map=mapBindings.find(m=>Number(m.id)===binding.mapId),namespace={...map.residentScripts,...map.scriptAliases},queue=[binding.id],seen=new Set(),closure=[];while(queue.length){const id=queue.shift();if(seen.has(id))continue;seen.add(id);const p=programs.get(id);if(!p)continue;closure.push(p);for(const edge of dependencies.filter(e=>e.site.asset===id))for(const target of edge.candidates??[])if(programs.has(target))queue.push(target);}
+ report.programs.push({binding,rawHash:program.rawHash,completeRoot:program,sameMapNamespace:namespace,dependencyClosure:closure,dependencies:dependencies.filter(e=>seen.has(e.site.asset)),runs});console.log(JSON.stringify({binding,runs:runs.map(r=>({lane:r.lane,result:r.result,stage:r.stage,reason:r.error?.message??r.stop?.message??r.frontier?.kind,transportation:r.transportationExecutions.length}))}));}
+ assert.equal(hash(await loadCorpus(root)),receipt.sourceDigest);assert.equal(await runtimeDigest(view,compiled),runtime);for(const[name,digest]of Object.entries(inputFiles))assert.equal(sha(await readFile(resolve(candidateDir,name+'.json'))),digest);report.result='complete-attempts-recorded';
+ const runs=report.programs.flatMap(p=>p.runs);report.counts={...report.counts,runs:runs.length,results:Object.fromEntries([...new Set(runs.map(r=>r.result))].map(key=>[key,runs.filter(r=>r.result===key).length])),actualTransportationCommands:runs.reduce((n,r)=>n+r.transportationExecutions.length,0),actualWorldRequests:runs.filter(r=>r.stop?.kind==='map-transition'&&worldIds.has(r.stop.request.mapId)).length,restores:runs.filter(r=>r.checkpoint?.restored).length};
+}catch(e){report.result='failed';report.error={message:e.message,stack:e.stack};process.exitCode=1;}
+const persisted=JSON.parse(JSON.stringify(report,(_key,value)=>value===undefined?null:value));persisted.contentHash=hash(persisted);await writeFile(reportPath,JSON.stringify(persisted,null,2)+'\n');console.log(JSON.stringify({result:report.result,counts:report.counts,error:report.error??null}));
