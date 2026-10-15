@@ -1,3 +1,4 @@
+import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
 // All periodic source maps, original installed namespaces and initialization.
 // Public content is read-only; explicit PointIn placement never grants story reachability.
 import assert from 'node:assert/strict';
@@ -23,7 +24,7 @@ const baseline=compileFrameworkContent(sourceBundle.catalog,sourceMaps,sourceBun
 const sourceKey=source=>canonical(Object.fromEntries(['file','assetPath','objectId','serializedFile','sha256'].map(key=>[key,source[key]??null]))),programAssets=new Map(corpus.assets.filter(asset=>asset.kind==='script').map(asset=>[sourceKey(asset.source),asset]));
 let logicalHost;
 if(bundle.content.developmentProfile.logicalFieldEffects!==undefined){const module=await load('core/field-logical-effects');assert.equal(bundle.content.developmentProfile.logicalFieldEffects,module.WEB_LOGICAL_FIELD_EFFECTS);logicalHost=module.createWebLogicalFieldEffectsHost;}
-const runtime=()=>({sourceMessageSequence:createWebFieldMessageSequencePort(),conditionLeaderActivity:createWebFlatConditionLeaderActivityPort(),sourceEncounterPolicy:WEB_SOURCE_ENCOUNTER_POLICY,audioReadiness:{isReady:()=>true},soundPresentation:{isPresented:()=>true},battleHandoff:'prepared',...(logicalHost?{fieldEffects:logicalHost()}: {})});
+const runtime=()=>({ ...sourceWebReplayRuntimePorts(),sourceMessageSequence:createWebFieldMessageSequencePort(),conditionLeaderActivity:createWebFlatConditionLeaderActivityPort(),sourceEncounterPolicy:WEB_SOURCE_ENCOUNTER_POLICY,audioReadiness:{isReady:()=>true},soundPresentation:{isPresented:()=>true},battleHandoff:'prepared',...(logicalHost?{fieldEffects:logicalHost()}: {})});
 await mkdir(dirname(output),{recursive:true});
 for(const source of periodic){const map=byId.get(source.mapId),row={mapId:source.mapId,sourceContentHash:source.contentHash,publishedContentHash:map.contentHash,worldIdentity:source.entryView.isWorld,loopType:source.entryView.loopType,sourceNamespace:[],originalInitializer:source.initializer,staticProjection:'unready',status:'unready',sourceInitializerExecuted:false,trace:[]};cases.push(row);
  const prior=baselineById.get(map.mapId);assert.deepEqual(map.developmentProfile.omissions,prior.developmentProfile.omissions,'Periodic presentation cannot expand source entity omissions');assert.deepEqual(map.map?.groups,prior.map?.groups);assert.deepEqual(map.map?.entities,prior.map?.entities);assert.deepEqual(map.blockers,prior.blockers);assert.deepEqual(map.nativeFootBlockers,source.nativeFootBlockers);

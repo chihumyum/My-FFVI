@@ -24,12 +24,14 @@ function fields(value,keys,label){
 }
 function parsePolicy(raw,api){
   fields(raw,'kind,framework','source battle directory policy');
-  assert.ok(['source-battle-directory-policy-v1','source-battle-directory-policy-v2'].includes(raw.kind),'Unknown source battle directory policy version');
-  fields(raw.framework,raw.kind==='source-battle-directory-policy-v2'?'handoff,entry,conditionControlPolicy':'handoff,entry','framework battle directory policy');
-  const conditionControlPolicy=raw.kind==='source-battle-directory-policy-v2'?parseConditionControlPolicy(raw.framework.conditionControlPolicy):undefined;
+  assert.ok(['source-battle-directory-policy-v1','source-battle-directory-policy-v2','source-battle-directory-policy-v3'].includes(raw.kind),'Unknown source battle directory policy version');
+  fields(raw.framework,raw.kind==='source-battle-directory-policy-v3'?'handoff,entry,conditionControlPolicy,manualControls':raw.kind==='source-battle-directory-policy-v2'?'handoff,entry,conditionControlPolicy':'handoff,entry','framework battle directory policy');
+  const manualControls=raw.kind==='source-battle-directory-policy-v3'?raw.framework.manualControls:undefined;
+  if(raw.kind==='source-battle-directory-policy-v3')assert.equal(manualControls,'web-manual-battle-controls-v1','Missing or unknown manual controls policy');
+  const conditionControlPolicy=raw.kind!=='source-battle-directory-policy-v1'?parseConditionControlPolicy(raw.framework.conditionControlPolicy):undefined;
   return {kind:raw.kind,framework:{handoff:api.parseBattleHandoffPolicy(raw.framework.handoff),
     entry:raw.framework.entry===null?null:api.parseBattleBatchEntryPolicy(raw.framework.entry),
-    ...(conditionControlPolicy?{conditionControlPolicy}:{})}};
+    ...(conditionControlPolicy?{conditionControlPolicy}:{}),...(manualControls===undefined?{}:{manualControls})}};
 }
 function parseConditionControlPolicy(raw){
   fields(raw,'kind','Web condition control policy');
@@ -43,6 +45,20 @@ async function assertConditionControlRuntime(root,compiledDir,policy){
   assert.equal(typeof runtime.planWebControlAction,'function','Compiled runtime has no condition action planner');
   assert.equal(typeof runtime.planWebControlTarget,'function','Compiled runtime has no condition target planner');
 }
+async function assertManualControlRuntime(root,compiledDir,policy){
+  if(policy===undefined)return;
+  const runtime=await import(pathToFileURL(resolve(root,compiledDir,'src/core/battle-controls.js')).href);
+  assert.equal(runtime.WEB_MANUAL_BATTLE_CONTROLS,policy,'Compiled runtime has no matching manual controls policy');
+  assert.equal(typeof runtime.parseSourceBattleControls,'function','Compiled runtime has no source battle controls parser');
+}
+/** All source-family producers use this version/field/runtime contract. */
+export async function readSourceBattleDirectoryPolicy({root=repository,compiledDir='dist',policy}){
+  const declared=parsePolicy(policy,await modules(root,compiledDir));
+  await Promise.all([assertConditionControlRuntime(root,compiledDir,declared.framework.conditionControlPolicy),
+    assertManualControlRuntime(root,compiledDir,declared.framework.manualControls)]);
+  return declared;
+}
+
 /** Bind omissions globally against actual complete descriptors. Formation
  * qualification belongs to the per-party runtime compiler, not this binding
  * pass: one unsupported source pattern must not abort the entire directory. */
@@ -140,7 +156,7 @@ export async function composeFrameworkBattleDirectory({root=repository,compiledD
 /** No file publication. Caller supplies the same candidate's whole source
  * world and baseline; this function emits strict and explicit Web variants. */
 export async function compileSourceBattleDirectory({root=repository,compiledDir='dist',world,baseCatalog,policy}){
-  root=resolve(root);const api=await modules(root,compiledDir),declared=parsePolicy(policy,api);
+  root=resolve(root);const api=await modules(root,compiledDir),declared=await readSourceBattleDirectoryPolicy({root,compiledDir,policy});
   const base=await api.verifyContent(structuredClone(baseCatalog));api.assertSourceGameCatalog(base);
   const catalog=await api.verifyContent(structuredClone(world.catalog));
   const maps=await Promise.all(world.maps.map(map=>api.verifyContent(structuredClone(map),catalog.maps[String(map.mapId)]?.contentHash)));
@@ -182,6 +198,7 @@ export async function compileSourceBattleDirectory({root=repository,compiledDir=
   const {drops:oldDrops,...oldCommon}=base.common,{drops:newDrops,...newCommon}=strictCatalog.common;
   assert.equal(api.canonical(oldCommon),api.canonical(newCommon),'Strict directory changed shared source capabilities');
   const runtime=api.compileBattleEncounterRuntime(shared.reader,{...runtimeInput,
+    ...(declared.framework.manualControls===undefined?{}:{manualControls:declared.framework.manualControls}),
     ...(declared.framework.conditionControlPolicy?{conditionControlPolicy:declared.framework.conditionControlPolicy}:{}),handoff:{policy:declared.framework.handoff},
     development:bindEntryPolicy(declared.framework.entry,descriptors.encounters,api)});
   const composed=await composeFrameworkBattleDirectory({root,compiledDir,baseCatalog:base,runtime,conditionControlPolicy:declared.framework.conditionControlPolicy});

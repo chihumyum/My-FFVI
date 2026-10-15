@@ -1,3 +1,4 @@
+import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -5,7 +6,8 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { compileInitializedContentBatch } from './build-initialized-content-batch.mjs';
-import { validateSourcePrerequisiteInputs } from './compile-source-prerequisites.mjs';
+import { openSourceCandidate } from './source-candidate.mjs';
+import { overlaySourceFrameworkMap, overlaySourceFrameworkWorld } from './source-framework-map-overlay.mjs';
 import { controlledAudioRuntime } from './controlled-audio.mjs';
 import { runtimeDigest } from './runtime-digest.mjs';
 import { sourceFlatNpcCohort } from './source-flat-npc-cohort.mjs';
@@ -21,18 +23,8 @@ const checkerBefore = sha(await readFile(new URL(import.meta.url)));
 await mkdir(out,{recursive:true});
 execFileSync(resolve(root,'.venv/bin/python'),[resolve(runtimeRoot,'scripts/inspect-flat-npc-native.py'),'--root',root,'--output',resolve(out,'native.json')],{stdio:'pipe'});
 const nativeBytes=await readFile(resolve(out,'native.json')),native=JSON.parse(nativeBytes);assert.equal(native.result,'passed-static-input-audit');
-const before = await runtimeDigest(runtimeRoot, compiled), candidateReportBytes = await readFile(resolve(candidateDir, 'report.json')), candidate = JSON.parse(candidateReportBytes), lock = JSON.parse(await readFile(resolve(candidateDir, 'inputs.json')));
-await validateSourcePrerequisiteInputs(lock, { root });
-assert.equal(candidate.status, 'complete');
-assert.equal(candidate.runtimeSha256, before, 'Candidate must come from this exact compiled/tool/app runtime');
-const corpusSnapshot = await readSnapshot(resolve(root, 'build/corpus')), bound = new Map(), objects = new Map(), objectIndex = new Map(candidate.objects.map(row => [row.url, row]));
-const read = async (url) => { const row = objectIndex.get(url); assert.ok(row, 'Unknown same-candidate input ' + url); const file = resolve(candidateDir, 'objects', url.slice(1)); if (!objects.has(row.sha256)) {
-    const bytes = await readFile(file);
-    assert.equal(sha(bytes), row.sha256);
-    assert.equal(bytes.length, row.bytes);
-    bound.set(file, row.sha256);
-    objects.set(row.sha256, JSON.parse(bytes));
-} return structuredClone(objects.get(row.sha256)); };
+const sharedCandidate = await openSourceCandidate({ root, runtimeRoot, compiledDir: compiled, candidateDir, legacyKind: 'source-flat-npc-candidate-v1' }), before = sharedCandidate.runtimeSha256, candidateReportBytes = sharedCandidate.reportBytes, candidate = sharedCandidate.report, lock = sharedCandidate.lock, read = sharedCandidate.read;
+const corpusSnapshot = await readSnapshot(resolve(root, 'build/corpus'));
 const strictWorld = await read('/world/catalog.json'), sourceEntry = await read('/game/source-new-game.json'), sourceBattle = await read('/game/source-catalog.json'), frameworkWorld = await read('/framework/world/catalog.json'), strictMaps = new Map(), frameworkMaps = new Map();
 const corpus = await loadCorpus(root), system = await loadSystemMessages(root, corpus.manifest.parentSourceSetHash, corpus.manifest.sources), { compileStoryCorpus } = await load('compiler/story-corpus'), ir = compileStoryCorpus({...corpus,messages:{...corpus.messages,system_zhc:system.messages}}), nomination = sourceFlatNpcCohort(corpus,ir,{...await load('compiler/map-package'),...await load('compiler/entity-group'),canonical}), nominationIds = [...new Set(nomination.roots.map(row=>row.root.mapId))].sort((a,b)=>a-b);
 for (const id of Object.keys(strictWorld.maps).map(Number).sort((a,b)=>a-b)) {
@@ -54,14 +46,11 @@ if (!serviceIds.length) {
     recipe.kind = 'initialized-source-map-recipe-v4';
     delete recipe.fieldServices;
 }
-const plain = await compileInitializedContentBatch(root, recipe, hash(recipe), { dist: compiled, readJson: read }), seal = value => { const { contentHash: _, ...body } = value; return { ...body, contentHash: hash(body) }; }, maps = plain.maps.map(value => { const original = frameworkMaps.get(value.mapId), map = structuredClone(value); map.map = structuredClone(original.map); map.blockers = structuredClone(original.blockers); map.developmentOmissions = structuredClone(original.developmentOmissions); map.fieldEffects = structuredClone(original.fieldEffects); map.frameworkNpcFlat=structuredClone(original.frameworkNpcFlat); if(original.frameworkPresentation)map.frameworkPresentation=structuredClone(original.frameworkPresentation); map.developmentProfile = { ...map.developmentProfile, ...original.developmentProfile, fieldPresentation: value.developmentProfile.fieldPresentation, npcActivity: value.developmentProfile.npcActivity, relayInteraction: value.developmentProfile.relayInteraction, passiveEffects: value.developmentProfile.passiveEffects }; for (const key of Object.keys(map.developmentProfile))
-    if (map.developmentProfile[key] === undefined)
-        delete map.developmentProfile[key]; assert.equal(canonical(map.scripts), canonical(strictMaps.get(map.mapId).scripts)); assert.equal(canonical(map.scriptPuppetContexts), canonical(strictMaps.get(map.mapId).scriptPuppetContexts)); return seal(map); }), byId = new Map(maps.map(m => [m.mapId, m])), worldDraft = structuredClone(plain.catalog);
-worldDraft.developmentProfile = { ...plain.catalog.developmentProfile, ...frameworkWorld.developmentProfile, fieldPresentation: 'framework-ordinary-field-flat-v1', npcActivity: 'framework-npc-area-v1', ...(serviceIds.length ? { relayInteraction: 'framework-relay-interaction-v1', passiveEffects: 'framework-passive-field-effects-v1' } : {}) };
-for (const map of maps)
-    worldDraft.maps[map.mapId].contentHash = map.contentHash;
-const world = seal(worldDraft);
-const sourceKey = ref => canonical(Object.fromEntries(['file', 'assetPath', 'objectId', 'serializedFile', 'sha256'].map(k => [k, ref[k]]))), physical = new Map(corpus.assets.filter(a => a.kind === 'script').map(a => [sourceKey(a.source), a])), physicalById=new Map(corpus.assets.filter(a=>a.kind==='script').map(a=>[a.id,a])), programs = new Map(), inventory = [], cases = [], host = { visible: true, mediaReady: true, overlayOpen: false }, runtime = () => ({ ...controlledAudioRuntime(), transportationTimestamp: () => '639273600000000000', sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY, cameraShake: createWebFieldCameraShakePolicy(), retainedWorldTransportation: WEB_RETAINED_WORLD_TRANSPORTATION, fieldEffects: createWebLogicalFieldEffectsHost(), sourceMessageSequence: createWebFieldMessageSequencePort(), conditionLeaderActivity: createWebFlatConditionLeaderActivityPort(), assignedNpcRoutes: WEB_ASSIGNED_ROUTE_POLICY, battleHandoff: 'prepared' });
+const plain = await compileInitializedContentBatch(root, recipe, hash(recipe), { dist: compiled, readJson: read }),
+    maps = plain.maps.map(initialized => overlaySourceFrameworkMap({ source: strictMaps.get(initialized.mapId), framework: frameworkMaps.get(initialized.mapId), initialized, canonical, hash })),
+    byId = new Map(maps.map(m => [m.mapId, m])),
+    world = overlaySourceFrameworkWorld({ source: strictWorld, framework: frameworkWorld, initialized: plain.catalog, maps, canonical, hash });
+const sourceKey = ref => canonical(Object.fromEntries(['file', 'assetPath', 'objectId', 'serializedFile', 'sha256'].map(k => [k, ref[k]]))), physical = new Map(corpus.assets.filter(a => a.kind === 'script').map(a => [sourceKey(a.source), a])), physicalById=new Map(corpus.assets.filter(a=>a.kind==='script').map(a=>[a.id,a])), programs = new Map(), inventory = [], cases = [], host = { visible: true, mediaReady: true, overlayOpen: false }, runtime = () => ({ ...sourceWebReplayRuntimePorts(), ...controlledAudioRuntime(), scriptRandom: 'web-source-script-random-field-stream-v1', transportationTimestamp: () => '639273600000000000', sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY, cameraShake: createWebFieldCameraShakePolicy(), retainedWorldTransportation: WEB_RETAINED_WORLD_TRANSPORTATION, fieldEffects: createWebLogicalFieldEffectsHost(), sourceMessageSequence: createWebFieldMessageSequencePort(), conditionLeaderActivity: createWebFlatConditionLeaderActivityPort(), assignedNpcRoutes: WEB_ASSIGNED_ROUTE_POLICY, battleHandoff: 'prepared' });
 const { GameEventSaveCoordinator } = await load('core/game-event-save'), { CheckpointStorage } = await load('core/saved-game'),{GameMapLoader}=await load('core/game-map-loader'), savers = new WeakMap(),repositories=new WeakMap();
 async function drain(game, flow, trace) { for (let tick = 0; tick < 6000; tick++) {
     if (game.eventSaveRequest) {
@@ -165,20 +154,13 @@ for (const id of ids) {
     }
 }
 assert.equal(cases.length,nomination.roots.length,'Every original installed source root must retain an actual attempt or initialization-unexecuted case');
-const rows = nomination.programs, report = { kind: 'whole-source-flat-npc-lifecycle-v1', published: false, sourceSetHash: corpus.sourceSetHash, parentSourceSetHash: corpus.manifest.parentSourceSetHash, runtimeSha256: before, checkerSha256: checkerBefore, nativeEvidence:{file:resolve(out,'native.json'),sha256:sha(nativeBytes),scope:native.scope,unknown:native.unknown}, sourceOrigin: { kind: 'private-pure-source-candidate-input-lock', reportSha256: sha(candidateReportBytes), sourceCompilerDigest: lock.compilerDigest }, recipe, buildReport: plain.report, counts: { ...nomination.counts, initializerAttempts: inventory.length, initializersCompleted: inventory.filter(row=>row.status==='initializer-completed').length, initializersUnready:inventory.filter(row=>row.status==='unready').length, sourceRootCases:cases.length, sourceRootsCompleted:cases.filter(c=>c.status==='completed').length, sourceRootsUnready:cases.filter(c=>c.status==='unready').length, flatNpcActiveAfterInitializers:inventory.reduce((n,row)=>n+(row.activeFlatNpcIds?.length??0),0), sourceRootsUnexecuted:cases.filter(c=>c.execution==='unexecuted-initialization-prerequisite').length, rootsWithProjectionActors:cases.filter(c=>c.projectedActors?.length).length, saveRestores:inventory.filter(row=>row.saveRestore==='passed').length }, dependencies:{file:resolve(out,'source-dependencies.json'),requiredMapIds:sourceDependencies.requiredMapIds,diagnostics:sourceDependencies.diagnostics.length,edges:sourceDependencies.edges.length,providerRequirements:sourceDependencies.providerRequirements.length}, maps: inventory, cases, evidence: { actualRepository: true, actualSession: true, actualFlow: true, actualNativeActorOwner: true, sourceProgramsPreserved: true, completeInstalledNamespace: true, actualFlatNpcActorOwner:true, countsAreStoryReachability: false, plotFlagsInjected: false, rosterInjected: false, sourceStoryReachability: false, nativeParity: false } };
+const rows = nomination.programs, report = { kind: 'whole-source-flat-npc-lifecycle-v1', published: false, sourceSetHash: corpus.sourceSetHash, parentSourceSetHash: corpus.manifest.parentSourceSetHash, runtimeSha256: before, checkerSha256: checkerBefore, nativeEvidence:{file:resolve(out,'native.json'),sha256:sha(nativeBytes),scope:native.scope,unknown:native.unknown}, sourceOrigin: { kind: 'private-pure-source-candidate-input-lock', reportSha256: sha(candidateReportBytes), sourceCompilerDigest: lock.compilerDigest, candidateKind: candidate.kind, candidateDir, sharedObjectCount: candidate.objects.length }, recipe, buildReport: plain.report, counts: { ...nomination.counts, initializerAttempts: inventory.length, initializersCompleted: inventory.filter(row=>row.status==='initializer-completed').length, initializersUnready:inventory.filter(row=>row.status==='unready').length, sourceRootCases:cases.length, sourceRootsCompleted:cases.filter(c=>c.status==='completed').length, sourceRootsUnready:cases.filter(c=>c.status==='unready').length, flatNpcActiveAfterInitializers:inventory.reduce((n,row)=>n+(row.activeFlatNpcIds?.length??0),0), sourceRootsUnexecuted:cases.filter(c=>c.execution==='unexecuted-initialization-prerequisite').length, rootsWithProjectionActors:cases.filter(c=>c.projectedActors?.length).length, saveRestores:inventory.filter(row=>row.saveRestore==='passed').length }, dependencies:{file:resolve(out,'source-dependencies.json'),requiredMapIds:sourceDependencies.requiredMapIds,diagnostics:sourceDependencies.diagnostics.length,edges:sourceDependencies.edges.length,providerRequirements:sourceDependencies.providerRequirements.length}, maps: inventory, cases, evidence: { actualRepository: true, actualSession: true, actualFlow: true, actualNativeActorOwner: true, sourceProgramsPreserved: true, completeInstalledNamespace: true, actualFlatNpcActorOwner:true, countsAreStoryReachability: false, plotFlagsInjected: false, rosterInjected: false, sourceStoryReachability: false, nativeParity: false } };
 assert.equal(await runtimeDigest(runtimeRoot, compiled), before);
-await validateSourcePrerequisiteInputs(lock, { root });
+await sharedCandidate.validate();
 const afterSnapshot = await readSnapshot(resolve(root, 'build/corpus'));
 assert.equal(corpusSnapshot.size, afterSnapshot.size);
 for (const [name, bytes] of corpusSnapshot)
     assert.equal(sha(afterSnapshot.get(name)), sha(bytes));
-for (const [file, digest] of bound)
-    assert.equal(sha(await readFile(file)), digest);
-for (const row of candidate.objects) {
-    const bytes = await readFile(resolve(candidateDir, 'objects', row.url.slice(1)));
-    assert.equal(sha(bytes), row.sha256);
-    assert.equal(bytes.length, row.bytes);
-}
 assert.equal(sha(await readFile(new URL(import.meta.url))), checkerBefore);assert.equal(sha(await readFile(resolve(out,'native.json'))),sha(nativeBytes));
 for(const row of native.files)assert.equal(sha(await readFile(resolve(root,row.path))),row.sha256);
 for(const row of Object.values(native.inputs))assert.equal(sha(await readFile(resolve(root,row.path))),row.sha256);

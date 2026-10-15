@@ -1,3 +1,4 @@
+import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
 import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
@@ -15,10 +16,10 @@ assert.ok(output.startsWith(resolve(root,'build')+'/'),'Explorer evidence must s
 const load=n=>import(pathToFileURL(resolve(compiled,'src',n+'.js')));
 const [{exploreReachableFrontiers},{GameSession},{GameFlow},{GameContentRepository},{NewGameFieldEntry},{FieldFadeState},
  {createSourcePresentationContext},{createWebFieldMessageSequencePort},{createWebFlatConditionLeaderActivityPort},
- {createWebLogicalFieldEffectsHost},{createWebFieldCameraShakePolicy},{WEB_SOURCE_ENCOUNTER_POLICY},{loadCorpus},{hash},{readSnapshot},{bindPublishedFrontierRelease},{resolveGameContentReleaseObject},{verifyContent}]=await Promise.all([
+ {createWebLogicalFieldEffectsHost},{createWebFieldCameraShakePolicy},{WEB_SOURCE_ENCOUNTER_POLICY},{loadCorpus},{hash},{readSnapshot},{bindPublishedFrontierRelease},{resolveGameContentReleaseObject},{verifyContent},{WEB_SOURCE_SCRIPT_RANDOM}]=await Promise.all([
  'tools/reachable-frontiers','core/game-session','core/game-flow','core/game-content','core/new-game-field-entry','core/field-fade',
  'core/source-presentation','core/source-message-sequence','core/field-condition-activity','core/field-logical-effects','core/field-camera-shake',
- 'core/source-encounter-entry','compiler/corpus','compiler/content','compiler/integrity','tools/frontier-input-binding','core/game-content-release','core/content-integrity'].map(load));
+ 'core/source-encounter-entry','compiler/corpus','compiler/content','compiler/integrity','tools/frontier-input-binding','core/game-content-release','core/content-integrity','core/field-script-random'].map(load));
 const releaseRoot=options['release-root']?resolve(root,options['release-root']):resolve(sourceRoot,'build/content-releases');
 const runtime=await runtimeDigest(root,compiled),publicationBytes=await readFile(resolve(root,options['publication-report'])),publication=JSON.parse(publicationBytes),
  contentRuntime=publication.sourceInputLock?.runtimeSha256;
@@ -49,7 +50,7 @@ async function read(url){assert.match(url,/^\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]
 const repo=new GameContentRepository(read,'framework',refs),entryContent=await repo.sourceNewGame(),{catalog,map,battle}=entryContent;
 assert.equal(snapshot.sourceSetHash,catalog.sourceSetHash);assert.equal(snapshot.manifest.parentSourceSetHash,catalog.parentSourceSetHash);
 assert.equal(binding.selected.release.sourceSetHash,catalog.parentSourceSetHash,'Release parent source identity changed');
-const runtimePorts=()=>({assignedNpcRoutes:'web-assigned-npc-route-grid-v1',retainedWorldTransportation:'web-retained-walking-magitek-world-entry-v1',
+const runtimePorts=()=>({ ...sourceWebReplayRuntimePorts(),scriptRandom:WEB_SOURCE_SCRIPT_RANDOM,assignedNpcRoutes:'web-assigned-npc-route-grid-v1',retainedWorldTransportation:'web-retained-walking-magitek-world-entry-v1',
  sourceEncounterPolicy:WEB_SOURCE_ENCOUNTER_POLICY,sourceMessageSequence:createWebFieldMessageSequencePort(),
  conditionLeaderActivity:createWebFlatConditionLeaderActivityPort(),fieldEffects:createWebLogicalFieldEffectsHost(),cameraShake:createWebFieldCameraShakePolicy(),
  battleHandoff:'prepared',audioReadiness:{isReady:()=>true},soundPresentation:{isPresented:()=>true},transportationTimestamp:()=>'639273600000000000'});

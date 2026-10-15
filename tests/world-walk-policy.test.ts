@@ -23,7 +23,7 @@ function fixture(returnPolicy: "same" | "changed" | "removed" = "same", query = 
   let preparations = 0, publications = 0;
   const world = new WorldSession(f.field, new EventState(), {
     current: ports,
-    prepare: () => { preparations++; return { ports: {}, commit: () => { publications++; return true; } }; },
+    prepare: () => { preparations++; return { ports: {}, sealPublication: () => () => true, commit: () => { publications++; return true; } }; },
   });
   return { ...f, world, catalog: f.world, back, scheduler, ports,
     get preparations() { return preparations; }, get publications() { return publications; } };

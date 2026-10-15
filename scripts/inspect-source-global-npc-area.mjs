@@ -5,11 +5,12 @@ import {createHash} from 'node:crypto';
 import {mkdir,readFile,readdir,writeFile} from 'node:fs/promises';
 import {resolve,relative,isAbsolute,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {compileSourcePrerequisites,validateSourcePrerequisiteInputs} from './compile-source-prerequisites.mjs';
+import {validateSourcePrerequisiteInputs} from './compile-source-prerequisites.mjs';
+import {loadSourceFamilyPrerequisites} from './source-family-prerequisites.mjs';
 import {webSourceFrameworkInputs} from './source-web-framework-inputs.mjs';
 const options={root:resolve(import.meta.dirname,'..'),compiled:'dist',output:'build/reports/source-global-npc-area',
  battle:'build/game/source-catalog.json'},args=process.argv.slice(2);
-while(args.length){const flag=args.shift();assert.ok(['--root','--compiled','--output','--battle'].includes(flag)&&args.length,'Use --root/--compiled/--output/--battle <path>');options[flag.slice(2)]=args.shift();}
+while(args.length){const flag=args.shift();assert.ok(['--root','--compiled','--output','--battle','--candidate-dir'].includes(flag)&&args.length,'Use --root/--compiled/--output/--battle <path>');options[flag.slice(2)]=args.shift();}
 const root=resolve(options.root),compiled=resolve(root,options.compiled),out=resolve(root,options.output),
  part=relative(resolve(root,'build'),out),sha=bytes=>createHash('sha256').update(bytes).digest('hex'),
  load=name=>import(pathToFileURL(resolve(compiled,'src',name+'.js')));
@@ -23,7 +24,7 @@ async function runtime(){const rows=[];async function walk(path){for(const entry
  await walk('src');return{hash:api.hash(rows),files:rows};}
 const runtimeBefore=await runtime(),snapshotBefore=sha(await readFile(resolve(root,'build/corpus/snapshot.json'))),
  source=await api.loadCorpus(root),sourceDigest=api.hash(source),webInputs=webSourceFrameworkInputs(),
- prerequisites=await compileSourcePrerequisites({root,compiledDir:compiled,...webInputs}),payloads=prerequisites.payloads,
+ prerequisites=await loadSourceFamilyPrerequisites({root,compiledDir:compiled,...(options['candidate-dir']?{candidateDir:options['candidate-dir']}:{})}),payloads=prerequisites.payloads,
  sourceCatalog=payloads.get('/world/catalog.json'),frameworkCatalog=payloads.get('/framework/world/catalog.json');
 assert.ok(sourceCatalog&&frameworkCatalog,'Missing shared whole-source world');
 const world={catalog:sourceCatalog,maps:Object.values(sourceCatalog.maps).map(row=>payloads.get(row.url))},
@@ -95,9 +96,9 @@ artifacts.sourceWorld=await artifact('strict-world.json',world.catalog);artifact
 artifacts.sourceEntry=await artifact('strict-entry.json',entry);artifacts.frameworkEntry=await artifact('framework-entry.json',framework.entry);
 artifacts.assessments=await artifact('assessments.json',assessments);artifacts.programs=await artifact('programs.json',programRecords);
 artifacts.freshBattle=await artifact('fresh-battle.json',battle);
-artifacts.prerequisites=await artifact('shared-source-prerequisites.json',{inputs:prerequisites.inputs,report:prerequisites.report,webInputs});
+artifacts.prerequisites=await artifact('shared-source-prerequisites.json',{inputs:prerequisites.inputs,report:prerequisites.report,webInputs,...(prerequisites.candidateEvidence?{candidateEvidence:prerequisites.candidateEvidence}:{})});
 artifacts.mapClosures=await artifact('map-closures.json',mapClosures);
-await validateSourcePrerequisiteInputs(prerequisites.inputs,{root});
+await validateSourcePrerequisiteInputs(prerequisites.inputs,{root});if(prerequisites.validate)await prerequisites.validate();
 assert.deepEqual(await runtime(),runtimeBefore,'Private compiled runtime changed');assert.equal(api.hash(await api.loadCorpus(root)),sourceDigest);
 assert.equal(sha(await readFile(resolve(root,'build/corpus/snapshot.json'))),snapshotBefore);
 assert.equal(sha(await readFile(resolve(root,options.battle))),sha(battleBytes),'Battle input changed');

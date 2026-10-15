@@ -65,7 +65,9 @@ export function createFrameworkNpcAreaEvidenceReader({root=repository,compiledDi
   if(!maps.has(key))maps.set(key,(async()=>{
    const sourceMap=await api.verifyContent(structuredClone(await readSourceMap(row.mapId)),api.world.maps[String(row.mapId)].contentHash),
     assessment=api.assessFrameworkNpcAreaMap(api.snapshot,sourceMap,proof.template);
-   return{sourceMap,assessment};
+   // The candidate/input collection retains the complete source body.
+   // This proof cache needs only the verified map identity and derived assessment.
+   return{sourceMap:{contentHash:sourceMap.contentHash},assessment};
   })());
   const result=await maps.get(key);assert.equal(row.sourceMapHash,result.sourceMap.contentHash,'NPC Area strict map pin mismatch');
   assert.equal(row.assessmentHash,result.assessment.contentHash,'NPC Area original source assessment mismatch');

@@ -1,3 +1,9 @@
+import { projectFieldEffectPlacement } from "../../src/core/field-effects.js";
+import { fieldNativeNpcStandbyPosition } from "../../src/core/field-native-npc.js";
+import { flatEffectBinding } from "./flat-field-effects.js";
+import { WEB_FLAT_FIELD_EFFECTS, type FieldEffectFlatPolicy } from "../../src/core/field-effect-flat-projection.js";
+import { projectFrameworkFieldEffectCatalog } from "../../src/compiler/framework-field-effect-flat-projection.js";
+import { hash } from "../../src/compiler/content.js";
 import { worldLoopSessionFixture } from "./world-loop-session.js";
 import { logicalEffectCatalog } from "./logical-field-effects.js";
 import { compileFrameworkNewGame } from "../../src/compiler/framework-new-game.js";
@@ -8,7 +14,7 @@ import { sealBatchContent } from "./content-batch.js";
 import type { FieldEntity, Op, Site } from "../../src/field/types.js";
 
 type Instruction<T> = T extends Site ? Omit<T, keyof Site> : never;
-export async function logicalWorldEffectsFixture(options: { initializationFailure?: boolean; emptyTarget?: boolean; unboundTarget?: "profile" | "catalog"; renderLayer?: boolean; sourceEncounter?: boolean } = {}) {
+export async function logicalWorldEffectsFixture(options: { initializationFailure?: boolean; emptyTarget?: boolean; unboundTarget?: "profile" | "catalog"; renderLayer?: boolean; sourceEncounter?: boolean; flatBirdview?: boolean } = {}) {
   const f = await worldLoopSessionFixture({ initializationFailure: options.initializationFailure ?? false });
   const fx = logicalEffectCatalog(f.map.sourceSetHash, f.map.parentSourceSetHash);
   const source = { file: "synthetic", assetPath: "logical-world-effects" };
@@ -21,7 +27,7 @@ export async function logicalWorldEffectsFixture(options: { initializationFailur
     if (!options.emptyTarget || index === 0) {
       const entity: FieldEntity = { id: "900", kind: 11, objectId: 0, layer: 0, x: 2, y: 2, width: 1, height: 1,
         direction: "down", asset: null, script: null, collision: null, destinationLayer: null, source: evidence,
-        effect: { ...structuredClone(fx.definition), source: evidence } };
+        effect: { ...structuredClone(fx.definition), source: evidence, ...(options.flatBirdview ? {birdviewPuppet:true} : {}) } };
       map.map!.entities.push(entity); map.map!.groups!.entity_default!.entities.push(structuredClone(entity));
     }
     const extras: Record<string, Instruction<Op>[]> = {
@@ -44,8 +50,20 @@ export async function logicalWorldEffectsFixture(options: { initializationFailur
     if (index === 1 && options.unboundTarget === "catalog") delete map.fieldEffects;
     return sealBatchContent(map);
   });
+  if(options.flatBirdview) {
+    const bindings=maps.flatMap(map=>map.map!.groups!.entity_default!.entities.filter(e=>e.kind===11).map(entity=>{
+      const b=flatEffectBinding(map.mapId,map.developmentProfile!.sourceContentHash,entity.layer,entity.id);b.entity=structuredClone(entity);b.position=projectFieldEffectPlacement(entity.effect!,{range:map.cameraHost!.mapRange,tileMapPresent:true,standbyAnchor:map.nativeNpcStandby?fieldNativeNpcStandbyPosition(map.nativeNpcStandby):null},entity.layer).position;return b;
+    }));
+    const projection:FieldEffectFlatPolicy={kind:WEB_FLAT_FIELD_EFFECTS,sourceSetHash:f.map.sourceSetHash,parentSourceSetHash:f.map.parentSourceSetHash,
+      sourceMapSetHash:hash({sourceSetHash:f.map.sourceSetHash,parentSourceSetHash:f.map.parentSourceSetHash,maps:maps.map(m=>({mapId:m.mapId,sourceMapHash:m.developmentProfile!.sourceContentHash})).sort((a,b)=>a.mapId-b.mapId)}),logicalCatalogHash:fx.catalog.webPolicy!.catalogHash,
+      reason:'Synthetic whole-session flat effect lifecycle; no source-program coverage claim.',mapSources:maps.map(m=>({mapId:m.mapId,sourceMapHash:m.developmentProfile!.sourceContentHash})),bindings,
+      objects:bindings.map(b=>({mapId:b.ref.mapId,sourceMapHash:b.ref.sourceMapHash,group:b.ref.group,source:b.entity.source,rawObject:b.rawObject,reasons:[]})),nativeParity:false};
+    const body={kind:'framework-field-effect-flat-assessment-v1' as const,projection},catalog=projectFrameworkFieldEffectCatalog(fx.catalog,{...body,contentHash:hash(body)});
+    for(let i=0;i<maps.length;i++){maps[i]!.developmentProfile!.fieldEffectProjection=WEB_FLAT_FIELD_EFFECTS;maps[i]!.fieldEffects=structuredClone(catalog);maps[i]=sealBatchContent(maps[i]!);}
+  }
   const [map, target] = maps, rawWorld = structuredClone(f.world);
   rawWorld.developmentProfile!.logicalFieldEffects = WEB_LOGICAL_FIELD_EFFECTS;
+  if(options.flatBirdview) rawWorld.developmentProfile!.fieldEffectProjection=WEB_FLAT_FIELD_EFFECTS;
   for (const current of maps) rawWorld.maps[current!.mapId]!.contentHash = current!.contentHash;
   const world = sealBatchContent(rawWorld), content = await compileFrameworkNewGame({ sourceEntry: f.sourceEntry,
     sourceBattle: f.sourceBattle, sourceMap: f.sourceMap, world, map: map!, battle: f.battle,

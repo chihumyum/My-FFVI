@@ -20,6 +20,7 @@ export function sourceCatalogProfile(profile: DevelopmentProfile | undefined): S
       profile.npcProjection !== undefined && profile.npcProjection !== "web-source-npc-flat-projection-v1" ||
       profile.mapAnimatedEntities !== undefined && profile.mapAnimatedEntities !== "web-field-animated-map-entities-v1" ||
       profile.autoSave !== undefined && profile.autoSave !== "web-field-autosave-barrier-v1" ||
+      profile.fieldEffectProjection !== undefined && profile.fieldEffectProjection !== "web-source-field-effect-flat-v1" ||
       profile.logicalFieldEffects !== undefined && profile.logicalFieldEffects !== "web-logical-all-loop-field-effects-v1")
     throw new Error("Source game catalog development profile mismatch");
   return "framework";
@@ -58,6 +59,7 @@ export function assertSourceEntryProfiles(
           dependency.developmentProfile!.npcProjection !== entry.developmentProfile!.npcProjection ||
           dependency.developmentProfile!.mapAnimatedEntities !== entry.developmentProfile!.mapAnimatedEntities ||
           dependency.developmentProfile!.autoSave !== entry.developmentProfile!.autoSave ||
+          dependency.developmentProfile!.fieldEffectProjection !== entry.developmentProfile!.fieldEffectProjection ||
           dependency.developmentProfile!.logicalFieldEffects !== entry.developmentProfile!.logicalFieldEffects))
       throw new Error("Source entry profile mismatch: " + name);
   }
@@ -88,12 +90,14 @@ export function assertSourceGameCatalog(catalog: BattleCatalog, profile: SourceC
       throw new Error("Source game catalog initial player seed differs from the source initializer");
   }
   // These are encounter declarations in every profile, never shared defaults.
-  for (const key of ["escapePolicy", "lifecycle", "rewardPolicy", "participants", "playerParticipants", "formationPlan"])
+  for (const key of ["escapePolicy", "lifecycle", "rewardPolicy", "participants", "playerParticipants", "formationPlan", "controls"])
     if (Object.hasOwn(catalog.common, key)) throw new Error("Source new game cannot use misplaced " + key + " policy");
   if (profile === "framework") return;
   if (Object.hasOwn(catalog.common, "conditionControlPolicy"))
     throw new Error("A strict source baseline cannot use a Web condition control policy");
   const encounters = Object.values(catalog.encounters);
+  if (encounters.some(encounter => Object.hasOwn(encounter, "controls")))
+    throw new Error("A strict source baseline cannot use a Web battle control policy");
   if (encounters.some(encounter => encounter.formationPlan?.kind === "development"))
     throw new Error("Source new game cannot use development formation selection");
   if (encounters.some(encounter => Object.hasOwn(encounter, "escapePolicy")))

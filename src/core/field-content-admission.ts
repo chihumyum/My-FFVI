@@ -1,9 +1,10 @@
+import { fieldMessageNameReferences, fieldMessageUsesFee } from "./field-message-template.js";
 import type { FieldContent, Op, Site } from "../field/types.js";
 
 export const fieldProviders = Object.freeze([
-  "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
+  "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
-  "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "assignedNpcRoutes", "sourceLeader", "scriptShop", "storyTimer", "screenEffects", "cameraShake", "sourceAutoSaveSync",
+  "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "sourceAutoSaveSync",
 ] as const);
 export type FieldProvider = typeof fieldProviders[number];
 export type FieldProviderStatus = "available" | "missing" | "unknown";
@@ -41,6 +42,8 @@ export type FieldContentRequirements = {
 };
 
 const codes: Record<FieldCapability, string> = {
+  messageValues: "FIELD_MESSAGE_VALUES_PROVIDER",
+  scriptRandom: "FIELD_SCRIPT_RANDOM_PROVIDER",
   inventory: "FIELD_INVENTORY_PROVIDER", recovery: "FIELD_RECOVERY_PROVIDER",
   messageNames: "FIELD_MESSAGE_NAMES_PROVIDER", sourceMessageSequence: "FIELD_SOURCE_MESSAGE_SEQUENCE_PROVIDER",
   ownedConditions: "FIELD_OWNED_CONDITIONS_PROVIDER", party: "FIELD_PARTY_PROVIDER",
@@ -53,8 +56,10 @@ const codes: Record<FieldCapability, string> = {
   sourceLeader: "FIELD_SOURCE_LEADER_PROVIDER", scriptShop: "FIELD_SCRIPT_SHOP_PROVIDER",
   storyTimer: "FIELD_STORY_TIMER_PROVIDER", screenEffects: "FIELD_SCREEN_EFFECTS_PROVIDER",
   cameraShake: "FIELD_CAMERA_SHAKE_PROVIDER",
+  contentInvalidations: "FIELD_CONTENT_INVALIDATIONS_PROVIDER",
   sourceAutoSaveSync: "FIELD_SOURCE_AUTO_SAVE_SYNC_PROVIDER",
   sourceEncounter: "FIELD_SOURCE_ENCOUNTER_PROVIDER",
+  sourceBossEntry: 'FIELD_SOURCE_BOSS_ENTRY_PROVIDER', sourceBattleResult:'FIELD_SOURCE_BATTLE_RESULT_PROVIDER',
   assignedNpcRoutes: "FIELD_ASSIGNED_NPC_ROUTE_PROVIDER",
   conditionVisual: "FIELD_CONDITION_VISUAL_CONTEXT", scriptMotion: "FIELD_SCRIPT_MOTION_PROVIDER",
 };
@@ -149,12 +154,19 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     case "source-message":
       if (op.command.kind === "sequence" || op.command.kind === "finish-wait")
         add("sourceMessageSequence", "Source message sequence profile/timing owner is unavailable");
-      if (op.command.kind === "sequence" && op.command.template !== undefined)
-        add("messageNames", "Source message character name owner is unavailable");
+      if (op.command.kind === "sequence" && op.command.template !== undefined) {
+        if (fieldMessageNameReferences(op.command.template).length) add("messageNames", "Source message character name owner is unavailable");
+        if (fieldMessageUsesFee(op.command.template)) add("messageValues", "Source message fee owner is unavailable");
+      }
       break;
     case "message":
-      if (op.template !== undefined) add("messageNames", "Source message character name owner is unavailable");
+      if (op.template !== undefined) {
+        if (fieldMessageNameReferences(op.template).length) add("messageNames", "Source message character name owner is unavailable");
+        if (fieldMessageUsesFee(op.template)) add("messageValues", "Source message fee owner is unavailable");
+      }
       break;
+    case "source-gil-tag": add("messageValues", "Source message fee catalog is unavailable"); break;
+    case "script-random": add("scriptRandom", "Source script random requires the explicit Web field-random owner"); break;
     case "inventory": add("inventory", "Field inventory state is unavailable"); break;
     case "field-recovery": {
       add("recovery", "Field recovery owned state is unavailable");
@@ -198,6 +210,9 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     case "field-color-fade": case "field-flash":
       add("screenEffects", "Source screen effect requires its declared Web policy and known field screen host");
       break;
+    case "field-content-invalidation":
+      add("contentInvalidations", "Source moving-content invalidation requires the current Field and its bound content catalog");
+      break;
     case "field-shake":
       add("cameraShake", "Source camera shake requires the explicit Web presentation stream and actual normal field camera host");
       break;
@@ -227,6 +242,8 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
         "Native AutoSave leader/player/camera synchronization is unassessed; the explicit Web barrier saves existing owners", "deferred");
       break;
     case "assign-npc-route": add("assignedNpcRoutes", "Assigned NPC route requires an explicit source-bound Web controller"); break;
+    case 'source-battle-result': add('sourceBattleResult','Source result requires an actual committed terminal fact and existing ScriptLocal frame');break;
+    case 'source-boss-encounter': add('sourceBossEntry','Boss entry requires its explicit handoff policy; focus parameters do not place actors');add('battleHandoff','Battle preparation/return belongs to the current Session','deferred');break;
     case "source-encounter":
       add("sourceEncounter", "Source encounter requires an explicit selection, native player synchronization and captured FootInfo host");
       add("battleHandoff", "Battle preparation/return host is unavailable", "deferred");

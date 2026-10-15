@@ -1,3 +1,4 @@
+import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
 // One reusable player-input driver. It never starts a script directly, edits
 // flags/HP, swaps maps behind WorldSession, or constructs reward outcomes.
 import assert from "node:assert/strict";
@@ -147,7 +148,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     load("new-game-field-entry"), load("field-fade"), load("source-presentation"), load("content-integrity"),
     load("source-encounter-entry"),
   ]);
-  const runtime = { ...controlledAudioRuntime(), battleHandoff: "prepared", sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY,
+  const runtime = { ...sourceWebReplayRuntimePorts(), ...controlledAudioRuntime(), battleHandoff: "prepared", sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY,
     transportationTimestamp: () => "639273600000000000" };
   const host = { visible: true, mediaReady: true, overlayOpen: false };
   const extended = route.inputs.some(input => input.kind === "menu" || input.kind === "save-restore" ||

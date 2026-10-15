@@ -40,7 +40,7 @@ import type { FieldTimerOriginContent } from "./field-story-runtime.js";
 import { fieldStoryRuntimeForNewMap } from "./field-story-runtime.js";
 export type WorldStateOwner = {
   current: FieldGameOptions;
-  prepare(): { ports: FieldGameOptions; commit(): boolean };
+  prepare(): { ports: FieldGameOptions; sealPublication(): () => boolean; commit(): boolean };
   nativeState?(): SourceNativeState | null;
 };
 
@@ -258,6 +258,8 @@ type Ownership = {
   stop: MapTransitionStop;
   request: string;
   state: string;
+  stateOwner: EventState;
+  stateRevision: number;
   bgm: string;
   environment: string;
   se: string;
@@ -267,8 +269,15 @@ type Ownership = {
   camera: string;
   story: string;
   storyOrigin: string;
+  messageValues: string;
+  messageOwner: FieldGame["sourceMessage"];
+  messageRevision: number;
+  candidateMessageValues: string;
   candidateStory: string;
   candidateStoryOrigin: string;
+  invalidations: string;
+  candidateInvalidations: string;
+  candidateIsCurrent(): boolean;
   publishPresentation(): void;
   validateWalkPolicy(): void;
   walkFieldState?: string;
@@ -406,7 +415,7 @@ export class WorldSession {
       throw new Error("World checkpoint source/version mismatch");
     if ((snapshot.kind === "event-world-v1" || snapshot.kind === "event-world-v2") !==
         (snapshot.field.kind === "event-field-v1" || snapshot.field.kind === "event-field-v2" ||
-          snapshot.field.kind === "event-field-v3" || snapshot.field.kind === "event-field-v4" || snapshot.field.kind === "event-field-v5"))
+          snapshot.field.kind === "event-field-v3" || snapshot.field.kind === "event-field-v4" || snapshot.field.kind === "event-field-v5" || snapshot.field.kind === "event-field-v6" || snapshot.field.kind === "event-field-v7"))
       throw new Error("World and field continuation formats disagree");
     let content = this.initial;
     const loc = snapshot.location;
@@ -571,6 +580,8 @@ export class WorldSession {
     validateWalkBinding();
     const fromActors = this.actorState(from), fromFade = canonical(from.fader.snapshot()),
       fromCamera = canonical(from.cameraSnapshot), fromPresentation = from.sourcePresentationContext;
+    const messageOwner = from.sourceMessage, messageRevision = messageOwner.mutationRevision,
+      messageValues = messageOwner.feeSnapshot;
     const story = from.storyRuntimeSnapshot, storyOrigin = structuredClone(from.storyTimerOrigin);
     const fromStory = canonical(story), fromStoryOrigin = canonical(storyOrigin ?? null);
     const effectBlocker = from.effectMapHandoffBlocker;
@@ -588,7 +599,7 @@ export class WorldSession {
     if (this.catalogHash !== null && this.catalogHash !== catalog.contentHash)
       throw new Error("World catalog changed during the session");
     // Work on a copy: failed preparation cannot clear old local variables or alter flags.
-    const snapshot = from.eventState.snapshot(),
+    const snapshot = from.eventState.snapshot(), stateRevision = from.eventState.mutationRevision,
       state = new EventState(snapshot);
     if (identity.areaId === target.areaId) state.clearMap(target.mapId);
     else if (identity.areaId > 0) state.clearArea(target.mapId);
@@ -704,7 +715,9 @@ export class WorldSession {
         state,
         new StaticAudioState(bgm),
         new StaticAudioState(environment),
-        { ...(owned?.ports ?? {}), npcActivityClock: () => this.current === field,
+        { ...(owned?.ports ?? {}),
+          ...(this.owned?.current.messageFees ? { messageFees: this.owned.current.messageFees } : {}),
+          ...(messageValues ? { messageFeeSeed: messageValues } : {}), npcActivityClock: () => this.current === field,
           ...(story ? { storyRuntimeSeed: fieldStoryRuntimeForNewMap(story) } : {}),
           ...(storyOrigin ? { storyTimerOrigin: structuredClone(storyOrigin) } : {}),
           ...(nativeActors ? { nativeActorPreparation: true } : {}),
@@ -715,6 +728,9 @@ export class WorldSession {
           ...(this.owned?.current.transportationTimestamp ? { transportationTimestamp: this.owned.current.transportationTimestamp } : {}),
           ...(this.owned?.current.soundPresentation ? { soundPresentation: this.owned.current.soundPresentation } : {}),
           ...(this.owned?.current.assignedNpcRoutes ? { assignedNpcRoutes: this.owned.current.assignedNpcRoutes } : {}),
+          ...(this.owned?.current.contentInvalidations ? { contentInvalidations: this.owned.current.contentInvalidations } : {}),
+          ...(this.owned?.current.sourceBossEntry?{sourceBossEntry:this.owned.current.sourceBossEntry}:{}),
+          ...(this.owned?.current.sourceBattleResult?{sourceBattleResult:this.owned.current.sourceBattleResult}:{}),
           ...(this.owned?.current.sourceEncounter ? { sourceEncounter: this.owned.current.sourceEncounter } : {}),
           ...(this.owned?.current.sourceMessageSequence ? { sourceMessageSequence: this.owned.current.sourceMessageSequence } : {}),
           ...(this.owned?.current.conditionLeaderActivity ? { conditionLeaderActivity: this.owned.current.conditionLeaderActivity } : {}),
@@ -749,12 +765,15 @@ export class WorldSession {
       field.startMapEntry(script || null);
       if (field.stop?.kind === "unsupported") throw new Error(field.stop.message);
       const effectPublication = effectCandidate?.seal();
+      const fieldIsCurrent = field.captureMapPublication();
+      const ownedIsCurrent = owned?.sealPublication();
       const prepared = Object.freeze({ field, request: stop });
       this.prepared.set(prepared, {
         from,
         stop,
         request: canonical(stop.request),
         state: canonical(snapshot),
+        stateOwner: from.eventState, stateRevision,
         bgm: canonical(bgm),
         environment: canonical(environment),
         se: canonical(se),
@@ -763,6 +782,10 @@ export class WorldSession {
         fade: fromFade,
         camera: fromCamera,
         story: fromStory, storyOrigin: fromStoryOrigin,
+        invalidations: canonical(from.contentInvalidationsSnapshot), candidateInvalidations: canonical(field.contentInvalidationsSnapshot),
+        candidateIsCurrent: () => fieldIsCurrent() && (ownedIsCurrent?.() ?? true),
+        messageValues: canonical(messageValues), messageOwner, messageRevision,
+        candidateMessageValues: canonical(field.sourceMessage.feeSnapshot),
         candidateStory: canonical(field.storyRuntimeSnapshot), candidateStoryOrigin: canonical(field.storyTimerOrigin ?? null),
         publishPresentation: () => { presentationPublished = true; },
         validateWalkPolicy: () => {
@@ -877,6 +900,7 @@ export class WorldSession {
     const current = ownership.from === this.current && ownership.stop === this.current.stop && value.request === ownership.stop &&
       ownership.request === canonical(this.current.stop.request) &&
       ownership.state === canonical(this.current.eventState.snapshot()) &&
+      ownership.stateOwner === this.current.eventState && ownership.stateRevision === this.current.eventState.mutationRevision &&
       ownership.bgm === canonical(this.current.bgm.snapshot()) &&
       ownership.environment === canonical(this.current.environment.snapshot()) &&
       ownership.se === canonical(this.current.se.snapshot()) &&
@@ -884,6 +908,11 @@ export class WorldSession {
       ownership.presentation === canonical(this.current.sourcePresentationContext) &&
       ownership.fade === canonical(this.current.fader.snapshot()) &&
       ownership.camera === canonical(this.current.cameraSnapshot) &&
+      ownership.invalidations === canonical(this.current.contentInvalidationsSnapshot) &&
+      ownership.candidateInvalidations === canonical(value.field.contentInvalidationsSnapshot) &&
+      ownership.messageValues === canonical(this.current.sourceMessage.feeSnapshot) &&
+      ownership.messageOwner === this.current.sourceMessage && ownership.messageRevision === this.current.sourceMessage.mutationRevision &&
+      ownership.candidateMessageValues === canonical(value.field.sourceMessage.feeSnapshot) &&
       ownership.story === canonical(this.current.storyRuntimeSnapshot) &&
       ownership.storyOrigin === canonical(this.current.storyTimerOrigin ?? null) &&
       ownership.candidateStory === canonical(value.field.storyRuntimeSnapshot) &&
@@ -892,7 +921,7 @@ export class WorldSession {
       (ownership.npcFieldState === undefined || ownership.npcFieldState === this.effectFieldState(value.field)) &&
       (!ownership.effects || ownership.effects.fieldState === this.effectFieldState(value.field));
     if (current) ownership.validateWalkPolicy();
-    return current;
+    return current && ownership.candidateIsCurrent();
   }
   private effectFieldState(field: FieldGame): string {
     return canonical({ time: field.time, busy: field.busy, stop: field.stop,

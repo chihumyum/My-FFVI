@@ -171,6 +171,9 @@ export class UnknownEventValue extends Error {
 }
 export class EventState {
   private data: EventStateSnapshot;
+  #mutation = 0;
+  /** Ephemeral owner revision. Snapshots cannot reset a prepared-map fence. */
+  get mutationRevision(): number { return this.#mutation; }
   private readonly scriptLocalFrames = new WeakMap<ScriptLocalFrame, {
     labels: string[] | null;
     values: Value[] | null;
@@ -214,6 +217,7 @@ export class EventState {
     if (!saved) throw new Error("Script-local frame belongs to another event owner or is invalid");
     this.data.scriptLabels = saved.labels;
     this.data.script = saved.values;
+    this.#mutation++;
   }
   private address(
     ref: VariableRef,
@@ -253,6 +257,7 @@ export class EventState {
     const a = this.address(ref);
     if ("selection" in a) this.data[a.selection] = value;
     else a.bank[a.index] = a.flag ? Number(value !== 0) : value;
+    this.#mutation++;
   }
   beginScript(locals: ScriptLocals | null): void {
     // Integrator.Execute skips CreateScriptLocal when the source omits ScriptLocal.
@@ -270,12 +275,14 @@ export class EventState {
     this.data.script = values;
     this.data.selected = 0;
     this.data.itemSelected = 0;
+    this.#mutation++;
   }
   clearMap(mapId: number): void {
     this.data.currentMapId = int32(mapId);
     this.data.map.fill(0);
     this.data.selected = 0;
     this.data.itemSelected = 0;
+    this.#mutation++;
   }
   clearArea(mapId: number): void {
     this.clearMap(mapId);

@@ -651,6 +651,36 @@ try {
     assert.equal(field.sourceMessage.active, false); assert.equal(h.$("dialogue").hidden, true);
     assert.equal(field.eventState.read({ category: "ScenarioFlag1", index: 3 }), 1);
   });
+  await check("actual app consumes source-bound fees from its catalog and snapshots each complete message window", async () => {
+    const fixture = checkpointFixture(), parent = "a".repeat(64), source = { file: "synthetic", assetPath: "app-fee" };
+    const [{ compileSourceGilTagInstruction }, { compileManualMessageInstruction }] = await Promise.all([
+      import(pathToFileURL(resolve(compiled, "src/compiler/source-message-fees.js"))),
+      import(pathToFileURL(resolve(compiled, "src/compiler/message.js"))),
+    ]);
+    const rows = [{ id: "9001", group_id: "101", coefficient: "50", content_id: "0" },
+      { id: "9002", group_id: "102", coefficient: "80", content_id: "0" }];
+    fixture.field.parentSourceSetHash = parent;
+    fixture.battle.common.sourceMessageFees = { kind: "source-message-fees-v1", sourceSetHash: parent, blockers: [],
+      fees: rows.map(row => ({ groupId: Number(row.group_id), productId: Number(row.id), amount: Number(row.coefficient),
+        source: { ...source, objectId: "9223372036854775807", serializedFile: "controlled", rowId: row.id } })) };
+    const fee = group => compileSourceGilTagInstruction({ type: 1, mnemonic: "SetGilTag", operands: {
+      iValues: [group, ...Array(7).fill(0)], rValues: Array(8).fill(0), sValues: Array(8).fill("") } }, { "product.csv": rows });
+    const message = compileManualMessageInstruction({ type: 1, mnemonic: "Msg", operands: {
+      iValues: Array(8).fill(0), rValues: Array(8).fill(0), sValues: ["PRICE", ...Array(7).fill("")] } },
+      { story_mes_zhc: { PRICE: "Pay (KINGAKU)?<P>Still (KINGAKU)." }, story_cha_zhc: { PRICE: "" } }, { nextMnemonic: "Exit" });
+    fixture.field.scripts.fees = [fee(101), message, fee(102), message, { kind: "exit" }]
+      .map((op, index) => ({ ...structuredClone(op), script: "fees", index: index + 99, source }));
+    const initial = await seal(fixture.field), battle = await seal(fixture.battle), h = await host({ initial, battle,
+      files: new Map([["/game/content.json", initial], ["/game/battle.json", battle]]) });
+    await h.ready(); await h.api.reset(); const field = h.api.read().game, session = h.api.read().flow.currentSession, gil = session.gil;
+    assert.equal(field.startEvent("fees"), true); await h.frame(); await h.frame(); assert.equal(h.$("message").textContent, "Pay 50?");
+    for (const expected of ["Still 50.", "Pay 80?", "Still 80."]) {
+      h.$("next").onclick(); await h.frame(); await h.frame(); assert.equal(h.$("message").textContent, expected);
+    }
+    h.$("next").onclick(); await h.frame(); assert.equal(h.$("dialogue").hidden, true); assert.equal(field.stop, null);
+    assert.equal(session.gil, gil); assert.equal(field.sourceMessage.prepareFeeValue().value, "80");
+    assert.equal(field.sourceMessageFeeExecutions.length, 2); assert.equal(field.checkpoint().kind, "idle-field-v16");
+  });
   await check("a nominated content package loads only its references before publishing any game owner", async () => {
     const p = await referencedPackages(await packages()), h = await host(p, { search: "?package=custom" });
     await h.ready();

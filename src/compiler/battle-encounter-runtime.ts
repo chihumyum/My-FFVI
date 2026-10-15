@@ -1,3 +1,4 @@
+import { WEB_MANUAL_BATTLE_CONTROLS, type SourceBattleControls } from '../core/battle-controls.js';
 import type { BattleAISource } from "../core/battle-ai.js";
 import type { BattleConditionCatalog } from "../core/battle-conditions.js";
 import type {
@@ -42,6 +43,7 @@ export type BattleEncounterRuntimeInput = {
   conditions: BattleConditionCatalog;
   /** Declared approximation lane, never a native condition/controller grant. */
   conditionControlPolicy?: { kind: "web-source-control-actions-v1" };
+  manualControls?: typeof WEB_MANUAL_BATTLE_CONTROLS;
   sprites: Readonly<Record<string, { file: string; width: number; height: number }>>;
   name(key: string): string;
   parameters: { temporary: ParameterValues; limits: ParameterLimits };
@@ -83,6 +85,7 @@ const array = (value: unknown): boolean => Array.isArray(value);
  * remain in the program, with PCs in the report and the existing runtime gate.
  * Shared rule corruption (for example missing drop weights) still fails the batch. */
 export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncounterRuntimeInput) {
+  if(input.manualControls!==undefined&&input.manualControls!==WEB_MANUAL_BATTLE_CONTROLS)throw new Error('Unknown manual battle control policy');
   const requested = [...input.requestedPartyIds];
   const reserves = input.reserveEnemies ?? [], policies = input.development.participants ?? [], waves = input.enemyParties ?? [];
   if (!requested.length || requested.some((id) => !identity(id)) ||
@@ -137,6 +140,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     let rewardPolicy: BattleRewardPolicy | undefined;
     let lifecycle: BattleLifecycle | undefined;
     let handoff: BattleHandoffContent | undefined;
+    let controls:SourceBattleControls|undefined;
     try {
       const m = encounter.metadata;
       if (!encounter.source || encounter.source.rowId !== String(partyId) || !m)
@@ -201,7 +205,9 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         if (m.battleFlags.some(flag => int(flag.values.battle_flag_id) === 27))
           block("formation-override", "ForceSideAttack requires an unimplemented battle formation provider", "battle_flag_group_id");
         const omission = input.development.flagGroups.find((g) => g.id === m.battleFlagGroupId && same(g.rows, m.battleFlags));
-        if (!omission) block("battle-flags", "Battle flag group is not implemented", "battle_flag_group_id");
+        const manualOnly=input.manualControls===WEB_MANUAL_BATTLE_CONTROLS && m.battleFlags.length>0 && m.battleFlags.every(flag=>int(flag.values.battle_flag_id)===19);
+        if(manualOnly){controls={kind:'source-battle-controls-v1',policy:WEB_MANUAL_BATTLE_CONTROLS,initialMode:'manual',offAutoBattle:true};add('development-omission','manual-controls-policy','Explicit Web manual controller consumes source flag19 initialization SetIsAuto(false); later auto toggles/repeated actions are unavailable',{dependency:{table:'battle_flag_group.csv',id:m.battleFlagGroupId}});}
+        else if (!omission) block("battle-flags", "Battle flag group is not implemented", "battle_flag_group_id");
         else add("development-omission", "battle-flags", omission.reason,
           { dependency: { table: "battle_flag_group.csv", id: m.battleFlagGroupId } });
       }
@@ -433,6 +439,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       input.sourceDiagnostics.some((d) => d.partyId === partyId);
     if (!blocked && formationPlan && rewardPolicy && lifecycle && participants) encounters[partyId] = { encounterId: partyId, enemies,
       background: encounter.background, formationPlan, rewardPolicy, lifecycle, participants,
+      ...(controls?{controls}:{}),
       ...(escapePolicy ? { escapePolicy } : {}), ...(handoff ? { handoff } : {}),
       formation: formationPlan.kind === "development" ? null : formationPlan.pattern === 3 ? "opposed" : "normal" };
     entries.push({ partyId, status: blocked ? "blocked" : "compiled", enemyCount: encounter.enemies.length,

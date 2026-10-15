@@ -1,8 +1,15 @@
+import type { SourceMessageFeeCatalog, SourceMessageFeeSnapshot } from "./source-message-fees.js";
+import { executeFieldScriptRandom, type FieldScriptRandomPort } from "./field-script-random.js";
+import { FieldContentInvalidations, type FieldContentInvalidationCatalog, type FieldContentInvalidationsCheckpoint } from "./field-content-invalidations.js";
+import { projectBattleFieldState, type BattleFieldState } from "./field-battle-entry.js";
+import type { BattleEntryCatalog } from "./battle-entry.js";
 import { captureFieldEventActivation, restoreFieldEventActivation, type FieldEventActivationCheckpoint } from "./field-event-activation.js";
 import { bindFieldNpcFlatProjections, flatNpcGroupBlockers, flatNpcInteractionLayer } from "./field-npc-flat-projection.js";
 import { captureAssignedRoutes, restoreAssignedRoutes, type AssignedRoutesCheckpoint, type RestoredAssignedRoute } from './field-assigned-route-checkpoint.js';
 import { WEB_ASSIGNED_ROUTE_POLICY, compileAssignedRouteProgram, createAssignedRouteCursor, settleAssignedRouteCursor, searchAssignedRouteGrid, assignedRouteLineClear, type WebAssignedRoutePolicy, type AssignedRouteProgram, type AssignedRouteCursor } from './field-assigned-route.js';
 import { parseFieldNpcRouteCatalog } from './field-npc-route.js';
+import { WEB_SOURCE_BOSS_ENTRY, parseSourceBossEncounterCommand, type WebSourceBossEntry, type SourceBossEncounterRequest } from './source-boss-encounter.js';
+import { WEB_COMMITTED_BATTLE_RESULT, executeCommittedBattleResult, type FieldBattleResultPort } from './source-battle-result.js';
 import { parseSourceEncounterCommand, selectSourceEncounterSlot } from "./source-encounter.js";
 import { captureSourceEncounterFootBackground } from "./source-encounter-foot.js";
 import { WEB_SOURCE_ENCOUNTER_POLICY, type FieldSourceEncounterPort,
@@ -44,7 +51,7 @@ import { fieldInstructionRequirements, assessFieldRequirements,
 import { executeSourcePresentation, cloneSourcePresentationContext, sourcePresentationCheckpoint,
   type SourcePresentationContext, type SourcePresentationPort } from "./source-presentation.js";
 import { canonical } from "./canonical.js";
-import { MESSAGE_VALUE_PATTERN, parseFieldMessageTemplate, fieldMessageNameReferences,
+import { MESSAGE_VALUE_PATTERN, parseFieldMessageTemplate, fieldMessageNameReferences, fieldMessageUsesFee,
   fieldMessageTemplateSource, resolveFieldMessageTemplate } from "./field-message-template.js";
 import type { FieldMessageNamesPort } from "./owned-message-names.js";
 import { prepareBattleEventSharedReturn, type BattleEventSharedReturn } from "./battle-event-shared.js";
@@ -96,6 +103,7 @@ import type { FieldPuppetActorCatalog, FieldPuppetActorContext, FieldPuppetContr
 import { partyActorMapArea, type PartyActorPlan } from "./party-actors.js";
 import { bindFieldRelays, fieldRelayGroupBlockers } from "./field-relay-policy.js";
 import { bindPassiveEffects, passiveEffectsGroupBlockers } from "./field-passive-effects-host.js";
+import { bindFieldEffectFlatProjection, validateFieldEffectFlatContext, fieldEffectRuntimeBoardBlockers } from "./field-effect-flat-projection.js";
 import { WEB_LOGICAL_FIELD_EFFECTS, logicalEffectsGroupBlockers, validateLogicalEffectMedia, logicalEffectDisplayBlockers } from "./field-logical-effects.js";
 import { projectFieldRelaySearchRanges, canFieldRelayInteractToEntityPosition } from "./field-relay-interaction.js";
 import { fieldNativeMapObjectPosition } from "./field-native-npc.js";
@@ -250,6 +258,11 @@ type FieldCheckpointState = {
   } | null;
 };
 export type FieldCheckpoint = FieldCheckpointState & (
+  { kind: "idle-field-v15"; contentInvalidations: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint }
+  | { kind: "event-field-v6"; contentInvalidations: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint; execution: FieldEventCheckpoint }
+  |
+  { kind: "idle-field-v16"; sourceMessageValues: SourceMessageFeeSnapshot; contentInvalidations?: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint } |
+  { kind: "event-field-v7"; sourceMessageValues: SourceMessageFeeSnapshot; contentInvalidations?: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint; execution: FieldEventCheckpoint } |
   { kind: "idle-field-v10" } | { kind: "event-field-v1"; execution: FieldEventCheckpoint }
   | { kind: "idle-field-v11"; viewPlan: MapEntryViewPlan }
   | { kind: "event-field-v2"; viewPlan: MapEntryViewPlan; execution: FieldEventCheckpoint }
@@ -330,6 +343,7 @@ export type Stop =
       continuation?: string;
       /** Source Encount snapshot; it carries no mutable actor or RNG owner. */
       sourceEncounter?: SourceEncounterRequest;
+      sourceBoss?: SourceBossEncounterRequest;
       /** Explicit ordinary walking return; never a fabricated event script. */
       returnTo?: { kind: "field-idle" };
     };
@@ -354,11 +368,15 @@ export type PreparedFieldSourceEncounter = {
   commitWith(publishBattle: () => void): void;
 };
 export type FieldGameOptions = {
+  /** Immutable catalog context supplied by the existing GameSession owner. */
+  contentInvalidations?: FieldContentInvalidationCatalog;
   /** Explicit Web controller, never native search/raycast admission. */
   retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation;
   assignedNpcRoutes?: WebAssignedRoutePolicy;
   /** Trusted explicit Web selection policy; absent remains native-unknown. */
   sourceEncounter?: FieldSourceEncounterPort;
+  sourceBossEntry?: WebSourceBossEntry;
+  sourceBattleResult?: FieldBattleResultPort;
   /** Internal unpublished restore shell; it must never allocate/replay FX. */
   deferLogicalEffectRestore?: true;
   storyRuntimeSeed?: FieldStoryRuntimeSnapshot;
@@ -376,6 +394,8 @@ export type FieldGameOptions = {
    * autonomous actors even when a stale caller retains the Field instance. */
   npcActivityClock?: () => boolean;
   sourceMessageEffects?: { prepare(effects: readonly SourceMessageEffect[]): () => void };
+  messageFees?: SourceMessageFeeCatalog;
+  messageFeeSeed?: SourceMessageFeeSnapshot;
   sourceMessageSequence?: { prepare(): { context: SourceMessageSequenceContext; validate(): void } };
   puppetActors?: FieldPuppetActorsPort;
   puppetRoster?: FieldPuppetRosterPort;
@@ -392,6 +412,7 @@ export type FieldGameOptions = {
   conditionLeaderActivity?: FieldConditionActivityPort;
   ownedConditions?: FieldOwnedConditionPort;
   recovery?: FieldRecoveryPort;
+  scriptRandom?: FieldScriptRandomPort;
   inventory?: FieldInventoryPort;
   /** Resolves source name references from the session's live or private draft
    * owner; the field never creates a separate name register. */
@@ -417,6 +438,14 @@ export type FieldGameOptions = {
 const contains = (e: FieldEntity, p: Point) =>
   p.x >= e.x && p.x < e.x + e.width && p.y >= e.y && p.y < e.y + e.height;
 export class FieldGame {
+  private readonly contentInvalidations: FieldContentInvalidations;
+  get contentInvalidationsSnapshot(): FieldContentInvalidationsCheckpoint | null { return this.contentInvalidations.snapshot(); }
+  /** All current menu/battle queries use the same Field register. Source entry
+   * may supply its captured pre-sync context without losing script mutations. */
+  projectBattleInvalidContents(catalog: BattleEntryCatalog, transportations: readonly { id: number; type: number }[],
+    state: BattleFieldState = this.battleEntryContext.state) {
+    return projectBattleFieldState(catalog, state, transportations, this.contentInvalidations.invalidTypes(catalog));
+  }
   /** Actual provider composition for one instruction. This does not run its
    * transaction, resolve target owners, or certify an unexecuted script. */
   assessInstructionAdmission(op: Op, actorId = "-1001", refreshRequired?: boolean) {
@@ -442,10 +471,13 @@ export class FieldGame {
       : !!(actor?.native && this.nativeActorProviders && this.camera && this.options.puppetActors &&
         this.content.cameraHost?.callbacks === "fresh-normal-field-v1");
     const context: FieldAdmissionContext = { actorKind, providers: {
+      contentInvalidations: presence(!!this.options.contentInvalidations),
       inventory: presence(typeof this.options.inventory?.prepare === "function"),
       messageNames: presence(typeof this.options.messageNames?.prepare === "function"),
       sourceMessageSequence: presence(typeof this.options.sourceMessageSequence?.prepare === "function"),
+      messageValues: presence(this.options.messageFees !== undefined),
       recovery: presence(typeof this.options.recovery?.prepare === "function"),
+      scriptRandom: presence(typeof this.options.scriptRandom?.prepare === "function"),
       ownedConditions: presence(typeof this.options.ownedConditions?.prepare === "function"),
       party: presence(typeof this.options.party?.prepare === "function"),
       roster: presence(typeof this.options.roster?.prepare === "function"),
@@ -464,6 +496,8 @@ export class FieldGame {
       cameraShake: presence(this.cameraShakeAvailable),
       eventSaveCompletion: "unknown", battleHandoff: "unknown",
       assignedNpcRoutes: presence(this.options.assignedNpcRoutes === WEB_ASSIGNED_ROUTE_POLICY),
+      sourceBossEntry: presence(this.options.sourceBossEntry===WEB_SOURCE_BOSS_ENTRY && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.player.native),
+      sourceBattleResult: presence(this.options.sourceBattleResult?.policy===WEB_COMMITTED_BATTLE_RESULT && typeof this.options.sourceBattleResult.prepare==='function'),
       sourceEncounter: presence(this.options.sourceEncounter?.policy === WEB_SOURCE_ENCOUNTER_POLICY &&
         !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.camera &&
         typeof this.options.sourceEncounter.prepare === "function"),
@@ -531,6 +565,10 @@ export class FieldGame {
   get transportationId(): number | null { return this.currentTransportationId; }
   get transportationPresentation() { return frameworkTransportationPresentation(this.content.developmentProfile); }
   /** Observable development departures, separate from source state and saves. */
+  private readonly feeJournal: { site: Site; value: SourceMessageFeeSnapshot; atMilliseconds: number }[] = [];
+  get sourceMessageFeeExecutions() { return structuredClone(this.feeJournal); }
+  private readonly scriptRandomJournal: { site: Site; value: number; atMilliseconds: number }[] = [];
+  get scriptRandomExecutions() { return structuredClone(this.scriptRandomJournal); }
   readonly transportationExecutions: { site: Site; command: FieldTransportationCommand; currentId: number | null;
     omissions: readonly string[] }[] = [];
   private transportationExecuting = false;
@@ -808,6 +846,7 @@ export class FieldGame {
   get npcActivitySnapshot(): Record<string, FieldNpcActivityState> {
     return structuredClone(Object.fromEntries([...this.npcActivities].map(([id, value]) => [id, value.state])));
   }
+  private sourceBossPending: { request: Extract<Stop,{kind:'unsupported'|'encounter'}>; validate():void }|null=null;
   private sourceEncounterPending: { request: Extract<Stop, { kind: "unsupported" | "encounter" }>;
     source: SourceEncounterRequest; validate(): void } | null = null;
   private nativeActorBindings: FieldActorFactoryBindings | null = null;
@@ -1024,7 +1063,7 @@ export class FieldGame {
     } catch (error) { this.block(error instanceof Error ? error.message : String(error)); }
   }
   dialogue: Dialogue | null = null;
-  readonly sourceMessage = new SourceMessageState();
+  readonly sourceMessage: SourceMessageState;
   private sourceMessageTask: number | null = null;
   private retainedMessage: Dialogue | null = null;
   private readonly choiceNamespace = nextChoiceNamespace++;
@@ -1129,6 +1168,10 @@ export class FieldGame {
     restoringNative = false,
     readonly se: FieldSoundState = new FieldSoundState(),
   ) {
+    this.contentInvalidations = new FieldContentInvalidations(content, options.contentInvalidations);
+    validateFieldEffectFlatContext(content);
+    if (options.messageFees && options.messageFees.sourceSetHash !== content.parentSourceSetHash) throw new Error("Message fee catalog/source mismatch");
+    this.sourceMessage = new SourceMessageState(options.messageFees, options.messageFeeSeed);
     if (hasFieldStoryRuntime(content)) {
       const seed = options.storyRuntimeSeed && restoreFieldStoryRuntime(options.storyRuntimeSeed, content, options.storyTimerOrigin, options.cameraShake);
       this.timerState = seed?.timer ?? createFieldTimer(WEB_FIELD_TIMER_POLICY, content.parentSourceSetHash);
@@ -1285,7 +1328,9 @@ export class FieldGame {
         ids.add(entity.id);
         const placement = projectFieldEffectPlacement(entity.effect, { range: content.cameraHost!.mapRange,
           tileMapPresent: true, standbyAnchor: content.nativeNpcStandby ? fieldNativeNpcStandbyPosition(content.nativeNpcStandby) : null }, entity.layer);
-        return { kind: "create", id: entity.id, definition: entity.effect, position: placement.position };
+        const flatProjection = bindFieldEffectFlatProjection(content,entity,"entity_default");
+        return { kind: "create", id: entity.id, definition: entity.effect, position: placement.position,
+          ...(flatProjection ? {flatProjection} : {}) };
       });
       operations.push({ kind: "setup", registeredBoards: sourceEffects.map((entity) => entity.id), groupUpdate: false });
       if (content.fieldEffects.webPolicy && (content.developmentProfile?.logicalFieldEffects !== WEB_LOGICAL_FIELD_EFFECTS ||
@@ -1296,7 +1341,7 @@ export class FieldGame {
       if (options.deferLogicalEffectRestore) {
         if (!restoringNative || !this.logicalEffectsPersistent || options.fieldEffectMap!.hasHistory ||
             sourceEffects.some(entity => !validateLogicalEffectMedia(content.fieldEffects!, entity.effect!.assetGroup) ||
-              logicalEffectDisplayBlockers(entity.effect!, content.fieldEffects, fieldEffectBoardBlockers(entity.effect!)).length > 0))
+              fieldEffectRuntimeBoardBlockers(entity.effect!,content.fieldEffects!,bindFieldEffectFlatProjection(content,entity,"entity_default"),entity.id).length > 0))
           throw new Error("Unbound unpublished logical effect restore shell");
         // Only immutable source/placement admission was checked. No create,
         // setup, host preparation, counter or manager state is replayed.
@@ -1305,7 +1350,7 @@ export class FieldGame {
         const boards = effects.snapshot().boards;
         if (boards.length !== sourceEffects.length || operations.some(operation => operation.kind === "create" &&
             !boards.some(board => board.id === operation.id && canonical(board.definition) === canonical(operation.definition) &&
-              canonical(board.position) === canonical(operation.position))))
+              canonical(board.position) === canonical(operation.position) && canonical(board.flatProjection ?? null) === canonical(operation.flatProjection ?? null))))
           throw new Error("Logical effect checkpoint board/source identity changed");
       } else effects.prepare(operations).commit();
       if (!options.deferLogicalEffectRestore) this.effects = effects;
@@ -1902,6 +1947,67 @@ export class FieldGame {
   get sourcePresentationContext(): SourcePresentationContext | null {
     return cloneSourcePresentationContext(this.options.sourcePresentation?.context() ?? null);
   }
+  /** A preparation fence, not a save or another Field owner. Media hosts may
+   * read this candidate but cannot silently advance or replace its state. */
+  captureMapPublication(): () => boolean {
+    const events = this.eventState, revision = events.mutationRevision, content = this.content;
+    const message = this.sourceMessage, messageRevision = message.mutationRevision;
+    const tasks = [...this.tasks], actors = Object.entries(this.actors).map(([id, actor]) =>
+      ({ id, actor, native: actor.native, entity: actor.native?.entity, animation: actor.animation, motion: actor.motion }));
+    const playerStep = this.pendingPlayerStep, walk = this.pendingWalkEncounter, encounter = this.sourceEncounterPending, boss=this.sourceBossPending;
+    const replayHandles = tasks.map(task => task.bgmReplay?.handle);
+    const before = this.mapPublicationState();
+    return () => this.content === content && this.eventState === events && events.mutationRevision === revision &&
+      this.sourceMessage === message && message.mutationRevision === messageRevision &&
+      this.tasks.length === tasks.length && tasks.every((task, index) => this.tasks[index] === task && task.bgmReplay?.handle === replayHandles[index]) &&
+      Object.keys(this.actors).length === actors.length && actors.every(({ id, actor, native, entity, animation, motion }) =>
+        this.actors[id] === actor && actor.native === native && actor.native?.entity === entity && actor.animation === animation && actor.motion === motion) &&
+      this.pendingPlayerStep === playerStep && this.pendingWalkEncounter === walk && this.sourceEncounterPending === encounter && this.sourceBossPending===boss &&
+      this.mapPublicationState() === before;
+  }
+  private mapPublicationState(): string {
+    // Opaque callbacks remain under their existing owners; capture their
+    // references separately above. Task data/cursors are an observation only.
+    const tasks = this.tasks.map(({ animationRepeat: repeat, bgmReplay: replay, ...task }) => ({ ...task,
+      animationRepeat: repeat && { op: repeat.op, fingerprint: repeat.fingerprint, script: repeat.script,
+        webPC: repeat.webPC, actorId: repeat.actorId, registers: repeat.registers },
+      bgmReplay: replay && { op: replay.op } }));
+    const data = {
+      content: this.content, time: this.time, remainder: this.remainder, nextTask: this.nextTask,
+      nextChoice: this.nextChoice, nextEventSave: this.nextEventSave, nextVisibilityTimer: this.nextVisibilityTimer,
+      nextNpcEvent: this.nextNpcEvent, stop: this.stop, tasks, eventRootScript: this.eventRootScript,
+      scriptHook: this.scriptHook && { ...this.scriptHook, locals: this.eventState.exportScriptLocalFrame(this.scriptHook.locals) },
+      eventActivation: this.eventActivation, puppetLifecycle: this.puppetLifecycle,
+      currentProperties: this.currentProperties, entities: this.entityList,
+      activeGroups: [...this.activeGroups], hiddenEntities: [...this.hiddenEntities], openedTreasures: [...this.openedTreasures],
+      events: this.eventState.snapshot(), contentInvalidations: this.contentInvalidationsSnapshot,
+      native: this.nativeActorStateFingerprint,
+      actors: Object.values(this.actors).map(({ native: _, animation, ...actor }) => ({ ...actor, animation: animation?.snapshot() ?? null })),
+      npcActivities: this.npcActivitySnapshot, assignedRoutes: this.assignedRouteSnapshot,
+      tiles: this.tileAnimations.snapshot(), doors: this.openTriggers.snapshot(),
+      bgm: this.bgm.snapshot(), environment: this.environment.snapshot(), se: this.se.snapshot(),
+      fade: this.fader.snapshot(), camera: this.cameraSnapshot, cameraOffset: this.cameraOffset, effects: this.fieldEffectsSnapshot,
+      collision: this.collisionSwitches, updateMask: this.entityUpdateMask, transportation: this.transportationId,
+      synchronizedEntry: this.synchronizedEntry, entryTaskStarted: this.entryTaskStarted, cameraEventActive: this.cameraEventActive,
+      story: this.storyRuntimeSnapshot, storyOrigin: this.storyTimerOrigin ?? null,
+      dialogue: this.dialogue, retainedMessage: this.retainedMessage, message: this.sourceMessage.snapshot(), sourceMessageTask: this.sourceMessageTask,
+      choice: this.pendingChoice && { request: this.pendingChoice.request, taskId: this.pendingChoice.task.id,
+        op: this.pendingChoice.op, answer: this.pendingChoice.answer },
+      eventSave: this.pendingEventSave && { request: this.pendingEventSave.request, taskId: this.pendingEventSave.task.id,
+        barrier: this.pendingEventSave.barrier },
+      interaction: this.interaction && { entityId: this.interaction.entityId, restoreDirection: this.interaction.restoreDirection,
+        waitUntil: this.interaction.waitUntil, activity: this.interaction.activity?.lease ?? null },
+      shop: this.shopTask, treasureScene: this.treasureSceneState,
+      visibilityTimers: this.visibilityTimers.map(timer => ({ ticket: timer.ticket, op: timer.op,
+        actorId: timer.actor.id, entityId: timer.entity.id, recordedSeconds: timer.recordedSeconds, delaySeconds: timer.delaySeconds,
+        programName: timer.programName, webPc: timer.webPc, instruction: timer.instruction })),
+    };
+    return canonical(JSON.parse(JSON.stringify(data, (_key, value) => {
+      if (typeof value === "function" || typeof value === "number" && !Number.isFinite(value))
+        throw new Error("Unobservable candidate map publication state");
+      return value;
+    })));
+  }
   private nativeCheckpointContext(bindings: FieldActorFactoryBindings, factory: FieldActorFactoryCatalog,
     providers: FieldPuppetHostProviders, autonomousMotions?: FieldNativeCheckpointContext["autonomousMotions"],
     assignedMotions?: FieldNativeCheckpointContext["assignedMotions"]): FieldNativeCheckpointContext {
@@ -1989,6 +2095,18 @@ export class FieldGame {
     const viewPlan = this.content.entry.viewPlan && structuredClone(this.content.entry.viewPlan);
     const storyRuntime = this.storyRuntimeSnapshot;
     const assignedNpcRoutes=this.assignedCheckpoint;
+    const contentInvalidations = this.contentInvalidationsSnapshot;
+    const sourceMessageValues = this.sourceMessage.feeSnapshot;
+    if (sourceMessageValues) return { ...snapshot, kind: execution ? "event-field-v7" : "idle-field-v16", sourceMessageValues,
+      ...(contentInvalidations ? { contentInvalidations } : {}),
+      ...(assignedNpcRoutes ? { assignedNpcRoutes } : {}), ...(storyRuntime ? { storyRuntime } : {}),
+      ...(npcActivities ? { npcActivities } : {}), ...(viewPlan ? { viewPlan } : {}), ...(execution ? { execution } : {}) } as FieldCheckpoint;
+    if (contentInvalidations) return execution ? { ...snapshot, kind: "event-field-v6", contentInvalidations,
+      ...(assignedNpcRoutes ? { assignedNpcRoutes } : {}), ...(storyRuntime ? { storyRuntime } : {}),
+      ...(npcActivities ? { npcActivities } : {}), ...(viewPlan ? { viewPlan } : {}), execution }
+      : { ...snapshot, kind: "idle-field-v15", contentInvalidations,
+        ...(assignedNpcRoutes ? { assignedNpcRoutes } : {}), ...(storyRuntime ? { storyRuntime } : {}),
+        ...(npcActivities ? { npcActivities } : {}), ...(viewPlan ? { viewPlan } : {}) };
     if(assignedNpcRoutes) return execution ? {...snapshot,kind:'event-field-v5',assignedNpcRoutes,
       ...(storyRuntime?{storyRuntime}:{}),...(npcActivities?{npcActivities}:{}),...(viewPlan?{viewPlan}:{}),execution}
       : {...snapshot,kind:'idle-field-v14',assignedNpcRoutes,...(storyRuntime?{storyRuntime}:{}),
@@ -2077,17 +2195,19 @@ export class FieldGame {
         Object.values(content.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id)))))
       throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
     const s = structuredClone(raw);
-    const hasAssigned = s.kind === "idle-field-v14" || s.kind === "event-field-v5";
-    const hasStory = s.kind === "idle-field-v13" || s.kind === "event-field-v4" || hasAssigned && Object.hasOwn(s,"storyRuntime");
-    const hasActivities = s.kind === "idle-field-v12" || s.kind === "event-field-v3" || (hasStory || hasAssigned) && Object.hasOwn(s, "npcActivities");
-    const continuation = s.kind === "event-field-v1" || s.kind === "event-field-v2" || s.kind === "event-field-v3" || s.kind === "event-field-v4" || s.kind === "event-field-v5";
-    const hasView = s.kind === "idle-field-v11" || s.kind === "event-field-v2" || (hasActivities || hasStory || hasAssigned) && Object.hasOwn(s, "viewPlan");
+    const hasValues = s.kind === "idle-field-v16" || s.kind === "event-field-v7";
+    const hasInvalidations = s.kind === "idle-field-v15" || s.kind === "event-field-v6" || hasValues && Object.hasOwn(s,"contentInvalidations");
+    const hasAssigned = s.kind === "idle-field-v14" || s.kind === "event-field-v5" || (hasInvalidations || hasValues) && Object.hasOwn(s,"assignedNpcRoutes");
+    const hasStory = s.kind === "idle-field-v13" || s.kind === "event-field-v4" || (hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s,"storyRuntime");
+    const hasActivities = s.kind === "idle-field-v12" || s.kind === "event-field-v3" || (hasStory || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s, "npcActivities");
+    const continuation = s.kind === "event-field-v1" || s.kind === "event-field-v2" || s.kind === "event-field-v3" || s.kind === "event-field-v4" || s.kind === "event-field-v5" || s.kind === "event-field-v6" || s.kind === "event-field-v7";
+    const hasView = s.kind === "idle-field-v11" || s.kind === "event-field-v2" || (hasActivities || hasStory || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s, "viewPlan");
     checkpointKeys(
       s,
       "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,se,fade,camera,native" +
-        (continuation ? ",execution" : "") + (hasView ? ",viewPlan" : "") + (hasActivities ? ",npcActivities" : "") + (hasStory ? ",storyRuntime" : "") + (hasAssigned ? ",assignedNpcRoutes" : ""),
+        (continuation ? ",execution" : "") + (hasView ? ",viewPlan" : "") + (hasActivities ? ",npcActivities" : "") + (hasStory ? ",storyRuntime" : "") + (hasAssigned ? ",assignedNpcRoutes" : "") + (hasInvalidations ? ",contentInvalidations" : "") + (hasValues ? ",sourceMessageValues" : ""),
     );
-    if (!["idle-field-v10", "idle-field-v11", "idle-field-v12", "idle-field-v13", "idle-field-v14", "event-field-v5", "event-field-v1", "event-field-v2", "event-field-v3", "event-field-v4"].includes(s.kind) ||
+    if (!["idle-field-v16", "event-field-v7", "idle-field-v10", "idle-field-v11", "idle-field-v12", "idle-field-v13", "idle-field-v14", "idle-field-v15", "event-field-v6", "event-field-v5", "event-field-v1", "event-field-v2", "event-field-v3", "event-field-v4"].includes(s.kind) ||
         s.contentHash !== content.contentHash || hasAssigned !== (options.assignedNpcRoutes === WEB_ASSIGNED_ROUTE_POLICY && content.npcRoutes !== undefined) || hasActivities !== (content.frameworkNpcActivity !== undefined) || hasStory !== hasFieldStoryRuntime(content))
       throw new Error("Field checkpoint source/version mismatch");
     if (hasStory && (s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime.colorFilter?.tween)
@@ -2132,6 +2252,7 @@ export class FieldGame {
       StaticAudioState.restore(s.bgm, content.bgm),
       StaticAudioState.restore(s.environment, content.environment),
       { ...options, ...(native ? { nativeActorPreparation: true } : {}),
+        ...(hasValues ? { messageFeeSeed: (s as { sourceMessageValues: SourceMessageFeeSnapshot }).sourceMessageValues } : {}),
         ...(hasStory ? { storyRuntimeSeed: restoreFieldStoryRuntime((s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime, content, options.storyTimerOrigin, options.cameraShake) } : {}) },
       FieldFadeState.restore(s.fade),
       s.camera ?? undefined,
@@ -2210,6 +2331,7 @@ export class FieldGame {
     s.openedTreasures.forEach((id) => next.openedTreasures.add(id));
     next.tileAnimations.restoreCheckpoint(s.tiles);
     next.openTriggers.restoreCheckpoint(s.doors, next.entities);
+    if (hasInvalidations) next.contentInvalidations.restore((s as { contentInvalidations: FieldContentInvalidationsCheckpoint }).contentInvalidations);
     next.time = s.time;
     next.remainder = s.remainder;
     next.nextTask = s.nextTask;
@@ -3192,11 +3314,13 @@ export class FieldGame {
     const template = parseFieldMessageTemplate(raw), source = fieldMessageTemplateSource(template);
     if (canonical(source.pages) !== canonical(pages) || source.speaker !== message.speaker)
       throw new Error("Source message template/text binding mismatch");
-    if (!this.options.messageNames) throw new Error("Source message character name owner is unavailable");
-    const names = this.options.messageNames.prepare(fieldMessageNameReferences(template));
-    const resolved = resolveFieldMessageTemplate(template, names.names);
+    const references = fieldMessageNameReferences(template);
+    if (references.length && !this.options.messageNames) throw new Error("Source message character name owner is unavailable");
+    const names = references.length ? this.options.messageNames!.prepare(references) : null;
+    const fee = fieldMessageUsesFee(template) ? this.sourceMessage.prepareFeeValue() : null;
+    const resolved = resolveFieldMessageTemplate(template, names?.names ?? [], fee?.value);
     return { message: { ...structuredClone(plain), text: resolved.pages[0]!, speaker: resolved.speaker },
-      pages: resolved.pages, validate: () => { validateContent(); names.validate(); } };
+      pages: resolved.pages, validate: () => { validateContent(); names?.validate(); fee?.validate(); } };
   }
   private beginManualDialogue(op: Extract<Op, { kind: "message" }>, task: Task): void {
     const manual = op.manual;
@@ -3718,6 +3842,22 @@ export class FieldGame {
   }
   /** Source Encount selects once and captures FootInfo while the actual
    * player still has its pre-sync transform. No live actor is written here. */
+  private beginSourceBossEncounter(op:Extract<Op,{kind:'source-boss-encounter'}>,task:Task):void {
+    const command=parseSourceBossEncounterCommand(op.command);
+    if(this.options.sourceBossEntry!==WEB_SOURCE_BOSS_ENTRY||!this.nativeActorBindings||!this.nativeRuntime?.mapLifecycle||!this.nativeActorProviders||!this.player.native)throw new Error('Source Boss entry requires its explicit Web policy and native actors');
+    if(!this.content.scripts[command.continuation])throw new Error('Missing source Boss continuation');
+    const program=this.content.scripts[task.script],pc=task.pc,player=this.player,native=player.native!,entity=native.entity,camera=this.camera,runtime=this.nativeRuntime,providers=this.nativeActorProviders,bindings=this.nativeActorBindings,events=this.eventState,revision=events.mutationRevision;
+    const fingerprint=()=>canonical({content:this.content,actors:this.nativeActorStateFingerprint,camera:this.cameraSnapshot,event:events.snapshot(),time:this.time,task:{script:task.script,pc:task.pc,done:task.done,registers:task.generalRegisters},op});
+    const before=fingerprint();
+    const request:Extract<Stop,{kind:'unsupported'|'encounter'}>={kind:'encounter',message:'正在准备来源Boss战斗…',site:op,party:command.partyId,continuation:command.continuation,sourceBoss:{kind:'source-boss-encounter-request-v1',policy:WEB_SOURCE_BOSS_ENTRY,command}};
+    const key=canonical(request);this.sourceBossPending={request,validate:()=>{if(this.options.sourceBossEntry!==WEB_SOURCE_BOSS_ENTRY||this.stop!==request||canonical(request)!==key||!this.tasks.includes(task)||task.done||task.pc!==pc||this.content.scripts[task.script]!==program||program?.[pc-1]!==op||this.player!==player||player.native!==native||native.entity!==entity||this.camera!==camera||this.nativeRuntime!==runtime||this.nativeActorProviders!==providers||this.nativeActorBindings!==bindings||this.eventState!==events||events.mutationRevision!==revision||fingerprint()!==before)throw new Error('Stale source Boss entry');}};this.stop=request;
+  }
+  prepareSourceBossEncounterStart():{validate():void;commitWith(publish:()=>void):void}|null {
+    if(this.stop?.kind!=='encounter'||this.stop.sourceBoss===undefined)return null;
+    const pending=this.sourceBossPending;if(!pending||pending.request!==this.stop)throw new Error('Source Boss requires its original request');pending.validate();let consumed=false;
+    const validate=()=>{if(consumed||this.sourceBossPending!==pending)throw new Error('Stale source Boss preparation');pending.validate();};
+    return {validate,commitWith:(publish)=>{validate();publish();consumed=true;this.sourceBossPending=null;}};
+  }
   private beginSourceEncounter(op: Extract<Op, { kind: "source-encounter" }>, task: Task): void {
     const command = parseSourceEncounterCommand(op.command), port = this.options.sourceEncounter;
     if (!port || port.policy !== WEB_SOURCE_ENCOUNTER_POLICY || !this.nativeActorBindings ||
@@ -4638,14 +4778,14 @@ export class FieldGame {
           this.block("Concurrent source message windows are not implemented", op);
           return;
         }
-        if (this.dialogue?.manual && ["change-map", "encounter", "source-encounter"].includes(op.kind)) {
+        if (this.dialogue?.manual && ["change-map", "encounter", "source-encounter", 'source-boss-encounter'].includes(op.kind)) {
           this.block("Field transition conflicts with an unfinished ordinary message", op);
           return;
         }
-        if (this.sourceMessage.active && (op.kind === "encounter" || op.kind === "source-encounter")) {
+        if (this.sourceMessage.active && (op.kind === "encounter" || op.kind === "source-encounter" || op.kind==='source-boss-encounter')) {
           this.block("Source message must close before battle handoff", op); return;
         }
-        if (this.pendingChoice && ["message", "source-message", "choice", "change-map", "encounter", "source-encounter", "treasure-box"].includes(op.kind)) {
+        if (this.pendingChoice && ["message", "source-message", "choice", "change-map", "encounter", "source-encounter", 'source-boss-encounter', "treasure-box"].includes(op.kind)) {
           this.block("Concurrent field interaction conflicts with an unfinished choice task", op);
           return;
         }
@@ -4678,6 +4818,23 @@ export class FieldGame {
           return;
         }
         switch (op.kind) {
+          case "source-gil-tag": {
+            try { this.sourceMessage.prepareFee(op).commit();
+              this.feeJournal.push({ site: { script: op.script, index: op.index, source: structuredClone(op.source) }, value: this.sourceMessage.feeSnapshot!, atMilliseconds: this.time });
+            }
+            catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
+          }
+          case 'source-battle-result': {const program=this.content.scripts[t.script],pc=t.pc,script=t.script,identity=canonical(op);try{executeCommittedBattleResult(this.eventState,this.options.sourceBattleResult,()=>{if(!this.tasks.includes(t)||t.done||this.stop!==null||t.pc!==pc||t.script!==script||this.content.scripts[script]!==program||program?.[pc-1]!==op||canonical(op)!==identity)throw new Error('Stale source result Task');});}catch(error){this.block(error instanceof Error?error.message:String(error),op);return;}break;}
+          case "script-random": {
+            const program = this.content.scripts[t.script], pc = t.pc, script = t.script, fingerprint = canonical(op);
+            try { const value = executeFieldScriptRandom(op.command, this.eventState, this.options.scriptRandom, () => {
+              if (!this.tasks.includes(t) || t.done || this.stop !== null || t.pc !== pc || t.script !== script ||
+                  this.content.scripts[script] !== program || program?.[pc - 1] !== op || canonical(op) !== fingerprint)
+                throw new Error("Stale source script random task");
+            }); this.scriptRandomJournal.push({ site: { script: op.script, index: op.index, source: structuredClone(op.source) }, value, atMilliseconds: this.time }); } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
+          }
           case "event-save":
             try {
               if (Object.hasOwn(op, "sourceAutoSave")) {
@@ -5359,6 +5516,10 @@ export class FieldGame {
               if (this.colorFilterState!.start(op) === "wait") { t.colorFadeWait = op; return; }
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
+          case "field-content-invalidation":
+            try { this.contentInvalidations.execute(t.script, t.pc - 1); }
+            catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
           case "field-shake":
             try {
               if (!this.cameraShakeAvailable) throw new Error("Normal field camera / explicit Web camera-shake policy is unavailable");
@@ -5449,6 +5610,7 @@ export class FieldGame {
               this.dialogue = { ...presentation.message, task: t.id };
             } catch (error) { t.pc--; this.block(error instanceof Error ? error.message : String(error), op); }
             return;
+          case 'source-boss-encounter':
           case "source-encounter":
           case "encounter":
             if (this.hasUnfinishedInterpolation()) {
@@ -5467,6 +5629,7 @@ export class FieldGame {
               this.block("宝箱任务尚未完成，尚不支持并发入战", op);
               return;
             }
+            if(op.kind==='source-boss-encounter'){try{this.beginSourceBossEncounter(op,t);}catch(error){this.block(error instanceof Error?error.message:String(error),op);}return;}
             if (op.kind === "source-encounter") {
               try { this.beginSourceEncounter(op, t); }
               catch (error) { this.block(error instanceof Error ? error.message : String(error), op); }

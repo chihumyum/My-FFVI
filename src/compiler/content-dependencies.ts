@@ -5,6 +5,7 @@ import type { SourceWalkEncounterDependencies, SourceWalkEncounterRowEvidence, W
 import { tableId } from "./table-id.js";
 import { canonical } from "../core/canonical.js";
 import { parseFrameworkWalkEncounterPolicy } from "../core/walk-encounters.js";
+import { parseSourceBossEncounterCommand } from '../core/source-boss-encounter.js';
 import { parseSourceEncounterCommand } from "../core/source-encounter.js";
 import { fieldInstructionRequirements, assessFieldRequirements,
   type FieldRequirement, type FieldAdmissionContext } from "../core/field-content-admission.js";
@@ -375,6 +376,12 @@ export function analyzeContentDependencies(input: {
             }
           }catch(error){diagnose('assigned-route-catalog-invalid',error instanceof Error?error.message:String(error),at);}
           break;
+        }
+        case 'source-boss-encounter': {
+          try{parseSourceBossEncounterCommand(op.command);}catch(error){diagnose('source-boss-command-invalid',error instanceof Error?error.message:String(error),at);}
+          const id=op.command.partyId,valid=integer(id,1);if(valid)encounters.add(id);
+          edge(from,'encounter',id,valid?`encounter:${id}`:null,valid?'resolved':'missing',op);
+          referenceScript(from,map,op.command.continuation,op);break;
         }
         case "source-encounter": {
           try { parseSourceEncounterCommand(op.command); }

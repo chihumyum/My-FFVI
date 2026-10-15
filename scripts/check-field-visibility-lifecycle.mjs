@@ -1,3 +1,4 @@
+import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
 // Complete actor-visibility source-program lifecycle. All candidates are private;
 // no source rewrites, story-state defaults, publication, or second VM/owner.
 import assert from 'node:assert/strict';
@@ -32,7 +33,7 @@ const { controlledAudioRuntime } = await import(pathToFileURL(resolve(root, 'scr
 const { decodeFieldOp } = await load('compiler/field');
 const { createWebFieldMessageSequencePort } = await load('core/source-message-sequence');
 const { createWebFlatConditionLeaderActivityPort } = await load('core/field-condition-activity');
-const runtime = () => ({ ...controlledAudioRuntime(), sourceMessageSequence: createWebFieldMessageSequencePort(),
+const runtime = () => ({ ...sourceWebReplayRuntimePorts(), ...controlledAudioRuntime(), sourceMessageSequence: createWebFieldMessageSequencePort(),
   conditionLeaderActivity: createWebFlatConditionLeaderActivityPort() });
 const cohortHelperBytes=await readFile(new URL('./visibility-cohort.mjs',import.meta.url));
 const beforeRuntime = await runtimeDigest(root, compiled), ownBytes = await readFile(new URL(import.meta.url));

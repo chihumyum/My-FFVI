@@ -3,9 +3,9 @@
  * character_default_name.csv record; the live owner resolves tag/sourceId. */
 export type CharacterMessageNameRef = { tag: string; sourceId: number; rowId: number };
 export type MessageTemplatePart = { kind: "text"; text: string } |
-  { kind: "character-name"; ref: CharacterMessageNameRef };
+  { kind: "character-name"; ref: CharacterMessageNameRef } | { kind: "source-fee"; tag: "KINGAKU" };
 export type FieldMessageTemplate = {
-  kind: "field-message-template-v1";
+  kind: "field-message-template-v1" | "field-message-template-v2";
   pages: MessageTemplatePart[][];
   speaker: MessageTemplatePart[];
 };
@@ -52,13 +52,17 @@ function text(raw: unknown, speaker: boolean): string {
  * same source character and row binding throughout body and speaker. */
 export function parseFieldMessageTemplate(raw: unknown): FieldMessageTemplate {
   const value = object(raw, ["kind", "pages", "speaker"], "document");
-  if (value.kind !== "field-message-template-v1") throw new Error("Invalid message template kind");
+  if (value.kind !== "field-message-template-v1" && value.kind !== "field-message-template-v2") throw new Error("Invalid message template kind");
   const bindings = new Map<string, CharacterMessageNameRef>(), rows = new Map<number, string>();
-  let references = 0;
+  let references = 0, amountReferences = 0;
   const parts = (rawParts: unknown, speaker: boolean): MessageTemplatePart[] => array(rawParts).map(rawPart => {
     const kind = rawPart && typeof rawPart === "object" ? Object.getOwnPropertyDescriptor(rawPart, "kind")?.value : undefined;
-    const part = object(rawPart, kind === "text" ? ["kind", "text"] : ["kind", "ref"], "part");
+    const part = object(rawPart, kind === "text" ? ["kind", "text"] : kind === "source-fee" ? ["kind", "tag"] : ["kind", "ref"], "part");
     if (part.kind === "text") return { kind: "text", text: text(part.text, speaker) };
+    if (part.kind === "source-fee") {
+      if (value.kind !== "field-message-template-v2" || part.tag !== "KINGAKU") throw new Error("Unknown source message amount tag");
+      references++; amountReferences++; return { kind: "source-fee", tag: "KINGAKU" };
+    }
     if (part.kind !== "character-name") throw new Error("Unknown message template part");
     const input = object(part.ref, ["tag", "sourceId", "rowId"], "name reference");
     if (typeof input.tag !== "string" || !tagPattern.test(input.tag)) throw new Error("Invalid message template name tag");
@@ -73,7 +77,8 @@ export function parseFieldMessageTemplate(raw: unknown): FieldMessageTemplate {
   const speaker = parts(value.speaker, true);
   if (!pages.length || pages.some(page => !page.length) || !references)
     throw new Error("Empty message template page or missing name reference");
-  return { kind: "field-message-template-v1", pages, speaker };
+  if ((value.kind === "field-message-template-v2") !== (amountReferences > 0)) throw new Error("Source fee template version mismatch");
+  return { kind: value.kind, pages, speaker };
 }
 
 /** No binding is cached here. The caller prepares one view from its live
@@ -88,16 +93,25 @@ export function fieldMessageNameReferences(template: FieldMessageTemplate): Char
  * check. These unresolved strings are never a presentation fallback. */
 export function fieldMessageTemplateSource(template: FieldMessageTemplate): ResolvedFieldMessageTemplate {
   const value = parseFieldMessageTemplate(template), render = (parts: MessageTemplatePart[]) =>
-    parts.map(part => part.kind === "text" ? part.text : "(" + part.ref.tag + ")").join("");
+    parts.map(part => part.kind === "text" ? part.text : "(" + (part.kind === "source-fee" ? part.tag : part.ref.tag) + ")").join("");
   return { pages: value.pages.map(render), speaker: render(value.speaker) };
 }
 
-export function resolveFieldMessageTemplate(template: FieldMessageTemplate, names: readonly string[]): ResolvedFieldMessageTemplate {
+export function fieldMessageUsesFee(template: FieldMessageTemplate): boolean {
+  const value = parseFieldMessageTemplate(template);
+  return [...value.pages.flat(), ...value.speaker].some(part => part.kind === "source-fee");
+}
+
+export function resolveFieldMessageTemplate(template: FieldMessageTemplate, names: readonly string[], amount?: string): ResolvedFieldMessageTemplate {
   const value = parseFieldMessageTemplate(template), supplied = array(names);
   const resolved = new Map<string, string>();
   let index = 0;
   const render = (parts: MessageTemplatePart[], speaker: boolean): string => parts.map(part => {
     if (part.kind === "text") return part.text;
+    if (part.kind === "source-fee") {
+      if (typeof amount !== "string" || !/^(0|[1-9][0-9]*)$/.test(amount) || Number(amount) > 0x7fffffff) throw new Error("Source message amount value is unavailable");
+      return amount;
+    }
     const name = text(supplied[index++], speaker), previous = resolved.get(part.ref.tag);
     if (previous !== undefined && previous !== name) throw new Error("Conflicting prepared message names");
     resolved.set(part.ref.tag, name);

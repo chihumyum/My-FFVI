@@ -1,3 +1,4 @@
+import { compileSourceMessageFees } from "./source-message-fees.js";
 import { compilePhysicalLimits } from "./physical-parameters.js";
 import { hash, record } from "./content.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
@@ -37,6 +38,13 @@ import type {
   BattleCatalog,
   CombatantDefinition,
 } from "../core/battle-content.js";
+
+/** Only the pure producer may request a pre-addition audit baseline. It is
+ * compiled from the same raw inputs; never manufactured by stripping a field
+ * from a candidate. Normal content construction always includes the catalog. */
+export type GameCatalogCompileOptions = {
+  messageFeeAdditionBaseline?: "omit-source-message-fees-for-addition-audit-v1";
+};
 
 /** Compiled capabilities are shared by independent entry composers. No
  * checkpoint state or development omission is part of this module boundary. */
@@ -85,7 +93,12 @@ function sourceEncounterAdmission(runtime: ReturnType<typeof compileBattleEncoun
 
 /** Source-bound tables/messages/media may be scoped differently. Retain their
  * original fingerprints; reading system messages does not execute a checkpoint. */
-export async function compileGameCatalogModules(root: string, source: SharedBattleSource): Promise<GameCatalogModules> {
+export async function compileGameCatalogModules(root: string, source: SharedBattleSource,
+  options: GameCatalogCompileOptions = {}): Promise<GameCatalogModules> {
+  if (Object.keys(options).some(key => key !== "messageFeeAdditionBaseline") ||
+      options.messageFeeAdditionBaseline !== undefined &&
+      options.messageFeeAdditionBaseline !== "omit-source-message-fees-for-addition-audit-v1")
+    throw new Error("Unknown game catalog addition audit option");
   const field = record(
     JSON.parse(
       snapshotFile(
@@ -308,6 +321,8 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
       mp: int(r.mp_value1),
     });
   }
+  // Keep source reads and their ledger identical in both compilations.
+  const sourceMessageFees = compileSourceMessageFees(conditionReader, handoffSystem.tables, source.parentSourceSetHash).catalog;
   const common: GameCatalogModules["common"] = {
     kind: "opening-battle-development",
     profile: "narshe-playability-v35",
@@ -316,6 +331,7 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
     atb: source.atb,
     timing: { mode: "active", speedIndex: 2 },
     battleAbilities,
+    ...(options.messageFeeAdditionBaseline === undefined ? { sourceMessageFees } : {}),
     playerConditionTraits: Object.fromEntries(ordinary.definitions.map(definition => [definition.sourceId,
       compileSourceFreshPlayerConditionTraits(conditionReader, definition.sourceId).metadata])),
     battleEntry: structuredClone(source.entryProviders.catalog),
@@ -434,8 +450,9 @@ export function assembleGameCatalog(modules: GameCatalogModules, entry: GameCata
 
 /** The shared source build never reads, verifies or copies a field checkpoint.
  * It compiles actual reusable modules and then uses the source initializer. */
-export async function compileSharedGameCatalog(root: string, source: SharedBattleSource): Promise<BattleCatalog> {
-  const modules = await compileGameCatalogModules(root, source);
+export async function compileSharedGameCatalog(root: string, source: SharedBattleSource,
+  options: GameCatalogCompileOptions = {}): Promise<BattleCatalog> {
+  const modules = await compileGameCatalogModules(root, source, options);
   return assembleGameCatalog(modules, { kind: "source-new-game", limitations: [
     "共享来源目录与来源新游戏入口；目录定义不授予角色、能力、装备或剧情可达性。",
     "初始名册、库存、装备与条件直接使用来源新游戏初始化；不装载纳尔谢开发检查点或跳过战斗脚本、旗标。",

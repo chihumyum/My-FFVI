@@ -65,7 +65,9 @@ export function createFrameworkNpcFlatEvidenceReader({root=repository,compiledDi
   if(!maps.has(key))maps.set(key,(async()=>{
    const sourceMap=await api.verifyContent(structuredClone(await readSourceMap(row.mapId)),api.world.maps[String(row.mapId)].contentHash),
     assessment=api.assessFrameworkNpcFlatMap(api.snapshot,sourceMap,proof.reason);
-   return{sourceMap,assessment};
+   // The candidate/input collection retains the complete source body.
+   // This proof cache needs only the verified map identity and derived assessment.
+   return{sourceMap:{contentHash:sourceMap.contentHash},assessment};
   })());
   const result=await maps.get(key);assert.equal(row.sourceMapHash,result.sourceMap.contentHash,'NPC flat strict map pin mismatch');
   assert.equal(row.assessmentHash,result.assessment.contentHash,'NPC flat original source assessment mismatch');
@@ -83,7 +85,7 @@ export function createFrameworkNpcFlatEvidenceReader({root=repository,compiledDi
    const sourceMaps=[];for(const row of proof.maps)sourceMaps.push(await api.verifyContent(structuredClone(await readSourceMap(row.mapId)),api.world.maps[String(row.mapId)].contentHash));
    const all=api.assessFrameworkNpcFlatWorld(api.snapshot,api.world,sourceMaps,proof.reason);
    for(let i=0;i<proof.maps.length;i++){const row=proof.maps[i],assessment=all[i];assert.equal(row.sourceMapHash,sourceMaps[i].contentHash);assert.equal(row.assessmentHash,assessment.contentHash);
-     maps.set(api.canonical({mapId:row.mapId,reason:proof.reason}),Promise.resolve({sourceMap:sourceMaps[i],assessment}));}
+     maps.set(api.canonical({mapId:row.mapId,reason:proof.reason}),Promise.resolve({sourceMap:{contentHash:sourceMaps[i].contentHash},assessment}));}
   })());
   await complete.get(proofKey);
   if(mapId===null)return{reason:proof.reason};

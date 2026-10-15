@@ -118,7 +118,7 @@ function host(initial = normal()) {
   };
   const owner: WorldStateOwner = {
     current: { sourcePresentation: port },
-    prepare: () => ({ ports: {}, commit: () => { ownedCommits++; return true; } }),
+    prepare: () => ({ ports: {}, sealPublication: () => () => true, commit: () => { ownedCommits++; return true; } }),
   };
   return { port, owner, published, setContext: (value: SourcePresentationContext) => { context = structuredClone(value); },
     get prepares() { return prepares; }, get ownedCommits() { return ownedCommits; } };
@@ -238,7 +238,7 @@ test("World candidate inherits a detached live context and probe writes stay pri
   state.write(mapFlag, 17);
   f.target.initializer = "probe";
   // An owned draft cannot substitute an unproved ordinary-title context.
-  h.owner.prepare = () => ({ ports: { sourcePresentation: { context: normal } }, commit: () => true });
+  h.owner.prepare = () => ({ ports: { sourcePresentation: { context: normal } }, sealPublication: () => () => true, commit: () => true });
   const world = new WorldSession(f.content, state, h.owner), old = world.field;
   old.startEvent("leave");
   const before = state.snapshot(), prepared = world.prepare(f.catalog, f.target);
@@ -259,7 +259,7 @@ test("World candidate inherits a detached live context and probe writes stay pri
 
 test("World candidate rejects unknown context and draft-only presentation authority without changing the old map", () => {
   for (const owner of [host(unknown()).owner, {
-    current: {}, prepare: () => ({ ports: { sourcePresentation: { context: normal } }, commit: () => true }),
+    current: {}, prepare: () => ({ ports: { sourcePresentation: { context: normal } }, sealPublication: () => () => true, commit: () => true }),
   } satisfies WorldStateOwner]) {
     const f = fixture(), state = EventState.initialized();
     f.target.initializer = "probe";
@@ -336,7 +336,7 @@ test("pending title task uses the protected candidate port before commit and liv
 
 test("failed owned publication leaves the candidate presentation port unpublished", () => {
   const f = fixture(), h = host(), state = EventState.initialized();
-  h.owner.prepare = () => ({ ports: {}, commit: () => false });
+  h.owner.prepare = () => ({ ports: {}, sealPublication: () => () => true, commit: () => false });
   f.target.initializer = "init";
   f.target.scripts.init = [wait, presentation(1), flag(2), exit];
   const world = new WorldSession(f.content, state, h.owner), old = world.field;

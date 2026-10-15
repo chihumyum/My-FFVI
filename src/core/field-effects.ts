@@ -1,4 +1,5 @@
 import type { Evidence } from "../field/types.js";
+import { fieldEffectRuntimeBoardBlockers, type FieldEffectFlatRef } from "./field-effect-flat-projection.js";
 import { checkpointKeys } from "./checkpoint-validation.js";
 import { WEB_LOGICAL_FIELD_EFFECTS, validateLogicalEffectCatalog, validateLogicalEffectMedia,
   type LogicalFieldEffectsPolicy } from "./field-logical-effects.js";
@@ -38,6 +39,7 @@ export type FieldEffectBoardState = {
   id: string; definition: FieldEffectBoardDefinition; cameraId: number;
   position: FieldEffectPoint; mesh: FieldEffectMesh;
   activeSelf: boolean; fadeAlpha: number; currentFadeStatus: 0;
+  flatProjection?: FieldEffectFlatRef;
 };
 export type FieldEffectPlayerState = {
   cameraId: number; assetGroup: string; references: number; autoPlaying: boolean;
@@ -54,7 +56,7 @@ export type FieldEffectState = {
 export type FieldEffectObservation = { cameraId: number; particlePlaying: boolean[]; kind?: never } |
   { cameraId: number; kind: "all-loop-completion-independent-v1"; particlePlaying?: never };
 export type FieldEffectOperation =
-  | { kind: "create"; id: string; definition: FieldEffectBoardDefinition; position: FieldEffectPoint }
+  | { kind: "create"; id: string; definition: FieldEffectBoardDefinition; position: FieldEffectPoint; flatProjection?: FieldEffectFlatRef }
   | { kind: "destroy"; id: string }
   /** Asset unloading clears prefab/shared lookup caches, not live players or
    * allocation counters (ReleaseAlreadyLoadPrefabs 575150). */
@@ -257,6 +259,10 @@ export function validateFieldEffectState(state: FieldEffectState, catalog: Field
   }
   for (const board of state.boards) {
     identity(board.id); point(board.position); validateFieldEffectBoard(board.definition);
+    if (board.flatProjection !== undefined || board.definition.birdviewPuppet && catalog.webPolicy?.boardProjection) {
+      if (fieldEffectRuntimeBoardBlockers(board.definition,catalog,board.flatProjection,board.id,board.position).length)
+        throw new Error("Unbound flat effect board state");
+    }
     const player = state.players.find((p) => p.cameraId === board.cameraId);
     if (!player || player.assetGroup !== board.definition.assetGroup || board.currentFadeStatus !== 0 ||
         typeof board.activeSelf !== "boolean" || ![0, 1].includes(board.fadeAlpha)) throw new Error("Invalid effect board ownership");
@@ -292,8 +298,7 @@ export function projectFieldEffects(state: FieldEffectState, catalog: FieldEffec
       case "create": {
         identity(op.id); point(op.position);
         if (next.boards.some((b) => b.id === op.id)) throw new Error("Duplicate effect board: " + op.id);
-        const d = op.definition, blocked = fieldEffectBoardBlockers(d).filter(reason =>
-          !(reason === "Field effect minimap provider is unavailable" && validateLogicalEffectMedia(catalog, d.assetGroup)));
+        const d = op.definition, blocked = fieldEffectRuntimeBoardBlockers(d,catalog,op.flatProjection,op.id,op.position);
         if (blocked.length) throw new Error(blocked.join("; "));
         const m = media(catalog, d.assetGroup), sharedId = d.playOnAwake ? next.shared[d.assetGroup] : undefined;
         let p: FieldEffectPlayerState;
@@ -310,7 +315,8 @@ export function projectFieldEffects(state: FieldEffectState, catalog: FieldEffec
         }
         p.references++;
         next.boards.push({ id: op.id, definition: structuredClone(d), cameraId: p.cameraId, position: structuredClone(op.position),
-          mesh: projectFieldEffectBoard(d, m.renderTexture), activeSelf: d.playOnAwake, fadeAlpha: d.playOnAwake ? 1 : 0, currentFadeStatus: 0 });
+          mesh: projectFieldEffectBoard(d, m.renderTexture), activeSelf: d.playOnAwake, fadeAlpha: d.playOnAwake ? 1 : 0, currentFadeStatus: 0,
+          ...(op.flatProjection ? {flatProjection:structuredClone(op.flatProjection)} : {}) });
         events.push({ kind: "clear-render-texture", cameraId: p.cameraId }); break;
       }
       case "destroy": {
@@ -422,9 +428,9 @@ export class FieldEffects {
         throw new Error("Invalid logical effect playback checkpoint");
     }
     for (const board of state.boards) {
-      if (fieldEffectBoardBlockers(board.definition).some(reason => reason !== "Field effect minimap provider is unavailable"))
+      if (fieldEffectRuntimeBoardBlockers(board.definition,catalog,board.flatProjection,board.id,board.position).length)
         throw new Error("Logical effect checkpoint has an unresolved gameplay board dependency");
-      checkpointKeys(board, "id,definition,cameraId,position,mesh,activeSelf,fadeAlpha,currentFadeStatus");
+      checkpointKeys(board, "id,definition,cameraId,position,mesh,activeSelf,fadeAlpha,currentFadeStatus" + (Object.hasOwn(board,"flatProjection") ? ",flatProjection" : ""));
       checkpointKeys(board.position, "x,y,z");
       checkpointKeys(board.mesh, "vertices,uv,triangles,renderQueue,affectedMode,zTest,blendType,collider");
       checkpointKeys(board.mesh.collider, "enabled,width,height");

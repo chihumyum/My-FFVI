@@ -1,3 +1,4 @@
+import { deriveFrameworkFieldEffectFlatContent, type FrameworkFieldEffectFlatAssessment } from "./framework-field-effect-flat-projection.js";
 import { deriveFrameworkNpcFlatContent, type FrameworkNpcFlatAssessment } from "./framework-npc-flat-projection.js";
 import { canonical, hash } from "./content.js";
 import { fieldEffectCompilationBlockers } from "./field-effects.js";
@@ -24,6 +25,7 @@ export type FrameworkContentOptions = {
   periodicPresentations?: readonly FrameworkPeriodicAssessment[];
   npcAreaAssessments?: readonly FrameworkNpcAreaAssessment[];
   npcFlatAssessments?: readonly FrameworkNpcFlatAssessment[];
+  fieldEffectFlat?: FrameworkFieldEffectFlatAssessment;
 };
 
 export type FrameworkContentRetained = {
@@ -47,6 +49,7 @@ export type FrameworkContentReport = {
   periodicReport?: { maps: FrameworkPeriodicAssessment[]; compiled: number; unready: number; sourceGameplayAdmitted: false };
   npcActivity?: FrameworkNpcAreaReport;
   npcProjection?: {maps:number;declared:number;derived:number;unready:number;nativeParity:false};
+  fieldEffectProjection?: {maps:number;declared:number;derived:number;unready:number;nativeParity:false};
   transportation: { capability: NonNullable<DevelopmentProfile["transportation"]>; limitations: string[] };
 };
 export type FrameworkContent = {
@@ -184,7 +187,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (!initial || strictEntry.mapContentHash !== initial.contentHash)
     throw new Error("Framework strict entry/map binding mismatch");
 
-  if (Object.keys(options).some(key => key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments"))
+  if (Object.keys(options).some(key => key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
     throw new Error("Unknown framework derivation option");
   if (options.mapAnimatedEntities !== undefined && options.mapAnimatedEntities !== WEB_FIELD_MAP_ANIMATION)
     throw new Error("Unknown framework animated map entity policy");
@@ -193,6 +196,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (logical) {
     if (Object.keys(logical).sort().join(",") !== "catalog,declaration") throw new Error("Invalid logical field effects option");
     const d = logical.declaration, policy = logical.catalog.webPolicy;
+    if (policy?.boardProjection !== undefined) throw new Error("Flat field effect projection requires its explicit full-source assessment option");
     if (Object.keys(d).sort().join(",") !== "catalogHash,kind,mapIds,parentSourceSetHash,policy,reason,sourceSetHash" ||
         d.kind !== "web-logical-field-effects-declaration-v1" || d.policy !== WEB_LOGICAL_FIELD_EFFECTS ||
         typeof d.reason !== "string" || !d.reason.trim() || !Array.isArray(d.mapIds) ||
@@ -289,7 +293,9 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
     if (!Array.isArray(options.npcAreaAssessments)) throw new Error("Invalid complete NPC Area assessments");
     composed = deriveFrameworkNpcAreaContent(composed, strictMaps, options.npcAreaAssessments);
   }
-  if (options.npcFlatAssessments === undefined) return composed;
-  if (!Array.isArray(options.npcFlatAssessments)) throw new Error("Invalid complete NPC flat assessments");
-  return deriveFrameworkNpcFlatContent(composed, strictMaps, options.npcFlatAssessments);
+  if (options.npcFlatAssessments !== undefined) {
+    if (!Array.isArray(options.npcFlatAssessments)) throw new Error("Invalid complete NPC flat assessments");
+    composed = deriveFrameworkNpcFlatContent(composed, strictMaps, options.npcFlatAssessments);
+  }
+  return options.fieldEffectFlat === undefined ? composed : deriveFrameworkFieldEffectFlatContent(composed, strictMaps, options.fieldEffectFlat);
 }

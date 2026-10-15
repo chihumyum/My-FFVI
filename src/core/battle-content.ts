@@ -1,3 +1,5 @@
+import type { SourceMessageFeeCatalog } from "./source-message-fees.js";
+import { parseSourceBattleControls } from './battle-controls.js';
 import type { PhysicalParameters } from "./physical.js";
 import type { AtbRules } from "./atb.js";
 import type { ParameterValues } from "./parameters.js";
@@ -47,6 +49,7 @@ export type SourceConditionTraits = {
 
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
+  controls?: import('./battle-controls.js').SourceBattleControls;
   kind: "opening-battle-development";
   profile: "narshe-playability-v35";
   contentHash: string;
@@ -76,6 +79,7 @@ export type BattleContent = {
   conditionControlPolicy?: { kind: "web-source-control-actions-v1" };
   /** Fresh source player parameter facts, keyed by the exact source character.
    * This does not change the owned initializer or represent live equipment. */
+  sourceMessageFees?: SourceMessageFeeCatalog;
   playerConditionTraits?: Readonly<Record<string, SourceConditionTraits>>;
   /** null explicitly marks an unported reward lane in development fixtures. */
   drops: BattleDropCatalog | null;
@@ -170,6 +174,7 @@ export type BattleEncounter = Pick<
   /** null means selection is still required, never a default normal formation. */
   formation: BattleContent["formation"] | null;
   formationPlan?: BattleFormationPlan;
+  controls?: import('./battle-controls.js').SourceBattleControls;
   escapePolicy?: FrameworkBattleEscapePolicy;
   rewardPolicy?: BattleRewardPolicy;
   lifecycle?: BattleLifecycle;
@@ -250,11 +255,13 @@ export function encounterContent(
   if (Object.hasOwn(catalog.common, "handoff")) throw new Error("Battle handoff must belong to an encounter");
   if (Object.hasOwn(catalog.common, "participants")) throw new Error("Battle participants must belong to an encounter");
   if (Object.hasOwn(catalog.common, "playerParticipants")) throw new Error("Battle player participants must belong to an encounter");
+  if(Object.hasOwn(catalog.common,'controls'))throw new Error('Battle controls must belong to an encounter');
   const encounter = catalog.encounters[String(id)];
   if (!encounter) return null;
   if (encounter.encounterId !== id) throw new Error("Inconsistent battle encounter identity");
   const options = encounterFormationOptions(encounter);
-  const { formationPlan, escapePolicy, rewardPolicy, lifecycle, handoff, participants, playerParticipants, ...definition } = encounter;
+  const { formationPlan, escapePolicy, rewardPolicy, lifecycle, handoff, participants, playerParticipants, controls, ...definition } = encounter;
+  const manualControls=controls===undefined?{}:{controls:parseSourceBattleControls(controls)};
   const escape = escapePolicy === undefined ? {} : { escapePolicy: parseBattleEscapePolicy(escapePolicy) };
   if (rewardPolicy === undefined && catalog.gameState.characterInitializations)
     throw new Error("Source encounter lacks battle reward policy");
@@ -269,10 +276,10 @@ export function encounterContent(
   const units = participants === undefined ? {} : { participants: parseBattleParticipantContent(participants, encounter.enemies) };
   const playerPlan = playerParticipants === undefined ? {} : { playerParticipants: parseBattlePlayerPlan(playerParticipants) };
   if (!formationPlan)
-    return { ...catalog.common, ...definition, ...escape, ...rewards, ...event, ...handoffContent, ...units, ...playerPlan,
+    return { ...catalog.common, ...definition, ...escape, ...rewards, ...event, ...handoffContent, ...units, ...playerPlan, ...manualControls,
       formation: options[0]!, contentHash: catalog.contentHash };
   const choice = selectBattleFormation(formationPlan, seed);
-  return { ...catalog.common, ...definition, ...escape, ...rewards, ...event, ...handoffContent, ...units, ...playerPlan, formation: choice.formation, formationChoice: choice,
+  return { ...catalog.common, ...definition, ...escape, ...rewards, ...event, ...handoffContent, ...units, ...playerPlan, ...manualControls, formation: choice.formation, formationChoice: choice,
     contentHash: catalog.contentHash };
 }
 export type AbilityDefinition = {

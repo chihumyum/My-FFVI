@@ -1,3 +1,4 @@
+import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
 // Full, unchanged source-program experiments on the actual shared/native VM.
 // Controlled geometry/owners are declared here, never claimed as story state.
 import assert from 'node:assert/strict';
@@ -124,6 +125,7 @@ function build(binding) {
   const f = type0ConditionSessionFixture(), rawMisc = { characteristics: true, corps_order: [0, 1, 2, 3],
     resident_characters: [], change_character_condition_list: [] },
     puppet = compileFieldPuppetActorCatalog(rawMisc), namespace = { ...binding.map.residentScripts, ...binding.map.scriptAliases };
+  if (options.leaderLane === 'production-web-flat') Object.assign(f.runtime, sourceWebReplayRuntimePorts());
   const controlledParent = hash({ kind: 'synthetic-native-vm-cohort-host-parent-v1' });
   for (const content of [f.map, f.world, f.content]) content.parentSourceSetHash = controlledParent;
   // Author launcher is deliberately inert. It is not one of the source

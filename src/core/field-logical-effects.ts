@@ -1,4 +1,5 @@
 import { canonical } from "./canonical.js";
+import { validateFieldEffectFlatPolicy, flatFieldEffectGroupBlockers, type FieldEffectFlatPolicy } from "./field-effect-flat-projection.js";
 import type { Evidence, FieldContent } from "../field/types.js";
 import type { FieldEffectCatalog, FieldEffectMediaDefinition, FieldEffectRuntimeHost,
   FieldEffectObservation, FieldEffectPlan, FieldEffectState } from "./field-effects.js";
@@ -28,6 +29,7 @@ export type LogicalFieldEffectsPolicy = {
   proofs: Record<string, LogicalFieldEffectProof>;
   display: "defer-particle-material-and-effect-minimap-v1";
   nativeParity: false;
+  boardProjection?: FieldEffectFlatPolicy;
 };
 const disabled = ["CollisionModule", "TriggerModule", "SubModule", "ExternalForcesModule", "LightsModule"];
 function digest(value: unknown): void {
@@ -67,6 +69,7 @@ export function validateLogicalEffectCatalog(catalog: FieldEffectCatalog): void 
   if (canonical(Object.keys(catalog.media).sort()) !== canonical(Object.keys(catalog.webPolicy.proofs).sort()))
     throw new Error("Logical effect proof/catalog closure changed");
   for (const group of Object.keys(catalog.media)) validateLogicalEffectMedia(catalog, group);
+  validateFieldEffectFlatPolicy(catalog);
 }
 export function logicalEffectDisplayBlockers(definition: { assetGroup: string; visibleMinimap: boolean },
   catalog: FieldEffectCatalog | undefined, reasons: readonly string[]): string[] {
@@ -81,13 +84,14 @@ export function logicalEffectDisplayBlockers(definition: { assetGroup: string; v
 }
 export function logicalEffectsGroupBlockers(group: NonNullable<FieldContent["map"]["groups"]>[string],
   content: { fieldEffects?: FieldEffectCatalog | undefined; developmentProfile?: FieldContent["developmentProfile"];
-    sourceSetHash: string; parentSourceSetHash: string }): typeof group.blockers {
+    sourceSetHash: string; parentSourceSetHash: string; mapId?: number; map?: FieldContent["map"] | null }): typeof group.blockers {
   const catalog = content.fieldEffects;
   if (!catalog?.webPolicy) return group.blockers;
   if (content.developmentProfile?.logicalFieldEffects !== WEB_LOGICAL_FIELD_EFFECTS ||
       catalog.webPolicy.sourceSetHash !== content.sourceSetHash || catalog.webPolicy.parentSourceSetHash !== content.parentSourceSetHash)
     throw new Error("Logical effect display deferral requires its exact Web content profile");
-  return group.blockers.filter(blocker => !group.entities.some(entity => entity.kind === 11 && entity.effect &&
+  const projectionBlockers = flatFieldEffectGroupBlockers(group, content);
+  return projectionBlockers.filter(blocker => !group.entities.some(entity => entity.kind === 11 && entity.effect &&
     canonical(entity.source) === canonical(blocker.source) &&
     logicalEffectDisplayBlockers(entity.effect, catalog, [blocker.reason]).length === 0));
 }

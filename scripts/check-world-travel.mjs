@@ -1,3 +1,4 @@
+import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
 // Verified source geometry and actors through the app's public gameplay owners.
 // Navigation, encounter cadence and flat materials are explicit Web policies.
 import assert from "node:assert/strict";
@@ -58,7 +59,7 @@ class Context {
   }
   putImageData(image) { assert.equal(image.data.length, this.canvas.width * this.canvas.height * 4); this.canvas.puts++; }
 }
-const host = { visible: true, mediaReady: true, overlayOpen: false }, runtime = { battleHandoff: "prepared" };
+const host = { visible: true, mediaReady: true, overlayOpen: false }, runtime = { ...sourceWebReplayRuntimePorts(), battleHandoff: "prepared" };
 const base = resolve(root, contentDirectory), output = resolve(root, reportFile), stages = [];
 const report = { kind: "framework-world-travel-check-v1", result: "running", stages,
   evidence: { source: "verified source maps 1 and 3, unchanged terrain/PointIn/exit and new-game initialization",

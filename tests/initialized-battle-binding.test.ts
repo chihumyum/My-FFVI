@@ -272,3 +272,33 @@ test("a consistent policy receipt grants no other capability or owned-state chan
   await assert.rejects(selectInitializedBattleCatalog({ selection: "source-baseline-v1", sourceWorld: f.sourceWorld,
     sourceBattle: f.directory.frameworkCatalog }), /strict source baseline cannot use a Web condition control policy/);
 });
+
+test("v3 directory manual controls keep the exact condition receipt through both initialized consumers",async()=>{
+ const f=await conditionPolicyFixture();
+ f.directory.report.policy.kind="source-battle-directory-policy-v3";
+ (f.directory.report.policy.framework as Record<string,unknown>).manualControls="web-manual-battle-controls-v1";
+ f.directory.report=seal(f.directory.report);
+ const selected=await selectInitializedBattleCatalog(f);
+ assert.deepEqual(selected.catalog.gameState,f.sourceBattle.gameState);
+ const checker=await import(pathToFileURL(resolve("scripts/check-selected-source-batches.mjs")).href);
+ const binding=await checker.validateSelectedSourceCatalogBinding({built:{
+  kind:"initialized-source-map-build-v1",recipeKind:"initialized-source-map-recipe-v3",
+  battleCatalogSelection:"shared-framework-directory-v1",sourceAreaScopeReceipt:null,battleDirectory:selected.directoryBinding,
+ },battle:selected.catalog,sourceBattle:f.sourceBattle,sourceWorld:f.sourceWorld,
+ directory:selected.catalog,requests:f.directory.requests,directoryReport:f.directory.report},
+ {compiledDir:resolve(import.meta.dirname,"..")});
+ assert.equal(binding.catalogHash,selected.catalog.contentHash);
+});
+test("new directory controls cannot be omitted, forged, granted by an old version or inferred for a future version",async()=>{
+ for(const change of [
+  (p:Record<string,unknown>)=>{delete(p.framework as Record<string,unknown>).manualControls;},
+  (p:Record<string,unknown>)=>{(p.framework as Record<string,unknown>).manualControls="unknown";},
+  (p:Record<string,unknown>)=>{p.kind="source-battle-directory-policy-v2";},
+  (p:Record<string,unknown>)=>{p.kind="source-battle-directory-policy-v4";},
+ ]){
+  const f=await conditionPolicyFixture(),p=f.directory.report.policy as Record<string,unknown>;
+  p.kind="source-battle-directory-policy-v3";(p.framework as Record<string,unknown>).manualControls="web-manual-battle-controls-v1";
+  change(p);f.directory.report=seal(f.directory.report);
+  await assert.rejects(selectInitializedBattleCatalog(f),/manual control|versioned directory/);
+ }
+});

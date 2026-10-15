@@ -1,3 +1,4 @@
+import { parseSourceBattleControls } from '../core/battle-controls.js';
 import { BattleConditions } from "../core/battle-conditions.js";
 import type { BattleCatalog, BattleEncounterDiagnostic } from "../core/battle-content.js";
 import { encounterFormationOptions } from "../core/battle-content.js";
@@ -95,6 +96,7 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
         enemyDefinitions = Object.values(participants.enemyDefinitions);
       });
       checked("encounter-formation", () => { formationOptions = encounterFormationOptions(encounter); });
+      checked('encounter-controls',()=>{if(Object.hasOwn(catalog.common,'controls'))throw new Error('Battle controls must belong to an encounter');if(encounter.controls!==undefined)parseSourceBattleControls(encounter.controls);});
       checked("encounter-escape", () => {
         if (Object.hasOwn(catalog.common, "escapePolicy")) throw new Error("Escape policy must belong to an encounter");
         if (encounter.escapePolicy !== undefined) parseBattleEscapePolicy(encounter.escapePolicy);

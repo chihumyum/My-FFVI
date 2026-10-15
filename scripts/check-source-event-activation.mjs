@@ -1,3 +1,4 @@
+import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
 // Whole installed source programs on original maps and an explicitly authored
 // contact map. This uses the real Session/Flow/handoff/storage engine only.
 import assert from 'node:assert/strict';
@@ -84,7 +85,7 @@ async function execute(root,lane,prefix){const row={mapId:root.mapId,alias:root.
  choices:[],messages:[],battles:[],saves:[],commands:[],originalMapEntryRequested:lane==='original-source-map',sourceMapInitializerStarted:false,sourceMapInitializerCompleted:false,
  invocation:lane==='original-source-map'?'public-whole-body-observer-not-contact':'actual-authored-contact-with-original-program',runtimeAdmission:'unassessed',storyReachability:'unverified'};
  let bound,game,flow,commands,handoff;const presented=new Set();
- try{bound=await bind(root,lane);const runtime={transportationTimestamp:()=>'639273600000000000',battleHandoff:'prepared',sourceEncounterPolicy:api.WEB_SOURCE_ENCOUNTER_POLICY,
+ try{bound=await bind(root,lane);const runtime={ ...sourceWebReplayRuntimePorts(),scriptRandom:'web-source-script-random-field-stream-v1',transportationTimestamp:()=>'639273600000000000',battleHandoff:'prepared',sourceEncounterPolicy:api.WEB_SOURCE_ENCOUNTER_POLICY,
   sourceMessageSequence:api.createWebFieldMessageSequencePort(),conditionLeaderActivity:api.createWebFlatConditionLeaderActivityPort(),
   cameraShake:api.createWebFieldCameraShakePolicy(),assignedNpcRoutes:api.WEB_ASSIGNED_ROUTE_POLICY,
   fieldEffects:api.createWebLogicalFieldEffectsHost(),retainedWorldTransportation:api.WEB_RETAINED_WORLD_TRANSPORTATION,

@@ -1,14 +1,15 @@
 import type { compileOpeningBattle } from "./battle.js";
 import type { BattleCatalog, CombatantDefinition } from "../core/battle-content.js";
-import { compileGameCatalogModules, assembleGameCatalog } from "./game-catalog.js";
+import { compileGameCatalogModules, assembleGameCatalog, type GameCatalogCompileOptions } from "./game-catalog.js";
 
 /** Compatibility adapter for the explicit Narshe development checkpoint.
  * Shared source construction calls neither this adapter nor its seed decoder. */
 export async function compileOpeningPlayable(
   root: string,
   source: Awaited<ReturnType<typeof compileOpeningBattle>>,
+  options: GameCatalogCompileOptions = {},
 ): Promise<BattleCatalog> {
-  const modules = await compileGameCatalogModules(root, source);
+  const modules = await compileGameCatalogModules(root, source, options);
   const checkpoint = source.entryProviders.ownedConditionCheckpoint;
   const checkpointIds = [...checkpoint.selectedSourceIds].sort((a, b) => a - b);
   const initialIds = source.initialParty.map((p) => p.characterId).sort((a, b) => a - b);

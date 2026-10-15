@@ -1,3 +1,4 @@
+import { WEB_SOURCE_SCRIPT_RANDOM } from "/runtime/core/field-script-random.js";
 import { syncFieldMessageView } from "./source-message-view.js";
 import { createWebFieldMessageSequencePort } from "/runtime/core/source-message-sequence.js";
 import { createWebFieldCameraShakePolicy } from "/runtime/core/field-camera-shake.js";
@@ -9,6 +10,8 @@ import { PartyView } from "./party-view.js";
 import { ChoiceView } from "./choice-view.js";
 import { ShopView } from "./shop-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
+import { WEB_SOURCE_BOSS_ENTRY } from '/runtime/core/source-boss-encounter.js';
+import { WEB_COMMITTED_BATTLE_RESULT } from '/runtime/core/source-battle-result.js';
 import { WEB_SOURCE_ENCOUNTER_POLICY } from "/runtime/core/source-encounter-entry.js";
 import { prepareGameDevelopmentEntry } from "/runtime/core/game-development-entry.js";
 import { GameFlow } from "/runtime/core/game-flow.js";
@@ -90,10 +93,12 @@ const readGameJson = async (url) => {
 let contents = new GameContentRepository(readGameJson, contentProfile);
 // Same declared Web policy as the source-route audit; no native default claim.
 const runtime = {
+  scriptRandom: WEB_SOURCE_SCRIPT_RANDOM,
   // Source slots and entry ordering are retained; this seed mapping and
   // deferred media-first publication are explicit Web policies, not Unity RNG.
   retainedWorldTransportation: "web-retained-walking-magitek-world-entry-v1",
   assignedNpcRoutes: "web-assigned-npc-route-grid-v1",
+  sourceBossEntry:WEB_SOURCE_BOSS_ENTRY,sourceBattleResult:WEB_COMMITTED_BATTLE_RESULT,
   sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY, sourceMessageSequence: createWebFieldMessageSequencePort(),
   // Explicit flat Web component/ancestor policy, rebound from each candidate's
   // trusted native factory. Saved activeSelf never grants this capability.

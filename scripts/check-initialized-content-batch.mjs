@@ -1,3 +1,4 @@
+import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
 // Original source maps/events on an explicitly relocated initialized framework
 // entry. Gameplay uses the app owners; media completion is a headless adapter.
 import assert from 'node:assert/strict';
@@ -24,7 +25,7 @@ const report={kind:'initialized-content-batch-check-v1',result:'running',runtime
  sourceCampaignComplete:false,sourceStoryReachability:false,browserVerified:false,originalGameExecuted:false,semanticsVerified:false,
  initialization:'actual source NewGamePlan; authored PointIn relocation; original events and groups retained',
  media:'headless immediately ready; no image decoding, audio output or original-game oracle'}};
-const host={visible:true,mediaReady:true,overlayOpen:false},runtime={...controlledAudioRuntime(),battleHandoff:'prepared',transportationTimestamp:()=> '639273600000000000'};
+const host={visible:true,mediaReady:true,overlayOpen:false},runtime={ ...sourceWebReplayRuntimePorts(),...controlledAudioRuntime(),battleHandoff:'prepared',transportationTimestamp:()=> '639273600000000000'};
 const passed=name=>tests.push({name,passed:true}),readJSON=file=>readFile(file,'utf8').then(JSON.parse);
 const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};};
 await mkdir(resolve(output,'..'),{recursive:true});

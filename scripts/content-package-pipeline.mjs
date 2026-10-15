@@ -1,3 +1,5 @@
+import {createFrameworkFieldEffectFlatAddition,createFrameworkFieldEffectFlatEvidenceReader} from './framework-field-effect-flat-evidence.mjs';
+import {createSourceMessageFeeEvidenceReader} from './source-message-fee-evidence.mjs';
 import {createFrameworkNpcFlatAddition,createFrameworkNpcFlatEvidenceReader} from './framework-npc-flat-evidence.mjs';
 // Prepare the entire collection privately; producers own no gameplay state.
 import assert from 'node:assert/strict';
@@ -100,7 +102,7 @@ async function validatePublicCAS(root,candidateHistory){
 
 const sourceFrameworkDefaults=webSourceFrameworkInputs();
 export async function compileSharedContentPackages({root=repository,compiledDir='dist',readJson,
-  sourceRecipePaths,sourceSelectionPath,npcAreas=sourceFrameworkDefaults.npcAreas,npcFlat=sourceFrameworkDefaults.npcFlat,
+  sourceRecipePaths,sourceSelectionPath,npcAreas=sourceFrameworkDefaults.npcAreas,npcFlat=sourceFrameworkDefaults.npcFlat,fieldEffectFlat=sourceFrameworkDefaults.fieldEffectFlat,
   periodicMaps=sourceFrameworkDefaults.periodicMaps,logicalFieldEffects=sourceFrameworkDefaults.logicalFieldEffects}={}){
   root=await realpath(resolve(root));
   // Several existing producers still import the repository's default emitted
@@ -138,7 +140,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     if(id!=='base')put('/content-packages/'+id+'/build-report.json',result.report);
     reports.push({id,report:result.report});
   };
-  const prerequisites=await compileSourcePrerequisites({root,compiledDir,logicalFieldEffects,periodicMaps,npcAreas,npcFlat,
+  const prerequisites=await compileSourcePrerequisites({root,compiledDir,logicalFieldEffects,periodicMaps,npcAreas,npcFlat,fieldEffectFlat,
     mapAnimatedEntities:sourceFrameworkDefaults.mapAnimatedEntities});
   const linked=await linkSourcePrerequisites({root,compiledDir,payloads:prerequisites.payloads,frameworkOptions:prerequisites.frameworkOptions});
   const sourceRead=async url=>linked.inputs.has(url)?structuredClone(linked.inputs.get(url)):readJson(url);
@@ -146,13 +148,23 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
   reports.push({id:'source-prerequisites',report:prerequisites.report},{id:'linked-source-prerequisites',report:linked.report});
   const ordinary=await recipe('content-batches/ordinary-battles.json');
   const battleRebindings=[...prerequisites.battleRebindings];
+  const sourceMessageFeeAddition={kind:'compiled-source-message-fee-addition-v1',compilerDigest:prerequisites.inputs.compilerDigest,sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash};
+  const sourceMessageFeeEvidence=createSourceMessageFeeEvidenceReader({root,compiledDir});
+  const sourceMessageFeeBaselines=new Map(prerequisites.sourceMessageFeeBaselines);
   const ordinaryReference=await resolveCompiledBattleReference({root,compiledDir,
-    reference:ordinary.value.baseCatalogRef,readCurrentJson:readJson,readCandidateJson:sourceRead,battleRebindings});
+    reference:ordinary.value.baseCatalogRef,readCurrentJson:readJson,readCandidateJson:sourceRead,battleRebindings,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines});
   const ordinaryDeclaration={...ordinary.value,baseCatalogRef:ordinaryReference.reference};
   if(ordinaryReference.report)rebindings.push({id:'ordinary-battles',kind:'battle-declaration-inputs-v1',
     recipePath:ordinary.path,recipeSha256:ordinary.sha256,battleCapabilityRebindings:[ordinaryReference.report]});
-  const [base,battles]=await Promise.all([
-    compileBaseContentPackages({root,readJson:sourceRead}),compileBattleContentBatch(root,ordinaryDeclaration,{readJson:sourceRead})]);
+  const noFeeBase=sourceMessageFeeBaselines.get(ordinary.value.baseCatalogRef.url);
+  assert.ok(noFeeBase,'Ordinary content requires the same producer fee baseline');
+  const noFeeDeclaration={...ordinaryDeclaration,baseCatalogRef:{
+    ...ordinaryDeclaration.baseCatalogRef,contentHash:noFeeBase.baseline.contentHash}};
+  const [base,battles,noFeeBattles]=await Promise.all([
+    compileBaseContentPackages({root,readJson:sourceRead}),compileBattleContentBatch(root,ordinaryDeclaration,{readJson:sourceRead}),
+    compileBattleContentBatch(root,noFeeDeclaration,{readJson:async url=>
+      url===ordinary.value.baseCatalogRef.url?structuredClone(noFeeBase.baseline):sourceRead(url)})]);
+  assert.ok(noFeeBattles.catalog,'Ordinary fee audit baseline is blocked');
   assert.ok(battles.catalog,'Ordinary battle content candidate is blocked');append('base',base);
   const {verifyContent,hash}=Object.assign({},...await Promise.all([
     import(pathToFileURL(resolve(root,compiledDir,'src/core/content-integrity.js')).href),
@@ -162,6 +174,18 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     previousHash:previousOrdinary.contentHash,candidateHash:battles.catalog.contentHash,
     compilerDigest:prerequisites.inputs.compilerDigest,sourceContentHash:battles.catalog.common.sourceContentHash,
     fieldSourceSetHash:battles.catalog.common.fieldSourceSetHash,gameStateHash:hash(battles.catalog.gameState)});
+  const ordinaryFeeBaseline=noFeeBattles.catalog;
+  await verifyContent(ordinaryFeeBaseline);
+  sourceMessageFeeBaselines.set('/content-batches/ordinary-battles/battle.json',{baseline:ordinaryFeeBaseline,rebinding:{
+    kind:'compiled-battle-rebinding-v1',url:'/content-batches/ordinary-battles/battle.json',
+    previousHash:previousOrdinary.contentHash,candidateHash:ordinaryFeeBaseline.contentHash,
+    compilerDigest:prerequisites.inputs.compilerDigest,sourceContentHash:ordinaryFeeBaseline.common.sourceContentHash,
+    fieldSourceSetHash:ordinaryFeeBaseline.common.fieldSourceSetHash,gameStateHash:hash(ordinaryFeeBaseline.gameState)}});
+  reports.push({id:'source-message-fee-baselines',report:{
+    kind:'same-input-compiled-message-fee-baselines-v1',compilerDigest:prerequisites.inputs.compilerDigest,
+    sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash,
+    policy:'omit-source-message-fees-for-addition-audit-v1',grantsSourceAdmission:false,
+    baselines:[...sourceMessageFeeBaselines].map(([url,value])=>({url,...value}))}});
   const candidateRead=async url=>url==='/content-batches/ordinary-battles/battle.json'
     ? structuredClone(battles.catalog):sourceRead(url);
   const sourceWalkEvidence=createSourceWalkEvidenceReader({root,compiledDir});
@@ -178,10 +202,14 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     catalog:await sourceRead('/framework/world/catalog.json'),entry:await sourceRead('/framework/new-game.json')}):undefined;
   const frameworkNpcFlatEvidence=frameworkNpcFlatAddition?createFrameworkNpcFlatEvidenceReader({root,compiledDir,readSourceWorld:()=>sourceRead('/world/catalog.json'),
     readSourceMap:async mapId=>{const catalog=await sourceRead('/world/catalog.json');return sourceRead(catalog.maps[String(mapId)].url);}}):undefined;
+  const frameworkFieldEffectFlatAddition=prerequisites.frameworkOptions.fieldEffectFlat?createFrameworkFieldEffectFlatAddition({compilerDigest:prerequisites.inputs.compilerDigest,assessment:prerequisites.frameworkOptions.fieldEffectFlat,
+    catalog:await sourceRead('/framework/world/catalog.json'),entry:await sourceRead('/framework/new-game.json')}):undefined;
+  const frameworkFieldEffectFlatEvidence=frameworkFieldEffectFlatAddition?createFrameworkFieldEffectFlatEvidenceReader({root,compiledDir,logicalInputDirectory:prerequisites.inputs.logicalFieldEffects.input,readSourceWorld:()=>sourceRead('/world/catalog.json'),
+    readSourceMap:async mapId=>{const catalog=await sourceRead('/world/catalog.json');return sourceRead(catalog.maps[String(mapId)].url);}}):undefined;
   const resolveRecipe=async path=>{
     const original=await recipe(path);
     const resolved=await resolveSourceRecipeInputs({root,compiledDir,recipePath:path,recipeBytes:original.raw,
-      readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence,battleRebindings,sourceMapAnimationEvidence,sourceNpcRouteEvidence,
+      readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence,battleRebindings,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines,sourceMapAnimationEvidence,sourceNpcRouteEvidence,
       sourceEventActivationEvidence,sourceEventActivationAddition:{kind:'compiled-source-event-activation-addition-v1',
         compilerDigest:prerequisites.inputs.compilerDigest,sourceSetHash:prerequisites.inputs.sourceSetHash,
         parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
@@ -189,7 +217,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
         sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
       sourceNpcRoutesAddition:{kind:'compiled-source-npc-route-evidence-addition-v1',compilerDigest:prerequisites.inputs.compilerDigest,
         sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
-      frameworkNpcAreaAddition,frameworkNpcAreaEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,
+      frameworkNpcAreaAddition,frameworkNpcAreaEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,
       frameworkProfileUpgrade:{kind:'compiled-framework-profile-upgrade-v4',
         compilerDigest:prerequisites.inputs.compilerDigest,markers:{
           storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1',mapAnimatedEntities:'web-field-animated-map-entities-v1',

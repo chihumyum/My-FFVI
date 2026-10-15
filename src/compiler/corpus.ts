@@ -107,7 +107,7 @@ export function analyzeCorpus(
       users.get(id)!.add(map.id);
       for (const raw of array(record(byId.get(id)!.data).Mnemonics)) {
         const op = record(raw);
-        if (!["Encount", "ChangeScript"].includes(String(op.mnemonic)))
+        if (!["Encount", 'EncountBoss', "ChangeScript"].includes(String(op.mnemonic)))
           continue;
         const ref = strings(
           op.operands == null ? [] : (record(op.operands).sValues ?? []),
@@ -226,7 +226,7 @@ export function analyzeCorpus(
           });
         }
       }
-      if (["Encount", "ChangeScript"].includes(String(m.mnemonic))) {
+      if (["Encount", 'EncountBoss', "ChangeScript"].includes(String(m.mnemonic))) {
         const ref = strings(operands.sValues ?? [])[0];
         if (ref) {
           if (field)

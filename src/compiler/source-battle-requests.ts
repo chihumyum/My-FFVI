@@ -4,10 +4,11 @@ import type { CorpusAsset, loadCorpus } from "./corpus.js";
 import { canonical, hash, record } from "./content.js";
 import { tableId } from "./table-id.js";
 import { validateSourceWalkEncounterDependencies } from "./content-dependencies.js";
+import { compileSourceBossEncounterInstruction } from './source-boss-encounter.js';
 import { compileSourceEncounterInstruction, sourceEncounterLiteralCandidates } from "./source-encounter.js";
 
 export type SourceBattleRequestSite = {
-  kind: "source-walking-slot" | "typed-field-encounter" | "typed-source-encounter" |
+  kind: "source-walking-slot" | "typed-field-encounter" | "typed-source-encounter" | 'typed-source-boss-encounter' |
     "blocked-field-primary" | "blocked-field-candidate" | "unbound-field-primary" | "unbound-field-candidate";
   partyId: number;
   mapId: number | null;
@@ -94,7 +95,7 @@ export function collectSourceBattleRequests(input: {
     sites.push(structuredClone(site)); references.set(site.partyId, sites);
   };
   const candidates = (raw: unknown): ReturnType<typeof sourceEncounterLiteralCandidates> => {
-    try { return sourceEncounterLiteralCandidates(raw); } catch { return []; }
+    try { const op=record(raw);if(op.mnemonic==='EncountBoss'&&op.type===1){const i=record(op.operands).iValues;return Array.isArray(i)&&identity(i[0])?[{slotIndex:0,partyId:i[0]}]:[];}return sourceEncounterLiteralCandidates(raw); } catch { return []; }
   };
   for (const map of [...maps.values()].sort((a, b) => a.mapId - b.mapId)) {
     const walking = map.sourceWalkEncounters;
@@ -118,16 +119,17 @@ export function collectSourceBattleRequests(input: {
         diagnose("source-walk-encounter-policy-unimplemented", "Source timing and lottery remain unimplemented", map.mapId, walking.map.source);
     }
     for (const [script, ops] of Object.entries(map.scripts)) for (const op of ops) {
-      if (op.kind !== "encounter" && op.kind !== "source-encounter" && !(op.kind === "blocked" && op.mnemonic === "Encount")) continue;
+      if (op.kind !== "encounter" && op.kind !== "source-encounter" && op.kind!=='source-boss-encounter' && !(op.kind === "blocked" && ['Encount','EncountBoss'].includes(op.mnemonic))) continue;
       const key = sourceKey(op.source), asset = assets.get(key), raw = asset ? rawAt(asset, op.index) : null;
-      if (!raw || record(raw).mnemonic !== "Encount") {
+      const expectedName=op.kind==='source-boss-encounter'||op.kind==='blocked'&&op.mnemonic==='EncountBoss'?'EncountBoss':'Encount';
+      if (!raw || record(raw).mnemonic !== expectedName) {
         diagnose("source-battle-field-source-missing", "Field encounter has no matching original instruction", map.mapId, op.source, script, op.index);
         continue;
       }
       mappedRaw.add(key + ":" + op.index);
       const slots = candidates(raw);
       let mismatch = false;
-      if (op.kind === "source-encounter") {
+      if(op.kind==='source-boss-encounter'){try{mismatch=canonical(compileSourceBossEncounterInstruction(raw).command)!==canonical(op.command);}catch{mismatch=true;}}else if (op.kind === "source-encounter") {
         try { mismatch = canonical(compileSourceEncounterInstruction(raw).command) !== canonical(op.command); }
         catch { mismatch = true; }
       } else if (op.kind === "encounter") {
@@ -142,7 +144,7 @@ export function collectSourceBattleRequests(input: {
         map.mapId, op.source, script, op.index);
       for (const { slotIndex, partyId } of slots) {
         const kind = mismatch || op.kind === "blocked" ? slotIndex === 0 ? "blocked-field-primary" : "blocked-field-candidate"
-          : op.kind === "source-encounter" ? "typed-source-encounter" : "typed-field-encounter";
+          : op.kind==='source-boss-encounter'?'typed-source-boss-encounter':op.kind === "source-encounter" ? "typed-source-encounter" : "typed-field-encounter";
         add({ kind, partyId, mapId: map.mapId, script, index: op.index,
           slot: op.kind === "encounter" && !mismatch ? null : String(slotIndex), source: op.source,
           rawPartyId: partyId, rawRate: null, rawInstruction: structuredClone(raw) });
@@ -154,7 +156,7 @@ export function collectSourceBattleRequests(input: {
     const data = asset.data;
     if (!data || typeof data !== "object" || !Array.isArray((data as Record<string, unknown>).Mnemonics)) continue;
     for (const [index, raw] of ((data as { Mnemonics: unknown[] }).Mnemonics).entries()) {
-      if (!raw || typeof raw !== "object" || (raw as Record<string, unknown>).mnemonic !== "Encount" ||
+      if (!raw || typeof raw !== "object" || !['Encount','EncountBoss'].includes(String((raw as Record<string, unknown>).mnemonic)) ||
           mappedRaw.has(sourceKey(asset.source) + ":" + index)) continue;
       const slots = candidates(raw), source = { ...asset.source, pointer: `/Mnemonics/${index}` };
       diagnose("source-battle-field-map-binding-unresolved", "Original Encount has no matched compiled map/script site", null, source, null, index);

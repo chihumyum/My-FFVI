@@ -1,3 +1,5 @@
+import { compileSourceGilTagInstruction } from "./source-message-fees.js";
+import { compileFieldScriptRandomInstruction } from "./field-script-random.js";
 import { compileFieldAssignedRouteInstruction } from './field-assigned-route.js';
 import { compileFieldFiniteAnimationInstruction } from './field-play-animation.js';
 import { decodeSourceSystemFlags, type SourceFormatFlagImportBinding } from "./source-system-flags.js";
@@ -34,8 +36,10 @@ import { compileFieldBgmControlInstruction, fieldBgmControlMnemonics } from "./f
 import { compileFieldTimerInstruction, fieldTimerMnemonics, fieldTimerSelectors } from "./field-timer.js";
 import { compileFieldScreenEffectInstruction, fieldScreenEffectMnemonics } from "./field-screen-effects.js";
 import { compileFieldShakeInstruction } from "./field-shake.js";
+import { compileFieldContentInvalidationInstruction } from "./field-content-invalidations.js";
 import { compileFieldAutoSaveInstruction } from "./field-auto-save.js";
 import { compileFieldInternalClockInstruction } from "./field-internal-clock.js";
+import { compileSourceBossEncounterInstruction, compileSourceBattleResultInstruction } from './source-boss-encounter.js';
 import { compileSourceEncounterInstruction } from "./source-encounter.js";
 import { compilePlayerVisibilityInstruction, compilePlayerVisibilityFactory, playerVisibilityMnemonics } from "./player-visibility.js";
 import { compileFieldTaskControlInstruction, fieldTaskControlMnemonics } from "./field-task-control.js";
@@ -133,6 +137,14 @@ export function decodeFieldOp(
     try { return { ...site, ...compileFieldInternalClockInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
+  if (name === "SetGilTag") {
+    try { return { ...site, ...compileSourceGilTagInstruction(raw, tables) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "SetRandomValue") {
+    try { return { ...site, ...compileFieldScriptRandomInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (name === "AutoSave") {
     try { return { ...site, ...compileFieldAutoSaveInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
@@ -143,6 +155,10 @@ export function decodeFieldOp(
   }
   if ((fieldScreenEffectMnemonics as readonly string[]).includes(name)) {
     try { return { ...site, ...compileFieldScreenEffectInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "InvalidateTelepo") {
+    try { return { ...site, ...compileFieldContentInvalidationInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if (name === "Shake") {
@@ -189,6 +205,7 @@ export function decodeFieldOp(
   }
   const o = record(m.operands), i = list(o.iValues).map(integer),
     r = list(o.rValues).map(Number), s = list(o.sValues).map(string);
+  if(name==='SysCall'&&s[0]==='戦闘結果取得'){try{return {...site,...compileSourceBattleResultInstruction(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if (name === "SysCall" && fieldScriptShopSelectors.includes(s[0]!)) {
     try { return { ...site, ...compileFieldScriptShopInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
@@ -496,6 +513,7 @@ export function decodeFieldOp(
   }
   if (name === "LookAt" && form([0]) && directions[i[0]!])
     return { ...site, kind: "look", direction: directions[i[0]!]! };
+  if(name==='EncountBoss'){try{return {...site,...compileSourceBossEncounterInstruction(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if (name === "Encount" && Object.hasOwn(m, "type")) {
     try { return { ...site, ...compileSourceEncounterInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }

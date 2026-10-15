@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { WEB_MANUAL_BATTLE_CONTROLS,parseSourceBattleControls } from '../src/core/battle-controls.js';
+import { compileBattleEncounterRuntime } from '../src/compiler/battle-encounter-runtime.js';
+import { encounterRuntimeFixture } from './fixtures/battle-encounter-runtime.js';
+import { checkpointFixture } from './fixtures/checkpoint-game.js';
+import { encounterContent } from '../src/core/battle-content.js';
+import { BattleGame } from '../src/core/battle.js';
+import { assertSourceGameCatalog } from '../src/core/source-catalog.js';
+import { sourceNewGameFixture } from './fixtures/source-new-game.js';
+test('source flag19 actually initializes the same BattleGame manual controller; default strict remains blocked',()=>{
+  const f=encounterRuntimeFixture(),e=f.input.encounters[0]!;
+  e.metadata.battleFlagGroupId=901;e.metadata.battleFlags=[{values:{id:'1',group_id:'901',battle_flag_id:'19'},source:{...e.source!,rowId:'1'}}];
+  const before=JSON.stringify(f.input),name=f.input.name,strict=compileBattleEncounterRuntime(f.reader(),f.input);assert.equal(strict.encounters[e.partyId],undefined);
+  const result=compileBattleEncounterRuntime(f.reader(),{...f.input,manualControls:WEB_MANUAL_BATTLE_CONTROLS});
+  const controls=result.encounters[e.partyId]!.controls!;assert.equal(controls.initialMode,'manual');assert.equal(JSON.stringify(f.input),before);assert.equal(f.input.name,name);
+  const content=encounterContent({...checkpointFixture().battle,common:{...f.battle,drops:result.drops},encounters:result.encounters},e.partyId,1)!;
+  const battle=new BattleGame(content,1);assert.equal(battle.playerControlMode,'manual');battle.setAutomaticMode(false);assert.equal(battle.playerControlMode,'manual');
+  assert.throws(()=>battle.setAutomaticMode(true),/unimplemented/);assert.equal(battle.playerControlMode,'manual');
+  assert.ok(result.diagnostics.some(d=>d.partyId===e.partyId&&d.code==='manual-controls-policy'));
+});
+test('manual policy never hides another flag, reward or unknown control mode',()=>{
+  const f=encounterRuntimeFixture(),e=f.input.encounters[0]!;e.metadata.battleFlagGroupId=901;
+  e.metadata.battleFlags=[19,24].map((id,index)=>({values:{id:String(index+1),group_id:'901',battle_flag_id:String(id)},source:{...e.source!,rowId:String(index+1)}}));
+  const result=compileBattleEncounterRuntime(f.reader(),{...f.input,manualControls:WEB_MANUAL_BATTLE_CONTROLS});assert.equal(result.encounters[e.partyId],undefined);assert.ok(result.diagnostics.some(d=>d.code==='battle-flags'&&d.kind==='blocked'));
+  assert.throws(()=>parseSourceBattleControls({kind:'source-battle-controls-v1',policy:WEB_MANUAL_BATTLE_CONTROLS,initialMode:'auto',offAutoBattle:true}));
+  const source=sourceNewGameFixture().battle;
+  Object.values(source.encounters)[0]!.controls={kind:'source-battle-controls-v1',policy:WEB_MANUAL_BATTLE_CONTROLS,initialMode:'manual',offAutoBattle:true};
+  assert.throws(()=>assertSourceGameCatalog(source),/strict source/,'A saved or otherwise misplaced Web marker cannot authorize the strict lane');
+});

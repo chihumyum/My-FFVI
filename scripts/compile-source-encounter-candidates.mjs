@@ -37,8 +37,8 @@ const selectedPrograms=new Set(sites.map(site=>site.assetId)),sourcePrograms=sna
  instructionCount:asset.data.Mnemonics.length,runtimeAdmission:'unassessed',storyReachability:'unassessed'})).sort((a,b)=>a.id.localeCompare(b.id));
 const partyIds=[...new Set(sites.flatMap(site=>site.candidates.map(row=>row.partyId)))].sort((a,b)=>a-b);
 assert.equal(partyIds.length,89);assert.equal(sites.flatMap(site=>site.candidates).length,284);
-const declaration=await input(options.policy);
-assert.ok(['source-battle-directory-policy-v1','source-battle-directory-policy-v2'].includes(declaration.kind));
+const {readSourceBattleDirectoryPolicy}=await import(new URL('./source-battle-directory.mjs',import.meta.url)),
+ declaration=await readSourceBattleDirectoryPolicy({root,compiledDir:compiled,policy:await input(options.policy)});
 const source=await compileSharedBattleSource(root),base=await compileSharedGameCatalog(root,source),exportSnapshot=await readSnapshot(resolve(root,'build/battle')),
  exported=JSON.parse(snapshotFile(exportSnapshot,'battle.json').toString()),corpus=await loadSystemSource(root,snapshot.manifest.parentSourceSetHash),
  bindings=new Map(),reader={};
@@ -55,7 +55,7 @@ const {compileSourceBattleDirectoryEntryPolicy,composeFrameworkBattleDirectory}=
  policy:declaration.framework.entry,encounters:descriptors.encounters}),
  common={...shared.runtimeInput,requestedPartyIds:partyIds,encounters:descriptors.encounters,sourceDiagnostics:descriptors.diagnostics},
  strict=compileBattleEncounterRuntime(shared.reader,{...common,handoff:{policy:null},development:{scripts:[],flagGroups:[]}}),
- framework=compileBattleEncounterRuntime(shared.reader,{...common,...(declaration.framework.conditionControlPolicy?{conditionControlPolicy:declaration.framework.conditionControlPolicy}:{}),handoff:{policy:declaration.framework.handoff},development}),
+ framework=compileBattleEncounterRuntime(shared.reader,{...common,...(declaration.framework.manualControls?{manualControls:declaration.framework.manualControls}:{}),...(declaration.framework.conditionControlPolicy?{conditionControlPolicy:declaration.framework.conditionControlPolicy}:{}),handoff:{policy:declaration.framework.handoff},development}),
  composed=await composeFrameworkBattleDirectory({root,compiledDir:compiled,baseCatalog:base,runtime:framework,conditionControlPolicy:declaration.framework.conditionControlPolicy});
 assert.equal(canonical(composed.catalog.gameState),canonical(base.gameState));
 const strictCatalog=assembleGameCatalog({...shared,reader:shared.reader,runtimeInput:{...common,handoff:{policy:null}}},

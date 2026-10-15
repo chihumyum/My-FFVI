@@ -1,3 +1,4 @@
+import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
 // Complete named-shop source-program lifecycle. All candidates are private;
 // no source rewrites, story-state defaults, publication, or second VM/owner.
 import assert from 'node:assert/strict';
@@ -242,7 +243,7 @@ for (const program of roots) for (const executionMap of program.maps) for (const
   try {
     const flow = new GameFlow(), entry = new GameEntryLoader(flow, { discard() {} });
     const launched = await entry.begin('new-game').prepare(async () => ({ session: await GameSession.prepareFrameworkNewGame(
-      prepared.contents.content, prepared.contents.catalog, prepared.contents.map, prepared.contents.battle, controlledAudioRuntime(), 314), presentation: null }));
+      prepared.contents.content, prepared.contents.catalog, prepared.contents.map, prepared.contents.battle, { ...controlledAudioRuntime(), ...sourceWebReplayRuntimePorts() }, 314), presentation: null }));
     assert.equal(launched.status, 'committed', String(launched.error)); game = launched.session;
     let commands = new GameCommands(flow, game); flow.advance(0, host);
     drain(flow, game, () => game.checkpointReady, row.trace);
@@ -324,7 +325,7 @@ for (const program of roots) for (const executionMap of program.maps) for (const
     const checkpoint = game.checkpoint(); await assert.rejects(storage.save(checkpoint, 1), /quota/);
     assert.equal(values.size, 0); assert.deepEqual(game.checkpoint(), checkpoint); fail = false; await storage.save(checkpoint, 2);
     const loaded = await storage.load(); const restored = await prepared.repository.restoreSessionContent(loaded.checkpoint);
-    const oldCommands = commands, next = GameSession.restore(loaded.checkpoint, restored.initial, restored.battle, restored.world);
+    const oldCommands = commands, next = GameSession.restore(loaded.checkpoint, restored.initial, restored.battle, restored.world, sourceWebReplayRuntimePorts());
     const loadTicket = flow.beginOperation('load'); assert.equal(loadTicket.publish(next), true); game = next;
     flow.advance(0, host); commands = new GameCommands(flow, game);
     assert.equal(oldCommands.tradeShop({ kind: 'buy', productId: product.productId, count: 1 }), null);

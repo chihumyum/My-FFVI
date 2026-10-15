@@ -30,12 +30,18 @@ function characterBindings(raw: unknown): Map<string, CharacterMessageNameRef> {
 export function compileFieldMessageTemplate(pages: readonly string[], speaker: string,
   characterNames?: unknown): FieldMessageTemplate | undefined {
   if (![...pages, speaker].some(text => [...text.matchAll(MESSAGE_VALUE_PATTERN)].length)) return undefined;
-  const bindings = characterBindings(characterNames);
+  let bindings: Map<string, CharacterMessageNameRef> | undefined;
+  let amountReferences = 0;
   const parts = (text: string): MessageTemplatePart[] => {
     const result: MessageTemplatePart[] = [];
     let start = 0;
     for (const match of text.matchAll(MESSAGE_VALUE_PATTERN)) {
       if (match.index > start) result.push({ kind: "text", text: text.slice(start, match.index) });
+      if (match[1] === "KINGAKU") {
+        result.push({ kind: "source-fee", tag: "KINGAKU" }); amountReferences++;
+        start = match.index + match[0].length; continue;
+      }
+      bindings ??= characterBindings(characterNames);
       const ref = bindings.get(match[1]!);
       if (!ref) throw new Error("Unsupported message value binding: " + match[1]);
       result.push({ kind: "character-name", ref: { ...ref } });
@@ -44,5 +50,6 @@ export function compileFieldMessageTemplate(pages: readonly string[], speaker: s
     if (start < text.length) result.push({ kind: "text", text: text.slice(start) });
     return result;
   };
-  return parseFieldMessageTemplate({ kind: "field-message-template-v1", pages: pages.map(parts), speaker: parts(speaker) });
+  const compiledPages = pages.map(parts), compiledSpeaker = parts(speaker);
+  return parseFieldMessageTemplate({ kind: amountReferences ? "field-message-template-v2" : "field-message-template-v1", pages: compiledPages, speaker: compiledSpeaker });
 }

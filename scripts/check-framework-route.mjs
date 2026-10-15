@@ -1,3 +1,4 @@
+import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
 // Actual source scripts, with the explicit framework presentation derivative.
 // Headless title/media acknowledgements are controlled; no original-game oracle.
 import assert from "node:assert/strict";
@@ -65,10 +66,11 @@ while (entry.phase !== "field-preparing") {
   const next = entry.prepareResume(fade, true);
   assert.ok(next); next.commit(); fade = next.fade;
 }
+const { WEB_SOURCE_SCRIPT_RANDOM } = await import(pathToFileURL(resolve(root, runtime, "src/core/field-script-random.js")));
 const sourceMessageSequence = createWebFieldMessageSequencePort();
 const messageContext = sourceMessageSequence.prepare().context;
 const game = GameSession.prepareNewGame(content, catalog, map, battle, fade, presentation,
-  { sourceMessageSequence, conditionLeaderActivity: createWebFlatConditionLeaderActivityPort(),
+  { ...sourceWebReplayRuntimePorts(), scriptRandom: WEB_SOURCE_SCRIPT_RANDOM, sourceMessageSequence, conditionLeaderActivity: createWebFlatConditionLeaderActivityPort(),
     fieldEffects: createWebLogicalFieldEffectsHost(), sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY,
     retainedWorldTransportation: "web-retained-walking-magitek-world-entry-v1",
     cameraShake: createWebFieldCameraShakePolicy(), assignedNpcRoutes: "web-assigned-npc-route-grid-v1",

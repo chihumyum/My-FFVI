@@ -1,5 +1,9 @@
+import { parseSourceMessageFeeCatalog } from "./source-message-fees.js";
+import { WEB_SOURCE_SCRIPT_RANDOM, type WebSourceScriptRandom } from "./field-script-random.js";
 import { validateRetainedWorldTransportationPolicy } from "./world-transportation-entry.js";
 import { WEB_SOURCE_ENCOUNTER_POLICY, selectWebSourceEncounter, type WebSourceEncounterPolicy } from "./source-encounter-entry.js";
+import { WEB_SOURCE_BOSS_ENTRY, type WebSourceBossEntry } from './source-boss-encounter.js';
+import { WEB_COMMITTED_BATTLE_RESULT, projectCommittedBattleResult, type WebCommittedBattleResult } from './source-battle-result.js';
 import { sourceEncounterCandidates } from "./source-encounter.js";
 import type { FieldContent } from "../field/types.js";
 import type { GameEventSaveRequest, FieldGame, FieldGameOptions, Stop } from "./field.js";
@@ -19,7 +23,6 @@ import { equipmentAvailability, equipmentOwnedAbilities } from "./equipment.js";
 import { projectBattleAbilities } from "./battle-abilities.js";
 import { projectBattleItemMenu } from "./battle-entry.js";
 import { BattleConditions } from "./battle-conditions.js";
-import { projectBattleFieldState } from "./field-battle-entry.js";
 import type { FieldAbilityContext, FieldAbilityRequest } from "./field-abilities.js";
 import {
   parseBattlePreferences,
@@ -69,7 +72,7 @@ export type GameCheckpoint = GameCheckpointBase & (
   { formatVersion: 4 } | { formatVersion: 5 | 6; walkEncounters: WalkEncounterSnapshot }
 );
 /** External observations are rebound by the host on load, never trusted from saves. */
-export type GameSessionRuntime = { retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
+export type GameSessionRuntime = { sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
   sourceMessageSequence?: NonNullable<FieldGameOptions["sourceMessageSequence"]>;
   conditionLeaderActivity?: NonNullable<FieldGameOptions["conditionLeaderActivity"]>;
@@ -222,7 +225,11 @@ export class GameSession {
       throw new Error('Unknown assigned NPC route policy');
     if (runtime.sourceEncounterPolicy !== undefined && runtime.sourceEncounterPolicy !== WEB_SOURCE_ENCOUNTER_POLICY)
       throw new Error("Unknown source encounter runtime policy");
+    if(runtime.sourceBossEntry!==undefined&&runtime.sourceBossEntry!==WEB_SOURCE_BOSS_ENTRY)throw new Error('Unknown source Boss policy');
+    if(runtime.sourceBattleResult!==undefined&&runtime.sourceBattleResult!==WEB_COMMITTED_BATTLE_RESULT)throw new Error('Unknown committed result policy');
     validateRetainedWorldTransportationPolicy(runtime.retainedWorldTransportation);
+    if (runtime.scriptRandom !== undefined && runtime.scriptRandom !== WEB_SOURCE_SCRIPT_RANDOM)
+      throw new Error("Unknown source script random policy");
     this.preparedBattleHandoff = runtime.battleHandoff === "prepared";
     this.walkEncounters = new WalkEncounterState(seed);
     this.currentBattlePreferences = parseBattlePreferences(battleCatalog.common.timing);
@@ -245,9 +252,11 @@ export class GameSession {
       seeded.add(identity);
       initialEvents.write(ref, value);
     }
+    const messageFees = battleCatalog.common.sourceMessageFees && parseSourceMessageFeeCatalog(battleCatalog.common.sourceMessageFees);
+    const { scriptRandom: scriptRandomPolicy, sourceBattleResult: resultPolicy, ...fieldRuntime } = runtime;
     this.world = new WorldSession(field, initialEvents, {
       current: {
-        ...runtime,
+        ...fieldRuntime,
         ...(runtime.sourceEncounterPolicy === undefined ? {} : { sourceEncounter: {
           policy: WEB_SOURCE_ENCOUNTER_POLICY,
           prepare: (command: import("./source-encounter.js").SourceEncounterCommand) => {
@@ -258,8 +267,12 @@ export class GameSession {
             } };
           },
         } }),
+        ...(runtime.sourceBattleResult===undefined?{}:{sourceBattleResult:{policy:WEB_COMMITTED_BATTLE_RESULT,prepare:()=>this.prepareCommittedBattleResult()}}),
         ...(fresh ? { nativeActorPreparation: true,
           sourcePresentation: { context: () => structuredClone(fresh.presentation) } } : {}),
+        ...(battleCatalog.common.battleEntry ? { contentInvalidations: {
+          catalogHash: battleCatalog.contentHash, catalog: battleCatalog.common.battleEntry } } : {}),
+        ...(messageFees ? { messageFees } : {}),
         puppetRoster: this.state.fieldPuppetRoster,
         inventory: this.state.fieldInventory,
         messageNames: this.state.fieldMessageNames,
@@ -268,6 +281,7 @@ export class GameSession {
         roster: this.state.fieldRoster,
         ownedConditions: this.state.fieldOwnedConditions,
         recovery: this.state.fieldRecovery,
+        ...(scriptRandomPolicy === WEB_SOURCE_SCRIPT_RANDOM ? { scriptRandom: this.state.fieldScriptRandom } : {}),
         ...(this.state.fieldTransportation ? { transportation: this.state.fieldTransportation } : {}),
         shop: this.state.fieldShop,
         walkEncounters: {
@@ -278,7 +292,7 @@ export class GameSession {
         ...(this.state.fieldPartyAppearance ? { partyAppearance: this.state.fieldPartyAppearance } : {}),
         movementBlocker: (transportationId, manual) => this.state.fieldMoveBlocker(transportationId, manual),
       },
-      prepare: () => this.state.prepareFieldState(),
+      prepare: () => this.state.prepareFieldState(scriptRandomPolicy === undefined ? {} : { scriptRandom: scriptRandomPolicy }),
       nativeState: () => this.state.nativeState,
     }, fresh?.fade, fresh?.restoring === true, fresh ? {
       catalogHash: fresh.content.worldCatalogHash,
@@ -293,6 +307,12 @@ export class GameSession {
         this.freshEntry = { content: structuredClone(fresh.content), launched: fresh.restoring === true };
       }
     }
+  }
+  prepareCommittedBattleResult(): ReturnType<import('./source-battle-result.js').FieldBattleResultPort['prepare']> {
+    const serial=this.encounterSerial,project=()=>projectCommittedBattleResult(this.state.snapshot(),this.encounterSerial);
+    const validateAvailable=()=>{if(this.field.stop?.kind==='encounter'||this.battle||this.battleEntry||this.battleLease||this.state.inBattle||this.pendingBattleHandoff||this.battleHandoffPreparing)throw new Error('Current battle result is uncommitted or unavailable');};
+    validateAvailable();const facts=project(),identity=canonical(facts);
+    return Object.freeze({...facts,validate:()=>{validateAvailable();if(this.encounterSerial!==serial||canonical(project())!==identity)throw new Error('Stale committed battle result identity');}});
   }
   get battlePreferences(): BattlePreferences {
     return { ...this.currentBattlePreferences };
@@ -334,7 +354,7 @@ export class GameSession {
     const common = this.battleCatalog.common, owned = this.state.snapshot(), system = this.battleCatalog.gameState.equipmentSystem;
     let context = common.qualificationContext;
     if (context?.mode === "source" && common.battleEntry) {
-      const field = projectBattleFieldState(common.battleEntry, this.field.battleEntryContext.state,
+      const field = this.field.projectBattleInvalidContents(common.battleEntry,
         this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
       if (field.invalidContentIds === null || field.blockers.length)
         throw new Error(field.blockers.join("; ") || "Unknown battle field exclusions");
@@ -423,7 +443,7 @@ export class GameSession {
   private fieldAbilityContext(): FieldAbilityContext {
     const entry = this.battleCatalog.common.battleEntry;
     if (!entry) return { invalidContentIds: null };
-    const field = projectBattleFieldState(entry, this.field.battleEntryContext.state,
+    const field = this.field.projectBattleInvalidContents(entry,
       this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
     return { invalidContentIds: field.blockers.length ? null : field.invalidContentIds };
   }
@@ -704,7 +724,7 @@ export class GameSession {
     return outcome === null ? null : { outcome, request: structuredClone(request) };
   }
   private fieldBattleFingerprint(field: FieldGame): string {
-    return canonical({ request: field.stop, events: field.eventState.snapshot(), entry: field.battleEntryContext.state,
+    return canonical({ request: field.stop, contentInvalidations: field.contentInvalidationsSnapshot, events: field.eventState.snapshot(), entry: field.battleEntryContext.state,
       time: field.time, fade: field.fader.snapshot(), effects: field.fieldEffectsSnapshot });
   }
   private rememberEncounterFailure(field: FieldGame, request: SessionBattleRequest, error: unknown): void {
@@ -800,7 +820,7 @@ export class GameSession {
     try {
       const before = this.fieldBattleFingerprint(field);
       const seed = (this.seed + Math.imul(this.encounterSerial, 0x9e3779b1)) >>> 0;
-      const sourceEntry = field.prepareSourceEncounterStart();
+      const sourceEntry = field.prepareSourceEncounterStart(),bossEntry=field.prepareSourceBossEncounterStart();
       const entryContext = sourceEntry?.battleEntryContext ?? field.battleEntryContext;
       const profile = this.initializedEntry ? "framework" : !this.freshEntry ? "development-checkpoint" :
         this.freshEntry.content.developmentProfile ? "framework" : "source";
@@ -813,8 +833,8 @@ export class GameSession {
         if (candidateHandoff.status === "blocked") throw new Error(candidateHandoff.reason);
         let candidateContext = candidateContent.qualificationContext;
         if (candidateContent.battleEntry && candidateContext?.mode === "source") {
-          const projected = projectBattleFieldState(candidateContent.battleEntry, entryContext.state,
-            this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
+          const projected = field.projectBattleInvalidContents(candidateContent.battleEntry,
+            this.battleCatalog.gameState.fieldConditions?.transportations ?? [], entryContext.state);
           if (projected.invalidContentIds === null || projected.blockers.length)
             throw new Error(projected.blockers.join("; ") || "Unknown source encounter candidate field exclusions");
           candidateContext = { ...candidateContext, invalidContentIds: projected.invalidContentIds, conditionContext: "current" };
@@ -831,8 +851,8 @@ export class GameSession {
           (reasons.length ? ` (${reasons.join("; ")})` : ""));
       }
       if (content.battleEntry && content.qualificationContext?.mode === "source") {
-        const projected = projectBattleFieldState(content.battleEntry, entryContext.state,
-          this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
+        const projected = field.projectBattleInvalidContents(content.battleEntry,
+          this.battleCatalog.gameState.fieldConditions?.transportations ?? [], entryContext.state);
         if (projected.invalidContentIds === null || projected.blockers.length)
           throw new Error(projected.blockers.join("; ") || "Unknown battle field exclusions");
         content = { ...content, qualificationContext: { ...content.qualificationContext,
@@ -862,7 +882,7 @@ export class GameSession {
       return this.createBattleHandoff("start", entry,
         () => this.field === field && field.stop === request && !this.battle && this.battleLease === ownedLease &&
           this.fieldBattleFingerprint(field) === before && canonical(this.state.snapshot()) === ownedBefore,
-        () => { this.state.battlePlayers(ownedLease); sourceEntry?.validate(); },
+        () => { this.state.battlePlayers(ownedLease); sourceEntry?.validate(); bossEntry?.validate(); },
         () => {
           const battle = this.constructBattle(entry);
           return beginPublication => {
@@ -871,7 +891,7 @@ export class GameSession {
               this.battle = battle; this.battleEntry = entry;
               this.encounterSerial++; this.encounterFailure = null;
             };
-            if (sourceEntry) sourceEntry.commitWith(publish); else publish();
+            if (sourceEntry) sourceEntry.commitWith(publish); else if(bossEntry)bossEntry.commitWith(publish);else publish();
           };
         },
         () => {

@@ -5,10 +5,11 @@ import {readFile,writeFile,readdir,mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
-import {compileSourcePrerequisites,validateSourcePrerequisiteInputs} from './compile-source-prerequisites.mjs';
+import {validateSourcePrerequisiteInputs} from './compile-source-prerequisites.mjs';
+import {loadSourceFamilyPrerequisites} from './source-family-prerequisites.mjs';
 import {webSourceFrameworkInputs} from './source-web-framework-inputs.mjs';
 const args=process.argv.slice(2),options={root:resolve(import.meta.dirname,'..'),compiled:'dist',output:'build/reports/source-event-activation'},seen=new Set();
-while(args.length){const f=args.shift();assert.ok(['--root','--compiled','--output'].includes(f)&&args[0]&&!seen.has(f));seen.add(f);options[f.slice(2)]=args.shift();}
+while(args.length){const f=args.shift();assert.ok(['--root','--compiled','--output','--candidate-dir'].includes(f)&&args[0]&&!seen.has(f));seen.add(f);options[f.slice(2)]=args.shift();}
 const root=resolve(options.root),compiled=resolve(root,options.compiled),out=resolve(root,options.output),
  load=n=>import(pathToFileURL(resolve(compiled,'src',n+'.js'))),sha=b=>createHash('sha256').update(b).digest('hex');
 assert(out.startsWith(resolve(root,'build')+'/'));await mkdir(out,{recursive:true});
@@ -21,7 +22,7 @@ async function runtime(){const files=[];async function walk(path){for(const e of
 const before=await runtime(),source=await api.loadCorpus(root),sourceDigest=api.hash(source),
  system=await api.loadSystemMessages(root,source.manifest.parentSourceSetHash,source.manifest.sources),
  corpus=api.compileStoryCorpus({...source,messages:{...source.messages,system_zhc:system.messages}}),
- webInputs=webSourceFrameworkInputs(),prerequisites=await compileSourcePrerequisites({root,compiledDir:compiled,...webInputs}),
+ webInputs=webSourceFrameworkInputs(),prerequisites=await loadSourceFamilyPrerequisites({root,compiledDir:compiled,...(options['candidate-dir']?{candidateDir:options['candidate-dir']}:{})}),
  payloads=prerequisites.payloads,sourceCatalog=payloads.get('/world/catalog.json'),frameworkCatalog=payloads.get('/framework/world/catalog.json'),
  world={catalog:sourceCatalog,maps:Object.values(sourceCatalog.maps).map(row=>payloads.get(row.url))},
  sourceBattle=await api.verifyContent(payloads.get('/game/source-catalog.json')),entry=await api.verifyContent(payloads.get('/game/source-new-game.json')),
@@ -82,7 +83,7 @@ artifacts.corpusAnalysis=await artifact('complete-corpus-analysis.json',corpus.a
 const graphRoots=closures.filter(r=>r.alias).map(r=>({kind:'script',mapId:r.mapId,script:r.alias})),
  graph=api.analyzeContentDependencies({catalog:world.catalog,maps:world.maps,roots:graphRoots,mapIds:world.maps.map(m=>m.mapId)});
 artifacts.dependencies=await artifact('complete-gimmick-dependencies.json',graph);
-artifacts.sourcePrerequisites=await artifact('source-prerequisites.json',{inputs:prerequisites.inputs,report:prerequisites.report,webInputs});
+artifacts.sourcePrerequisites=await artifact('source-prerequisites.json',{inputs:prerequisites.inputs,report:prerequisites.report,webInputs,...(prerequisites.candidateEvidence?{candidateEvidence:prerequisites.candidateEvidence}:{})});
 const records=[];
 for(const id of [...allInstalled].sort()){const p=programs.get(id);assert(p);const file='programs/'+api.hash(id)+'.json';
  const body={program:p,dependencies:dependencyByProgram.get(id)??[],runtimeAdmission:'unassessed'};records.push({id,rawHash:p.rawHash,source:p.source,artifact:await artifact(file,body)});}
@@ -108,7 +109,7 @@ const counts={allMaps:world.maps.length,physicalObjects:physical.size,mapGroupUs
  dependencyMaps:graph.requiredMapIds.length,diagnostics:graph.diagnostics.length,requirements:graph.providerRequirements.length,edges:graph.edges.length};
 assert.equal(counts.physicalObjects,4108);assert.equal(counts.mapGroupUses,4225);assert.equal(counts.gimmickPhysical,229);assert.equal(counts.gimmickUses,254);
 assert.deepEqual(await runtime(),before);assert.equal(api.hash(await api.loadCorpus(root)),sourceDigest);
-await validateSourcePrerequisiteInputs(prerequisites.inputs,{root});
+await validateSourcePrerequisiteInputs(prerequisites.inputs,{root});if(prerequisites.validate)await prerequisites.validate();
 const report={kind:'source-event-activation-whole-family-inventory-v1',runtime:before,sourceDigest,sourceSetHash:source.sourceSetHash,
  parentSourceSetHash:source.manifest.parentSourceSetHash,counts,artifacts,policies:{...webInputs,npc:template,
  battleDirectory:JSON.parse(policyBytes),controlledMap:'existing-author-systems-map-new-source-pins-explicit-probe'},

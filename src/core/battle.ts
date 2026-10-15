@@ -1,6 +1,7 @@
 import type { AbilityEffectResult } from "./ability.js";
 import type { ParameterValues } from "./parameters.js";
 import { projectAbilityCost, type AbilityCostOwner, type AbilityCostProjection } from "./ability-cost.js";
+import { parseSourceBattleControls } from './battle-controls.js';
 import { equipmentAbilityCostProviders, equipmentOwnedAbilities, validateEquipmentAbilityOwnership, validateEquipmentBattleRows } from "./equipment.js";
 import type { OwnedAbility } from "./owned-character.js";
 import { projectBattleDrops, validateBattleDropCatalog, type BattleDropPlan, type BattleDropGrant } from "./battle-rewards.js";
@@ -204,6 +205,9 @@ export class BattleGame {
     interactive: true, updateEnabled: true, enemyNoAct: false };
   private escapeRequested = false;
   private currentPreferences: BattlePreferences;
+  private currentPlayerControlMode:'manual'='manual';
+  get playerControlMode():'manual' {return this.currentPlayerControlMode;}
+  setAutomaticMode(value:boolean):void {if(value!==false)throw new Error('Automatic actions require an unimplemented Web controller');this.currentPlayerControlMode='manual';}
   private clockInput = {
     paused: false,
     helpPaused: false,
@@ -302,6 +306,7 @@ export class BattleGame {
       if (op.kind === "change-player-group" && !this.playerBorrow?.groups[op.group])
         throw new BattleEventError(this.lifecycle.program.source, pc, "Missing admitted Web player group");
     }
+    if(content.controls!==undefined){const controls=parseSourceBattleControls(content.controls);this.currentPlayerControlMode=controls.initialMode;}
     this.randomState = seed || 1;
     this.currentPreferences = parseBattlePreferences(content.timing);
     if (initialPreferences !== undefined)

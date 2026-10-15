@@ -7,6 +7,7 @@ import { canonical } from "../src/compiler/content.js";
 import { WEB_LOGICAL_FIELD_EFFECTS } from "../src/core/field-logical-effects.js";
 import { sourceGameContentRefsFixture } from "./fixtures/game-content-refs.js";
 import { logicalEffectCatalog } from "./fixtures/logical-field-effects.js";
+import { flatEffectCatalog } from "./fixtures/flat-field-effects.js";
 
 async function fixture() {
   const f = await sourceGameContentRefsFixture("source", "/world"), maps = [f.map, f.destination];
@@ -73,4 +74,15 @@ test("public map URL linking uses the same single compiled catalog and retains i
   }
   for(const map of f.maps) assert.deepEqual(linked.payloads.get("/content-packages/source/maps/"+map.mapId+".json"),map);
   assert.equal(canonical([...payloads]),before); assert.equal(linked.report.logicalFieldEffects.groups,1);
+});
+
+
+test("legacy logical derivation cannot silently grant a flat projection policy", async () => {
+  const f = await fixture(), legacy = compileFrameworkContent(f.catalog,f.maps,f.content,f.options);
+  assert.equal(legacy.catalog.developmentProfile.fieldEffectProjection,undefined);
+  assert(legacy.maps.every(map=>map.developmentProfile.fieldEffectProjection===undefined));
+  const altered=structuredClone(f.options);
+  altered.logicalFieldEffects!.catalog.webPolicy!.boardProjection=flatEffectCatalog().projection;
+  assert.throws(()=>compileFrameworkContent(f.catalog,f.maps,f.content,altered),/explicit full-source assessment/);
+  assert.deepEqual(compileFrameworkContent(f.catalog,f.maps,f.content,f.options),legacy);
 });

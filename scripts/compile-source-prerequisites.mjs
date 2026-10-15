@@ -105,16 +105,16 @@ async function readLockedJson(inputs, root, path) {
 
 async function modules(compiledDir) {
   const load = name => import(pathToFileURL(resolve(compiledDir, "src", name + ".js")).href);
-  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost, npcArea, npcFlat] = await Promise.all([
+  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost, npcArea, npcFlat, effectFlat] = await Promise.all([
     load("compiler/content"), load("core/content-integrity"), load("compiler/world"), load("compiler/source-new-game"),
     load("compiler/framework-content"), load("core/source-catalog"), load("core/field-native-composition"),
     load("compiler/battle"), load("compiler/game-catalog"), load("compiler/opening-playable"), load("compiler/field-logical-effects"),
     load("compiler/corpus"), load("compiler/map-package"), load("compiler/field-background"),
     load("compiler/framework-periodic-presentation"), load("compiler/field-native-composition"),
-    load("compiler/framework-npc-area"), load("compiler/framework-npc-flat-projection"),
+    load("compiler/framework-npc-area"), load("compiler/framework-npc-flat-projection"), load("compiler/framework-field-effect-flat-projection"),
   ]);
   return { ...content, ...integrity, ...world, ...newGame, ...framework, ...sourceCatalog, ...composition,
-    ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost, ...npcArea, ...npcFlat };
+    ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost, ...npcArea, ...npcFlat, ...effectFlat };
 }
 
 /** Explicit Web producer input, not a source/save capability grant. */
@@ -162,6 +162,16 @@ export function sourceNpcFlatInput(raw) {
   if(Reflect.ownKeys(raw).length!==2 || Object.values(d).some(v=>!v.enumerable||!Object.hasOwn(v,"value")) ||
     d.kind.value!=="web-source-npc-flat-input-v1" || typeof d.reason.value!=="string" || !d.reason.value.trim())
     throw new Error("Invalid NPC flat input declaration");
+  return {kind:d.kind.value,reason:d.reason.value};
+}
+
+/** A separate explicit board projection; no source/map list or saved grant. */
+export function sourceFieldEffectFlatInput(raw) {
+  exact(raw,"kind,reason","field effect flat input");
+  const d=Object.getOwnPropertyDescriptors(raw);
+  if(Reflect.ownKeys(raw).length!==2 || Object.values(d).some(v=>!v.enumerable||!Object.hasOwn(v,"value")) ||
+    d.kind.value!=="web-source-field-effect-flat-input-v1" || typeof d.reason.value!=="string" || !d.reason.value.trim())
+    throw new Error("Invalid field effect flat input declaration");
   return {kind:d.kind.value,reason:d.reason.value};
 }
 
@@ -310,12 +320,14 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
 
 /** Pure upstream DAG: current battle capabilities -> source world/new game -> explicit framework
  * derivation. It never writes packages, generated recipes, reports or archives. */
-export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, mapAnimatedEntities, npcAreas, npcFlat } = {}) {
+export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat } = {}) {
   if (mapAnimatedEntities !== undefined && mapAnimatedEntities !== "web-field-animated-map-entities-v1")
     throw new Error("Unknown source framework animated map entity policy");
   const periodicDeclaration = sourcePeriodicMapsInput(periodicMaps);
   const npcDeclaration = sourceNpcAreasInput(npcAreas);
   const flatDeclaration = npcFlat === undefined ? undefined : sourceNpcFlatInput(npcFlat);
+  const effectFlatDeclaration = fieldEffectFlat === undefined ? undefined : sourceFieldEffectFlatInput(fieldEffectFlat);
+  if(effectFlatDeclaration && logicalFieldEffects === undefined) throw new Error("Flat field effects require an explicit logical input");
   root = resolve(root);
   const inputs = await captureSourcePrerequisiteInputs({ root, compiledDir, logicalFieldEffects });
   const api = await modules(inputs.compiledDir);
@@ -327,12 +339,15 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
   await api.verifyContent(previousBattle); api.assertSourceGameCatalog(previousBattle);
   await api.verifyContent(previousDevelopment);
   const [source, opening] = await Promise.all([api.compileSharedBattleSource(root), api.compileOpeningBattle(root)]);
-  const [battle, development] = await Promise.all([
+  const feeBaselineOptions = {messageFeeAdditionBaseline:"omit-source-message-fees-for-addition-audit-v1"};
+  const [battle, development, battleFeeBaseline, developmentFeeBaseline] = await Promise.all([
     api.compileSharedGameCatalog(root, source), api.compileOpeningPlayable(root, opening),
+    api.compileSharedGameCatalog(root, source, feeBaselineOptions),
+    api.compileOpeningPlayable(root, opening, feeBaselineOptions),
   ]);
   await api.verifyContent(battle); api.assertSourceGameCatalog(battle);
   await api.verifyContent(development);
-  const battleRebindings = [];
+  const battleRebindings = [], sourceMessageFeeBaselines = new Map();
   for (const [url, before, after] of [["/game/source-catalog.json", previousBattle, battle],
     ["/game/opening-playable.json", previousDevelopment, development]]) {
     if (before.common.sourceContentHash !== after.common.sourceContentHash ||
@@ -343,6 +358,19 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
       previousHash: before.contentHash, candidateHash: after.contentHash, compilerDigest: inputs.compilerDigest,
       sourceContentHash: after.common.sourceContentHash, fieldSourceSetHash: after.common.fieldSourceSetHash,
       gameStateHash: api.hash(after.gameState) });
+  }
+  for (const [url, before, baseline] of [
+    ["/game/source-catalog.json", previousBattle, battleFeeBaseline],
+    ["/game/opening-playable.json", previousDevelopment, developmentFeeBaseline],
+  ]) {
+    await api.verifyContent(baseline);
+    if (baseline.common.sourceMessageFees !== undefined || api.canonical(before.gameState) !== api.canonical(baseline.gameState))
+      throw new Error("Source fee baseline changed initialization or includes the added field");
+    sourceMessageFeeBaselines.set(url,{baseline,rebinding:{
+      kind:"compiled-battle-rebinding-v1",url,previousHash:before.contentHash,candidateHash:baseline.contentHash,
+      compilerDigest:inputs.compilerDigest,sourceContentHash:baseline.common.sourceContentHash,
+      fieldSourceSetHash:baseline.common.fieldSourceSetHash,gameStateHash:api.hash(baseline.gameState),
+    }});
   }
   if (field.parentSourceSetHash !== inputs.parentSourceSetHash || api.hash(field.sources) !== field.sourceSetHash ||
       battle.common.fieldSourceSetHash !== field.sourceSetHash)
@@ -424,6 +452,13 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
     frameworkOptions.npcFlatAssessments=api.assessFrameworkNpcFlatWorld(corpus,strict.catalog,strict.maps,flatDeclaration.reason);
     npcFlatReport={declaration:flatDeclaration,maps:frameworkOptions.npcFlatAssessments.length,assessmentsHash:api.hash(frameworkOptions.npcFlatAssessments),nativeParity:false};
   }
+  let effectFlatReport = null;
+  if(effectFlatDeclaration) {
+    const corpus=await api.loadCorpus(root);
+    frameworkOptions.fieldEffectFlat=api.assessFrameworkFieldEffectFlatWorld(corpus,strict.catalog,strict.maps,frameworkOptions.logicalFieldEffects.catalog,effectFlatDeclaration.reason);
+    const p=frameworkOptions.fieldEffectFlat.projection;
+    effectFlatReport={declaration:effectFlatDeclaration,assessmentHash:frameworkOptions.fieldEffectFlat.contentHash,maps:p.mapSources.length,declared:p.objects.length,derived:p.bindings.length,unready:p.objects.length-p.bindings.length,nativeParity:false};
+  }
   const framework = api.compileFrameworkContent(strict.catalog, strict.maps, entry,frameworkOptions);
   const payloads = new Map([["/game/source-catalog.json", battle], ["/game/opening-playable.json", development],
     ["/world/catalog.json", strict.catalog], ["/game/source-new-game.json", entry],
@@ -442,6 +477,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
     framework: framework.report, logicalFieldEffects: logicalReport, ...(periodicReport?{periodicMaps:periodicReport}:{}),
     ...(npcReport ? { npcAreas: npcReport } : {}),
     ...(npcFlatReport ? { npcProjection: npcFlatReport } : {}),
+    ...(effectFlatReport ? { fieldEffectProjection: effectFlatReport } : {}),
     inputScope: { snapshotRoots: SNAPSHOTS.map(name => "build/" + name), files: inputs.files.length,
       originalFiles: inputs.files.filter(file => file.path.startsWith("build/runtime/game/")).map(file => file.path),
       nativeReceiptFiles: [...CATALOG_EVIDENCE], originalSourceFilesVerified: logicalReport ? "whole-corpus" : "composition-host-only", rawExports: "snapshot-and-source-manifest-bound" },
@@ -452,7 +488,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
       "Only the directly consumed original composition host files are byte-checked here. Other original sources remain bound by verified export manifests.",
       "The publication owner must revalidate this input lock and explicitly rebind dependent recipes before its single publication."],
   };
-  return { payloads, report, inputs, battleRebindings, frameworkOptions };
+  return { payloads, report, inputs, battleRebindings, frameworkOptions, sourceMessageFeeBaselines };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

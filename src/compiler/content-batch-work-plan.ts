@@ -154,6 +154,8 @@ const diagnosticOwners: Readonly<Record<string, ContentBatchSystem>> = {
   BATCH_ENTRY_UNSCANNED: "content-batch-interface",
 };
 const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
+  messageValues: "owned-menus-economy-and-growth",
+  scriptRandom: "map-event-and-travel",
   inventory: "owned-menus-economy-and-growth",
   messageNames: "owned-menus-economy-and-growth",
   sourceMessageSequence: "map-event-and-travel",
@@ -178,9 +180,10 @@ const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
   storyTimer: "map-event-and-travel",
   screenEffects: "map-event-and-travel",
   cameraShake: "map-event-and-travel",
+  contentInvalidations: "map-event-and-travel",
   eventSaveCompletion: "save-restore-and-continuation",
   sourceAutoSaveSync: "save-restore-and-continuation",
-  battleHandoff: "battle-and-return", sourceEncounter: "battle-and-return",
+  battleHandoff: "battle-and-return", sourceEncounter: "battle-and-return", sourceBossEntry:'battle-and-return',sourceBattleResult:'battle-and-return',
 };
 const byCode = (code: string): ContentBatchSystem => code === "instruction-blocked" ? "unclassified"
   : Object.hasOwn(diagnosticOwners, code) ? diagnosticOwners[code]! : "unclassified";

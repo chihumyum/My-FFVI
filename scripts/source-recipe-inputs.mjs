@@ -1,3 +1,5 @@
+import {parseFrameworkFieldEffectFlatAddition,comparableFrameworkFieldEffectFlatAddition} from './framework-field-effect-flat-evidence.mjs';
+import {parseSourceMessageFeeAddition,createSourceMessageFeeEvidenceReader,auditSourceMessageFeeAddition} from './source-message-fee-evidence.mjs';
 import {parseFrameworkNpcFlatAddition,comparableFrameworkNpcFlatAddition} from './framework-npc-flat-evidence.mjs';
 // Rebind declared recipe inputs to one private source compilation. This does
 // not edit recipes, rebuild inputs, or confer gameplay/source admission.
@@ -316,11 +318,47 @@ function compiledBattleRebinding(before,after,ref,proofs,canonical,sourceCatalog
   return {...proof,profile:sourceIdentityAfter.profile,sourceIdentityBefore,sourceIdentityAfter};
 }
 
+/** Historical compiler changes and a single metadata addition are separate
+ * proofs. A baseline is independently compiled by the input-locked producer,
+ * including its encounter body; it is never after.common with a field deleted. */
+async function auditCompiledMessageFeeAddition({before,after,ref,proofs,declaration,evidence,baselines,canonical,verifyContent,sourceCatalogProfile}) {
+  const needsAddition=before.kind==='narshe-battle-catalog' &&
+    before.common?.sourceMessageFees===undefined && after.common?.sourceMessageFees!==undefined;
+  if(!needsAddition || baselines===undefined)
+    return auditSourceMessageFeeAddition({before,after,declaration,evidence,canonical});
+  assert.ok(baselines instanceof Map,'Source fee baselines must be trusted compiler products');
+  const raw=baselines.get(ref.url);
+  dataFields(raw,['baseline','rebinding'],'source fee compiler baseline');
+  const baseline=structuredClone(raw.baseline);
+  await verifyContent(baseline);
+  assert.equal(baseline.kind,'narshe-battle-catalog');
+  assert.equal(baseline.common?.sourceMessageFees,undefined,'Source fee baseline already has the addition');
+  const baselineProofs=parseBattleRebindings([raw.rebinding]),baselineProof=baselineProofs.get(ref.url),finalProof=proofs.get(ref.url),
+    declarationProof=parseSourceMessageFeeAddition(declaration);
+  assert.ok(baselineProof&&finalProof&&declarationProof,'Source fee baseline requires both compiler rebindings and the addition declaration');
+  assert.equal(baselineProof.candidateHash,baseline.contentHash,'Source fee baseline candidate hash mismatch');
+  assert.equal(baselineProof.compilerDigest,declarationProof.compilerDigest,'Source fee baseline compiler mismatch');
+  assert.equal(finalProof.compilerDigest,declarationProof.compilerDigest,'Source fee candidate compiler mismatch');
+  for(const key of ['previousHash','sourceContentHash','fieldSourceSetHash','gameStateHash'])
+    assert.equal(baselineProof[key],finalProof[key],'Source fee baseline rebinding mismatch: '+key);
+  const historical=compiledBattleRebinding(before,baseline,ref,baselineProofs,canonical,sourceCatalogProfile);
+  // No-fee and with-fee compilation must differ only in that common field.
+  const outsideCommon=value=>{const{contentHash:_,common:__,...body}=value;return body;};
+  assert.equal(canonical(outsideCommon(baseline)),canonical(outsideCommon(after)),'Source fee addition changed the compiler baseline body');
+  const audit=await auditSourceMessageFeeAddition({before:baseline,after,declaration,evidence,canonical});
+  assert.ok(audit,'Source fee compiler baseline did not prove an addition');
+  return {...audit,compilationBaseline:{kind:'same-input-compiled-message-fee-baseline-v1',url:ref.url,
+    policy:'omit-source-message-fees-for-addition-audit-v1',contentHash:baseline.contentHash,
+    commonHash:sha(canonical(baseline.common)),compilerDigest:baselineProof.compilerDigest,
+    historicalRebinding:historical,originalPinnedHash:before.contentHash,
+    originalPinnedCommonHash:sha(canonical(before.common)),sourceOwnedBytesUnchanged:true}};
+}
+
 /** The proof is supplied by the trusted same-candidate compiler, never by a
  * recipe or save. It binds an exact URL and old/new body hashes; this helper
  * grants no source gameplay readiness and performs no save migration. */
 export async function resolveCompiledBattleReference({reference,readCurrentJson,readCandidateJson,
-    battleRebindings,root=repository,compiledDir='dist'}){
+    battleRebindings,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines,root=repository,compiledDir='dist'}){
   dataFields(reference,['url','contentHash'],'compiled battle reference');
   assert.ok(typeof reference.url==='string'&&jsonURL.test(reference.url),'Invalid compiled battle reference URL');
   assert.ok(typeof reference.contentHash==='string'&&digest.test(reference.contentHash),'Invalid compiled battle reference hash');
@@ -337,7 +375,9 @@ export async function resolveCompiledBattleReference({reference,readCurrentJson,
   assert.ok(plain(after),'Missing content for '+ref.url);
   await verifyContent(after);
   validateDocument(before,ref);validateDocument(after,ref);
+  const feeAudit=await auditCompiledMessageFeeAddition({before,after,ref,proofs,declaration:sourceMessageFeeAddition,evidence:sourceMessageFeeEvidence??(sourceMessageFeeAddition?createSourceMessageFeeEvidenceReader({root,compiledDir}):undefined),baselines:sourceMessageFeeBaselines,canonical,verifyContent,sourceCatalogProfile});
   const report=compiledBattleRebinding(before,after,ref,proofs,canonical,sourceCatalogProfile);
+  if(report&&feeAudit)report.sourceMessageFeeAddition=feeAudit;
   return {reference:{url:ref.url,contentHash:after.contentHash},report};
 }
 
@@ -417,13 +457,16 @@ async function npcRouteAdditionDeclaration(raw,root,compiledDir){
  * and complete package validation at their publication boundary. */
 export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurrentJson,readCandidateJson,
     root=repository,compiledDir='dist',sourceWalkEvidence,battleRebindings,frameworkProfileUpgrade,sourceMapAnimationAddition,sourceMapAnimationEvidence,sourceNpcRoutesAddition,sourceNpcRouteEvidence,
-    frameworkNpcAreaAddition,frameworkNpcAreaEvidence,sourceEventActivationAddition,sourceEventActivationEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence}){
+    frameworkNpcAreaAddition,frameworkNpcAreaEvidence,sourceEventActivationAddition,sourceEventActivationEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines}){
   assert.ok(typeof recipePath==='string'&&recipePath.length>0,'Missing original recipe path');
   assert.equal(typeof readCurrentJson,'function');assert.equal(typeof readCandidateJson,'function');
   const recipe=recipeJSON(recipeBytes),refs=declaredReferences(recipe),proofs=parseBattleRebindings(battleRebindings);
   const report={kind:'source-recipe-inputs-v1',id:recipe.id,recipeKind:recipe.kind,recipePath,
     recipeSha256:sha(recipeBytes),changes:[],dependencyRebindings:[],sourceIdentities:[],sourceEvidenceEnrichments:[],
     battleCapabilityRebindings:[],frameworkProfileUpgrades:[],sourceMapAnimationAdditions:[],sourceNpcRouteAdditions:[]};
+  parseSourceMessageFeeAddition(sourceMessageFeeAddition);
+  sourceMessageFeeEvidence??=sourceMessageFeeAddition?createSourceMessageFeeEvidenceReader({root,compiledDir}):undefined;
+  if(sourceMessageFeeAddition)report.sourceMessageFeeAdditions=[];
   const frameworkUpgrade=await frameworkUpgradeDeclaration(frameworkProfileUpgrade,root,compiledDir);
   const eventActivationAddition=parseSourceEventActivationAddition(sourceEventActivationAddition);
   if(eventActivationAddition)report.sourceEventActivationAdditions=[];
@@ -435,6 +478,8 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
   if(npcAreaAddition)report.frameworkNpcAreaAdditions=[];
   const npcFlatAddition=parseFrameworkNpcFlatAddition(frameworkNpcFlatAddition);
   if(npcFlatAddition)report.frameworkNpcFlatAdditions=[];
+  const effectFlatAddition=parseFrameworkFieldEffectFlatAddition(frameworkFieldEffectFlatAddition);
+  if(effectFlatAddition)report.frameworkFieldEffectFlatAdditions=[];
   if(refs.length===0)return {recipe,report};
   const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src/core',name+'.js')).href);
   const [{canonical},{verifyContent},{sourceCatalogProfile}]=await Promise.all([
@@ -608,12 +653,17 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
     const npcFlat=await comparableFrameworkNpcFlatAddition({before,after:npcArea.after,proof:npcFlatAddition,evidence:frameworkNpcFlatEvidence,canonical});
     if(npcFlat.addition)report.frameworkNpcFlatAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,previousHash:before.contentHash,candidateHash:after.contentHash,...npcFlat.addition,
       sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile)});
-    const upgraded=comparableFrameworkUpgrade(before,npcFlat.after,ref,frameworkUpgrade,canonical);
+    const effectFlat=await comparableFrameworkFieldEffectFlatAddition({before,after:npcFlat.after,proof:effectFlatAddition,evidence:frameworkFieldEffectFlatEvidence,canonical});
+    if(effectFlat.addition)report.frameworkFieldEffectFlatAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,previousHash:before.contentHash,candidateHash:after.contentHash,...effectFlat.addition,
+      sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile)});
+    const upgraded=comparableFrameworkUpgrade(before,effectFlat.after,ref,frameworkUpgrade,canonical);
     const comparisonAfter=upgraded.after;
     const routed=await comparableNpcRoutes(before,comparisonAfter,ref.role,ref.url,before,after);
     const comparison=await comparableWalkingEvidence(routed.before,routed.after,ref.role,ref.url);
     const oldIdentity=identities(comparison.before,canonical,sourceCatalogProfile),
       newIdentity=identities(comparison.after,canonical,sourceCatalogProfile);
+    const feeAudit=await auditCompiledMessageFeeAddition({before,after,ref,proofs,declaration:sourceMessageFeeAddition,evidence:sourceMessageFeeEvidence,baselines:sourceMessageFeeBaselines,canonical,verifyContent,sourceCatalogProfile});
+    if(feeAudit)report.sourceMessageFeeAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,...feeAudit});
     const battleRebinding=ref.kind==='narshe-battle-catalog'
       ?compiledBattleRebinding(before,after,ref,proofs,canonical,sourceCatalogProfile):null;
     if(battleRebinding)report.battleCapabilityRebindings.push({pointer:ref.pointer,role:ref.role,...battleRebinding});

@@ -83,7 +83,7 @@ function worldFixture(initialEffects = true) {
   const f = fixture(initialEffects), h = host(), owner = { commits: 0, refuse: false };
   const world = new WorldSession(f.field, EventState.initialized(), {
     current: { fieldEffects: h.api },
-    prepare: () => ({ ports: {}, commit: () => { if (owner.refuse) return false; owner.commits++; return true; } }),
+    prepare: () => ({ ports: {}, sealPublication: () => () => true, commit: () => { if (owner.refuse) return false; owner.commits++; return true; } }),
   });
   return { ...f, ...h, session: world, owner };
 }

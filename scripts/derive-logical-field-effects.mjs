@@ -15,6 +15,7 @@ export async function deriveLogicalFieldEffects({root,compiled='dist',catalog,ma
   assert.deepEqual(maps.map(m=>m.mapId).sort((a,b)=>a-b),[...declaration.mapIds].sort((a,b)=>a-b));
   await Promise.all([catalog,...maps].map(value=>verifyContent(value)));
   validateLogicalEffectCatalog(effects);assert.ok(effects.webPolicy);const policy=effects.webPolicy;
+  assert.equal(policy.boardProjection,undefined,"Flat field effect projection requires its independent full-source derivation");
   assert.equal(declaration.catalogHash,policy.catalogHash);assert.equal(declaration.sourceSetHash,policy.sourceSetHash);
   assert.equal(declaration.parentSourceSetHash,policy.parentSourceSetHash);
   assert.equal(policy.catalogHash,hash({sourceSetHash:policy.sourceSetHash,parentSourceSetHash:policy.parentSourceSetHash,media:effects.media,proofs:policy.proofs}));

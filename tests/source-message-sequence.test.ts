@@ -169,8 +169,12 @@ test("owned-name binding spans speaker and all text runs once, and never default
   assert.deepEqual(fieldMessageTemplateSource(op.command.template!), { pages: ["(NAME_A)", "Next (NAME_A)"], speaker: "(NAME_A)" });
   const compiledCommand = op.command;
   assert.throws(() => open(compiledCommand), /resolved/);
-  assert.throws(() => compileSourceMessageSequenceInstruction(raw(), { story_mes_zhc: { synthetic: "(KINGAKU)<WAIT01>" },
-    story_cha_zhc: { synthetic: "" } }, { nextMnemonic: "Exit" }, names), /KINGAKU/);
+  const amount = compileSourceMessageSequenceInstruction(raw(), { story_mes_zhc: { synthetic: "(KINGAKU)<WAIT01>" },
+    story_cha_zhc: { synthetic: "" } }, { nextMnemonic: "Exit" }, names);
+  if (amount.command.kind !== "sequence") throw new Error("Wrong amount test command");
+  assert.equal(amount.command.template?.kind, "field-message-template-v2");
+  const amountCommand = amount.command;
+  assert.throws(() => open(amountCommand), /resolved/);
 });
 
 test("stable policy is explicit Web layout; old v1 short-page bound remains unchanged", () => {

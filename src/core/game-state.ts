@@ -1,3 +1,4 @@
+import { WEB_SOURCE_SCRIPT_RANDOM, validateScriptRandomUpper, type WebSourceScriptRandom, type FieldScriptRandomPort } from "./field-script-random.js";
 import type { CombatantDefinition, BattleContent } from "./battle-content.js";
 import type { BattleEntryInventory, BattleInventoryWithQualification } from "./battle-entry.js";
 import type { Combatant, BattleStatProjection } from "./battle.js";
@@ -291,6 +292,7 @@ export class GameState {
   readonly fieldOwnedConditions: FieldOwnedConditionPort = {
     prepare: (command) => this.prepareOwnedConditionEvent(command),
   };
+  readonly fieldScriptRandom: FieldScriptRandomPort = { prepare: upper => this.prepareScriptRandom(upper) };
   readonly fieldRecovery: FieldRecoveryPort = {
     prepare: (command) => this.prepareFieldRecovery(command),
   };
@@ -1205,9 +1207,22 @@ export class GameState {
     };
     return { ...projection, commit: () => commitWith(() => {}), commitWith };
   }
+  private prepareScriptRandom(upper: number): ReturnType<FieldScriptRandomPort["prepare"]> {
+    this.requireIdle(); validateScriptRandomUpper(upper);
+    if (!this.data.fieldRandom) throw new Error("Missing field random ownership");
+    const next = this.snapshot(), revision = this.revision, value = drawFieldRandom(next.fieldRandom!, 1, upper);
+    this.validate(next); let consumed = false;
+    const validate = () => {
+      this.requireIdle();
+      if (consumed || this.revision !== revision) throw new Error("Stale source script random transaction");
+    };
+    return { value, validate, commitWith: publish => {
+      this.commitMenuPresentation(next, validate, publish); consumed = true;
+    } };
+  }
   /** Map initialization runs against this private draft. Publishing rebinds the
    * same ports to live state so later events keep a single state owner. */
-  prepareFieldState(): {
+  prepareFieldState(options: { scriptRandom?: WebSourceScriptRandom } = {}): {
     ports: {
       inventory: FieldInventoryPort;
       treasure: FieldTreasurePort;
@@ -1215,6 +1230,7 @@ export class GameState {
       roster: FieldRosterPort;
       ownedConditions: FieldOwnedConditionPort;
       recovery: FieldRecoveryPort;
+      scriptRandom?: FieldScriptRandomPort;
       puppetRoster: FieldPuppetRosterPort;
       messageNames: FieldMessageNamesPort;
       transportation?: FieldTransportationPort;
@@ -1223,15 +1239,44 @@ export class GameState {
       partyAppearance?: { catalog: PartyActorCatalog; current(): PartyAppearanceCandidate };
       movementBlocker: (transportationId: number | null, manual: boolean) => string | null;
     };
+    /** Seal the initializer's existing draft generation for map publication. */
+    sealPublication(): () => boolean;
     commit(): boolean;
   } {
     this.requireIdle();
+    if (options.scriptRandom !== undefined && options.scriptRandom !== WEB_SOURCE_SCRIPT_RANDOM)
+      throw new Error("Unknown source script random policy");
     const revision = this.revision;
     let data = this.snapshot(),
       generation = 0,
       published = false,
       transportationPublishing = false,
+      sealedGeneration: number | undefined,
       publicationRevision: number | null = null;
+    const scriptRandom: FieldScriptRandomPort = { prepare: upper => {
+      if (published) return this.prepareScriptRandom(upper);
+      this.requireIdle(); validateScriptRandomUpper(upper);
+      if (!data.fieldRandom) throw new Error("Missing field random ownership");
+      const next = structuredClone(data), version = generation;
+      const value = drawFieldRandom(next.fieldRandom!, 1, upper);
+      this.validate(next); let consumed = false;
+      const validate = () => {
+        this.requireIdle();
+        if (consumed || transportationPublishing || published || generation !== version || this.revision !== revision)
+          throw new Error("Stale candidate source script random transaction");
+      };
+      return { value, validate, commitWith: publish => {
+        validate();
+        if (typeof publish !== "function" || publish.constructor.name === "AsyncFunction")
+          throw new Error("Source script random publication must be synchronous");
+        transportationPublishing = true;
+        try { const result: unknown = publish();
+          if (result && typeof (result as {then?: unknown}).then === "function")
+            throw new Error("Source script random publication must be synchronous");
+          data = next; generation++; consumed = true;
+        } finally { transportationPublishing = false; }
+      } };
+    } };
     const inventory: FieldInventoryPort = {
       prepare: (command) => {
         if (published) return this.prepareInventoryEvent(command);
@@ -1427,6 +1472,7 @@ export class GameState {
         roster,
         ownedConditions,
         recovery,
+        ...(options.scriptRandom === WEB_SOURCE_SCRIPT_RANDOM ? { scriptRandom } : {}),
         puppetRoster: { current: () => this.projectPuppetRoster(published ? this.data : data) },
         messageNames: { prepare: (refs) => {
           if (published) return this.fieldMessageNames.prepare(refs);
@@ -1445,8 +1491,17 @@ export class GameState {
         movementBlocker: (transportationId, manual) =>
           this.movementBlocker(published ? this.data : data, transportationId, manual),
       },
+      sealPublication: () => {
+        this.requireIdle();
+        if (sealedGeneration !== undefined || transportationPublishing || published || this.revision !== revision)
+          throw new Error("Cannot seal a stale or already sealed map owned draft");
+        const version = sealedGeneration = generation;
+        return () => !transportationPublishing && !this.transportationPublication && !this.menuPublication &&
+          !published && !this.active && this.revision === revision && generation === version;
+      },
       commit: () => {
-        if (transportationPublishing || this.transportationPublication || published || this.active || this.revision !== revision)
+        if (transportationPublishing || this.transportationPublication || this.menuPublication || published || this.active || this.revision !== revision ||
+            sealedGeneration !== undefined && generation !== sealedGeneration)
           return false;
         this.data = data;
         this.revision++;

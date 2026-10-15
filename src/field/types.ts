@@ -1,3 +1,5 @@
+import type { SourceGilTagOp } from "../core/source-message-fees.js";
+import type { FieldScriptRandomOp } from "../core/field-script-random.js";
 /** Browser-safe field content: no Unity readers or renderer dependencies in the runtime. */
 import type { EventControlOp, ScriptLocals, VariableRef } from "../core/event-state.js";
 import type { FieldScriptShopOp } from "../core/field-script-shop.js";
@@ -20,6 +22,7 @@ import type { FieldBgmControlOp } from "../core/field-bgm-control.js";
 import type { FieldTimerOp } from "../core/field-timer.js";
 import type { FieldScreenEffectOp } from "../core/field-screen-effects.js";
 import type { FieldShakeOp } from "../core/field-camera-shake.js";
+import type { FieldContentInvalidationOp } from "../core/field-content-invalidations.js";
 import type { FieldEventSaveOp } from "../core/field-auto-save.js";
 import type { PlayerVisibilityOp, PlayerVisibilityFactory } from "../core/player-visibility.js";
 import type { FieldTaskControlOp } from "../core/field-task-control.js";
@@ -46,6 +49,7 @@ import type { FieldTransportationOp } from "../core/field-transportation-command
 import type { FieldMessageTemplate } from "../core/field-message-template.js";
 import type { FrameworkWalkEncounterPolicy } from "../core/walk-encounters.js";
 import type { GameDevelopmentEntry } from "../core/game-development-entry.js";
+import type { SourceBossEncounterOp } from '../core/source-boss-encounter.js';
 import type { SourceEncounterOp } from "../core/source-encounter.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
@@ -222,6 +226,8 @@ export type Op = Site &
     | RosterLifecycleEventOp
     | FieldTransportationOp
     | OwnedConditionEventOp
+    | SourceGilTagOp
+  | FieldScriptRandomOp
     | FieldRecoveryEventOp
     | SourcePresentationOp
     | AudioReadinessOp
@@ -229,7 +235,7 @@ export type Op = Site &
     | FieldBgmControlOp
     | FieldTimerOp
     | FieldScreenEffectOp
-    | FieldShakeOp
+    | FieldShakeOp | FieldContentInvalidationOp
     | PlayerVisibilityOp
     | FieldTaskControlOp
     | FieldFadeOp
@@ -291,6 +297,8 @@ export type Op = Site &
       }
     | ({ kind: "message"; manual?: FieldManualMessage } & FieldMessage)
     | SourceEncounterOp
+    | SourceBossEncounterOp
+    | {kind:'source-battle-result'}
     | { kind: "encounter"; party: number; continuation: string }
     | { kind: "blocked"; mnemonic: string; reason: string }
   );

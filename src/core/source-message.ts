@@ -1,3 +1,4 @@
+import { bindSourceMessageFee, restoreSourceMessageFee, parseSourceMessageFeeCatalog, type SourceGilTagOp, type SourceMessageFeeCatalog, type SourceMessageFeeSnapshot } from "./source-message-fees.js";
 import { checkpointKeys } from "./checkpoint-validation.js";
 import { createSourceMessageSequence, advanceSourceMessageSequence, confirmSourceMessageSequence,
   executeSourceMessagePageInput, sourceMessageSequenceStatus, type SourceMessageSequenceCommand,
@@ -65,10 +66,8 @@ type Message = {
   elapsed: number;
   waitConsumed: boolean;
 };
-export type SourceMessageSnapshot = {
-  kind: "source-message-v1";
-  message: Message | SourceMessageSequenceValue | null;
-};
+export type SourceMessageSnapshot = { message: Message | SourceMessageSequenceValue | null } & (
+  { kind: "source-message-v1" } | { kind: "source-message-v2"; fee: SourceMessageFeeSnapshot });
 
 function seconds(value: number): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0 ||
@@ -108,7 +107,30 @@ function command(value: SourceMessagePlay | { kind: "close" }): void {
 export class SourceMessageState {
   private value: Message | SourceMessageSequenceValue | null = null;
   private revision = 0;
+  /** Ephemeral owner revision for prepared-map publication; never serialized. */
+  get mutationRevision(): number { return this.revision; }
   private windowTicket = 0;
+  private readonly feeCatalog: SourceMessageFeeCatalog | undefined;
+  private fee: SourceMessageFeeSnapshot | null = null;
+  constructor(catalog?: SourceMessageFeeCatalog, seed?: SourceMessageFeeSnapshot) {
+    this.feeCatalog = catalog && parseSourceMessageFeeCatalog(catalog);
+    if (seed) this.fee = restoreSourceMessageFee(seed, this.feeCatalog);
+  }
+  get feeSnapshot(): SourceMessageFeeSnapshot | null { return structuredClone(this.fee); }
+  prepareFee(op: SourceGilTagOp) {
+    const value = bindSourceMessageFee(this.feeCatalog, op), revision = this.revision; let committed = false;
+    return { commit: () => {
+      if (committed || revision !== this.revision) throw new Error("Stale source message fee replacement");
+      this.fee = value; this.revision++; committed = true;
+    } };
+  }
+  prepareFeeValue() {
+    if (!this.fee) throw new Error("Source message KINGAKU has not been set");
+    const fee = restoreSourceMessageFee(this.fee, this.feeCatalog), revision = this.revision;
+    return { value: String(fee.amount), validate: () => {
+      if (revision !== this.revision) throw new Error("Stale source message fee presentation");
+    } };
+  }
   get endWaiting(): boolean {
     return this.value !== null && (isSequence(this.value) ? this.value.phase === "end-wait" : this.value.phase === "finished");
   }
@@ -157,18 +179,20 @@ export class SourceMessageState {
       phase: value.phase, acceptsInput: false };
   }
   snapshot(): SourceMessageSnapshot {
-    return { kind: "source-message-v1", message: structuredClone(this.value) };
+    return this.fee ? { kind: "source-message-v2", message: structuredClone(this.value), fee: structuredClone(this.fee) }
+      : { kind: "source-message-v1", message: structuredClone(this.value) };
   }
   fork(): SourceMessageState {
-    const copy = new SourceMessageState(); copy.value = structuredClone(this.value); copy.windowTicket = this.windowTicket; return copy;
+    const copy = new SourceMessageState(this.feeCatalog, this.fee ?? undefined); copy.value = structuredClone(this.value); copy.windowTicket = this.windowTicket; return copy;
   }
   /** Retained finished text is still an open window. No live message coroutine
    * or retained global window is admitted to the stable field save format. */
-  static restore(value: SourceMessageSnapshot): SourceMessageState {
-    checkpointKeys(value, "kind,message");
-    if (value.kind !== "source-message-v1" || value.message !== null)
+  static restore(value: SourceMessageSnapshot, catalog?: SourceMessageFeeCatalog): SourceMessageState {
+    const fee = value.kind === "source-message-v2";
+    checkpointKeys(value, "kind,message" + (fee ? ",fee" : ""));
+    if (value.kind !== "source-message-v1" && !fee || value.message !== null)
       throw new Error("Active or invalid source message checkpoint");
-    return new SourceMessageState();
+    return new SourceMessageState(catalog, fee ? value.fee : undefined);
   }
   prepare(op: SourceMessageOp, context?: SourceMessageSequenceContext): {
     flow: "next";

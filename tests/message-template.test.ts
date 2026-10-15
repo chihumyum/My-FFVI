@@ -61,7 +61,7 @@ test("CT selects one message alignment across all P pages without consuming othe
 test("missing, partial or ambiguous complete bindings cannot turn macros into printable text", () => {
   assert.throws(() => compileMessage("TEST", messages("(ALICE)")), /source table/);
   assert.throws(() => manual("(RESERVE)", "", bindings().slice(0, 2)), /value binding/);
-  for (const token of ["UNKNOWN", "KINGAKU", "FULL_SPACE", "ITEM_N", "alice", "名字"])
+  for (const token of ["UNKNOWN", "FULL_SPACE", "ITEM_N", "alice", "名字"])
     assert.throws(() => manual("(" + token + ")", ""), /value binding/);
   for (const change of [
     (rows: ReturnType<typeof bindings>) => rows.push({ ...rows[0]! }),

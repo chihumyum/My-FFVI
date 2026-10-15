@@ -1,3 +1,4 @@
+import { WEB_MANUAL_BATTLE_CONTROLS } from "../core/battle-controls.js";
 import type { BattleCatalog } from "../core/battle-content.js";
 import { verifyContent } from "../core/content-integrity.js";
 import { assertSourceGameCatalog } from "../core/source-catalog.js";
@@ -55,9 +56,12 @@ export function validateInitializedBattleSharedCapabilities(base: BattleCatalog,
   const report = directoryReport === undefined ? {} : record(directoryReport),
     policy = report.policy === undefined ? {} : record(report.policy),
     framework = policy.framework === undefined ? {} : record(policy.framework);
+  const manualPolicy = policy.kind === "source-battle-directory-policy-v3";
+  if (manualPolicy) same(framework.manualControls, WEB_MANUAL_BATTLE_CONTROLS, "known Web manual controls policy");
+  else require(!Object.hasOwn(framework, "manualControls"), "manual controls require the exact v3 directory declaration");
   if (Object.hasOwn(nextCommon, "conditionControlPolicy")) {
     const declared = { kind: "web-source-control-actions-v1" };
-    require(policy.kind === "source-battle-directory-policy-v2", "condition policy requires a versioned directory declaration");
+    require(policy.kind === "source-battle-directory-policy-v2" || manualPolicy, "condition policy requires a known versioned directory declaration");
     same(nextCommon.conditionControlPolicy, declared, "known Web condition policy");
     same(framework.conditionControlPolicy, declared, "declared Web condition policy");
     same(report.policyChanges, [{ kind: "framework-condition-policy-binding-v1",

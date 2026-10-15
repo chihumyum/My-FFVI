@@ -177,11 +177,11 @@ function phase(value: SourceMessageSequenceValue, next: SourceMessageSequencePha
 export function createSourceMessageSequence(command: SourceMessageSequenceCommand,
   context: SourceMessageSequenceContext): SourceMessageSequenceValue {
   const timing = prepareSourceMessageSequenceTiming(command, context);
-  // The caller resolves names once through the existing prepared owned-name
+  // The caller resolves values once through the existing prepared name/fee
   // view, then removes the compile-time template before this publication.
   if (command.template !== undefined || [command.speaker, ...sourceMessageSequenceTextRuns(command.document)]
     .some(text => /\(([\p{L}\p{Mn}\p{Nd}\p{Pc}]+)\)/u.test(text)))
-    throw new Error("Source sequence requires a resolved owned-name presentation");
+    throw new Error("Source sequence requires a resolved source-value presentation");
   return { command: structuredClone(command), timing, phase: "play", token: 0, text: "", page: 0, elapsed: 0, playing: true };
 }
 /** A manager Update never spills excess time through another wait or page. */
