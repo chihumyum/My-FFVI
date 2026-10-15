@@ -64,7 +64,7 @@ test('source decoder handles the whole operand families and retains specific lea
   const compile=(raw:ReturnType<typeof command>[])=>compileBattleEvent({Name:'authored',Title:{main:'',sub:''},Mnemonics:raw,Segments:[{Label:'Main',EntryPoint:0,Count:raw.length}],ScriptLocal:['a','b','c'],ScriptLocalValue:[0,0,9],SystemFlag:{KeepBadStatusVisual:0,KeepPlayerPuppet:0,RidingVehicle:0,SkipInitialize:0},Animations:[]},null);
   const raw=[command('SysCall',[],'ガウバトルモード設定'),command('GetEnemyMode',[9,-3])],before=structuredClone(raw),program=compile(raw);
   assert.deepEqual(program.instructions.map(row=>row.op),[{kind:'set-gau-mode'},{kind:'get-enemy-mode',uniqueId:9,expected:-3}]);assert.deepEqual(raw,before);
-  for(const selector of ['とびこむで離脱','敵パーティをガウに','バトル加入：ガウ','メンバー加入：ガウ','ガウ初回予約','ガウ登場アニメ']){
+  for(const selector of ['敵パーティをガウに','バトル加入：ガウ','メンバー加入：ガウ','ガウ登場アニメ']){
     const op=compile([command('SysCall',[],selector)]).instructions[0]!.op;assert.equal(op.kind,'blocked');if(op.kind==='blocked')assert.match(op.reason,/Gau/);
   }
   const bad=command('GetEnemyMode',[9]);bad.operands.iValues[7]=1;assert.equal(compile([bad]).instructions[0]!.op.kind,'blocked');

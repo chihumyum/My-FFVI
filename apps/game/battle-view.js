@@ -61,7 +61,7 @@ export class BattleView {
     $("party").replaceChildren();
   }
   userReady(battle = this.instance) {
-    return !!battle && this.instance === battle && !this.paused &&
+    return !!battle && !battle.globalFadeRaycast && this.instance === battle && !this.paused &&
       (battle.phase !== "active" || battle.uiControls.visible && this.controlRevision === battle.uiControls.revision) &&
       !(battle.phase === "active" && battle.messageInputPending) &&
       (!this.commands || this.owner?.battle === battle && this.commands.ownsBattle(battle) &&
@@ -654,6 +654,14 @@ export class BattleView {
         c.font='bold 15px monospace';c.textAlign='center';c.lineWidth=3;c.strokeStyle='#101426';c.fillStyle='#80ffa7';
         const y=to.y-66-(a.elapsed-400)/35;c.strokeText(text,to.x,y);c.fillText(text,to.x,y);
       }
+    }
+    // The Session's one shared FadeManager projection; drawing cannot advance
+    // its clock or acknowledge a script completion.
+    const fade = battle.globalFadeOverlay;
+    if (fade) {
+      c.save();c.globalAlpha=1;
+      c.fillStyle=`rgba(${fade.r*255},${fade.g*255},${fade.b*255},${fade.a})`;
+      c.fillRect(0,0,this.canvas.width,this.canvas.height);c.restore();
     }
   }
 }

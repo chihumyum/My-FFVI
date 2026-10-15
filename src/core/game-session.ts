@@ -1,3 +1,5 @@
+import { WEB_BATTLE_GLOBAL_FADE } from "./battle-global-fade.js";
+import { BATTLE_RESERVED_SCRIPTS, parseFieldReservation, reservationFingerprint, type FieldReservationSnapshot, type BattleFieldReservation, type BattleFieldReservationHost, type FieldReservedScriptPort } from "./field-reserved-script.js";
 import { validateBattleBranchExecutionPolicy, type WebBattleBranchExecution } from './battle-branch-execution.js';
 import { WEB_BATTLE_EVENT_EFFECTS, createWebBattleEventEffectHost, type BattleEventEffectHost } from './battle-event-effect.js';
 import { validateScriptedBattleActionPolicy, type WebScriptedBattleActions } from "./scripted-battle-action.js";
@@ -76,10 +78,11 @@ type GameCheckpointBase = {
 };
 /** Version 4 is read-only compatibility for content without walk encounters. */
 export type GameCheckpoint = GameCheckpointBase & (
-  { formatVersion: 4 } | { formatVersion: 5 | 6; walkEncounters: WalkEncounterSnapshot }
+  { formatVersion: 4 } | { formatVersion: 5 | 6; walkEncounters: WalkEncounterSnapshot } |
+  { formatVersion: 7 | 8; walkEncounters: WalkEncounterSnapshot; fieldReservation: FieldReservationSnapshot }
 );
 /** External observations are rebound by the host on load, never trusted from saves. */
-export type GameSessionRuntime = { mobColorFilter?: import("./field-mob-controls.js").WebFlatMobColorFilter; birdViewActors?: import("./field-bird-view-actors.js").WebFlatBirdViewActors; worldAutoMove?:import("./field-world-auto-move.js").WebFlatWorldAutoMove; worldAutoTasks?:import("./field-world-auto-tasks.js").WebFlatWorldAutoTasks; battleBranchExecution?:WebBattleBranchExecution; battleEventEffects?:BattleEventEffectHost|typeof WEB_BATTLE_EVENT_EFFECTS; battleEventControls?: WebBattleEventControls; viewChange?: import("./field-view-change.js").WebFlatFieldViewChange; battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY; sourcePartySelection?: WebSourcePartySelection; scriptedBattleActions?: WebScriptedBattleActions; puppetRoutes?: import("./field-puppet-route.js").WebPuppetRoutePolicy; sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
+export type GameSessionRuntime = { screenPresentation?: import("./field-screen-presentation.js").WebFieldScreenPresentation; battleGlobalFade?:typeof WEB_BATTLE_GLOBAL_FADE; mobColorFilter?: import("./field-mob-controls.js").WebFlatMobColorFilter; birdViewActors?: import("./field-bird-view-actors.js").WebFlatBirdViewActors; worldAutoMove?:import("./field-world-auto-move.js").WebFlatWorldAutoMove; worldAutoTasks?:import("./field-world-auto-tasks.js").WebFlatWorldAutoTasks; battleBranchExecution?:WebBattleBranchExecution; battleEventEffects?:BattleEventEffectHost|typeof WEB_BATTLE_EVENT_EFFECTS; battleEventControls?: WebBattleEventControls; viewChange?: import("./field-view-change.js").WebFlatFieldViewChange; battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY; sourcePartySelection?: WebSourcePartySelection; scriptedBattleActions?: WebScriptedBattleActions; puppetRoutes?: import("./field-puppet-route.js").WebPuppetRoutePolicy; sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
   sourceMessageSequence?: NonNullable<FieldGameOptions["sourceMessageSequence"]>;
   conditionLeaderActivity?: NonNullable<FieldGameOptions["conditionLeaderActivity"]>;
@@ -126,7 +129,7 @@ export type PreparedSessionBattleReturn = Omit<PreparedSessionBattleStart, "kind
   readonly outcome: "victory" | "escaped" | "forced";
 };
 type BattleEntry = { field: FieldGame; request: SessionBattleRequest; lease: BattleLease;
-  content: BattleContent; seed: number; shared: BattleEventSharedSnapshot; gau:BattleGauEntry|null };
+  content: BattleContent; seed: number; shared: BattleEventSharedSnapshot; gau:BattleGauEntry|null; reservationHost:BattleFieldReservationHost };
 type PendingBattleHandoff = { status: "prepared" | "publishing" | "consumed" | "discarded"; discard(): void };
 class StaleSessionBattleHandoff extends Error {
   constructor() { super("Stale session battle handoff"); }
@@ -158,8 +161,62 @@ export class GameSession {
   readonly #battleEffectRuntime:BattleEventEffectHost|undefined;
   private readonly scriptedBattleActions: WebScriptedBattleActions | undefined;
   private readonly battleBranchExecution:WebBattleBranchExecution|undefined;
+  private readonly battleGlobalFade:typeof WEB_BATTLE_GLOBAL_FADE|undefined;
   private readonly battleEventControls: WebBattleEventControls | undefined;
   readonly #battleMessageRuntime: { sequence: NonNullable<GameSessionRuntime["sourceMessageSequence"]> } | null;
+  private fieldReservation: FieldReservationSnapshot | null = null;
+  get reservedFieldScript(): FieldReservationSnapshot | null { return structuredClone(this.fieldReservation); }
+  private readonly fieldReservationPort: FieldReservedScriptPort = {
+    read: () => this.reservedFieldScript,
+    prepareConsume: content => {
+      const queued = this.reservedFieldScript;
+      if (!queued) return null;
+      const field = this.field;
+      if (field.content !== content || this.battle || this.state.inBattle)
+        throw new Error('Reserved script requires the current unleased field owner');
+      if (queued.parentSourceSetHash !== content.parentSourceSetHash)
+        throw new Error('Reserved script belongs to another source domain');
+      const before = canonical(queued), pin = reservationFingerprint(content, queued.script);
+      let consumed = false;
+      const validate = () => {
+        if (consumed || this.field !== field || this.battle || this.state.inBattle ||
+            canonical(this.fieldReservation) !== before || reservationFingerprint(content, queued.script) !== pin)
+          throw new Error('Stale reserved field script consumption');
+      };
+      return { script: queued.script, validate, commit: () => { validate(); consumed = true; this.fieldReservation = null; } };
+    },
+  };
+  private captureBattleReservationHost(field: FieldGame): BattleFieldReservationHost {
+    const targets = Object.fromEntries(Object.values(BATTLE_RESERVED_SCRIPTS).map(name => [name,
+      canonical({ binding: field.content.reservedScriptBindings?.[name] ?? null, body: field.content.scripts[name] ?? null,
+        locals: field.content.scriptLocals?.[name] ?? null, flags: field.content.scriptSystemFlags?.[name] ?? null,
+        puppet: field.content.scriptPuppetContexts?.[name] ?? null })]));
+    return { entry: this.reservedFieldScript, require: role => {
+      const name = BATTLE_RESERVED_SCRIPTS[role];
+      if (!name || this.field !== field || reservationFingerprint(field.content, name) !== targets[name])
+        throw new Error('Battle reserved script current source binding changed: ' + name);
+      return parseFieldReservation({ kind: 'source-field-reservation-v1', script: name,
+        parentSourceSetHash: field.content.parentSourceSetHash });
+    } };
+  }
+  private prepareReservationReturn(raw: BattleFieldReservation | null, field: FieldGame) {
+    if (!raw) throw new Error('Battle lost its borrowed field reservation');
+    checkpointKeys(raw, 'kind,entry,candidate');
+    if (raw.kind !== 'battle-field-reservation-v1') throw new Error('Invalid battle field reservation return');
+    const entry = raw.entry === null ? null : parseFieldReservation(raw.entry),
+      candidate = raw.candidate === null ? null : parseFieldReservation(raw.candidate), before = canonical(entry);
+    if (candidate && candidate.parentSourceSetHash !== field.content.parentSourceSetHash)
+      throw new Error('Battle field reservation source domain changed');
+    const pin = candidate ? reservationFingerprint(field.content, candidate.script) : null;
+    let consumed = false;
+    const validate = () => {
+      if (consumed || this.field !== field || canonical(this.fieldReservation) !== before ||
+          candidate && reservationFingerprint(field.content, candidate.script) !== pin)
+        throw new Error('Stale battle field reservation return');
+    };
+    validate();
+    return { validate, commit: () => { validate(); consumed = true; this.fieldReservation = candidate; } };
+  }
   private encounterSerial = 0;
   private remainder = 0;
   private currentBattlePreferences: BattlePreferences;
@@ -234,6 +291,8 @@ export class GameSession {
     validateScriptedBattleActionPolicy(runtime.scriptedBattleActions);
     this.scriptedBattleActions=runtime.scriptedBattleActions;
     validateBattleBranchExecutionPolicy(runtime.battleBranchExecution);this.battleBranchExecution=runtime.battleBranchExecution;
+    if(runtime.battleGlobalFade!==undefined&&runtime.battleGlobalFade!==WEB_BATTLE_GLOBAL_FADE)throw new Error("Unknown battle global fade policy");
+    this.battleGlobalFade=runtime.battleGlobalFade;
     validateBattleEventControls(runtime.battleEventControls);
     this.battleEventControls = runtime.battleEventControls;
     if(runtime.battleEventEffects!==undefined&&runtime.battleEventEffects!==WEB_BATTLE_EVENT_EFFECTS&&(runtime.battleEventEffects.policy!==WEB_BATTLE_EVENT_EFFECTS||typeof runtime.battleEventEffects.prepare!=='function'))throw new Error('Unknown session battle effect host');
@@ -277,10 +336,11 @@ export class GameSession {
       initialEvents.write(ref, value);
     }
     const messageFees = battleCatalog.common.sourceMessageFees && parseSourceMessageFeeCatalog(battleCatalog.common.sourceMessageFees);
-    const { battleBranchExecution: branchPolicy, battleEventEffects: battleEffectsHost, battleEventControls: battleControlsPolicy, battleEventMessages: battleMessagesPolicy, scriptRandom: scriptRandomPolicy, sourceBattleResult: resultPolicy, scriptedBattleActions: scriptActionsPolicy, ...fieldRuntime } = runtime;
+    const { battleGlobalFade:fadePolicy, battleBranchExecution: branchPolicy, battleEventEffects: battleEffectsHost, battleEventControls: battleControlsPolicy, battleEventMessages: battleMessagesPolicy, scriptRandom: scriptRandomPolicy, sourceBattleResult: resultPolicy, scriptedBattleActions: scriptActionsPolicy, ...fieldRuntime } = runtime;
     this.world = new WorldSession(field, initialEvents, {
       current: {
         ...fieldRuntime,
+        reservedScripts: this.fieldReservationPort,
         ...(runtime.sourceEncounterPolicy === undefined ? {} : { sourceEncounter: {
           policy: WEB_SOURCE_ENCOUNTER_POLICY,
           prepare: (command: import("./source-encounter.js").SourceEncounterCommand) => {
@@ -548,8 +608,8 @@ export class GameSession {
     return this.captureCheckpoint(this.world.checkpoint());
   }
   private captureCheckpoint(world: WorldCheckpoint): GameCheckpoint {
-    return {
-      formatVersion: this.initializedEntry ? 6 : 5,
+    const value: GameCheckpointBase & {formatVersion: 5|6; walkEncounters: WalkEncounterSnapshot} = {
+      formatVersion: this.initializedEntry ? 6 as const : 5 as const,
       kind: "game-checkpoint",
       sourceSetHash: this.field.content.parentSourceSetHash,
       battleCatalogHash: this.battleCatalog.contentHash,
@@ -564,6 +624,11 @@ export class GameSession {
       owned: this.state.snapshot(),
       world,
     };
+    if (this.fieldReservation) {
+      reservationFingerprint(this.field.content, this.fieldReservation.script);
+      return { ...value, formatVersion: this.initializedEntry ? 8 : 7, fieldReservation: this.reservedFieldScript! };
+    }
+    return value;
   }
   /** Storage and UI never serialize the VM themselves. The private candidate
    * contains the state after a successful ACK, before any following opcode. */
@@ -607,14 +672,14 @@ export class GameSession {
     runtime: GameSessionRuntime = {},
   ): GameSession {
     const s = structuredClone(raw);
-    if (s.formatVersion !== 4 && s.formatVersion !== 5 && s.formatVersion !== 6) throw new Error("Game checkpoint source/version mismatch");
+    if (s.formatVersion !== 4 && s.formatVersion !== 5 && s.formatVersion !== 6 && s.formatVersion !== 7 && s.formatVersion !== 8) throw new Error("Game checkpoint source/version mismatch");
     checkpointKeys(
       s,
       "formatVersion,kind,sourceSetHash,battleCatalogHash,origin,seed,encounterSerial,remainder,battlePreferences,owned,world" +
-        (s.formatVersion === 4 ? "" : ",walkEncounters"),
+        (s.formatVersion === 4 ? "" : ",walkEncounters") + (s.formatVersion === 7 || s.formatVersion === 8 ? ",fieldReservation" : ""),
     );
     if (
-      (s.formatVersion !== 4 && s.formatVersion !== 5 && s.formatVersion !== 6) ||
+      (s.formatVersion !== 4 && s.formatVersion !== 5 && s.formatVersion !== 6 && s.formatVersion !== 7 && s.formatVersion !== 8) ||
       s.kind !== "game-checkpoint" ||
       s.battleCatalogHash !== battle.contentHash
     )
@@ -623,7 +688,7 @@ export class GameSession {
     checkpointInteger(s.encounterSerial);
     checkpointNumber(s.remainder, 0, 10);
     if (s.remainder >= 10) throw new Error("Invalid session remainder");
-    if ((s.formatVersion === 6) !== (s.origin?.kind === "framework-new-game"))
+    if ((s.formatVersion === 6 || s.formatVersion === 8) !== (s.origin?.kind === "framework-new-game"))
       throw new Error("Checkpoint initialization version/origin mismatch");
     let next: GameSession;
     if (s.origin?.kind === "framework-new-game") {
@@ -697,6 +762,13 @@ export class GameSession {
       next.walkEncounters.assertPolicy(walkMapId, next.field.content.walkEncounters ?? null);
     else if (next.field.content.walkEncounters || s.formatVersion !== 4 && s.walkEncounters.maps.length)
       throw new Error("Saved walking encounters require a bound current map identity");
+    if (s.formatVersion === 7 || s.formatVersion === 8) {
+      const queued = parseFieldReservation(s.fieldReservation);
+      if (queued.parentSourceSetHash !== next.field.content.parentSourceSetHash)
+        throw new Error('Saved field reservation source domain changed');
+      reservationFingerprint(next.field.content, queued.script);
+      next.fieldReservation = queued;
+    }
     next.encounterSerial = s.encounterSerial;
     next.remainder = s.remainder;
     return next;
@@ -842,9 +914,11 @@ export class GameSession {
     return new BattleGame(content, entry.seed, this.state.battlePlayers(entry.lease), this.state.battleInventory(entry.lease),
       this.state.battleProgression(entry.lease, content.experience), this.currentBattlePreferences,
       structuredClone(entry.shared), this.state.battlePlayerBorrow(entry.lease),
-      this.battleBranchExecution !== undefined || this.scriptedBattleActions !== undefined || this.#battleMessageRuntime || this.battleEventControls !== undefined || this.#battleEffectRuntime || entry.gau ? {
+      this.battleBranchExecution !== undefined || this.scriptedBattleActions !== undefined || this.#battleMessageRuntime || this.battleEventControls !== undefined || this.#battleEffectRuntime || this.battleGlobalFade || entry.gau || entry.reservationHost ? {
         ...(this.battleBranchExecution===undefined?{}:{branchExecution:this.battleBranchExecution}),
         ...(entry.gau?{gau:entry.gau}:{}),
+        ...(this.battleGlobalFade?{fade:{policy:this.battleGlobalFade,owner:entry.field.fader}}:{}),
+        fieldContinuation: entry.reservationHost,
         ...(this.battleEventControls === undefined ? {} : { controls: this.battleEventControls }),
         ...(this.#battleEffectRuntime ? {effects:this.#battleEffectRuntime} : {}),
         ...(this.scriptedBattleActions === undefined ? {} : { scriptedActions: this.scriptedBattleActions }),
@@ -917,7 +991,7 @@ export class GameSession {
       if (this.state.battlePartyBlocker) throw new Error(this.state.battlePartyBlocker);
       const blocker = battleDefinitionBlocker(this.state.partyPlayers(), content.qualificationContext, content.conditions);
       if (blocker) throw new Error(blocker);
-      const gau=content.lifecycle?.mode==='script'&&content.lifecycle.program.instructions.some(({op})=>op.kind==='set-gau-mode'||op.kind==='shadow-secede-lot')
+      const gau=content.lifecycle?.mode==='script'&&content.lifecycle.program.instructions.some(({op})=>op.kind==='set-gau-mode'||op.kind==='shadow-secede-lot'||op.kind==='shadow-battle-departure')
         ?this.state.sourceBattleGauEntry(entryContext.state):null;
       if (this.field !== field || field.stop !== request || this.fieldBattleFingerprint(field) !== before)
         throw new StaleSessionBattleHandoff();
@@ -925,7 +999,7 @@ export class GameSession {
       const ownedLease = lease;
       this.battleLease = ownedLease;
       const entry: BattleEntry = { field, request, lease: ownedLease, seed,
-        content: structuredClone(content), shared: battleEventSharedSnapshot(field.eventState),gau };
+        content: structuredClone(content), shared: battleEventSharedSnapshot(field.eventState),gau, reservationHost: this.captureBattleReservationHost(field) };
       const ownedBefore = canonical(this.state.snapshot());
       this.encounterFailure = null;
       return this.createBattleHandoff("start", entry,
@@ -1013,10 +1087,10 @@ export class GameSession {
     this.battleHandoffPreparing = true;
     try {
       const currentResult = () => outcome === "victory" ? battle.previewVictory() : outcome === "escaped" ? battle.previewEscape() : battle.previewForcedReturn();
-      const resultFingerprint = () => canonical({ result: currentResult(), shared: battle.eventSharedReturn,
+      const resultFingerprint = () => canonical({ result: currentResult(), shared: battle.eventSharedReturn, reservation: battle.fieldReservationReturn,
         effects: field.fieldEffectsSnapshot, message: field.sourceMessage.snapshot(), messageRevision: field.sourceMessage.mutationRevision,
         ...(outcome === "forced" ? { units: battle.combatants } : {}) });
-      const before = resultFingerprint(), retirement = battle.prepareEventRetirement();
+      const before = resultFingerprint(), retirement = battle.prepareEventRetirement(), reservation = this.prepareReservationReturn(battle.fieldReservationReturn, field);
       const owned = outcome === "victory" ? this.state.prepareVictory(entry.lease, battle.previewVictory()!) :
         outcome === "escaped" ? this.state.prepareEscape(entry.lease, battle.previewEscape()!) :
         this.state.prepareForcedReturn(entry.lease, battle.previewForcedReturn()!);
@@ -1025,10 +1099,10 @@ export class GameSession {
         () => this.field === field && field.stop === request && request === entry.request && field === entry.field &&
           this.battle === battle && this.battleLease === entry.lease && this.battleEntry === entry &&
           resultFingerprint() === before,
-        () => { owned.validate(); resume.validate(); retirement.validate(); },
+        () => { owned.validate(); resume.validate(); retirement.validate(); reservation.validate(); },
         () => beginPublication => {
           let published = false;
-          resume.commitWith(() => { owned.validate(); retirement.validate(); beginPublication(); owned(); retirement.commit(); published = true; });
+          resume.commitWith(() => { owned.validate(); retirement.validate(); reservation.validate(); beginPublication(); owned(); retirement.commit(); reservation.commit(); published = true; });
           if (!published) throw new Error("Battle return did not publish its owned transaction");
           if (outcome === "victory") battle.takeVictory(); else if (outcome === "escaped") battle.takeEscape(); else battle.takeForcedReturn();
           this.battleLease = null; this.battle = null; this.battleEntry = null;

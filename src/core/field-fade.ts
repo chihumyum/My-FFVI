@@ -133,6 +133,22 @@ function resume(value: FieldFadeSnapshot, dt: number): void {
  * Null means the caller has not supplied a trustworthy initial host state. */
 export class FieldFadeState {
   private value: FieldFadeSnapshot | null;
+  private revision=0;
+  private frameReservation:object|null=null;
+  get mutationRevision(){return this.revision;}
+  private requireWritable(){if(this.frameReservation)throw new Error("Global fade owner is reserved by a frame transaction");}
+  /** A private simulation-frame branch, never a second live fade manager.
+   * Reserving the actual owner prevents callback writes during publication. */
+  prepareFrame(){
+    this.requireWritable();const token={},revision=this.revision,state=this.fork();
+    this.frameReservation=token;let closed=false;
+    const validate=()=>{if(closed||this.frameReservation!==token||this.revision!==revision)throw new Error("Stale global fade frame transaction");};
+    return {state,validate,discard:()=>{validate();closed=true;this.frameReservation=null;},prepareCommit:()=>{
+      validate();const candidateRevision=state.revision,value=state.snapshot();
+      const finalValidate=()=>{validate();if(state.revision!==candidateRevision)throw new Error("Global fade candidate changed after preparation");};
+      return {validate:finalValidate,commit:()=>{finalValidate();this.value=value;this.revision++;closed=true;this.frameReservation=null;}};
+    }};
+  }
   constructor(seed: FieldFadeInitial | null) {
     if (seed !== null) {
       checkpointKeys(seed, "imageColor,rendererColor,raycastTarget");
@@ -162,6 +178,7 @@ export class FieldFadeState {
   fork(): FieldFadeState {
     const copy = new FieldFadeState(null);
     copy.value = this.snapshot();
+    copy.revision = this.revision;
     return copy;
   }
   /** Stable saves may contain an opaque black screen, but no live coroutine. */
@@ -179,6 +196,7 @@ export class FieldFadeState {
     return restored;
   }
   start(op: FieldFadeOp, frameDeltaSeconds = 0): "next" | "wait" {
+    this.requireWritable();
     direction(op.direction);
     const dt = delta(frameDeltaSeconds),
       seconds = Math.fround(op.seconds);
@@ -212,7 +230,7 @@ export class FieldFadeState {
     // StartCoroutine performs its first MoveNext immediately in the calling frame.
     resume(next, dt);
     if (op.direction === "out") next.raycastTarget = true;
-    this.value = next;
+    this.value = next; this.revision++;
     return seconds < 0 ? "next" : "wait";
   }
   poll(mode: FieldFadeDirection): "next" | "wait" {
@@ -226,6 +244,7 @@ export class FieldFadeState {
   /** Scaled seconds supplied by the host. Web runs manager Update before its coroutine step;
    * this explicit scheduling policy is not original frame-order acceptance. */
   advance(deltaSeconds: number): void {
+    this.requireWritable();
     const dt = delta(deltaSeconds);
     if (!this.value) return;
     const next = this.snapshot()!;
@@ -234,6 +253,6 @@ export class FieldFadeState {
       next.raycastTarget = false;
     }
     resume(next, dt);
-    this.value = next;
+    this.value = next; this.revision++;
   }
 }

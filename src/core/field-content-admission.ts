@@ -2,7 +2,7 @@ import { fieldMessageNameReferences, fieldMessageUsesFee } from "./field-message
 import type { FieldContent, Op, Site } from "../field/types.js";
 
 export const fieldProviders = Object.freeze([
-  "mobColorFilter", "birdViewActors", "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
+  "screenPresentation", "mobColorFilter", "birdViewActors", "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
   "sourcePartySelection", "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "viewChange", "worldAutoTasks", "worldAutoMove", "sourceAutoSaveSync",
 ] as const);
@@ -42,6 +42,7 @@ export type FieldContentRequirements = {
 };
 
 const codes: Record<FieldCapability, string> = {
+  screenPresentation:"FIELD_SCREEN_PRESENTATION_PROVIDER",
   mobColorFilter: "FIELD_MOB_COLOR_FILTER_PROVIDER",
   birdViewActors: "FIELD_BIRD_VIEW_ACTOR_PROVIDER",
   puppetRoutes: "FIELD_PUPPET_ROUTE_PROVIDER",
@@ -154,6 +155,7 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     if (conditionVisual) add("conditionVisual", "Unknown or unsupported owned condition-visual context", "refresh");
   };
   switch (op.kind) {
+    case "field-screen-presentation":add("screenPresentation","Source screen presentation requires an explicit bound Web2D renderer and clock owner");break;
     case "field-view-change": add("viewChange", "ChangeView requires the explicit bound flat Web camera/party controller"); break;
     case 'field-world-auto-move':add('worldAutoTasks','World auto movement requires the shared parallel task clock');add('worldAutoMove','World auto movement requires a bound following entity and explicit flat movement policy');break;
     case 'field-world-auto-task': add('worldAutoTasks','World auto tasks require the explicit current flat content/runtime camera and parallel task host');break;

@@ -1,4 +1,5 @@
 import { compileFieldPuppetReplacementInstruction,sourcePuppetReplacementSelectors } from './field-puppet-replacement.js';
+import {compileFieldScreenPresentation,screenPresentationMnemonics,screenPresentationSelectors} from "./field-screen-presentation.js";
 import { compileFieldMobControl } from "./field-mob-controls.js";
 import { compileFieldBirdViewMoveInstruction } from "./field-bird-view-actors.js";
 import { compileFieldStandaloneWaitInstruction, sourceStandaloneWaitSelector } from "./field-standalone-wait.js";
@@ -174,6 +175,10 @@ export function decodeFieldOp(
     try { return { ...site, ...compileFieldBgmControlInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
+  if ((screenPresentationMnemonics as readonly string[]).includes(name)) {
+    try { return { ...site, ...compileFieldScreenPresentation(raw) }; }
+    catch(error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if ((fieldScreenEffectMnemonics as readonly string[]).includes(name)) {
     try { return { ...site, ...compileFieldScreenEffectInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
@@ -233,6 +238,7 @@ export function decodeFieldOp(
   }
   const o = record(m.operands), i = list(o.iValues).map(integer),
     r = list(o.rValues).map(Number), s = list(o.sValues).map(string);
+  if(name==='SysCall'&&(screenPresentationSelectors as readonly string[]).includes(s[0]??'')){try{return {...site,...compileFieldScreenPresentation(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if(name==='SysCall' && (sourcePartySelectionSelectors as readonly unknown[]).includes(s[0])) {
     try {return {...site,...compileSourcePartySelectionInstruction(raw)};}
     catch(error){return blocked(error instanceof Error?error.message:String(error));}

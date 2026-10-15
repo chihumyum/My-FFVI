@@ -1,3 +1,4 @@
+import {FieldScreenPresentationState,fieldScreenPresentationBinding,type FieldScreenPresentationSnapshot,type WebFieldScreenPresentation}from"./field-screen-presentation.js";
 import type { FieldContent, Op } from "../field/types.js";
 import { canonical } from "./canonical.js";
 import { checkpointKeys } from "./checkpoint-validation.js";
@@ -10,7 +11,8 @@ import { FieldCameraShakeState, type FieldCameraShakeSnapshot, type FieldCameraS
 export const WEB_FIELD_STORY_RUNTIME = "web-field-story-runtime-v1" as const;
 export type FieldStoryRuntimeSnapshot = { timer: FieldTimerSnapshot; colorFilter: FieldColorFilterSnapshot | null } & (
   { kind: typeof WEB_FIELD_STORY_RUNTIME } |
-  { kind: "web-field-story-runtime-v2"; cameraShake: FieldCameraShakeSnapshot });
+  { kind: "web-field-story-runtime-v2"; cameraShake: FieldCameraShakeSnapshot } |
+  { kind: "web-field-story-runtime-v3"; cameraShake: FieldCameraShakeSnapshot | null; screenPresentation:FieldScreenPresentationSnapshot });
 /** Verified immutable source content, never state or a permission in a save. */
 export type FieldTimerOriginContent = { mapId: number; mapContentHash: string; scripts: Record<string, Op[]> };
 export function fieldTimerOriginContent(content: FieldContent): FieldTimerOriginContent {
@@ -43,6 +45,7 @@ export function restoreFieldStoryShake(raw: FieldCameraShakeSnapshot, content: F
  * Web policy starts a new map without an old shake/stream. Preparing or
  * discarding that candidate never changes the source FieldGame. */
 export function fieldStoryRuntimeForNewMap(snapshot: FieldStoryRuntimeSnapshot): FieldStoryRuntimeSnapshot {
+  if(snapshot.kind==="web-field-story-runtime-v3")return {...structuredClone(snapshot),cameraShake:null};
   return { kind: WEB_FIELD_STORY_RUNTIME, timer: structuredClone(snapshot.timer), colorFilter: structuredClone(snapshot.colorFilter) };
 }
 /** Resolve the source's exact callback, retaining the original code address. */
@@ -63,9 +66,9 @@ export function bindFieldStoryTimerOrigin(origin: FieldTimerOriginContent, sourc
 }
 /** A saved timer can identify required content, but cannot supply that content. */
 export function restoreFieldStoryRuntime(raw: FieldStoryRuntimeSnapshot, content: FieldContent,
-  origin?: FieldTimerOriginContent, cameraShakePolicy?: FieldCameraShakePolicy): FieldStoryRuntimeSnapshot {
-  const hasShake = raw.kind === "web-field-story-runtime-v2";
-  checkpointKeys(raw, "kind,timer,colorFilter" + (hasShake ? ",cameraShake" : ""));
+  origin?: FieldTimerOriginContent, cameraShakePolicy?: FieldCameraShakePolicy, screenPolicy?:WebFieldScreenPresentation): FieldStoryRuntimeSnapshot {
+  const hasScreen = raw.kind === "web-field-story-runtime-v3",hasShake = raw.kind === "web-field-story-runtime-v2" || hasScreen;
+  checkpointKeys(raw, "kind,timer,colorFilter" + (hasShake ? ",cameraShake" : "") + (hasScreen?",screenPresentation":""));
   if (raw.kind !== WEB_FIELD_STORY_RUNTIME && !hasShake || !hasFieldStoryRuntime(content))
     throw new Error("Story runtime checkpoint cannot grant its content policy");
   const saved = cloneFieldTimer(raw.timer), active = saved.active;
@@ -82,6 +85,13 @@ export function restoreFieldStoryRuntime(raw: FieldStoryRuntimeSnapshot, content
   const timer = restoreFieldTimer(saved, { policy: WEB_FIELD_TIMER_POLICY, sourceSetHash: content.parentSourceSetHash,
     ...(binding ? { binding } : {}) });
   const colorFilter = FieldColorFilterState.restore(raw.colorFilter, fieldScreenEffectsBinding(content)).snapshot();
+  if (hasScreen) {
+    const binding=fieldScreenPresentationBinding(content,screenPolicy);if(!binding)throw new Error("Screen presentation checkpoint cannot supply trusted content/runtime policy");
+    const screenPresentation=FieldScreenPresentationState.restore(raw.screenPresentation,binding).snapshot();
+    if(raw.cameraShake&&!cameraShakePolicy)throw new Error("Camera-shake checkpoint cannot supply its Web policy");
+    const cameraShake=raw.cameraShake?restoreFieldStoryShake(raw.cameraShake,content,cameraShakePolicy!).snapshot()!:null;
+    return {kind:"web-field-story-runtime-v3",timer,colorFilter,cameraShake,screenPresentation};
+  }
   if (hasShake) {
     if (!cameraShakePolicy) throw new Error("Camera-shake checkpoint cannot supply its Web policy");
     const cameraShake = restoreFieldStoryShake(raw.cameraShake, content, cameraShakePolicy).snapshot()!;

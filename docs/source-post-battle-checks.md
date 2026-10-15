@@ -129,3 +129,5 @@ non-script directory diagnostics remain exact; source-script and source-flag
 omissions are empty. The directory remains 1→1 definitions. Static affected
 counts are not whole-program execution, source reachability, browser acceptance,
 original-game parity or campaign completion. No 649 producer runs in this batch.
+
+The later [owned/field-continuation family](source-battle-owned-field-continuation.md) now delegates actual-player Shadow departure: absence still publishes the real single reserved field script under the battle lease. A present Shadow remains gated on SecedeCharacter/equipment/parameter/result ordering. This supersedes only the older unconditional compile-time departure blocker above; it does not grant a native departure or an absent callback.

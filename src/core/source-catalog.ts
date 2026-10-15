@@ -18,6 +18,7 @@ export function sourceCatalogProfile(profile: DevelopmentProfile | undefined): S
       profile.fieldPresentation !== undefined && profile.fieldPresentation !== "framework-ordinary-field-flat-v1" ||
       profile.worldAutoMove !== undefined && (profile.worldAutoMove !== 'web-flat-world-auto-move-v1'||profile.worldAutoTasks!=='web-flat-world-auto-tasks-v1') ||
       profile.worldAutoTasks !== undefined && profile.worldAutoTasks !== 'web-flat-world-auto-tasks-v1' ||
+      profile.screenPresentation !== undefined && (profile.screenPresentation !== "web-field-screen-presentation-2d-v1" || profile.storyRuntime !== "web-field-story-runtime-v1") ||
       profile.mobColorFilter !== undefined && profile.mobColorFilter !== "web-flat-mob-color-filter-v1" ||
       profile.birdViewActors !== undefined && profile.birdViewActors !== "web-flat-bird-view-actors-v1" ||
       profile.storyRuntime !== undefined && profile.storyRuntime !== "web-field-story-runtime-v1" ||
@@ -61,6 +62,7 @@ export function assertSourceEntryProfiles(
           dependency.developmentProfile!.fieldPresentation !== entry.developmentProfile!.fieldPresentation ||
           dependency.developmentProfile!.worldAutoMove !== entry.developmentProfile!.worldAutoMove ||
           dependency.developmentProfile!.worldAutoTasks !== entry.developmentProfile!.worldAutoTasks ||
+          dependency.developmentProfile!.screenPresentation !== entry.developmentProfile!.screenPresentation ||
           dependency.developmentProfile!.mobColorFilter !== entry.developmentProfile!.mobColorFilter ||
           dependency.developmentProfile!.birdViewActors !== entry.developmentProfile!.birdViewActors ||
           dependency.developmentProfile!.storyRuntime !== entry.developmentProfile!.storyRuntime ||

@@ -88,12 +88,12 @@ test('Shadow eligibility uses selected owned identity, exact fixed state, an act
   assert.throws(()=>planShadowSecedeLot({...entry,fixedPreemptiveState:null},ref=>state.read(ref),()=>['a','b'],no,no),/fixedPreeMptiveState/);
   assert.equal(planShadowSecedeLot(entry,ref=>state.read(ref),()=>['a','b'],()=>[{actorSide:'enemy',ownedId:'a',commandId:1},{actorSide:'player',ownedId:'a',commandId:2}],no),0);
 });
-test('post-battle selectors retain full operands and Shadow departure stays blocked even without a current Shadow',()=>{
+test('post-battle selectors retain full operands and Shadow departure delegates its actual-owned/field-queue phase',()=>{
   const raw=(selector:string)=>({type:1,mnemonic:'SysCall',operands:{iValues:Array(8).fill(0),rValues:Array(8).fill(0),sValues:[selector,...Array(7).fill('')]}}),
     compile=(m:ReturnType<typeof raw>[])=>compileBattleEvent({Name:'authored',Title:{main:'',sub:''},Mnemonics:m,Segments:[{Label:'Main',EntryPoint:0,Count:m.length}],ScriptLocal:['a','b','c','d'],ScriptLocalValue:[0,0,0,7],SystemFlag:{KeepBadStatusVisual:0,KeepPlayerPuppet:0,RidingVehicle:0,SkipInitialize:0},Animations:[]},null);
   const source=[raw('血塗られた盾'),raw('シャドウ離脱抽選'),raw('バトルでシャドウ離脱')],before=structuredClone(source),p=compile(source);
   assert.deepEqual(p.instructions.slice(0,2).map(row=>row.op),[{kind:'cursed-shield-check'},{kind:'shadow-secede-lot'}]);
-  const leave=p.instructions[2]!.op;assert.equal(leave.kind,'blocked');if(leave.kind==='blocked')assert.match(leave.reason,/unconditional Integrator ReserveScript/);
+  const leave=p.instructions[2]!.op;assert.deepEqual(leave,{kind:'shadow-battle-departure'});
   assert.deepEqual(source,before);source[0]!.operands.iValues[7]=1;assert.equal(compile(source).instructions[0]!.op.kind,'blocked');
   const malformed=program([{kind:'shadow-secede-lot'}]);malformed.localNames.pop();malformed.initialLocals.pop();assert.throws(()=>parseBattleEventProgram(malformed),/ScriptLocalVariable\[3\]/);
 });

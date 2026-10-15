@@ -1,3 +1,5 @@
+import { reservedScriptBinding, type FieldReservedScriptPort } from "./field-reserved-script.js";
+import {FieldScreenPresentationState,fieldScreenPresentationBinding,validateScreenPresentationPolicy,type WebFieldScreenPresentation}from"./field-screen-presentation.js";
 import {WEB_FLAT_WORLD_AUTO_MOVE,validateWorldAutoMovePolicy,worldAutoMoveBinding,prepareFlatWorldAutoSegment,type WebFlatWorldAutoMove} from './field-world-auto-move.js';
 import { WEB_FLAT_BIRD_VIEW_ACTORS, validateBirdViewActorsPolicy, fieldBirdViewActorBinding, prepareFieldBirdViewMove, projectFieldBirdViewMove,
   createFieldBirdViewActorPose, parseFieldBirdViewActorPose, parseFieldBirdViewActorCheckpoint,
@@ -323,6 +325,7 @@ type Task = {
   scriptShop: { id: number; pc: number; op: Extract<Op, { kind: "field-script-shop" }>;
     identity: string; closed: boolean } | null;
   fadeWait: Extract<Op, { kind: "field-fade" }> | null;
+  screenBackdropWait:Extract<Op,{kind:"field-screen-presentation"}>|null;
   colorFadeWait: Extract<Op, { kind: "field-color-fade" }> | null;
   flashWait: { op: Extract<Op, { kind: "field-flash" }>; cursor: FieldFlashTask } | null;
   cameraPath: { op: Extract<Op, { kind: "field-script-motion" | "field-puppet-route" }>; progress: FieldCameraPathProgress } | null;
@@ -406,6 +409,7 @@ export type FieldGameOptions = {
   sourceBattleResult?: FieldBattleResultPort;
   /** Internal unpublished restore shell; it must never allocate/replay FX. */
   deferLogicalEffectRestore?: true;
+  screenPresentation?: WebFieldScreenPresentation;
   storyRuntimeSeed?: FieldStoryRuntimeSnapshot;
   /** Explicit Web presentation stream. Saved state and source code cannot grant it. */
   cameraShake?: FieldCameraShakePolicy;
@@ -428,6 +432,7 @@ export type FieldGameOptions = {
   sourceMessageEffects?: { prepare(effects: readonly SourceMessageEffect[]): () => void };
   messageFees?: SourceMessageFeeCatalog;
   messageFeeSeed?: SourceMessageFeeSnapshot;
+  reservedScripts?: FieldReservedScriptPort;
   sourceMessageSequence?: { prepare(): { context: SourceMessageSequenceContext; validate(): void } };
   puppetActors?: FieldPuppetActorsPort;
   puppetRoster?: FieldPuppetRosterPort;
@@ -536,6 +541,7 @@ export class FieldGame {
         !actor.native.entity.riding && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.nativeActorProviders && !!this.camera),
       actorMotion: presence(actorMotion), cameraMotion: presence(cameraMotion), effectMotion: "missing",
       storyTimer: presence(this.timerState !== null),
+      screenPresentation:presence(!!this.screenPresentationState && !!fieldScreenPresentationBinding(this.content,this.options.screenPresentation)),
       screenEffects: presence(this.ordinaryScreenEffectsAvailable),
       cameraShake: presence(this.cameraShakeAvailable),
       viewChange: presence(this.options.viewChange !== undefined && !!this.camera && !!this.partyActors && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.nativeActorProviders && !!this.player.native && !!fieldViewBinding(this.content,this.options.viewChange)),
@@ -1294,6 +1300,8 @@ export class FieldGame {
   }[] = [];
   get fade() { return this.fader.projection; }
   private timerState: FieldTimerSnapshot | null = null;
+  private screenPresentationState:FieldScreenPresentationState|null=null;
+  get screenPresentation(){return this.screenPresentationState?.projection??null;}
   private colorFilterState: FieldColorFilterState | null = null;
   private cameraShakeState: FieldCameraShakeState | null = null;
   private timerOrigin: FieldTimerOriginContent | undefined;
@@ -1301,6 +1309,7 @@ export class FieldGame {
     if (!this.timerState) return null;
     const timer = cloneFieldTimer(this.timerState), colorFilter = this.colorFilterState!.snapshot(),
       cameraShake = this.cameraShakeState?.snapshot();
+    if(this.screenPresentationState)return {kind:"web-field-story-runtime-v3",timer,colorFilter,cameraShake:cameraShake??null,screenPresentation:this.screenPresentationState.snapshot()};
     return cameraShake ? { kind: "web-field-story-runtime-v2", timer, colorFilter, cameraShake }
       : { kind: WEB_FIELD_STORY_RUNTIME, timer, colorFilter };
   }
@@ -1504,16 +1513,18 @@ export class FieldGame {
     if (options.messageFees && options.messageFees.sourceSetHash !== content.parentSourceSetHash) throw new Error("Message fee catalog/source mismatch");
     this.sourceMessage = new SourceMessageState(options.messageFees, options.messageFeeSeed);
     if (hasFieldStoryRuntime(content)) {
-      const seed = options.storyRuntimeSeed && restoreFieldStoryRuntime(options.storyRuntimeSeed, content, options.storyTimerOrigin, options.cameraShake);
+      const seed = options.storyRuntimeSeed && restoreFieldStoryRuntime(options.storyRuntimeSeed, content, options.storyTimerOrigin, options.cameraShake,options.screenPresentation);
       this.timerState = seed?.timer ?? createFieldTimer(WEB_FIELD_TIMER_POLICY, content.parentSourceSetHash);
       this.colorFilterState = seed ? FieldColorFilterState.restore(seed.colorFilter, fieldScreenEffectsBinding(content))
         : new FieldColorFilterState(fieldScreenEffectsBinding(content), { ...WEB_CLEAR_COLOR_FILTER });
-      this.cameraShakeState = seed?.kind === "web-field-story-runtime-v2"
+      this.cameraShakeState = (seed?.kind === "web-field-story-runtime-v2" || seed?.kind === "web-field-story-runtime-v3") && seed.cameraShake
         ? restoreFieldStoryShake(seed.cameraShake, content, options.cameraShake!)
         : options.cameraShake ? new FieldCameraShakeState(content.parentSourceSetHash, options.cameraShake) : null;
       if (this.timerState.active) this.timerOrigin = this.timerState.active.binding.mapContentHash === content.contentHash
         ? fieldTimerOriginContent(content) : options.storyTimerOrigin;
     } else if (options.storyRuntimeSeed || options.storyTimerOrigin) throw new Error("Story runtime host profile is unavailable");
+    const screenBinding=fieldScreenPresentationBinding(content,options.screenPresentation);
+    if(screenBinding)this.screenPresentationState=options.storyRuntimeSeed?.kind==='web-field-story-runtime-v3'?FieldScreenPresentationState.restore(options.storyRuntimeSeed.screenPresentation,screenBinding):new FieldScreenPresentationState(screenBinding);
     this.flatNpcBindings = bindFieldNpcFlatProjections(content);
     this.npcBindings = bindFieldNpcActivities(content);
     if ((this.npcBindings.size || this.flatNpcBindings.size) && !options.nativeActorPreparation)
@@ -2266,15 +2277,15 @@ export class FieldGame {
       this.synchronizedEntry !== false &&
       !this.fieldActivityBusy &&
       !this.fader.active &&
-      !this.colorFilterState?.active &&
+      !this.colorFilterState?.active && !this.screenPresentationState?.active &&
       !this.actorVisibilityBusy &&
       !this.interaction &&
       Object.values(this.actors).every((a) => a.motion === null || this.isAutonomousMotion(a))
     );
   }
-  get menuReady(): boolean { return !this.stop && this.idleFieldReady; }
+  get menuReady(): boolean { return !this.stop && this.idleFieldReady && !this.options.reservedScripts?.read(); }
   get checkpointReady(): boolean {
-    return !Object.values(this.actors).some(actor=>actor.mobColor?.tween) && this.menuReady && (this.logicalEffectsPersistent || !this.effects && !this.options.fieldEffectMap?.hasHistory);
+    return !Object.values(this.actors).some(actor=>actor.mobColor?.tween) && !this.stop && this.idleFieldReady && (this.logicalEffectsPersistent || !this.effects && !this.options.fieldEffectMap?.hasHistory);
   }
   get sourcePresentationContext(): SourcePresentationContext | null {
     return cloneSourcePresentationContext(this.options.sourcePresentation?.context() ?? null);
@@ -2465,13 +2476,13 @@ export class FieldGame {
     if (this.stop || this.worldAutoTasksBusy || !this.logicalEffectsPersistent && (this.effects || this.options.fieldEffectMap?.hasHistory) ||
         this.options.fieldEffectMap && !this.options.fieldEffectMap.active ||
         this.sourcePresentationContext?.advertisementOpeningFader === "present" ||
-        this.fader.active || this.colorFilterState?.active || this.actorVisibilityBusy || Object.values(this.actors).some(actor=>actor.mobColor?.tween) || this.sourceMessage.active || this.messageWindow ||
+        this.fader.active || this.colorFilterState?.active || this.screenPresentationState?.active || this.actorVisibilityBusy || Object.values(this.actors).some(actor=>actor.mobColor?.tween) || this.sourceMessage.active || this.messageWindow ||
         this.pendingChoice || this.shopTask || this.sourcePartySelectionRequest || this.treasureSceneState !== "player" ||
         this.openTriggers.busy || this.interaction || this.pendingPlayerStep ||
         Object.values(this.actors).some((actor) => actor.motion !== null && !this.isAutonomousMotion(actor)) ||
         this.tasks.some((other) => other !== task && !other.done) ||
         task.done || task.slot !== null || task.treasureRoot || task.state !== "ready" ||
-        task.wait !== 0 || task.standaloneWait || task.puppetWait || task.fadeWait || task.colorFadeWait || task.flashWait || task.cameraPath || task.cameraLerp ||
+        task.wait !== 0 || task.standaloneWait || task.puppetWait || task.fadeWait || task.screenBackdropWait || task.colorFadeWait || task.flashWait || task.cameraPath || task.cameraLerp ||
         task.scriptMove || task.scriptLerp || task.birdViewMove || task.remaining !== 0 || task.move ||
         task.animationWait || task.audioWait || task.bgmReplay || task.autoSaveWait || task.soundWait || task.treasure ||
         this.options.puppetActors && !this.nativeActorBindings)
@@ -2547,6 +2558,7 @@ export class FieldGame {
     if (!["idle-field-v16", "event-field-v7", "idle-field-v10", "idle-field-v11", "idle-field-v12", "idle-field-v13", "idle-field-v14", "idle-field-v15", "event-field-v6", "event-field-v5", "event-field-v1", "event-field-v2", "event-field-v3", "event-field-v4"].includes(s.kind) ||
         s.contentHash !== content.contentHash || hasAssigned !== (options.assignedNpcRoutes === WEB_ASSIGNED_ROUTE_POLICY && content.npcRoutes !== undefined) || hasActivities !== (content.frameworkNpcActivity !== undefined) || hasStory !== hasFieldStoryRuntime(content))
       throw new Error("Field checkpoint source/version mismatch");
+    if(hasStory){const saved=(s as {storyRuntime:FieldStoryRuntimeSnapshot}).storyRuntime;if(saved.kind==='web-field-story-runtime-v3'&&(saved.screenPresentation.tasks.length||saved.screenPresentation.backdrop.tween))throw new Error("Stable checkpoint cannot carry unfinished screen presentation");}
     if (hasStory && (s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime.colorFilter?.tween)
       throw new Error("Stable field checkpoint cannot carry an unfinished color-filter tween");
     if (hasView !== (content.entry.viewPlan !== undefined) || hasView &&
@@ -2590,7 +2602,7 @@ export class FieldGame {
       StaticAudioState.restore(s.environment, content.environment),
       { ...options, ...(native ? { nativeActorPreparation: true } : {}),
         ...(hasValues ? { messageFeeSeed: (s as { sourceMessageValues: SourceMessageFeeSnapshot }).sourceMessageValues } : {}),
-        ...(hasStory ? { storyRuntimeSeed: restoreFieldStoryRuntime((s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime, content, options.storyTimerOrigin, options.cameraShake) } : {}) },
+        ...(hasStory ? { storyRuntimeSeed: restoreFieldStoryRuntime((s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime, content, options.storyTimerOrigin, options.cameraShake,options.screenPresentation) } : {}) },
       FieldFadeState.restore(s.fade),
       s.camera ?? undefined,
       native !== undefined,
@@ -2976,7 +2988,7 @@ export class FieldGame {
   directionInput(direction: Direction): FieldDirectionInputResult {
     if (!Object.hasOwn(DELTA, direction)) throw new Error("Invalid field direction");
     const p = this.player;
-    if (this.busy || p.motion || this.worldAutoMovementBusy || this.movementBlocker) return { kind: "rejected" };
+    if (this.options.reservedScripts?.read() || this.busy || p.motion || this.worldAutoMovementBusy || this.movementBlocker) return { kind: "rejected" };
     const prepareFace = () => {
       const animation = p.animation?.clone() ?? null;
       animation?.look(direction);
@@ -3640,7 +3652,7 @@ export class FieldGame {
    * this never turns an actor, opens a service or starts an event task. */
   interactionTarget(direction: Direction = this.player.direction): FieldEntity | null {
     if (!DELTA[direction]) throw new Error("Unknown interaction direction");
-    if (this.busy || this.player.motion || !this.collisionSwitches.interactiveObservation) return null;
+    if (this.options.reservedScripts?.read() || this.busy || this.player.motion || !this.collisionSwitches.interactiveObservation) return null;
     const p = this.player, d = DELTA[direction], rawTarget = { x: p.x + d.x, y: p.y + d.y };
     let target = rawTarget;
     if (this.mapTopology) {
@@ -3734,7 +3746,7 @@ export class FieldGame {
       this.pump();
       return;
     }
-    if (this.busy || this.player.motion || !this.collisionSwitches.interactiveObservation) return;
+    if (this.options.reservedScripts?.read() || this.busy || this.player.motion || !this.collisionSwitches.interactiveObservation) return;
     const p = this.player;
     let e: FieldEntity | null;
     try { e = this.interactionTarget(); }
@@ -4052,6 +4064,7 @@ export class FieldGame {
       catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       this.fader.advance(0.01);
       this.colorFilterState?.advance(0.01);
+      try{if(this.screenPresentationState){if(!fieldScreenPresentationBinding(this.content,this.options.screenPresentation))throw new Error("Screen presentation runtime/content authorization revoked");if(!this.options.npcActivityClock||this.options.npcActivityClock())this.screenPresentationState.advance(10);}}catch(error){this.block(error instanceof Error?error.message:String(error));return;}
       try { this.cameraShakeState?.advance(); }
       catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       this.advanceStoryTimer(10, this.messageWindow || this.choicePending || this.sourceMessage.active ? "message"
@@ -4152,6 +4165,19 @@ export class FieldGame {
         try { this.advanceAssignedRoute(record); }
         catch (error) { this.block(error instanceof Error ? error.message : String(error), record.site); return; }
       }
+      // Consume only on a new logical clock after the existing main/puppet
+      // lifecycle is idle. A private candidate never consumes the shared slot.
+      if (this.idleFieldReady && (!this.options.npcActivityClock || this.options.npcActivityClock())) {
+        try {
+          const reserved = this.options.reservedScripts?.prepareConsume(this.content);
+          if (reserved) {
+            reservedScriptBinding(this.content, reserved.script); reserved.validate();
+            this.beginRoot(reserved.script, () => reserved.commit());
+            if (this.stop) return;
+            continue;
+          }
+        } catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
+      }
       const cellEvent = entered ? this.enter() : false;
       this.pump(0.01);
       if(this.sourcePartySelectionRequest)return;
@@ -4230,7 +4256,7 @@ export class FieldGame {
   }
   /** Runs a package-provided event through the same VM as map triggers. */
   startEvent(script: string): boolean {
-    if (this.busy || this.player.motion) return false;
+    if (this.options.reservedScripts?.read() || this.busy || this.player.motion) return false;
     if (!this.content.scripts[script])
       throw new Error("Missing event script: " + script);
     this.beginRoot(script);
@@ -4359,7 +4385,7 @@ export class FieldGame {
     Object.assign(t, plan, { stack: [], wait: 0, state: "ready", lastClock: this.time,
       standaloneWait: null,
       generalRegisters: initialFieldCoreRegisters(),
-      puppetWait: null, scriptShop: null, fadeWait: null, colorFadeWait: null, flashWait: null, cameraPath: null, cameraLerp: null, scriptMove: null, scriptLerp: null, birdViewMove: null, remaining: 0, move: null,
+      puppetWait: null, scriptShop: null, fadeWait: null, screenBackdropWait:null, colorFadeWait: null, flashWait: null, cameraPath: null, cameraLerp: null, scriptMove: null, scriptLerp: null, birdViewMove: null, remaining: 0, move: null,
       animationWait: false, animationRepeat: null, audioWait: null, bgmReplay: null, autoSaveWait: null, sourceMessageWait: null, soundWait: null, treasure: null, done: false });
   }
   private restoreHookedScript(main: Task): void {
@@ -4442,7 +4468,7 @@ export class FieldGame {
       puppetWait: null,
       scriptShop: null,
       fadeWait: null,
-      colorFadeWait: null, flashWait: null, cameraPath: null,
+      screenBackdropWait:null, colorFadeWait: null, flashWait: null, cameraPath: null,
       cameraLerp: null,
       scriptMove: null,
       birdViewMove: null,
@@ -5392,6 +5418,7 @@ export class FieldGame {
             return;
           }
         }
+        if(t.screenBackdropWait){if(!this.screenPresentationState||!fieldScreenPresentationBinding(this.content,this.options.screenPresentation)){this.block("Backdrop wait lost its bound screen owner",t.screenBackdropWait);return;}if(this.screenPresentationState.backdropPending)return;t.screenBackdropWait=null;}
         if (t.colorFadeWait) {
           if (this.colorFilterState!.poll() === "wait") return;
           t.colorFadeWait = null;
@@ -6349,6 +6376,14 @@ export class FieldGame {
               this.block(error instanceof Error ? error.message : String(error), op);
               return;
             }
+            break;
+          case "field-screen-presentation":
+            try {
+              if(!this.screenPresentationState||!fieldScreenPresentationBinding(this.content,this.options.screenPresentation))throw new Error("Source screen presentation requires explicit current Web2D runtime/content owner");
+              const state=this.screenPresentationState,transaction=state.prepare(op.command);
+              if(this.screenPresentationState!==state||!fieldScreenPresentationBinding(this.content,this.options.screenPresentation))throw new Error("Stale screen presentation owner");
+              transaction.commit();if(transaction.flow==='wait'){t.screenBackdropWait=op;return;}
+            }catch(error){this.block(error instanceof Error?error.message:String(error),op);return;}
             break;
           case "field-color-fade":
             try {

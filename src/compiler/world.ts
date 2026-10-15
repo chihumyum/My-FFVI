@@ -1,3 +1,4 @@
+import { compileReservedScriptBindings } from "./field-reserved-script.js";
 import { compileFieldNpcRoutes } from './field-npc-route.js';
 import { bindSourceFormatFlags } from "./source-system-flags.js";
 import { createHash } from "node:crypto";
@@ -529,6 +530,7 @@ export async function compileWorld(root: string) {
       scripts,
       scriptLocals,
       scriptTransitionMetadata,
+      reservedScriptBindings: compileReservedScriptBindings(aliases, byId, corpus.sourceSetHash, text(corpus.manifest.parentSourceSetHash)),
       scriptSystemFlags,
       scriptPuppetContexts,
       initializer: binding.initializer ? binding.initializerName : null,

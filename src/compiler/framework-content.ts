@@ -24,6 +24,7 @@ export type LogicalFieldEffectsDeclaration = {
   mapIds: readonly number[]; reason: string;
 };
 export type FrameworkContentOptions = {
+  screenPresentation?:import("../core/field-screen-presentation.js").WebFieldScreenPresentation;
   worldAutoMove?: typeof WEB_FLAT_WORLD_AUTO_MOVE;
   worldAutoTasks?: typeof WEB_FLAT_WORLD_AUTO_TASKS;
   mobColorFilter?: import("../core/field-mob-controls.js").WebFlatMobColorFilter;
@@ -197,7 +198,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (!initial || strictEntry.mapContentHash !== initial.contentHash)
     throw new Error("Framework strict entry/map binding mismatch");
 
-  if (Object.keys(options).some(key => key !== 'mobColorFilter' && key !== 'worldAutoMove' && key !== 'birdViewActors' && key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
+  if (Object.keys(options).some(key => key !== 'screenPresentation' && key !== 'mobColorFilter' && key !== 'worldAutoMove' && key !== 'birdViewActors' && key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
     throw new Error("Unknown framework derivation option");
   if(options.worldAutoMove!==undefined&&(options.worldAutoMove!==WEB_FLAT_WORLD_AUTO_MOVE||options.worldAutoTasks!==WEB_FLAT_WORLD_AUTO_TASKS))throw Error('World auto movement requires its declared flat task host');
   if(options.worldAutoTasks!==undefined&&options.worldAutoTasks!==WEB_FLAT_WORLD_AUTO_TASKS)throw new Error('Unknown framework world auto-task policy');
@@ -206,6 +207,8 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (options.birdViewActors !== undefined && options.birdViewActors !== WEB_FLAT_BIRD_VIEW_ACTORS) throw new Error("Unknown framework BirdView actor policy");
   if (options.mobColorFilter !== undefined && options.mobColorFilter !== "web-flat-mob-color-filter-v1") throw new Error("Unknown framework Mob color-filter policy");
   const mobColorFilter = options.mobColorFilter;
+  if(options.screenPresentation!==undefined&&options.screenPresentation!=="web-field-screen-presentation-2d-v1")throw new Error("Unknown framework screen presentation policy");
+  const screenPresentation=options.screenPresentation;
   const birdViewActors = options.birdViewActors;
   const mapAnimatedEntities = options.mapAnimatedEntities;
   const logical = options.logicalFieldEffects === undefined ? undefined : structuredClone(options.logicalFieldEffects);
@@ -226,7 +229,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
     validateLogicalEffectCatalog(logical.catalog);
   }
   const derivedProfile = (sourceContentHash: string, local: DevelopmentOmission[]): DevelopmentProfile => ({
-    ...profile(sourceContentHash, local), ...(mobColorFilter ? {mobColorFilter} : {}), ...(birdViewActors ? { birdViewActors } : {}), ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
+    ...profile(sourceContentHash, local), ...(screenPresentation?{screenPresentation}:{}), ...(mobColorFilter ? {mobColorFilter} : {}), ...(birdViewActors ? { birdViewActors } : {}), ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
     ...(options.worldAutoMove?{worldAutoMove:options.worldAutoMove}:{}),
     ...(options.worldAutoTasks?{worldAutoTasks:options.worldAutoTasks}:{}),
   });

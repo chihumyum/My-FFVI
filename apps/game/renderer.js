@@ -1,3 +1,4 @@
+import {renderScreenPresentation}from"./field-screen-renderer.js";
 import { filterMobPixels } from "./field-mob-renderer.js";
 import { minimapMarkers, MINIMAP_ROTATION } from "/runtime/core/minimap.js";
 import { projectFlatWorldAutoPose } from '/runtime/core/field-world-auto-tasks.js';
@@ -248,7 +249,7 @@ export class Renderer {
     }
     projected.sort((a, b) => a.row - b.row || a.actor.id.localeCompare(b.actor.id));
     const canvas = this.compositionCanvas(width, height), context = canvas.getContext("2d", { willReadFrequently: true });
-    context.imageSmoothingEnabled = false; context.fillStyle = "#09111b"; context.fillRect(0, 0, width, height);
+    this.fillBackdrop(context,width,height,game.screenPresentation?.backdrop);
     for (const background of backgrounds) {
       // Screen-fixed source texture repetition is an explicit authored policy.
       for (let y = 0; y < height; y += background.height) for (let x = 0; x < width; x += background.width)
@@ -384,7 +385,7 @@ export class Renderer {
         camera: sourceCamera.cameraPosition, width, height }, { validateFieldEffectBoardMaterial });
     }
     const canvas = this.compositionCanvas(width, height), context = canvas.getContext("2d", { willReadFrequently: true });
-    this.background(context, sourceCamera, width, height);
+    this.background(context, sourceCamera, width, height,game.screenPresentation?.backdrop);
     if (topology) projectedActors.sort((a, b) => a.row - b.row || a.actorId.localeCompare(b.actorId));
     const output = composeFieldNativePixels({ width, height, tiles, actors: projectedActors.map((actor) => actor.quad), ...(effects ? { effects } : {}),
       background: { width, height, data: context.getImageData(0, 0, width, height).data } });
@@ -393,10 +394,14 @@ export class Renderer {
       prior.kind === omission.kind && prior.actorId === omission.actorId)) this.presentationOmissions.push(omission);
     return imageData;
   }
-  background(context, sourceCamera, width, height) {
-    context.imageSmoothingEnabled = false;
-    context.fillStyle = "#09111b";
-    context.fillRect(0, 0, width, height);
+  fillBackdrop(context,width,height,color) {
+    context.imageSmoothingEnabled=false;
+    if(color?.a<1)context.clearRect(0,0,width,height);
+    context.fillStyle=color?`rgba(${color.r*255},${color.g*255},${color.b*255},${color.a})`:"#09111b";
+    context.fillRect(0,0,width,height);
+  }
+  background(context, sourceCamera, width, height,backdrop) {
+    this.fillBackdrop(context,width,height,backdrop);
     for (const background of this.content.map.backgrounds ?? []) {
       if (!sourceCamera) throw new Error("来源背景缺少摄像机宿主");
       const image = this.images.get(background.texture.url);
@@ -626,7 +631,9 @@ export class Renderer {
     const actorImages = native ? [] : this.actorImages(actors, cx, cy, w, h, topology, game);
     c.imageSmoothingEnabled = false;
     const auto=game.worldAutoPose?projectFlatWorldAutoPose(game.worldAutoPose):null;
-    if(auto){c.fillStyle='#09111b';c.fillRect(0,0,w,h);}
+    const screen=game.screenPresentation;
+    if(screen)this.fillBackdrop(c,w,h,screen.backdrop);
+    else if(auto){c.fillStyle='#09111b';c.fillRect(0,0,w,h);}
     c.save();
     try {
     if(auto){c.translate(w/2,h/2+auto.offsetY);c.rotate(auto.radians);c.scale(auto.scale,auto.scale);c.translate(-w/2,-h/2);}
@@ -636,7 +643,7 @@ export class Renderer {
       if(auto){const canvas=this.compositionCanvas(w,h);canvas.getContext('2d').putImageData(frame,0,0);c.drawImage(canvas,0,0);}
       else c.putImageData(frame, 0, 0);
     }
-    else this.background(c, sourceCamera, w, h);
+    else this.background(c, sourceCamera, w, h,screen?.backdrop);
     const drawActors = (layer) => {
       for (const { actor, point } of actorImages) if (actor.layer === layer) this.actor(actor, cx, cy, point, this.actorElevation(game, actor),this.mobFilterAlpha(game,actor));
     };
@@ -648,6 +655,7 @@ export class Renderer {
         if (l.name === "CeilLayer") drawActors(3);
       }
     } finally {c.restore();}
+    renderScreenPresentation(c,w,h,screen);
     const message = game.sourceMessage?.projection;
     // The sequence projection uses the shared DOM dialogue panel, which wraps
     // and scrolls complete source pages. The old v1 short subtitle stays here.

@@ -29,11 +29,9 @@ test('later actual unknown throws exact raw/source/PC/reason with attempted visi
 });
 test('opaque selector classification depends on complete raw semantics, never generic versus specific diagnostic wording; Gau gates still fail on actual entry',()=>{
  const gates={
-  'とびこむで離脱':'Gau leap requires source Rage learning, owned roster/Corps publication and action/ATB/instance removal in one battle transaction',
   '敵パーティをガウに':'Gau enemy replacement requires source flag-selected party, native asset-load/condition/AI/entity lifecycle and exact source party dependencies',
   'バトル加入：ガウ':'Gau battle join requires the complete owned enable/equipment/level/recovery/Corps borrow and publication',
   'メンバー加入：ガウ':'Gau member join requires the complete source JoinCharacter owned enable/equipment/level/recovery/Corps lifecycle',
-  'ガウ初回予約':'Gau first join requires DataStorage group8[8] plus Integrator ReserveScript and subsequent field queue lifecycle',
   'ガウ登場アニメ':'Gau appearance requires native enemy-instance animation/movement and completion callbacks',
  };
  for(const [selector,specific]of Object.entries(gates))for(const reason of ['An independently reworded opaque semantic diagnostic',specific]){

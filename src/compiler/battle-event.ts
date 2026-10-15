@@ -1,3 +1,4 @@
+import { compileFieldFadeInstruction } from "./field-fade.js";
 import { WEB_BATTLE_BRANCH_EXECUTION, validateBattleBranchExecutionPolicy, parseBattleSourceInstruction, classifyDeferredBattleInstruction, type WebBattleBranchExecution } from '../core/battle-branch-execution.js';
 import { compileBattleEventEffect, type BattleEffectReader } from './battle-event-effect.js';
 import { compileScriptedBattleAction } from "./battle-scripted-action.js";
@@ -76,6 +77,11 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
     const blocked = (reason: string): BattleEventOp => ({ kind: "blocked", reason });
     let op: BattleEventOp = blocked(`unsupported battle-event instruction or operands: ${m.mnemonic}`);
     if (m.type !== 1) return { mnemonic: m.mnemonic, op };
+    if (["FadeIn","FadeOut"].includes(m.mnemonic)) {
+      try {const fade=compileFieldFadeInstruction(m);op={...fade,kind:"global-fade"};}
+      catch(error){op=blocked(error instanceof Error?error.message:String(error));}
+      return {mnemonic:m.mnemonic,op};
+    }
     if (["PlayBattleEffect","SyncBattleEffect"].includes(m.mnemonic)) {
       try {op=compileBattleEventEffect(m,effects);} catch(error){op=blocked(error instanceof Error?error.message:String(error));}
       return {mnemonic:m.mnemonic,op};
@@ -138,14 +144,14 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
     if (m.mnemonic === "SysCall" && form([], [], [0])) {
       if(s[0]==='血塗られた盾')op={kind:'cursed-shield-check'};
       if(s[0]==='シャドウ離脱抽選')op=local(3)?{kind:'shadow-secede-lot'}:blocked('Shadow lottery requires ScriptLocalVariable[3]');
-      if(s[0]==='バトルでシャドウ離脱')op=blocked('Shadow battle departure requires source SecedeCharacter/owned disable and unconditional Integrator ReserveScript/field continuation publication');
+      if(s[0]==='バトルでシャドウ離脱')op={kind:'shadow-battle-departure'};
+      if(s[0]==='ガウ初回予約')op={kind:'reserve-gau-first'};
+      if(s[0]==='とびこむで離脱')op={kind:'gau-leap'};
       if(s[0]==='ガウバトルモード設定')op=local(2)?{kind:'set-gau-mode'}:blocked('SetGauMode requires ScriptLocalVariable[2]');
       const gauGates:Record<string,string>={
-        'とびこむで離脱':'Gau leap requires source Rage learning, owned roster/Corps publication and action/ATB/instance removal in one battle transaction',
         '敵パーティをガウに':'Gau enemy replacement requires source flag-selected party, native asset-load/condition/AI/entity lifecycle and exact source party dependencies',
         'バトル加入：ガウ':'Gau battle join requires the complete owned enable/equipment/level/recovery/Corps borrow and publication',
         'メンバー加入：ガウ':'Gau member join requires the complete source JoinCharacter owned enable/equipment/level/recovery/Corps lifecycle',
-        'ガウ初回予約':'Gau first join requires DataStorage group8[8] plus Integrator ReserveScript and subsequent field queue lifecycle',
         'ガウ登場アニメ':'Gau appearance requires native enemy-instance animation/movement and completion callbacks',
       };
       if(s[0]!==undefined&&gauGates[s[0]])op=blocked(gauGates[s[0]]!);

@@ -284,6 +284,7 @@ export type Op = Site &
     | { kind: "standalone-wait" }
     | { kind: "blank" }
     | { kind: "puppet"; slot: number; actor: string; target: number }
+    | { kind: "field-screen-presentation"; command: import("../core/field-screen-presentation.js").FieldScreenPresentationCommand }
     | { kind: "position"; x: number; y: number; animation: string;
         nativeCommand?: FieldNativePosition;
         /** Independent source admission when the runtime binding is dummy 0. */
@@ -383,6 +384,7 @@ export type FieldContent = {
   /** Explicit development presentation omissions; strict source packages keep
    * these entities and their full capability blockers. */
   developmentOmissions?: { kind: "field-effect"; entityId: string; group: string; source: Evidence; reason: string }[];
+  reservedScriptBindings?: Record<string, import("../core/field-reserved-script.js").SourceReservedScriptBinding>;
   scripts: Record<string, Op[]>;
   scriptLocals?: Record<string, ScriptLocals | null>;
   /** Presence certifies the script has no separate custom animation host. */

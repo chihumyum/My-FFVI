@@ -1,3 +1,6 @@
+import { parseBattleGlobalFadeOp, validateBattleGlobalFadeHost, type BattleGlobalFadeHost } from "./battle-global-fade.js";
+import { fieldFadeOverlay } from "./field-fade.js";
+import { parseFieldReservation, type BattleFieldReservation, type BattleFieldReservationHost } from "./field-reserved-script.js";
 import {resourceAbsorptionEffect,type AbsorptionContext} from './resource-absorption.js';
 import {parseWebEnemySpawnConditions,type WebEnemySpawnConditions} from './battle-spawn-conditions.js';
 import {validateOrdinaryConditionAction} from './ordinary-condition-action.js';
@@ -230,7 +233,17 @@ export class BattleGame {
       unvisitedDependencies:p.branchExecution!.deferred.filter(site=>!this.#branchVisited.has(site.pc)).map(site=>({...site,raw:structuredClone(p.branchExecution!.sourceProgram.Mnemonics[site.pc])})),
       lastFailure:structuredClone(this.#branchLastFailure)};
   }
-  private get deferredEventStart(){return !!this.#messageHost||!!this.#effectHost||this.lifecycle.kind==="battle-lifecycle-v2";}
+  private get deferredEventStart(){return this.#hasGlobalFade||!!this.#messageHost||!!this.#effectHost||this.lifecycle.kind==="battle-lifecycle-v2";}
+  readonly #fadeHost:BattleGlobalFadeHost|null;
+  #hasGlobalFade=false;
+  #fadeRevision=0;
+  #fadeFrame:ReturnType<BattleGlobalFadeHost["owner"]["prepareFrame"]>|null=null;
+  #fadeJournal:{action:"start"|"complete";pc:number;time:number}[]=[];
+  get globalFadeOverlay(){return fieldFadeOverlay(this.#fadeHost?.owner.projection??null);}
+  get globalFadeRaycast(){return this.#fadeHost?.owner.projection?.raycastTarget??false;}
+  get fadeExecution(){return structuredClone(this.#fadeJournal);}
+  private validateFadeOwnership(){if(this.#fadeHost&&this.#fadeHost.owner.mutationRevision!==this.#fadeRevision)throw new Error("Shared global fade owner changed outside its battle frame");}
+
 
   readonly #effectHost: BattleEventEffectHost | null;
   #effects: {projection:BattleEffectProjection;targets:Combatant[];resource:BattleEffectResourceLease}[]=[];
@@ -356,6 +369,7 @@ export class BattleGame {
   private readonly eventShared: BattleEventSharedState | null;
   private readonly gauEntry:BattleGauEntry|null;
   private gauEnemyIds:number[]|null=null;
+  private fieldReservation: BattleFieldReservation | null = null;
   private gauModeJournal:{pc:number;modeWrite:1|2|null;atMilliseconds:number}[]=[];
   private readonly participantContent: BattleParticipantContent | null;
   private readonly entryEnemies: CombatantDefinition[];
@@ -423,12 +437,14 @@ export class BattleGame {
     initialPreferences?: BattlePreferences,
     eventShared?: BattleEventSharedSnapshot,
     playerBorrow?: BattlePlayerBorrow,
-    private readonly eventHosts?: { scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; branchExecution?:WebBattleBranchExecution },
+    private readonly eventHosts?: { scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; fade?:BattleGlobalFadeHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; fieldContinuation?:BattleFieldReservationHost; branchExecution?:WebBattleBranchExecution },
   ) {
     if (eventHosts !== undefined && (!eventHosts || typeof eventHosts !== "object" || Array.isArray(eventHosts) ||
-        Object.keys(eventHosts).some(key => key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau")))
+        Object.keys(eventHosts).some(key => key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau" && key !== "fade" && key !== "fieldContinuation")))
       throw new Error("Unknown battle event host options");
     validateBattleBranchExecutionPolicy(eventHosts?.branchExecution);this.#branchPolicy=eventHosts?.branchExecution;
+    validateBattleGlobalFadeHost(eventHosts?.fade);this.#fadeHost=eventHosts?.fade?Object.freeze({...eventHosts.fade}):null;
+    this.#fadeRevision=this.#fadeHost?.owner.mutationRevision??0;
     const messageHost = eventHosts?.messages;
     if(eventHosts?.effects!==undefined&&(eventHosts.effects.policy!==WEB_BATTLE_EVENT_EFFECTS||typeof eventHosts.effects.prepare!=="function"))throw new Error("Unknown battle effect presentation host");
     if (
@@ -455,9 +471,13 @@ export class BattleGame {
     this.lifecycle = parseBattleLifecycle(content.lifecycle ?? { kind: "battle-lifecycle-v1", mode: "none" });
     this.spawnConditionPolicy=content.spawnConditionPolicy===undefined?null:parseWebEnemySpawnConditions(content.spawnConditionPolicy);
     this.forcedSavePolicy=content.forcedSavePolicy===undefined?null:parseWebBattleForcedSave(content.forcedSavePolicy);
+    if(eventHosts?.fieldContinuation){
+      if(typeof eventHosts.fieldContinuation.require!=='function')throw new Error('Missing source field reservation host');
+      this.fieldReservation={kind:'battle-field-reservation-v1',entry:eventHosts.fieldContinuation.entry===null?null:parseFieldReservation(eventHosts.fieldContinuation.entry),candidate:eventHosts.fieldContinuation.entry===null?null:parseFieldReservation(eventHosts.fieldContinuation.entry)};
+    }
     this.gauEntry=eventHosts?.gau===undefined?null:parseBattleGauEntry(eventHosts.gau);
     if(this.gauEntry&&this.gauEntry.catalogHash!==content.contentHash)throw new Error('Gau entry belongs to another battle catalog');
-    if(this.lifecycle.mode==='script'&&this.lifecycle.program.instructions.some(({op})=>op.kind==='set-gau-mode'||op.kind==='shadow-secede-lot')&&!this.gauEntry)
+    if(this.lifecycle.mode==='script'&&this.lifecycle.program.instructions.some(({op})=>op.kind==='set-gau-mode'||op.kind==='shadow-secede-lot'||op.kind==='shadow-battle-departure')&&!this.gauEntry)
       throw new Error('Gau/Shadow checks require their complete source-owned battle entry');
     if(this.lifecycle.kind==="battle-lifecycle-v2"&&this.#branchPolicy!==WEB_BATTLE_BRANCH_EXECUTION)throw new Error("Source branch lifecycle requires the explicit Web runtime host");
     const hasMessages = this.lifecycle.mode === "script" && this.lifecycle.program.instructions.some(({ op }) => op.kind === "message");
@@ -467,6 +487,8 @@ export class BattleGame {
     this.#messageHost = hasMessages ? Object.freeze({ ...messageHost! }) : null;
     const hasEffects=this.lifecycle.mode==='script'&&this.lifecycle.program.instructions.some(({op})=>['play-battle-effect','sync-battle-effect'].includes(op.kind));
     if(hasEffects&&!eventHosts?.effects)throw new Error('Battle effects require their explicit Web presentation/resource host');
+    this.#hasGlobalFade=this.lifecycle.mode==='script'&&this.lifecycle.program.instructions.some(row=>row.op.kind==='global-fade');
+    if(this.#hasGlobalFade&&(!this.#fadeHost||!this.#fadeHost.owner.known))throw new Error('Battle global fade requires its actual known shared Field fade host');
     this.#effectHost=hasEffects?Object.freeze({...eventHosts!.effects!}):null;
     if (content.conditionControlPolicy !== undefined && (!content.conditionControlPolicy ||
         Object.keys(content.conditionControlPolicy).length !== 1 || content.conditionControlPolicy.kind !== "web-source-control-actions-v1"))
@@ -1249,6 +1271,7 @@ export class BattleGame {
     return { state: structuredClone(this.eventState), controls: { ...this.eventControls } };
   }
   get eventSharedEntry(): BattleEventSharedSnapshot | undefined { return this.eventShared?.entry; }
+  get fieldReservationReturn(): BattleFieldReservation | null { return structuredClone(this.fieldReservation); }
   get gauLifecycle(){return {entry:this.gauEntry&&structuredClone(this.gauEntry),encounteredEnemyIds:structuredClone(this.gauEnemyIds),journal:structuredClone(this.gauModeJournal)};}
   get eventSharedReturn() { return this.eventShared?.prepareReturn() ?? null; }
   get participantExecution(): BattleParticipantState { return structuredClone(this.participantState); }
@@ -1558,6 +1581,7 @@ export class BattleGame {
           messageStatus: this.#messageFrame!.state.sequenceStatus(this.eventState.wait.cursor.ticket),
         } : {}),
         battleEffectsFinished:this.battleEffectsFinished,
+        ...(this.#fadeFrame?.state.known?{globalFadeStatus:{in:this.#fadeFrame.state.poll('in')==='next',out:this.#fadeFrame.state.poll('out')==='next'}}:{}),
         enemyModes:this.participantState.entries.filter(entry=>!entry.removed).map(entry=>{
           const unit=this.combatants.find(unit=>unit.id===entry.id&&unit.side==='enemy');
           if(!unit?.behavior)throw new Error('Missing actual enemy mode parameter owner');
@@ -1583,6 +1607,16 @@ export class BattleGame {
       for (const request of result.requests) {
         try {
           switch (request.kind) {
+            case 'global-fade-complete': {
+              if(!this.#fadeFrame||this.lifecycle.mode!=='script'||this.lifecycle.program.instructions[request.pc]?.op.kind!=='global-fade')throw new Error('Unbound global fade completion');
+              this.#fadeJournal.push({action:'complete',pc:request.pc,time:this.time});break;
+            }
+            case 'global-fade': {
+              const {pc,...raw}=request,op=parseBattleGlobalFadeOp(raw);
+              if(!this.#fadeHost||!this.#fadeFrame||this.lifecycle.mode!=='script'||canonical(this.lifecycle.program.instructions[pc]?.op)!==canonical(op))throw new Error('Unbound actual shared global fade request');
+              this.#fadeFrame.state.start({...op,kind:'field-fade'},.01);
+              this.#fadeJournal.push({action:'start',pc,time:this.time});break;
+            }
             case 'cursed-shield-check': {
               if(!this.eventShared)throw new Error('CursedShield requires the shared source scenario-variable owner');
               const plan=planCursedShieldCheck(ref=>this.eventShared!.read(ref),this.players,this.inventoryQualification,this.content.battleEntry);
@@ -1595,6 +1629,37 @@ export class BattleGame {
               nextEventState.locals[3]=planShadowSecedeLot(this.gauEntry??undefined,ref=>this.eventShared!.read(ref),
                 ()=>this.currentSourceCorps(),()=>{throw new Error('Shadow lottery requires the actual BattleActLog publication/lifecycle owner; the Web display/learning log is not a substitute');},
                 (min,max)=>this.randomInt(min,max));
+              break;
+            }
+            case 'gau-leap': {
+              // Native scans active condition functions on every actual player,
+              // not CharacterStatusId.Gau. The empty match branch does no write.
+              if(this.players.some(player=>this.conditions.types(player.conditionIds).includes(614)))
+                throw new Error('Gau leap condition614 requires held Rage learning, Corps disable and actual action/ATB/borrowed-instance retirement');
+              break;
+            }
+            case 'shadow-battle-departure': {
+              if(!this.gauEntry)throw new Error('Shadow departure requires the complete source-owned player identities');
+              const actual=this.players.map(player=>{
+                const id=this.playerOwnedId(player.id),owner=this.gauEntry!.roster.find(row=>row.id===id&&row.sourceId===player.sourceId);
+                if(!owner)throw new Error('Shadow departure actual player is not bound to its held source owner');
+                return owner;
+              });
+              if(actual.some(owner=>owner.sourceId===4))
+                throw new Error('Shadow departure requires same-held SecedeCharacter(false), equipment/parameters and SaveParameter result ordering before owned disable');
+              if(!this.fieldReservation||!this.eventHosts?.fieldContinuation)throw new Error('Shadow departure requires the unconditional Integrator ReserveScript/field continuation owner');
+              this.fieldReservation.candidate=parseFieldReservation(this.eventHosts.fieldContinuation.require('shadow-departure'));
+              if(this.fieldReservation.candidate.script!=='sc_secede_shadow')throw new Error('Shadow field continuation host returned another native reservation');
+              break;
+            }
+            case 'reserve-gau-first': {
+              if(!this.eventShared)throw new Error('Gau first reservation requires DataStorage group8[8]');
+              if(!this.fieldReservation||!this.eventHosts?.fieldContinuation)throw new Error('Gau first reservation requires Integrator ReserveScript/field continuation owner');
+              const reservation=parseFieldReservation(this.eventHosts.fieldContinuation.require('gau-first-join'));
+              if(reservation.script!=='sc_e_0239')throw new Error('Gau field continuation host returned another native reservation');
+              this.eventShared.write({category:'ScenarioVariable',index:8},1);
+              // Both wrappers cancel the previous single slot before reserving.
+              this.fieldReservation.candidate=reservation;
               break;
             }
             case 'set-gau-mode': {
@@ -2329,18 +2394,18 @@ export class BattleGame {
     this.remainder += ms;
     while (this.remainder >= 10) {
       if (this.phase === "active") this.tick();
-      else if (this.#messageHost?.owner.active) this.advanceTerminalMessage();
+      else if (this.#messageHost?.owner.active||this.#fadeHost) this.advanceTerminalMessage();
       this.remainder -= 10;
     }
   }
   private advanceTerminalMessage(): void {
-    if (this.#messageBusy) throw new Error("Reentrant battle message update");
-    this.validateMessageOwnership();
-    const frame = this.#messageHost!.owner.prepareFrame();
-    this.#messageBusy = true;
-    try { frame.state.advance(.01); const write = frame.prepareCommit(); write.validate(); write.commit(); }
-    catch (error) { frame.discard(); throw error; }
-    finally { this.#messageBusy = false; }
+    if(this.#messageBusy)throw new Error("Reentrant battle presentation update");
+    this.validateMessageOwnership();this.validateFadeOwnership();
+    const frame=this.#messageHost?.owner.active?this.#messageHost.owner.prepareFrame():null;let fade:ReturnType<BattleGlobalFadeHost["owner"]["prepareFrame"]>|null=null;
+    this.#messageBusy=true;
+    try {fade=this.#fadeHost?.owner.prepareFrame()??null;fade?.state.advance(.01);frame?.state.advance(.01);
+      const f=fade?.prepareCommit(),m=frame?.prepareCommit();f?.validate();m?.validate();m?.commit();f?.commit();this.#fadeRevision=this.#fadeHost?.owner.mutationRevision??0;
+    }catch(error){frame?.discard();fade?.discard();throw error;}finally{this.#messageBusy=false;}
   }
   private tick() {
     if (this.#messageBusy) throw new Error("Reentrant battle message frame");
@@ -2372,8 +2437,9 @@ export class BattleGame {
       queue: structuredClone(this.queue),
       reactions: structuredClone(this.reactions),
       ai: structuredClone(this.aiStates),
+      fadeJournal:structuredClone(this.#fadeJournal),
       eventState: structuredClone(this.eventState),branchVisited:new Set(this.#branchVisited),
-      gauEnemyIds:structuredClone(this.gauEnemyIds),gauModeJournal:structuredClone(this.gauModeJournal),
+      fieldReservation:structuredClone(this.fieldReservation),gauEnemyIds:structuredClone(this.gauEnemyIds),gauModeJournal:structuredClone(this.gauModeJournal),
       effectState:this.#effects.map(e=>({...e,projection:structuredClone(e.projection),targets:[...e.targets]})),effectNextTicket:this.#effectNextTicket,effectJournal:structuredClone(this.#effectJournal),
       messagePresentation: this.#messagePresentation, messageRootStarted: this.#messageRootStarted, messageJournal: structuredClone(this.#messageJournal),
       eventControls: { ...this.eventControls },
@@ -2399,17 +2465,19 @@ export class BattleGame {
       clockInput: { ...this.clockInput }, preferences: { ...this.currentPreferences }, remainder: this.remainder,
       escapeRequested: this.escapeRequested, forceReturnRequested: this.forceReturnRequested,
     };
-    this.validateMessageOwnership();
+    this.validateMessageOwnership();this.validateFadeOwnership();
     const frame = this.#messageHost?.owner.prepareFrame() ?? null;
     this.#messageBusy = true;
     this.#messageFrame = frame; this.#messageFrameValidations = []; this.#messageFrameEffects = null;
     this.#effectPendingCommits=[];this.#effectPendingDiscards=[];this.#branchFrameVisited=[];
     const completedResources:BattleEffectResourceLease[]=[];
     try {
-      frame?.state.advance(.01);
+      this.#fadeFrame=this.#fadeHost?.owner.prepareFrame()??null;
+      this.#fadeFrame?.state.advance(.01);frame?.state.advance(.01);
       this.reconcileAppearances();
       this.step();
       this.reconcileAppearances();
+      const fadeWrite=this.#fadeFrame?.prepareCommit();fadeWrite?.validate();
       const messageWrite = frame?.prepareCommit(), effects = this.#messageFrameEffects === null ? null :
         this.observeMessageProvider(() => this.#messageHost!.prepareEffects(this.#messageFrameEffects!));
       for (const validate of this.#messageFrameValidations) validate();
@@ -2419,13 +2487,13 @@ export class BattleGame {
       messageWrite?.validate();
       for(const e of this.#effects)this.observeMessageProvider(()=>e.resource.validate());
       for(const resource of this.#effectPendingCommits)resource.commit();
-      effects?.commit(); messageWrite?.commit();
+      effects?.commit(); messageWrite?.commit();fadeWrite?.commit();this.#fadeRevision=this.#fadeHost?.owner.mutationRevision??0;
       for(const pc of this.#branchFrameVisited)this.#branchVisited.add(pc);
       // Publication ends here. Cleanup must never enter the rollback handler
       // after the shared source-message frame has committed.
       completedResources.push(...this.#effectPendingDiscards);
     } catch (error) {
-      frame?.discard();
+      frame?.discard();this.#fadeFrame?.discard();this.#fadeJournal=before.fadeJournal;
       this.#effects=before.effectState;this.#effectNextTicket=before.effectNextTicket;this.#effectJournal=before.effectJournal;
       this.#messagePresentation = before.messagePresentation; this.#messageRootStarted = before.messageRootStarted; this.#messageJournal = before.messageJournal;
       this.combatants.splice(0, this.combatants.length, ...before.unitOwners);
@@ -2453,7 +2521,7 @@ export class BattleGame {
       if(this.lifecycle.kind==='battle-lifecycle-v2'&&error instanceof BattleEventError)this.#branchLastFailure={
         pc:error.pc,reason:error.reason,raw:structuredClone(this.lifecycle.program.branchExecution!.sourceProgram.Mnemonics[error.pc]),
         attemptedTime:before.time+10,attemptedVisited:[...this.#branchFrameVisited,...error.attemptedVisited]};
-      this.gauEnemyIds=before.gauEnemyIds;this.gauModeJournal=before.gauModeJournal;
+      this.fieldReservation=before.fieldReservation;this.gauEnemyIds=before.gauEnemyIds;this.gauModeJournal=before.gauModeJournal;
       this.eventControls = before.eventControls;
       this.eventUI = before.eventUI;
       this.currentPlayerControlMode = before.playerControlMode;
@@ -2480,7 +2548,7 @@ export class BattleGame {
       this.discardBattleEffectResources(this.#effectPendingCommits,'rollback');
       throw error;
     } finally {
-      this.#messageFrame = null; this.#messageFrameValidations = []; this.#messageFrameEffects = null;this.#effectPendingCommits=[];this.#effectPendingDiscards=[];this.#branchFrameVisited=[];
+      this.#fadeFrame=null;this.#messageFrame = null; this.#messageFrameValidations = []; this.#messageFrameEffects = null;this.#effectPendingCommits=[];this.#effectPendingDiscards=[];this.#branchFrameVisited=[];
       // Retain the reentrancy guard during external cleanup, but keep cleanup
       // outside the catch that can restore this already published frame.
       this.discardBattleEffectResources(completedResources,'complete');

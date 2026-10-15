@@ -9,10 +9,10 @@ export type BattleSourceInstruction = {mnemonic:string;type:number;operands:{iVa
 /** Known instructions with unsupported operands/dependencies remain hard. New
  * opcode implementations must extend this shared set before their bad forms
  * can be considered unimplemented instructions by the branch policy. */
-const KNOWN_BATTLE_EVENT_MNEMONICS = new Set(['PlayBattleEffect','SyncBattleEffect','Msg','MsgClose','Nop','Blank','Exit','Return','GetEnemyMode',
+const KNOWN_BATTLE_EVENT_MNEMONICS = new Set(['FadeIn','FadeOut','PlayBattleEffect','SyncBattleEffect','Msg','MsgClose','Nop','Blank','Exit','Return','GetEnemyMode',
  'WaitToBattleStart','ExecBattleAI','BattleSyncAction','SyncBattleAI','Call','Jump','BattleAction','BattleForceExit','BattleForceExitOnSave','BattleEndEnabled','BattlePause',
  'BattleInteractive','BattleSleepEnemy','BattleAddEnemy','BattleAddFellow','SysCall','Wait','SetFlag','ResetFlag','FlipFlag','Calc','Branch']);
-const knownCalls=new Set(['プレイヤーの状況で戦闘終了','HideBattleUI','ShowBattleUI','StopAutoBattle','RemoveAllAct','ガウバトルモード設定','血塗られた盾','シャドウ離脱抽選',
+const knownCalls=new Set(['プレイヤーの状況で戦闘終了','HideBattleUI','ShowBattleUI','StopAutoBattle','RemoveAllAct','ガウバトルモード設定','血塗られた盾','シャドウ離脱抽選','ガウ初回予約','バトルでシャドウ離脱','とびこむで離脱',
  'LB:敵パーティラウンド2','LB:敵パーティラウンド3','LB:敵パーティラウンド4']);
 export function parseBattleSourceInstruction(raw:unknown):BattleSourceInstruction {
  checkpointRecord(raw);const v=raw as Record<string,unknown>;

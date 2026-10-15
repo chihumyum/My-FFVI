@@ -55,6 +55,7 @@ export type WorldMapContent = {
   partyEntryBlockers?: ContentIssue[];
   scripts: Record<string, Op[]>;
   scriptLocals: Record<string, ScriptLocals | null>;
+  reservedScriptBindings?: FieldContent["reservedScriptBindings"];
   scriptTransitionMetadata?: FieldContent["scriptTransitionMetadata"];
   scriptSystemFlags?: FieldContent["scriptSystemFlags"];
   scriptPuppetContexts?: FieldContent["scriptPuppetContexts"];

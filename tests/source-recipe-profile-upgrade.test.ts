@@ -430,3 +430,26 @@ test('v8 requires the actual compiled Mob binding and cannot normalize foreign s
  try{await cp(resolve(compiledDir,'src'),resolve(isolated,'src'),{recursive:true});await writeFile(resolve(isolated,'src/core/field-mob-controls.js'),'export const WEB_FLAT_MOB_COLOR_FILTER="web-flat-mob-color-filter-v1";\n');await assert.rejects(f.run({compiledDir:isolated,frameworkProfileUpgrade:f.proof}),/host unavailable: mobColorFilter/);}finally{await rm(isolated,{recursive:true,force:true});}
  const bad=structuredClone(f.candidate.get(f.urls.sourceMap)!);bad.scripts={injected:[{kind:'exit'}]};f.candidate.set(f.urls.sourceMap,await seal(bad));await assert.rejects(f.run({frameworkProfileUpgrade:f.proof}),/identity|dependency|media changed/i);
 });
+
+async function screenPresentationProfileFixture(){
+ const f=await mobColorProfileFixture(),screenPresentation='web-field-screen-presentation-2d-v1';
+ for(const[url,value]of f.candidate)f.candidate.set(url,await seal({...value,developmentProfile:{...value.developmentProfile,screenPresentation}}));
+ const map=f.candidate.get(f.urls.sourceMap)!,world=f.candidate.get(f.urls.sourceWorld)!;
+ f.candidate.set(f.urls.sourceWorld,await seal({...world,maps:{...world.maps,[map.mapId]:{...world.maps[map.mapId],contentHash:map.contentHash}}}));
+ const entry=f.candidate.get(f.urls.sourceEntry)!;f.candidate.set(f.urls.sourceEntry,await seal({...entry,mapContentHash:map.contentHash,worldCatalogHash:f.candidate.get(f.urls.sourceWorld)!.contentHash}));
+ return {...f,proof:{...f.proof,kind:'compiled-framework-profile-upgrade-v9',markers:{...f.proof.markers,screenPresentation}}};
+}
+test('exact v9 screen presentation binds its actual provider and preserves all previous exact declaration shapes',async()=>{
+ const f=await screenPresentationProfileFixture(),before=canonical({recipe:f.recipe,current:[...f.current],candidate:[...f.candidate]}),result=await f.run({frameworkProfileUpgrade:f.proof});
+ assert.equal(result.report.frameworkProfileUpgrades.length,3);
+ for(const row of result.report.frameworkProfileUpgrades){assert.equal(row.kind,f.proof.kind);assert.equal(row.grantsSourceAdmission,false);assert.equal(row.saveMigration,false);assert.deepEqual(row.comparisonIdentityBefore,row.comparisonIdentityAfter);
+  const provider=row.providers.find((p:any)=>p.marker==='screenPresentation');assert.equal(provider.module,'src/core/field-screen-presentation.js');assert.equal(provider.provider,'fieldScreenPresentationBinding');assert.match(provider.sha256,/^[a-f0-9]{64}$/);}
+ assert.equal(canonical({recipe:f.recipe,current:[...f.current],candidate:[...f.candidate]}),before);
+ for(const version of[1,2,3,4,5,6,7,8])await assert.rejects(f.run({frameworkProfileUpgrade:{...f.proof,kind:'compiled-framework-profile-upgrade-v'+version}}),/framework profile upgrade/);
+ for(const mutate of[(p:any)=>{delete p.markers.screenPresentation;},(p:any)=>{p.markers.screenPresentation='unknown';},(p:any)=>{delete p.markers.mobColorFilter;},(p:any)=>{delete p.markers.storyRuntime;},(p:any)=>{p.markers.callback='forged';}]){const proof=structuredClone(f.proof);mutate(proof);await assert.rejects(f.run({frameworkProfileUpgrade:proof}),/framework profile upgrade/);}
+});
+test('v9 cannot supply a missing compiled screen owner or alter source script bodies',async()=>{
+ const f=await screenPresentationProfileFixture();await mkdir(resolve(root,'build/wip'),{recursive:true});const isolated=await mkdtemp(resolve(root,'build/wip/screen-owner-provider-unavailable-'));
+ try{await cp(resolve(compiledDir,'src'),resolve(isolated,'src'),{recursive:true});await writeFile(resolve(isolated,'src/core/field-screen-presentation.js'),'export const WEB_FIELD_SCREEN_PRESENTATION="web-field-screen-presentation-2d-v1";export class FieldScreenPresentationState{};export const fieldScreenPresentationBinding=undefined;\n');await assert.rejects(f.run({compiledDir:isolated,frameworkProfileUpgrade:f.proof}),/host unavailable: screenPresentation/);}finally{await rm(isolated,{recursive:true,force:true});}
+ const bad=structuredClone(f.candidate.get(f.urls.sourceMap)!);bad.scripts={injected:[{kind:'exit'}]};f.candidate.set(f.urls.sourceMap,await seal(bad));await assert.rejects(f.run({frameworkProfileUpgrade:f.proof}),/identity|dependency|media changed/i);
+});

@@ -1,3 +1,4 @@
+import { parseBattleGlobalFadeOp, type BattleGlobalFadeOp } from "./battle-global-fade.js";
 import { WEB_BATTLE_BRANCH_EXECUTION, validateBattleBranchExecutionPolicy, parseBattleSourceInstruction, classifyDeferredBattleInstruction, type WebBattleBranchExecution, type BattleSourceInstruction, type BattleDeferredInstructionCategory } from './battle-branch-execution.js';
 import {parseBattleEventEffectOp,type BattleEventEffectOp} from './battle-event-effect.js';
 import { readBattleEnemyMode } from './battle-gau.js';
@@ -17,12 +18,13 @@ export type BattleEventValue =
   | { kind: "local"; index: number };
 export type BattleEventOp =
   | ScriptedBattleAction
+  | BattleGlobalFadeOp
   | BattleEventEffectOp
   | BattleEventMessageOp
   | { kind: "ui-visibility"; visible: boolean }
   | { kind: "stop-auto" | "force-return" | "force-save-return" | "remove-all-actions" }
   | { kind: "cursed-shield-check" | "shadow-secede-lot" }
-  | { kind: "set-gau-mode" }
+  | { kind: "set-gau-mode" | "reserve-gau-first" | "shadow-battle-departure" | "gau-leap" }
   | { kind: "get-enemy-mode"; uniqueId:number; expected:number }
   | { kind: "nop" | "blank" | "exit" | "return" | "wait-start" | "exec-ai" | "sync-ai" | "sync-action" | "players-ended" }
   | { kind: "call" | "jump"; target: number }
@@ -58,7 +60,7 @@ export type BattleEventProgram = {
 export type BattleEventWait =
   | { kind: "message-prepare"; clock: number }
   | { kind: "message"; clock: number; cursor: SourceMessageTaskCursor }
-  | { kind: "blank" | "start" | "action" | "script-action" | "enemy-party-entry" | "player-group-entry" | "battle-effect"; clock: number }
+  | { kind: "blank" | "start" | "action" | "script-action" | "enemy-party-entry" | "player-group-entry" | "battle-effect" | "global-fade"; clock: number }
   | { kind: "time"; clock: number; entryTimeSeconds: number }
   | { kind: "enemy-entry" | "player-entry"; clock: number; previousNoAct: boolean };
 export type BattleEventState = {
@@ -92,14 +94,17 @@ export type BattleEventContext = {
   playerGroupEntry?: { completed: boolean };
   messageStatus?: SourceMessageSequenceStatus;
   battleEffectsFinished?:boolean;
+  globalFadeStatus?: {in:boolean;out:boolean};
   enemyModes?:readonly {uniqueId:number;mode:number}[];
 };
 export type BattleEventRequest =
   | (ScriptedBattleAction & { pc: number })
+  | (BattleGlobalFadeOp & {pc:number})
+  | {kind:"global-fade-complete";pc:number}
   | { kind: "ui-visibility"; pc: number; visible: boolean }
   | { kind: "stop-auto" | "force-return" | "force-save-return" | "remove-all-actions"; pc: number }
   | { kind: "cursed-shield-check" | "shadow-secede-lot"; pc:number }
-  | { kind: "set-gau-mode"; pc:number }
+  | { kind: "set-gau-mode" | "reserve-gau-first" | "shadow-battle-departure" | "gau-leap"; pc:number }
   | (Extract<BattleEventEffectOp,{kind:"play-battle-effect"}> & {pc:number})
   | { kind: "message"; pc: number; operation: BattleEventMessageOp }
   | { kind: "message-page-input"; pc: number; ticket: number }
@@ -216,12 +221,13 @@ function parseOp(raw: unknown): BattleEventOp {
   checkpointRecord(raw);
   const value = raw as Record<string, unknown>, kind = value.kind;
   switch (kind) {
+    case "global-fade": return parseBattleGlobalFadeOp(raw);
     case "ui-visibility":
       checkpointKeys(value, "kind,visible");
       return { kind, visible: boolean(value.visible) };
     case "stop-auto": case "force-return": case "force-save-return": case "remove-all-actions":
     case "cursed-shield-check": case "shadow-secede-lot":
-    case "set-gau-mode":
+    case "set-gau-mode": case "reserve-gau-first": case "shadow-battle-departure": case "gau-leap":
       checkpointKeys(value, "kind");
       return { kind };
     case "get-enemy-mode":
@@ -428,7 +434,7 @@ function parseWait(raw: unknown): BattleEventWait | null {
   if (kind === "message") {
     checkpointKeys(value, "kind,clock,cursor"); return { kind, clock: clockNumber(value.clock), cursor: parseMessageCursor(value.cursor) };
   }
-  if (kind === "blank" || kind === "start" || kind === "action" || kind === "script-action" || kind === "enemy-party-entry" || kind === "player-group-entry" || kind === "battle-effect") {
+  if (kind === "blank" || kind === "start" || kind === "action" || kind === "script-action" || kind === "enemy-party-entry" || kind === "player-group-entry" || kind === "battle-effect" || kind === "global-fade") {
     checkpointKeys(value, "kind,clock");
     return { kind, clock: clockNumber(value.clock) };
   }
@@ -469,6 +475,7 @@ function parseContext(raw: unknown): BattleEventContext {
     (Object.hasOwn(fields, "playerGroupEntry") ? ",playerGroupEntry" : "") +
     (Object.hasOwn(fields, "messageStatus") ? ",messageStatus" : "") +
     (Object.hasOwn(fields,"battleEffectsFinished") ? ",battleEffectsFinished" : "") +
+    (Object.hasOwn(fields,"globalFadeStatus") ? ",globalFadeStatus" : "") +
     (Object.hasOwn(fields,'enemyModes') ? ',enemyModes' : ''));
   let variables: BattleEventContext["variables"];
   if (Object.hasOwn(value, "variables")) {
@@ -516,6 +523,7 @@ function parseContext(raw: unknown): BattleEventContext {
     ...(messageStatus ? { messageStatus } : {}),
     ...(enemyModes ? {enemyModes} : {}),
     ...(Object.hasOwn(value,"battleEffectsFinished")?{battleEffectsFinished:boolean(value.battleEffectsFinished)}:{}),
+    ...(Object.hasOwn(value,"globalFadeStatus")?{globalFadeStatus:(()=>{const f=record(value.globalFadeStatus,"in,out");return {in:boolean(f.in),out:boolean(f.out)};})()}:{}),
     ...(Object.hasOwn(value, "playersEnded") ? { playersEnded: boolean(value.playersEnded) } : {}) };
 }
 
@@ -563,7 +571,7 @@ export function advanceBattleEvent(
     const expected = { blank: "blank", start: "wait-start", action: "sync-action", "script-action":"script-action", time: "wait",
       "enemy-entry": "add-enemy", "enemy-party-entry": "change-enemy-party",
       "player-entry": "add-player", "player-group-entry": "change-player-group",
-      "message-prepare": "message", "message": "message", "battle-effect":"sync-battle-effect" }[state.wait.kind];
+      "message-prepare": "message", "message": "message", "battle-effect":"sync-battle-effect", "global-fade":"global-fade" }[state.wait.kind];
     if (state.wait.kind === "battle-effect" ? !["play-battle-effect","sync-battle-effect"].includes(program.instructions[state.pc]?.op.kind??"") : program.instructions[state.pc]?.op.kind !== expected) fail("wait does not match its instruction");
     if (state.wait.clock === context.clock) return { state, requests: [], visited: [] };
   }
@@ -634,6 +642,14 @@ export function advanceBattleEvent(
     failurePc = pc;
     visited.push(pc); attemptedVisited.push(pc);
     switch (op.kind) {
+      case "global-fade":
+        if(state.wait?.kind!=="global-fade"){
+          if(op.seconds<0)next();else{state.status="waiting";state.wait={kind:"global-fade",clock:context.clock};}
+          requests.push({...structuredClone(op),pc});return result();
+        }
+        if(!context.globalFadeStatus)return fail("Missing actual shared global fade completion provider",pc);
+        if(!context.globalFadeStatus[op.direction]){state.wait.clock=context.clock;return result();}
+        next();requests.push({kind:"global-fade-complete",pc});return result();
       case "ui-visibility":
         next(); requests.push({ kind: op.kind, visible: op.visible, pc }); return result();
       case "stop-auto": case "force-return": case "force-save-return": case "remove-all-actions":
@@ -725,6 +741,8 @@ export function advanceBattleEvent(
         next();requests.push({kind:op.kind,pc});return result();
       case 'shadow-secede-lot':
         local(3);next();requests.push({kind:op.kind,pc});return result();
+      case 'reserve-gau-first': case 'shadow-battle-departure': case 'gau-leap':
+        next();requests.push({kind:op.kind,pc});return result();
       case 'set-gau-mode':
         local(2);next();requests.push({kind:'set-gau-mode',pc});return result();
       case "sync-ai":

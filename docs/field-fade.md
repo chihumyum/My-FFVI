@@ -65,3 +65,7 @@ node scripts/check-field-fade.mjs --compiled-dir build/v29-field-dist
 - 来源回执 `build/reports/field-fade-check.json` 保存来源指针、字符串 object ID、指令摘要、编译模块摘要与原生回执摘要，不把这些受控执行计为已迁移地图数。
 
 这些命令使用已有语料和本地 `GameAssembly.dll` / IL2CPP 元数据及导出，不需要新增来源媒体。真实浏览器画面和原版动态行为验收由独立证据记录。
+
+## 战斗共用 owner
+
+战斗脚本的 FadeIn／FadeOut 现通过显式 Session 宿主复用本 owner，使用保留 revision 的私有 frame 与已有 Battle／消息／效果事务一起发布，不创建第二个全局 FadeManager。失败候选不会修改已提交的 manager 时间。返场、重试、异步续行和真实 BattleView 绘制的边界见 [战斗共用渐变](battle-global-fade.md)；这不扩大 ColorFade 地图 filter、原生场景完成 callback 或像素对照的范围。

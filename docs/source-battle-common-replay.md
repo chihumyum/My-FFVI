@@ -23,3 +23,6 @@ node scripts/check-source-battle-common.mjs --compiled dist \
 `current-menu-qualified-ability-v1`读取实际BattleGame菜单，按来源菜单和能力顺序选择首个可用能力及实际目标，不预设能力身份。每次提交携带明确的command ID，同一能力出现在多个指令中时也不提交含糊的缺省指令。这只是能力输入观察策略，不是游戏AI，不授予能力、资源、名册或来源旗标；道具等其它合法操作没有被穷举，结果不代表玩家已无其它选择。
 
 角色已经ready却没有合法能力输入时，记录`battle-input-boundary`及完整菜单。未知所有者或目标错误仍成为明确阻断；这些结果都不表示原程序完成。已冻结旧代观察保留原输入策略和结果，不按新策略重新签名或改分类。
+
+
+联合全局 Fade 后，观察器以 `current-app-message-and-raycast-v1` 跟随当前 App 的普通输入窗口：消息或共享 Fade 的 raycast 阻挡期间只继续实际时钟，不发送普通菜单命令，也不把短暂遮挡误记成无合法能力边界。源脚本、AI 与返场操作沿既有自身合同推进；此规则仅描述当前 Web UI，不声称 Unity Image 也能阻挡原生键盘/菜单控制器。旧代输入与报告不改写。

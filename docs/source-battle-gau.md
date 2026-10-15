@@ -15,3 +15,5 @@ VM 保留原正文，只委派 SetGauMode 请求；模式和列表由 BattleGame
 下列来源调用仍保留具体 gate：`とびこむで離脱` 涉及 Rage 学习、持有名册/Corps、动作与 ATB/实例退出；`敵パーティをガウに` 涉及来源标志选择、原生载入、条件清理和 AI 重建；两种 Gau 加入涉及装备、等级、回复和持有借还；初回预约涉及 DataStorage group8[8] 与 Integrator 的字段脚本队列；登场动画涉及真实实例与完成回调。这些分支没有被空操作或现有其他换队命令替换。完整程序仍按现有准入门禁检查，不能因普通分支安全就忽略未访问的未知调用。
 
 `inspect-source-battle-gau.mjs` 只编译一次完整 490 队目录，并与独立 baseline 的全部 53 个程序比较。所有非本族操作、程序头和其他目录诊断必须相同。`check_source_battle_gau.py` 核对 15 个完整原生方法及 4 组多签名共享地址，保留全部别名且不套用第一条别名的 C 签名；PE 汇编确认 interface slot20 的 false 参数。原生静态审计、机制测试、真实 Session API 下的 authored 场景、全来源纯编译、真实剧情回放、浏览器和原版动态对照分别报告。
+
+后续整族 owned/字段续行增量已把初回预约、Shadow 离队与 Leap 分派接入同一个 BattleGame/Session owner；实际 held、condition614、自定义动画与实例出生门槛仍保留。其13处 typed 不代表原正文成功，完整分母、单槽与保存合同见 [战斗持有角色与字段续行](source-battle-owned-field-continuation.md)。
