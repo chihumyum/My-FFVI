@@ -238,26 +238,27 @@ function presentationStep(targetId: string): OwnedConditionAppearanceStep {
   return { targetId, appearance: { activeMembers: [], parties: [] }, setDummy: false, affectLeader: true };
 }
 
-test("event prepares and validates the complete appearance sequence before commit and publishes once afterward", () => {
+test("event prepares the complete appearance sequence and publishes actors before the final owned write", () => {
   const calls: string[] = [], steps = [presentationStep("a"), presentationStep("b")];
   const op = event({ allowUnableFight: true }), original = structuredClone(op);
   const port: FieldRecoveryPort = { prepare(c) {
     calls.push("prepare-owned"); assert.deepEqual(c, op.command); c.amount = 999;
-    return { targets: ["a", "b"], steps, commit: () => { calls.push("commit-owned"); } };
+    return { targets: ["a", "b"], steps, commit: () => { calls.push("commit-owned"); },
+      commitWith: (publish) => { publish(); calls.push("commit-owned"); } };
   } };
   executeFieldRecoveryEvent(op, port, (candidate) => {
     calls.push("prepare-actors"); assert.deepEqual(candidate, steps);
     candidate[0]!.appearance.parties.push([]);
     return Object.assign(() => { calls.push("publish-actors"); }, { validate: () => { calls.push("validate-actors"); } });
   });
-  assert.deepEqual(calls, ["prepare-owned", "prepare-actors", "validate-actors", "commit-owned", "publish-actors"]);
+  assert.deepEqual(calls, ["prepare-owned", "prepare-actors", "validate-actors", "publish-actors", "commit-owned"]);
   assert.deepEqual(op, original); assert.deepEqual(steps[0]!.appearance.parties, []);
 });
 
 test("missing presentation, late actor preparation failure or rejected validation never commits recovery", () => {
   let commits = 0, publications = 0;
   const port: FieldRecoveryPort = { prepare: () => ({ targets: ["a", "b"], steps: [presentationStep("a"), presentationStep("b")],
-    commit: () => { commits++; } }) };
+    commit: () => { commits++; }, commitWith: (publish) => { publish(); commits++; } }) };
   const op = event({ allowUnableFight: true });
   assert.throws(() => executeFieldRecoveryEvent(op, undefined), /owned state is unavailable/);
   assert.throws(() => executeFieldRecoveryEvent(op, port), /actor refresh is unavailable/);
@@ -274,17 +275,20 @@ test("missing presentation, late actor preparation failure or rejected validatio
 test("a stale owned commit leaves the prepared presentation unpublished", () => {
   let published = false;
   const port: FieldRecoveryPort = { prepare: () => ({ targets: ["a"], steps: [presentationStep("a")],
-    commit: () => { throw new Error("Stale field recovery transaction"); } }) };
+    commit: () => { throw new Error("Stale field recovery transaction"); },
+    commitWith: () => { throw new Error("Stale field recovery transaction"); } }) };
   assert.throws(() => executeFieldRecoveryEvent(event({ allowUnableFight: true }), port, () => () => { published = true; }), /Stale/);
   assert.equal(published, false);
 });
 
 test("scalar HP/MP and empty targets do not manufacture a presentation requirement", () => {
   let commits = 0;
-  const port: FieldRecoveryPort = { prepare: () => ({ targets: ["a"], steps: [], commit: () => { commits++; } }) };
+  const port: FieldRecoveryPort = { prepare: () => ({ targets: ["a"], steps: [], commit: () => { commits++; },
+    commitWith: (publish) => { publish(); commits++; } }) };
   for (const kind of ["recover-hp", "recover-mp"] as const)
     executeFieldRecoveryEvent(event({ kind }), port, () => assert.fail("numeric-only recovery has no Refresh"));
-  executeFieldRecoveryEvent(event({ allowUnableFight: true }), { prepare: () => ({ targets: [], steps: [], commit: () => { commits++; } }) },
+  executeFieldRecoveryEvent(event({ allowUnableFight: true }), { prepare: () => ({ targets: [], steps: [], commit: () => { commits++; },
+    commitWith: (publish) => { publish(); commits++; } }) },
     () => assert.fail("empty Corps has no Refresh"));
   assert.equal(commits, 3);
   let prepares = 0;

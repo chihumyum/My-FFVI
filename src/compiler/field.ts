@@ -1,3 +1,4 @@
+import { decodeSourceSystemFlags, type SourceFormatFlagImportBinding } from "./source-system-flags.js";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { readSnapshot, snapshotFile } from "./integrity.js";
@@ -6,6 +7,7 @@ import { ImportedProject } from "../contracts.js";
 import { compileEntityGroup } from "./entity-group.js";
 import { compileManualMessageInstruction } from "./message.js";
 import { compileSourceMessageInstruction } from "./source-message.js";
+import { compileSourceMessageSequenceInstruction } from "./source-message-sequence.js";
 import { compileFieldChoiceInstruction, type FieldChoiceCompileContext } from "./field-choice.js";
 import { compileEventContextBranchInstruction, eventContextBranchMnemonics } from "./event-context-branch.js";
 import { compileFieldScriptShopInstruction, fieldScriptShopSelectors } from "./field-script-shop.js";
@@ -99,10 +101,10 @@ export function decodeScriptLocals(raw: unknown): ScriptLocals | null {
 
 /** Only the visual-preservation flag is consumed by the admitted recovery path.
  * Other Format flags remain separate capabilities, never inferred defaults. */
-export function decodeConditionVisualFlag(raw: unknown): { keepBadStatusVisual: boolean } | null {
+export function decodeConditionVisualFlag(raw: unknown, binding?: SourceFormatFlagImportBinding): { keepBadStatusVisual: boolean } | null {
   const flags = record(raw).SystemFlag;
   if (flags == null) return null;
-  const value = record(flags).KeepBadStatusVisual;
+  const value = binding ? decodeSourceSystemFlags(raw, binding).values.KeepBadStatusVisual : record(flags).KeepBadStatusVisual;
   if (value === undefined) return null;
   if (value !== 0 && value !== 1) throw new Error("Unresolved source KeepBadStatusVisual flag");
   return { keepBadStatusVisual: value === 1 };
@@ -188,13 +190,27 @@ export function decodeFieldOp(
     try { return { ...site, ...compileFieldTransportationInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
-  if (name === "Msg" && [0, 3].includes(i[0]!) && r[0] === 0) {
-    try { return { ...site, ...compileManualMessageInstruction(raw, messages, context, tables["character_default_name.csv"]) }; }
+  if (name === "MsgFinishWait") {
+    try { return { ...site, ...compileSourceMessageSequenceInstruction(raw, messages, context, tables["character_default_name.csv"]) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
-  if (name === "MsgClose" || name === "Msg") {
+  if (name === "Msg" && [0, 3].includes(i[0]!) && r[0] === 0) {
+    try { return { ...site, ...compileManualMessageInstruction(raw, messages, context, tables["character_default_name.csv"]) }; }
+    catch {
+      try { return { ...site, ...compileSourceMessageSequenceInstruction(raw, messages, context, tables["character_default_name.csv"]) }; }
+      catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+    }
+  }
+  if (name === "MsgClose") {
     try { return { ...site, ...compileSourceMessageInstruction(raw, messages) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "Msg") {
+    try { return { ...site, ...compileSourceMessageInstruction(raw, messages) }; }
+    catch {
+      try { return { ...site, ...compileSourceMessageSequenceInstruction(raw, messages, context, tables["character_default_name.csv"]) }; }
+      catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+    }
   }
   const form = (is: number[], rs: number[] = [], ss: number[] = []) =>
     i.every((v, n) => v === 0 || is.includes(n)) &&

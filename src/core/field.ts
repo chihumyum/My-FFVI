@@ -44,6 +44,8 @@ import { projectFieldTransportActors, projectFieldPuppetTransportationEffects,
 import { requireFieldTransportPose } from "./field-transport-pose.js";
 import { partyActorCameraOffset } from "./party-actors.js";
 import { SourceMessageState, sourceMessageUpdateMask, type SourceMessageEffect } from "./source-message.js";
+import { sourceMessageSequenceTextRuns, createSourceMessageTaskCursor, pollSourceMessageTask,
+  type SourceMessageSequenceContext, type SourceMessageTaskCursor } from "./source-message-sequence.js";
 import { createFieldChoiceRequest, resolveFieldChoiceAnswer, type FieldChoiceAnswer,
   type FieldChoiceRequest } from "./field-choice.js";
 import { prepareEventContextBranch } from "./event-context-branch.js";
@@ -278,6 +280,7 @@ type Task = {
   bgmReplay: { op: Extract<Op, { kind: "bgm-replay" }>; handle: StaticAudioReplay } | null;
   /** Source first-clock yield; no pending save or independent save owner. */
   autoSaveWait: Extract<Op, { kind: "event-save" }> | null;
+  sourceMessageWait: { op: Extract<Op, { kind: "source-message" }>; cursor: SourceMessageTaskCursor | null } | null;
   soundWait: { op: Extract<Op, { kind: "field-sound" }>; handle: number | null } | null;
   treasure: { state: TreasureTaskState; entity: FieldEntity; site: Site;
     closeMessage: boolean; messageAvailableAt: number } | null;
@@ -329,6 +332,7 @@ export type FieldGameOptions = {
    * autonomous actors even when a stale caller retains the Field instance. */
   npcActivityClock?: () => boolean;
   sourceMessageEffects?: { prepare(effects: readonly SourceMessageEffect[]): () => void };
+  sourceMessageSequence?: { prepare(): { context: SourceMessageSequenceContext; validate(): void } };
   puppetActors?: FieldPuppetActorsPort;
   puppetRoster?: FieldPuppetRosterPort;
   audioReadiness?: AudioReadinessPort;
@@ -393,6 +397,7 @@ export class FieldGame {
     const context: FieldAdmissionContext = { actorKind, providers: {
       inventory: presence(typeof this.options.inventory?.prepare === "function"),
       messageNames: presence(typeof this.options.messageNames?.prepare === "function"),
+      sourceMessageSequence: presence(typeof this.options.sourceMessageSequence?.prepare === "function"),
       recovery: presence(typeof this.options.recovery?.prepare === "function"),
       ownedConditions: presence(typeof this.options.ownedConditions?.prepare === "function"),
       party: presence(typeof this.options.party?.prepare === "function"),
@@ -730,6 +735,7 @@ export class FieldGame {
   }
   dialogue: Dialogue | null = null;
   readonly sourceMessage = new SourceMessageState();
+  private sourceMessageTask: number | null = null;
   private retainedMessage: Dialogue | null = null;
   private readonly choiceNamespace = nextChoiceNamespace++;
   private nextChoice = 1;
@@ -2376,6 +2382,7 @@ export class FieldGame {
     // Confirm is not a choice response. Even an answered request waits for its
     // own interpreter clock before another input can dismiss the next message.
     if (this.stop || this.pendingChoice) return;
+    if (this.sourceMessage.active) { this.sourceMessage.confirm(); return; }
     if (this.dialogue) {
       if (this.dialogue.manual) {
         const current = this.dialogue, manual = current.manual!,
@@ -2638,7 +2645,9 @@ export class FieldGame {
         op.text !== manual.pages[0] || !["frame", "none"].includes(manual.window) ||
         !["top", "middle", "bottom"].includes(manual.anchor) || !["close", "message", "choice"].includes(manual.after))
       throw new Error("Invalid ordinary source Msg document");
-    if (this.sourceMessage.active || this.shopTask || this.treasureSceneState === "message")
+    const handoff = this.sourceMessage.active && this.sourceMessageTask === task.id && this.sourceMessage.sequenceAfter === "message",
+      release = handoff ? this.sourceMessage.prepareManualHandoff() : null;
+    if (this.sourceMessage.active && !handoff || this.shopTask || this.treasureSceneState === "message")
       throw new Error("Ordinary source Msg conflicts with an occupied message manager");
     const before = this.messageWindow, presentation = this.prepareMessagePresentation(op, manual.pages),
       prepared: Dialogue = { ...presentation.message, task: task.id,
@@ -2647,7 +2656,8 @@ export class FieldGame {
       publish = this.prepareDialogueMask(8);
     if (this.messageWindow !== before) throw new Error("Stale ordinary source Msg preparation");
     presentation.validate();
-    publish();
+    publish(); release?.commit();
+    if (handoff) this.sourceMessageTask = null;
     this.retainedMessage = null;
     this.dialogue = prepared;
   }
@@ -2665,8 +2675,13 @@ export class FieldGame {
         ? this.options.sourceMessageEffects.prepare(effects)
         : () => { this.entityUpdateMask = sourceMessageUpdateMask(12); };
       if (typeof publish !== "function") throw new Error("Invalid choice message host transaction");
-      publish();
+      const close = this.sourceMessage.active ? this.sourceMessage.prepare({ kind: "source-message", command: { kind: "close" } }) : null;
+      publish(); close?.commit();
+      this.sourceMessageTask = null;
       this.retainedMessage = null;
+    } else if (this.sourceMessage.active) {
+      if (this.sourceMessageTask !== t.id) throw new Error("Source choice message belongs to another task");
+      this.sourceMessage.retainAfterChoice();
     } else if (this.retainedMessage?.manual) {
       // Select's own source successor now owns the handoff decision. The
       // preceding Msg may have retained this same window for the choice.
@@ -2974,6 +2989,8 @@ export class FieldGame {
     if (!localsByScript || !Object.hasOwn(localsByScript, t.script) || !Object.hasOwn(localsByScript, op.targetScript))
       throw new Error("ChangeScript source local declarations are unavailable");
     if (this.pendingChoice) throw new Error("ChangeScript conflicts with an unfinished choice task");
+    if (this.sourceMessage.active && this.sourceMessageTask !== t.id)
+      throw new Error("ChangeScript cannot detach another task's source message window");
     if (this.messageWindow && this.messageWindow.task !== t.id)
       throw new Error("ChangeScript cannot detach another task's message window");
     if (this.treasureHandoffBlocked()) throw new Error("ChangeScript conflicts with an unfinished treasure task");
@@ -2995,10 +3012,12 @@ export class FieldGame {
     this.tasks = this.tasks.filter((other) => other === t || other.treasureRoot);
     Object.assign(t, plan, { stack: [], wait: 0, state: "ready", lastClock: this.time,
       puppetWait: null, scriptShop: null, fadeWait: null, colorFadeWait: null, flashWait: null, cameraPath: null, cameraLerp: null, scriptMove: null, scriptLerp: null, remaining: 0, move: null,
-      animationWait: false, audioWait: null, bgmReplay: null, autoSaveWait: null, soundWait: null, treasure: null, done: false });
+      animationWait: false, audioWait: null, bgmReplay: null, autoSaveWait: null, sourceMessageWait: null, soundWait: null, treasure: null, done: false });
   }
   private restoreHookedScript(main: Task): void {
     const hook = this.scriptHook!;
+    if (this.sourceMessage.active && this.sourceMessageTask !== main.id)
+      throw new Error("Hooked script cannot detach another task's source message window");
     if (this.messageWindow && this.messageWindow.task !== main.id)
       throw new Error("Hooked script cannot detach another task's message window");
     // Exit/Entry do not clear the callee's stack. The old caller stack was
@@ -3082,7 +3101,7 @@ export class FieldGame {
       audioWait: null,
       bgmReplay: null,
       autoSaveWait: null,
-      soundWait: null,
+      sourceMessageWait: null, soundWait: null,
       treasure: null,
       treasureRoot: false,
       done: false,
@@ -3586,6 +3605,13 @@ export class FieldGame {
         this.block("Main script ended with an unfinished choice task", this.pendingChoice.op);
         return;
       }
+      const waitingMessage = this.tasks.find(task => !task.done && task.sourceMessageWait)?.sourceMessageWait;
+      if (waitingMessage) {
+        this.block("Main script ended with an unfinished source message task", waitingMessage.op); return;
+      }
+      if (this.sourceMessage.active && this.sourceMessageTask !== main.id) {
+        this.block("Main script ended with another task's source message window"); return;
+      }
       if (this.messageWindow?.manual) {
         this.block("Main script ended with an unfinished ordinary message", this.messageWindow.manual.site);
         return;
@@ -3657,6 +3683,23 @@ export class FieldGame {
             const next = this.prepareActorScriptLerp(actor, pending.op, pending.progress);
             if (next.flow === "wait") { pending.progress = next.progress; return; }
             t.scriptLerp = null;
+          } catch (error) { this.block(error instanceof Error ? error.message : String(error), pending.op); return; }
+        }
+        if (t.sourceMessageWait) {
+          const pending = t.sourceMessageWait;
+          try {
+            if (pending.cursor === null) {
+              if (!this.sourceMessage.endWaiting) return;
+            } else {
+              const result = pollSourceMessageTask(pending.cursor, this.sourceMessage.sequenceStatus(pending.cursor.ticket), this.time);
+              if (result.action === "page-input") this.sourceMessage.executePageInput(pending.cursor.ticket);
+              if (result.flow === "wait") { pending.cursor = result.cursor; return; }
+              if (result.action === "close") {
+                const next = this.sourceMessage.prepare({ kind: "source-message", command: { kind: "close" } }), publish = this.prepareDialogueMask(12);
+                publish(); next.commit(); this.sourceMessageTask = null;
+              }
+            }
+            t.sourceMessageWait = null;
           } catch (error) { this.block(error instanceof Error ? error.message : String(error), pending.op); return; }
         }
         if (t.animationWait) {
@@ -3831,6 +3874,9 @@ export class FieldGame {
         if (this.dialogue?.manual && ["change-map", "encounter"].includes(op.kind)) {
           this.block("Field transition conflicts with an unfinished ordinary message", op);
           return;
+        }
+        if (this.sourceMessage.active && op.kind === "encounter") {
+          this.block("Source message must close before battle handoff", op); return;
         }
         if (this.pendingChoice && ["message", "source-message", "choice", "change-map", "encounter", "treasure-box"].includes(op.kind)) {
           this.block("Concurrent field interaction conflicts with an unfinished choice task", op);
@@ -4544,21 +4590,47 @@ export class FieldGame {
                 handoff = !this.dialogue && retained?.manual?.after === "message" && retained.task === t.id;
               if ((this.messageWindow && !handoff) || this.shopTask || this.treasureSceneState === "message")
                 throw new Error("Source message conflicts with an occupied message window");
-              if (!this.options.sourceMessageEffects) throw new Error("Source message entity-update host is unavailable");
-              const next = this.sourceMessage.prepare(op), publish = this.options.sourceMessageEffects.prepare(next.effects);
+              if (op.command.kind === "finish-wait") {
+                if (!this.sourceMessage.endWaiting) { t.sourceMessageWait = { op, cursor: null }; return; }
+                break;
+              }
+              if (!this.options.sourceMessageEffects && !this.options.sourceMessageSequence)
+                throw new Error("Source message entity-update host is unavailable");
+              let preparedOp = op, timingOwner: ReturnType<NonNullable<FieldGameOptions["sourceMessageSequence"]>["prepare"]> | null = null,
+                names: ReturnType<FieldGame["prepareMessagePresentation"]> | null = null;
+              if (op.command.kind === "sequence") {
+                if (!this.options.sourceMessageSequence) throw new Error("Source message sequence profile/timing owner is unavailable");
+                timingOwner = this.options.sourceMessageSequence.prepare();
+                const runs = sourceMessageSequenceTextRuns(op.command.document);
+                names = this.prepareMessagePresentation({ key: op.command.key, speaker: op.command.speaker, text: runs[0]!,
+                  ...(op.command.document.alignment === "center" ? { alignment: "center" as const } : {}),
+                  ...(op.command.template ? { template: op.command.template } : {}) }, runs);
+                const command = structuredClone(op.command); let run = 0;
+                command.speaker = names.message.speaker;
+                for (const token of command.document.tokens) if (token.kind === "text") token.text = names.pages[run++]!;
+                delete command.template; preparedOp = { ...op, command };
+              }
+              const next = this.sourceMessage.prepare(preparedOp, timingOwner?.context), publish = this.options.sourceMessageEffects
+                ? this.options.sourceMessageEffects.prepare(next.effects) : this.prepareDialogueMask(next.effects[0]!.group);
               if (typeof publish !== "function") throw new Error("Invalid source message host transaction");
               if (this.retainedMessage !== retained) throw new Error("Stale source message handoff");
-              publish(); next.commit();
+              names?.validate(); timingOwner?.validate();
+              publish(); next.commit(); this.sourceMessageTask = op.command.kind === "close" ? null : t.id;
               if (handoff) this.retainedMessage = null;
+              if (op.command.kind === "sequence") {
+                const cursor = createSourceMessageTaskCursor(op.command, next.timing!, next.ticket, this.time);
+                if (cursor) { t.sourceMessageWait = { op, cursor }; return; }
+              }
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
           case "choice":
             try {
-              if (this.sourceMessage.active || this.shopTask || this.treasureSceneState === "message")
+              const sourceWindow = this.sourceMessage.active && this.sourceMessageTask === t.id && this.sourceMessage.sequenceAfter === "choice";
+              if (this.sourceMessage.active && !sourceWindow || this.shopTask || this.treasureSceneState === "message")
                 throw new Error("Field choice conflicts with an occupied message manager");
               if (this.messageWindow && this.messageWindow.task !== t.id)
                 throw new Error("Field choice message belongs to another task");
-              if (op.presentation === "yes-no" && !this.messageWindow)
+              if (op.presentation === "yes-no" && !this.messageWindow && !sourceWindow)
                 throw new Error("Yes/no field choice requires its ordinary message window");
               if (!op.retainMessage && !this.options.sourceMessageEffects && (this.options.puppetActors || this.nativeActorBindings))
                 throw new Error("Source choice message entity-update host is unavailable");

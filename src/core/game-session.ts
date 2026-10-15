@@ -1,5 +1,5 @@
 import type { FieldContent } from "../field/types.js";
-import type { GameEventSaveRequest, FieldGame, Stop } from "./field.js";
+import type { GameEventSaveRequest, FieldGame, FieldGameOptions, Stop } from "./field.js";
 import { encounterContent, battleDefinitionBlocker, type BattleCatalog, type BattleContent } from "./battle-content.js";
 import { BattleGame, type Combatant } from "./battle.js";
 import { EventState } from "./event-state.js";
@@ -67,6 +67,7 @@ export type GameCheckpoint = GameCheckpointBase & (
 /** External observations are rebound by the host on load, never trusted from saves. */
 export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
+  sourceMessageSequence?: NonNullable<FieldGameOptions["sourceMessageSequence"]>;
   /** Host prepares battle and return media before committing the same session
    * candidate used by the synchronous development compatibility adapter. */
   battleHandoff?: "prepared";

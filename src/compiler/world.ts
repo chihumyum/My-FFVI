@@ -1,3 +1,4 @@
+import { bindSourceFormatFlags } from "./source-system-flags.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { loadCorpus } from "./corpus.js";
@@ -435,10 +436,11 @@ export async function compileWorld(root: string) {
         scriptLocals[name] = decodeScriptLocals(data);
         try { scriptTransitionMetadata[name] = compileEventScriptTransitionMetadata(data); }
         catch { scriptTransitionMetadata[name] = null; }
-        scriptSystemFlags[name] = decodeConditionVisualFlag(data);
+        const importBinding = bindSourceFormatFlags({ sourceSetHash: corpus.sourceSetHash, parentSourceSetHash: text(corpus.manifest.parentSourceSetHash), sources: corpus.manifest.sources }, asset);
+        scriptSystemFlags[name] = decodeConditionVisualFlag(data, importBinding);
         // Missing lifecycle flags do not prevent independent decoding, and
         // they never grant a formal source actor host.
-        try { scriptPuppetContexts[name] = compileFieldPuppetScriptContext(data, miscAssets[0]!.data); }
+        try { scriptPuppetContexts[name] = compileFieldPuppetScriptContext(data, miscAssets[0]!.data, importBinding); }
         catch { scriptPuppetContexts[name] = null; }
         const mnemonics = array(data.Mnemonics);
         scripts[name] = mnemonics.map((raw, index): Op => {

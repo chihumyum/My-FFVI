@@ -71,7 +71,7 @@ try {
         assert.deepEqual(state.snapshot(), before);
         assert.deepEqual(steps.map(step => step.targetId), targets);
         assert.ok(steps.every(step => step.setDummy === false && step.affectLeader === true));
-        return () => { publications++; assert.deepEqual(state.snapshot(), expected); };
+        return () => { publications++; assert.deepEqual(state.snapshot(), before); };
       });
       assert.equal(publications, op.command.kind === "recover-hp" && op.command.allowUnableFight && targets.length ? 1 : 0);
       assert.deepEqual(state.snapshot(), expected);

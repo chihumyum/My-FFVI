@@ -17,6 +17,8 @@
     "story:execute": "npm run build && node --max-old-space-size=8192 scripts/check-story-corpus-execution.mjs",
     "story:plan": "npm run build && node --max-old-space-size=8192 scripts/plan-story-runtime.mjs",
     "story-runtime:check": "npm run build && node --max-old-space-size=8192 scripts/check-story-runtime-capabilities.mjs && node scripts/check-field-timer.mjs && node scripts/check-field-auto-save.mjs",
+    "source-system-flags:check": "npm run build && node --max-old-space-size=8192 scripts/check-source-system-flags.mjs --compiled dist",
+    "source-message-sequence:check": "npm run story:build && .venv/bin/python scripts/inspect-source-message-sequence.py && node --max-old-space-size=8192 scripts/check-source-message-sequence.mjs && node --max-old-space-size=8192 scripts/check-source-message-sequence-execution.mjs && node scripts/check-source-message-view.mjs",
     "internal-clocks:check": "npm run story:build && node --max-old-space-size=8192 scripts/check-story-corpus-execution.mjs && node --max-old-space-size=8192 scripts/check-internal-clocks.mjs",
     "named-shops:assess": "npm run build && node scripts/check-named-shops-lifecycle.mjs --compiled dist",
     "story:continuity": "npm run build && node scripts/check-story-continuity.mjs",

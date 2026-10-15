@@ -1,5 +1,6 @@
 import { record, hash } from "./content.js";
 import { int32 } from "../core/script-integer.js";
+import { decodeSourceSystemFlags, type SourceFormatFlagImportBinding } from "./source-system-flags.js";
 import type { FieldPuppetActorCatalog, FieldPuppetScriptContext } from "../core/field-puppet-actors.js";
 
 const array = (value: unknown): unknown[] => {
@@ -16,10 +17,10 @@ const bool = (value: unknown): boolean => {
   return value;
 };
 
-/** JsonUtility defaults are not used as proof for absent source fields. Every
- * flag consumed by Integrator.Execute must be explicitly present in Format. */
-export function compileFieldPuppetScriptContext(rawScript: unknown, rawMisc: unknown): FieldPuppetScriptContext {
-  const script = record(rawScript), flags = record(script.SystemFlag), misc = record(rawMisc);
+/** Missing members are decoded only under the fixed native JSON import
+ * contract. Unbound callers retain the legacy explicit-member requirement. */
+export function compileFieldPuppetScriptContext(rawScript: unknown, rawMisc: unknown, binding?: SourceFormatFlagImportBinding): FieldPuppetScriptContext {
+  const script = record(rawScript), flags = binding ? decodeSourceSystemFlags(rawScript, binding).values : record(script.SystemFlag), misc = record(rawMisc);
   return {
     skipInitialize: int32(flags.SkipInitialize) !== 0,
     keepPlayerPuppet: int32(flags.KeepPlayerPuppet) !== 0,

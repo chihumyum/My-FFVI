@@ -1,6 +1,7 @@
 // Actual source scripts, with the explicit framework presentation derivative.
 // Headless title/media acknowledgements are controlled; no original-game oracle.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -16,10 +17,15 @@ for (let i = 0; i < args.length; i += 2) {
 const runtime = resolve(root, options.get("--dist") ?? "dist");
 const load = (name) => import(pathToFileURL(resolve(runtime, "src/core", name + ".js")));
 const [{ GameContentRepository }, { GameSession }, { GameFlow }, { FieldFadeState },
-  { NewGameFieldEntry }, { createSourcePresentationContext }, { GameMapLoader }] = await Promise.all([
+  { NewGameFieldEntry }, { createSourcePresentationContext }, { GameMapLoader },
+  { createWebFieldMessageSequencePort }] = await Promise.all([
   load("game-content"), load("game-session"), load("game-flow"), load("field-fade"),
-  load("new-game-field-entry"), load("source-presentation"), load("game-map-loader"),
+  load("new-game-field-entry"), load("source-presentation"), load("game-map-loader"), load("source-message-sequence"),
 ]);
+const appBytes = await readFile(resolve(root, "apps/game/app.js"));
+assert.match(appBytes.toString(), /import \{ createWebFieldMessageSequencePort \} from "\/runtime\/core\/source-message-sequence\.js"/);
+assert.match(appBytes.toString(), /sourceMessageSequence: createWebFieldMessageSequencePort\(\)/);
+const policyModuleSha256 = createHash("sha256").update(await readFile(resolve(runtime, "src/core/source-message-sequence.js"))).digest("hex");
 const directory = resolve(root, options.get("--content") ?? "build/content-packages");
 const consumed = new Map(), runtimeSha256 = await runtimeDigest(root, runtime);
 const read = async url => {
@@ -45,8 +51,10 @@ while (entry.phase !== "field-preparing") {
   const next = entry.prepareResume(fade, true);
   assert.ok(next); next.commit(); fade = next.fade;
 }
+const sourceMessageSequence = createWebFieldMessageSequencePort();
+const messageContext = sourceMessageSequence.prepare().context;
 const game = GameSession.prepareNewGame(content, catalog, map, battle, fade, presentation,
-  { audioReadiness: { isReady: () => true }, soundPresentation: { isPresented: () => true },
+  { sourceMessageSequence, audioReadiness: { isReady: () => true }, soundPresentation: { isPresented: () => true },
     transportationTimestamp: () => "639273600000000000" });
 const launch = entry.prepareLaunch(fade, game.newGamePreparation(true));
 game.launchNewGame(launch.launch); launch.commit();
@@ -56,7 +64,7 @@ const mapLoader = new GameMapLoader(flow, repo, {
   prepare: async field => { assert.notEqual(game.field, field, "Presentation prepares a private map"); },
   discard: () => {},
 });
-const ownedAtStart = game.state.snapshot(), transitions = [], answers = [], motionSamples = [], transportation = [], sounds = [];
+const ownedAtStart = game.state.snapshot(), transitions = [], answers = [], confirms = [], motionSamples = [], transportation = [], sounds = [];
 const transportationOffsets = new WeakMap();
 const soundOffsets = new WeakMap();
 function recordTransportation(field) {
@@ -73,12 +81,12 @@ function recordTransportation(field) {
 }
 const sampledActors = new Set();
 const report = { kind: "framework-source-route-check-v1", result: "running", profile: content.developmentProfile.kind,
-  runtimeSha256, contentRefs: refs, sourceCampaignComplete: false, browserVerified: false,
+  runtimeSha256, contentRefs: refs, messageContext, policyModuleSha256, messagePolicy: "createWebFieldMessageSequencePort (same production module as app)", sourceCampaignComplete: false, browserVerified: false,
   entryHash: content.contentHash, catalogHash: catalog.contentHash, battleHash: battle.contentHash,
   sourceEntryHash: content.developmentProfile.sourceContentHash,
   controlledInputs: ["headless title, field UI and immediately ready audio", "10ms host updates", "automatic dialogue confirm; first displayed choice", "fixed explicit transportation timestamp"],
   omittedEnvironmentEffects: content.developmentProfile.omissions.length,
-  originalGameExecuted: false, completeOpening: false, transitions, answers, motionSamples, transportation, sounds };
+  originalGameExecuted: false, completeOpening: false, transitions, answers, confirms, motionSamples, transportation, sounds };
 const output = resolve(root, options.get("--report") ?? "build/reports/framework-source-route-check.json");
 let elapsedMs = 0, boundary = null;
 try {
@@ -102,7 +110,12 @@ try {
     if (game.field.choice) {
       const choice = game.field.choice;
       assert.equal(flow.choose(choice.id, 0), true); answers.push({ id: choice.id, index: 0 });
-    } else if (game.field.dialogue) flow.confirm();
+    } else if (game.field.dialogue || game.field.sourceMessage.projection?.acceptsInput) {
+      const before = { dialogue: game.field.dialogue, source: game.field.sourceMessage.projection };
+      const accepted = flow.confirm();
+      confirms.push({ elapsedMs, mapId: game.field.content.map.identity.mapId, accepted,
+        before, after: { dialogue: game.field.dialogue, source: game.field.sourceMessage.projection } });
+    }
     flow.advance(10, host);
     for (const actor of Object.values(game.field.actors)) {
       const motion = actor.motion, key = `${game.field.content.map.identity.mapId}:${actor.id}`;

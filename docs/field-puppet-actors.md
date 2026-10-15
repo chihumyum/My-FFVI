@@ -27,9 +27,9 @@ The relevant receipts are in `event-operators`, `v28-puppet-lifecycle`, `v28-pup
 
 ## Compiler inputs
 
-`compileFieldPuppetScriptContext(rawScript, rawMisc)` requires all four explicit `SystemFlag` fields: `SkipInitialize`, `KeepPlayerPuppet`, `KeepBadStatusVisual`, and `RidingVehicle`. The native test is nonzero, not equality with one. Absent fields are not accepted as proof of JsonUtility's defaults. The compiled context contains each boolean, source `characteristics`, and hashes of the complete script and misc objects.
+`compileFieldPuppetScriptContext(rawScript, rawMisc)` retains the strict legacy requirement for four explicit `SystemFlag` members. The source world compiler can pass a third physical-source binding under [source-format-system-flags-import-v1](source-system-flags.md): inside an existing non-null object, omitted proven int32 members import as zero using the fixed original loader and matching Unity 2019.4 API contract. Missing/null whole objects and malformed explicit values remain rejected. This is metadata import, not a world-state default or actor-host admission. The native test remains nonzero, not equality with one; the context retains complete original script/misc hashes.
 
-`compileFieldPuppetActorCatalog(rawMisc)` binds the source Corps permutation, resident mappings and condition-character replacements. The current source has four Corps positions, 45 resident definitions and replacements for condition types 665, 666 and 677. The full local corpus has 2,771 scripts with all four fields and 533 with missing fields. The complete combinations `(SkipInitialize, KeepPlayerPuppet, KeepBadStatusVisual, RidingVehicle)` are:
+`compileFieldPuppetActorCatalog(rawMisc)` binds the source Corps permutation, resident mappings and condition-character replacements. The current source has four Corps positions, 45 resident definitions and replacements for condition types 665, 666 and 677. The original explicit-member subset has 2,771 scripts. Of the other 533 records, 526 now have importable omitted-member metadata and seven whole-object omissions remain rejected; 393 of the 526 have static field uses. These are import counts, not runtime coverage. The complete combinations for the explicit subset `(SkipInitialize, KeepPlayerPuppet, KeepBadStatusVisual, RidingVehicle)` are:
 
 | Combination | Scripts |
 | --- | ---: |

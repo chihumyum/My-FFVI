@@ -90,7 +90,7 @@ test("candidate forks, snapshots, op inputs and projections cannot mutate the li
   if (value.command.kind === "play") value.command.document.text = "tamper";
   tx.commit(); state.advance(.01);
   const candidate = state.fork(), snapshot = state.snapshot(), projection = state.projection!;
-  candidate.prepare(close).commit(); snapshot.message!.command.document.text = "snapshot"; projection.text = "view";
+  candidate.prepare(close).commit(); if (snapshot.message!.command.kind === "play") snapshot.message!.command.document.text = "snapshot"; projection.text = "view";
   assert.equal(state.projection?.text, "First line\nSecond line"); assert.equal(candidate.active, false);
 });
 

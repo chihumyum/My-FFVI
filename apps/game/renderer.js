@@ -589,7 +589,9 @@ export class Renderer {
         if (l.name === "CeilLayer") drawActors(3);
       }
     const message = game.sourceMessage?.projection;
-    if (message) {
+    // The sequence projection uses the shared DOM dialogue panel, which wraps
+    // and scrolls complete source pages. The old v1 short subtitle stays here.
+    if (message && message.documentKind !== "source-message-sequence-v1") {
       const lines = message.text.split("\n"), lineHeight = 24;
       const startY = message.anchor === "top" ? 28 : message.anchor === "middle"
         ? (h - lines.length * lineHeight) / 2 : h - 28 - lines.length * lineHeight;

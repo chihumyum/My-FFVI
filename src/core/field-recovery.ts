@@ -21,6 +21,8 @@ export type FieldRecoveryTransaction = {
   targets: string[];
   steps: OwnedConditionAppearanceStep[];
   commit(): void;
+  /** Publish prepared actor data and resources within the same owner fence. */
+  commitWith(publish: () => void): void;
 };
 export type FieldRecoveryPort = {
   prepare(command: FieldRecoveryCommand): FieldRecoveryTransaction;
@@ -135,8 +137,8 @@ export function projectFieldRecovery<T extends FieldRecoveryMember>(
   return { roster: next, targets, steps };
 }
 
-/** Prepare every required actor step before the single owned-state commit.
- * A validated publication is synchronous and must not fail after commit. */
+/** Prepare every actor step, then perform its last fallible validation while
+ * the prior owned state remains live. The owner publishes resources last. */
 export function executeFieldRecoveryEvent(
   op: FieldRecoveryEventOp, port: FieldRecoveryPort | undefined,
   preparePresentation?: (steps: readonly OwnedConditionAppearanceStep[]) => PartyPresentationPublication,
@@ -152,6 +154,5 @@ export function executeFieldRecoveryEvent(
     if (typeof publish !== "function") throw new Error("Invalid field recovery presentation transaction");
   }
   publish?.validate?.();
-  transaction.commit();
-  publish?.();
+  transaction.commitWith(publish ?? (() => {}));
 }

@@ -1,4 +1,7 @@
 import { checkpointKeys } from "./checkpoint-validation.js";
+import { createSourceMessageSequence, advanceSourceMessageSequence, confirmSourceMessageSequence,
+  executeSourceMessagePageInput, sourceMessageSequenceStatus, type SourceMessageSequenceCommand,
+  type SourceMessageSequenceContext, type SourceMessageSequencePhase, type SourceMessageSequenceValue } from "./source-message-sequence.js";
 
 /** Deliberate Web capability bound, not the native TextGenerator wrap rule.
  * Source field windows expose four rows; glyph/layout parity remains separate. */
@@ -24,7 +27,7 @@ export type SourceMessagePlay = {
   /** Source operand is double. A negative value means interpreter Next. */
   seconds: number;
 };
-export type SourceMessageCommand = SourceMessagePlay | { kind: "close" };
+export type SourceMessageCommand = SourceMessagePlay | SourceMessageSequenceCommand | { kind: "close" } | { kind: "finish-wait" };
 export type SourceMessageOp = {
   kind: "source-message";
   command: SourceMessageCommand;
@@ -43,25 +46,28 @@ export function sourceMessageUpdateMask(group: SourceMessageEffect["group"]): 9 
   throw new Error("Unknown source message update group");
 }
 export type SourceMessageProjection = {
+  documentKind?: "source-message-sequence-v1";
+  page?: number;
+  windowTicket?: number;
   key: string;
-  speaker: "";
+  speaker: string;
   text: string;
   alignment: "left" | "center";
-  window: "none";
+  window: "frame" | "none";
   anchor: "top" | "middle" | "bottom";
-  phase: "play" | "playing" | "time-wait" | "input-wait" | "finished";
+  phase: "play" | "playing" | "time-wait" | "input-wait" | "finished" | SourceMessageSequencePhase;
   /** Automatic messages ignore the confirm input; VM Wait continues separately. */
-  acceptsInput: false;
+  acceptsInput: boolean;
 };
 type Message = {
   command: SourceMessagePlay;
-  phase: SourceMessageProjection["phase"];
+  phase: "play" | "playing" | "time-wait" | "input-wait" | "finished";
   elapsed: number;
   waitConsumed: boolean;
 };
 export type SourceMessageSnapshot = {
   kind: "source-message-v1";
-  message: Message | null;
+  message: Message | SourceMessageSequenceValue | null;
 };
 
 function seconds(value: number): number {
@@ -83,7 +89,7 @@ export function validateSourceMessageDocument(value: SourceMessageDocument): voi
       (seconds(value.tailWaitSeconds) !== value.tailWaitSeconds || value.tailWaitSeconds <= 0))
     throw new Error("Invalid source message inline wait");
 }
-function command(value: SourceMessageCommand): void {
+function command(value: SourceMessagePlay | { kind: "close" }): void {
   if (value.kind === "close") { checkpointKeys(value, "kind"); return; }
   checkpointKeys(value, "kind,key,speaker,layout,document,seconds");
   checkpointKeys(value.layout, "window,anchor");
@@ -100,12 +106,52 @@ function command(value: SourceMessageCommand): void {
  * Construction is the host's explicit empty MessageWindow initialization, not a
  * fallback for a missing native MessageReady context. */
 export class SourceMessageState {
-  private value: Message | null = null;
+  private value: Message | SourceMessageSequenceValue | null = null;
   private revision = 0;
+  private windowTicket = 0;
+  get endWaiting(): boolean {
+    return this.value !== null && (isSequence(this.value) ? this.value.phase === "end-wait" : this.value.phase === "finished");
+  }
+  sequenceStatus(ticket: number) {
+    if (ticket !== this.windowTicket || !this.value || !isSequence(this.value))
+      throw new Error("Stale source Msg wrapper window");
+    return sourceMessageSequenceStatus(this.value, ticket);
+  }
+  executePageInput(ticket: number): boolean {
+    this.sequenceStatus(ticket);
+    const next = executeSourceMessagePageInput(this.value as SourceMessageSequenceValue);
+    if (next === null) return false;
+    this.value = next; this.revision++; return true;
+  }
+  get sequenceAfter(): SourceMessageSequenceCommand["after"] | null {
+    return this.value && isSequence(this.value) ? this.value.command.after : null;
+  }
+  /** Legacy ordinary dialogue and this controller are exclusive projections of
+   * the same global window. Transfer preserves the Message update mask. */
+  prepareManualHandoff() {
+    if (!this.value || !isSequence(this.value) || this.value.command.after !== "message")
+      throw new Error("Source sequence has no ordinary-message continuation");
+    const revision = this.revision; let committed = false;
+    return { commit: () => {
+      if (committed || revision !== this.revision) throw new Error("Stale source message handoff");
+      this.value = null; this.windowTicket++; this.revision++; committed = true;
+    } };
+  }
+  retainAfterChoice(): void {
+    if (!this.value || !isSequence(this.value) || this.value.command.after !== "choice" ||
+        !sourceMessageSequenceStatus(this.value, this.windowTicket).complete)
+      throw new Error("Source choice lost its complete ordinary window");
+    this.value = structuredClone(this.value); this.value.command.after = "message"; this.revision++;
+  }
   get active(): boolean { return this.value !== null; }
   get projection(): SourceMessageProjection | null {
     const value = this.value;
     if (value === null) return null;
+    if (isSequence(value)) return { documentKind: "source-message-sequence-v1", page: value.page, windowTicket: this.windowTicket,
+      key: value.command.key, speaker: value.command.speaker,
+      text: value.text, alignment: value.command.document.alignment, ...value.command.layout, phase: value.phase,
+      acceptsInput: !value.timing.autoInput && ["new-page", "press-wait", "end-wait"].includes(value.phase) &&
+        value.elapsed >= Math.fround(.01) && (value.phase !== "end-wait" || value.playing) };
     return { key: value.command.key, speaker: "", text: value.phase === "play" ? "" : value.command.document.text,
       alignment: value.command.document.alignment, ...value.command.layout,
       phase: value.phase, acceptsInput: false };
@@ -114,7 +160,7 @@ export class SourceMessageState {
     return { kind: "source-message-v1", message: structuredClone(this.value) };
   }
   fork(): SourceMessageState {
-    const copy = new SourceMessageState(); copy.value = structuredClone(this.value); return copy;
+    const copy = new SourceMessageState(); copy.value = structuredClone(this.value); copy.windowTicket = this.windowTicket; return copy;
   }
   /** Retained finished text is still an open window. No live message coroutine
    * or retained global window is admitted to the stable field save format. */
@@ -124,31 +170,50 @@ export class SourceMessageState {
       throw new Error("Active or invalid source message checkpoint");
     return new SourceMessageState();
   }
-  prepare(op: SourceMessageOp): {
+  prepare(op: SourceMessageOp, context?: SourceMessageSequenceContext): {
     flow: "next";
+    ticket: number;
+    timing: SourceMessageSequenceValue["timing"] | null;
     effects: SourceMessageEffect[];
     commit(): void;
   } {
     if (op.kind !== "source-message") throw new Error("Expected source message operation");
-    command(op.command);
-    const next: Message | null = op.command.kind === "close" ? null : {
-      command: structuredClone(op.command), phase: "play", elapsed: 0, waitConsumed: false,
-    };
+    if (op.command.kind === "finish-wait") throw new Error("MsgFinishWait polls the existing window and cannot publish a new one");
+    let next: Message | SourceMessageSequenceValue | null;
+    if (op.command.kind === "sequence") {
+      if (!context) throw new Error("Source message sequence profile/timing owner is unavailable");
+      next = createSourceMessageSequence(op.command, context);
+    } else {
+      command(op.command);
+      next = op.command.kind === "close" ? null : {
+        command: structuredClone(op.command), phase: "play", elapsed: 0, waitConsumed: false };
+    }
+    const ticket = this.windowTicket + 1;
+    if (!Number.isSafeInteger(ticket)) throw new Error("Source message window ticket overflows");
     const revision = this.revision;
     let committed = false;
-    return { flow: "next", effects: [{ kind: "entity-update-group", group: next ? 8 : 12, invokeCallback: false }],
+    return { flow: "next", ticket, timing: next !== null && isSequence(next) ? structuredClone(next.timing) : null, effects: [{ kind: "entity-update-group", group: next ? 8 : 12, invokeCallback: false }],
       commit: () => {
         if (committed || revision !== this.revision) throw new Error("Stale source message transaction");
-        this.value = next; this.revision++; committed = true;
+        this.value = next; this.windowTicket = ticket; this.revision++; committed = true;
       } };
   }
   /** Source AUTO_P makes InputAction return before querying physical input. */
-  confirm(): boolean { return false; }
+  confirm(): boolean {
+    if (this.value === null || !isSequence(this.value)) return false;
+    const next = confirmSourceMessageSequence(this.value);
+    if (next === null) return false;
+    this.value = next; this.revision++; return true;
+  }
   /** One manager Update per call. TimeFunction uses float32 accumulation and
    * resets excess time; it does not catch up several state transitions at once.
    * Web host orders this before its interpreter clock. */
   advance(deltaSeconds: number): void {
-    const dt = seconds(deltaSeconds), next = structuredClone(this.value);
+    const dt = seconds(deltaSeconds), value = this.value;
+    if (value !== null && isSequence(value)) {
+      this.value = advanceSourceMessageSequence(value, dt); this.revision++; return;
+    }
+    const next = structuredClone(value);
     if (next === null || next.phase === "finished") return;
     if (next.phase === "play") {
       // PlayingInit tail-calls ToNextMessage: reveal this page up to the tail wait.
@@ -169,4 +234,8 @@ export class SourceMessageState {
     }
     this.value = next; this.revision++;
   }
+}
+
+function isSequence(value: Message | SourceMessageSequenceValue): value is SourceMessageSequenceValue {
+  return value.command.kind === "sequence";
 }

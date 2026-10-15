@@ -652,6 +652,7 @@ export class WorldSession {
           ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}),
           ...(this.owned?.current.transportationTimestamp ? { transportationTimestamp: this.owned.current.transportationTimestamp } : {}),
           ...(this.owned?.current.soundPresentation ? { soundPresentation: this.owned.current.soundPresentation } : {}),
+          ...(this.owned?.current.sourceMessageSequence ? { sourceMessageSequence: this.owned.current.sourceMessageSequence } : {}),
           ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
         from.fader.fork(),
         from.cameraSnapshot ?? undefined,

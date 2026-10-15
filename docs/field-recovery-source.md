@@ -2,6 +2,8 @@
 
 本页限定 v58 共用恢复系统所需的目标身份、资格、资源与完成顺序。证据来自当前 DLL、完整来源语料和既有导出；没有新增 C 导出或原版运行，`semanticsVerified=false`。Web 使用同一 GameState 的准备／提交事务；这不表示原生逐目标调用本身具有 Web 的原子回滚。
 
+v97 修复共用恢复发布顺序：所有目标和演员准备完成后，`commitWith` 在原 `GameState` 发布锁内完成演员的最终校验及准备数据赋值，随后才更新持有资源和 revision。最后校验失败时资源、演员和草稿 generation 均保持原值，同一候选可在宿主恢复后重试；成功、旧 revision 或活动战斗 lease 后不可重用。合同与 [字段状态发布](owned-conditions.md) 相同，普通 MP 仍无需演员刷新，7个 MP 次数调用点仍阻塞。
+
 ```sh
 .venv/bin/python scripts/check_field_recovery_native_bindings.py
 .venv/bin/python -m unittest discover -s tests -p 'test_field_recovery_native_bindings.py'

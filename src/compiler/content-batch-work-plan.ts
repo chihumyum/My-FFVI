@@ -151,6 +151,7 @@ const diagnosticOwners: Readonly<Record<string, ContentBatchSystem>> = {
 const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
   inventory: "owned-menus-economy-and-growth",
   messageNames: "owned-menus-economy-and-growth",
+  sourceMessageSequence: "map-event-and-travel",
   recovery: "owned-menus-economy-and-growth",
   ownedConditions: "owned-menus-economy-and-growth",
   party: "owned-menus-economy-and-growth",

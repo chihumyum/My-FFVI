@@ -38,10 +38,13 @@ prepare(command): {
     affectLeader: true;
   }[];
   commit(): void;
+  commitWith(publish: () => void): void;
 }
 ```
 
-`executeOwnedConditionEvent` 先准备所有外观步骤，再提交一次持有状态，最后发布已经准备好的同步表现。`FieldPartyActors.prepareSequence` 在隔离的演员状态上依次准备，所有中间媒体、碰撞、伴随者和视角依赖都须先成立。缺失的外观输入、任何准备异常或过期事务均不能发布部分条件；已准备的表现提交必须同步且不再失败。空目标列表没有 Refresh 调用，不额外要求演员提供器。
+`executeOwnedConditionEvent` 先准备所有外观步骤，再通过 `commitWith` 在同一持有者发布锁内执行演员的最后一次校验和发布，最后写入持有状态。最后一次宿主读取仍观察旧持有状态，校验失败可重试原候选；成功消费一次。`FieldPartyActors.prepareSequence` 在隔离的演员状态上依次准备，所有中间媒体、碰撞、伴随者和视角依赖都须先成立。校验后只允许同步写入已准备的数据，不能再执行可能失败的宿主工作；任意外部回调先写后抛异常不属于可回滚合同。空目标列表没有 Refresh 调用，不额外要求演员提供器。
+
+v97 对 live owner 和地图私有草稿共用上述顺序，并拒绝重入、旧 revision/generation 和活动战斗 lease。真实 `GameSession`、原生演员实例、存读档和普通战斗往返的16项连续测试覆盖最后阶段取消、材质失配、动画实例替换及同候选重试；没有扩大 type0/665/666 状态准入。
 
 ## 共享存档、字段与战斗
 

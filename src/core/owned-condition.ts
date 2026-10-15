@@ -35,6 +35,8 @@ export type OwnedConditionTransaction = {
   /** Native dispatch refreshes after each target, including a storage no-op. */
   steps: OwnedConditionAppearanceStep[];
   commit(): void;
+  /** The last fallible actor validation observes the prior owned state. */
+  commitWith(publish: () => void): void;
 };
 export type FieldOwnedConditionPort = {
   prepare(command: OwnedConditionCommand): OwnedConditionTransaction;
@@ -127,6 +129,5 @@ export function executeOwnedConditionEvent(
     if (typeof publish !== "function") throw new Error("Invalid owned condition presentation transaction");
   }
   publish?.validate?.();
-  transaction.commit();
-  publish?.();
+  transaction.commitWith(publish ?? (() => {}));
 }

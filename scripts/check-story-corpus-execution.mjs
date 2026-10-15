@@ -105,7 +105,7 @@ function execute(program, input, choicePrefix) {
   const before = state.snapshot();
   const content = {
     formatVersion: 1, kind: 'field-development', sourceSetHash: snapshot.sourceSetHash,
-    parentSourceSetHash: snapshot.sourceSetHash, contentHash: hash({ id: asset.id, data: asset.data }),
+    parentSourceSetHash: snapshot.manifest.parentSourceSetHash, contentHash: hash({ id: asset.id, data: asset.data }),
     map: { id: 'controlled-story-vm-host', width: 1, height: 1, tileSize: 16, layers: [], tilesets: [],
       textures: {}, collisions: { 1: [0] }, entities: [], source: asset.source },
     characters: {}, scripts: { [asset.id]: ops }, scriptLocals: { [asset.id]: locals },

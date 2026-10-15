@@ -1,5 +1,7 @@
 # 来源字段消息与自动字幕
 
+本文保留 v31 的 `source-message-document-v1` 短字幕子集，并在后半部记录 v97 的普通窗口/时序序列族。两个文档协议使用同一个消息所有者。
+
 v31 将普通字段消息管理器的一个共用子集接入 Web：无边框、无说话人、单页自动消息，以及显式 `MsgClose`。它服务于真实来源 `Msg` 参数和本地化资源；运行时没有按开场脚本名、消息 ID 或地图 ID 分支。普通确认对白仍由既有路线处理，滚动、渐入、歌剧和战斗消息管理器不借用本模块的时序。
 
 原生证据来自当前提供的 PR 构建静态分析。所有原生回执保持 `semanticsVerified=false`，没有原版动态运行、字体像素或完整新游戏可玩性证明。
@@ -56,11 +58,11 @@ WAIT 的已支持后缀保留原版大小写比较：标签匹配不区分大小
 
 `ConvertLineTextList` `0x320700 / 0x320320` 通过 Unity `TextGenerator`、实际 RectTransform 和字体设置计算自动换行。普通字段 prefab 明确 `newLineCount=4`、字号 `40`、基准文本宽 `1000`、FontSelector 类型 `Font03`；`FontManager.CreateFontParameter` `0xab2360` 和 `FontSelector.SetFontParameter` `0x373fb0` 会替换运行时字体。不能用 prefab 内的日文字体证明中文最终排版。
 
-当前 Web 能力显式限制为最多四个手工换行后的短行，每行最多 `20` 个已支持 BMP 字符；组合符、补充平面字符、控制符及其它待恢复字形布局不准入。**20 是当前 Web 能力上限，不是从原版提取的换行列数，也不能证明这些文本在原版字体中绝不换行。** 本轮 11 处候选源消息的最长一行为 19 字。Canvas 字体、定位和阴影保持 Web 近似；原版字形、字距、自动换行和像素一致性仍未验收，不能把该近似收据用于迁移发布准入。
+旧 `source-message-document-v1` Web 能力显式限制为最多四个手工换行后的短行，每行最多 `20` 个已支持 BMP 字符；组合符、补充平面字符、控制符及其它待恢复字形布局不准入。**20 是当前 Web 能力上限，不是从原版提取的换行列数，也不能证明这些文本在原版字体中绝不换行。** 本轮 11 处候选源消息的最长一行为 19 字。Canvas 字体、定位和阴影保持 Web 近似；原版字形、字距、自动换行和像素一致性仍未验收，不能把该近似收据用于迁移发布准入。
 
-超出该上限、超过四行、页中等待、多页、手动确认、说话人媒体/名字替换、颜色/变量等控制标签、同步或正时长 `Msg`，以及 fade/scroll/opera/battle 窗口，继续在编译或宿主处明确阻塞。后续应以独立字体/排版提供器恢复真正分页，不能通过不断扩大字符上限取得假覆盖。
+v31 旧协议将超出该上限、超过四行、页中等待、多页、手动确认、名字替换、同步或正时长 `Msg` 留在门禁处；不能通过扩大旧字符上限冒充恢复原生分页。v97 的独立序列协议和 DOM 可读策略见下节。颜色/金额/变量及其它未知控制、fade/scroll/opera/battle 窗口仍不借用普通字段时序。
 
-## 检查入口
+## v31 历史检查入口
 
 ```sh
 ./node_modules/.bin/tsc --outDir build/v31-field-dist --pretty false
@@ -71,4 +73,50 @@ node scripts/check-source-message.mjs --compiled-dir build/v31-field-dist
 
 13 项独立测试覆盖异步开始、页末等待、float32、替换/取消、外部组效果、过期事务、保存限制、严格控制标签和 Web 页幅门禁。原生检查从 DLL、symbols、header、metadata 重新验证 44 份完整方法回执和 10 个原始机器码范围，输出 `build/reports/source-message-native-check.json`。
 
-来源检查遍历全部 `4838` 处 `Msg` 与 `55` 处 `MsgClose`，当前本模块接收 `11 + 55` 处，剩余 `4827` 处记录具体阻塞原因。66 个受控探针经过同一个共享 decoder 和消息所有者，另核开场独立 Wait/Close、控制后缀、prefab 来源身份与外部更新组。输出 `build/reports/source-message-check.json`；报告不复制来源正文，只记录来源定位、摘要和页幅统计。静态调用点数、受控时钟通过数、实际浏览器演出和原版动态一致性是不同证据，均不代表剧情覆盖率。
+v31 历史来源检查遍历全部 `4838` 处 `Msg` 与 `55` 处 `MsgClose`，当前本模块接收 `11 + 55` 处，剩余 `4827` 处记录具体阻塞原因。66 个受控探针经过同一个共享 decoder 和消息所有者，另核开场独立 Wait/Close、控制后缀、prefab 来源身份与外部更新组。输出 `build/reports/source-message-check.json`；报告不复制来源正文，只记录来源定位、摘要和页幅统计。静态调用点数、受控时钟通过数、实际浏览器演出和原版动态一致性是不同证据，均不代表剧情覆盖率。
+
+
+## v97 普通窗口、分页与解释器等待
+
+`src/compiler/source-message-sequence.ts` 编译普通字段 `Msg` / `MsgFinishWait`。共享 decoder 先保留已有旧协议和普通对白能力；新协议处理窗口 `0 / 3`、位置 `0 / 1 / 2`、明确说话人，以及负、零、正时长。保留原始整数、浮点、字符串槽和下一条来源 mnemonic；未知窗口、保留槽、缺本地化、未知标签和未绑定名字不准入。
+
+`source-message-sequence-v1` 保留有序 `text / WAIT / PRESS / P / AUTO_P / CT` token。`CT` 决定同一窗口的居中，`AUTO_P` 在原管理器中决定整个窗口的自动输入；`P` 才参与正时长的页数除数。大小写和 WAIT 后缀遵守前述源方法，未知 WAIT 不折算成猜测时长。自动窗口同时含 `PRESS` 时需要尚未提供的外部输入回调，明确阻塞。
+
+唯一的 `SourceMessageState` 负责消息 phase、窗口 ticket、页面和确认；任务只保存 Msg 包装器的等待游标，没有第二个消息状态所有者。负时长发起后 Next；零/正时长首先等待原管理器进度。分页等待、末端等待分别使用原包装器时钟；正时长末端重新开始计时，不能把最终确认提前当作时长结束。紧邻 `Select` 时按 complete 状态交接选择，紧邻 `Msg` 时保留同一个普通窗口。`MsgFinishWait` 读取全局 end-wait，不创建另一个窗口。
+
+消息 effects、名字候选、时序上下文和当前任务先完成验证，再由现有 FieldGame 接线发布。票据拒绝旧窗口上的延迟回调。跨任务 `ChangeScript` / hook 恢复 / main 结束不得遗失另一个任务的活动窗口；战斗和地图交接也不能带走尚未关闭的窗口。错误保留 locals、任务与原窗口，不以强制 close 代替未知取消语义。稳定保存仍只接受空窗口，恢复和跨图从显式 runtime port 取得上下文，存档本身不授予宿主能力。
+
+原生 Msg 包装器还使用共享 `Core.GeneralRegisters` 的 `i0 / i1 / i2` 与 `r1 / r2` 槽。当前游标是 Web 内部实现，不是这组可观察原生寄存器的投影；跨指令读写 GeneralRegisters 的剧情族仍需同一个明确 bank 所有者，不能把窗口 ticket 充当某个原生槽，也不能声称本轮已恢复该兼容性。
+
+## 明确的 Web 策略与完整可读性
+
+`createWebFieldMessageSequencePort()` 位于 `src/core/source-message-sequence.ts`。生产 app 和 `check-framework-route.mjs` 导入同一个纯 factory：`source-explicit-pages`、`integratorAutomatic=false`、`battleMessageSpeedFactor=1`。这是明确的 Web 策略，不是从原版配置恢复的默认值。一般 core API 缺少 factor 时，仍拒绝需要它的正时长；来源 bypass 和已有 Integrator 自动语义分别验证，不借用 factory 掩盖未知。
+
+`GameSessionRuntime → WorldSession → FieldGame` 传递同一 port；恢复同样由调用方重新提供。新游戏路线回执记录实际 prepared context、真实 `acceptsInput` 确认前后投影、选择和跨图记录；不改来源脚本、剧情 flag 或存档。检查器的直接音频就绪、固定时间戳和 headless 展示仍是受控环境，不能称为完整生产或原版运行。
+
+`apps/game/source-message-view.js` 是生产 app 实际调用的呈现 helper。新序列页以完整 `textContent`、保留空白的换行、长词换行和有界滚动区域呈现；说话人/顶部/中部/底部、居中、选择和暂停显隐均来自现有 owner。相同窗口页不重复改写文字或重置滚动，新 ticket/页面/FieldGame 才重置。Canvas 不再重复绘制新协议，旧 v1 短字幕仍走其原路径和 20 字限制。
+
+这套可读策略不模拟 Unity TextGenerator、原生四行自动分页、字形/字距和像素位置。按键采用明确的 10ms Web 边沿保护，未声称复刻原生 held-key 重复周期。歌剧、滚动、渐入、战斗消息、`FULL_SPACE`、颜色/金额/变量宏、缺少真实命名 owner 的模板和其它未知形态继续保留具体诊断。
+
+## 可复现的整族检查
+
+先用当前根 runtime 生成全量 IR；新检查器验证 `story-corpus-build.json` 的 source digest、artifact hash 和 runtimeHash，拒绝旧编译产物与新工具/应用混用。不会在执行时重新 decode 一遍源指令。
+
+```sh
+npm run build
+node scripts/build-story-corpus.mjs
+.venv/bin/python scripts/inspect-source-message-sequence.py
+node scripts/check-source-message-sequence.mjs
+node scripts/check-source-message-sequence-execution.mjs
+node scripts/check-source-message-view.mjs
+node scripts/check-framework-route.mjs --report build/reports/v97-framework-source-route.json
+```
+
+两个语料工具可用 `--compiled <directory> --corpus <file> --build-receipt <file> --report <file>` 指向一个有完整回执的隔离编译；`--root` 指定来源仓库。生成报告包含原始正文和本地化，仅留在 ignored `build/`。
+
+- `source-message-sequence-check.json` 完整保留字段/非字段调用点、原参数、typed op、未知诊断、全部 map 用点，以及含新序列的物理程序全文、locals 和全部依赖。只有无名字模板的参数探针用真实 `SourceMessageState` 执行；其余明确 excluded/unassessed。
+- `source-message-sequence-execution.json` 选择其它需求已在受控 host 内闭合的完整物理程序，使用实际 FieldGame VM 和同一生产 Web policy。零初始化及单个分支邻值输入、真实确认、有限深度选择探索和确定性 replay 都留轨迹；未知宿主、命名 owner、timer callback namespace 和多 segment 程序保留完整排除原因。选择前沿、错误和预算结束都保留，不伪称全部路径已完成。
+- `source-message-sequence-native.json` 从原 DLL/symbols/header/metadata 重验 47 份完整 C 回执与 14 个精确原始叶子范围。新增三个 C 与 receipt 位于 `build/native/v97-source-message-window-input`；命令支持 `--window-input-dir`。所有静态回执继续 `semanticsVerified=false`。 三个源方法为 `0x98ad10 / 0x98af30 / 0x98b930`，可按 [静态导出流程](../tools/native/README.md) 用 `ExportMethods.java` 对同一 DLL/header/symbols 重新生成该正式目录；必须取得完整 `complete.json` 并重新验 hash，不接受 shell 退出码或散落 C 文件代替成功。
+- `source-message-view-check.json` 执行真实 production helper，验证长页全文/空白/滚动/重置与旧协议分流；三个 actual-app UI harness 验证实际 import 和 owner 接线。它们不是浏览器 viewport/像素证据。
+
+整合前候选回执已记录：新 typed 480 处（474 sequence、6 finish-wait），206 个关联物理程序；223 个无名字模板参数探针，251 个真实命名依赖明确排除。闭合批次为 9 个完整程序 / 101 条指令 / 14 条依赖，25 个受控用例各 replay 两次完成。最终计数以当前生成报告为准，不能把这份候选快照、参数解码率或受控程序执行数称为 source-story reachability。剧情全局可达性、全地图可玩性、完整新游戏和原版动态一致性仍分别未评估。

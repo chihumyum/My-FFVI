@@ -33,10 +33,11 @@ const [{ contentDigest }, { GameSession }, { NewGameFieldEntry }, { FieldFadeSta
 const app = await readFile(resolve(root, "apps/game/app.js"), "utf8");
 const audio = await readFile(resolve(root, "apps/game/audio.js"), "utf8");
 const storyOverlay = await readFile(resolve(root, "apps/game/story-overlay.js"), "utf8");
+const messageView = await readFile(resolve(root, "apps/game/source-message-view.js"), "utf8");
 const html = await readFile(resolve(root, "apps/game/index.html"), "utf8");
 const reportPath = resolve(root, "build/reports/game-entry-ui-check.json");
 const report = { formatVersion: 1, kind: "controlled-game-entry-ui-check", result: "running",
-  appSha256: sha(app), audioSha256: sha(audio), storyOverlaySha256: sha(storyOverlay), htmlSha256: sha(html), tests: [],
+  appSha256: sha(app), audioSha256: sha(audio), storyOverlaySha256: sha(storyOverlay), messageViewSha256: sha(messageView), htmlSha256: sha(html), tests: [],
   limitations: [
     "Entire current app initialization and handlers with real core/repository/storage/audio modules",
     "Content, DOM, fetch, image decode, WebAudio and renderer/menu widgets are controlled fixtures",
@@ -323,13 +324,21 @@ for (const declaration of [...appModule.imports, ...audioModule.imports]) {
     coreBindings[binding.name.text] = loaded[(binding.propertyName ?? binding.name).text];
 }
 const viewNames = new Set(["InventoryView", "EquipmentView", "PartyView", "ChoiceView", "ShopView", "Renderer", "BattleView"]);
-const overlayBindings = { drawStoryTimer: (await import("../apps/game/story-overlay.js")).drawStoryTimer };
+const overlayBindings = { drawStoryTimer: (await import("../apps/game/story-overlay.js")).drawStoryTimer,
+  syncFieldMessageView: (await import("../apps/game/source-message-view.js")).syncFieldMessageView };
 for (const declaration of appModule.imports) {
   const path = declaration.moduleSpecifier.text;
   if (path.startsWith("/runtime/core/") || path === "./audio.js") continue;
   if (path === "./story-overlay.js") {
     for (const binding of declaration.importClause.namedBindings.elements)
       assert.equal(typeof overlayBindings[binding.name.text], "function", "Use the actual production overlay helper");
+    continue;
+  }
+  if (path === "./source-message-view.js") {
+    assert.equal(declaration.importClause.namedBindings.elements.length, 1);
+    const binding = declaration.importClause.namedBindings.elements[0];
+    assert.equal(binding.name.text, "syncFieldMessageView");
+    assert.equal(typeof overlayBindings.syncFieldMessageView, "function", "Use the actual production message helper");
     continue;
   }
   for (const binding of declaration.importClause.namedBindings.elements)
@@ -617,6 +626,30 @@ try {
     assert.match(html, /<a\b[^>]*id="systems-playground-link"[^>]*href="\/game\/\?package=systems-initialized"/);
     assert.equal(h.$("systems-playground-link").hidden, false);
     assert.equal(h.$("systems-playground-help").hidden, true);
+  });
+  await check("actual message helper retains the entire long source page and consumes confirm through the real owner", async () => {
+    const fixture = checkpointFixture(), text = "可滚动的完整来源页面。".repeat(80), source = { file: "synthetic", assetPath: "app-message-sequence" };
+    fixture.field.scripts.read = [
+      { kind: "source-message", command: { kind: "sequence", key: "CONTROLLED_SEQUENCE", speaker: "Controlled speaker",
+        layout: { window: "frame", anchor: "bottom" }, seconds: 0, bypassSpeed: false, after: "close",
+        document: { kind: "source-message-sequence-v1", alignment: "left", tokens: [{ kind: "text", text },
+          { kind: "wait", suffix: "01", seconds: .25 }, { kind: "text", text: "末尾标记" }] } } },
+      { kind: "flag", ref: { category: "ScenarioFlag1", index: 3 }, operation: "set" }, { kind: "exit" },
+    ].map((op, index) => ({ ...op, script: "read", index, source }));
+    fixture.field.entry.initialEventValues = [{ ref: { category: "ScenarioFlag1", index: 3 }, value: 0 }];
+    const initial = await seal(fixture.field), battle = await seal(fixture.battle), h = await host({ initial, battle,
+      files: new Map([["/game/content.json", initial], ["/game/battle.json", battle]]) });
+    await h.ready(); await h.api.reset(); const field = h.api.read().game;
+    assert.equal(field.startEvent("read"), true);
+    for (let index = 0; index < 20 && !field.sourceMessage.projection?.acceptsInput; index++) await h.frame();
+    assert.equal(field.stop, null); assert.equal(h.$("dialogue").hidden, false);
+    assert.equal(h.$("dialogue").dataset.protocol, "source-message-sequence-v1");
+    assert.equal(h.$("message").textContent, text + "末尾标记"); assert.equal(h.$("speaker").textContent, "Controlled speaker");
+    assert.equal(h.$("next").hidden, false); assert.equal(field.checkpointReady, false);
+    h.$("message").scrollTop = 120; await h.frame(); assert.equal(h.$("message").scrollTop, 120);
+    h.$("next").onclick(); await h.frame();
+    assert.equal(field.sourceMessage.active, false); assert.equal(h.$("dialogue").hidden, true);
+    assert.equal(field.eventState.read({ category: "ScenarioFlag1", index: 3 }), 1);
   });
   await check("a nominated content package loads only its references before publishing any game owner", async () => {
     const p = await referencedPackages(await packages()), h = await host(p, { search: "?package=custom" });
@@ -1357,7 +1390,7 @@ try {
     "game-content-history", "game-content-sessions", "game-content-release", "game-map-loader",
   ].map(async name => [name, sha(await readFile(resolve(compiled, `src/core/${name}.js`)))])));
   report.runtimeSha256 = Object.fromEntries(await Promise.all([
-    "game-session", "game-flow", "game-commands", "game-entry-loader", "game-content", "game-content-refs", "game-package-selection", "game-development-entry", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint", "game-battle-handoff",
+    "field", "source-message", "source-message-sequence", "game-session", "game-flow", "game-commands", "game-entry-loader", "game-content", "game-content-refs", "game-package-selection", "game-development-entry", "saved-game", "source-new-game", "game-event-save", "field-event-checkpoint", "game-battle-handoff",
   ].map(async (name) => [name, sha(await readFile(resolve(compiled, `src/core/${name}.js`)))])));
   report.result = "passed";
 } catch (error) {

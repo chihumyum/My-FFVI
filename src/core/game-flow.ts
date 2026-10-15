@@ -74,7 +74,7 @@ export class GameFlow {
     // a terminal blocker. GameSession needs its next logical tick to resolve it.
     if (field.stop?.kind === "encounter") return "event";
     if (field.choice) return "choice";
-    if (field.dialogue) return "dialogue";
+    if (field.dialogue || field.sourceMessage.projection?.acceptsInput) return "dialogue";
     if (field.currentShop) return "shop";
     return field.busy ? "event" : "exploration";
   }

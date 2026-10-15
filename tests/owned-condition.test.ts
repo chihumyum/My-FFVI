@@ -78,9 +78,10 @@ test("complete actor preparation precedes owned publication and cannot partially
   executeOwnedConditionEvent(event(), state.fieldOwnedConditions, (steps) => {
     assert.deepEqual(steps.map((step) => [step.setDummy, step.affectLeader]), [[false, true], [false, true]]);
     assert.deepEqual(state.snapshot(), before);
-    return () => { publications++; assert.deepEqual(state.snapshot().roster.map((p) => p.conditionIds), [[magitekRowId], [magitekRowId]]); };
+    return () => { publications++; assert.deepEqual(state.snapshot(), before); };
   });
   assert.equal(publications, 1);
+  assert.deepEqual(state.snapshot().roster.map((p) => p.conditionIds), [[magitekRowId], [magitekRowId]]);
 });
 
 test("a stale owned transaction never publishes a prepared renderer", () => {

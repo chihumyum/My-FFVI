@@ -22,6 +22,8 @@ const [{ GameSession }, { GameFlow }, { GameMapLoader }, { CheckpointStorage }, 
   ]);
 const app = await readFile(resolve(root, "apps/game/app.js"), "utf8");
 const { drawStoryTimer } = await import("../apps/game/story-overlay.js");
+const { syncFieldMessageView } = await import("../apps/game/source-message-view.js");
+const messageViewSource = await readFile(resolve(root, "apps/game/source-message-view.js"), "utf8");
 const audioSource = await readFile(resolve(root, "apps/game/audio.js"), "utf8");
 const boundAudio = audioSource.replace('"/runtime/core/static-audio.js"',
   JSON.stringify(pathToFileURL(resolve(compiled, "src/core/static-audio.js")).href));
@@ -44,7 +46,7 @@ const browserFunctions = [
 
 const reportPath = resolve(root, "build/reports/game-map-ui-check.json");
 const report = { formatVersion: 1, kind: "controlled-game-map-ui-check", result: "running",
-  appSha256: sha(app), audioSha256: sha(audioSource), tests: [],
+  appSha256: sha(app), audioSha256: sha(audioSource), messageViewSha256: sha(messageViewSource), tests: [],
   limitations: [
     "Actual app frame, map/retry/title/save functions with real core owners; DOM, network and decoder are controlled",
     "Synthetic content and media do not prove a source route, audible playback or browser-device acceptance",
@@ -83,7 +85,7 @@ function setup({ transition = false, play = false, mediaWait = null } = {}) {
   audio.context = { async decodeAudioData() { return { numberOfChannels: 1, duration: 10, sampleRate: 1000 }; } };
   const nodes = new Map();
   const $ = (id) => {
-    if (!nodes.has(id)) nodes.set(id, { hidden: true, disabled: false, textContent: "", attributes: {},
+    if (!nodes.has(id)) nodes.set(id, { hidden: true, disabled: false, textContent: "", attributes: {}, dataset: {}, style: {}, scrollTop: 0,
       setAttribute(key, value) { this.attributes[key] = value; }, focus() {} });
     return nodes.get(id);
   };
@@ -112,7 +114,7 @@ function setup({ transition = false, play = false, mediaWait = null } = {}) {
     document: { hidden: false }, canvas: $("canvas"), renderer: { draw() {} },
     battleView: { hide() {}, draw() {} }, shopView: { reset() {} }, choiceView: { reset() {} },
     minimapRenderer: { overview() {} },
-    sync() {}, syncSaveControls() {}, showLimitations() {}, focus() {},
+    sync() { syncFieldMessageView({ dialogue: $("dialogue"), speaker: $("speaker"), message: $("message"), next: $("next") }, context.game, flow.paused); }, syncSaveControls() {}, showLimitations() {}, focus() {},
     setupMapViews() { records.viewBindings++; },
     text(id, value) { $(id).textContent = value; },
     requestAnimationFrame() { records.scheduledFrames++; },
@@ -249,7 +251,7 @@ try {
     assert.equal(flow.busy, false);
   });
   report.runtimeSha256 = Object.fromEntries(await Promise.all([
-    "game-session", "game-flow", "game-map-loader", "saved-game", "static-audio",
+    "field", "source-message", "source-message-sequence", "game-session", "game-flow", "game-map-loader", "saved-game", "static-audio",
   ].map(async (name) => [name, sha(await readFile(resolve(compiled, `src/core/${name}.js`)))])));
   report.result = "passed";
 } catch (error) {

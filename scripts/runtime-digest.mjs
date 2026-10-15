@@ -9,7 +9,7 @@ export async function runtimeDigest(root, compiled = "dist") {
     for (const entry of await readdir(path, { withFileTypes: true })) {
       const full = resolve(path, entry.name);
       if (entry.isDirectory()) await walk(full);
-      else if (/\.(?:js|mjs|json)$/.test(entry.name)) files.push(full);
+      else if (/\.(?:js|mjs|json|css|html)$/.test(entry.name)) files.push(full);
     }
   }
   for (const folder of [resolve(root, compiled, "src"), resolve(root, compiled, "tests"), "apps/game", "scripts"])

@@ -1160,12 +1160,15 @@ export class GameState {
     this.requireIdle();
     const { next, ...projection } = this.projectOwnedConditionEvent(this.data, command);
     const revision = this.revision;
-    return { ...projection, commit: () => {
+    let consumed = false;
+    const validate = () => {
       this.requireIdle();
-      if (this.revision !== revision) throw new Error("Stale field owned condition transaction");
-      this.data = next;
-      this.revision++;
-    } };
+      if (consumed || this.revision !== revision) throw new Error("Stale field owned condition transaction");
+    };
+    const commitWith = (publish: () => void) => {
+      this.commitMenuPresentation(next, validate, publish); consumed = true;
+    };
+    return { ...projection, commit: () => commitWith(() => {}), commitWith };
   }
   private projectFieldRecoveryState(data: GameStateSnapshot, command: FieldRecoveryCommand) {
     const next = structuredClone(data);
@@ -1184,12 +1187,15 @@ export class GameState {
   private prepareFieldRecovery(command: FieldRecoveryCommand): FieldRecoveryTransaction {
     this.requireIdle();
     const { next, ...projection } = this.projectFieldRecoveryState(this.data, command), revision = this.revision;
-    return { ...projection, commit: () => {
+    let consumed = false;
+    const validate = () => {
       this.requireIdle();
-      if (this.revision !== revision) throw new Error("Stale field recovery transaction");
-      this.data = next;
-      this.revision++;
-    } };
+      if (consumed || this.revision !== revision) throw new Error("Stale field recovery transaction");
+    };
+    const commitWith = (publish: () => void) => {
+      this.commitMenuPresentation(next, validate, publish); consumed = true;
+    };
+    return { ...projection, commit: () => commitWith(() => {}), commitWith };
   }
   /** Map initialization runs against this private draft. Publishing rebinds the
    * same ports to live state so later events keep a single state owner. */
@@ -1323,13 +1329,28 @@ export class GameState {
     const ownedConditions: FieldOwnedConditionPort = {
       prepare: (command) => {
         if (published) return this.prepareOwnedConditionEvent(command);
+        this.requireIdle();
+        if (this.revision !== revision) throw new Error("Stale candidate owned condition owner");
         const { next, ...projection } = this.projectOwnedConditionEvent(data, command), version = generation;
-        return { ...projection, commit: () => {
-          if (transportationPublishing || published || generation !== version)
+        let consumed = false;
+        const validate = () => {
+          this.requireIdle();
+          if (consumed || transportationPublishing || published || generation !== version || this.revision !== revision)
             throw new Error("Stale candidate owned condition transaction");
-          data = next;
-          generation++;
-        } };
+        };
+        const commitWith = (publish: () => void) => {
+          validate();
+          if (typeof publish !== "function" || publish.constructor.name === "AsyncFunction")
+            throw new Error("Candidate owned condition publication must be synchronous");
+          transportationPublishing = true;
+          try {
+            const result: unknown = publish();
+            if (result && typeof (result as { then?: unknown }).then === "function")
+              throw new Error("Candidate owned condition publication must be synchronous");
+            data = next; generation++; consumed = true;
+          } finally { transportationPublishing = false; }
+        };
+        return { ...projection, commit: () => commitWith(() => {}), commitWith };
       },
     };
     const recovery: FieldRecoveryPort = {
@@ -1338,13 +1359,25 @@ export class GameState {
         this.requireIdle();
         if (this.revision !== revision) throw new Error("Stale candidate field recovery owner");
         const { next, ...projection } = this.projectFieldRecoveryState(data, command), version = generation;
-        return { ...projection, commit: () => {
+        let consumed = false;
+        const validate = () => {
           this.requireIdle();
-          if (transportationPublishing || published || generation !== version || this.revision !== revision)
+          if (consumed || transportationPublishing || published || generation !== version || this.revision !== revision)
             throw new Error("Stale candidate field recovery transaction");
-          data = next;
-          generation++;
-        } };
+        };
+        const commitWith = (publish: () => void) => {
+          validate();
+          if (typeof publish !== "function" || publish.constructor.name === "AsyncFunction")
+            throw new Error("Candidate field recovery publication must be synchronous");
+          transportationPublishing = true;
+          try {
+            const result: unknown = publish();
+            if (result && typeof (result as { then?: unknown }).then === "function")
+              throw new Error("Candidate field recovery publication must be synchronous");
+            data = next; generation++; consumed = true;
+          } finally { transportationPublishing = false; }
+        };
+        return { ...projection, commit: () => commitWith(() => {}), commitWith };
       },
     };
     const transportation: FieldTransportationPort | undefined = data.nativeState && this.content.sourceNewGame ? {

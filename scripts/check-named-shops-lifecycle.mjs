@@ -150,7 +150,7 @@ for (const program of cohort.programs) {
     }
   }
   report.inventory.push({ ...program, name, raw: asset.data,
-    publishedDecodeDiagnostics: maps.flatMap(id => sourceMaps.get(id).scripts[name].filter(op => op.kind === 'blocked')) });
+    consumedSourceDecodeDiagnostics: maps.flatMap(id => sourceMaps.get(id).scripts[name].filter(op => op.kind === 'blocked')) });
 }
 report.excludedPrograms = [];
 for (const program of cohort.excludedPrograms) {
@@ -204,6 +204,21 @@ function flags(game, ops) {
   return [...new Map(refs.map(ref => [canonical(ref), ref])).values()]
     .map(ref => ({ ref, value: game.field.eventState.read(ref) }));
 }
+function observedEventBankDeltas(before, after) {
+  const changes = [];
+  for (const bank of ['scenario', 'treasure', 'global', 'area', 'map', 'script']) {
+    const a = before[bank], b = after[bank];
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+      if (canonical(a) !== canonical(b)) changes.push({ bank, before: a, after: b });
+    } else for (let index = 0; index < a.length; index++) if (a[index] !== b[index])
+      changes.push({ bank, index, before: a[index], after: b[index] });
+  }
+  for (const register of ['scriptLabels', 'selected', 'itemSelected', 'currentMapId'])
+    if (canonical(before[register]) !== canonical(after[register]))
+      changes.push({ register, before: before[register], after: after[register] });
+  return { beforeHash: hash(before), afterHash: hash(after), changes,
+    actualFlagInstructionExecutions: 'unassessed', scope: 'Observed net state only; no VM instruction trace.' };
+}
 function drain(flow, game, until, trace) {
   for (let ticks = 0; ticks < 4000; ticks++) {
     if (game.field.stop) throw new Error('Source VM stopped: ' + canonical(game.field.stop));
@@ -246,7 +261,7 @@ for (const program of roots) for (const executionMap of program.maps) for (const
     const namespaceOps = cohort.programs.filter(program => program.maps.includes(String(mapId)))
       .flatMap(program => game.field.content.scripts[byId.get(program.id).data.Name]);
     assert.ok(sourceOps); const programBytes = canonical(sourceOps), initialFlags = flags(game, namespaceOps);
-    row.before = stateView(game); row.flagsBefore = initialFlags;
+    row.before = stateView(game); row.flagsBefore = initialFlags; row.eventBanksBefore = game.field.eventState.snapshot();
     assert.equal(game.field.startEvent(name), true);
     drain(flow, game, () => game.field.currentShop !== null, row.trace);
     const visit = game.field.currentShop; row.visit = visit; const options = game.shopOptions();
@@ -301,7 +316,8 @@ for (const program of roots) for (const executionMap of program.maps) for (const
     assert.equal(commands.closeShop(visit.id), true); assert.equal(commands.closeShop(visit.id), false);
     drain(flow, game, () => game.checkpointReady, row.trace);
     assert.equal(game.state, original.owned); assert.equal(game.field, original.field); assert.equal(game.world, original.world);
-    assert.equal(canonical(game.field.content.scripts[name]), programBytes); row.flagsAfter = flags(game, namespaceOps);
+    assert.equal(canonical(game.field.content.scripts[name]), programBytes); row.flagsAfter = flags(game, namespaceOps); row.eventBanksAfter = game.field.eventState.snapshot();
+    row.observedEventBankDeltas = observedEventBankDeltas(row.eventBanksBefore, row.eventBanksAfter);
     const values = new Map(); let fail = true;
     const storage = new CheckpointStorage({ getItem: key => values.get(key) ?? null,
       setItem(key, value) { if (fail) throw new Error('Controlled quota failure'); values.set(key, value); } }, 'framework');
@@ -322,7 +338,9 @@ for (const program of roots) for (const executionMap of program.maps) for (const
     assert.equal(canonical(game.state.snapshot()), settledOwned, 'A restored/reopened source script cannot replay a trade');
     assert.deepEqual(flags(game, namespaceOps), row.flagsAfter, 'Source flag sets are not duplicated on replay');
     row.trace.push({ kind: 'restored-whole-source-program-reopened-and-closed-without-trade-or-variable-replay',
-      variableRefsChecked: row.flagsAfter.length, onceFlagWritesExecuted: namespaceOps.filter(op => op.kind === 'flag').length });
+      variableRefsChecked: row.flagsAfter.length, actualFlagInstructionExecutions: 'unassessed', declaredFlagWriteSites: namespaceOps.filter(op => op.kind === 'flag').length });
+    row.eventBanksAfterReopen = game.field.eventState.snapshot();
+    row.observedEventBankDeltasAfterReopen = observedEventBankDeltas(row.eventBanksAfter, row.eventBanksAfterReopen);
     row.after = stateView(game); row.status = 'controlled-original-main-lifecycle-passed';
   } catch (error) { row.reason = String(error.stack ?? error); if (game) row.atFailure = stateView(game); }
 }

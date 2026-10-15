@@ -1,3 +1,5 @@
+import { syncFieldMessageView } from "./source-message-view.js";
+import { createWebFieldMessageSequencePort } from "/runtime/core/source-message-sequence.js";
 import { InventoryView } from "./inventory-view.js";
 import { EquipmentView } from "./equipment-view.js";
 import { PartyView } from "./party-view.js";
@@ -82,7 +84,9 @@ const readGameJson = async (url) => {
   return response.json();
 };
 let contents = new GameContentRepository(readGameJson, contentProfile);
-const runtime = { battleHandoff: "prepared", audioReadiness: { isReady: (track) => audio.isReady(track) },
+// Same declared Web policy as the source-route audit; no native default claim.
+const runtime = { sourceMessageSequence: createWebFieldMessageSequencePort(),
+  battleHandoff: "prepared", audioReadiness: { isReady: (track) => audio.isReady(track) },
   soundPresentation: { isPresented: (voice, track) => audio.isSoundPresented(voice, track) },
   // Source DateTime.Now.Ticks is local wall time. Keep its Int64 as a string.
   transportationTimestamp: () => { const now = new Date();
@@ -482,15 +486,7 @@ function sync() {
     return;
   }
   battleView.hide();
-  $("dialogue").hidden = !game.messageWindow || flow.paused;
-  $("next").hidden = game.choicePending;
-  if (game.messageWindow) {
-    text("speaker", game.messageWindow.speaker);
-    text("message", game.messageWindow.text);
-    $("message").style.textAlign = game.messageWindow.alignment ?? "left";
-    $("dialogue").dataset.window = game.messageWindow.manual?.window ?? "frame";
-    $("dialogue").dataset.anchor = game.messageWindow.manual?.anchor ?? "bottom";
-  }
+  syncFieldMessageView({ dialogue: $("dialogue"), speaker: $("speaker"), message: $("message"), next: $("next") }, game, flow.paused);
   $("stop").hidden = !game.stop || battleLoadAttempt?.session === flow.currentSession;
   $("retry-map").hidden = !mapFailure;
   $("retry-map").disabled = failed || flow.busy;
@@ -524,7 +520,7 @@ function sync() {
         ? "选择商品和数量，Esc 返回或离开商店"
         : game.choice
           ? "方向键选择，空格 / Enter 确认"
-        : game.dialogue
+        : game.dialogue || game.sourceMessage.projection?.acceptsInput
           ? "空格 / Enter 继续对白"
           : game.busy
             ? "事件进行中…"

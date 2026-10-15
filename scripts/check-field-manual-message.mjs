@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { syncFieldMessageView } from "../apps/game/source-message-view.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url)), args = process.argv.slice(2);
 assert.ok(args.length === 0 || (args.length === 2 && args[0] === "--compiled-dir"), "Use --compiled-dir <directory>");
@@ -137,17 +138,19 @@ assert.equal(again.choose(request.id, 0), false); assert.equal(again.phase, "exp
 // Execute the actual app projection block against an explicit DOM-shaped host.
 // This verifies wiring, not browser CSS layout or original-game pixels.
 const appBytes = await readFile(root + "apps/game/app.js"), app = appBytes.toString(),
-  block = app.match(/  if \(game\.messageWindow\) \{\n[\s\S]*?\n  \}/)?.[0];
-assert.ok(block?.includes('dataset.window'));
-const nodes = Object.fromEntries(["speaker", "message", "dialogue"].map(id => [id, { textContent: "", style: {}, dataset: {} }]));
-const render = new Function("game", "$", "text", block);
+  helperBytes = await readFile(root + "apps/game/source-message-view.js"),
+  block = app.match(/^  syncFieldMessageView\(\{ dialogue: \$\("dialogue"\), speaker: \$\("speaker"\), message: \$\("message"\), next: \$\("next"\) \}, game, flow\.paused\);$/m)?.[0];
+assert.ok(app.includes('import { syncFieldMessageView } from "./source-message-view.js";'));
+assert.ok(block, "The real app must call its production message projection helper");
+const nodes = Object.fromEntries(["speaker", "message", "dialogue", "next"].map(id => [id, { textContent: "", style: {}, dataset: {}, scrollTop: 0 }]));
+const render = new Function("game", "$", "flow", "syncFieldMessageView", block);
 for (const [window, anchor] of [["none", "middle"], ["frame", "top"], ["frame", "bottom"]]) {
   render({ messageWindow: { text: "Page", speaker: "Guide", manual: { window, anchor } } },
-    id => nodes[id], (id, value) => { nodes[id].textContent = value; });
+    id => nodes[id], { paused: false }, syncFieldMessageView);
   assert.equal(nodes.dialogue.dataset.window, window); assert.equal(nodes.dialogue.dataset.anchor, anchor);
 }
 render({ messageWindow: { text: "Legacy", speaker: "", alignment: "center" } }, id => nodes[id],
-  (id, value) => { nodes[id].textContent = value; });
+  { paused: false }, syncFieldMessageView);
 assert.equal(nodes.dialogue.dataset.window, "frame"); assert.equal(nodes.dialogue.dataset.anchor, "bottom");
 assert.equal(nodes.message.style.textAlign, "center");
 const report = { kind: "field-manual-message-check", lane: "source compilation and controlled shared GameSession/Flow",
@@ -163,7 +166,7 @@ const report = { kind: "field-manual-message-check", lane: "source compilation a
     methods: native.methods.length, rawMethods: native.rawMethods.length, pageTypeRva: "0x3759d0", pageTypeBytes: pageType },
   controlledJourney: { sourceSamples: [paged.site, windowless.site],
     initializedEventValues: { "MapLocalVariable[0]": 0, "MessageSelection[0]": 0 }, stages, confirmations, savedAndRestored: true },
-  appProjection: { sourceSha256: sha(appBytes), cases: 4, browser: false },
+  appProjection: { sourceSha256: sha(appBytes), helperSha256: sha(helperBytes), cases: 4, browser: false },
   originalGameExecuted: false, semanticsVerified: false,
   limitations: ["Not source-story reachability or complete game migration", "Web confirmation and page layout; native UI frame/font parity unverified",
     "Typed name references still require a live held owner; syntax acceptance does not establish that dependency or story reachability",

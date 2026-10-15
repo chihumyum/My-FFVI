@@ -88,9 +88,10 @@ for (const site of admitted) {
         assert.deepEqual(visible.conditionIds, expected.roster.find((owner) => owner.id === visible.id).conditionIds);
       preparedSteps.push(structuredClone(step));
     }
-    return () => { publications++; assert.deepEqual(state.snapshot(), expected); };
+    return () => { publications++; assert.deepEqual(state.snapshot(), initial); };
   });
   assert.equal(publications, 1);
+  assert.deepEqual(state.snapshot(), expected);
   const stable = state.snapshot();
   // Already-added and already-removed instructions still have source effects.
   executeOwnedConditionEvent(site.op, state.fieldOwnedConditions, (steps) => {

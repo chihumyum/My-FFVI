@@ -3,7 +3,7 @@ import type { FieldContent, Op, Site } from "../field/types.js";
 export const fieldProviders = Object.freeze([
   "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
-  "eventSaveCompletion", "battleHandoff", "sourceLeader", "scriptShop", "storyTimer", "screenEffects", "sourceAutoSaveSync",
+  "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceLeader", "scriptShop", "storyTimer", "screenEffects", "sourceAutoSaveSync",
 ] as const);
 export type FieldProvider = typeof fieldProviders[number];
 export type FieldProviderStatus = "available" | "missing" | "unknown";
@@ -39,7 +39,7 @@ export type FieldContentRequirements = {
 
 const codes: Record<FieldCapability, string> = {
   inventory: "FIELD_INVENTORY_PROVIDER", recovery: "FIELD_RECOVERY_PROVIDER",
-  messageNames: "FIELD_MESSAGE_NAMES_PROVIDER",
+  messageNames: "FIELD_MESSAGE_NAMES_PROVIDER", sourceMessageSequence: "FIELD_SOURCE_MESSAGE_SEQUENCE_PROVIDER",
   ownedConditions: "FIELD_OWNED_CONDITIONS_PROVIDER", party: "FIELD_PARTY_PROVIDER",
   roster: "FIELD_ROSTER_PROVIDER", treasure: "FIELD_TREASURE_PROVIDER",
   transportation: "FIELD_TRANSPORTATION_PROVIDER", puppetRoster: "FIELD_PUPPET_ROSTER_PROVIDER",
@@ -139,6 +139,12 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     case "position":
       if (op.nativeCommand?.mode === 1)
         add("actorControl", "Source relative SetPos requires its bound actor and exact selector owner");
+      break;
+    case "source-message":
+      if (op.command.kind === "sequence" || op.command.kind === "finish-wait")
+        add("sourceMessageSequence", "Source message sequence profile/timing owner is unavailable");
+      if (op.command.kind === "sequence" && op.command.template !== undefined)
+        add("messageNames", "Source message character name owner is unavailable");
       break;
     case "message":
       if (op.template !== undefined) add("messageNames", "Source message character name owner is unavailable");
