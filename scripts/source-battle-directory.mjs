@@ -10,7 +10,7 @@ async function modules(root,compiledDir){
   const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src/'+name+'.js')).href);
   return Object.assign({},...await Promise.all([
     'compiler/source-battle-requests','compiler/battle','compiler/game-catalog','compiler/system-source',
-    'compiler/battle-encounters','compiler/battle-encounter-runtime','compiler/battle-handoff','compiler/source-battle-participant-closure',
+    'compiler/battle-source-format-import','compiler/battle-encounters','compiler/battle-encounter-runtime','compiler/battle-handoff','compiler/source-battle-participant-closure',
     'compiler/battle-batch-entry','compiler/content-batch-battle','compiler/integrity','compiler/content',
     'core/battle-spawn-conditions','core/battle-forced-save','core/content-integrity','core/source-catalog','core/battle-rewards','core/battle-handoff-content',
   ].map(load)));
@@ -204,9 +204,10 @@ export async function compileSourceBattleDirectory({root=repository,compiledDir=
   assert.equal(api.canonical(strictCatalog.gameState),api.canonical(base.gameState),'Strict directory changed source initial owners');
   const {drops:oldDrops,...oldCommon}=base.common,{drops:newDrops,...newCommon}=strictCatalog.common;
   assert.equal(api.canonical(oldCommon),api.canonical(newCommon),'Strict directory changed shared source capabilities');
+  const sourceFormatImport=declared.framework.branchExecution ? api.createBattleSourceFormatImportResolver(corpus) : undefined;
   const participantClosure=declared.framework.sourceParticipants?api.compileSourceBattleParticipantClosure(reader,{policy:declared.framework.sourceParticipants,
-    encounters:descriptors.encounters,sources:descriptorSources,eventMessages:shared.runtimeInput.eventMessages,branchExecution:declared.framework.branchExecution}):null;
-  const runtime=api.compileBattleEncounterRuntime(shared.reader,{...runtimeInput,
+    encounters:descriptors.encounters,sources:descriptorSources,eventMessages:shared.runtimeInput.eventMessages,branchExecution:declared.framework.branchExecution,...(sourceFormatImport?{sourceFormatImport}:{})}):null;
+  const runtime=api.compileBattleEncounterRuntime(shared.reader,{...runtimeInput,...(sourceFormatImport?{sourceFormatImport}:{}),
     ...(participantClosure?{reserveEnemies:participantClosure.reserveEnemies,enemyParties:participantClosure.enemyParties,sourceDiagnostics:[...runtimeInput.sourceDiagnostics,...participantClosure.diagnostics]}:{}),
     ...(declared.framework.spawnConditionPolicy?{spawnConditionPolicy:declared.framework.spawnConditionPolicy}:{}),
     ...(declared.framework.forcedSavePolicy?{forcedSavePolicy:declared.framework.forcedSavePolicy}:{}),

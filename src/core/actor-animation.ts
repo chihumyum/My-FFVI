@@ -1,3 +1,6 @@
+import { sourceCustomAnimationAt, sourceCustomAnimationByName, projectSourceCustomAnimation,
+  type SourceActorAnimationAuthority, type SourceCustomAnimationRef } from "./source-script-animations.js";
+import { canonical } from "./canonical.js";
 import type { Animation, Character, Direction, Frame } from "../field/types.js";
 import {
   checkpointKeys,
@@ -19,6 +22,9 @@ export type ActorPlayback = {
   flip: boolean;
   playing: boolean;
   loops: number;
+  /** References only; frames and resource URLs come from trusted content. */
+  sourceCustomCache?: { kind: "source-actor-custom-animation-cache-v1"; catalogHash: string;
+    entries: { name: string; ref: SourceCustomAnimationRef }[] };
 };
 const f = Math.fround;
 const clamp = (n: number) => Math.max(0, Math.min(1, n));
@@ -28,29 +34,90 @@ const clamp = (n: number) => Math.max(0, Math.min(1, n));
  */
 export class ActorAnimation {
   private state: ActorPlayback | null = null;
+  private customAuthority: SourceActorAnimationAuthority | null = null;
+  private custom = new Map<string, { ref: SourceCustomAnimationRef; animation: Animation }>();
   constructor(readonly character: Character) {}
 
   clone(): ActorAnimation {
     const copy = new ActorAnimation(this.character);
     copy.state = this.state && { ...this.state };
+    copy.customAuthority = this.customAuthority;
+    copy.custom = new Map(this.custom);
     return copy;
   }
   snapshot(): Readonly<ActorPlayback> | null {
-    return this.state && { ...this.state };
+    if (!this.state && this.custom.size) throw new Error("Custom animation cache has no stable playback state");
+    return this.state && { ...this.state, ...(this.custom.size ? { sourceCustomCache: {
+      kind: "source-actor-custom-animation-cache-v1" as const, catalogHash: this.customAuthority!.catalog.contentHash,
+      entries: [...this.custom].map(([name, value]) => ({ name, ref: { ...value.ref } })),
+    } } : {}) };
   }
-  restore(snapshot: ActorPlayback | null): void {
+  /** Selective source materialization is prepared on a cloned owner together
+   * with playback. An uncompiled base key must never become a custom override. */
+  prepareSourceCustomKey(key: string, currentAsset: string | null, authority: SourceActorAnimationAuthority): void {
+    if (!Object.keys(this.character.animations).length)
+      throw new Error("Source custom animation requires a verified ordinary base sprite projection");
+    if (!Array.isArray(authority.baseKeys) || authority.baseKeys.some(k => typeof k !== "string" || !k) ||
+        new Set(authority.baseKeys).size !== authority.baseKeys.length ||
+        Object.keys(this.character.animations).some(k => !authority.baseKeys.includes(k)))
+      throw new Error("Source custom animation lacks the complete actual base namespace");
+    if (this.customAuthority && (this.customAuthority.catalog.contentHash !== authority.catalog.contentHash ||
+        canonical(this.customAuthority.baseKeys) !== canonical(authority.baseKeys)))
+      throw new Error("Actual actor custom animation authority changed");
+    if (Object.hasOwn(this.character.animations, key)) return;
+    if (authority.baseKeys.includes(key)) throw new Error("Uncompiled native base animation cannot use a source custom override: " + key);
+    if (this.custom.has(key)) return;
+    if (currentAsset === null) throw new Error("Current source custom animation asset is unavailable");
+    const ref = sourceCustomAnimationByName(authority.catalog, currentAsset, key);
+    if (!ref) throw new Error("Source custom animation key is unavailable: " + key);
+    const animation = projectSourceCustomAnimation(sourceCustomAnimationAt(authority.catalog, ref), this.character.sprites);
+    this.customAuthority = { catalog: authority.catalog, baseKeys: [...authority.baseKeys] };
+    this.custom.set(key, { ref, animation });
+  }
+  /** Validate a detached candidate from this already trusted live component.
+   * Unlike restore(save), this carries only the authority held by this exact
+   * existing instance; replacement assets must create a new component. */
+  validatedClone(): ActorAnimation {
+    const next = new ActorAnimation(this.character);
+    next.restore(this.snapshot(), this.customAuthority ?? undefined);
+    return next;
+  }
+  restore(snapshot: ActorPlayback | null, authority?: SourceActorAnimationAuthority): void {
     if (snapshot === null) {
+      if (this.custom.size) throw new Error("Cannot discard an existing custom animation cache by a null playback restore");
       this.state = null;
       return;
     }
-    checkpointKeys(snapshot, "key,mode,elapsed,duration,flip,playing,loops");
+    const cached = Object.hasOwn(snapshot, "sourceCustomCache");
+    checkpointKeys(snapshot, "key,mode,elapsed,duration,flip,playing,loops" + (cached ? ",sourceCustomCache" : ""));
+    const prepared = new ActorAnimation(this.character);
+    if (cached) {
+      const saved = snapshot.sourceCustomCache;
+      if (!saved || !authority) throw new Error("Saved custom animation cache requires trusted source content");
+      checkpointKeys(saved, "kind,catalogHash,entries");
+      if (saved.kind !== "source-actor-custom-animation-cache-v1" || saved.catalogHash !== authority.catalog.contentHash ||
+          !Array.isArray(saved.entries) || !saved.entries.length || Reflect.ownKeys(saved.entries).length !== saved.entries.length + 1) throw new Error("Changed saved custom animation catalog");
+      for (const row of Array.from(saved.entries)) {
+        checkpointKeys(row, "name,ref");
+        if (typeof row.name !== "string" || prepared.custom.has(row.name)) throw new Error("Duplicate saved custom animation key");
+        const raw = sourceCustomAnimationAt(authority.catalog, row.ref), first = sourceCustomAnimationByName(authority.catalog, row.ref.assetId, row.name);
+        if (raw.name !== row.name || first?.index !== row.ref.index || authority.baseKeys.includes(row.name))
+          throw new Error("Saved custom animation namespace/first-match identity changed");
+        prepared.prepareSourceCustomKey(row.name, row.ref.assetId, authority);
+      }
+    }
+    // Validate the whole candidate before changing this playback/cache owner.
+    prepared.restorePlayback(snapshot);
+    this.state = prepared.state; this.custom = prepared.custom; this.customAuthority = prepared.customAuthority;
+  }
+  private restorePlayback(snapshot: ActorPlayback): void {
     if (typeof snapshot.key !== "string")
       throw new Error("Invalid saved actor animation key");
     this.chain(snapshot.key);
     this.animation(snapshot.key);
     checkpointInteger(snapshot.loops);
     checkpointNumber(snapshot.elapsed);
-    checkpointNumber(snapshot.duration, Number.MIN_VALUE);
+    checkpointNumber(snapshot.duration, this.zeroCustom(snapshot.key) ? 0 : Number.MIN_VALUE);
     if (
       ![0, 1, 3].includes(snapshot.mode) ||
       typeof snapshot.flip !== "boolean" ||
@@ -59,19 +126,21 @@ export class ActorAnimation {
       f(snapshot.elapsed) !== snapshot.elapsed
     )
       throw new Error("Invalid actor animation checkpoint");
-    this.state = { ...snapshot };
+    const { sourceCustomCache: ignored, ...playback } = snapshot;
+    this.state = { ...playback };
   }
+  get hasSourceCustomAnimations(): boolean { return this.custom.size > 0; }
   get playing(): boolean {
     return this.state?.playing ?? false;
   }
 
   private animation(key: string): Animation {
-    const a = this.character.animations[key];
+    const a = Object.hasOwn(this.character.animations,key) ? this.character.animations[key] : this.custom.get(key)?.animation;
     if (!a) throw new Error(`Missing actor animation ${key}`);
     if (
       !a.frames.length ||
       !Number.isFinite(f(a.duration)) ||
-      f(a.duration) <= 0
+      (f(a.duration) < 0 || f(a.duration) === 0 && !this.zeroCustom(key))
     )
       throw new Error(`Invalid actor animation duration/frames ${key}`);
     if (![0, 1, 3].includes(a.mode))
@@ -96,11 +165,20 @@ export class ActorAnimation {
     }
     return a;
   }
+  private zeroCustom(key: string): boolean {
+    return !Object.hasOwn(this.character.animations, key) && this.custom.get(key)?.animation.duration === 0;
+  }
+  private baseAnimation(key: string): Animation {
+    if (!Object.hasOwn(this.character.animations, key)) throw new Error("Missing actor animation " + key + " in source base namespace");
+    return this.animation(key);
+  }
   private chain(key: string): void {
     const visited = new Set<string>();
+    let first = true;
     while (key && !visited.has(key)) {
       visited.add(key);
-      key = this.animation(key).next;
+      key = (first ? this.animation(key) : this.baseAnimation(key)).next;
+      first = false;
     }
   }
   private start(key: string, mode: number | null, scale: number): void {
@@ -109,10 +187,10 @@ export class ActorAnimation {
     // SetupAnimCommon alternates only when the requested key is the current asset's name.
     if (this.state?.key === key && a.next) {
       key = a.next;
-      a = this.animation(key);
+      a = this.baseAnimation(key);
     }
     const duration = f(f(a.duration) * f(scale));
-    if (!Number.isFinite(duration) || duration <= 0)
+    if (!Number.isFinite(duration) || duration < 0 || duration === 0 && !this.zeroCustom(key))
       throw new Error("Invalid scaled actor animation duration");
     this.state = {
       key,
@@ -200,7 +278,7 @@ export class ActorAnimation {
     const s = this.state!;
     const a = this.animation(s.key);
     if (!a.next) return;
-    const next = this.animation(a.next);
+    const next = this.baseAnimation(a.next);
     const duration = f(f(s.duration / f(a.duration)) * f(next.duration));
     if (!Number.isFinite(duration) || duration <= 0)
       throw new Error("Invalid next actor animation duration");
@@ -252,7 +330,7 @@ export class ActorAnimation {
     const a = this.animation(s.key);
     const index = Math.min(
       a.frames.length - 1,
-      Math.floor(f(f(s.elapsed / s.duration) * a.frames.length)),
+      s.duration === 0 ? 0 : Math.floor(f(f(s.elapsed / s.duration) * a.frames.length)),
     );
     const frame = a.frames[index]!;
     return { ...frame, flip: frame.flip !== s.flip };

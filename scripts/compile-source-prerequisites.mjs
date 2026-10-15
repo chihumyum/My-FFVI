@@ -105,17 +105,17 @@ async function readLockedJson(inputs, root, path) {
 
 async function modules(compiledDir) {
   const load = name => import(pathToFileURL(resolve(compiledDir, "src", name + ".js")).href);
-  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost, npcArea, npcFlat, effectFlat, ordinary] = await Promise.all([
+  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost, npcArea, npcFlat, effectFlat, ordinary, skybox] = await Promise.all([
     load("compiler/content"), load("core/content-integrity"), load("compiler/world"), load("compiler/source-new-game"),
     load("compiler/framework-content"), load("core/source-catalog"), load("core/field-native-composition"),
     load("compiler/battle"), load("compiler/game-catalog"), load("compiler/opening-playable"), load("compiler/field-logical-effects"),
     load("compiler/corpus"), load("compiler/map-package"), load("compiler/field-background"),
     load("compiler/framework-periodic-presentation"), load("compiler/field-native-composition"),
     load("compiler/framework-npc-area"), load("compiler/framework-npc-flat-projection"), load("compiler/framework-field-effect-flat-projection"),
-    load("compiler/framework-ordinary-presentation"),
+    load("compiler/framework-ordinary-presentation"), load("compiler/field-skybox"),
   ]);
   return { ...content, ...integrity, ...world, ...newGame, ...framework, ...sourceCatalog, ...composition,
-    ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost, ...npcArea, ...npcFlat, ...effectFlat, ...ordinary };
+    ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost, ...npcArea, ...npcFlat, ...effectFlat, ...ordinary, ...skybox };
 }
 
 /** Explicit Web producer input, not a source/save capability grant. */
@@ -192,9 +192,10 @@ export function sourceFieldEffectFlatInput(raw) {
 /** Capture exactly the current compiler's input domain. Raw-source exports
  * retain their original source fingerprints; this does not hash all Unity
  * bundles or claim all source files are live-verified. */
-export async function captureSourcePrerequisiteInputs({ root = repository, compiledDir = "dist", logicalFieldEffects } = {}) {
+export async function captureSourcePrerequisiteInputs({ root = repository, compiledDir = "dist", logicalFieldEffects, skyboxPresentation } = {}) {
   root = resolve(root); compiledDir = resolve(root, compiledDir);
   const logical = logicalInput(logicalFieldEffects, root);
+  if(skyboxPresentation!==undefined&&skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown Skybox presentation policy");
   const files = [], directories = [], recorded = new Map();
   const add = async (file, expected) => {
     file = resolve(file);
@@ -215,7 +216,7 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
   for (const file of await directory(resolve(compiledDir, "src"))) if (file.endsWith(".js")) await add(file);
   await add(resolve(import.meta.dirname, "compile-source-prerequisites.mjs"));
   const api = await modules(compiledDir);
-  for (const name of SNAPSHOTS) {
+  for (const name of [...SNAPSHOTS,...(skyboxPresentation?["field-skybox-media"]:[])]) {
     const path = resolve(root, "build", name); await directory(path);
     const manifestPath = resolve(path, "snapshot.json"); await add(manifestPath);
     const manifest = snapshotManifest(JSON.parse(await readFile(manifestPath, "utf8")));
@@ -248,11 +249,16 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
       if (recorded.get(source).bytes !== row.bytes) throw new Error("Original effect source size changed");
     }
   }
+  if(skyboxPresentation){
+    const media=JSON.parse(await readFile(resolve(root,"build/field-skybox-media/media.json"),"utf8"));
+    for(const row of media.sources){const file=filePath(resolve(root,"build/runtime/game"),row.file);if(!file.startsWith(resolve(root,"build/runtime/game")+sep))throw Error("Unsafe Skybox source");await add(file,row.sha256);if(recorded.get(file).bytes!==row.bytes)throw Error("Skybox physical source size changed");}
+  }
   files.sort((a, b) => a.path.localeCompare(b.path)); directories.sort((a, b) => a.path.localeCompare(b.path));
   const corpus = JSON.parse(await readFile(resolve(root, "build/corpus/corpus.json"), "utf8"));
   hash(corpus.sourceSetHash, "corpus source set"); hash(corpus.parentSourceSetHash, "parent source set");
   if (api.hash(corpus.sources) !== corpus.sourceSetHash) throw new Error("Corpus source manifest fingerprint mismatch");
-  const inputs = { kind: logical ? "source-prerequisite-input-lock-v2" : "source-prerequisite-input-lock-v1",
+  const inputs = { kind: skyboxPresentation ? "source-prerequisite-input-lock-v3" : logical ? "source-prerequisite-input-lock-v2" : "source-prerequisite-input-lock-v1",
+    ...(skyboxPresentation?{skyboxPresentation}:{}),
     ...(logical ? { logicalFieldEffects: logical } : {}), sourceSetHash: corpus.sourceSetHash,
     parentSourceSetHash: corpus.parentSourceSetHash, compiledDir, compilerDigest: compilerIdentity(files, compiledDir, root), files, directories };
   await validateSourcePrerequisiteInputs(inputs, { root });
@@ -264,9 +270,10 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
 export async function validateSourcePrerequisiteInputs(raw, { root = repository } = {}) {
   root = resolve(root);
   const lock = structuredClone(raw);
-  const version2 = lock?.kind === "source-prerequisite-input-lock-v2";
-  exact(lock, "kind,sourceSetHash,parentSourceSetHash,compiledDir,compilerDigest,files,directories" + (version2 ? ",logicalFieldEffects" : ""), "source prerequisite lock");
-  if (!["source-prerequisite-input-lock-v1","source-prerequisite-input-lock-v2"].includes(lock.kind) || typeof lock.compiledDir !== "string" ||
+  const version3=lock?.kind==="source-prerequisite-input-lock-v3",version2 = lock?.kind === "source-prerequisite-input-lock-v2"||version3&&Object.hasOwn(lock,"logicalFieldEffects");
+  if(version3&&lock.skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown locked Skybox presentation policy");
+  exact(lock, "kind,sourceSetHash,parentSourceSetHash,compiledDir,compilerDigest,files,directories" + (version2 ? ",logicalFieldEffects" : "")+(version3?",skyboxPresentation":""), "source prerequisite lock");
+  if (!["source-prerequisite-input-lock-v1","source-prerequisite-input-lock-v2","source-prerequisite-input-lock-v3"].includes(lock.kind) || typeof lock.compiledDir !== "string" ||
       !isAbsolute(lock.compiledDir) || resolve(lock.compiledDir) !== lock.compiledDir ||
       !Array.isArray(lock.files) || !lock.files.length || !Array.isArray(lock.directories) || !lock.directories.length)
     throw new Error("Invalid source prerequisite input lock");
@@ -289,7 +296,7 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
     if ((await directoryEntries(directory)).entriesDigest !== item.entriesDigest)
       throw new Error("Source prerequisite directory changed: " + item.path);
   }
-  for (const name of SNAPSHOTS) {
+  for (const name of [...SNAPSHOTS,...(version3?["field-skybox-media"]:[])]) {
     const path = `build/${name}`;
     if (!seen.has(resolve(root, path))) throw new Error("Missing source prerequisite snapshot directory: " + path);
     const manifest = snapshotManifest(await readLockedJson(lock, root, path + "/snapshot.json"));
@@ -329,12 +336,19 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
       if (!raw || !input || raw.sha256 !== input.sha256 || raw.bytes !== input.bytes) throw new Error("Unbound original effect object bytes");
     }
   }
+  if(version3){
+    const media=await readLockedJson(lock,root,"build/field-skybox-media/media.json");
+    if(media.formatVersion!==1||media.adapterVersion!=="field-skybox-0.1.0"||media.parentSourceSetHash!==lock.sourceSetHash||!HASH.test(media.sourceSetHash)||!Array.isArray(media.sources)||!media.sources.length||new Set(media.sources.map(s=>s.file)).size!==media.sources.length)throw Error("Invalid locked Skybox media source manifest");
+    for(const row of media.sources)if(!corpus.sources.some(s=>s.file===row.file&&s.sha256===row.sha256&&s.bytes===row.bytes))throw Error("Foreign locked Skybox physical source");
+    for(const row of media.sources){const file=filePath(resolve(root,"build/runtime/game"),row.file),bound=byPath.get(file);if(!file.startsWith(resolve(root,"build/runtime/game")+sep)||!bound||bound.sha256!==row.sha256||bound.bytes!==row.bytes)throw Error("Incomplete original Skybox source binding");}
+  }
   return true;
 }
 
 /** Pure upstream DAG: current battle capabilities -> source world/new game -> explicit framework
  * derivation. It never writes packages, generated recipes, reports or archives. */
-export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation } = {}) {
+export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation } = {}) {
+  if(skyboxPresentation!==undefined&&skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown Skybox presentation policy");
   if(screenPresentation!==undefined&&screenPresentation!=="web-field-screen-presentation-2d-v1")throw Error("Unknown screen presentation policy");
   if(worldAutoTasks!==undefined&&worldAutoTasks!=='web-flat-world-auto-tasks-v1')throw new Error('Unknown source world auto-task policy');
   if(worldAutoMove!==undefined&&(worldAutoMove!=='web-flat-world-auto-move-v1'||worldAutoTasks!=='web-flat-world-auto-tasks-v1'))throw Error('Invalid source world auto-movement policy');
@@ -349,7 +363,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
   const effectFlatDeclaration = fieldEffectFlat === undefined ? undefined : sourceFieldEffectFlatInput(fieldEffectFlat);
   if(effectFlatDeclaration && logicalFieldEffects === undefined) throw new Error("Flat field effects require an explicit logical input");
   root = resolve(root);
-  const inputs = await captureSourcePrerequisiteInputs({ root, compiledDir, logicalFieldEffects });
+  const inputs = await captureSourcePrerequisiteInputs({ root, compiledDir, logicalFieldEffects,skyboxPresentation });
   const api = await modules(inputs.compiledDir);
   const [previousBattle, previousDevelopment, field] = await Promise.all([
     readLockedJson(inputs, root, "build/game/source-catalog.json"),
@@ -402,7 +416,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
   const entry = await api.compileSourceNewGame(root, battle, strict);
   const frameworkOptions = { ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(worldAutoTasks?{worldAutoTasks}:{}),...(worldAutoMove?{worldAutoMove}:{}) };
   let logicalReport = null;
-  if (inputs.kind === "source-prerequisite-input-lock-v2") {
+  if (Object.hasOwn(inputs,"logicalFieldEffects")) {
     const declaration = inputs.logicalFieldEffects, directory = filePath(root,declaration.input);
     const media = await readLockedJson(inputs,root,displayPath(root,resolve(directory,"media.json")));
     const corpus = await readLockedJson(inputs,root,"build/corpus/corpus.json");
@@ -496,6 +510,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
   if (birdViewActors !== undefined) frameworkOptions.birdViewActors = birdViewActors;
   if (mobColorFilter !== undefined) frameworkOptions.mobColorFilter = mobColorFilter;
   if(screenPresentation!==undefined){if(screenPresentation!=="web-field-screen-presentation-2d-v1")throw Error("Unknown screen presentation policy");frameworkOptions.screenPresentation=screenPresentation;}
+  if(skyboxPresentation){frameworkOptions.skyboxPresentation=skyboxPresentation;frameworkOptions.skyboxCatalog=await api.loadFieldSkyboxCatalog(root);}
   const framework = api.compileFrameworkContent(strict.catalog, strict.maps, entry,frameworkOptions);
   const payloads = new Map([["/game/source-catalog.json", battle], ["/game/opening-playable.json", development],
     ["/world/catalog.json", strict.catalog], ["/game/source-new-game.json", entry],
@@ -516,7 +531,8 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
     ...(npcReport ? { npcAreas: npcReport } : {}),
     ...(npcFlatReport ? { npcProjection: npcFlatReport } : {}),
     ...(effectFlatReport ? { fieldEffectProjection: effectFlatReport } : {}),
-    inputScope: { snapshotRoots: SNAPSHOTS.map(name => "build/" + name), files: inputs.files.length,
+    ...(skyboxPresentation?{skyboxPresentation:{policy:skyboxPresentation,catalogHash:frameworkOptions.skyboxCatalog.contentHash,mediaSourceSetHash:frameworkOptions.skyboxCatalog.mediaSourceSetHash,models:frameworkOptions.skyboxCatalog.models.data.length,images:Object.keys(frameworkOptions.skyboxCatalog.images).length}}:{}),
+    inputScope: { snapshotRoots: [...SNAPSHOTS,...(skyboxPresentation?["field-skybox-media"]:[])].map(name => "build/" + name), files: inputs.files.length,
       originalFiles: inputs.files.filter(file => file.path.startsWith("build/runtime/game/")).map(file => file.path),
       nativeReceiptFiles: [...CATALOG_EVIDENCE], originalSourceFilesVerified: logicalReport ? "whole-corpus" : "composition-host-only", rawExports: "snapshot-and-source-manifest-bound" },
     payloads: [...payloads].map(([url, content]) => ({ url, contentHash: content.contentHash })),

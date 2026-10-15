@@ -314,6 +314,9 @@ export function composeFieldNativePixels(input: {
    * transparent target for independent RT/formula checks; the Web host passes
    * its complete prepared background and publishes with putImageData. */
   background?: FieldCompositionPixels;
+  /** Explicit Web-only reserved panorama. Suppress only tile fragments in
+   * this display band; original actor coordinates/passes remain unchanged. */
+  webSkyboxBand?: { policy: "web-flat-skybox-panorama-v1"; height: number };
   /** Prepared in source draw order within each queue. The compositor does not
    * invent an order from IDs or turn arbitrary particle centers into pixels. */
   effects?: { material: FieldEffectBoardMaterial; batches: readonly FieldEffectCompositionBatch[] };
@@ -327,6 +330,8 @@ export function composeFieldNativePixels(input: {
       throw new Error("Composition background dimensions differ from the target");
     output.data.set(input.background.data);
   }
+  if(input.webSkyboxBand&&(input.webSkyboxBand.policy!=="web-flat-skybox-panorama-v1"||input.webSkyboxBand.height!==Math.ceil(input.height/3)))
+    throw new Error("Unknown Web Skybox composition band");
   for (const tile of input.tiles) quad(tile);
   for (const actor of input.actors) {
     quad(actor);
@@ -369,6 +374,7 @@ export function composeFieldNativePixels(input: {
     for (let y = Math.max(0, Math.ceil(d.y - 0.5)); y < Math.min(input.height, Math.ceil(d.y + d.height - 0.5)); y++) {
       for (let x = Math.max(0, Math.ceil(d.x - 0.5)); x < Math.min(input.width, Math.ceil(d.x + d.width - 0.5)); x++) {
         const index = y * input.width + x;
+        if((pass==="opaque"||pass==="transparent")&&input.webSkyboxBand&&y<input.webSkyboxBand.height)continue;
         if (q.depth > depths[index]!) continue;
         let u = (x + 0.5 - d.x) / d.width, v = (y + 0.5 - d.y) / d.height;
         if (q.diagonal) [u, v] = [q.flipY ? 1 - v : v, q.flipX ? 1 - u : u];

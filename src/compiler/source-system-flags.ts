@@ -9,20 +9,10 @@ import { int32 } from "../core/script-integer.js";
  * rejected by native Execute and is never synthesized here.
  * Evidence: scripts/check-source-system-flags.mjs + docs/source-system-flags.md.
  * No original executable was run. */
-export const SOURCE_FORMAT_FLAG_IMPORT = Object.freeze({
-  kind: "source-format-system-flags-import-v1" as const,
-  nativeSha256: "1a7e12c90c6a734e17dda507dd6ab7555090dff6a1e96f3473a90c29916ca6dc",
-  symbolsSha256: "5067386c455a1b16e7bed8789859a41c10740bb7487303c3dafdb273cca26ef3",
-  headerSha256: "71e6ec207e0faa50e38ab34628922cb78eaaff54747ffda7f410515f401fd718",
-  unityVersion: "2019.4.20f1", loaderRva: "0x5f2530", genericMethodMetadataRva: "0x1fc0690",
-  api: "https://docs.unity3d.com/2019.4/Documentation/ScriptReference/JsonUtility.FromJson.html",
-});
-export const SOURCE_SYSTEM_FLAG_KEYS = ["SkipInitialize", "KeepPlayerPuppet", "KeepBadStatusVisual", "RidingVehicle"] as const;
+import { SOURCE_FORMAT_FLAG_IMPORT, SOURCE_SYSTEM_FLAG_KEYS, type SourceFormatFlagImportBinding,
+  type SourceFormatPhysicalSource as Source } from "../core/source-format-import.js";
+export { SOURCE_FORMAT_FLAG_IMPORT, SOURCE_SYSTEM_FLAG_KEYS, type SourceFormatFlagImportBinding } from "../core/source-format-import.js";
 type Flag = typeof SOURCE_SYSTEM_FLAG_KEYS[number];
-type Source = { file: string; assetPath: string; objectId: string; sha256: string; serializedFile: string };
-export type SourceFormatFlagImportBinding = { kind: typeof SOURCE_FORMAT_FLAG_IMPORT.kind;
-  sourceSetHash: string; parentSourceSetHash: string; source: Source; rawScriptHash: string;
-  nativeSha256: string; symbolsSha256: string; headerSha256: string; bindingHash: string };
 const digest = /^[a-f0-9]{64}$/;
 function ownRecord(value: unknown): Record<string, unknown> {
   const result = record(value), proto = Object.getPrototypeOf(result);

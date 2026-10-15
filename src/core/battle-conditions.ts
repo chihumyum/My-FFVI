@@ -500,6 +500,30 @@ export class BattleConditions {
       missed: false,
     };
   }
+  /** EventCommand list operations deliberately bypass skill hit, resistance,
+   * IsAddable and Conflict. The host owns immediate Web lifecycle publication. */
+  eventListChange(currentIds: readonly number[], conditionId: number,
+      action: "add" | "recover", owner: "player" | "enemy"): ConditionChange {
+    this.validateOwner(currentIds, owner);
+    this.validateReferences([conditionId]);
+    if (action === "recover") return this.recover(currentIds, [conditionId]);
+    if (action !== "add") throw new Error("Unknown event condition list action");
+    this.validateOwner([conditionId], owner);
+    // Native appends duplicates. This Web lifecycle owner has no proven
+    // duplicate Start/Remove phase: retain the gate, never silently de-duplicate.
+    if (currentIds.includes(conditionId))
+      throw new Error("Source repeated condition append needs a duplicate lifecycle owner");
+    const behavior = this.behaviors.get(conditionId)!;
+    if (["unable-fight", "dying", "escape", "sleep", "confusion", "temptation", "doom"].includes(behavior.kind))
+      throw new Error("Source condition append requires its explicit life/control/instance activation owner: " + conditionId);
+    const next = [...currentIds, conditionId];
+    // This checks admission only. EventCommand did not call Conflict, so never
+    // publish the skill controller's changed list in place of the raw append.
+    const conflict = this.rules.resolveConflict({ currentIds: next, equipmentIds: [], incomingId: conditionId });
+    if (conflict.currentIds.length !== next.length || conflict.currentIds.some((id, index) => id !== next[index]))
+      throw new Error("Source event list append has an unclosed conflicting lifecycle phase");
+    return { currentIds: next, added: [conditionId], removed: [], missed: false };
+  }
   recover(
     currentIds: readonly number[],
     recoveryIds: readonly number[],

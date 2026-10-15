@@ -1,0 +1,17 @@
+# 来源脚本自定义动画上下文
+
+这是共同导入与播放能力，不是逐脚本的动画补丁。固定来源的全部3304程序/186003指令保留；682程序含1978定义/7913帧。358条ChangeScript来自302调用程序，194个字符串在实际地图局部/显式Resident命名空间解析为218个物理目标；361个地图使用绑定中9个仍未解决。原完整正文、原始flags、locals、数组索引与重复名称不修改。全部8369条相关动画指令保留，BattleAnim和jockey组合不因普通Cue/Play成功而获准。
+
+`WorldCatalog.sourceScriptAnimations`只保存一份来源绑定的定义目录。地图只保存原脚本资产引用；Field从校验过的当前世界目录获得该能力。目录保留物理file、assetPath、objectId、serializedFile、文件摘要、完整rawScriptHash和原动画数组顺序。编译器与可信快照加载器验证来源；core检查纯数据与一致性，不把这些摘要称为签名，也不允许存档提供新定义、资源URL或新的能力声明。缺失整个Animations或未知metadata仍拒绝。source Format的默认next=null解释仅使用已证明的同一原生FromJson类型与来源链。
+
+初次查找严格遵循原生顺序：基础动画列表→实际ActorAnimation组件已经加载的custom缓存→当前Integrator脚本资产的第一个同名条目。完整基础名字索引中存在但尚未编译的key保持具体门槛，不能以custom覆盖。后继动画和重复选择时的next查找只查基础列表，不能把自定义数组并入Character.animations。每一帧的sprite_name只在实际演员的spriteModel对应Character.sprites解析，不从别的角色、图集或最近资源补齐。
+
+自定义播放也要求实际Character已有可执行的基础sprite投影；原world编译器对未知shader输出空基础目录，不能因为现在能找到custom帧而越过该门槛。
+
+当前资产属于Field脚本执行上下文；缓存属于实际演员动画组件。普通Execute替换当前资产；ChangeScript及单hook返回分别替换/恢复当前引用，不清除已有演员缓存。普通Init重建sprite dictionary但不清custom dictionary；SetAssetStructure创建新组件则没有旧custom缓存。现有native map/transport候选使用已持有组件的验证克隆；实际资产替换继续使用原appearance owner的新组件。无按演员ID、地图ID或PC跨实例复制缓存。
+
+首批可执行形式是已绑定、非骑乘、实际sprite演员的普通Cue/Play，白色恒定alpha帧，模式0/1/3，以及有明确原生证据的零时长/单帧/One pose。零时长直接选择frame0，下一次正逻辑clock才结束One；不增加epsilon或猜帧率。模式2、颜色/alpha插值、空帧、缺媒体、未知工厂、jockey及不支持的包装器参数仍具体阻断。已有渲染、材质、暂停、有限重复及动作完成clock继续由原owner消费，无第二套调度器。
+
+新idle-field-v17/event-field-v8只保存目录摘要、当前/单hook资产引用，以及演员cache的assetId/原数组index和播放状态；不保存定义。恢复先按当前可信目录、实际演员媒体和完整基础名字索引重建候选，再一次发布。旧无目录内容保持旧存档形状与拒绝规则，存档不能授权该能力。当前资产也在battle-return的同一已准备提交内切换到真实字段续行；取消、失败或过期不先发布引用。跨图仍由WorldSession原事务退休旧owner。
+
+可重复命令：`scripts/check-source-script-animations.mjs`做全源静态目录/命名空间审计；`tools/native/check_source_script_animations.py`复核11份已有完整C/PE、两份构造/Init短PE和精确getter，不启动Ghidra；`tests/source-script-animations.test.ts`与`tests/source-script-animation-session.test.ts`分别验证查找/codec和实际Session→ChangeScript/hook→battle/map→Storage。原始参数、原完整正文、合成会话、Canvas和原版动态对照分别记数；静态1978不是1978项已入战/入场，更不是全剧情通过。ReserveScript原生writer完整闭包仍未知，已知两个后继保留但不据此宣称所有writer已恢复。

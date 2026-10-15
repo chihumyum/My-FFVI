@@ -1,4 +1,7 @@
 import { compileFieldFadeInstruction } from "./field-fade.js";
+import { decodeSourceSystemFlags, type SourceFormatFlagImportBinding } from "./source-system-flags.js";
+import { parseSourceBattleFormatImport, type SourceBattleFormatImport } from "../core/source-format-import.js";
+import { compileBattleEventCondition } from "./battle-event-condition.js";
 import { WEB_BATTLE_BRANCH_EXECUTION, validateBattleBranchExecutionPolicy, parseBattleSourceInstruction, classifyDeferredBattleInstruction, type WebBattleBranchExecution } from '../core/battle-branch-execution.js';
 import { compileBattleEventEffect, type BattleEffectReader } from './battle-event-effect.js';
 import { compileScriptedBattleAction } from "./battle-scripted-action.js";
@@ -35,9 +38,17 @@ const instruction = z.object({
 /** Battle-event compilation is distinct from monster AI. Preserve every source
  * PC; unknown hosts, operands and branches remain explicit blocked operations.
  * This compiler does not certify a native scheduler or grant owned effects. */
-export function compileBattleEvent(raw: unknown, source: BattleAISource | null, messages?: BattleEventMessageInput, effects?:BattleEffectReader,branchExecution?:WebBattleBranchExecution): BattleEventProgram {
+export function compileBattleEvent(raw: unknown, source: BattleAISource | null, messages?: BattleEventMessageInput, effects?:BattleEffectReader,branchExecution?:WebBattleBranchExecution,sourceFormatBinding?:SourceFormatFlagImportBinding): BattleEventProgram {
   validateBattleBranchExecutionPolicy(branchExecution);
   const data = script.parse(raw), blockers: string[] = [];
+  let sourceFormatImport: SourceBattleFormatImport | undefined;
+  if (sourceFormatBinding !== undefined) {
+    if (branchExecution !== WEB_BATTLE_BRANCH_EXECUTION || !source)
+      throw new Error("Source Format import requires explicit source battle v2 compilation");
+    const decoded = decodeSourceSystemFlags(raw, sourceFormatBinding);
+    sourceFormatImport = parseSourceBattleFormatImport({ kind: "source-battle-format-flags-v1",
+      binding: structuredClone(sourceFormatBinding), values: decoded.values, defaulted: decoded.defaulted }, raw, source);
+  }
   let messageCompiler: ReturnType<typeof createBattleEventMessageCompiler> | null = null;
   const main = data.Segments.length === 1 && data.Segments[0]!.Label === "Main" ? data.Segments[0]! : null;
   // Other segment layouts need their own entry/range proof. The bounded Main
@@ -45,9 +56,10 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
   if (!main || main.EntryPoint !== 0 || main.Count !== data.Mnemonics.length)
     blockers.push("unresolved battle-event Main segment");
   if (data.Animations.length) blockers.push("battle-event custom animations require a host");
-  if (Object.keys(data.SystemFlag).length !== flags.length ||
-      flags.some(name => data.SystemFlag[name] !== 0) ||
-      Object.keys(data.SystemFlag).some(name => !(flags as readonly string[]).includes(name)))
+  const applicabilityFlags = sourceFormatImport?.values ?? data.SystemFlag;
+  if (Object.keys(applicabilityFlags).length !== flags.length ||
+      flags.some(name => applicabilityFlags[name] !== 0) ||
+      Object.keys(applicabilityFlags).some(name => !(flags as readonly string[]).includes(name)))
     blockers.push("battle-event SystemFlag requires four explicitly supported zero flags");
   if (new Set(data.ScriptLocal).size !== data.ScriptLocal.length)
     blockers.push("ambiguous battle-event local labels");
@@ -119,6 +131,10 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
     }
     if (["Call", "Jump"].includes(m.mnemonic) && form([0]) && target(i[0]))
       op = { kind: m.mnemonic === "Call" ? "call" : "jump", target: i[0] };
+    if (m.mnemonic === "BattleCondition") {
+      try { op = compileBattleEventCondition(m,effects); }
+      catch (error) { op = blocked(error instanceof Error ? error.message : String(error)); }
+    }
     if (m.mnemonic === "BattleAction") {
       try { op=compileScriptedBattleAction(m); }
       catch(error) { op=blocked(error instanceof Error?error.message:String(error)); }
@@ -192,7 +208,7 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
   const messageBinding = instructions.some(({ op }) => op.kind === "message") && messages?.binding
     ? parseBattleEventMessageBinding(messages.binding) : undefined;
   const branch=branchExecution===WEB_BATTLE_BRANCH_EXECUTION?{
-    policy:branchExecution,sourceProgram:{...structuredClone(data),Mnemonics:data.Mnemonics.map(parseBattleSourceInstruction)},
+    policy:branchExecution,...(sourceFormatImport ? { sourceFormatImport } : {}),sourceProgram:{...structuredClone(data),Mnemonics:data.Mnemonics.map(parseBattleSourceInstruction)},
     deferred:instructions.flatMap(({op},pc)=>{const category=classifyDeferredBattleInstruction(parseBattleSourceInstruction(data.Mnemonics[pc]));return op.kind==='blocked'&&category?[{pc,category,reason:op.reason}]:[];}),
   }:undefined;
   return structuredClone({ kind: branch ? "battle-event-v2" : "battle-event-v1", source, entry, end,

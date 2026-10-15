@@ -14,9 +14,9 @@ assert.ok(out.startsWith(resolve(root,'build')+'/'),'Source-derived output must 
 await mkdir(out,{recursive:true});
 const [{loadCorpus},{hash,canonical},{compileSourceEncounterInstruction,sourceEncounterLiteralCandidates},{compileSourceBossEncounterInstruction},
  {compileSharedBattleSource},{compileGameCatalogModules,assembleGameCatalog,compileSharedGameCatalog},{loadSystemSource},{readSnapshot,snapshotFile},
- {compileBattleEncounterSources},{compileBattleEncounterRuntime},{createBattleHandoffMusicLookup},
+ {compileBattleEncounterSources},{createBattleSourceFormatImportResolver},{compileBattleEncounterRuntime},{createBattleHandoffMusicLookup},
  {analyzeBatchEncounters}]=await Promise.all(['compiler/corpus','compiler/content','compiler/source-encounter','compiler/source-boss-encounter',
- 'compiler/battle','compiler/game-catalog','compiler/system-source','compiler/integrity','compiler/battle-encounters',
+ 'compiler/battle','compiler/game-catalog','compiler/system-source','compiler/integrity','compiler/battle-encounters','compiler/battle-source-format-import',
  'compiler/battle-encounter-runtime','compiler/battle-handoff','compiler/content-batch-battle'].map(load));
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex'),inputs=new Map();
 async function input(path){const bytes=await readFile(resolve(root,path));inputs.set(path,sha(bytes));return JSON.parse(bytes);}
@@ -56,7 +56,7 @@ const {compileSourceBattleDirectoryEntryPolicy,composeFrameworkBattleDirectory}=
  policy:declaration.framework.entry,encounters:descriptors.encounters}),
  common={...shared.runtimeInput,requestedPartyIds:partyIds,encounters:descriptors.encounters,sourceDiagnostics:descriptors.diagnostics},
  strict=compileBattleEncounterRuntime(shared.reader,{...common,handoff:{policy:null},development:{scripts:[],flagGroups:[]}}),
- framework=compileBattleEncounterRuntime(shared.reader,{...common,...(declaration.framework.branchExecution===undefined?{}:{branchExecution:declaration.framework.branchExecution}),...(declaration.framework.manualControls===undefined?{}:{manualControls:declaration.framework.manualControls}),...(declaration.framework.conditionControlPolicy?{conditionControlPolicy:declaration.framework.conditionControlPolicy}:{}),handoff:{policy:declaration.framework.handoff},development}),
+ framework=compileBattleEncounterRuntime(shared.reader,{...common,...(declaration.framework.branchExecution?{sourceFormatImport:createBattleSourceFormatImportResolver(snapshot)}:{}),...(declaration.framework.branchExecution===undefined?{}:{branchExecution:declaration.framework.branchExecution}),...(declaration.framework.manualControls===undefined?{}:{manualControls:declaration.framework.manualControls}),...(declaration.framework.conditionControlPolicy?{conditionControlPolicy:declaration.framework.conditionControlPolicy}:{}),handoff:{policy:declaration.framework.handoff},development}),
  composed=await composeFrameworkBattleDirectory({root,compiledDir:compiled,baseCatalog:base,runtime:framework,conditionControlPolicy:declaration.framework.conditionControlPolicy});
 assert.equal(canonical(composed.catalog.gameState),canonical(base.gameState));
 const strictCatalog=assembleGameCatalog({...shared,reader:shared.reader,runtimeInput:{...common,handoff:{policy:null}}},

@@ -1,6 +1,7 @@
 import { parseBattleGlobalFadeOp, validateBattleGlobalFadeHost, type BattleGlobalFadeHost } from "./battle-global-fade.js";
 import { fieldFadeOverlay } from "./field-fade.js";
 import { parseFieldReservation, type BattleFieldReservation, type BattleFieldReservationHost } from "./field-reserved-script.js";
+import { parseBattleEventCondition, validateBattleEventConditions, WEB_BATTLE_EVENT_CONDITIONS, type BattleEventCondition, type WebBattleEventConditions } from "./battle-event-condition.js";
 import {resourceAbsorptionEffect,type AbsorptionContext} from './resource-absorption.js';
 import {parseWebEnemySpawnConditions,type WebEnemySpawnConditions} from './battle-spawn-conditions.js';
 import {validateOrdinaryConditionAction} from './ordinary-condition-action.js';
@@ -233,7 +234,7 @@ export class BattleGame {
       unvisitedDependencies:p.branchExecution!.deferred.filter(site=>!this.#branchVisited.has(site.pc)).map(site=>({...site,raw:structuredClone(p.branchExecution!.sourceProgram.Mnemonics[site.pc])})),
       lastFailure:structuredClone(this.#branchLastFailure)};
   }
-  private get deferredEventStart(){return this.#hasGlobalFade||!!this.#messageHost||!!this.#effectHost||this.lifecycle.kind==="battle-lifecycle-v2";}
+  private get deferredEventStart(){return this.#hasGlobalFade||!!this.#messageHost||!!this.#effectHost||this.lifecycle.kind==="battle-lifecycle-v2"||this.lifecycle.mode==="script"&&this.lifecycle.program.instructions.some(row=>row.op.kind==="condition-list");}
   readonly #fadeHost:BattleGlobalFadeHost|null;
   #hasGlobalFade=false;
   #fadeRevision=0;
@@ -437,10 +438,10 @@ export class BattleGame {
     initialPreferences?: BattlePreferences,
     eventShared?: BattleEventSharedSnapshot,
     playerBorrow?: BattlePlayerBorrow,
-    private readonly eventHosts?: { scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; fade?:BattleGlobalFadeHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; fieldContinuation?:BattleFieldReservationHost; branchExecution?:WebBattleBranchExecution },
+    private readonly eventHosts?: { conditions?: WebBattleEventConditions; scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; fade?:BattleGlobalFadeHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; fieldContinuation?:BattleFieldReservationHost; branchExecution?:WebBattleBranchExecution },
   ) {
     if (eventHosts !== undefined && (!eventHosts || typeof eventHosts !== "object" || Array.isArray(eventHosts) ||
-        Object.keys(eventHosts).some(key => key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau" && key !== "fade" && key !== "fieldContinuation")))
+        Object.keys(eventHosts).some(key => key !== "conditions" && key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau" && key !== "fade" && key !== "fieldContinuation")))
       throw new Error("Unknown battle event host options");
     validateBattleBranchExecutionPolicy(eventHosts?.branchExecution);this.#branchPolicy=eventHosts?.branchExecution;
     validateBattleGlobalFadeHost(eventHosts?.fade);this.#fadeHost=eventHosts?.fade?Object.freeze({...eventHosts.fade}):null;
@@ -466,6 +467,7 @@ export class BattleGame {
     this.escapeRule = content.escapePolicy === undefined ? null : parseBattleEscapePolicy(content.escapePolicy);
     this.rewardPolicy = Object.freeze(parseBattleRewardPolicy(content.rewardPolicy === undefined
       ? { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 } : content.rewardPolicy));
+    validateBattleEventConditions(eventHosts?.conditions);
     validateScriptedBattleActionPolicy(eventHosts?.scriptedActions);
     validateBattleEventControls(eventHosts?.controls);
     this.lifecycle = parseBattleLifecycle(content.lifecycle ?? { kind: "battle-lifecycle-v1", mode: "none" });
@@ -1617,6 +1619,9 @@ export class BattleGame {
               this.#fadeFrame.state.start({...op,kind:'field-fade'},.01);
               this.#fadeJournal.push({action:'start',pc,time:this.time});break;
             }
+            case "condition-list": {
+              const { pc, ...operation } = request; this.applyEventCondition(operation, pc); break;
+            }
             case 'cursed-shield-check': {
               if(!this.eventShared)throw new Error('CursedShield requires the shared source scenario-variable owner');
               const plan=planCursedShieldCheck(ref=>this.eventShared!.read(ref),this.players,this.inventoryQualification,this.content.battleEntry);
@@ -1751,6 +1756,60 @@ export class BattleGame {
       this.eventState = nextEventState;
       if (!result.requests.length) return;
     }
+  }
+  #conditionJournal: { pc: number; time: number; operation: BattleEventCondition;
+    targets: { instanceId: string; sourceId: number; before: number[]; after: number[] }[] }[] = [];
+  get conditionExecution() { return structuredClone(this.#conditionJournal); }
+  private applyEventCondition(operation: BattleEventCondition, pc: number): void {
+    const op = parseBattleEventCondition(operation);
+    if (this.eventHosts?.conditions !== WEB_BATTLE_EVENT_CONDITIONS || this.lifecycle.mode !== "script" ||
+        canonical(this.lifecycle.program.instructions[pc]?.op) !== canonical(op))
+      throw new Error("Missing or unbound explicit Web condition-list lifecycle owner");
+    this.conditions.validateReferences([op.conditionId]);
+    // The original wrapper always owns this separate phase, for both list
+    // actions. A synchronous state update is not its down-animation callback.
+    if (op.target.side === "enemy" && op.conditionId === 5)
+      throw new Error("Source enemy condition5 requires down-animation synchronization and previous enemy no-act restoration");
+    const targets = this.scriptedUnits(op.target);
+    if (!targets.length || op.target.id > 0 && targets.length !== 1)
+      throw new Error("Source condition target is absent or ambiguous; no empty target provider");
+    const planned = targets.map(unit => {
+      const change = this.conditions.eventListChange(unit.conditionIds, op.conditionId, op.action, unit.side);
+      const changed = canonical(unit.conditionIds) !== canonical(change.currentIds);
+      const life = changed ? this.conditions.settleLife(unit.hp, change.currentIds,
+        this.conditions.isUnableFight(unit.conditionIds)) : { hp: unit.hp, conditionIds: [...unit.conditionIds] };
+      if (life.hp !== unit.hp) life.conditionIds = this.conditions.updateDying(life.hp, unit.maxHp, life.conditionIds);
+      const control = this.prepareControlState(unit, life.conditionIds, this.controlStates.get(unit.id)!,
+        this.controlTargetUnits.get(unit.id)!, null);
+      const poison = this.conditions.reconcilePoisonState(life.conditionIds, this.poisonStates.get(unit.id)!, this.atbSpeed);
+      const slow = this.conditions.reconcileSlowState(life.conditionIds, this.slowStates.get(unit.id)!);
+      return { unit, change, life, control, poison, slow, before: [...unit.conditionIds] };
+    });
+    // Every target/provider is prepared before publishing the first live list.
+    for (const next of planned) {
+      const lifeChanged = (next.unit.hp === 0) !== (next.life.hp === 0);
+      Object.assign(next.unit, next.life);
+      this.poisonStates.set(next.unit.id, next.poison); this.slowStates.set(next.unit.id, next.slow);
+      this.controlStates.set(next.unit.id, next.control.state); this.controlTargetUnits.set(next.unit.id, next.control.targets);
+      this.observeDropLife(next.unit);
+      if (lifeChanged) {
+        next.unit.atb = 0; next.unit.queued = false;
+        this.queue = this.queue.filter(action => action.actor !== next.unit.id);
+        this.reactions = this.reactions.filter(action => action.actor !== next.unit.id);
+      }
+      if (next.change.removed.some(id => this.content.conditions.behaviors.find(behavior => behavior.id === id)?.kind === "sleep"))
+        for (const action of this.queue) if (action.actor === next.unit.id) action.charge = 0;
+    }
+    const keepsControl = (action: BattleAction) => !action.control || this.combatants.some(unit => unit.id === action.actor &&
+      this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.id === action.control!.conditionId && behavior.kind === action.control!.kind));
+    const dropped = this.queue.filter(action => action.control && !keepsControl(action)).map(action => action.actor);
+    this.queue = this.queue.filter(keepsControl); this.reactions = this.reactions.filter(keepsControl);
+    for (const id of dropped) {
+      const unit = this.combatants.find(unit => unit.id === id)!;
+      if (!this.queue.some(action => action.actor === id) && this.action?.actor !== id) unit.queued = false;
+    }
+    this.#conditionJournal.push({ pc, time: this.time, operation: op, targets: planned.map(next => ({
+      instanceId: next.unit.id, sourceId: next.unit.sourceId, before: next.before, after: [...next.unit.conditionIds] })) });
   }
   /** The source request has no authority to create a combatant or grant an
    * ability. It captures current instance identities into the existing action
@@ -2412,6 +2471,7 @@ export class BattleGame {
     // One failed simulation step consumes neither logical time nor randomness.
     // Definitions/media/AI programs stay shared; only mutable runtime values are copied.
     const before = {
+      conditionJournal: structuredClone(this.#conditionJournal),
       unitOwners: [...this.combatants],
       participantState: structuredClone(this.participantState),
       currentEnemyPartyId: this.currentEnemyPartyId,
@@ -2496,6 +2556,7 @@ export class BattleGame {
       frame?.discard();this.#fadeFrame?.discard();this.#fadeJournal=before.fadeJournal;
       this.#effects=before.effectState;this.#effectNextTicket=before.effectNextTicket;this.#effectJournal=before.effectJournal;
       this.#messagePresentation = before.messagePresentation; this.#messageRootStarted = before.messageRootStarted; this.#messageJournal = before.messageJournal;
+      this.#conditionJournal = before.conditionJournal;
       this.combatants.splice(0, this.combatants.length, ...before.unitOwners);
       for (const [index, unit] of before.units.entries())
         Object.assign(this.combatants[index]!, unit);

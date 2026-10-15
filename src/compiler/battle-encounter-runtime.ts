@@ -1,3 +1,5 @@
+import type { BattleSourceFormatImportResolver } from "./battle-source-format-import.js";
+import { battleEventConditionDependencies } from "./battle-event-condition.js";
 import {parseWebEnemySpawnConditions,type WebEnemySpawnConditions} from '../core/battle-spawn-conditions.js';
 import { parseBattleEventProgram } from '../core/battle-event.js';
 import { WEB_BATTLE_BRANCH_EXECUTION, validateBattleBranchExecutionPolicy, type WebBattleBranchExecution } from '../core/battle-branch-execution.js';
@@ -58,6 +60,8 @@ export type BattleEncounterRuntimeInput = {
   conditionControlPolicy?: { kind: "web-source-control-actions-v1" };
   manualControls?: typeof WEB_MANUAL_BATTLE_CONTROLS;
   branchExecution?:WebBattleBranchExecution;
+  /** Trusted Format snapshot resolver; absent keeps the old strict compiler. */
+  sourceFormatImport?:BattleSourceFormatImportResolver;
   sprites: Readonly<Record<string, { file: string; width: number; height: number }>>;
   name(key: string): string;
   eventMessages?: BattleEventMessageInput;
@@ -204,7 +208,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         const omission = input.development.scripts.find((s) => s.id === m.scriptId && same(s.source, encounter.script!.source));
         const issues: { reason: string; pc?: number }[] = [];
         try {
-          const program = compileBattleEvent(encounter.script!.data, encounter.script!.source, input.eventMessages, reader,input.branchExecution);
+          const program = compileBattleEvent(encounter.script!.data, encounter.script!.source, input.eventMessages, reader,input.branchExecution,input.sourceFormatImport?.(encounter.script!));
           let structurallyValid=true;
           if(input.branchExecution)try{parseBattleEventProgram(program);}catch(error){structurallyValid=false;issues.push({reason:message(error)});}
           const deferred=structurallyValid&&!program.blockers.length&&input.branchExecution===WEB_BATTLE_BRANCH_EXECUTION&&program.kind==='battle-event-v2'?program.branchExecution!.deferred:[];
@@ -227,6 +231,11 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
             { dependency: { table: "script.csv", id: m.scriptId },
               ...(issue.pc === undefined ? {} : { pc: issue.pc }) });
         }
+      }
+      if (lifecycle?.mode === "script") for (const [pc, row] of lifecycle.program.instructions.entries()) {
+        if (row.op.kind !== "condition-list") continue;
+        for (const dependency of battleEventConditionDependencies(row.op, input.conditions))
+          add(dependency.kind, dependency.code, dependency.reason, { pc, dependency: dependency.dependency });
       }
       if (!Number.isInteger(m.battleFlagGroupId) || m.battleFlagGroupId < 0 || !Array.isArray(m.battleFlags) ||
           (m.battleFlagGroupId === 0) !== (m.battleFlags.length === 0))

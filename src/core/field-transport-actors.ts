@@ -143,7 +143,7 @@ export function projectFieldTransportActors(input: FieldTransportActorInput): {
     if (row.fieldAssetId !== null) {
       const bound = media(row.fieldAssetId);
       if (canonical(a.animation!.character) !== canonical(bound.character)) throw new Error("Unbound transportation outer animation");
-      const checked = new ActorAnimation(bound.character); checked.restore(a.animation!.snapshot()); a.animation = checked;
+      const checked = a.animation!.validatedClone(); a.animation = checked;
     }
     if (a.riderAssetId !== null) media(a.riderAssetId);
   }

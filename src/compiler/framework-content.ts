@@ -1,3 +1,4 @@
+import{verifyCompiledSkyboxCatalog}from"./field-skybox.js";import{fieldSkyboxDefinition,type FieldSkyboxCatalog,type WebFlatSkybox}from"../core/field-skybox.js";
 import {WEB_FLAT_WORLD_AUTO_MOVE} from '../core/field-world-auto-move.js';
 import { WEB_FLAT_BIRD_VIEW_ACTORS } from "../core/field-bird-view-actors.js";
 import { deriveFrameworkFieldEffectFlatContent, type FrameworkFieldEffectFlatAssessment } from "./framework-field-effect-flat-projection.js";
@@ -24,6 +25,7 @@ export type LogicalFieldEffectsDeclaration = {
   mapIds: readonly number[]; reason: string;
 };
 export type FrameworkContentOptions = {
+  skyboxPresentation?:WebFlatSkybox;skyboxCatalog?:FieldSkyboxCatalog;
   screenPresentation?:import("../core/field-screen-presentation.js").WebFieldScreenPresentation;
   worldAutoMove?: typeof WEB_FLAT_WORLD_AUTO_MOVE;
   worldAutoTasks?: typeof WEB_FLAT_WORLD_AUTO_TASKS;
@@ -198,7 +200,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (!initial || strictEntry.mapContentHash !== initial.contentHash)
     throw new Error("Framework strict entry/map binding mismatch");
 
-  if (Object.keys(options).some(key => key !== 'screenPresentation' && key !== 'mobColorFilter' && key !== 'worldAutoMove' && key !== 'birdViewActors' && key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
+  if (Object.keys(options).some(key => key !== 'skyboxPresentation' && key !== 'skyboxCatalog' && key !== 'screenPresentation' && key !== 'mobColorFilter' && key !== 'worldAutoMove' && key !== 'birdViewActors' && key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
     throw new Error("Unknown framework derivation option");
   if(options.worldAutoMove!==undefined&&(options.worldAutoMove!==WEB_FLAT_WORLD_AUTO_MOVE||options.worldAutoTasks!==WEB_FLAT_WORLD_AUTO_TASKS))throw Error('World auto movement requires its declared flat task host');
   if(options.worldAutoTasks!==undefined&&options.worldAutoTasks!==WEB_FLAT_WORLD_AUTO_TASKS)throw new Error('Unknown framework world auto-task policy');
@@ -207,6 +209,9 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (options.birdViewActors !== undefined && options.birdViewActors !== WEB_FLAT_BIRD_VIEW_ACTORS) throw new Error("Unknown framework BirdView actor policy");
   if (options.mobColorFilter !== undefined && options.mobColorFilter !== "web-flat-mob-color-filter-v1") throw new Error("Unknown framework Mob color-filter policy");
   const mobColorFilter = options.mobColorFilter;
+  if((options.skyboxPresentation===undefined)!==(options.skyboxCatalog===undefined)||options.skyboxPresentation!==undefined&&options.skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Skybox requires its explicit policy and complete compiled source catalog");
+  const skyboxCatalog=options.skyboxCatalog&&verifyCompiledSkyboxCatalog(options.skyboxCatalog);
+  if(skyboxCatalog&&(skyboxCatalog.sourceSetHash!==strictCatalog.sourceSetHash||skyboxCatalog.parentSourceSetHash!==strictCatalog.parentSourceSetHash))throw Error("Skybox framework source identity mismatch");
   if(options.screenPresentation!==undefined&&options.screenPresentation!=="web-field-screen-presentation-2d-v1")throw new Error("Unknown framework screen presentation policy");
   const screenPresentation=options.screenPresentation;
   const birdViewActors = options.birdViewActors;
@@ -229,7 +234,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
     validateLogicalEffectCatalog(logical.catalog);
   }
   const derivedProfile = (sourceContentHash: string, local: DevelopmentOmission[]): DevelopmentProfile => ({
-    ...profile(sourceContentHash, local), ...(screenPresentation?{screenPresentation}:{}), ...(mobColorFilter ? {mobColorFilter} : {}), ...(birdViewActors ? { birdViewActors } : {}), ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
+    ...profile(sourceContentHash, local), ...(options.skyboxPresentation?{skyboxPresentation:options.skyboxPresentation}:{}), ...(screenPresentation?{screenPresentation}:{}), ...(mobColorFilter ? {mobColorFilter} : {}), ...(birdViewActors ? { birdViewActors } : {}), ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
     ...(options.worldAutoMove?{worldAutoMove:options.worldAutoMove}:{}),
     ...(options.worldAutoTasks?{worldAutoTasks:options.worldAutoTasks}:{}),
   });
@@ -237,6 +242,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   for (const map of strictMaps) referenceStrings(map.scripts, scriptReferences);
   const maps = [...strictMaps].sort((a, b) => a.mapId - b.mapId).map((strictMap) => {
     const map = structuredClone(strictMap), local: DevelopmentOmission[] = [];
+    if(skyboxCatalog&&map.map){const skybox=fieldSkyboxDefinition(skyboxCatalog,map);if(skybox)map.map.skybox=skybox;}
     const removed: { entity: FieldEntity; particleBlockers: Set<string> }[] = [];
     for (const [key, group] of Object.entries(map.map?.groups ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
       for (const entity of group.entities.filter((e) => e.kind === 11)) {

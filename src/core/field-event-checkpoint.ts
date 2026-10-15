@@ -1,3 +1,4 @@
+import { sourceScriptAnimationAsset } from "./source-script-animations.js";
 import { restoreFieldEventActivation, type FieldEventActivationCheckpoint } from "./field-event-activation.js";
 import type { FieldContent, Op } from "../field/types.js";
 import { canonical } from "./canonical.js";
@@ -81,8 +82,8 @@ function validateBank(content: FieldContent, script: string,
     throw new Error("Event continuation script-local labels differ from source");
 }
 function transitionMetadata(content: FieldContent, script: string): void {
-  if (content.scriptTransitionMetadata?.[script]?.customAnimations !== "none")
-    throw new Error("Event continuation custom-animation context is unavailable");
+  try { sourceScriptAnimationAsset(content.scriptTransitionMetadata?.[script],content.sourceScriptAnimations); }
+  catch { throw new Error("Event continuation custom-animation context is unavailable"); }
 }
 
 /** A hook may survive direct ChangeScript replacements. Establish whether the
@@ -92,9 +93,8 @@ function localFramePath(content: FieldContent, first: string, current: string, d
   const pending = [{ script: first, changed: false }], visited = new Set<string>();
   while (pending.length) {
     const next = pending.pop()!;
-    if (!Object.hasOwn(content.scripts, next.script) ||
-        content.scriptTransitionMetadata?.[next.script]?.customAnimations !== "none" ||
-        !content.scriptLocals || !Object.hasOwn(content.scriptLocals, next.script)) continue;
+    if (!Object.hasOwn(content.scripts, next.script) || !content.scriptLocals || !Object.hasOwn(content.scriptLocals, next.script)) continue;
+    try { transitionMetadata(content,next.script); } catch { continue; }
     const changed = next.changed || declaration(content, next.script, true) !== null;
     const key = JSON.stringify([next.script, changed]);
     if (visited.has(key)) continue;

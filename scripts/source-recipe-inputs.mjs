@@ -144,7 +144,8 @@ function parseBattleRebindings(raw=[]){
 
 async function frameworkUpgradeDeclaration(raw,root,compiledDir){
   if(raw===undefined)return null;
-  const screen=raw?.kind==='compiled-framework-profile-upgrade-v9';
+  const skybox=raw?.kind==='compiled-framework-profile-upgrade-v10';
+  const screen=raw?.kind==='compiled-framework-profile-upgrade-v9'||skybox;
   const mob=raw?.kind==='compiled-framework-profile-upgrade-v8'||screen;
   const worldMove=raw?.kind==='compiled-framework-profile-upgrade-v7'||mob;
   const birdActors=raw?.kind==='compiled-framework-profile-upgrade-v6'||worldMove;
@@ -152,10 +153,10 @@ async function frameworkUpgradeDeclaration(raw,root,compiledDir){
   const animated=raw?.kind==='compiled-framework-profile-upgrade-v4'||worldAuto;
   const periodic=raw?.kind==='compiled-framework-profile-upgrade-v3'||animated&&Object.hasOwn(raw?.markers??{},'worldMap');
   const logical=raw?.kind==='compiled-framework-profile-upgrade-v2'||(periodic||animated)&&Object.hasOwn(raw,'logicalFieldEffects');
-  dataFields(raw,['kind','compilerDigest','markers',...(logical?['logicalFieldEffects']:[])],'framework profile upgrade declaration');
-  assert.ok(['compiled-framework-profile-upgrade-v1','compiled-framework-profile-upgrade-v2','compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9'].includes(raw.kind),'Unknown framework profile upgrade version');
+  dataFields(raw,['kind','compilerDigest','markers',...(logical?['logicalFieldEffects']:[]),...(skybox?['skyboxCatalog']:[])],'framework profile upgrade declaration');
+  assert.ok(['compiled-framework-profile-upgrade-v1','compiled-framework-profile-upgrade-v2','compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10'].includes(raw.kind),'Unknown framework profile upgrade version');
   assert.ok(typeof raw.compilerDigest==='string'&&digest.test(raw.compilerDigest),'Invalid framework profile upgrade compiler digest');
-  const hosts={...frameworkHostMarkers,...(screen?{screenPresentation:{value:"web-field-screen-presentation-2d-v1",module:"field-screen-presentation",exportName:"WEB_FIELD_SCREEN_PRESENTATION",provider:"fieldScreenPresentationBinding"}}:{}),...(mob?{mobColorFilter:{value:'web-flat-mob-color-filter-v1',module:'field-mob-controls',exportName:'WEB_FLAT_MOB_COLOR_FILTER',provider:'fieldMobColorBinding'}}:{}),...(worldMove?{worldAutoMove:{value:'web-flat-world-auto-move-v1',module:'field-world-auto-move',exportName:'WEB_FLAT_WORLD_AUTO_MOVE',provider:'worldAutoMoveBinding'}}:{}),...(birdActors?{birdViewActors:{value:'web-flat-bird-view-actors-v1',module:'field-bird-view-actors',exportName:'WEB_FLAT_BIRD_VIEW_ACTORS',provider:'fieldBirdViewActorBinding'}}:{}),...(worldAuto?{worldAutoTasks:{value:'web-flat-world-auto-tasks-v1',module:'field-world-auto-tasks',exportName:'WEB_FLAT_WORLD_AUTO_TASKS',provider:'worldAutoBinding'}}:{}),...(animated?{mapAnimatedEntities:{value:'web-field-animated-map-entities-v1',module:'field-map-animation',exportName:'WEB_FIELD_MAP_ANIMATION',provider:'prepareFieldMapAnimations'}}:{}),...(logical?{logicalFieldEffects:logicalMarker}:{}),...(periodic?periodicMarkers:{})};
+  const hosts={...frameworkHostMarkers,...(skybox?{skyboxPresentation:{value:"web-flat-skybox-panorama-v1",module:"field-skybox",exportName:"WEB_FLAT_SKYBOX",provider:"fieldSkyboxBinding"}}:{}),...(screen?{screenPresentation:{value:"web-field-screen-presentation-2d-v1",module:"field-screen-presentation",exportName:"WEB_FIELD_SCREEN_PRESENTATION",provider:"fieldScreenPresentationBinding"}}:{}),...(mob?{mobColorFilter:{value:'web-flat-mob-color-filter-v1',module:'field-mob-controls',exportName:'WEB_FLAT_MOB_COLOR_FILTER',provider:'fieldMobColorBinding'}}:{}),...(worldMove?{worldAutoMove:{value:'web-flat-world-auto-move-v1',module:'field-world-auto-move',exportName:'WEB_FLAT_WORLD_AUTO_MOVE',provider:'worldAutoMoveBinding'}}:{}),...(birdActors?{birdViewActors:{value:'web-flat-bird-view-actors-v1',module:'field-bird-view-actors',exportName:'WEB_FLAT_BIRD_VIEW_ACTORS',provider:'fieldBirdViewActorBinding'}}:{}),...(worldAuto?{worldAutoTasks:{value:'web-flat-world-auto-tasks-v1',module:'field-world-auto-tasks',exportName:'WEB_FLAT_WORLD_AUTO_TASKS',provider:'worldAutoBinding'}}:{}),...(animated?{mapAnimatedEntities:{value:'web-field-animated-map-entities-v1',module:'field-map-animation',exportName:'WEB_FIELD_MAP_ANIMATION',provider:'prepareFieldMapAnimations'}}:{}),...(logical?{logicalFieldEffects:logicalMarker}:{}),...(periodic?periodicMarkers:{})};
   dataFields(raw.markers,Object.keys(hosts),'framework profile upgrade markers');
   const result=structuredClone(raw),providers=[];
   for(const [marker,definition] of Object.entries(hosts)){
@@ -179,6 +180,13 @@ async function frameworkUpgradeDeclaration(raw,root,compiledDir){
     assert.equal(policy.catalogHash,hash({sourceSetHash:policy.sourceSetHash,parentSourceSetHash:policy.parentSourceSetHash,
       media:catalog.media,proofs:policy.proofs}),'Framework profile upgrade logical catalog identity mismatch');
   }
+  if(skybox){
+    const [{loadFieldSkyboxCatalog,verifyCompiledSkyboxCatalog},{canonical}]=await Promise.all([
+      import(pathToFileURL(resolve(root,compiledDir,'src/compiler/field-skybox.js')).href),
+      import(pathToFileURL(resolve(root,compiledDir,'src/core/canonical.js')).href)]);
+    verifyCompiledSkyboxCatalog(result.skyboxCatalog);
+    assert.equal(canonical(result.skyboxCatalog),canonical(await loadFieldSkyboxCatalog(root)),"Framework Skybox upgrade differs from exact verified source catalog");
+  }
   return {...result,providers};
 }
 
@@ -187,23 +195,33 @@ async function frameworkUpgradeDeclaration(raw,root,compiledDir){
  * or changed, and no other profile field is normalized by this declaration. */
 function comparableFrameworkUpgrade(before,after,ref,declaration,canonical){
   if(!declaration)return {after,upgrade:null};
-  const previous=before.developmentProfile,next=after.developmentProfile;
-  if(['compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9'].includes(declaration.kind)&&
+  const previous=before.developmentProfile,next=after.developmentProfile,comparison=structuredClone(after);
+  let skyboxPresentation=null;
+  if(declaration.kind==='compiled-framework-profile-upgrade-v10'){
+    const catalog=declaration.skyboxCatalog;
+    assert.equal(after.sourceSetHash,catalog.sourceSetHash,'Skybox upgrade source domain mismatch');
+    assert.equal(after.parentSourceSetHash,catalog.parentSourceSetHash,'Skybox upgrade parent domain mismatch');
+    if(after.kind==='world-map-development'&&after.map){
+      const expected=before.entryView?.isWorld?{kind:'source-map-skybox-v1',mapId:before.mapId,mapName:before.name,isWorld:true,
+        mapSource:structuredClone(before.entryView.sources.map),areaSource:structuredClone(before.entryView.sources.area),catalog:structuredClone(catalog)}:undefined;
+      assert.equal(canonical(after.map.skybox??null),canonical(expected??null),'Skybox map provider must equal actual source applicability and complete catalog');
+      if(before.map?.skybox!==undefined)assert.equal(canonical(before.map.skybox),canonical(expected),'Skybox upgrade cannot replace a prior provider');
+      else if(expected){delete comparison.map.skybox;skyboxPresentation={catalogHash:catalog.contentHash,mapId:after.mapId,display:'Web2D top-third panorama behind all map layers/actors',clock:'Field-only; paused during battle',nativeParity:false};}
+    }else if(after.kind==='field-development')assert.equal(after.map?.skybox,undefined,'Legacy field map cannot acquire a world Skybox provider');
+  }
+  if(['compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10'].includes(declaration.kind)&&
       ['world-map-development','field-development'].includes(after.kind)) {
-    // A marker proof is not a presentation/media/geometry migration proof.
-    // In particular, same physical SourceRefs do not establish unchanged
-    // topology, tile arrays, textures or a newly added alternative.
     for(const key of ['map','frameworkPresentation','actorView','entryView','partyEntry','cameraHost'])
-      assert.equal(canonical(before[key]??null),canonical(after[key]??null),
+      assert.equal(canonical(before[key]??null),canonical(comparison[key]??null),
         'Framework profile upgrade periodic geometry or presentation changed: '+key);
   }
   const keys=Object.keys(declaration.markers);
   const changes=keys.filter(key=>Object.hasOwn(previous??{},key)!==Object.hasOwn(next??{},key)||
     canonical(previous?.[key]??null)!==canonical(next?.[key]??null));
-  if(!changes.length)return {after,upgrade:null};
+  if(!changes.length&&!skyboxPresentation)return {after,upgrade:null};
   assert.ok(previous?.kind==='framework-development-v1'&&next?.kind==='framework-development-v1',
     'Framework profile upgrade requires an existing framework profile');
-  const comparison=structuredClone(after),addedMarkers=[];
+  const addedMarkers=[];
   for(const key of changes){
     assert.ok(!Object.hasOwn(previous,key)&&Object.hasOwn(next,key),
       'Framework profile upgrade cannot remove or change marker: '+key);
@@ -232,7 +250,7 @@ function comparableFrameworkUpgrade(before,after,ref,declaration,canonical){
     pointer:ref.pointer+'/developmentProfile',role:ref.role,url:ref.url,
     oldHash:before.contentHash,newHash:after.contentHash,addedMarkers,providers:structuredClone(declaration.providers),
     profileBefore:structuredClone(previous),profileAfter:structuredClone(next),
-    logicalFieldEffects,grantsSourceAdmission:false,saveMigration:false}};
+    logicalFieldEffects,skyboxPresentation,grantsSourceAdmission:false,saveMigration:false}};
 }
 
 function identities(value,canonical,sourceCatalogProfile){

@@ -42,6 +42,8 @@ const server = http.createServer(async (req, res) => {
     } else if (url.pathname.startsWith("/framework/")) {
       base = resolve(root, "build/framework");
       relative = decodeURIComponent(url.pathname.slice("/framework/".length));
+    } else if (url.pathname.startsWith("/field-skybox-media/")) {
+      base=resolve(root,"build/field-skybox-media");relative=decodeURIComponent(url.pathname.slice("/field-skybox-media/".length));
     } else if (url.pathname.startsWith("/field-background-media/")) {
       base = resolve(root, "build/field-background-media");
       relative = decodeURIComponent(url.pathname.slice("/field-background-media/".length));

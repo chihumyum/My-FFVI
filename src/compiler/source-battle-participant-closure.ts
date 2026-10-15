@@ -1,3 +1,4 @@
+import type { BattleSourceFormatImportResolver } from "./battle-source-format-import.js";
 import type {BattleRow} from './battle.js';
 import {tableInteger} from './table.js';
 import {compileBattleEvent} from './battle-event.js';
@@ -60,13 +61,13 @@ function sourceEnemy(reader:Reader,sources:Sources,id:number){
   return {enemy,monster,asset,aiRow};
 }
 export function compileSourceBattleParticipantClosure(reader:Reader,input:{policy:SourceBattleParticipantPolicy;encounters:readonly SourceBattleEncounter[];
-  sources:Sources;eventMessages?:BattleEventMessageInput;branchExecution?:WebBattleBranchExecution}){
+  sources:Sources;eventMessages?:BattleEventMessageInput;branchExecution?:WebBattleBranchExecution;sourceFormatImport?:BattleSourceFormatImportResolver}){
   const policy=parseSourceBattleParticipantPolicy(input.policy),reserveEnemies:NonNullable<BattleEncounterRuntimeInput['reserveEnemies']>[number][]=[],
     enemyParties:NonNullable<BattleEncounterRuntimeInput['enemyParties']>[number][]=[],participants:ParticipantPolicy[]=[],diagnostics:BattleEncounterDiagnostic[]=[],bindings:Record<string,unknown>[]=[];
   const cache=new Map<number,ReturnType<typeof sourceEnemy>>();
   for(const root of input.encounters){
     if(!root.script)continue;
-    const program=compileBattleEvent(root.script.data,root.script.source,input.eventMessages,reader,input.branchExecution),sites:Site[]=[];
+    const program=compileBattleEvent(root.script.data,root.script.source,input.eventMessages,reader,input.branchExecution,input.sourceFormatImport?.(root.script)),sites:Site[]=[];
     for(const[pc,{op}]of program.instructions.entries())if(op.kind==='add-enemy'||op.kind==='change-enemy-party')
       sites.push({pc,op,raw:structuredClone((root.script.data as {Mnemonics:unknown[]}).Mnemonics[pc])});
     if(!sites.length)continue;

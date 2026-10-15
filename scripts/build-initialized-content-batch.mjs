@@ -20,7 +20,7 @@ function fields(raw, keys) {
 async function modules(root, dist) {
   const load = name => import(pathToFileURL(resolve(root, dist, "src", name + ".js")).href);
   return Object.assign({}, ...await Promise.all([
-    "compiler/framework-field-presentation", "compiler/framework-new-game", "compiler/content-batch",
+    "compiler/field-skybox","core/field-skybox","compiler/framework-field-presentation", "compiler/framework-new-game", "compiler/content-batch",
     "compiler/corpus", "compiler/map-package", "compiler/field-native-composition", "compiler/content",
     "core/content-integrity", "core/game-content", "core/game-content-refs", "core/source-catalog", "core/development-profile",
     "compiler/source-walk-policy",
@@ -31,7 +31,8 @@ async function modules(root, dist) {
 
 /** One explicit producer profile for every initialized entry/world/map body.
  * Runtime authorization is separate; this creates no source readiness grant. */
-export function initializedContentBatchProfile(sourceContentHash,{presentation,npcActivity,worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation}={}){
+export function initializedContentBatchProfile(sourceContentHash,{presentation,npcActivity,worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation}={}){
+  if(skyboxPresentation!==undefined&&skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown initialized Skybox presentation policy");
   if(screenPresentation!==undefined&&screenPresentation!=="web-field-screen-presentation-2d-v1")throw Error("Unknown initialized screen presentation policy");
   assert.match(sourceContentHash,digest);assert.equal(presentation,'framework-ordinary-field-flat-v1');
   if(worldAutoTasks!==undefined&&worldAutoTasks!=='web-flat-world-auto-tasks-v1')throw new Error('Unknown initialized world auto-task policy');
@@ -41,13 +42,14 @@ export function initializedContentBatchProfile(sourceContentHash,{presentation,n
   if(npcActivity!==undefined&&npcActivity!=='framework-npc-area-v1')throw new Error('Unknown initialized NPC activity policy');
   return {kind:'framework-development-v1',policy:'omit-anonymous-environment-particles-v1',sourceContentHash,omissions:[],
     storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1',fieldPresentation:presentation,
-    ...(npcActivity?{npcActivity}:{}),...(worldAutoTasks?{worldAutoTasks}:{}),...(birdViewActors?{birdViewActors}:{}),...(worldAutoMove?{worldAutoMove}:{}),...(mobColorFilter?{mobColorFilter}:{}),...(screenPresentation?{screenPresentation}:{})};
+    ...(npcActivity?{npcActivity}:{}),...(worldAutoTasks?{worldAutoTasks}:{}),...(birdViewActors?{birdViewActors}:{}),...(worldAutoMove?{worldAutoMove}:{}),...(mobColorFilter?{mobColorFilter}:{}),...(screenPresentation?{screenPresentation}:{}),...(skyboxPresentation?{skyboxPresentation}:{})};
 }
 
 /** All source references are verified before derivation. The manifest supplies
  * player inputs, not replacement scripts, flags, actors, rewards or assets. */
 export async function compileInitializedContentBatch(root, raw, recipeSha256,
-  { dist = "dist", readJson, sourceBattleDirectory, worldAutoTasks, birdViewActors, worldAutoMove, mobColorFilter,screenPresentation } = {}) {
+  { dist = "dist", readJson, sourceBattleDirectory, worldAutoTasks, birdViewActors, worldAutoMove, mobColorFilter,screenPresentation,skyboxPresentation } = {}) {
+  if(skyboxPresentation!==undefined&&skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown initialized Skybox presentation policy");
   if(screenPresentation!==undefined&&screenPresentation!=="web-field-screen-presentation-2d-v1")throw Error("Unknown initialized screen presentation policy");
   if(worldAutoTasks!==undefined&&worldAutoTasks!=='web-flat-world-auto-tasks-v1')throw new Error('Unknown initialized world auto-task policy');
   if(mobColorFilter!==undefined&&mobColorFilter!=='web-flat-mob-color-filter-v1')throw new Error('Unknown initialized Mob color-filter policy');
@@ -138,16 +140,18 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
   const corpus = await api.loadCorpus(root);
   assert.equal(corpus.sourceSetHash, sourceWorld.sourceSetHash);
   assert.equal(corpus.manifest.parentSourceSetHash, sourceWorld.parentSourceSetHash);
+  const skyboxCatalog=skyboxPresentation?await api.loadFieldSkyboxCatalog(root,corpus):null;
   const sources = corpus.manifest.sources.map(({ file, sha256 }) => ({ file, sha256 }));
   const bindings = api.bindMapPackages(corpus.assets, corpus.tables), byId = new Map(corpus.assets.map(asset => [asset.id, asset]));
   const renderHost = await api.loadFieldCompositionRenderHost(root, sources);
   const seal = value => { const { contentHash: _, ...body } = value; return { ...body, contentHash: api.hash(body) }; };
   const profile = sourceContentHash => initializedContentBatchProfile(sourceContentHash,{presentation:recipe.presentation,
-    ...(npcVariant?{npcActivity:npcTemplate.policy}:{}),...(worldAutoTasks?{worldAutoTasks}:{}),...(birdViewActors?{birdViewActors}:{}),...(worldAutoMove?{worldAutoMove}:{}),...(mobColorFilter?{mobColorFilter}:{}),...(screenPresentation?{screenPresentation}:{})});
+    ...(npcVariant?{npcActivity:npcTemplate.policy}:{}),...(worldAutoTasks?{worldAutoTasks}:{}),...(birdViewActors?{birdViewActors}:{}),...(worldAutoMove?{worldAutoMove}:{}),...(mobColorFilter?{mobColorFilter}:{}),...(screenPresentation?{screenPresentation}:{}),...(skyboxPresentation?{skyboxPresentation}:{})});
   const prefix = "/content-packages/" + recipe.id, presentations = [], walkingResults=[],npcResults=[],serviceResults=[];
   const maps = sourceMaps.map(sourceMap => {
     const map = structuredClone(sourceMap);
     map.developmentProfile = profile(sourceMap.contentHash);
+    if(skyboxCatalog&&map.map){const definition=api.fieldSkyboxDefinition(skyboxCatalog,sourceMap);if(definition)map.map.skybox=definition;}
     if(serviceMaps.has(map.mapId)){
       map.developmentProfile.relayInteraction=recipe.fieldServices.relayInteraction;
       map.developmentProfile.passiveEffects=recipe.fieldServices.passiveEffects;

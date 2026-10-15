@@ -1,3 +1,4 @@
+import { compileSourceScriptAnimations } from "./source-script-animations.js";
 import { compileReservedScriptBindings } from "./field-reserved-script.js";
 import { compileFieldNpcRoutes } from './field-npc-route.js';
 import { bindSourceFormatFlags } from "./source-system-flags.js";
@@ -189,6 +190,7 @@ export function compileWorldCharacter(
 export async function compileWorld(root: string) {
   const corpus = await loadCorpus(root),
     files = await readSnapshot(root + "/build/world-media");
+  const scriptAnimations = compileSourceScriptAnimations({...corpus,manifest:{parentSourceSetHash:text(corpus.manifest.parentSourceSetHash),sources:corpus.manifest.sources}});
   const systemSource = await loadSystemSource(root, text(corpus.manifest.parentSourceSetHash));
   const backgroundMedia = await loadFieldBackgroundMedia(root, corpus.sourceSetHash);
   const systemMessages = await loadSystemMessages(root, text(corpus.manifest.parentSourceSetHash),
@@ -448,7 +450,8 @@ export async function compileWorld(root: string) {
       try {
         const data = record(asset.data);
         scriptLocals[name] = decodeScriptLocals(data);
-        try { scriptTransitionMetadata[name] = compileEventScriptTransitionMetadata(data); }
+        try { scriptTransitionMetadata[name] = compileEventScriptTransitionMetadata(data,
+          scriptAnimations.byProgram[asset.id] ? {catalog:scriptAnimations.catalog,assetId:scriptAnimations.byProgram[asset.id]!} : undefined); }
         catch { scriptTransitionMetadata[name] = null; }
         const importBinding = bindSourceFormatFlags({ sourceSetHash: corpus.sourceSetHash, parentSourceSetHash: text(corpus.manifest.parentSourceSetHash), sources: corpus.manifest.sources }, asset);
         scriptSystemFlags[name] = decodeConditionVisualFlag(data, importBinding);
@@ -555,6 +558,7 @@ export async function compileWorld(root: string) {
   }
   const catalog: Omit<WorldCatalog, "contentHash"> = {
     nativeAnimationKeys,
+    ...(Object.keys(scriptAnimations.catalog.assets).length ? {sourceScriptAnimations:scriptAnimations.catalog} : {}),
     formatVersion: 1,
     kind: "world-development",
     sourceSetHash: corpus.sourceSetHash,

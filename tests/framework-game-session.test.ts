@@ -5,10 +5,14 @@ import { GameFlow } from "../src/core/game-flow.js";
 import { GameCommands } from "../src/core/game-commands.js";
 import { GameEntryLoader } from "../src/core/game-entry-loader.js";
 import { createSourceNativeState } from "../src/core/source-native-state.js";
-import { encodeSavedGame, decodeSavedGame } from "../src/core/saved-game.js";
+import { encodeSavedGame, decodeSavedGame, CheckpointStorage } from "../src/core/saved-game.js";
+import { FieldFadeState, DEVELOPMENT_TRANSPARENT_FADE, fieldFadeOverlay } from "../src/core/field-fade.js";
+import { WEB_BATTLE_GLOBAL_FADE } from "../src/core/battle-global-fade.js";
+import { WEB_BATTLE_EVENT_CONTROLS } from "../src/core/battle-controls.js";
 import { frameworkNewGameFixture } from "./fixtures/framework-new-game.js";
 import { sourceNewGameFixture } from "./fixtures/source-new-game.js";
 import { sealBatchContent } from "./fixtures/content-batch.js";
+import { authoredMessageSource } from "./fixtures/battle-event-message.js";
 
 const host = { visible: true, mediaReady: true, overlayOpen: false };
 async function initialized() {
@@ -113,4 +117,60 @@ test("late initialized preparation cannot replace a different published owner", 
   const result = await pending;
   assert.equal(result.status, "cancelled"); assert.equal(flow.currentSession, replacement);
   assert.deepEqual(discarded, [73]); assert.deepEqual(replacement.checkpoint(), before);
+});
+
+test("an authored framework fade is captured before digest awaits and remains separate from the caller", async () => {
+  const f = await frameworkNewGameFixture(), fade = new FieldFadeState(DEVELOPMENT_TRANSPARENT_FADE), before = fade.snapshot();
+  const pending = GameSession.prepareFrameworkNewGame(f.content, f.world, f.map, f.battle, {}, 17, fade);
+  fade.start({ kind: "field-fade", direction: "out", seconds: 0, color: { r: 1, g: 0, b: 0, a: 1 } });
+  const game = await pending;
+  assert.notEqual(game.field.fader, fade);
+  assert.deepEqual(game.field.fader.snapshot(), before);
+  assert.equal(fade.projection!.imageColor.r, 1);
+  const old = await GameSession.prepareFrameworkNewGame(f.content, f.world, f.map, f.battle, {}, 17);
+  assert.equal(old.field.fader.known, false, "Existing callers never receive an inferred transparent screen");
+  const unknown = await GameSession.prepareFrameworkNewGame(f.content, f.world, f.map, f.battle, {}, 17, new FieldFadeState(null));
+  assert.equal(unknown.field.fader.known, false);
+  const wrong = sealBatchContent({ ...f.content, initializerHash: "0".repeat(64) }), changed = fade.snapshot();
+  await assert.rejects(GameSession.prepareFrameworkNewGame(wrong, f.world, f.map, f.battle, {}, 17, fade), /Content payload changed/);
+  assert.deepEqual(fade.snapshot(), changed, "A failed private preparation cannot consume the external presentation owner");
+  await assert.rejects(GameSession.prepareFrameworkNewGame(f.content, f.world, f.map, f.battle, {}, 17,
+    null as unknown as FieldFadeState), /actual Field fade owner/);
+});
+
+test("the initialized Field and Battle use the captured fade through return and Storage; a save cannot grant startup authority", async () => {
+  const f = await frameworkNewGameFixture();
+  f.battle.encounters[f.encounterId]!.lifecycle = { kind: "battle-lifecycle-v1", mode: "script", scriptId: 9000,
+    program: { kind: "battle-event-v1", source: authoredMessageSource, entry: 0, end: 3, localNames: [], initialLocals: [], blockers: [],
+      instructions: [
+        { mnemonic: "FadeOut", op: { kind: "global-fade", direction: "out", seconds: Math.fround(-.05), color: { r: 0, g: 0, b: 0, a: 1 } } },
+        { mnemonic: "BattleForceExit", op: { kind: "force-return" } }, { mnemonic: "Exit", op: { kind: "exit" } },
+      ] } };
+  const battle = sealBatchContent(f.battle), content = sealBatchContent({ ...f.content, battleCatalogHash: battle.contentHash }),
+    runtime = { battleHandoff: "prepared" as const, battleGlobalFade: WEB_BATTLE_GLOBAL_FADE, battleEventControls: WEB_BATTLE_EVENT_CONTROLS },
+    external = new FieldFadeState(DEVELOPMENT_TRANSPARENT_FADE),
+    game = await GameSession.prepareFrameworkNewGame(content, f.world, f.map, battle, runtime, 17, external);
+  game.advance(10); const owner = game.field.fader;
+  assert(game.field.startEvent("stone-battle")); game.advance(10); assert(game.prepareBattleStart()!.commit());
+  const actualBattle = game.battle!; game.advance(10);
+  assert.equal(actualBattle.phase, "forced"); assert(owner.active);
+  assert.deepEqual(actualBattle.globalFadeOverlay, fieldFadeOverlay(owner.projection));
+  assert(game.prepareBattleReturn()!.commit()); assert.equal(game.field.fader, owner);
+  assert.throws(() => actualBattle.advance(10), /Retired/);
+  for (let i = 0; i < 100 && !game.checkpointReady; i++) game.advance(10);
+  assert(game.checkpointReady); assert.equal(owner.projection!.rendererColor.a, 1);
+  assert.deepEqual(external.projection, DEVELOPMENT_TRANSPARENT_FADE);
+  const entries = new Map<string, string>(), storage = new CheckpointStorage({ getItem: k => entries.get(k) ?? null,
+    setItem: (k, v) => { entries.set(k, v); } });
+  await storage.save(game.checkpoint(), 0); const saved = (await storage.load())!.checkpoint,
+    world = { catalog: f.world, map: f.map, initialized: { content, initialMap: f.map } },
+    restored = GameSession.restore(saved, undefined, battle, world, runtime);
+  assert.deepEqual(restored.checkpoint(), saved); assert.deepEqual(restored.field.fader.snapshot(), owner.snapshot());
+  const injected = structuredClone(saved); Reflect.set(injected, "initialFade", external.snapshot());
+  assert.throws(() => GameSession.restore(injected, undefined, battle, world, runtime), /checkpoint fields/);
+
+  const unqualified = await GameSession.prepareFrameworkNewGame(content, f.world, f.map, battle, runtime, 17);
+  unqualified.advance(10); assert(unqualified.field.startEvent("stone-battle")); unqualified.advance(10);
+  assert.throws(() => unqualified.prepareBattleStart()!.commit(), /actual known shared Field fade/);
+  assert.equal(unqualified.field.fader.known, false);
 });

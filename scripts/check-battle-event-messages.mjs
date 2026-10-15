@@ -12,15 +12,17 @@ import {loadBattleEventMessageSourceInputs} from './battle-event-message-source-
 import {observerErrorDetails,observedBattleEffects,observationDraftJSON} from './battle-observer-results.mjs';
 import {chooseBattleObserverInput,BATTLE_OBSERVER_INPUT_POLICY} from './battle-observer-inputs.mjs';
 const root=resolve(import.meta.dirname,'..'),args=process.argv.slice(2),o={compiled:'dist',report:'build/reports/battle-event-messages/check.json'},seen=new Set();
-while(args.length){const f=args.shift();assert(['--compiled','--report','--candidate-dir','--smoke','--family'].includes(f)&&args[0]&&!seen.has(f));seen.add(f);o[f.slice(2)]=args.shift();}
+while(args.length){const f=args.shift();assert(['--compiled','--report','--candidate-dir','--smoke','--family','--caller-fade'].includes(f)&&args[0]&&!seen.has(f));seen.add(f);o[f.slice(2)]=args.shift();}
 assert(o['candidate-dir']||['one','all'].includes(o.smoke),'Use --candidate-dir <same-runtime private candidate>, or --smoke one|all');
+assert(o['caller-fade']===undefined||o['caller-fade']==='transparent-web-v1','Unknown authored caller fade');
+const callerFade=o['caller-fade']??null;
 const family=o.family??'messages';assert(['messages','effects','system-messages','branch-execution','all'].includes(family));
 const compiled=resolve(root,o.compiled),out=resolve(root,o.report),sha=b=>createHash('sha256').update(b).digest('hex');assert(out.startsWith(resolve(root,'build')+'/'));await mkdir(dirname(out),{recursive:true});
 const {readSourceBattleDirectoryPolicy:readObserverPolicy}=await import('./source-battle-directory.mjs');
 const observerDeclaration=await readObserverPolicy({root,compiledDir:resolve(root,o.compiled),policy:JSON.parse(await readFile(resolve(root,'content-batches/source-battle-directory.policy.json')))});
 const load=n=>import(pathToFileURL(resolve(compiled,'src',n+'.js')).href),api=Object.assign({},...await Promise.all([
  'compiler/content','compiler/framework-new-game','compiler/content-dependencies','core/game-session','core/game-flow','core/saved-game','core/source-message-sequence',
- 'core/field-condition-activity','core/field-camera-shake','core/field-logical-effects','core/content-integrity'].map(load))),runtime=await runtimeDigest(root,compiled),input=await loadBattleEventMessageSourceInputs(root,compiled,{branchExecution:observerDeclaration.framework.branchExecution});
+ 'core/field-fade','core/field-condition-activity','core/field-camera-shake','core/field-logical-effects','core/content-integrity'].map(load))),runtime=await runtimeDigest(root,compiled),input=await loadBattleEventMessageSourceInputs(root,compiled,{branchExecution:observerDeclaration.framework.branchExecution,sourceFormatImport:true});
 const seal=v=>{const{contentHash,...body}=v;return {...body,contentHash:api.hash(body)};},ready={visible:true,mediaReady:true,overlayOpen:false},
  ports=()=>({...sourceWebReplayRuntimePorts(),battleHandoff:'prepared',sourceMessageSequence:api.createWebFieldMessageSequencePort(),
  sourceEncounterPolicy:'web-source-encounter-uniform-slots-v1',scriptRandom:'web-source-script-random-field-stream-v1',assignedNpcRoutes:'web-assigned-npc-route-grid-v1',
@@ -51,14 +53,14 @@ if(o['candidate-dir']){
   const p=input.programs.find(p=>p.source.assetPath===descriptor.script?.source.assetPath);
   assert(p&&descriptor.script,'Original source party has no exact namespace/body binding');
   assert.equal(api.canonical(descriptor.script.data),api.canonical(p.data),'Original source descriptor/body differs');
-  assert.equal(api.canonical(input.api.compileBattleEvent(descriptor.script.data,descriptor.script.source,input.input,input.snapshot.reader,declaration.framework.branchExecution)),api.canonical(p.compiled),'Observer source program differs from production descriptor compilation');
+  assert.equal(api.canonical(input.api.compileBattleEvent(descriptor.script.data,descriptor.script.source,input.input,input.snapshot.reader,declaration.framework.branchExecution,input.sourceFormatImport?.(descriptor.script))),api.canonical(p.compiled),'Observer source program differs from production descriptor compilation');
   return {partyId:descriptor.partyId,program:p.id,rawHash:p.rawHash,source:descriptor.script.source};
  });
  const participantClosure=declaration.framework.sourceParticipants?compileSourceBattleParticipantClosure(input.snapshot.reader,{
   policy:declaration.framework.sourceParticipants,encounters:input.dependencies.encounters,sources:input.encounterSources,
-  eventMessages:shared.runtimeInput.eventMessages,branchExecution:declaration.framework.branchExecution}):null;
+  eventMessages:shared.runtimeInput.eventMessages,branchExecution:declaration.framework.branchExecution,...(input.sourceFormatImport?{sourceFormatImport:input.sourceFormatImport}:{})}):null;
  const requestedPartyIds=input.dependencies.requestedPartyIds,
-  runtime=compileBattleEncounterRuntime(shared.reader,{...shared.runtimeInput,requestedPartyIds,encounters:input.dependencies.encounters,sourceDiagnostics:input.dependencies.diagnostics,
+  runtime=compileBattleEncounterRuntime(shared.reader,{...shared.runtimeInput,...(input.sourceFormatImport?{sourceFormatImport:input.sourceFormatImport}:{}),requestedPartyIds,encounters:input.dependencies.encounters,sourceDiagnostics:input.dependencies.diagnostics,
    ...(declaration.framework.forcedSavePolicy===undefined?{}:{forcedSavePolicy:declaration.framework.forcedSavePolicy}),
    ...(declaration.framework.spawnConditionPolicy===undefined?{}:{spawnConditionPolicy:declaration.framework.spawnConditionPolicy}),
    ...(participantClosure?{reserveEnemies:participantClosure.reserveEnemies,enemyParties:participantClosure.enemyParties,
@@ -83,7 +85,7 @@ if(o['candidate-dir']){
 const journalProjection=game=>({field:game.field.stop,window:game.field.sourceMessage.projection,revision:game.field.sourceMessage.mutationRevision,
  mask:game.field.updateAttributeMask,effectRequests:game.battle?.effectExecution??[],effects:game.battle?.effectPresentation??[],branchExecution:game.battle?.eventBranchExecution??null,event:game.battle?.eventExecution??null,messages:game.battle?.messageExecution??[],battleTime:game.battle?.time??null,phase:game.battle?.phase??null});
 async function create(program,partyOverride){
- if(fixture){const f=fixture.battleMessageSessionFixture(program);if(program.kind==='battle-event-v2')f.battle.encounters[1000].lifecycle={kind:'battle-lifecycle-v2',mode:'script',scriptId:9000,program,branchExecution:observerDeclaration.framework.branchExecution};const game=new api.GameSession(f.field,f.battle,314,{...f.runtime,...sourceWebReplayRuntimePorts()});return {game,field:f.field,battle:f.battle,restore:saved=>api.GameSession.restore(saved,f.field,f.battle,undefined,{...f.runtime,...sourceWebReplayRuntimePorts()})};}
+ if(fixture){const f=fixture.battleMessageSessionFixture(program);if(callerFade)f.field.entry.fade=structuredClone(api.DEVELOPMENT_TRANSPARENT_FADE);if(program.kind==='battle-event-v2')f.battle.encounters[1000].lifecycle={kind:'battle-lifecycle-v2',mode:'script',scriptId:9000,program,branchExecution:observerDeclaration.framework.branchExecution};const game=new api.GameSession(f.field,f.battle,314,{...f.runtime,...sourceWebReplayRuntimePorts()});return {game,field:f.field,battle:f.battle,restore:saved=>api.GameSession.restore(saved,f.field,f.battle,undefined,{...f.runtime,...sourceWebReplayRuntimePorts()})};}
  const map=structuredClone(systems.map),world=structuredClone(systems.catalog),battle=structuredClone(partyOverride?familyCatalog:systems.battle),partyId=partyOverride??Number(Object.keys(battle.encounters)[0]);
  if(partyOverride){
   const encounter=battle.encounters[partyId],assessment=familyDirectory.report.entries.find(row=>row.partyId===partyId),diagnostics=familyDirectory.diagnostics.filter(row=>row.partyId===partyId);
@@ -119,7 +121,8 @@ async function create(program,partyOverride){
  }
  const sealedMap=seal(map);world.maps[map.mapId].contentHash=sealedMap.contentHash;const sealedWorld=seal(world),sealedBattle=seal(battle),
   content=await api.compileFrameworkNewGame({sourceEntry,sourceBattle,sourceMap:await candidate.read(strict.maps[sourceEntry.entry.mapId].url),world:sealedWorld,map:sealedMap,battle:sealedBattle,entrance:sealedMap.partyEntry.pointIns[0].id}),
-  game=await api.GameSession.prepareFrameworkNewGame(content,sealedWorld,sealedMap,sealedBattle,ports());
+  game=await api.GameSession.prepareFrameworkNewGame(content,sealedWorld,sealedMap,sealedBattle,ports(),20261010,
+    callerFade?new api.FieldFadeState(api.DEVELOPMENT_TRANSPARENT_FADE):undefined);
  return {game,field:null,battle:sealedBattle,restore:saved=>api.GameSession.restore(saved,undefined,sealedBattle,{catalog:sealedWorld,map:sealedMap,initialized:{content,initialMap:sealedMap}},ports()),script};
 }
 const authored=(kind,rest={})=>({mnemonic:'authored:'+kind,op:{kind,...rest}}),close=()=>({kind:'message',command:{kind:'close'},presentation:null});
@@ -219,7 +222,7 @@ const report={kind:family==='all'?'source-battle-common-family-execution-v1':fam
   affectedProgramAttempts:programs.filter(r=>r.affected).length,affectedProgramFinished:programs.filter(r=>r.affected&&r.run.result==='whole-program-finished-and-restored').length,originalPartyAttempts:originalParties.length,originalPartyDirectoryRequests:familyDirectory?.requestedPartyIds.length??0,originalPartyDescriptorDiagnostics:input.dependencies.diagnostics.length},
  parameters,programs,originalParties,blockerGroups:[...blockerGroups.values()],sourceCampaignComplete:false,nativeParity:false,browserVerified:false,
  familyCounts:family==='branch-execution'?{programs:input.programs.length,rawInstructions:input.inventory.counts.instructions,deferredSites:input.programs.reduce((n,p)=>n+(p.compiled.branchExecution?.deferred.length??0),0)}:family==='system-messages'?{systemMessageSites:systemSites.length,physicalPrograms:systemPrograms.size,completeRawInstructions:input.programs.filter(p=>systemPrograms.has(p.id)).reduce((n,p)=>n+p.data.Mnemonics.length,0)}:family==='effects'?{playSites:effectSites.filter(s=>s.raw.mnemonic==='PlayBattleEffect').length,syncSites:effectSites.filter(s=>s.raw.mnemonic==='SyncBattleEffect').length,physicalPrograms:input.programs.filter(p=>p.data.Mnemonics.some(i=>['PlayBattleEffect','SyncBattleEffect'].includes(i.mnemonic))).length,completeRawInstructions:input.programs.filter(p=>p.data.Mnemonics.some(i=>['PlayBattleEffect','SyncBattleEffect'].includes(i.mnemonic))).reduce((n,p)=>n+p.data.Mnemonics.length,0)}:null,
- controlledHost:{input:'Explicit recorded confirmation and current-menu qualified battle commands',battleInputPolicy:BATTLE_OBSERVER_INPUT_POLICY,battleUIInputPolicy:'current-app-message-and-raycast-v1',caller:'Authored ordinary Session/placement; original battle body and all unknowns intact',clock:'10ms fixed Web manager-before-VM; no message-implied pause',policy:sourceWebReplayRuntimePorts(),messageOwner:'Actual Field.sourceMessage; no second window owner',smoke:!!o.smoke}};
+ controlledHost:{input:'Explicit recorded confirmation and current-menu qualified battle commands',battleInputPolicy:BATTLE_OBSERVER_INPUT_POLICY,battleUIInputPolicy:'current-app-message-and-raycast-v1',caller:'Authored ordinary Session/placement; original battle body and all unknowns intact',callerFade:{kind:callerFade??'unknown',origin:'Explicit authored caller presentation, not a source title-state assertion',sourceStateUnchanged:true},clock:'10ms fixed Web manager-before-VM; no message-implied pause',policy:sourceWebReplayRuntimePorts(),messageOwner:'Actual Field.sourceMessage; no second window owner',smoke:!!o.smoke}};
 await writeFile(resolve(dirname(out),'attempts-draft.json'),observationDraftJSON(report));
 try{report.contentHash=api.hash(report);}catch(error){progress.status='failed-report-validation';progress.error=observerErrorDetails(error);await persistProgress();throw error;}
 await writeFile(out,JSON.stringify(report)+'\n');progress.status=report.result;progress.reportContentHash=report.contentHash;await persistProgress();console.log(JSON.stringify({result:report.result,counts:report.counts,hash:report.contentHash,report:out}));

@@ -204,6 +204,7 @@ export function worldFieldContent(
     ...(target.developmentOmissions ? { developmentOmissions: structuredClone(target.developmentOmissions) } : {}),
     scriptLocals: target.scriptLocals,
     ...(target.scriptTransitionMetadata ? { scriptTransitionMetadata: target.scriptTransitionMetadata } : {}),
+    ...(catalog.sourceScriptAnimations ? { sourceScriptAnimations: catalog.sourceScriptAnimations } : {}),
     ...(target.scriptSystemFlags ? { scriptSystemFlags: target.scriptSystemFlags } : {}),
     characters,
     // The package describes conditional normal-view capability. Geometry-only
@@ -418,7 +419,7 @@ export class WorldSession {
       throw new Error("World checkpoint source/version mismatch");
     if ((snapshot.kind === "event-world-v1" || snapshot.kind === "event-world-v2") !==
         (snapshot.field.kind === "event-field-v1" || snapshot.field.kind === "event-field-v2" ||
-          snapshot.field.kind === "event-field-v3" || snapshot.field.kind === "event-field-v4" || snapshot.field.kind === "event-field-v5" || snapshot.field.kind === "event-field-v6" || snapshot.field.kind === "event-field-v7"))
+          snapshot.field.kind === "event-field-v3" || snapshot.field.kind === "event-field-v4" || snapshot.field.kind === "event-field-v5" || snapshot.field.kind === "event-field-v6" || snapshot.field.kind === "event-field-v7" || snapshot.field.kind === "event-field-v8"))
       throw new Error("World and field continuation formats disagree");
     let content = this.initial;
     const loc = snapshot.location;
@@ -539,7 +540,7 @@ export class WorldSession {
     this.effectMap = effectMap;
     this.effectOwner = restoredOwner;
     this.nextEffectScope = nextScope;
-    this.current.retirePuppetReplacements();this.current.retireMobControls();this.current.retireWorldAutoTasks();
+    this.current.retirePuppetReplacements();this.current.retireMobControls();this.current.retireSkyboxPresentation();this.current.retireWorldAutoTasks();
     this.current = next;
     this.location = structuredClone(loc);
     this.catalogHash = loc?.catalogHash ?? this.sourceOrigin?.catalogHash ?? null;
@@ -742,6 +743,7 @@ export class WorldSession {
           ...(this.owned?.current.sourceEncounter ? { sourceEncounter: this.owned.current.sourceEncounter } : {}),
           ...(this.owned?.current.sourceMessageSequence ? { sourceMessageSequence: this.owned.current.sourceMessageSequence } : {}),
           ...(this.owned?.current.conditionLeaderActivity ? { conditionLeaderActivity: this.owned.current.conditionLeaderActivity } : {}),
+          ...(this.owned?.current.skyboxPresentation?{skyboxPresentation:this.owned.current.skyboxPresentation}:{}),
           ...(this.owned?.current.screenPresentation?{screenPresentation:this.owned.current.screenPresentation}:{}),
           ...(this.owned?.current.mobColorFilter ? {mobColorFilter:this.owned.current.mobColorFilter} : {}),
           ...(this.owned?.current.birdViewActors ? {birdViewActors:this.owned.current.birdViewActors} : {}),
@@ -831,7 +833,7 @@ export class WorldSession {
           map: effectMap!, fieldState: this.effectFieldState(field) } } : {}),
       });
       return prepared;
-    } catch (error) { destinationField?.retirePuppetReplacements();destinationField?.retireMobControls();destinationField?.retireWorldAutoTasks();effectCandidate?.discard(); throw error; }
+    } catch (error) { destinationField?.retirePuppetReplacements();destinationField?.retireMobControls();destinationField?.retireSkyboxPresentation();destinationField?.retireWorldAutoTasks();effectCandidate?.discard(); throw error; }
   }
   commit(value: PreparedMap): boolean {
     if (this.commitInProgress) return false;
@@ -845,7 +847,7 @@ export class WorldSession {
     this.commitInProgress = active;
     try { return this.commitPrepared(value, ownership, active); }
     catch (error) { if (!active.started) ownership.effects?.candidate.discard(); throw error; }
-    finally { if(this.current!==value.field){value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireWorldAutoTasks();}this.commitInProgress = null; }
+    finally { if(this.current!==value.field){value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();}this.commitInProgress = null; }
   }
   private commitPrepared(value: PreparedMap, ownership: Ownership, active: MapCommit): boolean {
     if (!this.isCurrent(ownership, value) || active.cancelled) {
@@ -899,7 +901,7 @@ export class WorldSession {
       request: structuredClone(value.request.request),
       site: value.request.site,
     });
-    ownership.from.retirePuppetReplacements();ownership.from.retireMobControls();ownership.from.retireWorldAutoTasks();
+    ownership.from.retirePuppetReplacements();ownership.from.retireMobControls();ownership.from.retireSkyboxPresentation();ownership.from.retireWorldAutoTasks();
     this.current = value.field;
     value.field.publishWorldAutoTasks();
     this.catalogHash = ownership.catalogHash;
@@ -924,7 +926,7 @@ export class WorldSession {
     }
     const ownership = this.prepared.get(value);
     this.prepared.delete(value);
-    if(ownership){value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireWorldAutoTasks();}
+    if(ownership){value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();}
     ownership?.effects?.candidate.discard();
   }
   private isCurrent(ownership: Ownership, value: PreparedMap): boolean {

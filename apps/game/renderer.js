@@ -1,3 +1,4 @@
+import {renderSkyboxPanorama}from"./field-skybox-renderer.js";
 import {renderScreenPresentation}from"./field-screen-renderer.js";
 import { filterMobPixels } from "./field-mob-renderer.js";
 import { minimapMarkers, MINIMAP_ROTATION } from "/runtime/core/minimap.js";
@@ -28,6 +29,7 @@ export class Renderer {
     this.content = content;
     this.images = images;
     this.nativePixels = new WeakMap();
+    this.skyboxPixels = new WeakMap();
     this.mobImages = new WeakMap();
     this.presentationOmissions = [];
     // Explicit qualified RT and draw-order provider. Absence is a capability
@@ -250,16 +252,19 @@ export class Renderer {
     projected.sort((a, b) => a.row - b.row || a.actor.id.localeCompare(b.actor.id));
     const canvas = this.compositionCanvas(width, height), context = canvas.getContext("2d", { willReadFrequently: true });
     this.fillBackdrop(context,width,height,game.screenPresentation?.backdrop);
+    this.skyboxBackground(context,width,height,game.skyboxPresentation);
+    context.save();if(game.skyboxPresentation){context.beginPath();context.rect(0,Math.ceil(height/3),width,height);context.clip();}
     for (const background of backgrounds) {
       // Screen-fixed source texture repetition is an explicit authored policy.
       for (let y = 0; y < height; y += background.height) for (let x = 0; x < width; x += background.width)
         context.drawImage(background.image, x, y);
     }
+    context.restore();
     const prior = this.ctx;
     try {
       this.ctx = context;
       for (const [li, layer] of m.layers.entries()) {
-        this.layer(layer, cx, cy, width, height, game, li, topology);
+        this.skyboxClippedLayer(context,width,height,game,()=>this.layer(layer, cx, cy, width, height, game, li, topology));
         const index = ["BottomLayer", "GroundLayer", "UpperLayer", "CeilLayer"].indexOf(layer.name);
         for (const p of projected) if (p.actor.layer === index) {
           context.save(); context.translate(p.x, p.y); context.scale(p.frame.flip ? -1 : 1, 1);
@@ -385,9 +390,10 @@ export class Renderer {
         camera: sourceCamera.cameraPosition, width, height }, { validateFieldEffectBoardMaterial });
     }
     const canvas = this.compositionCanvas(width, height), context = canvas.getContext("2d", { willReadFrequently: true });
-    this.background(context, sourceCamera, width, height,game.screenPresentation?.backdrop);
+    this.background(context, sourceCamera, width, height,game.screenPresentation?.backdrop,game.skyboxPresentation);
     if (topology) projectedActors.sort((a, b) => a.row - b.row || a.actorId.localeCompare(b.actorId));
     const output = composeFieldNativePixels({ width, height, tiles, actors: projectedActors.map((actor) => actor.quad), ...(effects ? { effects } : {}),
+      ...(game.skyboxPresentation?{webSkyboxBand:{policy:"web-flat-skybox-panorama-v1",height:Math.ceil(height/3)}}:{}),
       background: { width, height, data: context.getImageData(0, 0, width, height).data } });
     const imageData = context.createImageData(width, height); imageData.data.set(output.data);
     for (const omission of omissions) if (!this.presentationOmissions.some((prior) =>
@@ -400,9 +406,20 @@ export class Renderer {
     context.fillStyle=color?`rgba(${color.r*255},${color.g*255},${color.b*255},${color.a})`:"#09111b";
     context.fillRect(0,0,width,height);
   }
-  background(context, sourceCamera, width, height,backdrop) {
+  skyboxClippedLayer(context,width,height,game,draw){
+    if(!game.skyboxPresentation){draw();return;}
+    context.save();try{context.beginPath();context.rect(0,Math.ceil(height/3),width,height);context.clip();draw();}finally{context.restore();}
+  }
+  skyboxBackground(context,width,height,projection) {
+    renderSkyboxPanorama(context,width,height,projection,this.images,image=>{
+      let value=this.skyboxPixels.get(image);if(!value){const width=image.naturalWidth??image.width,height=image.naturalHeight??image.height,canvas=typeof OffscreenCanvas!=="undefined"?new OffscreenCanvas(width,height):Object.assign(document.createElement("canvas"),{width,height}),c=canvas.getContext("2d",{willReadFrequently:true});c.drawImage(image,0,0);value=c.getImageData(0,0,width,height);this.skyboxPixels.set(image,value);}return value;
+    });
+  }
+  background(context, sourceCamera, width, height,backdrop,skybox) {
     this.fillBackdrop(context,width,height,backdrop);
-    for (const background of this.content.map.backgrounds ?? []) {
+    this.skyboxBackground(context,width,height,skybox);
+    context.save();if(skybox){context.beginPath();context.rect(0,Math.ceil(height/3),width,height);context.clip();}
+    try{for (const background of this.content.map.backgrounds ?? []) {
       if (!sourceCamera) throw new Error("来源背景缺少摄像机宿主");
       const image = this.images.get(background.texture.url);
       if (!image) throw new Error("缺少来源背景图像");
@@ -415,7 +432,7 @@ export class Renderer {
       for (const { source, destination } of projection.patches)
         context.drawImage(image, source.x, source.y, source.width, source.height,
           destination.x, destination.y, destination.width, destination.height);
-    }
+    }}finally{context.restore();}
   }
   spriteFrame(asset, key, a, pose = null) {
     const char = this.content.characters[asset];
@@ -643,12 +660,12 @@ export class Renderer {
       if(auto){const canvas=this.compositionCanvas(w,h);canvas.getContext('2d').putImageData(frame,0,0);c.drawImage(canvas,0,0);}
       else c.putImageData(frame, 0, 0);
     }
-    else this.background(c, sourceCamera, w, h,screen?.backdrop);
+    else this.background(c, sourceCamera, w, h,screen?.backdrop,game.skyboxPresentation);
     const drawActors = (layer) => {
       for (const { actor, point } of actorImages) if (actor.layer === layer) this.actor(actor, cx, cy, point, this.actorElevation(game, actor),this.mobFilterAlpha(game,actor));
     };
     if (!native) for (const [li, l] of m.layers.entries()) {
-        this.layer(l, cx, cy, w, h, game, li, topology);
+        this.skyboxClippedLayer(c,w,h,game,()=>this.layer(l, cx, cy, w, h, game, li, topology));
         if (l.name === "BottomLayer") drawActors(0);
         if (l.name === "GroundLayer") drawActors(1);
         if (l.name === "UpperLayer") drawActors(2);

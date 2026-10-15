@@ -27,7 +27,7 @@ globalgamemanagers 并非 corpus.sources 成员；它和 UnityPlayer 使用单�
 
 生产调用是 `compileWorld → loadCorpus → 真实物理 asset → bindSourceFormatFlags`。绑定记录 source-set、parent-set、物理文件及 SHA、asset path、十进制字符串 object ID、serialized file 和完整原始脚本 hash。绑定摘要用于发现意外漂移，不是签名、权限凭据或存档授权。受信快照加载仍是编译调用方的责任。
 
-只有这个绑定存在时，`compileFieldPuppetScriptContext` 与 `decodeConditionVisualFlag` 才解释已知成员的省略值。现有双参数 puppet API 和无 binding 的 visual API 保留原行为。authored 内容、legacy 内容、battle 编译器、development profile 和存档没有接入该导入规则；不得把一般对象、profile 或存档字段当作来源凭据。
+只有这个绑定存在时，`compileFieldPuppetScriptContext` 与 `decodeConditionVisualFlag` 才解释已知成员的省略值。现有双参数 puppet API 和无 binding 的 visual API 保留原行为。显式来源 battle-v2 的可信编译接线见 [战斗 Format 导入](source-battle-format-import.md)；旧五参数 battle 接口、authored/legacy 内容、development profile 和存档不能自行选择该导入规则。不得把一般对象、profile 或存档字段当作来源凭据。
 
 - 仅既有、非 null、own data 的 plain `SystemFlag` 对象适用。
 - 四个已知成员省略时按本协议投影为 int32 0；原始 JSON 不被补写，原始脚本 hash 不改变。

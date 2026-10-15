@@ -1,3 +1,5 @@
+import type { SourceScriptAnimationCatalog } from "./source-script-animations.js";
+import type { FieldNativeAnimationKeys } from "./field-native-appearance.js";
 import { validateFieldMapAnimation, WEB_FIELD_MAP_ANIMATION, type FieldMapAnimationDefinition } from "./field-map-animation.js";
 import { ActorAnimation, type ActorPlayback } from "./actor-animation.js";
 import { canonical } from "./canonical.js";
@@ -72,6 +74,8 @@ export type FieldNativeCheckpointContext = {
   partyCatalog: PartyActorCatalog;
   partyCheckpoint: FieldPartyActorCheckpoint;
   characters: Readonly<Record<string, Character>>;
+  sourceScriptAnimations?: SourceScriptAnimationCatalog;
+  animationKeys?: FieldNativeAnimationKeys;
   npcs: readonly FieldNativeNpcDefinition[];
   animated?: readonly FieldMapAnimationDefinition[];
   animatedPolicy?: typeof WEB_FIELD_MAP_ANIMATION;
@@ -93,6 +97,7 @@ type BoundActor = {
   character: boolean;
   metadata: Omit<NativeFieldActorData, "entity">;
   media: Character | null;
+  mediaName: string | null;
   childEntityObject: "absent";
   rideOnEntity: "idle" | "riding";
   riding: boolean;
@@ -211,7 +216,7 @@ function expectedActors(context: FieldNativeCheckpointContext): BoundActor[] {
     if (media === undefined || media !== null && (!media.source?.file || !media.source.assetPath ||
         !media.animations || !media.sprites || !Object.keys(media.sprites).length))
       throw new Error("Missing native checkpoint source media: " + mediaName);
-    result.push({ id, character: metadata.scope?.kind !== "map-animated", metadata, media, childEntityObject: prefab.childEntityObject,
+    result.push({ id, character: metadata.scope?.kind !== "map-animated", metadata, media, mediaName, childEntityObject: prefab.childEntityObject,
       rideOnEntity: riding ? "riding" : prefab.rideOnEntity, riding, riderAssetId });
   };
   const persistent = (actor: PartyActorInstance, player = false) => {
@@ -311,7 +316,10 @@ function restoreActor(row: FieldNativeActorCheckpoint | FieldNativeActorMotionCh
     : autonomousMotion((row as FieldNativeActorMotionCheckpoint).motion, binding, row, context).state;
   const animation = expected.media && new ActorAnimation(expected.media);
   if (animation) {
-    animation.restore(row.animation);
+    const keys=expected.mediaName===null?undefined:context.animationKeys?.assets[expected.mediaName];
+    if(row.animation?.sourceCustomCache&&(!expected.character||expected.riding||!keys||!context.sourceScriptAnimations))
+      throw new Error("Saved custom animation requires the actual ordinary actor namespace/media authority");
+    animation.restore(row.animation,keys&&context.sourceScriptAnimations?{catalog:context.sourceScriptAnimations,baseKeys:keys.keys}:undefined);
     if (row.animation !== null) animation.frame();
   }
   const entity: FieldPuppetHostActor = { id: expected.id, character: expected.character, position: { ...row.position }, layer: row.layer,

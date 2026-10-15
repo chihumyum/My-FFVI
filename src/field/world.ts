@@ -99,6 +99,7 @@ export type WorldCatalog = {
   developmentProfile?: DevelopmentProfile;
   characters: Record<string, Character>;
   nativeAnimationKeys?: FieldNativeAnimationKeys;
+  sourceScriptAnimations?: import("../core/source-script-animations.js").SourceScriptAnimationCatalog;
   transportation?: TransportationCatalog;
   playerFactory?: FieldContent["playerFactory"];
   treasureInventoryLimits?: FieldContent["treasureInventoryLimits"];

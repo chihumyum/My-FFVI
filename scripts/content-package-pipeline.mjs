@@ -60,7 +60,7 @@ function inputReader(root){
   return {inputs,mediaInputs,bytes,json:async url=>JSON.parse((await bytes(url)).toString()),
     async media(url){
       assert.match(url,mediaURL);
-      assert.ok(['/world-media/','/field-background-media/','/map-ui/','/field/sprites/','/battle/sprites/',
+      assert.ok(['/world-media/','/field-skybox-media/','/field-background-media/','/map-ui/','/field/sprites/','/battle/sprites/',
         '/bgm/tracks/','/se/tracks/','/environment/tracks/','/imports/textures/'].some(prefix=>url.startsWith(prefix)),
         'Unexpected runtime media URL');
       const mapped=url.startsWith('/imports/')?'/import/'+url.slice('/imports/'.length):url;
@@ -104,7 +104,7 @@ async function validatePublicCAS(root,candidateHistory){
 const sourceFrameworkDefaults=webSourceFrameworkInputs();
 export async function compileSharedContentPackages({root=repository,compiledDir='dist',readJson,
   sourceRecipePaths,sourceSelectionPath,npcAreas=sourceFrameworkDefaults.npcAreas,npcFlat=sourceFrameworkDefaults.npcFlat,fieldEffectFlat=sourceFrameworkDefaults.fieldEffectFlat,
-  worldAutoTasks=sourceFrameworkDefaults.worldAutoTasks,birdViewActors=sourceFrameworkDefaults.birdViewActors,worldAutoMove=sourceFrameworkDefaults.worldAutoMove,mobColorFilter=sourceFrameworkDefaults.mobColorFilter,screenPresentation=sourceFrameworkDefaults.screenPresentation,
+  worldAutoTasks=sourceFrameworkDefaults.worldAutoTasks,birdViewActors=sourceFrameworkDefaults.birdViewActors,worldAutoMove=sourceFrameworkDefaults.worldAutoMove,mobColorFilter=sourceFrameworkDefaults.mobColorFilter,screenPresentation=sourceFrameworkDefaults.screenPresentation,skyboxPresentation=sourceFrameworkDefaults.skyboxPresentation,
   periodicMaps=sourceFrameworkDefaults.periodicMaps,ordinaryFields=sourceFrameworkDefaults.ordinaryFields,logicalFieldEffects=sourceFrameworkDefaults.logicalFieldEffects}={}){
   if(worldAutoTasks!==undefined&&worldAutoTasks!=='web-flat-world-auto-tasks-v1')throw Error('Unknown source world auto-task policy');
   if(mobColorFilter!==undefined&&mobColorFilter!=='web-flat-mob-color-filter-v1')throw Error('Unknown source framework Mob color-filter policy');
@@ -112,6 +112,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
   if(worldAutoMove!==undefined&&(worldAutoMove!=='web-flat-world-auto-move-v1'||worldAutoTasks!=='web-flat-world-auto-tasks-v1'||birdViewActors!=='web-flat-bird-view-actors-v1'))throw Error('Invalid shared world auto-movement policy or v7 dependencies');
   if(mobColorFilter!==undefined&&(worldAutoMove!=='web-flat-world-auto-move-v1'||worldAutoTasks!=='web-flat-world-auto-tasks-v1'||birdViewActors!=='web-flat-bird-view-actors-v1'))throw Error('Mob v8 recipe requires its exact v7 dependency cohort');
   if(screenPresentation!==undefined&&(screenPresentation!=="web-field-screen-presentation-2d-v1"||mobColorFilter!=="web-flat-mob-color-filter-v1"))throw Error("Screen v9 recipe requires its exact v8 dependency cohort");
+  if(skyboxPresentation!==undefined&&(skyboxPresentation!=="web-flat-skybox-panorama-v1"||screenPresentation!=="web-field-screen-presentation-2d-v1"))throw Error("Skybox v10 recipe requires its exact v9 dependency cohort");
   root=await realpath(resolve(root));
   // Several existing producers still import the repository's default emitted
   // modules. Do not claim another compiler lock covers that mixed runtime.
@@ -149,7 +150,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     reports.push({id,report:result.report});
   };
   const prerequisites=await compileSourcePrerequisites({root,compiledDir,logicalFieldEffects,periodicMaps,ordinaryFields,npcAreas,npcFlat,fieldEffectFlat,
-    mapAnimatedEntities:sourceFrameworkDefaults.mapAnimatedEntities,worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation});
+    mapAnimatedEntities:sourceFrameworkDefaults.mapAnimatedEntities,worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation});
   const linked=await linkSourcePrerequisites({root,compiledDir,payloads:prerequisites.payloads,frameworkOptions:prerequisites.frameworkOptions});
   const sourceRead=async url=>linked.inputs.has(url)?structuredClone(linked.inputs.get(url)):readJson(url);
   for(const [url,value] of linked.payloads)payloads.set(url,value);
@@ -234,8 +235,9 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
       sourceNpcRoutesAddition:{kind:'compiled-source-npc-route-evidence-addition-v1',compilerDigest:prerequisites.inputs.compilerDigest,
         sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
       frameworkNpcAreaAddition,frameworkNpcAreaEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,frameworkOrdinaryPresentationAddition,frameworkOrdinaryPresentationEvidence,
-      frameworkProfileUpgrade:{kind:prerequisites.frameworkOptions.screenPresentation?'compiled-framework-profile-upgrade-v9':prerequisites.frameworkOptions.mobColorFilter?'compiled-framework-profile-upgrade-v8':prerequisites.frameworkOptions.worldAutoMove?'compiled-framework-profile-upgrade-v7':prerequisites.frameworkOptions.birdViewActors?'compiled-framework-profile-upgrade-v6':prerequisites.frameworkOptions.worldAutoTasks?'compiled-framework-profile-upgrade-v5':'compiled-framework-profile-upgrade-v4',
-        compilerDigest:prerequisites.inputs.compilerDigest,markers:{
+      frameworkProfileUpgrade:{kind:prerequisites.frameworkOptions.skyboxPresentation?'compiled-framework-profile-upgrade-v10':prerequisites.frameworkOptions.screenPresentation?'compiled-framework-profile-upgrade-v9':prerequisites.frameworkOptions.mobColorFilter?'compiled-framework-profile-upgrade-v8':prerequisites.frameworkOptions.worldAutoMove?'compiled-framework-profile-upgrade-v7':prerequisites.frameworkOptions.birdViewActors?'compiled-framework-profile-upgrade-v6':prerequisites.frameworkOptions.worldAutoTasks?'compiled-framework-profile-upgrade-v5':'compiled-framework-profile-upgrade-v4',
+        compilerDigest:prerequisites.inputs.compilerDigest,...(prerequisites.frameworkOptions.skyboxPresentation?{skyboxCatalog:prerequisites.frameworkOptions.skyboxCatalog}:{}),markers:{
+          ...(prerequisites.frameworkOptions.skyboxPresentation?{skyboxPresentation:prerequisites.frameworkOptions.skyboxPresentation}:{}),
           ...(prerequisites.frameworkOptions.screenPresentation?{screenPresentation:prerequisites.frameworkOptions.screenPresentation}:{}),
           storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1',mapAnimatedEntities:'web-field-animated-map-entities-v1',
           ...(prerequisites.frameworkOptions.worldAutoTasks?{worldAutoTasks:prerequisites.frameworkOptions.worldAutoTasks}:{}),
@@ -276,7 +278,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     compileInitializedSystems(root,initRecipe.value,initRecipe.sha256,{dist:compiledDir,readJson:candidateRead}),
     compileWorldTravel(root,travelRecipe.value,travelRecipe.sha256,{dist:compiledDir,readJson:candidateRead}),
     ...sourceRecipes.map(item=>compileInitializedContentBatch(root,item.value,item.sha256,
-      {dist:compiledDir,readJson:candidateRead,sourceBattleDirectory,...(prerequisites.frameworkOptions.screenPresentation?{screenPresentation:prerequisites.frameworkOptions.screenPresentation}:{}),...(prerequisites.frameworkOptions.worldAutoTasks?{worldAutoTasks:prerequisites.frameworkOptions.worldAutoTasks}:{}),...(prerequisites.frameworkOptions.birdViewActors?{birdViewActors:prerequisites.frameworkOptions.birdViewActors}:{}),...(prerequisites.frameworkOptions.worldAutoMove?{worldAutoMove:prerequisites.frameworkOptions.worldAutoMove}:{}),...(prerequisites.frameworkOptions.mobColorFilter?{mobColorFilter:prerequisites.frameworkOptions.mobColorFilter}:{})})),
+      {dist:compiledDir,readJson:candidateRead,sourceBattleDirectory,...(skyboxPresentation?{skyboxPresentation}:{}),...(prerequisites.frameworkOptions.screenPresentation?{screenPresentation:prerequisites.frameworkOptions.screenPresentation}:{}),...(prerequisites.frameworkOptions.worldAutoTasks?{worldAutoTasks:prerequisites.frameworkOptions.worldAutoTasks}:{}),...(prerequisites.frameworkOptions.birdViewActors?{birdViewActors:prerequisites.frameworkOptions.birdViewActors}:{}),...(prerequisites.frameworkOptions.worldAutoMove?{worldAutoMove:prerequisites.frameworkOptions.worldAutoMove}:{}),...(prerequisites.frameworkOptions.mobColorFilter?{mobColorFilter:prerequisites.frameworkOptions.mobColorFilter}:{})})),
   ]);
   for(const [index,id] of ['figaro-development','systems-playground','systems-initialized','world-travel'].entries())append(id,derived[index]);
   for(const [index,item] of sourceRecipes.entries())append(item.value.id,derived[index+4]);
@@ -338,6 +340,7 @@ export async function publishContentPackages({root=repository,compiledDir='dist'
     report.recipeRebindings=candidate.rebindings??[];
     report.battleCapabilityRebindings=candidate.battleRebindings??[];
     if(candidate.sourceInputs)report.sourceInputLock={kind:candidate.sourceInputs.kind,
+      ...(candidate.sourceInputs.kind==="source-prerequisite-input-lock-v3"?{skyboxPresentation:candidate.sourceInputs.skyboxPresentation}:{}),
       runtimeSha256:candidate.runtimeSha256,sourceSetHash:candidate.sourceInputs.sourceSetHash,
       parentSourceSetHash:candidate.sourceInputs.parentSourceSetHash,compiledDir,
       compilerDigest:candidate.sourceInputs.compilerDigest,files:candidate.sourceInputs.files.length,

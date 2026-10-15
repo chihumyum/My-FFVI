@@ -4,7 +4,8 @@ import type {
   EventScriptTransitionOp,
 } from "../core/event-script-transition.js";
 import { int32 } from "../core/script-integer.js";
-import { record } from "./content.js";
+import { hash, canonical, record } from "./content.js";
+import type { SourceScriptAnimationCatalog } from "../core/source-script-animations.js";
 
 /** Only the complete source Format.type=1 form is admitted. Resolution belongs
  * to the current map's script aliases, not a global name search in this decoder. */
@@ -38,11 +39,17 @@ export function compileEventScriptTransitionInstruction(
  * is currently supported; missing metadata cannot stand in for an empty list. */
 export function compileEventScriptTransitionMetadata(
   rawScript: unknown,
+  imported?: { catalog: SourceScriptAnimationCatalog; assetId: string },
 ): EventScriptTransitionMetadata {
   const script = record(rawScript);
   if (!Array.isArray(script.Animations))
     throw new Error("Missing or invalid ChangeScript custom animation metadata");
-  if (script.Animations.length !== 0)
-    throw new Error("ChangeScript custom animation assets require a source provider");
+  if (script.Animations.length !== 0) {
+    const asset=imported?.catalog.assets[imported.assetId];
+    if(!asset||asset.rawScriptHash!==hash(rawScript)||canonical(asset.animations)!==canonical(script.Animations))
+      throw new Error("ChangeScript custom animation assets require a source provider");
+    return {customAnimations:"source-script-custom-animations-v1",assetId:asset.id,
+      catalogHash:imported!.catalog.contentHash,rawScriptHash:asset.rawScriptHash};
+  }
   return { customAnimations: "none" };
 }

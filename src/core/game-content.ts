@@ -444,6 +444,7 @@ function fieldImageUrls(map: FieldContent["map"], characters: FieldContent["char
   return [...new Set([
     ...Object.values(map.textures),
     ...(map.backgrounds ?? []).map((background) => background.texture.url),
+    ...Object.values(map.skybox?.catalog.images??{}).map(image=>"/field-skybox-media/"+image.file),
     ...Object.values(characters).flatMap((character) => Object.values(character.sprites).map((sprite) => sprite.file)),
     ...Object.values(minimap?.icons ?? {}).map((sprite) => sprite.file),
   ])];

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
-export async function loadBattleEventMessageSourceInputs(root,compiledDir,{branchExecution}={}){
+export async function loadBattleEventMessageSourceInputs(root,compiledDir,{branchExecution,sourceFormatImport:importSourceFormat=false}={}){
  const load=name=>import(pathToFileURL(resolve(compiledDir,'src',name+'.js')).href),api=Object.assign({},...await Promise.all([
-  'compiler/content','compiler/integrity','compiler/system-source','compiler/corpus','compiler/battle-event','compiler/battle-event-message-bindings',
+  'compiler/battle-source-format-import','compiler/content','compiler/integrity','compiler/system-source','compiler/corpus','compiler/battle-event','compiler/battle-event-message-bindings',
   'compiler/battle-encounters','core/battle-event','core/battle-event-message','core/source-message-sequence'].map(load)));
  const files=await api.readSnapshot(resolve(root,'build/corpus')),manifest=JSON.parse(api.snapshotFile(files,'corpus.json').toString()),
   snapshot=await api.loadSystemSource(root,manifest.parentSourceSetHash),sourceDigest=api.hash({assets:snapshot.assets,tables:snapshot.tables,messages:snapshot.messages,manifest:snapshot.manifest}),
@@ -26,7 +26,10 @@ export async function loadBattleEventMessageSourceInputs(root,compiledDir,{branc
   assert.equal(files[0].sha256,p.source.sha256,'Corpus/battle physical bytes differ');
   return {...exported.source,sha256:files[0].sha256,sourceSetHash:battle.parentSourceSetHash,battleSourceSetHash:battle.sourceSetHash};
  };
- const compiled=programs.map(p=>{const bound=typedSource(p),program=api.compileBattleEvent(p.data,bound,input,snapshot.reader,branchExecution),messageSites=[];
+ assert.equal(typeof importSourceFormat,'boolean','Unknown source Format import selection');
+ assert.ok(!importSourceFormat||branchExecution,'Source Format import requires explicit source battle branch compilation');
+ const sourceFormatImport=importSourceFormat ? api.createBattleSourceFormatImportResolver(snapshot) : undefined;
+ const compiled=programs.map(p=>{const bound=typedSource(p),program=api.compileBattleEvent(p.data,bound,input,snapshot.reader,branchExecution,bound?sourceFormatImport?.({data:p.data,source:bound}):undefined),messageSites=[];
   assert.equal(program.instructions.length,p.data.Mnemonics.length);
   for(const[index,raw]of p.data.Mnemonics.entries())if(['Msg','MsgClose'].includes(raw.mnemonic)){
    const value={program:p.id,source:p.source,rawHash:api.hash(p.data),index,raw,nextMnemonic:p.data.Mnemonics[index+1]?.mnemonic??null,
@@ -43,7 +46,7 @@ export async function loadBattleEventMessageSourceInputs(root,compiledDir,{branc
   spritePath(suffix){const matches=Object.entries(battle.sprites).filter(([path])=>path.toLowerCase().endsWith(suffix.toLowerCase()));assert.equal(matches.length,1,'Unresolved exact source sprite '+suffix);return matches[0][0];}};
  const dependencies=partyIds.length?api.compileBattleEncounterSources(snapshot.reader,{partyIds,...encounterSources}):{requestedPartyIds:[],encounters:[],diagnostics:[]};
  const analysis=api.analyzeCorpus(snapshot.assets,snapshot.tables,snapshot.messages,snapshot.sourceSetHash);
- return {api,snapshot,sourceDigest,input,scripts,programs:compiled,sites,dependencies,encounterSources,analysis,
+ return {api,snapshot,sourceDigest,input,...(sourceFormatImport?{sourceFormatImport}:{}),scripts,programs:compiled,sites,dependencies,encounterSources,analysis,
   inventory:{kind:'battle-event-message-source-inventory-v1',sourceSetHash:snapshot.sourceSetHash,parentSourceSetHash:snapshot.manifest.parentSourceSetHash,sourceDigest,
    binding:input.binding,counts:{allPrograms:scripts.length,allInstructions:scripts.reduce((n,p)=>n+p.data.Mnemonics.length,0),programs:programs.length,
     instructions:programs.reduce((n,p)=>n+p.data.Mnemonics.length,0),affectedPrograms:compiled.filter(p=>p.messageSites.length).length,

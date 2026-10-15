@@ -1,4 +1,6 @@
 import { parseBattleGlobalFadeOp, type BattleGlobalFadeOp } from "./battle-global-fade.js";
+import { parseSourceBattleFormatImport, type SourceBattleFormatImport } from "./source-format-import.js";
+import { parseBattleEventCondition, type BattleEventCondition } from "./battle-event-condition.js";
 import { WEB_BATTLE_BRANCH_EXECUTION, validateBattleBranchExecutionPolicy, parseBattleSourceInstruction, classifyDeferredBattleInstruction, type WebBattleBranchExecution, type BattleSourceInstruction, type BattleDeferredInstructionCategory } from './battle-branch-execution.js';
 import {parseBattleEventEffectOp,type BattleEventEffectOp} from './battle-event-effect.js';
 import { readBattleEnemyMode } from './battle-gau.js';
@@ -17,6 +19,7 @@ export type BattleEventValue =
   | { kind: "immediate"; value: number }
   | { kind: "local"; index: number };
 export type BattleEventOp =
+  | BattleEventCondition
   | ScriptedBattleAction
   | BattleGlobalFadeOp
   | BattleEventEffectOp
@@ -43,7 +46,7 @@ export type BattleEventOp =
   | { kind: "blocked"; reason: string };
 export type BattleEventProgram = {
   kind: "battle-event-v1" | "battle-event-v2";
-  branchExecution?: { policy: WebBattleBranchExecution; sourceProgram: { Name:string; Title:{main:string;sub:string}; Mnemonics:BattleSourceInstruction[]; Segments:{Label:string;EntryPoint:number;Count:number}[]; ScriptLocal:string[]; ScriptLocalValue:number[]|null; SystemFlag:Record<string,number>; Animations:unknown[] }; deferred: {pc:number;category:BattleDeferredInstructionCategory;reason:string}[] };
+  branchExecution?: { policy: WebBattleBranchExecution; sourceFormatImport?: SourceBattleFormatImport; sourceProgram: { Name:string; Title:{main:string;sub:string}; Mnemonics:BattleSourceInstruction[]; Segments:{Label:string;EntryPoint:number;Count:number}[]; ScriptLocal:string[]; ScriptLocalValue:number[]|null; SystemFlag:Record<string,number>; Animations:unknown[] }; deferred: {pc:number;category:BattleDeferredInstructionCategory;reason:string}[] };
   source: BattleAISource | null;
   /** Entry is inclusive; end is exclusive. Jump targets name the label before
    * the next executed instruction, as in Internal.Main.Call/Return. */
@@ -98,6 +101,7 @@ export type BattleEventContext = {
   enemyModes?:readonly {uniqueId:number;mode:number}[];
 };
 export type BattleEventRequest =
+  | (BattleEventCondition & { pc: number })
   | (ScriptedBattleAction & { pc: number })
   | (BattleGlobalFadeOp & {pc:number})
   | {kind:"global-fade-complete";pc:number}
@@ -233,6 +237,7 @@ function parseOp(raw: unknown): BattleEventOp {
     case "get-enemy-mode":
       checkpointKeys(value,"kind,uniqueId,expected");
       return {kind,uniqueId:integer(value.uniqueId,1,9),expected:integer(value.expected,-0x80000000)};
+    case "condition-list": return parseBattleEventCondition(value);
     case "script-action": return parseScriptedBattleAction(value);
     case "play-battle-effect":case "sync-battle-effect": return parseBattleEventEffectOp(value);
     case "message": return parseBattleEventMessageOp(raw);
@@ -329,17 +334,20 @@ export function parseBattleEventProgram(raw: unknown): BattleEventProgram {
   if (program.kind === "battle-event-v2") {
     if (!source) fail(program.entry,"Branch execution requires the complete original source identity");
     if(program.messageBinding&&program.messageBinding.parentSourceSetHash!==source!.sourceSetHash)fail(program.entry,"Branch message binding belongs to another source import");
-    const policy=record(value.branchExecution,"policy,sourceProgram,deferred");
+    const policy=record(value.branchExecution,"policy,sourceProgram,deferred" +
+      (Object.hasOwn(value.branchExecution as object,"sourceFormatImport") ? ",sourceFormatImport" : ""));
     if(policy.policy!==WEB_BATTLE_BRANCH_EXECUTION)fail(program.entry,"Unknown battle program branch execution policy");
     const original=record(policy.sourceProgram,"Name,Title,Mnemonics,Segments,ScriptLocal,ScriptLocalValue,SystemFlag,Animations"),title=record(original.Title,"main,sub");
     const sourceInstructions=array(original.Mnemonics,parseBattleSourceInstruction),
       deferred=array(policy.deferred,(raw):{pc:number;category:BattleDeferredInstructionCategory;reason:string}=>{const v=record(raw,"pc,category,reason");if(v.category!=="unimplemented-instruction"&&v.category!=="unimplemented-selector")throw new Error("Unknown runtime battle dependency category");return {pc:integer(v.pc),category:v.category,reason:text(v.reason)};}),
       segments=array(original.Segments,raw=>{const v=record(raw,"Label,EntryPoint,Count");return {Label:text(v.Label),EntryPoint:integer(v.EntryPoint),Count:integer(v.Count)};}),
       sourceNames=array(original.ScriptLocal,v=>text(v,true)),sourceValues=original.ScriptLocalValue===null?null:array(original.ScriptLocalValue,int32),
-      sourceFlags=record(original.SystemFlag,"KeepBadStatusVisual,KeepPlayerPuppet,RidingVehicle,SkipInitialize"),animations=array(original.Animations,v=>v);
+      sourceFormatImport=Object.hasOwn(policy,"sourceFormatImport") ? parseSourceBattleFormatImport(policy.sourceFormatImport,original,source) : undefined,
+      sourceFlags=sourceFormatImport ? original.SystemFlag as Record<string,number> : record(original.SystemFlag,"KeepBadStatusVisual,KeepPlayerPuppet,RidingVehicle,SkipInitialize"),
+      applicabilityFlags=sourceFormatImport?.values ?? sourceFlags,animations=array(original.Animations,v=>v);
     if(program.entry!==0||program.end!==program.instructions.length||segments.length!==1||segments[0]!.Label!=="Main"||segments[0]!.EntryPoint!==0||segments[0]!.Count!==program.instructions.length)
       fail(program.entry,"Branch execution requires the complete original Main range");
-    if(animations.length||Object.values(sourceFlags).some(v=>v!==0))fail(program.entry,"Branch execution cannot grant source animations or SystemFlag applicability");
+    if(animations.length||Object.values(applicabilityFlags).some(v=>v!==0))fail(program.entry,"Branch execution cannot grant source animations or SystemFlag applicability");
     const initial=sourceValues?.length===sourceNames.length?sourceValues:sourceNames.map(()=>0);
     if(new Set(sourceNames).size!==sourceNames.length||JSON.stringify(sourceNames)!==JSON.stringify(program.localNames)||JSON.stringify(initial)!==JSON.stringify(program.initialLocals))
       fail(program.entry,"Original battle local bank/initial values do not match");
@@ -364,7 +372,7 @@ export function parseBattleEventProgram(raw: unknown): BattleEventProgram {
         fail(pc,"Original script-local index is outside the declared bank");
     }
     if(JSON.stringify(expected)!==JSON.stringify(deferred))fail(program.entry,"Runtime battle dependencies differ from exact original blocked sites");
-    program.branchExecution={policy:WEB_BATTLE_BRANCH_EXECUTION,sourceProgram:{Name:text(original.Name),Title:{main:text(title.main,true),sub:text(title.sub,true)},Mnemonics:sourceInstructions,Segments:segments,
+    program.branchExecution={policy:WEB_BATTLE_BRANCH_EXECUTION,...(sourceFormatImport ? { sourceFormatImport } : {}),sourceProgram:{Name:text(original.Name),Title:{main:text(title.main,true),sub:text(title.sub,true)},Mnemonics:sourceInstructions,Segments:segments,
       ScriptLocal:sourceNames,ScriptLocalValue:sourceValues,SystemFlag:sourceFlags as Record<string,number>,Animations:animations},deferred};
   }
 
@@ -650,6 +658,8 @@ export function advanceBattleEvent(
         if(!context.globalFadeStatus)return fail("Missing actual shared global fade completion provider",pc);
         if(!context.globalFadeStatus[op.direction]){state.wait.clock=context.clock;return result();}
         next();requests.push({kind:"global-fade-complete",pc});return result();
+      case "condition-list":
+        next(); requests.push({ ...structuredClone(op), pc }); return result();
       case "ui-visibility":
         next(); requests.push({ kind: op.kind, visible: op.visible, pc }); return result();
       case "stop-auto": case "force-return": case "force-save-return": case "remove-all-actions":

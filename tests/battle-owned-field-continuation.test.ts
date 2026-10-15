@@ -1,3 +1,10 @@
+import { hash } from '../src/compiler/content.js';
+import { compileBattleEvent } from '../src/compiler/battle-event.js';
+import { createBattleSourceFormatImportResolver } from '../src/compiler/battle-source-format-import.js';
+import { SOURCE_FORMAT_FLAG_IMPORT } from '../src/compiler/source-system-flags.js';
+import { WEB_BATTLE_BRANCH_EXECUTION } from '../src/core/battle-branch-execution.js';
+import { WEB_BATTLE_EVENT_CONDITIONS } from '../src/core/battle-event-condition.js';
+import { authoredMessageSource } from './fixtures/battle-event-message.js';
 import { WEB_BATTLE_GLOBAL_FADE } from '../src/core/battle-global-fade.js';
 import { DEVELOPMENT_TRANSPARENT_FADE } from '../src/core/field-fade.js';
 import test from 'node:test';
@@ -117,12 +124,29 @@ test('Rage data compiler does not grant abilities and rejects incomplete/duplica
 });
 
 
-test('shared Fade and reserved continuation roll back one failed frame, then return, consume and restore once',async()=>{
+test('imported source flags, condition clocks, shared Fade and reserved continuation roll back and restore together',async()=>{
   const fade=messageRaw('FadeOut',-.7);fade.operands.iValues[3]=255;
-  const f=battleMessageSessionFixture(battleMessageProgram([
-    fade,syscall('ガウ初回予約'),messageRaw('BattleForceExit'),messageRaw('Exit')]));
+  const condition=messageRaw('BattleCondition');condition.operands.iValues=[1,1000,302,1,0,0,0,0];
+  const ops=[fade,condition,syscall('ガウ初回予約'),messageRaw('BattleForceExit'),messageRaw('Exit')],
+    data={Name:'authored combined import',Title:{main:'',sub:''},Mnemonics:ops,
+      Segments:[{Label:'Main',EntryPoint:0,Count:ops.length}],ScriptLocal:['BattleAIFlag'],ScriptLocalValue:[0],
+      SystemFlag:{SkipInitialize:0},Animations:[]},
+    source=authoredMessageSource,physical={file:source.file,assetPath:source.assetPath,objectId:source.objectId,
+      serializedFile:source.serializedFile,sha256:source.sha256},
+    sources=[{file:'GameAssembly.dll',sha256:SOURCE_FORMAT_FLAG_IMPORT.nativeSha256},{file:source.file,sha256:source.sha256}],
+    resolve=createBattleSourceFormatImportResolver({sourceSetHash:hash(sources),manifest:{parentSourceSetHash:source.sourceSetHash,sources},
+      assets:[{kind:'script',source:physical,data}]}),
+    program=compileBattleEvent(data,source,undefined,undefined,WEB_BATTLE_BRANCH_EXECUTION,resolve({source,data})),
+    f=battleMessageSessionFixture(program);
+  assert.deepEqual(program.branchExecution!.sourceProgram,data);
+  assert.equal(Object.hasOwn(program.branchExecution!.sourceProgram.SystemFlag,'RidingVehicle'),false);
+  f.battle.encounters[1000]!.lifecycle={kind:'battle-lifecycle-v2',mode:'script',scriptId:1,program,branchExecution:WEB_BATTLE_BRANCH_EXECUTION};
+  f.battle.common.conditions.rules.definitions.push({id:302,type:10,overlapped:false,eraseGroupId:600});
+  f.battle.common.conditions.rules.eraseRules.push({id:600,groupId:600,conditionId:0,type:1,eraseConditionId:0});
+  f.battle.common.conditions.behaviors.push({id:302,kind:'poison',name:'Authored poison',untilType:3,hpDivisor:4});
+  f.battle.common.battleEvents!.conditions.push({id:302,type:10,attackTarget:0,gameOverTarget:0});
   f.field.parentSourceSetHash='a'.repeat(64);f.field.entry.fade=structuredClone(DEVELOPMENT_TRANSPARENT_FADE);bind(f.field);
-  const runtime={...f.runtime,battleEventControls:WEB_BATTLE_EVENT_CONTROLS,battleGlobalFade:WEB_BATTLE_GLOBAL_FADE},
+  const runtime={...f.runtime,battleBranchExecution:WEB_BATTLE_BRANCH_EXECUTION,battleEventConditions:WEB_BATTLE_EVENT_CONDITIONS,battleEventControls:WEB_BATTLE_EVENT_CONTROLS,battleGlobalFade:WEB_BATTLE_GLOBAL_FADE},
     game=new GameSession(f.field,f.battle,19,runtime),flow=new GameFlow(game);
   for(const index of [8,10])game.field.eventState.write(ref(index),0);
   flow.start();flow.advance(0,ready);assert(game.field.startEvent('fight'));flow.advance(10,ready);assert(game.prepareBattleStart()!.commit());
@@ -132,6 +156,7 @@ test('shared Fade and reserved continuation roll back one failed frame, then ret
   assert.throws(()=>game.advance(10),/package binding/);
   assert.equal(battle.time,time);assert.deepEqual(owner.snapshot(),pose);assert.equal(owner.mutationRevision,revision);
   assert.equal(battle.fadeExecution.length,0);assert.equal(battle.fieldReservationReturn!.candidate,null);
+  assert.equal(battle.conditionExecution.length,0);assert.deepEqual(battle.players[0]!.conditionIds,[]);assert.deepEqual(battle.conditionClockState(battle.players[0]!.id),[]);
   assert.equal(game.field.eventState.read(ref(8)),0);assert.deepEqual(game.state.snapshot(),owned);
   assert(battle.combatants.every((unit,i)=>unit===units[i]));
   f.field.reservedScriptBindings![first]=binding;game.advance(0);
@@ -140,6 +165,7 @@ test('shared Fade and reserved continuation roll back one failed frame, then ret
   assert.equal(battle.phase,'active');assert.equal(battle.time,time);assert.deepEqual(owner.snapshot(),pose);
   game.advance(10);
   assert.equal(battle.phase,'forced');assert(owner.active);assert.equal(battle.fadeExecution.filter(e=>e.action==='start').length,1);
+  assert.equal(battle.conditionExecution.length,1);assert.deepEqual(battle.players[0]!.conditionIds,[302]);assert.equal(battle.conditionClockState(battle.players[0]!.id).length,1);
   assert.equal(battle.fieldReservationReturn!.candidate!.script,first);assert.equal(game.reservedFieldScript,null);
   const committedFade=owner.snapshot();game.prepareBattleReturn()!.discard();
   assert.deepEqual(owner.snapshot(),committedFade);assert.deepEqual(game.state.snapshot(),owned);assert.equal(game.reservedFieldScript,null);
@@ -149,7 +175,7 @@ test('shared Fade and reserved continuation roll back one failed frame, then ret
   assert(game.checkpointReady);assert.equal(game.reservedFieldScript,null);assert.equal(game.field.eventState.read(ref(10)),1);
   assert.equal(owner.active,false);assert.equal(owner.projection!.rendererColor.a,1);assert.equal(game.state.snapshot().completedBattles.length,1);
   const bytes=new Map<string,string>(),storage=new CheckpointStorage({getItem:k=>bytes.get(k)??null,setItem:(k,v)=>{bytes.set(k,v);}});
-  await storage.save(game.checkpoint(),1);const loaded=(await storage.load())!,restored=GameSession.restore(loaded.checkpoint,f.field,f.battle,undefined,runtime);
+  await storage.save(game.checkpoint(),1);const loaded=(await storage.load())!;assert(!JSON.stringify(loaded.checkpoint).includes('sourceFormatImport'));const restored=GameSession.restore(loaded.checkpoint,f.field,f.battle,undefined,runtime);
   assert.deepEqual(restored.checkpoint(),loaded.checkpoint);restored.advance(100);
   assert.equal(restored.field.eventState.read(ref(10)),1);assert.equal(restored.reservedFieldScript,null);
   assert.equal(restored.state.snapshot().completedBattles.length,1);

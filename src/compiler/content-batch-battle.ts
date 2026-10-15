@@ -1,3 +1,4 @@
+import { battleEventConditionDependencies } from "./battle-event-condition.js";
 import { parseSourceBattleControls } from '../core/battle-controls.js';
 import { BattleConditions } from "../core/battle-conditions.js";
 import type { BattleCatalog, BattleEncounterDiagnostic } from "../core/battle-content.js";
@@ -124,6 +125,12 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
           for (const [pc, { op }] of lifecycle.program.instructions.entries()) {
             if(op.kind==='reserve-gau-first'||op.kind==='shadow-battle-departure'||op.kind==='gau-leap'){
               conditional('battle-owned-field-continuation', 'Battle event PC '+pc+' requires actual held/condition branch and source-bound single field reservation/return transaction; visited unsupported owned phases remain hard');
+              continue;
+            }
+            if (op.kind === "condition-list") {
+              for (const dependency of battleEventConditionDependencies(op, catalog.common.conditions))
+                (dependency.kind === "blocked" ? block : conditional)(dependency.code,
+                  `Battle event PC ${pc}: ${dependency.reason}`);
               continue;
             }
             if(op.kind==="script-action"){

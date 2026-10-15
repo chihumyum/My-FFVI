@@ -102,6 +102,7 @@ const readGameJson = async (url) => {
 let contents = new GameContentRepository(readGameJson, contentProfile);
 // Same declared Web policy as the source-route audit; no native default claim.
 const runtime = {
+    battleEventConditions: "web-source-battle-condition-lists-v1",
   battleBranchExecution:WEB_BATTLE_BRANCH_EXECUTION,
   scriptedBattleActions: WEB_SCRIPTED_BATTLE_ACTIONS,
   scriptRandom: WEB_SOURCE_SCRIPT_RANDOM,
@@ -112,6 +113,7 @@ const runtime = {
   birdViewActors:"web-flat-bird-view-actors-v1",
   mobColorFilter:"web-flat-mob-color-filter-v1",
   screenPresentation:"web-field-screen-presentation-2d-v1",
+    skyboxPresentation:'web-flat-skybox-panorama-v1',
   viewChange:"web-flat-field-view-change-v2",
   worldAutoTasks:WEB_FLAT_WORLD_AUTO_TASKS,worldAutoMove:WEB_FLAT_WORLD_AUTO_MOVE,
   battleEventEffects:"web-source-battle-effects-pulse-v1",

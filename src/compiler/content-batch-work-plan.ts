@@ -154,6 +154,7 @@ const diagnosticOwners: Readonly<Record<string, ContentBatchSystem>> = {
   BATCH_ENTRY_UNSCANNED: "content-batch-interface",
 };
 const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
+  skyboxPresentation:"map-event-and-travel",
   screenPresentation:"map-event-and-travel",
   mobColorFilter: "map-event-and-travel",
   messageValues: "owned-menus-economy-and-growth",

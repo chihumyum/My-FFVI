@@ -247,7 +247,7 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
       same(actor.animation.character, media, "Native map actor media identity changed");
       // A corrupt playback cannot survive a handoff just because the sprite is
       // currently hidden. Restore checks the complete animation chain.
-      const checked = new ActorAnimation(media); checked.restore(actor.animation.snapshot());
+      const checked = actor.animation.validatedClone();
       actor.animation = checked;
     }
   }

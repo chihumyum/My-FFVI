@@ -1,3 +1,4 @@
+import { sourceScriptAnimationAsset } from "./source-script-animations.js";
 import type { Evidence, FieldContent } from '../field/types.js';
 import { checkpointKeys } from './checkpoint-validation.js';
 import { canonical } from './canonical.js';
@@ -43,7 +44,12 @@ export function reservedScriptBinding(content: FieldContent, name: string): Sour
       program.some(op => op.script !== name || op.source.file !== binding.source.file ||
         op.source.assetPath !== binding.source.assetPath || op.source.objectId !== binding.source.objectId))
     throw new Error('Reserved field script source identity changed: ' + name);
-  if (content.scriptTransitionMetadata?.[name]?.customAnimations !== 'none' ||
+  const animationAsset=sourceScriptAnimationAsset(content.scriptTransitionMetadata?.[name],content.sourceScriptAnimations);
+  if(animationAsset!==null){const catalog=content.sourceScriptAnimations!,asset=catalog.assets[animationAsset]!;
+    if(catalog.sourceSetHash!==content.sourceSetHash||catalog.parentSourceSetHash!==content.parentSourceSetHash||
+        asset.rawScriptHash!==binding.rawHash||canonical(asset.source)!==canonical(binding.source))
+      throw new Error('Reserved field script custom animation source identity changed: '+name);}
+  if (
       !Object.hasOwn(content.scriptLocals ?? {}, name) || content.scriptLocals![name] === null ||
       !content.scriptSystemFlags?.[name])
     throw new Error('Reserved field script requires its original locals, flags and custom-animation provider: ' + name);
@@ -55,10 +61,17 @@ export function reservedScriptBinding(content: FieldContent, name: string): Sour
   // instruction. Unknown instructions still fail at their original source PC.
   return structuredClone(binding);
 }
+/** Read-only capture may include an unavailable target; actual require/consume
+ * validates it lazily through reservedScriptBinding at the source instruction. */
+export function reservationSourceFingerprint(content: FieldContent, name: string): string {
+  return canonical({ binding: content.reservedScriptBindings?.[name] ?? null, body: content.scripts[name] ?? null,
+    locals: content.scriptLocals?.[name] ?? null, flags: content.scriptSystemFlags?.[name] ?? null,
+    puppet: content.scriptPuppetContexts?.[name] ?? null,
+    customAnimations: content.scriptTransitionMetadata?.[name] ?? null, customCatalog: content.sourceScriptAnimations?.contentHash ?? null });
+}
 export function reservationFingerprint(content: FieldContent, name: string): string {
-  return canonical({ binding: reservedScriptBinding(content, name), body: content.scripts[name],
-    locals: content.scriptLocals?.[name], flags: content.scriptSystemFlags?.[name],
-    puppet: content.scriptPuppetContexts?.[name] ?? null });
+  reservedScriptBinding(content,name);
+  return reservationSourceFingerprint(content,name);
 }
 /** The session owns the native Integrator's single slot across field lifetimes.
  * A prepared/retired map can neither consume it nor allocate a second slot. */

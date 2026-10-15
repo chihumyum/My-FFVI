@@ -281,6 +281,7 @@ export type Op = Site &
     | import('../core/field-puppet-replacement.js').FieldPuppetReplacementOp
     | { kind: "call"; target: number }
     | { kind: "wait"; seconds: number }
+    | { kind: "field-skybox-scroll"; command: import("../core/field-skybox.js").FieldSkyboxScrollCommand }
     | { kind: "standalone-wait" }
     | { kind: "blank" }
     | { kind: "puppet"; slot: number; actor: string; target: number }
@@ -350,6 +351,7 @@ export type FieldContent = {
     /** Trusted cell-space topology; no terrain or source-view capability is inferred. */
     topology?: import("../core/field-map-topology.js").FieldMapTopology;
     worldTerrain?: import("../core/world-terrain.js").WorldTerrainDefinition;
+    skybox?: import("../core/field-skybox.js").FieldSkyboxDefinition;
     nativeComposition?: FieldNativeCompositionDefinition;
     id: string;
     identity?: { mapId: number; areaId: number };
@@ -388,6 +390,8 @@ export type FieldContent = {
   scripts: Record<string, Op[]>;
   scriptLocals?: Record<string, ScriptLocals | null>;
   /** Presence certifies the script has no separate custom animation host. */
+  /** Shared trusted world catalog; maps serialize only script references. */
+  sourceScriptAnimations?: import("../core/source-script-animations.js").SourceScriptAnimationCatalog;
   scriptTransitionMetadata?: Record<string, EventScriptTransitionMetadata | null>;
   /** Integrator.Execute reads this per source Format; absence is unknown. */
   scriptSystemFlags?: Record<string, { keepBadStatusVisual: boolean } | null>;
