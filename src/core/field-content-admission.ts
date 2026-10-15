@@ -4,7 +4,7 @@ import type { FieldContent, Op, Site } from "../field/types.js";
 export const fieldProviders = Object.freeze([
   "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
-  "sourcePartySelection", "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "viewChange", "sourceAutoSaveSync",
+  "sourcePartySelection", "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "viewChange", "worldAutoTasks", "sourceAutoSaveSync",
 ] as const);
 export type FieldProvider = typeof fieldProviders[number];
 export type FieldProviderStatus = "available" | "missing" | "unknown";
@@ -58,6 +58,7 @@ const codes: Record<FieldCapability, string> = {
   storyTimer: "FIELD_STORY_TIMER_PROVIDER", screenEffects: "FIELD_SCREEN_EFFECTS_PROVIDER",
   cameraShake: "FIELD_CAMERA_SHAKE_PROVIDER",
   viewChange: "FIELD_VIEW_CHANGE_PROVIDER",
+  worldAutoTasks: 'FIELD_WORLD_AUTO_TASK_PROVIDER',
   contentInvalidations: "FIELD_CONTENT_INVALIDATIONS_PROVIDER",
   sourceAutoSaveSync: "FIELD_SOURCE_AUTO_SAVE_SYNC_PROVIDER",
   sourceEncounter: "FIELD_SOURCE_ENCOUNTER_PROVIDER",
@@ -150,6 +151,7 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
   };
   switch (op.kind) {
     case "field-view-change": add("viewChange", "ChangeView requires the explicit bound flat Web camera/party controller"); break;
+    case 'field-world-auto-task': add('worldAutoTasks','World auto tasks require the explicit current flat content/runtime camera and parallel task host');break;
     case "actor-visibility": add("actorControl", "Source actor visibility requires its bound control owner"); break;
     case "position":
       if (op.nativeCommand?.mode === 1)

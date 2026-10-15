@@ -1,4 +1,6 @@
 import { WEB_FLAT_FIELD_VIEW_CHANGE, WEB_FLAT_RETAINED_FIELD_VIEW_CHANGE, validateFieldViewChangePolicy, fieldViewBinding, parseFieldViewChangeCommand, type WebFlatFieldViewChange, type FieldViewChangeCommand } from './field-view-change.js';
+import { WEB_FLAT_WORLD_AUTO_TASKS, validateWorldAutoTaskPolicy, worldAutoBinding, parseFieldWorldAutoCommand,
+  createWorldAutoQueue, addWorldAutoCommand, advanceWorldAutoQueue, type WebFlatWorldAutoTasks, type WorldAutoPose } from './field-world-auto-tasks.js';
 import { assertRetainedGroundViewTransportation } from './world-transportation-entry.js';
 import { WEB_SOURCE_PARTY_SELECTION, projectSourcePartySelection, type WebSourcePartySelection, type FieldSourcePartySelectionPort, type SourcePartySelectionModel, type SourcePartySelectionOutcome } from './source-party-selection.js';
 import type { SourceMessageFeeCatalog, SourceMessageFeeSnapshot } from "./source-message-fees.js";
@@ -148,7 +150,7 @@ import { projectPlayerVisibility } from "./player-visibility.js";
 import { FieldFadeState, type FieldFadeSnapshot } from "./field-fade.js";
 import { FieldCameraHost, type FieldCameraViewport } from "./field-camera-host.js";
 import type { FieldCameraState, FieldCameraLerp, FieldCameraLerpProgress } from "./field-camera.js";
-import { fieldCameraWorldToCell, fieldCameraCellToWorld } from "./field-camera.js";
+import { fieldCameraView, fieldCameraWorldToCell, fieldCameraCellToWorld } from "./field-camera.js";
 import { projectFieldPuppetInitialization, projectFieldPuppetActorEntry, resolveFieldPuppetActor,
   fieldPuppetAssignments, type FieldPuppetActorsPort, type FieldPuppetScriptContext } from "./field-puppet-actors.js";
 import {
@@ -391,6 +393,7 @@ export type FieldGameOptions = {
   /** Explicit Web presentation stream. Saved state and source code cannot grant it. */
   cameraShake?: FieldCameraShakePolicy;
   viewChange?: WebFlatFieldViewChange;
+  worldAutoTasks?: WebFlatWorldAutoTasks;
   storyTimerOrigin?: FieldTimerOriginContent;
   /** Explicit particle/material host. Content parsing never grants one. */
   fieldEffects?: FieldEffectRuntimeHost;
@@ -510,6 +513,7 @@ export class FieldGame {
       screenEffects: presence(this.ordinaryScreenEffectsAvailable),
       cameraShake: presence(this.cameraShakeAvailable),
       viewChange: presence(this.options.viewChange !== undefined && !!this.camera && !!this.partyActors && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.nativeActorProviders && !!this.player.native && !!fieldViewBinding(this.content,this.options.viewChange)),
+      worldAutoTasks: presence(this.#worldAutoPolicy===WEB_FLAT_WORLD_AUTO_TASKS && this.worldAutoPose!==null && !this.#worldAutoRetired),
       eventSaveCompletion: "unknown", battleHandoff: "unknown",
       assignedNpcRoutes: presence(this.options.assignedNpcRoutes === WEB_ASSIGNED_ROUTE_POLICY),
       sourceBossEntry: presence(this.options.sourceBossEntry===WEB_SOURCE_BOSS_ENTRY && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.player.native),
@@ -620,12 +624,50 @@ export class FieldGame {
   private cameraEventActive = false;
   readonly cameraActorId = "native:camera";
   get cameraSnapshot(): FieldCameraState | null { return this.camera?.snapshot() ?? null; }
+  readonly #worldAutoPolicy:WebFlatWorldAutoTasks|undefined;
+  #worldAutoQueue=createWorldAutoQueue();
+  #worldAutoPrepared=false;
+  #worldAutoRetired=false;
+  readonly worldAutoTaskJournal:{action:'add'|'start'|'complete'|'retire';tickets:number[];atMilliseconds:number;site?:Site}[]=[];
+  get worldAutoPose():WorldAutoPose|null {
+    const state=this.camera?.snapshot();return state?.kind==='field-camera-v4'?state.worldAuto:null;
+  }
+  get worldAutoTaskSnapshot(){return this.worldAutoPose?{...structuredClone(this.#worldAutoQueue),prepared:this.#worldAutoPrepared,retired:this.#worldAutoRetired}:null;}
+  private get worldAutoTasksBusy(){return this.#worldAutoQueue.tasks.length>0;}
+  /** World preparation may execute source Add/Start but cannot tick a private
+   * candidate before its existing map publication. */
+  holdWorldAutoTasks():void {if(this.#worldAutoQueue.tasks.length||this.#worldAutoRetired)throw new Error('Cannot prepare an active world auto-task owner');this.#worldAutoPrepared=true;}
+  publishWorldAutoTasks():void {this.#worldAutoPrepared=false;}
+  retireWorldAutoTasks():void {
+    if(this.#worldAutoRetired)return;
+    const tickets=this.#worldAutoQueue.tasks.map(t=>t.ticket);this.#worldAutoQueue={...this.#worldAutoQueue,revision:this.#worldAutoQueue.revision+1,tasks:[]};
+    this.#worldAutoRetired=true;this.worldAutoTaskJournal.push({action:'retire',tickets,atMilliseconds:this.time});
+  }
+  private applyWorldAutoTask(op:Extract<Op,{kind:'field-world-auto-task'}>):void {
+    const pose=this.worldAutoPose,binding=worldAutoBinding(this.content,this.#worldAutoPolicy);
+    if(this.#worldAutoRetired||this.#worldAutoPolicy!==WEB_FLAT_WORLD_AUTO_TASKS||this.options.worldAutoTasks!==this.#worldAutoPolicy||!pose||!binding||canonical(pose.binding)!==canonical(binding))
+      throw new Error('World auto tasks require the current runtime policy, trusted flat content and camera owner');
+    const command=parseFieldWorldAutoCommand(op.command),next=addWorldAutoCommand(this.#worldAutoQueue,pose,command,{script:op.script,index:op.index,source:op.source});
+    this.#worldAutoQueue=next;this.worldAutoTaskJournal.push({action:command.kind==='start'?'start':'add',tickets:command.kind==='start'?next.tasks.map(t=>t.ticket):[next.nextTicket-1],
+      atMilliseconds:this.time,site:structuredClone({script:op.script,index:op.index,source:op.source})});
+  }
+  private advanceWorldAutoTasks():void {
+    if(!this.worldAutoTasksBusy||this.#worldAutoPrepared||this.#worldAutoRetired||this.options.npcActivityClock&&!this.options.npcActivityClock())return;
+    const pose=this.worldAutoPose,binding=worldAutoBinding(this.content,this.#worldAutoPolicy);
+    if(!pose||!this.camera||this.options.worldAutoTasks!==this.#worldAutoPolicy||!binding||canonical(pose.binding)!==canonical(binding))throw new Error('World auto-task camera/content/clock owner changed');
+    const before=this.#worldAutoQueue,next=advanceWorldAutoQueue(before,pose);
+    if(next.queue.revision===before.revision)return;
+    const camera=this.camera.prepareWorldAutoPose(next.pose);
+    if(!camera.commitWith(()=>{if(this.#worldAutoQueue!==before||this.#worldAutoRetired||this.#worldAutoPrepared)return false;this.#worldAutoQueue=next.queue;return true;}))
+      throw new Error('Stale world auto-task tick');
+    if(next.completed.length)this.worldAutoTaskJournal.push({action:'complete',tickets:next.completed,atMilliseconds:this.time});
+  }
   private get currentPartyViewType():0|1|2 {
-    const state=this.camera?.snapshot();return state?.kind === "field-camera-v3" ? state.view.mapViewType : (this.content.entry.partyActors?.context.camera.mapViewType ?? 0) as 0|1|2;
+    const state=this.camera?.snapshot();return (state?fieldCameraView(state)?.mapViewType:undefined) ?? (this.content.entry.partyActors?.context.camera.mapViewType ?? 0) as 0|1|2;
   }
   /** Detached presentation of the one camera view; no parallel latest-command owner. */
   get currentView() {
-    const state=this.camera?.snapshot();return state?.kind === "field-camera-v3" ? structuredClone(state.view) : null;
+    const state=this.camera?.snapshot();return state?structuredClone(fieldCameraView(state)):null;
   }
   readonly viewChangeJournal:{requestedViewType:0|1;mapViewType:0|1|2;branchReturn:boolean;wait:boolean;timeScale:number;atMilliseconds:number}[]=[];
   /** Validate a view's controller applicability without changing transport,
@@ -707,7 +749,7 @@ export class FieldGame {
         canonical(entity.viewBinding.properties)!==canonical(providers.applyViewProperties(entity.layer)))
         throw new Error("ChangeView material/renderer registration is unresolved");
     }
-    const mapViewType=next.state.kind === "field-camera-v3" ? next.state.view.mapViewType : 0;
+    const mapViewType=fieldCameraView(next.state)?.mapViewType ?? 0;
     const partyWrite=party.prepareView(mapViewType), catalog=this.options.partyAppearance!.catalog;
     const asset=transport?.typeId===1||transport===null?context.player.fieldAssetId:transport.fieldAssetId;
     if(asset===null)throw new Error("ChangeView actual player asset is unavailable");
@@ -1352,6 +1394,7 @@ export class FieldGame {
     readonly se: FieldSoundState = new FieldSoundState(),
   ) {
     validateFieldViewChangePolicy(options.viewChange);
+    validateWorldAutoTaskPolicy(options.worldAutoTasks);this.#worldAutoPolicy=options.worldAutoTasks;
     if(options.sourcePartySelection!==undefined&&options.sourcePartySelection!==WEB_SOURCE_PARTY_SELECTION)throw new Error("Unknown source party selection policy");
     if (options.puppetRoutes !== undefined && options.puppetRoutes !== WEB_PUPPET_ROUTE_POLICY)
       throw new Error("Unknown Web puppet Route policy");
@@ -1485,7 +1528,7 @@ export class FieldGame {
     if (cameraState && !content.cameraHost) throw new Error("Saved camera cannot grant an unbound camera host");
     if (content.cameraHost && this.entityList.some((entity) => entity.kind === 15))
       throw new Error("Camera ChangeOffset trigger provider is unresolved");
-    this.camera = content.cameraHost ? new FieldCameraHost(content.cameraHost, this.cameraPorts(), cameraState, fieldViewBinding(content,options.viewChange),options.viewChange) : null;
+    this.camera = content.cameraHost ? new FieldCameraHost(content.cameraHost, this.cameraPorts(), cameraState, fieldViewBinding(content,options.viewChange),options.viewChange,worldAutoBinding(content,this.#worldAutoPolicy)) : null;
     const treasures = restoringNative ? [] : this.prepareTreasureInitialization(this.entityList);
     this.tileAnimations.register(this.entityList);
     this.initializeTreasures(treasures);
@@ -2117,7 +2160,7 @@ export class FieldGame {
       !this.options.deferLogicalEffectRestore &&
       (!this.options.puppetActors || !!(this.nativeActorBindings && this.nativeRuntime?.mapLifecycle &&
         this.nativeRuntime.animationKeys && this.nativeActorProviders && this.partyActors && this.camera)) &&
-      !this.cameraEventActive && (!this.puppetLifecycle || this.puppetLifecycle.finished) &&
+      !this.cameraEventActive && !this.worldAutoTasksBusy && (!this.puppetLifecycle || this.puppetLifecycle.finished) &&
       (!this.options.fieldEffectMap || this.options.fieldEffectMap.active) &&
       this.sourcePresentationContext?.advertisementOpeningFader !== "present" &&
       this.synchronizedEntry !== false &&
@@ -2175,7 +2218,7 @@ export class FieldGame {
       npcActivities: this.npcActivitySnapshot, assignedRoutes: this.assignedRouteSnapshot,
       tiles: this.tileAnimations.snapshot(), doors: this.openTriggers.snapshot(),
       bgm: this.bgm.snapshot(), environment: this.environment.snapshot(), se: this.se.snapshot(),
-      fade: this.fader.snapshot(), camera: this.cameraSnapshot, cameraOffset: this.cameraOffset, effects: this.fieldEffectsSnapshot,
+      fade: this.fader.snapshot(), camera: this.cameraSnapshot, worldAutoTasks:this.worldAutoTaskSnapshot, cameraOffset: this.cameraOffset, effects: this.fieldEffectsSnapshot,
       collision: this.collisionSwitches, updateMask: this.entityUpdateMask, transportation: this.transportationId,
       synchronizedEntry: this.synchronizedEntry, entryTaskStarted: this.entryTaskStarted, cameraEventActive: this.cameraEventActive,
       story: this.storyRuntimeSnapshot, storyOrigin: this.storyTimerOrigin ?? null,
@@ -2315,7 +2358,7 @@ export class FieldGame {
   /** A barrier owns one quiescent main core. Other live coroutine registers
    * need their own codecs before a content package may save through them. */
   private requireEventSaveBoundary(task: Task): void {
-    if (this.stop || !this.logicalEffectsPersistent && (this.effects || this.options.fieldEffectMap?.hasHistory) ||
+    if (this.stop || this.worldAutoTasksBusy || !this.logicalEffectsPersistent && (this.effects || this.options.fieldEffectMap?.hasHistory) ||
         this.options.fieldEffectMap && !this.options.fieldEffectMap.active ||
         this.sourcePresentationContext?.advertisementOpeningFader === "present" ||
         this.fader.active || this.colorFilterState?.active || this.actorVisibilityBusy || this.sourceMessage.active || this.messageWindow ||
@@ -3671,6 +3714,8 @@ export class FieldGame {
       this.tileAnimations.advance(10);
       this.openTriggers.advance();
       this.time += 10;
+      try { this.advanceWorldAutoTasks(); }
+      catch(error){this.block(error instanceof Error?error.message:String(error));return;}
       try { this.advanceActorVisibilityTimers(); }
       catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       this.fader.advance(0.01);
@@ -5578,6 +5623,10 @@ export class FieldGame {
           case "actor-visibility":
             try { this.executeActorVisibility(t.actor, op, t.script, t.pc - 1); }
             catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
+          case 'field-world-auto-task':
+            try {this.applyWorldAutoTask(op);}
+            catch(error){this.block(error instanceof Error?error.message:String(error),op);return;}
             break;
           case "field-view-change":
             try { const prepared=this.prepareViewChange(op.command);prepared.commit();

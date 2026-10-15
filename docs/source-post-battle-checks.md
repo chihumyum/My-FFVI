@@ -10,6 +10,11 @@ source without an exact battle export remains explicitly unbound.
 
 ## Owners and transactions
 
+The no-shield branch scans the actual borrowed six-slot equipment first. It
+does not require unused shield master 213, a conversion catalog or counter 9.
+A real wearer still needs its exact shield binding; the 256 conversion remains
+blocked until its owned equipment transaction is implemented.
+
 `BattleGame` reads its existing equipment qualification and shared-bank draft.
 `GameState` remains the owned roster/equipment/inventory owner; the existing
 `GameSession` lease and prepared return publish owned resources and shared

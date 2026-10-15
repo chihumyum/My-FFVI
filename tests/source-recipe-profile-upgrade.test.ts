@@ -275,3 +275,36 @@ test("animated map host uses a separate exact additive v4 declaration and cannot
   f.candidate.set(f.urls.sourceWorld, await seal(bad));
   await assert.rejects(f.run({ frameworkProfileUpgrade: proof }), /identity|dependency|media changed/i);
 });
+
+async function worldAutoProfileFixture(){
+ const f=await fixture(),added={mapAnimatedEntities:'web-field-animated-map-entities-v1',worldAutoTasks:'web-flat-world-auto-tasks-v1'};
+ for(const[url,value]of f.candidate)f.candidate.set(url,await seal({...value,developmentProfile:{...value.developmentProfile,...added}}));
+ const map=f.candidate.get(f.urls.sourceMap)!,world=f.candidate.get(f.urls.sourceWorld)!;
+ f.candidate.set(f.urls.sourceWorld,await seal({...world,maps:{...world.maps,[map.mapId]:{...world.maps[map.mapId],contentHash:map.contentHash}}}));
+ const entry=f.candidate.get(f.urls.sourceEntry)!;f.candidate.set(f.urls.sourceEntry,await seal({...entry,mapContentHash:map.contentHash,worldCatalogHash:f.candidate.get(f.urls.sourceWorld)!.contentHash}));
+ return {...f,proof:{...declaration(),kind:'compiled-framework-profile-upgrade-v5',markers:{...markers,...added}}};
+}
+test('exact v5 world-auto marker upgrades all pinned content identities and binds the real content/runtime provider',async()=>{
+ const f=await worldAutoProfileFixture(),before=canonical({recipe:f.recipe,current:[...f.current],candidate:[...f.candidate]});
+ await assert.rejects(f.run({frameworkProfileUpgrade:{...f.proof,kind:'compiled-framework-profile-upgrade-v4'}}),/framework profile upgrade markers/);
+ const result=await f.run({frameworkProfileUpgrade:f.proof});assert.equal(result.report.frameworkProfileUpgrades.length,3);
+ for(const row of result.report.frameworkProfileUpgrades){
+  assert.equal(row.kind,'compiled-framework-profile-upgrade-v5');assert.equal(row.grantsSourceAdmission,false);assert.equal(row.saveMigration,false);
+  assert.deepEqual(row.comparisonIdentityBefore,row.comparisonIdentityAfter);assert.equal(row.profileAfter.worldAutoTasks,f.proof.markers.worldAutoTasks);
+  const provider=row.providers.find((p:any)=>p.marker==='worldAutoTasks');assert.equal(provider.provider,'worldAutoBinding');assert.match(provider.sha256,/^[a-f0-9]{64}$/);
+ }
+ assert.equal(canonical({recipe:f.recipe,current:[...f.current],candidate:[...f.candidate]}),before);
+ for(const mutate of [(p:any)=>{delete p.markers.worldAutoTasks;},(p:any)=>{p.markers.worldAutoTasks='unknown';},(p:any)=>{p.markers.unverified=true;},
+  (p:any)=>{p.kind='compiled-framework-profile-upgrade-v6';}]){const proof=structuredClone(f.proof);mutate(proof);await assert.rejects(f.run({frameworkProfileUpgrade:proof}),/framework profile upgrade/);}
+ const bad=structuredClone(f.candidate.get(f.urls.sourceMap)!);bad.map.identity.areaId++;bad.areaId++;
+ f.candidate.set(f.urls.sourceMap,await seal(bad));await assert.rejects(f.run({frameworkProfileUpgrade:f.proof}),/identity|dependency|media changed/i);
+});
+test('v5 world-auto declaration cannot replace an unavailable compiled provider or alter a prior marker',async()=>{
+ const f=await worldAutoProfileFixture();await mkdir(resolve(root,'build/wip'),{recursive:true});const isolated=await mkdtemp(resolve(root,'build/wip/world-auto-provider-unavailable-'));
+ try{await cp(resolve(compiledDir,'src'),resolve(isolated,'src'),{recursive:true});await writeFile(resolve(isolated,'src/core/field-world-auto-tasks.js'),'export const WEB_FLAT_WORLD_AUTO_TASKS="unavailable";export function worldAutoBinding(){}\n');
+  await assert.rejects(f.run({compiledDir:isolated,frameworkProfileUpgrade:f.proof}),/host unavailable: worldAutoTasks/);
+ }finally{await rm(isolated,{recursive:true,force:true});}
+ for(const[url,value]of f.current)f.current.set(url,await seal({...value,developmentProfile:{...value.developmentProfile,worldAutoTasks:'prior-unknown'}}));
+ for(const[role,url]of Object.entries(f.urls))(f.recipe as any)[role].contentHash=f.current.get(url)!.contentHash;
+ await assert.rejects(f.run({frameworkProfileUpgrade:f.proof}),/profile mismatch|cannot remove or change marker/);
+});

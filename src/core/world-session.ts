@@ -268,6 +268,7 @@ type Ownership = {
   presentation: string;
   fade: string;
   camera: string;
+  worldAutoTasks:string;
   story: string;
   storyOrigin: string;
   messageValues: string;
@@ -537,6 +538,7 @@ export class WorldSession {
     this.effectMap = effectMap;
     this.effectOwner = restoredOwner;
     this.nextEffectScope = nextScope;
+    this.current.retireWorldAutoTasks();
     this.current = next;
     this.location = structuredClone(loc);
     this.catalogHash = loc?.catalogHash ?? this.sourceOrigin?.catalogHash ?? null;
@@ -739,6 +741,7 @@ export class WorldSession {
           ...(this.owned?.current.sourceMessageSequence ? { sourceMessageSequence: this.owned.current.sourceMessageSequence } : {}),
           ...(this.owned?.current.conditionLeaderActivity ? { conditionLeaderActivity: this.owned.current.conditionLeaderActivity } : {}),
           ...(this.owned?.current.viewChange ? {viewChange:this.owned.current.viewChange} : {}),
+          ...(this.owned?.current.worldAutoTasks ? {worldAutoTasks:this.owned.current.worldAutoTasks} : {}),
           ...(this.owned?.current.retainedWorldTransportation ? {retainedWorldTransportation:this.owned.current.retainedWorldTransportation} : {}),
           ...(this.owned?.current.cameraShake ? { cameraShake: this.owned.current.cameraShake } : {}),
           ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
@@ -748,6 +751,7 @@ export class WorldSession {
         FieldSoundState.restore(se, content.se),
       );
       destinationField = field;
+      field.holdWorldAutoTasks();
       if (nativeActors) {
         if (!prior || !actorEntry || !target.partyEntry ||
             !owned?.ports.partyAppearance || !nativeRuntime || !catalog.nativeAnimationKeys ||
@@ -794,6 +798,7 @@ export class WorldSession {
         presentation: canonical(presentation),
         fade: fromFade,
         camera: fromCamera,
+        worldAutoTasks:canonical(from.worldAutoTaskSnapshot),
         story: fromStory, storyOrigin: fromStoryOrigin,
         invalidations: canonical(from.contentInvalidationsSnapshot), candidateInvalidations: canonical(field.contentInvalidationsSnapshot),
         candidateIsCurrent: () => fieldIsCurrent() && (ownedIsCurrent?.() ?? true),
@@ -818,7 +823,7 @@ export class WorldSession {
           map: effectMap!, fieldState: this.effectFieldState(field) } } : {}),
       });
       return prepared;
-    } catch (error) { effectCandidate?.discard(); throw error; }
+    } catch (error) { destinationField?.retireWorldAutoTasks();effectCandidate?.discard(); throw error; }
   }
   commit(value: PreparedMap): boolean {
     if (this.commitInProgress) return false;
@@ -832,7 +837,7 @@ export class WorldSession {
     this.commitInProgress = active;
     try { return this.commitPrepared(value, ownership, active); }
     catch (error) { if (!active.started) ownership.effects?.candidate.discard(); throw error; }
-    finally { this.commitInProgress = null; }
+    finally { if(this.current!==value.field)value.field.retireWorldAutoTasks();this.commitInProgress = null; }
   }
   private commitPrepared(value: PreparedMap, ownership: Ownership, active: MapCommit): boolean {
     if (!this.isCurrent(ownership, value) || active.cancelled) {
@@ -886,7 +891,9 @@ export class WorldSession {
       request: structuredClone(value.request.request),
       site: value.request.site,
     });
+    ownership.from.retireWorldAutoTasks();
     this.current = value.field;
+    value.field.publishWorldAutoTasks();
     this.catalogHash = ownership.catalogHash;
     this.location = {
       catalogHash: ownership.catalogHash,
@@ -909,6 +916,7 @@ export class WorldSession {
     }
     const ownership = this.prepared.get(value);
     this.prepared.delete(value);
+    if(ownership)value.field.retireWorldAutoTasks();
     ownership?.effects?.candidate.discard();
   }
   private isCurrent(ownership: Ownership, value: PreparedMap): boolean {
@@ -923,6 +931,7 @@ export class WorldSession {
       ownership.presentation === canonical(this.current.sourcePresentationContext) &&
       ownership.fade === canonical(this.current.fader.snapshot()) &&
       ownership.camera === canonical(this.current.cameraSnapshot) &&
+      ownership.worldAutoTasks === canonical(this.current.worldAutoTaskSnapshot) &&
       ownership.invalidations === canonical(this.current.contentInvalidationsSnapshot) &&
       ownership.candidateInvalidations === canonical(value.field.contentInvalidationsSnapshot) &&
       ownership.messageValues === canonical(this.current.sourceMessage.feeSnapshot) &&

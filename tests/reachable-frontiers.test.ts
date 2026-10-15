@@ -60,3 +60,17 @@ test("failed real entry preparation retains a frontier without inventing a publi
   assert.equal(report.runs[0]!.mapId,null);assert.deepEqual(report.runs[0]!.inputPrefix,[]);
   assert.equal(report.groups[0]!.message,"Controlled entry provider unavailable");
 });
+
+
+test("source-style newgame exploration returns a real forced terminal through the common handoff and keeps searching",async()=>{
+  const f=await reachableFrontierFixture({forcedBattle:true});
+  const report=await exploreReachableFrontiers(f.host,{maxRuns:90,maxDepth:64,maxTicksPerRun:1500});
+  const returns=report.runs.flatMap(r=>r.inputs).filter((i:any)=>i.kind==="automatic-battle-return") as {outcome:string}[];
+  assert.ok(returns.some(r=>r.outcome==="forced"),"The forced terminal must publish through the real return transaction");
+  assert.ok(report.reached.some(r=>r.mapId===f.ids[2]),"Continue the original field caller and its next real map transition");
+  assert.ok(report.anchors.some(a=>a.reason==="source-event-save"));
+  assert.ok(f.seenSessions.some(game=>game.state.snapshot().completedBattles.some(b=>b.outcome==="forced")));
+  assert.ok(f.seenSessions.every(game=>game.state.completedEncounters.length===0),"A forced return cannot become a victory");
+  assert.ok(!report.frontiers.some(f=>f.capability==="logical-clock"),"A supported terminal is not a wait-budget frontier");
+  assert.equal(report.sourceCampaignComplete,false);
+});

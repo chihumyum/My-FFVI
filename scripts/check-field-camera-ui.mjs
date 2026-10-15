@@ -275,8 +275,8 @@ function canvas(width = 160, height = 160) {
     },
   };
 }
-function scene(definition, width = 160, height = 160) {
-  const game = new FieldGame(definition, EventState.initialized()),
+function scene(definition, width = 160, height = 160, options={}) {
+  const game = new FieldGame(definition, EventState.initialized(),undefined,undefined,options),
     target = canvas(width, height),
     images = new Map(
       ["synthetic-map.png", "synthetic-player.png", "synthetic-minimap.png",
@@ -559,6 +559,15 @@ check("draw refuses a source background with a missing camera host or image", ()
   return { missingCamera: "blocked", missingImage: "blocked" };
 });
 
+check('world auto scalars transform actual production Canvas map/actor drawing using the same camera pose, without moving the logical player',()=>{
+  const raw=(mnemonic,reals=[])=>({type:1,mnemonic,operands:{iValues:[1,0,0,0,0,0,0,0],rValues:[...reals,...Array(8-reals.length).fill(0)],sValues:Array(8).fill('')}});
+  const ops=['AddAirShipRotateChangeTask','AddAirShipFlightAltitudeChangeTask','AddAirshipUpDownMoveTask'].map((name,i)=>decodeFieldOp(raw(name,[.02,[90,1,20][i],0]),at({},i),{}));
+  ops.push({kind:'field-world-auto-task',command:{kind:'start'}},exit);
+  const definition=content(ops);definition.developmentProfile={kind:'framework-development-v1',policy:'omit-anonymous-environment-particles-v1',sourceContentHash:sourceHash,omissions:[],worldAutoTasks:'web-flat-world-auto-tasks-v1'};definition.contentHash=sha(JSON.stringify(definition));
+  const s=scene(definition,160,160,{worldAutoTasks:'web-flat-world-auto-tasks-v1'}),before=s.draw(),position={x:s.game.player.x,y:s.game.player.y};
+  assert(s.game.startEvent('main'));s.game.advance(100);const after=s.draw();assert.notDeepEqual(player(before),player(after));assert.deepEqual({x:s.game.player.x,y:s.game.player.y},position);assert.equal(s.game.worldAutoPose.rotation,90);assert.equal(s.game.worldAutoPose.flightAltitude,1);assert.equal(s.game.worldAutoPose.upDown,20);
+  return {actualRenderer:true,logicalPositionPreserved:true,pose:s.game.worldAutoPose,pixelsVerified:false,nativeParity:false};
+});
 const implementation = {};
 for (const file of [
   "apps/game/renderer.js",

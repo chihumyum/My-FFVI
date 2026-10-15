@@ -29,10 +29,22 @@ async function modules(root, dist) {
   ].map(load)));
 }
 
+/** One explicit producer profile for every initialized entry/world/map body.
+ * Runtime authorization is separate; this creates no source readiness grant. */
+export function initializedContentBatchProfile(sourceContentHash,{presentation,npcActivity,worldAutoTasks}={}){
+  assert.match(sourceContentHash,digest);assert.equal(presentation,'framework-ordinary-field-flat-v1');
+  if(worldAutoTasks!==undefined&&worldAutoTasks!=='web-flat-world-auto-tasks-v1')throw new Error('Unknown initialized world auto-task policy');
+  if(npcActivity!==undefined&&npcActivity!=='framework-npc-area-v1')throw new Error('Unknown initialized NPC activity policy');
+  return {kind:'framework-development-v1',policy:'omit-anonymous-environment-particles-v1',sourceContentHash,omissions:[],
+    storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1',fieldPresentation:presentation,
+    ...(npcActivity?{npcActivity}:{}),...(worldAutoTasks?{worldAutoTasks}:{})};
+}
+
 /** All source references are verified before derivation. The manifest supplies
  * player inputs, not replacement scripts, flags, actors, rewards or assets. */
 export async function compileInitializedContentBatch(root, raw, recipeSha256,
-  { dist = "dist", readJson, sourceBattleDirectory } = {}) {
+  { dist = "dist", readJson, sourceBattleDirectory, worldAutoTasks } = {}) {
+  if(worldAutoTasks!==undefined&&worldAutoTasks!=='web-flat-world-auto-tasks-v1')throw new Error('Unknown initialized world auto-task policy');
   root = resolve(root); const api = await modules(root, dist), build = resolve(root, "build");
   const serviceVariant=raw?.kind==='initialized-source-map-recipe-v5';
   const npcVariant=raw?.kind==='initialized-source-map-recipe-v4'||serviceVariant;
@@ -122,8 +134,8 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
   const bindings = api.bindMapPackages(corpus.assets, corpus.tables), byId = new Map(corpus.assets.map(asset => [asset.id, asset]));
   const renderHost = await api.loadFieldCompositionRenderHost(root, sources);
   const seal = value => { const { contentHash: _, ...body } = value; return { ...body, contentHash: api.hash(body) }; };
-  const profile = sourceContentHash => ({ kind: "framework-development-v1", policy: "omit-anonymous-environment-particles-v1",
-    sourceContentHash, omissions: [], ...api.FRAMEWORK_STORY_RUNTIME_DECLARATIONS, fieldPresentation: recipe.presentation,...(npcVariant?{npcActivity:npcTemplate.policy}:{}) });
+  const profile = sourceContentHash => initializedContentBatchProfile(sourceContentHash,{presentation:recipe.presentation,
+    ...(npcVariant?{npcActivity:npcTemplate.policy}:{}),...(worldAutoTasks?{worldAutoTasks}:{})});
   const prefix = "/content-packages/" + recipe.id, presentations = [], walkingResults=[],npcResults=[],serviceResults=[];
   const maps = sourceMaps.map(sourceMap => {
     const map = structuredClone(sourceMap);

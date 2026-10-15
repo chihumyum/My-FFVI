@@ -154,7 +154,7 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
         op = { kind: "ui-visibility", visible: s[0] === "ShowBattleUI" };
       if (s[0] === "StopAutoBattle") op = { kind: "stop-auto" };
       if (s[0] === "RemoveAllAct")
-        op = blocked("RemoveAllAct requires staged-action cancellation, fixed-player stack and executor state exit/entry lifecycle; queue-only clearing is not admitted");
+        op = { kind: "remove-all-actions" };
       const party = ({ "LB:敵パーティラウンド2": { partyId: 513, hidden: false },
         "LB:敵パーティラウンド3": { partyId: 514, hidden: false },
         "LB:敵パーティラウンド4": { partyId: 515, hidden: true } } as Record<string, { partyId: number; hidden: boolean }>)[s[0]!];

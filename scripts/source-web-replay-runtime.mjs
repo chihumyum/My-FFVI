@@ -5,6 +5,7 @@
 export function sourceWebReplayRuntimePorts() {
   return Object.freeze({
     battleBranchExecution: 'web-source-battle-branch-execution-v1',
+    worldAutoTasks: 'web-flat-world-auto-tasks-v1',
     viewChange: 'web-flat-field-view-change-v2',
     battleEventEffects: 'web-source-battle-effects-pulse-v1',
     sourcePartySelection: 'web-source-party-selection-atomic-v1',

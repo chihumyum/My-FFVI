@@ -18,9 +18,9 @@ function visibilityProgram() {
   return battleMessageProgram([messageRaw('BattleEndEnabled'), syscall('HideBattleUI'), messageRaw('Wait', .05),
     syscall('ShowBattleUI'), syscall('StopAutoBattle'), messageRaw('Wait', .05), messageRaw('Exit')]);
 }
-test('all common control operands decode exactly; unknown queue cancellation and altered operands stay blocked', () => {
+test('all common control operands decode exactly; altered operands stay blocked', () => {
   for (const [name, expected] of [['HideBattleUI', { kind: 'ui-visibility', visible: false }],
-    ['ShowBattleUI', { kind: 'ui-visibility', visible: true }], ['StopAutoBattle', { kind: 'stop-auto' }]] as const) {
+    ['ShowBattleUI', { kind: 'ui-visibility', visible: true }], ['StopAutoBattle', { kind: 'stop-auto' }], ['RemoveAllAct', { kind: 'remove-all-actions' }]] as const) {
     const raw = syscall(name);
     assert.deepEqual(battleMessageProgram([raw, messageRaw('Exit')]).instructions[0]!.op, expected);
     for (const key of ['iValues', 'rValues', 'sValues'] as const) {
@@ -28,9 +28,7 @@ test('all common control operands decode exactly; unknown queue cancellation and
       assert.equal(battleMessageProgram([changed, messageRaw('Exit')]).instructions[0]!.op.kind, 'blocked');
     }
   }
-  const blocked = battleMessageProgram([syscall('RemoveAllAct'), messageRaw('Exit')]);
-  assert.equal(blocked.instructions[0]!.op.kind, 'blocked');
-  assert.throws(() => createBattleEventState(blocked), /staged-action cancellation.*executor state/);
+
 });
 test('the detached VM yields one immediate control request and advances without an invented wait', () => {
   const program = battleMessageProgram([syscall('HideBattleUI'), syscall('StopAutoBattle'), syscall('ShowBattleUI'), messageRaw('Exit')]);

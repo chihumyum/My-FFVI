@@ -1,5 +1,6 @@
 import { WEB_BATTLE_BRANCH_EXECUTION } from '/runtime/core/battle-branch-execution.js';
 import { WEB_SCRIPTED_BATTLE_ACTIONS } from "/runtime/core/scripted-battle-action.js";
+import { WEB_FLAT_WORLD_AUTO_TASKS } from '/runtime/core/field-world-auto-tasks.js';
 import { WEB_SOURCE_PARTY_SELECTION } from '/runtime/core/source-party-selection.js';
 import { SourcePartySelectionView } from './source-party-selection-view.js';
 import { WEB_BATTLE_EVENT_MESSAGE_POLICY } from "/runtime/core/battle-event-message.js";
@@ -108,6 +109,7 @@ const runtime = {
   retainedWorldTransportation: "web-retained-walking-magitek-world-entry-v1",
   assignedNpcRoutes: "web-assigned-npc-route-grid-v1",
   viewChange:"web-flat-field-view-change-v2",
+  worldAutoTasks:WEB_FLAT_WORLD_AUTO_TASKS,
   battleEventEffects:"web-source-battle-effects-pulse-v1",
   sourcePartySelection:WEB_SOURCE_PARTY_SELECTION,
   sourceBossEntry:WEB_SOURCE_BOSS_ENTRY,sourceBattleResult:WEB_COMMITTED_BATTLE_RESULT,

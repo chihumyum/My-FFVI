@@ -22,21 +22,26 @@ export function planCursedShieldCheck(read:PostBattleSharedRead,players:readonly
   equipment:BattleEntryInventory|undefined,catalog:BattleEntryCatalog|undefined):{counter:number|null}{
   if(read({category:'ScenarioVariable',index:2})===-1001)return {counter:null};
   if(players.length===0)return {counter:null};
-  if(!equipment||!catalog)throw new Error('CursedShield requires the actual borrowed player equipment and source content catalog');
-  for(const id of [CURSED_SHIELD_CONTENT_ID]){
-    const rows=catalog.items.filter(row=>row.id===id),gear=equipment.equipmentCatalog.definitions[id];
-    if(rows.length!==1||rows[0]!.type!==3||!gear||gear.id!==id||gear.kind!=='armor'||gear.empty)
-      throw new Error('CursedShield requires exact source content 213 equipment binding');
-  }
+  if(!equipment)throw new Error('CursedShield requires the actual borrowed player equipment');
   let counter:number|null=null;
   for(const player of players){
     const members=equipment.members.filter(member=>member.id===player.id&&member.sourceId===player.sourceId);
     if(members.length!==1||members[0]!.equipment.length!==6)throw new Error('CursedShield actual player equipment owner is missing or ambiguous');
     const slots=members[0]!.equipment;
-    if(slots.some(id=>!equipment.equipmentCatalog.definitions[id]))throw new Error('CursedShield equipped content identity is unresolved');
     // The native dictionary scan breaks on its first matching slot; count once
     // per actual player, including a player whose battle HP is already zero.
-    if(!slots.includes(CURSED_SHIELD_CONTENT_ID))continue;
+    const wearsShield=slots.includes(CURSED_SHIELD_CONTENT_ID);
+    // The source scans actual OwnedItem.Id before consulting a shield master.
+    // Missing unused content cannot turn the proven no-shield branch into an
+    // unresolved equipment conversion. A real wearer still needs its binding.
+    if(wearsShield){
+      if(!catalog)throw new Error('CursedShield requires exact source content 213 equipment binding');
+      const rows=catalog.items.filter(row=>row.id===CURSED_SHIELD_CONTENT_ID),gear=equipment.equipmentCatalog.definitions[CURSED_SHIELD_CONTENT_ID];
+      if(rows.length!==1||rows[0]!.type!==3||!gear||gear.id!==CURSED_SHIELD_CONTENT_ID||gear.kind!=='armor'||gear.empty)
+        throw new Error('CursedShield requires exact source content 213 equipment binding');
+    }
+    if(slots.some(id=>!equipment.equipmentCatalog.definitions[id]))throw new Error('CursedShield equipped content identity is unresolved');
+    if(!wearsShield)continue;
     counter=(int32(counter??read({category:'ScenarioVariable',index:9}))+1)|0;
     if(counter===256)throw new Error('CursedShield 256 conversion requires atomic owned content 214 grant, exact equipped-slot SetEquip, content 213 removal and parameter/provider refresh');
   }

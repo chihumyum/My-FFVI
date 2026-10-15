@@ -218,6 +218,7 @@ export type MapRequest = {
 export type Op = Site &
   (
     | import("../core/field-view-change.js").FieldViewChangeOp
+    | import("../core/field-world-auto-tasks.js").FieldWorldAutoOp
     | import("../core/source-party-selection.js").SourcePartySelectionOp
     | { kind: "nop" | "exit" | "return" | "join" | "hide" }
     /** Authored Web barrier or source AutoSave under its explicit content policy. */

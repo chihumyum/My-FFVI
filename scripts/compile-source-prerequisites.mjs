@@ -334,7 +334,8 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
 
 /** Pure upstream DAG: current battle capabilities -> source world/new game -> explicit framework
  * derivation. It never writes packages, generated recipes, reports or archives. */
-export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat } = {}) {
+export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks } = {}) {
+  if(worldAutoTasks!==undefined&&worldAutoTasks!=='web-flat-world-auto-tasks-v1')throw new Error('Unknown source world auto-task policy');
   if (mapAnimatedEntities !== undefined && mapAnimatedEntities !== "web-field-animated-map-entities-v1")
     throw new Error("Unknown source framework animated map entity policy");
   const periodicDeclaration = sourcePeriodicMapsInput(periodicMaps);
@@ -395,7 +396,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
     initializerHash: api.hash(battle.gameState.sourceNewGame) };
   const strict = await api.compileWorld(root);
   const entry = await api.compileSourceNewGame(root, battle, strict);
-  const frameworkOptions = { ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}) };
+  const frameworkOptions = { ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(worldAutoTasks?{worldAutoTasks}:{}) };
   let logicalReport = null;
   if (inputs.kind === "source-prerequisite-input-lock-v2") {
     const declaration = inputs.logicalFieldEffects, directory = filePath(root,declaration.input);

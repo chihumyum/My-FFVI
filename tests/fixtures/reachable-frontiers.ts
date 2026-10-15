@@ -8,11 +8,13 @@ import type { FrontierHost } from "../../src/tools/reachable-frontiers.js";
 import type { Op, Site, FieldEntity } from "../../src/field/types.js";
 import type { WorldMapContent } from "../../src/field/world.js";
 import { choiceDefinition } from "./field-choice.js";
+import { battleMessageProgram, messageRaw } from "./battle-event-message.js";
+import { WEB_BATTLE_EVENT_CONTROLS } from "../../src/core/battle-controls.js";
 type Instruction<T> = T extends Site ? Omit<T, keyof Site> : never;
 
 /** Three authored maps reached only by contact, choice, real battle, event
  * save and a talk input. All resources exist before the shared initializer. */
-export async function reachableFrontierFixture() {
+export async function reachableFrontierFixture(options: { forcedBattle?: boolean } = {}) {
   const f = await frameworkNewGameFixture(), ids = [900001,900002,900003] as const;
   const source = { file:"tests/fixtures/reachable-frontiers.ts",assetPath:"authored-three-map-loop",objectId:"9223372036854775807" };
   const point = f.map.partyEntry!.pointIns[0]!, x=point.x,y=point.y;
@@ -55,10 +57,16 @@ export async function reachableFrontierFixture() {
     name:map.name,areaId:map.areaId,geometryReady:true,defaultGroupReady:true,blockers:[]}]));
   const qualification=battleDraft.common.battleEntry!.maps.find(m=>m.id===ids[0])!;
   for(const id of ids.slice(1))battleDraft.common.battleEntry!.maps.push({...structuredClone(qualification),id});
+  if (options.forcedBattle) {
+    battleDraft.encounters[f.encounterId]!.lifecycle = { kind: "battle-lifecycle-v1", mode: "script", scriptId: 9000,
+      program: battleMessageProgram([messageRaw("BattleForceExit"), messageRaw("Wait", .1), messageRaw("Exit")]) };
+    battleDraft.common.battleEvents = { conditions: battleDraft.common.conditions.rules.definitions.map(({ id, type }) =>
+      ({ id, type, attackTarget: type === 5 ? 1 : 0, gameOverTarget: type === 5 ? 1 : 0 })) };
+  }
   const world=sealBatchContent(worldDraft),battle=sealBatchContent(battleDraft);
   const content=await compileFrameworkNewGame({sourceEntry:f.sourceEntry,sourceBattle:f.sourceBattle,sourceMap:f.sourceMap,
     world,map:sealedMaps[0]!,battle,entrance:point.id});
-  const runtime={battleHandoff:"prepared" as const};
+  const runtime={battleHandoff:"prepared" as const, ...(options.forcedBattle ? {battleEventControls:WEB_BATTLE_EVENT_CONTROLS} : {})};
   const files=new Map<string,unknown>([["/framework/world/catalog.json",world],...sealedMaps.map(m=>[world.maps[m.mapId]!.url,m] as [string,unknown])]);
   const read=async(url:string)=>{if(!files.has(url))throw Error("Missing controlled dependency "+url);return structuredClone(files.get(url));};
   let creates=0,restores=0;const seenSessions:GameSession[]=[];

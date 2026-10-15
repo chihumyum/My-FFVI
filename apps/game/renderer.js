@@ -1,4 +1,5 @@
 import { minimapMarkers, MINIMAP_ROTATION } from "/runtime/core/minimap.js";
+import { projectFlatWorldAutoPose } from '/runtime/core/field-world-auto-tasks.js';
 import { FIELD_POSE as FACING } from "/runtime/core/actor-animation.js";
 import { fieldFadeOverlay } from "/runtime/core/field-fade.js";
 import { projectFieldBackground } from "/runtime/core/field-background.js";
@@ -604,9 +605,16 @@ export class Renderer {
     if (!native && game.fieldEffectsSnapshot != null && !this.effectsDeferred(game)) throw new Error("来源字段特效需要共享原生颜色与深度缓冲");
     const actorImages = native ? [] : this.actorImages(actors, cx, cy, w, h, topology);
     c.imageSmoothingEnabled = false;
+    const auto=game.worldAutoPose?projectFlatWorldAutoPose(game.worldAutoPose):null;
+    if(auto){c.fillStyle='#09111b';c.fillRect(0,0,w,h);}
+    c.save();
+    try {
+    if(auto){c.translate(w/2,h/2+auto.offsetY);c.rotate(auto.radians);c.scale(auto.scale,auto.scale);c.translate(-w/2,-h/2);}
     if (native) {
       const scaled = scaleFieldCompositionPixels(native, w, h), frame = c.createImageData(w, h);
-      frame.data.set(scaled.data); c.putImageData(frame, 0, 0);
+      frame.data.set(scaled.data);
+      if(auto){const canvas=this.compositionCanvas(w,h);canvas.getContext('2d').putImageData(frame,0,0);c.drawImage(canvas,0,0);}
+      else c.putImageData(frame, 0, 0);
     }
     else this.background(c, sourceCamera, w, h);
     const drawActors = (layer) => {
@@ -619,6 +627,7 @@ export class Renderer {
         if (l.name === "UpperLayer") drawActors(2);
         if (l.name === "CeilLayer") drawActors(3);
       }
+    } finally {c.restore();}
     const message = game.sourceMessage?.projection;
     // The sequence projection uses the shared DOM dialogue panel, which wraps
     // and scrolls complete source pages. The old v1 short subtitle stays here.

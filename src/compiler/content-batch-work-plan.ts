@@ -180,6 +180,7 @@ const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
   storyTimer: "map-event-and-travel",
   screenEffects: "map-event-and-travel",
   viewChange:"map-event-and-travel",
+  worldAutoTasks:'map-event-and-travel',
   cameraShake: "map-event-and-travel",
   contentInvalidations: "map-event-and-travel",
   eventSaveCompletion: "save-restore-and-continuation",

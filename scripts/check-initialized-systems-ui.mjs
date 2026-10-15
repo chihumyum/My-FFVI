@@ -482,6 +482,13 @@ async function packages(packageId = "controlled-initialized-ui", sourceEncounter
       entry.lifecycle.program.end=entry.lifecycle.program.instructions.length;
     }
   }
+  if(packageId==='controlled-world-auto-tasks'){
+    f.map.developmentProfile.worldAutoTasks=f.world.developmentProfile.worldAutoTasks=core.WEB_FLAT_WORLD_AUTO_TASKS;
+    const {compileFieldWorldAutoInstruction}=await load('src/compiler/field-world-auto-tasks.js'),raw=(mnemonic,reals=[])=>({type:1,mnemonic,operands:{iValues:[1,0,0,0,0,0,0,0],rValues:[...reals,...Array(8-reals.length).fill(0)],sValues:Array(8).fill('')}});
+    const commands=[compileFieldWorldAutoInstruction(raw('AddAirShipRotateChangeTask',[1,90,10])),compileFieldWorldAutoInstruction(raw('AddAirShipFlightAltitudeChangeTask',[1,1,0])),
+      compileFieldWorldAutoInstruction(raw('AddAirshipUpDownMoveTask',[1,20,0])),{kind:'field-world-auto-task',command:{kind:'start'}},{kind:'exit'}];
+    scripts['ui-acquire']=site('ui-acquire',commands);
+  }
   f.map = await seal(f.map); f.battle = await seal(f.battle);
   f.world.maps[String(f.map.mapId)].contentHash = f.map.contentHash;
   f.world = await seal(f.world);
@@ -1430,6 +1437,14 @@ try {
     const restored=h.bound();assert.notEqual(restored,owner);assert.deepEqual(restored.checkpoint(),saved);
     retained();assert.deepEqual(restored.checkpoint(),saved);assert.deepEqual(owner.state.snapshot().roster,before.roster);
     report.sourcePartySelection={actualApp:true,actualCommands:true,actualNativeOwner:true,detachedUi:true,storageWrites:h.calls.writes,sourceStoryReachability:false,nativeParity:false};
+  });
+  await check('world auto scalar tasks use the actual app Field clock and host policy, preserve hidden-tab gating and restore one stable camera pose',async()=>{
+    const pack=await packages('controlled-world-auto-tasks'),h=await host(pack),owner=await start(h),field=owner.field,before=owner.state.snapshot();
+    assert.equal(h.api.runtime.worldAutoTasks,core.WEB_FLAT_WORLD_AUTO_TASKS);await move(h,'right');assert.equal(field.worldAutoTaskSnapshot.tasks.length,3);assert.equal(owner.checkpointReady,false);
+    const pose=field.worldAutoPose,queue=field.worldAutoTaskSnapshot;h.visibility(true);await h.frame(1000);assert.deepEqual(field.worldAutoPose,pose);assert.deepEqual(field.worldAutoTaskSnapshot,queue);h.visibility(false);await resume(h);
+    for(let i=0;i<80&&!owner.checkpointReady;i++)await h.frame();assert(owner.checkpointReady,JSON.stringify({stop:field.stop,flow:h.api.read().flow.phase,time:field.time,queue:field.worldAutoTaskSnapshot,pose:field.worldAutoPose}));assert.equal(field.worldAutoPose.rotation,100);assert.equal(field.worldAutoPose.flightAltitude,1);assert.equal(field.worldAutoPose.upDown,20);assert.deepEqual(owner.state.snapshot(),before);
+    const saved=owner.checkpoint();await pauseMenu(h);await h.click(h.$('save-game'));await h.click(h.$('load-game'));const restored=h.bound();assert.deepEqual(restored.checkpoint(),saved);assert.deepEqual(restored.field.worldAutoPose,field.worldAutoPose);await resume(h);for(let i=0;i<8;i++)await h.frame();assert.deepEqual(restored.state.snapshot(),before);
+    report.worldAutoTasks={actualApp:true,actualFieldCamera:true,actualParallelQueue:true,hiddenClockGate:true,actualStorage:true,sourceStoryReachability:false,nativeParity:false};
   });
   await check("source ChangeView uses the actual app policy across delayed media failure/retry, world entry and Storage restore",async()=>{
     const pack=await conditionActivityPackages("controlled-field-view-change"),h=await host(pack),owner=await start(h),first=owner.field;

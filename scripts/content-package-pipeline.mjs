@@ -104,6 +104,7 @@ async function validatePublicCAS(root,candidateHistory){
 const sourceFrameworkDefaults=webSourceFrameworkInputs();
 export async function compileSharedContentPackages({root=repository,compiledDir='dist',readJson,
   sourceRecipePaths,sourceSelectionPath,npcAreas=sourceFrameworkDefaults.npcAreas,npcFlat=sourceFrameworkDefaults.npcFlat,fieldEffectFlat=sourceFrameworkDefaults.fieldEffectFlat,
+  worldAutoTasks=sourceFrameworkDefaults.worldAutoTasks,
   periodicMaps=sourceFrameworkDefaults.periodicMaps,ordinaryFields=sourceFrameworkDefaults.ordinaryFields,logicalFieldEffects=sourceFrameworkDefaults.logicalFieldEffects}={}){
   root=await realpath(resolve(root));
   // Several existing producers still import the repository's default emitted
@@ -142,7 +143,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     reports.push({id,report:result.report});
   };
   const prerequisites=await compileSourcePrerequisites({root,compiledDir,logicalFieldEffects,periodicMaps,ordinaryFields,npcAreas,npcFlat,fieldEffectFlat,
-    mapAnimatedEntities:sourceFrameworkDefaults.mapAnimatedEntities});
+    mapAnimatedEntities:sourceFrameworkDefaults.mapAnimatedEntities,worldAutoTasks});
   const linked=await linkSourcePrerequisites({root,compiledDir,payloads:prerequisites.payloads,frameworkOptions:prerequisites.frameworkOptions});
   const sourceRead=async url=>linked.inputs.has(url)?structuredClone(linked.inputs.get(url)):readJson(url);
   for(const [url,value] of linked.payloads)payloads.set(url,value);
@@ -227,9 +228,10 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
       sourceNpcRoutesAddition:{kind:'compiled-source-npc-route-evidence-addition-v1',compilerDigest:prerequisites.inputs.compilerDigest,
         sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
       frameworkNpcAreaAddition,frameworkNpcAreaEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,frameworkOrdinaryPresentationAddition,frameworkOrdinaryPresentationEvidence,
-      frameworkProfileUpgrade:{kind:'compiled-framework-profile-upgrade-v4',
+      frameworkProfileUpgrade:{kind:prerequisites.frameworkOptions.worldAutoTasks?'compiled-framework-profile-upgrade-v5':'compiled-framework-profile-upgrade-v4',
         compilerDigest:prerequisites.inputs.compilerDigest,markers:{
           storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1',mapAnimatedEntities:'web-field-animated-map-entities-v1',
+          ...(prerequisites.frameworkOptions.worldAutoTasks?{worldAutoTasks:prerequisites.frameworkOptions.worldAutoTasks}:{}),
           ...(prerequisites.frameworkOptions.logicalFieldEffects?{logicalFieldEffects:'web-logical-all-loop-field-effects-v1'}:{}),
           ...(prerequisites.frameworkOptions.periodicPresentations?{worldMap:'framework-world-map-flat-v1'}:{}),
           ...(prerequisites.frameworkOptions.periodicPresentations||prerequisites.frameworkOptions.ordinaryPresentations?{fieldPresentation:'framework-ordinary-field-flat-v1'}:{})},
@@ -262,7 +264,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     compileInitializedSystems(root,initRecipe.value,initRecipe.sha256,{dist:compiledDir,readJson:candidateRead}),
     compileWorldTravel(root,travelRecipe.value,travelRecipe.sha256,{dist:compiledDir,readJson:candidateRead}),
     ...sourceRecipes.map(item=>compileInitializedContentBatch(root,item.value,item.sha256,
-      {dist:compiledDir,readJson:candidateRead,sourceBattleDirectory})),
+      {dist:compiledDir,readJson:candidateRead,sourceBattleDirectory,...(prerequisites.frameworkOptions.worldAutoTasks?{worldAutoTasks:prerequisites.frameworkOptions.worldAutoTasks}:{})})),
   ]);
   for(const [index,id] of ['figaro-development','systems-playground','systems-initialized','world-travel'].entries())append(id,derived[index]);
   for(const [index,item] of sourceRecipes.entries())append(item.value.id,derived[index+4]);

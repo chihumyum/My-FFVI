@@ -151,7 +151,7 @@ export async function exploreReachableFrontiers(host: FrontierHost, options: Fro
       }
       if (game.battle) {
         const battle = game.battle;
-        if (battle.phase === "victory" || battle.phase === "escaped") {
+        if (battle.phase === "victory" || battle.phase === "escaped" || battle.phase === "forced") {
           const result = await handoff.return();
           if (result.status !== "committed") { addFrontier(bundle, run, "battle-provider", "battle-return", result.status === "failed" ? errorText(result.error) : "Battle return cancelled"); return null; }
           run.inputs.push({ kind: "automatic-battle-return", outcome: battle.phase, encounter: battle.content.encounterId }); tick(bundle, run); continue;

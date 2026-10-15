@@ -127,6 +127,8 @@ export type BattleStatProjection = Omit<ParameterValues, "hp" | "mp"> &
     "maxHp" | "maxMp" | "physical" | "attackElements" | "elementResistances"
   >;
 export type BattleAction = {
+  /** Assigned once by this BattleGame when actually enqueued; never saved. */
+  executionTicket?: number;
   kind: "normal" | "loop" | "counter" | "derived" | "event";
   scripted?: { pc: number; command: ScriptedBattleAction; targetInstanceIds: string[] };
   /** Legacy CounterAct captures the attacker; command-conditioned interrupts
@@ -186,6 +188,15 @@ export class BattleGame {
   private remainder = 0;
   private randomState: number;
   private queue: BattleAction[] = [];
+  #nextActionTicket=1;
+  /** The native fixed-player dictionary remembers the latest accepted action
+   * per source character. Store a reference ticket, never another action copy. */
+  #fixedPlayerActions=new Map<number,number>();
+  #actionCancellations:{pc:number;time:number;staged:number|null;stagedCommitted:boolean;queued:number[];fixed:{sourceId:number;ticket:number}[]}[]=[];
+  get actionExecutor(){return {state:this.action?(this.action.resolved?'presenting':'staging'):'idle',
+    currentTicket:this.action?.executionTicket??null,fixedPlayerActions:[...this.#fixedPlayerActions].map(([sourceId,ticket])=>({sourceId,ticket})),
+    cancellations:structuredClone(this.#actionCancellations)};}
+
   private reactions: BattleAction[] = [];
   private aiStates = new Map<string, BattleAIState>();
   private poisonStates = new Map<string, PoisonState>();
@@ -475,7 +486,7 @@ export class BattleGame {
     this.eventShared = eventShared === undefined ? null : new BattleEventSharedState(eventShared);
     if (this.lifecycle.mode === "script") this.eventState = createBattleEventState(this.lifecycle.program,this.#branchPolicy);
     if (this.lifecycle.mode === "script") for (const [pc, { op }] of this.lifecycle.program.instructions.entries()) {
-      if ((op.kind === "ui-visibility" || op.kind === "stop-auto" || op.kind === "force-return") && eventHosts?.controls !== WEB_BATTLE_EVENT_CONTROLS)
+      if ((op.kind === "ui-visibility" || op.kind === "stop-auto" || op.kind === "force-return" || op.kind === "remove-all-actions") && eventHosts?.controls !== WEB_BATTLE_EVENT_CONTROLS)
         throw new BattleEventError(this.lifecycle.program.source, pc, "Missing explicit Web battle event control policy");
       if(op.kind==="script-action"){
         if(eventHosts?.scriptedActions!==WEB_SCRIPTED_BATTLE_ACTIONS)
@@ -1002,7 +1013,7 @@ export class BattleGame {
       results: [],
     };
     const conditionIds = this.conditions.admitAtbAction(actor.conditionIds, []);
-    this.queue.push(action);
+    this.registerActions([action]);this.queue.push(action);
     actor.conditionIds = conditionIds;
     actor.queued = true;
     return true;
@@ -1431,10 +1442,9 @@ export class BattleGame {
     this.queue = this.queue.filter(action => !removed.has(action.actor));
     this.reactions = this.reactions.filter(action => !removed.has(action.actor));
     if (this.action && (removed.has(this.action.actor) || this.action.targetIds.some(id => removed.has(id)))) {
-      const action = this.action, actor = this.combatants.find(current => current.id === action.actor);
-      this.action = null;
-      if (actor) this.finishActorAction(actor, action.kind);
+      this.releaseStagedAction('actor-retired');
     }
+    for(const unit of this.combatants)if(removed.has(unit.id)&&unit.side==='player')this.#fixedPlayerActions.delete(unit.sourceId);
     for (const removedId of removed) {
       this.aiStates.delete(removedId);
       this.poisonStates.delete(removedId);
@@ -1587,6 +1597,7 @@ export class BattleGame {
               break;
             case "stop-auto": this.setAutomaticMode(false); break;
             case "force-return": this.forceReturnRequested = true; break;
+            case "remove-all-actions": this.removeAllActions(request.pc); break;
             case "play-battle-effect": { const {pc,...op}=request;this.prepareBattleEffect(op,pc);break; }
             case "script-action": { const { pc, ...command }=request; this.enqueueScriptedAction(command, pc); break; }
             case "message": {
@@ -1684,7 +1695,7 @@ export class BattleGame {
     // Unsupported content is an error. Current death/sleep/insufficient MP can
     // invalidate a supported action at staging, using the ordinary queue path.
     this.validateScriptedAbility(actor,ability);
-    this.reactions.push(action);
+    this.registerActions([action]);this.reactions.push(action);
   }
   private validateScriptedAbility(actor:Combatant,ability:AbilityDefinition):void {
     if(!ability.plan||ability.plan.effects.some(effect=>effect.kind==="random-ability"||effect.kind==="forced-escape"))
@@ -1860,7 +1871,7 @@ export class BattleGame {
     const ability = this.content.abilities[result.abilityId]!, action = this.createAction(actor, ability, result.choice, result.commandId);
     action.control = control;
     const conditionIds = this.conditions.admitAtbAction(actor.conditionIds, [{ id: ability.id, type: ability.program.rules.type_id! }]);
-    this.queue.push(action); actor.conditionIds = conditionIds; actor.queued = true;
+    this.registerActions([action]);this.queue.push(action); actor.conditionIds = conditionIds; actor.queued = true;
   }
   private conditionUndead(unit: Combatant, conditionIds: readonly number[]): boolean {
     const identity = this.#conditionUnitIdentities.get(unit);
@@ -2106,7 +2117,7 @@ export class BattleGame {
         const ability = this.content.abilities[action.source.id]!;
         return { id: ability.id, type: ability.program.rules.type_id! };
       }));
-      this.queue.push(...decisions);
+      this.registerActions(decisions);this.queue.push(...decisions);
       actor.conditionIds = conditionIds;
       actor.queued = true;
       this.aiStates.set(actor.id, turn.state);
@@ -2182,7 +2193,7 @@ export class BattleGame {
     );
     const conditionIds = this.conditions.admitAtbAction(actor.conditionIds,
       [{ id: ability.id, type: ability.program.rules.type_id! }]);
-    this.queue.push(action);
+    this.registerActions([action]);this.queue.push(action);
     actor.conditionIds = conditionIds;
     actor.queued = true;
     return true;
@@ -2228,6 +2239,54 @@ export class BattleGame {
       resolved: false,
       results: [],
     };
+  }
+  private registerActions(actions:readonly BattleAction[]):void {
+    if(this.#nextActionTicket+actions.length>0x7fffffff)throw new Error('Battle action ticket capacity exceeded');
+    const owners=actions.map(action=>{
+      const owner=this.combatants.find(unit=>unit.id===action.actor);
+      if(!owner||!['player','enemy'].includes(owner.side)||action.executionTicket!==undefined)
+        throw new Error('Unresolved or already published battle action identity');
+      return owner;
+    });
+    for(const [index,action]of actions.entries()){
+      action.executionTicket=this.#nextActionTicket++;
+      const owner=owners[index]!;
+      if(owner.side==='player')this.#fixedPlayerActions.set(owner.sourceId,action.executionTicket);
+    }
+  }
+  private releaseStagedAction(reason:'completed'|'cancelled'|'actor-retired'):void {
+    const action=this.action;if(!action)return;
+    this.action=null;
+    // Cancellation is not normal completion: native clears staging before its
+    // state transition, so no staged actor reaches the ordinary ATB delegate.
+    if(reason!=='cancelled'){
+      const actor=this.combatants.find(unit=>unit.id===action.actor);
+      if(actor)this.finishActorAction(actor,action.kind);
+    }
+  }
+  private removeAllActions(pc:number):void {
+    const pending=[...this.queue,...this.reactions],all=[...(this.action?[this.action]:[]),...pending];
+    // Unknown ownership cannot be hidden by deleting the offending action.
+    const tickets=new Set<number>();
+    for(const action of all){
+      const ticket=action.executionTicket;
+      if(!Number.isInteger(ticket)||ticket!<1||ticket!>=this.#nextActionTicket||tickets.has(ticket!)||
+          !this.combatants.some(unit=>unit.id===action.actor&&['player','enemy'].includes(unit.side)))
+        throw new Error('RemoveAllAct requires every actual queued/staged action owner and execution ticket');
+      tickets.add(ticket!);
+    }
+    const journal={pc,time:this.time,staged:this.action?.executionTicket??null,stagedCommitted:this.action?.resolved??false,
+      queued:pending.map(action=>action.executionTicket!),fixed:[...this.#fixedPlayerActions].map(([sourceId,ticket])=>({sourceId,ticket}))};
+    // Web controls V1 cancels both source side-filters atomically before idle
+    // entry; it never dispatches a surviving enemy interrupt between the two.
+    this.queue=[];this.reactions=[];this.#fixedPlayerActions.clear();
+    this.releaseStagedAction('cancelled');
+    for(const unit of this.combatants)unit.queued=false;
+    this.#actionCancellations.push(journal);
+    this.eventUI.revision++;
+    this.clockInput.uiWaiting=false;this.clockInput.forceWaiting=false;
+    // HP/MP, costs, consumed items, results, condition clocks, ATB values, AI
+    // continuation/parameters, source messages and global effects stay owned.
   }
   private finishActorAction(actor: Combatant, kind: BattleAction["kind"]) {
     // Interrupt actions have no ordinary ATB completion delegate. In particular,
@@ -2287,6 +2346,7 @@ export class BattleGame {
         ...(c.appearanceState ? { appearanceState: structuredClone(c.appearanceState) } : {}),
       })),
       action: structuredClone(this.action),
+      nextActionTicket:this.#nextActionTicket,fixedPlayerActions:new Map(this.#fixedPlayerActions),actionCancellations:structuredClone(this.#actionCancellations),
       queue: structuredClone(this.queue),
       reactions: structuredClone(this.reactions),
       ai: structuredClone(this.aiStates),
@@ -2361,6 +2421,7 @@ export class BattleGame {
       this.unresolvedCostOwners.clear(); before.unresolvedCostOwners.forEach(key => this.unresolvedCostOwners.add(key));
       this.equipmentAbilities.clear(); before.equipmentAbilities.forEach((value, key) => this.equipmentAbilities.set(key, value));
       this.action = before.action;
+      this.#nextActionTicket=before.nextActionTicket;this.#fixedPlayerActions=before.fixedPlayerActions;this.#actionCancellations=before.actionCancellations;
       this.queue = before.queue;
       this.reactions = before.reactions;
       this.enemyExits = before.enemyExits;
@@ -2427,10 +2488,7 @@ export class BattleGame {
       if (!this.action.resolved && this.action.elapsed >= 400)
         this.resolve(this.action);
       if (this.action.elapsed >= 900) {
-        const actor = this.combatants.find((c) => c.id === this.action!.actor)!;
-        const kind = this.action.kind;
-        this.action = null;
-        this.finishActorAction(actor, kind);
+        this.releaseStagedAction('completed');
       }
     }
     if (gate.conditions) this.advanceConditions(0.01);
@@ -2759,6 +2817,9 @@ export class BattleGame {
     return choice;
   }
   private resolve(action: BattleAction) {
+    // Stale presentation/executor completions cannot revive a cancelled action
+    // or a retired battle. No RNG, cost, lookup or effect precedes this fence.
+    if(this.phase!=='active'||this.#messageRetired||this.#effectRetired||this.action!==action)return;
     const actor = this.combatants.find((c) => c.id === action.actor)!;
     const ability = this.actionDefinition(action);
     if (action.resolved) return;
@@ -2983,7 +3044,7 @@ export class BattleGame {
       }
       // Function46 enqueues its child during HitCalc, before the parent's
       // completed result wakes receivers. Both preparations commit together.
-      this.reactions.push(...derived, ...reactions.decisions);
+      this.registerActions([...derived,...reactions.decisions]);this.reactions.push(...derived, ...reactions.decisions);
       action.selection = choice.selection;
       action.targetIds = choice.targetIds;
       action.results = results;

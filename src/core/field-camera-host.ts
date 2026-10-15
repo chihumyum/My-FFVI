@@ -1,9 +1,10 @@
 import { WEB_FLAT_FIELD_VIEW_CHANGE, validateFieldViewChangePolicy, parseFieldDynamicView, projectFieldViewChange, type WebFlatFieldViewChange, type FieldViewBinding, type FieldViewChangeCommand } from './field-view-change.js';
+import { createWorldAutoPose, parseWorldAutoBinding, parseWorldAutoPose, type WorldAutoBinding, type WorldAutoPose } from './field-world-auto-tasks.js';
 import type { Direction, Point } from "../field/types.js";
 import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
 import { prepareFieldCameraPathStep, type FieldCameraPathCommand, type FieldCameraPathProgress } from "./field-camera-path.js";
 import {
-  createFieldCameraState, fieldCameraActorFromCell, fieldCameraWorldToContinuousCell,
+  createFieldCameraState, fieldCameraView, fieldCameraActorFromCell, fieldCameraWorldToContinuousCell,
   initializeFieldCameraDummy, projectFieldCamera, projectFieldCameraSetPosition,
   projectFieldCameraTarget, projectFieldCameraVisibility, stepFieldCameraLerp, validateFieldCameraState,
   type FieldCameraCommand, type FieldCameraLerp, type FieldCameraLerpProgress,
@@ -125,22 +126,29 @@ export class FieldCameraHost {
 
   constructor(definition: FieldCameraHostDefinition, ports: FieldCameraHostPorts,
     checkpoint: FieldCameraState = createFieldCameraState(), private readonly viewBinding?: FieldViewBinding,
-    private readonly viewPolicy:WebFlatFieldViewChange=WEB_FLAT_FIELD_VIEW_CHANGE) {
+    private readonly viewPolicy:WebFlatFieldViewChange=WEB_FLAT_FIELD_VIEW_CHANGE,
+    private readonly worldAutoBinding?:WorldAutoBinding) {
     validateFieldViewChangePolicy(viewPolicy);
     validateDefinition(definition); validatePorts(ports); validateFieldCameraState(checkpoint);
+    this.worldAutoBinding=worldAutoBinding&&parseWorldAutoBinding(worldAutoBinding);
     this.#definition = structuredClone(definition);
     this.#ports = ports;
-    if (checkpoint.kind === "field-camera-v3") {
+    if (fieldCameraView(checkpoint)) {
       if (!viewBinding) throw new Error("Saved dynamic view cannot grant a view policy");
-      parseFieldDynamicView(checkpoint.view,viewBinding,viewPolicy);
+      parseFieldDynamicView(fieldCameraView(checkpoint)!,viewBinding,viewPolicy);
     }
-    this.#state = structuredClone(checkpoint);
+    if(checkpoint.kind==='field-camera-v4') {
+      if(!worldAutoBinding)throw new Error('Saved world auto-task pose cannot grant a runtime/content policy');
+      parseWorldAutoPose(checkpoint.worldAuto,worldAutoBinding);
+    }
+    this.#state = checkpoint.kind==='field-camera-v4'||!worldAutoBinding ? structuredClone(checkpoint)
+      : {kind:'field-camera-v4',target:checkpoint.target,dummy:structuredClone(checkpoint.dummy),view:fieldCameraView(checkpoint),worldAuto:createWorldAutoPose(worldAutoBinding)};
   }
   snapshot(): FieldCameraState { return structuredClone(this.#state); }
   /** The caller supplies the destination's trusted content and live read ports.
    * A map transaction can prepare the fork without changing its source host. */
   fork(definition: FieldCameraHostDefinition, ports: FieldCameraHostPorts): FieldCameraHost {
-    return new FieldCameraHost(definition, ports, this.#state, this.viewBinding,this.viewPolicy);
+    return new FieldCameraHost(definition, ports, this.#state, this.viewBinding,this.viewPolicy,this.worldAutoBinding);
   }
   /** Publish a completely prepared fork or restore into this existing owner.
    * The snapshot supplies state only; this host keeps its content and ports. */
@@ -160,8 +168,10 @@ export class FieldCameraHost {
     callbackDisposition: FieldCameraPrepared["callbackDisposition"]): FieldCameraPrepared {
     if (this.#publishing) throw new Error("Field camera publication is already in progress");
     validateFieldCameraState(state);
-    if(state.kind === "field-camera-v3") { if(!this.viewBinding)throw new Error("Unbound dynamic camera view");parseFieldDynamicView(state.view,this.viewBinding,this.viewPolicy); }
-    if(callbackDisposition === "source-absent" && state.kind === "field-camera-v3") callbackDisposition="web-flat-not-installed";
+    if(fieldCameraView(state)) { if(!this.viewBinding)throw new Error("Unbound dynamic camera view");parseFieldDynamicView(fieldCameraView(state)!,this.viewBinding,this.viewPolicy); }
+    if(state.kind==='field-camera-v4'){if(!this.worldAutoBinding)throw new Error('Unbound world auto-task camera pose');parseWorldAutoPose(state.worldAuto,this.worldAutoBinding);}
+    if(this.worldAutoBinding&&state.kind!=='field-camera-v4')throw new Error('World auto-task camera pose cannot be discarded');
+    if(callbackDisposition === "source-absent" && fieldCameraView(state)) callbackDisposition="web-flat-not-installed";
     const candidate = structuredClone(state), revision = this.#revision;
     let committed = false;
     const validate = () => {
@@ -183,8 +193,14 @@ export class FieldCameraHost {
     if(!this.viewBinding)throw new Error("Trusted Web field view binding is unavailable");
     const view=projectFieldViewChange(this.viewBinding,command,this.viewPolicy);
     if(!view)return {...this.#prepare(this.#state,false,"not-invoked"),branchReturn:true};
-    const next:FieldCameraState={kind:"field-camera-v3",target:this.#state.target,dummy:structuredClone(this.#state.dummy),view};
+    const next:FieldCameraState=this.#state.kind==='field-camera-v4'?{...structuredClone(this.#state),view}
+      : {kind:"field-camera-v3",target:this.#state.target,dummy:structuredClone(this.#state.dummy),view};
     return {...this.#prepare(next,true,"web-flat-not-installed"),branchReturn:false};
+  }
+  prepareWorldAutoPose(raw:WorldAutoPose):FieldCameraPrepared {
+    if(this.#state.kind!=='field-camera-v4'||!this.worldAutoBinding)throw new Error('Missing world auto-task camera owner');
+    const pose=parseWorldAutoPose(raw,this.worldAutoBinding);
+    return this.#prepare({...structuredClone(this.#state),worldAuto:pose},true,'web-flat-not-installed');
   }
   prepareInitializeDummy(): FieldCameraPrepared {
     return this.#prepare(initializeFieldCameraDummy(this.#state, this.#player()), false, "not-invoked");

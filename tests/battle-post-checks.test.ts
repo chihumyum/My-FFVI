@@ -38,6 +38,19 @@ test('CursedShield sentinel reads no equipment or counter and a proven no-shield
   assert.deepEqual(planCursedShieldCheck(ref=>{read.push(ref.index);return state.read(ref);},f.content.players,f.inventory.qualification,f.content.battleEntry),{counter:null});
   assert.deepEqual(read,[2]);assert.throws(()=>planCursedShieldCheck(ref=>state.read(ref),f.content.players,undefined,f.content.battleEntry),/actual borrowed/);
 });
+test('a source no-shield branch needs its real equipped owners but never an unused shield master or conversion catalog',()=>{
+  const f=battleEntryRuntimeFixture(),q=f.inventory.qualification!,state=new EventState(),reads:number[]=[];
+  variable(state,2,0);
+  assert.equal(q.equipmentCatalog.definitions[213],undefined);
+  const before=structuredClone(q),read=(ref:Parameters<EventState['read']>[0])=>{reads.push(ref.index);return state.read(ref);};
+  assert.deepEqual(planCursedShieldCheck(read,f.content.players,q,undefined),{counter:null});
+  assert.deepEqual(reads,[2]);assert.deepEqual(q,before);
+  const missingMember=structuredClone(q);missingMember.members.shift();
+  assert.throws(()=>planCursedShieldCheck(read,f.content.players,missingMember,undefined),/equipment owner/);
+  const wearer=gear();wearer.inventory.qualification!.members[0]!.equipment[1]=213;
+  assert.throws(()=>planCursedShieldCheck(read,wearer.content.players,wearer.inventory.qualification,undefined),/exact source content/);
+  assert(reads.every(index=>index===2));
+});
 test('CursedShield counts each actual player once, preserves int32 and gates the exact 256 equipment conversion atomically',()=>{
   const f=gear(),q=f.inventory.qualification!,state=shared(),before=structuredClone(q);
   q.members[0]!.equipment[0]=213;q.members[0]!.equipment[1]=213;

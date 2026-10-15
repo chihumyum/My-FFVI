@@ -20,7 +20,7 @@ export type BattleEventOp =
   | BattleEventEffectOp
   | BattleEventMessageOp
   | { kind: "ui-visibility"; visible: boolean }
-  | { kind: "stop-auto" | "force-return" }
+  | { kind: "stop-auto" | "force-return" | "remove-all-actions" }
   | { kind: "cursed-shield-check" | "shadow-secede-lot" }
   | { kind: "set-gau-mode" }
   | { kind: "get-enemy-mode"; uniqueId:number; expected:number }
@@ -97,7 +97,7 @@ export type BattleEventContext = {
 export type BattleEventRequest =
   | (ScriptedBattleAction & { pc: number })
   | { kind: "ui-visibility"; pc: number; visible: boolean }
-  | { kind: "stop-auto" | "force-return"; pc: number }
+  | { kind: "stop-auto" | "force-return" | "remove-all-actions"; pc: number }
   | { kind: "cursed-shield-check" | "shadow-secede-lot"; pc:number }
   | { kind: "set-gau-mode"; pc:number }
   | (Extract<BattleEventEffectOp,{kind:"play-battle-effect"}> & {pc:number})
@@ -219,7 +219,7 @@ function parseOp(raw: unknown): BattleEventOp {
     case "ui-visibility":
       checkpointKeys(value, "kind,visible");
       return { kind, visible: boolean(value.visible) };
-    case "stop-auto": case "force-return":
+    case "stop-auto": case "force-return": case "remove-all-actions":
     case "cursed-shield-check": case "shadow-secede-lot":
     case "set-gau-mode":
       checkpointKeys(value, "kind");
@@ -636,7 +636,7 @@ export function advanceBattleEvent(
     switch (op.kind) {
       case "ui-visibility":
         next(); requests.push({ kind: op.kind, visible: op.visible, pc }); return result();
-      case "stop-auto": case "force-return":
+      case "stop-auto": case "force-return": case "remove-all-actions":
         next(); requests.push({ kind: op.kind, pc }); return result();
       case "play-battle-effect": {
         if(state.wait?.kind!=="battle-effect") {

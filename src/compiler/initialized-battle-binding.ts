@@ -1,3 +1,4 @@
+import { WEB_BATTLE_BRANCH_EXECUTION } from "../core/battle-branch-execution.js";
 import { WEB_MANUAL_BATTLE_CONTROLS } from "../core/battle-controls.js";
 import type { BattleCatalog } from "../core/battle-content.js";
 import { verifyContent } from "../core/content-integrity.js";
@@ -56,9 +57,12 @@ export function validateInitializedBattleSharedCapabilities(base: BattleCatalog,
   const report = directoryReport === undefined ? {} : record(directoryReport),
     policy = report.policy === undefined ? {} : record(report.policy),
     framework = policy.framework === undefined ? {} : record(policy.framework);
-  const manualPolicy = policy.kind === "source-battle-directory-policy-v3";
+  const manualPolicy = policy.kind === "source-battle-directory-policy-v3" || policy.kind === "source-battle-directory-policy-v4";
   if (manualPolicy) same(framework.manualControls, WEB_MANUAL_BATTLE_CONTROLS, "known Web manual controls policy");
-  else require(!Object.hasOwn(framework, "manualControls"), "manual controls require the exact v3 directory declaration");
+  else require(!Object.hasOwn(framework, "manualControls"), "manual controls require the exact v3 or v4 directory declaration");
+  if (policy.kind === "source-battle-directory-policy-v4")
+    same(framework.branchExecution, WEB_BATTLE_BRANCH_EXECUTION, "versioned directory branch execution policy");
+  else require(!Object.hasOwn(framework, "branchExecution"), "branch execution requires the exact v4 directory declaration");
   if (Object.hasOwn(nextCommon, "conditionControlPolicy")) {
     const declared = { kind: "web-source-control-actions-v1" };
     require(policy.kind === "source-battle-directory-policy-v2" || manualPolicy, "condition policy requires a known versioned directory declaration");
@@ -77,6 +81,15 @@ export function validateInitializedBattleSharedCapabilities(base: BattleCatalog,
       (report.policyChanges === undefined || canonical(report.policyChanges) === "[]"),
     "condition policy declaration has no bound owner");
     same(nextCommon, baseCommon, "shared battle capabilities");
+  }
+  if (report.policy !== undefined) {
+    const versions = ["source-battle-directory-policy-v1", "source-battle-directory-policy-v2",
+      "source-battle-directory-policy-v3", "source-battle-directory-policy-v4"];
+    require(versions.includes(String(policy.kind)), "unknown versioned directory policy");
+    require(Object.keys(policy).sort().join(",") === "framework,kind", "unknown versioned directory policy fields");
+    const allowed = ["handoff", "entry", ...(policy.kind === versions[0] ? [] : ["conditionControlPolicy"]),
+      ...(manualPolicy ? ["manualControls"] : []), ...(policy.kind === versions[3] ? ["branchExecution"] : [])];
+    require(Object.keys(framework).every(key => allowed.includes(key)), "unknown versioned directory framework fields");
   }
 }
 function validateSharedContent(base: BattleCatalog, catalog: BattleCatalog, directoryReport?: unknown): void {
