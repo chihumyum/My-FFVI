@@ -217,6 +217,7 @@ export type MapRequest = {
 };
 export type Op = Site &
   (
+    | import("../core/field-mob-controls.js").FieldMobControlOp
     | import("../core/field-bird-view-actors.js").FieldBirdViewMoveOp
     | import("../core/field-view-change.js").FieldViewChangeOp
     | import("../core/field-world-auto-tasks.js").FieldWorldAutoOp
@@ -279,6 +280,7 @@ export type Op = Site &
     | { kind: "environment-stop"; channel: number; fade: number }
     | { kind: "call"; target: number }
     | { kind: "wait"; seconds: number }
+    | { kind: "standalone-wait" }
     | { kind: "blank" }
     | { kind: "puppet"; slot: number; actor: string; target: number }
     | { kind: "position"; x: number; y: number; animation: string;

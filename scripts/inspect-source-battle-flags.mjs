@@ -25,7 +25,8 @@ try{
   if(flags.includes(14)){try{rawFlagPlans.push({partyId:id,plan:api.compileSourceBattleFlags(id,party.source,groupId,rows)});}catch(error){rawFlagFailures.push({partyId:id,reason:String(error),party,groupId,rows});}}
  }
  const runtimeInput={...modules.runtimeInput,requestedPartyIds:dep.requestedPartyIds,encounters:dep.encounters,sourceDiagnostics:dep.diagnostics,
-  ...(policy.framework.manualControls===undefined?{}:{manualControls:policy.framework.manualControls}),
+  ...(policy.framework.forcedSavePolicy?{forcedSavePolicy:policy.framework.forcedSavePolicy}:{}),
+      ...(policy.framework.manualControls===undefined?{}:{manualControls:policy.framework.manualControls}),
   ...(policy.framework.conditionControlPolicy?{conditionControlPolicy:policy.framework.conditionControlPolicy}:{}),
   handoff:{policy:policy.framework.handoff},development:{...(policy.framework.entry?.formations?{formations:policy.framework.entry.formations}:{}),scripts:[],flagGroups:[]}},
   current=api.compileBattleEncounterRuntime(modules.reader,runtimeInput);

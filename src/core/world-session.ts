@@ -538,7 +538,7 @@ export class WorldSession {
     this.effectMap = effectMap;
     this.effectOwner = restoredOwner;
     this.nextEffectScope = nextScope;
-    this.current.retireWorldAutoTasks();
+    this.current.retireMobControls();this.current.retireWorldAutoTasks();
     this.current = next;
     this.location = structuredClone(loc);
     this.catalogHash = loc?.catalogHash ?? this.sourceOrigin?.catalogHash ?? null;
@@ -740,6 +740,7 @@ export class WorldSession {
           ...(this.owned?.current.sourceEncounter ? { sourceEncounter: this.owned.current.sourceEncounter } : {}),
           ...(this.owned?.current.sourceMessageSequence ? { sourceMessageSequence: this.owned.current.sourceMessageSequence } : {}),
           ...(this.owned?.current.conditionLeaderActivity ? { conditionLeaderActivity: this.owned.current.conditionLeaderActivity } : {}),
+          ...(this.owned?.current.mobColorFilter ? {mobColorFilter:this.owned.current.mobColorFilter} : {}),
           ...(this.owned?.current.birdViewActors ? {birdViewActors:this.owned.current.birdViewActors} : {}),
           ...(this.owned?.current.viewChange ? {viewChange:this.owned.current.viewChange} : {}),
           ...(this.owned?.current.worldAutoMove ? {worldAutoMove:this.owned.current.worldAutoMove}:{}),
@@ -779,6 +780,7 @@ export class WorldSession {
         field.installNativeActors(candidate, nativeRuntime.catalog, providers, nativeRuntime.controlContext,
           catalog.nativeAnimationKeys, nativeRuntime.mapLifecycle);
       }
+      field.inheritMobControls(from);
       field.initializeMapCamera();
       const script = request.continuation || target.initializer;
       field.startMapEntry(script || null);
@@ -825,7 +827,7 @@ export class WorldSession {
           map: effectMap!, fieldState: this.effectFieldState(field) } } : {}),
       });
       return prepared;
-    } catch (error) { destinationField?.retireWorldAutoTasks();effectCandidate?.discard(); throw error; }
+    } catch (error) { destinationField?.retireMobControls();destinationField?.retireWorldAutoTasks();effectCandidate?.discard(); throw error; }
   }
   commit(value: PreparedMap): boolean {
     if (this.commitInProgress) return false;
@@ -839,7 +841,7 @@ export class WorldSession {
     this.commitInProgress = active;
     try { return this.commitPrepared(value, ownership, active); }
     catch (error) { if (!active.started) ownership.effects?.candidate.discard(); throw error; }
-    finally { if(this.current!==value.field)value.field.retireWorldAutoTasks();this.commitInProgress = null; }
+    finally { if(this.current!==value.field){value.field.retireMobControls();value.field.retireWorldAutoTasks();}this.commitInProgress = null; }
   }
   private commitPrepared(value: PreparedMap, ownership: Ownership, active: MapCommit): boolean {
     if (!this.isCurrent(ownership, value) || active.cancelled) {
@@ -893,7 +895,7 @@ export class WorldSession {
       request: structuredClone(value.request.request),
       site: value.request.site,
     });
-    ownership.from.retireWorldAutoTasks();
+    ownership.from.retireMobControls();ownership.from.retireWorldAutoTasks();
     this.current = value.field;
     value.field.publishWorldAutoTasks();
     this.catalogHash = ownership.catalogHash;
@@ -918,7 +920,7 @@ export class WorldSession {
     }
     const ownership = this.prepared.get(value);
     this.prepared.delete(value);
-    if(ownership)value.field.retireWorldAutoTasks();
+    if(ownership){value.field.retireMobControls();value.field.retireWorldAutoTasks();}
     ownership?.effects?.candidate.discard();
   }
   private isCurrent(ownership: Ownership, value: PreparedMap): boolean {
@@ -976,7 +978,7 @@ export class WorldSession {
   private actorState(field: FieldGame): string {
     const p = field.player;
     return canonical({ prior: field.partyActorCheckpoint,
-      native: field.nativeActorStateFingerprint,
+      mobControls:field.mobControlsSnapshot,native: field.nativeActorStateFingerprint,
       ...(field.sourceEventActivation ? { eventActivation: field.sourceEventActivation } : {}),
       nativeRuntime: field.nativeActorRuntime, cameraOffset: field.cameraOffset,
       collision: field.collisionState, updateMask: field.updateAttributeMask,

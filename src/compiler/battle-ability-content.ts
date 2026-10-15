@@ -167,7 +167,7 @@ export function compileBattleAbilityContent(
       if (definition.plan.physical || definition.plan.magic) requirements.push("admitted-equipment-and-parameter-providers");
       if (definition.plan.physical) requirements.push("front-row-selected-arm-physical-inputs");
       if (effects.some((effect) => effect.kind === "recover-max-hp")) requirements.push("player-only-revival-targets");
-      if (effects.some((effect) => ["physical", "magic", "recovery", "add-condition"].includes(effect.kind)))
+      if (effects.some((effect) => ["physical", "magic", "recovery", "add-condition", "absorb-resource"].includes(effect.kind)))
         requirements.push("no-runic-undead-or-other-value-overrides");
       for (const effect of effects) {
         if (effect.kind === "add-condition" || effect.kind === "defend") {

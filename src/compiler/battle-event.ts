@@ -118,8 +118,7 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
       catch(error) { op=blocked(error instanceof Error?error.message:String(error)); }
     }
     if (m.mnemonic === "BattleForceExit" && form()) op = { kind: "force-return" };
-    if (m.mnemonic === "BattleForceExitOnSave" && form())
-      op = blocked("BattleForceExitOnSave requires owned Corps layout, nonparticipant recovery conditions, equipment and retained steal/drop save projections; no-save forced return does not grant Save semantics");
+    if (m.mnemonic === "BattleForceExitOnSave" && form()) op = { kind: "force-save-return" };
     if (m.mnemonic === "BattleEndEnabled" && form([0]))
       op = { kind: "end-enabled", enabled: i[0] !== 0 };
     if (m.mnemonic === "BattlePause" && form([0])) op = { kind: "pause", enabled: i[0] !== 0 };

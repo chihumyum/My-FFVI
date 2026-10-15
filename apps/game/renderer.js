@@ -1,3 +1,4 @@
+import { filterMobPixels } from "./field-mob-renderer.js";
 import { minimapMarkers, MINIMAP_ROTATION } from "/runtime/core/minimap.js";
 import { projectFlatWorldAutoPose } from '/runtime/core/field-world-auto-tasks.js';
 import { FIELD_POSE as FACING } from "/runtime/core/actor-animation.js";
@@ -26,6 +27,7 @@ export class Renderer {
     this.content = content;
     this.images = images;
     this.nativePixels = new WeakMap();
+    this.mobImages = new WeakMap();
     this.presentationOmissions = [];
     // Explicit qualified RT and draw-order provider. Absence is a capability
     // error for an effect scene, never an empty or synthetic particle frame.
@@ -81,6 +83,19 @@ export class Renderer {
     if (typeof game?.birdViewActorElevation === "function") return game.birdViewActorElevation(actor.id);
     if (actor.birdView !== undefined) throw new Error("角色高度缺少已授权的实际游戏所有者");
     return 0;
+  }
+  mobFilterAlpha(game, actor) {
+    if (typeof game?.mobColorFilterAlpha === "function") return game.mobColorFilterAlpha(actor.id);
+    if (actor.mobColor !== undefined) throw new Error("Mob material filter lacks its actual authorized game owner");
+    return 0;
+  }
+  mobPixels(file, alpha) { const image=this.compositionPixels(file);return alpha===0?image:filterMobPixels(image,alpha); }
+  mobImage(file, alpha, original=this.images.get(file)) {
+    if(alpha===0)return original;
+    if(!original)throw new Error("Missing Mob filter source image");
+    const cached=this.mobImages.get(original);if(cached?.alpha===alpha)return cached.canvas;
+    const pixels=this.mobPixels(file,alpha),canvas=this.compositionCanvas(pixels.width,pixels.height),context=canvas.getContext("2d"),data=context.createImageData(pixels.width,pixels.height);
+    data.data.set(pixels.data);context.putImageData(data,0,0);this.mobImages.set(original,{alpha,canvas});return canvas;
   }
   point(a) {
     const m = a.motion;
@@ -252,7 +267,7 @@ export class Renderer {
           // this remains Web flat presentation, not native pass equivalence.
           const materialAlpha = p.actor.native.entity.fadeAlpha;
           context.globalAlpha = Math.fround(Math.fround(p.frame.alpha * materialAlpha) * materialAlpha);
-          context.drawImage(p.image, 0, 0, p.sprite.width, p.sprite.height,
+          context.drawImage(this.mobImage(p.sprite.file,this.mobFilterAlpha(game,p.actor),p.image), 0, 0, p.sprite.width, p.sprite.height,
             -p.sprite.width * p.sprite.pivot[0], -p.sprite.height * (1 - p.sprite.pivot[1]), p.sprite.width, p.sprite.height);
           context.restore();
         }
@@ -334,7 +349,7 @@ export class Renderer {
       for (const layer of layers) {
         const pose = layer.frame, sprite = this.content.characters[layer.asset]?.sprites[pose.sprite];
         if (!sprite || sprite.height <= layer.crop) throw new Error("原生角色帧缺少来源图像");
-        const image = this.compositionPixels(sprite.file);
+        const image = this.mobPixels(sprite.file,this.mobFilterAlpha(game,actor));
         if (image.width !== sprite.width || image.height !== sprite.height) throw new Error("原生角色图像几何不符");
         const x = (point.x + 0.5) * 16 - cx + pose.x,
           y = (point.y + 0.5) * 16 - cy - pose.y - layer.lift - this.actorElevation(game, actor);
@@ -422,10 +437,10 @@ export class Renderer {
     if (!f) throw new Error("空动画");
     return f;
   }
-  sprite(asset, key, a, x, y, crop = 0, lift = 0, pose = null) {
+  sprite(asset, key, a, x, y, crop = 0, lift = 0, pose = null, mobAlpha = 0) {
     const char = this.content.characters[asset], f = this.spriteFrame(asset, key, a, pose);
     const s = char.sprites[f.sprite],
-      image = this.images.get(s.file);
+      image = this.mobImage(s.file,mobAlpha);
     if (!image) throw new Error("缺少角色图像");
     const c = this.ctx;
     c.save();
@@ -445,7 +460,7 @@ export class Renderer {
     );
     c.restore();
   }
-  actor(a, cx, cy, p = this.point(a), elevation = 0) {
+  actor(a, cx, cy, p = this.point(a), elevation = 0, mobAlpha = 0) {
     // Fresh factory residents may be active without a selected sprite. A zero
     // direction is a native state, never an invitation to invent a facing.
     if (a.asset === null || a.direction === null || (a.native && !a.animation?.frame())) return;
@@ -453,10 +468,10 @@ export class Renderer {
       y = (p.y + 1) * 16 - 2 - cy - elevation;
     const key = FACING[a.direction];
     if (a.mount) {
-      this.sprite(a.mount, key, a, x, y);
+      this.sprite(a.mount, key, a, x, y, 0, 0, null,mobAlpha);
       const ride = { WalkL: "RideL", WalkR: "RideR" }[key] ?? key;
-      this.sprite(a.asset, ride, a, x, y, 8, 14);
-    } else this.sprite(a.asset, key, a, x, y, 0, 0, a.animation?.frame());
+      this.sprite(a.asset, ride, a, x, y, 8, 14, null,mobAlpha);
+    } else this.sprite(a.asset, key, a, x, y, 0, 0, a.animation?.frame(),mobAlpha);
   }
   actorImages(actors, cx, cy, width, height, topology, game = null) {
     if (!topology) return actors.map((actor) => ({ actor, point: this.point(actor) }));
@@ -623,7 +638,7 @@ export class Renderer {
     }
     else this.background(c, sourceCamera, w, h);
     const drawActors = (layer) => {
-      for (const { actor, point } of actorImages) if (actor.layer === layer) this.actor(actor, cx, cy, point, this.actorElevation(game, actor));
+      for (const { actor, point } of actorImages) if (actor.layer === layer) this.actor(actor, cx, cy, point, this.actorElevation(game, actor),this.mobFilterAlpha(game,actor));
     };
     if (!native) for (const [li, l] of m.layers.entries()) {
         this.layer(l, cx, cy, w, h, game, li, topology);

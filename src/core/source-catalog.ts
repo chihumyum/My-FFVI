@@ -18,6 +18,7 @@ export function sourceCatalogProfile(profile: DevelopmentProfile | undefined): S
       profile.fieldPresentation !== undefined && profile.fieldPresentation !== "framework-ordinary-field-flat-v1" ||
       profile.worldAutoMove !== undefined && (profile.worldAutoMove !== 'web-flat-world-auto-move-v1'||profile.worldAutoTasks!=='web-flat-world-auto-tasks-v1') ||
       profile.worldAutoTasks !== undefined && profile.worldAutoTasks !== 'web-flat-world-auto-tasks-v1' ||
+      profile.mobColorFilter !== undefined && profile.mobColorFilter !== "web-flat-mob-color-filter-v1" ||
       profile.birdViewActors !== undefined && profile.birdViewActors !== "web-flat-bird-view-actors-v1" ||
       profile.storyRuntime !== undefined && profile.storyRuntime !== "web-field-story-runtime-v1" ||
       profile.npcProjection !== undefined && profile.npcProjection !== "web-source-npc-flat-projection-v1" ||
@@ -60,6 +61,7 @@ export function assertSourceEntryProfiles(
           dependency.developmentProfile!.fieldPresentation !== entry.developmentProfile!.fieldPresentation ||
           dependency.developmentProfile!.worldAutoMove !== entry.developmentProfile!.worldAutoMove ||
           dependency.developmentProfile!.worldAutoTasks !== entry.developmentProfile!.worldAutoTasks ||
+          dependency.developmentProfile!.mobColorFilter !== entry.developmentProfile!.mobColorFilter ||
           dependency.developmentProfile!.birdViewActors !== entry.developmentProfile!.birdViewActors ||
           dependency.developmentProfile!.storyRuntime !== entry.developmentProfile!.storyRuntime ||
           dependency.developmentProfile!.npcProjection !== entry.developmentProfile!.npcProjection ||
@@ -96,12 +98,14 @@ export function assertSourceGameCatalog(catalog: BattleCatalog, profile: SourceC
       throw new Error("Source game catalog initial player seed differs from the source initializer");
   }
   // These are encounter declarations in every profile, never shared defaults.
-  for (const key of ["escapePolicy", "lifecycle", "rewardPolicy", "participants", "playerParticipants", "formationPlan", "controls", "sourceFlags"])
+  for (const key of ["escapePolicy", "lifecycle", "rewardPolicy", "participants", "playerParticipants", "formationPlan", "controls", "sourceFlags", "forcedSavePolicy"])
     if (Object.hasOwn(catalog.common, key)) throw new Error("Source new game cannot use misplaced " + key + " policy");
   if (profile === "framework") return;
   if (Object.hasOwn(catalog.common, "conditionControlPolicy"))
     throw new Error("A strict source baseline cannot use a Web condition control policy");
   const encounters = Object.values(catalog.encounters);
+  if (encounters.some(encounter => Object.hasOwn(encounter, "forcedSavePolicy")))
+    throw new Error("A strict source baseline cannot use a Web forced-save policy");
   if (encounters.some(encounter => Object.hasOwn(encounter, "controls")))
     throw new Error("A strict source baseline cannot use a Web battle control policy");
   if (encounters.some(encounter => encounter.formationPlan?.kind === "development"))

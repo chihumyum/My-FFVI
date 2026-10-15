@@ -41,7 +41,9 @@ type Reader = {
   matching(table: string, key: string, value: string | number): BattleRow[];
   handoffMusic?: BattleHandoffMusicLookup;
 };
+import {parseWebBattleForcedSave,type WebBattleForcedSave} from '../core/battle-forced-save.js';
 export type BattleEncounterRuntimeInput = {
+  forcedSavePolicy?:WebBattleForcedSave;
   /** Source field/story requests do not enter the separate native AR catalogs.
    * An absent declaration preserves legacy/strict unknown-flag admission. */
   sourceFlagContext?: "story";
@@ -100,6 +102,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     throw new Error("Unimplemented source battle flag execution context");
   if(input.manualControls!==undefined&&input.manualControls!==WEB_MANUAL_BATTLE_CONTROLS)throw new Error('Unknown manual battle control policy');
   validateBattleBranchExecutionPolicy(input.branchExecution);
+  if(input.forcedSavePolicy!==undefined)parseWebBattleForcedSave(input.forcedSavePolicy);
   const requested = [...input.requestedPartyIds];
   const reserves = input.reserveEnemies ?? [], policies = input.development.participants ?? [], waves = input.enemyParties ?? [];
   if (!requested.length || requested.some((id) => !identity(id)) ||
@@ -154,6 +157,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     let escapePolicy: FrameworkBattleEscapePolicy | undefined;
     let rewardPolicy: BattleRewardPolicy | undefined;
     let lifecycle: BattleLifecycle | undefined;
+    let forcedSavePolicy:WebBattleForcedSave|undefined;
     let handoff: BattleHandoffContent | undefined;
     let controls:SourceBattleControls|undefined;
     let sourceFlags:SourceBattleFlags|undefined;
@@ -400,6 +404,10 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
           }
         } catch (error) { stage("blocked", "enemy-party-provider", message(error)); }
       }
+      if(lifecycle?.mode==='script')for(const [pc,{op}]of lifecycle.program.instructions.entries())if(op.kind==='force-save-return'){
+        if(input.forcedSavePolicy===undefined)add('blocked','forced-save-policy','BattleForceExitOnSave requires explicit complete Web saved-return policy',{pc,dependency:{table:'script.csv',id:encounter.metadata.scriptId}});
+        else{forcedSavePolicy=parseWebBattleForcedSave(input.forcedSavePolicy);add('development-omission','forced-save-policy','Explicit Web saved return uses actual entered resources, admitted equipment/rows, all-owned recovery and existing retained loot; native fixed-preemptive/field-condition differences remain declared',{pc});}
+      }
       const dynamicEntries = lifecycle?.mode === "script" ? lifecycle.program.instructions.flatMap(({ op }, pc) =>
         op.kind === "add-enemy" || op.kind === "change-enemy-party" ? [{ op, pc }] : []) : [];
       if (lifecycle?.mode === "script") for (const [pc, { op }] of lifecycle.program.instructions.entries()) {
@@ -472,7 +480,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       input.sourceDiagnostics.some((d) => d.partyId === partyId);
     if (!blocked && formationPlan && rewardPolicy && lifecycle && participants) encounters[partyId] = { encounterId: partyId, enemies,
       background: encounter.background, formationPlan, rewardPolicy, lifecycle, participants,
-      ...(controls?{controls}:{}),
+      ...(controls?{controls}:{}),...(forcedSavePolicy?{forcedSavePolicy}:{}),
       ...(sourceFlags?{sourceFlags}:{}),
       ...(escapePolicy ? { escapePolicy } : {}), ...(handoff ? { handoff } : {}),
       formation: formationPlan.kind === "development" ? null : formationPlan.pattern === 3 ? "opposed" : "normal" };

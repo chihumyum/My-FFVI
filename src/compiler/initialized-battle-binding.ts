@@ -1,3 +1,4 @@
+import {parseWebBattleForcedSave} from '../core/battle-forced-save.js';
 import {parseSourceBattleParticipantPolicy,validateSourceBattleParticipantProof} from './source-battle-participant-closure.js';
 import { WEB_BATTLE_BRANCH_EXECUTION } from "../core/battle-branch-execution.js";
 import { WEB_MANUAL_BATTLE_CONTROLS } from "../core/battle-controls.js";
@@ -58,10 +59,10 @@ export function validateInitializedBattleSharedCapabilities(base: BattleCatalog,
   const report = directoryReport === undefined ? {} : record(directoryReport),
     policy = report.policy === undefined ? {} : record(report.policy),
     framework = policy.framework === undefined ? {} : record(policy.framework);
-  const manualPolicy = policy.kind === "source-battle-directory-policy-v3" || ["source-battle-directory-policy-v4", "source-battle-directory-policy-v5"].includes(String(policy.kind));
+  const manualPolicy = policy.kind === "source-battle-directory-policy-v3" || ["source-battle-directory-policy-v4", "source-battle-directory-policy-v5", "source-battle-directory-policy-v6"].includes(String(policy.kind));
   if (manualPolicy) same(framework.manualControls, WEB_MANUAL_BATTLE_CONTROLS, "known Web manual controls policy");
   else require(!Object.hasOwn(framework, "manualControls"), "manual controls require the exact v3 or v4 directory declaration");
-  if (["source-battle-directory-policy-v4", "source-battle-directory-policy-v5"].includes(String(policy.kind)))
+  if (["source-battle-directory-policy-v4", "source-battle-directory-policy-v5", "source-battle-directory-policy-v6"].includes(String(policy.kind)))
     same(framework.branchExecution, WEB_BATTLE_BRANCH_EXECUTION, "versioned directory branch execution policy");
   else require(!Object.hasOwn(framework, "branchExecution"), "branch execution requires the exact v4 or v5 directory declaration");
   if (Object.hasOwn(nextCommon, "conditionControlPolicy")) {
@@ -85,13 +86,18 @@ export function validateInitializedBattleSharedCapabilities(base: BattleCatalog,
   }
   if (report.policy !== undefined) {
     const versions = ["source-battle-directory-policy-v1", "source-battle-directory-policy-v2",
-      "source-battle-directory-policy-v3", "source-battle-directory-policy-v4", "source-battle-directory-policy-v5"];
+      "source-battle-directory-policy-v3", "source-battle-directory-policy-v4", "source-battle-directory-policy-v5", "source-battle-directory-policy-v6"];
     require(versions.includes(String(policy.kind)), "unknown versioned directory policy");
     require(Object.keys(policy).sort().join(",") === "framework,kind", "unknown versioned directory policy fields");
     const allowed = ["handoff", "entry", ...(policy.kind === versions[0] ? [] : ["conditionControlPolicy"]),
-      ...(manualPolicy ? ["manualControls"] : []), ...([versions[3],versions[4]].includes(String(policy.kind)) ? ["branchExecution"] : []), ...(policy.kind === versions[4] ? ["sourceParticipants"] : [])];
+      ...(manualPolicy ? ["manualControls"] : []), ...([versions[3],versions[4],versions[5]].includes(String(policy.kind)) ? ["branchExecution"] : []), ...([versions[4],versions[5]].includes(String(policy.kind)) ? ["sourceParticipants"] : []),...(policy.kind===versions[5]?["forcedSavePolicy"]:[])];
     require(Object.keys(framework).every(key => allowed.includes(key)), "unknown versioned directory framework fields");
-    if(policy.kind === versions[4]){
+    if(policy.kind===versions[5])parseWebBattleForcedSave(framework.forcedSavePolicy);
+    for(const encounter of Object.values(catalog.encounters)){
+      if(encounter.forcedSavePolicy!==undefined){require(policy.kind===versions[5],"forced save requires exact v6 directory policy");same(encounter.forcedSavePolicy,framework.forcedSavePolicy,"declared forced-save policy");}
+      if(encounter.lifecycle?.mode==='script'&&encounter.lifecycle.program.instructions.some(({op})=>op.kind==='force-save-return'))require(encounter.forcedSavePolicy!==undefined,"missing bound forced-save encounter policy");
+    }
+    if([versions[4],versions[5]].includes(String(policy.kind))){
       require(framework.sourceParticipants!==undefined&&report.sourceParticipantClosure!==undefined,"versioned directory dynamic participant proof missing");
       parseSourceBattleParticipantPolicy(framework.sourceParticipants);
       validateSourceBattleParticipantProof(framework.sourceParticipants,report.sourceParticipantClosure,{encounters:catalog.encounters,

@@ -79,7 +79,7 @@ export type GameCheckpoint = GameCheckpointBase & (
   { formatVersion: 4 } | { formatVersion: 5 | 6; walkEncounters: WalkEncounterSnapshot }
 );
 /** External observations are rebound by the host on load, never trusted from saves. */
-export type GameSessionRuntime = { birdViewActors?: import("./field-bird-view-actors.js").WebFlatBirdViewActors; worldAutoMove?:import("./field-world-auto-move.js").WebFlatWorldAutoMove; worldAutoTasks?:import("./field-world-auto-tasks.js").WebFlatWorldAutoTasks; battleBranchExecution?:WebBattleBranchExecution; battleEventEffects?:BattleEventEffectHost|typeof WEB_BATTLE_EVENT_EFFECTS; battleEventControls?: WebBattleEventControls; viewChange?: import("./field-view-change.js").WebFlatFieldViewChange; battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY; sourcePartySelection?: WebSourcePartySelection; scriptedBattleActions?: WebScriptedBattleActions; puppetRoutes?: import("./field-puppet-route.js").WebPuppetRoutePolicy; sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
+export type GameSessionRuntime = { mobColorFilter?: import("./field-mob-controls.js").WebFlatMobColorFilter; birdViewActors?: import("./field-bird-view-actors.js").WebFlatBirdViewActors; worldAutoMove?:import("./field-world-auto-move.js").WebFlatWorldAutoMove; worldAutoTasks?:import("./field-world-auto-tasks.js").WebFlatWorldAutoTasks; battleBranchExecution?:WebBattleBranchExecution; battleEventEffects?:BattleEventEffectHost|typeof WEB_BATTLE_EVENT_EFFECTS; battleEventControls?: WebBattleEventControls; viewChange?: import("./field-view-change.js").WebFlatFieldViewChange; battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY; sourcePartySelection?: WebSourcePartySelection; scriptedBattleActions?: WebScriptedBattleActions; puppetRoutes?: import("./field-puppet-route.js").WebPuppetRoutePolicy; sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
   sourceMessageSequence?: NonNullable<FieldGameOptions["sourceMessageSequence"]>;
   conditionLeaderActivity?: NonNullable<FieldGameOptions["conditionLeaderActivity"]>;
@@ -921,7 +921,7 @@ export class GameSession {
         ?this.state.sourceBattleGauEntry(entryContext.state):null;
       if (this.field !== field || field.stop !== request || this.fieldBattleFingerprint(field) !== before)
         throw new StaleSessionBattleHandoff();
-      lease = this.state.openBattle(content.encounterId, content.rewardPolicy, content.playerParticipants);
+      lease = this.state.openBattle(content.encounterId, content.rewardPolicy, content.playerParticipants, content.forcedSavePolicy);
       const ownedLease = lease;
       this.battleLease = ownedLease;
       const entry: BattleEntry = { field, request, lease: ownedLease, seed,

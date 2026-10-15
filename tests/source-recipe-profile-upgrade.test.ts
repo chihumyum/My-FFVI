@@ -407,3 +407,26 @@ test('v7 rejects a missing real provider and does not authorize source geometry,
     f.candidate.set(f.urls.sourceMap, old);
   }
 });
+
+async function mobColorProfileFixture() {
+ const f=await worldAutoMoveProfileFixture(),mobColorFilter='web-flat-mob-color-filter-v1';
+ for(const[url,value]of f.candidate)f.candidate.set(url,await seal({...value,developmentProfile:{...value.developmentProfile,mobColorFilter}}));
+ const map=f.candidate.get(f.urls.sourceMap)!,world=f.candidate.get(f.urls.sourceWorld)!;
+ f.candidate.set(f.urls.sourceWorld,await seal({...world,maps:{...world.maps,[map.mapId]:{...world.maps[map.mapId],contentHash:map.contentHash}}}));
+ const entry=f.candidate.get(f.urls.sourceEntry)!;f.candidate.set(f.urls.sourceEntry,await seal({...entry,mapContentHash:map.contentHash,worldCatalogHash:f.candidate.get(f.urls.sourceWorld)!.contentHash}));
+ return {...f,proof:{...f.proof,kind:'compiled-framework-profile-upgrade-v8',markers:{...f.proof.markers,mobColorFilter}}};
+}
+test('exact v8 Mob marker binds complete v7 dependency cohort without widening previous declarations or granting source/save authority',async()=>{
+ const f=await mobColorProfileFixture(),before=canonical({recipe:f.recipe,current:[...f.current],candidate:[...f.candidate]}),result=await f.run({frameworkProfileUpgrade:f.proof});
+ assert.equal(result.report.frameworkProfileUpgrades.length,3);
+ for(const row of result.report.frameworkProfileUpgrades){assert.equal(row.kind,f.proof.kind);assert.equal(row.grantsSourceAdmission,false);assert.equal(row.saveMigration,false);assert.deepEqual(row.comparisonIdentityBefore,row.comparisonIdentityAfter);
+  const provider=row.providers.find((p:any)=>p.marker==='mobColorFilter');assert.equal(provider.module,'src/core/field-mob-controls.js');assert.equal(provider.provider,'fieldMobColorBinding');assert.match(provider.sha256,/^[a-f0-9]{64}$/);}
+ assert.equal(canonical({recipe:f.recipe,current:[...f.current],candidate:[...f.candidate]}),before);
+ for(const version of[1,2,3,4,5,6,7])await assert.rejects(f.run({frameworkProfileUpgrade:{...f.proof,kind:'compiled-framework-profile-upgrade-v'+version}}),/framework profile upgrade/);
+ for(const mutate of[(p:any)=>{delete p.markers.mobColorFilter},(p:any)=>{p.markers.mobColorFilter='unknown'},(p:any)=>{delete p.markers.worldAutoMove},(p:any)=>{p.kind='compiled-framework-profile-upgrade-v9'},(p:any)=>{p.markers.future=true}]){const proof=structuredClone(f.proof);mutate(proof);await assert.rejects(f.run({frameworkProfileUpgrade:proof}),/framework profile upgrade/);}
+});
+test('v8 requires the actual compiled Mob binding and cannot normalize foreign source scripts or geometry',async()=>{
+ const f=await mobColorProfileFixture();await mkdir(resolve(root,'build/wip'),{recursive:true});const isolated=await mkdtemp(resolve(root,'build/wip/mob-filter-provider-unavailable-'));
+ try{await cp(resolve(compiledDir,'src'),resolve(isolated,'src'),{recursive:true});await writeFile(resolve(isolated,'src/core/field-mob-controls.js'),'export const WEB_FLAT_MOB_COLOR_FILTER="web-flat-mob-color-filter-v1";\n');await assert.rejects(f.run({compiledDir:isolated,frameworkProfileUpgrade:f.proof}),/host unavailable: mobColorFilter/);}finally{await rm(isolated,{recursive:true,force:true});}
+ const bad=structuredClone(f.candidate.get(f.urls.sourceMap)!);bad.scripts={injected:[{kind:'exit'}]};f.candidate.set(f.urls.sourceMap,await seal(bad));await assert.rejects(f.run({frameworkProfileUpgrade:f.proof}),/identity|dependency|media changed/i);
+});

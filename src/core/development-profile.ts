@@ -40,6 +40,7 @@ export type DevelopmentProfile = {
   storyRuntime?: "web-field-story-runtime-v1";
   autoSave?: "web-field-autosave-barrier-v1";
   /** Sprite-only elevation on actual native actors; logical ground pose is unchanged. */
+  mobColorFilter?: import("./field-mob-controls.js").WebFlatMobColorFilter;
   birdViewActors?: "web-flat-bird-view-actors-v1";
 };
 /** Explicit current Web policies for newly authored framework derivatives. */

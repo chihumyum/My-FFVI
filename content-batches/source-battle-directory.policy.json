@@ -1,5 +1,5 @@
 {
-  "kind": "source-battle-directory-policy-v5",
+  "kind": "source-battle-directory-policy-v6",
   "framework": {
     "handoff": {
       "kind": "framework-battle-handoff-v1",
@@ -46,6 +46,9 @@
       "kind": "web-source-dynamic-participants-v1",
       "slotLayout": "source-party-nine-slots",
       "rewardScope": "all-entered"
+    },
+    "forcedSavePolicy": {
+      "kind": "web-source-battle-forced-save-v1"
     }
   }
 }

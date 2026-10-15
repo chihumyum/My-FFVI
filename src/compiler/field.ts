@@ -1,4 +1,6 @@
+import { compileFieldMobControl } from "./field-mob-controls.js";
 import { compileFieldBirdViewMoveInstruction } from "./field-bird-view-actors.js";
+import { compileFieldStandaloneWaitInstruction, sourceStandaloneWaitSelector } from "./field-standalone-wait.js";
 import { compileFieldViewChangeInstruction } from './field-view-change.js';
 import { worldAutoMnemonics, compileFieldWorldAutoInstruction,compileFieldWorldAutoMove } from './field-world-auto-tasks.js';
 import { compileSourcePartySelectionInstruction, sourcePartySelectionSelectors } from './source-party-selection.js';
@@ -213,6 +215,9 @@ export function decodeFieldOp(
     try { return { ...site, ...compileFieldPartyQueryInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
+  if (name === "HideMob" || name === "RestoreMob") {
+    try { return { ...site, ...compileFieldMobControl(raw) }; } catch(error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (name === "MoveBirdView") {
     try { return { ...site, ...compileFieldBirdViewMoveInstruction(raw) }; }
     catch (error) { return { ...site, kind: "blocked", mnemonic: name, reason: error instanceof Error ? error.message : String(error) }; }
@@ -230,6 +235,10 @@ export function decodeFieldOp(
   if(name==='SysCall' && (sourcePartySelectionSelectors as readonly unknown[]).includes(s[0])) {
     try {return {...site,...compileSourcePartySelectionInstruction(raw)};}
     catch(error){return blocked(error instanceof Error?error.message:String(error));}
+  }
+  if (name === "SysCall" && s[0] === sourceStandaloneWaitSelector) {
+    try { return { ...site, ...compileFieldStandaloneWaitInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if(name==='SysCall'&&s[0]==='戦闘結果取得'){try{return {...site,...compileSourceBattleResultInstruction(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if (name === "SysCall" && fieldScriptShopSelectors.includes(s[0]!)) {

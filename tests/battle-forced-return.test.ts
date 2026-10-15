@@ -37,7 +37,8 @@ test("whole no-save instruction shape is admitted while Save and every altered u
     assert.equal(battleMessageProgram([changed, messageRaw("Exit")]).instructions[0]!.op.kind, "blocked");
   }
   const saved = battleMessageProgram([messageRaw("BattleForceExitOnSave"), messageRaw("Exit")]);
-  assert.throws(() => createBattleEventState(saved), /owned Corps layout.*nonparticipant recovery.*retained steal\/drop/);
+  assert.deepEqual(saved.instructions[0]!.op,{kind:"force-save-return"});
+  assert.throws(()=>new BattleGame(battleMessageContent(saved),1,undefined,undefined,undefined,undefined,undefined,undefined),/explicit Web|saved forced-return policy/);
   assert.throws(() => new BattleGame(battleMessageContent(program()), 1), /explicit Web battle event control policy/);
 });
 

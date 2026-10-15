@@ -212,6 +212,7 @@ const OPPOSITE: Record<Direction, Direction> = {
   right: "left",
   down: "up",
 };
+import { FieldMobControls, fieldMobColorBinding, validateMobPolicy, tickMobColor, cloneMobColor, parseMobControlCommand, type FieldMobCheckpoint, type FieldMobColor, type FieldMobControlOp, type WebFlatMobColorFilter } from "./field-mob-controls.js";
 export type Motion = FieldActorMotion;
 export type FieldDirectionInputResult = { kind: "movement" } |
   { kind: "door"; entityId: string; regionId: string } |
@@ -228,6 +229,7 @@ export type Actor = Point & {
   native?: NativeFieldActorData;
   /** Component owned by this actual Actor instance, never its ground transform. */
   birdView?: FieldBirdViewActorPose;
+  mobColor?: FieldMobColor;
 };
 type PlacedActor = Actor & { layer: number; direction: Direction; asset: string };
 type NpcActivityRuntime = {
@@ -264,6 +266,7 @@ type FieldCheckpointState = {
   native: {
     actors: FieldNativeCheckpoint;
     birdViewActors?: FieldBirdViewActorCheckpoint;
+    mobControls?: FieldMobCheckpoint;
     collision: FieldPuppetCollisionState;
     updateMask: number;
     cameraOffset: Point;
@@ -306,6 +309,8 @@ type Task = {
   actor: string;
   sourceEntityId: number | null;
   wait: number;
+  standaloneWait: { op: Extract<Op, { kind: "standalone-wait" }>; program: Op[];
+    webPC: number; fingerprint: string; registers: FieldCoreRegisters } | null;
   /** null is the main core (or the external treasure coroutine). */
   slot: number | null;
   state: "awake" | "ready";
@@ -405,6 +410,7 @@ export type FieldGameOptions = {
   worldAutoMove?:WebFlatWorldAutoMove;
   worldAutoTasks?: WebFlatWorldAutoTasks;
   birdViewActors?: WebFlatBirdViewActors;
+  mobColorFilter?: WebFlatMobColorFilter;
   storyTimerOrigin?: FieldTimerOriginContent;
   /** Explicit particle/material host. Content parsing never grants one. */
   fieldEffects?: FieldEffectRuntimeHost;
@@ -519,6 +525,7 @@ export class FieldGame {
       audioReadiness: presence(typeof this.options.audioReadiness?.isReady === "function"),
       soundPresentation: presence(typeof this.options.soundPresentation?.isPresented === "function"),
       actorControl: presence(actorControl),
+      mobColorFilter: presence(this.mobControlsEnabled && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.options.puppetActors),
       birdViewActors: presence(!!actor && this.birdViewActorsEnabled && !!actor.native && actor.native.entity.character &&
         !actor.native.entity.riding && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.nativeActorProviders && !!this.camera),
       actorMotion: presence(actorMotion), cameraMotion: presence(cameraMotion), effectMotion: "missing",
@@ -1125,7 +1132,7 @@ export class FieldGame {
       ({ ...actor, animation: actor.animation?.snapshot() ?? null })) },
       metadata: Object.values(this.actors).filter((actor) => actor.native).map((actor) => ({
         id: actor.id, motion: actor.motion, steps: actor.steps, fieldAssetId: actor.native!.fieldAssetId,
-        birdView: actor.birdView ?? null, charaZOffset: actor.native!.charaZOffset, mapAnimation: actor.native!.mapAnimation ?? null, mapObjectAsset: actor.native!.mapObjectAsset ?? null,
+        mobColor: actor.mobColor ?? null, birdView: actor.birdView ?? null, charaZOffset: actor.native!.charaZOffset, mapAnimation: actor.native!.mapAnimation ?? null, mapObjectAsset: actor.native!.mapObjectAsset ?? null,
         scope: actor.native!.scope ?? null, updateAttribute: actor.native!.updateAttribute ?? null,
       })), npcActivities: this.npcActivitySnapshot, assignedRoutes: this.assignedRouteSnapshot,
       ...(this.eventActivation ? { eventActivation: this.eventActivation } : {}) });
@@ -1477,6 +1484,9 @@ export class FieldGame {
     validateFieldViewChangePolicy(options.viewChange);
     validateWorldAutoTaskPolicy(options.worldAutoTasks);this.#worldAutoPolicy=options.worldAutoTasks;
     validateWorldAutoMovePolicy(options.worldAutoMove);this.#worldAutoMovePolicy=options.worldAutoMove;
+    validateMobPolicy(options.mobColorFilter); validateMobPolicy(content.developmentProfile?.mobColorFilter);
+    const mobBinding = fieldMobColorBinding(content,options.mobColorFilter);
+    if (mobBinding) this.#mobControls = new FieldMobControls(mobBinding,()=>this.actors);
     validateBirdViewActorsPolicy(options.birdViewActors);
     validateBirdViewActorsPolicy(content.developmentProfile?.birdViewActors);
     if(options.sourcePartySelection!==undefined&&options.sourcePartySelection!==WEB_SOURCE_PARTY_SELECTION)throw new Error("Unknown source party selection policy");
@@ -2258,7 +2268,7 @@ export class FieldGame {
   }
   get menuReady(): boolean { return !this.stop && this.idleFieldReady; }
   get checkpointReady(): boolean {
-    return this.menuReady && (this.logicalEffectsPersistent || !this.effects && !this.options.fieldEffectMap?.hasHistory);
+    return !Object.values(this.actors).some(actor=>actor.mobColor?.tween) && this.menuReady && (this.logicalEffectsPersistent || !this.effects && !this.options.fieldEffectMap?.hasHistory);
   }
   get sourcePresentationContext(): SourcePresentationContext | null {
     return cloneSourcePresentationContext(this.options.sourcePresentation?.context() ?? null);
@@ -2297,7 +2307,7 @@ export class FieldGame {
       eventActivation: this.eventActivation, puppetLifecycle: this.puppetLifecycle,
       currentProperties: this.currentProperties, entities: this.entityList,
       activeGroups: [...this.activeGroups], hiddenEntities: [...this.hiddenEntities], openedTreasures: [...this.openedTreasures],
-      events: this.eventState.snapshot(), contentInvalidations: this.contentInvalidationsSnapshot,
+      mobControls: this.mobControlsSnapshot, events: this.eventState.snapshot(), contentInvalidations: this.contentInvalidationsSnapshot,
       native: this.nativeActorStateFingerprint,
       actors: Object.values(this.actors).map(({ native: _, animation, ...actor }) => ({ ...actor, animation: animation?.snapshot() ?? null })),
       npcActivities: this.npcActivitySnapshot, assignedRoutes: this.assignedRouteSnapshot,
@@ -2367,8 +2377,9 @@ export class FieldGame {
         sourceSpeedEnum: r.binding.program.sourceSpeedEnum, commandId: r.state.pending.commandId,
         secondsPerCell: sourceNpcSecondsPerCell(r.binding.program.sourceSpeedEnum) }]] : [];
     }));
+    const mobControls = this.mobControlsEnabled ? this.mobControlsOwner().checkpoint() : undefined;
     const birdViewActors = this.captureBirdViewActorPoses();
-    return { ...(birdViewActors ? { birdViewActors } : {}), actors: captureFieldNativeCheckpoint(this.actors, this.nativeCheckpointContext(
+    return { ...(mobControls ? {mobControls} : {}), ...(birdViewActors ? { birdViewActors } : {}), actors: captureFieldNativeCheckpoint(this.actors, this.nativeCheckpointContext(
       this.nativeActorBindings, this.nativeRuntime.mapLifecycle.factory, this.nativeActorProviders(), autonomousMotions,
       this.assignedCheckpoint ? restoreAssignedRoutes(this.assignedCheckpoint,this.content,this.entityList,this.time,this.options.assignedNpcRoutes).motions : undefined)),
       collision: { ...this.collisionSwitches }, updateMask: this.entityUpdateMask,
@@ -2447,13 +2458,13 @@ export class FieldGame {
     if (this.stop || this.worldAutoTasksBusy || !this.logicalEffectsPersistent && (this.effects || this.options.fieldEffectMap?.hasHistory) ||
         this.options.fieldEffectMap && !this.options.fieldEffectMap.active ||
         this.sourcePresentationContext?.advertisementOpeningFader === "present" ||
-        this.fader.active || this.colorFilterState?.active || this.actorVisibilityBusy || this.sourceMessage.active || this.messageWindow ||
+        this.fader.active || this.colorFilterState?.active || this.actorVisibilityBusy || Object.values(this.actors).some(actor=>actor.mobColor?.tween) || this.sourceMessage.active || this.messageWindow ||
         this.pendingChoice || this.shopTask || this.sourcePartySelectionRequest || this.treasureSceneState !== "player" ||
         this.openTriggers.busy || this.interaction || this.pendingPlayerStep ||
         Object.values(this.actors).some((actor) => actor.motion !== null && !this.isAutonomousMotion(actor)) ||
         this.tasks.some((other) => other !== task && !other.done) ||
         task.done || task.slot !== null || task.treasureRoot || task.state !== "ready" ||
-        task.wait !== 0 || task.puppetWait || task.fadeWait || task.colorFadeWait || task.flashWait || task.cameraPath || task.cameraLerp ||
+        task.wait !== 0 || task.standaloneWait || task.puppetWait || task.fadeWait || task.colorFadeWait || task.flashWait || task.cameraPath || task.cameraLerp ||
         task.scriptMove || task.scriptLerp || task.birdViewMove || task.remaining !== 0 || task.move ||
         task.animationWait || task.audioWait || task.bgmReplay || task.autoSaveWait || task.soundWait || task.treasure ||
         this.options.puppetActors && !this.nativeActorBindings)
@@ -2703,8 +2714,10 @@ export class FieldGame {
   }
   private restoreNativeOwner(saved: NonNullable<FieldCheckpoint["native"]>, source: FieldNativeRestoreDependencies,
     restoredActivities?: RestoredFieldNpcActivities,assignedMotions?:FieldNativeCheckpointContext["assignedMotions"]): void {
+    const hasMobControls = Object.hasOwn(saved, "mobControls");
+    if (hasMobControls !== this.mobControlsEnabled) throw new Error("Saved Mob controls cannot grant or discard content/runtime policy");
     const hasBirdViewActors = Object.hasOwn(saved, "birdViewActors");
-    checkpointKeys(saved, "actors,collision,updateMask,cameraOffset,completedScript" + (hasBirdViewActors ? ",birdViewActors" : ""));
+    checkpointKeys(saved, "actors,collision,updateMask,cameraOffset,completedScript" + (hasBirdViewActors ? ",birdViewActors" : "") + (hasMobControls ? ",mobControls" : ""));
     if (hasBirdViewActors !== this.birdViewActorsEnabled) throw new Error("Saved BirdView actor poses cannot grant or discard content/runtime policy");
     const birdPoses = hasBirdViewActors ? parseFieldBirdViewActorCheckpoint(saved.birdViewActors!) : null;
     checkpointKeys(saved.collision, "mapColliders,entityCollision,interactiveObservation");
@@ -2746,6 +2759,10 @@ export class FieldGame {
     }
     this.publishNativeActors(actors, bindings, source.catalog, providers, source.controlContext,
       source.animationKeys, { factory: structuredClone(source.factory) }, restoredActivities);
+    if (hasMobControls) {
+      for (const pose of saved.mobControls!.poses) {const actor=this.actors[pose.actorId];if(!actor)throw new Error("Saved Mob pose actor missing");this.requireMobActor(actor);}
+      this.mobControlsOwner().restore(saved.mobControls!);
+    }
     this.collisionSwitches = { ...saved.collision };
     this.entityUpdateMask = saved.updateMask;
     this.mapScrollOffset = Object.freeze({ ...saved.cameraOffset });
@@ -3102,6 +3119,111 @@ export class FieldGame {
     publish();
     return { flow: prepared.flow, progress: prepared.progress };
   }
+  #mobControls: FieldMobControls | null = null;
+  private get mobControlsEnabled(): boolean { return fieldMobColorBinding(this.content,this.options.mobColorFilter) !== undefined; }
+  private mobControlsOwner(): FieldMobControls {
+    const map = fieldMobColorBinding(this.content,this.options.mobColorFilter);
+    if (!map) throw new Error('Mob filter requires current content and runtime authorization');
+    return this.#mobControls ??= new FieldMobControls(map,()=>this.actors);
+  }
+  get mobControlsSnapshot() { return this.#mobControls?.snapshot() ?? null; }
+  /** Candidate-only transfer. No live actor reference crosses map publication. */
+  inheritMobControls(previous: FieldGame): void {
+    if (!previous.#mobControls) return;
+    this.mobControlsOwner().transferFrom(previous.#mobControls);
+  }
+  retireMobControls(): void { this.#mobControls?.retire(); }
+  private requireMobActor(actor: Actor): void {
+    const native=actor.native,entity=native?.entity;
+    const animated=native?.scope?.kind==='map-animated'&&native.mapAnimation!==undefined;
+    if(this.#mobControls?.isRetired||!this.mobControlsEnabled||!this.nativeActorBindings||!this.nativeRuntime?.mapLifecycle||!this.nativeActorProviders||!this.options.puppetActors||
+      this.actors[actor.id]!==actor||!native||!entity||entity.id!==actor.id||(!entity.character&&!animated)||
+      entity.childEntityObject!=='absent'||!actor.animation)
+      throw new Error('Mob filter requires an actual registered sprite/character; children and unknown renderers remain gated');
+    if(entity.character)requireFieldTransportPose(entity,this.transportationPresentation);
+    else if(entity.riding||actor.mount||!['absent','idle'].includes(entity.rideOnEntity))throw new Error('Unknown Mob map-sprite riding material');
+    if(entity.riding){
+      // The actual native projection owns both IDs and the single outer clock.
+      // This accepts already-bound Web riding, never grants a transport or asset.
+      const catalog=this.options.partyAppearance?.catalog,keys=this.nativeRuntime.animationKeys,
+        outer=native.fieldAssetId===null?undefined:catalog?.assets[native.fieldAssetId],
+        inner=entity.riderAssetId===null?undefined:catalog?.assets[entity.riderAssetId];
+      if(this.transportationPresentation!=='framework-development'||!outer||!inner||!actor.mount||!actor.asset||
+        outer.asset!==actor.mount||inner.asset!==actor.asset||!actor.direction)
+        throw new Error('Mob riding material lacks its actual inner/outer identities');
+      for(const row of [outer,inner]){
+        const character=this.content.characters[row.asset],sourceKeys=keys?.assets[row.asset];
+        if(!character||!sourceKeys||canonical(sourceKeys.source)!==canonical(character.source)||
+          missingFieldPoses(character,row===inner).length||
+          row===outer&&canonical(actor.animation.character)!==canonical(character))
+          throw new Error('Mob riding inner/outer media or animation source changed');
+      }
+    }else if(actor.mount)throw new Error('Mob material mount disagrees with its actual native riding state');
+  }
+  mobColorFilterAlpha(actorId: string): number {
+    const actor=this.actors[actorId];if(!actor)throw new Error('Unknown Mob render actor');
+    if(!actor.mobColor)return 0;this.requireMobActor(actor);
+    const alpha=cloneMobColor(actor.mobColor).alpha;if(!Number.isFinite(alpha)||Math.fround(alpha)!==alpha||alpha<0||alpha>1)throw new Error('Invalid actual Mob render filter');return alpha;
+  }
+  private mobRegistry(): Actor[] {
+    if(!this.mobControlsEnabled||!this.nativeActorBindings||!this.nativeRuntime?.mapLifecycle||!this.options.puppetActors)
+      throw new Error('Mob control lacks its complete Web actor registration owner');
+    // These already-admitted Web logical entities have no sprite/material owner.
+    // Unknown classes and effect renderers are never silently added to this set.
+    const logical=new Set([0,1,2,3,5,7,8,9,12,13,14,15,16,18,19]),passive=bindPassiveEffects(this.content);
+    if(canonical([...passive].sort())!==canonical([...this.passiveEffects].sort()))throw new Error('Mob passive no-material source binding changed');
+    for(const entity of this.entityList){
+      if([6,17,10].includes(entity.kind)){
+        const actor=this.actors[entity.id];if(!actor?.native)throw new Error('Mob source sprite is missing its registered Actor');
+      }else if(entity.kind===11){
+        // Both classes below explicitly allocate no Web sprite/material.
+        // An arbitrary effect declaration or activeSelf=false proves neither.
+        if(this.passiveEffects.has(entity.id)){
+          if(this.effectBoard(entity.id)||this.actors[entity.id])throw new Error('Passive Mob effect unexpectedly owns a renderer');
+        }else{
+          const board=this.effectBoard(entity.id);
+          if(this.fieldEffectsDisplayPolicy!==WEB_LOGICAL_FIELD_EFFECTS||!this.content.fieldEffects||!entity.effect||!board||
+            canonical(board.definition)!==canonical(entity.effect)||!validateLogicalEffectMedia(this.content.fieldEffects,board.definition.assetGroup)||this.actors[entity.id])
+            throw new Error('Mob effect board lacks its explicit no-material Web owner');
+        }
+      }else if(!logical.has(entity.kind))throw new Error('Mob registry has an unsupported source entity class: '+entity.kind);
+    }
+    for(const board of this.fieldEffectsSnapshot?.boards??[]){
+      if(this.fieldEffectsDisplayPolicy!==WEB_LOGICAL_FIELD_EFFECTS||!this.content.fieldEffects||
+        !validateLogicalEffectMedia(this.content.fieldEffects,board.definition.assetGroup)||
+        !this.entityList.some(entity=>entity.kind===11&&entity.id===board.id&&canonical(entity.effect)===canonical(board.definition)))
+        throw new Error('Mob effect-board material lifecycle is unresolved');
+    }
+    const actors=Object.values(this.actors);
+    for(const actor of actors){if(!actor.native||typeof actor.native.entity.visible!=='boolean')throw new Error('Mob registry contains an unknown native instance');}
+    return actors;
+  }
+  private executeMobControl(op: FieldMobControlOp): void {
+    op={...op,command:parseMobControlCommand(op.command)};
+    const owner=this.mobControlsOwner(),port=this.options.puppetActors!,registry=this.mobRegistry(),read=port.read();
+    const selectors=op.command.kind==='hide'?[900,901,902,...op.command.exemptions]:[];
+    const excluded=selectors.map(id=>{const selected=resolveFieldPuppetActor(read.catalog,read.context,id);return selected.actor===null?null:this.actors[selected.actor]??(()=>{throw new Error('Mob exemption lost its actual selected actor');})();});
+    const active=op.command.kind==='hide'?registry.filter(actor=>actor.native!.entity.visible&&!excluded.includes(actor)):owner.liveActors() as Actor[];
+    for(const actor of active)this.requireMobActor(actor);
+    const materialFingerprint=()=>canonical(active.filter(actor=>actor.native!.entity.riding).map(actor=>({id:actor.id,asset:actor.asset,mount:actor.mount,
+      media:[this.content.characters[actor.asset!],this.content.characters[actor.mount!]],
+      keys:[this.nativeRuntime!.animationKeys!.assets[actor.asset!],this.nativeRuntime!.animationKeys!.assets[actor.mount!]]}))),
+      effectFingerprint=()=>canonical({policy:this.fieldEffectsDisplayPolicy,state:this.fieldEffectsSnapshot,catalog:this.content.fieldEffects??null}),
+      materialBefore=materialFingerprint(),fingerprint=canonical(read),nativeFingerprint=this.nativeActorStateFingerprint,effectsBefore=effectFingerprint(),at=this.time,actors=[...registry];
+    owner.prepare(op.command,registry,excluded,this.time/1000,()=>{
+      if(this.options.puppetActors!==port||canonical(port.read())!==fingerprint||this.time!==at||this.nativeActorStateFingerprint!==nativeFingerprint||effectFingerprint()!==effectsBefore||this.mobRegistry().length!==actors.length||actors.some(actor=>this.actors[actor.id]!==actor))throw new Error('Mob selector/registration changed before publication');
+      for(const actor of active)this.requireMobActor(actor);
+      if(materialFingerprint()!==materialBefore)throw new Error('Mob riding material changed before publication');
+    })();
+  }
+  private advanceMobColorFilters(): void {
+    const candidates=Object.values(this.actors).filter(actor=>actor.mobColor?.tween&&actor.native?.entity.visible&&
+      (this.entityUpdateMask&(actor.native.updateAttribute??2))!==0).map(actor=>{
+      this.requireMobActor(actor);return {actor,native:actor.native!,entity:actor.native!.entity,prior:actor.mobColor!,next:tickMobColor(actor.mobColor!,this.time/1000)};
+    });
+    if(candidates.some(c=>this.actors[c.actor.id]!==c.actor||c.actor.native!==c.native||c.native.entity!==c.entity||c.actor.mobColor!==c.prior))throw new Error('Stale Mob material clock');
+    for(const c of candidates)c.actor.mobColor=c.next;
+  }
   private get birdViewActorsEnabled(): boolean {
     return fieldBirdViewActorBinding(this.content, this.options.birdViewActors) !== undefined;
   }
@@ -3385,7 +3507,7 @@ export class FieldGame {
     }
   }
   private advanceActorVisibilityFades(): void {
-    const effects = Object.values(this.actors).flatMap(actor => actor.native && actorFadeActive(actor.native.entity) &&
+    const effects = Object.values(this.actors).flatMap(actor => actor.native && !actor.mobColor?.tween && actorFadeActive(actor.native.entity) &&
       (this.entityUpdateMask & (actor.native.updateAttribute ?? 2)) !== 0
       ? [{ kind: "visibility-tick" as const, actor: actor.id, nowSeconds: this.time / 1000 }] : []);
     if (!effects.length) return;
@@ -3837,7 +3959,7 @@ export class FieldGame {
       milliseconds > 60000
     )
       throw new Error("Invalid elapsed time");
-    if ((this.birdViewActorsEnabled || this.content.frameworkNpcActivity || this.assignedRoutes.size > 0 || this.tasks.some(task => !task.done && task.animationRepeat)) && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
+    if ((this.mobControlsEnabled || this.birdViewActorsEnabled || this.content.frameworkNpcActivity || this.assignedRoutes.size > 0 || this.tasks.some(task => !task.done && task.animationRepeat)) && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
     if (this.pendingEventSave) return;
     this.remainder += milliseconds;
     while (this.remainder >= 10) {
@@ -3875,7 +3997,7 @@ export class FieldGame {
       // Use the same post-message update mask as the existing actor loop.
       // Actor animation and this callback-free scalar fade commute within the
       // fixed Web step; native host callback/reentry is not admitted here.
-      try { this.advanceActorVisibilityFades(); }
+      try { this.advanceActorVisibilityFades(); this.advanceMobColorFilters(); }
       catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       let entered = false;
       let walkParty: number | null = null;
@@ -4171,6 +4293,7 @@ export class FieldGame {
     // treasure coroutines are not cores and keep their existing owner.
     this.tasks = this.tasks.filter((other) => other === t || other.treasureRoot);
     Object.assign(t, plan, { stack: [], wait: 0, state: "ready", lastClock: this.time,
+      standaloneWait: null,
       generalRegisters: initialFieldCoreRegisters(),
       puppetWait: null, scriptShop: null, fadeWait: null, colorFadeWait: null, flashWait: null, cameraPath: null, cameraLerp: null, scriptMove: null, scriptLerp: null, birdViewMove: null, remaining: 0, move: null,
       animationWait: false, animationRepeat: null, audioWait: null, bgmReplay: null, autoSaveWait: null, sourceMessageWait: null, soundWait: null, treasure: null, done: false });
@@ -4195,6 +4318,7 @@ export class FieldGame {
     main.state = "ready";
     main.lastClock = this.time;
     main.wait = 0;
+    main.standaloneWait = null;
     for (const task of this.tasks) if (task.slot !== null) task.done = true;
     this.scriptHook = null;
     // Integrator.Update returns after restoring. The caller resumes on the
@@ -4246,6 +4370,7 @@ export class FieldGame {
       sourceEntityId: null,
       stack: [],
       wait: 0,
+      standaloneWait: null,
       slot: null,
       state: "ready",
       range: { min: 0, max: (this.content.scripts[script]?.length ?? 0) - 1 },
@@ -4280,10 +4405,12 @@ export class FieldGame {
     );
   }
   private hasUnfinishedInterpolation(): boolean {
-    return this.tasks.some((task) => !task.done && !!(task.scriptLerp || task.cameraLerp || task.cameraPath));
+    // Timing wrappers also own captured Core r0/r1 until their next-clock
+    // completion. A script/map/battle replacement cannot discard that bank.
+    return this.tasks.some((task) => !task.done && !!(task.scriptLerp || task.cameraLerp || task.cameraPath || task.standaloneWait));
   }
   private hasUnfinishedNativeEncounterActivity(): boolean {
-    return !!(this.actorVisibilityBusy || this.pendingChoice || this.messageWindow || this.sourceMessage.active || this.shopTask ||
+    return !!(Object.values(this.actors).some(actor=>actor.mobColor?.tween) || this.actorVisibilityBusy || this.pendingChoice || this.messageWindow || this.sourceMessage.active || this.shopTask ||
       this.treasureHandoffBlocked() || Object.values(this.actors).some((actor) => actor.motion !== null && !this.isAutonomousMotion(actor)));
   }
   /** Source Encount selects once and captures FootInfo while the actual
@@ -4995,6 +5122,20 @@ export class FieldGame {
     }
     for (let budget = 0; budget < 4096; budget++) {
         if (t.done || t.wait > 0 || this.dialogue?.task === t.id) return;
+        if (t.standaloneWait) {
+          const pending = t.standaloneWait;
+          try {
+            if (this.content.scripts[t.script] !== pending.program || t.pc !== pending.webPC + 1 ||
+                pending.program[pending.webPC] !== pending.op || canonical(pending.op) !== pending.fingerprint ||
+                t.generalRegisters !== pending.registers)
+              throw new Error("Standalone wait lost its source instruction or Core registers");
+            const bank = parseFieldCoreRegisters(t.generalRegisters);
+            if (this.time / 1000 - bank.r[1]! < bank.r[0]!) return;
+            t.standaloneWait = null;
+          } catch (error) {
+            this.block(error instanceof Error ? error.message : String(error), pending.op); return;
+          }
+        }
         const actor = this.actors[t.actor];
         if (!actor && !this.hasEntity(t.actor)) {
           this.block(`缺少角色 ${t.actor}`);
@@ -5617,6 +5758,19 @@ export class FieldGame {
             t.wait = Math.ceil(op.seconds * 100);
             t.wait *= 10;
             break;
+          case "standalone-wait":
+            try {
+              // The exact source wrapper reads category10/index7 once on its
+              // first clock, publishes r0/r1, then yields even for <=0ms.
+              const milliseconds = this.eventState.read({ category: "MapLocalVariable", index: 7 });
+              if (milliseconds === null) throw new Error("Standalone wait requires known MapLocalVariable[7]");
+              const registers = projectFieldCoreSlots(t.generalRegisters,
+                { r: { 0: milliseconds / 1000, 1: this.time / 1000 } });
+              const program = this.content.scripts[t.script]!;
+              t.generalRegisters = registers;
+              t.standaloneWait = { op, program, webPC: t.pc - 1, fingerprint: canonical(op), registers };
+              return;
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
           case "puppet":
             try {
               const host = this.options.puppetActors, lifecycle = this.puppetLifecycle;
@@ -5834,6 +5988,9 @@ export class FieldGame {
                 site: structuredClone(op), actorId: actor.id, atMilliseconds: this.time });
               if (flow === "wait") { t.scriptMove = op; return; }
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
+          case "field-mob-control":
+            try { this.executeMobControl(op); } catch(error) { this.block(String(error),op); return; }
             break;
           case "field-bird-view-move":
             try {

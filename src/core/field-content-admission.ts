@@ -2,7 +2,7 @@ import { fieldMessageNameReferences, fieldMessageUsesFee } from "./field-message
 import type { FieldContent, Op, Site } from "../field/types.js";
 
 export const fieldProviders = Object.freeze([
-  "birdViewActors", "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
+  "mobColorFilter", "birdViewActors", "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
   "sourcePartySelection", "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "viewChange", "worldAutoTasks", "worldAutoMove", "sourceAutoSaveSync",
 ] as const);
@@ -42,6 +42,7 @@ export type FieldContentRequirements = {
 };
 
 const codes: Record<FieldCapability, string> = {
+  mobColorFilter: "FIELD_MOB_COLOR_FILTER_PROVIDER",
   birdViewActors: "FIELD_BIRD_VIEW_ACTOR_PROVIDER",
   puppetRoutes: "FIELD_PUPPET_ROUTE_PROVIDER",
   messageValues: "FIELD_MESSAGE_VALUES_PROVIDER",
@@ -235,6 +236,7 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       break;
     }
     case "bgm-ready": add("audioReadiness", "Missing BGM resource readiness provider"); break;
+    case "field-mob-control": add("mobColorFilter", "Mob color control requires complete actual actor registry and retained instance membership"); break;
     case "field-bird-view-move": {
       add("birdViewActors", "MoveBirdView requires an explicit bound actor elevation component");
       if (commandOf(op).move !== null) add("scriptMotion", "MoveBirdView delegates the existing ordinary source Move provider");

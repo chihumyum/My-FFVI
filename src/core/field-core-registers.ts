@@ -88,6 +88,7 @@ export function projectFieldCoreSlots(current: FieldCoreRegisters,
  * this codec. A save cannot grant the content an extra register consumer. */
 export function fieldUsesCoreRegisters(content: Pick<FieldContent, "scripts">): boolean {
   return Object.values(content.scripts).some(program => program.some(op =>
+    op.kind === "standalone-wait" ||
     op.kind === "owned-condition" && op.command.kind === "remove-condition" && op.command.conditionType === 0 ||
     op.kind === "animation-play" && op.repeatCount !== undefined));
 }

@@ -1,4 +1,6 @@
+import {resourceAbsorptionEffect,type AbsorptionContext} from './resource-absorption.js';
 import { planCursedShieldCheck, planShadowSecedeLot } from './battle-post-checks.js';
+import {parseWebBattleForcedSave,BattleRetainedLootLedger,type BattleSavedForcedReturnResult,type WebBattleForcedSave} from './battle-forced-save.js';
 import type { BattleForcedReturnResult } from "./battle-forced-return.js";
 import { WEB_BATTLE_BRANCH_EXECUTION, validateBattleBranchExecutionPolicy, type WebBattleBranchExecution } from './battle-branch-execution.js';
 import { WEB_BATTLE_EVENT_EFFECTS, WEB_BATTLE_EFFECT_PULSE_MILLISECONDS, parseBattleEventEffectOp, type BattleEventEffectHost, type BattleEffectResourceLease, type BattleEffectProjection, type BattleEventEffectOp } from './battle-event-effect.js';
@@ -151,6 +153,8 @@ export type BattleAction = {
   results: { target: string; effects: AbilityEffectResult[] }[];
   /** Independent caster results; never substituted for target calculation. */
   userConditionResults?: ActionUserConditionResult[];
+  /** Caster recovery is presentation data, never another received target hit. */
+  userResourceResults?: {ownerId:string;slot:number;resource:'hp'|'mp';recovery:true;amount:number;missed:boolean;nullified?:boolean}[];
 };
 export type BattleReward = {
   exp: number;
@@ -369,6 +373,10 @@ export class BattleGame {
   get uiControls() { return { ...this.eventUI }; }
   private escapeRequested = false;
   private forceReturnRequested = false;
+  private forceSaveRequested=false;
+  private forcedSaveTerminal=false;
+  private readonly forcedSavePolicy:WebBattleForcedSave|null;
+  private readonly retainedLoot=new BattleRetainedLootLedger();
   private currentPreferences: BattlePreferences;
   private currentPlayerControlMode:'manual'='manual';
   get playerControlMode():'manual' {return this.currentPlayerControlMode;}
@@ -442,6 +450,7 @@ export class BattleGame {
     validateScriptedBattleActionPolicy(eventHosts?.scriptedActions);
     validateBattleEventControls(eventHosts?.controls);
     this.lifecycle = parseBattleLifecycle(content.lifecycle ?? { kind: "battle-lifecycle-v1", mode: "none" });
+    this.forcedSavePolicy=content.forcedSavePolicy===undefined?null:parseWebBattleForcedSave(content.forcedSavePolicy);
     this.gauEntry=eventHosts?.gau===undefined?null:parseBattleGauEntry(eventHosts.gau);
     if(this.gauEntry&&this.gauEntry.catalogHash!==content.contentHash)throw new Error('Gau entry belongs to another battle catalog');
     if(this.lifecycle.mode==='script'&&this.lifecycle.program.instructions.some(({op})=>op.kind==='set-gau-mode'||op.kind==='shadow-secede-lot')&&!this.gauEntry)
@@ -486,8 +495,9 @@ export class BattleGame {
     this.eventShared = eventShared === undefined ? null : new BattleEventSharedState(eventShared);
     if (this.lifecycle.mode === "script") this.eventState = createBattleEventState(this.lifecycle.program,this.#branchPolicy);
     if (this.lifecycle.mode === "script") for (const [pc, { op }] of this.lifecycle.program.instructions.entries()) {
-      if ((op.kind === "ui-visibility" || op.kind === "stop-auto" || op.kind === "force-return" || op.kind === "remove-all-actions") && eventHosts?.controls !== WEB_BATTLE_EVENT_CONTROLS)
+      if ((op.kind === "ui-visibility" || op.kind === "stop-auto" || op.kind === "force-return" || op.kind === "force-save-return" || op.kind === "remove-all-actions") && eventHosts?.controls !== WEB_BATTLE_EVENT_CONTROLS)
         throw new BattleEventError(this.lifecycle.program.source, pc, "Missing explicit Web battle event control policy");
+      if(op.kind==='force-save-return'&&!this.forcedSavePolicy)throw new BattleEventError(this.lifecycle.program.source,pc,"Missing explicit Web saved forced-return policy");
       if(op.kind==="script-action"){
         if(eventHosts?.scriptedActions!==WEB_SCRIPTED_BATTLE_ACTIONS)
           throw new BattleEventError(this.lifecycle.program.source,pc,"Missing explicit Web scripted battle action policy");
@@ -1150,6 +1160,7 @@ export class BattleGame {
     )
       return false;
     this.conditions.validateActive(actor.conditionIds);
+    resourceAbsorptionEffect(ability.plan);
     if (ability.plan.effects.some((effect) => effect.kind === "physical")) {
       try { this.physicalRows(actor, abilityId, actor); }
       catch { return false; }
@@ -1597,6 +1608,7 @@ export class BattleGame {
               break;
             case "stop-auto": this.setAutomaticMode(false); break;
             case "force-return": this.forceReturnRequested = true; break;
+            case "force-save-return": this.forceSaveRequested=true;break;
             case "remove-all-actions": this.removeAllActions(request.pc); break;
             case "play-battle-effect": { const {pc,...op}=request;this.prepareBattleEffect(op,pc);break; }
             case "script-action": { const { pc, ...command }=request; this.enqueueScriptedAction(command, pc); break; }
@@ -1708,6 +1720,7 @@ export class BattleGame {
       validateNonDamagingPresentation(ability.nonDamagingPresentation);
     }
     this.conditions.validateActive(actor.conditionIds);
+    resourceAbsorptionEffect(ability.plan);
     if(ability.plan.effects.some(effect=>effect.kind==="physical")){
       if(!actor.physical)throw new Error("Unresolved scripted physical owner");
       this.physicalRows(actor,ability.id,actor);
@@ -2363,7 +2376,7 @@ export class BattleGame {
       control: structuredClone(this.controlStates),
       controlTargets: new Map([...this.controlTargetUnits].map(([id, targets]) => [id, new Map(targets)])),
       stock: structuredClone(this.stock),
-      consumedItems: structuredClone(this.consumedItems),
+      consumedItems: structuredClone(this.consumedItems),retainedLoot:this.retainedLoot.snapshot(),forcedSaveTerminal:this.forcedSaveTerminal,forceSaveRequested:this.forceSaveRequested,
       observedAbilityIds: [...this.observedAbilityIds],
       dropRegistrations: [...this.dropRegistrations],
       dropDead: new Set(this.dropDead),
@@ -2441,7 +2454,7 @@ export class BattleGame {
       this.controlStates = before.control;
       this.controlTargetUnits = before.controlTargets;
       this.stock = before.stock;
-      this.consumedItems = before.consumedItems;
+      this.consumedItems = before.consumedItems;this.retainedLoot.restore(before.retainedLoot);this.forcedSaveTerminal=before.forcedSaveTerminal;this.forceSaveRequested=before.forceSaveRequested;
       this.observedAbilityIds = before.observedAbilityIds;
       this.dropRegistrations = before.dropRegistrations;
       this.dropDead = before.dropDead;
@@ -2470,7 +2483,7 @@ export class BattleGame {
     if (!gate.simulation) return;
     this.time += 10;
     this.advanceBattleEffects();
-    if (this.forceReturnRequested && this.eventControls.endEnabled) { this.checkOutcome(); return; }
+    if ((this.forceReturnRequested||this.forceSaveRequested) && this.eventControls.endEnabled) { this.checkOutcome(); return; }
     if (this.escapeRequested && !this.action) {
       // Existing lethal results outrank retreat; a request cannot avoid defeat
       // or turn a completed victory into a reward-free exit.
@@ -2816,6 +2829,14 @@ export class BattleGame {
     if (!choice) throw new Error("Derived child target is not currently eligible");
     return choice;
   }
+  private absorptionContext(actor:Combatant,ability:Pick<AbilityDefinition,"plan">,targetIds:readonly string[]):AbsorptionContext|undefined {
+    if(!ability.plan||!resourceAbsorptionEffect(ability.plan))return undefined;
+    if(targetIds.length!==1)throw Error('Unresolved source absorption multi-target phase');
+    const target=this.combatants.find(unit=>unit.id===targetIds[0]);
+    if(!target||this.conditionUndead(actor,actor.conditionIds)||this.conditionUndead(target,target.conditionIds))
+      throw Error('Unresolved source absorption reverse-recovery context');
+    return {kind:'source-non-reversing-absorption-v1',actorId:actor.id,targetId:target.id};
+  }
   private resolve(action: BattleAction) {
     // Stale presentation/executor completions cannot revive a cancelled action
     // or a retired battle. No RNG, cost, lookup or effect precedes this fence.
@@ -2867,6 +2888,7 @@ export class BattleGame {
               : (() => { throw new Error("Physical item row providers are unavailable"); })()
             : undefined,
           action.source.kind === "ability" ? action.source.id : undefined,
+          this.absorptionContext(actor,ability,choice.targetIds),
         );
       const staged = projection.targets.map(({ targetId, state, effects }) => {
         const target = this.combatants.find(c => c.id === targetId)!;
@@ -2914,6 +2936,7 @@ export class BattleGame {
         ...c,
         mp: c.mp - (c === actor ? payment : 0),
         ...staged.find((entry) => entry.target.id === c.id)?.state,
+        ...(c===actor&&projection.userResourceState?projection.userResourceState:{}),
         ...(c === actor && projection.userResults.length ? { conditionIds: projection.userConditionIds } : {}),
       }));
       const results = staged.map((entry) => ({
@@ -2921,6 +2944,8 @@ export class BattleGame {
         effects: entry.effects,
       }));
       const userMessages: string[] = [];
+      for(const result of projection.userResourceResults??[])if(!result.missed&&!result.nullified&&result.amount>0)
+        userMessages.push(`${actor.name} 恢复 ${result.amount} ${result.resource.toUpperCase()}。`);
       for (const result of projection.userResults) {
         for (const id of result.added)
           if (this.conditions.name(id)) userMessages.push(`${actor.name} 获得${this.conditions.name(id)}状态。`);
@@ -2928,7 +2953,7 @@ export class BattleGame {
           if (this.conditions.name(id)) userMessages.push(`${actor.name} 的${this.conditions.name(id)}已解除。`);
       }
       const changedIds = [...new Set([...staged.map(entry => entry.target.id),
-        ...(projection.userResults.length ? [actor.id] : [])])];
+        ...(projection.userResults.length||projection.userResourceState ? [actor.id] : [])])];
       const poison = changedIds.map(id => {
         const unit = projected.find(c => c.id === id)!;
         const targetEntry = staged.find(entry => entry.target.id === id);
@@ -3002,6 +3027,7 @@ export class BattleGame {
         this.observedAbilityIds.push(action.source.id);
       }
       actor.mp -= payment;
+      if(projection.userResourceState)Object.assign(actor,projection.userResourceState);
       this.queue = nextQueue; this.reactions = nextReactions;
       for (const unit of this.combatants) {
         if (controlStarts.has(unit.id) || cancelledControlOwners.has(unit.id) &&
@@ -3049,6 +3075,7 @@ export class BattleGame {
       action.targetIds = choice.targetIds;
       action.results = results;
       if (projection.userResults.length) action.userConditionResults = structuredClone(projection.userResults);
+      if(projection.userResourceResults)action.userResourceResults=structuredClone(projection.userResourceResults);
       action.resolved = true;
     } catch (error) {
       this.randomState = randomBefore;
@@ -3062,12 +3089,18 @@ export class BattleGame {
     // Native Integrator and battle updates are separate Unity components; their
     // relative frame order is not certified. The VM runs while progress waits.
     this.advanceEvent();
-    if (this.forceReturnRequested && this.eventControls.endEnabled) {
+    if ((this.forceReturnRequested||this.forceSaveRequested) && this.eventControls.endEnabled) {
       // Native Forced=4 precedes ordinary death/victory judgment, even with
       // staged work. Keep that work suspended until the whole battle owner is
       // retired by the prepared handoff; this is not RemoveAllAct cancellation.
+      this.forcedSaveTerminal=!this.forceReturnRequested&&this.forceSaveRequested;
+      if(this.forcedSaveTerminal){
+        if(!this.forcedSavePolicy)throw new Error('Missing explicit Web forced-save policy');
+        for(const player of this.players)Object.assign(player,this.conditions.settleLife(player.hp,player.conditionIds,false));
+        this.clearBattleConditions();
+      }
       this.phase = "forced"; this.escapeRequested = false;
-      this.log("战斗结束，返回进入战斗前的状态。"); return;
+      this.log(this.forcedSaveTerminal?'战斗结束，保存当前状态并返回。':"战斗结束，返回进入战斗前的状态。"); return;
     }
     if (this.action || this.reactions[0]?.kind === "derived") return;
     for (const c of this.combatants) {
@@ -3143,6 +3176,7 @@ export class BattleGame {
       Object.assign(c, this.progressionResult(c, 0));
     const dropPlan = this.content.drops === null ? null : projectBattleDrops(this.content.drops,
       this.dropRegistrations, (min, max) => this.randomInt(min, max));
+    if(dropPlan)this.retainedLoot.record('drops',dropPlan.grants);
     for (const player of players) {
       const live = this.players.find(c => this.playerOwnedId(c.id) === player.id);
       if (live) Object.assign(live, player, { id: live.id });
@@ -3214,13 +3248,28 @@ export class BattleGame {
       observations: firstEnteredOwnerIds(this.playerState).map(ownedId => ({ ownedId,
         abilityIds: escaped ? [] : [...this.playerObservations.get(ownedId)!] })) } };
   }
-  previewForcedReturn(): BattleForcedReturnResult | null {
+  get retainedLootSnapshot(){return this.retainedLoot.snapshot();}
+  previewForcedReturn(): BattleForcedReturnResult | BattleSavedForcedReturnResult | null {
     if (this.phase !== "forced" || this.collected) return null;
+    if(this.forcedSaveTerminal){const players=structuredClone(this.settlementPlayers()).map(player=>({...player,conditionIds:this.conditions.battleEnd(player.conditionIds),atb:0,queued:false}));
+      const baseEquipment=this.playerBorrow?.qualification??this.inventoryQualification??null;
+      const equipment=baseEquipment===null?null:{...structuredClone(baseEquipment),members:players.map(player=>{
+        const held=baseEquipment.members.find(member=>member.id===player.id&&member.sourceId===player.sourceId);
+        if(!held)throw new Error('Missing entered owned equipment save binding');
+        const live=this.players.find(unit=>this.playerOwnedId(unit.id)===player.id),actual=live&&this.inventoryQualification?.members.find(member=>member.id===live.id);
+        if(live&&(!actual||canonical(actual.equipment)!==canonical(held.equipment)))throw new Error('Unadmitted battle equipment save mutation');
+        return structuredClone(held);
+      })};
+      return {kind:'battle-save-return-v1',resultType:6,policy:{...this.forcedSavePolicy!},players,
+        participants:players.map(player=>({ownedId:player.id,sourceId:player.sourceId})),
+        consumedItems:structuredClone(this.consumedItems).sort((a,b)=>a.id-b.id),retainedLoot:this.retainedLoot.snapshot(),
+        equipment,...this.playerReturn(true)};
+    }
     return { kind: "battle-no-save-return-v1", resultType: 4,
       participants: this.settlementPlayers().map(player => ({ ownedId: player.id, sourceId: player.sourceId })),
       ...this.playerReturn(true) };
   }
-  takeForcedReturn(): BattleForcedReturnResult | null {
+  takeForcedReturn(): BattleForcedReturnResult | BattleSavedForcedReturnResult | null {
     const result = this.previewForcedReturn(); if (result) this.collected = true; return result;
   }
   previewEscape(): { players: Combatant[]; consumedItems: ItemStack[]; playerParticipants?: BattlePlayerReturn } | null {

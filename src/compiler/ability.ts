@@ -1,3 +1,4 @@
+import {compileResourceAbsorption} from './resource-absorption.js';
 import { compileNonDamagingAbility } from "./non-damaging-ability.js";
 import { tableInteger } from "./table.js";
 import {
@@ -162,9 +163,16 @@ export function compileDevelopmentAbility(
     "fixed 10 ms stepping, 400/900 ms action presentation and UI time-scale/settings remain provisional",
   ];
   const effects: AbilityEffect[] = [];
+  let resourceAbsorption=false;
+  if(program.functions.some(fn=>[13,69,77].includes(fn.type))){
+    try {const compiled=compileResourceAbsorption(reader,program);effects.push(...compiled.effects);resourceAbsorption=true;
+      for(const row of compiled.sources)if(!sources.some(existing=>existing.source.assetPath===row.source.assetPath&&existing.source.rowId===row.source.rowId))sources.push(row);
+    }catch(error){blockers.push(error instanceof Error?error.message:String(error));}
+  }
   let nonDamagingPresentation: AbilityDefinition["nonDamagingPresentation"];
   const zero = (values: number[]) => values.every((v) => v === 0);
   for (const fn of program.functions) {
+    if(resourceAbsorption)continue;
     const [v1, v2, v3] = fn.values;
     if (fn.series !== 0) {
       blockers.push(`slot ${fn.slot}: unresolved series ${fn.series}`);
@@ -339,6 +347,7 @@ export function compileDevelopmentAbility(
     effects.length > 1 &&
     !revival &&
     !userRemovalOnly &&
+    !resourceAbsorption &&
     !effects.every((e) => e.kind === "recovery" && e.calculation === "fixed")
   )
     blockers.push("unresolved multi-effect sequencing");
@@ -358,7 +367,7 @@ export function compileDevelopmentAbility(
   }
   const r = program.rules;
   const nonDamagingOnly = effects.length === 1 && first?.kind === "non-damaging";
-  const physicalOnly = effects.length === 1 && effects[0]!.kind === "physical";
+  const physicalOnly = (effects.length === 1||resourceAbsorption) && effects[0]!.kind === "physical";
   const defendOnly = effects.length === 1 && effects[0]!.kind === "defend";
   const rowOnly = effects.length === 1 && effects[0]!.kind === "change-row";
   const forcedEscapeOnly = effects.length === 1 && first?.kind === "forced-escape";
@@ -382,7 +391,7 @@ export function compileDevelopmentAbility(
   if (speedOnly && !speedSupport)
     blockers.push(`unresolved speed ability type/system ${r.type_id}/${r.system_id}`);
   const magicOnly =
-    effects.length === 1 &&
+    (effects.length === 1||resourceAbsorption) &&
     (effects[0]!.kind === "magic" ||
       (effects[0]!.kind === "recovery" && effects[0]!.calculation === "magic"));
   // Ordinary white/black magic uses the same source Function1/Function3
@@ -428,9 +437,9 @@ export function compileDevelopmentAbility(
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !controlSupport && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
+  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !resourceAbsorption && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !controlSupport && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
-  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
+  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !resourceAbsorption && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
   if ((ordinaryMagic || loreMagic || protectionSpell || speedSpell) && int(a.ability_lv) !== 0)
     blockers.push("unresolved level-specific ability consumption");
@@ -502,6 +511,7 @@ export function compileDevelopmentAbility(
   if (!magicOnly && (attribute || r.attribute_group_id))
     blockers.push("unresolved non-magic element carrier");
   if (elements.length > 8) blockers.push("unreviewed magic element count");
+  if(resourceAbsorption)limitations.push("Source resource absorption binds its complete two-slot plan and effect/SE dependencies under web-source-resource-absorption-deferred-v1; joint target/caster resources use the existing action transaction. Reverse recovery, unknown traits and equipment carriers remain hard gates.");
   if (nonDamagingOnly) limitations.push("Native battle effect assets are deferred under web-source-non-damaging-effect-deferred-v1; the existing Web action stages preserve queue, fixed Hit, reactions and continuation, not native animation timing.");
   limitations.push(
     "only admitted active battle behaviors with their required hosts; poison row 88 and other unknown providers remain blocked; MP-cost equipment needs an owned source loadout; weapon-added actions, undead and Runic remain unsupported",
@@ -572,7 +582,7 @@ export function compileDevelopmentAbility(
     ...(conditionRecoveryHit ? { conditionRecoveryHit } : {}),
     presentation: !plan
       ? "unsupported"
-      : nonDamagingOnly
+      : nonDamagingOnly||resourceAbsorption
         ? "source-effect-deferred"
       : rowOnly
         ? "row"

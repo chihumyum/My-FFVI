@@ -12,7 +12,7 @@ async function modules(root,compiledDir){
     'compiler/source-battle-requests','compiler/battle','compiler/game-catalog','compiler/system-source',
     'compiler/battle-encounters','compiler/battle-encounter-runtime','compiler/battle-handoff','compiler/source-battle-participant-closure',
     'compiler/battle-batch-entry','compiler/content-batch-battle','compiler/integrity','compiler/content',
-    'core/content-integrity','core/source-catalog','core/battle-rewards','core/battle-handoff-content',
+    'core/battle-forced-save','core/content-integrity','core/source-catalog','core/battle-rewards','core/battle-handoff-content',
   ].map(load)));
 }
 function fields(value,keys,label){
@@ -24,17 +24,18 @@ function fields(value,keys,label){
 }
 function parsePolicy(raw,api){
   fields(raw,'kind,framework','source battle directory policy');
-  assert.ok(['source-battle-directory-policy-v1','source-battle-directory-policy-v2','source-battle-directory-policy-v3','source-battle-directory-policy-v4','source-battle-directory-policy-v5'].includes(raw.kind),'Unknown source battle directory policy version');
-  fields(raw.framework,raw.kind==='source-battle-directory-policy-v5'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution,sourceParticipants':raw.kind==='source-battle-directory-policy-v4'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution':raw.kind==='source-battle-directory-policy-v3'?'handoff,entry,conditionControlPolicy,manualControls':raw.kind==='source-battle-directory-policy-v2'?'handoff,entry,conditionControlPolicy':'handoff,entry','framework battle directory policy');
-  const current=['source-battle-directory-policy-v3','source-battle-directory-policy-v4','source-battle-directory-policy-v5'].includes(raw.kind),manualControls=current?raw.framework.manualControls:undefined;
-  const sourceParticipants=raw.kind==='source-battle-directory-policy-v5'?api.parseSourceBattleParticipantPolicy(raw.framework.sourceParticipants):undefined;
-  const branchExecution=['source-battle-directory-policy-v4','source-battle-directory-policy-v5'].includes(raw.kind)?raw.framework.branchExecution:undefined;
-  if(['source-battle-directory-policy-v4','source-battle-directory-policy-v5'].includes(raw.kind))assert.equal(branchExecution,'web-source-battle-branch-execution-v1','Missing or unknown source battle branch policy');
+  assert.ok(['source-battle-directory-policy-v1','source-battle-directory-policy-v2','source-battle-directory-policy-v3','source-battle-directory-policy-v4','source-battle-directory-policy-v5','source-battle-directory-policy-v6'].includes(raw.kind),'Unknown source battle directory policy version');
+  fields(raw.framework,raw.kind==='source-battle-directory-policy-v6'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution,sourceParticipants,forcedSavePolicy':raw.kind==='source-battle-directory-policy-v5'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution,sourceParticipants':raw.kind==='source-battle-directory-policy-v4'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution':raw.kind==='source-battle-directory-policy-v3'?'handoff,entry,conditionControlPolicy,manualControls':raw.kind==='source-battle-directory-policy-v2'?'handoff,entry,conditionControlPolicy':'handoff,entry','framework battle directory policy');
+  const current=['source-battle-directory-policy-v3','source-battle-directory-policy-v4','source-battle-directory-policy-v5','source-battle-directory-policy-v6'].includes(raw.kind),manualControls=current?raw.framework.manualControls:undefined;
+  const forcedSavePolicy=raw.kind==='source-battle-directory-policy-v6'?api.parseWebBattleForcedSave(raw.framework.forcedSavePolicy):undefined;
+  const sourceParticipants=['source-battle-directory-policy-v5','source-battle-directory-policy-v6'].includes(raw.kind)?api.parseSourceBattleParticipantPolicy(raw.framework.sourceParticipants):undefined;
+  const branchExecution=['source-battle-directory-policy-v4','source-battle-directory-policy-v5','source-battle-directory-policy-v6'].includes(raw.kind)?raw.framework.branchExecution:undefined;
+  if(['source-battle-directory-policy-v4','source-battle-directory-policy-v5','source-battle-directory-policy-v6'].includes(raw.kind))assert.equal(branchExecution,'web-source-battle-branch-execution-v1','Missing or unknown source battle branch policy');
   if(current)assert.equal(manualControls,'web-manual-battle-controls-v1','Missing or unknown manual controls policy');
   const conditionControlPolicy=raw.kind!=='source-battle-directory-policy-v1'?parseConditionControlPolicy(raw.framework.conditionControlPolicy):undefined;
   return {kind:raw.kind,framework:{handoff:api.parseBattleHandoffPolicy(raw.framework.handoff),
     entry:raw.framework.entry===null?null:api.parseBattleBatchEntryPolicy(raw.framework.entry),
-    ...(conditionControlPolicy?{conditionControlPolicy}:{}),...(manualControls===undefined?{}:{manualControls}),...(branchExecution===undefined?{}:{branchExecution}),...(sourceParticipants?{sourceParticipants}:{})}};
+    ...(conditionControlPolicy?{conditionControlPolicy}:{}),...(manualControls===undefined?{}:{manualControls}),...(branchExecution===undefined?{}:{branchExecution}),...(sourceParticipants?{sourceParticipants}:{}),...(forcedSavePolicy?{forcedSavePolicy}:{})}};
 }
 function parseConditionControlPolicy(raw){
   fields(raw,'kind','Web condition control policy');
@@ -206,6 +207,7 @@ export async function compileSourceBattleDirectory({root=repository,compiledDir=
     encounters:descriptors.encounters,sources:descriptorSources,eventMessages:shared.runtimeInput.eventMessages,branchExecution:declared.framework.branchExecution}):null;
   const runtime=api.compileBattleEncounterRuntime(shared.reader,{...runtimeInput,
     ...(participantClosure?{reserveEnemies:participantClosure.reserveEnemies,enemyParties:participantClosure.enemyParties,sourceDiagnostics:[...runtimeInput.sourceDiagnostics,...participantClosure.diagnostics]}:{}),
+    ...(declared.framework.forcedSavePolicy?{forcedSavePolicy:declared.framework.forcedSavePolicy}:{}),
     ...(declared.framework.branchExecution===undefined?{}:{branchExecution:declared.framework.branchExecution}),
     ...(declared.framework.manualControls===undefined?{}:{manualControls:declared.framework.manualControls}),
     ...(declared.framework.conditionControlPolicy?{conditionControlPolicy:declared.framework.conditionControlPolicy}:{}),handoff:{policy:declared.framework.handoff},

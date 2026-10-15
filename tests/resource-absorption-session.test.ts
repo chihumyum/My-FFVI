@@ -1,0 +1,31 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {GameSession} from '../src/core/game-session.js';import {GameFlow} from '../src/core/game-flow.js';
+import {GameBattleHandoff} from '../src/core/game-battle-handoff.js';import {CheckpointStorage} from '../src/core/saved-game.js';
+import {WEB_SCRIPTED_BATTLE_ACTIONS} from '../src/core/scripted-battle-action.js';
+import {compileScriptedBattleAction} from '../src/compiler/battle-scripted-action.js';
+import {checkpointFixture} from './fixtures/checkpoint-game.js';import {absorptionSource} from './fixtures/resource-absorption.js';
+const ready={visible:true,mediaReady:true,overlayOpen:false},runtime={battleHandoff:'prepared'as const,scriptedBattleActions:WEB_SCRIPTED_BATTLE_ACTIONS};
+const action=(id:number,actorSide=1,actor=1000,targetSide=2,target=1)=>compileScriptedBattleAction({type:1,mnemonic:'BattleAction',operands:{iValues:[actorSide,actor,id,targetSide,target,0,0,0],rValues:Array(8).fill(0),sValues:Array(8).fill('')}});
+for(const resource of ['hp','mp']as const)test(`actual Session ${resource} absorption shares owned entry/return cancellation and stable Storage without an ability grant`,async()=>{
+ const f=checkpointFixture();f.battle.common.abilities[901]=absorptionSource(resource).compile().abilities[901]!;
+ f.battle.common.playerConditionTraits=Object.fromEntries(f.battle.common.players.map(p=>[p.sourceId,{kind:'source-condition-traits-v1',baseUndead:false}]));
+ for(const encounter of Object.values(f.battle.encounters))for(const enemy of encounter.enemies){enemy.mp=20;enemy.conditionTraits={kind:'source-condition-traits-v1',baseUndead:false};}
+ const ops=[...(resource==='hp'?[action(13,2,1,1,1000)]:[]),action(901),action(10,1,1000,2,0),{kind:'exit'as const}];
+ f.battle.common.battleEvents={conditions:f.battle.common.conditions.rules.definitions.map(({id,type})=>({id,type,attackTarget:type===5?1:0,gameOverTarget:type===5?1:0}))};
+ f.battle.encounters[1000]!.lifecycle={kind:'battle-lifecycle-v1',mode:'script',scriptId:1,program:{kind:'battle-event-v1',source:null,entry:0,end:ops.length,localNames:[],initialLocals:[],instructions:ops.map(op=>({mnemonic:op.kind,op})),blockers:[]}};
+ const session=new GameSession(f.field,f.battle,123,runtime),flow=new GameFlow(session);flow.start();flow.advance(0,ready);const owner=session.state,before=owner.snapshot();assert(session.field.startEvent('fight'));
+ let failed=false;const discarded:unknown[]=[],handoff=new GameBattleHandoff(flow,{prepareStart:async()=>{if(!failed){failed=true;throw Error('authored resource media failure');}return {kind:'ready'};},prepareReturn:async()=>({kind:'return'}),discard:v=>discarded.push(v)});
+ assert.equal((await handoff.start()).status,'failed');assert.deepEqual(owner.snapshot(),before);
+ let release!:(v:{kind:string})=>void;const held=new Promise<{kind:string}>(yes=>{release=yes;}),cancelled=new GameBattleHandoff(flow,{prepareStart:()=>held,prepareReturn:async()=>({kind:'return'}),discard:v=>discarded.push(v)}),pending=cancelled.start();cancelled.cancel();assert.equal((await handoff.start()).status,'committed');release({kind:'old'});assert.equal((await pending).status,'cancelled');assert.equal(discarded.length,1);
+ const b=session.battle!,a=b.players[0]!,target=b.enemies[0]!;assert(!a.abilities.includes(901));assert.equal(b.canUse(a.id,901),false);
+ for(let i=0;i<1000&&!(b.action?.source.id===901&&b.action.resolved);i++)flow.advance(10,ready);
+ assert.equal(b.action?.source.id,901);assert(b.action?.resolved);const returned=b.action!.userResourceResults![0]!;assert.equal(returned.resource,resource);assert(returned.amount>0);
+ assert.equal(b.action!.results[0]!.effects[0]!.resource,resource);if(resource==='mp')assert.equal(a.mp,a.maxMp);
+ else assert(a.hp<=a.maxHp);assert(target.mp<=target.maxMp);assert.deepEqual(owner.snapshot(),before);assert.throws(()=>session.checkpoint());
+ for(let i=0;i<1000&&b.phase==='active';i++)flow.advance(10,ready);assert.equal(b.phase,'victory');const finalMp=a.mp;
+ assert.equal((await handoff.return()).status,'committed');flow.advance(10,ready);assert.equal(session.state,owner);assert.equal(owner.snapshot().completedBattles.length,1);
+ const stable=session.checkpoint(),bytes=new Map<string,string>();let quota=true;const storage=new CheckpointStorage({getItem:k=>bytes.get(k)??null,setItem:(k,v)=>{if(quota)throw Error('quota');bytes.set(k,v);}},'framework','resource-absorption');
+ await assert.rejects(storage.save(stable,100),/quota/);assert.equal(bytes.size,0);assert.deepEqual(session.checkpoint(),stable);quota=false;await storage.save(stable,101);const saved=(await storage.load())!;
+ const restored=GameSession.restore(saved.checkpoint,f.field,f.battle,undefined,runtime),next=new GameFlow(restored);next.start();next.advance(0,ready);assert.deepEqual(restored.checkpoint(),stable);const settled=restored.state.snapshot();next.advance(500,ready);assert.deepEqual(restored.state.snapshot(),settled);assert.equal(settled.completedBattles.length,1);assert.equal(restored.battle,null);
+ assert.equal(b.players[0]!.mp,finalMp);assert.throws(()=>b.advance(10),/Retired/);
+});

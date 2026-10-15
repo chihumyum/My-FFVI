@@ -9,10 +9,11 @@ import {runtimeDigest} from './runtime-digest.mjs';
 import {openSourceCandidate} from './source-candidate.mjs';
 import {sourceWebReplayRuntimePorts} from './source-web-replay-runtime.mjs';
 import {loadBattleEventMessageSourceInputs} from './battle-event-message-source-inputs.mjs';
+import {observerErrorDetails,observedBattleEffects,observationDraftJSON} from './battle-observer-results.mjs';
 const root=resolve(import.meta.dirname,'..'),args=process.argv.slice(2),o={compiled:'dist',report:'build/reports/battle-event-messages/check.json'},seen=new Set();
 while(args.length){const f=args.shift();assert(['--compiled','--report','--candidate-dir','--smoke','--family'].includes(f)&&args[0]&&!seen.has(f));seen.add(f);o[f.slice(2)]=args.shift();}
 assert(o['candidate-dir']||['one','all'].includes(o.smoke),'Use --candidate-dir <same-runtime private candidate>, or --smoke one|all');
-const family=o.family??'messages';assert(['messages','effects','system-messages','branch-execution'].includes(family));
+const family=o.family??'messages';assert(['messages','effects','system-messages','branch-execution','all'].includes(family));
 const compiled=resolve(root,o.compiled),out=resolve(root,o.report),sha=b=>createHash('sha256').update(b).digest('hex');assert(out.startsWith(resolve(root,'build')+'/'));await mkdir(dirname(out),{recursive:true});
 const {readSourceBattleDirectoryPolicy:readObserverPolicy}=await import('./source-battle-directory.mjs');
 const observerDeclaration=await readObserverPolicy({root,compiledDir:resolve(root,o.compiled),policy:JSON.parse(await readFile(resolve(root,'content-batches/source-battle-directory.policy.json')))});
@@ -37,8 +38,8 @@ if(o['candidate-dir']){
  // The shared map prerequisite catalog deliberately selects a small baseline.
  // Its absence is not source party admission: compile the entire family from
  // the locked raw inputs through the same pure runtime/directory producer.
- const [{compileSharedBattleSource},{compileGameCatalogModules},{compileBattleEncounterRuntime}]=await Promise.all([
-  'compiler/battle','compiler/game-catalog','compiler/battle-encounter-runtime'].map(load));
+ const [{compileSharedBattleSource},{compileGameCatalogModules},{compileBattleEncounterRuntime},{compileSourceBattleParticipantClosure}]=await Promise.all([
+  'compiler/battle','compiler/game-catalog','compiler/battle-encounter-runtime','compiler/source-battle-participant-closure'].map(load));
  const {readSourceBattleDirectoryPolicy,composeFrameworkBattleDirectory}=await import('./source-battle-directory.mjs'),
   policyFile=resolve(root,'content-batches/source-battle-directory.policy.json'),policyBytes=await readFile(policyFile),
   declaration=await readSourceBattleDirectoryPolicy({root,compiledDir:compiled,policy:JSON.parse(policyBytes)}),
@@ -52,19 +53,26 @@ if(o['candidate-dir']){
   assert.equal(api.canonical(input.api.compileBattleEvent(descriptor.script.data,descriptor.script.source,input.input,input.snapshot.reader,declaration.framework.branchExecution)),api.canonical(p.compiled),'Observer source program differs from production descriptor compilation');
   return {partyId:descriptor.partyId,program:p.id,rawHash:p.rawHash,source:descriptor.script.source};
  });
+ const participantClosure=declaration.framework.sourceParticipants?compileSourceBattleParticipantClosure(input.snapshot.reader,{
+  policy:declaration.framework.sourceParticipants,encounters:input.dependencies.encounters,sources:input.encounterSources,
+  eventMessages:shared.runtimeInput.eventMessages,branchExecution:declaration.framework.branchExecution}):null;
  const requestedPartyIds=input.dependencies.requestedPartyIds,
   runtime=compileBattleEncounterRuntime(shared.reader,{...shared.runtimeInput,requestedPartyIds,encounters:input.dependencies.encounters,sourceDiagnostics:input.dependencies.diagnostics,
+   ...(declaration.framework.forcedSavePolicy===undefined?{}:{forcedSavePolicy:declaration.framework.forcedSavePolicy}),
+   ...(participantClosure?{reserveEnemies:participantClosure.reserveEnemies,enemyParties:participantClosure.enemyParties,
+    sourceDiagnostics:[...input.dependencies.diagnostics,...participantClosure.diagnostics]}:{}),
    ...(declaration.framework.branchExecution===undefined?{}:{branchExecution:declaration.framework.branchExecution}),
    ...(declaration.framework.manualControls===undefined?{}:{manualControls:declaration.framework.manualControls}),
    ...(declaration.framework.conditionControlPolicy?{conditionControlPolicy:declaration.framework.conditionControlPolicy}:{}),
-   handoff:{policy:declaration.framework.handoff},development:{...(declaration.framework.entry?.formations?{formations:declaration.framework.entry.formations}:{}),scripts:[],flagGroups:[]}}),
+   handoff:{policy:declaration.framework.handoff},development:{...(declaration.framework.entry?.formations?{formations:declaration.framework.entry.formations}:{}),scripts:[],flagGroups:[],
+    ...(participantClosure?{participants:participantClosure.participants}:{})}}),
   composed=await composeFrameworkBattleDirectory({root,compiledDir:compiled,baseCatalog:sourceBattle,runtime,conditionControlPolicy:declaration.framework.conditionControlPolicy});
  familyCatalog=composed.catalog;
  assert.equal(api.canonical(familyCatalog.gameState),api.canonical(sourceBattle.gameState),'Complete party directory cannot change initial owners');
  assert.equal(familyCatalog.common.sourceContentHash,sourceBattle.common.sourceContentHash,'Complete party directory cannot change shared source content identity');
  familyDirectory={kind:'same-input-complete-battle-message-family-directory-v1',requestedPartyIds,baselineCatalogHash:sourceBattle.contentHash,catalogHash:familyCatalog.contentHash,
   policy:{file:policyFile,sha256:sha(policyBytes),declaration,sourceScriptOmissions:[],sourceFlagOmissions:[]},report:composed.runtime.report,diagnostics:composed.runtime.diagnostics,
-  sourceDiagnostics:input.dependencies.diagnostics,originalProgramBindings,sourceStateUnchanged:true,sharedSourceContentUnchanged:true,sourceInitializerUnchanged:true,
+  sourceDiagnostics:input.dependencies.diagnostics,participantClosure,originalProgramBindings,sourceStateUnchanged:true,sharedSourceContentUnchanged:true,sourceInitializerUnchanged:true,
   commonChanges:{kind:'existing-pure-framework-directory-composition',drops:'Source-bound compiler/compose merge with owned-content rejection',conditionControlPolicy:declaration.framework.conditionControlPolicy??null}};
  const maps=[];for(const ref of Object.values(strict.maps))maps.push(await candidate.read(ref.url));
  const roots=maps.flatMap(m=>[...Object.keys(m.scripts).map(script=>({kind:'script',mapId:m.mapId,script})),...(m.partyEntry?.pointIns??[]).map(p=>({kind:'entry',mapId:m.mapId,entrance:p.id,continuation:null}))]);
@@ -139,7 +147,7 @@ async function run(program,{site=null,actualPc=null,endPc=null,partyOverride=nul
     assert.equal(game.field.sourceMessage.active,false);row.result='parameter-protocol-completed';row.actualSourceInstructionExecuted=true;break;
    }
    if(!site&&battle.phase!=='active'){
-    row.terminal=battle.phase;if(battle.phase!=='victory'&&battle.phase!=='escaped'){row.result='terminal-boundary';break;}
+    row.terminal=battle.phase;if(!['victory','escaped','forced'].includes(battle.phase)){row.result='terminal-boundary';break;}
     row.battleAtReturn=journalProjection(game);const ret=game.prepareBattleReturn();assert(ret&&ret.commit(),'Battle result return unavailable');game.advance(10);
     if(!game.checkpointReady){row.result='field-continuation-boundary';break;}
     const slots=new Map(),storage=new api.CheckpointStorage({getItem:k=>slots.get(k)??null,setItem:(k,v)=>slots.set(k,v)});await storage.save(game.checkpoint(),0);
@@ -147,39 +155,64 @@ async function run(program,{site=null,actualPc=null,endPc=null,partyOverride=nul
    }
   }
   if(row.result==='not-started')row.result='clock-budget';row.stateAfter=journalProjection(game);row.ownedAfter=game.state.snapshot();
- }catch(error){row.result='blocked';row.error={message:error.message,stack:error.stack,pc:error.pc,source:error.source,reason:error.reason,attemptedVisited:error.attemptedVisited,rawInstruction:error.rawInstruction};if(game){row.stateAfter=journalProjection(game);row.ownedAfter=game.state.snapshot();}}
+ }catch(error){row.result='blocked';row.error=observerErrorDetails(error);if(game){row.stateAfter=journalProjection(game);row.ownedAfter=game.state.snapshot();}}
  return row;
 }
 const effectSites=input.programs.flatMap(p=>p.data.Mnemonics.flatMap((raw,index)=>['PlayBattleEffect','SyncBattleEffect'].includes(raw.mnemonic)?[{program:p.id,index,source:p.source,raw,typed:p.compiled.instructions[index].op}]:[]));
 const systemSites=input.sites.filter(site=>site.raw.mnemonic==='Msg'&&Object.hasOwn(input.input.messages.system_zhc??{},site.raw.operands.sValues[0])),systemPrograms=new Set(systemSites.map(site=>site.program));
+// All three observers use the identical initialization, source bodies, source
+// party directory, input policy and real Session lifecycle. The joint mode
+// executes that shared experiment once; family views below are projections of
+// the same evidence, never independent repeats or cached old-runtime reports.
+const progress={kind:'source-battle-common-execution-progress-v1',family,runtimeSha256:runtime,sourceDigest:input.sourceDigest,
+ candidateReportSha256:candidate?sha(candidate.reportBytes):null,status:'running',completed:{parameters:0,programs:0,originalParties:0},active:null,sourceCampaignComplete:false};
+const persistProgress=async()=>writeFile(resolve(dirname(out),'execution-progress.json'),JSON.stringify(progress)+'\n');
+const trackedRun=async(program,options)=>{
+ progress.active={lane:options.lane,partyId:options.partyOverride??null,source:program.source,programHash:api.hash(program)};await persistProgress();
+ const result=await run(program,options);progress.active=null;return result;
+};
 const selected=family==='branch-execution'?[]:family==='system-messages'?systemSites:family==='effects'?[]:o.smoke==='one'?[input.sites.find(s=>s.typed.kind==='message'&&s.typed.command.kind==='sequence'&&!s.typed.command.template)]:input.sites,parameters=[];
-for(const site of selected){if(site.typed.kind!=='message'){parameters.push({site,result:'source-operand-blocked',reason:site.typed.reason});continue;}const e=envelope(site);parameters.push({site,run:await run(e.program,{site,actualPc:e.actualPc,endPc:e.endPc,lane:o.smoke?'authored-fixture-smoke':'actual-source-operand-controlled-host'})});}
+for(const site of selected){if(site.typed.kind!=='message')parameters.push({site,result:'source-operand-blocked',reason:site.typed.reason});else{const e=envelope(site);parameters.push({site,run:await trackedRun(e.program,{site,actualPc:e.actualPc,endPc:e.endPc,lane:o.smoke?'authored-fixture-smoke':'actual-source-operand-controlled-host'})});}progress.completed.parameters=parameters.length;await persistProgress();}
 const programs=[],originalParties=[];
-if(!o.smoke){for(const p of input.programs)programs.push({id:p.id,source:p.source,rawHash:p.rawHash,affected:family==='branch-execution'?true:family==='system-messages'?systemPrograms.has(p.id):family==='effects'?p.data.Mnemonics.some(i=>["PlayBattleEffect","SyncBattleEffect"].includes(i.mnemonic)):p.messageSites.length>0,battleExportBinding:p.battleExportBinding,
- run:p.battleExportBinding.kind==='unbound-battle-export-source-v1'?{lane:'whole-original-battle-program-controlled-caller',result:'source-program-binding-blocked',reason:p.battleExportBinding.reason,vmPreflightAttempted:false,sessionBattlePreparationAttempted:false,sourceStoryReachability:false}:await run(p.compiled,{lane:'whole-original-battle-program-controlled-caller'})});
+if(!o.smoke){for(const p of input.programs){programs.push({id:p.id,source:p.source,rawHash:p.rawHash,affected:['branch-execution','all'].includes(family)?true:family==='system-messages'?systemPrograms.has(p.id):family==='effects'?p.data.Mnemonics.some(i=>["PlayBattleEffect","SyncBattleEffect"].includes(i.mnemonic)):p.messageSites.length>0,battleExportBinding:p.battleExportBinding,
+ run:p.battleExportBinding.kind==='unbound-battle-export-source-v1'?{lane:'whole-original-battle-program-controlled-caller',result:'source-program-binding-blocked',reason:p.battleExportBinding.reason,vmPreflightAttempted:false,sessionBattlePreparationAttempted:false,sourceStoryReachability:false}:await trackedRun(p.compiled,{lane:'whole-original-battle-program-controlled-caller'})});progress.completed.programs=programs.length;await persistProgress();}
  for(const partyId of input.dependencies.requestedPartyIds){
   const descriptor=input.dependencies.encounters.find(row=>row.partyId===partyId),diagnostics=input.dependencies.diagnostics.filter(row=>row.partyId===partyId);
   if(!descriptor){assert(diagnostics.length,'Requested party has neither descriptor nor diagnostic');originalParties.push({partyId,program:null,sourceDiagnostics:diagnostics,
-   run:{lane:'original-source-party-availability-and-lifecycle',result:'source-descriptor-blocked',vmPreflightAttempted:false,sessionBattlePreparationAttempted:false,sourceStoryReachability:false}});continue;}
+   run:{lane:'original-source-party-availability-and-lifecycle',result:'source-descriptor-blocked',vmPreflightAttempted:false,sessionBattlePreparationAttempted:false,sourceStoryReachability:false}});progress.completed.originalParties=originalParties.length;await persistProgress();continue;}
   const p=input.programs.find(p=>p.source.assetPath===descriptor.script?.source.assetPath);
   if(!p){originalParties.push({partyId,program:null,source:descriptor.source,dependencies:descriptor,sourceDiagnostics:diagnostics,
-   run:{lane:'original-source-party-availability-and-lifecycle',result:'source-program-binding-blocked',reason:'Complete original source body/namespace binding is unavailable',vmPreflightAttempted:false,sessionBattlePreparationAttempted:false,sourceStoryReachability:false}});continue;}
+   run:{lane:'original-source-party-availability-and-lifecycle',result:'source-program-binding-blocked',reason:'Complete original source body/namespace binding is unavailable',vmPreflightAttempted:false,sessionBattlePreparationAttempted:false,sourceStoryReachability:false}});progress.completed.originalParties=originalParties.length;await persistProgress();continue;}
   originalParties.push({partyId,program:p.id,source:descriptor.source,dependencies:descriptor,sourceDiagnostics:diagnostics,
-   run:await run(p.compiled,{partyOverride:partyId,lane:'original-source-party-availability-and-lifecycle'})});}}
+   run:await trackedRun(p.compiled,{partyOverride:partyId,lane:'original-source-party-availability-and-lifecycle'})});progress.completed.originalParties=originalParties.length;await persistProgress();}}
 assert.equal(await runtimeDigest(root,compiled),runtime,'Runtime changed during family execution');if(candidate){await candidate.validate();assert.equal(sha(await readFile(familyDirectory.policy.file)),familyDirectory.policy.sha256,'Explicit family battle policy changed');}
 const now=await input.api.loadCorpus(root);assert.equal(api.hash({assets:now.assets,tables:now.tables,messages:now.messages,manifest:now.manifest}),input.sourceDigest,'Source snapshots changed');
 const artifacts={};async function artifact(file,value){const bytes=JSON.stringify(value)+'\n',path=resolve(dirname(out),file);await writeFile(path,bytes);return {file,sha256:sha(bytes),bytes:Buffer.byteLength(bytes)};}
-artifacts.inventory=await artifact('source-inventory.json',input.inventory);if(family==='effects')artifacts.effectSites=await artifact('all-battle-effect-sites.json',effectSites);if(fullGraph)artifacts.completeWorldDependencies=await artifact('all-world-dependencies.json',fullGraph);
+artifacts.inventory=await artifact('source-inventory.json',input.inventory);if(['effects','all'].includes(family))artifacts.effectSites=await artifact('all-battle-effect-sites.json',effectSites);if(fullGraph)artifacts.completeWorldDependencies=await artifact('all-world-dependencies.json',fullGraph);
 const blockerGroups=new Map();for(const row of [...parameters.filter(p=>p.result==='source-operand-blocked'||p.run?.result==='blocked').map(p=>({kind:'parameter',reason:p.reason??p.run.error.message,source:p.site.source,index:p.site.index,program:p.site.program})),
  ...programs.filter(p=>['blocked','source-program-binding-blocked'].includes(p.run.result)).map(p=>({kind:'whole-program',reason:p.run.error?.message??p.run.reason,source:p.source,program:p.id}))]){
  const key=row.reason;const group=blockerGroups.get(key)??{reason:key,sites:[]};group.sites.push(row);blockerGroups.set(key,group);
 }
-const report={kind:family==='branch-execution'?'source-battle-branch-execution-v1':family==='system-messages'?'source-battle-system-message-execution-v1':family==='effects'?'source-battle-event-effect-execution-v1':'source-battle-event-message-execution-v1',family,result:o.smoke?'smoke-attempts-recorded':'complete-attempts-recorded',runtimeSha256:runtime,sourceDigest:input.sourceDigest,
+const familyDefinitions={messages:p=>p.messageSites.length>0,effects:p=>p.data.Mnemonics.some(i=>['PlayBattleEffect','SyncBattleEffect'].includes(i.mnemonic)),
+ 'system-messages':p=>systemPrograms.has(p.id),'branch-execution':()=>true};
+const familyViews=family==='all'?Object.fromEntries(Object.entries(familyDefinitions).map(([name,select])=>{
+ const selected=new Set(input.programs.filter(select).map(p=>p.id)),indexes=programs.flatMap((p,i)=>selected.has(p.id)?[i]:[]),
+  actualParameters=name==='messages'?parameters:name==='system-messages'?parameters.filter(p=>systemSites.some(s=>s.program===p.site.program&&s.index===p.site.index)):[];
+ return [name,{kind:'same-execution-family-view-v1',physicalPrograms:selected.size,completeRawInstructions:input.programs.filter(p=>selected.has(p.id)).reduce((n,p)=>n+p.data.Mnemonics.length,0),
+  sourceSites:name==='messages'?input.sites.length:name==='system-messages'?systemSites.length:name==='effects'?effectSites.length:input.programs.reduce((n,p)=>n+(p.compiled.branchExecution?.deferred.length??0),0),
+  programResultIndexes:indexes,affectedProgramAttempts:indexes.length,affectedProgramFinished:indexes.filter(i=>programs[i].run.result==='whole-program-finished-and-restored').length,
+  parameterAttempts:actualParameters.length,parameterCompleted:actualParameters.filter(p=>p.run?.result==='parameter-protocol-completed').length,
+  sourceStoryReachability:false,independentEvidence:false}];})):undefined;
+if(family==='all'&&!o.smoke){assert.equal(programs.length,input.programs.length);assert.equal(originalParties.length,input.dependencies.requestedPartyIds.length);assert.equal(parameters.length,input.sites.length);}
+const report={kind:family==='all'?'source-battle-common-family-execution-v1':family==='branch-execution'?'source-battle-branch-execution-v1':family==='system-messages'?'source-battle-system-message-execution-v1':family==='effects'?'source-battle-event-effect-execution-v1':'source-battle-event-message-execution-v1',family,result:o.smoke?'smoke-attempts-recorded':'complete-attempts-recorded',runtimeSha256:runtime,sourceDigest:input.sourceDigest,
+ ...(familyViews?{familyViews,sharedExecution:{kind:'one-source-battle-lifecycle-experiment-v1',repeats:1,independentEvidence:false,wholeSourceScopeUnchanged:true}}:{}),
  candidate:candidate?{reportSha256:sha(candidate.reportBytes),runtimeSha256:candidate.runtimeSha256,objects:candidate.report.objects.length,link:candidate.report.link,inputLock:candidate.report.inputLock}:null,recipeBinding,familyDirectory,artifacts,
- counts:{...input.inventory.counts,...(family==='effects'?{effectSites:effectSites.length,decodedEffectSites:effectSites.filter(s=>['play-battle-effect','sync-battle-effect'].includes(s.typed.kind)).length,actualEffectRequests:programs.reduce((n,p)=>n+(p.run.stateAfter?.effectRequests.filter(e=>e.action==='request').length??0),0),actualEffectCompletions:programs.reduce((n,p)=>n+(p.run.stateAfter?.effectRequests.filter(e=>e.action==='complete').length??0),0)}:{}),parameterAttempts:parameters.length,parameterCompleted:parameters.filter(r=>r.run?.result==='parameter-protocol-completed').length,
+ counts:{...input.inventory.counts,...(['effects','all'].includes(family)?{effectSites:effectSites.length,decodedEffectSites:effectSites.filter(s=>['play-battle-effect','sync-battle-effect'].includes(s.typed.kind)).length,actualEffectRequests:programs.reduce((n,p)=>n+observedBattleEffects(p.run).filter(e=>e.action==='request').length,0),actualEffectCompletions:programs.reduce((n,p)=>n+observedBattleEffects(p.run).filter(e=>e.action==='complete').length,0)}:{}),parameterAttempts:parameters.length,parameterCompleted:parameters.filter(r=>r.run?.result==='parameter-protocol-completed').length,
   parameterBlocked:parameters.filter(r=>r.result==='source-operand-blocked'||r.run?.result==='blocked').length,wholeProgramAttempts:programs.length,wholeProgramVMPreflightAccepted:programs.filter(r=>r.run.vmPreflightAccepted).length,wholeProgramSessionBattlePreparationAttempts:programs.filter(r=>r.run.sessionBattlePreparationAttempted).length,wholeProgramFinished:programs.filter(r=>r.run.result==='whole-program-finished-and-restored').length,
   affectedProgramAttempts:programs.filter(r=>r.affected).length,affectedProgramFinished:programs.filter(r=>r.affected&&r.run.result==='whole-program-finished-and-restored').length,originalPartyAttempts:originalParties.length,originalPartyDirectoryRequests:familyDirectory?.requestedPartyIds.length??0,originalPartyDescriptorDiagnostics:input.dependencies.diagnostics.length},
  parameters,programs,originalParties,blockerGroups:[...blockerGroups.values()],sourceCampaignComplete:false,nativeParity:false,browserVerified:false,
  familyCounts:family==='branch-execution'?{programs:input.programs.length,rawInstructions:input.inventory.counts.instructions,deferredSites:input.programs.reduce((n,p)=>n+(p.compiled.branchExecution?.deferred.length??0),0)}:family==='system-messages'?{systemMessageSites:systemSites.length,physicalPrograms:systemPrograms.size,completeRawInstructions:input.programs.filter(p=>systemPrograms.has(p.id)).reduce((n,p)=>n+p.data.Mnemonics.length,0)}:family==='effects'?{playSites:effectSites.filter(s=>s.raw.mnemonic==='PlayBattleEffect').length,syncSites:effectSites.filter(s=>s.raw.mnemonic==='SyncBattleEffect').length,physicalPrograms:input.programs.filter(p=>p.data.Mnemonics.some(i=>['PlayBattleEffect','SyncBattleEffect'].includes(i.mnemonic))).length,completeRawInstructions:input.programs.filter(p=>p.data.Mnemonics.some(i=>['PlayBattleEffect','SyncBattleEffect'].includes(i.mnemonic))).reduce((n,p)=>n+p.data.Mnemonics.length,0)}:null,
  controlledHost:{input:'Explicit recorded confirmation and legal existing battle commands',caller:'Authored ordinary Session/placement; original battle body and all unknowns intact',clock:'10ms fixed Web manager-before-VM; no message-implied pause',policy:sourceWebReplayRuntimePorts(),messageOwner:'Actual Field.sourceMessage; no second window owner',smoke:!!o.smoke}};
-report.contentHash=api.hash(report);await writeFile(out,JSON.stringify(report)+'\n');console.log(JSON.stringify({result:report.result,counts:report.counts,hash:report.contentHash,report:out}));
+await writeFile(resolve(dirname(out),'attempts-draft.json'),observationDraftJSON(report));
+try{report.contentHash=api.hash(report);}catch(error){progress.status='failed-report-validation';progress.error=observerErrorDetails(error);await persistProgress();throw error;}
+await writeFile(out,JSON.stringify(report)+'\n');progress.status=report.result;progress.reportContentHash=report.contentHash;await persistProgress();console.log(JSON.stringify({result:report.result,counts:report.counts,hash:report.contentHash,report:out}));

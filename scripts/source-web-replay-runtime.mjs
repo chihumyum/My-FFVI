@@ -8,6 +8,7 @@ export function sourceWebReplayRuntimePorts() {
     worldAutoTasks: 'web-flat-world-auto-tasks-v1',
     worldAutoMove: 'web-flat-world-auto-move-v1',
     birdViewActors: 'web-flat-bird-view-actors-v1',
+    mobColorFilter: 'web-flat-mob-color-filter-v1',
     viewChange: 'web-flat-field-view-change-v2',
     battleEventEffects: 'web-source-battle-effects-pulse-v1',
     sourcePartySelection: 'web-source-party-selection-atomic-v1',

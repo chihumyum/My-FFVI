@@ -14,7 +14,7 @@ type Instruction<T> = T extends Site ? Omit<T, keyof Site> : never;
 
 /** Three authored maps reached only by contact, choice, real battle, event
  * save and a talk input. All resources exist before the shared initializer. */
-export async function reachableFrontierFixture(options: { forcedBattle?: boolean } = {}) {
+export async function reachableFrontierFixture(options: { forcedBattle?: boolean; standaloneTiming?: boolean } = {}) {
   const f = await frameworkNewGameFixture(), ids = [900001,900002,900003] as const;
   const source = { file:"tests/fixtures/reachable-frontiers.ts",assetPath:"authored-three-map-loop",objectId:"9223372036854775807" };
   const point = f.map.partyEntry!.pointIns[0]!, x=point.x,y=point.y;
@@ -43,8 +43,11 @@ export async function reachableFrontierFixture(options: { forcedBattle?: boolean
     {kind:"branch",left:{category:"MessageSelection",index:0},operator:"＝",right:{kind:"immediate",value:0},target:4},
     {kind:"blocked",mnemonic:"ControlledFamilyGate",reason:"Authored shared choice capability frontier"},{kind:"exit"},travel(ids[1])]);
   add(maps[0]!,entity(maps[0]!,"choice-contact",1,"choice-gate"));
-  install(maps[1]!,"fight",[{kind:"encounter",party:f.encounterId,continuation:"after-fight"}]);
-  install(maps[1]!,"after-fight",[{kind:"event-save"},travel(ids[2])]);
+  const timing:Instruction<Op>[] = options.standaloneTiming ? [
+    {kind:"calc",left:{category:"MapLocalVariable",index:7},operator:"←",right:{kind:"immediate",value:35}},
+    {kind:"standalone-wait"}] : [];
+  install(maps[1]!,"fight",[...timing,{kind:"encounter",party:f.encounterId,continuation:"after-fight"}]);
+  install(maps[1]!,"after-fight",[...timing,{kind:"event-save"},...timing,travel(ids[2])]);
   add(maps[1]!,entity(maps[1]!,"battle-contact",1,"fight"));
   install(maps[2]!,"loop",[travel(ids[0])]);add(maps[2]!,entity(maps[2]!,"return-contact",-1,"loop"));
   install(maps[2]!,"talk",[{kind:"message",key:"AUDIT_TALK",speaker:"Guide",text:"A real nearby interaction."},

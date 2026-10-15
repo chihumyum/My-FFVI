@@ -15,7 +15,7 @@ for(const p of source.programs)for(const[index,raw]of p.data.Mnemonics.entries()
  const mnemonic=raw.mnemonic,op=p.compiled.instructions[index].op;
  assert.equal(raw.type,1);assert.equal(raw.operands.iValues.length,8);assert.equal(raw.operands.rValues.length,8);assert.equal(raw.operands.sValues.length,8);
  assert.ok(raw.operands.iValues.every(x=>x===0)&&raw.operands.rValues.every(x=>x===0)&&raw.operands.sValues.every(x=>x===''));
- if(mnemonic==='BattleForceExitOnSave'){assert.equal(op.kind,'blocked');assert.match(op.reason,/owned Corps layout.*nonparticipant recovery.*retained steal\/drop/);}
+ if(mnemonic==='BattleForceExitOnSave')assert.deepEqual(op,{kind:'force-save-return'});
  else assert.deepEqual(op,{kind:'force-return'});
  sites.push({program:p.id,index,source:p.source,rawHash:p.rawHash,raw,typed:op,runtimeExecution:'not-attempted'});
 }
@@ -36,12 +36,12 @@ const report={kind:'source-battle-forced-return-whole-family-v1',result:'passed-
   battlePrograms:53,battleInstructions:2312,exportBoundPrograms:source.programs.filter(p=>p.battleExportBinding.kind==='exact-battle-export-source-binding-v1').length,
   exportUnboundPrograms:source.programs.filter(p=>p.battleExportBinding.kind==='unbound-battle-export-source-v1').length,
   nominatedSites:sites.length,typedSites:sites.filter(row=>row.typed.kind!=='blocked').length,
-  unresolvedSaveSites:22,mnemonicSites:counts,requestedParties:490,sourceDescriptors:483,sourceDiagnostics:7,
+  unresolvedSaveSites:0,explicitSavedReturnPolicySites:22,mnemonicSites:counts,requestedParties:490,sourceDescriptors:483,sourceDiagnostics:7,
   remainingBlockedSites:source.programs.reduce((n,p)=>n+p.compiled.instructions.filter(row=>row.op.kind==='blocked').length,0)},
  artifacts:[{path:file,sha256:createHash('sha256').update(bytes).digest('hex'),bytes:bytes.length}],
  sourceExecutions:0,worldCompilations:0,publications:0,sourceStoryReachability:false,nativeDynamicParity:false,browserVerified:false,
- limitations:['10 typed no-save forced-return requests are not completed source programs or playable encounters.',
+ limitations:['10 no-save and 22 policy-bound saved-return typed requests are not completed source programs or playable encounters.',
   'All 53 complete original bodies, 490 requested parties, 483 descriptors and 7 diagnostics remain retained.',
-  'All 22 OnSave sites retain specific owned save projection gates; all 6 RemoveAllAct sites remain explicitly blocked.',
+  'All 22 OnSave sites require their explicit encounter/lease Web saved-return policy; unimplemented writers and unrelated source gates remain retained.',
   'Forced previous-result queries require exact current Corps eligibility and previous-result publication; no fixed 4/6, Escape or Win is fabricated.']};
 await writeFile(resolve(out,'report.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({result:report.result,counts:report.counts,report:resolve(out,'report.json')}));

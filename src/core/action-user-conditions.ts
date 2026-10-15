@@ -1,3 +1,4 @@
+import {resourceAbsorptionEffect,projectResourceAbsorption,type AbsorptionContext,type ActionResourceState} from './resource-absorption.js';
 import { projectNonDamagingEffect } from "./non-damaging-ability.js";
 import type { AbilityEffectResult, DevelopmentAbilityPlan } from "./ability.js";
 import { projectActionTarget, type ActionParticipant } from "./action-effects.js";
@@ -16,7 +17,9 @@ export function projectActionTargets<T extends ActionParticipant>(plan: Developm
   random: (min: number, max: number) => number, cost = 0,
   rows?: (target: T) => PhysicalRowContext,
   abilityId?: number,
-) {
+  absorptionContext?:AbsorptionContext,
+): {targets:(ReturnType<typeof projectActionTarget>&{targetId:string})[];userConditionIds:number[];userResults:ActionUserConditionResult[];
+  userResourceState?:ActionResourceState;userResourceResults?:{ownerId:string;slot:number;resource:'hp'|'mp';recovery:true;amount:number;missed:boolean;nullified?:boolean}[]} {
   if (!targets.length || new Set(targets.map(target => target.id)).size !== targets.length)
     throw new Error("Invalid joint action targets");
   conditions.validateOwner(actor.conditionIds, actor.side);
@@ -36,6 +39,10 @@ export function projectActionTargets<T extends ActionParticipant>(plan: Developm
         state: { hp: target.hp, mp: target.mp - (target.id === actor.id ? cost : 0), conditionIds: [...target.conditionIds] } };
     });
     return { targets: projected, userConditionIds: [...actor.conditionIds], userResults: [] as ActionUserConditionResult[] };
+  }
+  if(resourceAbsorptionEffect(plan)){
+    if(targets.length!==1)throw Error('Unresolved absorption multi-target scope');
+    return projectResourceAbsorption(plan,power,actor,targets[0]!,conditions,random,cost,absorptionContext,rows?.(targets[0]!),abilityId);
   }
   const userEffects = plan.effects.filter((effect): effect is UserConditionEffect => effect.kind === "user-condition");
   if (!userEffects.length) return {

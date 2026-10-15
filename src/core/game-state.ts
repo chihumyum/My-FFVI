@@ -19,6 +19,7 @@ import { projectEquipmentOwnership } from "./inventory-ownership.js";
 import type { BattleDropGrant } from "./battle-rewards.js";
 import { MAX_MAGIC_LEARNING_VALUE, parseBattleRewardPolicy, projectMagicLearningValue,
   type BattleRewardPolicy } from "./battle-result.js";
+import {parseBattleSavedForcedReturnResult,parseWebBattleForcedSave,type BattleSavedForcedReturnResult,type WebBattleForcedSave} from './battle-forced-save.js';
 import { parseBattleForcedReturnResult, type BattleForcedReturnResult } from "./battle-forced-return.js";
 import { projectShopTrade, shopBuyOptions, shopSellOptions, validateShopCatalog,
   type ShopCatalog, type ShopInventoryRead, type ShopTradeRequest } from "./shop.js";
@@ -188,7 +189,7 @@ export type OwnedCharacter = RosterMember & {
   growth: CharacterGrowthProgress | null;
 };
 export type GameStateSnapshot = {
-  formatVersion: 12 | 13 | 14;
+  formatVersion: 12 | 13 | 14 | 15;
   kind: "owned-game-state";
   catalogHash: string;
   initialization: "development-checkpoint" | "source-new-game";
@@ -208,7 +209,7 @@ export type GameStateSnapshot = {
   characterNames: Record<string, string>;
   /** One receipt per settled lease, including escapes. Only victories qualify
    * as won encounters or as a source observation-learning result. */
-  completedBattles: { serial: number; encounterId: number; outcome: "victory" | "escaped" | "forced" }[];
+  completedBattles: { serial: number; encounterId: number; outcome: "victory" | "escaped" | "forced" | "forced-save" }[];
 };
 /** The two supported historical formats had no admitted magic-point rewards;
  * version 10 additionally could only settle victories. */
@@ -272,6 +273,7 @@ export class GameState {
     players: Combatant[];
     items: ItemStack[];
     qualification: BattleEntryInventory | null;
+    forcedSavePolicy:WebBattleForcedSave|null;
     rewardPolicy: Readonly<BattleRewardPolicy>;
     playerBorrow: BattlePlayerBorrow | undefined;
   } | null = null;
@@ -516,7 +518,7 @@ export class GameState {
     keys(data, ownedSnapshotFields + (this.content.fieldAbilities ? ",fieldRandom" : ""));
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== (this.content.magicStones ? 14 : this.content.fieldAbilities ? 13 : 12) ||
+      data.formatVersion !== (Array.isArray(data.completedBattles)&&data.completedBattles.some(b=>b.outcome==='forced-save')?15:this.content.magicStones ? 14 : this.content.fieldAbilities ? 13 : 12) ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -607,7 +609,7 @@ export class GameState {
       if (b.serial !== index)
         throw new Error("Invalid battle receipt sequence");
       integer(b.encounterId, 0x7fffffff, 1);
-      if (b.outcome !== "victory" && b.outcome !== "escaped" && b.outcome !== "forced")
+      if (b.outcome !== "victory" && b.outcome !== "escaped" && b.outcome !== "forced" && (b.outcome!=="forced-save"||data.formatVersion!==15))
         throw new Error("Invalid battle receipt outcome");
     }
   }
@@ -2139,7 +2141,7 @@ export class GameState {
     this.data = next;
     this.revision++;
   }
-  openBattle(encounterId: number, rewardPolicy?: BattleRewardPolicy, playerPlan?: BattlePlayerPlan): BattleLease {
+  openBattle(encounterId: number, rewardPolicy?: BattleRewardPolicy, playerPlan?: BattlePlayerPlan, forcedSavePolicy?:WebBattleForcedSave): BattleLease {
     this.requireIdle();
     if (this.battlePartyBlocker) throw new Error(this.battlePartyBlocker);
     integer(encounterId, 0x7fffffff, 1);
@@ -2167,7 +2169,7 @@ export class GameState {
       lease,
       players,
       items: structuredClone(this.data.items),
-      qualification,
+      qualification,forcedSavePolicy:forcedSavePolicy===undefined?null:parseWebBattleForcedSave(forcedSavePolicy),
       rewardPolicy: policy,
       playerBorrow,
     };
@@ -2267,8 +2269,20 @@ export class GameState {
   }
   /** Forced=4 releases borrowed battle resources without SaveParameter. It
    * records neither victory nor escape and never publishes resource changes. */
-  prepareForcedReturn(lease: BattleLease, input: BattleForcedReturnResult): PreparedBattleReturn {
+  prepareForcedReturn(lease: BattleLease, input: BattleForcedReturnResult|BattleSavedForcedReturnResult): PreparedBattleReturn {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
+    if(input.kind==='battle-save-return-v1'){
+      const result=parseBattleSavedForcedReturnResult(input);
+      if(!this.active.forcedSavePolicy||canonical(result.policy)!==canonical(this.active.forcedSavePolicy))throw new Error('Saved forced return is outside its actual owned lease policy');
+      if(canonical(result.participants)!==canonical(result.players.map(player=>({ownedId:player.id,sourceId:player.sourceId}))))throw new Error('Saved forced-return participant identity changed');
+      const baseEquipment=this.active.playerBorrow?.qualification??this.active.qualification;
+      const equipment=baseEquipment===null?null:{...baseEquipment,members:result.players.map(player=>{
+        const member=baseEquipment.members.find(member=>member.id===player.id&&member.sourceId===player.sourceId);
+        if(!member)throw new Error('Missing entered saved equipment owner');return member;
+      })};
+      if(canonical(result.equipment)!==canonical(equipment))throw new Error('Saved forced return equipment differs from its admitted actual six-slot/stock owner; no equipment mutation writer is admitted');
+      return this.prepareBattleReturn(lease,{outcome:'forced-save',result});
+    }
     const result = parseBattleForcedReturnResult(input), borrowed = this.validateBorrowedReturn(result, null),
       ids = borrowed ? firstEnteredOwnerIds(borrowed.state) : this.active.players.map(player => player.id),
       expected = ids.map(ownedId => {
@@ -2325,10 +2339,10 @@ export class GameState {
   }
   private prepareBattleReturn(
     lease: BattleLease,
-    exit: { outcome: "victory"; result: BattleVictoryResult } | { outcome: "escaped"; result: BattleEscapeResult },
+    exit: { outcome: "victory"; result: BattleVictoryResult } | { outcome: "escaped"; result: BattleEscapeResult } | {outcome:"forced-save";result:BattleSavedForcedReturnResult},
   ): PreparedBattleReturn {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
-    const result = exit.result, victory = exit.outcome === "victory" ? exit.result : null;
+    const result = exit.result, victory = exit.outcome === "victory" ? exit.result : null,saved=exit.outcome==='forced-save'?exit.result:null;
     const borrowed = this.validateBorrowedReturn(result, victory);
     let next = this.snapshot();
     const revision = this.revision;
@@ -2337,12 +2351,17 @@ export class GameState {
     if (victory && (magicPoints !== this.active.rewardPolicy.magicPoints ||
         (victory.magicPoints === undefined && this.content.characterInitializations)))
       throw new Error("Battle magic points disagree with leased reward policy");
+    // Native save order is committed steals, used items, then the already
+    // existing drop list. This branch never invokes the victory lottery.
+    if(saved)for(const grant of saved.retainedLoot.stolen)next=this.projectInventoryEvent(next,grant).next;
     validateItemStacks(
       result.consumedItems,
       this.content.items,
       this.content.limits.item,
     );
     for (const used of result.consumedItems) {
+      if(saved&&(this.active.items.find(item=>item.id===used.id)?.count??0)<used.count)
+        throw new Error('Saved battle consumption exceeds its actual entry stock');
       const stock = next.items.find((i) => i.id === used.id);
       if (
         !stock ||
@@ -2353,7 +2372,7 @@ export class GameState {
         throw new Error("Invalid battle inventory consumption");
       stock.count -= used.count;
     }
-    const grants = victory?.dropGrants ?? [];
+    const grants = victory?.dropGrants ?? saved?.retainedLoot.drops ?? [];
     if (!Array.isArray(grants)) throw new Error("Invalid battle drop grants");
     distinct(grants.map((grant) => grant.id));
     // FixedStatusInfo.SaveItem removes used items before adding DropItemList.
@@ -2413,6 +2432,13 @@ export class GameState {
       // rows and disabled owners. Legacy fixed-party Function17 row writeback
       // stays within the same leased, atomic field-return transaction.
       if (cell) cell.row = player.row;
+      if(saved){
+        // SaveCorpList writes CorpsId (Front/Back), never CharacterId. The
+        // explicit Web all-entered variant preserves saved membership.
+        if(borrowed)for(const savedCell of next.party.slots[next.party.selectedSlot])if(savedCell.id===player.id)savedCell.row=player.row;
+        if(saved.equipment){const loadout=saved.equipment.members.find(row=>row.id===player.id);
+          if(!loadout||loadout.sourceId!==target.sourceId)throw new Error('Missing saved forced equipment owner');target.equipment=[...loadout.equipment];}
+      }
       if (!victory) {
         for (const key of ["level", "exp", "maxHp", "maxMp"] as const)
           if (player[key] !== entry[key] || entry[key] !== target[key])
@@ -2463,6 +2489,10 @@ export class GameState {
     if (victory) {
       next.gil = Math.min(this.content.limits.gil, next.gil + victory.gil);
       next.totalGil += victory.gil;
+    }
+    if(saved){
+      for(const owner of next.roster)owner.conditionIds=this.conditions.battleEnd(owner.conditionIds);
+      next.formatVersion=15;
     }
     next.completedBattles.push({ ...lease, outcome: exit.outcome });
     if (victory && next.nativeState) next.nativeState.ownedMagic = this.observedMagic(next);

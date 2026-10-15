@@ -64,7 +64,7 @@ class Element {
   getContext() { return {}; }
 }
 
-async function fixture({ allowed = true, ready = true, scripted = false, items = 0, controls = false, forced = false } = {}) {
+async function fixture({ allowed = true, ready = true, scripted = false, items = 0, controls = false, forced = false, saved = false } = {}) {
   const f = scripted ? checkpointFixture() : walkEncounterFixture(1);
   if (allowed) f.battle.encounters[1000].escapePolicy = { ...policy };
   f.battle.common.initialAtb.player = ready ? [100, 100] : [0, 0];
@@ -84,10 +84,11 @@ async function fixture({ allowed = true, ready = true, scripted = false, items =
         {mnemonic:"SysCall",op:{kind:"stop-auto"}},
         {mnemonic:"Exit",op:{kind:"exit"}}]}};
   }
+  if(saved)f.battle.encounters[1000].forcedSavePolicy={kind:'web-source-battle-forced-save-v1'};
   if(forced) f.battle.encounters[1000].lifecycle={kind:"battle-lifecycle-v1",mode:"script",scriptId:9001,program:{
     kind:"battle-event-v1",source:null,entry:0,end:3,localNames:[],initialLocals:[],blockers:[],instructions:[
       {mnemonic:"Wait",op:{kind:"wait",seconds:.03}},
-      {mnemonic:"BattleForceExit",op:{kind:"force-return"}},
+      {mnemonic:saved?"BattleForceExitOnSave":"BattleForceExit",op:{kind:saved?"force-save-return":"force-return"}},
       {mnemonic:"Wait",op:{kind:"wait",seconds:1}}]}};
   const {WEB_BATTLE_EVENT_CONTROLS}=await load("src/core/battle-controls.js");
   const game = new GameSession(f.field, f.battle, 314, { battleHandoff: "prepared",
@@ -347,12 +348,12 @@ for (const phase of ["escaped", "victory"]) {
   assert.equal(h.$("battle-ui").attributes.get("data-player-control"),"manual");assert.equal(h.flow.pause(true),true);
   checked.push("source UI visibility/revision invalidates stale actual BattleView commands and WAIT, preserves battle owner and re-enables user pause");
 }
-{
-  const h=host(await fixture({scripted:true,forced:true,items:3})),battle=h.game.battle,field=h.game.field,owned=h.game.state.snapshot();
-  h.flow.advance(60,walkHost);h.sync();assert.equal(battle.phase,"forced");
+for(const saved of [false,true]){
+  const h=host(await fixture({scripted:true,forced:true,saved,items:3})),battle=h.game.battle,field=h.game.field,owned=h.game.state.snapshot();
+  battle.players[0].mp=0;h.flow.advance(60,walkHost);h.sync();assert.equal(battle.phase,"forced");
   assert.equal(h.$("battle-ui").hidden,true);assert.equal(h.$("battle-result").hidden,false);
   assert.equal(h.$("battle-result-title").textContent,"战斗结束");
-  assert.match(h.$("battle-result-text").textContent,/进入战斗前.*不获得胜利奖励/);
+  assert.match(h.$("battle-result-text").textContent,saved?/保存当前角色与物品状态.*不获得胜利奖励/:/进入战斗前.*不获得胜利奖励/);
   assert.equal(h.$("battle-return").hidden,false);assert.equal(h.$("battle-retry").hidden,true);
   const prepare=field.prepareEncounterReturn;let attempts=0;
   field.prepareEncounterReturn=function(...args){attempts++;if(attempts===1)throw Error("controlled forced-return preparation failure");return prepare.apply(this,args);};
@@ -361,10 +362,11 @@ for (const phase of ["escaped", "victory"]) {
   assert.match(h.$("battle-result-text").textContent,/返回地图失败/);assert.deepEqual(h.failures,[]);
   stale();await h.wait();assert.equal(h.game.battle,null);assert.equal(attempts,2);assert.equal(h.flow.phase,"event");
   h.flow.advance(10,walkHost);h.sync();assert.equal(h.flow.phase,"exploration");
-  const after=h.game.state.snapshot();assert.deepEqual({...after,completedBattles:[]},{...owned,completedBattles:[]});
-  assert.deepEqual(after.completedBattles.map(r=>r.outcome),["forced"]);const saved=h.game.checkpoint();stale();await h.wait();
-  assert.deepEqual(h.game.checkpoint(),saved);assert.deepEqual(h.failures,[]);assert.equal(attempts,2);
-  checked.push("forced no-save: actual App/BattleView exposes a distinct result, retries failed return, preserves owned resources and rejects stale callbacks");
+  const after=h.game.state.snapshot();if(saved){assert.equal(after.roster[0].mp,0);assert.equal(after.formatVersion,15);assert.deepEqual(after.items,owned.items);}
+  else assert.deepEqual({...after,completedBattles:[]},{...owned,completedBattles:[]});
+  assert.deepEqual(after.completedBattles.map(r=>r.outcome),[saved?"forced-save":"forced"]);const checkpoint=h.game.checkpoint();stale();await h.wait();
+  assert.deepEqual(h.game.checkpoint(),checkpoint);assert.deepEqual(h.failures,[]);assert.equal(attempts,2);
+  checked.push((saved?"forced save":"forced no-save")+": actual App/BattleView exposes a distinct result, retries failed return, preserves owned resources and rejects stale callbacks");
 }
 const report = { kind: "controlled-battle-escape-ui", result: "passed", scenarios: checked.length, checked,
   appSha256: hash(app), battleViewSha256: hash(await readFile(resolve(root, "apps/game/battle-view.js"))),

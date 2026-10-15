@@ -281,7 +281,9 @@ export class BattleView {
       label(
         $("battle-result-text"),
         (battle.phase === "forced"
-          ? "返回进入战斗前的角色与物品状态，不获得胜利奖励。"
+          ? battle.previewForcedReturn()?.resultType === 6
+            ? "保存当前角色与物品状态并返回，不获得胜利奖励。"
+            : "返回进入战斗前的角色与物品状态，不获得胜利奖励。"
           : battle.phase === "escaped"
           ? "保留当前状态与已用掉的物品，不获得胜利奖励。"
           : r
@@ -641,6 +643,16 @@ export class BattleView {
             c.fillText(text, to.x, y);
           }
         }
+      }
+      // Caster recovery belongs to the same action but is not a target hit.
+      // It cannot create target reactions or a second action completion.
+      if(a.resolved)for(const effect of a.userResourceResults??[]){
+        if(effect.missed||effect.nullified||effect.amount===0)continue;
+        const owner=battle.combatants.find(unit=>unit.id===effect.ownerId);
+        if(!owner||!battle.isCombatantVisible(owner.id))continue;
+        const to=this.position(owner,battle,layout),text=`+${effect.amount}${effect.resource==='mp'?' MP':''}`;
+        c.font='bold 15px monospace';c.textAlign='center';c.lineWidth=3;c.strokeStyle='#101426';c.fillStyle='#80ffa7';
+        const y=to.y-66-(a.elapsed-400)/35;c.strokeText(text,to.x,y);c.fillText(text,to.x,y);
       }
     }
   }
