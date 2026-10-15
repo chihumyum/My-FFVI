@@ -86,7 +86,7 @@ v31 历史来源检查遍历全部 `4838` 处 `Msg` 与 `55` 处 `MsgClose`，�
 
 消息 effects、名字候选、时序上下文和当前任务先完成验证，再由现有 FieldGame 接线发布。票据拒绝旧窗口上的延迟回调。跨任务 `ChangeScript` / hook 恢复 / main 结束不得遗失另一个任务的活动窗口；战斗和地图交接也不能带走尚未关闭的窗口。错误保留 locals、任务与原窗口，不以强制 close 代替未知取消语义。稳定保存仍只接受空窗口，恢复和跨图从显式 runtime port 取得上下文，存档本身不授予宿主能力。
 
-原生 Msg 包装器还使用共享 `Core.GeneralRegisters` 的 `i0 / i1 / i2` 与 `r1 / r2` 槽。当前游标是 Web 内部实现，不是这组可观察原生寄存器的投影；跨指令读写 GeneralRegisters 的剧情族仍需同一个明确 bank 所有者，不能把窗口 ticket 充当某个原生槽，也不能声称本轮已恢复该兼容性。
+原生 Msg 包装器还使用共享 `Core.GeneralRegisters` 的 `i0 / i1 / i2` 与 `r1 / r2` 槽。v97 游标本身不是该银行。v98 为状态清理的可观察消费者增加同一 Task 的明确 bank，并在消息起止边界投影这些槽；游标仍是唯一活动消息计时进度，ticket 不充当原生槽。这不是全部 scratch 写入或原生时钟位值的完整模拟，见 [共用生命周期](story-shared-lifecycles.md)。
 
 ## 明确的 Web 策略与完整可读性
 
@@ -111,6 +111,8 @@ node scripts/check-source-message-sequence-execution.mjs
 node scripts/check-source-message-view.mjs
 node scripts/check-framework-route.mjs --report build/reports/v97-framework-source-route.json
 ```
+
+维护探针现支持 `--max-elapsed-ms`，默认600,000逻辑毫秒；显式120,000可复演旧预算耗尽。预算只约束宿主循环，不跳过原始等待，不改任务PC或拥有状态。回执分别记录预算耗尽与真实能力边界；`passed`只表示有界边界探针成立，仍不是开场或主线完成。
 
 两个语料工具可用 `--compiled <directory> --corpus <file> --build-receipt <file> --report <file>` 指向一个有完整回执的隔离编译；`--root` 指定来源仓库。生成报告包含原始正文和本地化，仅留在 ignored `build/`。
 

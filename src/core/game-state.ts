@@ -84,7 +84,7 @@ import { createSourceNativeState, validateSourceNativeState,
   type SourceNativeState } from "./source-native-state.js";
 import { projectTransportationState, type FieldTransportationPort,
   type FieldTransportationTransaction, type TransportationStateCommand } from "./transportation-state.js";
-import { projectOwnedCondition, type FieldOwnedConditionPort,
+import { projectOwnedCondition, projectOwnedConditionRemoveAll, type FieldOwnedConditionPort,
   type OwnedConditionCommand, type OwnedConditionTransaction } from "./owned-condition.js";
 import { projectFieldRecovery, type FieldRecoveryCommand,
   type FieldRecoveryPort, type FieldRecoveryTransaction } from "./field-recovery.js";
@@ -1147,12 +1147,19 @@ export class GameState {
   }
   private projectOwnedConditionEvent(data: GameStateSnapshot, command: OwnedConditionCommand) {
     const next = structuredClone(data);
-    const preview = projectOwnedCondition(next.roster, next.party, command, this.ownedConditionDefinitions);
+    const preview: { roster: GameStateSnapshot["roster"]; targets: string[];
+      steps: { targetId: string; roster: GameStateSnapshot["roster"] }[]; coreI0Writes?: readonly number[] } =
+      command.kind === "remove-condition" && command.conditionType === 0
+      ? projectOwnedConditionRemoveAll(next.roster, next.party, command, this.conditions)
+      : projectOwnedCondition(next.roster, next.party, command, this.ownedConditionDefinitions);
     next.roster = preview.roster;
     this.validate(next);
-    return { next, targets: preview.targets, steps: preview.steps.map((step) => ({
+    return { next, targets: preview.targets,
+      ...(preview.coreI0Writes !== undefined ? { coreI0Writes: preview.coreI0Writes } : {}),
+      steps: preview.steps.map((step) => ({
       targetId: step.targetId,
       appearance: this.projectPartyAppearance({ ...next, roster: step.roster }),
+      ...(this.content.partyActors ? { puppetRoster: this.projectPuppetRoster({ ...next, roster: step.roster }) } : {}),
       setDummy: false as const, affectLeader: true as const,
     })) };
   }
@@ -1181,6 +1188,7 @@ export class GameState {
       const intermediate = { ...next, roster: step.roster };
       this.validate(intermediate);
       return { targetId: step.targetId, appearance: this.projectPartyAppearance(intermediate),
+        ...(this.content.partyActors ? { puppetRoster: this.projectPuppetRoster(intermediate) } : {}),
         setDummy: false as const, affectLeader: true as const };
     }) };
   }

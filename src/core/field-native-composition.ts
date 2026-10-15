@@ -142,6 +142,9 @@ export function blendFieldTransparent(source: FieldCompositionColor, destination
 export function fieldCharacterFragment(input: {
   sample: FieldCompositionColor;
   vertexAlpha: number;
+  /** Material _Color.a is applied in both the bound VS and PS. Frame color
+   * enters COLOR0 once; head RT overlays follow this initial product. */
+  materialAlpha?: number;
   normalizedV: number;
   part: "body" | "head";
   first: FieldCompositionColor | null;
@@ -154,7 +157,10 @@ export function fieldCharacterFragment(input: {
   if (input.part !== "body" && input.part !== "head") throw new Error("Unknown character shader part");
   if (input.first !== null) color(input.first);
   if (input.second !== null) color(input.second);
-  const a = f(f(input.sample[3]) * f(input.vertexAlpha));
+  const materialAlpha = input.materialAlpha ?? 1;
+  if (!Number.isFinite(materialAlpha) || materialAlpha < 0 || materialAlpha > 1)
+    throw new Error("Invalid ordinary character material alpha");
+  const a = f(f(f(input.sample[3]) * f(materialAlpha)) * f(f(input.vertexAlpha) * f(materialAlpha)));
   if (a < lowAlpha || (input.part === "body" ? f(input.normalizedV) > 0.25 : f(input.normalizedV) < 0.25)) return null;
   let result: FieldCompositionColor = [f(input.sample[0]), f(input.sample[1]), f(input.sample[2]), a];
   if (input.part === "head") for (const overlay of [input.first, input.second]) {
@@ -212,6 +218,8 @@ export type FieldCompositionQuad = {
 export type FieldCompositionLayerQuad = FieldCompositionQuad & { layer: FieldCompositionLayer };
 export type FieldCompositionActorQuad = FieldCompositionQuad & {
   alpha: number; first: FieldCompositionPixels | null; second: FieldCompositionPixels | null;
+  materialAlpha?: number;
+  depthWrite?: boolean;
 };
 function pixels(image: FieldCompositionPixels): void {
   if (!image || !Number.isSafeInteger(image.width) || !Number.isSafeInteger(image.height) || image.width <= 0 || image.height <= 0 ||
@@ -324,6 +332,9 @@ export function composeFieldNativePixels(input: {
     quad(actor);
     if (!Number.isFinite(actor.alpha) || actor.alpha < 0 || actor.alpha > 1 || actor.diagonal || actor.flipY)
       throw new Error("Unrecovered native character alpha/UV transformation");
+    if (actor.materialAlpha !== undefined && (!Number.isFinite(actor.materialAlpha) || actor.materialAlpha < 0 || actor.materialAlpha > 1) ||
+        actor.depthWrite !== undefined && typeof actor.depthWrite !== "boolean")
+      throw new Error("Invalid bound character material alpha/depth input");
     if (actor.first) pixels(actor.first);
     if (actor.second) pixels(actor.second);
   }
@@ -369,12 +380,14 @@ export function composeFieldNativePixels(input: {
         else {
           const actor = q as FieldCompositionActorQuad;
           result = fieldCharacterFragment({ sample, vertexAlpha: actor.alpha, normalizedV: 1 - v, part: pass,
+            ...(actor.materialAlpha === undefined ? {} : { materialAlpha: actor.materialAlpha }),
             first: screenSample(actor.first, x, y, input.width, input.height),
             second: screenSample(actor.second, x, y, input.width, input.height) });
         }
         if (result === null) continue;
         if (pass === "transparent") result = blendFieldTransparent(result, readPixel(output, x, y));
-        else depths[index] = q.depth;
+        else if ((pass !== "body" && pass !== "head") || (q as FieldCompositionActorQuad).depthWrite !== false)
+          depths[index] = q.depth;
         // Ordinary source transparent tiles Replace 0; character materials
         // Replace 2. Opaque tiles Keep. No stencil consumer is guessed here.
         if (pass === "transparent") stencil[index] = 0;

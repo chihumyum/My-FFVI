@@ -15,6 +15,8 @@ const args = process.argv.slice(2);
 assert.ok(args.length === 0 || args.length === 2 && args[0] === "--compiled-dir",
   "Use --compiled-dir <directory>");
 const compiled = resolve(root, args[1] ?? "dist");
+const { runtimeDigest } = await import(pathToFileURL(resolve(root, "scripts/runtime-digest.mjs")).href);
+const runtimeBefore = await runtimeDigest(root, compiled), checkerBefore = await readFile(new URL(import.meta.url));
 const load = (path) => import(pathToFileURL(resolve(compiled, path)).href);
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const { GameSession } = await load("src/core/game-session.js");
@@ -27,11 +29,13 @@ const ui = Object.fromEntries(await Promise.all(uiNames.map(async name =>
   [name, await readFile(resolve(root, "apps/game", name + ".js"), "utf8")])));
 const reportPath = resolve(root, "build/reports/initialized-systems-ui-check.json");
 const report = { kind: "controlled-initialized-systems-ui-check-v1", result: "running", cases: [],
-  appSha256: sha(app), htmlSha256: sha(html),
+  appSha256: sha(app), htmlSha256: sha(html), runtimeSha256: runtimeBefore, checkerSha256: sha(checkerBefore),
   viewSha256: Object.fromEntries(Object.entries(ui).map(([key, source]) => [key, sha(source)])),
   evidence: { actualApp: true, actualSession: true, actualRepository: true, actualCommands: true,
     actualCheckpointStorage: true, actualContentHistory: true, actualContentSessions: true,
     originalGameExecuted: false, sourceStoryAdmitted: false },
+  conditionActivityPolicy: { kind: "web-flat-condition-leader-activity-v1", nativeParity: false,
+    observation: "Actual production factory and scopes are delegated without substituting predicate results." },
   limitations: ["Synthetic content declares its initializer, held domains, prices, abilities and encounters explicitly.",
     "DOM, network, Blob URLs, image decode and WebAudio are controlled. Renderer and BattleView drawing are host doubles.",
     "The synthetic package publishes one verified release index, immutable JSON objects and authored PNG bytes; this grants no source-story admission.",
@@ -60,7 +64,7 @@ const appBody = appModule.body.replace("init().catch(failure);", "globalThis.__i
 globalThis.__app = {
   read: () => ({ flow, commands, game, contents, contentSessions, failed, entryLoad, sourceBoot, partyView, shopView,
     battleView, inventoryView, contentProfile, renderer, entryLoader, images, battleLoadAttempt }),
-  frame, sync, reset, startInitializedGame, returnToTitle, pause, saveGame, loadGame
+  runtime, frame, sync, reset, startInitializedGame, returnToTitle, pause, saveGame, loadGame
 };`;
 const deferred = () => {
   let resolve, reject;
@@ -78,7 +82,7 @@ async function until(predicate, message) {
 
 async function host(pack, { slots = new Map(), search = "?package=" + pack.packageId } = {}) {
   const calls = { json: [], images: [], media: [], imageBytes: [], objectUrls: [], revokedUrls: [],
-    views: [], frames: [], writes: 0 };
+    views: [], frames: [], writes: 0, nativeAtDecode: [] };
   const failedUrls = new Set(), heldUrls = new Map(), failedImages = new Set(), heldImages = new Map();
   const listeners = new Map(), nodes = new Map();
   let now = 0;
@@ -163,6 +167,8 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
         assert.deepEqual([...bytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
         digest = sha(bytes); calls.imageBytes.push(digest);
       }
+      const owner = context.__app?.read().flow.currentSession;
+      if (owner) calls.nativeAtDecode.push({ field: owner.field, fingerprint: owner.field.nativeActorStateFingerprint });
       const hold = heldImages.get(this.file) ?? heldImages.get(`sha256:${digest}`); if (hold) await hold.promise;
       if (failedImages.has(this.file) || failedImages.has(`sha256:${digest}`))
         throw new Error("Controlled image failure: " + this.file);
@@ -179,7 +185,23 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
     sync(battle) { this.instance = battle; } hide() { this.instance = null; }
     draw() {} keyboard() {} back() { return false; }
   }
-  const context = vm.createContext({ ...core, document, Image, AudioContext, Renderer, BattleView,
+  const actualActivityFactory = core.createWebFlatConditionLeaderActivityPort;
+  assert.equal(typeof actualActivityFactory, "function", "Actual production app must import its activity factory");
+  const activityCalls = [], activityPorts = [];
+  const observedCore = { ...core, createWebFlatConditionLeaderActivityPort: () => {
+    const actualPort = actualActivityFactory();
+    const port = Object.freeze({ ...actualPort, prepare(scopeHost) {
+      const scope = actualPort.prepare(scopeHost);
+      const row = { actors: scopeHost.readActors(), factory: scopeHost.readFactory(), reads: [] };
+      activityCalls.push(row);
+      return Object.freeze({ validate: () => scope.validate(), isActiveAndEnabled(id, draft) {
+        const value = scope.isActiveAndEnabled(id, draft);
+        row.reads.push({ id, value }); return value;
+      } });
+    } });
+    activityPorts.push(port); return port;
+  } };
+  const context = vm.createContext({ ...observedCore, document, Image, AudioContext, Renderer, BattleView,
     window: { addEventListener(name, callback) { listeners.set(name, callback); } },
     location: { search }, URLSearchParams, URL: ControlledURL, Blob, structuredClone, crypto: webcrypto,
     console, performance: { now: () => now }, requestAnimationFrame(callback) { calls.frames.push(callback); },
@@ -232,7 +254,7 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
     assert.equal(current.sourceBoot, null, "Initialized entry must not borrow source fade/launch");
     return owner;
   };
-  return { api, frame, click, bound, healthy, calls, slots, failedUrls, heldUrls, failedImages, heldImages,
+  return { api, frame, click, bound, healthy, calls, slots, activityCalls, activityPorts, failedUrls, heldUrls, failedImages, heldImages,
     $: id => document.getElementById(id),
     find: (id, predicate) => walk(document.getElementById(id)).find(predicate),
     key(code) { listeners.get("keydown")({ code, target: nodes.get("game"), repeat: false, preventDefault() {} });
@@ -421,6 +443,85 @@ async function win(h, pack) {
   assert.equal(h.bound(), owner); return owner;
 }
 
+async function conditionActivityPackages(packageId = "controlled-condition-activity") {
+  const { worldLoopSessionFixture } = await load("tests/fixtures/world-loop-session.js");
+  const { compileFrameworkNewGame } = await load("src/compiler/framework-new-game.js");
+  const f = await worldLoopSessionFixture();
+  const png = controlledPng(), pngHash = sha(png);
+  for (const character of Object.values(f.world.characters)) for (const sprite of Object.values(character.sprites)) {
+    sprite.file = "/controlled/condition-actor.png"; sprite.sha256 = pngHash;
+  }
+  for (const sprite of Object.values(f.battle.common.sprites)) sprite.file = "/controlled/condition-battle.png";
+  const source = { file: "synthetic", assetPath: "condition-activity-ui" };
+  const maps = [];
+  for (const original of [f.map, f.worldMap]) {
+    const map = structuredClone(original), name = map.initializer;
+    const prior = map.scripts[name].filter(op => op.kind !== "exit");
+    map.scripts[name] = [...prior, { kind: "owned-condition", command: { kind: "remove-condition", conditionType: 607, target: 0 }, dependencies: [] },
+      { kind: "exit" }].map((op, index) => ({ ...op, script: name, index, source }));
+    Object.assign(map.scriptPuppetContexts[name], { keepBadStatusVisual: true, keepPlayerPuppet: true });
+    (map.scriptSystemFlags ??= {})[name] = { keepBadStatusVisual: true };
+    const probe = "condition-ui-probe";
+    map.scripts[probe] = [
+      { kind: "owned-condition", command: { kind: "remove-condition", conditionType: 607, target: 0 }, dependencies: [] },
+      { kind: "exit" },
+    ].map((op, index) => ({ ...op, script: probe, index, source }));
+    map.scriptPuppetContexts[probe] = { ...map.scriptPuppetContexts[name], scriptHash: sha(probe) };
+    map.scriptSystemFlags[probe] = { keepBadStatusVisual: true };
+    (map.scriptLocals ??= {})[probe] = null;
+    const point = map.partyEntry.pointIns[0];
+    const entity = { id: "activity-ui-probe", kind: 2, objectId: 9801, x: point.x - 1, y: point.y,
+      layer: point.layer, width: 1, height: 1, direction: "up", asset: null, script: probe,
+      collision: null, destinationLayer: null, source };
+    map.map.entities.push(entity); map.map.groups.entity_default.entities.push(structuredClone(entity));
+    map.map.textures = { controlled: "/controlled/condition-field-" + map.mapId + ".png" };
+    maps.push(await seal(map));
+  }
+  const [map, target] = maps;
+  for (const current of maps) f.world.maps[String(current.mapId)].contentHash = current.contentHash;
+  const world = await seal(f.world), battle = await seal(f.battle);
+  const content = await compileFrameworkNewGame({ sourceEntry: f.sourceEntry, sourceBattle: f.sourceBattle,
+    sourceMap: f.sourceMap, world, map, battle, entrance: map.partyEntry.pointIns[0].id });
+  const prefix = "/content-packages/" + packageId;
+  const refs = { kind: "game-content-refs-v2", profile: "framework",
+    world: { url: prefix + "/world.json", contentHash: world.contentHash }, source: null, development: null,
+    initialized: { entry: { url: prefix + "/entry.json", contentHash: content.contentHash },
+      battle: { url: prefix + "/battle.json", contentHash: battle.contentHash } } };
+  const files = new Map([["/content-packages/" + packageId + ".json", refs],
+    [refs.world.url, world], [refs.initialized.entry.url, content], [refs.initialized.battle.url, battle],
+    ...maps.map(value => [world.maps[String(value.mapId)].url, value])]);
+  const bindings = Object.fromEntries([...files].filter(([, value]) => /^[a-f0-9]{64}$/.test(value.contentHash))
+    .map(([url, value]) => [url, value.contentHash]));
+  const mediaBindings = Object.fromEntries([...new Set([...maps.flatMap(value => core.fieldMediaUrls({ map: value.map,
+    characters: world.characters, minimap: value.minimap })), ...Object.values(battle.common.sprites).map(sprite => sprite.file)])]
+    .map(url => [url, { sha256: pngHash, extension: "png" }]));
+  const release = { id: await contentDigest({ packageId, refs, bindings, mediaBindings }),
+    sourceSetHash: content.parentSourceSetHash, refs, bindings, mediaBindings };
+  const indexUrl = `/content-releases/packages/${packageId}.json`;
+  const index = await seal({ kind: "game-content-release-index-v1", packageId, profile: "framework",
+    objectRoot: "/content-releases", currentReleaseId: release.id, releases: [release] });
+  for (const [url, hash] of Object.entries(bindings)) files.set(`/content-releases/objects/${hash}.json`, files.get(url));
+  files.set(indexUrl, index);
+  const media = new Map(Object.keys(mediaBindings).map(url => [url, png]));
+  media.set(`/content-releases/media/${pngHash}.png`, png);
+  return { ...f, content, world, battle, map, worldMap: target, maps, packageId, refs, files, media, release, indexUrl, pngHash,
+    targetTexture: target.map.textures.controlled };
+}
+function assertActivity(h, field) {
+  assert.equal(h.activityPorts.length, 1, "Whole actual app creates one runtime activity port");
+  assert.equal(h.api.runtime.conditionLeaderActivity, h.activityPorts[0]);
+  assert.equal(Reflect.get(field, "options").conditionLeaderActivity, h.activityPorts[0]);
+  const scopes = h.activityCalls.filter(row => row.actors === field.actors);
+  assert.ok(scopes.length > 0, "The actual field condition transaction must invoke the production port");
+  assert.ok(scopes.some(row => row.reads.some(read => read.value === true)),
+    "Source KeepBadStatusVisual=true must execute a real active native leader branch");
+  return { scopes: scopes.length, predicateReads: scopes.flatMap(row => row.reads) };
+}
+async function activityIdle(h, owner = h.bound()) {
+  for (let i = 0; i < 100 && !owner.checkpointReady && !owner.field.stop; i++) await h.frame();
+  assert.equal(owner.field.stop, null, owner.field.stop?.message);
+  assert.equal(owner.checkpointReady, true); return owner;
+}
 try {
   await check("bare title selects the systems package and exposes honest independent entry links", async () => {
     const pack = await packages("systems-initialized"), h = await host(pack, { search: "" });
@@ -598,6 +699,48 @@ try {
     assert.deepEqual(owner.state.snapshot(), before); assert.equal(h.api.read().flow.started, false);
     assert.equal(h.$("start").disabled, false);
   });
+  await check("production activity port survives actual app start, media rollback, map retry, save/load and continuation", async () => {
+    const pack = await conditionActivityPackages(), h = await host(pack), owner = await start(h), first = owner.field;
+    const firstAudit = assertActivity(h, first), before = owner.state.snapshot();
+    const initialItemCount = pack.plan.owned.items.find(item => item.id === 701)?.count ?? 0;
+    assert.equal(before.items.find(item => item.id === 701).count, initialItemCount + 1);
+    const initialCommands = h.api.read().commands, port = h.api.runtime.conditionLeaderActivity;
+    h.api.read().images.clear(); h.failedImages.add(`sha256:${pack.pngHash}`);
+    await move(h, "right");
+    for (let i = 0; i < 30 && h.$("retry-map").hidden; i++) await h.frame();
+    assert.equal(h.$("retry-map").hidden, false);
+    assert.equal(owner.field, first); assert.equal(h.bound(), owner);
+    assert.deepEqual(owner.state.snapshot(), before, "Failed candidate must not publish initializer inventory or condition state");
+    const decoded = h.calls.nativeAtDecode.filter(row => row.field === first).at(-1);
+    assert.ok(decoded); assert.equal(first.nativeActorStateFingerprint, decoded.fingerprint, "Failed private media must not half-publish current native actors");
+    assert.equal(h.api.runtime.conditionLeaderActivity, port);
+    h.failedImages.clear(); await h.click(h.$("retry-map"));
+    for (let i = 0; i < 100 && owner.field === first; i++) await h.frame();
+    await activityIdle(h, owner); const second = owner.field;
+    assert.notEqual(second, first); assert.equal(second.content.map.identity.mapId, pack.worldMap.mapId);
+    const secondAudit = assertActivity(h, second);
+    const settled = owner.state.snapshot();
+    assert.equal(settled.items.find(item => item.id === 701).count, initialItemCount + 2);
+    await pauseMenu(h); await h.click(h.$("save-game"));
+    const bytes = [...h.slots.entries()]; assert.ok(bytes.length > 0);
+    await h.click(h.$("load-game")); const restored = h.bound();
+    assert.notEqual(restored, owner); assert.deepEqual(restored.state.snapshot(), settled);
+    assert.equal(restored.field.content.map.identity.mapId, pack.worldMap.mapId);
+    assert.equal(h.api.runtime.conditionLeaderActivity, port);
+    assert.equal(Reflect.get(restored.field, "options").conditionLeaderActivity, port);
+    assert.equal(initialCommands.menuReady, false);
+    const count = h.activityCalls.length; await resume(h); await move(h, "left"); await activityIdle(h, restored);
+    const restoredAudit = assertActivity(h, restored.field);
+    assert.ok(h.activityCalls.length > count, "Post-restore real movement must execute the retained original condition probe");
+    assert.deepEqual(restored.state.snapshot(), settled, "Recovery/checkpoint continuation cannot replay map grants");
+    report.lifecycle = { first: firstAudit, second: secondAudit, restored: restoredAudit,
+      appPortCount: h.activityPorts.length, storageWrites: h.calls.writes,
+      firstMapId: first.content.map.identity.mapId, secondMapId: second.content.map.identity.mapId,
+      restoredMapId: restored.field.content.map.identity.mapId, sourceStoryReachability: false };
+  });
+  assert.equal(await runtimeDigest(root, compiled), runtimeBefore, "Runtime changed during actual app checks");
+  assert.equal(sha(await readFile(new URL(import.meta.url))), sha(checkerBefore), "App checker changed during checks");
+  report.runtimeRevalidated = true;
   report.result = "pass";
 } catch (error) {
   report.result = "fail"; report.error = error.stack ?? String(error); throw error;

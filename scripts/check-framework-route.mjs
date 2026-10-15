@@ -10,10 +10,16 @@ import { runtimeDigest } from "./runtime-digest.mjs";
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2), options = new Map();
 for (let i = 0; i < args.length; i += 2) {
-  assert.ok(["--dist", "--report", "--content"].includes(args[i]) && args[i + 1] &&
-    !args[i + 1].startsWith("--") && !options.has(args[i]), "Use --dist/--report <path>");
+  assert.ok(["--dist", "--report", "--content", "--max-elapsed-ms"].includes(args[i]) && args[i + 1] &&
+    !args[i + 1].startsWith("--") && !options.has(args[i]),
+  "Use --dist/--report/--content <path> or --max-elapsed-ms <positive multiple of 10>");
   options.set(args[i], args[i + 1]);
 }
+// Long source cutscenes use the same clock as ordinary play. A budget is a
+// host bound, never permission to skip a source wait or advance a task's PC.
+const maxElapsedMs = Number(options.get("--max-elapsed-ms") ?? 600000);
+assert.ok(Number.isSafeInteger(maxElapsedMs) && maxElapsedMs >= 10 && maxElapsedMs <= 3600000 &&
+  maxElapsedMs % 10 === 0, "Source route budget must be a multiple of 10ms between 10ms and one hour");
 const runtime = resolve(root, options.get("--dist") ?? "dist");
 const load = (name) => import(pathToFileURL(resolve(runtime, "src/core", name + ".js")));
 const [{ GameContentRepository }, { GameSession }, { GameFlow }, { FieldFadeState },
@@ -81,6 +87,8 @@ function recordTransportation(field) {
 }
 const sampledActors = new Set();
 const report = { kind: "framework-source-route-check-v1", result: "running", profile: content.developmentProfile.kind,
+  acceptanceScope: "bounded source boundary probe; passing does not complete the opening or campaign",
+  maxElapsedMs,
   runtimeSha256, contentRefs: refs, messageContext, policyModuleSha256, messagePolicy: "createWebFieldMessageSequencePort (same production module as app)", sourceCampaignComplete: false, browserVerified: false,
   entryHash: content.contentHash, catalogHash: catalog.contentHash, battleHash: battle.contentHash,
   sourceEntryHash: content.developmentProfile.sourceContentHash,
@@ -90,7 +98,7 @@ const report = { kind: "framework-source-route-check-v1", result: "running", pro
 const output = resolve(root, options.get("--report") ?? "build/reports/framework-source-route-check.json");
 let elapsedMs = 0, boundary = null;
 try {
-  for (; elapsedMs < 120000; elapsedMs += 10) {
+  for (; elapsedMs < maxElapsedMs; elapsedMs += 10) {
     recordTransportation(game.field);
     const stop = game.field.stop;
     if (stop?.kind === "map-transition") {
@@ -128,7 +136,7 @@ try {
     if (game.checkpointReady) { boundary = { kind: "stable-field", mapId: game.field.content.map.identity.mapId }; break; }
   }
   assert.equal(ownedAtStart.initialization, "source-new-game");
-  assert.ok(boundary, "Source route did not reach an observable boundary within 120s");
+  assert.ok(boundary, `Source route exhausted its ${maxElapsedMs}ms host budget before an observable boundary`);
   assert.ok(transitions.length > 0, `The source route must commit its first map handoff: ${JSON.stringify(boundary)}`);
   assert.ok(motionSamples.length > 0, `Source actor movement must actually advance after map handoff: ${JSON.stringify(boundary)}`);
   for (const [path, bytes] of consumed) assert.ok((await readFile(path)).equals(bytes), "Published source route input changed");
@@ -138,7 +146,8 @@ try {
 finally {
   recordTransportation(game.field);
   Object.assign(report, { elapsedMs, boundary, mapId: game.field.content.map.identity.mapId,
-    currentPhase: flow.phase, checkpointReady: game.checkpointReady });
+    currentPhase: flow.phase, checkpointReady: game.checkpointReady,
+    budgetExhausted: boundary === null && elapsedMs >= maxElapsedMs });
   await writeFile(output, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ result: report.result, elapsedMs, transitions: transitions.length,
     mapId: report.mapId, boundary }));

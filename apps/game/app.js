@@ -1,5 +1,6 @@
 import { syncFieldMessageView } from "./source-message-view.js";
 import { createWebFieldMessageSequencePort } from "/runtime/core/source-message-sequence.js";
+import { createWebFlatConditionLeaderActivityPort } from "/runtime/core/field-condition-activity.js";
 import { InventoryView } from "./inventory-view.js";
 import { EquipmentView } from "./equipment-view.js";
 import { PartyView } from "./party-view.js";
@@ -86,6 +87,9 @@ const readGameJson = async (url) => {
 let contents = new GameContentRepository(readGameJson, contentProfile);
 // Same declared Web policy as the source-route audit; no native default claim.
 const runtime = { sourceMessageSequence: createWebFieldMessageSequencePort(),
+  // Explicit flat Web component/ancestor policy, rebound from each candidate's
+  // trusted native factory. Saved activeSelf never grants this capability.
+  conditionLeaderActivity: createWebFlatConditionLeaderActivityPort(),
   battleHandoff: "prepared", audioReadiness: { isReady: (track) => audio.isReady(track) },
   soundPresentation: { isPresented: (voice, track) => audio.isSoundPresented(voice, track) },
   // Source DateTime.Now.Ticks is local wall time. Keep its Int64 as a string.

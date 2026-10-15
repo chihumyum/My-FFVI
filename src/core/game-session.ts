@@ -68,6 +68,7 @@ export type GameCheckpoint = GameCheckpointBase & (
 export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
   sourceMessageSequence?: NonNullable<FieldGameOptions["sourceMessageSequence"]>;
+  conditionLeaderActivity?: NonNullable<FieldGameOptions["conditionLeaderActivity"]>;
   /** Host prepares battle and return media before committing the same session
    * candidate used by the synchronous development compatibility adapter. */
   battleHandoff?: "prepared";

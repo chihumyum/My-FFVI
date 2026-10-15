@@ -27,6 +27,10 @@ class Canvas {
 }
 class Context {
   constructor(canvas) { this.canvas = canvas; this.data = new Uint8ClampedArray(canvas.width * canvas.height * 4); this.globalAlpha = 1; }
+  save() { (this.stack ??= []).push({ globalAlpha: this.globalAlpha, transform: { ...(this.transform ?? { x: 0, y: 0, sx: 1, sy: 1 }) } }); }
+  restore() { const state = this.stack.pop(); this.globalAlpha = state.globalAlpha; this.transform = state.transform; }
+  translate(x, y) { const t = this.transform ??= { x: 0, y: 0, sx: 1, sy: 1 }; t.x += t.sx * x; t.y += t.sy * y; }
+  scale(x, y) { const t = this.transform ??= { x: 0, y: 0, sx: 1, sy: 1 }; t.sx *= x; t.sy *= y; }
   createImageData(width, height) { return { width, height, data: new Uint8ClampedArray(width * height * 4) }; }
   getImageData() { return { width: this.canvas.width, height: this.canvas.height, data: this.data.slice() }; }
   putImageData(image) { this.canvas.puts++; this.data.set(image.data); }
@@ -36,10 +40,11 @@ class Context {
     const src = image instanceof Canvas ? image.getContext().data : image.data;
     const [sx, sy, sw, sh, dx, dy, dw, dh] = args.length === 2 ? [0, 0, image.width, image.height, ...args, image.width, image.height] : args;
     for (let y = 0; y < dh; y++) for (let x = 0; x < dw; x++) {
-      const tx = Math.floor(dx + x), ty = Math.floor(dy + y);
+      const t = this.transform ?? { x: 0, y: 0, sx: 1, sy: 1 };
+      const tx = Math.floor(t.x + t.sx * (dx + x + .5)), ty = Math.floor(t.y + t.sy * (dy + y + .5));
       if (tx < 0 || ty < 0 || tx >= this.canvas.width || ty >= this.canvas.height) continue;
       const si = (Math.floor(sy + y * sh / dh) * image.width + Math.floor(sx + x * sw / dw)) * 4;
-      const di = (ty * this.canvas.width + tx) * 4, a = src[si + 3] / 255,
+      const di = (ty * this.canvas.width + tx) * 4, a = (src[si + 3] / 255) * this.globalAlpha,
         destinationAlpha = this.data[di + 3] / 255, alpha = a + destinationAlpha * (1 - a);
       for (let c = 0; c < 3; c++) this.data[di + c] = alpha === 0 ? 0
         : Math.round((src[si + c] * a + this.data[di + c] * destinationAlpha * (1 - a)) / alpha);
@@ -102,7 +107,7 @@ run("foreign binding, missing media and unsupported providers fail without publi
   for (const change of [(t) => { t.player.native.entity.viewBinding.properties.contextId = "f".repeat(64); },
     (t) => { t.player.native.entity.viewBinding.properties.sourceHashes[0] = "f".repeat(64); },
     (t) => t.renderer.images.clear(), (t) => { t.player.native.entity.bodyOpaque = false; },
-    (t) => { t.player.native.entity.fadeAlpha = 0.5; }]) {
+    (t) => { t.player.native.entity.fadeAlpha = 1.1; }]) {
     const t = fixture(); change(t); assert.throws(() => t.renderer.draw(t.game));
     assert.equal(t.canvas.fills, 0); assert.equal(t.canvas.draws.length, 0); assert.equal(t.canvas.puts, 0);
   }
@@ -231,6 +236,60 @@ run("mounted native actor cannot grant framework presentation to the strict rend
   assert.throws(() => t.renderer.draw(t.game), /骑乘/);
   assert.equal(t.canvas.puts, 0); assert.equal(t.canvas.draws.length, 0);
 });
+
+const { startFieldActorVisibility, tickFieldActorVisibility } = await load("src/core/field-actor-visibility.js");
+const applyVisibility = (entity, next) => { entity.visible = next.visible; entity.fadeAlpha = next.fadeAlpha;
+  if (Object.hasOwn(next, "visibilityFade")) entity.visibilityFade = next.visibilityFade; };
+const { compileFrameworkFieldPresentation } = await load("src/compiler/framework-field-presentation.js");
+run("real ordinary Renderer applies the two material alpha stages without changing frame alpha or actor owner", () => {
+  const t = fixture(), entity = t.player.native.entity, animation = t.player.animation;
+  applyVisibility(entity, startFieldActorVisibility(entity, false, 1, 0));
+  applyVisibility(entity, tickFieldActorVisibility(entity, .5));
+  t.renderer.draw(t.game);
+  assert.deepEqual(pixel(t, 56, 49), [255, 0, 0, 64]);
+  assert.equal(t.player.native.entity, entity); assert.equal(t.player.animation, animation);
+  assert.equal(t.player.animation.frame().alpha, 1); assert.equal(entity.fadeAlpha, .5);
+  assert.equal(t.canvas.puts, 1); assert.equal(t.canvas.draws.length, 0);
+});
+run("head RT RGBA lerps happen after source material-alpha product, rather than final-image opacity", () => {
+  const t = fixture({ targets: true, host: true }); addTargetTile(t, [0, 0, 255, 128]);
+  const entity = t.player.native.entity;
+  applyVisibility(entity, startFieldActorVisibility(entity, false, 1, 0));
+  applyVisibility(entity, tickFieldActorVisibility(entity, .5));
+  t.renderer.draw(t.game);
+  assert.deepEqual(pixel(t, 56, 11), [194, 3, 35, 64]);
+  assert.equal(entity.fadeAlpha, .5); assert.equal(t.canvas.puts, 1);
+});
+run("flat-field Web presentation draws the same existing actor opacity through real Canvas inputs", () => {
+  const t = fixture({ host: true }), tilemap = structuredClone(t.f.tilemap), group = tilemap.data.layers[0];
+  group.visible = true; group.opacity = 1;
+  for (const layer of group.layers) Object.assign(layer, { visible: true, opacity: 1, width: 20, height: 16, data: Array(320).fill(0) });
+  const flat = compileFrameworkFieldPresentation({ policy: "framework-ordinary-field-flat-v1", sources: t.f.sources,
+    tilemap, mapPackage: t.f.mapPackage, mapSize: { width: 20, height: 16 }, mapRange: t.f.map.mapRange,
+    renderHost: ordinaryFieldCompositionRenderHost() });
+  t.content.map.nativeComposition = flat.composition;
+  t.content.map.layers = group.layers;
+  t.content.developmentProfile = { fieldPresentation: flat.view.policy }; t.content.entry = { viewPlan: { isWorld: false } };
+  for (const actor of Object.values(t.actors)) {
+    const entity = actor.native.entity;
+    entity.viewBinding = { map: flat.view.contextId, layer: entity.layer, properties: projectFieldActorView(flat.view, entity.layer) };
+    entity.transparentTextures = { first: null, second: null };
+  }
+  const entity = t.player.native.entity, animation = t.player.animation;
+  applyVisibility(entity, startFieldActorVisibility(entity, false, 1, 0));
+  applyVisibility(entity, tickFieldActorVisibility(entity, .5));
+  t.renderer.draw(t.game);
+  assert.deepEqual(pixel(t, 56, 11), [71, 13, 20, 255]);
+  assert.equal(t.player.native.entity, entity); assert.equal(t.player.animation, animation);
+  assert.equal(entity.fadeAlpha, .5); assert.equal(t.canvas.puts, 1);
+});
+
+run("ordinary fading does not grant mounted actor alpha propagation", () => {
+  const t=mountedFixture();t.game.transportationPresentation="framework-development";
+  t.player.native.entity.fadeAlpha=.5;
+  assert.throws(()=>t.renderer.draw(t.game),/骑乘/);assert.equal(t.canvas.puts,0);assert.equal(t.canvas.draws.length,0);
+});
+
 await mkdir(root + "build/reports", { recursive: true });
 const report = { kind: "field-native-composition-ui", tests, passed: tests.length, rendererSha256: (await import("node:crypto")).createHash("sha256")
   .update(await readFile(root + "apps/game/renderer.js")).digest("hex"), controlledCanvas: true, browserVerified: false, originalGameParityVerified: false };

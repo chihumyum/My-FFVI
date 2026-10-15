@@ -488,6 +488,11 @@ export class WorldSession {
       stop = from.stop;
     if (stop?.kind !== "map-transition")
       throw new Error("No pending map transition");
+    // Native delayed callbacks capture the old entity instance. Until the
+    // original cross-map lifetime is proved, never rebind them to a new map
+    // or serialize an incomplete actor fade into the destination candidate.
+    if (from.actorVisibilityBusy)
+      throw new Error("Pending source visibility needs a cross-map actor lifetime provider");
     if (this.sourceOrigin) {
       if (catalog.contentHash !== this.sourceOrigin.catalogHash)
         throw new Error("Source world catalog changed during the session");
@@ -653,6 +658,7 @@ export class WorldSession {
           ...(this.owned?.current.transportationTimestamp ? { transportationTimestamp: this.owned.current.transportationTimestamp } : {}),
           ...(this.owned?.current.soundPresentation ? { soundPresentation: this.owned.current.soundPresentation } : {}),
           ...(this.owned?.current.sourceMessageSequence ? { sourceMessageSequence: this.owned.current.sourceMessageSequence } : {}),
+          ...(this.owned?.current.conditionLeaderActivity ? { conditionLeaderActivity: this.owned.current.conditionLeaderActivity } : {}),
           ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
         from.fader.fork(),
         from.cameraSnapshot ?? undefined,

@@ -1,3 +1,4 @@
+import { actorFadeActive, sourceVisibilityDelayDue } from "./field-actor-visibility.js";
 import type {
   Direction,
   FieldContent,
@@ -22,8 +23,13 @@ import {
   type FieldInventoryTransaction,
 } from "./inventory-event.js";
 import { executePartyEvent, type FieldPartyPort, type PartyAppearanceCandidate } from "./party.js";
-import { executeOwnedConditionEvent, type FieldOwnedConditionPort } from "./owned-condition.js";
+import { executeOwnedConditionEvent, type FieldOwnedConditionPort,
+  type OwnedConditionAppearanceStep } from "./owned-condition.js";
+import { fieldUsesCoreRegisters, initialFieldCoreRegisters, parseFieldCoreRegisters,
+  projectFieldCoreI0, projectFieldCoreSlots, type FieldCoreRegisters } from "./field-core-registers.js";
 import { executeFieldRecoveryEvent, type FieldRecoveryPort } from "./field-recovery.js";
+import { prepareFieldConditionActors } from "./field-condition-actors.js";
+import type { FieldConditionActivityPort } from "./field-condition-activity.js";
 import { fieldInstructionRequirements, assessFieldRequirements,
   type FieldAdmissionContext } from "./field-content-admission.js";
 import { executeSourcePresentation, cloneSourcePresentationContext, sourcePresentationCheckpoint,
@@ -250,6 +256,8 @@ export type FieldNativeRestoreDependencies = {
   providers(field: FieldGame): () => FieldPuppetHostProviders;
 };
 type Task = {
+  /** One bank on the existing Core/Task; no EventState or session register owner. */
+  generalRegisters: FieldCoreRegisters;
   id: number;
   script: string;
   pc: number;
@@ -343,6 +351,9 @@ export type FieldGameOptions = {
   sourcePresentation?: SourcePresentationPort;
   /** Read-only admission before any shop greeting or interaction is published. */
   shop?: { validate(groupId: number): void };
+  /** The host must additionally know Behaviour.enabled and ancestor activity.
+   * Saved visibility cannot grant this native condition-leader capability. */
+  conditionLeaderActivity?: FieldConditionActivityPort;
   ownedConditions?: FieldOwnedConditionPort;
   recovery?: FieldRecoveryPort;
   inventory?: FieldInventoryPort;
@@ -419,6 +430,10 @@ export class FieldGame {
     // A helper's source flag cannot stand in for the active event root.
     const visual = this.eventRootScript === null ? undefined : this.content.scriptSystemFlags?.[this.eventRootScript];
     if (visual?.keepBadStatusVisual !== undefined) context.keepBadStatusVisual = visual.keepBadStatusVisual;
+    context.conditionLeaderAvailable = !!(this.player.native && this.partyActors && this.options.partyAppearance &&
+      this.options.puppetActors && this.nativeActorBindings && this.nativeRuntime?.animationKeys &&
+      this.nativeActorProviders && this.camera && this.content.cameraHost && this.nativeRuntime.mapLifecycle &&
+      typeof this.options.conditionLeaderActivity?.prepare === "function");
     if (op.kind === "field-sound" && (op.command.kind === "sync" || op.command.kind === "stop")) {
       try { context.soundVoiceActive = this.se.isPlaying(this.eventState.read({
         category: "ScriptLocalVariable", index: op.command.handleSlot })); }
@@ -525,6 +540,18 @@ export class FieldGame {
   readonly mapTopology: FieldMapTopology | null;
   private readonly collisionMappings = new Map<number, number[]>();
   readonly actors: Record<string, Actor> = {};
+  private nextVisibilityTimer = 1;
+  private readonly visibilityTimers: {
+    ticket: number; op: Extract<Op, { kind: "actor-visibility" }>; actor: Actor;
+    entity: NonNullable<Actor["native"]>["entity"]; recordedSeconds: number; delaySeconds: number;
+    programName: string; program: Op[]; webPc: number; instruction: Extract<Op, { kind: "actor-visibility" }>;
+  }[] = [];
+  private readonly visibilityJournal: { ticket: number | null; phase: "queued" | "applied";
+    site: Site; actorId: string; atMilliseconds: number; visible: boolean; durationSeconds: number; delaySeconds: number }[] = [];
+  get actorVisibilityExecutions() { return structuredClone(this.visibilityJournal); }
+  get actorVisibilityBusy(): boolean {
+    return this.visibilityTimers.length > 0 || Object.values(this.actors).some(actor => actor.native && actorFadeActive(actor.native.entity));
+  }
   private readonly npcBindings: Map<string, FrameworkNpcActivityBinding>;
   private readonly npcActivities = new Map<string, NpcActivityRuntime>();
   private nextNpcEvent = 1;
@@ -751,6 +778,7 @@ export class FieldGame {
   stop: Stop | null = null;
   time = 0;
   private tasks: Task[] = [];
+  private coreRegisterPublishing = false;
   private nextEventSave = 1;
   private pendingEventSave: { request: GameEventSaveRequest; task: Task;
     barrier: { script: string; pc: number } } | null = null;
@@ -1362,6 +1390,129 @@ export class FieldGame {
       ? { prepareBatch: (steps) => this.prepareNativePartyRenderer(steps) }
       : (media, plan) => this.preparePartyRenderer(media, plan);
   }
+  /** One native draft carries every target's Refresh(false) then the source
+   * condition-leader effects. Only prepared writes remain after its last fence. */
+  private prepareOwnedConditionAppearance(task: Task, op: Extract<Op, { kind: "owned-condition" | "field-recovery" }>,
+    steps: readonly OwnedConditionAppearanceStep[], coreManaged = false): FieldPartyActorPublication {
+    this.requireInstructionProviders(op, task.actor, true);
+    const tasks = this.tasks, script = task.script, pc = task.pc, actorId = task.actor,
+      time = this.time, root = this.eventRootScript, bank = task.generalRegisters,
+      source = canonical(op), stack = canonical(task.stack);
+    const flag = this.content.scriptSystemFlags?.[root ?? script]?.keepBadStatusVisual;
+    if (typeof flag !== "boolean") throw new Error("Unknown source condition-visual context");
+    const activity = this.options.conditionLeaderActivity, activityPrepare = activity?.prepare,
+      activityPolicy = activity?.policy, actorBaseline = this.nativeActorStateFingerprint,
+      factory = this.nativeRuntime?.mapLifecycle?.factory, factoryHash = canonical(factory ?? null);
+    const validateTask = () => {
+      if (this.tasks !== tasks || !tasks.includes(task) || task.done || task.script !== script || task.pc !== pc ||
+          task.actor !== actorId || task.generalRegisters !== bank || this.time !== time ||
+          canonical(task.stack) !== stack || this.eventRootScript !== root || this.stop ||
+          this.content.scriptSystemFlags?.[root ?? script]?.keepBadStatusVisual !== flag ||
+          this.options.conditionLeaderActivity !== activity || activity?.prepare !== activityPrepare || activity?.policy !== activityPolicy ||
+          this.nativeRuntime?.mapLifecycle?.factory !== factory || canonical(factory ?? null) !== factoryHash ||
+          this.nativeActorStateFingerprint !== actorBaseline || canonical(this.content.scripts[script]?.[pc - 1]) !== source)
+        throw new Error("Stale owned condition actor task or source context");
+    };
+    if (!this.partyActors) throw new Error("Party actor refresh is unavailable");
+    let validateActors: () => void, commitActors: () => void;
+    if (this.player.native) {
+      const port = this.options.puppetActors, appearance = this.options.partyAppearance,
+        bindings = this.nativeActorBindings, runtime = this.nativeRuntime, camera = this.camera,
+        providers = this.nativeActorProviders, map = this.content.cameraHost?.mapRange;
+      if (!port || !appearance || !bindings || !runtime?.animationKeys || !camera || !providers || !map)
+        throw new Error("Native condition actor source host is unavailable");
+      const scope = flag && activity ? activity.prepare({ readActors: () => this.actors,
+        readBindings: () => this.nativeActorBindings!, readFactory: () => {
+          const bound = this.nativeRuntime?.mapLifecycle?.factory;
+          if (!bound) throw new Error("Condition leader native factory source is unavailable");
+          return bound;
+        } }) : null;
+      const prepared = prepareFieldConditionActors({ keepBadStatusVisual: flag,
+        readActors: () => this.actors, readPartyActors: () => this.partyActors!, readCatalog: () => appearance.catalog,
+        readPuppetContext: () => port.read(), readBindings: () => this.nativeActorBindings!,
+        readMapRange: () => this.content.cameraHost!.mapRange, readCharacters: () => this.content.characters,
+        readAnimationKeys: () => this.nativeRuntime!.animationKeys!, readProviders: () => this.nativeActorProviders!(),
+        readCamera: () => { const state = camera.snapshot(); return { id: this.cameraActorId,
+          position: state.dummy.position, layer: state.dummy.layer }; },
+        readCameraOffset: () => this.mapScrollOffset,
+        ...(scope ? { readActiveAndEnabled: (id, draft) => scope.isActiveAndEnabled(id, draft) } : {}),
+        transportationId: this.transportationId,
+        ...(this.transportationPresentation ? { transportationPresentation: this.transportationPresentation } : {}),
+      }, steps);
+      validateActors = () => {
+        if (this.options.puppetActors !== port || this.options.partyAppearance !== appearance ||
+            this.nativeActorBindings !== bindings || this.nativeRuntime !== runtime || this.camera !== camera ||
+            this.nativeActorProviders !== providers || this.content.cameraHost?.mapRange !== map)
+          throw new Error("Stale native condition actor host");
+        scope?.validate(); prepared.validate();
+      };
+      // Fetch the detached value before publishing. After the first write no
+      // host reads, media preparation or arbitrary callbacks remain.
+      const offset = prepared.cameraOffset;
+      commitActors = () => { prepared.commit(); this.mapScrollOffset = offset; };
+    } else {
+      if (flag) throw new Error("Source condition leader activity requires a native actor host");
+      const legacy = this.partyActors.prepareSequence(steps, this.partyRenderer());
+      validateActors = () => legacy.validate();
+      // Legacy renderer commits only prevalidated writes. Its callable's last
+      // validating phase remains before the Task fence and every owned write.
+      commitActors = () => legacy(validateTask);
+    }
+    let consumed = false;
+    const validate = () => {
+      if (consumed || this.coreRegisterPublishing) throw new Error("Stale condition actor publication");
+      validateActors(); validateTask();
+    };
+    const publish = (beforeWrite?: () => void) => {
+      if (consumed || (!coreManaged && this.coreRegisterPublishing) || (coreManaged && !this.coreRegisterPublishing))
+        throw new Error("Stale condition actor publication");
+      if (!coreManaged) this.coreRegisterPublishing = true;
+      try {
+        validateActors(); validateTask(); beforeWrite?.();
+        commitActors(); consumed = true;
+      } finally { if (!coreManaged) this.coreRegisterPublishing = false; }
+    };
+    validateTask();
+    return Object.assign(publish, { validate });
+  }
+  /** The real MainCore bank is part of this Task, not the owned roster or
+   * ScriptLocal. Fence it AFTER the renderer's final callback, then publish
+   * only prepared data inside GameState's existing owned publication lock. */
+  private prepareOwnedConditionCore(task: Task, op: Extract<Op, { kind: "owned-condition" }>,
+    steps: readonly OwnedConditionAppearanceStep[], writes: readonly number[]) {
+    const tasks = this.tasks, before = task.generalRegisters, script = task.script,
+      pc = task.pc, time = this.time, stack = canonical(task.stack), root = this.eventRootScript;
+    const next = projectFieldCoreI0(before, writes), source = canonical(op);
+    const validateCore = () => {
+      if (this.tasks !== tasks || !tasks.includes(task) || task.done || task.slot !== null ||
+          task.treasureRoot || task.actor !== "-1001" || task.sourceEntityId !== null ||
+          task.script !== script || task.pc !== pc || this.time !== time ||
+          canonical(task.stack) !== stack || this.eventRootScript !== root || this.stop ||
+          task.generalRegisters !== before || canonical(this.content.scripts[script]?.[pc - 1]) !== source)
+        throw new Error("Stale owned condition MainCore task");
+      parseFieldCoreRegisters(before);
+    };
+    validateCore();
+    let appearance: FieldPartyActorPublication | null = null;
+    if (steps.length) appearance = this.prepareOwnedConditionAppearance(task, op, steps, true);
+    let consumed = false;
+    const validate = () => {
+      if (consumed || this.coreRegisterPublishing) throw new Error("Stale owned condition Core publication");
+      appearance?.validate(); validateCore();
+    };
+    const publish = () => {
+      if (consumed || this.coreRegisterPublishing) throw new Error("Stale owned condition Core publication");
+      this.coreRegisterPublishing = true;
+      try {
+        // Existing FieldPartyActors beforeWrite is exactly after all native
+        // providers have returned and before its first actor/context write.
+        if (appearance) appearance(validateCore); else validateCore();
+        task.generalRegisters = next;
+        consumed = true;
+      } finally { this.coreRegisterPublishing = false; }
+    };
+    return Object.assign(publish, { validate });
+  }
   private prepareNativePartyRenderer(steps: readonly FieldPartyActorRenderStep[]) {
     if (!this.nativeActorProviders || !this.nativeRuntime?.animationKeys || !this.options.partyAppearance || !this.camera)
       throw new Error("Native party appearance source providers are unavailable");
@@ -1426,6 +1577,7 @@ export class FieldGame {
       !this.fieldActivityBusy &&
       !this.fader.active &&
       !this.colorFilterState?.active &&
+      !this.actorVisibilityBusy &&
       !this.interaction &&
       Object.values(this.actors).every((a) => a.motion === null || this.isAutonomousMotion(a))
     );
@@ -1456,6 +1608,7 @@ export class FieldGame {
       ...(this.transportationPresentation ? { transportationPresentation: this.transportationPresentation } : {}) };
   }
   private nativeCheckpoint(continuation = false): FieldCheckpoint["native"] {
+    if (this.actorVisibilityBusy) throw new Error("Active source visibility timer/fade cannot be checkpointed");
     if (!this.nativeActorBindings) return null;
     if (!this.nativeRuntime?.mapLifecycle || !this.nativeActorProviders || !this.nativeRuntime.animationKeys)
       throw new Error("Native actor checkpoint source capabilities are incomplete");
@@ -1531,7 +1684,7 @@ export class FieldGame {
     if (this.stop || this.effects || this.options.fieldEffectMap?.hasHistory ||
         this.options.fieldEffectMap && !this.options.fieldEffectMap.active ||
         this.sourcePresentationContext?.advertisementOpeningFader === "present" ||
-        this.fader.active || this.colorFilterState?.active || this.sourceMessage.active || this.messageWindow ||
+        this.fader.active || this.colorFilterState?.active || this.actorVisibilityBusy || this.sourceMessage.active || this.messageWindow ||
         this.pendingChoice || this.shopTask || this.treasureSceneState !== "player" ||
         this.openTriggers.busy || this.interaction || this.pendingPlayerStep ||
         Object.values(this.actors).some((actor) => actor.motion !== null && !this.isAutonomousMotion(actor)) ||
@@ -1549,7 +1702,8 @@ export class FieldGame {
     const lifecycle = this.puppetLifecycle;
     if (lifecycle?.finished) throw new Error("Event save cannot resume a completed puppet lifecycle");
     return captureFieldEventCheckpoint({ barrier, main: { id: task.id, script: task.script, pc: task.pc,
-      stack: [...task.stack], actor: task.actor, sourceEntityId: task.sourceEntityId, range: { ...task.range } },
+      stack: [...task.stack], actor: task.actor, sourceEntityId: task.sourceEntityId, range: { ...task.range },
+      ...(fieldUsesCoreRegisters(this.content) ? { generalRegisters: parseFieldCoreRegisters(task.generalRegisters) } : {}) },
       eventRootScript: this.eventRootScript,
       scriptHook: this.scriptHook && { script: this.scriptHook.script, pc: this.scriptHook.pc,
         range: { ...this.scriptHook.range }, locals: this.eventState.exportScriptLocalFrame(this.scriptHook.locals) },
@@ -1734,7 +1888,8 @@ export class FieldGame {
       if (s.native?.completedScript) throw new Error("Event continuation cannot also own a completed script");
       const main = execution.main, task = next.task(main.script, main.pc, main.actor, main.id);
       Object.assign(task, { stack: [...main.stack], range: { ...main.range },
-        sourceEntityId: main.sourceEntityId, lastClock: s.time });
+        sourceEntityId: main.sourceEntityId, lastClock: s.time,
+        ...(main.generalRegisters ? { generalRegisters: parseFieldCoreRegisters(main.generalRegisters) } : {}) });
       next.tasks = [task];
       next.eventRootScript = execution.eventRootScript;
       next.scriptHook = execution.scriptHook && { ...execution.scriptHook,
@@ -2234,6 +2389,16 @@ export class FieldGame {
     if (op.kind === "actor-visibility") {
       if (typeof op.visible !== "boolean") throw new Error("Invalid source actor visibility");
       const visible = op.visible;
+      if (op.timing && op.timing.durationSeconds !== 0) {
+        if (!actor?.native || !this.options.puppetActors || this.effectBoard(actorId) || actorId === this.cameraActorId ||
+            this.tileAnimations.has(actorId) || !actor.native.entity.character || !actor.animation)
+          throw new Error("Timed source visibility requires its ordinary native sprite owner");
+        if (!Number.isFinite(op.timing.durationSeconds) || Math.fround(op.timing.durationSeconds) !== op.timing.durationSeconds ||
+            op.timing.durationSeconds <= 0 || !Number.isFinite(op.timing.delaySeconds))
+          throw new Error("Invalid source actor visibility timing");
+        return this.options.puppetActors.prepare({ leaderId: null, assignments: null, effects: [{ kind: "visibility-fade",
+          actor: actor.id, visible, durationSeconds: op.timing.durationSeconds, nowSeconds: this.time / 1000 }] });
+      }
       if (this.effectBoard(actorId)) {
         const next = this.effects!.prepare([{ kind: "visibility", id: actorId, visible, duration: 0 }]);
         return () => next.commit();
@@ -2284,6 +2449,58 @@ export class FieldGame {
     }, (snapshot, providers) => projectNativeFieldPosition(snapshot, providers, actor.id, command,
       this.content.cameraHost!.mapRange, "source-absent", referenceActorId),
     () => { if (resolveReference() !== referenceActorId) throw new Error("Stale source relative SetPos selector"); });
+  }
+  private executeActorVisibility(actorId: string, op: Extract<Op, { kind: "actor-visibility" }>,
+    programName: string, webPc: number): void {
+    const durationSeconds = op.timing?.durationSeconds ?? 0, delaySeconds = op.timing?.delaySeconds ?? 0;
+    if (!Number.isFinite(delaySeconds) || !Number.isFinite(durationSeconds) || durationSeconds < 0 ||
+        Math.fround(durationSeconds) !== durationSeconds) throw new Error("Invalid source actor visibility timing");
+    const actor = this.actors[actorId];
+    // Validate every effect dependency before registering deferred work. The
+    // returned candidate is deliberately not committed until its actual due update.
+    const publish = this.prepareActorControl(actorId, op);
+    if (delaySeconds !== 0) {
+      if (!actor?.native || this.effectBoard(actorId) || actorId === this.cameraActorId || this.tileAnimations.has(actorId))
+        throw new Error("Delayed source visibility requires its captured native actor identity");
+      const program=this.content.scripts[programName];
+      if (!program || program[webPc] !== op) throw new Error("Delayed source visibility lost its issuing Web instruction");
+      const ticket = this.nextVisibilityTimer++;
+      this.visibilityTimers.push({ ticket, op: structuredClone(op), programName, program, webPc, instruction: op,
+        actor, entity: actor.native.entity,
+        recordedSeconds: Math.fround(this.time / 1000), delaySeconds });
+      this.visibilityJournal.push({ ticket, phase: "queued", site: op, actorId, atMilliseconds: this.time,
+        visible: op.visible, durationSeconds, delaySeconds });
+    } else {
+      publish(); this.visibilityJournal.push({ ticket: null, phase: "applied", site: op, actorId,
+        atMilliseconds: this.time, visible: op.visible, durationSeconds, delaySeconds });
+    }
+  }
+  private advanceActorVisibilityTimers(): void {
+    // Insert-at-zero plus reverse native scan yields oldest-first delivery.
+    // Copy the eligible old set: new callbacks never execute in this Update.
+    for (const pending of [...this.visibilityTimers]) {
+      if (!sourceVisibilityDelayDue(pending.recordedSeconds, pending.delaySeconds, this.time / 1000)) continue;
+      const { actor, op } = pending;
+      if (this.actors[actor.id] !== actor || actor.native?.entity !== pending.entity ||
+          this.content.scripts[pending.programName] !== pending.program ||
+          pending.program[pending.webPc] !== pending.instruction || canonical(pending.instruction) !== canonical(op))
+        throw new Error("Delayed source visibility lost its captured actor or source instruction");
+      this.prepareActorControl(actor.id, op)();
+      const index = this.visibilityTimers.indexOf(pending);
+      if (index < 0) throw new Error("Source visibility timer ticket was reused");
+      this.visibilityTimers.splice(index, 1);
+      this.visibilityJournal.push({ ticket: pending.ticket, phase: "applied", site: op, actorId: actor.id,
+        atMilliseconds: this.time, visible: op.visible, durationSeconds: op.timing?.durationSeconds ?? 0,
+        delaySeconds: pending.delaySeconds });
+    }
+  }
+  private advanceActorVisibilityFades(): void {
+    const effects = Object.values(this.actors).flatMap(actor => actor.native && actorFadeActive(actor.native.entity) &&
+      (this.entityUpdateMask & (actor.native.updateAttribute ?? 2)) !== 0
+      ? [{ kind: "visibility-tick" as const, actor: actor.id, nowSeconds: this.time / 1000 }] : []);
+    if (!effects.length) return;
+    if (!this.options.puppetActors) throw new Error("Source actor fade lost its native publication owner");
+    this.options.puppetActors.prepare({ leaderId: null, assignments: null, effects })();
   }
   /** The scoped Web observer reads the current registration order and the
    * existing native actors. Immutable host bindings never become a second
@@ -2379,6 +2596,7 @@ export class FieldGame {
     return hits[0] ?? null;
   }
   confirm(): void {
+    if (this.coreRegisterPublishing) throw new Error("Core publication is in progress");
     // Confirm is not a choice response. Even an answered request waits for its
     // own interpreter clock before another input can dismiss the next message.
     if (this.stop || this.pendingChoice) return;
@@ -2660,6 +2878,8 @@ export class FieldGame {
     if (handoff) this.sourceMessageTask = null;
     this.retainedMessage = null;
     this.dialogue = prepared;
+    // Manual source Msg is exactly rValues[0] === 0; r1 is untouched.
+    task.generalRegisters = projectFieldCoreSlots(task.generalRegisters, { i: { 0: 0, 1: 0, 2: 0 }, r: { 2: 0 } });
   }
   private finishChoice(t: Task): void {
     const pending = this.pendingChoice;
@@ -2716,6 +2936,7 @@ export class FieldGame {
   }
   /** Integer 10 ms simulation steps make render-frame partitioning irrelevant. */
   advance(milliseconds: number): void {
+    if (this.coreRegisterPublishing) throw new Error("Core publication is in progress");
     if (
       !Number.isFinite(milliseconds) ||
       milliseconds < 0 ||
@@ -2744,11 +2965,18 @@ export class FieldGame {
       this.tileAnimations.advance(10);
       this.openTriggers.advance();
       this.time += 10;
+      try { this.advanceActorVisibilityTimers(); }
+      catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       this.fader.advance(0.01);
       this.colorFilterState?.advance(0.01);
       this.advanceStoryTimer(10, this.messageWindow || this.choicePending || this.sourceMessage.active ? "message"
         : this.openTriggers.busy || this.treasureSceneState === "message" ? "gimmick" : this.fieldActivityBusy ? "event" : "player");
       this.sourceMessage.advance(0.01);
+      // Use the same post-message update mask as the existing actor loop.
+      // Actor animation and this callback-free scalar fade commute within the
+      // fixed Web step; native host callback/reentry is not admitted here.
+      try { this.advanceActorVisibilityFades(); }
+      catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       let entered = false;
       let walkParty: number | null = null;
       // Integer-like object keys are numerically reordered by JavaScript.
@@ -2953,6 +3181,7 @@ export class FieldGame {
   }
   private beginRoot(script: string, publishStory?: () => void): void {
     try {
+      if (this.coreRegisterPublishing) throw new Error("Core publication is in progress");
       if (this.hasUnfinishedInterpolation())
         throw new Error("Starting a script cannot discard unfinished source interpolation registers");
       if (this.options.nativeActorPreparation && !this.nativeActorBindings)
@@ -3011,6 +3240,7 @@ export class FieldGame {
     // treasure coroutines are not cores and keep their existing owner.
     this.tasks = this.tasks.filter((other) => other === t || other.treasureRoot);
     Object.assign(t, plan, { stack: [], wait: 0, state: "ready", lastClock: this.time,
+      generalRegisters: initialFieldCoreRegisters(),
       puppetWait: null, scriptShop: null, fadeWait: null, colorFadeWait: null, flashWait: null, cameraPath: null, cameraLerp: null, scriptMove: null, scriptLerp: null, remaining: 0, move: null,
       animationWait: false, audioWait: null, bgmReplay: null, autoSaveWait: null, sourceMessageWait: null, soundWait: null, treasure: null, done: false });
   }
@@ -3077,6 +3307,7 @@ export class FieldGame {
   }
   private task(script: string, pc: number, actor: string, id = this.nextTask++): Task {
     return {
+      generalRegisters: initialFieldCoreRegisters(),
       id,
       script,
       pc,
@@ -3119,7 +3350,7 @@ export class FieldGame {
     return this.tasks.some((task) => !task.done && !!(task.scriptLerp || task.cameraLerp || task.cameraPath));
   }
   private hasUnfinishedNativeEncounterActivity(): boolean {
-    return !!(this.pendingChoice || this.messageWindow || this.sourceMessage.active || this.shopTask ||
+    return !!(this.actorVisibilityBusy || this.pendingChoice || this.messageWindow || this.sourceMessage.active || this.shopTask ||
       this.treasureHandoffBlocked() || Object.values(this.actors).some((actor) => actor.motion !== null && !this.isAutonomousMotion(actor)));
   }
   /** Validate the handoff before consuming rewards. The commit only schedules
@@ -3698,6 +3929,13 @@ export class FieldGame {
                 const next = this.sourceMessage.prepare({ kind: "source-message", command: { kind: "close" } }), publish = this.prepareDialogueMask(12);
                 publish(); next.commit(); this.sourceMessageTask = null;
               }
+              // The existing cursor owns the active timer. Once complete,
+              // transfer its final source register projection back to Task;
+              // do not create a second mutable message clock.
+              if (pending.cursor.pageSeconds !== null)
+                t.generalRegisters = projectFieldCoreSlots(t.generalRegisters, {
+                  i: { 1: result.cursor.finalTimerStarted ? 0 : -1 }, r: { 1: result.cursor.anchorTime / 1000 },
+                });
             }
             t.sourceMessageWait = null;
           } catch (error) { this.block(error instanceof Error ? error.message : String(error), pending.op); return; }
@@ -3740,6 +3978,7 @@ export class FieldGame {
           const flash = t.flashWait;
           try {
             if (pollFieldFlash(this.fader, flash.cursor, frameDeltaSeconds) === "wait") return;
+            t.generalRegisters = projectFieldCoreSlots(t.generalRegisters, { i: { 7: 1 } });
             t.flashWait = null;
           } catch (error) { this.block(error instanceof Error ? error.message : String(error), flash.op); return; }
         }
@@ -4046,14 +4285,10 @@ export class FieldGame {
             try {
               const prepare: Parameters<typeof executeOwnedConditionEvent>[2] = (steps) => {
                 if (!steps.length) return () => {};
-                this.requireInstructionProviders(op, t.actor, true);
-                const visual = this.content.scriptSystemFlags?.[this.eventRootScript ?? t.script];
-                if (visual?.keepBadStatusVisual !== false)
-                  throw new Error("Unknown or unsupported owned condition-visual context");
-                if (!this.partyActors) throw new Error("Party actor refresh is unavailable");
-                return this.partyActors.prepareSequence(steps, this.partyRenderer());
+                return this.prepareOwnedConditionAppearance(t, op, steps);
               };
-              if (op.kind === "owned-condition") executeOwnedConditionEvent(op, this.options.ownedConditions, prepare);
+              if (op.kind === "owned-condition") executeOwnedConditionEvent(op, this.options.ownedConditions, prepare,
+                (steps, writes) => this.prepareOwnedConditionCore(t, op, steps, writes));
               else executeFieldRecoveryEvent(op, this.options.recovery, prepare);
             } catch (error) {
               this.block(error instanceof Error ? error.message : String(error), op);
@@ -4244,6 +4479,10 @@ export class FieldGame {
               child.range = entry.range;
               child.slot = entry.slot;
               child.state = "awake";
+              // Native Entry/Exit do not clear a reused PuppetCore's bank;
+              // ResetAll drops old tasks only after their banks are reset.
+              const previousCore = this.tasks.filter(other => other.slot === entry.slot).at(-1);
+              if (previousCore) child.generalRegisters = previousCore.generalRegisters;
               publish();
               if (plan?.assignments) lifecycle!.assignments = plan.assignments;
               this.tasks.push(child);
@@ -4377,7 +4616,7 @@ export class FieldGame {
               actor.direction = "left";
             break;
           case "actor-visibility":
-            try { this.prepareActorControl(t.actor, op)(); }
+            try { this.executeActorVisibility(t.actor, op, t.script, t.pc - 1); }
             catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
           case "field-camera":
@@ -4582,6 +4821,7 @@ export class FieldGame {
             try {
               if (!this.ordinaryScreenEffectsAvailable) throw new Error("Ordinary Web screen-effects host is unavailable");
               t.flashWait = { op, cursor: startFieldFlash(this.fader, op, frameDeltaSeconds) };
+              t.generalRegisters = projectFieldCoreSlots(t.generalRegisters, { i: { 7: 0 } });
               return;
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
           case "source-message":
@@ -4612,10 +4852,17 @@ export class FieldGame {
               }
               const next = this.sourceMessage.prepare(preparedOp, timingOwner?.context), publish = this.options.sourceMessageEffects
                 ? this.options.sourceMessageEffects.prepare(next.effects) : this.prepareDialogueMask(next.effects[0]!.group);
+              const core = op.command.kind === "sequence" ? projectFieldCoreSlots(t.generalRegisters, {
+                i: { 0: op.command.seconds > 0 ? 1 : 0, 1: op.command.seconds > 0 ? -1 : 0,
+                  2: op.command.seconds > 0 && timingOwner!.context.integratorAutomatic ? 1 : 0 },
+                r: { 2: next.timing!.pageSeconds ?? op.command.seconds,
+                  ...(op.command.seconds > 0 ? { 1: this.time / 1000 } : {}) },
+              }) : null;
               if (typeof publish !== "function") throw new Error("Invalid source message host transaction");
               if (this.retainedMessage !== retained) throw new Error("Stale source message handoff");
               names?.validate(); timingOwner?.validate();
               publish(); next.commit(); this.sourceMessageTask = op.command.kind === "close" ? null : t.id;
+              if (core) t.generalRegisters = core;
               if (handoff) this.retainedMessage = null;
               if (op.command.kind === "sequence") {
                 const cursor = createSourceMessageTaskCursor(op.command, next.timing!, next.ticket, this.time);

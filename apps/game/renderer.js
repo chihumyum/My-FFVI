@@ -181,7 +181,8 @@ export class Renderer {
       if (!actor.native) throw new Error("平面世界混入未绑定演员");
       const entity = actor.native.entity, frame = actor.animation?.frame();
       if (!frame || actor.asset === null) continue;
-      if (!entity.character || entity.riding || !entity.bodyOpaque || entity.fadeAlpha !== 1)
+      if (!entity.character || entity.riding || !entity.bodyOpaque ||
+          !Number.isFinite(entity.fadeAlpha) || entity.fadeAlpha < 0 || entity.fadeAlpha > 1 || Math.fround(entity.fadeAlpha) !== entity.fadeAlpha)
         throw new Error("平面世界当前仅支持普通步行演员");
       validateFieldActorViewProjection(entity.viewBinding?.properties, definition.contextId, entity.layer);
       if (canonical(entity.viewBinding.properties) !== canonical(projectFieldActorView(view, entity.layer)))
@@ -216,7 +217,11 @@ export class Renderer {
         const index = ["BottomLayer", "GroundLayer", "UpperLayer", "CeilLayer"].indexOf(layer.name);
         for (const p of projected) if (p.actor.layer === index) {
           context.save(); context.translate(p.x, p.y); context.scale(p.frame.flip ? -1 : 1, 1);
-          context.globalAlpha = p.frame.alpha;
+          // The existing flat-field policy uses Canvas blending. Preserve the
+          // bound ordinary shader's two material-alpha inputs in its opacity;
+          // this remains Web flat presentation, not native pass equivalence.
+          const materialAlpha = p.actor.native.entity.fadeAlpha;
+          context.globalAlpha = Math.fround(Math.fround(p.frame.alpha * materialAlpha) * materialAlpha);
           context.drawImage(p.image, 0, 0, p.sprite.width, p.sprite.height,
             -p.sprite.width * p.sprite.pivot[0], -p.sprite.height * (1 - p.sprite.pivot[1]), p.sprite.width, p.sprite.height);
           context.restore();
@@ -269,8 +274,9 @@ export class Renderer {
       if (!actor.native) throw new Error("原生材质视口混入未绑定演员");
       const entity = actor.native.entity, frame = actor.animation?.frame();
       if (!frame || actor.asset === null) continue;
-      if (!entity.character || entity.riding && game.transportationPresentation !== "framework-development" ||
-          !entity.bodyOpaque || entity.fadeAlpha !== 1)
+      if (!entity.character || entity.riding && (game.transportationPresentation !== "framework-development" || entity.fadeAlpha !== 1) ||
+          !entity.bodyOpaque || !Number.isFinite(entity.fadeAlpha) || entity.fadeAlpha < 0 || entity.fadeAlpha > 1 ||
+          Math.fround(entity.fadeAlpha) !== entity.fadeAlpha)
         throw new Error("原生普通材质不支持当前骑乘或透明提供器");
       if (entity.shadowVisible) omissions.push({ kind: "native-character-shadow", actorId: actor.id });
       if (!entity.viewBinding?.properties) throw new Error("原生演员缺少普通材质绑定");
@@ -315,6 +321,7 @@ export class Renderer {
             image, source: { x: 0, y: 0, width: sprite.width, height: sprite.height - layer.crop },
             destination: { ...destination, x: destination.x + offset.x, y: destination.y + offset.y },
             flipX: pose.flip, flipY: false, diagonal: false, alpha: pose.alpha, depth,
+            materialAlpha: entity.fadeAlpha, depthWrite: entity.fadeAlpha >= 1,
             first: sampleTarget(textures.first), second: sampleTarget(textures.second) } });
         }
       }

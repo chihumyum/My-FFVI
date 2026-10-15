@@ -108,8 +108,17 @@ test("Ready Show and Hide retain sprite-less camera active/fade state in one sav
   restored.startEvent("main");
   assert.equal(restored.cameraSnapshot?.dummy.visibility.activeSelf, true);
   assert.equal(restored.cameraSnapshot?.dummy.visibility.fadeAlpha, 1);
-  for (const values of [[0.5, 0], [0, 0.5], [-0.5, 0]]) {
-    assert.equal(decodeFieldOp(raw("Hide", [], values), { script: "main", index: 0, source }, {}).kind, "blocked");
+  assert.equal(decodeFieldOp(raw("Hide", [], [-0.5, 0]), { script: "main", index: 0, source }, {}).kind, "blocked");
+  for (const values of [[0.5, 0], [0, 0.5]]) {
+    const op=decodeFieldOp(raw("Hide", [], values), { script: "main", index: 5, source }, {});
+    assert.equal(op.kind,"actor-visibility","The shared ABI decoder preserves timing independently of target type");
+    const ops=visibilitySequence();ops[5]=op;
+    const timed=new FieldGame(content(ops));timed.startEvent("main");
+    const before=timed.cameraSnapshot!.dummy.visibility;
+    for(let i=0;i<20&&!timed.stop;i++)timed.advance(10);
+    assert.equal(timed.stop?.kind,"unsupported");
+    assert.match(timed.stop!.message,/ordinary native sprite|captured native actor/);
+    assert.deepEqual(timed.cameraSnapshot!.dummy.visibility,before,"Timed camera host remains unavailable, without partial fade publication");
   }
 });
 

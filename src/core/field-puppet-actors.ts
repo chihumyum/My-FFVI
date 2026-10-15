@@ -64,6 +64,8 @@ export type FieldPuppetActorEffect =
   | { kind: "copy-layer"; actor: string; from: string }
   | { kind: "look" | "cue"; actor: string; from: string }
   | { kind: "show" | "hide" | "switch-transparent" | "apply-view-properties" | "attach-transparent"; actor: string }
+  | { kind: "visibility-fade"; actor: string; visible: boolean; durationSeconds: number; nowSeconds: number }
+  | { kind: "visibility-tick"; actor: string; nowSeconds: number }
   | { kind: "ride-out"; actor: string }
   | { kind: "ride-on"; actor: string; transportationId: number };
 

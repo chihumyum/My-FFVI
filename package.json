@@ -18,6 +18,8 @@
     "story:plan": "npm run build && node --max-old-space-size=8192 scripts/plan-story-runtime.mjs",
     "story-runtime:check": "npm run build && node --max-old-space-size=8192 scripts/check-story-runtime-capabilities.mjs && node scripts/check-field-timer.mjs && node scripts/check-field-auto-save.mjs",
     "source-system-flags:check": "npm run build && node --max-old-space-size=8192 scripts/check-source-system-flags.mjs --compiled dist",
+    "source-remove-all:check": "npm run story:build && .venv/bin/python scripts/inspect-owned-condition-all.py && node --max-old-space-size=8192 scripts/check-source-remove-all.mjs --audio-lane sha-verified-controlled-ack --leader-lane production-web-flat",
+    "field-visibility:check": "npm run build && node scripts/check-field-visibility-native.mjs && node --test scripts/visibility-cohort.test.mjs && node --max-old-space-size=8192 scripts/check-field-visibility-lifecycle.mjs --compiled dist --source-compiler dist && node scripts/check-field-native-composition-ui.mjs",
     "source-message-sequence:check": "npm run story:build && .venv/bin/python scripts/inspect-source-message-sequence.py && node --max-old-space-size=8192 scripts/check-source-message-sequence.mjs && node --max-old-space-size=8192 scripts/check-source-message-sequence-execution.mjs && node scripts/check-source-message-view.mjs",
     "internal-clocks:check": "npm run story:build && node --max-old-space-size=8192 scripts/check-story-corpus-execution.mjs && node --max-old-space-size=8192 scripts/check-internal-clocks.mjs",
     "named-shops:assess": "npm run build && node scripts/check-named-shops-lifecycle.mjs --compiled dist",

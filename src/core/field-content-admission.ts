@@ -20,6 +20,9 @@ export type FieldAdmissionContext = {
   actorKind: "actor" | "camera" | "effect" | "none" | "unknown";
   refreshRequired?: boolean;
   keepBadStatusVisual?: boolean;
+  /** A real native joint Refresh/Affect host; does not itself grant an actor
+   * activity/condition-resident/media provider. Missing retains old gates. */
+  conditionLeaderAvailable?: boolean;
   soundVoiceActive?: boolean;
 };
 export type FieldAdmissionDiagnostic = Pick<FieldRequirement, "capability" | "site" | "code" | "reason"> & {
@@ -238,14 +241,14 @@ export function deriveFieldContentRequirements(content: Pick<FieldContent, "cont
 }
 
 function validateContext(context: FieldAdmissionContext): void {
-  keys(context, ["providers", "actorKind"], ["refreshRequired", "keepBadStatusVisual", "soundVoiceActive"]);
+  keys(context, ["providers", "actorKind"], ["refreshRequired", "keepBadStatusVisual", "conditionLeaderAvailable", "soundVoiceActive"]);
   record(context.providers);
   for (const [provider, status] of Object.entries(context.providers))
     if (!(fieldProviders as readonly string[]).includes(provider) || !["available", "missing", "unknown"].includes(status))
       throw new Error("Invalid field admission provider state");
   if (!["actor", "camera", "effect", "none", "unknown"].includes(context.actorKind))
     throw new Error("Invalid field admission actor kind");
-  for (const key of ["refreshRequired", "keepBadStatusVisual", "soundVoiceActive"] as const)
+  for (const key of ["refreshRequired", "keepBadStatusVisual", "conditionLeaderAvailable", "soundVoiceActive"] as const)
     if (Object.hasOwn(context, key) && typeof context[key] !== "boolean")
       throw new Error("Invalid field admission context flag: " + key);
 }
@@ -272,7 +275,8 @@ export function assessFieldRequirements(requirements: readonly FieldRequirement[
     if (applies === false) continue;
     if (when === "deferred" || applies === undefined) status = "unknown";
     else if (capability === "conditionVisual")
-      status = context.keepBadStatusVisual === undefined ? "unknown" : context.keepBadStatusVisual ? "missing" : "available";
+      status = context.keepBadStatusVisual === undefined ? "unknown" : context.keepBadStatusVisual
+        ? context.conditionLeaderAvailable === true ? "available" : "missing" : "available";
     else if (capability === "scriptMotion") {
       if (context.actorKind === "unknown") status = "unknown";
       else if (context.actorKind === "none") { status = "missing"; reason = "Source script motion requires a bound actor"; }

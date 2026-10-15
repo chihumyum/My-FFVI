@@ -1,5 +1,7 @@
 # Ordinary native field composition
 
+v98 adds the ordinary actor fade inputs and conditional body/head depth writes, described in [shared story lifecycles](story-shared-lifecycles.md). The bound material alpha participates in both VS and PS before the existing head RT overlays; the flat Canvas route remains an explicit Web presentation policy. Riding/special-material and GPU parity limits remain. References below to rejecting all actor fades describe the earlier v33/v34 scope.
+
 v34 supplies the ordinary nonempty UpperLayer/CeilLayer render targets to the shared CPU compositor and real Canvas renderer. The source camera renders at 320×180 for the admitted 16:9 configuration; the Web display is point-resampled only after that source framebuffer is complete. This extends v33's body/head material implementation. Native shadows, particles and other actor/material modes retain their separate boundaries; a ready ordinary compositor does not certify a playable map.
 
 The original build is identified by `GameAssembly.dll` SHA-256 `1a7e12c90c6a734e17dda507dd6ab7555090dff6a1e96f3473a90c29916ca6dc`. No original shader bytecode, textures or decompiled source is committed. The native checker reads ignored local inputs and validates their identities.

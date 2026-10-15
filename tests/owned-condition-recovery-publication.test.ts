@@ -202,11 +202,11 @@ test("scalar MP recovery has no actor obligation but still uses once-only owned 
   assert.equal(Reflect.get(f.game.state, "revision"), Number(before.revision) + 1);
 });
 
-test("the publication patch grants no type0/665/666 condition or MP-count execution", () => {
+test("the publication patch grants no explicit 665/666 condition or MP-count execution", () => {
   const f = fixture(), before = capture(f);
   const raw = (mnemonic: string, values: number[]) => ({ mnemonic, type: 1,
     operands: { iValues: values, rValues: Array(8).fill(0), sValues: Array(8).fill("") } });
-  for (const type of [0, 665, 666]) {
+  for (const type of [665, 666]) {
     assert.throws(() => f.game.state.fieldOwnedConditions.prepare({ ...condition, conditionType: type }), /Unimplemented owned condition behavior/);
     assert.throws(() => compileOwnedConditionInstruction(raw("RemoveCondition", [type, 0, 0, 0, 0, 0, 0, 0]), {}), /Unimplemented owned condition behavior/);
   }

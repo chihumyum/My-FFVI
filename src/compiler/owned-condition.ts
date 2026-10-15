@@ -5,8 +5,8 @@ import { record } from "./content.js";
 import { hasMagitekBehavior } from "./conditions.js";
 import { tableId } from "./table-id.js";
 
-/** Complete field instruction decoder. Unsupported type 0 removal is not a
- * generic clear: it invokes script-specific NotRemoveConditionWhenAll hooks. */
+/** Complete instruction decoder. Type0 uses the pinned Current hook's exact
+ * retained row IDs and requires a shared MainCore at runtime. */
 export function compileOwnedConditionInstruction(
   raw: unknown, tables: Record<string, unknown>,
 ): OwnedConditionEventOp {
@@ -22,6 +22,22 @@ export function compileOwnedConditionInstruction(
     conditionType: values[0]!, target: values[1]! };
   validateOwnedConditionCommand(command);
   const data = z.array(z.record(z.string(), z.string())).parse(tables["condition.csv"]);
+  if (command.kind === "remove-condition" && command.conditionType === 0) {
+    for (const [id, type] of [[53, 607], [79, 665], [80, 666]]) {
+      const matches = data.filter(row => tableId(row.id) === id);
+      if (matches.length !== 1 || tableId(matches[0]!.condition_type) !== type ||
+          id === 53 && !hasMagitekBehavior({ values: matches[0]! }))
+        throw new Error("Unresolved source retained condition row identity");
+    }
+    const dependencies = [53, 79, 80].map(id => ({ table: "condition.csv", id }));
+    if (command.target > 0) {
+      const characters = z.array(z.record(z.string(), z.string())).parse(tables["character_status.csv"]);
+      if (characters.filter(row => tableId(row.id) === command.target).length !== 1)
+        throw new Error("Missing or ambiguous owned character source reference");
+      dependencies.push({ table: "character_status.csv", id: command.target });
+    }
+    return { kind: "owned-condition", command, dependencies };
+  }
   const rows = data.filter((row) => tableId(row.condition_type) === command.conditionType);
   if (rows.length !== 1 || !hasMagitekBehavior({ values: rows[0]! }))
     throw new Error("Unresolved owned Magitek condition provider");

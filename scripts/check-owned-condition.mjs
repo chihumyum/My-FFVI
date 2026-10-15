@@ -43,21 +43,29 @@ assert.equal(battle.catalog.behaviors.find((behavior) => behavior.id === rowId)?
 assert.deepEqual(field.catalog.behaviors.find((behavior) => behavior.id === rowId), { id: rowId, kind: "none" });
 const controlledStateContent = { ...structuredClone(published.gameState), fieldConditions: field.catalog };
 const make = () => new GameState(controlledStateContent, published.common.players, published.contentHash, battle.catalog);
-const sourceSites = [], admitted = [], blocked = [];
+const sourceSites = [], decoded = [], blocked = [];
 for (const asset of corpus.assets.filter((asset) => asset.kind === "script")) {
   asset.data.Mnemonics.forEach((raw, index) => {
     if (!["AddCondition", "RemoveCondition"].includes(raw.mnemonic)) return;
     const site = { asset: asset.id, source: asset.source, index, mnemonic: raw.mnemonic, type: raw.operands.iValues[0], target: raw.operands.iValues[1] };
     sourceSites.push(site);
-    try { admitted.push({ ...site, op: compileOwnedConditionInstruction(raw, corpus.tables) }); }
+    try { decoded.push({ ...site, op: compileOwnedConditionInstruction(raw, corpus.tables) }); }
     catch (error) { blocked.push({ ...site, reason: error.message }); }
   });
 }
 assert.equal(sourceSites.length, 210);
 assert.equal(sourceSites.filter((site) => site.mnemonic === "AddCondition").length, 10);
 assert.equal(sourceSites.filter((site) => site.mnemonic === "RemoveCondition").length, 200);
+// This historical checker owns the type607 callsite contract. Newly decoded
+// type0 calls are retained and delegated to the complete-program lifecycle
+// checker; decoder coverage must not be confused with this controlled subset.
+const admitted = decoded.filter(site => site.type === 607);
+const removeAll = decoded.filter(site => site.type === 0 && site.mnemonic === "RemoveCondition");
+assert.equal(decoded.length, 158);
+assert.equal(removeAll.length, 150);
 assert.equal(admitted.length, 8);
-assert.equal(blocked.length, 202);
+assert.equal(blocked.length, 52);
+assert.equal(admitted.length + removeAll.length + blocked.length, sourceSites.length);
 assert.ok(admitted.every((site) => site.type === 607 && [0, 1].includes(site.target)));
 assert.equal(admitted.filter((site) => site.mnemonic === "AddCondition").length, 4);
 assert.equal(admitted.filter((site) => site.mnemonic === "RemoveCondition").length, 4);
@@ -141,15 +149,18 @@ const report = {
   parentSourceSetHash: corpus.manifest.parentSourceSetHash, sourceSetHash: corpus.manifest.sourceSetHash,
   playableContentHash: published.contentHash, nativeReportSha256: digest(nativeBytes),
   battleConditionCatalogHash: hash(battle.catalog), fieldConditionCatalogHash: hash(field.catalog),
-  totalSites: sourceSites.length, admittedSites: admitted.length, blockedSites: blocked.length,
+  totalSites: sourceSites.length, operandDecodedSites: decoded.length,
+  admittedSites: admitted.length, blockedSites: blocked.length,
+  delegatedRemoveAll: { checker: "scripts/check-source-remove-all.mjs", sites: removeAll,
+    scope: "Decoder admission only here; complete-program lifecycle and MainCore writes are independently checked" },
   controlledChecks: { sourceEventExecutions: calls.length * 2, saveBattleRoundTrips: calls.length,
     completedFieldSteps: calls.length, selectorCases: 4 },
   calls, blocked,
   sourceProviders: ["type607 storage", "per-target Refresh(false) and AffectLeader request", "field zero damage", "battle lease condition projection"],
   presentationScope: "These probes validate ordered host requests and atomic state; FieldGame/actor-host tests validate rendering admission separately.",
   nativeSemanticsVerified: false, originalGameExecuted: false,
-  limitations: ["Only type607; type0 removal hooks, HP/death and other families remain blocked.",
-    "KeepBadStatusVisual=true/unknown remains blocked by the field host.",
+  limitations: ["This controlled lane exercises only type607; type0/MainCore/HP/death use the separate complete-program lifecycle checker.",
+    "This lane validates host requests; the separately declared Web-flat activity policy does not establish native hierarchy parity.",
     "Controlled callsites are not complete scripts, story reachability, map coverage or native parity."],
 };
 await mkdir(root + "build/reports", { recursive: true });

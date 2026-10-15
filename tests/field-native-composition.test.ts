@@ -210,3 +210,21 @@ test("display resampling is point-only RGBA copy and cannot change the source as
     194, 3, 35, 207, 194, 3, 35, 207, 127, 0, 128, 191, 127, 0, 128, 191]).flat());
   assert.throws(() => scaleFieldCompositionPixels(input, 4, 3), /aspect/);
 });
+
+test("source material alpha participates in both shader stages before head target lerps", () => {
+  assert.deepEqual(fieldCharacterFragment({ sample: red, vertexAlpha: .5, materialAlpha: .5,
+    normalizedV: .1, part: "body", first: null, second: null }), [1, 0, 0, .125]);
+  assert.deepEqual(fieldCharacterFragment({ sample: red, vertexAlpha: 1, materialAlpha: .5,
+    normalizedV: .5, part: "head", first: [0, 1, 0, .5], second: null }), [.5, .5, 0, .375]);
+  assert.throws(() => fieldCharacterFragment({ sample: red, vertexAlpha: 1, materialAlpha: -1,
+    normalizedV: .5, part: "head", first: null, second: null }), /material alpha/);
+});
+test("fade controls character depth writes independently of the source frame alpha", () => {
+  const near = actor(5, { alpha: .5, materialAlpha: .5, depthWrite: false });
+  const farther = { ...actor(10), image: image([0, 255, 0, 255]) };
+  const noDepth = composeFieldNativePixels({ width: 1, height: 4, tiles: [], actors: [near, farther] });
+  assert.deepEqual([...noDepth.data.slice(0, 4)], [0, 255, 0, 255]);
+  const withDepth = composeFieldNativePixels({ width: 1, height: 4, tiles: [], actors: [{ ...near, depthWrite: true }, farther] });
+  assert.deepEqual([...withDepth.data.slice(0, 4)], [255, 0, 0, 32]);
+  assert.equal(near.alpha, .5); assert.equal(near.materialAlpha, .5);
+});

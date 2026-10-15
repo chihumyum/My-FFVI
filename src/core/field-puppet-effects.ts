@@ -1,4 +1,6 @@
 import { ActorAnimation } from "./actor-animation.js";
+import { cloneFieldActorFade, startFieldActorVisibility, tickFieldActorVisibility,
+  type FieldActorVisibilityFade } from "./field-actor-visibility.js";
 import type { Direction } from "../field/types.js";
 import type { FieldPuppetActorEffect } from "./field-puppet-actors.js";
 import { validateFieldActorViewProjection, type FieldActorViewProjection } from "./field-actor-view.js";
@@ -19,6 +21,7 @@ export type FieldPuppetHostActor = {
   animation: ActorAnimation | null;
   visible: boolean;
   fadeAlpha: number;
+  visibilityFade?: FieldActorVisibilityFade | null;
   childEntityObject: "absent" | "unknown";
   moving: boolean;
   riding: boolean;
@@ -143,7 +146,8 @@ export function projectFieldPuppetActorEffects(
       if (a.viewBinding?.properties) validateFieldActorViewProjection(a.viewBinding.properties, a.viewBinding.map, a.viewBinding.layer);
       if (!a.transparentTextures) throw new Error("Unknown source actor transparent texture state");
       texture(a.transparentTextures.first); texture(a.transparentTextures.second);
-      return { ...a, position: { ...a.position }, animation: a.animation?.clone() ?? null,
+      return { ...a, ...(a.visibilityFade === undefined ? {} : { visibilityFade: cloneFieldActorFade(a.visibilityFade) }),
+        position: { ...a.position }, animation: a.animation?.clone() ?? null,
         viewBinding: a.viewBinding && structuredClone(a.viewBinding), transparentTextures: { ...a.transparentTextures } };
     }),
     camera: snapshot.camera && { ...snapshot.camera, position: { ...snapshot.camera.position } },
@@ -189,7 +193,15 @@ export function projectFieldPuppetActorEffects(
       }
       case "show": case "hide":
         if (target.childEntityObject !== "absent") throw new Error("Source puppet child visibility propagation is unresolved");
-        target.visible = effect.kind === "show"; target.fadeAlpha = target.visible ? 1 : 0; break;
+        Object.assign(target, startFieldActorVisibility(target, effect.kind === "show", 0, 0)); break;
+      case "visibility-fade": case "visibility-tick":
+        if (target.childEntityObject !== "absent" || target.riding ||
+            target.rideOnEntity !== "absent" && target.rideOnEntity !== "idle")
+          throw new Error("Timed source visibility requires ordinary childless non-riding actor");
+        Object.assign(target, effect.kind === "visibility-fade"
+          ? startFieldActorVisibility(target, effect.visible, effect.durationSeconds, effect.nowSeconds)
+          : tickFieldActorVisibility(target, effect.nowSeconds));
+        break;
       case "apply-view-properties":
         if (target.character && providers.applyViewProperties) {
           const properties = providers.applyViewProperties(target.layer);

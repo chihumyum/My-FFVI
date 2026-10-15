@@ -1,5 +1,7 @@
 # 字段持有状态指令
 
+当前 v98 的 type0、逐目标领队交接、同任务银行及明确 Web 活动策略见 [共用生命周期](story-shared-lifecycles.md)。下述 v22 数量是历史范围；665/666显式移除、MP-count及未知活动状态没有随本批放行。
+
 v22 将来源 `AddCondition` / `RemoveCondition` 的 type 607 接入唯一 `GameState`，并把每个目标对应的队伍外观刷新纳入同一准备阶段。它不是完整状态指令集：真实语料共 210 个调用点，本批 8 个 607 调用点可进入该实现，其余 202 个保留 blocker。是否能执行完整脚本，还取决于旗标、队伍、演员、媒体和其余指令。
 
 ## 来源语义
@@ -18,13 +20,13 @@ v22 将来源 `AddCondition` / `RemoveCondition` 的 type 607 接入唯一 `Game
 
 `Misc.RemoveCondition (0xb517e0)` → `Character.RemoveCondition (0xb46410)` 对非零类型取对应主表行，再以 `duplicationRemove=true` 调用 `OwnedCharacterClient.RemoveCondition (0x330ef0)`。本版 607 恰有一个来源行，删除它的全部同 ID 项，保留其他条件及顺序。纯投影保留来源处理重复项的能力；正式持有存档仍拒绝重复条件。
 
-type 0 不等于无条件清空：它会调用脚本的 `NotRemoveConditionWhenAll` 钩子。type 5 还有死亡 HP 与恢复 HP 副作用。它们和其他状态家族未随 607 自动准入。多个同类型主表行的先后顺序也不能由通用表遍历猜测；当前 decoder 要求 607 的来源行唯一且符合完整已知行为。
+type 0 不等于无条件清空：它会调用脚本的 `NotRemoveConditionWhenAll` 钩子。type 5 还有死亡 HP 与恢复 HP 副作用。v22 未随607准入这些行为；v98 按固定 Current 钩子另行实现 type0，保留行身份和完整顺序。多个同类型行不能由通用表遍历猜顺序；607 decoder 仍要求来源行唯一且符合完整已知行为。
 
 ## 外观与发布
 
 每个目标即使发生重复添加或无状态可删，也会执行 `Refresh(false)` 和 `AffectLeaderWithCondition (0xb45540)`。两条指令的原始代码分别在 `0xb45251`、`0xb46bab` 向 `IMapAccessor` 的槽 43 传入 false，随后调用 AffectLeader。
 
-`AffectLeader` 在明确的 `KeepBadStatusVisual=false` 下直接返回。true 分支可能隐藏旧领队、显示新领队，并复制位置、层与动画；当前字段宿主对 true 或未知值拒绝执行，不能当作无效果。
+`AffectLeader` 在明确的 `KeepBadStatusVisual=false` 下直接返回。v22 对 true/未知拒绝；v98 的 true 路径要求明确活动资格宿主并执行逐目标完整交接，未知仍拒绝，不能当作无效果。
 
 `projectOwnedCondition` 返回最终名册及每个目标之后的独立候选名册。`GameState.fieldOwnedConditions.prepare` 把它们投影为按来源顺序排列的 `OwnedConditionAppearanceStep`。共享接口为：
 

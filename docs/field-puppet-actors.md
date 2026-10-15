@@ -1,5 +1,7 @@
 # Source field puppet actor host
 
+v98 ordinary timed Show/Hide, per-target Refresh/AffectLeader and the explicit Web activity scope are documented in [shared story lifecycles](story-shared-lifecycles.md). They reuse these native instances and preparation/publication boundaries; unknown hierarchy, condition stand-ins and pending cross-map callback lifetime remain gated.
+
 V29 supplies source actor selection, start/entry/finish plans, and an executable adapter for ordinary actor effects. FieldGame remains the owner of actors, playback, the camera, task slots and collision state. The new modules do not create another saved actor registry. Formal scene readiness still requires a trusted factory/runtime context; the development checkpoint's hidden actor metadata does not prove positions, child hierarchy or material initialization.
 
 The supplied PR executable is the only source. Its SHA-256 is `1a7e12c90c6a734e17dda507dd6ab7555090dff6a1e96f3473a90c29916ca6dc`. All native evidence remains static; no original executable was run. This work does not investigate HD-2D.

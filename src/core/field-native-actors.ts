@@ -1,4 +1,5 @@
 import { ActorAnimation } from "./actor-animation.js";
+import { cloneFieldActorFade } from "./field-actor-visibility.js";
 import { canonical } from "./canonical.js";
 import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
 import { fieldCameraLayerFromLogical, fieldCameraWorldToContinuousCell, type FieldCameraMapRange } from "./field-camera.js";
@@ -87,7 +88,8 @@ function cloneEntity(entity: FieldPuppetHostActor): FieldPuppetHostActor {
   checkpointInteger(entity.layer, 0, 31);
   if (entity.direction !== null && !directions.includes(entity.direction)) throw new Error("Unknown native field direction");
   if (entity.animation !== null && !(entity.animation instanceof ActorAnimation)) throw new Error("Unknown native field playback");
-  return { ...entity, position, animation: entity.animation?.clone() ?? null,
+  return { ...entity, ...(entity.visibilityFade === undefined ? {} : { visibilityFade: cloneFieldActorFade(entity.visibilityFade) }),
+    position, animation: entity.animation?.clone() ?? null,
     viewBinding: entity.viewBinding && structuredClone(entity.viewBinding),
     transparentTextures: { ...entity.transparentTextures } };
 }
@@ -279,6 +281,7 @@ function writable(entity: FieldPuppetHostActor, candidate: FieldPuppetHostActor)
   for (const key of Object.keys(candidate)) {
     if (key === "moving") continue;
     const descriptor = Object.getOwnPropertyDescriptor(entity, key);
+    if (key === "visibilityFade" && descriptor === undefined && Object.isExtensible(entity)) continue;
     if (!descriptor || !Object.hasOwn(descriptor, "value") || descriptor.writable !== true)
       throw new Error("Native field publication needs a writable existing entity");
   }

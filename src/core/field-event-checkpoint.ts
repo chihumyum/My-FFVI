@@ -5,15 +5,17 @@ import { validateScriptLocalFrameSnapshot, type EventStateSnapshot, type ScriptL
 import { validateFieldPuppetScriptContext } from "./field-puppet-actors.js";
 import type { FieldTaskRange } from "./field-task-control.js";
 import { assertFieldEventSaveAdmission } from "./field-auto-save.js";
+import { fieldUsesCoreRegisters, parseFieldCoreRegisters, type FieldCoreRegisters } from "./field-core-registers.js";
 
 export type FieldEventCheckpoint = {
-  kind: "field-event-continuation-v1";
+  kind: "field-event-continuation-v1" | "field-event-continuation-v2";
   contentHash: string;
   /** Web program-array address, which need not equal the source Site.index. */
   barrier: { script: string; pc: number };
   main: {
     id: number; script: string; pc: number; stack: number[]; actor: string;
     sourceEntityId: number | null; range: FieldTaskRange;
+    generalRegisters?: FieldCoreRegisters;
   };
   eventRootScript: string;
   scriptHook: {
@@ -109,7 +111,8 @@ function localFramePath(content: FieldContent, first: string, current: string, d
 export function captureFieldEventCheckpoint(input: FieldEventCheckpointInput,
   context: FieldEventCheckpointContext): FieldEventCheckpoint {
   checkpointKeys(input, "barrier,main,eventRootScript,scriptHook,puppetLifecycle,cameraEventActive,entryTaskStarted");
-  return restoreFieldEventCheckpoint({ ...input, kind: "field-event-continuation-v1",
+  return restoreFieldEventCheckpoint({ ...input,
+    kind: fieldUsesCoreRegisters(context.content) ? "field-event-continuation-v2" : "field-event-continuation-v1",
     contentHash: context.content.contentHash }, context);
 }
 
@@ -120,13 +123,16 @@ export function restoreFieldEventCheckpoint(raw: unknown,
   checkpointKeys(raw, "kind,contentHash,barrier,main,eventRootScript,scriptHook,puppetLifecycle,cameraEventActive,entryTaskStarted");
   const saved = structuredClone(raw) as FieldEventCheckpoint;
   name(context.content.contentHash);
-  if (saved.kind !== "field-event-continuation-v1" || saved.contentHash !== context.content.contentHash)
+  const registers = fieldUsesCoreRegisters(context.content);
+  if (saved.kind !== (registers ? "field-event-continuation-v2" : "field-event-continuation-v1") ||
+      saved.contentHash !== context.content.contentHash)
     throw new Error("Event continuation content/version mismatch");
   checkpointInteger(context.nextTask, 1);
   checkpointNumber(context.time);
   checkpointIds(context.actorIds);
   checkpointKeys(saved.barrier, "script,pc");
-  checkpointKeys(saved.main, "id,script,pc,stack,actor,sourceEntityId,range");
+  checkpointKeys(saved.main, "id,script,pc,stack,actor,sourceEntityId,range" + (registers ? ",generalRegisters" : ""));
+  if (registers) saved.main.generalRegisters = parseFieldCoreRegisters(saved.main.generalRegisters);
   const main = saved.main, ops = instructions(context.content, main.script);
   checkpointInteger(main.id, 1, context.nextTask - 1);
   name(main.actor);

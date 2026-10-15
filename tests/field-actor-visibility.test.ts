@@ -39,20 +39,20 @@ test("MainCore and player wrappers do not become Puppet actor visibility aliases
   assert.equal(decodeFieldOp(untypedShow, site, {}).kind, "blocked");
 });
 
-test("duration, delay and every reserved operand remain explicit blockers", () => {
+test("every reserved operand remains blocked after timing family is imported", () => {
   for (const mnemonic of fieldActorVisibilityMnemonics) {
     for (let index = 0; index < 8; index++) {
       const integer = raw(mnemonic); integer.operands.iValues[index] = 1;
       const real = raw(mnemonic); real.operands.rValues[index] = index === 1 ? .1 : .7;
       const string = raw(mnemonic); string.operands.sValues[index] = "source-unknown";
-      for (const input of [integer, real, string]) {
+      for (const input of index < 2 ? [integer, string] : [integer, real, string]) {
         const before = structuredClone(input);
-        assert.throws(() => compileFieldActorVisibilityInstruction(input), /duration, delay or reserved/);
+        assert.throws(() => compileFieldActorVisibilityInstruction(input), /reserved/);
         assert.deepEqual(input, before);
       }
     }
     const negative = raw(mnemonic); negative.operands.rValues[0] = -.1;
-    assert.throws(() => compileFieldActorVisibilityInstruction(negative), /duration, delay or reserved/);
+    assert.throws(() => compileFieldActorVisibilityInstruction(negative), /negative/);
   }
 });
 

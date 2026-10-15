@@ -116,7 +116,7 @@ test("decoder binds source row identity and positive source selectors without in
     { table: "condition.csv", id: magitekRowId }, { table: "character_status.csv", id: 12 },
   ] });
   for (const target of [0, -1]) assert.equal(compileOwnedConditionInstruction(raw("RemoveCondition", 607, target), tables()).dependencies.length, 1);
-  assert.throws(() => compileOwnedConditionInstruction(raw("RemoveCondition", 0), tables()), /Unimplemented/);
+  assert.throws(() => compileOwnedConditionInstruction(raw("RemoveCondition", 0), tables()), /retained condition row identity/);
   assert.throws(() => compileOwnedConditionInstruction(raw("AddCondition", 607, 11), tables()), /source reference/);
 });
 
