@@ -445,7 +445,7 @@ async function packages(packageId = "controlled-initialized-ui", sourceEncounter
     f.map.frameworkPresentation=compileFrameworkOrdinaryPresentation({map:await seal(f.map),sources:[{file:tileSource.file,sha256:tileSource.sha256}],tilemap,mapPackage,
       renderHost:ordinaryFieldCompositionRenderHost()});
   }
-  if(["controlled-scripted-battle-action","controlled-non-damaging-battle-action","controlled-battle-event-controls","controlled-battle-effect"].includes(packageId)) {
+  if(["controlled-scripted-battle-action","controlled-non-damaging-battle-action","controlled-battle-event-controls","controlled-battle-effect","controlled-battle-branch"].includes(packageId)) {
     const {compileScriptedBattleAction}=await load("src/compiler/battle-scripted-action.js");
     const op=compileScriptedBattleAction({type:1,mnemonic:"BattleAction",operands:{
       iValues:[1,f.battle.common.players[0].sourceId,10,2,0,0,0,0],rValues:Array(8).fill(0),sValues:Array(8).fill("")}});
@@ -464,6 +464,12 @@ async function packages(packageId = "controlled-initialized-ui", sourceEncounter
     if(packageId === "controlled-battle-effect") {
       const {prefixAuthoredBattleEffect}=await load("tests/fixtures/battle-event-effect.js");
       entry.lifecycle.program=prefixAuthoredBattleEffect(entry.lifecycle.program,f.battle.common.players[0].sourceId);
+    }
+    if(packageId === "controlled-battle-branch") {
+      const {branchProgram,branchRaw,unknownBranchRaw}=await load("tests/fixtures/battle-branch-execution.js");
+      entry.lifecycle={kind:"battle-lifecycle-v2",mode:"script",scriptId:1,branchExecution:core.WEB_BATTLE_BRANCH_EXECUTION,
+        program:branchProgram([branchRaw("Jump",[1]),unknownBranchRaw(),branchRaw("BattleAction",[1,f.battle.common.players[0].sourceId,10,2]),
+          branchRaw("Calc",[0,1],[],["ScriptLocalVariable","＋","imm"]),branchRaw("Exit")])};
     }
     if(nonDamagingOp) { entry.lifecycle.program.instructions.unshift({mnemonic:"BattleAction",op:nonDamagingOp});entry.lifecycle.program.end++; }
     if(packageId === "controlled-battle-event-controls") {
@@ -1363,6 +1369,20 @@ try {
     assert.deepEqual(restored.state.snapshot(),settled);assert.equal(restored.battle,null);
     report.scriptedBattleActionLifecycle={policy:h.api.runtime.scriptedBattleActions,actualQueue:true,actualEffect:true,actualVmContinuation:true,
       actualStorage:true,onceSettlement:true,storageWrites:h.calls.writes,sourceStoryReachability:false,nativeDynamicParity:false};
+  });
+  await check("explicit branch policy runs actual app action/return/Storage while preserving an unvisited unknown dependency",async()=>{
+    const pack=await packages("controlled-battle-branch"),h=await host(pack),owner=await start(h);
+    assert.equal(h.api.runtime.battleBranchExecution,core.WEB_BATTLE_BRANCH_EXECUTION);
+    await move(h,"right");await move(h,"right");for(let i=0;i<80&&!owner.battle;i++)await h.frame();assert.ok(owner.battle,h.api.read().battleLoadAttempt?.error?.stack);
+    const battle=owner.battle;assert.equal(battle.content.lifecycle.kind,"battle-lifecycle-v2");
+    for(let i=0;i<160&&battle.phase==="active";i++)await h.frame();assert.equal(battle.phase,"victory");
+    assert.deepEqual(battle.eventBranchExecution.unvisitedDependencies.map(d=>d.pc),[1]);assert.equal(battle.eventBranchExecution.lastFailure,null);
+    assert.equal(battle.eventBranchExecution.committedVisited.includes(1),false);assert.equal(battle.eventExecution.state.locals[0],1);
+    await win(h,pack);const settled=owner.state.snapshot();assert.equal(settled.completedBattles.length,1);assert.throws(()=>battle.advance(10),/Retired/);
+    await pauseMenu(h);const saved=owner.checkpoint();await h.click(h.$("save-game"));await h.click(h.$("load-game"));const restored=h.bound();
+    assert.deepEqual(restored.checkpoint(),saved);await resume(h);for(let i=0;i<8;i++)await h.frame();assert.deepEqual(restored.state.snapshot(),settled);
+    report.battleBranchExecution={policy:h.api.runtime.battleBranchExecution,actualApp:true,actualBattleGame:true,actualAction:true,actualStorage:true,onceSettlement:true,
+      committedVisited:battle.eventBranchExecution.committedVisited,unvisitedDependencies:battle.eventBranchExecution.unvisitedDependencies,sourceStoryReachability:false,nativeDynamicParity:false};
   });
   await check("non-damaging source ability preserves actual app action stages and no HP change, then settles and restores once",async()=>{
     const pack=await packages("controlled-non-damaging-battle-action"),h=await host(pack),owner=await start(h);

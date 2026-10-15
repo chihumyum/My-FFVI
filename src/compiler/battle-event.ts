@@ -1,3 +1,4 @@
+import { WEB_BATTLE_BRANCH_EXECUTION, validateBattleBranchExecutionPolicy, parseBattleSourceInstruction, classifyDeferredBattleInstruction, type WebBattleBranchExecution } from '../core/battle-branch-execution.js';
 import { compileBattleEventEffect, type BattleEffectReader } from './battle-event-effect.js';
 import { compileScriptedBattleAction } from "./battle-scripted-action.js";
 import { z } from "zod";
@@ -33,7 +34,8 @@ const instruction = z.object({
 /** Battle-event compilation is distinct from monster AI. Preserve every source
  * PC; unknown hosts, operands and branches remain explicit blocked operations.
  * This compiler does not certify a native scheduler or grant owned effects. */
-export function compileBattleEvent(raw: unknown, source: BattleAISource | null, messages?: BattleEventMessageInput, effects?:BattleEffectReader): BattleEventProgram {
+export function compileBattleEvent(raw: unknown, source: BattleAISource | null, messages?: BattleEventMessageInput, effects?:BattleEffectReader,branchExecution?:WebBattleBranchExecution): BattleEventProgram {
+  validateBattleBranchExecutionPolicy(branchExecution);
   const data = script.parse(raw), blockers: string[] = [];
   let messageCompiler: ReturnType<typeof createBattleEventMessageCompiler> | null = null;
   const main = data.Segments.length === 1 && data.Segments[0]!.Label === "Main" ? data.Segments[0]! : null;
@@ -123,6 +125,8 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
     if (m.mnemonic === "BattlePause" && form([0])) op = { kind: "pause", enabled: i[0] !== 0 };
     if (m.mnemonic === "BattleInteractive" && form([0])) op = { kind: "interactive", enabled: i[0] !== 0 };
     if (m.mnemonic === "BattleSleepEnemy" && form([0])) op = { kind: "enemy-no-act", enabled: i[0] !== 0 };
+    if(m.mnemonic==='GetEnemyMode'&&form([0,1])&&i[0]!>=1&&i[0]!<=9)
+      op=local(1)?{kind:'get-enemy-mode',uniqueId:i[0]!,expected:i[1]!}:blocked('GetEnemyMode requires ScriptLocalVariable[1]');
     if (m.mnemonic === "BattleAddEnemy" && form([0, 1]) && i[0]! > 0 && i[1]! >= 1 && i[1]! <= 9)
       op = { kind: "add-enemy", monsterId: i[0]!, uniqueId: i[1]! };
     if (m.mnemonic === "BattleAddFellow" && form([0]) && i[0]! > 0)
@@ -133,6 +137,19 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
       op = local(0) ? { kind: "players-ended" }
         : blocked("Player battle-end query requires ScriptLocalVariable[0]");
     if (m.mnemonic === "SysCall" && form([], [], [0])) {
+      if(s[0]==='血塗られた盾')op={kind:'cursed-shield-check'};
+      if(s[0]==='シャドウ離脱抽選')op=local(3)?{kind:'shadow-secede-lot'}:blocked('Shadow lottery requires ScriptLocalVariable[3]');
+      if(s[0]==='バトルでシャドウ離脱')op=blocked('Shadow battle departure requires source SecedeCharacter/owned disable and unconditional Integrator ReserveScript/field continuation publication');
+      if(s[0]==='ガウバトルモード設定')op=local(2)?{kind:'set-gau-mode'}:blocked('SetGauMode requires ScriptLocalVariable[2]');
+      const gauGates:Record<string,string>={
+        'とびこむで離脱':'Gau leap requires source Rage learning, owned roster/Corps publication and action/ATB/instance removal in one battle transaction',
+        '敵パーティをガウに':'Gau enemy replacement requires source flag-selected party, native asset-load/condition/AI/entity lifecycle and exact source party dependencies',
+        'バトル加入：ガウ':'Gau battle join requires the complete owned enable/equipment/level/recovery/Corps borrow and publication',
+        'メンバー加入：ガウ':'Gau member join requires the complete source JoinCharacter owned enable/equipment/level/recovery/Corps lifecycle',
+        'ガウ初回予約':'Gau first join requires DataStorage group8[8] plus Integrator ReserveScript and subsequent field queue lifecycle',
+        'ガウ登場アニメ':'Gau appearance requires native enemy-instance animation/movement and completion callbacks',
+      };
+      if(s[0]!==undefined&&gauGates[s[0]])op=blocked(gauGates[s[0]]!);
       if (s[0] === "HideBattleUI" || s[0] === "ShowBattleUI")
         op = { kind: "ui-visibility", visible: s[0] === "ShowBattleUI" };
       if (s[0] === "StopAutoBattle") op = { kind: "stop-auto" };
@@ -169,7 +186,11 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
   });
   const messageBinding = instructions.some(({ op }) => op.kind === "message") && messages?.binding
     ? parseBattleEventMessageBinding(messages.binding) : undefined;
-  return structuredClone({ kind: "battle-event-v1", source, entry, end,
+  const branch=branchExecution===WEB_BATTLE_BRANCH_EXECUTION?{
+    policy:branchExecution,sourceProgram:{...structuredClone(data),Mnemonics:data.Mnemonics.map(parseBattleSourceInstruction)},
+    deferred:instructions.flatMap(({op},pc)=>{const category=classifyDeferredBattleInstruction(parseBattleSourceInstruction(data.Mnemonics[pc]));return op.kind==='blocked'&&category?[{pc,category,reason:op.reason}]:[];}),
+  }:undefined;
+  return structuredClone({ kind: branch ? "battle-event-v2" : "battle-event-v1", source, entry, end,
     localNames: data.ScriptLocal, initialLocals, instructions, blockers,
-    ...(messageBinding ? { messageBinding } : {}) });
+    ...(messageBinding ? { messageBinding } : {}),...(branch?{branchExecution:branch}:{}) });
 }

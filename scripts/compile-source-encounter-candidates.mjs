@@ -55,7 +55,7 @@ const {compileSourceBattleDirectoryEntryPolicy,composeFrameworkBattleDirectory}=
  policy:declaration.framework.entry,encounters:descriptors.encounters}),
  common={...shared.runtimeInput,requestedPartyIds:partyIds,encounters:descriptors.encounters,sourceDiagnostics:descriptors.diagnostics},
  strict=compileBattleEncounterRuntime(shared.reader,{...common,handoff:{policy:null},development:{scripts:[],flagGroups:[]}}),
- framework=compileBattleEncounterRuntime(shared.reader,{...common,...(declaration.framework.manualControls?{manualControls:declaration.framework.manualControls}:{}),...(declaration.framework.conditionControlPolicy?{conditionControlPolicy:declaration.framework.conditionControlPolicy}:{}),handoff:{policy:declaration.framework.handoff},development}),
+ framework=compileBattleEncounterRuntime(shared.reader,{...common,...(declaration.framework.branchExecution===undefined?{}:{branchExecution:declaration.framework.branchExecution}),...(declaration.framework.manualControls?{manualControls:declaration.framework.manualControls}:{}),...(declaration.framework.conditionControlPolicy?{conditionControlPolicy:declaration.framework.conditionControlPolicy}:{}),handoff:{policy:declaration.framework.handoff},development}),
  composed=await composeFrameworkBattleDirectory({root,compiledDir:compiled,baseCatalog:base,runtime:framework,conditionControlPolicy:declaration.framework.conditionControlPolicy});
 assert.equal(canonical(composed.catalog.gameState),canonical(base.gameState));
 const strictCatalog=assembleGameCatalog({...shared,reader:shared.reader,runtimeInput:{...common,handoff:{policy:null}}},

@@ -214,6 +214,7 @@ export type BattleEncounterDiagnostic = {
   dependency?: { table: string; id: number; field?: string };
   enemySlot?: number;
   pc?: number;
+  battleEventDependency?:{kind:"source-battle-branch-dependency-v1";source:BattleAISource;pc:number;category:import("./battle-branch-execution.js").BattleDeferredInstructionCategory;reason:string;raw:import("./battle-branch-execution.js").BattleSourceInstruction};
 };
 export type BattleEncounterReport = {
   requested: number;

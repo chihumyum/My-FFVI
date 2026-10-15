@@ -121,6 +121,7 @@ export function calculateDevelopmentEffects(
   randomInt: (min: number, max: number) => number,
   targetCount = 1,
   physicalRows?: PhysicalRowContext,
+  abilityId?: number,
 ): NumericalEffectResult[] {
   if (
     !Number.isInteger(targetCount) ||
@@ -175,6 +176,7 @@ export function calculateDevelopmentEffects(
         (effect.kind === "recovery" && effect.calculation === "magic")
       )
         validateMagic({
+          ...(abilityId !== undefined ? { abilityId } : {}),
           rules: plan.magic,
           power,
           actor,
@@ -201,6 +203,7 @@ export function calculateDevelopmentEffects(
     } else {
       const result = calculateMagic(
         {
+          ...(abilityId !== undefined ? { abilityId } : {}),
           rules: plan.magic!,
           power,
           actor,

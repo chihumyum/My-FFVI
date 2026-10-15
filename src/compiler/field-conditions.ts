@@ -18,11 +18,12 @@ export function compileFieldConditionCatalog(
   transportationIds: readonly number[],
 ): { catalog: FieldConditionCatalog; sources: BattleRow[] } {
   const sources: BattleRow[] = [];
+  // Enemy-only Leviteto has no admitted player renderer/field persistence.
   // Escape, Defend, ordinary protection, speed and action-control states are removed at battle end. Their field
   // application/appearance is not admitted; a checkpoint cannot inject them
   // as passive statuses and carry them into another encounter.
   const behaviors = battle.behaviors.filter((behavior) =>
-    !["escape", "defend", "physical-protection", "magic-protection", "haste", "slow", "sleep", "confusion", "temptation", "doom"].includes(behavior.kind)).flatMap(
+    !["levitate", "escape", "defend", "physical-protection", "magic-protection", "haste", "slow", "sleep", "confusion", "temptation", "doom"].includes(behavior.kind)).flatMap(
     (behavior): FieldConditionCatalog["behaviors"] => {
       const row = reader.row("condition.csv", behavior.id);
       sources.push(row);

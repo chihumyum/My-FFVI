@@ -104,6 +104,8 @@ export function projectUserConditionPhase(
     return { ...unchanged, executed: true,
       removed: index < 0 ? [] : [effect.conditionId] };
   }
+  if (effect.conditionType === 409)
+    throw new Error("Unresolved user-condition Leviteto owner lifecycle");
   if (effect.conditionType === 501)
     throw new Error("Unresolved user-condition Manipulate guard");
   // Non-501 CheckHittable is source true, but does not authorize an unported

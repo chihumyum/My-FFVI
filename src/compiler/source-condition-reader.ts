@@ -8,9 +8,11 @@ export type SourceConditionReadLedger = {
   sourceSetHash: string;
   parentSourceSetHash: string;
   battleSourceSetHash: string;
+  orderedViews?: { table: string; masterIds: string[] }[];
   rows: { table: string; row: BattleRow; physicalSource: SourceConditionPhysicalFile }[];
 };
 type Reader = {
+  ordered?(table: string): BattleRow[];
   row(table: string, id: string | number): BattleRow;
   group(table: string, key: string, value: string | number): BattleRow[];
   matching(table: string, key: string, value: string | number): BattleRow[];
@@ -30,6 +32,7 @@ export function trackSourceConditionReads(reader: Reader, identity: {
   for (const file of physical)
     if (!file.file || !/^[a-f0-9]{64}$/.test(file.sha256) || !Number.isSafeInteger(file.bytes) || file.bytes < 0)
       throw new Error("Invalid condition reader physical source");
+  const orderedViews = new Map<string, string[]>();
   const retained = new Map<string, SourceConditionReadLedger["rows"][number]>();
   const remember = (table: string, row: BattleRow): BattleRow => {
     if (!row.values.id || row.values.id !== row.source.rowId)
@@ -45,6 +48,14 @@ export function trackSourceConditionReads(reader: Reader, identity: {
   };
   return {
     reader: {
+      ...(reader.ordered ? { ordered: (table: string) => {
+        const rows = reader.ordered!(table).map(row => remember(table, row));
+        const ids = rows.map(row => row.source.rowId), before = orderedViews.get(table);
+        if (new Set(ids).size !== ids.length || before && canonical(before) !== canonical(ids))
+          throw new Error("Condition reader ordered master view changed during compilation");
+        orderedViews.set(table, [...ids]);
+        return rows;
+      } } : {}),
       row: (table: string, id: string | number) => remember(table, reader.row(table, id)),
       unique: (table: string, key: string, value: string | number) => remember(table, reader.unique(table, key, value)),
       group: (table: string, key: string, value: string | number) => reader.group(table, key, value).map(row => remember(table, row)),
@@ -54,6 +65,7 @@ export function trackSourceConditionReads(reader: Reader, identity: {
       kind: "source-condition-read-ledger-v1", reader: "complete-verified-system-reader",
       sourceSetHash: identity.sourceSetHash, parentSourceSetHash: identity.parentSourceSetHash,
       battleSourceSetHash: identity.battleSourceSetHash,
+      ...(orderedViews.size ? { orderedViews: [...orderedViews].map(([table, masterIds]) => ({ table, masterIds: [...masterIds] })) } : {}),
       rows: [...retained.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => structuredClone(value)),
     }),
   };

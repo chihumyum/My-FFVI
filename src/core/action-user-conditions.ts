@@ -15,9 +15,12 @@ export function projectActionTargets<T extends ActionParticipant>(plan: Developm
   actor: T, targets: readonly T[], conditions: BattleConditions,
   random: (min: number, max: number) => number, cost = 0,
   rows?: (target: T) => PhysicalRowContext,
+  abilityId?: number,
 ) {
   if (!targets.length || new Set(targets.map(target => target.id)).size !== targets.length)
     throw new Error("Invalid joint action targets");
+  conditions.validateOwner(actor.conditionIds, actor.side);
+  for (const target of targets) conditions.validateOwner(target.conditionIds, target.side);
   if (plan.effects.length === 1 && plan.effects[0]?.kind === "non-damaging") {
     const result = projectNonDamagingEffect(plan.effects[0]);
     if (!Number.isSafeInteger(cost) || cost < 0 || cost > actor.mp) throw new Error("Invalid non-damaging action cost");
@@ -37,7 +40,7 @@ export function projectActionTargets<T extends ActionParticipant>(plan: Developm
   const userEffects = plan.effects.filter((effect): effect is UserConditionEffect => effect.kind === "user-condition");
   if (!userEffects.length) return {
     targets: targets.map(target => ({ targetId: target.id,
-      ...projectActionTarget(plan, power, actor, target, conditions, random, targets.length, cost, rows?.(target)) })),
+      ...projectActionTarget(plan, power, actor, target, conditions, random, targets.length, cost, rows?.(target), abilityId) })),
     userConditionIds: [...actor.conditionIds], userResults: [] as ActionUserConditionResult[],
   };
   // The currently closed source composition has an empty primary calculator

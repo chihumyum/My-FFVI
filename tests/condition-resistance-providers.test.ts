@@ -50,7 +50,8 @@ function fixture() {
 test("generic active providers preserve all three condition identities, erase groups and source references", () => {
   const f = fixture(), before = structuredClone(f.tables), compiled = f.compile();
   const engine = new BattleConditions(compiled.catalog);
-  assert.deepEqual(compiled.providerBlockers, []);
+  assert.deepEqual(compiled.providerBlockers.filter(b => b.conditionId !== 196), []);
+  assert.match(compiled.providerBlockers.find(b => b.conditionId === 196)!.reason, /Leviteto lifecycle/);
   assert.deepEqual(engine.types([195, 189, 188]), [15, 9, 10]);
   for (const [id, kind, eraseGroupId, groupId, conditions] of [
     [195, "haste", 20, 910, { 121: 1, 125: 1 }],
@@ -77,7 +78,7 @@ test("initial membership activates the source master directly and never its resi
   }
   assert.throws(() => compileEnemyInitialConditions(f.reader(), 8004, catalog), /Unimplemented active.*196/);
   f.tables["condition_group.csv"]!.push({ id: "11", group_id: "8001", condition_id: "189", type_id: "1", invocation_rate: "0" });
-  assert.throws(() => compileEnemyInitialConditions(f.reader(), 8001, catalog), /multiple.*activation order/);
+  assert.throws(() => compileEnemyInitialConditions({ row: f.reader().row, group: f.reader().group }, 8001, catalog), /multiple.*activation order/);
 });
 
 test("temporary resistance blocks ordinary and fixed attempts before hit RNG without changing the active owner", () => {

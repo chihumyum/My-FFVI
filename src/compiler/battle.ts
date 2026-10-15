@@ -236,7 +236,8 @@ export function battleTableIndex(
       throw new Error(`Unresolved table group ${name}.${key}=${value}`);
     return found;
   };
-  return { row, matching, unique, group, selected };
+  const ordered = (name: string): BattleRow[] => [...index(name).keys()].map(id => row(name, id));
+  return { row, matching, unique, group, ordered, selected };
 }
 
 /** Shared source definitions; no checkpoint state or development omissions. */

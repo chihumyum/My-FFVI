@@ -106,7 +106,7 @@ test("initial membership retains explicit missing, unsupported, ambiguous-order 
   const unsupported = structuredClone(catalog); unsupported.behaviors = unsupported.behaviors.filter((b) => b.id !== 193);
   assert.throws(() => compileEnemyInitialConditions(f.reader(), 1007, unsupported), /Unimplemented active/);
   f.tables["condition_group.csv"]!.push({ id: "15", group_id: "1007", condition_id: "194", type_id: "1", invocation_rate: "0" });
-  assert.throws(() => compileEnemyInitialConditions(f.reader(), 1007, catalog), /multiple.*order/);
+  assert.throws(() => compileEnemyInitialConditions({ row: f.reader().row, group: f.reader().group }, 1007, catalog), /multiple.*order/);
   const reader = f.reader();
   assert.throws(() => compileEnemyInitialConditions({ ...reader, group: (table, key, value) =>
     reader.group(table, key, value).map((row) => ({ ...row, source: { ...row.source, rowId: "999" } })) }, 1007, catalog), /source identity/);

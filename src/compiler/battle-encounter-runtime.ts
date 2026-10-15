@@ -1,3 +1,5 @@
+import { parseBattleEventProgram } from '../core/battle-event.js';
+import { WEB_BATTLE_BRANCH_EXECUTION, validateBattleBranchExecutionPolicy, type WebBattleBranchExecution } from '../core/battle-branch-execution.js';
 import { WEB_MANUAL_BATTLE_CONTROLS, type SourceBattleControls } from '../core/battle-controls.js';
 import { compileSourceBattleFlags } from "./battle-flags.js";
 import type { SourceBattleFlags } from "../core/battle-flags.js";
@@ -32,6 +34,7 @@ import { parseBattleHandoffPolicy, type BattleHandoffContent, type FrameworkBatt
 import { compileBattleHandoffContent, BattleHandoffDependencyError, type BattleHandoffMusicLookup } from "./battle-handoff.js";
 
 type Reader = {
+  ordered?(table: string): BattleRow[];
   row(table: string, id: string | number): BattleRow;
   unique(table: string, key: string, value: string): BattleRow;
   group(table: string, key: string, value: string | number): BattleRow[];
@@ -50,6 +53,7 @@ export type BattleEncounterRuntimeInput = {
   /** Declared approximation lane, never a native condition/controller grant. */
   conditionControlPolicy?: { kind: "web-source-control-actions-v1" };
   manualControls?: typeof WEB_MANUAL_BATTLE_CONTROLS;
+  branchExecution?:WebBattleBranchExecution;
   sprites: Readonly<Record<string, { file: string; width: number; height: number }>>;
   name(key: string): string;
   eventMessages?: BattleEventMessageInput;
@@ -95,6 +99,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
   if (input.sourceFlagContext !== undefined && input.sourceFlagContext !== "story")
     throw new Error("Unimplemented source battle flag execution context");
   if(input.manualControls!==undefined&&input.manualControls!==WEB_MANUAL_BATTLE_CONTROLS)throw new Error('Unknown manual battle control policy');
+  validateBattleBranchExecutionPolicy(input.branchExecution);
   const requested = [...input.requestedPartyIds];
   const reserves = input.reserveEnemies ?? [], policies = input.development.participants ?? [], waves = input.enemyParties ?? [];
   if (!requested.length || requested.some((id) => !identity(id)) ||
@@ -127,7 +132,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
   for (const encounter of input.encounters) {
     const partyId = encounter.partyId, start = diagnostics.length;
     const add = (kind: BattleEncounterDiagnostic["kind"], code: string, reason: string,
-      extra: Partial<Pick<BattleEncounterDiagnostic, "dependency" | "enemySlot" | "pc" | "source">> = {}) => {
+      extra: Partial<Pick<BattleEncounterDiagnostic, "dependency" | "enemySlot" | "pc" | "source" | "battleEventDependency">> = {}) => {
       diagnostics.push({ partyId, kind, code, reason, source: encounter.source, ...extra });
     };
     const block = (code: string, reason: string, field?: string) => add("blocked", code, reason,
@@ -192,11 +197,18 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         const omission = input.development.scripts.find((s) => s.id === m.scriptId && same(s.source, encounter.script!.source));
         const issues: { reason: string; pc?: number }[] = [];
         try {
-          const program = compileBattleEvent(encounter.script!.data, encounter.script!.source, input.eventMessages, reader);
+          const program = compileBattleEvent(encounter.script!.data, encounter.script!.source, input.eventMessages, reader,input.branchExecution);
+          let structurallyValid=true;
+          if(input.branchExecution)try{parseBattleEventProgram(program);}catch(error){structurallyValid=false;issues.push({reason:message(error)});}
+          const deferred=structurallyValid&&!program.blockers.length&&input.branchExecution===WEB_BATTLE_BRANCH_EXECUTION&&program.kind==='battle-event-v2'?program.branchExecution!.deferred:[];
+          for(const site of deferred)add('runtime-dependency','battle-script',site.reason,{dependency:{table:'script.csv',id:m.scriptId},pc:site.pc,
+            battleEventDependency:{kind:'source-battle-branch-dependency-v1',source:program.source!,pc:site.pc,category:site.category,reason:site.reason,raw:structuredClone(program.branchExecution!.sourceProgram.Mnemonics[site.pc]!)}});
           issues.push(...program.blockers.map(reason => ({ reason })),
-            ...program.instructions.flatMap(({ op }, pc) => op.kind === "blocked" ? [{ reason: op.reason, pc }] : []));
-          if (!issues.length) lifecycle = parseBattleLifecycle({ kind: "battle-lifecycle-v1", mode: "script",
-            scriptId: m.scriptId, program });
+            ...program.instructions.flatMap(({ op }, pc) => op.kind === "blocked"&&!deferred.some(site=>site.pc===pc) ? [{ reason: op.reason, pc }] : []));
+          if (!issues.length) {
+            lifecycle = parseBattleLifecycle({ kind: input.branchExecution?'battle-lifecycle-v2':'battle-lifecycle-v1', mode: "script",
+              scriptId: m.scriptId, program,...(input.branchExecution?{branchExecution:input.branchExecution}:{}) });
+          }
         } catch (error) { issues.push({ reason: message(error) }); }
         if (!lifecycle && omission) {
           lifecycle = parseBattleLifecycle({ kind: "battle-lifecycle-v1", mode: "development-omission",
@@ -431,7 +443,9 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
           add("blocked", "participant-policy", "Dynamic enemy entry requires an explicit Web slot and reward policy",
             { pc, dependency: { table: "script.csv", id: encounter.metadata.scriptId } });
       }
-      else {
+      {
+        // Initial bindings remain an independent hard gate even when the
+        // now-visible script also lacks a dynamic participant policy.
         try {
           const slots: Record<string, BattleParticipantSlot> = {};
           for (const enemy of encounter.enemies)

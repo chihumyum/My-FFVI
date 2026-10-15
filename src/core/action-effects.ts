@@ -35,6 +35,7 @@ export function projectActionTarget(
   targetCount: number,
   cost = 0,
   physicalRows?: PhysicalRowContext,
+  abilityId?: number,
 ) {
   for (const key of ["hp", "mp", "maxHp", "maxMp"] as const)
     if (
@@ -52,7 +53,8 @@ export function projectActionTarget(
     cost > actor.mp
   )
     throw new Error("Invalid action resource bounds/cost");
-  conditions.validateActive(target.conditionIds);
+  conditions.validateOwner(actor.conditionIds, actor.side);
+  conditions.validateOwner(target.conditionIds, target.side);
   let conditionIds = [...target.conditionIds];
   let effects: AbilityEffectResult[];
   let row: BattleRow | undefined;
@@ -114,10 +116,12 @@ export function projectActionTarget(
       plan,
       power,
       { ...actor, conditionTypes: conditions.types(actor.conditionIds) },
-      { ...target, conditionTypes: conditions.types(target.conditionIds) },
+      { ...target, conditionTypes: conditions.types(target.conditionIds),
+        elementResistances: conditions.effectiveElements(target.conditionIds, target.elementResistances, target.side) },
       random,
       targetCount,
       physicalRows,
+      abilityId,
     );
   }
   const state: { hp: number; mp: number; conditionIds: number[]; row?: BattleRow } = {

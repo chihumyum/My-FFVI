@@ -1,3 +1,4 @@
+import { validateBattleBranchExecutionPolicy, type WebBattleBranchExecution } from './battle-branch-execution.js';
 import { WEB_BATTLE_EVENT_EFFECTS, createWebBattleEventEffectHost, type BattleEventEffectHost } from './battle-event-effect.js';
 import { validateScriptedBattleActionPolicy, type WebScriptedBattleActions } from "./scripted-battle-action.js";
 import { WEB_SOURCE_PARTY_SELECTION, type WebSourcePartySelection, type SourcePartySelectionOutcome } from './source-party-selection.js';
@@ -6,6 +7,7 @@ import { WEB_BATTLE_EVENT_CONTROLS, validateBattleEventControls, type WebBattleE
 import { parseSourceMessageFeeCatalog } from "./source-message-fees.js";
 import { WEB_SOURCE_SCRIPT_RANDOM, type WebSourceScriptRandom } from "./field-script-random.js";
 import { validateRetainedWorldTransportationPolicy } from "./world-transportation-entry.js";
+import type { BattleGauEntry } from './battle-gau.js';
 import { WEB_SOURCE_ENCOUNTER_POLICY, selectWebSourceEncounter, type WebSourceEncounterPolicy } from "./source-encounter-entry.js";
 import { WEB_SOURCE_BOSS_ENTRY, type WebSourceBossEntry } from './source-boss-encounter.js';
 import { WEB_COMMITTED_BATTLE_RESULT, projectCommittedBattleResult, type WebCommittedBattleResult } from './source-battle-result.js';
@@ -77,7 +79,7 @@ export type GameCheckpoint = GameCheckpointBase & (
   { formatVersion: 4 } | { formatVersion: 5 | 6; walkEncounters: WalkEncounterSnapshot }
 );
 /** External observations are rebound by the host on load, never trusted from saves. */
-export type GameSessionRuntime = { battleEventEffects?:BattleEventEffectHost|typeof WEB_BATTLE_EVENT_EFFECTS; battleEventControls?: WebBattleEventControls; viewChange?: import("./field-view-change.js").WebFlatFieldViewChange; battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY; sourcePartySelection?: WebSourcePartySelection; scriptedBattleActions?: WebScriptedBattleActions; puppetRoutes?: import("./field-puppet-route.js").WebPuppetRoutePolicy; sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
+export type GameSessionRuntime = { battleBranchExecution?:WebBattleBranchExecution; battleEventEffects?:BattleEventEffectHost|typeof WEB_BATTLE_EVENT_EFFECTS; battleEventControls?: WebBattleEventControls; viewChange?: import("./field-view-change.js").WebFlatFieldViewChange; battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY; sourcePartySelection?: WebSourcePartySelection; scriptedBattleActions?: WebScriptedBattleActions; puppetRoutes?: import("./field-puppet-route.js").WebPuppetRoutePolicy; sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
   sourceMessageSequence?: NonNullable<FieldGameOptions["sourceMessageSequence"]>;
   conditionLeaderActivity?: NonNullable<FieldGameOptions["conditionLeaderActivity"]>;
@@ -124,7 +126,7 @@ export type PreparedSessionBattleReturn = Omit<PreparedSessionBattleStart, "kind
   readonly outcome: "victory" | "escaped" | "forced";
 };
 type BattleEntry = { field: FieldGame; request: SessionBattleRequest; lease: BattleLease;
-  content: BattleContent; seed: number; shared: BattleEventSharedSnapshot };
+  content: BattleContent; seed: number; shared: BattleEventSharedSnapshot; gau:BattleGauEntry|null };
 type PendingBattleHandoff = { status: "prepared" | "publishing" | "consumed" | "discarded"; discard(): void };
 class StaleSessionBattleHandoff extends Error {
   constructor() { super("Stale session battle handoff"); }
@@ -155,6 +157,7 @@ export class GameSession {
   private readonly preparedBattleHandoff: boolean;
   readonly #battleEffectRuntime:BattleEventEffectHost|undefined;
   private readonly scriptedBattleActions: WebScriptedBattleActions | undefined;
+  private readonly battleBranchExecution:WebBattleBranchExecution|undefined;
   private readonly battleEventControls: WebBattleEventControls | undefined;
   readonly #battleMessageRuntime: { sequence: NonNullable<GameSessionRuntime["sourceMessageSequence"]> } | null;
   private encounterSerial = 0;
@@ -230,6 +233,7 @@ export class GameSession {
     checkpointInteger(seed, 0, 0xffffffff);
     validateScriptedBattleActionPolicy(runtime.scriptedBattleActions);
     this.scriptedBattleActions=runtime.scriptedBattleActions;
+    validateBattleBranchExecutionPolicy(runtime.battleBranchExecution);this.battleBranchExecution=runtime.battleBranchExecution;
     validateBattleEventControls(runtime.battleEventControls);
     this.battleEventControls = runtime.battleEventControls;
     if(runtime.battleEventEffects!==undefined&&runtime.battleEventEffects!==WEB_BATTLE_EVENT_EFFECTS&&(runtime.battleEventEffects.policy!==WEB_BATTLE_EVENT_EFFECTS||typeof runtime.battleEventEffects.prepare!=='function'))throw new Error('Unknown session battle effect host');
@@ -273,7 +277,7 @@ export class GameSession {
       initialEvents.write(ref, value);
     }
     const messageFees = battleCatalog.common.sourceMessageFees && parseSourceMessageFeeCatalog(battleCatalog.common.sourceMessageFees);
-    const { battleEventEffects: battleEffectsHost, battleEventControls: battleControlsPolicy, battleEventMessages: battleMessagesPolicy, scriptRandom: scriptRandomPolicy, sourceBattleResult: resultPolicy, scriptedBattleActions: scriptActionsPolicy, ...fieldRuntime } = runtime;
+    const { battleBranchExecution: branchPolicy, battleEventEffects: battleEffectsHost, battleEventControls: battleControlsPolicy, battleEventMessages: battleMessagesPolicy, scriptRandom: scriptRandomPolicy, sourceBattleResult: resultPolicy, scriptedBattleActions: scriptActionsPolicy, ...fieldRuntime } = runtime;
     this.world = new WorldSession(field, initialEvents, {
       current: {
         ...fieldRuntime,
@@ -838,7 +842,9 @@ export class GameSession {
     return new BattleGame(content, entry.seed, this.state.battlePlayers(entry.lease), this.state.battleInventory(entry.lease),
       this.state.battleProgression(entry.lease, content.experience), this.currentBattlePreferences,
       structuredClone(entry.shared), this.state.battlePlayerBorrow(entry.lease),
-      this.scriptedBattleActions !== undefined || this.#battleMessageRuntime || this.battleEventControls !== undefined || this.#battleEffectRuntime ? {
+      this.battleBranchExecution !== undefined || this.scriptedBattleActions !== undefined || this.#battleMessageRuntime || this.battleEventControls !== undefined || this.#battleEffectRuntime || entry.gau ? {
+        ...(this.battleBranchExecution===undefined?{}:{branchExecution:this.battleBranchExecution}),
+        ...(entry.gau?{gau:entry.gau}:{}),
         ...(this.battleEventControls === undefined ? {} : { controls: this.battleEventControls }),
         ...(this.#battleEffectRuntime ? {effects:this.#battleEffectRuntime} : {}),
         ...(this.scriptedBattleActions === undefined ? {} : { scriptedActions: this.scriptedBattleActions }),
@@ -911,13 +917,15 @@ export class GameSession {
       if (this.state.battlePartyBlocker) throw new Error(this.state.battlePartyBlocker);
       const blocker = battleDefinitionBlocker(this.state.partyPlayers(), content.qualificationContext, content.conditions);
       if (blocker) throw new Error(blocker);
+      const gau=content.lifecycle?.mode==='script'&&content.lifecycle.program.instructions.some(({op})=>op.kind==='set-gau-mode'||op.kind==='shadow-secede-lot')
+        ?this.state.sourceBattleGauEntry(entryContext.state):null;
       if (this.field !== field || field.stop !== request || this.fieldBattleFingerprint(field) !== before)
         throw new StaleSessionBattleHandoff();
       lease = this.state.openBattle(content.encounterId, content.rewardPolicy, content.playerParticipants);
       const ownedLease = lease;
       this.battleLease = ownedLease;
       const entry: BattleEntry = { field, request, lease: ownedLease, seed,
-        content: structuredClone(content), shared: battleEventSharedSnapshot(field.eventState) };
+        content: structuredClone(content), shared: battleEventSharedSnapshot(field.eventState),gau };
       const ownedBefore = canonical(this.state.snapshot());
       this.encounterFailure = null;
       return this.createBattleHandoff("start", entry,

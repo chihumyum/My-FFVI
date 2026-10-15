@@ -1,5 +1,5 @@
 {
-  "kind": "source-battle-directory-policy-v3",
+  "kind": "source-battle-directory-policy-v4",
   "framework": {
     "handoff": {
       "kind": "framework-battle-handoff-v1",
@@ -40,6 +40,7 @@
     "conditionControlPolicy": {
       "kind": "web-source-control-actions-v1"
     },
-    "manualControls": "web-manual-battle-controls-v1"
+    "manualControls": "web-manual-battle-controls-v1",
+    "branchExecution": "web-source-battle-branch-execution-v1"
   }
 }

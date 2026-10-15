@@ -1,4 +1,6 @@
+import { WEB_BATTLE_BRANCH_EXECUTION, validateBattleBranchExecutionPolicy, parseBattleSourceInstruction, classifyDeferredBattleInstruction, type WebBattleBranchExecution, type BattleSourceInstruction, type BattleDeferredInstructionCategory } from './battle-branch-execution.js';
 import {parseBattleEventEffectOp,type BattleEventEffectOp} from './battle-event-effect.js';
+import { readBattleEnemyMode } from './battle-gau.js';
 import { parseScriptedBattleAction, type ScriptedBattleAction } from "./scripted-battle-action.js";
 import type { BattleAISource } from "./battle-ai.js";
 import { int32, integerOperation, isOperator, type Operator } from "./script-integer.js";
@@ -19,6 +21,9 @@ export type BattleEventOp =
   | BattleEventMessageOp
   | { kind: "ui-visibility"; visible: boolean }
   | { kind: "stop-auto" | "force-return" }
+  | { kind: "cursed-shield-check" | "shadow-secede-lot" }
+  | { kind: "set-gau-mode" }
+  | { kind: "get-enemy-mode"; uniqueId:number; expected:number }
   | { kind: "nop" | "blank" | "exit" | "return" | "wait-start" | "exec-ai" | "sync-ai" | "sync-action" | "players-ended" }
   | { kind: "call" | "jump"; target: number }
   | { kind: "calc"; index: number; operator: Operator; right: BattleEventValue }
@@ -35,7 +40,8 @@ export type BattleEventOp =
   | { kind: "end-enabled" | "pause" | "interactive" | "enemy-no-act"; enabled: boolean }
   | { kind: "blocked"; reason: string };
 export type BattleEventProgram = {
-  kind: "battle-event-v1";
+  kind: "battle-event-v1" | "battle-event-v2";
+  branchExecution?: { policy: WebBattleBranchExecution; sourceProgram: { Name:string; Title:{main:string;sub:string}; Mnemonics:BattleSourceInstruction[]; Segments:{Label:string;EntryPoint:number;Count:number}[]; ScriptLocal:string[]; ScriptLocalValue:number[]|null; SystemFlag:Record<string,number>; Animations:unknown[] }; deferred: {pc:number;category:BattleDeferredInstructionCategory;reason:string}[] };
   source: BattleAISource | null;
   /** Entry is inclusive; end is exclusive. Jump targets name the label before
    * the next executed instruction, as in Internal.Main.Call/Return. */
@@ -86,11 +92,14 @@ export type BattleEventContext = {
   playerGroupEntry?: { completed: boolean };
   messageStatus?: SourceMessageSequenceStatus;
   battleEffectsFinished?:boolean;
+  enemyModes?:readonly {uniqueId:number;mode:number}[];
 };
 export type BattleEventRequest =
   | (ScriptedBattleAction & { pc: number })
   | { kind: "ui-visibility"; pc: number; visible: boolean }
   | { kind: "stop-auto" | "force-return"; pc: number }
+  | { kind: "cursed-shield-check" | "shadow-secede-lot"; pc:number }
+  | { kind: "set-gau-mode"; pc:number }
   | (Extract<BattleEventEffectOp,{kind:"play-battle-effect"}> & {pc:number})
   | { kind: "message"; pc: number; operation: BattleEventMessageOp }
   | { kind: "message-page-input"; pc: number; ticket: number }
@@ -129,7 +138,8 @@ export function acknowledgeBattleEventMessage(program: BattleEventProgram, curre
   return state;
 }
 export class BattleEventError extends Error {
-  constructor(readonly source: BattleAISource | null, readonly pc: number, reason: string) {
+  constructor(readonly source: BattleAISource | null, readonly pc: number, readonly reason: string,
+    readonly attemptedVisited: readonly number[] = [], readonly rawInstruction:BattleSourceInstruction|null=null) {
     super(`Battle event ${source?.assetPath ?? "synthetic"}#/Mnemonics/${pc}: ${reason}`);
     this.name = "BattleEventError";
   }
@@ -210,8 +220,13 @@ function parseOp(raw: unknown): BattleEventOp {
       checkpointKeys(value, "kind,visible");
       return { kind, visible: boolean(value.visible) };
     case "stop-auto": case "force-return":
+    case "cursed-shield-check": case "shadow-secede-lot":
+    case "set-gau-mode":
       checkpointKeys(value, "kind");
       return { kind };
+    case "get-enemy-mode":
+      checkpointKeys(value,"kind,uniqueId,expected");
+      return {kind,uniqueId:integer(value.uniqueId,1,9),expected:integer(value.expected,-0x80000000)};
     case "script-action": return parseScriptedBattleAction(value);
     case "play-battle-effect":case "sync-battle-effect": return parseBattleEventEffectOp(value);
     case "message": return parseBattleEventMessageOp(raw);
@@ -276,7 +291,7 @@ function parseSource(raw: unknown): BattleAISource | null {
     return value;
   };
   const objectId = text(value.objectId);
-  if (!/^-?\d+$/.test(objectId)) throw new Error("Invalid battle event source object identity");
+  if (!/^(?:0|-?[1-9]\d*)$/.test(objectId) || BigInt(objectId)<-(1n<<63n) || BigInt(objectId)>=(1n<<63n)) throw new Error("Invalid battle event source object identity");
   return { sourceSetHash: hash(value.sourceSetHash), battleSourceSetHash: hash(value.battleSourceSetHash),
     file: text(value.file), sha256: hash(value.sha256), assetPath: text(value.assetPath),
     serializedFile: text(value.serializedFile), objectId };
@@ -287,11 +302,12 @@ function parseSource(raw: unknown): BattleAISource | null {
 export function parseBattleEventProgram(raw: unknown): BattleEventProgram {
   checkpointRecord(raw);
   const value = record(raw, "kind,source,entry,end,localNames,initialLocals,instructions,blockers" +
-    (Object.hasOwn(raw as object, "messageBinding") ? ",messageBinding" : ""));
-  if (value.kind !== "battle-event-v1") throw new Error("Invalid battle event program kind");
+    (Object.hasOwn(raw as object, "messageBinding") ? ",messageBinding" : "") +
+    ((raw as {kind?:unknown}).kind === "battle-event-v2" ? ",branchExecution" : ""));
+  if (value.kind !== "battle-event-v1" && value.kind !== "battle-event-v2") throw new Error("Invalid battle event program kind");
   const source = parseSource(value.source);
   const program: BattleEventProgram = {
-    kind: "battle-event-v1", source, entry: integer(value.entry), end: integer(value.end),
+    kind: value.kind, source, entry: integer(value.entry), end: integer(value.end),
     localNames: array(value.localNames, name => text(name, true)), initialLocals: array(value.initialLocals, int32),
     instructions: array(value.instructions, (raw, pc) => {
       try {
@@ -304,6 +320,48 @@ export function parseBattleEventProgram(raw: unknown): BattleEventProgram {
     ...(Object.hasOwn(value, "messageBinding") ? { messageBinding: parseBattleEventMessageBinding(value.messageBinding) } : {}),
   };
   const fail = (pc: number, reason: string): never => { throw new BattleEventError(program.source, pc, reason); };
+  if (program.kind === "battle-event-v2") {
+    if (!source) fail(program.entry,"Branch execution requires the complete original source identity");
+    if(program.messageBinding&&program.messageBinding.parentSourceSetHash!==source!.sourceSetHash)fail(program.entry,"Branch message binding belongs to another source import");
+    const policy=record(value.branchExecution,"policy,sourceProgram,deferred");
+    if(policy.policy!==WEB_BATTLE_BRANCH_EXECUTION)fail(program.entry,"Unknown battle program branch execution policy");
+    const original=record(policy.sourceProgram,"Name,Title,Mnemonics,Segments,ScriptLocal,ScriptLocalValue,SystemFlag,Animations"),title=record(original.Title,"main,sub");
+    const sourceInstructions=array(original.Mnemonics,parseBattleSourceInstruction),
+      deferred=array(policy.deferred,(raw):{pc:number;category:BattleDeferredInstructionCategory;reason:string}=>{const v=record(raw,"pc,category,reason");if(v.category!=="unimplemented-instruction"&&v.category!=="unimplemented-selector")throw new Error("Unknown runtime battle dependency category");return {pc:integer(v.pc),category:v.category,reason:text(v.reason)};}),
+      segments=array(original.Segments,raw=>{const v=record(raw,"Label,EntryPoint,Count");return {Label:text(v.Label),EntryPoint:integer(v.EntryPoint),Count:integer(v.Count)};}),
+      sourceNames=array(original.ScriptLocal,v=>text(v,true)),sourceValues=original.ScriptLocalValue===null?null:array(original.ScriptLocalValue,int32),
+      sourceFlags=record(original.SystemFlag,"KeepBadStatusVisual,KeepPlayerPuppet,RidingVehicle,SkipInitialize"),animations=array(original.Animations,v=>v);
+    if(program.entry!==0||program.end!==program.instructions.length||segments.length!==1||segments[0]!.Label!=="Main"||segments[0]!.EntryPoint!==0||segments[0]!.Count!==program.instructions.length)
+      fail(program.entry,"Branch execution requires the complete original Main range");
+    if(animations.length||Object.values(sourceFlags).some(v=>v!==0))fail(program.entry,"Branch execution cannot grant source animations or SystemFlag applicability");
+    const initial=sourceValues?.length===sourceNames.length?sourceValues:sourceNames.map(()=>0);
+    if(new Set(sourceNames).size!==sourceNames.length||JSON.stringify(sourceNames)!==JSON.stringify(program.localNames)||JSON.stringify(initial)!==JSON.stringify(program.initialLocals))
+      fail(program.entry,"Original battle local bank/initial values do not match");
+    if(sourceInstructions.length!==program.instructions.length)fail(program.entry,"Original battle instruction/body length mismatch");
+    if(new Set(deferred.map(row=>row.pc)).size!==deferred.length)fail(program.entry,"Duplicate runtime battle dependency PC");
+    const expected:{pc:number;category:BattleDeferredInstructionCategory;reason:string}[]=[];
+    for(const [pc,raw]of sourceInstructions.entries()){
+      const typed=program.instructions[pc]!;
+      if(raw.mnemonic!==typed.mnemonic)fail(pc,"Original battle instruction name/PC mismatch");
+      const category=classifyDeferredBattleInstruction(raw);
+      if(category&&typed.op.kind!=='blocked')fail(pc,"Opaque original battle instruction cannot be replaced by a typed operation");
+      if(typed.op.kind==='blocked'&&category)expected.push({pc,category,reason:typed.op.reason});
+      // Raw control-flow/local operands must remain valid even when a bad
+      // instruction was retained as blocked rather than decoded by the compiler.
+      const ints=raw.operands.iValues,strings=raw.operands.sValues;
+      if((raw.mnemonic==='Call'||raw.mnemonic==='Jump'||raw.mnemonic==='Branch')&&
+        ((raw.mnemonic==='Branch'?ints[2]:ints[0])!<program.entry||(raw.mnemonic==='Branch'?ints[2]:ints[0])!+1>=program.end))
+        fail(pc,"Original battle target label leaves the complete program range");
+      const refs=raw.mnemonic==='Calc'||raw.mnemonic==='Branch'?[[strings[0],ints[0]],[strings[2],ints[1]]]:
+        ['SetFlag','ResetFlag','FlipFlag'].includes(raw.mnemonic)?[[strings[0],ints[0]]]:[];
+      if(refs.some(([category,index])=>category==='ScriptLocalVariable'&&(typeof index!=='number'||index<0||index>=program.localNames.length)))
+        fail(pc,"Original script-local index is outside the declared bank");
+    }
+    if(JSON.stringify(expected)!==JSON.stringify(deferred))fail(program.entry,"Runtime battle dependencies differ from exact original blocked sites");
+    program.branchExecution={policy:WEB_BATTLE_BRANCH_EXECUTION,sourceProgram:{Name:text(original.Name),Title:{main:text(title.main,true),sub:text(title.sub,true)},Mnemonics:sourceInstructions,Segments:segments,
+      ScriptLocal:sourceNames,ScriptLocalValue:sourceValues,SystemFlag:sourceFlags as Record<string,number>,Animations:animations},deferred};
+  }
+
   if (program.source && program.instructions.some(({ op }) => op.kind === "message") && !program.messageBinding)
     fail(program.entry, "Source battle messages require their physical localization/name binding");
   if (program.entry >= program.end || program.end > program.instructions.length)
@@ -325,20 +383,25 @@ export function parseBattleEventProgram(raw: unknown): BattleEventProgram {
       fail(pc, "SyncBattleAI requires ScriptLocalVariable[0]");
     if (op.kind === "players-ended" && program.localNames.length === 0)
       fail(pc, "players-ended requires ScriptLocalVariable[0]");
+    if(op.kind==='get-enemy-mode'&&program.localNames.length<2)fail(pc,'GetEnemyMode requires ScriptLocalVariable[1]');
+    if(op.kind==='set-gau-mode'&&program.localNames.length<3)fail(pc,'SetGauMode requires ScriptLocalVariable[2]');
+    if(op.kind==='shadow-secede-lot'&&program.localNames.length<4)fail(pc,'Shadow lottery requires ScriptLocalVariable[3]');
   }
   return program;
 }
 
-export function assertBattleEventExecutable(program: BattleEventProgram): void {
+export function assertBattleEventExecutable(program: BattleEventProgram, policy?:WebBattleBranchExecution): void {
+  validateBattleBranchExecutionPolicy(policy);
   const parsed = parseBattleEventProgram(program);
   if (parsed.blockers.length)
     throw new BattleEventError(parsed.source, parsed.entry, parsed.blockers.join("; "));
   for (const [pc, { op }] of parsed.instructions.entries())
-    if (op.kind === "blocked") throw new BattleEventError(parsed.source, pc, op.reason);
+    if (op.kind === "blocked" && !(policy===WEB_BATTLE_BRANCH_EXECUTION && parsed.kind==="battle-event-v2" && parsed.branchExecution!.deferred.some(site=>site.pc===pc)))
+      throw new BattleEventError(parsed.source, pc, op.reason);
 }
 
-export function createBattleEventState(program: BattleEventProgram): BattleEventState {
-  assertBattleEventExecutable(program);
+export function createBattleEventState(program: BattleEventProgram, policy?:WebBattleBranchExecution): BattleEventState {
+  assertBattleEventExecutable(program,policy);
   return {
     pc: program.entry,
     stack: [],
@@ -405,7 +468,8 @@ function parseContext(raw: unknown): BattleEventContext {
     (Object.hasOwn(fields, "playerEntry") ? ",playerEntry" : "") +
     (Object.hasOwn(fields, "playerGroupEntry") ? ",playerGroupEntry" : "") +
     (Object.hasOwn(fields, "messageStatus") ? ",messageStatus" : "") +
-    (Object.hasOwn(fields,"battleEffectsFinished") ? ",battleEffectsFinished" : ""));
+    (Object.hasOwn(fields,"battleEffectsFinished") ? ",battleEffectsFinished" : "") +
+    (Object.hasOwn(fields,'enemyModes') ? ',enemyModes' : ''));
   let variables: BattleEventContext["variables"];
   if (Object.hasOwn(value, "variables")) {
     const port = record(value.variables, "read");
@@ -439,6 +503,9 @@ function parseContext(raw: unknown): BattleEventContext {
     messageStatus = { ticket: integer(status.ticket, 1, Number.MAX_SAFE_INTEGER), complete: boolean(status.complete),
       endWaiting: boolean(status.endWaiting), newPageInputWaiting: boolean(status.newPageInputWaiting), playing: boolean(status.playing) };
   }
+  const enemyModes=Object.hasOwn(value,'enemyModes')?array(value.enemyModes,row=>{
+    const r=record(row,'uniqueId,mode');return {uniqueId:integer(r.uniqueId,1,9),mode:int32(r.mode)};
+  }):undefined;
   return { clock: clockNumber(value.clock), timeSeconds: finite(value.timeSeconds, 0),
     started: boolean(value.started), aiCoreAlive: boolean(value.aiCoreAlive), actionStaging: boolean(value.actionStaging),
     ...(variables ? { variables } : {}),
@@ -447,6 +514,7 @@ function parseContext(raw: unknown): BattleEventContext {
     ...(playerEntry ? { playerEntry } : {}),
     ...(playerGroupEntry ? { playerGroupEntry } : {}),
     ...(messageStatus ? { messageStatus } : {}),
+    ...(enemyModes ? {enemyModes} : {}),
     ...(Object.hasOwn(value,"battleEffectsFinished")?{battleEffectsFinished:boolean(value.battleEffectsFinished)}:{}),
     ...(Object.hasOwn(value, "playersEnded") ? { playersEnded: boolean(value.playersEnded) } : {}) };
 }
@@ -459,10 +527,12 @@ export function advanceBattleEvent(
   program: BattleEventProgram,
   current: BattleEventState,
   context: BattleEventContext,
+  policy?:WebBattleBranchExecution,
 ): BattleEventAdvance {
+  const attemptedVisited:number[]=[];
   let failurePc = current.pc;
   const fail = (reason: string, pc = failurePc): never => {
-    throw new BattleEventError(program.source, pc, reason);
+    throw new BattleEventError(program.source, pc, reason,[...attemptedVisited],program.kind==="battle-event-v2"?structuredClone(program.branchExecution?.sourceProgram.Mnemonics[pc]??null):null);
   };
   const guarded = <T>(operation: () => T): T => {
     try { return operation(); }
@@ -471,7 +541,7 @@ export function advanceBattleEvent(
       return fail(error instanceof Error ? error.message : String(error));
     }
   };
-  guarded(() => assertBattleEventExecutable(program));
+  guarded(() => assertBattleEventExecutable(program,policy));
   const state = guarded(() => parseState(current));
   context = guarded(() => parseContext(context));
   const inRange = (pc: number) => pc >= program.entry && pc < program.end;
@@ -562,7 +632,7 @@ export function advanceBattleEvent(
     state.clockInstructions++;
     const pc = state.pc, op = program.instructions[pc]!.op;
     failurePc = pc;
-    visited.push(pc);
+    visited.push(pc); attemptedVisited.push(pc);
     switch (op.kind) {
       case "ui-visibility":
         next(); requests.push({ kind: op.kind, visible: op.visible, pc }); return result();
@@ -649,6 +719,14 @@ export function advanceBattleEvent(
         if (context.playersEnded) state.locals[0] = -1;
         next();
         break;
+      case 'get-enemy-mode':
+        state.locals[1]=guarded(()=>readBattleEnemyMode(op.uniqueId,op.expected,local(1),context.enemyModes));next();break;
+      case 'cursed-shield-check':
+        next();requests.push({kind:op.kind,pc});return result();
+      case 'shadow-secede-lot':
+        local(3);next();requests.push({kind:op.kind,pc});return result();
+      case 'set-gau-mode':
+        local(2);next();requests.push({kind:'set-gau-mode',pc});return result();
       case "sync-ai":
         local(0);
         state.locals[0] = Number(!context.aiCoreAlive);

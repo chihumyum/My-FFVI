@@ -1,3 +1,4 @@
+import { WEB_BATTLE_BRANCH_EXECUTION } from '/runtime/core/battle-branch-execution.js';
 import { WEB_SCRIPTED_BATTLE_ACTIONS } from "/runtime/core/scripted-battle-action.js";
 import { WEB_SOURCE_PARTY_SELECTION } from '/runtime/core/source-party-selection.js';
 import { SourcePartySelectionView } from './source-party-selection-view.js';
@@ -99,6 +100,7 @@ const readGameJson = async (url) => {
 let contents = new GameContentRepository(readGameJson, contentProfile);
 // Same declared Web policy as the source-route audit; no native default claim.
 const runtime = {
+  battleBranchExecution:WEB_BATTLE_BRANCH_EXECUTION,
   scriptedBattleActions: WEB_SCRIPTED_BATTLE_ACTIONS,
   scriptRandom: WEB_SOURCE_SCRIPT_RANDOM,
   // Source slots and entry ordering are retained; this seed mapping and

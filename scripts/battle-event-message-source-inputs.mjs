@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
-export async function loadBattleEventMessageSourceInputs(root,compiledDir){
+export async function loadBattleEventMessageSourceInputs(root,compiledDir,{branchExecution}={}){
  const load=name=>import(pathToFileURL(resolve(compiledDir,'src',name+'.js')).href),api=Object.assign({},...await Promise.all([
   'compiler/content','compiler/integrity','compiler/system-source','compiler/corpus','compiler/battle-event','compiler/battle-event-message-bindings',
   'compiler/battle-encounters','core/battle-event','core/battle-event-message','core/source-message-sequence'].map(load)));
@@ -26,7 +26,7 @@ export async function loadBattleEventMessageSourceInputs(root,compiledDir){
   assert.equal(files[0].sha256,p.source.sha256,'Corpus/battle physical bytes differ');
   return {...exported.source,sha256:files[0].sha256,sourceSetHash:battle.parentSourceSetHash,battleSourceSetHash:battle.sourceSetHash};
  };
- const compiled=programs.map(p=>{const bound=typedSource(p),program=api.compileBattleEvent(p.data,bound,input,snapshot.reader),messageSites=[];
+ const compiled=programs.map(p=>{const bound=typedSource(p),program=api.compileBattleEvent(p.data,bound,input,snapshot.reader,branchExecution),messageSites=[];
   assert.equal(program.instructions.length,p.data.Mnemonics.length);
   for(const[index,raw]of p.data.Mnemonics.entries())if(['Msg','MsgClose'].includes(raw.mnemonic)){
    const value={program:p.id,source:p.source,rawHash:api.hash(p.data),index,raw,nextMnemonic:p.data.Mnemonics[index+1]?.mnemonic??null,

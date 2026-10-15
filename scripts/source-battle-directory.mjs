@@ -24,14 +24,16 @@ function fields(value,keys,label){
 }
 function parsePolicy(raw,api){
   fields(raw,'kind,framework','source battle directory policy');
-  assert.ok(['source-battle-directory-policy-v1','source-battle-directory-policy-v2','source-battle-directory-policy-v3'].includes(raw.kind),'Unknown source battle directory policy version');
-  fields(raw.framework,raw.kind==='source-battle-directory-policy-v3'?'handoff,entry,conditionControlPolicy,manualControls':raw.kind==='source-battle-directory-policy-v2'?'handoff,entry,conditionControlPolicy':'handoff,entry','framework battle directory policy');
-  const manualControls=raw.kind==='source-battle-directory-policy-v3'?raw.framework.manualControls:undefined;
-  if(raw.kind==='source-battle-directory-policy-v3')assert.equal(manualControls,'web-manual-battle-controls-v1','Missing or unknown manual controls policy');
+  assert.ok(['source-battle-directory-policy-v1','source-battle-directory-policy-v2','source-battle-directory-policy-v3','source-battle-directory-policy-v4'].includes(raw.kind),'Unknown source battle directory policy version');
+  fields(raw.framework,raw.kind==='source-battle-directory-policy-v4'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution':raw.kind==='source-battle-directory-policy-v3'?'handoff,entry,conditionControlPolicy,manualControls':raw.kind==='source-battle-directory-policy-v2'?'handoff,entry,conditionControlPolicy':'handoff,entry','framework battle directory policy');
+  const current=['source-battle-directory-policy-v3','source-battle-directory-policy-v4'].includes(raw.kind),manualControls=current?raw.framework.manualControls:undefined;
+  const branchExecution=raw.kind==='source-battle-directory-policy-v4'?raw.framework.branchExecution:undefined;
+  if(raw.kind==='source-battle-directory-policy-v4')assert.equal(branchExecution,'web-source-battle-branch-execution-v1','Missing or unknown source battle branch policy');
+  if(current)assert.equal(manualControls,'web-manual-battle-controls-v1','Missing or unknown manual controls policy');
   const conditionControlPolicy=raw.kind!=='source-battle-directory-policy-v1'?parseConditionControlPolicy(raw.framework.conditionControlPolicy):undefined;
   return {kind:raw.kind,framework:{handoff:api.parseBattleHandoffPolicy(raw.framework.handoff),
     entry:raw.framework.entry===null?null:api.parseBattleBatchEntryPolicy(raw.framework.entry),
-    ...(conditionControlPolicy?{conditionControlPolicy}:{}),...(manualControls===undefined?{}:{manualControls})}};
+    ...(conditionControlPolicy?{conditionControlPolicy}:{}),...(manualControls===undefined?{}:{manualControls}),...(branchExecution===undefined?{}:{branchExecution})}};
 }
 function parseConditionControlPolicy(raw){
   fields(raw,'kind','Web condition control policy');
@@ -56,6 +58,7 @@ export async function readSourceBattleDirectoryPolicy({root=repository,compiledD
   const declared=parsePolicy(policy,await modules(root,compiledDir));
   await Promise.all([assertConditionControlRuntime(root,compiledDir,declared.framework.conditionControlPolicy),
     assertManualControlRuntime(root,compiledDir,declared.framework.manualControls)]);
+  if(declared.framework.branchExecution!==undefined){const runtime=await import(pathToFileURL(resolve(root,compiledDir,'src/core/battle-branch-execution.js')).href);assert.equal(runtime.WEB_BATTLE_BRANCH_EXECUTION,declared.framework.branchExecution);assert.equal(typeof runtime.validateBattleBranchExecutionPolicy,'function');runtime.validateBattleBranchExecutionPolicy(declared.framework.branchExecution);}
   return declared;
 }
 
@@ -198,6 +201,7 @@ export async function compileSourceBattleDirectory({root=repository,compiledDir=
   const {drops:oldDrops,...oldCommon}=base.common,{drops:newDrops,...newCommon}=strictCatalog.common;
   assert.equal(api.canonical(oldCommon),api.canonical(newCommon),'Strict directory changed shared source capabilities');
   const runtime=api.compileBattleEncounterRuntime(shared.reader,{...runtimeInput,
+    ...(declared.framework.branchExecution===undefined?{}:{branchExecution:declared.framework.branchExecution}),
     ...(declared.framework.manualControls===undefined?{}:{manualControls:declared.framework.manualControls}),
     ...(declared.framework.conditionControlPolicy?{conditionControlPolicy:declared.framework.conditionControlPolicy}:{}),handoff:{policy:declared.framework.handoff},
     development:bindEntryPolicy(declared.framework.entry,descriptors.encounters,api)});

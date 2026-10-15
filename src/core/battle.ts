@@ -1,4 +1,6 @@
+import { planCursedShieldCheck, planShadowSecedeLot } from './battle-post-checks.js';
 import type { BattleForcedReturnResult } from "./battle-forced-return.js";
+import { WEB_BATTLE_BRANCH_EXECUTION, validateBattleBranchExecutionPolicy, type WebBattleBranchExecution } from './battle-branch-execution.js';
 import { WEB_BATTLE_EVENT_EFFECTS, WEB_BATTLE_EFFECT_PULSE_MILLISECONDS, parseBattleEventEffectOp, type BattleEventEffectHost, type BattleEffectResourceLease, type BattleEffectProjection, type BattleEventEffectOp } from './battle-event-effect.js';
 import { isNonDamagingHit, validateNonDamagingPresentation } from "./non-damaging-ability.js";
 import { WEB_SCRIPTED_BATTLE_ACTIONS, validateScriptedBattleActionPolicy, parseScriptedBattleAction, type ScriptedBattleAction, type WebScriptedBattleActions } from "./scripted-battle-action.js";
@@ -97,6 +99,7 @@ import type { SourceMessageEffect, SourceMessageState } from "./source-message.j
 import { parseBattleLifecycle, type BattleLifecycle } from "./battle-lifecycle.js";
 import { battleEventUnitEnded } from "./battle-event-context.js";
 import { BattleEventSharedState, type BattleEventSharedSnapshot } from "./battle-event-shared.js";
+import { parseBattleGauEntry, planBattleGauMode, type BattleGauEntry } from './battle-gau.js';
 import { parseBattleParticipantContent, type BattleParticipantContent, type BattleParticipantSlot,
   type EnemyBattleDefinition } from "./battle-participants.js";
 import { createBattleParticipantState, projectEnemyReplacement, projectEnemyPartyReplacement, projectBattleParticipantRewards,
@@ -199,6 +202,19 @@ export class BattleGame {
   private readonly playerConditionTraits = new Map<number, Readonly<NonNullable<CombatantDefinition["conditionTraits"]>>>();
   readonly #conditionUnitIdentities = new WeakMap<Combatant, { id: string; sourceId: number; side: "player" | "enemy" }>();
   private eventState: BattleEventState | null = null;
+  readonly #branchPolicy:WebBattleBranchExecution|undefined;
+  #branchVisited=new Set<number>();
+  #branchFrameVisited:number[]=[];
+  #branchLastFailure:{pc:number;reason:string;raw:unknown;attemptedTime:number;attemptedVisited:number[]}|null=null;
+  get eventBranchExecution(){
+    if(this.lifecycle.kind!=="battle-lifecycle-v2")return null;
+    const p=this.lifecycle.program,visited=[...this.#branchVisited].sort((a,b)=>a-b);
+    return {policy:this.#branchPolicy,committedVisited:visited,unvisited:p.instructions.flatMap((_,pc)=>this.#branchVisited.has(pc)?[]:[pc]),
+      unvisitedDependencies:p.branchExecution!.deferred.filter(site=>!this.#branchVisited.has(site.pc)).map(site=>({...site,raw:structuredClone(p.branchExecution!.sourceProgram.Mnemonics[site.pc])})),
+      lastFailure:structuredClone(this.#branchLastFailure)};
+  }
+  private get deferredEventStart(){return !!this.#messageHost||!!this.#effectHost||this.lifecycle.kind==="battle-lifecycle-v2";}
+
   readonly #effectHost: BattleEventEffectHost | null;
   #effects: {projection:BattleEffectProjection;targets:Combatant[];resource:BattleEffectResourceLease}[]=[];
   #effectNextTicket=1;
@@ -321,6 +337,9 @@ export class BattleGame {
       this.#messageJournal.push({ action: "retire", pc: null, ticket: held?.ticket ?? null, time: this.time }); committed = true; } };
   }
   private readonly eventShared: BattleEventSharedState | null;
+  private readonly gauEntry:BattleGauEntry|null;
+  private gauEnemyIds:number[]|null=null;
+  private gauModeJournal:{pc:number;modeWrite:1|2|null;atMilliseconds:number}[]=[];
   private readonly participantContent: BattleParticipantContent | null;
   private readonly entryEnemies: CombatantDefinition[];
   private participantState: BattleParticipantState;
@@ -382,11 +401,12 @@ export class BattleGame {
     initialPreferences?: BattlePreferences,
     eventShared?: BattleEventSharedSnapshot,
     playerBorrow?: BattlePlayerBorrow,
-    private readonly eventHosts?: { scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; controls?:WebBattleEventControls },
+    private readonly eventHosts?: { scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; branchExecution?:WebBattleBranchExecution },
   ) {
     if (eventHosts !== undefined && (!eventHosts || typeof eventHosts !== "object" || Array.isArray(eventHosts) ||
-        Object.keys(eventHosts).some(key => key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls")))
+        Object.keys(eventHosts).some(key => key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau")))
       throw new Error("Unknown battle event host options");
+    validateBattleBranchExecutionPolicy(eventHosts?.branchExecution);this.#branchPolicy=eventHosts?.branchExecution;
     const messageHost = eventHosts?.messages;
     if(eventHosts?.effects!==undefined&&(eventHosts.effects.policy!==WEB_BATTLE_EVENT_EFFECTS||typeof eventHosts.effects.prepare!=="function"))throw new Error("Unknown battle effect presentation host");
     if (
@@ -411,6 +431,11 @@ export class BattleGame {
     validateScriptedBattleActionPolicy(eventHosts?.scriptedActions);
     validateBattleEventControls(eventHosts?.controls);
     this.lifecycle = parseBattleLifecycle(content.lifecycle ?? { kind: "battle-lifecycle-v1", mode: "none" });
+    this.gauEntry=eventHosts?.gau===undefined?null:parseBattleGauEntry(eventHosts.gau);
+    if(this.gauEntry&&this.gauEntry.catalogHash!==content.contentHash)throw new Error('Gau entry belongs to another battle catalog');
+    if(this.lifecycle.mode==='script'&&this.lifecycle.program.instructions.some(({op})=>op.kind==='set-gau-mode'||op.kind==='shadow-secede-lot')&&!this.gauEntry)
+      throw new Error('Gau/Shadow checks require their complete source-owned battle entry');
+    if(this.lifecycle.kind==="battle-lifecycle-v2"&&this.#branchPolicy!==WEB_BATTLE_BRANCH_EXECUTION)throw new Error("Source branch lifecycle requires the explicit Web runtime host");
     const hasMessages = this.lifecycle.mode === "script" && this.lifecycle.program.instructions.some(({ op }) => op.kind === "message");
     if (hasMessages && (!messageHost || messageHost.policy !== WEB_BATTLE_EVENT_MESSAGE_POLICY ||
         !messageHost.owner || typeof messageHost.sequence?.prepare !== "function" || typeof messageHost.prepareEffects !== "function"))
@@ -448,7 +473,7 @@ export class BattleGame {
       uniqueId: this.participantContent?.initial.find(entry => entry.id === unit.id)?.uniqueId ?? index + 1,
     })));
     this.eventShared = eventShared === undefined ? null : new BattleEventSharedState(eventShared);
-    if (this.lifecycle.mode === "script") this.eventState = createBattleEventState(this.lifecycle.program);
+    if (this.lifecycle.mode === "script") this.eventState = createBattleEventState(this.lifecycle.program,this.#branchPolicy);
     if (this.lifecycle.mode === "script") for (const [pc, { op }] of this.lifecycle.program.instructions.entries()) {
       if ((op.kind === "ui-visibility" || op.kind === "stop-auto" || op.kind === "force-return") && eventHosts?.controls !== WEB_BATTLE_EVENT_CONTROLS)
         throw new BattleEventError(this.lifecycle.program.source, pc, "Missing explicit Web battle event control policy");
@@ -614,7 +639,7 @@ export class BattleGame {
     this.log("敌人出现了。");
     // Message-bearing roots start on the first admitted battle tick. Preparing
     // a media handoff or retry never publishes a global window in a constructor.
-    if (!this.#messageHost&&!this.#effectHost) this.advanceEvent();
+    if (!this.deferredEventStart) this.advanceEvent();
   }
   get players() {
     return this.combatants.filter((c) => c.side === "player");
@@ -645,13 +670,13 @@ export class BattleGame {
     }
   }
   get ready() {
-    if ((this.#messageHost||this.#effectHost) && !this.#messageRootStarted || this.escapeRequested || !this.eventControls.interactive || !this.eventUI.visible) return [];
+    if (this.deferredEventStart && !this.#messageRootStarted || this.escapeRequested || !this.eventControls.interactive || !this.eventUI.visible) return [];
     return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued &&
       !this.hasSleep(c) && !this.hasAutomaticControl(c));
   }
   get escapePending(): boolean { return this.escapeRequested; }
   get canRequestEscape(): boolean {
-    return (!this.#messageHost&&!this.#effectHost || this.#messageRootStarted) && this.escapeRule !== null && this.phase === "active" && !this.escapeRequested &&
+    return (!this.deferredEventStart || this.#messageRootStarted) && this.escapeRule !== null && this.phase === "active" && !this.escapeRequested &&
       this.eventControls.endEnabled && this.eventControls.interactive && this.eventControls.updateEnabled && this.eventUI.visible &&
       this.players.some(c => c.hp > 0) && this.enemies.some(c => c.hp > 0) &&
       !this.clockInput.paused && !this.clockInput.helpPaused && this.clockInput.progressEnabled && !this.clockInput.forceWaiting;
@@ -1034,7 +1059,7 @@ export class BattleGame {
     for (const c of units) {
       validateBattleRow(c.row);
       if (c.side === "enemy" && c.row !== "front") throw new Error("Unresolved enemy battle row");
-      this.conditions.validateActive(c.conditionIds);
+      this.conditions.validateOwner(c.conditionIds, c.side);
       this.conditions.validateResistances(c.conditionResistances);
       for (const id of (c.side === "player" && this.usesSourceQualification ? [] : c.commands))
         if (!this.content.commands[id])
@@ -1197,6 +1222,7 @@ export class BattleGame {
     return { state: structuredClone(this.eventState), controls: { ...this.eventControls } };
   }
   get eventSharedEntry(): BattleEventSharedSnapshot | undefined { return this.eventShared?.entry; }
+  get gauLifecycle(){return {entry:this.gauEntry&&structuredClone(this.gauEntry),encounteredEnemyIds:structuredClone(this.gauEnemyIds),journal:structuredClone(this.gauModeJournal)};}
   get eventSharedReturn() { return this.eventShared?.prepareReturn() ?? null; }
   get participantExecution(): BattleParticipantState { return structuredClone(this.participantState); }
   get enemyPartyExecution() {
@@ -1482,10 +1508,19 @@ export class BattleGame {
     }
     this.eventControls.aiStarted = true;
   }
+  private currentSourceCorps(): string[] {
+    if(!this.gauEntry)throw new Error('Missing complete source-owned Corps entry');
+    const expected=this.gauEntry.party.slots[this.gauEntry.party.selectedSlot].flatMap(cell=>cell.id===null?[]:[cell.id]),
+      current=this.playerState?this.playerState.entries.filter(entry=>!entry.removed).map(entry=>({id:entry.ownedId,sourceId:entry.sourceId})):this.players,
+      actual=current.map(unit=>unit.id);
+    if(canonical(expected)!==canonical(actual)||current.some(unit=>this.gauEntry!.roster.find(owner=>owner.id===unit.id)?.sourceId!==unit.sourceId))
+      throw new Error('Gau/Shadow current Corps owner changed; live source-owned formation publication is required');
+    return expected;
+  }
   private advanceEvent(): void {
     if (this.lifecycle.mode !== "script" || !this.eventState || this.eventState.status === "exited") return;
     const program = this.lifecycle.program;
-    if (this.#messageHost||this.#effectHost) this.#messageRootStarted = true;
+    if (this.deferredEventStart) this.#messageRootStarted = true;
     for (;;) {
       const cores = this.battleAICoresAlive();
       const result = advanceBattleEvent(program, this.eventState, {
@@ -1494,6 +1529,11 @@ export class BattleGame {
           messageStatus: this.#messageFrame!.state.sequenceStatus(this.eventState.wait.cursor.ticket),
         } : {}),
         battleEffectsFinished:this.battleEffectsFinished,
+        enemyModes:this.participantState.entries.filter(entry=>!entry.removed).map(entry=>{
+          const unit=this.combatants.find(unit=>unit.id===entry.id&&unit.side==='enemy');
+          if(!unit?.behavior)throw new Error('Missing actual enemy mode parameter owner');
+          return {uniqueId:entry.uniqueId,mode:unit.behavior.mode};
+        }),
         aiCoreAlive: cores.alive,
         // Source IsNowAttackStaging includes staged/interrupt actions, but not
         // ordinary queued turns. The queues remain owned by this BattleGame.
@@ -1508,11 +1548,35 @@ export class BattleGame {
         ...(program.instructions.some(({ op }) => op.kind === "players-ended") ? {
           playersEnded: this.eventPlayersEnded(),
         } : {}),
-      });
+      },this.#branchPolicy);
+      if(this.lifecycle.kind==='battle-lifecycle-v2')this.#branchFrameVisited.push(...result.visited);
       let nextEventState = result.state;
       for (const request of result.requests) {
         try {
           switch (request.kind) {
+            case 'cursed-shield-check': {
+              if(!this.eventShared)throw new Error('CursedShield requires the shared source scenario-variable owner');
+              const plan=planCursedShieldCheck(ref=>this.eventShared!.read(ref),this.players,this.inventoryQualification,this.content.battleEntry);
+              if(plan.counter!==null)this.eventShared.write({category:'ScenarioVariable',index:9},plan.counter);
+              break;
+            }
+            case 'shadow-secede-lot': {
+              if(!this.eventShared)throw new Error('Shadow lottery requires the shared source scenario-flag owner');
+              nextEventState.locals[3]=0;
+              nextEventState.locals[3]=planShadowSecedeLot(this.gauEntry??undefined,ref=>this.eventShared!.read(ref),
+                ()=>this.currentSourceCorps(),()=>{throw new Error('Shadow lottery requires the actual BattleActLog publication/lifecycle owner; the Web display/learning log is not a substitute');},
+                (min,max)=>this.randomInt(min,max));
+              break;
+            }
+            case 'set-gau-mode': {
+              if(!this.gauEntry)throw new Error('Missing source Gau owned entry');
+              this.currentSourceCorps();
+              const plan=planBattleGauMode(this.gauEntry,this.enemies.map(unit=>unit.sourceId),(min,max)=>this.randomInt(min,max));
+              this.gauEnemyIds=plan.encounteredEnemyIds;
+              if(plan.modeWrite!==null)nextEventState.locals[2]=plan.modeWrite;
+              if(plan.endEnabled!==null)this.eventControls.endEnabled=plan.endEnabled;
+              this.gauModeJournal.push({pc:request.pc,modeWrite:plan.modeWrite,atMilliseconds:this.time});break;
+            }
             case "ui-visibility":
               this.eventUI.visible = request.visible;
               this.eventUI.pauseLocked = !request.visible;
@@ -2226,7 +2290,8 @@ export class BattleGame {
       queue: structuredClone(this.queue),
       reactions: structuredClone(this.reactions),
       ai: structuredClone(this.aiStates),
-      eventState: structuredClone(this.eventState),
+      eventState: structuredClone(this.eventState),branchVisited:new Set(this.#branchVisited),
+      gauEnemyIds:structuredClone(this.gauEnemyIds),gauModeJournal:structuredClone(this.gauModeJournal),
       effectState:this.#effects.map(e=>({...e,projection:structuredClone(e.projection),targets:[...e.targets]})),effectNextTicket:this.#effectNextTicket,effectJournal:structuredClone(this.#effectJournal),
       messagePresentation: this.#messagePresentation, messageRootStarted: this.#messageRootStarted, messageJournal: structuredClone(this.#messageJournal),
       eventControls: { ...this.eventControls },
@@ -2256,7 +2321,7 @@ export class BattleGame {
     const frame = this.#messageHost?.owner.prepareFrame() ?? null;
     this.#messageBusy = true;
     this.#messageFrame = frame; this.#messageFrameValidations = []; this.#messageFrameEffects = null;
-    this.#effectPendingCommits=[];this.#effectPendingDiscards=[];
+    this.#effectPendingCommits=[];this.#effectPendingDiscards=[];this.#branchFrameVisited=[];
     const completedResources:BattleEffectResourceLease[]=[];
     try {
       frame?.state.advance(.01);
@@ -2273,6 +2338,7 @@ export class BattleGame {
       for(const e of this.#effects)this.observeMessageProvider(()=>e.resource.validate());
       for(const resource of this.#effectPendingCommits)resource.commit();
       effects?.commit(); messageWrite?.commit();
+      for(const pc of this.#branchFrameVisited)this.#branchVisited.add(pc);
       // Publication ends here. Cleanup must never enter the rollback handler
       // after the shared source-message frame has committed.
       completedResources.push(...this.#effectPendingDiscards);
@@ -2300,7 +2366,11 @@ export class BattleGame {
       this.enemyExits = before.enemyExits;
       this.rewardRegisteredInstances = before.rewardRegisteredInstances;
       this.aiStates = before.ai;
-      this.eventState = before.eventState;
+      this.eventState = before.eventState;this.#branchVisited=before.branchVisited;
+      if(this.lifecycle.kind==='battle-lifecycle-v2'&&error instanceof BattleEventError)this.#branchLastFailure={
+        pc:error.pc,reason:error.reason,raw:structuredClone(this.lifecycle.program.branchExecution!.sourceProgram.Mnemonics[error.pc]),
+        attemptedTime:before.time+10,attemptedVisited:[...this.#branchFrameVisited,...error.attemptedVisited]};
+      this.gauEnemyIds=before.gauEnemyIds;this.gauModeJournal=before.gauModeJournal;
       this.eventControls = before.eventControls;
       this.eventUI = before.eventUI;
       this.currentPlayerControlMode = before.playerControlMode;
@@ -2327,7 +2397,7 @@ export class BattleGame {
       this.discardBattleEffectResources(this.#effectPendingCommits,'rollback');
       throw error;
     } finally {
-      this.#messageFrame = null; this.#messageFrameValidations = []; this.#messageFrameEffects = null;this.#effectPendingCommits=[];this.#effectPendingDiscards=[];
+      this.#messageFrame = null; this.#messageFrameValidations = []; this.#messageFrameEffects = null;this.#effectPendingCommits=[];this.#effectPendingDiscards=[];this.#branchFrameVisited=[];
       // Retain the reentrancy guard during external cleanup, but keep cleanup
       // outside the catch that can restore this already published frame.
       this.discardBattleEffectResources(completedResources,'complete');
@@ -2735,6 +2805,7 @@ export class BattleGame {
             ? action.source.kind === "ability" ? target => this.physicalRows(actor, action.source.id, target)
               : (() => { throw new Error("Physical item row providers are unavailable"); })()
             : undefined,
+          action.source.kind === "ability" ? action.source.id : undefined,
         );
       const staged = projection.targets.map(({ targetId, state, effects }) => {
         const target = this.combatants.find(c => c.id === targetId)!;

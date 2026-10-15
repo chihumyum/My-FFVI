@@ -1,3 +1,4 @@
+import { levitateForcesMagicMiss } from "./condition-levitate.js";
 import {
   drawBattleRandom,
   magicAccuracyHit,
@@ -20,6 +21,8 @@ export type MagicRules = {
 };
 export type MagicParticipant = { side: "player" | "enemy" };
 export type MagicInput = {
+  /** Source ability carrier, absent for menu/item calculators. */
+  abilityId?: number;
   rules: MagicRules;
   power: number;
   actor: MagicParticipant & { level: number; magic: number };
@@ -41,6 +44,7 @@ export type MagicInput = {
  */
 export function validateMagic(input: MagicInput): number {
   const { rules, actor, target, power, recovery, targetCount } = input;
+  levitateForcesMagicMiss(input.abilityId, target.conditionTypes ?? []);
   if (!rules || !Array.isArray(rules.contentFlags))
     throw new Error("Missing magic calculation rules");
   validateElements(rules.elements);
@@ -98,6 +102,7 @@ export function validateMagic(input: MagicInput): number {
 export function calculateMagic(input: MagicInput, random: BattleRandom) {
   const base = validateMagic(input);
   const { rules, target, actor, recovery, targetCount } = input;
+  if (levitateForcesMagicMiss(input.abilityId, target.conditionTypes ?? [])) return { amount: 0, missed: true };
   if (
     !magicAccuracyHit(
       rules.contentFlags.includes(1) ? 255 : rules.accuracy,

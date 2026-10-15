@@ -2,6 +2,7 @@ import { tableInteger as int } from "./table.js";
 import type { BattleRow } from "./battle.js";
 import type { BattleConditionCatalog } from "../core/battle-conditions.js";
 import { hasDefendBehavior } from "./defend.js";
+import { compileLevitateCondition } from "./condition-levitate.js";
 import { compileProtectionCondition } from "./protection.js";
 import { compileSpeedCondition } from "./condition-speed.js";
 import { compileBlindCondition, compileBlindPresentation } from "./condition-blind.js";
@@ -14,6 +15,8 @@ import {
 } from "../core/conditions.js";
 
 export type ConditionReader = {
+  /** Exact physical master array order; no group-row or numeric-sort fallback. */
+  ordered?(table: string): BattleRow[];
   row(table: string, id: string | number): BattleRow;
   group(table: string, key: string, value: string | number): BattleRow[];
 };
@@ -198,6 +201,12 @@ export function compileBattleConditionCatalog(
     behaviors: result.catalog.definitions.flatMap(
       (d): BattleConditionCatalog["behaviors"] => {
         const row = reader.row("condition.csv", d.id);
+        const levitate = compileLevitateCondition(reader, row, name, result.catalog.definitions);
+        providerBlockers.push(...levitate.blockers.map(reason => ({ conditionId: d.id, reason })));
+        if (levitate.behavior) {
+          presentationSources.push(...levitate.sources);
+          return [levitate.behavior];
+        }
         const protection = compileProtectionCondition(reader, row, name, result.catalog.definitions);
         providerBlockers.push(...protection.blockers.map((reason) => ({ conditionId: d.id, reason })));
         if (protection.behavior) {

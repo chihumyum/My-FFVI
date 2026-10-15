@@ -1,4 +1,6 @@
 import { previewSourcePartySelection, type FieldSourcePartySelectionPort, type SourcePartySelectionModel, type SourcePartySelectionOutcome } from './source-party-selection.js';
+import { parseBattleGauEntry, type BattleGauEntry } from './battle-gau.js';
+import type { BattleFieldState } from './field-battle-entry.js';
 import { WEB_SOURCE_SCRIPT_RANDOM, validateScriptRandomUpper, type WebSourceScriptRandom, type FieldScriptRandomPort } from "./field-script-random.js";
 import type { CombatantDefinition, BattleContent } from "./battle-content.js";
 import type { BattleEntryInventory, BattleInventoryWithQualification } from "./battle-entry.js";
@@ -470,7 +472,7 @@ export class GameState {
         throw new Error("Invalid initial owned condition checkpoint identity");
       seeded.add(seed.id);
       distinct(seed.conditionIds);
-      this.conditions.validateActive(seed.conditionIds);
+      this.conditions.validateOwner(seed.conditionIds, "player");
       this.data.roster.find((member) => member.id === seed.id)!.conditionIds = [...seed.conditionIds];
     }
     if (!fresh && this.content.equipmentSystem) {
@@ -762,6 +764,16 @@ export class GameState {
   }
   get initialization(): GameStateSnapshot["initialization"] {
     return this.data.initialization;
+  }
+  /** Capture every held record before the battle lease; a bounded development
+   * roster cannot prove that a source character has never been owned. */
+  sourceBattleGauEntry(field:BattleFieldState):BattleGauEntry{
+    this.requireIdle();
+    if(this.data.initialization!=='source-new-game'||!this.content.sourceNewGame||!this.data.nativeState)
+      throw new Error('Gau mode requires the complete source-initialized owned owner');
+    return parseBattleGauEntry({kind:'source-battle-gau-entry-v1',catalogHash:this.catalogHash,
+      roster:this.data.roster.map(({id,sourceId,ownedId,enabled})=>({id,sourceId,ownedId,enabled})),
+      party:this.data.party,field,fixedPreemptiveState:null});
   }
   /** Source domains and entry seed are returned by value. A read never creates
    * source state for a development checkpoint or authorizes a later mutation. */

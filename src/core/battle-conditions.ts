@@ -1,4 +1,6 @@
 import { ConditionRules, type ConditionCatalog } from "./conditions.js";
+import { validateLevitateBehavior, type LevitateBehavior } from "./condition-levitate.js";
+import { mergeElementResistances, validateElementResistances, type ElementResistances } from "./elements.js";
 import { accuracyHit } from "./battle-hit.js";
 import { applyDefend, clearDefendOnAdmission } from "./defend.js";
 import { blindConditionType, validateBlindBehavior, type BlindBehavior } from "./condition-blind.js";
@@ -47,6 +49,7 @@ export type BattleConditionCatalog = {
     /** Escape owns action/target eligibility, never HP or death registration.
      * The host publishes its enemy-only lifecycle after the complete action. */
     | { id: number; kind: "escape"; name: string; untilType: 2 }
+    | LevitateBehavior
     | ProtectionBehavior
     | SpeedBehavior
     | BlindBehavior
@@ -115,8 +118,14 @@ export class BattleConditions {
     if (this.behaviors.size !== catalog.behaviors.length)
       throw new Error("Duplicate battle condition behavior");
     for (const b of this.behaviors.values()) {
-      if ("resistanceProvider" in b && !["physical-protection", "magic-protection", "haste", "slow", "blind", "poison", "sleep", "confusion", "temptation", "doom"].includes(b.kind))
+      if ("resistanceProvider" in b && !["levitate", "physical-protection", "magic-protection", "haste", "slow", "blind", "poison", "sleep", "confusion", "temptation", "doom"].includes(b.kind))
         throw new Error("Unsupported condition resistance provider behavior");
+      if (b.kind === "levitate") {
+        validateLevitateBehavior(b);
+        const entries = Object.entries(b.resistanceProvider?.conditions ?? {});
+        if (b.resistanceProvider && (entries.length !== 1 || this.definitions.get(Number(entries[0]![0]))?.type !== 409 || entries[0]![1] !== 1))
+          throw new Error("Unresolved Leviteto same-type master resistance provider");
+      }
       if (b.kind === "haste" || b.kind === "slow") validateSpeedBehavior(b);
       if (b.kind === "blind") validateBlindBehavior(b);
       if (b.kind === "sleep" || b.kind === "confusion" || b.kind === "temptation" || b.kind === "doom")
@@ -154,6 +163,8 @@ export class BattleConditions {
               (b.kind === "dying" && this.definitions.get(b.id)?.type === 4) ||
               (b.kind === "blind" && this.definitions.get(b.id)?.type === blindConditionType &&
                 this.definitions.get(b.id)?.overlapped === false) ||
+              (b.kind === "levitate" && this.definitions.get(b.id)?.type === 409 &&
+                this.definitions.get(b.id)?.overlapped === false) ||
               (b.kind === "magitek" &&
                 this.definitions.get(b.id)?.type === 607 &&
                 this.definitions.get(b.id)?.overlapped === false) ||
@@ -185,6 +196,40 @@ export class BattleConditions {
     for (const id of ids)
       if (!this.behaviors.has(id))
         throw new Error("Unimplemented active battle condition: " + id);
+  }
+  /** Native Leviteto Start/Remove is a no-op only for enemies. Player renderer
+   * and field retention are unclosed; reject before any owner publishes. */
+  validateOwner(ids: readonly number[], owner: "enemy" | "player" | undefined): void {
+    this.validateActive(ids);
+    if (ids.some(id => this.behaviors.get(id)!.kind === "levitate") && owner !== "enemy")
+      throw new Error("Player or unknown-owner Leviteto renderer/field lifecycle is not admitted");
+  }
+  /** Only this closed family has order-independent Start and disjoint providers.
+   * Unknown behaviors, opposite speeds and duplicate kinds are never inferred. */
+  validateInitialComposition(ids: readonly number[]): void {
+    this.validateActive(ids);
+    const kinds = new Set<string>(), keys = new Set<string>();
+    for (const id of ids) {
+      const b = this.behaviors.get(id)!;
+      if (!["levitate", "poison", "blind", "haste", "physical-protection", "magic-protection"].includes(b.kind) || kinds.has(b.kind))
+        throw new Error("Unresolved multiple enemy initial condition activation order: noncommuting lifecycle");
+      kinds.add(b.kind);
+      for (const key of Object.keys(b.resistanceProvider?.conditions ?? {})) {
+        if (keys.has(key)) throw new Error("Unresolved multiple enemy initial condition activation order: colliding providers");
+        keys.add(key);
+      }
+    }
+  }
+  effectiveElements(ids: readonly number[], base: ElementResistances, owner?: "enemy" | "player"): ElementResistances {
+    this.validateOwner(ids, owner);
+    validateElementResistances(base);
+    const temporary: ElementResistances = {};
+    for (const id of ids) {
+      const behavior = this.behaviors.get(id)!;
+      if (behavior.kind === "levitate") Object.assign(temporary, behavior.elementProvider.resistances);
+    }
+    // Enemy ConfirmedResistanceAttributeList 4af6f0 uses native priority merge.
+    return mergeElementResistances(base, temporary);
   }
   validateResistances(resistances: Record<string, number>) {
     for (const id of Object.keys(resistances))
@@ -253,7 +298,7 @@ export class BattleConditions {
   validateStableLife(hp: number, ids: readonly number[]): void {
     if (!Number.isInteger(hp) || hp < 0 || hp > 0x7fffffff)
       throw new Error("Invalid life HP");
-    this.validateActive(ids);
+    this.validateOwner(ids, "player");
     if (this.controlBehaviors(ids).length)
       throw new Error("Battle action-control conditions cannot persist in stable owned state");
     const deaths = ids.filter((id) => this.behaviors.get(id)!.kind === "unable-fight");
@@ -422,7 +467,8 @@ export class BattleConditions {
     resistanceOwner?: "enemy" | "player",
   ): ConditionChange {
     this.validateActive(currentIds);
-    this.validateActive([incomingId]);
+    this.validateOwner([incomingId], resistanceOwner);
+    this.validateOwner(currentIds, resistanceOwner);
     const effective = this.effectiveResistances(currentIds, resistances, resistanceOwner);
     const miss = {
       currentIds: [...currentIds],

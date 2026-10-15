@@ -14,8 +14,8 @@ const identity = (value: number) => Number.isInteger(value) && value > 0 && valu
  * MASTER array by membership (4672a0). Group selector/rate do not filter this
  * consumer, repeated membership does not duplicate a master. Init's callback
  * 4674c0 appends missing identities directly before constructing behaviors: no
- * accuracy, resistance or condition-conflict pass. Multiple master activation
- * order and the ctor's direct-master/group-ID collision remain unadmitted. */
+ * accuracy, resistance or condition-conflict pass. Multiple masters require an exact master view and a proved commuting
+ * behavior family; the ctor's direct-master/group-ID collision stays gated. */
 export function compileEnemyInitialConditions(reader: ConditionReader, groupId: number,
   catalog: BattleConditionCatalog): { conditionIds: number[]; sources: BattleRow[] } {
   const groupDependency = { table: "condition_group.csv", id: groupId, field: "group_id" };
@@ -59,9 +59,30 @@ export function compileEnemyInitialConditions(reader: ConditionReader, groupId: 
       ids.add(id);
       sources.push(structuredClone(row), structuredClone(master));
     }
-    if (ids.size > 1) throw new Error("Unresolved multiple enemy initial condition activation order");
-    const conditionIds = [...ids];
+    let conditionIds = [...ids];
     const conditions = new BattleConditions(catalog);
+    for (const id of conditionIds) {
+      dependency = { table: "condition.csv", id };
+      conditions.validateActive([id]);
+    }
+    if (ids.size > 1) {
+      dependency = groupDependency;
+      if (!reader.ordered) throw new Error("Unresolved multiple enemy initial condition activation order: missing ordered master view");
+      const ordered = reader.ordered("condition.csv"), seen = new Set<number>();
+      conditionIds = [];
+      for (const master of ordered) {
+        const id = bound("condition.csv", master);
+        if (seen.has(id)) throw new Error("Duplicate ordered condition master");
+        seen.add(id);
+        if (!ids.has(id)) continue;
+        if (JSON.stringify(master) !== JSON.stringify(reader.row("condition.csv", id)))
+          throw new Error("Changed ordered condition master binding");
+        conditionIds.push(id);
+      }
+      if (conditionIds.length !== ids.size) throw new Error("Missing ordered condition master membership");
+      conditions.validateInitialComposition(conditionIds);
+    }
+    conditions.validateOwner(conditionIds, "enemy");
     conditions.validateActive(conditionIds);
     if (conditions.isEscaped(conditionIds))
       throw new Error("Source initial Escape component lifecycle is not admitted");

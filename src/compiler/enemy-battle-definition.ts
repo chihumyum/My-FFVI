@@ -18,6 +18,7 @@ import { compileEnemyInitialConditions, InitialConditionCompilationError } from 
 import { compileSourceEnemyConditionTraits } from "./source-condition-application.js";
 
 type Reader = {
+  ordered?(table: string): BattleRow[];
   row(table: string, id: string | number): BattleRow;
   unique(table: string, key: string, value: string): BattleRow;
   group(table: string, key: string, value: string | number): BattleRow[];
