@@ -4,11 +4,12 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { runtimeDigest } from "./runtime-digest.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2), options = new Map();
 for (let i = 0; i < args.length; i += 2) {
-  assert.ok(["--dist", "--report"].includes(args[i]) && args[i + 1] &&
+  assert.ok(["--dist", "--report", "--content"].includes(args[i]) && args[i + 1] &&
     !args[i + 1].startsWith("--") && !options.has(args[i]), "Use --dist/--report <path>");
   options.set(args[i], args[i + 1]);
 }
@@ -19,12 +20,17 @@ const [{ GameContentRepository }, { GameSession }, { GameFlow }, { FieldFadeStat
   load("game-content"), load("game-session"), load("game-flow"), load("field-fade"),
   load("new-game-field-entry"), load("source-presentation"), load("game-map-loader"),
 ]);
-const aliases = { "/game/content.json": "/game/narshe.json", "/game/battle.json": "/game/opening-playable.json",
-  "/game/new-game.json": "/game/source-new-game.json" };
-const repo = new GameContentRepository(async (url) => {
-  assert.match(url, /^\/(game|framework|world)\/[a-zA-Z0-9/_-]+\.json$/);
-  return JSON.parse(await readFile(root + "/build" + (aliases[url] ?? url), "utf8"));
-}, "framework");
+const directory = resolve(root, options.get("--content") ?? "build/content-packages");
+const consumed = new Map(), runtimeSha256 = await runtimeDigest(root, runtime);
+const read = async url => {
+  assert.match(url, /^\/content-packages\/[a-zA-Z0-9/_-]+\.json$/);
+  const path = resolve(directory, url.slice("/content-packages/".length));
+  const bytes = await readFile(path);
+  consumed.set(path, bytes);
+  return JSON.parse(bytes);
+};
+const refs = await read("/content-packages/framework.json");
+const repo = new GameContentRepository(read, "framework", refs);
 const { content, catalog, map, battle } = await repo.sourceNewGame();
 const presentation = createSourcePresentationContext({ kind: "title-new-game",
   titleCleanupComplete: true, openingCallbackStarted: false });
@@ -67,6 +73,7 @@ function recordTransportation(field) {
 }
 const sampledActors = new Set();
 const report = { kind: "framework-source-route-check-v1", result: "running", profile: content.developmentProfile.kind,
+  runtimeSha256, contentRefs: refs, sourceCampaignComplete: false, browserVerified: false,
   entryHash: content.contentHash, catalogHash: catalog.contentHash, battleHash: battle.contentHash,
   sourceEntryHash: content.developmentProfile.sourceContentHash,
   controlledInputs: ["headless title, field UI and immediately ready audio", "10ms host updates", "automatic dialogue confirm; first displayed choice", "fixed explicit transportation timestamp"],
@@ -111,6 +118,8 @@ try {
   assert.ok(boundary, "Source route did not reach an observable boundary within 120s");
   assert.ok(transitions.length > 0, `The source route must commit its first map handoff: ${JSON.stringify(boundary)}`);
   assert.ok(motionSamples.length > 0, `Source actor movement must actually advance after map handoff: ${JSON.stringify(boundary)}`);
+  for (const [path, bytes] of consumed) assert.ok((await readFile(path)).equals(bytes), "Published source route input changed");
+  assert.equal(await runtimeDigest(root, runtime), runtimeSha256, "Runtime changed during source route execution");
   report.result = "passed";
 } catch (error) { report.result = "failed"; throw error; }
 finally {

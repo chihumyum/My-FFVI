@@ -9,6 +9,7 @@ import { compileDevelopmentMapEntry } from "../dist/src/compiler/development-map
 import { canonical, hash } from "../dist/src/compiler/content.js";
 import { verifyContent } from "../dist/src/core/content-integrity.js";
 import { GameContentRepository } from "../dist/src/core/game-content.js";
+import { FRAMEWORK_STORY_RUNTIME_DECLARATIONS } from "../dist/src/core/development-profile.js";
 import { parseGameContentRefs } from "../dist/src/core/game-content-refs.js";
 
 const repository = resolve(import.meta.dirname, ".."), recipeName = "content-batches/systems-playground.recipe.json";
@@ -73,7 +74,7 @@ export async function compileSystemsPlayground(root, rawRecipe, recipeSha256, { 
   const source = pointer => ({ file: recipeName, assetPath: "Authored/SystemsPlayground/recipe.json",
     pointer, sha256: recipeSha256 });
   const profile = originalHash => ({ kind: "framework-development-v1", policy: "omit-anonymous-environment-particles-v1",
-    sourceContentHash: originalHash, omissions: [], transportation: baseWorld.developmentProfile.transportation });
+    sourceContentHash: originalHash, omissions: [], ...FRAMEWORK_STORY_RUNTIME_DECLARATIONS, transportation: baseWorld.developmentProfile.transportation });
   const maps = recipe.stages.map((stage, index) => {
     fields(stage, "id,name,partyId,entrance,trigger,portal,before,after");
     integer(stage.id, 1); integer(stage.partyId, 1);

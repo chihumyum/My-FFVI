@@ -8,13 +8,109 @@ import { pathToFileURL } from 'node:url';
 import { runtimeDigest } from './runtime-digest.mjs';
 
 const root = resolve(import.meta.dirname, '..'), buildRoot = resolve(root, 'build');
-const args = process.argv.slice(2);
-let compiled = 'dist';
-if (args.length) {
-  if (args.length !== 2 || args[0] !== '--compiled' || !args[1] || args[1].startsWith('--'))
-    throw new Error('Use plan-story-runtime.mjs [--compiled directory]');
-  compiled = args[1];
+const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+const publicationStages = ['compile-private-candidate', 'validate-all-package-closures',
+  'validate-complete-json-and-media-archive', 'archive-published-before-publication',
+  'validate-retained-CAS-compatibility', 'validate-unchanged-inputs', 'publish-complete-collection',
+  'archive-published-after-publication', 'verify-published-source-objects'];
+
+/** Read-only provenance assessment. A failed/missing publication or incomplete
+ * proof cannot fail the static graph, or turn matching timestamps/one entry
+ * into evidence that every source map was rebuilt by the scanned runtime. */
+export function assessStoryRuntimePublication({ receipt, runtimeSha256, compiledDirectory,
+  refs, manifest, inputFiles, mapInventory, canonical, receiptStable = true }) {
+  const unknown = reason => ({ status: 'unassessed', rebuiltForThisRuntime: 'unassessed', reasons: [reason] });
+  try {
+    if (!receipt || typeof receipt !== 'object') return unknown('publication-receipt-unavailable');
+    if (!receiptStable) return unknown('publication-receipt-changed-during-scan');
+    if (receipt.kind !== 'versioned-content-package-build-v2' || receipt.result !== 'passed' || receipt.published !== true)
+      return unknown('successful-complete-publication-not-established');
+    if (!Array.isArray(receipt.stages) || receipt.stages.some(stage => stage.status !== 'passed') ||
+        publicationStages.some(name => receipt.stages.filter(stage => stage.name === name).length !== 1))
+      return unknown('publication-stage-proof-incomplete');
+    const lock = receipt.sourceInputLock;
+    if (lock?.kind !== 'source-prerequisite-input-lock-v1' || !digest(lock.compilerDigest) ||
+        !digest(lock.runtimeSha256) || lock.runtimeSha256 !== runtimeSha256 ||
+        typeof lock.compiledDir !== 'string' || resolve(root, lock.compiledDir) !== resolve(compiledDirectory))
+      return unknown('same-runtime-compiler-lock-not-established');
+    if (lock.sourceSetHash !== manifest.sourceSetHash || lock.parentSourceSetHash !== manifest.parentSourceSetHash)
+      return unknown('publication-source-set-mismatch');
+    const producer = id => {
+      const matches = Array.isArray(receipt.producers) ? receipt.producers.filter(row => row.id === id) : [];
+      return matches.length === 1 ? matches[0].report : null;
+    };
+    const source = producer('source-prerequisites'), linked = producer('linked-source-prerequisites'), base = producer('base');
+    if (source?.kind !== 'source-prerequisite-candidate-v1' || linked?.kind !== 'linked-source-prerequisites-v1' ||
+        base?.kind !== 'game-content-package-build-v1' || source.compilerDigest !== lock.compilerDigest ||
+        source.sourceSetHash !== manifest.sourceSetHash || source.parentSourceSetHash !== manifest.parentSourceSetHash)
+      return unknown('source-producer-identity-not-established');
+    const sourceStages = ['capture-inputs', 'battle-capability-rebuild', 'source-world', 'source-new-game',
+      'framework-derivation', 'revalidate-inputs'];
+    if (!Array.isArray(source.stages) || source.stages.some(stage => stage.status !== 'passed') ||
+        sourceStages.some(name => source.stages.filter(stage => stage.name === name).length !== 1))
+      return unknown('source-producer-stages-incomplete');
+    if (source.strict?.maps !== mapInventory.length || linked.sourceMaps !== mapInventory.length ||
+        linked.originalWorldHash !== source.strict.catalogHash || linked.originalEntryHash !== source.strict.entryHash ||
+        linked.linkedWorldHash !== manifest.worldContentHash || linked.linkedEntryHash !== refs.source?.entry.contentHash)
+      return unknown('linked-source-world-or-entry-proof-mismatch');
+    const baseSource = Array.isArray(base.packages) ? base.packages.filter(row => row.id === 'source') : [];
+    if (baseSource.length !== 1 || canonical(baseSource[0].refs) !== canonical(refs))
+      return unknown('published-source-reference-producer-mismatch');
+    if (!Array.isArray(source.payloads)) return unknown('source-producer-objects-unavailable');
+    const produced = new Map();
+    for (const row of source.payloads) {
+      if (typeof row.url !== 'string' || !digest(row.contentHash) || produced.has(row.url))
+        return unknown('source-producer-object-identity-invalid');
+      produced.set(row.url, row.contentHash);
+    }
+    if (produced.get('/world/catalog.json') !== source.strict.catalogHash ||
+        produced.get('/game/source-new-game.json') !== source.strict.entryHash)
+      return unknown('source-producer-world-or-entry-object-mismatch');
+    if ([...produced.keys()].filter(url => /^\/world\/maps\/[1-9][0-9]*\.json$/.test(url)).length !== mapInventory.length)
+      return unknown('source-producer-map-inventory-mismatch');
+    for (const map of mapInventory) if (produced.get('/world/maps/' + map.mapId + '.json') !== map.contentHash)
+      return unknown('source-producer-map-object-mismatch');
+    if (!Array.isArray(receipt.publishedObjects)) return unknown('published-byte-proof-unavailable');
+    const published = new Map();
+    for (const object of receipt.publishedObjects) {
+      if (typeof object.url !== 'string' || !/^\/content-packages\/[a-zA-Z0-9/_-]+\.json$/.test(object.url) ||
+          posix.normalize(object.url) !== object.url || !digest(object.sha256) ||
+          !Number.isSafeInteger(object.bytes) || object.bytes < 1 ||
+          object.contentHash !== null && !digest(object.contentHash) || published.has(object.url))
+        return unknown('published-object-byte-identity-invalid');
+      published.set(object.url, object);
+    }
+    const scanned = new Map();
+    for (const input of inputFiles) {
+      if (scanned.has(input.url)) return unknown('scanned-input-identity-invalid');
+      scanned.set(input.url, input);
+      const object = published.get(input.url);
+      if (!object || object.sha256 !== input.sha256 || object.bytes !== input.bytes ||
+          object.contentHash !== input.contentHash)
+        return unknown('published-object-byte-proof-mismatch');
+    }
+    if (scanned.get(manifest.refsURL)?.contentHash !== null ||
+        scanned.get(refs.world.url)?.contentHash !== manifest.worldContentHash ||
+        scanned.get(manifest.refsURL)?.sha256 !== manifest.refsSha256)
+      return unknown('scanned-source-refs-or-world-proof-incomplete');
+    for (const map of mapInventory) {
+      const input = scanned.get(map.url);
+      if (!input || input.contentHash !== map.contentHash || input.sha256 !== map.sha256 || input.bytes !== map.bytes)
+        return unknown('scanned-source-map-byte-proof-incomplete');
+    }
+    if (!receipt.after?.packages?.includes('source') || !Array.isArray(receipt.after.reports) ||
+        receipt.after.reports.filter(row => row.packageId === 'source' && row.kind === 'content-release-archive-v1' &&
+          row.originalJSONBytesPreserved === true && row.mapIndexCount === mapInventory.length &&
+          digest(row.releaseId) && digest(row.indexHash)).length !== 1)
+      return unknown('post-publication-source-archive-not-established');
+    return { status: 'verified', rebuiltForThisRuntime: true, reasons: [],
+      basis: 'successful-same-runtime-publication-producer-and-all-scanned-byte-bindings',
+      runtimeSha256, compilerDigest: lock.compilerDigest, scannedFilesVerified: inputFiles.length,
+      sourceMapsVerified: mapInventory.length, sourceSetHash: manifest.sourceSetHash };
+  } catch { return unknown('publication-proof-malformed'); }
 }
+
+export async function planStoryRuntime({ compiled = 'dist', publication = 'build/reports/versioned-content-package-build.json' } = {}) {
 const load = name => import(pathToFileURL(resolve(root, compiled, 'src', name + '.js')));
 const [{ GameContentRepository }, { parseGameContentRefs }, { analyzeContentDependencies },
   { hash, canonical }] = await Promise.all([
@@ -38,9 +134,15 @@ async function read(url) {
   const prior = inputFiles.get(url);
   if (prior && (prior.path !== file || prior.sha256 !== sha256))
     throw new Error('Source input changed during planning: ' + url);
-  inputFiles.set(url, { url, path: file, sha256, bytes: bytes.length });
-  return JSON.parse(bytes.toString('utf8'));
+  const value = JSON.parse(bytes.toString('utf8'));
+  inputFiles.set(url, { url, path: file, sha256, bytes: bytes.length, contentHash: value.contentHash ?? null });
+  return value;
 }
+
+const publicationPath = resolve(root, publication);
+let publicationBytes = null, publicationReceipt = null;
+try { publicationBytes = await readFile(publicationPath); publicationReceipt = JSON.parse(publicationBytes.toString()); }
+catch { /* Missing, malformed and failed metadata leave origin unassessed. */ }
 
 const refsURL = '/content-packages/source.json';
 const refs = parseGameContentRefs(await read(refsURL));
@@ -137,6 +239,14 @@ const counts = { maps: mapIds.length, mapLocalScriptKeys: mapInventory.reduce((t
   providerAssessmentReady: analysis.providerAssessments.filter(row => row.status === 'ready').length,
   providerAssessmentConditional: analysis.providerAssessments.filter(row => row.status === 'conditional').length,
   providerAssessmentBlocked: analysis.providerAssessments.filter(row => row.status === 'blocked').length };
+let publicationStable = false;
+try { publicationStable = publicationBytes !== null && (await readFile(publicationPath)).equals(publicationBytes); }
+catch { /* A removed receipt cannot grant rebuild provenance. */ }
+const publicationProof = assessStoryRuntimePublication({ receipt: publicationReceipt, runtimeSha256: initialRuntime,
+  compiledDirectory: resolve(root, compiled), refs, manifest, inputFiles: reads, mapInventory, canonical,
+  receiptStable: publicationStable });
+const publicationMetadata = { ...publicationProof, receiptPath: relative(root, publicationPath),
+  receiptSha256: publicationBytes ? fileDigest(publicationBytes) : null };
 const report = { kind: 'story-runtime-plan-v1', result: 'static-planning-complete',
   sourceSetHash: catalog.sourceSetHash, parentSourceSetHash: catalog.parentSourceSetHash,
   mediaSourceSetHash: catalog.mediaSourceSetHash, runtimeSha256: initialRuntime,
@@ -145,13 +255,16 @@ const report = { kind: 'story-runtime-plan-v1', result: 'static-planning-complet
   }, inputFiles: reads.map(({ path: _path, ...input }) => input), mapInventory, counts,
   scan: { calls: 1, scope: 'complete-source-world-map-inventory',
     providerContext: { providers: {}, actorKind: 'unknown' },
-    contentGeneration: 'existing-published-source-packages', rebuiltForThisRuntime: false },
+    contentGeneration: publicationProof.status === 'verified' ? 'same-runtime-publication-verified' : 'published-source-generation-unassessed',
+    rebuiltForThisRuntime: publicationProof.rebuiltForThisRuntime, publication: publicationMetadata },
   analysis, work: { grouping: 'exact-code-reason-and-explicit-capability',
     ownerClassification: 'unassigned-no-owner-inference', diagnosticGroups, providerRequirementGroups, providerAssessmentGroups },
   runtimeAdmission: 'unassessed', sourceStoryReachability: false, sourceCampaignComplete: false,
   browserVerified: false, originalGameExecuted: false, limitations: [
     'Every published source map, map-local script key and source PointIn is inventoried; this is a conservative static graph, not a reachable campaign.',
-    'Existing source packages were not rebuilt for this runtime. Checked payload/source identities do not grant migration or runtime admission.',
+    publicationProof.status === 'verified'
+      ? 'Successful same-runtime publication and producer/byte bindings establish source rebuild provenance; they do not grant migration or runtime admission.'
+      : 'Source rebuild provenance is unassessed without a matching complete successful publication receipt; checked payload/source identities do not grant migration or runtime admission.',
     'Empty geometry and unknown diagnostics are retained. No missing provider is replaced with a no-op or guessed host.',
     'No provider observations are supplied; conditional/blocked assessments are potential host requirements, not evidence that existing shared owners are absent.',
     'Gap groups preserve every original record/site and use only exact published codes, reasons and explicit capabilities; system ownership is not guessed.',
@@ -163,4 +276,18 @@ await mkdir(resolve(output, '..'), { recursive: true });
 await writeFile(output, JSON.stringify({ ...report, contentHash: hash(report) }, null, 2) + '\n');
 console.log(JSON.stringify({ result: report.result, counts, referenceClosure: analysis.referenceClosure,
   runtimeSha256: initialRuntime, sourceStoryReachability: false, runtimeAdmission: 'unassessed',
+  rebuiltForThisRuntime: publicationProof.rebuiltForThisRuntime, publication: publicationProof.status,
   elapsedMs: Date.now() - started, report: output }));
+return report;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const args = process.argv.slice(2), options = {}, seen = new Set();
+  for (let index = 0; index < args.length; index += 2) {
+    const key = args[index], value = args[index + 1];
+    if (!['--compiled', '--publication'].includes(key) || !value || value.startsWith('--') || seen.has(key))
+      throw new Error('Use plan-story-runtime.mjs [--compiled directory] [--publication receipt.json]');
+    seen.add(key); options[key === '--compiled' ? 'compiled' : 'publication'] = value;
+  }
+  await planStoryRuntime(options);
+}

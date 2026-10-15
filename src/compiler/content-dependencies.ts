@@ -317,6 +317,25 @@ export function analyzeContentDependencies(input: {
       }
       switch (op.kind) {
         case "blocked": diagnose("instruction-blocked", `${op.mnemonic}: ${op.reason}`, at); break;
+        case "field-timer":
+          if (op.command.kind === "set") {
+            const names = op.command.callbackScripts;
+            if (!Array.isArray(names) || !names.length)
+              diagnose("timer-callback-binding-invalid", "SetTimer callback script list is missing or empty", at);
+            if (Array.isArray(names)) {
+              // The whole literal callback list survives even when the live
+              // host cannot admit its lottery; no first-candidate shortcut.
+              for (const name of names) {
+                if (typeof name !== "string" || !name || name.trim() !== name)
+                  diagnose("timer-callback-binding-invalid", "SetTimer contains an invalid callback script name", at);
+                else referenceScript(from, map, name, op);
+              }
+              if (names.length > 1)
+                diagnose("timer-callback-lottery-unimplemented",
+                  "Multiple SetTimer callback scripts require an admitted source lottery provider", at);
+            }
+          }
+          break;
         case "script-transition":
           referenceScript(from, map, op.targetScript, op);
           for (const script of new Set([name, op.targetScript])) {
@@ -380,6 +399,7 @@ export function analyzeContentDependencies(input: {
       "Artifact bytes must be verified by the caller; this analysis validates catalog/map identity links and does not instantiate or execute game owners.",
       "Provider requirements and assessments describe potential reached instructions separately from reference diagnostics; they neither remove existing blockers nor certify an executed route.",
       "Provider observations are unknown by default. Tooling may supply explicit runtime facts; map/script metadata does not infer actor bindings, refresh need or the active event root's condition-visual context.",
+      "Every literal timer callback name is retained in its origin map/Resident namespace, including unsupported lottery candidates. Expiry timing, cross-map callback delivery and source story applicability remain runtime evidence.",
     ],
   } satisfies ContentDependencyAnalysis);
 }

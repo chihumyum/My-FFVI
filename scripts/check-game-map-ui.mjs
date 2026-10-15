@@ -21,6 +21,7 @@ const [{ GameSession }, { GameFlow }, { GameMapLoader }, { CheckpointStorage }, 
     module("tests/fixtures/checkpoint-game.js"),
   ]);
 const app = await readFile(resolve(root, "apps/game/app.js"), "utf8");
+const { drawStoryTimer } = await import("../apps/game/story-overlay.js");
 const audioSource = await readFile(resolve(root, "apps/game/audio.js"), "utf8");
 const boundAudio = audioSource.replace('"/runtime/core/static-audio.js"',
   JSON.stringify(pathToFileURL(resolve(compiled, "src/core/static-audio.js")).href));
@@ -103,7 +104,7 @@ function setup({ transition = false, play = false, mediaWait = null } = {}) {
   const storage = new CheckpointStorage({ getItem: (key) => slot.get(key) ?? null,
     setItem: (key, value) => { records.storageWrites++; slot.set(key, value); } });
   const context = vm.createContext({
-    $, flow, game: session.field, audio, audioProjection, mapLoader: loader, contents,
+    $, flow, game: session.field, audio, audioProjection, drawStoryTimer, mapLoader: loader, contents,
     sourceBoot: null, entryLoad: null, mapLoadFailure: null, eventSaver: null, eventSaveFailure: null,
     battleHandoff: null, battleLoadAttempt: null, attemptedBattleStarts: new WeakSet(),
     attemptedEventSaves: new WeakSet(), failed: false, mapOpen: false,

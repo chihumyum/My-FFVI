@@ -1,5 +1,6 @@
 import type { Direction, Point } from "../field/types.js";
 import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
+import { prepareFieldCameraPathStep, type FieldCameraPathCommand, type FieldCameraPathProgress } from "./field-camera-path.js";
 import {
   createFieldCameraState, fieldCameraActorFromCell, fieldCameraWorldToContinuousCell,
   initializeFieldCameraDummy, projectFieldCamera, projectFieldCameraSetPosition,
@@ -187,6 +188,15 @@ export class FieldCameraHost {
     sourceTimeSeconds: number): FieldCameraPrepared & { progress: FieldCameraLerpProgress; flow: "next" | "wait" } {
     const plan = stepFieldCameraLerp(this.#state, command, this.#definition.mapRange, progress, sourceTimeSeconds);
     return { ...this.#prepare(plan.state, false, "not-invoked"), progress: plan.progress, flow: plan.flow };
+  }
+  preparePath(command: FieldCameraPathCommand, progress: FieldCameraPathProgress | null,
+    clockMs: number, targetEntity?: { x: number; y: number; z: number }) {
+    const plan = prepareFieldCameraPathStep(this.#state, command, {
+      mapRange: this.#definition.mapRange, loop: this.#definition.loop, magnification: 1,
+      view: "normal-field", callbacks: "source-absent", raycast: "disabled",
+      ...(targetEntity ? { targetEntity } : {}),
+    }, progress, clockMs);
+    return { ...this.#prepare(plan.state, false, "source-absent"), progress: plan.progress, flow: plan.flow };
   }
   projection(view: FieldCameraViewport): FieldCameraHostProjection | null {
     validateViewport(view);

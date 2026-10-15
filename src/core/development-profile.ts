@@ -29,7 +29,13 @@ export type DevelopmentProfile = {
   relayInteraction?: "framework-relay-interaction-v1";
   /** Source-bound, anonymous decorative boards keep their original diagnostics. */
   passiveEffects?: "framework-passive-field-effects-v1";
+  /** Shared source event controls on a declared Web clock and screen host. */
+  storyRuntime?: "web-field-story-runtime-v1";
+  autoSave?: "web-field-autosave-barrier-v1";
 };
+/** Explicit current Web policies for newly authored framework derivatives. */
+export const FRAMEWORK_STORY_RUNTIME_DECLARATIONS: Readonly<Required<Pick<DevelopmentProfile, "storyRuntime" | "autoSave">>> =
+  Object.freeze({ storyRuntime: "web-field-story-runtime-v1", autoSave: "web-field-autosave-barrier-v1" });
 
 export function frameworkWorldMapPresentation(profile: DevelopmentProfile | undefined): "framework-world-map-flat-v1" | undefined {
   return profile?.kind === "framework-development-v1" && profile.worldMap === "framework-world-map-flat-v1"

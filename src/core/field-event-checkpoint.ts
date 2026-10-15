@@ -4,6 +4,7 @@ import { checkpointIds, checkpointInteger, checkpointKeys, checkpointNumber } fr
 import { validateScriptLocalFrameSnapshot, type EventStateSnapshot, type ScriptLocalFrameSnapshot } from "./event-state.js";
 import { validateFieldPuppetScriptContext } from "./field-puppet-actors.js";
 import type { FieldTaskRange } from "./field-task-control.js";
+import { assertFieldEventSaveAdmission } from "./field-auto-save.js";
 
 export type FieldEventCheckpoint = {
   kind: "field-event-continuation-v1";
@@ -141,6 +142,7 @@ export function restoreFieldEventCheckpoint(raw: unknown,
   if ((barrier as { kind: string }).kind !== "event-save" ||
       (context.isBarrier && context.isBarrier(barrier) !== true))
     throw new Error("Event continuation barrier is not admitted by trusted content");
+  assertFieldEventSaveAdmission(context.content, barrier as Extract<Op, { kind: "event-save" }>);
   if (!Array.isArray(main.stack)) throw new Error("Invalid event continuation Call stack");
   for (const pc of main.stack) {
     address(pc, ops);

@@ -1,7 +1,7 @@
 import type { FieldContent } from "../field/types.js";
 import type { WorldCatalog, WorldMapContent } from "../field/world.js";
 import type { BattleCatalog } from "../core/battle-content.js";
-import { assertGameDevelopmentEntry, type GameDevelopmentEntry } from "../core/game-development-entry.js";
+import { assertGameDevelopmentEntry, gameDevelopmentEntryProfile, type GameDevelopmentEntry } from "../core/game-development-entry.js";
 import { verifyContent } from "../core/content-integrity.js";
 import { hash } from "./content.js";
 
@@ -30,9 +30,7 @@ export async function compileDevelopmentMapEntry(input: DevelopmentMapEntryInput
       state: "preserve-baseline", relocation: "source-point-in", storyReachability: "unverified" } };
   const { contentHash: _, ...baseline } = baseField;
   const payload = { ...baseline, developmentEntry,
-    developmentProfile: { kind: "framework-development-v1" as const, policy: "omit-anonymous-environment-particles-v1" as const,
-      sourceContentHash: baseField.contentHash, omissions: [],
-      ...(catalog.developmentProfile?.transportation ? { transportation: catalog.developmentProfile.transportation } : {}) } };
+    developmentProfile: gameDevelopmentEntryProfile(baseField.contentHash, catalog) };
   const result = { ...payload, contentHash: hash(payload) };
   await assertGameDevelopmentEntry(result, baseBattle, catalog, map);
   return result;

@@ -16,6 +16,10 @@ import type { FieldEntryContextDefinition } from "../core/field-entry-context.js
 import type { SourcePresentationOp } from "../core/source-presentation.js";
 import type { AudioReadinessOp } from "../core/audio-readiness.js";
 import type { FieldSoundOp } from "../core/field-sound-command.js";
+import type { FieldBgmControlOp } from "../core/field-bgm-control.js";
+import type { FieldTimerOp } from "../core/field-timer.js";
+import type { FieldScreenEffectOp } from "../core/field-screen-effects.js";
+import type { FieldEventSaveOp } from "../core/field-auto-save.js";
 import type { PlayerVisibilityOp, PlayerVisibilityFactory } from "../core/player-visibility.js";
 import type { FieldTaskControlOp } from "../core/field-task-control.js";
 import type { FieldFadeOp, FieldFadeInitial } from "../core/field-fade.js";
@@ -202,9 +206,8 @@ export type MapRequest = {
 export type Op = Site &
   (
     | { kind: "nop" | "exit" | "return" | "join" | "hide" }
-    /** Explicit Web continuation barrier. The source AutoSave instruction is
-     * not compiled to this development protocol. */
-    | { kind: "event-save" }
+    /** Authored Web barrier or source AutoSave under its explicit content policy. */
+    | FieldEventSaveOp
     | EventControlOp
     | InventoryEventOp
     | TreasureBoxRequest
@@ -216,6 +219,9 @@ export type Op = Site &
     | SourcePresentationOp
     | AudioReadinessOp
     | FieldSoundOp
+    | FieldBgmControlOp
+    | FieldTimerOp
+    | FieldScreenEffectOp
     | PlayerVisibilityOp
     | FieldTaskControlOp
     | FieldFadeOp

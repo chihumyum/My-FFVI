@@ -94,18 +94,22 @@ export function parseGameDevelopmentEntry(raw: unknown): GameDevelopmentEntry {
       relocation: "source-point-in", storyReachability: "unverified" } };
 }
 
-function profile(baseFieldHash: string, catalog: WorldCatalog): DevelopmentProfile {
+export function gameDevelopmentEntryProfile(baseFieldHash: string, catalog: WorldCatalog): DevelopmentProfile {
   if (sourceCatalogProfile(catalog.developmentProfile) !== "framework") throw new Error("Development map entry requires a framework catalog");
   return { kind: "framework-development-v1", policy: "omit-anonymous-environment-particles-v1",
     sourceContentHash: baseFieldHash, omissions: [],
-    ...(catalog.developmentProfile!.transportation ? { transportation: catalog.developmentProfile!.transportation } : {}) };
+    ...(catalog.developmentProfile!.transportation ? { transportation: catalog.developmentProfile!.transportation } : {}),
+    ...(catalog.developmentProfile!.worldMap ? { worldMap: catalog.developmentProfile!.worldMap } : {}),
+    ...(catalog.developmentProfile!.fieldPresentation ? { fieldPresentation: catalog.developmentProfile!.fieldPresentation } : {}),
+    ...(catalog.developmentProfile!.storyRuntime ? { storyRuntime: catalog.developmentProfile!.storyRuntime } : {}),
+    ...(catalog.developmentProfile!.autoSave ? { autoSave: catalog.developmentProfile!.autoSave } : {}) };
 }
 
 /** Only the exact marker this compiler owns may be removed. A caller cannot
  * hide arbitrary omissions or another derivation while claiming a raw base. */
 export function gameDevelopmentEntryBaseline(field: FieldContent, catalog: WorldCatalog): FieldContent {
   const entry = parseGameDevelopmentEntry(field.developmentEntry);
-  if (canonical(field.developmentProfile) !== canonical(profile(entry.baseFieldHash, catalog)))
+  if (canonical(field.developmentProfile) !== canonical(gameDevelopmentEntryProfile(entry.baseFieldHash, catalog)))
     throw new Error("Development map entry profile does not preserve its baseline");
   const { developmentEntry: _, developmentProfile: _profile, contentHash: _hash, ...baseline } = structuredClone(field);
   return { ...baseline, contentHash: entry.baseFieldHash };

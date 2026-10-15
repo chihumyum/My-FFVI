@@ -2,7 +2,7 @@ import { canonical, hash } from "./content.js";
 import { fieldEffectCompilationBlockers } from "./field-effects.js";
 import { fieldEffectBoardBlockers } from "../core/field-effects.js";
 import type { DevelopmentOmission, DevelopmentProfile } from "../core/development-profile.js";
-import { FRAMEWORK_TRANSPORTATION_LIMITATIONS } from "../core/development-profile.js";
+import { FRAMEWORK_TRANSPORTATION_LIMITATIONS, FRAMEWORK_STORY_RUNTIME_DECLARATIONS } from "../core/development-profile.js";
 import type { SourceNewGameContent } from "../core/source-new-game.js";
 import type { EntityGroup, Evidence, FieldEntity } from "../field/types.js";
 import type { ContentIssue, WorldCatalog, WorldMapContent } from "../field/world.js";
@@ -56,7 +56,7 @@ function verify(value: { contentHash: string; developmentProfile?: DevelopmentPr
 }
 function profile(sourceContentHash: string, omissions: DevelopmentOmission[]): DevelopmentProfile {
   return { kind: PROFILE, policy: POLICY, sourceContentHash, omissions: structuredClone(omissions),
-    transportation: "walking-magitek-framework-v1" };
+    transportation: "walking-magitek-framework-v1", ...FRAMEWORK_STORY_RUNTIME_DECLARATIONS };
 }
 function sourceObject(a: Evidence, b: Evidence): boolean {
   const { pointer: _a, ...objectA } = a, { pointer: _b, ...objectB } = b;

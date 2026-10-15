@@ -22,7 +22,7 @@ async function modules(root, dist) {
   return Object.assign({}, ...await Promise.all([
     "compiler/framework-field-presentation", "compiler/framework-new-game", "compiler/content-batch",
     "compiler/corpus", "compiler/map-package", "compiler/field-native-composition", "compiler/content",
-    "core/content-integrity", "core/game-content", "core/game-content-refs", "core/source-catalog",
+    "core/content-integrity", "core/game-content", "core/game-content-refs", "core/source-catalog", "core/development-profile",
     "compiler/source-walk-policy",
     "compiler/initialized-battle-binding", "compiler/source-area-scope",
     "compiler/field-npc-activity", "core/field-npc-activity-source", "compiler/field-services",
@@ -123,7 +123,7 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
   const renderHost = await api.loadFieldCompositionRenderHost(root, sources);
   const seal = value => { const { contentHash: _, ...body } = value; return { ...body, contentHash: api.hash(body) }; };
   const profile = sourceContentHash => ({ kind: "framework-development-v1", policy: "omit-anonymous-environment-particles-v1",
-    sourceContentHash, omissions: [], fieldPresentation: recipe.presentation,...(npcVariant?{npcActivity:npcTemplate.policy}:{}) });
+    sourceContentHash, omissions: [], ...api.FRAMEWORK_STORY_RUNTIME_DECLARATIONS, fieldPresentation: recipe.presentation,...(npcVariant?{npcActivity:npcTemplate.policy}:{}) });
   const prefix = "/content-packages/" + recipe.id, presentations = [], walkingResults=[],npcResults=[],serviceResults=[];
   const maps = sourceMaps.map(sourceMap => {
     const map = structuredClone(sourceMap);

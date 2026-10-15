@@ -23,7 +23,7 @@ const integer = (value, minimum = 0) => assert.ok(Number.isInteger(value) && val
 async function modules(root, dist) {
   const load = name => import(pathToFileURL(resolve(root, dist, "src", name + ".js")).href);
   const results = await Promise.all([load("compiler/framework-new-game"), load("compiler/content"),
-    load("core/content-integrity"), load("core/game-content"), load("core/game-content-refs"), load("core/source-catalog")]);
+    load("core/content-integrity"), load("core/game-content"), load("core/game-content-refs"), load("core/source-catalog"), load("core/development-profile")]);
   return Object.assign({}, ...results);
 }
 
@@ -96,7 +96,7 @@ export async function compileInitializedSystems(root, rawRecipe, recipeSha256, {
   assert.equal(api.canonical(battle.gameState), api.canonical(sourceBattle.gameState));
   const evidence = pointer => ({ file: recipeName, assetPath: "Authored/SystemsInitialized/recipe.json", pointer, sha256: recipeSha256 });
   const profile = sourceContentHash => ({ kind: "framework-development-v1", policy: "omit-anonymous-environment-particles-v1",
-    sourceContentHash, omissions: [] });
+    sourceContentHash, omissions: [], ...api.FRAMEWORK_STORY_RUNTIME_DECLARATIONS });
   const local = { category: "MapLocalVariable", index: 0 }, selection = { category: "MessageSelection", index: 0 };
   const message = (key, text) => ({ kind: "message", key, speaker: "", text });
   const programs = {

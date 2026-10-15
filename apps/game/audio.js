@@ -1,4 +1,4 @@
-import { audioGain, audioPosition } from "/runtime/core/static-audio.js";
+import { audioGain, audioPosition, audioVoicePlaying } from "/runtime/core/static-audio.js";
 
 const voiceIdentity = (voice, track) => JSON.stringify([
   track.sha256, voice.id, voice.track, voice.started, voice.seek, voice.fadeIn, voice.pan ?? 0,
@@ -220,7 +220,7 @@ export function audioProjection(field) {
     const state = field[kind],
       media = field.content[kind];
     if (!state) return [];
-    return state.voices.map((voice) => {
+    return state.voices.filter(voice => audioVoicePlaying(voice, state.time)).map((voice) => {
       const track = media?.tracks[voice.track];
       if (!track) throw new Error("缺少声音资源 " + kind + "/" + voice.track);
       return { id: kind + ":" + voice.id, voice, track, time: state.time };

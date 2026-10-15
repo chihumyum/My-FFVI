@@ -22,6 +22,7 @@ import {
   type BattlePreferences,
 } from "./battle-preferences.js";
 import { WorldSession, type WorldCheckpoint } from "./world-session.js";
+import type { FieldTimerOriginContent } from "./field-story-runtime.js";
 import {
   GameState,
   type BattleLease,
@@ -75,6 +76,7 @@ export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort; fieldEff
 type FreshSession = { content: SourceNewGameContent | FrameworkNewGameContent; state: GameState; events: EventState;
   map: WorldMapContent; fade?: FieldFadeState; presentation: SourcePresentationContext; restoring?: true };
 export type GameRestoreWorld = { catalog: WorldCatalog; map: WorldMapContent;
+  timerOrigin?: FieldTimerOriginContent;
   source?: { content: SourceNewGameContent; initialMap: WorldMapContent };
   initialized?: { content: FrameworkNewGameContent; initialMap: WorldMapContent } };
 export type PreparedGameEventSave = {
@@ -610,7 +612,8 @@ export class GameSession {
     if (s.encounterSerial !== s.owned.completedBattles.length)
       throw new Error("Saved encounter sequence disagrees with settled battles");
     next.world.restore(s.world, world?.catalog, world?.map,
-      s.origin.kind === "source-new-game" ? world!.source : s.origin.kind === "framework-new-game" ? world!.initialized : undefined);
+      s.origin.kind === "source-new-game" ? world!.source : s.origin.kind === "framework-new-game" ? world!.initialized : undefined,
+      world?.timerOrigin);
     if (s.formatVersion !== 4) next.walkEncounters.restore(s.walkEncounters);
     else if (initial?.walkEncounters || next.field.content.walkEncounters)
       throw new Error("Legacy checkpoint has no walking encounter state");
@@ -638,6 +641,7 @@ export class GameSession {
       if (this.eventSaveRequest) continue;
       if (this.battle) {
         if (!this.field.soundReady) continue;
+        this.field.advanceStoryTimer(10, "battle");
         this.field.bgm.advance(10, this.field.content.bgm);
         this.field.environment.advance(10, this.field.content.environment);
         this.field.se.advance(10, this.field.content.se);

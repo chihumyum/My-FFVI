@@ -17,8 +17,8 @@ for (let index = 0; index < args.length; index += 2) {
 }
 const load = name => import(pathToFileURL(resolve(compiledRoot, 'src', name + '.js')));
 const [{ loadCorpus }, { hash },
-  { EventState }, { FieldGame }, { loadSystemMessages }] = await Promise.all([
-  'compiler/corpus', 'compiler/content', 'core/event-state', 'core/field', 'compiler/system-messages',
+  { EventState }, { FieldGame }, { loadSystemMessages }, { DEVELOPMENT_TRANSPARENT_FADE }] = await Promise.all([
+  'compiler/corpus', 'compiler/content', 'core/event-state', 'core/field', 'compiler/system-messages', 'core/field-fade',
 ].map(load));
 const snapshot = await loadCorpus(root);
 // This loader verifies the same parent source set and every expected file;
@@ -36,7 +36,8 @@ assert.equal(new Set(corpus.scripts.map(script => script.id)).size, corpus.scrip
 assert.deepEqual(corpus.scripts.map(script => script.id).sort(), sourceScripts.map(asset => asset.id).sort(),
   'The whole translated/source script inventory changed');
 const compiledScripts = new Map(corpus.scripts.map(script => [script.id, script]));
-const allowed = new Set(['nop', 'exit', 'return', 'call', 'wait', 'jump', 'branch', 'calc', 'flag', 'message', 'choice']);
+const allowed = new Set(['nop', 'exit', 'return', 'call', 'wait', 'jump', 'branch', 'calc', 'flag', 'message', 'choice',
+  'field-fade', 'field-color-fade', 'field-flash', 'field-timer', 'bgm-pause', 'bgm-replay', 'event-save']);
 const exclusions = [], programs = [];
 
 for (const asset of sourceScripts) {
@@ -70,6 +71,8 @@ for (const asset of sourceScripts) {
     assert.equal(op.index, index);
     if (!allowed.has(op.kind)) reasons.push({ code: 'host-or-capability-required', index,
       kind: op.kind, reason: op.reason ?? null });
+    if (op.kind === 'field-timer' && ['set', 'change-script-if-expired'].includes(op.command.kind))
+      reasons.push({ code: 'source-timer-callback-namespace-required', index });
     // FieldMessage properties are on Op itself; no nested op.message exists.
     if (op.kind === 'message' && op.template) reasons.push({ code: 'owned-message-names-required', index });
     // Call is a local instruction address. No script lookup or rewrite occurs.
@@ -106,19 +109,31 @@ function execute(program, input, choicePrefix) {
     map: { id: 'controlled-story-vm-host', width: 1, height: 1, tileSize: 16, layers: [], tilesets: [],
       textures: {}, collisions: { 1: [0] }, entities: [], source: asset.source },
     characters: {}, scripts: { [asset.id]: ops }, scriptLocals: { [asset.id]: locals },
+    developmentProfile: { kind: 'framework-development-v1', policy: 'omit-anonymous-environment-particles-v1',
+      sourceContentHash: hash({ id: asset.id, data: asset.data }), omissions: [], storyRuntime: 'web-field-story-runtime-v1',
+      autoSave: 'web-field-autosave-barrier-v1' },
     entry: { player: { x: 0, y: 0, layer: 1, direction: 'up', asset: '', mount: '' },
+      fade: structuredClone(DEVELOPMENT_TRANSPARENT_FADE),
       description: 'Controlled whole-corpus experiment; not a story checkpoint', evidence: [asset.source] },
     limitations: ['controlled-state', 'headless-event-host', 'no-original-oracle'],
   };
-  const dialogue = [], choices = [];
+  const dialogue = [], choices = [], saves = [];
   let game = null, exception = null;
   let ticks = 0, boundary = null;
   try {
     game = new FieldGame(content, new EventState(structuredClone(before)));
     assert.equal(game.startEvent(asset.id), true);
-    while (ticks < 12000 && game.busy && !game.stop) {
+    while (ticks < 12000 && (game.busy || game.fader.active || game.storyRuntimeSnapshot?.colorFilter?.tween) && !game.stop) {
       ticks++;
-      if (game.choice) {
+      if (game.eventSaveRequest) {
+        const request = game.eventSaveRequest, checkpoint = game.eventCheckpoint(request);
+        const restored = FieldGame.restore(content, JSON.parse(JSON.stringify(checkpoint)));
+        assert.deepEqual(restored.eventState.snapshot(), game.eventState.snapshot(), 'Event round trip changed source banks');
+        assert.equal(restored.eventSaveRequest, null, 'Restore must continue after the saved barrier');
+        saves.push({ site: request.site, checkpointHash: hash(checkpoint) });
+        game.acknowledgeEventSave(request);
+        game = restored;
+      } else if (game.choice) {
         const request = game.choice;
         if (choices.length >= choicePrefix.length) {
           boundary = { code: 'choice-frontier', options: request.options.map(option => option.key),
@@ -158,8 +173,10 @@ function execute(program, input, choicePrefix) {
     });
   for (const bank of ['selected', 'itemSelected', 'currentMapId'])
     if (after[bank] !== before[bank]) changes.push({ bank, before: before[bank], after: after[bank] });
-  return { input, choicePrefix, choices, dialogue, changes, stateHash: hash(after),
-    outcome: exception ? 'error' : boundary ? 'frontier' : game.stop ? 'stopped' : game.busy ? 'budget-exhausted' : 'finished',
+  const pending = game && (game.busy || game.fader.active || game.storyRuntimeSnapshot?.colorFilter?.tween);
+  return { input, choicePrefix, choices, dialogue, saves, changes, stateHash: hash(after),
+    hostStateHash: game ? hash({ runtime: game.storyRuntimeSnapshot, fade: game.fader.snapshot(), bgm: game.bgm.snapshot() }) : null,
+    outcome: exception ? 'error' : boundary ? 'frontier' : game.stop ? 'stopped' : pending ? 'budget-exhausted' : 'finished',
     boundary: exception ?? boundary ?? game?.stop ?? null };
 }
 
@@ -192,11 +209,14 @@ const counts = { totalScripts: sourceScripts.length, selectedScripts: programs.l
   coverageBudgetExhausted: cases.filter(result => result.outcome === 'coverage-budget-exhausted').length,
   scriptsWithStateChanges: results.filter(result => result.cases.some(value => value.changes?.length)).length,
   scriptsWithChoiceAnswers: results.filter(result => result.cases.some(value => value.choices?.length)).length };
+counts.scriptsWithEventRoundTrips = results.filter(result => result.cases.some(value => value.saves?.length)).length;
+counts.eventRoundTrips = cases.reduce((count, value) => count + (value.saves?.length ?? 0), 0);
 assert.equal(counts.totalScripts, counts.selectedScripts + counts.excludedScripts, 'A source program was omitted');
 assert.ok(counts.selectedScripts > 0 && counts.finished > 0, 'No source script execution was demonstrated');
 const report = { kind: 'story-corpus-execution-v1', result: 'experiment-complete', sourceSetHash: snapshot.sourceSetHash,
   storyCorpusHash: corpusHash, systemMessageSource: system.source,
   runtimeHash: await runtimeDigest(root, compiledRoot), counts, selection: { allowed: [...allowed],
+    host: 'explicit Web linear RGBA screen, transparent fader, known absent timer, empty BGM bus and event checkpoint round trip; no native sync, durable storage, camera shader or playback parity',
     states: 'source zero initialization plus isolated branch boundary inputs', choiceDepth: 8, maxChoiceCasesPerState: 128,
     segmentScope: 'one complete source program at entry zero' }, results, exclusions,
   runtimeAdmission: 'unassessed', sourceStoryReachability: false, sourceCampaignComplete: false,

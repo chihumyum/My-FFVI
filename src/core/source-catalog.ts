@@ -15,7 +15,9 @@ export function sourceCatalogProfile(profile: DevelopmentProfile | undefined): S
       !Array.isArray(profile.omissions) ||
       profile.transportation !== undefined && profile.transportation !== "walking-magitek-framework-v1" ||
       profile.worldMap !== undefined && profile.worldMap !== "framework-world-map-flat-v1" ||
-      profile.fieldPresentation !== undefined && profile.fieldPresentation !== "framework-ordinary-field-flat-v1")
+      profile.fieldPresentation !== undefined && profile.fieldPresentation !== "framework-ordinary-field-flat-v1" ||
+      profile.storyRuntime !== undefined && profile.storyRuntime !== "web-field-story-runtime-v1" ||
+      profile.autoSave !== undefined && profile.autoSave !== "web-field-autosave-barrier-v1")
     throw new Error("Source game catalog development profile mismatch");
   return "framework";
 }
@@ -48,7 +50,9 @@ export function assertSourceEntryProfiles(
         profile === "framework" &&
         (dependency.developmentProfile!.transportation !== entry.developmentProfile!.transportation ||
           dependency.developmentProfile!.worldMap !== entry.developmentProfile!.worldMap ||
-          dependency.developmentProfile!.fieldPresentation !== entry.developmentProfile!.fieldPresentation))
+          dependency.developmentProfile!.fieldPresentation !== entry.developmentProfile!.fieldPresentation ||
+          dependency.developmentProfile!.storyRuntime !== entry.developmentProfile!.storyRuntime ||
+          dependency.developmentProfile!.autoSave !== entry.developmentProfile!.autoSave))
       throw new Error("Source entry profile mismatch: " + name);
   }
   return profile;

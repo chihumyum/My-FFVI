@@ -11,6 +11,7 @@ import { canonical } from "/runtime/core/canonical.js";
 import { canonicalCell, validateFieldMapTopology } from "/runtime/core/field-map-topology.js";
 import { validateFieldEffectBoardMaterial } from "/runtime/core/field-particle-geometry.js";
 import { prepareSourceFieldEffectBoards } from "./field-effect-renderer.js";
+import { drawStoryTimer } from "./story-overlay.js";
 export class Renderer {
   constructor(canvas, content, images, effectProvider = null) {
     this.canvas = canvas;
@@ -602,10 +603,16 @@ export class Renderer {
         message.alignment === "center" ? w / 2 : 28, startY + lineHeight * index);
       c.restore();
     }
+    const filter = game.colorFilter;
+    if (filter && filter.a > 0) {
+      c.fillStyle = `rgba(${filter.r * 255},${filter.g * 255},${filter.b * 255},${filter.a})`;
+      c.fillRect(0, 0, w, h);
+    }
     if (game.fade) {
       const color = fieldFadeOverlay(game.fade);
       c.fillStyle = `rgba(${color.r * 255},${color.g * 255},${color.b * 255},${color.a})`;
       c.fillRect(0, 0, w, h);
     }
+    drawStoryTimer(c, w, game.timerProjection);
   }
 }

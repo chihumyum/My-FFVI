@@ -26,6 +26,10 @@ import { compileFieldRecoveryInstruction } from "./field-recovery.js";
 import { compileSourcePresentationInstruction, sourcePresentationSelectors } from "./source-presentation.js";
 import { compileAudioReadinessInstruction } from "./audio-readiness.js";
 import { compileFieldSoundInstruction, fieldSoundMnemonics } from "./field-sound.js";
+import { compileFieldBgmControlInstruction, fieldBgmControlMnemonics } from "./field-bgm-control.js";
+import { compileFieldTimerInstruction, fieldTimerMnemonics, fieldTimerSelectors } from "./field-timer.js";
+import { compileFieldScreenEffectInstruction, fieldScreenEffectMnemonics } from "./field-screen-effects.js";
+import { compileFieldAutoSaveInstruction } from "./field-auto-save.js";
 import { compilePlayerVisibilityInstruction, compilePlayerVisibilityFactory, playerVisibilityMnemonics } from "./player-visibility.js";
 import { compileFieldTaskControlInstruction, fieldTaskControlMnemonics } from "./field-task-control.js";
 import { compileFieldFadeInstruction } from "./field-fade.js";
@@ -118,6 +122,24 @@ export function decodeFieldOp(
     mnemonic: name,
     reason,
   });
+  if (name === "AutoSave") {
+    try { return { ...site, ...compileFieldAutoSaveInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if ((fieldBgmControlMnemonics as readonly string[]).includes(name)) {
+    try { return { ...site, ...compileFieldBgmControlInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if ((fieldScreenEffectMnemonics as readonly string[]).includes(name)) {
+    try { return { ...site, ...compileFieldScreenEffectInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  const timerSelector = name === "SysCall" && record(m.operands).sValues;
+  if ((fieldTimerMnemonics as readonly string[]).includes(name) ||
+      Array.isArray(timerSelector) && (fieldTimerSelectors as readonly unknown[]).includes(timerSelector[0])) {
+    try { return { ...site, ...compileFieldTimerInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (fieldSoundMnemonics.some(mnemonic => mnemonic === name)) {
     try { return { ...site, ...compileFieldSoundInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }

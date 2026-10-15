@@ -160,7 +160,10 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
   const resolveRecipe=async path=>{
     const original=await recipe(path);
     const resolved=await resolveSourceRecipeInputs({root,compiledDir,recipePath:path,recipeBytes:original.raw,
-      readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence,battleRebindings});
+      readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence,battleRebindings,
+      frameworkProfileUpgrade:{kind:'compiled-framework-profile-upgrade-v1',
+        compilerDigest:prerequisites.inputs.compilerDigest,markers:{
+          storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1'}}});
     rebindings.push(resolved.report);return {...original,value:resolved.recipe};
   };
   const [playRecipe,initRecipe,travelRecipe,developmentRecipe,...sourceRecipes]=await Promise.all([
@@ -211,6 +214,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
   put('/content-packages/source-batches/selection.json',sourceSelection);
   reports.push({id:'source-batch-selection',report:sourceSelection});
   return {payloads,reports,recipes,rebindings,sourceInputs:prerequisites.inputs,sourceSelection,battleRebindings,
+    runtimeSha256:preparedRuntime,
     validateInputs:async()=>{
       await validateSourcePrerequisiteInputs(prerequisites.inputs,{root});
       assert.equal(await runtimeDigest(root,resolve(root,compiledDir)),preparedRuntime,
@@ -243,11 +247,15 @@ export async function publishContentPackages({root=repository,compiledDir='dist'
     const candidate=await stage('compile-private-candidate',()=>compile({root,compiledDir,sourceRecipePaths,sourceSelectionPath,
       readJson:url=>reader.json(url)}));
     assert.ok(candidate?.payloads instanceof Map&&candidate.payloads.size>0,'Content candidate has no payloads');
+    if(candidate.sourceInputs)assert.match(candidate.runtimeSha256,/^[a-f0-9]{64}$/,
+      'Source publication requires the candidate runtime identity');
     report.producers=candidate.reports??[];
     if(candidate.sourceSelection)report.sourceSelection=candidate.sourceSelection;
     report.recipeRebindings=candidate.rebindings??[];
     report.battleCapabilityRebindings=candidate.battleRebindings??[];
     if(candidate.sourceInputs)report.sourceInputLock={kind:candidate.sourceInputs.kind,
+      runtimeSha256:candidate.runtimeSha256,sourceSetHash:candidate.sourceInputs.sourceSetHash,
+      parentSourceSetHash:candidate.sourceInputs.parentSourceSetHash,compiledDir,
       compilerDigest:candidate.sourceInputs.compilerDigest,files:candidate.sourceInputs.files.length,
       directories:candidate.sourceInputs.directories.length};
     const api=Object.assign({},...await Promise.all(['core/game-content','core/game-content-refs','core/content-integrity','core/canonical'].map(name=>
@@ -322,6 +330,21 @@ export async function publishContentPackages({root=repository,compiledDir='dist'
     // Once published, metadata failures require repair, never a rollback of
     // content which a live app may already use.
     report.after=await stage('archive-published-after-publication',()=>archive({root,compiledDir,packageDirectory:target}));
+    if(candidate.sourceInputs)await stage('verify-published-source-objects',async()=>{
+      report.publishedObjects=[];
+      for(const [url,value] of [...candidate.payloads].filter(([url])=>
+        url==='/content-packages/source.json'||url.startsWith('/content-packages/source/')).sort(([a],[b])=>a.localeCompare(b))){
+        assert.match(url,packageURL);
+        const file=await realpath(resolve(target,url.slice('/content-packages/'.length)));
+        assert.ok(within(target,file),'Published source object escapes its collection');
+        const raw=await readFile(file),parsed=JSON.parse(raw.toString());
+        assert.equal(api.canonical(parsed),api.canonical(value),'Published source object differs from its validated candidate');
+        report.publishedObjects.push({url,contentHash:typeof value.contentHash==='string'?value.contentHash:null,
+          sha256:sha(raw),bytes:raw.length});
+      }
+      assert.equal(await runtimeDigest(root,resolve(root,compiledDir)),candidate.runtimeSha256,
+        'Runtime changed during complete collection publication');
+    });
     report.upstreamJSONFiles=reader.inputs.size;report.upstreamMediaFiles=reader.mediaInputs.size;
     report.result='passed';await persist();return report;
   }catch(error){

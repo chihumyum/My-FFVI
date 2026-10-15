@@ -16,6 +16,7 @@
     "story:build": "npm run build && node --max-old-space-size=8192 scripts/build-story-corpus.mjs",
     "story:execute": "npm run build && node --max-old-space-size=8192 scripts/check-story-corpus-execution.mjs",
     "story:plan": "npm run build && node --max-old-space-size=8192 scripts/plan-story-runtime.mjs",
+    "story-runtime:check": "npm run build && node --max-old-space-size=8192 scripts/check-story-runtime-capabilities.mjs && node scripts/check-field-timer.mjs && node scripts/check-field-auto-save.mjs",
     "story:continuity": "npm run build && node scripts/check-story-continuity.mjs",
     "story:check": "npm run build && node --max-old-space-size=8192 scripts/build-story-corpus.mjs && node --max-old-space-size=8192 scripts/check-story-corpus-execution.mjs && node --max-old-space-size=8192 scripts/plan-story-runtime.mjs && node scripts/check-story-continuity.mjs",
     "batch:plan": "npm run build && node scripts/check-content-batch.mjs plan",

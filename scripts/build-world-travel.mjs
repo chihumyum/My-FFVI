@@ -25,7 +25,7 @@ async function modules(root, dist) {
     "compiler/framework-new-game", "compiler/framework-world-presentation", "compiler/field-background",
     "compiler/field-native-composition", "compiler/corpus", "compiler/map-package", "compiler/system-source",
     "compiler/world-terrain", "compiler/field-native-foot", "compiler/field-entry-context", "compiler/content", "core/content-integrity",
-    "core/game-content", "core/game-content-refs", "core/source-catalog", "core/walk-encounters",
+    "core/game-content", "core/game-content-refs", "core/source-catalog", "core/development-profile", "core/walk-encounters",
   ].map(load)));
 }
 
@@ -100,7 +100,7 @@ export async function compileWorldTravel(root, raw, recipeSha256, { dist = "dist
   const battle = selected.catalog;
   assert.equal(api.canonical(battle.gameState), api.canonical(sourceBattle.gameState));
   const profile = sourceContentHash => ({ kind: "framework-development-v1", policy: "omit-anonymous-environment-particles-v1",
-    sourceContentHash, omissions: [], worldMap: "framework-world-map-flat-v1" });
+    sourceContentHash, omissions: [], ...api.FRAMEWORK_STORY_RUNTIME_DECLARATIONS, worldMap: "framework-world-map-flat-v1" });
   const evidence = pointer => ({ file: recipeName, assetPath: "Authored/WorldTravel/recipe.json", pointer, sha256: recipeSha256 });
   const omissionReports = [];
   function scaffold(sourceMap, extraEntities, programs) {

@@ -26,6 +26,7 @@ import { CheckpointStorage } from "/runtime/core/saved-game.js";
 import { Renderer } from "./renderer.js";
 import { BattleView } from "./battle-view.js";
 import { AudioOutput, audioProjection } from "./audio.js";
+import { drawStoryTimer } from "./story-overlay.js";
 const $ = (id) => document.getElementById(id),
   canvas = $("game");
 let flow,
@@ -688,7 +689,10 @@ function frame(now) {
       "music-status",
       flow.started ? audio.status(audioReady, projection.length > 0) : "",
     );
-    if (flow.started && flow.session.battle) battleView.draw(flow.session.battle);
+    if (flow.started && flow.session.battle) {
+      battleView.draw(flow.session.battle);
+      drawStoryTimer(canvas.getContext("2d"), canvas.width, game.timerProjection);
+    }
     else if (renderer && game) renderer.draw(game);
     if (sourceBoot) {
       const c = canvas.getContext("2d"), color = fieldFadeOverlay(sourceBoot.fade.projection);

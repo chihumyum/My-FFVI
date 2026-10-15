@@ -2,6 +2,7 @@
 // not edit recipes, rebuild inputs, or confer gameplay/source admission.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 
@@ -10,6 +11,10 @@ const digest=/^[a-f0-9]{64}$/;
 const logicalURL=/^\/(?:world|game|framework)\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.json$/;
 const jsonURL=/^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.json$/;
 const ordinaryBattle='/content-batches/ordinary-battles/battle.json';
+const frameworkHostMarkers={storyRuntime:{value:'web-field-story-runtime-v1',module:'field-story-runtime',
+  exportName:'WEB_FIELD_STORY_RUNTIME',provider:'hasFieldStoryRuntime'},
+  autoSave:{value:'web-field-autosave-barrier-v1',module:'field-auto-save',
+    exportName:'WEB_AUTO_SAVE_POLICY',provider:'assertFieldEventSaveAdmission'}};
 const roles={sourceEntry:'source-new-game-content-v1',sourceBattle:'narshe-battle-catalog',
   sourceWorld:'world-development',sourceMap:'world-map-development',
   'sourceMaps.world':'world-map-development','sourceMaps.location':'world-map-development',
@@ -114,6 +119,54 @@ function parseBattleRebindings(raw=[]){
     result.set(value.url,structuredClone(value));
   }
   return result;
+}
+
+async function frameworkUpgradeDeclaration(raw,root,compiledDir){
+  if(raw===undefined)return null;
+  dataFields(raw,['kind','compilerDigest','markers'],'framework profile upgrade declaration');
+  assert.equal(raw.kind,'compiled-framework-profile-upgrade-v1','Unknown framework profile upgrade version');
+  assert.ok(typeof raw.compilerDigest==='string'&&digest.test(raw.compilerDigest),'Invalid framework profile upgrade compiler digest');
+  dataFields(raw.markers,Object.keys(frameworkHostMarkers),'framework profile upgrade markers');
+  const result=structuredClone(raw),providers=[];
+  for(const [marker,definition] of Object.entries(frameworkHostMarkers)){
+    assert.equal(result.markers[marker],definition.value,'Unavailable or unknown framework profile upgrade marker: '+marker);
+    const path=resolve(root,compiledDir,'src/core',definition.module+'.js');
+    let module,bytes;
+    try{bytes=await readFile(path);module=await import(pathToFileURL(path).href);}
+    catch(error){throw new Error('Framework profile upgrade host unavailable: '+marker,{cause:error});}
+    assert.equal(module[definition.exportName],definition.value,'Framework profile upgrade host unavailable: '+marker);
+    assert.equal(typeof module[definition.provider],'function','Framework profile upgrade host unavailable: '+marker);
+    providers.push({marker,value:definition.value,module:'src/core/'+definition.module+'.js',
+      exportName:definition.exportName,provider:definition.provider,sha256:sha(bytes)});
+  }
+  return {...result,providers};
+}
+
+/** One narrowly versioned additive comparison. The actual candidate remains
+ * untouched and keeps its new profile/hash. No existing value may be removed
+ * or changed, and no other profile field is normalized by this declaration. */
+function comparableFrameworkUpgrade(before,after,ref,declaration,canonical){
+  if(!declaration)return {after,upgrade:null};
+  const previous=before.developmentProfile,next=after.developmentProfile;
+  const keys=Object.keys(frameworkHostMarkers);
+  const changes=keys.filter(key=>Object.hasOwn(previous??{},key)!==Object.hasOwn(next??{},key)||
+    canonical(previous?.[key]??null)!==canonical(next?.[key]??null));
+  if(!changes.length)return {after,upgrade:null};
+  assert.ok(previous?.kind==='framework-development-v1'&&next?.kind==='framework-development-v1',
+    'Framework profile upgrade requires an existing framework profile');
+  const comparison=structuredClone(after),addedMarkers=[];
+  for(const key of changes){
+    assert.ok(!Object.hasOwn(previous,key)&&Object.hasOwn(next,key),
+      'Framework profile upgrade cannot remove or change marker: '+key);
+    assert.equal(next[key],declaration.markers[key],'Unavailable or unknown framework profile upgrade marker: '+key);
+    delete comparison.developmentProfile[key];
+    addedMarkers.push({key,previous:null,next:next[key]});
+  }
+  return {after:comparison,upgrade:{kind:declaration.kind,compilerDigest:declaration.compilerDigest,
+    pointer:ref.pointer+'/developmentProfile',role:ref.role,url:ref.url,
+    oldHash:before.contentHash,newHash:after.contentHash,addedMarkers,providers:structuredClone(declaration.providers),
+    profileBefore:structuredClone(previous),profileAfter:structuredClone(next),
+    grantsSourceAdmission:false,saveMigration:false}};
 }
 
 function identities(value,canonical,sourceCatalogProfile){
@@ -254,13 +307,14 @@ export function createSourceWalkEvidenceReader({root=repository,compiledDir='dis
  * before asynchronous verification. Callers retain byte/path freshness checks
  * and complete package validation at their publication boundary. */
 export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurrentJson,readCandidateJson,
-    root=repository,compiledDir='dist',sourceWalkEvidence,battleRebindings}){
+    root=repository,compiledDir='dist',sourceWalkEvidence,battleRebindings,frameworkProfileUpgrade}){
   assert.ok(typeof recipePath==='string'&&recipePath.length>0,'Missing original recipe path');
   assert.equal(typeof readCurrentJson,'function');assert.equal(typeof readCandidateJson,'function');
   const recipe=recipeJSON(recipeBytes),refs=declaredReferences(recipe),proofs=parseBattleRebindings(battleRebindings);
   const report={kind:'source-recipe-inputs-v1',id:recipe.id,recipeKind:recipe.kind,recipePath,
     recipeSha256:sha(recipeBytes),changes:[],dependencyRebindings:[],sourceIdentities:[],sourceEvidenceEnrichments:[],
-    battleCapabilityRebindings:[]};
+    battleCapabilityRebindings:[],frameworkProfileUpgrades:[]};
+  const frameworkUpgrade=await frameworkUpgradeDeclaration(frameworkProfileUpgrade,root,compiledDir);
   if(refs.length===0)return {recipe,report};
   const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src/core',name+'.js')).href);
   const [{canonical},{verifyContent},{sourceCatalogProfile}]=await Promise.all([
@@ -360,7 +414,9 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
     const before=await read(readCurrentJson,oldCache,ref.url,ref.contentHash);
     const after=await read(readCandidateJson,newCache,ref.url);
     validateDocument(before,ref);validateDocument(after,ref);
-    const comparisonAfter=await comparableAfter(before,after,ref);
+    const omissionsAfter=await comparableAfter(before,after,ref);
+    const upgraded=comparableFrameworkUpgrade(before,omissionsAfter,ref,frameworkUpgrade,canonical);
+    const comparisonAfter=upgraded.after;
     const comparison=await comparableWalkingEvidence(before,comparisonAfter,ref.role,ref.url);
     const oldIdentity=identities(comparison.before,canonical,sourceCatalogProfile),
       newIdentity=identities(comparison.after,canonical,sourceCatalogProfile);
@@ -368,6 +424,14 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
       ?compiledBattleRebinding(before,after,ref,proofs,canonical,sourceCatalogProfile):null;
     if(battleRebinding)report.battleCapabilityRebindings.push({pointer:ref.pointer,role:ref.role,...battleRebinding});
     else assert.equal(canonical(oldIdentity),canonical(newIdentity),'Source identity/profile/media changed: '+ref.role);
+    if(upgraded.upgrade)report.frameworkProfileUpgrades.push({...upgraded.upgrade,
+      // These are the unmodified full identities, including physical/media
+      // counts and hashes. Existing walking/omission evidence has its own
+      // independent receipts; their effects are never hidden in this audit.
+      profileAfter:structuredClone(after.developmentProfile),
+      sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),
+      sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile),
+      comparisonIdentityBefore:oldIdentity,comparisonIdentityAfter:newIdentity});
     if(ref.kind==='field-development')
       assert.equal(after.contentHash,before.contentHash,'This batch must retain '+ref.role+' content unchanged');
     if(ref.kind==='source-new-game-content-v1'){

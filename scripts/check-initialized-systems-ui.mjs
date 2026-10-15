@@ -22,7 +22,7 @@ const { CheckpointStorage } = await load("src/core/saved-game.js");
 const { contentDigest } = await load("src/core/content-integrity.js");
 const app = await readFile(resolve(root, "apps/game/app.js"), "utf8");
 const html = await readFile(resolve(root, "apps/game/index.html"), "utf8");
-const uiNames = ["audio", "magic-stones-view", "party-view", "shop-view", "choice-view", "inventory-view", "equipment-view"];
+const uiNames = ["audio", "story-overlay", "magic-stones-view", "party-view", "shop-view", "choice-view", "inventory-view", "equipment-view"];
 const ui = Object.fromEntries(await Promise.all(uiNames.map(async name =>
   [name, await readFile(resolve(root, "apps/game", name + ".js"), "utf8")])));
 const reportPath = resolve(root, "build/reports/initialized-systems-ui-check.json");
@@ -198,7 +198,7 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
       return { ok: true, json: async () => structuredClone(pack.files.get(url)) };
     },
   });
-  const exports = { audio: ["AudioOutput", "audioProjection"], "magic-stones-view": ["MagicStoneView"],
+  const exports = { audio: ["AudioOutput", "audioProjection"], "story-overlay": ["drawStoryTimer"], "magic-stones-view": ["MagicStoneView"],
     "party-view": ["PartyView"], "shop-view": ["ShopView"], "choice-view": ["ChoiceView"],
     "inventory-view": ["InventoryView"], "equipment-view": ["EquipmentView"] };
   for (const name of uiNames) {

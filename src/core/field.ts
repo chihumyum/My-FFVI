@@ -99,6 +99,17 @@ import { validateFieldMoveAreas, fieldMoveAreas, findFieldMoveArea, type FieldMo
 import { StaticAudioState, type AudioSnapshot } from "./static-audio.js";
 import { FieldSoundState, type SoundSnapshot } from "./field-sound.js";
 import type { FieldSoundPresentation } from "./field-sound-presentation.js";
+import type { StaticAudioReplay } from "./static-audio.js";
+import { createFieldTimer, cloneFieldTimer, advanceFieldTimer, prepareFieldTimerCommand,
+  pendingFieldTimerCallback, acknowledgeFieldTimerCallback, fieldTimerProjection, WEB_FIELD_TIMER_POLICY,
+  type FieldTimerSnapshot, type FieldTimerScene, type FieldTimerCallbackRequest } from "./field-timer.js";
+import { FieldColorFilterState, WEB_CLEAR_COLOR_FILTER, startFieldFlash, pollFieldFlash,
+  type FieldFlashTask } from "./field-screen-effects.js";
+import { WEB_FIELD_STORY_RUNTIME, hasFieldStoryRuntime, fieldScreenEffectsBinding,
+  bindFieldStoryTimer, fieldTimerOriginContent, restoreFieldStoryRuntime,
+  type FieldStoryRuntimeSnapshot, type FieldTimerOriginContent } from "./field-story-runtime.js";
+import type { FieldCameraPathProgress } from "./field-camera-path.js";
+import { assertFieldEventSaveAdmission } from "./field-auto-save.js";
 import { audioReadinessTrack, pollAudioReadiness, type AudioReadinessPort } from "./audio-readiness.js";
 import { projectPlayerVisibility } from "./player-visibility.js";
 import { FieldFadeState, type FieldFadeSnapshot } from "./field-fade.js";
@@ -223,6 +234,8 @@ export type FieldCheckpoint = FieldCheckpointState & (
   | { kind: "event-field-v2"; viewPlan: MapEntryViewPlan; execution: FieldEventCheckpoint }
   | { kind: "idle-field-v12"; viewPlan?: MapEntryViewPlan; npcActivities: FieldNpcActivitiesCheckpoint }
   | { kind: "event-field-v3"; viewPlan?: MapEntryViewPlan; npcActivities: FieldNpcActivitiesCheckpoint; execution: FieldEventCheckpoint }
+  | { kind: "idle-field-v13"; storyRuntime: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint }
+  | { kind: "event-field-v4"; storyRuntime: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint; execution: FieldEventCheckpoint }
 );
 export type GameEventSaveRequest = Readonly<{ id: string; site: Site }>;
 /** Trusted source packages reconstruct this capability. Nothing in a saved
@@ -251,6 +264,9 @@ type Task = {
   scriptShop: { id: number; pc: number; op: Extract<Op, { kind: "field-script-shop" }>;
     identity: string; closed: boolean } | null;
   fadeWait: Extract<Op, { kind: "field-fade" }> | null;
+  colorFadeWait: Extract<Op, { kind: "field-color-fade" }> | null;
+  flashWait: { op: Extract<Op, { kind: "field-flash" }>; cursor: FieldFlashTask } | null;
+  cameraPath: { op: Extract<Op, { kind: "field-script-motion" }>; progress: FieldCameraPathProgress } | null;
   cameraLerp: { op: Site; command: FieldCameraLerp;
     progress: FieldCameraLerpProgress } | null;
   scriptMove: Extract<Op, { kind: "field-script-motion" }> | null;
@@ -259,6 +275,9 @@ type Task = {
   move: Extract<Op, { kind: "move" }> | null;
   animationWait: boolean;
   audioWait: Extract<Op, { kind: "bgm-ready" | "bgm-sync" }> | null;
+  bgmReplay: { op: Extract<Op, { kind: "bgm-replay" }>; handle: StaticAudioReplay } | null;
+  /** Source first-clock yield; no pending save or independent save owner. */
+  autoSaveWait: Extract<Op, { kind: "event-save" }> | null;
   soundWait: { op: Extract<Op, { kind: "field-sound" }>; handle: number | null } | null;
   treasure: { state: TreasureTaskState; entity: FieldEntity; site: Site;
     closeMessage: boolean; messageAvailableAt: number } | null;
@@ -297,6 +316,8 @@ export type FieldEncounterReturnPublication = (() => void) & {
 // FieldGame (including restore) cannot accept a callback from an older owner.
 let nextChoiceNamespace = 1;
 export type FieldGameOptions = {
+  storyRuntimeSeed?: FieldStoryRuntimeSnapshot;
+  storyTimerOrigin?: FieldTimerOriginContent;
   /** Explicit particle/material host. Content parsing never grants one. */
   fieldEffects?: FieldEffectRuntimeHost;
   /** World-owned lease; a prepared map never allocates another live pool. */
@@ -356,7 +377,8 @@ export class FieldGame {
     const actorKind = actorId === this.cameraActorId ? "camera" as const : this.effectBoard(actorId)
       ? "effect" as const : actor ? "actor" as const : "none" as const;
     const cameraMotion = !!this.camera && (op.kind !== "field-script-motion" ||
-      op.command.kind === "lerp" && op.command.layer === 0 && op.command.animation === "");
+      op.command.animation === "" && (op.command.kind === "lerp" ? op.command.layer === 0 :
+        this.content.cameraHost?.callbacks === "fresh-normal-field-v1"));
     const legacyMove = op.kind === "field-script-motion" && op.command.kind === "move" && !!actor &&
       !actor.native && !this.options.nativeActorPreparation && !this.options.puppetActors &&
       !this.content.scriptPuppetContexts && op.command.animation === "" && op.command.speedId !== null;
@@ -385,6 +407,8 @@ export class FieldGame {
       soundPresentation: presence(typeof this.options.soundPresentation?.isPresented === "function"),
       actorControl: presence(actorControl),
       actorMotion: presence(actorMotion), cameraMotion: presence(cameraMotion), effectMotion: "missing",
+      storyTimer: presence(this.timerState !== null),
+      screenEffects: presence(this.ordinaryScreenEffectsAvailable),
       eventSaveCompletion: "unknown", battleHandoff: "unknown",
     }, ...(refreshRequired === undefined ? {} : { refreshRequired }) };
     // A helper's source flag cannot stand in for the active event root.
@@ -670,6 +694,40 @@ export class FieldGame {
     soundId: number | null;
   }[] = [];
   get fade() { return this.fader.projection; }
+  private timerState: FieldTimerSnapshot | null = null;
+  private colorFilterState: FieldColorFilterState | null = null;
+  private timerOrigin: FieldTimerOriginContent | undefined;
+  get storyRuntimeSnapshot(): FieldStoryRuntimeSnapshot | null {
+    return this.timerState ? { kind: WEB_FIELD_STORY_RUNTIME, timer: cloneFieldTimer(this.timerState),
+      colorFilter: this.colorFilterState!.snapshot() } : null;
+  }
+  get storyTimerOrigin(): FieldTimerOriginContent | undefined {
+    return this.timerState?.active ? structuredClone(this.timerOrigin) : undefined;
+  }
+  get colorFilter() { return this.colorFilterState?.projection ?? null; }
+  get timerProjection() { return this.timerState ? fieldTimerProjection(this.timerState) : null; }
+  private get ordinaryScreenEffectsAvailable(): boolean {
+    return !!this.colorFilterState?.known && (this.content.entry.viewPlan?.presentationViewType ?? 0) === 0;
+  }
+  /** Battle clocks the same field timer owner; callbacks wait for safe field publication. */
+  advanceStoryTimer(milliseconds: number, scene: FieldTimerScene): void {
+    if (this.timerState) this.timerState = advanceFieldTimer(this.timerState, milliseconds, scene);
+  }
+  private validateTimerCallback(request: FieldTimerCallbackRequest): void {
+    const target = this.content.scripts[request.binding.callback.name]?.[0];
+    if (!target || canonical(target.source) !== canonical(request.binding.callback.source))
+      throw new Error("Timer callback is unavailable in the current trusted script namespace");
+  }
+  private dispatchExpiredTimer(): void {
+    if (!this.timerState || !this.idleFieldReady || this.stop) return;
+    const request = pendingFieldTimerCallback(this.timerState);
+    if (!request) return;
+    try {
+      this.validateTimerCallback(request);
+      const acknowledged = acknowledgeFieldTimerCallback(this.timerState, request);
+      this.beginRoot(request.binding.callback.name, () => { this.timerState = acknowledged; });
+    } catch (error) { this.block(error instanceof Error ? error.message : String(error)); }
+  }
   dialogue: Dialogue | null = null;
   readonly sourceMessage = new SourceMessageState();
   private retainedMessage: Dialogue | null = null;
@@ -770,6 +828,14 @@ export class FieldGame {
     restoringNative = false,
     readonly se: FieldSoundState = new FieldSoundState(),
   ) {
+    if (hasFieldStoryRuntime(content)) {
+      const seed = options.storyRuntimeSeed && restoreFieldStoryRuntime(options.storyRuntimeSeed, content, options.storyTimerOrigin);
+      this.timerState = seed?.timer ?? createFieldTimer(WEB_FIELD_TIMER_POLICY, content.parentSourceSetHash);
+      this.colorFilterState = seed ? FieldColorFilterState.restore(seed.colorFilter, fieldScreenEffectsBinding(content))
+        : new FieldColorFilterState(fieldScreenEffectsBinding(content), { ...WEB_CLEAR_COLOR_FILTER });
+      if (this.timerState.active) this.timerOrigin = this.timerState.active.binding.mapContentHash === content.contentHash
+        ? fieldTimerOriginContent(content) : options.storyTimerOrigin;
+    } else if (options.storyRuntimeSeed || options.storyTimerOrigin) throw new Error("Story runtime host profile is unavailable");
     this.npcBindings = bindFieldNpcActivities(content);
     if (this.npcBindings.size && !options.nativeActorPreparation)
       throw new Error("Framework NPC activities require the native actor owner");
@@ -1353,6 +1419,7 @@ export class FieldGame {
       this.synchronizedEntry !== false &&
       !this.fieldActivityBusy &&
       !this.fader.active &&
+      !this.colorFilterState?.active &&
       !this.interaction &&
       Object.values(this.actors).every((a) => a.motion === null || this.isAutonomousMotion(a))
     );
@@ -1440,6 +1507,11 @@ export class FieldGame {
       native: this.nativeCheckpoint(execution !== undefined),
     };
     const viewPlan = this.content.entry.viewPlan && structuredClone(this.content.entry.viewPlan);
+    const storyRuntime = this.storyRuntimeSnapshot;
+    if (storyRuntime) return execution ? { ...snapshot, kind: "event-field-v4", storyRuntime,
+      ...(viewPlan ? { viewPlan } : {}), ...(npcActivities ? { npcActivities } : {}), execution }
+      : { ...snapshot, kind: "idle-field-v13", storyRuntime,
+        ...(viewPlan ? { viewPlan } : {}), ...(npcActivities ? { npcActivities } : {}) };
     if (npcActivities) return execution ? { ...snapshot, kind: "event-field-v3", npcActivities,
       ...(viewPlan ? { viewPlan } : {}), execution } : { ...snapshot, kind: "idle-field-v12", npcActivities,
       ...(viewPlan ? { viewPlan } : {}) };
@@ -1453,15 +1525,15 @@ export class FieldGame {
     if (this.stop || this.effects || this.options.fieldEffectMap?.hasHistory ||
         this.options.fieldEffectMap && !this.options.fieldEffectMap.active ||
         this.sourcePresentationContext?.advertisementOpeningFader === "present" ||
-        this.fader.active || this.sourceMessage.active || this.messageWindow ||
+        this.fader.active || this.colorFilterState?.active || this.sourceMessage.active || this.messageWindow ||
         this.pendingChoice || this.shopTask || this.treasureSceneState !== "player" ||
         this.openTriggers.busy || this.interaction || this.pendingPlayerStep ||
         Object.values(this.actors).some((actor) => actor.motion !== null && !this.isAutonomousMotion(actor)) ||
         this.tasks.some((other) => other !== task && !other.done) ||
         task.done || task.slot !== null || task.treasureRoot || task.state !== "ready" ||
-        task.wait !== 0 || task.puppetWait || task.fadeWait || task.cameraLerp ||
+        task.wait !== 0 || task.puppetWait || task.fadeWait || task.colorFadeWait || task.flashWait || task.cameraPath || task.cameraLerp ||
         task.scriptMove || task.scriptLerp || task.remaining !== 0 || task.move ||
-        task.animationWait || task.audioWait || task.soundWait || task.treasure ||
+        task.animationWait || task.audioWait || task.bgmReplay || task.autoSaveWait || task.soundWait || task.treasure ||
         this.options.puppetActors && !this.nativeActorBindings)
       throw new Error("Event save requires a quiescent main task with supported field owners");
   }
@@ -1483,6 +1555,7 @@ export class FieldGame {
   }
   private requestEventSave(task: Task, op: Extract<Op, { kind: "event-save" }>): void {
     if (this.pendingEventSave) throw new Error("An event save is already pending");
+    assertFieldEventSaveAdmission(this.content, op);
     const barrier = { script: task.script, pc: task.pc - 1 };
     // Fully validate before exposing an asynchronous host request.
     this.captureCheckpoint(this.eventContinuation(task, barrier));
@@ -1515,17 +1588,20 @@ export class FieldGame {
         Object.values(content.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id))))
       throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
     const s = structuredClone(raw);
-    const hasActivities = s.kind === "idle-field-v12" || s.kind === "event-field-v3";
-    const continuation = s.kind === "event-field-v1" || s.kind === "event-field-v2" || s.kind === "event-field-v3";
-    const hasView = s.kind === "idle-field-v11" || s.kind === "event-field-v2" || hasActivities && Object.hasOwn(s, "viewPlan");
+    const hasStory = s.kind === "idle-field-v13" || s.kind === "event-field-v4";
+    const hasActivities = s.kind === "idle-field-v12" || s.kind === "event-field-v3" || hasStory && Object.hasOwn(s, "npcActivities");
+    const continuation = s.kind === "event-field-v1" || s.kind === "event-field-v2" || s.kind === "event-field-v3" || s.kind === "event-field-v4";
+    const hasView = s.kind === "idle-field-v11" || s.kind === "event-field-v2" || (hasActivities || hasStory) && Object.hasOwn(s, "viewPlan");
     checkpointKeys(
       s,
       "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,se,fade,camera,native" +
-        (continuation ? ",execution" : "") + (hasView ? ",viewPlan" : "") + (hasActivities ? ",npcActivities" : ""),
+        (continuation ? ",execution" : "") + (hasView ? ",viewPlan" : "") + (hasActivities ? ",npcActivities" : "") + (hasStory ? ",storyRuntime" : ""),
     );
-    if (!["idle-field-v10", "idle-field-v11", "idle-field-v12", "event-field-v1", "event-field-v2", "event-field-v3"].includes(s.kind) ||
-        s.contentHash !== content.contentHash || hasActivities !== (content.frameworkNpcActivity !== undefined))
+    if (!["idle-field-v10", "idle-field-v11", "idle-field-v12", "idle-field-v13", "event-field-v1", "event-field-v2", "event-field-v3", "event-field-v4"].includes(s.kind) ||
+        s.contentHash !== content.contentHash || hasActivities !== (content.frameworkNpcActivity !== undefined) || hasStory !== hasFieldStoryRuntime(content))
       throw new Error("Field checkpoint source/version mismatch");
+    if (hasStory && (s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime.colorFilter?.tween)
+      throw new Error("Stable field checkpoint cannot carry an unfinished color-filter tween");
     if (hasView !== (content.entry.viewPlan !== undefined) || hasView &&
         canonical(parseMapEntryViewPlan((s as { viewPlan?: MapEntryViewPlan }).viewPlan)) !== canonical(content.entry.viewPlan))
       throw new Error("Field checkpoint cannot grant or change map view presentation");
@@ -1565,7 +1641,8 @@ export class FieldGame {
       new EventState(s.eventState),
       StaticAudioState.restore(s.bgm, content.bgm),
       StaticAudioState.restore(s.environment, content.environment),
-      { ...options, ...(native ? { nativeActorPreparation: true } : {}) },
+      { ...options, ...(native ? { nativeActorPreparation: true } : {}),
+        ...(hasStory ? { storyRuntimeSeed: restoreFieldStoryRuntime((s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime, content, options.storyTimerOrigin) } : {}) },
       FieldFadeState.restore(s.fade),
       s.camera ?? undefined,
       native !== undefined,
@@ -1591,7 +1668,7 @@ export class FieldGame {
     } else if (s.partyActors !== null) throw new Error("Unbound saved party appearances");
     const restoredActivities = hasActivities ? restoreFieldNpcActivities(Object.fromEntries(next.entityList.flatMap(e => {
       const binding = next.npcBindings.get(e.id); return binding ? [[e.id, binding.program]] : [];
-    })), (s as Extract<FieldCheckpoint, { kind: "idle-field-v12" | "event-field-v3" }>).npcActivities,
+    })), (s as { npcActivities: FieldNpcActivitiesCheckpoint }).npcActivities,
     { generation: next.choiceNamespace }) : undefined;
     if (native) next.restoreNativeOwner(s.native!, native, restoredActivities);
     checkpointIds(s.hiddenEntities);
@@ -2653,6 +2730,9 @@ export class FieldGame {
       this.openTriggers.advance();
       this.time += 10;
       this.fader.advance(0.01);
+      this.colorFilterState?.advance(0.01);
+      this.advanceStoryTimer(10, this.messageWindow || this.choicePending || this.sourceMessage.active ? "message"
+        : this.openTriggers.busy || this.treasureSceneState === "message" ? "gimmick" : this.fieldActivityBusy ? "event" : "player");
       this.sourceMessage.advance(0.01);
       let entered = false;
       let walkParty: number | null = null;
@@ -2729,6 +2809,7 @@ export class FieldGame {
           !this.hasUnfinishedNativeEncounterActivity())
         this.stop = { kind: "encounter", party: walkParty, returnTo: { kind: "field-idle" },
           site: null, message: "普通步行遭遇" };
+      this.dispatchExpiredTimer();
     }
   }
   /** True also covers a synchronously completed destination event. */
@@ -2855,7 +2936,7 @@ export class FieldGame {
       },
     };
   }
-  private beginRoot(script: string): void {
+  private beginRoot(script: string, publishStory?: () => void): void {
     try {
       if (this.hasUnfinishedInterpolation())
         throw new Error("Starting a script cannot discard unfinished source interpolation registers");
@@ -2866,6 +2947,7 @@ export class FieldGame {
       const publish = this.preparePuppetStart(script);
       this.eventState.beginScript(locals);
       publish();
+      publishStory?.();
     } catch (error) {
       this.block(error instanceof Error ? error.message : String(error), this.content.scripts[script]?.[0] ?? null);
       return;
@@ -2912,8 +2994,8 @@ export class FieldGame {
     // treasure coroutines are not cores and keep their existing owner.
     this.tasks = this.tasks.filter((other) => other === t || other.treasureRoot);
     Object.assign(t, plan, { stack: [], wait: 0, state: "ready", lastClock: this.time,
-      puppetWait: null, scriptShop: null, fadeWait: null, cameraLerp: null, scriptMove: null, scriptLerp: null, remaining: 0, move: null,
-      animationWait: false, audioWait: null, soundWait: null, treasure: null, done: false });
+      puppetWait: null, scriptShop: null, fadeWait: null, colorFadeWait: null, flashWait: null, cameraPath: null, cameraLerp: null, scriptMove: null, scriptLerp: null, remaining: 0, move: null,
+      animationWait: false, audioWait: null, bgmReplay: null, autoSaveWait: null, soundWait: null, treasure: null, done: false });
   }
   private restoreHookedScript(main: Task): void {
     const hook = this.scriptHook!;
@@ -2990,6 +3072,7 @@ export class FieldGame {
       puppetWait: null,
       scriptShop: null,
       fadeWait: null,
+      colorFadeWait: null, flashWait: null, cameraPath: null,
       cameraLerp: null,
       scriptMove: null,
       scriptLerp: null,
@@ -2997,6 +3080,8 @@ export class FieldGame {
       move: null,
       animationWait: false,
       audioWait: null,
+      bgmReplay: null,
+      autoSaveWait: null,
       soundWait: null,
       treasure: null,
       treasureRoot: false,
@@ -3012,7 +3097,7 @@ export class FieldGame {
     );
   }
   private hasUnfinishedInterpolation(): boolean {
-    return this.tasks.some((task) => !task.done && !!(task.scriptLerp || task.cameraLerp));
+    return this.tasks.some((task) => !task.done && !!(task.scriptLerp || task.cameraLerp || task.cameraPath));
   }
   private hasUnfinishedNativeEncounterActivity(): boolean {
     return !!(this.pendingChoice || this.messageWindow || this.sourceMessage.active || this.shopTask ||
@@ -3604,6 +3689,50 @@ export class FieldGame {
             return;
           }
         }
+        if (t.colorFadeWait) {
+          if (this.colorFilterState!.poll() === "wait") return;
+          t.colorFadeWait = null;
+        }
+        if (t.flashWait) {
+          const flash = t.flashWait;
+          try {
+            if (pollFieldFlash(this.fader, flash.cursor, frameDeltaSeconds) === "wait") return;
+            t.flashWait = null;
+          } catch (error) { this.block(error instanceof Error ? error.message : String(error), flash.op); return; }
+        }
+        if (t.cameraPath) {
+          const path = t.cameraPath;
+          try {
+            if (!this.camera || path.op.command.kind === "lerp" || t.actor !== this.cameraActorId)
+              throw new Error("Camera path lost its source task owner");
+            const next = this.camera.preparePath(path.op.command, path.progress, this.time);
+            next.commit(); path.progress = next.progress;
+            if (next.flow === "wait") return;
+            t.cameraPath = null;
+          } catch (error) { this.block(error instanceof Error ? error.message : String(error), path.op); return; }
+        }
+        if (t.bgmReplay) {
+          const replay = t.bgmReplay;
+          try {
+            this.bgm.finishReplay(replay.handle, this.content.bgm);
+            t.bgmReplay = null;
+          } catch (error) {
+            this.block(error instanceof Error ? error.message : String(error), replay.op);
+            return;
+          }
+        }
+        if (t.autoSaveWait) {
+          const op = t.autoSaveWait;
+          // The same main cursor consumed the first-clock yield. Drop this
+          // transient register only while preparing its ordinary stable barrier.
+          t.autoSaveWait = null;
+          try { this.requestEventSave(t, op); }
+          catch (error) {
+            t.autoSaveWait = op;
+            this.block(error instanceof Error ? error.message : String(error), op);
+          }
+          return;
+        }
         if (t.cameraLerp) {
           const motion = t.cameraLerp;
           try {
@@ -3737,7 +3866,15 @@ export class FieldGame {
         }
         switch (op.kind) {
           case "event-save":
-            try { this.requestEventSave(t, op); }
+            try {
+              if (Object.hasOwn(op, "sourceAutoSave")) {
+                assertFieldEventSaveAdmission(this.content, op);
+                // Reject unknown owner contexts before the Web variant's first
+                // yield, without performing native player/puppet/camera sync.
+                this.requireEventSaveBoundary(t);
+                t.autoSaveWait = op;
+              } else this.requestEventSave(t, op);
+            }
             catch (error) { this.block(error instanceof Error ? error.message : String(error), op); }
             return;
           case "script-transition":
@@ -3949,6 +4086,33 @@ export class FieldGame {
               );
               return;
             }
+            break;
+          case "bgm-pause":
+            try { this.bgm.pause(op.channel, op.paused, op.fade, this.content.bgm); }
+            catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
+          case "bgm-replay":
+            try {
+              const handle = this.bgm.beginReplay(op.channel, op.fade, this.content.bgm);
+              if (handle) { t.bgmReplay = { op, handle }; return; }
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
+          case "field-timer":
+            try {
+              if (!this.timerState) throw new Error("Story timer host profile is unavailable");
+              const origin = op.command.kind === "set" ? fieldTimerOriginContent(this.content) : undefined;
+              const prepared = prepareFieldTimerCommand(this.timerState, op,
+                op.command.kind === "set" ? bindFieldStoryTimer(this.content, op) : undefined);
+              if (prepared.callback) {
+                this.validateTimerCallback(prepared.callback);
+                const acknowledged = acknowledgeFieldTimerCallback(prepared.snapshot, prepared.callback);
+                this.transitionScript(t, { ...op, kind: "script-transition",
+                  targetScript: prepared.callback.binding.callback.name, returnToCaller: false });
+                this.timerState = acknowledged;
+              } else this.timerState = prepared.snapshot;
+              if (origin) this.timerOrigin = origin;
+              if (!this.timerState.active) this.timerOrigin = undefined;
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
           case "change-map":
             if (this.hasUnfinishedInterpolation()) {
@@ -4188,8 +4352,25 @@ export class FieldGame {
           case "field-script-motion":
             try {
               if (t.actor === this.cameraActorId) {
-                if (!this.camera || op.command.kind !== "lerp" || op.command.layer !== 0 || op.command.animation !== "")
-                  throw new Error("Camera source Move, animation or layer transition requires a separate provider");
+                if (!this.camera) throw new Error("Camera source motion host is unavailable");
+                if (op.command.kind !== "lerp") {
+                  let target: { x: number; y: number; z: number } | undefined;
+                  if (op.command.kind === "move-to" && op.command.target.kind === "entity") {
+                    if (!this.options.puppetActors) throw new Error("Camera MoveTo target entity selector owner is unavailable");
+                    const { catalog, context } = this.options.puppetActors.read();
+                    const resolved = resolveFieldPuppetActor(catalog, context, op.command.target.selector);
+                    const entity = resolved.actor === null ? undefined : this.actors[resolved.actor]?.native?.entity;
+                    if (entity) target = { ...entity.position };
+                    else if (resolved.actor === this.cameraActorId) target = { ...this.camera.snapshot().dummy.position };
+                    else throw new Error("Camera MoveTo target has no trusted native position");
+                  }
+                  const next = this.camera.preparePath(op.command, null, this.time, target);
+                  next.commit();
+                  if (next.flow === "wait") { t.cameraPath = { op, progress: next.progress }; return; }
+                  break;
+                }
+                if (op.command.layer !== 0 || op.command.animation !== "")
+                  throw new Error("Camera animation or layer transition provider is unavailable");
                 const command: FieldCameraLerp = { kind: "lerp", x: op.command.x, y: op.command.y,
                   layer: 0, duration: op.command.duration, arcHeight: op.command.arcHeight };
                 if (command.duration < 0) throw new Error("Negative source Lerp duration is not admitted");
@@ -4340,6 +4521,18 @@ export class FieldGame {
               return;
             }
             break;
+          case "field-color-fade":
+            try {
+              if (!this.ordinaryScreenEffectsAvailable) throw new Error("Ordinary Web screen-effects host is unavailable");
+              if (this.colorFilterState!.start(op) === "wait") { t.colorFadeWait = op; return; }
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
+          case "field-flash":
+            try {
+              if (!this.ordinaryScreenEffectsAvailable) throw new Error("Ordinary Web screen-effects host is unavailable");
+              t.flashWait = { op, cursor: startFieldFlash(this.fader, op, frameDeltaSeconds) };
+              return;
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
           case "source-message":
             try {
               const retained = this.retainedMessage,

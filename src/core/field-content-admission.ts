@@ -3,7 +3,7 @@ import type { FieldContent, Op, Site } from "../field/types.js";
 export const fieldProviders = Object.freeze([
   "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
-  "eventSaveCompletion", "battleHandoff", "sourceLeader", "scriptShop",
+  "eventSaveCompletion", "battleHandoff", "sourceLeader", "scriptShop", "storyTimer", "screenEffects", "sourceAutoSaveSync",
 ] as const);
 export type FieldProvider = typeof fieldProviders[number];
 export type FieldProviderStatus = "available" | "missing" | "unknown";
@@ -48,6 +48,8 @@ const codes: Record<FieldCapability, string> = {
   cameraMotion: "FIELD_CAMERA_MOTION_PROVIDER", effectMotion: "FIELD_EFFECT_MOTION_PROVIDER",
   eventSaveCompletion: "FIELD_EVENT_SAVE_COMPLETION", battleHandoff: "FIELD_BATTLE_HANDOFF",
   sourceLeader: "FIELD_SOURCE_LEADER_PROVIDER", scriptShop: "FIELD_SCRIPT_SHOP_PROVIDER",
+  storyTimer: "FIELD_STORY_TIMER_PROVIDER", screenEffects: "FIELD_SCREEN_EFFECTS_PROVIDER",
+  sourceAutoSaveSync: "FIELD_SOURCE_AUTO_SAVE_SYNC_PROVIDER",
   conditionVisual: "FIELD_CONDITION_VISUAL_CONTEXT", scriptMotion: "FIELD_SCRIPT_MOTION_PROVIDER",
 };
 
@@ -174,6 +176,16 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       add("sourceLeader", "Missing current source map leader index provider");
       break;
     case "field-script-shop": add("scriptShop", "Missing shared script shop lifecycle provider"); break;
+    case "field-timer": {
+      const command = commandOf(op);
+      if (!["set", "finish", "pause", "resume", "change-script-if-expired"].includes(command.kind as string))
+        throw new Error("Invalid field timer requirement command");
+      add("storyTimer", "Source timer requires the declared Web story-runtime clock and callback owner");
+      break;
+    }
+    case "field-color-fade": case "field-flash":
+      add("screenEffects", "Source screen effect requires its declared Web policy and known field screen host");
+      break;
     case "field-party-query": add("puppetRoster", "Missing field party query roster provider"); break;
     case "field-sound": {
       const command = commandOf(op);
@@ -194,7 +206,11 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     }
     case "field-camera": add("cameraMotion", "Source field camera host is unavailable"); break;
     case "field-camera-motion": add("cameraMotion", "Source motion is only admitted for camera dummy 0"); break;
-    case "event-save": add("eventSaveCompletion", "Event-save completion requires the external save coordinator", "deferred"); break;
+    case "event-save":
+      add("eventSaveCompletion", "Event-save completion requires the external save coordinator", "deferred");
+      if (Object.hasOwn(op, "sourceAutoSave")) add("sourceAutoSaveSync",
+        "Native AutoSave leader/player/camera synchronization is unassessed; the explicit Web barrier saves existing owners", "deferred");
+      break;
     case "encounter": add("battleHandoff", "Battle handoff completion belongs to the GameSession owner", "deferred"); break;
   }
   return requirements;

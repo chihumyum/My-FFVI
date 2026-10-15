@@ -32,10 +32,11 @@ const [{ contentDigest }, { GameSession }, { NewGameFieldEntry }, { FieldFadeSta
   ]);
 const app = await readFile(resolve(root, "apps/game/app.js"), "utf8");
 const audio = await readFile(resolve(root, "apps/game/audio.js"), "utf8");
+const storyOverlay = await readFile(resolve(root, "apps/game/story-overlay.js"), "utf8");
 const html = await readFile(resolve(root, "apps/game/index.html"), "utf8");
 const reportPath = resolve(root, "build/reports/game-entry-ui-check.json");
 const report = { formatVersion: 1, kind: "controlled-game-entry-ui-check", result: "running",
-  appSha256: sha(app), audioSha256: sha(audio), htmlSha256: sha(html), tests: [],
+  appSha256: sha(app), audioSha256: sha(audio), storyOverlaySha256: sha(storyOverlay), htmlSha256: sha(html), tests: [],
   limitations: [
     "Entire current app initialization and handlers with real core/repository/storage/audio modules",
     "Content, DOM, fetch, image decode, WebAudio and renderer/menu widgets are controlled fixtures",
@@ -322,9 +323,15 @@ for (const declaration of [...appModule.imports, ...audioModule.imports]) {
     coreBindings[binding.name.text] = loaded[(binding.propertyName ?? binding.name).text];
 }
 const viewNames = new Set(["InventoryView", "EquipmentView", "PartyView", "ChoiceView", "ShopView", "Renderer", "BattleView"]);
+const overlayBindings = { drawStoryTimer: (await import("../apps/game/story-overlay.js")).drawStoryTimer };
 for (const declaration of appModule.imports) {
   const path = declaration.moduleSpecifier.text;
   if (path.startsWith("/runtime/core/") || path === "./audio.js") continue;
+  if (path === "./story-overlay.js") {
+    for (const binding of declaration.importClause.namedBindings.elements)
+      assert.equal(typeof overlayBindings[binding.name.text], "function", "Use the actual production overlay helper");
+    continue;
+  }
   for (const binding of declaration.importClause.namedBindings.elements)
     assert.ok(viewNames.has(binding.name.text), "Declare new browser boundary explicitly: " + binding.name.text);
 }
@@ -450,7 +457,7 @@ async function host(pack, { slots = new Map(), failBinding = false, search = "?p
       entryHash: parameters[0].contentHash, initialItems: candidate.state.snapshot().items });
     return candidate;
   } };
-  const context = vm.createContext({ ...observedCore, ...bindings, document, Image, AudioContext,
+  const context = vm.createContext({ ...observedCore, ...bindings, ...overlayBindings, document, Image, AudioContext,
     window: { addEventListener(name, fn) { listeners.set(name, fn); } },
     location: { search }, URL: ControlledURL, URLSearchParams, Blob, Map, WeakSet, Set, structuredClone, crypto: webcrypto,
     console, performance: { now: () => now },

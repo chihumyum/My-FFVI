@@ -33,6 +33,7 @@ import type { NativeGameEntryContent } from "./source-new-game.js";
 import { assertSourceEntryProfiles, type SourceEntryProfileDependency } from "./source-catalog.js";
 import { FieldEffects, type FieldEffectCandidate, type FieldEffectCandidatePrepared } from "./field-effects.js";
 import { FieldEffectMap } from "./field-effect-map.js";
+import type { FieldTimerOriginContent } from "./field-story-runtime.js";
 export type WorldStateOwner = {
   current: FieldGameOptions;
   prepare(): { ports: FieldGameOptions; commit(): boolean };
@@ -255,6 +256,10 @@ type Ownership = {
   presentation: string;
   fade: string;
   camera: string;
+  story: string;
+  storyOrigin: string;
+  candidateStory: string;
+  candidateStoryOrigin: string;
   publishPresentation(): void;
   validateWalkPolicy(): void;
   walkFieldState?: string;
@@ -356,6 +361,7 @@ export class WorldSession {
     catalog?: WorldCatalog,
     target?: WorldMapContent,
     native?: { content: NativeGameEntryContent; initialMap: WorldMapContent },
+    timerOrigin?: FieldTimerOriginContent,
   ): void {
     if (this.commitInProgress) throw new Error("Cannot restore during map publication");
     if (this.sourceOrigin) {
@@ -371,7 +377,7 @@ export class WorldSession {
       throw new Error("World checkpoint source/version mismatch");
     if ((snapshot.kind === "event-world-v1") !==
         (snapshot.field.kind === "event-field-v1" || snapshot.field.kind === "event-field-v2" ||
-          snapshot.field.kind === "event-field-v3"))
+          snapshot.field.kind === "event-field-v3" || snapshot.field.kind === "event-field-v4"))
       throw new Error("World and field continuation formats disagree");
     let content = this.initial;
     const loc = snapshot.location;
@@ -462,6 +468,7 @@ export class WorldSession {
       content,
       snapshot.field,
       { ...(this.owned?.current ?? {}), npcActivityClock: () => this.current === next,
+        ...(timerOrigin ? { storyTimerOrigin: timerOrigin } : {}),
         ...(effectMap ? { fieldEffectMap: effectMap } : {}),
         ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}) },
       nativeDependencies,
@@ -505,6 +512,8 @@ export class WorldSession {
     validateWalkBinding();
     const fromActors = this.actorState(from), fromFade = canonical(from.fader.snapshot()),
       fromCamera = canonical(from.cameraSnapshot), fromPresentation = from.sourcePresentationContext;
+    const story = from.storyRuntimeSnapshot, storyOrigin = structuredClone(from.storyTimerOrigin);
+    const fromStory = canonical(story), fromStoryOrigin = canonical(storyOrigin ?? null);
     const effectBlocker = from.effectMapHandoffBlocker;
     if (effectBlocker) throw new Error(effectBlocker);
     const passiveEffects = target.map ? bindPassiveEffects({ ...target, map: target.map }) : new Set<string>();
@@ -634,6 +643,8 @@ export class WorldSession {
         new StaticAudioState(bgm),
         new StaticAudioState(environment),
         { ...(owned?.ports ?? {}), npcActivityClock: () => this.current === field,
+          ...(story ? { storyRuntimeSeed: structuredClone(story) } : {}),
+          ...(storyOrigin ? { storyTimerOrigin: structuredClone(storyOrigin) } : {}),
           ...(nativeActors ? { nativeActorPreparation: true } : {}),
           ...(walkEncounters ? { walkEncounters } : {}),
           ...(effectMap ? { fieldEffectMap: effectMap } : {}),
@@ -684,6 +695,8 @@ export class WorldSession {
         presentation: canonical(presentation),
         fade: fromFade,
         camera: fromCamera,
+        story: fromStory, storyOrigin: fromStoryOrigin,
+        candidateStory: canonical(field.storyRuntimeSnapshot), candidateStoryOrigin: canonical(field.storyTimerOrigin ?? null),
         publishPresentation: () => { presentationPublished = true; },
         validateWalkPolicy: () => {
           if (canonical(field.content.walkEncounters ?? null) !== walkPolicyIdentity)
@@ -802,6 +815,10 @@ export class WorldSession {
       ownership.presentation === canonical(this.current.sourcePresentationContext) &&
       ownership.fade === canonical(this.current.fader.snapshot()) &&
       ownership.camera === canonical(this.current.cameraSnapshot) &&
+      ownership.story === canonical(this.current.storyRuntimeSnapshot) &&
+      ownership.storyOrigin === canonical(this.current.storyTimerOrigin ?? null) &&
+      ownership.candidateStory === canonical(value.field.storyRuntimeSnapshot) &&
+      ownership.candidateStoryOrigin === canonical(value.field.storyTimerOrigin ?? null) &&
       (ownership.walkFieldState === undefined || ownership.walkFieldState === this.effectFieldState(value.field)) &&
       (ownership.npcFieldState === undefined || ownership.npcFieldState === this.effectFieldState(value.field)) &&
       (!ownership.effects || ownership.effects.fieldState === this.effectFieldState(value.field));

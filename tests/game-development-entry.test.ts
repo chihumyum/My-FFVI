@@ -18,6 +18,24 @@ function input() {
 }
 const host = { visible: true, mediaReady: true, overlayOpen: false };
 
+test("development relocation carries the catalog runtime policies without changing its raw baseline", async () => {
+  const raw = input(), baseline = structuredClone(raw.baseField);
+  Object.assign(raw.catalog.developmentProfile!, { storyRuntime: "web-field-story-runtime-v1",
+    autoSave: "web-field-autosave-barrier-v1" });
+  Object.assign(raw.map.developmentProfile!, { storyRuntime: "web-field-story-runtime-v1",
+    autoSave: "web-field-autosave-barrier-v1" });
+  raw.map = sealBatchContent(raw.map);
+  raw.catalog.maps[String(raw.map.mapId)]!.contentHash = raw.map.contentHash;
+  raw.catalog = sealBatchContent(raw.catalog);
+  const field = await compileDevelopmentMapEntry(raw);
+  assert.equal(field.developmentProfile!.storyRuntime, "web-field-story-runtime-v1");
+  assert.equal(field.developmentProfile!.autoSave, "web-field-autosave-barrier-v1");
+  assert.deepEqual(gameDevelopmentEntryBaseline(field, raw.catalog), baseline);
+  const missing = structuredClone(field);
+  delete missing.developmentProfile!.autoSave;
+  assert.throws(() => gameDevelopmentEntryBaseline(missing, raw.catalog), /profile/);
+});
+
 test("development entry is a detached derivation preserving the complete original baseline", async () => {
   const raw = input(), before = structuredClone(raw), field = await compileDevelopmentMapEntry(raw);
   assert.deepEqual(raw, before);

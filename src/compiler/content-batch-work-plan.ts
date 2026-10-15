@@ -105,6 +105,8 @@ const diagnosticOwners: Readonly<Record<string, ContentBatchSystem>> = {
   "script-transition-metadata": "map-event-and-travel",
   "script-transition-locals": "map-event-and-travel",
   "script-transition-entry": "map-event-and-travel",
+  "timer-callback-binding-invalid": "map-event-and-travel",
+  "timer-callback-lottery-unimplemented": "map-event-and-travel",
   "encounter-id-invalid": "battle-and-return",
   "compiler-report": "battle-and-return",
   "compiler-evidence-missing": "battle-and-return",
@@ -167,7 +169,10 @@ const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
   effectMotion: "map-event-and-travel",
   conditionVisual: "map-event-and-travel",
   scriptMotion: "map-event-and-travel",
+  storyTimer: "map-event-and-travel",
+  screenEffects: "map-event-and-travel",
   eventSaveCompletion: "save-restore-and-continuation",
+  sourceAutoSaveSync: "save-restore-and-continuation",
   battleHandoff: "battle-and-return",
 };
 const byCode = (code: string): ContentBatchSystem => code === "instruction-blocked" ? "unclassified"

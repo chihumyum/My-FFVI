@@ -3,11 +3,14 @@ import type { WorldCatalog, WorldMapContent } from "../field/world.js";
 import type { BattleCatalog, BattleContent, CombatantDefinition } from "./battle-content.js";
 import { verifyContent, contentDigest } from "./content-integrity.js";
 import type { GameCheckpoint, GameRestoreWorld } from "./game-session.js";
-import type { SourceNewGameContent } from "./source-new-game.js";
+import { prepareSourceNewGameField, type SourceNewGameContent } from "./source-new-game.js";
 import { assertSourceGameCatalog } from "./source-catalog.js";
 import { parseGameContentRefs, type GameContentProfile, type GameContentRefs } from "./game-content-refs.js";
 import { parseGameDevelopmentEntry, assertGameDevelopmentEntry } from "./game-development-entry.js";
-import { assertFrameworkNewGameBindings, parseFrameworkNewGameContent, type FrameworkNewGameContent } from "./framework-new-game.js";
+import { assertFrameworkNewGameBindings, parseFrameworkNewGameContent, prepareFrameworkNewGameField,
+  type FrameworkNewGameContent } from "./framework-new-game.js";
+import { GameState } from "./game-state.js";
+import { fieldTimerOriginContent, type FieldTimerOriginContent } from "./field-story-runtime.js";
 
 export type { GameContentProfile } from "./game-content-refs.js";
 
@@ -280,14 +283,53 @@ export class GameContentRepository {
       } else {
         throw new Error("Unknown game checkpoint origin");
       }
-      if (saved.world.location === null) return result;
-      const location = saved.world.location;
-      object(location); integer(location.mapId, 1); integer(location.entrance); hash(location.catalogHash);
-      const catalog = result.world?.catalog ?? await this.readWorld(read);
-      if (location.catalogHash !== catalog.contentHash || catalog.parentSourceSetHash !== saved.sourceSetHash)
-        throw new Error("Saved map catalog/source identity mismatch");
-      const map = await this.readMap(read, location.mapId, catalog);
-      return { ...result, world: { ...result.world, catalog, map } };
+      if (saved.world.location !== null) {
+        const location = saved.world.location;
+        object(location); integer(location.mapId, 1); integer(location.entrance); hash(location.catalogHash);
+        const catalog = result.world?.catalog ?? await this.readWorld(read);
+        if (location.catalogHash !== catalog.contentHash || catalog.parentSourceSetHash !== saved.sourceSetHash)
+          throw new Error("Saved map catalog/source identity mismatch");
+        const map = await this.readMap(read, location.mapId, catalog);
+        result = { ...result, world: { ...result.world, catalog, map } };
+      }
+      const active = "storyRuntime" in saved.world.field ? saved.world.field.storyRuntime.timer.active : null;
+      if (active) {
+        object(active.binding); integer(active.binding.mapId, 1); hash(active.binding.mapContentHash);
+        let origin: FieldTimerOriginContent;
+        if (active.binding.mapContentHash === saved.world.initialHash) {
+          // The entry wrapper has a different digest from the indexed map
+          // body. Rebuild its metadata from independently pinned entry data,
+          // never from scripts or authority supplied by the saved timer.
+          if (result.initial) origin = fieldTimerOriginContent(result.initial);
+          else {
+            const world = result.world;
+            if (!world) throw new Error("Story timer initial origin is unavailable");
+            const state = GameState.createNewGame(result.battle.gameState, result.battle.common.players,
+              result.battle.contentHash, result.battle.common.conditions);
+            const prepared = world.initialized
+              ? prepareFrameworkNewGameField(world.initialized.content, world.catalog, world.initialized.initialMap,
+                result.battle, state)
+              : world.source ? prepareSourceNewGameField(world.source.content, world.catalog, world.source.initialMap,
+                result.battle, state, undefined) : null;
+            if (!prepared) throw new Error("Story timer trusted initial wrapper is unavailable");
+            origin = fieldTimerOriginContent(prepared.field);
+          }
+        } else {
+          const world = result.world;
+          if (!world || world.catalog.parentSourceSetHash !== saved.sourceSetHash)
+            throw new Error("Story timer origin requires its trusted map catalog");
+          const map = await this.readMap(read, active.binding.mapId, world.catalog);
+          if (map.contentHash !== active.binding.mapContentHash)
+            throw new Error("Story timer origin map content changed");
+          origin = { mapId: map.mapId, mapContentHash: map.contentHash, scripts: structuredClone(map.scripts) };
+        }
+        if (origin.mapId !== active.binding.mapId || origin.mapContentHash !== active.binding.mapContentHash)
+          throw new Error("Story timer origin identity differs from trusted content");
+        if (result.world) result.world.timerOrigin = origin;
+        // A standalone initial field rebinds directly from result.initial;
+        // it has no WorldSession map package to carry another dependency.
+      }
+      return result;
     });
   }
 

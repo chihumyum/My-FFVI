@@ -4,6 +4,8 @@
 
 本页是 v47 的静态来源调查。没有运行原版、读取真实原版存档或验证磁盘崩溃恢复；`semanticsVerified=false`。此次调查没有开放 strict 编译准入；Web 公共协议的实施另见 [v47](systems-v47.md)。
 
+当前新增 [全量 AutoSave 的显式 Web 保存屏障](field-auto-save.md)：全部来源参数形态保留，执行需要独立可信内容标记。它保留首 clock yield，复用现有成功 ACK／续行协议，原生演员同步仍为 unassessed provider，严格来源准入未因此开放。下文 v47 的原始观察与未知项继续有效。
+
 ## 调用形态与覆盖口径
 
 对已校验来源 corpus 独立重计数：3304 份脚本中有 **95 处 / 95 份脚本**；现有地图包别名与 `Encount`、`ChangeScript` 引用关系把其中 **94 处 / 94 份脚本**关联到 **58 条地图记录**，字段脚本全集为 2804。未被该静态关系关联到地图的是 Resident 的 `sc_sht_corps_after:5`。这不表示它永远不可执行。
