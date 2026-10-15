@@ -3,7 +3,7 @@ import type { FieldChoiceAnswer } from "./field-choice.js";
 import type { FieldDirectionInputResult } from "./field.js";
 import { GameSession } from "./game-session.js";
 
-export type GameFlowPhase = "title" | "loading" | "paused" | "exploration" | "event" | "dialogue" | "choice" | "shop" |
+export type GameFlowPhase = "title" | "loading" | "paused" | "exploration" | "event" | "dialogue" | "choice" | "shop" | "party-selection" |
   "battle-entry" | "battle-return" | "battle" | "victory" | "defeat" | "escaped" | "transition" | "blocked";
 export type GameFlowOperation = "new-game" | "load" | "save" | "map" | "battle-entry" | "battle-return";
 export type GameFlowHostState = { visible: boolean; mediaReady: boolean; overlayOpen: boolean };
@@ -75,6 +75,7 @@ export class GameFlow {
     if (field.stop?.kind === "encounter") return "event";
     if (field.choice) return "choice";
     if (field.dialogue || field.sourceMessage.projection?.acceptsInput) return "dialogue";
+    if (field.currentSourcePartySelection) return "party-selection";
     if (field.currentShop) return "shop";
     return field.busy ? "event" : "exploration";
   }
@@ -197,7 +198,9 @@ export class GameFlow {
    * a nearby object or a waiting dialogue actually accepts the confirmation. */
   confirm(): boolean {
     const owner = this.owner;
-    if (!this.hostAllowsInput || !owner || owner.battle || owner.field.stop || owner.field.choicePending) return false;
+    if (!this.hostAllowsInput || !owner) return false;
+    if (owner.battle) return owner.battle.confirmMessage();
+    if (owner.field.stop || owner.field.choicePending) return false;
     owner.field.confirm(); return true;
   }
   choose(requestId: string, answer: FieldChoiceAnswer): boolean {

@@ -1,4 +1,5 @@
 import {parseFrameworkFieldEffectFlatAddition,comparableFrameworkFieldEffectFlatAddition} from './framework-field-effect-flat-evidence.mjs';
+import {parseFrameworkOrdinaryPresentationAddition,comparableFrameworkOrdinaryPresentationAddition} from './framework-ordinary-presentation-evidence.mjs';
 import {parseSourceMessageFeeAddition,createSourceMessageFeeEvidenceReader,auditSourceMessageFeeAddition} from './source-message-fee-evidence.mjs';
 import {parseFrameworkNpcFlatAddition,comparableFrameworkNpcFlatAddition} from './framework-npc-flat-evidence.mjs';
 // Rebind declared recipe inputs to one private source compilation. This does
@@ -9,6 +10,7 @@ import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createSourceMapAnimationEvidenceReader,compareSourceMapAnimationAddition} from './source-map-animation-evidence.mjs';
+import {parseSourceNpcInitialPoseAddition,createSourceNpcInitialPoseEvidenceReader,compareSourceNpcInitialPoseAddition,sourceNpcInitialPoseChanged} from './source-npc-initial-pose-evidence.mjs';
 import {parseSourceEventActivationAddition,createSourceEventActivationEvidenceReader,compareSourceEventActivationAddition,sourceEventActivationChanged} from './source-event-activation-evidence.mjs';
 import {parseFrameworkNpcAreaAddition,comparableFrameworkNpcAreaAddition} from './framework-npc-area-evidence.mjs';
 
@@ -456,8 +458,8 @@ async function npcRouteAdditionDeclaration(raw,root,compiledDir){
  * before asynchronous verification. Callers retain byte/path freshness checks
  * and complete package validation at their publication boundary. */
 export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurrentJson,readCandidateJson,
-    root=repository,compiledDir='dist',sourceWalkEvidence,battleRebindings,frameworkProfileUpgrade,sourceMapAnimationAddition,sourceMapAnimationEvidence,sourceNpcRoutesAddition,sourceNpcRouteEvidence,
-    frameworkNpcAreaAddition,frameworkNpcAreaEvidence,sourceEventActivationAddition,sourceEventActivationEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines}){
+    root=repository,compiledDir='dist',sourceWalkEvidence,battleRebindings,frameworkProfileUpgrade,sourceMapAnimationAddition,sourceMapAnimationEvidence,sourceNpcInitialPoseAddition,sourceNpcInitialPoseEvidence,sourceNpcRoutesAddition,sourceNpcRouteEvidence,
+    frameworkNpcAreaAddition,frameworkNpcAreaEvidence,sourceEventActivationAddition,sourceEventActivationEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,frameworkOrdinaryPresentationAddition,frameworkOrdinaryPresentationEvidence,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines}){
   assert.ok(typeof recipePath==='string'&&recipePath.length>0,'Missing original recipe path');
   assert.equal(typeof readCurrentJson,'function');assert.equal(typeof readCandidateJson,'function');
   const recipe=recipeJSON(recipeBytes),refs=declaredReferences(recipe),proofs=parseBattleRebindings(battleRebindings);
@@ -473,6 +475,9 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
   const eventActivationEvidence=sourceEventActivationEvidence??(eventActivationAddition?createSourceEventActivationEvidenceReader({root,compiledDir}):undefined);
   const animationAddition=await mapAnimationAdditionDeclaration(sourceMapAnimationAddition,root,compiledDir);
   sourceMapAnimationEvidence??=createSourceMapAnimationEvidenceReader({root,compiledDir});
+  const npcInitialPoseAddition=parseSourceNpcInitialPoseAddition(sourceNpcInitialPoseAddition);
+  if(npcInitialPoseAddition)report.sourceNpcInitialPoseAdditions=[];
+  sourceNpcInitialPoseEvidence??=createSourceNpcInitialPoseEvidenceReader({root,compiledDir,sourceMapAnimationEvidence});
   const npcRouteAddition=await npcRouteAdditionDeclaration(sourceNpcRoutesAddition,root,compiledDir);
   const npcAreaAddition=parseFrameworkNpcAreaAddition(frameworkNpcAreaAddition);
   if(npcAreaAddition)report.frameworkNpcAreaAdditions=[];
@@ -480,6 +485,8 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
   if(npcFlatAddition)report.frameworkNpcFlatAdditions=[];
   const effectFlatAddition=parseFrameworkFieldEffectFlatAddition(frameworkFieldEffectFlatAddition);
   if(effectFlatAddition)report.frameworkFieldEffectFlatAdditions=[];
+  const ordinaryAddition=parseFrameworkOrdinaryPresentationAddition(frameworkOrdinaryPresentationAddition);
+  if(ordinaryAddition)report.frameworkOrdinaryPresentationAdditions=[];
   if(refs.length===0)return {recipe,report};
   const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src/core',name+'.js')).href);
   const [{canonical},{verifyContent},{sourceCatalogProfile}]=await Promise.all([
@@ -547,6 +554,16 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
       evidence:'exact metadata reconstructed from verified original map/monster-set table rows; no walking execution grant'});
     return {before:comparisonBefore,after:comparisonAfter};
   }
+  async function comparableNpcInitialPose(before,after,{pointer,role,url}){
+    if(!['world-development','world-map-development'].includes(after.kind))return after;
+    if(sourceNpcInitialPoseChanged(before,after,canonical))assert.ok(npcInitialPoseAddition,'Source NPC initial pose addition proof is required');
+    if(!npcInitialPoseAddition)return after;
+    const evidence=await sourceNpcInitialPoseEvidence(after),result=compareSourceNpcInitialPoseAddition(before,after,evidence,npcInitialPoseAddition);
+    if(result.audit)report.sourceNpcInitialPoseAdditions.push({pointer,role,url,
+      previousHash:before.contentHash,candidateHash:after.contentHash,...result.audit,
+      sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile)});
+    return result.after;
+  }
   async function read(reader,cache,url,expected){
     if(!cache.has(url))cache.set(url,(async()=>{
       const value=structuredClone(await reader(url));assert.ok(plain(value),'Missing content for '+url);
@@ -566,7 +583,8 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
         assert.ok(value.developmentProfile===undefined&&value.frameworkPresentation===undefined&&
           value.walkEncounters===undefined&&!(value.developmentOmissions?.length),'Omission requires a strict source map');
       }
-      const routed=await comparableNpcRoutes(before,after,'omission source map',url);
+      const poseAfter=await comparableNpcInitialPose(before,after,{pointer:'/developmentProfile/omissions',role:'omission source map',url});
+      const routed=await comparableNpcRoutes(before,poseAfter,'omission source map',url,before,after);
       const comparison=await comparableWalkingEvidence(routed.before,routed.after,'omission source map',url);
       assert.equal(canonical(identities(comparison.before,canonical,sourceCatalogProfile)),
         canonical(identities(comparison.after,canonical,sourceCatalogProfile)),'Omission source identity/profile/media changed');
@@ -633,11 +651,12 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
           sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile)});
       }
     }
-    let animationAfter=eventAfter;
+    const poseAfter=await comparableNpcInitialPose(before,eventAfter,ref);
+    let animationAfter=poseAfter;
     if(animationAddition&&['world-development','world-map-development'].includes(after.kind)){
       assert.equal(after.sourceSetHash,animationAddition.sourceSetHash,'Animation source addition source mismatch');
       assert.equal(after.parentSourceSetHash,animationAddition.parentSourceSetHash,'Animation source addition parent mismatch');
-      const evidence=await sourceMapAnimationEvidence(after),result=compareSourceMapAnimationAddition(before,eventAfter,evidence,animationAddition);
+      const evidence=await sourceMapAnimationEvidence(after),result=compareSourceMapAnimationAddition(before,poseAfter,evidence,animationAddition);
       animationAfter=result.after;
       if(result.audit)report.sourceMapAnimationAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,
         previousHash:before.contentHash,candidateHash:after.contentHash,...result.audit,
@@ -656,7 +675,12 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
     const effectFlat=await comparableFrameworkFieldEffectFlatAddition({before,after:npcFlat.after,proof:effectFlatAddition,evidence:frameworkFieldEffectFlatEvidence,canonical});
     if(effectFlat.addition)report.frameworkFieldEffectFlatAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,previousHash:before.contentHash,candidateHash:after.contentHash,...effectFlat.addition,
       sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile)});
-    const upgraded=comparableFrameworkUpgrade(before,effectFlat.after,ref,frameworkUpgrade,canonical);
+    const ordinary=await comparableFrameworkOrdinaryPresentationAddition({before,after:effectFlat.after,actualBefore:before,actualAfter:after,
+      proof:ordinaryAddition,evidence:frameworkOrdinaryPresentationEvidence,canonical,verifyContent});
+    if(ordinary.addition)report.frameworkOrdinaryPresentationAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,
+      previousHash:before.contentHash,candidateHash:after.contentHash,...ordinary.addition,
+      sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile)});
+    const upgraded=comparableFrameworkUpgrade(before,ordinary.after,ref,frameworkUpgrade,canonical);
     const comparisonAfter=upgraded.after;
     const routed=await comparableNpcRoutes(before,comparisonAfter,ref.role,ref.url,before,after);
     const comparison=await comparableWalkingEvidence(routed.before,routed.after,ref.role,ref.url);

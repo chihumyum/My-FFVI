@@ -1,3 +1,4 @@
+import { isNonDamagingHit } from "./non-damaging-ability.js";
 import type { AbilityEffectResult } from "./ability.js";
 import type { BattleAIReaction } from "./battle-ai.js";
 
@@ -39,7 +40,7 @@ export function battleReaction(
 ): BattleAIReaction | null {
   if (input.isCounter || input.actor === input.target) return null;
   const first = input.effects[0];
-  if (first?.resource === "none") {
+  if (first?.resource === "none" && !isNonDamagingHit(first)) {
     if (first.slot !== input.primarySlot || first.primaryResult !== "empty-dictionary" || first.calcResult !== null)
       throw new Error("Invalid empty primary reaction calculation");
     return null;

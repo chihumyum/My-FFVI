@@ -176,14 +176,15 @@ const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
   cameraMotion: "map-event-and-travel",
   effectMotion: "map-event-and-travel",
   conditionVisual: "map-event-and-travel",
-  scriptMotion: "map-event-and-travel", assignedNpcRoutes: "map-event-and-travel",
+  scriptMotion: "map-event-and-travel", puppetRoutes: "map-event-and-travel", assignedNpcRoutes: "map-event-and-travel",
   storyTimer: "map-event-and-travel",
   screenEffects: "map-event-and-travel",
+  viewChange:"map-event-and-travel",
   cameraShake: "map-event-and-travel",
   contentInvalidations: "map-event-and-travel",
   eventSaveCompletion: "save-restore-and-continuation",
   sourceAutoSaveSync: "save-restore-and-continuation",
-  battleHandoff: "battle-and-return", sourceEncounter: "battle-and-return", sourceBossEntry:'battle-and-return',sourceBattleResult:'battle-and-return',
+  battleHandoff: "battle-and-return", sourceEncounter: "battle-and-return", sourceBossEntry:'battle-and-return',sourceBattleResult:'battle-and-return',sourcePartySelection:'owned-menus-economy-and-growth',
 };
 const byCode = (code: string): ContentBatchSystem => code === "instruction-blocked" ? "unclassified"
   : Object.hasOwn(diagnosticOwners, code) ? diagnosticOwners[code]! : "unclassified";

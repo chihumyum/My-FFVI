@@ -89,7 +89,7 @@ async function fixture({ allowed = true, ready = true, scripted = false, items =
 function host(f) {
   const ids = ["battle-return", "battle-retry", "party", "battle-ui", "battle-result", "battle-result-title",
     "battle-result-text", "battle-levels", "battle-menu", "battle-action", "pause", "welcome", "stop", "dialogue",
-    "map-overview", "minimap-button", "menu-button", "equipment-menu", "party-menu", "shop-menu"];
+    "map-overview", "minimap-button", "menu-button", "equipment-menu", "party-menu", "source-party-selection", "shop-menu"];
   const elements = new Map(ids.map(id => [id, new Element()]));
   const document = { hidden: false, activeElement: null,
     getElementById(id) { assert.ok(elements.has(id), id); return elements.get(id); },
@@ -110,6 +110,7 @@ function host(f) {
     choiceView: emptyView,
     EquipmentView: class { reset() {} render() {} },
     PartyView: class { reset() {} render() {} },
+    SourcePartySelectionView: class { reset() {} render() {} },
     ShopView: class { reset() {} render() {} },
     InventoryView: class { render() {} },
     sync, syncSaveControls() {}, showLimitations() {},
@@ -140,7 +141,7 @@ function host(f) {
     $: id => document.getElementById(id),
   });
   vm.runInContext(`let game, renderer, minimapRenderer, overviewRenderer, battleView, inventoryView,
-      equipmentView, partyView, shopView, commands;
+      equipmentView, partyView, sourcePartySelectionView, shopView, commands;
     let menuCommandsReady = null;
     let mapLoadFailure = null, battleLoadAttempt = null, mapOpen = false, last = 0, lastMinimapFrame = 0, failed = false;
     ${bindingSource}

@@ -1,3 +1,4 @@
+import type { SourcePartySelectionOutcome } from './source-party-selection.js';
 import { GameFlow } from "./game-flow.js";
 import { GameSession } from "./game-session.js";
 import { BattleGame } from "./battle.js";
@@ -24,6 +25,13 @@ export class GameCommands {
   get settingsReady(): boolean { return this.current && this.flow.menuInputReady; }
   get battleReady(): boolean {
     return this.current && this.flow.inputReady && this.owner.battle?.phase === "active";
+  }
+  get sourcePartySelectionReady():boolean {
+    return this.current&&this.flow.inputReady&&!this.owner.battle&&!this.owner.state.inBattle&&this.owner.currentSourcePartySelection!==null;
+  }
+  sourcePartySelection(){return this.sourcePartySelectionReady?this.owner.currentSourcePartySelection:null;}
+  completeSourcePartySelection(token:object,outcome:SourcePartySelectionOutcome):boolean {
+    return this.sourcePartySelectionReady?this.owner.completeSourcePartySelection(token,outcome,()=>this.sourcePartySelectionReady):false;
   }
   get shopReady(): boolean {
     return this.current && this.flow.inputReady && !this.owner.battle && !this.owner.state.inBattle &&

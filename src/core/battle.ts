@@ -1,3 +1,5 @@
+import { isNonDamagingHit, validateNonDamagingPresentation } from "./non-damaging-ability.js";
+import { WEB_SCRIPTED_BATTLE_ACTIONS, validateScriptedBattleActionPolicy, parseScriptedBattleAction, type ScriptedBattleAction, type WebScriptedBattleActions } from "./scripted-battle-action.js";
 import type { AbilityEffectResult } from "./ability.js";
 import type { ParameterValues } from "./parameters.js";
 import { projectAbilityCost, type AbilityCostOwner, type AbilityCostProjection } from "./ability-cost.js";
@@ -84,7 +86,11 @@ import { validateBattleFormationChoice } from "./battle-formations.js";
 import { parseBattleEscapePolicy, type FrameworkBattleEscapePolicy } from "./battle-escape.js";
 import { parseBattleRewardPolicy, projectMagicLearningValue, type BattleRewardPolicy } from "./battle-result.js";
 import { observeLearningAction, validateObservedLearningCatalog } from "./character-learning.js";
-import { advanceBattleEvent, createBattleEventState, BattleEventError, type BattleEventState } from "./battle-event.js";
+import { advanceBattleEvent, acknowledgeBattleEventMessage, createBattleEventState, BattleEventError, type BattleEventState } from "./battle-event.js";
+import { WEB_BATTLE_EVENT_MESSAGE_POLICY, prepareBattleEventMessagePresentation,
+  type BattleEventMessageHost, type BattleEventMessagePresentation } from "./battle-event-message.js";
+import { createSourceMessageTaskCursor } from "./source-message-sequence.js";
+import type { SourceMessageEffect, SourceMessageState } from "./source-message.js";
 import { parseBattleLifecycle, type BattleLifecycle } from "./battle-lifecycle.js";
 import { battleEventUnitEnded } from "./battle-event-context.js";
 import { BattleEventSharedState, type BattleEventSharedSnapshot } from "./battle-event-shared.js";
@@ -115,7 +121,8 @@ export type BattleStatProjection = Omit<ParameterValues, "hp" | "mp"> &
     "maxHp" | "maxMp" | "physical" | "attackElements" | "elementResistances"
   >;
 export type BattleAction = {
-  kind: "normal" | "loop" | "counter" | "derived";
+  kind: "normal" | "loop" | "counter" | "derived" | "event";
+  scripted?: { pc: number; command: ScriptedBattleAction; targetInstanceIds: string[] };
   /** Legacy CounterAct captures the attacker; command-conditioned interrupts
    * pass a null target to the native controller and use automatic selection. */
   targeting?: BattleAICounterTargeting;
@@ -189,6 +196,64 @@ export class BattleGame {
   private readonly playerConditionTraits = new Map<number, Readonly<NonNullable<CombatantDefinition["conditionTraits"]>>>();
   readonly #conditionUnitIdentities = new WeakMap<Combatant, { id: string; sourceId: number; side: "player" | "enemy" }>();
   private eventState: BattleEventState | null = null;
+  readonly #messageHost: BattleEventMessageHost | null;
+  #messageFrame: ReturnType<SourceMessageState["prepareFrame"]> | null = null;
+  #messagePresentation: { ticket: number; value: BattleEventMessagePresentation } | null = null;
+  #messageFrameValidations: (() => void)[] = [];
+  #messageFrameEffects: readonly SourceMessageEffect[] | null = null;
+  #messageBusy = false;
+  #messageRetired = false;
+  #messageRootStarted = false;
+  #messageJournal: { action: "open" | "close" | "page-input" | "complete" | "confirm" | "retire";
+    pc: number | null; ticket: number | null; time: number }[] = [];
+  get messageExecution() { return structuredClone(this.#messageJournal); }
+  private validateMessageOwnership(): void {
+    const owner = this.#messageHost?.owner;
+    if (owner?.active && (!this.#messagePresentation || owner.projection?.windowTicket !== this.#messagePresentation.ticket))
+      throw new Error("Battle source-message window was replaced outside its owner");
+  }
+  private observeMessageProvider<T>(read: () => T): T {
+    const fingerprint = () => canonical({ units: this.combatants, time: this.time, phase: this.phase,
+      event: this.eventState, controls: this.eventControls, queue: this.queue, reactions: this.reactions,
+      action: this.action, stock: this.stock, reward: this.reward, random: this.randomState,
+      preferences: this.currentPreferences, clock: this.clockInput, remainder: this.remainder, events: this.events });
+    const before = fingerprint(), result = read();
+    if (fingerprint() !== before) throw new Error("Battle message observer mutated a gameplay owner");
+    return result;
+  }
+  get sourceMessage(): SourceMessageState | undefined { return this.#messageRetired ? undefined : this.#messageHost?.owner; }
+  get messagePresentation(): BattleEventMessagePresentation | null {
+    const held = this.#messagePresentation, value = this.#messageHost?.owner.projection;
+    return held && value?.windowTicket === held.ticket ? { ...held.value } : null;
+  }
+  get messageInputPending(): boolean { return this.eventState?.wait?.kind === "message"; }
+  confirmMessage(): boolean {
+    if (this.#messageRetired) throw new Error("Retired battle message owner");
+    if (this.#messageBusy) throw new Error("Reentrant battle message input");
+    this.validateMessageOwnership();
+    const ticket = this.#messageHost?.owner.projection?.windowTicket ?? null,
+      accepted = this.#messageHost?.owner.confirm() ?? false;
+    if (accepted) this.#messageJournal.push({ action: "confirm", pc: this.eventState?.pc ?? null, ticket, time: this.time });
+    return accepted;
+  }
+  /** Explicit Web battle-scene retirement, not a synthetic confirmation. The
+   * live global owner is cleared only by successful retry/return publication. */
+  prepareMessageRetirement() {
+    const owner = this.#messageHost?.owner, held = this.#messagePresentation;
+    if (!owner) return { validate() {}, commit() {} };
+    if (owner.active && (!held || owner.projection?.windowTicket !== held.ticket))
+      throw new Error("Battle message owner was replaced before retirement");
+    const revision = owner.mutationRevision, close = owner.prepare({ kind: "source-message", command: { kind: "close" } }),
+      effects = this.#messageHost!.prepareEffects(close.effects);
+    let committed = false;
+    const validate = () => {
+      if (committed || this.#messageRetired || this.#messageBusy || owner.mutationRevision !== revision || this.#messagePresentation !== held)
+        throw new Error("Stale battle message retirement");
+      effects.validate();
+    };
+    return { validate, commit: () => { validate(); effects.commit(); close.commit(); this.#messagePresentation = null; this.#messageRetired = true;
+      this.#messageJournal.push({ action: "retire", pc: null, ticket: held?.ticket ?? null, time: this.time }); committed = true; } };
+  }
   private readonly eventShared: BattleEventSharedState | null;
   private readonly participantContent: BattleParticipantContent | null;
   private readonly entryEnemies: CombatantDefinition[];
@@ -245,7 +310,12 @@ export class BattleGame {
     initialPreferences?: BattlePreferences,
     eventShared?: BattleEventSharedSnapshot,
     playerBorrow?: BattlePlayerBorrow,
+    private readonly eventHosts?: { scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost },
   ) {
+    if (eventHosts !== undefined && (!eventHosts || typeof eventHosts !== "object" || Array.isArray(eventHosts) ||
+        Object.keys(eventHosts).some(key => key !== "messages" && key !== "scriptedActions")))
+      throw new Error("Unknown battle event host options");
+    const messageHost = eventHosts?.messages;
     if (
       content.kind !== "opening-battle-development" ||
       content.profile !== "narshe-playability-v35"
@@ -260,7 +330,13 @@ export class BattleGame {
     this.escapeRule = content.escapePolicy === undefined ? null : parseBattleEscapePolicy(content.escapePolicy);
     this.rewardPolicy = Object.freeze(parseBattleRewardPolicy(content.rewardPolicy === undefined
       ? { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 } : content.rewardPolicy));
+    validateScriptedBattleActionPolicy(eventHosts?.scriptedActions);
     this.lifecycle = parseBattleLifecycle(content.lifecycle ?? { kind: "battle-lifecycle-v1", mode: "none" });
+    const hasMessages = this.lifecycle.mode === "script" && this.lifecycle.program.instructions.some(({ op }) => op.kind === "message");
+    if (hasMessages && (!messageHost || messageHost.policy !== WEB_BATTLE_EVENT_MESSAGE_POLICY ||
+        !messageHost.owner || typeof messageHost.sequence?.prepare !== "function" || typeof messageHost.prepareEffects !== "function"))
+      throw new Error("Battle event Msg requires the shared source-message host and explicit Web policy");
+    this.#messageHost = hasMessages ? Object.freeze({ ...messageHost! }) : null;
     if (content.conditionControlPolicy !== undefined && (!content.conditionControlPolicy ||
         Object.keys(content.conditionControlPolicy).length !== 1 || content.conditionControlPolicy.kind !== "web-source-control-actions-v1"))
       throw new Error("Invalid condition-control scheduler policy");
@@ -292,6 +368,12 @@ export class BattleGame {
     this.eventShared = eventShared === undefined ? null : new BattleEventSharedState(eventShared);
     if (this.lifecycle.mode === "script") this.eventState = createBattleEventState(this.lifecycle.program);
     if (this.lifecycle.mode === "script") for (const [pc, { op }] of this.lifecycle.program.instructions.entries()) {
+      if(op.kind==="script-action"){
+        if(eventHosts?.scriptedActions!==WEB_SCRIPTED_BATTLE_ACTIONS)
+          throw new BattleEventError(this.lifecycle.program.source,pc,"Missing explicit Web scripted battle action policy");
+        if(!content.abilities[op.abilityId]?.plan)
+          throw new BattleEventError(this.lifecycle.program.source,pc,"Unresolved scripted battle ability "+op.abilityId);
+      }
       if (op.kind === "add-enemy" && (!this.participantContent ||
           !this.participantContent.enemyDefinitions[op.monsterId] || !this.participantContent.slots[op.uniqueId]))
         throw new BattleEventError(this.lifecycle.program.source, pc, "Missing admitted battle enemy entry definition or slot");
@@ -446,7 +528,9 @@ export class BattleGame {
       for (const owner of firstEnteredOwnerIds(this.playerState!)) this.playerObservations.set(owner, []);
     }
     this.log("敌人出现了。");
-    this.advanceEvent();
+    // Message-bearing roots start on the first admitted battle tick. Preparing
+    // a media handoff or retry never publishes a global window in a constructor.
+    if (!this.#messageHost) this.advanceEvent();
   }
   get players() {
     return this.combatants.filter((c) => c.side === "player");
@@ -477,13 +561,13 @@ export class BattleGame {
     }
   }
   get ready() {
-    if (this.escapeRequested || !this.eventControls.interactive) return [];
+    if (this.#messageHost && !this.#messageRootStarted || this.escapeRequested || !this.eventControls.interactive) return [];
     return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued &&
       !this.hasSleep(c) && !this.hasAutomaticControl(c));
   }
   get escapePending(): boolean { return this.escapeRequested; }
   get canRequestEscape(): boolean {
-    return this.escapeRule !== null && this.phase === "active" && !this.escapeRequested &&
+    return (!this.#messageHost || this.#messageRootStarted) && this.escapeRule !== null && this.phase === "active" && !this.escapeRequested &&
       this.eventControls.endEnabled && this.eventControls.interactive && this.eventControls.updateEnabled &&
       this.players.some(c => c.hp > 0) && this.enemies.some(c => c.hp > 0) &&
       !this.clockInput.paused && !this.clockInput.helpPaused && this.clockInput.progressEnabled && !this.clockInput.forceWaiting;
@@ -836,6 +920,7 @@ export class BattleGame {
     };
   }
   private canUseAction(action: BattleAction) {
+    if(action.kind==="event")return this.canUseScriptedAction(action);
     if (action.control) {
       const actor = this.combatants.find(unit => unit.id === action.actor);
       if (!actor || this.hasSleep(actor) || !this.controlPolicy || action.control.policy !== this.controlPolicy.kind ||
@@ -1315,10 +1400,14 @@ export class BattleGame {
   private advanceEvent(): void {
     if (this.lifecycle.mode !== "script" || !this.eventState || this.eventState.status === "exited") return;
     const program = this.lifecycle.program;
+    if (this.#messageHost) this.#messageRootStarted = true;
     for (;;) {
       const cores = this.battleAICoresAlive();
       const result = advanceBattleEvent(program, this.eventState, {
         clock: this.time / 10, timeSeconds: this.time / 1000, started: true,
+        ...(this.eventState.wait?.kind === "message" ? {
+          messageStatus: this.#messageFrame!.state.sequenceStatus(this.eventState.wait.cursor.ticket),
+        } : {}),
         aiCoreAlive: cores.alive,
         // Source IsNowAttackStaging includes staged/interrupt actions, but not
         // ordinary queued turns. The queues remain owned by this BattleGame.
@@ -1334,9 +1423,49 @@ export class BattleGame {
           playersEnded: this.eventPlayersEnded(),
         } : {}),
       });
+      let nextEventState = result.state;
       for (const request of result.requests) {
         try {
           switch (request.kind) {
+            case "script-action": { const { pc, ...command }=request; this.enqueueScriptedAction(command, pc); break; }
+            case "message": {
+              if (!this.#messageHost || !this.#messageFrame) throw new Error("Missing battle source-message frame");
+              const owner = this.#messageFrame.state, operation = request.operation;
+              if (operation.command.kind === "close") {
+                const ticket = this.#messagePresentation?.ticket ?? null;
+                const closed = owner.prepare({ kind: "source-message", command: { kind: "close" } });
+                closed.commit(); this.#messageFrameEffects = closed.effects;
+                this.#messagePresentation = null;
+                this.#messageJournal.push({ action: "close", pc: request.pc, ticket, time: this.time });
+              } else {
+                const presentation = this.observeMessageProvider(() => prepareBattleEventMessagePresentation(operation.command as Extract<typeof operation.command, { kind: "sequence" }>, this.#messageHost!, owner)),
+                  context = this.observeMessageProvider(() => this.#messageHost!.sequence.prepare()),
+                  prepared = owner.prepare({ kind: "source-message", command: presentation.command }, context.context);
+                this.observeMessageProvider(presentation.validate); this.observeMessageProvider(context.validate);
+                prepared.commit(); this.#messageFrameEffects = prepared.effects;
+                this.#messageFrameValidations.push(() => this.observeMessageProvider(presentation.validate), () => this.observeMessageProvider(context.validate));
+                this.#messagePresentation = { ticket: prepared.ticket, value: { ...operation.presentation! } };
+                this.#messageJournal.push({ action: "open", pc: request.pc, ticket: prepared.ticket, time: this.time });
+                nextEventState = acknowledgeBattleEventMessage(program, nextEventState, request.pc,
+                  createSourceMessageTaskCursor(operation.command, prepared.timing!, prepared.ticket, this.time));
+              }
+              break;
+            }
+            case "message-page-input":
+              if (!this.#messageFrame) throw new Error("Missing battle source-message frame");
+              this.#messageFrame.state.executePageInput(request.ticket);
+              this.#messageJournal.push({ action: "page-input", pc: request.pc, ticket: request.ticket, time: this.time }); break;
+            case "message-complete":
+              if (!this.#messageFrame || this.#messagePresentation?.ticket !== request.ticket)
+                throw new Error("Stale battle message completion");
+              this.#messageFrame.state.sequenceStatus(request.ticket);
+              if (request.close) {
+                const closed = this.#messageFrame.state.prepare({ kind: "source-message", command: { kind: "close" } });
+                closed.commit(); this.#messageFrameEffects = closed.effects;
+                this.#messagePresentation = null;
+              }
+              this.#messageJournal.push({ action: "complete", pc: request.pc, ticket: request.ticket, time: this.time });
+              break;
             case "exec-ai": this.startEnemyAI(); break;
             case "sync-ai":
               for (const id of cores.exitedIds) this.aiStates.get(id)!.status = "exited";
@@ -1362,9 +1491,76 @@ export class BattleGame {
             error instanceof Error ? error.message : String(error));
         }
       }
-      this.eventState = result.state;
+      this.eventState = nextEventState;
       if (!result.requests.length) return;
     }
+  }
+  /** The source request has no authority to create a combatant or grant an
+   * ability. It captures current instance identities into the existing action
+   * queue; target slot reuse can never redirect an old action. */
+  private scriptedUnits(ref: ScriptedBattleAction["actor"]): Combatant[] {
+    const units=this.activeCombatants.filter(unit=>unit.side===ref.side);
+    if(ref.id<=0)return units;
+    return units.filter(unit=>ref.side==="player"?unit.sourceId===ref.id:
+      this.participantState.entries.some(entry=>!entry.removed&&entry.id===unit.id&&entry.uniqueId===ref.id));
+  }
+  private enqueueScriptedAction(command:ScriptedBattleAction,pc:number):void {
+    command=parseScriptedBattleAction(command);
+    if(this.eventHosts?.scriptedActions!==WEB_SCRIPTED_BATTLE_ACTIONS||this.lifecycle.mode!=="script"||
+      canonical(this.lifecycle.program.instructions[pc]?.op)!==canonical(command))
+      throw new Error("Unbound scripted battle action request");
+    const actors=this.scriptedUnits(command.actor),targets=this.scriptedUnits(command.target);
+    if(actors.length!==1||!targets.length||command.target.id>0&&targets.length!==1)
+      throw new Error("Scripted battle source actor/target is absent or ambiguous");
+    const actor=actors[0]!,ability=this.content.abilities[command.abilityId];
+    if(!ability?.plan||!this.abilityCost(actor.id,command.abilityId))
+      throw new Error("Unresolved scripted battle ability or cost owner");
+    const selection:TargetSelection=command.target.id>0?{kind:"single",id:targets[0]!.id}:
+      {kind:"side",side:command.target.side};
+    const action:BattleAction={kind:"event",scripted:{pc,command:structuredClone(command),targetInstanceIds:targets.map(unit=>unit.id)},
+      actor:actor.id,selection,targetIds:targets.map(unit=>unit.id),source:{kind:"ability",id:ability.id},
+      commandId:null,charge:0,elapsed:0,resolved:false,results:[]};
+    // Unsupported content is an error. Current death/sleep/insufficient MP can
+    // invalidate a supported action at staging, using the ordinary queue path.
+    this.validateScriptedAbility(actor,ability);
+    this.reactions.push(action);
+  }
+  private validateScriptedAbility(actor:Combatant,ability:AbilityDefinition):void {
+    if(!ability.plan||ability.plan.effects.some(effect=>effect.kind==="random-ability"||effect.kind==="forced-escape"))
+      throw new Error("Unresolved scripted derived-action provider");
+    if(ability.plan.targeting.normalFormationOnly&&this.content.formation!=="normal")
+      throw new Error("Unresolved scripted battle formation");
+    if (ability.plan.effects.some(effect => effect.kind === "non-damaging")) {
+      if (!ability.nonDamagingPresentation || ability.presentation !== "source-effect-deferred")
+        throw new Error("Missing source non-damaging presentation policy");
+      validateNonDamagingPresentation(ability.nonDamagingPresentation);
+    }
+    this.conditions.validateActive(actor.conditionIds);
+    if(ability.plan.effects.some(effect=>effect.kind==="physical")){
+      if(!actor.physical)throw new Error("Unresolved scripted physical owner");
+      this.physicalRows(actor,ability.id,actor);
+    }
+    if(ability.plan.effects.some(effect=>effect.kind==="change-row")&&actor.side!=="player")
+      throw new Error("Unresolved scripted row owner");
+  }
+  private canUseScriptedAction(action:BattleAction):boolean {
+    const binding=action.scripted,actor=this.combatants.find(unit=>unit.id===action.actor);
+    if(!binding||this.eventHosts?.scriptedActions!==WEB_SCRIPTED_BATTLE_ACTIONS||action.source.kind!=="ability"||
+      this.lifecycle.mode!=="script"||canonical(this.lifecycle.program.instructions[binding.pc]?.op)!==canonical(binding.command)||
+      action.source.id!==binding.command.abilityId)throw new Error("Invalid scripted action authority");
+    if(!actor)return false;
+    const ability=this.content.abilities[action.source.id],cost=this.abilityCost(actor.id,action.source.id);
+    if(!ability?.plan||!cost)throw new Error("Scripted battle definition/cost changed");
+    this.validateScriptedAbility(actor,ability);
+    return actor.hp>0&&!this.hasSleep(actor)&&!this.enemyExits.has(actor.id)&&
+      (actor.side!=="player"||actor.mp>=cost.mp)&&conditionsAllowAction(actor.conditionIds,ability.program.forbiddenConditionIds,[]);
+  }
+  private scriptedTargetChoices(action:BattleAction):TargetChoice[] {
+    if(!this.canUseScriptedAction(action))return[];
+    const plan=this.content.abilities[action.source.id]!.plan!;
+    const targets=action.scripted!.targetInstanceIds.filter(id=>this.activeCombatants.some(unit=>unit.id===id&&
+      (unit.hp>0||plan.targeting.life==="include-fallen-players"&&unit.side==="player")));
+    return targets.length?[{selection:structuredClone(action.selection),targetIds:targets}]:[];
   }
   private eventPlayersEnded(): boolean {
     if (!this.content.battleEvents) throw new Error("Missing battle event condition rules");
@@ -1601,7 +1797,7 @@ export class BattleGame {
         !Number.isInteger(classification.forAiType) || classification.forAiType < 0 || typeof classification.isMagic !== "boolean")
       throw new Error("Missing explicit source condition recovery-hit classification");
     if (classification.forAiType !== 1 || classification.isMagic ||
-        !effects.some(effect => effect.resource !== "none" && !effect.missed))
+        !effects.some(effect => effect.resource === "none" ? isNonDamagingHit(effect) : !effect.missed))
       return { conditionIds: [...conditionIds], control, removedIds: [] as number[] };
     if (!ability.plan) throw new Error("Missing condition recovery ability plan");
     let ids = [...conditionIds];
@@ -1852,7 +2048,7 @@ export class BattleGame {
       // ActDecision 0x1587aa0 routes Interrupt directly to the executor;
       // it never enters Progress.SetActData/GetChantingTime.
       charge:
-        kind === "counter" || kind === "derived"
+        kind === "counter" || kind === "derived" || kind === "event"
           ? 0
           : chantingSeconds({
               actor: actor.side,
@@ -1882,6 +2078,7 @@ export class BattleGame {
     if (!actor.queued) actor.atb = 0;
   }
   advance(ms: number) {
+    if (this.#messageRetired) throw new Error("Retired battle message owner");
     if (!Number.isFinite(ms) || ms < 0 || ms > 60000)
       throw new Error("Invalid battle elapsed time");
     this.validateConditionState();
@@ -1889,10 +2086,21 @@ export class BattleGame {
     this.remainder += ms;
     while (this.remainder >= 10) {
       if (this.phase === "active") this.tick();
+      else if (this.#messageHost?.owner.active) this.advanceTerminalMessage();
       this.remainder -= 10;
     }
   }
+  private advanceTerminalMessage(): void {
+    if (this.#messageBusy) throw new Error("Reentrant battle message update");
+    this.validateMessageOwnership();
+    const frame = this.#messageHost!.owner.prepareFrame();
+    this.#messageBusy = true;
+    try { frame.state.advance(.01); const write = frame.prepareCommit(); write.validate(); write.commit(); }
+    catch (error) { frame.discard(); throw error; }
+    finally { this.#messageBusy = false; }
+  }
   private tick() {
+    if (this.#messageBusy) throw new Error("Reentrant battle message frame");
     // One failed simulation step consumes neither logical time nor randomness.
     // Definitions/media/AI programs stay shared; only mutable runtime values are copied.
     const before = {
@@ -1921,6 +2129,7 @@ export class BattleGame {
       reactions: structuredClone(this.reactions),
       ai: structuredClone(this.aiStates),
       eventState: structuredClone(this.eventState),
+      messagePresentation: this.#messagePresentation, messageRootStarted: this.#messageRootStarted, messageJournal: structuredClone(this.#messageJournal),
       eventControls: { ...this.eventControls },
       eventShared: this.eventShared?.snapshot() ?? null,
       poison: structuredClone(this.poisonStates),
@@ -1939,13 +2148,28 @@ export class BattleGame {
       random: this.randomState,
       phase: this.phase,
       reward: this.reward,
+      clockInput: { ...this.clockInput }, preferences: { ...this.currentPreferences }, remainder: this.remainder,
       escapeRequested: this.escapeRequested,
     };
+    this.validateMessageOwnership();
+    const frame = this.#messageHost?.owner.prepareFrame() ?? null;
+    this.#messageBusy = true;
+    this.#messageFrame = frame; this.#messageFrameValidations = []; this.#messageFrameEffects = null;
     try {
+      frame?.state.advance(.01);
       this.reconcileAppearances();
       this.step();
       this.reconcileAppearances();
+      const messageWrite = frame?.prepareCommit(), effects = this.#messageFrameEffects === null ? null :
+        this.observeMessageProvider(() => this.#messageHost!.prepareEffects(this.#messageFrameEffects!));
+      for (const validate of this.#messageFrameValidations) validate();
+      if (this.#messageFrameEffects !== null && (!effects || typeof effects.validate !== "function" || typeof effects.commit !== "function"))
+        throw new Error("Invalid battle source-message effects transaction");
+      if (effects) this.observeMessageProvider(effects.validate);
+      messageWrite?.validate(); effects?.commit(); messageWrite?.commit();
     } catch (error) {
+      frame?.discard();
+      this.#messagePresentation = before.messagePresentation; this.#messageRootStarted = before.messageRootStarted; this.#messageJournal = before.messageJournal;
       this.combatants.splice(0, this.combatants.length, ...before.unitOwners);
       for (const [index, unit] of before.units.entries())
         Object.assign(this.combatants[index]!, unit);
@@ -1983,8 +2207,11 @@ export class BattleGame {
       this.randomState = before.random;
       this.phase = before.phase;
       this.reward = before.reward;
+      this.clockInput = before.clockInput; this.currentPreferences = before.preferences; this.remainder = before.remainder;
       this.escapeRequested = before.escapeRequested;
       throw error;
+    } finally {
+      this.#messageFrame = null; this.#messageFrameValidations = []; this.#messageFrameEffects = null; this.#messageBusy = false;
     }
   }
   private step() {
@@ -2058,7 +2285,7 @@ export class BattleGame {
     // executor gate only prevents a new ordinary action from starting.
     const index = queue === this.queue && !this.eventControls.updateEnabled
       ? -1 : queue.findIndex((a) => a.charge <= 0 &&
-          !this.hasSleep(this.combatants.find(unit => unit.id === a.actor)!));
+          (a.kind==="event" || !this.hasSleep(this.combatants.find(unit => unit.id === a.actor)!)));
     if (index >= 0) {
       const action = queue.splice(index, 1)[0]!,
         actor = this.combatants.find((c) => c.id === action.actor)!;
@@ -2182,6 +2409,7 @@ export class BattleGame {
       }));
   }
   private actionTargetChoices(action: BattleAction) {
+    if(action.kind==="event")return this.scriptedTargetChoices(action);
     if (action.targeting !== undefined && (action.kind !== "counter" ||
         action.targeting !== "received-actor" && action.targeting !== "automatic"))
       throw new Error("Invalid interrupt target provider");
@@ -2343,6 +2571,11 @@ export class BattleGame {
     const ability = this.actionDefinition(action);
     if (action.resolved) return;
     if (!ability.plan) throw new Error("Unimplemented ability cannot execute");
+    if (ability.plan.effects.some(effect => effect.kind === "non-damaging")) {
+      if (!("nonDamagingPresentation" in ability) || !ability.nonDamagingPresentation || ability.presentation !== "source-effect-deferred")
+        throw new Error("Missing source non-damaging presentation policy");
+      validateNonDamagingPresentation(ability.nonDamagingPresentation);
+    }
     if (!this.canUseAction(action)) {
       action.resolved = true;
       return;
@@ -2586,6 +2819,7 @@ export class BattleGame {
         this.reactions = this.reactions.filter((a) => a.actor !== c.id);
       }
     }
+    if (this.reactions.some(action=>action.kind==="event")) return;
     if (!this.eventControls.endEnabled) return;
     if (!this.players.some((c) => c.hp > 0)) {
       this.clearBattleConditions();

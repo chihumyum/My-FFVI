@@ -135,3 +135,28 @@ test("stale transform, clock, command or map and forged waypoint registers canno
   assert.throws(() => prepareFieldCameraPathStep(first.state, command, context, forged, 1010), /waypoints/);
   assert.deepEqual(first.state, beforeState); assert.deepEqual(first.progress, beforeProgress);
 });
+
+test("explicit camera Puppet.Route shares the dummy and path cursor through bends, known collision waits and final drain", () => {
+  const command = { kind: "route" as const, x: 16, y: 27, layer: 0 as const, speedId: 2, animation: "" };
+  let blocked = false;
+  const input: FieldCameraPathContext = { ...context, grid: { policy: "web-source-puppet-route-grid-v1", canStep: (_a, b) => !blocked || b.x !== 16 } };
+  let step = prepareFieldCameraPathStep(state(), command, input, null, 0);
+  assert.equal(step.flow, "wait"); assert.deepEqual(step.progress.gridPoints, [{ x: 15, y: 26 }, { x: 16, y: 26 }, { x: 16, y: 27 }]);
+  assert.deepEqual(step.state.dummy.position, state().dummy.position);
+  step = prepareFieldCameraPathStep(step.state, command, input, step.progress, 120); blocked = true;
+  const atCell = structuredClone(step); step = prepareFieldCameraPathStep(step.state, command, input, step.progress, 1000);
+  assert.deepEqual(step.state, atCell.state); assert.deepEqual(step.progress.motion, atCell.progress.motion); assert.equal(step.progress.lastClockMs, 1000);
+  blocked = false; let time = 1000; for (let i = 0; i < 100 && step.flow === "wait"; i++) { time += 10; step = prepareFieldCameraPathStep(step.state, command, input, step.progress, time); }
+  assert.equal(step.flow, "next"); assert.equal(step.progress.motion, null); assert.equal(step.state.dummy.direction, "down");
+  assert.deepEqual(step.state.dummy.position, fieldCameraCellToWorld(context.mapRange, { x: 6, y: 7 }, 1));
+  const again = prepareFieldCameraPathStep(step.state, command, input, step.progress, time + 10); assert.equal(again.completedRoute, false); assert.deepEqual(again.state, step.state);
+});
+test("camera Puppet.Route refuses unknown collision without publishing transform/cursor, and keeps layer/wrap/animation gates", () => {
+  const command = { kind: "route" as const, x: 16, y: 27, layer: 0 as const, speedId: 0, animation: "" }, initial = state(), before = structuredClone(initial);
+  assert.throws(() => prepareFieldCameraPathStep(initial, command, { ...context, grid: { policy: "web-source-puppet-route-grid-v1", canStep() { throw Error("unknown collision"); } } }, null, 0), /unknown collision/); assert.deepEqual(initial, before);
+  assert.throws(() => prepareFieldCameraPathStep(initial, command, context, null, 0), /explicit Web/);
+  const input: FieldCameraPathContext = { ...context, grid: { policy: "web-source-puppet-route-grid-v1", canStep: () => true } };
+  assert.throws(() => prepareFieldCameraPathStep(initial, { ...command, animation: "WalkR" }, input, null, 0), /animation provider/);
+  assert.throws(() => prepareFieldCameraPathStep(initial, { ...command, layer: 1 }, input, null, 0), /cross-layer/);
+  const equal = prepareFieldCameraPathStep(initial, { ...command, x: 14, y: 26, animation: "NotStarted" }, input, null, 0); assert.equal(equal.flow, "next"); assert.deepEqual(equal.state, initial);
+});

@@ -182,8 +182,16 @@ export function compileBattleAbilityContent(
     }
     const hostBlockers = tableInteger(master.values.ability_lv) === 0
       ? [] : ["Unresolved level-specific ability consumption"];
-    if (displayBlockers.length || hostBlockers.length) {
-      definition.blockers.push(...displayBlockers, ...hostBlockers);
+    // A source NonAct with a proven Function19 fixed-Hit plan has no menu
+    // content identity in the master list. Preserve that absence and every raw
+    // row; do not fabricate a name/content ID or grant an owned/menu ability.
+    const deferredEffectOnly = definition.plan?.effects.length === 1 &&
+      definition.plan.effects[0]?.kind === "non-damaging" && definition.nonDamagingPresentation !== undefined;
+    const requiredDisplayBlockers = deferredEffectOnly && display.kind === "missing-content" ? [] : displayBlockers;
+    if (deferredEffectOnly && display.kind === "missing-content")
+      definition.limitations.push("Source non-damaging action has no content/menu identity; original absence retained, no ownership or command granted.");
+    if (requiredDisplayBlockers.length || hostBlockers.length) {
+      definition.blockers.push(...requiredDisplayBlockers, ...hostBlockers);
       definition.plan = null;
       definition.presentation = "unsupported";
     }

@@ -23,7 +23,7 @@ import { compileFieldNativeFoot } from "./field-native-foot.js";
 import { compileWorldMapEntryView, compileWorldTerrain, type WorldMapEntryView } from "./world-terrain.js";
 import type { WorldTerrainDefinition } from "../core/world-terrain.js";
 import { compileFieldPuppetScriptContext } from "./field-puppet-actors.js";
-import { missingFieldPoses } from "../core/character-media.js";
+import { compileFieldEntityPoseBlockers } from "./field-initial-npc-pose.js";
 import { fieldCollisionRange } from "../core/collision.js";
 import { tableId } from "./table-id.js";
 import { loadMinimapMedia } from "./map-ui.js";
@@ -492,22 +492,16 @@ export async function compileWorld(root: string) {
         scriptPuppetContexts[name] = null;
       }
     }
-    for (const group of Object.values(groups))
+    for (const group of Object.values(groups)) {
       for (const entity of group.entities) {
         if (entity.script && !scripts[entity.script])
           group.blockers.push({
             reason: "Missing entity script " + entity.script,
             source: entity.source,
           });
-        if (entity.asset) {
-          const character = characters[entity.asset];
-          for (const key of entity.kind === 10 ? (character?.animations.Default ? [] : ["Default"]) : missingFieldPoses(character))
-            group.blockers.push({
-              reason: `Missing character pose ${entity.asset}/${key}`,
-              source: entity.source,
-            });
-        }
+        group.blockers.push(...compileFieldEntityPoseBlockers([entity], characters));
       }
+    }
     const npcRoutes = compileFieldNpcRoutes({ ...corpus, manifest: { parentSourceSetHash: text(corpus.manifest.parentSourceSetHash) } }, Number(binding.id)).catalog;
     const sourceWalkEncounters = compileSourceWalkEncounterDependencies(systemSource.reader, Number(binding.id));
     const value: Omit<WorldMapContent, "contentHash"> = {

@@ -1,3 +1,4 @@
+import { projectNonDamagingEffect } from "./non-damaging-ability.js";
 import type { AbilityEffectResult, DevelopmentAbilityPlan } from "./ability.js";
 import { projectActionTarget, type ActionParticipant } from "./action-effects.js";
 import { projectUserConditionPhase, projectUniqueNoneEffect, type UserConditionEffect } from "./ability-user-conditions.js";
@@ -17,6 +18,22 @@ export function projectActionTargets<T extends ActionParticipant>(plan: Developm
 ) {
   if (!targets.length || new Set(targets.map(target => target.id)).size !== targets.length)
     throw new Error("Invalid joint action targets");
+  if (plan.effects.length === 1 && plan.effects[0]?.kind === "non-damaging") {
+    const result = projectNonDamagingEffect(plan.effects[0]);
+    if (!Number.isSafeInteger(cost) || cost < 0 || cost > actor.mp) throw new Error("Invalid non-damaging action cost");
+    conditions.validateActive(actor.conditionIds);
+    const projected = targets.map(target => {
+      for (const key of ["hp", "mp", "maxHp", "maxMp"] as const)
+        if (!Number.isSafeInteger(target[key]) || target[key] < 0 || target[key] > 0x7fffffff)
+          throw new Error("Invalid non-damaging target resource");
+      if (target.maxHp < 1 || target.hp > target.maxHp || target.mp > target.maxMp)
+        throw new Error("Invalid non-damaging target bounds");
+      conditions.validateActive(target.conditionIds);
+      return { targetId: target.id, effects: [structuredClone(result)] as AbilityEffectResult[],
+        state: { hp: target.hp, mp: target.mp - (target.id === actor.id ? cost : 0), conditionIds: [...target.conditionIds] } };
+    });
+    return { targets: projected, userConditionIds: [...actor.conditionIds], userResults: [] as ActionUserConditionResult[] };
+  }
   const userEffects = plan.effects.filter((effect): effect is UserConditionEffect => effect.kind === "user-condition");
   if (!userEffects.length) return {
     targets: targets.map(target => ({ targetId: target.id,

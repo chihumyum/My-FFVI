@@ -1,4 +1,5 @@
 import { compileSourceMessageFees } from "./source-message-fees.js";
+import { bindBattleEventMessageInput } from "./battle-event-message-bindings.js";
 import { compilePhysicalLimits } from "./physical-parameters.js";
 import { hash, record } from "./content.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
@@ -305,6 +306,8 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
     sourceDiagnostics: source.encounterDiagnostics, abilities, conditions, sprites: source.sprites, name,
     parameters: { temporary: noTemporary, limits: parameterLimits },
     physical: { temporary: noPhysicalTemporary, limits: physicalLimits },
+    eventMessages: bindBattleEventMessageInput(field, corpus,
+      corpus.tables["character_default_name.csv"]!.map(row => conditionReader.row("character_default_name.csv", row.id!))),
   };
   const growth: BattleContent["growth"] = {};
   for (const r of rows("growth_curve.csv")) {

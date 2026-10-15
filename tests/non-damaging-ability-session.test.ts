@@ -1,0 +1,27 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { GameSession } from "../src/core/game-session.js";
+import { GameFlow } from "../src/core/game-flow.js";
+import { GameBattleHandoff } from "../src/core/game-battle-handoff.js";
+import { CheckpointStorage } from "../src/core/saved-game.js";
+import { WEB_SCRIPTED_BATTLE_ACTIONS } from "../src/core/scripted-battle-action.js";
+import { compileScriptedBattleAction } from "../src/compiler/battle-scripted-action.js";
+import { compileBattleAbilityContent } from "../src/compiler/battle-ability-content.js";
+import { checkpointFixture } from "./fixtures/checkpoint-game.js";
+import { battleAbilityContentFixture } from "./fixtures/battle-ability-content.js";
+const ready={visible:true,mediaReady:true,overlayOpen:false},runtime={battleHandoff:"prepared"as const,scriptedBattleActions:WEB_SCRIPTED_BATTLE_ACTIONS};
+test("non-damaging source effect shares entry cancellation, actual owned settlement, quota retry and stable Storage",async()=>{
+ const f=checkpointFixture(),rows=battleAbilityContentFixture();Object.assign(rows.ability,{type_id:"35",system_id:"2",battle_renge_id:"5",standard_value:"0",use_value:"0",ability_wait:"0",battle_effect_asset_id:"0"});rows.tables["function.csv"]![0]!.type_id="19";rows.group.function1_value1=rows.group.function1_value2="0";rows.tables["content.csv"]=[];
+ f.battle.common.abilities[901]=compileBattleAbilityContent(rows.reader(),rows.tables,rows.resolveName).abilities[901]!;f.battle.common.sprites.synthetic={file:"synthetic.png",width:16,height:16};
+ f.battle.common.battleEvents={conditions:f.battle.common.conditions.rules.definitions.map(({id,type})=>({id,type,attackTarget:type===5?1:0,gameOverTarget:type===5?1:0}))};
+ const action=(id:number)=>compileScriptedBattleAction({type:1,mnemonic:"BattleAction",operands:{iValues:[1,1000,id,2,0,0,0,0],rValues:Array(8).fill(0),sValues:Array(8).fill("")}});
+ const ops=[action(901),action(10),{kind:"exit"as const}];f.battle.encounters[1000]!.lifecycle={kind:"battle-lifecycle-v1",mode:"script",scriptId:1,program:{kind:"battle-event-v1",source:null,entry:0,end:ops.length,localNames:[],initialLocals:[],instructions:ops.map(op=>({mnemonic:op.kind,op})),blockers:[]}};
+ const session=new GameSession(f.field,f.battle,123,runtime),flow=new GameFlow(session);flow.start();flow.advance(0,ready);const owner=session.state,before=owner.snapshot();session.field.startEvent("fight");const request=session.field.stop;
+ let fail=true,release!:(v:{kind:string})=>void;const held=new Promise<{kind:string}>(yes=>{release=yes;}),discarded:unknown[]=[],handoff=new GameBattleHandoff(flow,{prepareStart:async()=>{if(fail){fail=false;throw new Error("controlled media failure");}return{kind:"ready"};},prepareReturn:async()=>({kind:"return"}),discard:v=>discarded.push(v)});
+ assert.equal((await handoff.start()).status,"failed");assert.equal(session.field.stop,request);assert.deepEqual(owner.snapshot(),before);
+ const cancelled=new GameBattleHandoff(flow,{prepareStart:()=>held,prepareReturn:async()=>({kind:"return"}),discard:v=>discarded.push(v)}),pending=cancelled.start();cancelled.cancel();assert.equal((await handoff.start()).status,"committed");release({kind:"old"});assert.equal((await pending).status,"cancelled");assert.equal(discarded.length,1);
+ const b=session.battle!,units=b.combatants.map(c=>({id:c.id,hp:c.hp,mp:c.mp,conditions:[...c.conditionIds]}));for(let i=0;i<42;i++)flow.advance(10,ready);assert.equal(b.action?.source.id,901);assert.equal(b.action?.resolved,true);assert.equal(b.action!.results[0]!.effects[0]!.resource,"none");assert.deepEqual(b.combatants.map(c=>({id:c.id,hp:c.hp,mp:c.mp,conditions:c.conditionIds})),units);
+ assert.deepEqual(owner.snapshot(),before);for(let i=0;i<300&&b.phase==="active";i++)flow.advance(10,ready);assert.equal(b.phase,"victory");assert.equal((await handoff.return()).status,"committed");flow.advance(10,ready);assert.equal(session.state,owner);assert.equal(owner.snapshot().completedBattles.length,1);
+ const stable=session.checkpoint(),bytes=new Map<string,string>();let quota=true;const storage=new CheckpointStorage({getItem:k=>bytes.get(k)??null,setItem:(k,v)=>{if(quota)throw new Error("quota");bytes.set(k,v);}},"framework","non-damaging");await assert.rejects(storage.save(stable,100),/quota/);assert.equal(bytes.size,0);assert.deepEqual(session.checkpoint(),stable);quota=false;await storage.save(stable,101);const saved=(await storage.load())!;
+ const restored=GameSession.restore(saved.checkpoint,f.field,f.battle,undefined,runtime),next=new GameFlow(restored);next.start();next.advance(0,ready);assert.deepEqual(restored.checkpoint(),stable);const settled=restored.state.snapshot();next.advance(500,ready);assert.deepEqual(restored.state.snapshot(),settled);assert.equal(settled.completedBattles.length,1);assert.equal(restored.battle,null);
+});

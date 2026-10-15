@@ -32,6 +32,7 @@ import type { FieldCameraOp, FieldCameraMotionOp, FieldCameraSetPosition } from 
 import type { FieldAssignedRouteOp } from '../core/field-assigned-route.js';
 import type { FieldNpcRouteCatalog } from '../core/field-npc-route.js';
 import type { FieldScriptMotionOp } from "../core/field-script-motion.js";
+import type { FieldPuppetRouteOp } from "../core/field-puppet-route.js";
 import type { FieldMoveAreaDefinition } from "../core/field-move-area.js";
 import type { FieldCameraHostDefinition } from "../core/field-camera-host.js";
 import type { FieldBackgroundLayer } from "../core/field-background.js";
@@ -216,6 +217,8 @@ export type MapRequest = {
 };
 export type Op = Site &
   (
+    | import("../core/field-view-change.js").FieldViewChangeOp
+    | import("../core/source-party-selection.js").SourcePartySelectionOp
     | { kind: "nop" | "exit" | "return" | "join" | "hide" }
     /** Authored Web barrier or source AutoSave under its explicit content policy. */
     | FieldEventSaveOp
@@ -243,6 +246,7 @@ export type Op = Site &
     | FieldCameraMotionOp
     | FieldAssignedRouteOp
     | FieldScriptMotionOp
+    | FieldPuppetRouteOp
     | SourceMessageOp
     | FieldChoiceOp
     | FieldScriptShopOp

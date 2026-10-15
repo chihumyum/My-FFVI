@@ -105,16 +105,17 @@ async function readLockedJson(inputs, root, path) {
 
 async function modules(compiledDir) {
   const load = name => import(pathToFileURL(resolve(compiledDir, "src", name + ".js")).href);
-  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost, npcArea, npcFlat, effectFlat] = await Promise.all([
+  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost, npcArea, npcFlat, effectFlat, ordinary] = await Promise.all([
     load("compiler/content"), load("core/content-integrity"), load("compiler/world"), load("compiler/source-new-game"),
     load("compiler/framework-content"), load("core/source-catalog"), load("core/field-native-composition"),
     load("compiler/battle"), load("compiler/game-catalog"), load("compiler/opening-playable"), load("compiler/field-logical-effects"),
     load("compiler/corpus"), load("compiler/map-package"), load("compiler/field-background"),
     load("compiler/framework-periodic-presentation"), load("compiler/field-native-composition"),
     load("compiler/framework-npc-area"), load("compiler/framework-npc-flat-projection"), load("compiler/framework-field-effect-flat-projection"),
+    load("compiler/framework-ordinary-presentation"),
   ]);
   return { ...content, ...integrity, ...world, ...newGame, ...framework, ...sourceCatalog, ...composition,
-    ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost, ...npcArea, ...npcFlat, ...effectFlat };
+    ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost, ...npcArea, ...npcFlat, ...effectFlat, ...ordinary };
 }
 
 /** Explicit Web producer input, not a source/save capability grant. */
@@ -141,6 +142,19 @@ export function sourcePeriodicMapsInput(raw) {
       typeof descriptors.reason.value!=="string" || !descriptors.reason.value.trim())
     throw new Error("Invalid periodic maps input declaration");
   return {kind:descriptors.kind.value,reason:descriptors.reason.value};
+}
+
+/** A distinct whole ordinary-map input. Periodic assessment permission never
+ * implies this policy, and neither a map, recipe nor save supplies its scope. */
+export function sourceOrdinaryFieldsInput(raw) {
+  if(raw===undefined)return undefined;
+  exact(raw,"kind,reason","ordinary field presentation input");
+  const descriptors=Object.getOwnPropertyDescriptors(raw);
+  if(Reflect.ownKeys(raw).length!==2||Object.values(descriptors).some(d=>!d.enumerable||!Object.hasOwn(d,"value"))||
+      descriptors.kind.value!=="web-source-ordinary-field-presentation-input-v1"||
+      typeof descriptors.reason.value!=="string"||!descriptors.reason.value.trim())
+    throw new Error("Invalid ordinary field presentation input declaration");
+  return{kind:descriptors.kind.value,reason:descriptors.reason.value};
 }
 
 /** Fixed existing Web Area policy for the complete source domain. It is a
@@ -320,10 +334,11 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
 
 /** Pure upstream DAG: current battle capabilities -> source world/new game -> explicit framework
  * derivation. It never writes packages, generated recipes, reports or archives. */
-export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat } = {}) {
+export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat } = {}) {
   if (mapAnimatedEntities !== undefined && mapAnimatedEntities !== "web-field-animated-map-entities-v1")
     throw new Error("Unknown source framework animated map entity policy");
   const periodicDeclaration = sourcePeriodicMapsInput(periodicMaps);
+  const ordinaryDeclaration = sourceOrdinaryFieldsInput(ordinaryFields);
   const npcDeclaration = sourceNpcAreasInput(npcAreas);
   const flatDeclaration = npcFlat === undefined ? undefined : sourceNpcFlatInput(npcFlat);
   const effectFlatDeclaration = fieldEffectFlat === undefined ? undefined : sourceFieldEffectFlatInput(fieldEffectFlat);
@@ -432,6 +447,20 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
       compiled:assessments.filter(row=>row.presentation).length,unready:assessments.filter(row=>!row.presentation).length,
       pureCompilations:1,sourceGameplayAdmitted:false,nativeParity:false};
   }
+  let ordinaryReport=null;
+  if(ordinaryDeclaration){
+    const corpus=await api.loadCorpus(root),sources=corpus.manifest.sources.map(({file,sha256})=>({file,sha256}));
+    if(corpus.sourceSetHash!==inputs.sourceSetHash||corpus.manifest.parentSourceSetHash!==inputs.parentSourceSetHash)
+      throw new Error("Ordinary presentation corpus/input-lock identity mismatch");
+    const renderHost=await api.loadFieldCompositionRenderHost(root,sources);
+    frameworkOptions.ordinaryPresentations=api.assessFrameworkOrdinaryWorld(corpus,strict.catalog,strict.maps,renderHost,ordinaryDeclaration.reason);
+    ordinaryReport={declaration:ordinaryDeclaration,maps:frameworkOptions.ordinaryPresentations.length,
+      available:frameworkOptions.ordinaryPresentations.filter(row=>row.presentation).length,
+      derived:frameworkOptions.ordinaryPresentations.filter(row=>row.mode==='flat-alternative').length,
+      nativePreserved:frameworkOptions.ordinaryPresentations.filter(row=>row.mode==='native-preserved').length,
+      unready:frameworkOptions.ordinaryPresentations.filter(row=>!row.presentation).length,
+      assessmentsHash:api.hash(frameworkOptions.ordinaryPresentations),pureCompilations:1,sourceGameplayAdmitted:false,nativeParity:false};
+  }
   let npcReport = null;
   if (npcDeclaration) {
     const corpus = await api.loadCorpus(root);
@@ -475,6 +504,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
     strict: { catalogHash: strict.catalog.contentHash, entryHash: entry.contentHash, maps: strict.maps.length,
       mapsWithBlockers: strict.maps.filter(map => map.blockers.length).length },
     framework: framework.report, logicalFieldEffects: logicalReport, ...(periodicReport?{periodicMaps:periodicReport}:{}),
+    ...(ordinaryReport?{ordinaryFields:ordinaryReport}:{}),
     ...(npcReport ? { npcAreas: npcReport } : {}),
     ...(npcFlatReport ? { npcProjection: npcFlatReport } : {}),
     ...(effectFlatReport ? { fieldEffectProjection: effectFlatReport } : {}),

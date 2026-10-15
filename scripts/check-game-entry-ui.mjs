@@ -135,8 +135,13 @@ async function eventPackages() {
   const initial = await seal(fixture.field), battle = await seal(fixture.battle);
   return { initial, battle, files: new Map([["/game/content.json", initial], ["/game/battle.json", battle]]) };
 }
-async function battlePackages() {
+async function battlePackages(messageProgram = false) {
   const fixture = checkpointFixture();
+  if (messageProgram) {
+    const { battleMessageContent } = await import(pathToFileURL(resolve(compiled, "tests/fixtures/battle-event-message.js")).href);
+    const content = battleMessageContent(); fixture.battle.common.battleEvents = content.battleEvents;
+    fixture.battle.encounters[1000].lifecycle = content.lifecycle;
+  }
   fixture.field.map.textures = { controlled: "/controlled/development-entry.png" };
   fixture.battle.common.sprites.synthetic = { file: "/controlled/battle-preparation.png", width: 32, height: 32 };
   const initial = await seal(fixture.field), battle = await seal(fixture.battle);
@@ -323,7 +328,7 @@ for (const declaration of [...appModule.imports, ...audioModule.imports]) {
   for (const binding of declaration.importClause.namedBindings.elements)
     coreBindings[binding.name.text] = loaded[(binding.propertyName ?? binding.name).text];
 }
-const viewNames = new Set(["InventoryView", "EquipmentView", "PartyView", "ChoiceView", "ShopView", "Renderer", "BattleView"]);
+const viewNames = new Set(["InventoryView", "EquipmentView", "PartyView", "SourcePartySelectionView", "ChoiceView", "ShopView", "Renderer", "BattleView"]);
 const overlayBindings = { drawStoryTimer: (await import("../apps/game/story-overlay.js")).drawStoryTimer,
   syncFieldMessageView: (await import("../apps/game/source-message-view.js")).syncFieldMessageView };
 for (const declaration of appModule.imports) {
@@ -518,7 +523,7 @@ async function host(pack, { slots = new Map(), failBinding = false, search = "?p
     assert.equal(state.battleView.common, owner.battleCatalog.common,
       "BattleView must consume the newly published session catalog");
     assert.equal(state.inventoryView.args[1], owner.battleCatalog.gameState.items);
-    for (const name of ["InventoryView", "EquipmentView", "PartyView", "ShopView", "BattleView"]) {
+    for (const name of ["InventoryView", "EquipmentView", "PartyView", "SourcePartySelectionView", "ShopView", "BattleView"]) {
       const view = calls.views.filter(view => view.name === name).at(-1);
       assert.equal(view.args.at(-1).owner, owner, name + " must bind the exact published owner");
       assert.equal(view.args.at(-1).commands, state.commands, name + " must share the same command channel");
@@ -940,6 +945,31 @@ try {
     await eventually(() => !h.api.read().flow.busy && owner.battle, "Explicit battle preparation retry did not publish");
     assert.equal(owner.battle.content.encounterId, 1000); assert.equal(h.$("battle-loading").hidden, true);
     assert.deepEqual(owner.state.snapshot(), before); assert.equal(owner.state.inBattle, true);
+  });
+  await check("actual app battle Msg uses the same source owner and production dialogue, real key input, close, return and Storage restore", async () => {
+    const h = await host(await battlePackages(true)); await h.ready(); await h.$("start").onclick();
+    const owner = h.api.read().flow.session, messageOwner = owner.field.sourceMessage;
+    assert.equal(owner.field.startEvent("fight"), true); await h.frame(10);
+    await eventually(() => !h.api.read().flow.busy && owner.battle, "Message-bearing battle entry did not publish");
+    assert.equal(messageOwner.active, false, "Media publication does not pre-run the message");
+    for (let n=0;n<100&&!messageOwner.projection?.acceptsInput;n++) await h.frame(10);
+    assert.equal(owner.battle.sourceMessage, messageOwner); assert.equal(h.$("dialogue").hidden, false);
+    assert.equal(h.$("speaker").textContent, "Authored speaker"); assert.equal(h.$("message").textContent, "First page.");
+    assert.equal(h.$("dialogue").dataset.sourceWindow, "1");
+    const ticket=messageOwner.projection.windowTicket, pc=owner.battle.eventExecution.state.pc, time=owner.battle.time;
+    h.key("Enter"); await h.frame(10); assert.equal(messageOwner.projection.windowTicket, ticket);
+    assert.equal(owner.battle.eventExecution.state.pc, pc); assert.ok(owner.battle.time>time);
+    let inputs=1;
+    for(let n=0;n<1500&&owner.battle.phase==='active';n++) {
+      if(messageOwner.projection?.acceptsInput){h.key("Enter");inputs++;}
+      if(!owner.battle.messageInputPending) for(const actor of owner.battle.ready){const target=owner.battle.targets(actor.id,10)[0];if(target)owner.battle.command(actor.id,10,target.id);}
+      await h.frame(10);
+    }
+    assert.ok(inputs>=3); assert.equal(owner.battle.phase,'victory'); assert.equal(messageOwner.active,false);
+    await h.api.loadBattle(owner,'return'); await eventually(()=>!h.api.read().flow.busy&&!owner.battle,'Message battle return failed');
+    await h.frame(10);await h.frame(10);assert.equal(owner.checkpointReady,true);
+    h.$('menu-button').onclick();await h.$('save-game').onclick();const saved=await stored(h).load();assert.equal(saved.checkpoint.owned.completedBattles.length,1);
+    await h.$('load-game').onclick();assert.equal(h.api.read().flow.session.field.sourceMessage.active,false);assert.equal(h.api.read().flow.session.battle,null);
   });
   await check("an unrelated library image failure does not enter this encounter's preparation dependency set", async () => {
     const pack = await battlePackages(), unrelated = "/controlled/unrelated-enemy.png";

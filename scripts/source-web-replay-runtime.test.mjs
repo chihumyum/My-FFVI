@@ -9,15 +9,15 @@ import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
 const root=resolve(import.meta.dirname,'..'),compiled=resolve(root,process.env.FFVI_REPLAY_PORTS_COMPILED??'dist'),
  load=path=>import(pathToFileURL(resolve(compiled,path+'.js')));
 
-test('the detached Web replay pair is exactly the real app policy and current core constants',async()=>{
- const [{WEB_SOURCE_BOSS_ENTRY},{WEB_COMMITTED_BATTLE_RESULT}]=await Promise.all([load('src/core/source-boss-encounter'),load('src/core/source-battle-result')]),
+test('the detached Web replay policies are exactly the real app policy and current core constants',async()=>{
+ const [{WEB_SOURCE_BOSS_ENTRY},{WEB_COMMITTED_BATTLE_RESULT},{WEB_PUPPET_ROUTE_POLICY},{WEB_SCRIPTED_BATTLE_ACTIONS},{WEB_SOURCE_PARTY_SELECTION},{WEB_BATTLE_EVENT_MESSAGE_POLICY},{WEB_FLAT_FIELD_VIEW_CHANGE}]=await Promise.all([load('src/core/source-boss-encounter'),load('src/core/source-battle-result'),load('src/core/field-puppet-route'),load('src/core/scripted-battle-action'),load('src/core/source-party-selection'),load('src/core/battle-event-message'),load('src/core/field-view-change')]),
   text=await readFile(resolve(root,'apps/game/app.js'),'utf8'),ast=ts.createSourceFile('app.js',text,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS),imports=new Map();
  for(const node of ast.statements)if(ts.isImportDeclaration(node)&&node.importClause?.namedBindings&&ts.isNamedImports(node.importClause.namedBindings))for(const name of node.importClause.namedBindings.elements)imports.set(name.name.text,node.moduleSpecifier.text);
  let runtime;function visit(node){if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==='runtime')runtime=node.initializer;ts.forEachChild(node,visit);}visit(ast);
  assert.ok(runtime&&ts.isObjectLiteralExpression(runtime));
- const expected={sourceBossEntry:['WEB_SOURCE_BOSS_ENTRY','/runtime/core/source-boss-encounter.js',WEB_SOURCE_BOSS_ENTRY],sourceBattleResult:['WEB_COMMITTED_BATTLE_RESULT','/runtime/core/source-battle-result.js',WEB_COMMITTED_BATTLE_RESULT]},first=sourceWebReplayRuntimePorts();
+ const expected={viewChange:[null,null,WEB_FLAT_FIELD_VIEW_CHANGE],battleEventMessages:['WEB_BATTLE_EVENT_MESSAGE_POLICY','/runtime/core/battle-event-message.js',WEB_BATTLE_EVENT_MESSAGE_POLICY],sourcePartySelection:['WEB_SOURCE_PARTY_SELECTION','/runtime/core/source-party-selection.js',WEB_SOURCE_PARTY_SELECTION],sourceBossEntry:['WEB_SOURCE_BOSS_ENTRY','/runtime/core/source-boss-encounter.js',WEB_SOURCE_BOSS_ENTRY],sourceBattleResult:['WEB_COMMITTED_BATTLE_RESULT','/runtime/core/source-battle-result.js',WEB_COMMITTED_BATTLE_RESULT],puppetRoutes:[null,null,WEB_PUPPET_ROUTE_POLICY],scriptedBattleActions:['WEB_SCRIPTED_BATTLE_ACTIONS','/runtime/core/scripted-battle-action.js',WEB_SCRIPTED_BATTLE_ACTIONS]},first=sourceWebReplayRuntimePorts();
  assert.deepEqual(Object.keys(first).sort(),Object.keys(expected).sort());assert.equal(Object.isFrozen(first),true);
- for(const[key,[identifier,path,value]]of Object.entries(expected)){const field=runtime.properties.find(p=>ts.isPropertyAssignment(p)&&p.name.getText(ast)===key);assert.ok(field);assert.equal(field.initializer.getText(ast),identifier);assert.equal(imports.get(identifier),path);assert.equal(first[key],value);}
+ for(const[key,[identifier,path,value]]of Object.entries(expected)){const field=runtime.properties.find(p=>ts.isPropertyAssignment(p)&&p.name.getText(ast)===key);assert.ok(field);if(identifier===null){assert.ok(ts.isStringLiteral(field.initializer));assert.equal(field.initializer.text,value);}else{assert.equal(field.initializer.getText(ast),identifier);assert.equal(imports.get(identifier),path);}assert.equal(first[key],value);}
  assert.throws(()=>{first.sourceBattleResult='fallback-zero';});assert.notEqual(first,sourceWebReplayRuntimePorts());assert.deepEqual(sourceWebReplayRuntimePorts(),first);
 });
 

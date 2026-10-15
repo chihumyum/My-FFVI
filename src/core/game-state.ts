@@ -1,3 +1,4 @@
+import { previewSourcePartySelection, type FieldSourcePartySelectionPort, type SourcePartySelectionModel, type SourcePartySelectionOutcome } from './source-party-selection.js';
 import { WEB_SOURCE_SCRIPT_RANDOM, validateScriptRandomUpper, type WebSourceScriptRandom, type FieldScriptRandomPort } from "./field-script-random.js";
 import type { CombatantDefinition, BattleContent } from "./battle-content.js";
 import type { BattleEntryInventory, BattleInventoryWithQualification } from "./battle-entry.js";
@@ -1039,6 +1040,24 @@ export class GameState {
   }
   /** Menu organization changes only saved cells and the selected group. It
    * never performs the source Join/Unlock lifecycle or changes owned resources. */
+  /** Shared source UI transaction; the UI never owns a roster or durable slot state. */
+  private sourceSelectionRead(data: GameStateSnapshot) {
+    return {party:structuredClone(data.party),roster:data.roster.map(({id,sourceId,enabled})=>({id,sourceId,enabled}))};
+  }
+  readonly fieldSourcePartySelection: FieldSourcePartySelectionPort = {
+    read:()=>this.sourceSelectionRead(this.data),
+    capture:()=>{this.requireIdle();const revision=this.revision,current=this.sourceSelectionRead(this.data);
+      return {current,validate:()=>{if(this.inBattle||this.revision!==revision) throw new Error('Stale source party selection ownership');}};},
+    prepare:(model,outcome)=>this.prepareSourcePartySelection(model,outcome),
+  };
+  prepareSourcePartySelection(model:SourcePartySelectionModel,outcome:SourcePartySelectionOutcome) {
+    this.requireIdle(); const next=this.snapshot(),revision=this.revision;
+    next.party=previewSourcePartySelection(model,this.sourceSelectionRead(next),outcome); this.validate(next);
+    let consumed=false;
+    const validate=()=>{this.requireIdle();if(consumed||this.revision!==revision) throw new Error('Stale source party selection transaction');};
+    return {appearance:this.projectPartyAppearance(next),confirmed:outcome.kind==='confirm',validate,
+      commitWith:(publish:()=>void)=>{this.commitMenuPresentation(next,validate,publish);consumed=true;}};
+  }
   preparePartyMenu(request: PartyMenuRequest) {
     this.requireIdle();
     const next = this.snapshot(), revision = this.revision;
@@ -1227,6 +1246,7 @@ export class GameState {
       inventory: FieldInventoryPort;
       treasure: FieldTreasurePort;
       party: FieldPartyPort;
+      sourcePartySelectionPort: FieldSourcePartySelectionPort;
       roster: FieldRosterPort;
       ownedConditions: FieldOwnedConditionPort;
       recovery: FieldRecoveryPort;
@@ -1332,6 +1352,30 @@ export class GameState {
           ...projection,
           commit: () => commitWith(() => {}), commitWith,
         };
+      },
+    };
+    const sourcePartySelectionPort: FieldSourcePartySelectionPort = {
+      read:()=>this.sourceSelectionRead(published?this.data:data),
+      capture:()=>{
+        if(published)return this.fieldSourcePartySelection.capture();
+        const version=generation,owner=data,current=this.sourceSelectionRead(data);
+        // The same map port survives its one publication. Bind that exact
+        // draft identity/revision rather than granting a newly selected bank.
+        return {current,validate:()=>{if(this.inBattle||generation!==version||data!==owner||
+          (published?(this.data!==owner||this.revision!==publicationRevision):this.revision!==revision))
+          throw new Error('Stale candidate source party selection owner');}};
+      },
+      prepare:(model,outcome)=>{
+        if(published)return this.prepareSourcePartySelection(model,outcome);
+        const next=structuredClone(data),version=generation;
+        next.party=previewSourcePartySelection(model,this.sourceSelectionRead(data),outcome);this.validate(next);let consumed=false;
+        const validate=()=>{this.requireIdle();if(consumed||published||transportationPublishing||generation!==version||this.revision!==revision)
+          throw new Error('Stale candidate source party selection transaction');};
+        return {appearance:this.projectPartyAppearance(next),confirmed:outcome.kind==='confirm',validate,commitWith:(publish)=>{
+          validate();if(typeof publish!=='function'||publish.constructor.name==='AsyncFunction')throw new Error('Source party publication must be synchronous');
+          transportationPublishing=true;try {const result:unknown=publish();if(result&&typeof (result as {then?:unknown}).then==='function')
+            throw new Error('Source party publication must be synchronous');data=next;generation++;consumed=true;}finally{transportationPublishing=false;}
+        }};
       },
     };
     const roster: FieldRosterPort = {
@@ -1466,6 +1510,7 @@ export class GameState {
     } : undefined;
     return {
       ports: {
+        sourcePartySelectionPort,
         inventory,
         treasure,
         party,

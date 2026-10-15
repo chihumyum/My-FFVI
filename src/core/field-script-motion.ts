@@ -120,6 +120,8 @@ export function prepareFieldScriptMove(command: FieldScriptMove, from: Point, co
 export type FieldScriptRoute = {
   points: Point[]; index: number; pendingSegment: boolean;
   direction: Direction; animation: string; animationSecondsPerCell: number;
+  /** Shared Actor.motion path, with per-segment Web collision revalidation. */
+  search?: "web-source-puppet-route-grid-v1";
 };
 export type FieldActorMotion = {
   from: Point; to: Point; elapsed: number; duration: number; manual: boolean;
@@ -145,6 +147,11 @@ export function prepareFieldActorMotionTick(motion: Readonly<FieldActorMotion>, 
     }
     route.index++; route.pendingSegment = false;
     next.from = { ...next.to }; next.to = { ...destination }; next.elapsed = 0;
+    if (route.search === "web-source-puppet-route-grid-v1") {
+      const dx = next.to.x - next.from.x, dy = next.to.y - next.from.y;
+      if (Math.abs(dx) + Math.abs(dy) !== 1) throw new Error("Invalid Puppet Route waypoint adjacency");
+      route.direction = dx === 1 ? "right" : dx === -1 ? "left" : dy === 1 ? "down" : "up";
+    }
     playback?.move(route.direction, route.animationSecondsPerCell, route.animation || undefined);
     playback?.frame();
     // FieldEntity.Update starts the next segment on this update and does not

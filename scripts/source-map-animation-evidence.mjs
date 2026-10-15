@@ -106,7 +106,9 @@ export function compareSourceMapAnimationAddition(before, after, evidence, proof
         const familyRows = group => group.entities.filter(e => e.kind === 10);
         const familySources = new Set(Object.values(evidence.groups).flatMap(pair => [...pair.sources]));
         const isActiveFamily = entity => entity.kind === 10 || familySources.has(canonical(entity.source));
-        const covered = (b, sources) => sources.has(canonical(b.source)) || b.reason.startsWith('Missing character pose ');
+        // Kind10 permission covers only its own physical rows. Ordinary NPC
+        // initialization diagnostics have a separate exact source audit.
+        const covered = (b, sources) => sources.has(canonical(b.source));
         const familyBlockers = (group, sources) => group.blockers.filter(b => covered(b, sources));
         const actualNext = (g, document) => ({ ...g, blockers: g.blockers.filter(b => !(b.reason === 'Native animated map entity presentation/lifecycle is unbound' && document.developmentProfile?.mapAnimatedEntities === 'web-field-animated-map-entities-v1')) });
         for (const [name, pair] of Object.entries(evidence.groups)) {

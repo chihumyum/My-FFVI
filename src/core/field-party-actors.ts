@@ -1,3 +1,4 @@
+import { WEB_SOURCE_PARTY_SELECTION, type WebSourcePartySelection } from './source-party-selection.js';
 import { canonical } from "./canonical.js";
 import { checkpointKeys, checkpointInteger } from "./checkpoint-validation.js";
 import { preparePartyActors, type PartyActorCatalog, type PartyActorContext,
@@ -69,7 +70,10 @@ export class FieldPartyActors {
   constructor(catalog: PartyActorCatalog,
     origin: FieldPartyActorCheckpoint,
     transportationId: number | null,
-    private readonly transportationPresentation?: FieldTransportActorPresentation) {
+    private readonly transportationPresentation?: FieldTransportActorPresentation,
+    private readonly sourcePartySelection?: WebSourcePartySelection,
+    private readonly readViewType?: () => 0|1|2) {
+    if(sourcePartySelection!==undefined&&sourcePartySelection!==WEB_SOURCE_PARTY_SELECTION) throw new Error("Unknown source party selection policy");
     this.catalog = structuredClone(catalog);
     this.origin = { ...structuredClone(origin), context: detachedContext(origin.context) };
     this.state = structuredClone(this.origin);
@@ -77,7 +81,7 @@ export class FieldPartyActors {
       throw new Error("Party appearance transportation is not bound to this field");
     this.validate(this.state);
   }
-  private validate(value: FieldPartyActorCheckpoint) {
+  private validate(value: FieldPartyActorCheckpoint, preparedViewType?:0|1|2) {
     checkpointKeys(value, "kind,context,playerAssetCacheId");
     if (value.kind !== "field-party-actors-v1") throw new Error("Unknown field party appearance checkpoint");
     const c = value.context, base = this.origin.context;
@@ -90,16 +94,23 @@ export class FieldPartyActors {
     // transport identity. Other providers remain bound to this map's origin.
     if (this.transportationPresentation !== "framework-development" && canonical(c.currentTransport) !== canonical(base.currentTransport))
       throw new Error("Unsupported saved appearance provider change: currentTransport");
-    for (const key of ["conditionResidents", "companion", "conditionColliders", "camera"] as const)
+    for (const key of ["conditionResidents", "companion", "conditionColliders"] as const)
       if (canonical(c[key]) !== canonical(base[key])) throw new Error("Unsupported saved appearance provider change: " + key);
+    checkpointKeys(c.camera,"mapViewType,mapArea");
+    if(canonical(c.camera.mapArea)!==canonical(base.camera.mapArea)||
+      c.camera.mapViewType!==(preparedViewType??this.readViewType?.()??base.camera.mapViewType))
+      throw new Error("Saved party camera is not the existing camera owner's view projection");
     if (!Array.isArray(c.multiParty) || c.multiParty.length !== 3 ||
       !Array.isArray(c.puppets) || c.puppets.length !== base.puppets.length)
       throw new Error("Saved native actor inventory changed");
     for (const [index, party] of c.multiParty.entries()) {
       checkpointKeys(party, "leaderIndex,members,actor");
       if (!Array.isArray(party.members) || party.members.length) throw new Error("Duplicate saved party ownership");
-      if (party.leaderIndex !== base.multiParty[index]!.leaderIndex)
-        throw new Error("Unsupported saved per-party leader change");
+      if(party.leaderIndex!==base.multiParty[index]!.leaderIndex) {
+        if(this.sourcePartySelection!==WEB_SOURCE_PARTY_SELECTION)
+          throw new Error("Unsupported saved per-party leader change");
+        checkpointInteger(party.leaderIndex,0,3);
+      }
     }
     const actors = instances(c), initial = instances(base);
     if (canonical(actors.map((a) => a.id)) !== canonical(initial.map((a) => a.id)))
@@ -134,9 +145,12 @@ export class FieldPartyActors {
   /** Publish bookkeeping already produced by source refreshes on a private
    * actor draft. This does not run renderer effects or initialize actors. */
   prepareState(raw: FieldPartyActorCheckpoint): FieldPartyActorRendererPublication {
+    return this.prepareStateForView(raw);
+  }
+  private prepareStateForView(raw:FieldPartyActorCheckpoint, viewType?:0|1|2):FieldPartyActorRendererPublication {
     if (this.publishing) throw new Error("Cannot prepare party appearance during publication");
     const next = structuredClone(raw), revision = this.revision;
-    this.validate(next);
+    this.validate(next,viewType);
     let validated = false, committed = false;
     return {
       validate: () => {
@@ -150,6 +164,14 @@ export class FieldPartyActors {
         this.state = next; this.revision++; committed = true;
       },
     };
+  }
+  /** Derived bookkeeping only; caller commits the unique camera view owner in
+   * the same synchronous transaction. It cannot change any actor/transport. */
+  prepareView(mapViewType:0|1|2):FieldPartyActorRendererPublication {
+    if(!this.readViewType||![0,1,2].includes(mapViewType))throw new Error("Trusted field camera view owner is unavailable");
+    const before=this.readViewType(), next=this.checkpoint();next.context.camera.mapViewType=mapViewType;
+    const prepared=this.prepareStateForView(next,mapViewType);
+    return {validate:()=>{if(this.readViewType!()!==before)throw new Error("Stale camera view projection");prepared.validate();},commit:prepared.commit};
   }
   /** Bookkeeping half of a containing actor/controller transaction. The caller
    * projects the SAME ordered operations onto native actors and validates both
@@ -188,11 +210,18 @@ export class FieldPartyActors {
   prepareSequence(
     steps: readonly { appearance: PartyAppearanceCandidate; setDummy: boolean }[],
     renderer: FieldPartyActorRenderer,
+    selectionLeaders?: readonly [number,number,number],
   ): FieldPartyActorPublication {
     if (!Array.isArray(steps)) throw new Error("Missing ordered party appearance steps");
     if (this.publishing) throw new Error("Cannot prepare party appearance during publication");
     const revision = this.revision;
     let next = this.checkpoint();
+    if(selectionLeaders) {
+      if(this.sourcePartySelection!==WEB_SOURCE_PARTY_SELECTION)throw new Error('Source party selection leader policy is unavailable');
+      selectionLeaders.forEach(v=>checkpointInteger(v,0,3));
+      next.context.multiParty.forEach((p,i)=>{p.leaderIndex=selectionLeaders[i]!;});
+      next.context.leaderIndex=selectionLeaders[0];
+    }
     const rendered: FieldPartyActorRenderStep[] = [];
     for (const step of steps) {
       if (!step || typeof step.setDummy !== "boolean") throw new Error("Unknown party appearance dummy request");
@@ -231,6 +260,13 @@ export class FieldPartyActors {
     renderer: FieldPartyActorRenderer,
     setDummy = true): FieldPartyActorPublication {
     return this.prepareSequence([{ appearance: candidate, setDummy }], renderer);
+  }
+  prepareSourceSelection(candidate:PartyAppearanceCandidate, renderer:FieldPartyActorRenderer,
+    confirmed:boolean):FieldPartyActorPublication {
+    if(this.sourcePartySelection!==WEB_SOURCE_PARTY_SELECTION)throw new Error('Source party selection leader policy is unavailable');
+    const leaders=(confirmed?candidate.parties.map(p=>p.length?p[0]!.index:0):
+      this.state.context.multiParty.map(p=>p.leaderIndex)) as [number,number,number];
+    return this.prepareSequence([{appearance:candidate,setDummy:true}],renderer,leaders);
   }
   private prepareStep(state: FieldPartyActorCheckpoint, candidate: PartyAppearanceCandidate,
     setDummy: boolean): { next: FieldPartyActorCheckpoint; render: FieldPartyActorRenderStep } {

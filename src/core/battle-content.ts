@@ -283,6 +283,7 @@ export function encounterContent(
     contentHash: catalog.contentHash };
 }
 export type AbilityDefinition = {
+  nonDamagingPresentation?: import("./non-damaging-ability.js").NonDamagingAbilityPresentation;
   /** Source AbilityUtility/FF6 hit classification, independent of the effect
    * plan. It does not itself authorize an effect or an active condition. */
   conditionRecoveryHit?: { kind: "source-condition-recovery-hit-v1"; forAiType: number; isMagic: boolean };
@@ -293,7 +294,7 @@ export type AbilityDefinition = {
   blockers: string[];
   limitations: string[];
   /** Presentation only. Logic dispatches the complete admitted effect plan. */
-  presentation: "beam" | "heal" | "physical" | "condition" | "row" | "unsupported";
+  presentation: "beam" | "heal" | "physical" | "condition" | "row" | "source-effect-deferred" | "unsupported";
   power: number;
   cost: number;
   wait: number;

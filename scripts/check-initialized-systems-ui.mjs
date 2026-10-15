@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { createHash, webcrypto } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, posix } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { deflateSync } from "node:zlib";
 import vm from "node:vm";
@@ -24,7 +24,7 @@ const { CheckpointStorage } = await load("src/core/saved-game.js");
 const { contentDigest } = await load("src/core/content-integrity.js");
 const app = await readFile(resolve(root, "apps/game/app.js"), "utf8");
 const html = await readFile(resolve(root, "apps/game/index.html"), "utf8");
-const uiNames = ["audio", "story-overlay", "source-message-view", "magic-stones-view", "party-view", "shop-view", "choice-view", "inventory-view", "equipment-view"];
+const uiNames = ["audio", "story-overlay", "source-message-view", "magic-stones-view", "party-view", "source-party-selection-view", "shop-view", "choice-view", "inventory-view", "equipment-view"];
 const ui = Object.fromEntries(await Promise.all(uiNames.map(async name =>
   [name, await readFile(resolve(root, "apps/game", name + ".js"), "utf8")])));
 const reportPath = resolve(root, "build/reports/initialized-systems-ui-check.json");
@@ -62,7 +62,7 @@ for (const entry of [...appModule.imports, ...stripImports(ui.audio, "audio.js")
 assert.equal((appModule.body.match(/init\(\)\.catch\(failure\);/g) ?? []).length, 1);
 const appBody = appModule.body.replace("init().catch(failure);", "globalThis.__init = init().catch(failure);") + `
 globalThis.__app = {
-  read: () => ({ flow, commands, game, contents, contentSessions, failed, entryLoad, sourceBoot, partyView, shopView,
+  read: () => ({ flow, commands, game, contents, contentSessions, failed, entryLoad, sourceBoot, partyView, sourcePartySelectionView, shopView,
     battleView, inventoryView, contentProfile, renderer, entryLoader, images, battleLoadAttempt }),
   runtime, frame, sync, reset, startInitializedGame, returnToTitle, pause, saveGame, loadGame
 };`;
@@ -168,7 +168,7 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
         digest = sha(bytes); calls.imageBytes.push(digest);
       }
       const owner = context.__app?.read().flow.currentSession;
-      if (owner) calls.nativeAtDecode.push({ field: owner.field, fingerprint: owner.field.nativeActorStateFingerprint });
+      if (owner) calls.nativeAtDecode.push({ field: owner.field, fingerprint: owner.field.nativeActorStateFingerprint, camera:owner.field.cameraSnapshot });
       const hold = heldImages.get(this.file) ?? heldImages.get(`sha256:${digest}`); if (hold) await hold.promise;
       if (failedImages.has(this.file) || failedImages.has(`sha256:${digest}`))
         throw new Error("Controlled image failure: " + this.file);
@@ -224,7 +224,7 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
     },
   });
   const exports = { audio: ["AudioOutput", "audioProjection"], "story-overlay": ["drawStoryTimer"], "source-message-view": ["fieldMessageView", "syncFieldMessageView"], "magic-stones-view": ["MagicStoneView"],
-    "party-view": ["PartyView"], "shop-view": ["ShopView"], "choice-view": ["ChoiceView"],
+    "party-view": ["PartyView"], "source-party-selection-view":["SourcePartySelectionView"], "shop-view": ["ShopView"], "choice-view": ["ChoiceView"],
     "inventory-view": ["InventoryView"], "equipment-view": ["EquipmentView"] };
   for (const name of uiNames) {
     const body = stripImports(ui[name], name + ".js").body.replace(/\bexport (?=class |function |const )/g, "");
@@ -338,6 +338,9 @@ async function packages(packageId = "controlled-initialized-ui", sourceEncounter
     "ui-practice": site("ui-practice", [{ kind: "encounter", party: entry.encounterId, continuation: "ui-return" }]),
     "ui-return": site("ui-return", [{ kind: "exit" }]),
   };
+  if(packageId==='controlled-source-party-selection') {
+    scripts['ui-acquire']=site('ui-acquire',[{kind:'source-party-selection',command:{kind:'source-party-selection',mode:'two'}},{kind:'wait',seconds:.03},{kind:'exit'}]);
+  }
   if (cameraShake) {
     const parent = sha("declared-controlled-shake-ui-source-parent");
     f.map.parentSourceSetHash = f.world.parentSourceSetHash = parent;
@@ -423,6 +426,42 @@ async function packages(packageId = "controlled-initialized-ui", sourceEncounter
     scripts["ui-acquire"] = site("ui-acquire", [compileFieldFiniteAnimationInstruction({type:2,mnemonic:"PlayAnim",operands:{
       iValues:[0,3,0,0,0,0,0,0],rValues:[.25,0,0,0,0,0,0,0],sValues:["Default","","","","","","",""]}}),
       {kind:"inventory",command:{kind:"grant-item",id:itemId,count:1},result:null,dependencies:[]},{kind:"exit"}]);
+  }
+  if(packageId === "controlled-ordinary-presentation") {
+    const {compileFrameworkOrdinaryPresentation}=await load("src/compiler/framework-ordinary-presentation.js"),
+      {ordinaryFieldCompositionRenderHost}=await load("src/core/field-native-composition.js"),
+      [tileSource,packageSource]=f.map.actorView.sources.map(row=>structuredClone(row.source)),geometry=f.map.map;
+    geometry.source=structuredClone(tileSource);geometry.layers=[{name:"BottomLayer",width:geometry.width,height:geometry.height,
+      opacity:1,data:Array(geometry.width*geometry.height).fill(0)}];
+    f.map.entryView={mapId:f.map.mapId,isWorld:false,loopType:0,sources:{map:source,area:source}};
+    f.map.partyEntry.loopType=0;f.map.cameraHost.loop={horizontal:false,vertical:false};
+    const issue={reason:"Source actor water/group material provider is unresolved",source:tileSource};
+    f.map.actorViewBlockers=[issue];f.map.nativeCompositionBlockers=[issue];
+    f.map.developmentProfile.fieldPresentation=f.world.developmentProfile.fieldPresentation="framework-ordinary-field-flat-v1";
+    const tilemap={source:tileSource,data:{width:geometry.width,height:geometry.height,tilewidth:16,tileheight:16,orientation:"orthogonal",infinite:false,properties:[],
+      layers:[{type:"group",name:"TileGroup",visible:true,opacity:1,properties:[{name:"body_threshold",type:"int",value:12}],
+        layers:geometry.layers.map(row=>({...structuredClone(row),type:"tilelayer",visible:true,properties:[]}))}]}},
+      mapPackage={source:packageSource,data:{map:[{tilemap:posix.relative(posix.dirname(packageSource.assetPath),tileSource.assetPath).replace(/\.json$/,"")}],texture:[]}};
+    f.map.frameworkPresentation=compileFrameworkOrdinaryPresentation({map:await seal(f.map),sources:[{file:tileSource.file,sha256:tileSource.sha256}],tilemap,mapPackage,
+      renderHost:ordinaryFieldCompositionRenderHost()});
+  }
+  if(["controlled-scripted-battle-action","controlled-non-damaging-battle-action"].includes(packageId)) {
+    const {compileScriptedBattleAction}=await load("src/compiler/battle-scripted-action.js");
+    const op=compileScriptedBattleAction({type:1,mnemonic:"BattleAction",operands:{
+      iValues:[1,f.battle.common.players[0].sourceId,10,2,0,0,0,0],rValues:Array(8).fill(0),sValues:Array(8).fill("")}});
+    let nonDamagingOp;
+    if(packageId === "controlled-non-damaging-battle-action") {
+      const {battleAbilityContentFixture}=await load("tests/fixtures/battle-ability-content.js"),
+        {compileBattleAbilityContent}=await load("src/compiler/battle-ability-content.js"),rows=battleAbilityContentFixture();
+      Object.assign(rows.ability,{type_id:"35",system_id:"2",battle_renge_id:"5",standard_value:"0",use_value:"0",ability_wait:"0",battle_effect_asset_id:"0"});
+      rows.tables["function.csv"][0].type_id="19";rows.group.function1_value1=rows.group.function1_value2="0";rows.tables["content.csv"]=[];
+      f.battle.common.abilities[901]=compileBattleAbilityContent(rows.reader(),rows.tables,rows.resolveName).abilities[901];
+      nonDamagingOp=compileScriptedBattleAction({type:1,mnemonic:"BattleAction",operands:{iValues:[1,f.battle.common.players[0].sourceId,901,2,0,0,0,0],rValues:Array(8).fill(0),sValues:Array(8).fill("")}});
+    }
+    f.battle.common.battleEvents={conditions:f.battle.common.conditions.rules.definitions.map(({id,type})=>({id,type,attackTarget:type===5?1:0,gameOverTarget:type===5?1:0}))};
+    entry.lifecycle={kind:"battle-lifecycle-v1",mode:"script",scriptId:1,program:{kind:"battle-event-v1",source:{file:"synthetic-scripted-action.bundle",assetPath:"sc_b_controlled_action.json",serializedFile:"synthetic",objectId:"1",sha256:sha("controlled-action"),sourceSetHash:sha("controlled-action-corpus"),battleSourceSetHash:sha("controlled-action-battle")},entry:0,end:3,
+      localNames:["after"],initialLocals:[0],instructions:[{mnemonic:"BattleAction",op},{mnemonic:"Calc",op:{kind:"calc",index:0,operator:"＋",right:{kind:"immediate",value:1}}},{mnemonic:"Exit",op:{kind:"exit"}}],blockers:[]}};
+    if(nonDamagingOp) { entry.lifecycle.program.instructions.unshift({mnemonic:"BattleAction",op:nonDamagingOp});entry.lifecycle.program.end++; }
   }
   f.map = await seal(f.map); f.battle = await seal(f.battle);
   f.world.maps[String(f.map.mapId)].contentHash = f.map.contentHash;
@@ -545,6 +584,11 @@ async function conditionActivityPackages(packageId = "controlled-condition-activ
       collision: null, destinationLayer: null, source };
     map.map.entities.push(entity); map.map.groups.entity_default.entities.push(structuredClone(entity));
     map.map.textures = { controlled: "/controlled/condition-field-" + map.mapId + ".png" };
+    if(packageId === "controlled-field-view-change") {
+      const {compileFieldViewChangeInstruction}=await load("src/compiler/field-view-change.js");
+      const op=compileFieldViewChangeInstruction({type:1,mnemonic:"ChangeView",operands:{iValues:[1,0,0,0,0,0,0,0],rValues:[.016,0,0,0,0,0,0,0],sValues:Array(8).fill("")}});
+      map.scripts[name].splice(map.scripts[name].length-1,0,{...op,script:name,index:map.scripts[name].length-1,source});
+    }
     maps.push(await seal(map));
   }
   const [map, target] = maps;
@@ -1254,6 +1298,92 @@ try {
     assert.equal(restored.state.snapshot().items.find(row=>row.id===pack.itemId)?.count??0,before+1);
     assert.deepEqual(restored.field.finiteAnimationExecutions,[]);report.finiteAnimationLifecycle={actualApp:true,actualRepository:true,actualCommands:true,actualRAF:true,
       completedRepeatInstructions:1,actualPlayCalls:3,storageWrites:h.calls.writes,pausedByVisibility:true,sourceStoryReachability:false,nativeParity:false};
+  });
+  await check("explicit ordinary alternative uses actual app startup, source triggers, storage and native binding while strict diagnostics survive",async()=>{
+    const pack=await packages("controlled-ordinary-presentation"),h=await host(pack),owner=await start(h),field=owner.field;
+    assert.equal(field.player.native.entity.viewBinding.properties.kind,"framework-flat-field-view-projection-v1");
+    assert.equal(pack.map.actorViewBlockers[0].reason,"Source actor water/group material provider is unresolved");
+    assert.equal(pack.map.frameworkPresentation.view.policy,"framework-ordinary-field-flat-v1");
+    const count=()=>h.bound().state.snapshot().nativeState.ownedMagicStones.length,before=count();await move(h,"right");
+    for(let i=0;i<40&&field.busy;i++)await h.frame();assert.equal(count(),before+1);assert.equal(owner.field,field);
+    assert.equal(h.api.read().renderer.game,field);await pauseMenu(h);const saved=owner.checkpoint();
+    await h.click(h.$("save-game"));await h.click(h.$("load-game"));const restored=h.bound();assert.notEqual(restored,owner);
+    assert.deepEqual(restored.checkpoint(),saved);assert.equal(restored.field.player.native.entity.viewBinding.properties.kind,"framework-flat-field-view-projection-v1");
+    await resume(h);await h.frame();assert.equal(h.api.read().renderer.game,restored.field);assert.equal(count(),before+1);
+    report.ordinaryPresentationLifecycle={actualApp:true,actualRepository:true,actualCommands:true,actualRAF:true,actualStorage:true,
+      retainedStrictDiagnostics:pack.map.actorViewBlockers,policy:pack.map.frameworkPresentation.view.policy,storageWrites:h.calls.writes,
+      sourceStoryReachability:false,nativeParity:false};
+  });
+  await check("source-shaped scripted action uses actual app queue, effect, VM continuation, owned settlement and Storage",async()=>{
+    const pack=await packages("controlled-scripted-battle-action"),h=await host(pack),owner=await start(h);
+    assert.equal(h.api.runtime.scriptedBattleActions,core.WEB_SCRIPTED_BATTLE_ACTIONS);
+    await move(h,"right");await move(h,"right");
+    for(let i=0;i<80&&!owner.battle;i++)await h.frame();assert.ok(owner.battle,h.api.read().battleLoadAttempt?.error?.stack);
+    const battle=owner.battle,before=owner.state.snapshot(),hp=battle.enemies.map(enemy=>enemy.hp);
+    assert.equal(battle.pendingActions.some(action=>action.kind==="event")||battle.action?.kind==="event",true);
+    assert.deepEqual(battle.enemies.map(enemy=>enemy.hp),hp);let staged=false,effect=false;
+    for(let i=0;i<120&&battle.phase==="active";i++){await h.frame();staged ||= battle.action?.kind==="event";
+      effect ||= !!battle.action?.results.length;}
+    assert.equal(staged,true);assert.equal(effect,true);assert.equal(battle.phase,"victory");assert.equal(battle.eventExecution.state.locals[0],1);
+    assert.equal(owner.state.snapshot().completedBattles.length,before.completedBattles.length);
+    await win(h,pack);const settled=owner.state.snapshot();assert.equal(settled.completedBattles.length,1);
+    await pauseMenu(h);const saved=owner.checkpoint();await h.click(h.$("save-game"));await h.click(h.$("load-game"));const restored=h.bound();
+    assert.notEqual(restored,owner);assert.deepEqual(restored.checkpoint(),saved);await resume(h);for(let i=0;i<8;i++)await h.frame();
+    assert.deepEqual(restored.state.snapshot(),settled);assert.equal(restored.battle,null);
+    report.scriptedBattleActionLifecycle={policy:h.api.runtime.scriptedBattleActions,actualQueue:true,actualEffect:true,actualVmContinuation:true,
+      actualStorage:true,onceSettlement:true,storageWrites:h.calls.writes,sourceStoryReachability:false,nativeDynamicParity:false};
+  });
+  await check("non-damaging source ability preserves actual app action stages and no HP change, then settles and restores once",async()=>{
+    const pack=await packages("controlled-non-damaging-battle-action"),h=await host(pack),owner=await start(h);
+    await move(h,"right");await move(h,"right");for(let i=0;i<80&&!owner.battle;i++)await h.frame();
+    assert.ok(owner.battle,h.api.read().battleLoadAttempt?.error?.stack);const battle=owner.battle,
+      before=battle.combatants.map(unit=>({id:unit.id,hp:unit.hp,mp:unit.mp,conditions:[...unit.conditionIds]}));
+    let resolved=false;for(let i=0;i<120&&!resolved;i++){await h.frame();const action=battle.action;
+      resolved=action?.source.id===901&&action.resolved;if(resolved){assert.equal(action.results[0].effects[0].resource,"none");assert.equal(action.results[0].effects[0].calcResult.hitType,0);
+        assert.deepEqual(battle.combatants.map(unit=>({id:unit.id,hp:unit.hp,mp:unit.mp,conditions:unit.conditionIds})),before);}}
+    assert.equal(resolved,true);for(let i=0;i<160&&battle.phase==="active";i++)await h.frame();assert.equal(battle.phase,"victory");
+    await win(h,pack);const settled=owner.state.snapshot();assert.equal(settled.completedBattles.length,1);await pauseMenu(h);const stable=owner.checkpoint();
+    await h.click(h.$("save-game"));await h.click(h.$("load-game"));const restored=h.bound();assert.deepEqual(restored.checkpoint(),stable);await resume(h);for(let i=0;i<8;i++)await h.frame();assert.deepEqual(restored.state.snapshot(),settled);
+    report.nonDamagingBattleAction={sourceEffectPolicy:battle.content.abilities[901].nonDamagingPresentation,actualApp:true,actualQueue:true,fixedHit:true,unchangedParameters:true,onceSettlement:true,actualStorage:true,sourceStoryReachability:false,nativeDynamicParity:false};
+  });
+  await check("source party selection uses actual app candidate editing, captured commands and the same native/owned Storage owner",async()=>{
+    const pack=await packages('controlled-source-party-selection'),h=await host(pack),owner=await start(h),field=owner.field;
+    const before=owner.state.snapshot(),actor=field.player,entity=actor.native.entity;
+    await move(h,'right');await h.frame();assert.equal(h.api.read().flow.phase,'party-selection');
+    const panel=h.$('source-party-selection'),getSelects=()=>walk(panel).filter(n=>n.tagName==='SELECT');
+    assert.equal(panel.hidden,false);assert.equal(getSelects().length,8);assert.deepEqual(owner.state.snapshot(),before);
+    const time=field.time;await h.frame(100);assert.equal(field.time,time);
+    let selects=getSelects();selects[0].value=before.roster[1].id;selects[0].onchange();
+    selects=getSelects();selects[4].value=before.roster[0].id;selects[4].onchange();
+    const confirm=button(h,'source-party-selection','确认编队'),retained=confirm.onclick;
+    await h.click(confirm);for(let i=0;i<30&&!owner.checkpointReady;i++)await h.frame(20);
+    assert(owner.checkpointReady,field.stop?.message);assert.equal(field.player,actor);assert.equal(actor.native.entity,entity);
+    assert.equal(owner.state.snapshot().party.slots[0][0].id,before.roster[1].id);
+    assert.equal(owner.state.snapshot().party.slots[1][0].id,before.roster[0].id);
+    await pauseMenu(h);await h.click(h.$('save-game'));const saved=owner.checkpoint();await h.click(h.$('load-game'));
+    const restored=h.bound();assert.notEqual(restored,owner);assert.deepEqual(restored.checkpoint(),saved);
+    retained();assert.deepEqual(restored.checkpoint(),saved);assert.deepEqual(owner.state.snapshot().roster,before.roster);
+    report.sourcePartySelection={actualApp:true,actualCommands:true,actualNativeOwner:true,detachedUi:true,storageWrites:h.calls.writes,sourceStoryReachability:false,nativeParity:false};
+  });
+  await check("source ChangeView uses the actual app policy across delayed media failure/retry, world entry and Storage restore",async()=>{
+    const pack=await conditionActivityPackages("controlled-field-view-change"),h=await host(pack),owner=await start(h),first=owner.field;
+    assert.equal(h.api.runtime.viewChange,"web-flat-field-view-change-v1");assert.equal(first.currentView,null);
+    assert.equal(first.viewChangeJournal.at(-1).requestedViewType,1);assert.equal(first.viewChangeJournal.at(-1).branchReturn,true);
+    const before=owner.state.snapshot(),commands=h.api.read().commands;
+    h.api.read().images.clear();h.failedImages.add(`sha256:${pack.pngHash}`);await move(h,"right");
+    for(let i=0;i<30&&h.$("retry-map").hidden;i++)await h.frame();
+    assert.equal(h.$("retry-map").hidden,false);assert.equal(owner.field,first);const decoded=h.calls.nativeAtDecode.filter(row=>row.field===first).at(-1);assert.ok(decoded);assert.deepEqual(first.cameraSnapshot,decoded.camera);assert.deepEqual(owner.state.snapshot(),before);
+    h.failedImages.clear();const media=deferred(),imageCount=h.calls.imageBytes.length;h.heldImages.set(`sha256:${pack.pngHash}`,media);
+    await h.click(h.$("retry-map"));await until(()=>h.calls.imageBytes.length>imageCount,"View map retry never prepared real media");
+    const waiting=first.cameraSnapshot,waitingTime=first.time;for(let i=0;i<8;i++)await h.frame();
+    assert.equal(owner.field,first);assert.equal(first.time,waitingTime);assert.deepEqual(first.cameraSnapshot,waiting);assert.deepEqual(owner.state.snapshot(),before);
+    media.resolve();h.heldImages.clear();for(let i=0;i<100&&(owner.field===first||!owner.checkpointReady);i++)await h.frame();
+    assert.notEqual(owner.field,first);assert(owner.checkpointReady,owner.field.stop?.message);assert.equal(owner.field.currentView.mapViewType,1);
+    assert.equal(owner.field.partyActorCheckpoint.context.camera.mapViewType,1);assert.equal(owner.field.content.entry.viewPlan.mapViewType,0);
+    const saved=owner.checkpoint();await pauseMenu(h);await h.click(h.$("save-game"));await h.click(h.$("load-game"));const restored=h.bound();
+    assert.notEqual(restored,owner);assert.deepEqual(restored.checkpoint(),saved);assert.equal(restored.field.currentView.mapViewType,1);assert.equal(commands.menuReady,false);
+    await resume(h);await move(h,"left");await activityIdle(h,restored);assert.equal(restored.field.currentView.mapViewType,1);
+    report.viewChange={actualApp:true,actualStorage:true,appPolicy:h.api.runtime.viewChange,nonworldBranchReturn:true,worldCurrentView:1,immutableEntryView:0,mediaFailureRollback:true,storageWrites:h.calls.writes,nativeParity:false};
   });
   assert.equal(await runtimeDigest(root, compiled), runtimeBefore, "Runtime changed during actual app checks");
   assert.equal(sha(await readFile(new URL(import.meta.url))), sha(checkerBefore), "App checker changed during checks");

@@ -87,3 +87,7 @@ node scripts/check-field-script-motion.mjs --compiled-dir build/v41-motion-compi
 全语料检查的准入为 6,342 条 Move 和 4,897 条 Lerp，分布于 975 个 script asset；4 条不完整 sandbox Move 保持阻塞。其中 2,245 条 Move 和 3,714 条 Lerp 带显式动画名。脚本、地图、动画和其它宿主依赖仍逐项保留。这些数字表示参数编译范围，不表示这些调用已在完整剧情中可达或可玩。
 
 受控的完整 GameSession / GameFlow 旅程由 `scripts/check-script-motion-integration.mjs` 另行验证；正式当前内容框架路线由 `scripts/check-framework-route.mjs` 验证。各自报告与本节静态语料数字分开，不将通过一种检查等同于其它验收。
+
+## 独立 Puppet.Route 家族
+
+Puppet.Route 的两个目标坐标不属于 Move/MoveTo 的单轴直线路径。整族使用独立 opcode，并在明确 Web 网格策略下复用同一 Actor.motion 或相机 dummy/Task.cameraPath；不授权 NPC AssignMoveRoute 或自主 controller。合同、完整源分母、保留门槛和共同候选验收入口见 [source-puppet-routes.md](source-puppet-routes.md)。

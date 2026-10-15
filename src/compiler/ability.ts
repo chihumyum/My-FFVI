@@ -1,3 +1,4 @@
+import { compileNonDamagingAbility } from "./non-damaging-ability.js";
 import { tableInteger } from "./table.js";
 import {
   compileConditionGroup,
@@ -161,6 +162,7 @@ export function compileDevelopmentAbility(
     "fixed 10 ms stepping, 400/900 ms action presentation and UI time-scale/settings remain provisional",
   ];
   const effects: AbilityEffect[] = [];
+  let nonDamagingPresentation: AbilityDefinition["nonDamagingPresentation"];
   const zero = (values: number[]) => values.every((v) => v === 0);
   for (const fn of program.functions) {
     const [v1, v2, v3] = fn.values;
@@ -283,6 +285,12 @@ export function compileDevelopmentAbility(
         resource: v2 === 2 ? "hp" : "mp",
         calculation: v1 === 1 ? "fixed" : "magic",
       });
+    } else if (fn.type === 19) {
+      try { const compiled = compileNonDamagingAbility(reader, program, fn);
+        effects.push(compiled.effect); nonDamagingPresentation = compiled.presentation;
+        for (const row of compiled.sources) if (!sources.some(existing => existing.source.assetPath === row.source.assetPath &&
+          existing.source.rowId === row.source.rowId)) sources.push(row);
+      } catch (error) { blockers.push(error instanceof Error ? error.message : String(error)); }
     } else if (
       fn.type === 23 &&
       zero(fn.values) &&
@@ -349,6 +357,7 @@ export function compileDevelopmentAbility(
     );
   }
   const r = program.rules;
+  const nonDamagingOnly = effects.length === 1 && first?.kind === "non-damaging";
   const physicalOnly = effects.length === 1 && effects[0]!.kind === "physical";
   const defendOnly = effects.length === 1 && effects[0]!.kind === "defend";
   const rowOnly = effects.length === 1 && effects[0]!.kind === "change-row";
@@ -419,9 +428,9 @@ export function compileDevelopmentAbility(
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (!defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !controlSupport && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
+  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !controlSupport && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
-  if (!defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
+  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
   if ((ordinaryMagic || loreMagic || protectionSpell || speedSpell) && int(a.ability_lv) !== 0)
     blockers.push("unresolved level-specific ability consumption");
@@ -493,6 +502,7 @@ export function compileDevelopmentAbility(
   if (!magicOnly && (attribute || r.attribute_group_id))
     blockers.push("unresolved non-magic element carrier");
   if (elements.length > 8) blockers.push("unreviewed magic element count");
+  if (nonDamagingOnly) limitations.push("Native battle effect assets are deferred under web-source-non-damaging-effect-deferred-v1; the existing Web action stages preserve queue, fixed Hit, reactions and continuation, not native animation timing.");
   limitations.push(
     "only admitted active battle behaviors with their required hosts; poison row 88 and other unknown providers remain blocked; MP-cost equipment needs an owned source loadout; weapon-added actions, undead and Runic remain unsupported",
   );
@@ -558,9 +568,12 @@ export function compileDevelopmentAbility(
     cost,
     wait,
     attribute,
+    ...(nonDamagingPresentation ? { nonDamagingPresentation } : {}),
     ...(conditionRecoveryHit ? { conditionRecoveryHit } : {}),
     presentation: !plan
       ? "unsupported"
+      : nonDamagingOnly
+        ? "source-effect-deferred"
       : rowOnly
         ? "row"
       : revival

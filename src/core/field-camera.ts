@@ -1,3 +1,4 @@
+import { parseFieldDynamicView, type FieldDynamicView } from './field-view-change.js';
 import type { Direction, Point } from "../field/types.js";
 import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
 
@@ -12,8 +13,7 @@ export type FieldCameraActor = {
   layerZ: number;
   direction: Direction;
 };
-export type FieldCameraState = {
-  kind: "field-camera-v2";
+type FieldCameraBase = {
   target: "player" | "dummy" | null;
   /** The source dummy has no sprite, collider or ordinary field actor identity. */
   dummy: {
@@ -32,6 +32,7 @@ export type FieldCameraState = {
     };
   };
 };
+export type FieldCameraState = FieldCameraBase & ({kind:"field-camera-v2"}|{kind:"field-camera-v3";view:FieldDynamicView});
 export type FieldCameraCommand = { target: "player" | "dummy" };
 export type FieldCameraOp = { kind: "field-camera"; command: FieldCameraCommand };
 export type FieldCameraPlan = {
@@ -62,8 +63,9 @@ function actor(value: FieldCameraActor): void {
   if (!directions.includes(value.direction)) throw new Error("Unknown field camera actor direction");
 }
 export function validateFieldCameraState(state: FieldCameraState): void {
-  checkpointKeys(state, "kind,target,dummy");
-  if (state.kind !== "field-camera-v2" || ![null, "player", "dummy"].includes(state.target))
+  checkpointKeys(state, state.kind === "field-camera-v3" ? "kind,target,dummy,view" : "kind,target,dummy");
+  if (state.kind === "field-camera-v3") parseFieldDynamicView(state.view);
+  if (!["field-camera-v2","field-camera-v3"].includes(state.kind) || ![null, "player", "dummy"].includes(state.target))
     throw new Error("Unknown field camera state");
   checkpointKeys(state.dummy, "position,entityOffset,layer,direction,visibility");
   position(state.dummy.position); point(state.dummy.entityOffset);

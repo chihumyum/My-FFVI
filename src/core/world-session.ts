@@ -1,3 +1,4 @@
+import { fieldViewBinding } from './field-view-change.js';
 import { flatNpcGroupBlockers } from "./field-npc-flat-projection.js";
 import { validateRetainedWorldTransportationPolicy, type RetainedWorldTransportationEntry } from "./world-transportation-entry.js";
 import type { FieldContent } from "../field/types.js";
@@ -660,6 +661,7 @@ export class WorldSession {
       },
     } : undefined;
     const retainedPolicy = this.owned?.current.retainedWorldTransportation;
+    const puppetRoutePolicy = from.puppetRoutePolicy;
     const prior = from.partyActorCheckpoint;
     const viewPlan = worldMapEntryView(target, request.birdview ? 1 : 0);
     let actorEntry: { plan: MapPartyEntryPlan; assets: string[] } | undefined;
@@ -727,17 +729,20 @@ export class WorldSession {
           ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}),
           ...(this.owned?.current.transportationTimestamp ? { transportationTimestamp: this.owned.current.transportationTimestamp } : {}),
           ...(this.owned?.current.soundPresentation ? { soundPresentation: this.owned.current.soundPresentation } : {}),
+          ...(puppetRoutePolicy ? { puppetRoutes: puppetRoutePolicy } : {}),
           ...(this.owned?.current.assignedNpcRoutes ? { assignedNpcRoutes: this.owned.current.assignedNpcRoutes } : {}),
           ...(this.owned?.current.contentInvalidations ? { contentInvalidations: this.owned.current.contentInvalidations } : {}),
+          ...(this.owned?.current.sourcePartySelection?{sourcePartySelection:this.owned.current.sourcePartySelection}:{}),
           ...(this.owned?.current.sourceBossEntry?{sourceBossEntry:this.owned.current.sourceBossEntry}:{}),
           ...(this.owned?.current.sourceBattleResult?{sourceBattleResult:this.owned.current.sourceBattleResult}:{}),
           ...(this.owned?.current.sourceEncounter ? { sourceEncounter: this.owned.current.sourceEncounter } : {}),
           ...(this.owned?.current.sourceMessageSequence ? { sourceMessageSequence: this.owned.current.sourceMessageSequence } : {}),
           ...(this.owned?.current.conditionLeaderActivity ? { conditionLeaderActivity: this.owned.current.conditionLeaderActivity } : {}),
+          ...(this.owned?.current.viewChange ? {viewChange:this.owned.current.viewChange} : {}),
           ...(this.owned?.current.cameraShake ? { cameraShake: this.owned.current.cameraShake } : {}),
           ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
         from.fader.fork(),
-        from.cameraSnapshot ?? undefined,
+        from.cameraSnapshot ? {kind:"field-camera-v2",target:from.cameraSnapshot.target,dummy:from.cameraSnapshot.dummy} : undefined,
         false,
         FieldSoundState.restore(se, content.se),
       );
@@ -752,6 +757,8 @@ export class WorldSession {
         const providers = prepareNativeFieldProviders(field, presentation.view, target.nativeFoot);
         const candidate = prepareSourceNativeMap({ prior: nativeActors, priorCheckpoint: prior,
           ...(from.content.map.nativeComposition ? { priorComposition: from.content.map.nativeComposition } : {}),
+          ...(from.currentView && this.owned?.current.viewChange ? {departedView:{policy:this.owned.current.viewChange,
+            binding:fieldViewBinding(from.content,this.owned.current.viewChange)!,view:from.currentView}} : {}),
           entry: actorEntry.plan, definition: target.partyEntry, catalog: owned.ports.partyAppearance.catalog,
           party: owned.ports.partyAppearance.current(),
           characters: field.content.characters, animationKeys: catalog.nativeAnimationKeys,
@@ -789,6 +796,8 @@ export class WorldSession {
         candidateStory: canonical(field.storyRuntimeSnapshot), candidateStoryOrigin: canonical(field.storyTimerOrigin ?? null),
         publishPresentation: () => { presentationPublished = true; },
         validateWalkPolicy: () => {
+          if (from.puppetRoutePolicy !== puppetRoutePolicy)
+            throw new Error("Puppet Route policy changed before map publication");
           if (this.owned?.current.retainedWorldTransportation !== retainedPolicy)
             throw new Error("Retained world transportation policy changed before publication");
           if (canonical(field.content.walkEncounters ?? null) !== walkPolicyIdentity)

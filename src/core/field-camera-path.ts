@@ -1,4 +1,4 @@
-import type { Point } from "../field/types.js";
+import type { Direction, Point } from "../field/types.js";
 import { canonical } from "./canonical.js";
 import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
 import { fieldCameraCellToWorld, fieldCameraWorldToCell, validateFieldCameraState,
@@ -6,7 +6,8 @@ import { fieldCameraCellToWorld, fieldCameraWorldToCell, validateFieldCameraStat
 import { prepareFieldActorMotionTick, prepareFieldScriptMove, resolveFieldScriptMoveToTarget,
   type FieldActorMotion, type FieldScriptMove, type FieldScriptMoveTo } from "./field-script-motion.js";
 
-export type FieldCameraPathCommand = FieldScriptMove | FieldScriptMoveTo;
+import { prepareFieldPuppetRoute, fieldRouteDirection, WEB_PUPPET_ROUTE_POLICY, type FieldPuppetRouteCommand, type WebPuppetRoutePolicy } from "./field-puppet-route.js";
+export type FieldCameraPathCommand = FieldScriptMove | FieldScriptMoveTo | (FieldPuppetRouteCommand & { kind: "route" });
 export type FieldCameraPathContext = {
   mapRange: FieldCameraMapRange;
   loop: { horizontal: boolean; vertical: boolean };
@@ -16,6 +17,7 @@ export type FieldCameraPathContext = {
   raycast: "disabled" | "active" | "unknown";
   /** Resolved by the existing source entity selector owner, never by this route. */
   targetEntity?: { x: number; y: number; z: number };
+  grid?: { policy: WebPuppetRoutePolicy | undefined; canStep(from: Point, to: Point): boolean };
 };
 /** Frozen route and elapsed instruction registers. The only authoritative
  * current transform remains FieldCameraHost.state.dummy.position. */
@@ -30,6 +32,8 @@ export type FieldCameraPathProgress = {
   lastClockMs: number;
   motion: FieldActorMotion | null;
   complete: boolean;
+  /** Immutable cell plan; the existing task cursor and dummy own progression. */
+  gridPoints?: Point[];
 };
 export type FieldCameraPathPrepared = {
   state: FieldCameraState;
@@ -62,7 +66,8 @@ function waypoints(registers: FieldCameraPathProgress, input: FieldCameraPathCon
   points: Point[]; secondsPerCell: number; animationSecondsPerCell: number;
 } {
   if (registers.move === null) return { points: [], secondsPerCell: 0, animationSecondsPerCell: 0 };
-  const plan = prepareFieldScriptMove(registers.move, registers.fromCell, input);
+  const timing = prepareFieldScriptMove(registers.move, registers.fromCell, input);
+  const plan = { ...timing, points: registers.gridPoints ?? timing.points };
   return { ...plan, points: plan.points.map(cell => {
     const world = fieldCameraCellToWorld(input.mapRange, {
       x: (cell.x - input.mapRange.x) | 0, y: (cell.y - input.mapRange.y) | 0,
@@ -77,12 +82,25 @@ function sample(motion: FieldActorMotion): Point {
 }
 function progress(value: FieldCameraPathProgress, command: FieldCameraPathCommand,
   input: FieldCameraPathContext): void {
-  checkpointKeys(value, "kind,command,mapRange,move,fromCell,startWorld,sourceZ,lastClockMs,motion,complete");
+  checkpointKeys(value, "kind,command,mapRange,move,fromCell,startWorld,sourceZ,lastClockMs,motion,complete" +
+    (command.kind === "route" ? ",gridPoints" : ""));
   if (value.kind !== "field-camera-path-v1" || canonical(value.command) !== canonical(command) ||
       canonical(value.mapRange) !== canonical(input.mapRange) || typeof value.complete !== "boolean")
     throw new Error("Camera route command/map registers changed");
   point(value.fromCell); point(value.startWorld); checkpointInteger(value.lastClockMs, 0);
   if (!zs.includes(value.sourceZ as typeof zs[number])) throw new Error("Camera route source Z provider is unavailable");
+  if (command.kind === "route") {
+    if (input.grid?.policy !== WEB_PUPPET_ROUTE_POLICY || !Array.isArray(value.gridPoints))
+      throw new Error("Camera Puppet Route lost its Web grid host or plan");
+    let from = value.fromCell;
+    for (const cell of value.gridPoints) {
+      point(cell); fieldRouteDirection(from, cell);
+      if (cell.x < input.mapRange.x || cell.y < input.mapRange.y || cell.x >= input.mapRange.x + input.mapRange.width || cell.y >= input.mapRange.y + input.mapRange.height)
+        throw new Error("Camera Puppet Route waypoint outside its map");
+      from = cell;
+    }
+    if (from.x !== command.x || from.y !== command.y) throw new Error("Camera Puppet Route endpoint changed");
+  }
   const plan = waypoints(value, input), motion = value.motion;
   if (motion !== null) {
     checkpointKeys(motion, "from,to,elapsed,duration,manual,route");
@@ -92,7 +110,8 @@ function progress(value: FieldCameraPathProgress, command: FieldCameraPathComman
     checkpointKeys(motion.route, "points,index,pendingSegment,direction,animation,animationSecondsPerCell");
     const route = motion.route;
     checkpointInteger(route.index, 0, plan.points.length - 1);
-    if (canonical(route.points) !== canonical(plan.points) || route.direction !== value.move!.direction ||
+    if (canonical(route.points) !== canonical(plan.points) || route.direction !== (value.gridPoints ? fieldRouteDirection(
+          route.index === 0 ? value.fromCell : value.gridPoints[route.index - 1]!, value.gridPoints[route.index]!) : value.move!.direction) ||
         route.animation !== "" || route.animationSecondsPerCell !== plan.animationSecondsPerCell ||
         typeof route.pendingSegment !== "boolean" || route.pendingSegment !== (motion.elapsed >= motion.duration) ||
         canonical(motion.to) !== canonical(plan.points[route.index]) ||
@@ -111,8 +130,8 @@ export function prepareFieldCameraPathStep(state: FieldCameraState, command: Fie
   input: FieldCameraPathContext, prior: FieldCameraPathProgress | null,
   clockMs: number): FieldCameraPathPrepared {
   validateFieldCameraState(state); context(input); checkpointInteger(clockMs, 0);
-  if (command.kind !== "move" && command.kind !== "move-to") throw new Error("Unsupported camera path command");
-  if (command.animation !== "") throw new Error("Camera route animation provider is unavailable");
+  if (command.kind !== "move" && command.kind !== "move-to" && command.kind !== "route") throw new Error("Unsupported camera path command");
+  if (command.animation !== "" && command.kind !== "route") throw new Error("Camera route animation provider is unavailable");
   const candidate = structuredClone(state);
   if (prior === null) {
     const sourceZ = state.dummy.position.z;
@@ -121,8 +140,16 @@ export function prepareFieldCameraPathStep(state: FieldCameraState, command: Fie
       x: state.dummy.position.x, y: state.dummy.position.y,
     });
     const fromCell = { x: local.x + input.mapRange.x, y: local.y + input.mapRange.y };
-    let move: FieldScriptMove | null;
-    if (command.kind === "move") move = structuredClone(command);
+    let move: FieldScriptMove | null, gridPoints: Point[] | undefined;
+    if (command.kind === "route") {
+      const { kind: _, ...request } = command;
+      const plan = prepareFieldPuppetRoute(request, { policy: input.grid?.policy, from: fromCell,
+        layer: zs.indexOf(sourceZ as typeof zs[number]), range: input.mapRange, loop: input.loop, magnification: 1,
+        canStep: (from, to) => { if (!input.grid) throw new Error("Camera Puppet Route collision host is unavailable"); return input.grid.canStep(from, to); } });
+      if (plan.flow !== "next" && command.animation !== "") throw new Error("Camera route animation provider is unavailable");
+      gridPoints = plan.flow === "next" ? [] : plan.points;
+      move = plan.flow === "next" ? null : { kind: "move", direction: plan.direction, steps: plan.points.length, speedId: command.speedId, animation: "" };
+    } else if (command.kind === "move") move = structuredClone(command);
     else {
       if (command.target.kind === "direct" && command.target.layer !== 0)
         throw new Error("Camera MoveTo layer-change provider is unavailable");
@@ -141,7 +168,7 @@ export function prepareFieldCameraPathStep(state: FieldCameraState, command: Fie
     const registers: FieldCameraPathProgress = { kind: "field-camera-path-v1", command: structuredClone(command),
       mapRange: structuredClone(input.mapRange), move, fromCell,
       startWorld: { x: state.dummy.position.x, y: state.dummy.position.y }, sourceZ,
-      lastClockMs: clockMs, motion: null, complete: move === null };
+      lastClockMs: clockMs, motion: null, complete: move === null, ...(gridPoints ? { gridPoints } : {}) };
     const plan = waypoints(registers, input);
     if (plan.points.length) {
       registers.motion = { from: { ...registers.startWorld }, to: { ...plan.points[0]! },
@@ -163,7 +190,7 @@ export function prepareFieldCameraPathStep(state: FieldCameraState, command: Fie
   const expected = prior.motion ? sample(prior.motion) : prior.startWorld;
   if (state.dummy.position.x !== expected.x || state.dummy.position.y !== expected.y)
     throw new Error("Camera route dummy transform changed outside its task");
-  if (prior.motion && state.dummy.direction !== prior.move!.direction)
+  if (prior.motion && state.dummy.direction !== prior.motion.route!.direction)
     throw new Error("Camera route dummy direction changed outside its task");
   const registers = structuredClone(prior), dt = clockMs - prior.lastClockMs;
   if (dt === 0) return { state: candidate, progress: registers, flow: "wait",
@@ -174,9 +201,15 @@ export function prepareFieldCameraPathStep(state: FieldCameraState, command: Fie
     registers.complete = true;
     return { state: candidate, progress: registers, flow: "next", completedSegment: false, completedRoute: true };
   }
+  if (registers.gridPoints && registers.motion.route?.pendingSegment && registers.motion.route.index + 1 < registers.gridPoints.length) {
+    const nextIndex = registers.motion.route.index + 1, from = registers.gridPoints[nextIndex - 1]!, to = registers.gridPoints[nextIndex]!;
+    if (!input.grid?.canStep(from, to)) return { state: candidate, progress: registers, flow: "wait", completedSegment: false, completedRoute: false };
+    registers.motion.route.direction = fieldRouteDirection(from, to);
+  }
   const tick = prepareFieldActorMotionTick(registers.motion, null, dt);
   registers.motion = tick.motion;
   registers.complete = tick.completedRoute;
+  if (tick.motion?.route) candidate.dummy.direction = tick.motion.route.direction;
   candidate.dummy.position = { x: f(tick.point.x), y: f(tick.point.y), z: prior.sourceZ };
   // Move preserves the exact source Z; it is not camera Lerp's transient z-5.
   progress(registers, command, input); validateFieldCameraState(candidate);

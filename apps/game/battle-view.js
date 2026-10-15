@@ -61,6 +61,7 @@ export class BattleView {
   }
   userReady(battle = this.instance) {
     return !!battle && this.instance === battle && !this.paused &&
+      !(battle.phase === "active" && battle.messageInputPending) &&
       (!this.commands || this.owner?.battle === battle && this.commands.ownsBattle(battle) &&
         this.commands.battleReady);
   }
@@ -491,12 +492,13 @@ export class BattleView {
     c.drawImage(background, 0, 0, 512, 288);
     const a = battle.action;
     const rowAction = a && battle.actionDefinition(a).presentation === "row";
+    const deferredEffect = a && battle.actionDefinition(a).presentation === "source-effect-deferred";
     for (const actor of [...battle.enemies, ...battle.players]) {
       if (!battle.isCombatantVisible(actor.id)) continue;
       const p = this.position(actor, battle, layout);
       let x = p.x,
         y = p.y;
-      if (a?.actor === actor.id && !rowAction)
+      if (a?.actor === actor.id && !rowAction && !deferredEffect)
         x -= Math.sin(Math.min(1, a.elapsed / 900) * Math.PI) * 9;
       if (actor.hp === 0 && actor.side === "enemy") continue;
       c.save();
@@ -568,7 +570,7 @@ export class BattleView {
           battle.combatants.find((p) => p.id === id),
           battle,
         );
-        if (a.elapsed > 150 && a.elapsed < 500 && !rowAction) {
+        if (a.elapsed > 150 && a.elapsed < 500 && !rowAction && !deferredEffect) {
           c.save();
           c.globalAlpha = Math.sin(((a.elapsed - 150) / 350) * Math.PI);
           c.strokeStyle =
@@ -596,6 +598,7 @@ export class BattleView {
           const effects =
             a.results.find((result) => result.target === id)?.effects ?? [];
           for (const [index, effect] of effects.entries()) {
+            if (effect.resource === "none") continue;
             c.fillStyle = effect.recovery ? "#80ffa7" : "white";
             const text = effect.resource === "row"
                 ? effect.after === "back" ? "后排" : "前排"

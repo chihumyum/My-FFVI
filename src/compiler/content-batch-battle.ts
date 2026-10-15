@@ -122,6 +122,12 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
             throw new Error("Battle lifecycle condition rules do not cover the current condition catalog");
           limitations.push("Compiled battle-event instructions require live lifecycle/AI/action/outcome execution evidence.");
           for (const [pc, { op }] of lifecycle.program.instructions.entries()) {
+            if(op.kind==="script-action"){
+              const ability=catalog.common.abilities[op.abilityId];
+              if(!ability?.plan)block("scripted-battle-ability", "Battle event PC "+pc+" lacks admitted ability "+op.abilityId);
+              conditional("scripted-battle-action-policy","Battle event PC "+pc+" requires explicit web-source-scripted-battle-actions-v1 and current source actor/target/cost owners");
+              continue;
+            }
             if (op.kind === "add-player" || op.kind === "change-player-group") {
               const plan = encounter.playerParticipants === undefined ? null : parseBattlePlayerPlan(encounter.playerParticipants);
               if (!plan || op.kind === "add-player" && !plan.sourceIds.includes(op.sourceId) ||

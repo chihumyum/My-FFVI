@@ -1,3 +1,4 @@
+import type { NonDamagingAbilityEffect, NonDamagingAbilityResult } from "./non-damaging-ability.js";
 import {
   calculatePhysical,
   validatePhysical,
@@ -42,6 +43,7 @@ export type AbilityEffect =
   | ChangeBattleRowEffect
   | UserConditionEffect
   | UniqueNoneEffect
+  | NonDamagingAbilityEffect
   | { slot: number; kind: "physical" | "magic" }
   | {
       slot: number;
@@ -82,6 +84,7 @@ export type AbilityEffectResult =
   | NumericalEffectResult
   | ChangeBattleRowResult
   | UniqueNoneEffectResult
+  | NonDamagingAbilityResult
   | {
       slot: number;
       resource: "condition";

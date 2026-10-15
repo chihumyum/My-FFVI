@@ -1,8 +1,11 @@
+import { compileScriptedBattleAction } from "./battle-scripted-action.js";
 import { z } from "zod";
 import type { BattleAISource } from "../core/battle-ai.js";
 import type { BattleEventOp, BattleEventProgram, BattleEventValue } from "../core/battle-event.js";
 import { isOperator } from "../core/script-integer.js";
 import { isCategory, validVariable, type EventValue, type VariableRef } from "../core/event-state.js";
+import { compileBattleEventMessage, type BattleEventMessageInput } from "./battle-event-message.js";
+import { parseBattleEventMessageBinding } from "../core/battle-event-message.js";
 
 const integer = z.number().int().min(-0x80000000).max(0x7fffffff);
 const flags = ["KeepBadStatusVisual", "KeepPlayerPuppet", "RidingVehicle", "SkipInitialize"] as const;
@@ -29,7 +32,7 @@ const instruction = z.object({
 /** Battle-event compilation is distinct from monster AI. Preserve every source
  * PC; unknown hosts, operands and branches remain explicit blocked operations.
  * This compiler does not certify a native scheduler or grant owned effects. */
-export function compileBattleEvent(raw: unknown, source: BattleAISource | null): BattleEventProgram {
+export function compileBattleEvent(raw: unknown, source: BattleAISource | null, messages?: BattleEventMessageInput): BattleEventProgram {
   const data = script.parse(raw), blockers: string[] = [];
   const main = data.Segments.length === 1 && data.Segments[0]!.Label === "Main" ? data.Segments[0]! : null;
   // Other segment layouts need their own entry/range proof. The bounded Main
@@ -61,7 +64,7 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null):
   };
   const target = (index: number | undefined): index is number =>
     index !== undefined && index >= entry && index + 1 < end;
-  const instructions = data.Mnemonics.map(raw => {
+  const instructions = data.Mnemonics.map((raw, pc) => {
     const parsed = instruction.safeParse(raw);
     if (!parsed.success) return { mnemonic: "invalid", op: { kind: "blocked" as const,
       reason: "invalid battle-event instruction encoding" } };
@@ -69,6 +72,15 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null):
     const blocked = (reason: string): BattleEventOp => ({ kind: "blocked", reason });
     let op: BattleEventOp = blocked(`unsupported battle-event instruction or operands: ${m.mnemonic}`);
     if (m.type !== 1) return { mnemonic: m.mnemonic, op };
+    if (m.mnemonic === "Msg" || m.mnemonic === "MsgClose") {
+      try {
+        if (!messages || source && !messages.binding)
+          throw new Error("Battle message localization/name source is unavailable");
+        op = compileBattleEventMessage(m, messages, data.Mnemonics[pc + 1] &&
+          typeof data.Mnemonics[pc + 1] === "object" ? (data.Mnemonics[pc + 1] as { mnemonic?: string }).mnemonic ?? null : null);
+      } catch (error) { op = blocked(error instanceof Error ? error.message : String(error)); }
+      return { mnemonic: m.mnemonic, op };
+    }
     // Nop/Blank do not consume operands. Actual scripts retain formerly
     // authored arguments, so zero-only validation would change their meaning.
     if (m.mnemonic === "Nop" || m.mnemonic === "Blank") {
@@ -93,6 +105,10 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null):
     }
     if (["Call", "Jump"].includes(m.mnemonic) && form([0]) && target(i[0]))
       op = { kind: m.mnemonic === "Call" ? "call" : "jump", target: i[0] };
+    if (m.mnemonic === "BattleAction") {
+      try { op=compileScriptedBattleAction(m); }
+      catch(error) { op=blocked(error instanceof Error?error.message:String(error)); }
+    }
     if (m.mnemonic === "BattleEndEnabled" && form([0]))
       op = { kind: "end-enabled", enabled: i[0] !== 0 };
     if (m.mnemonic === "BattlePause" && form([0])) op = { kind: "pause", enabled: i[0] !== 0 };
@@ -137,6 +153,9 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null):
     }
     return { mnemonic: m.mnemonic, op };
   });
+  const messageBinding = instructions.some(({ op }) => op.kind === "message") && messages?.binding
+    ? parseBattleEventMessageBinding(messages.binding) : undefined;
   return structuredClone({ kind: "battle-event-v1", source, entry, end,
-    localNames: data.ScriptLocal, initialLocals, instructions, blockers });
+    localNames: data.ScriptLocal, initialLocals, instructions, blockers,
+    ...(messageBinding ? { messageBinding } : {}) });
 }

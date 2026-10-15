@@ -2,9 +2,9 @@ import { fieldMessageNameReferences, fieldMessageUsesFee } from "./field-message
 import type { FieldContent, Op, Site } from "../field/types.js";
 
 export const fieldProviders = Object.freeze([
-  "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
+  "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
-  "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "sourceAutoSaveSync",
+  "sourcePartySelection", "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "viewChange", "sourceAutoSaveSync",
 ] as const);
 export type FieldProvider = typeof fieldProviders[number];
 export type FieldProviderStatus = "available" | "missing" | "unknown";
@@ -42,6 +42,7 @@ export type FieldContentRequirements = {
 };
 
 const codes: Record<FieldCapability, string> = {
+  puppetRoutes: "FIELD_PUPPET_ROUTE_PROVIDER",
   messageValues: "FIELD_MESSAGE_VALUES_PROVIDER",
   scriptRandom: "FIELD_SCRIPT_RANDOM_PROVIDER",
   inventory: "FIELD_INVENTORY_PROVIDER", recovery: "FIELD_RECOVERY_PROVIDER",
@@ -56,9 +57,11 @@ const codes: Record<FieldCapability, string> = {
   sourceLeader: "FIELD_SOURCE_LEADER_PROVIDER", scriptShop: "FIELD_SCRIPT_SHOP_PROVIDER",
   storyTimer: "FIELD_STORY_TIMER_PROVIDER", screenEffects: "FIELD_SCREEN_EFFECTS_PROVIDER",
   cameraShake: "FIELD_CAMERA_SHAKE_PROVIDER",
+  viewChange: "FIELD_VIEW_CHANGE_PROVIDER",
   contentInvalidations: "FIELD_CONTENT_INVALIDATIONS_PROVIDER",
   sourceAutoSaveSync: "FIELD_SOURCE_AUTO_SAVE_SYNC_PROVIDER",
   sourceEncounter: "FIELD_SOURCE_ENCOUNTER_PROVIDER",
+  sourcePartySelection:'FIELD_SOURCE_PARTY_SELECTION_PROVIDER',
   sourceBossEntry: 'FIELD_SOURCE_BOSS_ENTRY_PROVIDER', sourceBattleResult:'FIELD_SOURCE_BATTLE_RESULT_PROVIDER',
   assignedNpcRoutes: "FIELD_ASSIGNED_NPC_ROUTE_PROVIDER",
   conditionVisual: "FIELD_CONDITION_VISUAL_CONTEXT", scriptMotion: "FIELD_SCRIPT_MOTION_PROVIDER",
@@ -146,6 +149,7 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     if (conditionVisual) add("conditionVisual", "Unknown or unsupported owned condition-visual context", "refresh");
   };
   switch (op.kind) {
+    case "field-view-change": add("viewChange", "ChangeView requires the explicit bound flat Web camera/party controller"); break;
     case "actor-visibility": add("actorControl", "Source actor visibility requires its bound control owner"); break;
     case "position":
       if (op.nativeCommand?.mode === 1)
@@ -241,7 +245,9 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       if (Object.hasOwn(op, "sourceAutoSave")) add("sourceAutoSaveSync",
         "Native AutoSave leader/player/camera synchronization is unassessed; the explicit Web barrier saves existing owners", "deferred");
       break;
+    case "field-puppet-route": add("puppetRoutes", "Puppet Route requires its bound actor and explicit Web pathfinding policy"); break;
     case "assign-npc-route": add("assignedNpcRoutes", "Assigned NPC route requires an explicit source-bound Web controller"); break;
+    case 'source-party-selection': add('sourcePartySelection','Source party selection requires its explicit Web UI policy and the existing owned/actor publication owners');break;
     case 'source-battle-result': add('sourceBattleResult','Source result requires an actual committed terminal fact and existing ScriptLocal frame');break;
     case 'source-boss-encounter': add('sourceBossEntry','Boss entry requires its explicit handoff policy; focus parameters do not place actors');add('battleHandoff','Battle preparation/return belongs to the current Session','deferred');break;
     case "source-encounter":

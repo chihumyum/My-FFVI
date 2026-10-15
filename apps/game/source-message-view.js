@@ -11,7 +11,8 @@ export function fieldMessageView(game) {
   const value = game.sourceMessage?.projection;
   return value?.documentKind === "source-message-sequence-v1" ? { key: value.key, speaker: value.speaker,
     text: value.text, alignment: value.alignment, window: value.window, anchor: value.anchor,
-    protocol: value.documentKind, page: value.page, windowTicket: value.windowTicket, acceptsInput: value.acceptsInput } : null;
+    protocol: value.documentKind, page: value.page, windowTicket: value.windowTicket, acceptsInput: value.acceptsInput,
+    sourceWindow: game.messagePresentation?.sourceWindow ?? null, speakerAnchor: game.messagePresentation?.speakerAnchor ?? "left" } : null;
 }
 export function syncFieldMessageView(elements, game, paused) {
   const value = fieldMessageView(game), { dialogue, speaker, message, next } = elements;
@@ -31,4 +32,7 @@ export function syncFieldMessageView(elements, game, paused) {
   dialogue.dataset.protocol = value.protocol;
   dialogue.dataset.window = value.window;
   dialogue.dataset.anchor = value.anchor;
+  dialogue.dataset.sourceWindow = value.sourceWindow === null || value.sourceWindow === undefined ? "field" : String(value.sourceWindow);
+  dialogue.dataset.speakerAnchor = value.speakerAnchor ?? "left";
+  speaker.style.textAlign = value.speakerAnchor === "right" ? "right" : "left";
 }

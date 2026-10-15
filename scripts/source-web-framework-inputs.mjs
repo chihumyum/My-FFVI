@@ -10,6 +10,8 @@ export function webSourceFrameworkInputs() {
       reason: 'Explicit playable Web framework: use the existing declared Area NPC lifecycle over every original source map; all original blockers and strict source data retained.' },
     periodicMaps: { kind: 'web-source-periodic-presentation-input-v1',
       reason: 'Explicit playable Web framework: fixed flat presentation for the complete source periodic-map family; strict diagnostics retained.' },
+    ordinaryFields: {kind:'web-source-ordinary-field-presentation-input-v1',
+      reason:'Explicit playable Web framework: flat display for the complete nonperiodic ordinary-map family using proven backdrop/body_threshold shapes; retain original layers, source diagnostics, collision, scripts and every unsupported water/palette/group shape.'},
     logicalFieldEffects: { kind: 'web-logical-field-effects-input-v1', input: 'build/field-effect-media',
       reason: 'Explicit playable Web framework: retain proven all-loop board logic while deferring particle/material/minimap display.' },
   };

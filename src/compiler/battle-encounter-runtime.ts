@@ -18,6 +18,7 @@ import { parseBattleEscapePolicy, type FrameworkBattleEscapePolicy } from "../co
 import { compileBattleRewardPolicy } from "./battle-result.js";
 import type { BattleRewardPolicy } from "../core/battle-result.js";
 import { compileBattleEvent } from "./battle-event.js";
+import type { BattleEventMessageInput } from "./battle-event-message.js";
 import { parseBattleLifecycle, type BattleLifecycle } from "../core/battle-lifecycle.js";
 import { parseBattleParticipantContent, parseBattleParticipantEnemyParty, type BattleParticipantContent,
   type BattleParticipantSlot, type BattleParticipantRewardScope, type EnemyBattleDefinition,
@@ -46,6 +47,7 @@ export type BattleEncounterRuntimeInput = {
   manualControls?: typeof WEB_MANUAL_BATTLE_CONTROLS;
   sprites: Readonly<Record<string, { file: string; width: number; height: number }>>;
   name(key: string): string;
+  eventMessages?: BattleEventMessageInput;
   parameters: { temporary: ParameterValues; limits: ParameterLimits };
   physical: { temporary: PhysicalParameters; limits: PhysicalLimits };
   /** Explicitly selected late master resources, not live units or story unlocks.
@@ -181,7 +183,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         const omission = input.development.scripts.find((s) => s.id === m.scriptId && same(s.source, encounter.script!.source));
         const issues: { reason: string; pc?: number }[] = [];
         try {
-          const program = compileBattleEvent(encounter.script!.data, encounter.script!.source);
+          const program = compileBattleEvent(encounter.script!.data, encounter.script!.source, input.eventMessages);
           issues.push(...program.blockers.map(reason => ({ reason })),
             ...program.instructions.flatMap(({ op }, pc) => op.kind === "blocked" ? [{ reason: op.reason, pc }] : []));
           if (!issues.length) lifecycle = parseBattleLifecycle({ kind: "battle-lifecycle-v1", mode: "script",

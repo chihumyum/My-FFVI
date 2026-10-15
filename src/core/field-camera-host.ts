@@ -1,3 +1,4 @@
+import { parseFieldDynamicView, projectFieldViewChange, type FieldViewBinding, type FieldViewChangeCommand } from './field-view-change.js';
 import type { Direction, Point } from "../field/types.js";
 import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
 import { prepareFieldCameraPathStep, type FieldCameraPathCommand, type FieldCameraPathProgress } from "./field-camera-path.js";
@@ -61,7 +62,7 @@ export type FieldCameraPrepared = {
   refresh: boolean;
   /** Native ordinary MoveCallback/SetPosCallback are absent in the bound
    * lifecycle. No arbitrary user-supplied delegate is treated as a no-op. */
-  callbackDisposition: "source-absent" | "not-invoked";
+  callbackDisposition: "source-absent" | "not-invoked" | "web-flat-not-installed";
   validate(): void;
   commit(): void;
   /** Validate and lock this owner before the other atomic publication. */
@@ -123,17 +124,21 @@ export class FieldCameraHost {
   #publishing = false;
 
   constructor(definition: FieldCameraHostDefinition, ports: FieldCameraHostPorts,
-    checkpoint: FieldCameraState = createFieldCameraState()) {
+    checkpoint: FieldCameraState = createFieldCameraState(), private readonly viewBinding?: FieldViewBinding) {
     validateDefinition(definition); validatePorts(ports); validateFieldCameraState(checkpoint);
     this.#definition = structuredClone(definition);
     this.#ports = ports;
+    if (checkpoint.kind === "field-camera-v3") {
+      if (!viewBinding) throw new Error("Saved dynamic view cannot grant a view policy");
+      parseFieldDynamicView(checkpoint.view,viewBinding);
+    }
     this.#state = structuredClone(checkpoint);
   }
   snapshot(): FieldCameraState { return structuredClone(this.#state); }
   /** The caller supplies the destination's trusted content and live read ports.
    * A map transaction can prepare the fork without changing its source host. */
   fork(definition: FieldCameraHostDefinition, ports: FieldCameraHostPorts): FieldCameraHost {
-    return new FieldCameraHost(definition, ports, this.#state);
+    return new FieldCameraHost(definition, ports, this.#state, this.viewBinding);
   }
   /** Publish a completely prepared fork or restore into this existing owner.
    * The snapshot supplies state only; this host keeps its content and ports. */
@@ -153,6 +158,8 @@ export class FieldCameraHost {
     callbackDisposition: FieldCameraPrepared["callbackDisposition"]): FieldCameraPrepared {
     if (this.#publishing) throw new Error("Field camera publication is already in progress");
     validateFieldCameraState(state);
+    if(state.kind === "field-camera-v3") { if(!this.viewBinding)throw new Error("Unbound dynamic camera view");parseFieldDynamicView(state.view,this.viewBinding); }
+    if(callbackDisposition === "source-absent" && state.kind === "field-camera-v3") callbackDisposition="web-flat-not-installed";
     const candidate = structuredClone(state), revision = this.#revision;
     let committed = false;
     const validate = () => {
@@ -167,6 +174,15 @@ export class FieldCameraHost {
     };
     return { state: structuredClone(candidate), refresh, callbackDisposition, validate,
       commit: () => { commitWith(() => true); }, commitWith };
+  }
+  /** The existing camera owns current view. A prepared candidate has no live
+   * callback/registry effects; its containing Field transaction fences actors. */
+  prepareView(command: FieldViewChangeCommand): (FieldCameraPrepared & { branchReturn:boolean }) {
+    if(!this.viewBinding)throw new Error("Trusted Web field view binding is unavailable");
+    const view=projectFieldViewChange(this.viewBinding,command);
+    if(!view)return {...this.#prepare(this.#state,false,"not-invoked"),branchReturn:true};
+    const next:FieldCameraState={kind:"field-camera-v3",target:this.#state.target,dummy:structuredClone(this.#state.dummy),view};
+    return {...this.#prepare(next,true,"web-flat-not-installed"),branchReturn:false};
   }
   prepareInitializeDummy(): FieldCameraPrepared {
     return this.#prepare(initializeFieldCameraDummy(this.#state, this.#player()), false, "not-invoked");
@@ -190,11 +206,12 @@ export class FieldCameraHost {
     return { ...this.#prepare(plan.state, false, "not-invoked"), progress: plan.progress, flow: plan.flow };
   }
   preparePath(command: FieldCameraPathCommand, progress: FieldCameraPathProgress | null,
-    clockMs: number, targetEntity?: { x: number; y: number; z: number }) {
+    clockMs: number, targetEntity?: { x: number; y: number; z: number },
+    grid?: import("./field-camera-path.js").FieldCameraPathContext["grid"]) {
     const plan = prepareFieldCameraPathStep(this.#state, command, {
       mapRange: this.#definition.mapRange, loop: this.#definition.loop, magnification: 1,
       view: "normal-field", callbacks: "source-absent", raycast: "disabled",
-      ...(targetEntity ? { targetEntity } : {}),
+      ...(targetEntity ? { targetEntity } : {}), ...(grid ? { grid } : {}),
     }, progress, clockMs);
     return { ...this.#prepare(plan.state, false, "source-absent"), progress: plan.progress, flow: plan.flow };
   }

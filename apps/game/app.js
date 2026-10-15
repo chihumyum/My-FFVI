@@ -1,3 +1,7 @@
+import { WEB_SCRIPTED_BATTLE_ACTIONS } from "/runtime/core/scripted-battle-action.js";
+import { WEB_SOURCE_PARTY_SELECTION } from '/runtime/core/source-party-selection.js';
+import { SourcePartySelectionView } from './source-party-selection-view.js';
+import { WEB_BATTLE_EVENT_MESSAGE_POLICY } from "/runtime/core/battle-event-message.js";
 import { WEB_SOURCE_SCRIPT_RANDOM } from "/runtime/core/field-script-random.js";
 import { syncFieldMessageView } from "./source-message-view.js";
 import { createWebFieldMessageSequencePort } from "/runtime/core/source-message-sequence.js";
@@ -51,6 +55,7 @@ let flow,
   inventoryView,
   equipmentView,
   partyView,
+  sourcePartySelectionView,
   choiceView,
   shopView,
   mapOpen = false,
@@ -93,12 +98,17 @@ const readGameJson = async (url) => {
 let contents = new GameContentRepository(readGameJson, contentProfile);
 // Same declared Web policy as the source-route audit; no native default claim.
 const runtime = {
+  scriptedBattleActions: WEB_SCRIPTED_BATTLE_ACTIONS,
   scriptRandom: WEB_SOURCE_SCRIPT_RANDOM,
   // Source slots and entry ordering are retained; this seed mapping and
   // deferred media-first publication are explicit Web policies, not Unity RNG.
   retainedWorldTransportation: "web-retained-walking-magitek-world-entry-v1",
   assignedNpcRoutes: "web-assigned-npc-route-grid-v1",
+  viewChange:"web-flat-field-view-change-v1",
+  sourcePartySelection:WEB_SOURCE_PARTY_SELECTION,
   sourceBossEntry:WEB_SOURCE_BOSS_ENTRY,sourceBattleResult:WEB_COMMITTED_BATTLE_RESULT,
+  puppetRoutes: "web-source-puppet-route-grid-v1",
+  battleEventMessages: WEB_BATTLE_EVENT_MESSAGE_POLICY,
   sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY, sourceMessageSequence: createWebFieldMessageSequencePort(),
   // Explicit flat Web component/ancestor policy, rebound from each candidate's
   // trusted native factory. Saved activeSelf never grants this capability.
@@ -254,6 +264,7 @@ function bindSession(candidate, views) {
     equipmentView.render(flow.session);
     syncSaveControls();
   }, commandOptions);
+  sourcePartySelectionView = new SourcePartySelectionView($("source-party-selection"), () => {held.clear();sync();}, commandOptions);
   shopView = new ShopView($("shop-menu"), () => {
     held.clear();
     sync();
@@ -474,6 +485,7 @@ function sync() {
   }
   const mapFailure = mapLoadFailure?.session === flow.session && mapLoadFailure.request === game.stop
     ? mapLoadFailure : null;
+  sourcePartySelectionView?.render(flow.session, failed || document.hidden || mapOpen || flow.paused || flow.busy);
   choiceView?.render(flow, { disabled: failed || document.hidden || mapOpen });
   if (game.choicePending) held.clear();
   shopView?.render(
@@ -497,7 +509,7 @@ function sync() {
   text("overview-title", mapName);
   if (flow.session.battle) {
     held.clear();
-    $("dialogue").hidden = true;
+    syncFieldMessageView({ dialogue: $("dialogue"), speaker: $("speaker"), message: $("message"), next: $("next") }, flow.session.battle, flow.paused);
     $("stop").hidden = true;
     battleView.sync(flow.session.battle, !flow.inputReady || document.hidden);
     text(
@@ -537,6 +549,8 @@ function sync() {
       ? game.stop.kind === "map-transition"
         ? mapFailure ? "地图载入失败，进度已保留。" : "地图载入中…"
         : "当前片段已停止，可重新开始。"
+      : game.currentSourcePartySelection
+        ? "选择剧情编队成员后确认或取消"
       : game.currentShop
         ? "选择商品和数量，Esc 返回或离开商店"
         : game.choice
@@ -550,7 +564,7 @@ function sync() {
   );
 }
 function confirm() {
-  if (!flow.started || flow.paused || mapOpen || game.stop) return;
+  if (!flow.started || flow.paused || mapOpen || !flow.session.battle && game.stop) return;
   flow.confirm();
   sync();
 }
@@ -572,6 +586,12 @@ window.addEventListener("keydown", (e) => {
   }
   if (!flow?.started || flow.paused || flow.busy || mapOpen) return;
   if (flow.session.battle) {
+    if (flow.session.battle.messageInputPending || flow.session.battle.sourceMessage?.projection?.acceptsInput) {
+      if (["Space", "Enter"].includes(e.code) && (e.target === canvas || $("dialogue").contains(e.target))) {
+        e.preventDefault(); if (!e.repeat) confirm();
+      }
+      return;
+    }
     if (e.target === canvas || $("battle-menu").contains(e.target))
       battleView.keyboard(e);
     return;

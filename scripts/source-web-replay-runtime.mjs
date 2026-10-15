@@ -1,10 +1,15 @@
-// These are the two explicit policies already installed by apps/game/app.js.
+// These explicit policies are installed by apps/game/app.js.
 // A positive Web replay opts in at its own runtime construction; strict/native
 // unknown lanes keep their existing missing providers. No state or fallback
 // result is supplied, and GameSession remains the only terminal producer.
 export function sourceWebReplayRuntimePorts() {
   return Object.freeze({
+    viewChange: 'web-flat-field-view-change-v1',
+    sourcePartySelection: 'web-source-party-selection-atomic-v1',
+    battleEventMessages: 'web-source-battle-event-messages-v1',
     sourceBossEntry: 'web-source-boss-entry-v1',
     sourceBattleResult: 'web-committed-battle-result-v1',
+    scriptedBattleActions: 'web-source-scripted-battle-actions-v1',
+    puppetRoutes: 'web-source-puppet-route-grid-v1',
   });
 }

@@ -1,3 +1,4 @@
+import { WEB_FLAT_FIELD_VIEW_CHANGE, parseFieldDynamicView, viewDataKeys, type WebFlatFieldViewChange, type FieldViewBinding, type FieldDynamicView } from './field-view-change.js';
 import { ActorAnimation } from "./actor-animation.js";
 import { canonical } from "./canonical.js";
 import { checkpointInteger } from "./checkpoint-validation.js";
@@ -32,6 +33,9 @@ export type SourceNativeMapInput = {
   /** Trusted departed map content, required whenever a retained actor has RT
    * references. Actor tokens alone cannot authorize their source identity. */
   priorComposition?: FieldNativeCompositionDefinition;
+  /** Current departed camera under an explicit trusted flat Web host. Never a
+   * replacement for destination MapEntryViewPlan or native Bird registries. */
+  departedView?:{policy:WebFlatFieldViewChange;binding:FieldViewBinding;view:FieldDynamicView};
   view: FieldActorViewDefinition;
   providers: FieldPuppetHostProviders;
   transportationPresentation?: FieldTransportActorPresentation;
@@ -132,10 +136,19 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
       before.multiParty.some((p) => p.actor === null || p.members.length) ||
       after.multiParty.some((p) => p.actor === null || p.members.length))
     throw new Error("Native map companion/party placement lifecycle is unresolved");
+  let flatDeparted=false;
+  if(input.departedView){
+    viewDataKeys(input.departedView,"policy,binding,view");
+    if(input.departedView.policy!==WEB_FLAT_FIELD_VIEW_CHANGE)throw new Error("Unknown departed view policy");
+    const departed=parseFieldDynamicView(input.departedView.view,input.departedView.binding);
+    if(departed.mapViewType!==before.camera.mapViewType||before.currentTransport?.typeId!==1||
+      before.player.riding)throw new Error("Departed flat camera/party/transport binding changed");
+    flatDeparted=true;
+  }
   const developmentRiding = input.transportationPresentation === "framework-development";
   if (!before.currentTransport || !after.currentTransport ||
       (before.currentTransport.typeId !== 1 || after.currentTransport.typeId !== 1) && !developmentRiding ||
-      providers.transportationType !== after.currentTransport?.typeId || before.camera.mapViewType !== 0 || after.camera.mapViewType !== 0)
+      providers.transportationType !== after.currentTransport?.typeId || before.camera.mapViewType !== 0 && !flatDeparted || after.camera.mapViewType !== 0)
     throw new Error("Native map handoff requires explicit ordinary walking transportation/view");
   same(after.currentTransport, before.currentTransport, "Native map transportation switch lifecycle is unresolved");
   same(after.camera.mapArea, partyActorMapArea(definition.mapRange.width, definition.mapRange.height, definition.loopType),

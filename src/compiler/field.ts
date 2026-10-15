@@ -1,4 +1,7 @@
+import { compileFieldViewChangeInstruction } from './field-view-change.js';
+import { compileSourcePartySelectionInstruction, sourcePartySelectionSelectors } from './source-party-selection.js';
 import { compileSourceGilTagInstruction } from "./source-message-fees.js";
+import { compileFieldPuppetRouteInstruction } from "./field-puppet-route.js";
 import { compileFieldScriptRandomInstruction } from "./field-script-random.js";
 import { compileFieldAssignedRouteInstruction } from './field-assigned-route.js';
 import { compileFieldFiniteAnimationInstruction } from './field-play-animation.js';
@@ -137,8 +140,16 @@ export function decodeFieldOp(
     try { return { ...site, ...compileFieldInternalClockInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
+  if (name === "ChangeView") {
+    try { return { ...site, ...compileFieldViewChangeInstruction(raw) }; }
+    catch(error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (name === "SetGilTag") {
     try { return { ...site, ...compileSourceGilTagInstruction(raw, tables) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "Route") {
+    try { return { ...site, ...compileFieldPuppetRouteInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if (name === "SetRandomValue") {
@@ -205,6 +216,10 @@ export function decodeFieldOp(
   }
   const o = record(m.operands), i = list(o.iValues).map(integer),
     r = list(o.rValues).map(Number), s = list(o.sValues).map(string);
+  if(name==='SysCall' && (sourcePartySelectionSelectors as readonly unknown[]).includes(s[0])) {
+    try {return {...site,...compileSourcePartySelectionInstruction(raw)};}
+    catch(error){return blocked(error instanceof Error?error.message:String(error));}
+  }
   if(name==='SysCall'&&s[0]==='戦闘結果取得'){try{return {...site,...compileSourceBattleResultInstruction(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if (name === "SysCall" && fieldScriptShopSelectors.includes(s[0]!)) {
     try { return { ...site, ...compileFieldScriptShopInstruction(raw) }; }

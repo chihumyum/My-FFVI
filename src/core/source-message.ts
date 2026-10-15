@@ -105,6 +105,42 @@ function command(value: SourceMessagePlay | { kind: "close" }): void {
  * Construction is the host's explicit empty MessageWindow initialization, not a
  * fallback for a missing native MessageReady context. */
 export class SourceMessageState {
+  private frameReservation: object | null = null;
+  private requireWritable(): void {
+    if (this.frameReservation) throw new Error("Source message owner is reserved by a frame transaction");
+  }
+  /** The field and battle share this actual owner. A frame may operate only on
+   * its private fork until all VM/action/provider work succeeds. Discard leaves
+   * the window, ticket and fee untouched; a commit never reuses a prior ticket. */
+  prepareFrame() {
+    this.requireWritable();
+    const token = {}, revision = this.revision, entryTicket = this.windowTicket, state = this.fork();
+    this.frameReservation = token;
+    let closed = false;
+    const validate = () => {
+      if (closed || this.frameReservation !== token || this.revision !== revision)
+        throw new Error("Stale source message frame transaction");
+    };
+    const discard = () => { validate(); closed = true; this.frameReservation = null; };
+    return { state, validate, discard,
+      prepareCommit: () => {
+        validate();
+        const candidateRevision = state.revision, value = structuredClone(state.value),
+          fee = structuredClone(state.fee), ticket = state.windowTicket;
+        if (!Number.isSafeInteger(ticket) || ticket < entryTicket)
+          throw new Error("Source message frame cannot restore an earlier window ticket");
+        const finalValidate = () => {
+          validate();
+          if (state.revision !== candidateRevision)
+            throw new Error("Source message frame candidate changed after preparation");
+        };
+        return { validate: finalValidate, commit: () => {
+          finalValidate();
+          this.value = value; this.fee = fee; this.windowTicket = ticket;
+          this.revision++; closed = true; this.frameReservation = null;
+        } };
+      } };
+  }
   private value: Message | SourceMessageSequenceValue | null = null;
   private revision = 0;
   /** Ephemeral owner revision for prepared-map publication; never serialized. */
@@ -120,6 +156,7 @@ export class SourceMessageState {
   prepareFee(op: SourceGilTagOp) {
     const value = bindSourceMessageFee(this.feeCatalog, op), revision = this.revision; let committed = false;
     return { commit: () => {
+      this.requireWritable();
       if (committed || revision !== this.revision) throw new Error("Stale source message fee replacement");
       this.fee = value; this.revision++; committed = true;
     } };
@@ -140,6 +177,7 @@ export class SourceMessageState {
     return sourceMessageSequenceStatus(this.value, ticket);
   }
   executePageInput(ticket: number): boolean {
+    this.requireWritable();
     this.sequenceStatus(ticket);
     const next = executeSourceMessagePageInput(this.value as SourceMessageSequenceValue);
     if (next === null) return false;
@@ -155,11 +193,13 @@ export class SourceMessageState {
       throw new Error("Source sequence has no ordinary-message continuation");
     const revision = this.revision; let committed = false;
     return { commit: () => {
+      this.requireWritable();
       if (committed || revision !== this.revision) throw new Error("Stale source message handoff");
       this.value = null; this.windowTicket++; this.revision++; committed = true;
     } };
   }
   retainAfterChoice(): void {
+    this.requireWritable();
     if (!this.value || !isSequence(this.value) || this.value.command.after !== "choice" ||
         !sourceMessageSequenceStatus(this.value, this.windowTicket).complete)
       throw new Error("Source choice lost its complete ordinary window");
@@ -218,12 +258,14 @@ export class SourceMessageState {
     let committed = false;
     return { flow: "next", ticket, timing: next !== null && isSequence(next) ? structuredClone(next.timing) : null, effects: [{ kind: "entity-update-group", group: next ? 8 : 12, invokeCallback: false }],
       commit: () => {
+        this.requireWritable();
         if (committed || revision !== this.revision) throw new Error("Stale source message transaction");
         this.value = next; this.windowTicket = ticket; this.revision++; committed = true;
       } };
   }
   /** Source AUTO_P makes InputAction return before querying physical input. */
   confirm(): boolean {
+    this.requireWritable();
     if (this.value === null || !isSequence(this.value)) return false;
     const next = confirmSourceMessageSequence(this.value);
     if (next === null) return false;
@@ -233,6 +275,7 @@ export class SourceMessageState {
    * resets excess time; it does not catch up several state transitions at once.
    * Web host orders this before its interpreter clock. */
   advance(deltaSeconds: number): void {
+    this.requireWritable();
     const dt = seconds(deltaSeconds), value = this.value;
     if (value !== null && isSequence(value)) {
       this.value = advanceSourceMessageSequence(value, dt); this.revision++; return;

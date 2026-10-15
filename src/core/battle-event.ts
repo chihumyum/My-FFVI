@@ -1,7 +1,11 @@
+import { parseScriptedBattleAction, type ScriptedBattleAction } from "./scripted-battle-action.js";
 import type { BattleAISource } from "./battle-ai.js";
 import { int32, integerOperation, isOperator, type Operator } from "./script-integer.js";
 import { checkpointInteger, checkpointKeys, checkpointNumber, checkpointRecord } from "./checkpoint-validation.js";
 import { validVariable, type EventValue, type VariableRef } from "./event-state.js";
+import { parseBattleEventMessageOp, parseBattleEventMessageBinding,
+  type BattleEventMessageOp, type BattleEventMessageBinding } from "./battle-event-message.js";
+import { pollSourceMessageTask, type SourceMessageTaskCursor, type SourceMessageSequenceStatus } from "./source-message-sequence.js";
 
 /** BattleGame owns every unit, AI core, action queue, permission, and RNG. This
  * interpreter owns only a detached continuation and script-local integers. */
@@ -9,6 +13,8 @@ export type BattleEventValue =
   | { kind: "immediate"; value: number }
   | { kind: "local"; index: number };
 export type BattleEventOp =
+  | ScriptedBattleAction
+  | BattleEventMessageOp
   | { kind: "nop" | "blank" | "exit" | "return" | "wait-start" | "exec-ai" | "sync-ai" | "sync-action" | "players-ended" }
   | { kind: "call" | "jump"; target: number }
   | { kind: "calc"; index: number; operator: Operator; right: BattleEventValue }
@@ -35,9 +41,14 @@ export type BattleEventProgram = {
   initialLocals: number[];
   instructions: { mnemonic: string; op: BattleEventOp }[];
   blockers: string[];
+  /** Optional only for the explicit message family. Old program shape stays
+   * unchanged; source text and name-table objects retain physical provenance. */
+  messageBinding?: BattleEventMessageBinding;
 };
 export type BattleEventWait =
-  | { kind: "blank" | "start" | "action" | "enemy-party-entry" | "player-group-entry"; clock: number }
+  | { kind: "message-prepare"; clock: number }
+  | { kind: "message"; clock: number; cursor: SourceMessageTaskCursor }
+  | { kind: "blank" | "start" | "action" | "script-action" | "enemy-party-entry" | "player-group-entry"; clock: number }
   | { kind: "time"; clock: number; entryTimeSeconds: number }
   | { kind: "enemy-entry" | "player-entry"; clock: number; previousNoAct: boolean };
 export type BattleEventState = {
@@ -69,8 +80,13 @@ export type BattleEventContext = {
   /** Native AddFellow waits on IsEndAct, separately from AddEnemy loading. */
   playerEntry?: { noAct: boolean; completed: boolean };
   playerGroupEntry?: { completed: boolean };
+  messageStatus?: SourceMessageSequenceStatus;
 };
 export type BattleEventRequest =
+  | (ScriptedBattleAction & { pc: number })
+  | { kind: "message"; pc: number; operation: BattleEventMessageOp }
+  | { kind: "message-page-input"; pc: number; ticket: number }
+  | { kind: "message-complete"; pc: number; ticket: number; close: boolean }
   | { kind: "exec-ai" | "sync-ai"; pc: number }
   | { kind: "write-variable"; pc: number; ref: VariableRef; value: number }
   | { kind: "add-enemy"; pc: number; monsterId: number; uniqueId: number }
@@ -85,6 +101,25 @@ export type BattleEventAdvance = {
   requests: BattleEventRequest[];
   visited: number[];
 };
+/** A successful shared-window publication binds its ticket to this exact VM
+ * request. Negative Msg goes Next immediately; synchronous Msg waits without
+ * replaying its source operation on subsequent clocks. */
+export function acknowledgeBattleEventMessage(program: BattleEventProgram, current: BattleEventState,
+  pc: number, cursor: SourceMessageTaskCursor | null): BattleEventState {
+  const state = parseState(current), op = program.instructions[pc]?.op;
+  if (state.pc !== pc || state.status !== "waiting" || state.wait?.kind !== "message-prepare" ||
+      op?.kind !== "message" || op.command.kind !== "sequence")
+    throw new BattleEventError(program.source, pc, "Stale battle message publication request");
+  if (op.command.seconds < 0) {
+    if (cursor !== null) throw new BattleEventError(program.source, pc, "Asynchronous battle Msg cannot retain a wrapper cursor");
+    state.pc++; state.status = "running"; state.wait = null;
+  } else {
+    const value = parseMessageCursor(cursor);
+    if (value.after !== op.command.after) throw new BattleEventError(program.source, pc, "Battle message continuation changed");
+    state.wait = { kind: "message", clock: state.wait.clock, cursor: value };
+  }
+  return state;
+}
 export class BattleEventError extends Error {
   constructor(readonly source: BattleAISource | null, readonly pc: number, reason: string) {
     super(`Battle event ${source?.assetPath ?? "synthetic"}#/Mnemonics/${pc}: ${reason}`);
@@ -163,6 +198,8 @@ function parseOp(raw: unknown): BattleEventOp {
   checkpointRecord(raw);
   const value = raw as Record<string, unknown>, kind = value.kind;
   switch (kind) {
+    case "script-action": return parseScriptedBattleAction(value);
+    case "message": return parseBattleEventMessageOp(raw);
     case "nop": case "blank": case "exit": case "return":
     case "wait-start": case "exec-ai": case "sync-ai": case "sync-action": case "players-ended":
       checkpointKeys(value, "kind");
@@ -233,7 +270,9 @@ function parseSource(raw: unknown): BattleAISource | null {
 /** Structural parsing deliberately retains blockers, so failed source programs
  * remain inspectable. Execution is a separate, full-program admission check. */
 export function parseBattleEventProgram(raw: unknown): BattleEventProgram {
-  const value = record(raw, "kind,source,entry,end,localNames,initialLocals,instructions,blockers");
+  checkpointRecord(raw);
+  const value = record(raw, "kind,source,entry,end,localNames,initialLocals,instructions,blockers" +
+    (Object.hasOwn(raw as object, "messageBinding") ? ",messageBinding" : ""));
   if (value.kind !== "battle-event-v1") throw new Error("Invalid battle event program kind");
   const source = parseSource(value.source);
   const program: BattleEventProgram = {
@@ -247,14 +286,17 @@ export function parseBattleEventProgram(raw: unknown): BattleEventProgram {
         throw new BattleEventError(source, pc, error instanceof Error ? error.message : String(error));
       }
     }), blockers: array(value.blockers, value => text(value)),
+    ...(Object.hasOwn(value, "messageBinding") ? { messageBinding: parseBattleEventMessageBinding(value.messageBinding) } : {}),
   };
   const fail = (pc: number, reason: string): never => { throw new BattleEventError(program.source, pc, reason); };
+  if (program.source && program.instructions.some(({ op }) => op.kind === "message") && !program.messageBinding)
+    fail(program.entry, "Source battle messages require their physical localization/name binding");
   if (program.entry >= program.end || program.end > program.instructions.length)
     fail(program.entry, "invalid program range");
   if (program.initialLocals.length !== program.localNames.length)
     fail(program.entry, "script-local names and values do not match");
   for (const [pc, { op }] of program.instructions.entries()) {
-    if ("target" in op && (op.target < program.entry || op.target + 1 >= program.end))
+    if ((op.kind==="call"||op.kind==="jump"||op.kind==="branch"||op.kind==="variable-branch") && (op.target < program.entry || op.target + 1 >= program.end))
       fail(pc, "target label has no instruction inside the program range");
     if ((op.kind === "calc" || op.kind === "branch") &&
         (op.index >= program.localNames.length || op.right.kind === "local" && op.right.index >= program.localNames.length))
@@ -302,7 +344,13 @@ function parseWait(raw: unknown): BattleEventWait | null {
   if (raw === null) return null;
   checkpointRecord(raw);
   const value = raw as Record<string, unknown>, kind = value.kind;
-  if (kind === "blank" || kind === "start" || kind === "action" || kind === "enemy-party-entry" || kind === "player-group-entry") {
+  if (kind === "message-prepare") {
+    checkpointKeys(value, "kind,clock"); return { kind, clock: clockNumber(value.clock) };
+  }
+  if (kind === "message") {
+    checkpointKeys(value, "kind,clock,cursor"); return { kind, clock: clockNumber(value.clock), cursor: parseMessageCursor(value.cursor) };
+  }
+  if (kind === "blank" || kind === "start" || kind === "action" || kind === "script-action" || kind === "enemy-party-entry" || kind === "player-group-entry") {
     checkpointKeys(value, "kind,clock");
     return { kind, clock: clockNumber(value.clock) };
   }
@@ -315,6 +363,13 @@ function parseWait(raw: unknown): BattleEventWait | null {
     return { kind, clock: clockNumber(value.clock), previousNoAct: boolean(value.previousNoAct) };
   }
   throw new Error("Invalid battle event wait kind");
+}
+function parseMessageCursor(raw: unknown): SourceMessageTaskCursor {
+  const c = record(raw, "ticket,pageSeconds,after,anchorTime,finalTimerStarted");
+  if (!["message", "choice", "close"].includes(String(c.after))) throw new Error("Invalid battle message continuation");
+  const pageSeconds = c.pageSeconds === null ? null : finite(c.pageSeconds, Number.MIN_VALUE);
+  return { ticket: integer(c.ticket, 1, Number.MAX_SAFE_INTEGER), pageSeconds,
+    after: c.after as SourceMessageTaskCursor["after"], anchorTime: finite(c.anchorTime, 0), finalTimerStarted: boolean(c.finalTimerStarted) };
 }
 function parseState(raw: unknown): BattleEventState {
   const value = record(raw, "pc,stack,locals,status,wait,clock,clockInstructions"), status = value.status;
@@ -333,7 +388,8 @@ function parseContext(raw: unknown): BattleEventContext {
     (Object.hasOwn(fields, "enemyEntry") ? ",enemyEntry" : "") +
     (Object.hasOwn(fields, "enemyPartyEntry") ? ",enemyPartyEntry" : "") +
     (Object.hasOwn(fields, "playerEntry") ? ",playerEntry" : "") +
-    (Object.hasOwn(fields, "playerGroupEntry") ? ",playerGroupEntry" : ""));
+    (Object.hasOwn(fields, "playerGroupEntry") ? ",playerGroupEntry" : "") +
+    (Object.hasOwn(fields, "messageStatus") ? ",messageStatus" : ""));
   let variables: BattleEventContext["variables"];
   if (Object.hasOwn(value, "variables")) {
     const port = record(value.variables, "read");
@@ -361,6 +417,12 @@ function parseContext(raw: unknown): BattleEventContext {
     const entry = record(value.playerGroupEntry, "completed");
     playerGroupEntry = { completed: boolean(entry.completed) };
   }
+  let messageStatus: SourceMessageSequenceStatus | undefined;
+  if (Object.hasOwn(value, "messageStatus")) {
+    const status = record(value.messageStatus, "ticket,complete,endWaiting,newPageInputWaiting,playing");
+    messageStatus = { ticket: integer(status.ticket, 1, Number.MAX_SAFE_INTEGER), complete: boolean(status.complete),
+      endWaiting: boolean(status.endWaiting), newPageInputWaiting: boolean(status.newPageInputWaiting), playing: boolean(status.playing) };
+  }
   return { clock: clockNumber(value.clock), timeSeconds: finite(value.timeSeconds, 0),
     started: boolean(value.started), aiCoreAlive: boolean(value.aiCoreAlive), actionStaging: boolean(value.actionStaging),
     ...(variables ? { variables } : {}),
@@ -368,6 +430,7 @@ function parseContext(raw: unknown): BattleEventContext {
     ...(enemyPartyEntry ? { enemyPartyEntry } : {}),
     ...(playerEntry ? { playerEntry } : {}),
     ...(playerGroupEntry ? { playerGroupEntry } : {}),
+    ...(messageStatus ? { messageStatus } : {}),
     ...(Object.hasOwn(value, "playersEnded") ? { playersEnded: boolean(value.playersEnded) } : {}) };
 }
 
@@ -410,9 +473,10 @@ export function advanceBattleEvent(
   }
   if (!inRange(state.pc)) fail("PC outside the program range");
   if (state.wait) {
-    const expected = { blank: "blank", start: "wait-start", action: "sync-action", time: "wait",
+    const expected = { blank: "blank", start: "wait-start", action: "sync-action", "script-action":"script-action", time: "wait",
       "enemy-entry": "add-enemy", "enemy-party-entry": "change-enemy-party",
-      "player-entry": "add-player", "player-group-entry": "change-player-group" }[state.wait.kind];
+      "player-entry": "add-player", "player-group-entry": "change-player-group",
+      "message-prepare": "message", "message": "message" }[state.wait.kind];
     if (program.instructions[state.pc]?.op.kind !== expected) fail("wait does not match its instruction");
     if (state.wait.clock === context.clock) return { state, requests: [], visited: [] };
   }
@@ -483,6 +547,26 @@ export function advanceBattleEvent(
     failurePc = pc;
     visited.push(pc);
     switch (op.kind) {
+      case "message": {
+        if (op.command.kind === "close") {
+          next(); requests.push({ kind: "message", pc, operation: structuredClone(op) }); return result();
+        }
+        if (state.wait?.kind === "message-prepare") return fail("Battle message publication was not acknowledged", pc);
+        if (state.wait?.kind !== "message") {
+          state.status = "waiting"; state.wait = { kind: "message-prepare", clock: context.clock };
+          requests.push({ kind: "message", pc, operation: structuredClone(op) }); return result();
+        }
+        if (!context.messageStatus) return fail("Missing battle message manager status", pc);
+        const polled = guarded(() => pollSourceMessageTask(state.wait!.kind === "message" ? state.wait!.cursor : fail("Missing battle message cursor"),
+          context.messageStatus!, context.timeSeconds * 1000));
+        const ticket = state.wait.cursor.ticket;
+        if (polled.flow === "next") {
+          next(); requests.push({ kind: "message-complete", pc, ticket, close: polled.action === "close" }); return result();
+        }
+        state.wait = { kind: "message", clock: context.clock, cursor: polled.cursor };
+        if (polled.action === "page-input") requests.push({ kind: "message-page-input", pc, ticket });
+        return result();
+      }
       case "nop": next(); break;
       case "exit": next(); state.status = "exited"; return result();
       case "jump": jump(op.target); break;
@@ -545,6 +629,15 @@ export function advanceBattleEvent(
         if (!context.started) return yieldClock("start");
         next();
         break;
+      case "script-action":
+        if(state.wait?.kind==="script-action"){
+          if(context.actionStaging){state.wait.clock=context.clock;return result();}
+          next();break;
+        }
+        if(op.asynchronous)next();
+        else{state.status="waiting";state.wait={kind:"script-action",clock:context.clock};}
+        requests.push({...structuredClone(op),pc});
+        return result();
       case "sync-action":
         if (context.actionStaging) return yieldClock("action");
         next();

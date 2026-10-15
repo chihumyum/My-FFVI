@@ -1,4 +1,5 @@
 import {createFrameworkFieldEffectFlatAddition,createFrameworkFieldEffectFlatEvidenceReader} from './framework-field-effect-flat-evidence.mjs';
+import {createFrameworkOrdinaryPresentationAddition,createFrameworkOrdinaryPresentationEvidenceReader} from './framework-ordinary-presentation-evidence.mjs';
 import {createSourceMessageFeeEvidenceReader} from './source-message-fee-evidence.mjs';
 import {createFrameworkNpcFlatAddition,createFrameworkNpcFlatEvidenceReader} from './framework-npc-flat-evidence.mjs';
 // Prepare the entire collection privately; producers own no gameplay state.
@@ -103,7 +104,7 @@ async function validatePublicCAS(root,candidateHistory){
 const sourceFrameworkDefaults=webSourceFrameworkInputs();
 export async function compileSharedContentPackages({root=repository,compiledDir='dist',readJson,
   sourceRecipePaths,sourceSelectionPath,npcAreas=sourceFrameworkDefaults.npcAreas,npcFlat=sourceFrameworkDefaults.npcFlat,fieldEffectFlat=sourceFrameworkDefaults.fieldEffectFlat,
-  periodicMaps=sourceFrameworkDefaults.periodicMaps,logicalFieldEffects=sourceFrameworkDefaults.logicalFieldEffects}={}){
+  periodicMaps=sourceFrameworkDefaults.periodicMaps,ordinaryFields=sourceFrameworkDefaults.ordinaryFields,logicalFieldEffects=sourceFrameworkDefaults.logicalFieldEffects}={}){
   root=await realpath(resolve(root));
   // Several existing producers still import the repository's default emitted
   // modules. Do not claim another compiler lock covers that mixed runtime.
@@ -140,7 +141,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     if(id!=='base')put('/content-packages/'+id+'/build-report.json',result.report);
     reports.push({id,report:result.report});
   };
-  const prerequisites=await compileSourcePrerequisites({root,compiledDir,logicalFieldEffects,periodicMaps,npcAreas,npcFlat,fieldEffectFlat,
+  const prerequisites=await compileSourcePrerequisites({root,compiledDir,logicalFieldEffects,periodicMaps,ordinaryFields,npcAreas,npcFlat,fieldEffectFlat,
     mapAnimatedEntities:sourceFrameworkDefaults.mapAnimatedEntities});
   const linked=await linkSourcePrerequisites({root,compiledDir,payloads:prerequisites.payloads,frameworkOptions:prerequisites.frameworkOptions});
   const sourceRead=async url=>linked.inputs.has(url)?structuredClone(linked.inputs.get(url)):readJson(url);
@@ -206,6 +207,12 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     catalog:await sourceRead('/framework/world/catalog.json'),entry:await sourceRead('/framework/new-game.json')}):undefined;
   const frameworkFieldEffectFlatEvidence=frameworkFieldEffectFlatAddition?createFrameworkFieldEffectFlatEvidenceReader({root,compiledDir,logicalInputDirectory:prerequisites.inputs.logicalFieldEffects.input,readSourceWorld:()=>sourceRead('/world/catalog.json'),
     readSourceMap:async mapId=>{const catalog=await sourceRead('/world/catalog.json');return sourceRead(catalog.maps[String(mapId)].url);}}):undefined;
+  const frameworkOrdinaryPresentationAddition=prerequisites.frameworkOptions.ordinaryPresentations?createFrameworkOrdinaryPresentationAddition({
+    compilerDigest:prerequisites.inputs.compilerDigest,assessments:prerequisites.frameworkOptions.ordinaryPresentations,
+    strictWorld:await sourceRead('/world/catalog.json'),catalog:await sourceRead('/framework/world/catalog.json'),entry:await sourceRead('/framework/new-game.json')}):undefined;
+  const frameworkOrdinaryPresentationEvidence=frameworkOrdinaryPresentationAddition?createFrameworkOrdinaryPresentationEvidenceReader({root,compiledDir,
+    compilerDigest:prerequisites.inputs.compilerDigest,
+    readSourceWorld:()=>sourceRead('/world/catalog.json'),readSourceMap:async mapId=>{const catalog=await sourceRead('/world/catalog.json');return sourceRead(catalog.maps[String(mapId)].url);}}):undefined;
   const resolveRecipe=async path=>{
     const original=await recipe(path);
     const resolved=await resolveSourceRecipeInputs({root,compiledDir,recipePath:path,recipeBytes:original.raw,
@@ -215,14 +222,17 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
         parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
       sourceMapAnimationAddition:{kind:'compiled-source-map-animation-import-addition-v1',compilerDigest:prerequisites.inputs.compilerDigest,
         sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
+      sourceNpcInitialPoseAddition:{kind:'compiled-source-npc-initial-pose-contract-addition-v1',compilerDigest:prerequisites.inputs.compilerDigest,
+        sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
       sourceNpcRoutesAddition:{kind:'compiled-source-npc-route-evidence-addition-v1',compilerDigest:prerequisites.inputs.compilerDigest,
         sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
-      frameworkNpcAreaAddition,frameworkNpcAreaEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,
+      frameworkNpcAreaAddition,frameworkNpcAreaEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,frameworkOrdinaryPresentationAddition,frameworkOrdinaryPresentationEvidence,
       frameworkProfileUpgrade:{kind:'compiled-framework-profile-upgrade-v4',
         compilerDigest:prerequisites.inputs.compilerDigest,markers:{
           storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1',mapAnimatedEntities:'web-field-animated-map-entities-v1',
           ...(prerequisites.frameworkOptions.logicalFieldEffects?{logicalFieldEffects:'web-logical-all-loop-field-effects-v1'}:{}),
-          ...(prerequisites.frameworkOptions.periodicPresentations?{worldMap:'framework-world-map-flat-v1',fieldPresentation:'framework-ordinary-field-flat-v1'}:{})},
+          ...(prerequisites.frameworkOptions.periodicPresentations?{worldMap:'framework-world-map-flat-v1'}:{}),
+          ...(prerequisites.frameworkOptions.periodicPresentations||prerequisites.frameworkOptions.ordinaryPresentations?{fieldPresentation:'framework-ordinary-field-flat-v1'}:{})},
         ...(prerequisites.frameworkOptions.logicalFieldEffects?{logicalFieldEffects:prerequisites.frameworkOptions.logicalFieldEffects.catalog}:{})}});
     rebindings.push(resolved.report);return {...original,value:resolved.recipe};
   };
