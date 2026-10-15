@@ -4,7 +4,7 @@ import type { FieldDirectionInputResult } from "./field.js";
 import { GameSession } from "./game-session.js";
 
 export type GameFlowPhase = "title" | "loading" | "paused" | "exploration" | "event" | "dialogue" | "choice" | "shop" | "party-selection" |
-  "battle-entry" | "battle-return" | "battle" | "victory" | "defeat" | "escaped" | "transition" | "blocked";
+  "battle-entry" | "battle-return" | "battle" | "victory" | "defeat" | "escaped" | "forced" | "transition" | "blocked";
 export type GameFlowOperation = "new-game" | "load" | "save" | "map" | "battle-entry" | "battle-return";
 export type GameFlowHostState = { visible: boolean; mediaReady: boolean; overlayOpen: boolean };
 export type GameFlowStartOptions = { paused?: boolean };
@@ -95,6 +95,7 @@ export class GameFlow {
   pause(value: boolean): boolean {
     if (typeof value !== "boolean") throw new Error("Invalid game flow pause value");
     if (!this.hasStarted || !this.owner || this.operation) return false;
+    if (value && this.owner.battle?.phase === "active" && this.owner.battle.uiControls.pauseLocked) return false;
     this.isPaused = value; return true;
   }
   beginOperation(kind: GameFlowOperation): GameFlowTicket {
@@ -216,6 +217,9 @@ export class GameFlow {
   requestEscape(): boolean { return this.canEscape ? this.owner!.requestEscape() : false; }
   continueEscape(): boolean {
     return this.hostAllowsInput && this.owner?.battle?.phase === "escaped" ? this.owner.continueEscape() : false;
+  }
+  continueForcedReturn(): boolean {
+    return this.hostAllowsInput && this.owner?.battle?.phase === "forced" ? this.owner.continueForcedReturn() : false;
   }
   retryBattle(): boolean {
     const owner = this.owner;

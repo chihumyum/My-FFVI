@@ -11,23 +11,39 @@ export const WEB_BATTLE_EVENT_MESSAGE_POLICY = "web-source-battle-event-messages
 export type BattleEventMessagePresentation = { sourceWindow: 0 | 1 | 2; speakerAnchor: "left" | "right" };
 export type BattleEventMessageOp = { kind: "message"; command: SourceMessageSequenceCommand | { kind: "close" };
   presentation: BattleEventMessagePresentation | null };
+type MessagePhysicalSource = {
+  file: string; assetPath: string; objectId: string; serializedFile: string | null; sha256: string;
+};
+type LegacyMessageRole = "body" | "speaker" | "character-names";
+export const BATTLE_MESSAGE_DICTIONARIES = {
+  body: "story_mes_zhc", speaker: "story_cha_zhc", "character-names": "character_default_name.csv",
+  "system-body": "system_zhc", "etcetera-body": "etc_text_zhc",
+} as const;
+type MessageRole = keyof typeof BATTLE_MESSAGE_DICTIONARIES;
 export type BattleEventMessageBinding = {
   kind: "battle-event-message-binding-v1"; sourceSetHash: string; parentSourceSetHash: string;
-  sources: { role: "body" | "speaker" | "character-names"; source: {
-    file: string; assetPath: string; objectId: string; serializedFile: string | null; sha256: string;
-  } }[];
+  sources: { role: LegacyMessageRole; source: MessagePhysicalSource }[];
+} | {
+  kind: "battle-event-message-binding-v2"; sourceSetHash: string; parentSourceSetHash: string;
+  /** Complete MessageManager dictionary load contract, including native empty
+   * speaker semantics. It grants neither a body fallback nor a second window. */
+  routing: "native-shared-message-dictionaries-v1";
+  sources: { role: MessageRole; source: MessagePhysicalSource; contentHash: string; rowCount: number }[];
 };
 export function parseBattleEventMessageBinding(raw: unknown): BattleEventMessageBinding {
-  checkpointKeys(raw, "kind,sourceSetHash,parentSourceSetHash,sources");
+  checkpointRecord(raw);
+  const v2 = (raw as {kind?:unknown}).kind === "battle-event-message-binding-v2";
+  checkpointKeys(raw, "kind,sourceSetHash,parentSourceSetHash,sources" + (v2 ? ",routing" : ""));
   const value = raw as BattleEventMessageBinding;
-  if (value.kind !== "battle-event-message-binding-v1" ||
+  if ((!v2 && value.kind !== "battle-event-message-binding-v1") ||
+      v2 && (value as Extract<BattleEventMessageBinding, {kind:"battle-event-message-binding-v2"}>).routing !== "native-shared-message-dictionaries-v1" ||
       !/^[a-f0-9]{64}$/.test(value.sourceSetHash) || !/^[a-f0-9]{64}$/.test(value.parentSourceSetHash) ||
-      !Array.isArray(value.sources) || value.sources.length !== 3)
+      !Array.isArray(value.sources) || value.sources.length !== (v2 ? 5 : 3))
     throw new Error("Invalid battle message source binding");
   const roles = new Set<string>();
   for (const row of value.sources) {
-    checkpointKeys(row, "role,source"); checkpointKeys(row.source, "file,assetPath,objectId,serializedFile,sha256");
-    if (!["body", "speaker", "character-names"].includes(row.role) || roles.has(row.role))
+    checkpointKeys(row, "role,source" + (v2 ? ",contentHash,rowCount" : "")); checkpointKeys(row.source, "file,assetPath,objectId,serializedFile,sha256");
+    if (!(v2 ? Object.keys(BATTLE_MESSAGE_DICTIONARIES) : ["body", "speaker", "character-names"]).includes(row.role) || roles.has(row.role))
       throw new Error("Ambiguous battle message source role");
     roles.add(row.role);
     const s = row.source;
@@ -35,6 +51,11 @@ export function parseBattleEventMessageBinding(raw: unknown): BattleEventMessage
         typeof s.objectId !== "string" || !/^-?(?:0|[1-9]\d*)$/.test(s.objectId) ||
         BigInt(s.objectId) < -(1n << 63n) || BigInt(s.objectId) >= 1n << 63n || !/^[a-f0-9]{64}$/.test(s.sha256))
       throw new Error("Invalid battle message physical source");
+    if (v2) {
+      const bound = row as Extract<BattleEventMessageBinding, {kind:"battle-event-message-binding-v2"}>["sources"][number];
+      if (!/^[a-f0-9]{64}$/.test(bound.contentHash) || !Number.isSafeInteger(bound.rowCount) || bound.rowCount < 1)
+        throw new Error("Invalid battle message dictionary content binding");
+    }
   }
   return structuredClone(value);
 }

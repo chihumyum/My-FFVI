@@ -54,6 +54,7 @@ export class BattleView {
     this.paused = false;
     this.specialInput = null;
     this.revision = 0;
+    this.controlRevision = null;
     $("battle-return").onclick = () => {};
     $("battle-retry").onclick = () => {};
     this.rows = new Map();
@@ -61,6 +62,7 @@ export class BattleView {
   }
   userReady(battle = this.instance) {
     return !!battle && this.instance === battle && !this.paused &&
+      (battle.phase !== "active" || battle.uiControls.visible && this.controlRevision === battle.uiControls.revision) &&
       !(battle.phase === "active" && battle.messageInputPending) &&
       (!this.commands || this.owner?.battle === battle && this.commands.ownsBattle(battle) &&
         this.commands.battleReady);
@@ -70,6 +72,7 @@ export class BattleView {
     this.selected = null;
     this.publishClock();
     this.instance = null;
+    this.controlRevision = null;
     this.returnError = null;
     $("battle-ui").hidden = true;
     $("battle-result").hidden = true;
@@ -77,7 +80,7 @@ export class BattleView {
   /** Presentation-only failure marker, tied to this exact terminal battle.
    * The session retains the receipt and remains the only settlement owner. */
   showReturnError(battle) {
-    if (this.instance !== battle || !["victory", "escaped"].includes(battle.phase))
+    if (this.instance !== battle || !["victory", "escaped", "forced"].includes(battle.phase))
       throw new Error("Cannot show return error for a stale battle");
     this.returnError = battle;
     this.sync(battle, this.paused);
@@ -192,10 +195,15 @@ export class BattleView {
       this.resetMenu();
     }
     const commandPort = this.commands, owner = this.owner, phase = battle.phase;
+    if (this.controlRevision !== battle.uiControls.revision) {
+      this.controlRevision = battle.uiControls.revision;
+      this.selected = null;
+      this.resetMenu();
+    }
     const current = () => this.instance === battle && this.commands === commandPort &&
       this.owner === owner && !this.paused && battle.phase === phase;
     $("battle-return").onclick = () => {
-      if (!current() || !["victory", "escaped"].includes(phase) ||
+      if (!current() || !["victory", "escaped", "forced"].includes(phase) ||
         commandPort && !commandPort.canReturnBattle(battle)) return;
       this.returnError = null;
       this.onReturn();
@@ -260,18 +268,21 @@ export class BattleView {
       row.button.classList.toggle("selected", p.id === this.selected);
       row.button.classList.toggle("fallen", p.hp === 0);
     }
-    $("battle-ui").hidden = paused || battle.phase !== "active";
+    $("battle-ui").hidden = paused || battle.phase !== "active" || !battle.uiControls.visible;
+    $("battle-ui").setAttribute("data-player-control", battle.playerControlMode);
     $("battle-result").hidden = paused || battle.phase === "active";
     if (battle.phase !== "active") {
       this.publishClock();
       label(
         $("battle-result-title"),
-        battle.phase === "escaped" ? "已撤离战斗" : battle.phase === "victory" ? "战斗胜利" : "队伍倒下了",
+        battle.phase === "forced" ? "战斗结束" : battle.phase === "escaped" ? "已撤离战斗" : battle.phase === "victory" ? "战斗胜利" : "队伍倒下了",
       );
       const r = battle.reward;
       label(
         $("battle-result-text"),
-        (battle.phase === "escaped"
+        (battle.phase === "forced"
+          ? "返回进入战斗前的角色与物品状态，不获得胜利奖励。"
+          : battle.phase === "escaped"
           ? "保留当前状态与已用掉的物品，不获得胜利奖励。"
           : r
           ? `${r.exp} EXP · ${r.gil} Gil\n存活队员各获得 ${r.each} EXP` +
@@ -292,7 +303,7 @@ export class BattleView {
               .join(" · ")
           : "",
       );
-      $("battle-return").hidden = !["victory", "escaped"].includes(battle.phase);
+      $("battle-return").hidden = !["victory", "escaped", "forced"].includes(battle.phase);
       label($("battle-return"), this.returnError === battle ? "重试返回" : "继续前行");
       $("battle-retry").hidden = battle.phase !== "defeat";
       return;
@@ -558,6 +569,18 @@ export class BattleView {
         c.fill();
       }
       c.restore();
+    }
+    // Explicit Web pulse policy; the native effect/master identity stays on
+    // the projection. These rings do not pretend to render its Unity prefab.
+    for (const effect of battle.effectPresentation ?? []) if (effect.phase === "playing") {
+      const progress = effect.elapsed / effect.duration;
+      for (const id of effect.targetInstanceIds) {
+        const target = battle.combatants.find(unit => unit.id === id);
+        if (!target) continue;
+        const point = this.position(target, battle);
+        c.save(); c.globalAlpha = Math.sin(progress * Math.PI); c.strokeStyle = "#e8f4ff"; c.lineWidth = 3;
+        c.beginPath(); c.arc(point.x, point.y - 22, 12 + 20 * progress, 0, Math.PI * 2); c.stroke(); c.restore();
+      }
     }
     if (a) {
       const from = this.position(

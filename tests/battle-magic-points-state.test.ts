@@ -30,6 +30,10 @@ function setPoints(state: GameState, values: number[]) {
 }
 function legacy11(snapshot: GameStateSnapshot): LegacyGameStateSnapshotV11 {
   return { ...structuredClone(snapshot), formatVersion: 11,
+    completedBattles: snapshot.completedBattles.map(receipt => {
+      if (receipt.outcome === "forced") throw new Error("Forced receipt cannot be represented by historical v11");
+      return { ...receipt, outcome: receipt.outcome };
+    }),
     roster: snapshot.roster.map(({ magicLearningValue: _, ...member }) => structuredClone(member)) };
 }
 function legacy10(snapshot: GameStateSnapshot): LegacyGameStateSnapshotV10 {

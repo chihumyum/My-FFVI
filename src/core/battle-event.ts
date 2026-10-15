@@ -1,3 +1,4 @@
+import {parseBattleEventEffectOp,type BattleEventEffectOp} from './battle-event-effect.js';
 import { parseScriptedBattleAction, type ScriptedBattleAction } from "./scripted-battle-action.js";
 import type { BattleAISource } from "./battle-ai.js";
 import { int32, integerOperation, isOperator, type Operator } from "./script-integer.js";
@@ -14,7 +15,10 @@ export type BattleEventValue =
   | { kind: "local"; index: number };
 export type BattleEventOp =
   | ScriptedBattleAction
+  | BattleEventEffectOp
   | BattleEventMessageOp
+  | { kind: "ui-visibility"; visible: boolean }
+  | { kind: "stop-auto" | "force-return" }
   | { kind: "nop" | "blank" | "exit" | "return" | "wait-start" | "exec-ai" | "sync-ai" | "sync-action" | "players-ended" }
   | { kind: "call" | "jump"; target: number }
   | { kind: "calc"; index: number; operator: Operator; right: BattleEventValue }
@@ -48,7 +52,7 @@ export type BattleEventProgram = {
 export type BattleEventWait =
   | { kind: "message-prepare"; clock: number }
   | { kind: "message"; clock: number; cursor: SourceMessageTaskCursor }
-  | { kind: "blank" | "start" | "action" | "script-action" | "enemy-party-entry" | "player-group-entry"; clock: number }
+  | { kind: "blank" | "start" | "action" | "script-action" | "enemy-party-entry" | "player-group-entry" | "battle-effect"; clock: number }
   | { kind: "time"; clock: number; entryTimeSeconds: number }
   | { kind: "enemy-entry" | "player-entry"; clock: number; previousNoAct: boolean };
 export type BattleEventState = {
@@ -81,9 +85,13 @@ export type BattleEventContext = {
   playerEntry?: { noAct: boolean; completed: boolean };
   playerGroupEntry?: { completed: boolean };
   messageStatus?: SourceMessageSequenceStatus;
+  battleEffectsFinished?:boolean;
 };
 export type BattleEventRequest =
   | (ScriptedBattleAction & { pc: number })
+  | { kind: "ui-visibility"; pc: number; visible: boolean }
+  | { kind: "stop-auto" | "force-return"; pc: number }
+  | (Extract<BattleEventEffectOp,{kind:"play-battle-effect"}> & {pc:number})
   | { kind: "message"; pc: number; operation: BattleEventMessageOp }
   | { kind: "message-page-input"; pc: number; ticket: number }
   | { kind: "message-complete"; pc: number; ticket: number; close: boolean }
@@ -198,7 +206,14 @@ function parseOp(raw: unknown): BattleEventOp {
   checkpointRecord(raw);
   const value = raw as Record<string, unknown>, kind = value.kind;
   switch (kind) {
+    case "ui-visibility":
+      checkpointKeys(value, "kind,visible");
+      return { kind, visible: boolean(value.visible) };
+    case "stop-auto": case "force-return":
+      checkpointKeys(value, "kind");
+      return { kind };
     case "script-action": return parseScriptedBattleAction(value);
+    case "play-battle-effect":case "sync-battle-effect": return parseBattleEventEffectOp(value);
     case "message": return parseBattleEventMessageOp(raw);
     case "nop": case "blank": case "exit": case "return":
     case "wait-start": case "exec-ai": case "sync-ai": case "sync-action": case "players-ended":
@@ -350,7 +365,7 @@ function parseWait(raw: unknown): BattleEventWait | null {
   if (kind === "message") {
     checkpointKeys(value, "kind,clock,cursor"); return { kind, clock: clockNumber(value.clock), cursor: parseMessageCursor(value.cursor) };
   }
-  if (kind === "blank" || kind === "start" || kind === "action" || kind === "script-action" || kind === "enemy-party-entry" || kind === "player-group-entry") {
+  if (kind === "blank" || kind === "start" || kind === "action" || kind === "script-action" || kind === "enemy-party-entry" || kind === "player-group-entry" || kind === "battle-effect") {
     checkpointKeys(value, "kind,clock");
     return { kind, clock: clockNumber(value.clock) };
   }
@@ -389,7 +404,8 @@ function parseContext(raw: unknown): BattleEventContext {
     (Object.hasOwn(fields, "enemyPartyEntry") ? ",enemyPartyEntry" : "") +
     (Object.hasOwn(fields, "playerEntry") ? ",playerEntry" : "") +
     (Object.hasOwn(fields, "playerGroupEntry") ? ",playerGroupEntry" : "") +
-    (Object.hasOwn(fields, "messageStatus") ? ",messageStatus" : ""));
+    (Object.hasOwn(fields, "messageStatus") ? ",messageStatus" : "") +
+    (Object.hasOwn(fields,"battleEffectsFinished") ? ",battleEffectsFinished" : ""));
   let variables: BattleEventContext["variables"];
   if (Object.hasOwn(value, "variables")) {
     const port = record(value.variables, "read");
@@ -431,6 +447,7 @@ function parseContext(raw: unknown): BattleEventContext {
     ...(playerEntry ? { playerEntry } : {}),
     ...(playerGroupEntry ? { playerGroupEntry } : {}),
     ...(messageStatus ? { messageStatus } : {}),
+    ...(Object.hasOwn(value,"battleEffectsFinished")?{battleEffectsFinished:boolean(value.battleEffectsFinished)}:{}),
     ...(Object.hasOwn(value, "playersEnded") ? { playersEnded: boolean(value.playersEnded) } : {}) };
 }
 
@@ -476,8 +493,8 @@ export function advanceBattleEvent(
     const expected = { blank: "blank", start: "wait-start", action: "sync-action", "script-action":"script-action", time: "wait",
       "enemy-entry": "add-enemy", "enemy-party-entry": "change-enemy-party",
       "player-entry": "add-player", "player-group-entry": "change-player-group",
-      "message-prepare": "message", "message": "message" }[state.wait.kind];
-    if (program.instructions[state.pc]?.op.kind !== expected) fail("wait does not match its instruction");
+      "message-prepare": "message", "message": "message", "battle-effect":"sync-battle-effect" }[state.wait.kind];
+    if (state.wait.kind === "battle-effect" ? !["play-battle-effect","sync-battle-effect"].includes(program.instructions[state.pc]?.op.kind??"") : program.instructions[state.pc]?.op.kind !== expected) fail("wait does not match its instruction");
     if (state.wait.clock === context.clock) return { state, requests: [], visited: [] };
   }
   if (state.clock !== context.clock) {
@@ -547,6 +564,21 @@ export function advanceBattleEvent(
     failurePc = pc;
     visited.push(pc);
     switch (op.kind) {
+      case "ui-visibility":
+        next(); requests.push({ kind: op.kind, visible: op.visible, pc }); return result();
+      case "stop-auto": case "force-return":
+        next(); requests.push({ kind: op.kind, pc }); return result();
+      case "play-battle-effect": {
+        if(state.wait?.kind!=="battle-effect") {
+          if(op.wait){state.status="waiting";state.wait={kind:"battle-effect",clock:context.clock};}else next();
+          requests.push({...structuredClone(op),pc});return result();
+        }
+        if(typeof context.battleEffectsFinished!=="boolean")return fail("Missing global battle effect completion provider",pc);
+        if(!context.battleEffectsFinished){state.wait.clock=context.clock;return result();}next();break;
+      }
+      case "sync-battle-effect":
+        if(typeof context.battleEffectsFinished!=="boolean")return fail("Missing global battle effect completion provider",pc);
+        if(!context.battleEffectsFinished){state.status="waiting";state.wait={kind:"battle-effect",clock:context.clock};return result();}next();break;
       case "message": {
         if (op.command.kind === "close") {
           next(); requests.push({ kind: "message", pc, operation: structuredClone(op) }); return result();

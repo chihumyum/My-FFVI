@@ -35,7 +35,7 @@ const party = z.object({ selectedSlot: z.union([z.literal(0), z.literal(1), z.li
   slots: z.tuple([slot, slot, slot]) }).strict();
 const item = z.object({ id, count }).strict();
 const settled = z.object({ serial: count, encounterId: id,
-  outcome: z.enum(["victory", "escaped"]) }).strict();
+  outcome: z.enum(["victory", "escaped", "forced"]) }).strict();
 const expectation = z.object({ mapId: id.nullable(), flags: z.array(flag),
   roster: z.array(rosterMember).nullable(), party: party.nullable(), gil: count.nullable(),
   items: z.array(item), equipmentStock: z.array(item).optional() }).strict();

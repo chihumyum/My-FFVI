@@ -26,7 +26,7 @@ export async function loadBattleEventMessageSourceInputs(root,compiledDir){
   assert.equal(files[0].sha256,p.source.sha256,'Corpus/battle physical bytes differ');
   return {...exported.source,sha256:files[0].sha256,sourceSetHash:battle.parentSourceSetHash,battleSourceSetHash:battle.sourceSetHash};
  };
- const compiled=programs.map(p=>{const bound=typedSource(p),program=api.compileBattleEvent(p.data,bound,input),messageSites=[];
+ const compiled=programs.map(p=>{const bound=typedSource(p),program=api.compileBattleEvent(p.data,bound,input,snapshot.reader),messageSites=[];
   assert.equal(program.instructions.length,p.data.Mnemonics.length);
   for(const[index,raw]of p.data.Mnemonics.entries())if(['Msg','MsgClose'].includes(raw.mnemonic)){
    const value={program:p.id,source:p.source,rawHash:api.hash(p.data),index,raw,nextMnemonic:p.data.Mnemonics[index+1]?.mnemonic??null,

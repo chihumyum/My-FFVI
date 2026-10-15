@@ -1,4 +1,4 @@
-import { fieldViewBinding } from './field-view-change.js';
+import { WEB_FLAT_RETAINED_FIELD_VIEW_CHANGE, fieldViewBinding } from './field-view-change.js';
 import { flatNpcGroupBlockers } from "./field-npc-flat-projection.js";
 import { validateRetainedWorldTransportationPolicy, type RetainedWorldTransportationEntry } from "./world-transportation-entry.js";
 import type { FieldContent } from "../field/types.js";
@@ -739,6 +739,7 @@ export class WorldSession {
           ...(this.owned?.current.sourceMessageSequence ? { sourceMessageSequence: this.owned.current.sourceMessageSequence } : {}),
           ...(this.owned?.current.conditionLeaderActivity ? { conditionLeaderActivity: this.owned.current.conditionLeaderActivity } : {}),
           ...(this.owned?.current.viewChange ? {viewChange:this.owned.current.viewChange} : {}),
+          ...(this.owned?.current.retainedWorldTransportation ? {retainedWorldTransportation:this.owned.current.retainedWorldTransportation} : {}),
           ...(this.owned?.current.cameraShake ? { cameraShake: this.owned.current.cameraShake } : {}),
           ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
         from.fader.fork(),
@@ -758,7 +759,12 @@ export class WorldSession {
         const candidate = prepareSourceNativeMap({ prior: nativeActors, priorCheckpoint: prior,
           ...(from.content.map.nativeComposition ? { priorComposition: from.content.map.nativeComposition } : {}),
           ...(from.currentView && this.owned?.current.viewChange ? {departedView:{policy:this.owned.current.viewChange,
-            binding:fieldViewBinding(from.content,this.owned.current.viewChange)!,view:from.currentView}} : {}),
+            binding:fieldViewBinding(from.content,this.owned.current.viewChange)!,view:from.currentView,
+            ...(from.currentView.policy===WEB_FLAT_RETAINED_FIELD_VIEW_CHANGE&&prior.context.player.riding&&
+              this.owned.current.retainedWorldTransportation&&from.content.entry.viewPlan&&from.transportationPresentation?
+              {retained:{policy:this.owned.current.retainedWorldTransportation,viewPlan:from.content.entry.viewPlan,
+                presentation:from.transportationPresentation,
+                worldPresentation:frameworkWorldMapPresentation(from.content.developmentProfile)!}}:{})}} : {}),
           entry: actorEntry.plan, definition: target.partyEntry, catalog: owned.ports.partyAppearance.catalog,
           party: owned.ports.partyAppearance.current(),
           characters: field.content.characters, animationKeys: catalog.nativeAnimationKeys,

@@ -1,4 +1,6 @@
 import { WEB_MANUAL_BATTLE_CONTROLS, type SourceBattleControls } from '../core/battle-controls.js';
+import { compileSourceBattleFlags } from "./battle-flags.js";
+import type { SourceBattleFlags } from "../core/battle-flags.js";
 import type { BattleAISource } from "../core/battle-ai.js";
 import type { BattleConditionCatalog } from "../core/battle-conditions.js";
 import type {
@@ -37,6 +39,9 @@ type Reader = {
   handoffMusic?: BattleHandoffMusicLookup;
 };
 export type BattleEncounterRuntimeInput = {
+  /** Source field/story requests do not enter the separate native AR catalogs.
+   * An absent declaration preserves legacy/strict unknown-flag admission. */
+  sourceFlagContext?: "story";
   requestedPartyIds: readonly number[];
   encounters: readonly SourceBattleEncounter[];
   sourceDiagnostics: readonly SourceDiagnostic[];
@@ -87,6 +92,8 @@ const array = (value: unknown): boolean => Array.isArray(value);
  * remain in the program, with PCs in the report and the existing runtime gate.
  * Shared rule corruption (for example missing drop weights) still fails the batch. */
 export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncounterRuntimeInput) {
+  if (input.sourceFlagContext !== undefined && input.sourceFlagContext !== "story")
+    throw new Error("Unimplemented source battle flag execution context");
   if(input.manualControls!==undefined&&input.manualControls!==WEB_MANUAL_BATTLE_CONTROLS)throw new Error('Unknown manual battle control policy');
   const requested = [...input.requestedPartyIds];
   const reserves = input.reserveEnemies ?? [], policies = input.development.participants ?? [], waves = input.enemyParties ?? [];
@@ -106,6 +113,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
   const encounters: Record<string, BattleEncounter> = {};
   const entries: BattleEncounterReport["entries"] = [];
   const handoffSources: NonNullable<BattleEncounterReport["handoffSources"]> = [];
+  const flagSources: NonNullable<BattleEncounterReport["flagSources"]> = [];
   let handoffPolicy: FrameworkBattleHandoffPolicy | null | undefined;
   if (input.handoff !== undefined) {
     checkpointKeys(input.handoff, "policy");
@@ -143,6 +151,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     let lifecycle: BattleLifecycle | undefined;
     let handoff: BattleHandoffContent | undefined;
     let controls:SourceBattleControls|undefined;
+    let sourceFlags:SourceBattleFlags|undefined;
     try {
       const m = encounter.metadata;
       if (!encounter.source || encounter.source.rowId !== String(partyId) || !m)
@@ -183,7 +192,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         const omission = input.development.scripts.find((s) => s.id === m.scriptId && same(s.source, encounter.script!.source));
         const issues: { reason: string; pc?: number }[] = [];
         try {
-          const program = compileBattleEvent(encounter.script!.data, encounter.script!.source, input.eventMessages);
+          const program = compileBattleEvent(encounter.script!.data, encounter.script!.source, input.eventMessages, reader);
           issues.push(...program.blockers.map(reason => ({ reason })),
             ...program.instructions.flatMap(({ op }, pc) => op.kind === "blocked" ? [{ reason: op.reason, pc }] : []));
           if (!issues.length) lifecycle = parseBattleLifecycle({ kind: "battle-lifecycle-v1", mode: "script",
@@ -207,10 +216,18 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         if (m.battleFlags.some(flag => int(flag.values.battle_flag_id) === 27))
           block("formation-override", "ForceSideAttack requires an unimplemented battle formation provider", "battle_flag_group_id");
         const omission = input.development.flagGroups.find((g) => g.id === m.battleFlagGroupId && same(g.rows, m.battleFlags));
-        const manualOnly=input.manualControls===WEB_MANUAL_BATTLE_CONTROLS && m.battleFlags.length>0 && m.battleFlags.every(flag=>int(flag.values.battle_flag_id)===19);
-        if(manualOnly){controls={kind:'source-battle-controls-v1',policy:WEB_MANUAL_BATTLE_CONTROLS,initialMode:'manual',offAutoBattle:true};add('development-omission','manual-controls-policy','Explicit Web manual controller consumes source flag19 initialization SetIsAuto(false); later auto toggles/repeated actions are unavailable',{dependency:{table:'battle_flag_group.csv',id:m.battleFlagGroupId}});}
-        else if (!omission) block("battle-flags", "Battle flag group is not implemented", "battle_flag_group_id");
-        else add("development-omission", "battle-flags", omission.reason,
+        const flagIds=m.battleFlags.map(flag=>int(flag.values.battle_flag_id)),hasNoAr=flagIds.includes(14),
+          noArFamily=input.sourceFlagContext==="story"&&hasNoAr&&flagIds.every(id=>id===14||id===19),
+          needsManual=flagIds.includes(19),manualOnly=input.manualControls===WEB_MANUAL_BATTLE_CONTROLS&&flagIds.every(id=>id===19),
+          supported=noArFamily&&(!needsManual||input.manualControls===WEB_MANUAL_BATTLE_CONTROLS);
+        if(supported){
+          try{sourceFlags=compileSourceBattleFlags(partyId,encounter.source,m.battleFlagGroupId,m.battleFlags);
+            flagSources.push({partyId,content:structuredClone(sourceFlags)});}
+          catch(error){block("battle-flags",message(error),"battle_flag_group_id");}
+        }
+        if(manualOnly||supported&&needsManual){controls={kind:'source-battle-controls-v1',policy:WEB_MANUAL_BATTLE_CONTROLS,initialMode:'manual',offAutoBattle:true};add('development-omission','manual-controls-policy','Explicit Web manual controller consumes source flag19 initialization SetIsAuto(false); later auto toggles/repeated actions are unavailable',{dependency:{table:'battle_flag_group.csv',id:m.battleFlagGroupId}});}
+        if (!supported&&!manualOnly&&!omission) block("battle-flags", "Battle flag group is not implemented", "battle_flag_group_id");
+        else if (!supported&&!manualOnly&&omission) add("development-omission", "battle-flags", omission.reason,
           { dependency: { table: "battle_flag_group.csv", id: m.battleFlagGroupId } });
       }
       try {
@@ -442,6 +459,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     if (!blocked && formationPlan && rewardPolicy && lifecycle && participants) encounters[partyId] = { encounterId: partyId, enemies,
       background: encounter.background, formationPlan, rewardPolicy, lifecycle, participants,
       ...(controls?{controls}:{}),
+      ...(sourceFlags?{sourceFlags}:{}),
       ...(escapePolicy ? { escapePolicy } : {}), ...(handoff ? { handoff } : {}),
       formation: formationPlan.kind === "development" ? null : formationPlan.pattern === 3 ? "opposed" : "normal" };
     entries.push({ partyId, status: blocked ? "blocked" : "compiled", enemyCount: encounter.enemies.length,
@@ -466,6 +484,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     withDevelopmentOmissions: new Set(diagnostics.filter((d) => d.kind === "development-omission").map((d) => d.partyId)).size,
     originalGameExecuted: false, entries,
   };
+  if(flagSources.length)report.flagSources=flagSources;
   if (waves.length) report.enemyPartySources = waves.map(({ partyId, encounter: child }) => ({ rootPartyId: partyId,
     partyId: child.partyId, source: structuredClone(child.source), patterns: [...child.patterns],
     background: child.background, metadata: structuredClone(child.metadata),

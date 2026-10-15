@@ -69,7 +69,7 @@ export class GameBattleHandoff<T> {
     const field = session.field, request = field.stop;
     if (request?.kind !== "encounter" || kind === "start" && session.battle ||
         kind === "retry" && session.battle?.phase !== "defeat" ||
-        kind === "return" && !["victory", "escaped"].includes(session.battle?.phase ?? ""))
+        kind === "return" && !["victory", "escaped", "forced"].includes(session.battle?.phase ?? ""))
       throw new Error("Battle handoff requires its pending encounter or terminal battle");
     const attempt: Attempt<T> = { session, field, battle: session.battle, request: request as SessionBattleRequest,
       requestKey: canonical(request), kind, ticket: this.flow.beginOperation(kind === "return" ? "battle-return" : "battle-entry"),

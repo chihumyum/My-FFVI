@@ -10,8 +10,9 @@ import {openSourceCandidate} from './source-candidate.mjs';
 import {sourceWebReplayRuntimePorts} from './source-web-replay-runtime.mjs';
 import {loadBattleEventMessageSourceInputs} from './battle-event-message-source-inputs.mjs';
 const root=resolve(import.meta.dirname,'..'),args=process.argv.slice(2),o={compiled:'dist',report:'build/reports/battle-event-messages/check.json'},seen=new Set();
-while(args.length){const f=args.shift();assert(['--compiled','--report','--candidate-dir','--smoke'].includes(f)&&args[0]&&!seen.has(f));seen.add(f);o[f.slice(2)]=args.shift();}
+while(args.length){const f=args.shift();assert(['--compiled','--report','--candidate-dir','--smoke','--family'].includes(f)&&args[0]&&!seen.has(f));seen.add(f);o[f.slice(2)]=args.shift();}
 assert(o['candidate-dir']||['one','all'].includes(o.smoke),'Use --candidate-dir <same-runtime private candidate>, or --smoke one|all');
+const family=o.family??'messages';assert(['messages','effects','system-messages'].includes(family));
 const compiled=resolve(root,o.compiled),out=resolve(root,o.report),sha=b=>createHash('sha256').update(b).digest('hex');assert(out.startsWith(resolve(root,'build')+'/'));await mkdir(dirname(out),{recursive:true});
 const load=n=>import(pathToFileURL(resolve(compiled,'src',n+'.js')).href),api=Object.assign({},...await Promise.all([
  'compiler/content','compiler/framework-new-game','compiler/content-dependencies','core/game-session','core/game-flow','core/saved-game','core/source-message-sequence',
@@ -46,7 +47,7 @@ if(o['candidate-dir']){
   const p=input.programs.find(p=>p.source.assetPath===descriptor.script?.source.assetPath);
   assert(p&&descriptor.script,'Original source party has no exact namespace/body binding');
   assert.equal(api.canonical(descriptor.script.data),api.canonical(p.data),'Original source descriptor/body differs');
-  assert.equal(api.canonical(input.api.compileBattleEvent(descriptor.script.data,descriptor.script.source,input.input)),api.canonical(p.compiled),'Observer source program differs from production descriptor compilation');
+  assert.equal(api.canonical(input.api.compileBattleEvent(descriptor.script.data,descriptor.script.source,input.input,input.snapshot.reader)),api.canonical(p.compiled),'Observer source program differs from production descriptor compilation');
   return {partyId:descriptor.partyId,program:p.id,rawHash:p.rawHash,source:descriptor.script.source};
  });
  const requestedPartyIds=input.dependencies.requestedPartyIds,
@@ -67,7 +68,7 @@ if(o['candidate-dir']){
  fullGraph=api.analyzeContentDependencies({catalog:strict,maps,roots,mapIds:maps.map(m=>m.mapId)});
 }else fixture=await import(pathToFileURL(resolve(compiled,'tests/fixtures/battle-event-message.js')).href);
 const journalProjection=game=>({field:game.field.stop,window:game.field.sourceMessage.projection,revision:game.field.sourceMessage.mutationRevision,
- mask:game.field.updateAttributeMask,event:game.battle?.eventExecution??null,messages:game.battle?.messageExecution??[],battleTime:game.battle?.time??null,phase:game.battle?.phase??null});
+ mask:game.field.updateAttributeMask,effectRequests:game.battle?.effectExecution??[],effects:game.battle?.effectPresentation??[],event:game.battle?.eventExecution??null,messages:game.battle?.messageExecution??[],battleTime:game.battle?.time??null,phase:game.battle?.phase??null});
 async function create(program,partyOverride){
  if(fixture){const f=fixture.battleMessageSessionFixture(program),game=new api.GameSession(f.field,f.battle,314,{...f.runtime,...sourceWebReplayRuntimePorts()});return {game,field:f.field,battle:f.battle,restore:saved=>api.GameSession.restore(saved,f.field,f.battle,undefined,{...f.runtime,...sourceWebReplayRuntimePorts()})};}
  const map=structuredClone(systems.map),world=structuredClone(systems.catalog),battle=structuredClone(partyOverride?familyCatalog:systems.battle),partyId=partyOverride??Number(Object.keys(battle.encounters)[0]);
@@ -145,10 +146,12 @@ async function run(program,{site=null,actualPc=null,endPc=null,partyOverride=nul
  }catch(error){row.result='blocked';row.error={message:error.message,stack:error.stack};if(game){row.stateAfter=journalProjection(game);row.ownedAfter=game.state.snapshot();}}
  return row;
 }
-const selected=o.smoke==='one'?[input.sites.find(s=>s.typed.kind==='message'&&s.typed.command.kind==='sequence'&&!s.typed.command.template)]:input.sites,parameters=[];
+const effectSites=input.programs.flatMap(p=>p.data.Mnemonics.flatMap((raw,index)=>['PlayBattleEffect','SyncBattleEffect'].includes(raw.mnemonic)?[{program:p.id,index,source:p.source,raw,typed:p.compiled.instructions[index].op}]:[]));
+const systemSites=input.sites.filter(site=>site.raw.mnemonic==='Msg'&&Object.hasOwn(input.input.messages.system_zhc??{},site.raw.operands.sValues[0])),systemPrograms=new Set(systemSites.map(site=>site.program));
+const selected=family==='system-messages'?systemSites:family==='effects'?[]:o.smoke==='one'?[input.sites.find(s=>s.typed.kind==='message'&&s.typed.command.kind==='sequence'&&!s.typed.command.template)]:input.sites,parameters=[];
 for(const site of selected){if(site.typed.kind!=='message'){parameters.push({site,result:'source-operand-blocked',reason:site.typed.reason});continue;}const e=envelope(site);parameters.push({site,run:await run(e.program,{site,actualPc:e.actualPc,endPc:e.endPc,lane:o.smoke?'authored-fixture-smoke':'actual-source-operand-controlled-host'})});}
 const programs=[],originalParties=[];
-if(!o.smoke){for(const p of input.programs)programs.push({id:p.id,source:p.source,rawHash:p.rawHash,affected:p.messageSites.length>0,battleExportBinding:p.battleExportBinding,
+if(!o.smoke){for(const p of input.programs)programs.push({id:p.id,source:p.source,rawHash:p.rawHash,affected:family==='system-messages'?systemPrograms.has(p.id):family==='effects'?p.data.Mnemonics.some(i=>["PlayBattleEffect","SyncBattleEffect"].includes(i.mnemonic)):p.messageSites.length>0,battleExportBinding:p.battleExportBinding,
  run:p.battleExportBinding.kind==='unbound-battle-export-source-v1'?{lane:'whole-original-battle-program-controlled-caller',result:'source-program-binding-blocked',reason:p.battleExportBinding.reason,vmPreflightAttempted:false,sessionBattlePreparationAttempted:false,sourceStoryReachability:false}:await run(p.compiled,{lane:'whole-original-battle-program-controlled-caller'})});
  for(const partyId of input.dependencies.requestedPartyIds){
   const descriptor=input.dependencies.encounters.find(row=>row.partyId===partyId),diagnostics=input.dependencies.diagnostics.filter(row=>row.partyId===partyId);
@@ -162,16 +165,17 @@ if(!o.smoke){for(const p of input.programs)programs.push({id:p.id,source:p.sourc
 assert.equal(await runtimeDigest(root,compiled),runtime,'Runtime changed during family execution');if(candidate){await candidate.validate();assert.equal(sha(await readFile(familyDirectory.policy.file)),familyDirectory.policy.sha256,'Explicit family battle policy changed');}
 const now=await input.api.loadCorpus(root);assert.equal(api.hash({assets:now.assets,tables:now.tables,messages:now.messages,manifest:now.manifest}),input.sourceDigest,'Source snapshots changed');
 const artifacts={};async function artifact(file,value){const bytes=JSON.stringify(value)+'\n',path=resolve(dirname(out),file);await writeFile(path,bytes);return {file,sha256:sha(bytes),bytes:Buffer.byteLength(bytes)};}
-artifacts.inventory=await artifact('source-inventory.json',input.inventory);if(fullGraph)artifacts.completeWorldDependencies=await artifact('all-world-dependencies.json',fullGraph);
+artifacts.inventory=await artifact('source-inventory.json',input.inventory);if(family==='effects')artifacts.effectSites=await artifact('all-battle-effect-sites.json',effectSites);if(fullGraph)artifacts.completeWorldDependencies=await artifact('all-world-dependencies.json',fullGraph);
 const blockerGroups=new Map();for(const row of [...parameters.filter(p=>p.result==='source-operand-blocked'||p.run?.result==='blocked').map(p=>({kind:'parameter',reason:p.reason??p.run.error.message,source:p.site.source,index:p.site.index,program:p.site.program})),
  ...programs.filter(p=>['blocked','source-program-binding-blocked'].includes(p.run.result)).map(p=>({kind:'whole-program',reason:p.run.error?.message??p.run.reason,source:p.source,program:p.id}))]){
  const key=row.reason;const group=blockerGroups.get(key)??{reason:key,sites:[]};group.sites.push(row);blockerGroups.set(key,group);
 }
-const report={kind:'source-battle-event-message-execution-v1',result:o.smoke?'smoke-attempts-recorded':'complete-attempts-recorded',runtimeSha256:runtime,sourceDigest:input.sourceDigest,
+const report={kind:family==='system-messages'?'source-battle-system-message-execution-v1':family==='effects'?'source-battle-event-effect-execution-v1':'source-battle-event-message-execution-v1',family,result:o.smoke?'smoke-attempts-recorded':'complete-attempts-recorded',runtimeSha256:runtime,sourceDigest:input.sourceDigest,
  candidate:candidate?{reportSha256:sha(candidate.reportBytes),runtimeSha256:candidate.runtimeSha256,objects:candidate.report.objects.length,link:candidate.report.link,inputLock:candidate.report.inputLock}:null,recipeBinding,familyDirectory,artifacts,
- counts:{...input.inventory.counts,parameterAttempts:parameters.length,parameterCompleted:parameters.filter(r=>r.run?.result==='parameter-protocol-completed').length,
+ counts:{...input.inventory.counts,...(family==='effects'?{effectSites:effectSites.length,decodedEffectSites:effectSites.filter(s=>['play-battle-effect','sync-battle-effect'].includes(s.typed.kind)).length,actualEffectRequests:programs.reduce((n,p)=>n+(p.run.stateAfter?.effectRequests.filter(e=>e.action==='request').length??0),0),actualEffectCompletions:programs.reduce((n,p)=>n+(p.run.stateAfter?.effectRequests.filter(e=>e.action==='complete').length??0),0)}:{}),parameterAttempts:parameters.length,parameterCompleted:parameters.filter(r=>r.run?.result==='parameter-protocol-completed').length,
   parameterBlocked:parameters.filter(r=>r.result==='source-operand-blocked'||r.run?.result==='blocked').length,wholeProgramAttempts:programs.length,wholeProgramVMPreflightAccepted:programs.filter(r=>r.run.vmPreflightAccepted).length,wholeProgramSessionBattlePreparationAttempts:programs.filter(r=>r.run.sessionBattlePreparationAttempted).length,wholeProgramFinished:programs.filter(r=>r.run.result==='whole-program-finished-and-restored').length,
   affectedProgramAttempts:programs.filter(r=>r.affected).length,affectedProgramFinished:programs.filter(r=>r.affected&&r.run.result==='whole-program-finished-and-restored').length,originalPartyAttempts:originalParties.length,originalPartyDirectoryRequests:familyDirectory?.requestedPartyIds.length??0,originalPartyDescriptorDiagnostics:input.dependencies.diagnostics.length},
  parameters,programs,originalParties,blockerGroups:[...blockerGroups.values()],sourceCampaignComplete:false,nativeParity:false,browserVerified:false,
+ familyCounts:family==='system-messages'?{systemMessageSites:systemSites.length,physicalPrograms:systemPrograms.size,completeRawInstructions:input.programs.filter(p=>systemPrograms.has(p.id)).reduce((n,p)=>n+p.data.Mnemonics.length,0)}:family==='effects'?{playSites:effectSites.filter(s=>s.raw.mnemonic==='PlayBattleEffect').length,syncSites:effectSites.filter(s=>s.raw.mnemonic==='SyncBattleEffect').length,physicalPrograms:input.programs.filter(p=>p.data.Mnemonics.some(i=>['PlayBattleEffect','SyncBattleEffect'].includes(i.mnemonic))).length,completeRawInstructions:input.programs.filter(p=>p.data.Mnemonics.some(i=>['PlayBattleEffect','SyncBattleEffect'].includes(i.mnemonic))).reduce((n,p)=>n+p.data.Mnemonics.length,0)}:null,
  controlledHost:{input:'Explicit recorded confirmation and legal existing battle commands',caller:'Authored ordinary Session/placement; original battle body and all unknowns intact',clock:'10ms fixed Web manager-before-VM; no message-implied pause',policy:sourceWebReplayRuntimePorts(),messageOwner:'Actual Field.sourceMessage; no second window owner',smoke:!!o.smoke}};
 report.contentHash=api.hash(report);await writeFile(out,JSON.stringify(report)+'\n');console.log(JSON.stringify({result:report.result,counts:report.counts,hash:report.contentHash,report:out}));

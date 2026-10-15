@@ -1,4 +1,6 @@
-import { WEB_FLAT_FIELD_VIEW_CHANGE, parseFieldDynamicView, viewDataKeys, type WebFlatFieldViewChange, type FieldViewBinding, type FieldDynamicView } from './field-view-change.js';
+import { WEB_FLAT_RETAINED_FIELD_VIEW_CHANGE, validateFieldViewChangePolicy, parseFieldDynamicView, viewDataKeys, type WebFlatFieldViewChange, type FieldViewBinding, type FieldDynamicView } from './field-view-change.js';
+import { assertRetainedGroundViewTransportation, type WebRetainedWorldTransportation } from './world-transportation-entry.js';
+import type { MapEntryViewPlan } from './map-view.js';
 import { ActorAnimation } from "./actor-animation.js";
 import { canonical } from "./canonical.js";
 import { checkpointInteger } from "./checkpoint-validation.js";
@@ -35,7 +37,9 @@ export type SourceNativeMapInput = {
   priorComposition?: FieldNativeCompositionDefinition;
   /** Current departed camera under an explicit trusted flat Web host. Never a
    * replacement for destination MapEntryViewPlan or native Bird registries. */
-  departedView?:{policy:WebFlatFieldViewChange;binding:FieldViewBinding;view:FieldDynamicView};
+  departedView?:{policy:WebFlatFieldViewChange;binding:FieldViewBinding;view:FieldDynamicView;
+    retained?:{policy:WebRetainedWorldTransportation;viewPlan:MapEntryViewPlan;presentation:FieldTransportActorPresentation;
+      worldPresentation:"framework-world-map-flat-v1"}};
   view: FieldActorViewDefinition;
   providers: FieldPuppetHostProviders;
   transportationPresentation?: FieldTransportActorPresentation;
@@ -138,11 +142,23 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
     throw new Error("Native map companion/party placement lifecycle is unresolved");
   let flatDeparted=false;
   if(input.departedView){
-    viewDataKeys(input.departedView,"policy,binding,view");
-    if(input.departedView.policy!==WEB_FLAT_FIELD_VIEW_CHANGE)throw new Error("Unknown departed view policy");
-    const departed=parseFieldDynamicView(input.departedView.view,input.departedView.binding);
-    if(departed.mapViewType!==before.camera.mapViewType||before.currentTransport?.typeId!==1||
-      before.player.riding)throw new Error("Departed flat camera/party/transport binding changed");
+    viewDataKeys(input.departedView,Object.hasOwn(input.departedView,"retained")?"policy,binding,view,retained":"policy,binding,view");
+    validateFieldViewChangePolicy(input.departedView.policy);
+    if(input.departedView.policy===undefined)throw new Error("Missing departed view host policy");
+    const departed=parseFieldDynamicView(input.departedView.view,input.departedView.binding,input.departedView.policy);
+    if(departed.mapViewType!==before.camera.mapViewType)throw new Error("Departed flat camera/party binding changed");
+    if(before.currentTransport?.typeId!==1||before.player.riding){
+      const retained=input.departedView.retained,actor=prior.snapshot.actors.find(row=>row.id===before.player.id),
+        asset=prior.assets.find(row=>row.id===before.player.id);
+      if(retained)viewDataKeys(retained,"policy,viewPlan,presentation,worldPresentation");
+      if(input.departedView.policy!==WEB_FLAT_RETAINED_FIELD_VIEW_CHANGE||departed.policy!==WEB_FLAT_RETAINED_FIELD_VIEW_CHANGE||
+        !retained||!actor||!asset||retained.viewPlan.mapId!==departed.binding.mapId||!departed.binding.isWorld)
+        throw new Error("Departed flat riding view has no bound retained source policy");
+      assertRetainedGroundViewTransportation({policy:retained.policy,viewPlan:retained.viewPlan,presentation:retained.presentation,
+        worldPresentation:retained.worldPresentation,
+        catalog,context:before,actual:{id:actor.id,fieldAssetId:asset.fieldAssetId,riderAssetId:actor.riderAssetId,
+          riding:actor.riding,rideOnEntity:actor.rideOnEntity}});
+    }else if(Object.hasOwn(input.departedView,"retained"))throw new Error("Unexpected departed retained riding proof");
     flatDeparted=true;
   }
   const developmentRiding = input.transportationPresentation === "framework-development";

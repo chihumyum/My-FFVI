@@ -90,7 +90,7 @@ export function assertSourceGameCatalog(catalog: BattleCatalog, profile: SourceC
       throw new Error("Source game catalog initial player seed differs from the source initializer");
   }
   // These are encounter declarations in every profile, never shared defaults.
-  for (const key of ["escapePolicy", "lifecycle", "rewardPolicy", "participants", "playerParticipants", "formationPlan", "controls"])
+  for (const key of ["escapePolicy", "lifecycle", "rewardPolicy", "participants", "playerParticipants", "formationPlan", "controls", "sourceFlags"])
     if (Object.hasOwn(catalog.common, key)) throw new Error("Source new game cannot use misplaced " + key + " policy");
   if (profile === "framework") return;
   if (Object.hasOwn(catalog.common, "conditionControlPolicy"))

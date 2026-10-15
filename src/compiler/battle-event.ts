@@ -1,10 +1,11 @@
+import { compileBattleEventEffect, type BattleEffectReader } from './battle-event-effect.js';
 import { compileScriptedBattleAction } from "./battle-scripted-action.js";
 import { z } from "zod";
 import type { BattleAISource } from "../core/battle-ai.js";
 import type { BattleEventOp, BattleEventProgram, BattleEventValue } from "../core/battle-event.js";
 import { isOperator } from "../core/script-integer.js";
 import { isCategory, validVariable, type EventValue, type VariableRef } from "../core/event-state.js";
-import { compileBattleEventMessage, type BattleEventMessageInput } from "./battle-event-message.js";
+import { createBattleEventMessageCompiler, type BattleEventMessageInput } from "./battle-event-message.js";
 import { parseBattleEventMessageBinding } from "../core/battle-event-message.js";
 
 const integer = z.number().int().min(-0x80000000).max(0x7fffffff);
@@ -32,8 +33,9 @@ const instruction = z.object({
 /** Battle-event compilation is distinct from monster AI. Preserve every source
  * PC; unknown hosts, operands and branches remain explicit blocked operations.
  * This compiler does not certify a native scheduler or grant owned effects. */
-export function compileBattleEvent(raw: unknown, source: BattleAISource | null, messages?: BattleEventMessageInput): BattleEventProgram {
+export function compileBattleEvent(raw: unknown, source: BattleAISource | null, messages?: BattleEventMessageInput, effects?:BattleEffectReader): BattleEventProgram {
   const data = script.parse(raw), blockers: string[] = [];
+  let messageCompiler: ReturnType<typeof createBattleEventMessageCompiler> | null = null;
   const main = data.Segments.length === 1 && data.Segments[0]!.Label === "Main" ? data.Segments[0]! : null;
   // Other segment layouts need their own entry/range proof. The bounded Main
   // contract admits all of sc_b_2001 without special-casing its identity.
@@ -72,11 +74,15 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
     const blocked = (reason: string): BattleEventOp => ({ kind: "blocked", reason });
     let op: BattleEventOp = blocked(`unsupported battle-event instruction or operands: ${m.mnemonic}`);
     if (m.type !== 1) return { mnemonic: m.mnemonic, op };
+    if (["PlayBattleEffect","SyncBattleEffect"].includes(m.mnemonic)) {
+      try {op=compileBattleEventEffect(m,effects);} catch(error){op=blocked(error instanceof Error?error.message:String(error));}
+      return {mnemonic:m.mnemonic,op};
+    }
     if (m.mnemonic === "Msg" || m.mnemonic === "MsgClose") {
       try {
         if (!messages || source && !messages.binding)
           throw new Error("Battle message localization/name source is unavailable");
-        op = compileBattleEventMessage(m, messages, data.Mnemonics[pc + 1] &&
+        op = (messageCompiler ??= createBattleEventMessageCompiler(messages))(m, data.Mnemonics[pc + 1] &&
           typeof data.Mnemonics[pc + 1] === "object" ? (data.Mnemonics[pc + 1] as { mnemonic?: string }).mnemonic ?? null : null);
       } catch (error) { op = blocked(error instanceof Error ? error.message : String(error)); }
       return { mnemonic: m.mnemonic, op };
@@ -109,6 +115,9 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
       try { op=compileScriptedBattleAction(m); }
       catch(error) { op=blocked(error instanceof Error?error.message:String(error)); }
     }
+    if (m.mnemonic === "BattleForceExit" && form()) op = { kind: "force-return" };
+    if (m.mnemonic === "BattleForceExitOnSave" && form())
+      op = blocked("BattleForceExitOnSave requires owned Corps layout, nonparticipant recovery conditions, equipment and retained steal/drop save projections; no-save forced return does not grant Save semantics");
     if (m.mnemonic === "BattleEndEnabled" && form([0]))
       op = { kind: "end-enabled", enabled: i[0] !== 0 };
     if (m.mnemonic === "BattlePause" && form([0])) op = { kind: "pause", enabled: i[0] !== 0 };
@@ -124,6 +133,11 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
       op = local(0) ? { kind: "players-ended" }
         : blocked("Player battle-end query requires ScriptLocalVariable[0]");
     if (m.mnemonic === "SysCall" && form([], [], [0])) {
+      if (s[0] === "HideBattleUI" || s[0] === "ShowBattleUI")
+        op = { kind: "ui-visibility", visible: s[0] === "ShowBattleUI" };
+      if (s[0] === "StopAutoBattle") op = { kind: "stop-auto" };
+      if (s[0] === "RemoveAllAct")
+        op = blocked("RemoveAllAct requires staged-action cancellation, fixed-player stack and executor state exit/entry lifecycle; queue-only clearing is not admitted");
       const party = ({ "LB:敵パーティラウンド2": { partyId: 513, hidden: false },
         "LB:敵パーティラウンド3": { partyId: 514, hidden: false },
         "LB:敵パーティラウンド4": { partyId: 515, hidden: true } } as Record<string, { partyId: number; hidden: boolean }>)[s[0]!];

@@ -17,6 +17,7 @@ import { projectEquipmentOwnership } from "./inventory-ownership.js";
 import type { BattleDropGrant } from "./battle-rewards.js";
 import { MAX_MAGIC_LEARNING_VALUE, parseBattleRewardPolicy, projectMagicLearningValue,
   type BattleRewardPolicy } from "./battle-result.js";
+import { parseBattleForcedReturnResult, type BattleForcedReturnResult } from "./battle-forced-return.js";
 import { projectShopTrade, shopBuyOptions, shopSellOptions, validateShopCatalog,
   type ShopCatalog, type ShopInventoryRead, type ShopTradeRequest } from "./shop.js";
 import {
@@ -205,14 +206,15 @@ export type GameStateSnapshot = {
   characterNames: Record<string, string>;
   /** One receipt per settled lease, including escapes. Only victories qualify
    * as won encounters or as a source observation-learning result. */
-  completedBattles: { serial: number; encounterId: number; outcome: "victory" | "escaped" }[];
+  completedBattles: { serial: number; encounterId: number; outcome: "victory" | "escaped" | "forced" }[];
 };
 /** The two supported historical formats had no admitted magic-point rewards;
  * version 10 additionally could only settle victories. */
 type LegacyOwnedCharacter = Omit<OwnedCharacter, "magicLearningValue">;
-export type LegacyGameStateSnapshotV11 = Omit<GameStateSnapshot, "formatVersion" | "roster"> & {
+export type LegacyGameStateSnapshotV11 = Omit<GameStateSnapshot, "formatVersion" | "roster" | "completedBattles"> & {
   formatVersion: 11;
   roster: LegacyOwnedCharacter[];
+  completedBattles: { serial: number; encounterId: number; outcome: "victory" | "escaped" }[];
 };
 export type LegacyGameStateSnapshotV10 = Omit<LegacyGameStateSnapshotV11, "formatVersion" | "completedBattles"> & {
   formatVersion: 10;
@@ -603,7 +605,7 @@ export class GameState {
       if (b.serial !== index)
         throw new Error("Invalid battle receipt sequence");
       integer(b.encounterId, 0x7fffffff, 1);
-      if (b.outcome !== "victory" && b.outcome !== "escaped")
+      if (b.outcome !== "victory" && b.outcome !== "escaped" && b.outcome !== "forced")
         throw new Error("Invalid battle receipt outcome");
     }
   }
@@ -779,8 +781,11 @@ export class GameState {
       if (!Array.isArray(input.roster)) throw new Error("Invalid legacy owned roster");
       for (const member of input.roster) keys(member, legacyOwnedMemberFields);
       if (!Array.isArray(input.completedBattles)) throw new Error("Invalid legacy battle receipts");
-      for (const receipt of input.completedBattles)
+      for (const receipt of input.completedBattles) {
         keys(receipt, input.formatVersion === 10 ? "serial,encounterId" : "serial,encounterId,outcome");
+        if (input.formatVersion === 11 && "outcome" in receipt && receipt.outcome !== "victory" && receipt.outcome !== "escaped")
+          throw new Error("Invalid historical battle receipt outcome");
+      }
       next = { ...input, formatVersion: 12,
         roster: input.roster.map((member) => ({ ...member, magicLearningValue: 0 })),
         completedBattles: input.formatVersion === 10
@@ -2248,8 +2253,29 @@ export class GameState {
     keys(result, "players,consumedItems" + (Object.hasOwn(result, "playerParticipants") ? ",playerParticipants" : ""));
     return this.prepareBattleReturn(lease, { outcome: "escaped", result });
   }
+  /** Forced=4 releases borrowed battle resources without SaveParameter. It
+   * records neither victory nor escape and never publishes resource changes. */
+  prepareForcedReturn(lease: BattleLease, input: BattleForcedReturnResult): PreparedBattleReturn {
+    if (this.active?.lease !== lease) throw new Error("Stale battle lease");
+    const result = parseBattleForcedReturnResult(input), borrowed = this.validateBorrowedReturn(result, null),
+      ids = borrowed ? firstEnteredOwnerIds(borrowed.state) : this.active.players.map(player => player.id),
+      expected = ids.map(ownedId => {
+        const owner = this.data.roster.find(member => member.id === ownedId);
+        if (!owner) throw new Error("Missing forced-return owned participant");
+        return { ownedId, sourceId: owner.sourceId };
+      });
+    if (canonical(result.participants) !== canonical(expected)) throw new Error("Forced-return participant identity changed");
+    const next = this.snapshot(), revision = this.revision;
+    next.completedBattles.push({ ...lease, outcome: "forced" });
+    this.validate(next);
+    const validate = () => { if (this.active?.lease !== lease || this.revision !== revision) throw new Error("Stale forced-return transaction"); };
+    const commit = () => { validate(); this.data = next; this.active = null; this.revision++; };
+    return Object.assign(commit, { validate, fieldState: () => { validate(); return {
+      puppetRoster: this.projectPuppetRoster(next),
+      partyAppearance: this.content.partyActors ? this.projectPartyAppearance(next) : null }; } });
+  }
   private validateBorrowedReturn(
-    result: BattleEscapeResult,
+    result: Pick<BattleEscapeResult, "playerParticipants">,
     victory: BattleVictoryResult | null,
   ): BattlePlayerReturn | null {
     const borrow = this.active!.playerBorrow;

@@ -1,5 +1,13 @@
 import { sourceBossDataKeys } from "./source-boss-encounter.js";
 export const WEB_MANUAL_BATTLE_CONTROLS = "web-manual-battle-controls-v1" as const;
+/** Prepared Web controls commit source UI requests on the existing battle
+ * frame. Native Unity coroutine ordering and automatic actions stay deferred. */
+export const WEB_BATTLE_EVENT_CONTROLS = "web-source-battle-event-controls-v1" as const;
+export type WebBattleEventControls = typeof WEB_BATTLE_EVENT_CONTROLS;
+export function validateBattleEventControls(value: unknown): void {
+  if (value !== undefined && value !== WEB_BATTLE_EVENT_CONTROLS)
+    throw new Error("Unknown battle event control policy");
+}
 export type SourceBattleControls = {
   kind: "source-battle-controls-v1";
   policy: typeof WEB_MANUAL_BATTLE_CONTROLS;

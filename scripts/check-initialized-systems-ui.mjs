@@ -445,7 +445,7 @@ async function packages(packageId = "controlled-initialized-ui", sourceEncounter
     f.map.frameworkPresentation=compileFrameworkOrdinaryPresentation({map:await seal(f.map),sources:[{file:tileSource.file,sha256:tileSource.sha256}],tilemap,mapPackage,
       renderHost:ordinaryFieldCompositionRenderHost()});
   }
-  if(["controlled-scripted-battle-action","controlled-non-damaging-battle-action"].includes(packageId)) {
+  if(["controlled-scripted-battle-action","controlled-non-damaging-battle-action","controlled-battle-event-controls","controlled-battle-effect"].includes(packageId)) {
     const {compileScriptedBattleAction}=await load("src/compiler/battle-scripted-action.js");
     const op=compileScriptedBattleAction({type:1,mnemonic:"BattleAction",operands:{
       iValues:[1,f.battle.common.players[0].sourceId,10,2,0,0,0,0],rValues:Array(8).fill(0),sValues:Array(8).fill("")}});
@@ -461,7 +461,20 @@ async function packages(packageId = "controlled-initialized-ui", sourceEncounter
     f.battle.common.battleEvents={conditions:f.battle.common.conditions.rules.definitions.map(({id,type})=>({id,type,attackTarget:type===5?1:0,gameOverTarget:type===5?1:0}))};
     entry.lifecycle={kind:"battle-lifecycle-v1",mode:"script",scriptId:1,program:{kind:"battle-event-v1",source:{file:"synthetic-scripted-action.bundle",assetPath:"sc_b_controlled_action.json",serializedFile:"synthetic",objectId:"1",sha256:sha("controlled-action"),sourceSetHash:sha("controlled-action-corpus"),battleSourceSetHash:sha("controlled-action-battle")},entry:0,end:3,
       localNames:["after"],initialLocals:[0],instructions:[{mnemonic:"BattleAction",op},{mnemonic:"Calc",op:{kind:"calc",index:0,operator:"＋",right:{kind:"immediate",value:1}}},{mnemonic:"Exit",op:{kind:"exit"}}],blockers:[]}};
+    if(packageId === "controlled-battle-effect") {
+      const {prefixAuthoredBattleEffect}=await load("tests/fixtures/battle-event-effect.js");
+      entry.lifecycle.program=prefixAuthoredBattleEffect(entry.lifecycle.program,f.battle.common.players[0].sourceId);
+    }
     if(nonDamagingOp) { entry.lifecycle.program.instructions.unshift({mnemonic:"BattleAction",op:nonDamagingOp});entry.lifecycle.program.end++; }
+    if(packageId === "controlled-battle-event-controls") {
+      entry.lifecycle.program.instructions.unshift(
+        {mnemonic:"Wait",op:{kind:"wait",seconds:.2}},
+        {mnemonic:"SysCall",op:{kind:"ui-visibility",visible:false}},
+        {mnemonic:"Wait",op:{kind:"wait",seconds:.3}},
+        {mnemonic:"SysCall",op:{kind:"ui-visibility",visible:true}},
+        {mnemonic:"SysCall",op:{kind:"stop-auto"}});
+      entry.lifecycle.program.end=entry.lifecycle.program.instructions.length;
+    }
   }
   f.map = await seal(f.map); f.battle = await seal(f.battle);
   f.world.maps[String(f.map.mapId)].contentHash = f.map.contentHash;
@@ -1314,6 +1327,24 @@ try {
       retainedStrictDiagnostics:pack.map.actorViewBlockers,policy:pack.map.frameworkPresentation.view.policy,storageWrites:h.calls.writes,
       sourceStoryReachability:false,nativeParity:false};
   });
+  await check("shared battle control requests hide actual app controls, preserve host pause, then settle forced action and restore",async()=>{
+    const pack=await packages("controlled-battle-event-controls"),h=await host(pack),owner=await start(h);
+    assert.equal(h.api.runtime.battleEventControls,core.WEB_BATTLE_EVENT_CONTROLS);
+    await move(h,"right");await move(h,"right");for(let i=0;i<80&&!owner.battle;i++)await h.frame();
+    const battle=owner.battle;assert.ok(battle);const oldPause=h.$("menu-button").onclick;
+    for(let i=0;i<20&&battle.uiControls.visible;i++)await h.frame();
+    assert.equal(battle.uiControls.visible,false);assert.equal(h.$("menu-button").hidden,true);assert.equal(h.$("menu-button").disabled,true);
+    assert.equal(h.api.read().commands.battleReady,false);oldPause();h.key("Escape");assert.equal(h.api.read().flow.paused,false);
+    const time=battle.time;h.visibility(true);await h.frame(1000);assert.equal(battle.time,time);h.visibility(false);
+    for(let i=0;i<120&&battle.phase==="active";i++)await h.frame();
+    assert.equal(battle.uiControls.visible,true);assert.equal(battle.uiControls.pauseLocked,false);assert.equal(battle.playerControlMode,"manual");
+    assert.equal(h.$("menu-button").hidden,false);assert.equal(battle.phase,"victory");await win(h,pack);
+    const settled=owner.state.snapshot();assert.equal(settled.completedBattles.length,1);await pauseMenu(h);
+    const saved=owner.checkpoint();await h.click(h.$("save-game"));await h.click(h.$("load-game"));
+    assert.deepEqual(h.bound().checkpoint(),saved);await resume(h);assert.deepEqual(h.bound().state.snapshot(),settled);
+    report.battleEventControls={actualApp:true,actualHeaderVisibility:true,actualFlowAndCommandQualification:true,
+      preservedHostPause:true,onceForcedActionSettlement:true,actualStorage:true,sourceStoryReachability:false,browserRendering:false};
+  });
   await check("source-shaped scripted action uses actual app queue, effect, VM continuation, owned settlement and Storage",async()=>{
     const pack=await packages("controlled-scripted-battle-action"),h=await host(pack),owner=await start(h);
     assert.equal(h.api.runtime.scriptedBattleActions,core.WEB_SCRIPTED_BATTLE_ACTIONS);
@@ -1346,6 +1377,21 @@ try {
     await h.click(h.$("save-game"));await h.click(h.$("load-game"));const restored=h.bound();assert.deepEqual(restored.checkpoint(),stable);await resume(h);for(let i=0;i<8;i++)await h.frame();assert.deepEqual(restored.state.snapshot(),settled);
     report.nonDamagingBattleAction={sourceEffectPolicy:battle.content.abilities[901].nonDamagingPresentation,actualApp:true,actualQueue:true,fixedHit:true,unchangedParameters:true,onceSettlement:true,actualStorage:true,sourceStoryReachability:false,nativeDynamicParity:false};
   });
+  await check("battle effect global join and the actual Web app clock precede real action, once settlement and Storage",async()=>{
+    const pack=await packages("controlled-battle-effect"),h=await host(pack),owner=await start(h),field=owner.field;
+    assert.equal(h.api.runtime.battleEventEffects,"web-source-battle-effects-pulse-v1");
+    await move(h,"right");await move(h,"right");for(let i=0;i<80&&!owner.battle;i++)await h.frame();
+    assert.ok(owner.battle,h.api.read().battleLoadAttempt?.error?.stack);const battle=owner.battle,owned=owner.state.snapshot(),hp=battle.combatants.map(u=>({id:u.id,hp:u.hp,mp:u.mp}));
+    let played=false;for(let i=0;i<20&&!battle.effectExecution.some(e=>e.action==="complete");i++){await h.frame();played ||= battle.effectPresentation.some(e=>e.phase==="playing");
+      if(battle.effectPresentation.length)assert.deepEqual(battle.combatants.map(u=>({id:u.id,hp:u.hp,mp:u.mp})),hp);}
+    assert.equal(played,true);assert.equal(battle.effectExecution.filter(e=>e.action==="request").length,1);
+    for(let i=0;i<180&&battle.phase==="active";i++)await h.frame();assert.equal(battle.phase,"victory");assert.equal(battle.eventExecution.state.locals[0],1);
+    assert.equal(owner.state.snapshot().completedBattles.length,owned.completedBattles.length);await win(h,pack);assert.equal(owner.field,field);
+    const settled=owner.state.snapshot();assert.equal(settled.completedBattles.length,1);assert.throws(()=>battle.advance(10),/Retired/);
+    await pauseMenu(h);const saved=owner.checkpoint();await h.click(h.$("save-game"));await h.click(h.$("load-game"));const restored=h.bound();
+    assert.notEqual(restored,owner);assert.deepEqual(restored.checkpoint(),saved);await resume(h);for(let i=0;i<8;i++)await h.frame();assert.deepEqual(restored.state.snapshot(),settled);
+    report.battleEffectLifecycle={policy:h.api.runtime.battleEventEffects,actualApp:true,actualBattleGame:true,globalJoin:true,onceRequest:true,actualStorage:true,onceSettlement:true,webPulseMilliseconds:300,sourceStoryReachability:false,nativeDynamicParity:false};
+  });
   await check("source party selection uses actual app candidate editing, captured commands and the same native/owned Storage owner",async()=>{
     const pack=await packages('controlled-source-party-selection'),h=await host(pack),owner=await start(h),field=owner.field;
     const before=owner.state.snapshot(),actor=field.player,entity=actor.native.entity;
@@ -1367,7 +1413,7 @@ try {
   });
   await check("source ChangeView uses the actual app policy across delayed media failure/retry, world entry and Storage restore",async()=>{
     const pack=await conditionActivityPackages("controlled-field-view-change"),h=await host(pack),owner=await start(h),first=owner.field;
-    assert.equal(h.api.runtime.viewChange,"web-flat-field-view-change-v1");assert.equal(first.currentView,null);
+    assert.equal(h.api.runtime.viewChange,"web-flat-field-view-change-v2");assert.equal(first.currentView,null);
     assert.equal(first.viewChangeJournal.at(-1).requestedViewType,1);assert.equal(first.viewChangeJournal.at(-1).branchReturn,true);
     const before=owner.state.snapshot(),commands=h.api.read().commands;
     h.api.read().images.clear();h.failedImages.add(`sha256:${pack.pngHash}`);await move(h,"right");

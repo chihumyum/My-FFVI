@@ -1,4 +1,4 @@
-import { parseFieldDynamicView, projectFieldViewChange, type FieldViewBinding, type FieldViewChangeCommand } from './field-view-change.js';
+import { WEB_FLAT_FIELD_VIEW_CHANGE, validateFieldViewChangePolicy, parseFieldDynamicView, projectFieldViewChange, type WebFlatFieldViewChange, type FieldViewBinding, type FieldViewChangeCommand } from './field-view-change.js';
 import type { Direction, Point } from "../field/types.js";
 import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
 import { prepareFieldCameraPathStep, type FieldCameraPathCommand, type FieldCameraPathProgress } from "./field-camera-path.js";
@@ -124,13 +124,15 @@ export class FieldCameraHost {
   #publishing = false;
 
   constructor(definition: FieldCameraHostDefinition, ports: FieldCameraHostPorts,
-    checkpoint: FieldCameraState = createFieldCameraState(), private readonly viewBinding?: FieldViewBinding) {
+    checkpoint: FieldCameraState = createFieldCameraState(), private readonly viewBinding?: FieldViewBinding,
+    private readonly viewPolicy:WebFlatFieldViewChange=WEB_FLAT_FIELD_VIEW_CHANGE) {
+    validateFieldViewChangePolicy(viewPolicy);
     validateDefinition(definition); validatePorts(ports); validateFieldCameraState(checkpoint);
     this.#definition = structuredClone(definition);
     this.#ports = ports;
     if (checkpoint.kind === "field-camera-v3") {
       if (!viewBinding) throw new Error("Saved dynamic view cannot grant a view policy");
-      parseFieldDynamicView(checkpoint.view,viewBinding);
+      parseFieldDynamicView(checkpoint.view,viewBinding,viewPolicy);
     }
     this.#state = structuredClone(checkpoint);
   }
@@ -138,7 +140,7 @@ export class FieldCameraHost {
   /** The caller supplies the destination's trusted content and live read ports.
    * A map transaction can prepare the fork without changing its source host. */
   fork(definition: FieldCameraHostDefinition, ports: FieldCameraHostPorts): FieldCameraHost {
-    return new FieldCameraHost(definition, ports, this.#state, this.viewBinding);
+    return new FieldCameraHost(definition, ports, this.#state, this.viewBinding,this.viewPolicy);
   }
   /** Publish a completely prepared fork or restore into this existing owner.
    * The snapshot supplies state only; this host keeps its content and ports. */
@@ -158,7 +160,7 @@ export class FieldCameraHost {
     callbackDisposition: FieldCameraPrepared["callbackDisposition"]): FieldCameraPrepared {
     if (this.#publishing) throw new Error("Field camera publication is already in progress");
     validateFieldCameraState(state);
-    if(state.kind === "field-camera-v3") { if(!this.viewBinding)throw new Error("Unbound dynamic camera view");parseFieldDynamicView(state.view,this.viewBinding); }
+    if(state.kind === "field-camera-v3") { if(!this.viewBinding)throw new Error("Unbound dynamic camera view");parseFieldDynamicView(state.view,this.viewBinding,this.viewPolicy); }
     if(callbackDisposition === "source-absent" && state.kind === "field-camera-v3") callbackDisposition="web-flat-not-installed";
     const candidate = structuredClone(state), revision = this.#revision;
     let committed = false;
@@ -179,7 +181,7 @@ export class FieldCameraHost {
    * callback/registry effects; its containing Field transaction fences actors. */
   prepareView(command: FieldViewChangeCommand): (FieldCameraPrepared & { branchReturn:boolean }) {
     if(!this.viewBinding)throw new Error("Trusted Web field view binding is unavailable");
-    const view=projectFieldViewChange(this.viewBinding,command);
+    const view=projectFieldViewChange(this.viewBinding,command,this.viewPolicy);
     if(!view)return {...this.#prepare(this.#state,false,"not-invoked"),branchReturn:true};
     const next:FieldCameraState={kind:"field-camera-v3",target:this.#state.target,dummy:structuredClone(this.#state.dummy),view};
     return {...this.#prepare(next,true,"web-flat-not-installed"),branchReturn:false};

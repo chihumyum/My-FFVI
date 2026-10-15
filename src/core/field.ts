@@ -1,4 +1,5 @@
-import { WEB_FLAT_FIELD_VIEW_CHANGE, fieldViewBinding, parseFieldViewChangeCommand, type WebFlatFieldViewChange, type FieldViewChangeCommand } from './field-view-change.js';
+import { WEB_FLAT_FIELD_VIEW_CHANGE, WEB_FLAT_RETAINED_FIELD_VIEW_CHANGE, validateFieldViewChangePolicy, fieldViewBinding, parseFieldViewChangeCommand, type WebFlatFieldViewChange, type FieldViewChangeCommand } from './field-view-change.js';
+import { assertRetainedGroundViewTransportation } from './world-transportation-entry.js';
 import { WEB_SOURCE_PARTY_SELECTION, projectSourcePartySelection, type WebSourcePartySelection, type FieldSourcePartySelectionPort, type SourcePartySelectionModel, type SourcePartySelectionOutcome } from './source-party-selection.js';
 import type { SourceMessageFeeCatalog, SourceMessageFeeSnapshot } from "./source-message-fees.js";
 import { executeFieldScriptRandom, type FieldScriptRandomPort } from "./field-script-random.js";
@@ -508,7 +509,7 @@ export class FieldGame {
       storyTimer: presence(this.timerState !== null),
       screenEffects: presence(this.ordinaryScreenEffectsAvailable),
       cameraShake: presence(this.cameraShakeAvailable),
-      viewChange: presence(this.options.viewChange === WEB_FLAT_FIELD_VIEW_CHANGE && !!this.camera && !!this.partyActors && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.nativeActorProviders && !!this.player.native && !!fieldViewBinding(this.content,this.options.viewChange)),
+      viewChange: presence(this.options.viewChange !== undefined && !!this.camera && !!this.partyActors && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.nativeActorProviders && !!this.player.native && !!fieldViewBinding(this.content,this.options.viewChange)),
       eventSaveCompletion: "unknown", battleHandoff: "unknown",
       assignedNpcRoutes: presence(this.options.assignedNpcRoutes === WEB_ASSIGNED_ROUTE_POLICY),
       sourceBossEntry: presence(this.options.sourceBossEntry===WEB_SOURCE_BOSS_ENTRY && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.player.native),
@@ -627,11 +628,41 @@ export class FieldGame {
     const state=this.camera?.snapshot();return state?.kind === "field-camera-v3" ? structuredClone(state.view) : null;
   }
   readonly viewChangeJournal:{requestedViewType:0|1;mapViewType:0|1|2;branchReturn:boolean;wait:boolean;timeScale:number;atMilliseconds:number}[]=[];
+  /** Validate a view's controller applicability without changing transport,
+   * release flags, parking, actors, rider caches or native renderer bindings. */
+  private viewTransportation(policy:WebFlatFieldViewChange):1|12 {
+    const context=this.partyActors?.checkpoint().context,entity=this.player.native?.entity;
+    if(!context||!entity)throw new Error("View transportation has no current native actor owner");
+    const transport=context.currentTransport;
+    if((transport===null||transport.typeId===1&&transport.id===this.transportationId)&&
+      !context.player.riding&&!entity.riding&&["absent","idle"].includes(entity.rideOnEntity))return 1;
+    if(policy!==WEB_FLAT_RETAINED_FIELD_VIEW_CHANGE||!transport||transport.id!==this.transportationId||!this.options.partyAppearance||!this.player.native)
+      throw new Error("ChangeView transport/riding applicability is unresolved");
+    assertRetainedGroundViewTransportation({policy:this.options.retainedWorldTransportation,viewPlan:this.content.entry.viewPlan,
+      presentation:this.transportationPresentation,worldPresentation:frameworkWorldMapPresentation(this.content.developmentProfile),
+      catalog:this.options.partyAppearance.catalog,context,
+      actual:{id:this.player.id,fieldAssetId:this.player.native.fieldAssetId,riderAssetId:entity.riderAssetId,riding:entity.riding,rideOnEntity:entity.rideOnEntity}});
+    const port=this.options.transportation;
+    if(!port)throw new Error("Flat riding view has no current owned transportation source");
+    const transports=new Transportations(port.catalog),identity=transports.identity(transport.id);
+    if(canonical(identity)!==canonical({id:transport.id,type:transport.typeId,assetId:transport.fieldAssetId})||
+      this.eventState.read(transports.releaseFlagRef(identity.id))!==1||!port.read().some(record=>record.id===identity.id))
+      throw new Error("Flat riding view current transportation is unavailable or changed");
+    const catalog=this.options.partyAppearance.catalog;
+    for(const id of [context.player.fieldAssetId,context.player.riderFieldAssetId]){
+      const row=id===null?null:catalog.assets[id],character=row&&this.content.characters[row.asset],keys=row&&this.nativeRuntime?.animationKeys?.assets[row.asset];
+      if(!row||!character||!keys||canonical(keys.source)!==canonical(character.source)||
+        id===context.player.fieldAssetId&&canonical(entity.animation?.character)!==canonical(character))
+        throw new Error("Flat riding view inner/outer media or animation source is unavailable");
+    }
+    return 12;
+  }
   /** Prepare all fallible material/identity reads before camera, party and
    * collision writes. Web flat walking never manufactures an airship entity. */
   prepareViewChange(raw:FieldViewChangeCommand) {
     const command=parseFieldViewChangeCommand(raw), camera=this.camera, party=this.partyActors;
-    if(this.options.viewChange!==WEB_FLAT_FIELD_VIEW_CHANGE||!camera||!party||!this.nativeActorBindings||
+    const viewPolicy=this.options.viewChange;validateFieldViewChangePolicy(viewPolicy);
+    if(viewPolicy===undefined||!camera||!party||!this.nativeActorBindings||
       !this.nativeRuntime?.mapLifecycle||!this.nativeActorProviders||!this.player.native||this.stop)
       throw new Error("Bound field view/camera/party/native host is unavailable");
     const binding=fieldViewBinding(this.content,this.options.viewChange);
@@ -639,9 +670,12 @@ export class FieldGame {
     const nativeBindings=this.nativeActorBindings,nativeRuntime=this.nativeRuntime,providerPort=this.nativeActorProviders,appearanceHost=this.options.partyAppearance;
     const factory=nativeRuntime.mapLifecycle!.factory,catalogOwner=appearanceHost?.catalog;
     const sourcesBefore=canonical({bindings:nativeBindings,runtime:nativeRuntime,catalog:catalogOwner??null});
-    const sourceCurrent=()=>this.options.viewChange===WEB_FLAT_FIELD_VIEW_CHANGE&&this.nativeActorBindings===nativeBindings&&
+    const retainedPolicy=this.options.retainedWorldTransportation,transportPort=this.options.transportation;
+    let ownedTransportationBefore:string|null=null;
+    const sourceCurrent=()=>this.options.viewChange===viewPolicy&&this.options.retainedWorldTransportation===retainedPolicy&&this.nativeActorBindings===nativeBindings&&
       this.nativeRuntime===nativeRuntime&&nativeRuntime.mapLifecycle?.factory===factory&&
       this.nativeActorProviders===providerPort&&this.options.partyAppearance===appearanceHost&&appearanceHost?.catalog===catalogOwner&&
+      (ownedTransportationBefore===null||this.options.transportation===transportPort&&!!transportPort&&canonical({catalog:transportPort.catalog,records:transportPort.read()})===ownedTransportationBefore)&&
       canonical({bindings:nativeBindings,runtime:nativeRuntime,catalog:catalogOwner??null})===sourcesBefore;
     const before=this.captureMapPublication(), next=camera.prepareView(command);
     // The native non-world Bird branch returns before transport/material reads.
@@ -650,16 +684,18 @@ export class FieldGame {
       this.viewChangeJournal.push({...command,mapViewType:this.currentPartyViewType,branchReturn:true,atMilliseconds:this.time});
     }};}
     const context=party.checkpoint().context, transport=context.currentTransport;
-    if((transport!==null&&(transport.typeId!==1||transport.id!==this.transportationId))||
-      this.player.native.entity.riding||!["absent","idle"].includes(this.player.native.entity.rideOnEntity)||context.companion!==null||
+    const viewTransport=this.viewTransportation(viewPolicy);
+    if(viewTransport===12)ownedTransportationBefore=canonical({catalog:transportPort!.catalog,records:transportPort!.read()});
+    if(context.companion!==null||
       Object.values(this.actors).some(actor=>actor.motion!==null)||this.hasUnfinishedInterpolation()||this.actorVisibilityBusy)
       throw new Error("ChangeView transport/riding/companion or active actor lifecycle is unresolved");
     const providers=this.nativeActorProviders(), contextId=providers.mapRenderContext;
     const providerProjection=(value:FieldPuppetHostProviders)=>{const {footAttribute:_,applyViewProperties:__,...data}=value;return canonical({data,
       properties:Object.values(this.actors).filter(actor=>actor.native).map(actor=>value.applyViewProperties?.(actor.native!.entity.layer)??null)});};
     const providerBefore=providerProjection(providers);
-    if(providers.transportationType!==null&&providers.transportationType!==1||!contextId||!providers.applyViewProperties)
-      throw new Error("ChangeView requires the trusted flat walking/material host");
+    if(providers.transportationType!==viewTransport&&!(viewTransport===1&&providers.transportationType===null)||
+      viewTransport===12&&providers.transportationPresentation!=="framework-development"||!contextId||!providers.applyViewProperties)
+      throw new Error("ChangeView requires the trusted flat ground/material host");
     for(const actor of Object.values(this.actors))if(actor.native){
       const entity=actor.native.entity;
       // Existing renderer registrations and per-actor material bindings remain
@@ -1315,7 +1351,7 @@ export class FieldGame {
     restoringNative = false,
     readonly se: FieldSoundState = new FieldSoundState(),
   ) {
-    if(options.viewChange!==undefined&&options.viewChange!==WEB_FLAT_FIELD_VIEW_CHANGE)throw new Error("Unknown field view change policy");
+    validateFieldViewChangePolicy(options.viewChange);
     if(options.sourcePartySelection!==undefined&&options.sourcePartySelection!==WEB_SOURCE_PARTY_SELECTION)throw new Error("Unknown source party selection policy");
     if (options.puppetRoutes !== undefined && options.puppetRoutes !== WEB_PUPPET_ROUTE_POLICY)
       throw new Error("Unknown Web puppet Route policy");
@@ -1449,7 +1485,7 @@ export class FieldGame {
     if (cameraState && !content.cameraHost) throw new Error("Saved camera cannot grant an unbound camera host");
     if (content.cameraHost && this.entityList.some((entity) => entity.kind === 15))
       throw new Error("Camera ChangeOffset trigger provider is unresolved");
-    this.camera = content.cameraHost ? new FieldCameraHost(content.cameraHost, this.cameraPorts(), cameraState, fieldViewBinding(content,options.viewChange)) : null;
+    this.camera = content.cameraHost ? new FieldCameraHost(content.cameraHost, this.cameraPorts(), cameraState, fieldViewBinding(content,options.viewChange),options.viewChange) : null;
     const treasures = restoringNative ? [] : this.prepareTreasureInitialization(this.entityList);
     this.tileAnimations.register(this.entityList);
     this.initializeTreasures(treasures);
@@ -2438,6 +2474,9 @@ export class FieldGame {
     const assignedRestore=hasAssigned ? restoreAssignedRoutes((s as {assignedNpcRoutes:AssignedRoutesCheckpoint}).assignedNpcRoutes,
       content,next.entityList,s.time,options.assignedNpcRoutes) : undefined;
     if (native) next.restoreNativeOwner(s.native!, native, restoredActivities,assignedRestore?.motions);
+    // A v2 host can read an old walking view without rewriting its saved
+    // policy. The old v1 payload never grants the newly supported rider host.
+    if(next.currentView)next.viewTransportation(next.currentView.policy);
     if(assignedRestore) next.installAssignedRoutes(assignedRestore.rows,s.time);
     checkpointIds(s.hiddenEntities);
     if (s.hiddenEntities.some((id) => !next.hasEntity(id) || (next.camera && id === next.cameraActorId) || next.actors[id]?.native))

@@ -302,6 +302,7 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
     handoffMusic: createBattleHandoffMusicLookup(handoffSystem.tables, conditionReader),
   };
   const runtimeInput: GameCatalogModules["runtimeInput"] = {
+    sourceFlagContext: "story",
     requestedPartyIds: source.encounterPartyIds, encounters: source.encounters,
     sourceDiagnostics: source.encounterDiagnostics, abilities, conditions, sprites: source.sprites, name,
     parameters: { temporary: noTemporary, limits: parameterLimits },

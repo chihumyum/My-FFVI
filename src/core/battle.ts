@@ -1,9 +1,12 @@
+import type { BattleForcedReturnResult } from "./battle-forced-return.js";
+import { WEB_BATTLE_EVENT_EFFECTS, WEB_BATTLE_EFFECT_PULSE_MILLISECONDS, parseBattleEventEffectOp, type BattleEventEffectHost, type BattleEffectResourceLease, type BattleEffectProjection, type BattleEventEffectOp } from './battle-event-effect.js';
 import { isNonDamagingHit, validateNonDamagingPresentation } from "./non-damaging-ability.js";
 import { WEB_SCRIPTED_BATTLE_ACTIONS, validateScriptedBattleActionPolicy, parseScriptedBattleAction, type ScriptedBattleAction, type WebScriptedBattleActions } from "./scripted-battle-action.js";
 import type { AbilityEffectResult } from "./ability.js";
 import type { ParameterValues } from "./parameters.js";
 import { projectAbilityCost, type AbilityCostOwner, type AbilityCostProjection } from "./ability-cost.js";
-import { parseSourceBattleControls } from './battle-controls.js';
+import { parseSourceBattleControls, WEB_BATTLE_EVENT_CONTROLS, validateBattleEventControls, type WebBattleEventControls } from './battle-controls.js';
+import { parseSourceBattleFlags, assertSourceBattleFlagsControls, type SourceBattleFlags } from "./battle-flags.js";
 import { equipmentAbilityCostProviders, equipmentOwnedAbilities, validateEquipmentAbilityOwnership, validateEquipmentBattleRows } from "./equipment.js";
 import type { OwnedAbility } from "./owned-character.js";
 import { projectBattleDrops, validateBattleDropCatalog, type BattleDropPlan, type BattleDropGrant } from "./battle-rewards.js";
@@ -173,7 +176,7 @@ type ControlFunctionState = { recovery: ControlRecoveryState; doom: DoomClockSta
 export class BattleGame {
   readonly combatants: Combatant[];
   readonly events: BattleEvent[] = [];
-  phase: "active" | "victory" | "defeat" | "escaped" = "active";
+  phase: "active" | "victory" | "defeat" | "escaped" | "forced" = "active";
   action: BattleAction | null = null;
   reward: BattleReward | null = null;
   time = 0;
@@ -196,6 +199,68 @@ export class BattleGame {
   private readonly playerConditionTraits = new Map<number, Readonly<NonNullable<CombatantDefinition["conditionTraits"]>>>();
   readonly #conditionUnitIdentities = new WeakMap<Combatant, { id: string; sourceId: number; side: "player" | "enemy" }>();
   private eventState: BattleEventState | null = null;
+  readonly #effectHost: BattleEventEffectHost | null;
+  #effects: {projection:BattleEffectProjection;targets:Combatant[];resource:BattleEffectResourceLease}[]=[];
+  #effectNextTicket=1;
+  #effectRetired=false;
+  #effectPendingCommits:BattleEffectResourceLease[]=[];
+  #effectPendingDiscards:BattleEffectResourceLease[]=[];
+  #effectJournal:{action:'request'|'play'|'complete'|'retire';ticket:number;pc:number;time:number}[]=[];
+  #effectCleanupFailures:{reason:'complete'|'rollback'|'retire';time:number}[]=[];
+  get effectPresentation():readonly BattleEffectProjection[]{return this.#effects.map(e=>structuredClone(e.projection));}
+  get effectExecution(){return structuredClone(this.#effectJournal);}
+  /** Resource cleanup is outside logical publication. Failure cannot restore an
+   * already published window or stop the remaining resources from retiring. */
+  get effectCleanupFailures(){return structuredClone(this.#effectCleanupFailures);}
+  private discardBattleEffectResources(resources:readonly BattleEffectResourceLease[],reason:'complete'|'rollback'|'retire'):void {
+    for(const resource of resources)try{resource.discard();}
+    catch{this.#effectCleanupFailures.push({reason,time:this.time});}
+  }
+  /** Global join also sees the existing action presentation, never a separate
+   * fake source completion flag supplied by the VM. */
+  private get battleEffectsFinished(){return this.#effects.length===0&&this.action===null;}
+  private prepareBattleEffect(op:Extract<BattleEventEffectOp,{kind:'play-battle-effect'}>,pc:number):void {
+    op=parseBattleEventEffectOp(op) as typeof op;
+    if(!this.#effectHost||this.#effectRetired||this.lifecycle.mode!=='script'||
+      canonical(this.lifecycle.program.instructions[pc]?.op)!==canonical(op))throw new Error('Unbound battle effect request');
+    const targets=this.scriptedUnits(op.target);
+    if(targets.length!==1)throw new Error('Battle effect source target is absent or ambiguous');
+    const ticket=this.#effectNextTicket++,request={ticket,effect:structuredClone(op.effect),targetInstanceIds:targets.map(t=>t.id)},
+      resource=this.observeMessageProvider(()=>this.#effectHost!.prepare(request));
+    if(!resource||['status','validate','commit','discard'].some(k=>typeof resource[k as keyof BattleEffectResourceLease]!=='function'))throw new Error('Invalid battle effect resource lease');
+    this.#effectPendingCommits.push(resource);this.observeMessageProvider(()=>resource.validate());
+    this.#effects.push({projection:{ticket,pc,effect:structuredClone(op.effect),targetInstanceIds:targets.map(t=>t.id),phase:'loading',elapsed:0,duration:WEB_BATTLE_EFFECT_PULSE_MILLISECONDS},targets:[...targets],resource});
+    this.#effectJournal.push({action:'request',ticket,pc,time:this.time});
+  }
+  private advanceBattleEffects():void {
+    for(const e of [...this.#effects]){
+      if(e.targets.some((unit,index)=>!this.activeCombatants.includes(unit)||unit.id!==e.projection.targetInstanceIds[index]))throw new Error('Retired battle effect target instance');
+      this.observeMessageProvider(()=>e.resource.validate());
+      if(e.projection.phase==='loading'){
+        const status=this.observeMessageProvider(()=>e.resource.status());
+        if(status==='failed')throw new Error('Battle effect resource preparation failed');
+        if(status==='loading')continue;
+        if(status!=='ready')throw new Error('Unknown battle effect resource status');
+        e.projection.phase='playing';e.projection.elapsed=0;
+        this.#effectJournal.push({action:'play',ticket:e.projection.ticket,pc:e.projection.pc,time:this.time});
+      }else{
+        e.projection.elapsed+=10;
+        if(e.projection.elapsed>=e.projection.duration){
+          this.#effects=this.#effects.filter(row=>row!==e);this.#effectPendingDiscards.push(e.resource);
+          this.#effectJournal.push({action:'complete',ticket:e.projection.ticket,pc:e.projection.pc,time:this.time});
+        }
+      }
+    }
+  }
+  private prepareEffectRetirement(){
+    const before=canonical({effects:this.effectPresentation,journal:this.#effectJournal,next:this.#effectNextTicket,time:this.time}),resources=this.#effects.map(e=>e.resource);let used=false;
+    const validate=()=>{if(used||this.#effectRetired||this.#messageBusy||canonical({effects:this.effectPresentation,journal:this.#effectJournal,next:this.#effectNextTicket,time:this.time})!==before)throw new Error('Stale battle effect retirement');for(const r of resources)this.observeMessageProvider(()=>r.validate());};
+    // Only prepareEventRetirement calls commit, immediately after validating
+    // both owners and publishing the message retirement. No host callback may
+    // fail between that publication and these owned effect-state assignments.
+    return {validate,commit:()=>{used=true;this.#effectRetired=true;this.#effects=[];this.#effectJournal.push({action:'retire',ticket:0,pc:-1,time:this.time});this.discardBattleEffectResources(resources,'retire');}};
+  }
+  prepareEventRetirement(){const message=this.prepareMessageRetirement(),effect=this.prepareEffectRetirement();return {validate(){message.validate();effect.validate();},commit(){message.validate();effect.validate();message.commit();effect.commit();}};}
   readonly #messageHost: BattleEventMessageHost | null;
   #messageFrame: ReturnType<SourceMessageState["prepareFrame"]> | null = null;
   #messagePresentation: { ticket: number; value: BattleEventMessagePresentation } | null = null;
@@ -216,7 +281,8 @@ export class BattleGame {
     const fingerprint = () => canonical({ units: this.combatants, time: this.time, phase: this.phase,
       event: this.eventState, controls: this.eventControls, queue: this.queue, reactions: this.reactions,
       action: this.action, stock: this.stock, reward: this.reward, random: this.randomState,
-      preferences: this.currentPreferences, clock: this.clockInput, remainder: this.remainder, events: this.events });
+      preferences: this.currentPreferences, clock: this.clockInput, remainder: this.remainder, events: this.events,
+      effect:this.effectPresentation,effectJournal:this.#effectJournal,nextEffect:this.#effectNextTicket });
     const before = fingerprint(), result = read();
     if (fingerprint() !== before) throw new Error("Battle message observer mutated a gameplay owner");
     return result;
@@ -268,7 +334,11 @@ export class BattleGame {
   private playerObservations = new Map<string, number[]>();
   private eventControls = { aiStarted: false, aiAliveLastSync: false, endEnabled: true,
     interactive: true, updateEnabled: true, enemyNoAct: false };
+  private eventUI = { visible: true, pauseLocked: false, revision: 0 };
+  /** Detached presentation/input projection. The battle owns these facts. */
+  get uiControls() { return { ...this.eventUI }; }
   private escapeRequested = false;
+  private forceReturnRequested = false;
   private currentPreferences: BattlePreferences;
   private currentPlayerControlMode:'manual'='manual';
   get playerControlMode():'manual' {return this.currentPlayerControlMode;}
@@ -295,6 +365,8 @@ export class BattleGame {
    * active conditions remain on the original combatant, never on this record. */
   private enemyExits = new Map<string, { kind: "escaped"; conditionId: number }>();
   private rewardRegisteredInstances = new Set<string>();
+  private readonly sourceFlags:SourceBattleFlags|null;
+  get sourceFlagExecution():SourceBattleFlags|null{return this.sourceFlags===null?null:structuredClone(this.sourceFlags);}
   constructor(
     readonly content: BattleContent,
     seed: number,
@@ -310,12 +382,13 @@ export class BattleGame {
     initialPreferences?: BattlePreferences,
     eventShared?: BattleEventSharedSnapshot,
     playerBorrow?: BattlePlayerBorrow,
-    private readonly eventHosts?: { scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost },
+    private readonly eventHosts?: { scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; controls?:WebBattleEventControls },
   ) {
     if (eventHosts !== undefined && (!eventHosts || typeof eventHosts !== "object" || Array.isArray(eventHosts) ||
-        Object.keys(eventHosts).some(key => key !== "messages" && key !== "scriptedActions")))
+        Object.keys(eventHosts).some(key => key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls")))
       throw new Error("Unknown battle event host options");
     const messageHost = eventHosts?.messages;
+    if(eventHosts?.effects!==undefined&&(eventHosts.effects.policy!==WEB_BATTLE_EVENT_EFFECTS||typeof eventHosts.effects.prepare!=="function"))throw new Error("Unknown battle effect presentation host");
     if (
       content.kind !== "opening-battle-development" ||
       content.profile !== "narshe-playability-v35"
@@ -327,16 +400,25 @@ export class BattleGame {
       throw new Error("Battle formation selection is unresolved");
     if (content.formationChoice !== undefined)
       validateBattleFormationChoice(content.formationChoice, content.formation, seed);
+    this.sourceFlags=content.sourceFlags===undefined?null:parseSourceBattleFlags(content.sourceFlags);
+    if(this.sourceFlags){
+      if(this.sourceFlags.partySource.rowId!==String(content.encounterId))throw new Error("Battle source flags belong to another encounter");
+      assertSourceBattleFlagsControls(this.sourceFlags,content.controls);
+    }
     this.escapeRule = content.escapePolicy === undefined ? null : parseBattleEscapePolicy(content.escapePolicy);
     this.rewardPolicy = Object.freeze(parseBattleRewardPolicy(content.rewardPolicy === undefined
       ? { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 } : content.rewardPolicy));
     validateScriptedBattleActionPolicy(eventHosts?.scriptedActions);
+    validateBattleEventControls(eventHosts?.controls);
     this.lifecycle = parseBattleLifecycle(content.lifecycle ?? { kind: "battle-lifecycle-v1", mode: "none" });
     const hasMessages = this.lifecycle.mode === "script" && this.lifecycle.program.instructions.some(({ op }) => op.kind === "message");
     if (hasMessages && (!messageHost || messageHost.policy !== WEB_BATTLE_EVENT_MESSAGE_POLICY ||
         !messageHost.owner || typeof messageHost.sequence?.prepare !== "function" || typeof messageHost.prepareEffects !== "function"))
       throw new Error("Battle event Msg requires the shared source-message host and explicit Web policy");
     this.#messageHost = hasMessages ? Object.freeze({ ...messageHost! }) : null;
+    const hasEffects=this.lifecycle.mode==='script'&&this.lifecycle.program.instructions.some(({op})=>['play-battle-effect','sync-battle-effect'].includes(op.kind));
+    if(hasEffects&&!eventHosts?.effects)throw new Error('Battle effects require their explicit Web presentation/resource host');
+    this.#effectHost=hasEffects?Object.freeze({...eventHosts!.effects!}):null;
     if (content.conditionControlPolicy !== undefined && (!content.conditionControlPolicy ||
         Object.keys(content.conditionControlPolicy).length !== 1 || content.conditionControlPolicy.kind !== "web-source-control-actions-v1"))
       throw new Error("Invalid condition-control scheduler policy");
@@ -368,6 +450,8 @@ export class BattleGame {
     this.eventShared = eventShared === undefined ? null : new BattleEventSharedState(eventShared);
     if (this.lifecycle.mode === "script") this.eventState = createBattleEventState(this.lifecycle.program);
     if (this.lifecycle.mode === "script") for (const [pc, { op }] of this.lifecycle.program.instructions.entries()) {
+      if ((op.kind === "ui-visibility" || op.kind === "stop-auto" || op.kind === "force-return") && eventHosts?.controls !== WEB_BATTLE_EVENT_CONTROLS)
+        throw new BattleEventError(this.lifecycle.program.source, pc, "Missing explicit Web battle event control policy");
       if(op.kind==="script-action"){
         if(eventHosts?.scriptedActions!==WEB_SCRIPTED_BATTLE_ACTIONS)
           throw new BattleEventError(this.lifecycle.program.source,pc,"Missing explicit Web scripted battle action policy");
@@ -530,7 +614,7 @@ export class BattleGame {
     this.log("敌人出现了。");
     // Message-bearing roots start on the first admitted battle tick. Preparing
     // a media handoff or retry never publishes a global window in a constructor.
-    if (!this.#messageHost) this.advanceEvent();
+    if (!this.#messageHost&&!this.#effectHost) this.advanceEvent();
   }
   get players() {
     return this.combatants.filter((c) => c.side === "player");
@@ -561,14 +645,14 @@ export class BattleGame {
     }
   }
   get ready() {
-    if (this.#messageHost && !this.#messageRootStarted || this.escapeRequested || !this.eventControls.interactive) return [];
+    if ((this.#messageHost||this.#effectHost) && !this.#messageRootStarted || this.escapeRequested || !this.eventControls.interactive || !this.eventUI.visible) return [];
     return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued &&
       !this.hasSleep(c) && !this.hasAutomaticControl(c));
   }
   get escapePending(): boolean { return this.escapeRequested; }
   get canRequestEscape(): boolean {
-    return (!this.#messageHost || this.#messageRootStarted) && this.escapeRule !== null && this.phase === "active" && !this.escapeRequested &&
-      this.eventControls.endEnabled && this.eventControls.interactive && this.eventControls.updateEnabled &&
+    return (!this.#messageHost&&!this.#effectHost || this.#messageRootStarted) && this.escapeRule !== null && this.phase === "active" && !this.escapeRequested &&
+      this.eventControls.endEnabled && this.eventControls.interactive && this.eventControls.updateEnabled && this.eventUI.visible &&
       this.players.some(c => c.hp > 0) && this.enemies.some(c => c.hp > 0) &&
       !this.clockInput.paused && !this.clockInput.helpPaused && this.clockInput.progressEnabled && !this.clockInput.forceWaiting;
   }
@@ -777,7 +861,8 @@ export class BattleGame {
       progressEnabled: this.clockInput.progressEnabled && this.eventControls.updateEnabled,
       // Once accepted, an old target/ability menu must not deadlock WAIT.
       // Pause, help, special input and the host progress gate still apply.
-      uiWaiting: this.escapeRequested ? false : this.clockInput.uiWaiting,
+      uiWaiting: this.escapeRequested || !this.eventUI.visible ? false : this.clockInput.uiWaiting,
+      forceWaiting: this.eventUI.visible && this.clockInput.forceWaiting,
       mode: this.currentPreferences.mode,
       battleResult: this.phase === "active" ? 0 : 1,
     });
@@ -1400,7 +1485,7 @@ export class BattleGame {
   private advanceEvent(): void {
     if (this.lifecycle.mode !== "script" || !this.eventState || this.eventState.status === "exited") return;
     const program = this.lifecycle.program;
-    if (this.#messageHost) this.#messageRootStarted = true;
+    if (this.#messageHost||this.#effectHost) this.#messageRootStarted = true;
     for (;;) {
       const cores = this.battleAICoresAlive();
       const result = advanceBattleEvent(program, this.eventState, {
@@ -1408,6 +1493,7 @@ export class BattleGame {
         ...(this.eventState.wait?.kind === "message" ? {
           messageStatus: this.#messageFrame!.state.sequenceStatus(this.eventState.wait.cursor.ticket),
         } : {}),
+        battleEffectsFinished:this.battleEffectsFinished,
         aiCoreAlive: cores.alive,
         // Source IsNowAttackStaging includes staged/interrupt actions, but not
         // ordinary queued turns. The queues remain owned by this BattleGame.
@@ -1427,6 +1513,17 @@ export class BattleGame {
       for (const request of result.requests) {
         try {
           switch (request.kind) {
+            case "ui-visibility":
+              this.eventUI.visible = request.visible;
+              this.eventUI.pauseLocked = !request.visible;
+              this.eventUI.revision++;
+              // A retired menu cannot keep WAIT or special-input clocks held.
+              // Host/background pause and progress observations are preserved.
+              this.clockInput.uiWaiting = false; this.clockInput.forceWaiting = false;
+              break;
+            case "stop-auto": this.setAutomaticMode(false); break;
+            case "force-return": this.forceReturnRequested = true; break;
+            case "play-battle-effect": { const {pc,...op}=request;this.prepareBattleEffect(op,pc);break; }
             case "script-action": { const { pc, ...command }=request; this.enqueueScriptedAction(command, pc); break; }
             case "message": {
               if (!this.#messageHost || !this.#messageFrame) throw new Error("Missing battle source-message frame");
@@ -2078,7 +2175,8 @@ export class BattleGame {
     if (!actor.queued) actor.atb = 0;
   }
   advance(ms: number) {
-    if (this.#messageRetired) throw new Error("Retired battle message owner");
+    if (this.#messageRetired||this.#effectRetired) throw new Error("Retired battle presentation owner");
+    if (this.#messageBusy) throw new Error("Reentrant battle presentation update");
     if (!Number.isFinite(ms) || ms < 0 || ms > 60000)
       throw new Error("Invalid battle elapsed time");
     this.validateConditionState();
@@ -2129,8 +2227,11 @@ export class BattleGame {
       reactions: structuredClone(this.reactions),
       ai: structuredClone(this.aiStates),
       eventState: structuredClone(this.eventState),
+      effectState:this.#effects.map(e=>({...e,projection:structuredClone(e.projection),targets:[...e.targets]})),effectNextTicket:this.#effectNextTicket,effectJournal:structuredClone(this.#effectJournal),
       messagePresentation: this.#messagePresentation, messageRootStarted: this.#messageRootStarted, messageJournal: structuredClone(this.#messageJournal),
       eventControls: { ...this.eventControls },
+      eventUI: { ...this.eventUI },
+      playerControlMode: this.currentPlayerControlMode,
       eventShared: this.eventShared?.snapshot() ?? null,
       poison: structuredClone(this.poisonStates),
       slow: structuredClone(this.slowStates),
@@ -2149,12 +2250,14 @@ export class BattleGame {
       phase: this.phase,
       reward: this.reward,
       clockInput: { ...this.clockInput }, preferences: { ...this.currentPreferences }, remainder: this.remainder,
-      escapeRequested: this.escapeRequested,
+      escapeRequested: this.escapeRequested, forceReturnRequested: this.forceReturnRequested,
     };
     this.validateMessageOwnership();
     const frame = this.#messageHost?.owner.prepareFrame() ?? null;
     this.#messageBusy = true;
     this.#messageFrame = frame; this.#messageFrameValidations = []; this.#messageFrameEffects = null;
+    this.#effectPendingCommits=[];this.#effectPendingDiscards=[];
+    const completedResources:BattleEffectResourceLease[]=[];
     try {
       frame?.state.advance(.01);
       this.reconcileAppearances();
@@ -2166,9 +2269,16 @@ export class BattleGame {
       if (this.#messageFrameEffects !== null && (!effects || typeof effects.validate !== "function" || typeof effects.commit !== "function"))
         throw new Error("Invalid battle source-message effects transaction");
       if (effects) this.observeMessageProvider(effects.validate);
-      messageWrite?.validate(); effects?.commit(); messageWrite?.commit();
+      messageWrite?.validate();
+      for(const e of this.#effects)this.observeMessageProvider(()=>e.resource.validate());
+      for(const resource of this.#effectPendingCommits)resource.commit();
+      effects?.commit(); messageWrite?.commit();
+      // Publication ends here. Cleanup must never enter the rollback handler
+      // after the shared source-message frame has committed.
+      completedResources.push(...this.#effectPendingDiscards);
     } catch (error) {
       frame?.discard();
+      this.#effects=before.effectState;this.#effectNextTicket=before.effectNextTicket;this.#effectJournal=before.effectJournal;
       this.#messagePresentation = before.messagePresentation; this.#messageRootStarted = before.messageRootStarted; this.#messageJournal = before.messageJournal;
       this.combatants.splice(0, this.combatants.length, ...before.unitOwners);
       for (const [index, unit] of before.units.entries())
@@ -2192,6 +2302,8 @@ export class BattleGame {
       this.aiStates = before.ai;
       this.eventState = before.eventState;
       this.eventControls = before.eventControls;
+      this.eventUI = before.eventUI;
+      this.currentPlayerControlMode = before.playerControlMode;
       if (this.eventShared && before.eventShared) this.eventShared.restore(before.eventShared);
       this.poisonStates = before.poison;
       this.slowStates = before.slow;
@@ -2208,16 +2320,26 @@ export class BattleGame {
       this.phase = before.phase;
       this.reward = before.reward;
       this.clockInput = before.clockInput; this.currentPreferences = before.preferences; this.remainder = before.remainder;
-      this.escapeRequested = before.escapeRequested;
+      this.escapeRequested = before.escapeRequested; this.forceReturnRequested = before.forceReturnRequested;
+      // A lease may have published before another host failed. Revoke every
+      // candidate after restoring owners; a throwing discard cannot interrupt
+      // rollback or replace the original publication error.
+      this.discardBattleEffectResources(this.#effectPendingCommits,'rollback');
       throw error;
     } finally {
-      this.#messageFrame = null; this.#messageFrameValidations = []; this.#messageFrameEffects = null; this.#messageBusy = false;
+      this.#messageFrame = null; this.#messageFrameValidations = []; this.#messageFrameEffects = null;this.#effectPendingCommits=[];this.#effectPendingDiscards=[];
+      // Retain the reentrancy guard during external cleanup, but keep cleanup
+      // outside the catch that can restore this already published frame.
+      this.discardBattleEffectResources(completedResources,'complete');
+      this.#messageBusy = false;
     }
   }
   private step() {
     const gate = this.clockGate();
     if (!gate.simulation) return;
     this.time += 10;
+    this.advanceBattleEffects();
+    if (this.forceReturnRequested && this.eventControls.endEnabled) { this.checkOutcome(); return; }
     if (this.escapeRequested && !this.action) {
       // Existing lethal results outrank retreat; a request cannot avoid defeat
       // or turn a completed victory into a reward-free exit.
@@ -2808,6 +2930,13 @@ export class BattleGame {
     // Native Integrator and battle updates are separate Unity components; their
     // relative frame order is not certified. The VM runs while progress waits.
     this.advanceEvent();
+    if (this.forceReturnRequested && this.eventControls.endEnabled) {
+      // Native Forced=4 precedes ordinary death/victory judgment, even with
+      // staged work. Keep that work suspended until the whole battle owner is
+      // retired by the prepared handoff; this is not RemoveAllAct cancellation.
+      this.phase = "forced"; this.escapeRequested = false;
+      this.log("战斗结束，返回进入战斗前的状态。"); return;
+    }
     if (this.action || this.reactions[0]?.kind === "derived") return;
     for (const c of this.combatants) {
       Object.assign(c, this.conditions.settleLife(c.hp, c.conditionIds, false));
@@ -2952,6 +3081,15 @@ export class BattleGame {
     return { playerParticipants: { state: this.playerExecution!,
       observations: firstEnteredOwnerIds(this.playerState).map(ownedId => ({ ownedId,
         abilityIds: escaped ? [] : [...this.playerObservations.get(ownedId)!] })) } };
+  }
+  previewForcedReturn(): BattleForcedReturnResult | null {
+    if (this.phase !== "forced" || this.collected) return null;
+    return { kind: "battle-no-save-return-v1", resultType: 4,
+      participants: this.settlementPlayers().map(player => ({ ownedId: player.id, sourceId: player.sourceId })),
+      ...this.playerReturn(true) };
+  }
+  takeForcedReturn(): BattleForcedReturnResult | null {
+    const result = this.previewForcedReturn(); if (result) this.collected = true; return result;
   }
   previewEscape(): { players: Combatant[]; consumedItems: ItemStack[]; playerParticipants?: BattlePlayerReturn } | null {
     if (this.phase !== "escaped" || this.collected) return null;

@@ -24,7 +24,7 @@ export class GameCommands {
   get menuReady(): boolean { return this.current && this.flow.menuInputReady && this.owner.menuReady; }
   get settingsReady(): boolean { return this.current && this.flow.menuInputReady; }
   get battleReady(): boolean {
-    return this.current && this.flow.inputReady && this.owner.battle?.phase === "active";
+    return this.current && this.flow.inputReady && this.owner.battle?.phase === "active" && this.owner.battle.uiControls.visible;
   }
   get sourcePartySelectionReady():boolean {
     return this.current&&this.flow.inputReady&&!this.owner.battle&&!this.owner.state.inBattle&&this.owner.currentSourcePartySelection!==null;
@@ -101,7 +101,7 @@ export class GameCommands {
    * settlement. These checks authorize the captured terminal button only. */
   canReturnBattle(battle: BattleGame): boolean {
     return this.current && this.flow.inputReady && this.ownsBattle(battle) &&
-      (battle.phase === "victory" || battle.phase === "escaped");
+      (battle.phase === "victory" || battle.phase === "escaped" || battle.phase === "forced");
   }
   canRetryBattle(battle: BattleGame): boolean {
     return this.current && this.flow.inputReady && this.ownsBattle(battle) && battle.phase === "defeat";

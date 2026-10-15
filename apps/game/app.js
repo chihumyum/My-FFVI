@@ -2,6 +2,7 @@ import { WEB_SCRIPTED_BATTLE_ACTIONS } from "/runtime/core/scripted-battle-actio
 import { WEB_SOURCE_PARTY_SELECTION } from '/runtime/core/source-party-selection.js';
 import { SourcePartySelectionView } from './source-party-selection-view.js';
 import { WEB_BATTLE_EVENT_MESSAGE_POLICY } from "/runtime/core/battle-event-message.js";
+import { WEB_BATTLE_EVENT_CONTROLS } from "/runtime/core/battle-controls.js";
 import { WEB_SOURCE_SCRIPT_RANDOM } from "/runtime/core/field-script-random.js";
 import { syncFieldMessageView } from "./source-message-view.js";
 import { createWebFieldMessageSequencePort } from "/runtime/core/source-message-sequence.js";
@@ -104,11 +105,13 @@ const runtime = {
   // deferred media-first publication are explicit Web policies, not Unity RNG.
   retainedWorldTransportation: "web-retained-walking-magitek-world-entry-v1",
   assignedNpcRoutes: "web-assigned-npc-route-grid-v1",
-  viewChange:"web-flat-field-view-change-v1",
+  viewChange:"web-flat-field-view-change-v2",
+  battleEventEffects:"web-source-battle-effects-pulse-v1",
   sourcePartySelection:WEB_SOURCE_PARTY_SELECTION,
   sourceBossEntry:WEB_SOURCE_BOSS_ENTRY,sourceBattleResult:WEB_COMMITTED_BATTLE_RESULT,
   puppetRoutes: "web-source-puppet-route-grid-v1",
   battleEventMessages: WEB_BATTLE_EVENT_MESSAGE_POLICY,
+  battleEventControls: WEB_BATTLE_EVENT_CONTROLS,
   sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY, sourceMessageSequence: createWebFieldMessageSequencePort(),
   // Explicit flat Web component/ancestor policy, rebound from each candidate's
   // trusted native factory. Saved activeSelf never grants this capability.
@@ -273,7 +276,7 @@ function bindSession(candidate, views) {
   battleView = new BattleView(canvas, candidate.battleCatalog.common, images,
     () => {
       if (!battleOwnerReady()) return;
-      if (["victory", "escaped"].includes(candidate.battle?.phase)) loadBattle(candidate, "return");
+      if (["victory", "escaped", "forced"].includes(candidate.battle?.phase)) loadBattle(candidate, "return");
     },
     () => { if (battleOwnerReady()) loadBattle(candidate, "retry"); },
     battleAppearanceQuads, projectDevelopmentBattleLayout, {
@@ -511,6 +514,8 @@ function sync() {
     held.clear();
     syncFieldMessageView({ dialogue: $("dialogue"), speaker: $("speaker"), message: $("message"), next: $("next") }, flow.session.battle, flow.paused);
     $("stop").hidden = true;
+    $("menu-button").disabled = flow.session.battle.phase === "active" && flow.session.battle.uiControls.pauseLocked;
+    $("menu-button").hidden = flow.session.battle.phase === "active" && !flow.session.battle.uiControls.visible;
     battleView.sync(flow.session.battle, !flow.inputReady || document.hidden);
     text(
       "status",
@@ -519,6 +524,7 @@ function sync() {
     return;
   }
   battleView.hide();
+  $("menu-button").hidden = false;
   syncFieldMessageView({ dialogue: $("dialogue"), speaker: $("speaker"), message: $("message"), next: $("next") }, game, flow.paused);
   $("stop").hidden = !game.stop || battleLoadAttempt?.session === flow.currentSession;
   $("retry-map").hidden = !mapFailure;

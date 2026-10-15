@@ -64,7 +64,7 @@ class Element {
   getContext() { return {}; }
 }
 
-async function fixture({ allowed = true, ready = true, scripted = false, items = 0 } = {}) {
+async function fixture({ allowed = true, ready = true, scripted = false, items = 0, controls = false, forced = false } = {}) {
   const f = scripted ? checkpointFixture() : walkEncounterFixture(1);
   if (allowed) f.battle.encounters[1000].escapePolicy = { ...policy };
   f.battle.common.initialAtb.player = ready ? [100, 100] : [0, 0];
@@ -73,7 +73,25 @@ async function fixture({ allowed = true, ready = true, scripted = false, items =
   f.battle.common.commands[200] = { id: 200, kind: "item", name: "Items", abilityIds: [],
     referencedAbility: null, forbiddenConditionIds: [] };
   for (const player of f.battle.common.players) player.commands.push(200);
-  const game = new GameSession(f.field, f.battle, 314, { battleHandoff: "prepared" }), flow = new GameFlow(game);
+  if(controls) {
+    f.battle.encounters[1000].lifecycle={kind:"battle-lifecycle-v1",mode:"script",scriptId:9000,program:{
+      kind:"battle-event-v1",source:null,entry:0,end:7,localNames:[],initialLocals:[],blockers:[],instructions:[
+        {mnemonic:"BattleEndEnabled",op:{kind:"end-enabled",enabled:false}},
+        {mnemonic:"Wait",op:{kind:"wait",seconds:.1}},
+        {mnemonic:"SysCall",op:{kind:"ui-visibility",visible:false}},
+        {mnemonic:"Wait",op:{kind:"wait",seconds:.1}},
+        {mnemonic:"SysCall",op:{kind:"ui-visibility",visible:true}},
+        {mnemonic:"SysCall",op:{kind:"stop-auto"}},
+        {mnemonic:"Exit",op:{kind:"exit"}}]}};
+  }
+  if(forced) f.battle.encounters[1000].lifecycle={kind:"battle-lifecycle-v1",mode:"script",scriptId:9001,program:{
+    kind:"battle-event-v1",source:null,entry:0,end:3,localNames:[],initialLocals:[],blockers:[],instructions:[
+      {mnemonic:"Wait",op:{kind:"wait",seconds:.03}},
+      {mnemonic:"BattleForceExit",op:{kind:"force-return"}},
+      {mnemonic:"Wait",op:{kind:"wait",seconds:1}}]}};
+  const {WEB_BATTLE_EVENT_CONTROLS}=await load("src/core/battle-controls.js");
+  const game = new GameSession(f.field, f.battle, 314, { battleHandoff: "prepared",
+    ...((controls||forced)?{battleEventControls:WEB_BATTLE_EVENT_CONTROLS}:{}) }), flow = new GameFlow(game);
   flow.start(); flow.advance(0, walkHost);
   if (scripted) { assert.equal(game.field.startEvent("fight"), true); flow.advance(10, walkHost); }
   else { assert.equal(flow.move("right"), true); flow.advance(240, walkHost); }
@@ -317,6 +335,37 @@ for (const phase of ["escaped", "victory"]) {
   checked.push("workbench without an escape owner omits retreat and malformed callback contracts reject");
 }
 
+{
+  const h=host(await fixture({scripted:true,controls:true})),battle=h.game.battle,view=h.view();
+  const old=h.buttons().find(button=>!button.disabled&&button.textContent!=="撤退");assert.ok(old);const click=old.onclick;
+  h.flow.advance(120,walkHost);h.sync();assert.equal(battle.uiControls.visible,false);assert.equal(h.$("battle-ui").hidden,true);
+  assert.equal(view.userReady(),false);assert.equal(view.menuState,"none");assert.equal(battle.canRequestEscape,false);
+  const before=battle.pendingActions;click();assert.deepEqual(battle.pendingActions,before);assert.equal(h.flow.pause(true),false);
+  h.flow.advance(120,walkHost);assert.equal(battle.uiControls.visible,true);
+  assert.equal(view.userReady(),false,"an old menu stays stale even after Hide+Show before view synchronization");
+  click();assert.deepEqual(battle.pendingActions,before);h.sync();assert.equal(h.$("battle-ui").hidden,false);assert.equal(view.userReady(),true);
+  assert.equal(h.$("battle-ui").attributes.get("data-player-control"),"manual");assert.equal(h.flow.pause(true),true);
+  checked.push("source UI visibility/revision invalidates stale actual BattleView commands and WAIT, preserves battle owner and re-enables user pause");
+}
+{
+  const h=host(await fixture({scripted:true,forced:true,items:3})),battle=h.game.battle,field=h.game.field,owned=h.game.state.snapshot();
+  h.flow.advance(60,walkHost);h.sync();assert.equal(battle.phase,"forced");
+  assert.equal(h.$("battle-ui").hidden,true);assert.equal(h.$("battle-result").hidden,false);
+  assert.equal(h.$("battle-result-title").textContent,"战斗结束");
+  assert.match(h.$("battle-result-text").textContent,/进入战斗前.*不获得胜利奖励/);
+  assert.equal(h.$("battle-return").hidden,false);assert.equal(h.$("battle-retry").hidden,true);
+  const prepare=field.prepareEncounterReturn;let attempts=0;
+  field.prepareEncounterReturn=function(...args){attempts++;if(attempts===1)throw Error("controlled forced-return preparation failure");return prepare.apply(this,args);};
+  const stale=h.$("battle-return").onclick;stale();await h.wait();
+  assert.equal(h.game.battle,battle);assert.deepEqual(h.game.state.snapshot(),owned);assert.equal(attempts,1);
+  assert.match(h.$("battle-result-text").textContent,/返回地图失败/);assert.deepEqual(h.failures,[]);
+  stale();await h.wait();assert.equal(h.game.battle,null);assert.equal(attempts,2);assert.equal(h.flow.phase,"event");
+  h.flow.advance(10,walkHost);h.sync();assert.equal(h.flow.phase,"exploration");
+  const after=h.game.state.snapshot();assert.deepEqual({...after,completedBattles:[]},{...owned,completedBattles:[]});
+  assert.deepEqual(after.completedBattles.map(r=>r.outcome),["forced"]);const saved=h.game.checkpoint();stale();await h.wait();
+  assert.deepEqual(h.game.checkpoint(),saved);assert.deepEqual(h.failures,[]);assert.equal(attempts,2);
+  checked.push("forced no-save: actual App/BattleView exposes a distinct result, retries failed return, preserves owned resources and rejects stale callbacks");
+}
 const report = { kind: "controlled-battle-escape-ui", result: "passed", scenarios: checked.length, checked,
   appSha256: hash(app), battleViewSha256: hash(await readFile(resolve(root, "apps/game/battle-view.js"))),
   evidence: "Actual app bindSession handlers and BattleView with real started GameFlow/GameSession/BattleGame/GameBattleHandoff; asynchronous controlled ready host and explicit error-presentation bridge; synthetic ordinary walk encounter",

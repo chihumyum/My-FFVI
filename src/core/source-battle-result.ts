@@ -24,6 +24,8 @@ export function projectCommittedBattleResult(owned: GameStateSnapshot, encounter
     if (owned.initialization !== "source-new-game") throw new Error("Fresh native result context is unavailable");
     return { value: 0, receipt: null };
   }
+  if (receipt.outcome === "forced")
+    throw new Error("Forced battle result query requires previous-result publication and current Corps eligibility projection");
   if (receipt.serial !== encounterSerial - 1 || !Number.isInteger(receipt.encounterId) || receipt.encounterId <= 0 ||
       receipt.outcome !== "victory" && receipt.outcome !== "escaped")
     throw new Error("Unimplemented or invalid committed battle result producer");

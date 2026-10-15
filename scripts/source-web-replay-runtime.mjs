@@ -4,9 +4,11 @@
 // result is supplied, and GameSession remains the only terminal producer.
 export function sourceWebReplayRuntimePorts() {
   return Object.freeze({
-    viewChange: 'web-flat-field-view-change-v1',
+    viewChange: 'web-flat-field-view-change-v2',
+    battleEventEffects: 'web-source-battle-effects-pulse-v1',
     sourcePartySelection: 'web-source-party-selection-atomic-v1',
     battleEventMessages: 'web-source-battle-event-messages-v1',
+    battleEventControls: 'web-source-battle-event-controls-v1',
     sourceBossEntry: 'web-source-boss-entry-v1',
     sourceBattleResult: 'web-committed-battle-result-v1',
     scriptedBattleActions: 'web-source-scripted-battle-actions-v1',
