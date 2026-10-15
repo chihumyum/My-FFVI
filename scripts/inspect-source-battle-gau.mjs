@@ -18,7 +18,7 @@ try{
  const input=await loadBattleEventMessageSourceInputs(root,compiled),dep=input.dependencies,source=await api.compileSharedBattleSource(root),modules=await api.compileGameCatalogModules(root,source),
    policy=await readSourceBattleDirectoryPolicy({root,compiledDir:compiled,policy:JSON.parse(await readFile(resolve(root,'content-batches/source-battle-directory.policy.json')))}),
    runtimeInput={...modules.runtimeInput,requestedPartyIds:dep.requestedPartyIds,encounters:dep.encounters,sourceDiagnostics:dep.diagnostics,
-     ...(policy.framework.forcedSavePolicy?{forcedSavePolicy:policy.framework.forcedSavePolicy}:{}),
+     ...(policy.framework.spawnConditionPolicy?{spawnConditionPolicy:policy.framework.spawnConditionPolicy}:{}),...(policy.framework.forcedSavePolicy?{forcedSavePolicy:policy.framework.forcedSavePolicy}:{}),
       ...(policy.framework.manualControls===undefined?{}:{manualControls:policy.framework.manualControls}),
      ...(policy.framework.conditionControlPolicy?{conditionControlPolicy:policy.framework.conditionControlPolicy}:{}),
      handoff:{policy:policy.framework.handoff},development:{...(policy.framework.entry?.formations?{formations:policy.framework.entry.formations}:{}),scripts:[],flagGroups:[]}},

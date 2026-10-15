@@ -1,3 +1,4 @@
+import {parseWebEnemySpawnConditions,type WebEnemySpawnConditions} from '../core/battle-spawn-conditions.js';
 import { parseBattleEventProgram } from '../core/battle-event.js';
 import { WEB_BATTLE_BRANCH_EXECUTION, validateBattleBranchExecutionPolicy, type WebBattleBranchExecution } from '../core/battle-branch-execution.js';
 import { WEB_MANUAL_BATTLE_CONTROLS, type SourceBattleControls } from '../core/battle-controls.js';
@@ -44,6 +45,7 @@ type Reader = {
 import {parseWebBattleForcedSave,type WebBattleForcedSave} from '../core/battle-forced-save.js';
 export type BattleEncounterRuntimeInput = {
   forcedSavePolicy?:WebBattleForcedSave;
+  spawnConditionPolicy?:WebEnemySpawnConditions;
   /** Source field/story requests do not enter the separate native AR catalogs.
    * An absent declaration preserves legacy/strict unknown-flag admission. */
   sourceFlagContext?: "story";
@@ -102,6 +104,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     throw new Error("Unimplemented source battle flag execution context");
   if(input.manualControls!==undefined&&input.manualControls!==WEB_MANUAL_BATTLE_CONTROLS)throw new Error('Unknown manual battle control policy');
   validateBattleBranchExecutionPolicy(input.branchExecution);
+  if(input.spawnConditionPolicy!==undefined)parseWebEnemySpawnConditions(input.spawnConditionPolicy);
   if(input.forcedSavePolicy!==undefined)parseWebBattleForcedSave(input.forcedSavePolicy);
   const requested = [...input.requestedPartyIds];
   const reserves = input.reserveEnemies ?? [], policies = input.development.participants ?? [], waves = input.enemyParties ?? [];
@@ -277,7 +280,8 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
 
       const compileEnemy = (enemy: EnemyBattleSource, slot?: number, childPartyId?: number): EnemyBattleDefinition | null => {
         const compiled = compileEnemyBattleDefinition(reader, { enemy,
-          entryPhase: slot === undefined || childPartyId !== undefined ? "late" : "initial", abilities: input.abilities,
+          entryPhase: slot === undefined || childPartyId !== undefined ? "late" : "initial",
+          ...(input.spawnConditionPolicy?{spawnConditionPolicy:input.spawnConditionPolicy}:{}), abilities: input.abilities,
           conditions: input.conditions, sprites: input.sprites, name: input.name,
           parameters: input.parameters, physical: input.physical, formationPlan,
           ...(input.conditionControlPolicy ? { conditionControlPolicy: input.conditionControlPolicy } : {}) });
@@ -427,7 +431,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         if (!enemyDefinitions[String(op.monsterId)])
           add("blocked", "battle-participant-reference", `Battle event PC ${pc} has no admitted enemy master ${op.monsterId}`,
             { pc, dependency: { table: "monster.csv", id: op.monsterId } });
-        else if (enemyDefinitions[String(op.monsterId)]!.conditionIds.length)
+        else if (enemyDefinitions[String(op.monsterId)]!.conditionIds.length && input.spawnConditionPolicy===undefined)
           add("blocked", "enemy-late-initial-condition", "Dynamic entry cannot reuse the initial battle condition activation phase",
             { pc, dependency: { table: "monster.csv", id: op.monsterId, field: "initial_condition" } });
         if (!slotIds.has(String(op.uniqueId)))
@@ -481,6 +485,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     if (!blocked && formationPlan && rewardPolicy && lifecycle && participants) encounters[partyId] = { encounterId: partyId, enemies,
       background: encounter.background, formationPlan, rewardPolicy, lifecycle, participants,
       ...(controls?{controls}:{}),...(forcedSavePolicy?{forcedSavePolicy}:{}),
+      ...(input.spawnConditionPolicy&&lifecycle.mode==='script'&&lifecycle.program.instructions.some(({op})=>op.kind==='add-enemy'||op.kind==='change-enemy-party')?{spawnConditionPolicy:structuredClone(input.spawnConditionPolicy)}:{}),
       ...(sourceFlags?{sourceFlags}:{}),
       ...(escapePolicy ? { escapePolicy } : {}), ...(handoff ? { handoff } : {}),
       formation: formationPlan.kind === "development" ? null : formationPlan.pattern === 3 ? "opposed" : "normal" };

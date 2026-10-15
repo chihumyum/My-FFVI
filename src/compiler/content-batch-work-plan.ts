@@ -173,6 +173,7 @@ const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
   audioReadiness: "map-event-and-travel",
   soundPresentation: "map-event-and-travel",
   actorControl: "map-event-and-travel",
+  sourcePosition: "map-event-and-travel",
   actorMotion: "map-event-and-travel",
   cameraMotion: "map-event-and-travel",
   effectMotion: "map-event-and-travel",

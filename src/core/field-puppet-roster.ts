@@ -11,6 +11,8 @@ export type FieldPuppetRosterRead = {
 
 export type FieldPuppetRosterPort = {
   current(): FieldPuppetRosterRead;
+  /** Same GameState owner, all three source Corps cells; never an active-party reconstruction. */
+  replacement?(): import("./field-puppet-replacement.js").FieldPuppetReplacementRoster;
 };
 
 export type FieldPuppetRosterMember = {

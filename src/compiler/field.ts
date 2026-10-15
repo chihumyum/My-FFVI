@@ -1,3 +1,4 @@
+import { compileFieldPuppetReplacementInstruction,sourcePuppetReplacementSelectors } from './field-puppet-replacement.js';
 import { compileFieldMobControl } from "./field-mob-controls.js";
 import { compileFieldBirdViewMoveInstruction } from "./field-bird-view-actors.js";
 import { compileFieldStandaloneWaitInstruction, sourceStandaloneWaitSelector } from "./field-standalone-wait.js";
@@ -66,7 +67,7 @@ import { compileFieldEntryContext } from "./field-entry-context.js";
 import { activePartyMembers } from "../core/party.js";
 import {
   compileRosterLifecycleEvent,
-  rosterLifecycleSelectors,
+  rosterLifecycleKnownSelectors,
 } from "./roster.js";
 import {
   int32,
@@ -241,6 +242,10 @@ export function decodeFieldOp(
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if(name==='SysCall'&&s[0]==='戦闘結果取得'){try{return {...site,...compileSourceBattleResultInstruction(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
+  if(name==='SysCall'&&sourcePuppetReplacementSelectors.includes(s[0]!)){
+    try{return {...site,...compileFieldPuppetReplacementInstruction(raw)};}
+    catch(error){return blocked(error instanceof Error?error.message:String(error));}
+  }
   if (name === "SysCall" && fieldScriptShopSelectors.includes(s[0]!)) {
     try { return { ...site, ...compileFieldScriptShopInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
@@ -314,7 +319,7 @@ export function decodeFieldOp(
     r.length === 8 &&
     s.length === 8 &&
     form([], [], [0]) &&
-    rosterLifecycleSelectors.includes(s[0]!)
+    rosterLifecycleKnownSelectors.includes(s[0]!)
   ) {
     try {
       return { ...site, ...compileRosterLifecycleEvent(s[0]!, tables) };

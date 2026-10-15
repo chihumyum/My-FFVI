@@ -83,6 +83,8 @@ export function projectActionTarget(
     first &&
     (first.kind === "add-condition" || first.kind === "recover-condition")
   ) {
+    if(first.kind==='recover-condition'&&first.recoveryHit!==undefined&&first.recoveryHit!=='matching-current-condition-or-miss')
+      throw Error('Unresolved source condition recovery Hit policy');
     if (first.kind === "add-condition" && !target.conditionResistances)
       throw new Error("Missing action target condition resistances");
     const change =
@@ -108,7 +110,8 @@ export function projectActionTarget(
         recovery: first.kind === "recover-condition",
         added: change.added,
         removed: change.removed,
-        missed: change.missed,
+        missed: first.kind==='recover-condition'&&first.recoveryHit==='matching-current-condition-or-miss'
+          ? change.removed.length===0 : change.missed,
       },
     ];
   } else {

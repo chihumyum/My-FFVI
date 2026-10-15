@@ -1,4 +1,5 @@
 import {compileResourceAbsorption} from './resource-absorption.js';
+import {compileOrdinaryConditionAction} from './ordinary-condition-action.js';
 import { compileNonDamagingAbility } from "./non-damaging-ability.js";
 import { tableInteger } from "./table.js";
 import {
@@ -170,6 +171,9 @@ export function compileDevelopmentAbility(
     }catch(error){blockers.push(error instanceof Error?error.message:String(error));}
   }
   let nonDamagingPresentation: AbilityDefinition["nonDamagingPresentation"];
+  let ordinaryConditionPresentation: AbilityDefinition['ordinaryConditionPresentation'];
+  let ordinaryConditionDependencyError: string | undefined;
+  let newSingleRecovery = false;
   const zero = (values: number[]) => values.every((v) => v === 0);
   for (const fn of program.functions) {
     if(resourceAbsorption)continue;
@@ -260,6 +264,10 @@ export function compileDevelopmentAbility(
         kind: "recover-condition",
         conditionIds: [v1],
       });
+    } else if (fn.type === 11 && v1 > 0 && v2 === 0 && v3 === 0) {
+      reader.row('condition.csv',v1);
+      effects.push({slot:fn.slot,kind:'recover-condition',conditionIds:[v1]});
+      newSingleRecovery = true;
     } else if (fn.type === 12 && v2 === 0 && v3 === 0) {
       const group = compileConditionGroup(reader, v1);
       if (!group.ids.length) blockers.push("empty recovery condition group");
@@ -387,8 +395,17 @@ export function compileDevelopmentAbility(
   const controlOnly = effects.length === 1 && first?.kind === "add-condition" &&
     hasSourceControlConditionLifecycle(reader.row("condition.csv", first.conditionId));
   const controlSupport = controlOnly && [3, 13, 504].includes(r.type_id!) && r.system_id === 5;
-  if (controlOnly && !controlSupport) blockers.push(`unresolved control-condition ability type/system ${r.type_id}/${r.system_id}`);
-  if (speedOnly && !speedSupport)
+  let ordinaryConditionSupport = false;
+  if(conditionOnly && first?.kind!=='defend') {
+    try {
+      const compiled=compileOrdinaryConditionAction(reader,program,first!);
+      effects[0]=compiled.effect;
+      ordinaryConditionPresentation=compiled.presentation;ordinaryConditionSupport=true;
+      for(const row of compiled.sources)if(!sources.some(existing=>existing.source.assetPath===row.source.assetPath&&existing.source.rowId===row.source.rowId))sources.push(row);
+    }catch(error){ordinaryConditionDependencyError='Ordinary condition carrier dependency: '+(error instanceof Error?error.message:String(error));if(newSingleRecovery)blockers.push(ordinaryConditionDependencyError);}
+  }
+  if (controlOnly && !controlSupport && !ordinaryConditionSupport) blockers.push(`unresolved control-condition ability type/system ${r.type_id}/${r.system_id}`);
+  if (speedOnly && !speedSupport && !ordinaryConditionSupport)
     blockers.push(`unresolved speed ability type/system ${r.type_id}/${r.system_id}`);
   const magicOnly =
     (effects.length === 1||resourceAbsorption) &&
@@ -420,6 +437,8 @@ export function compileDevelopmentAbility(
     blockers.push(`unresolved accuracy_rate=${r.accuracy_rate}`);
   const allowedFlags = revival
     ? [1, 3]
+    : ordinaryConditionSupport
+      ? [1, 3]
     : protectionSpell || speedSpell
       ? [1, 3]
     : controlOnly
@@ -437,9 +456,9 @@ export function compileDevelopmentAbility(
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !resourceAbsorption && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !controlSupport && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
+  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !resourceAbsorption && !ordinaryConditionSupport && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !controlSupport && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
-  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !resourceAbsorption && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
+  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !resourceAbsorption && !ordinaryConditionSupport && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
   if ((ordinaryMagic || loreMagic || protectionSpell || speedSpell) && int(a.ability_lv) !== 0)
     blockers.push("unresolved level-specific ability consumption");
@@ -453,7 +472,7 @@ export function compileDevelopmentAbility(
       ([59, 360, 1312, 1330].includes(abilityId) || r.type_id === 623) &&
       !program.contentFlags.includes(2))
     blockers.push("unresolved all-target magic correction provider");
-  if ((ordinaryMagic || protectionSpell || speedSpell) && program.contentFlags.includes(3))
+  if ((ordinaryMagic || protectionSpell || speedSpell || ordinaryConditionSupport) && program.contentFlags.includes(3))
     limitations.push("source flag 3 is Runic targeting; active Runic behavior must remain blocked by the host");
   if (![0, 1].includes(r.reaction_type!))
     blockers.push(`unresolved reaction_type=${r.reaction_type}`);
@@ -513,6 +532,7 @@ export function compileDevelopmentAbility(
   if (elements.length > 8) blockers.push("unreviewed magic element count");
   if(resourceAbsorption)limitations.push("Source resource absorption binds its complete two-slot plan and effect/SE dependencies under web-source-resource-absorption-deferred-v1; joint target/caster resources use the existing action transaction. Reverse recovery, unknown traits and equipment carriers remain hard gates.");
   if (nonDamagingOnly) limitations.push("Native battle effect assets are deferred under web-source-non-damaging-effect-deferred-v1; the existing Web action stages preserve queue, fixed Hit, reactions and continuation, not native animation timing.");
+  if(ordinaryConditionSupport)limitations.push('Source ordinary single-slot condition actions retain original flags, rows and effect/SE dependencies under web-source-ordinary-condition-action-deferred-v1. Existing active behavior/owner, Runic/reflect, special source overrides and mixed-phase gates remain required.');
   limitations.push(
     "only admitted active battle behaviors with their required hosts; poison row 88 and other unknown providers remain blocked; MP-cost equipment needs an owned source loadout; weapon-added actions, undead and Runic remain unsupported",
   );
@@ -532,6 +552,9 @@ export function compileDevelopmentAbility(
     limitations.push(
       "reviewed magic and elemental arithmetic; no accessory, critical, counter-stat or weapon modifiers",
     );
+  // Keep the legacy valid domain compatible, while preserving the actual
+  // missing/changed dependency behind a refused carrier expansion.
+  if(blockers.length&&ordinaryConditionDependencyError&&!blockers.includes(ordinaryConditionDependencyError))blockers.push(ordinaryConditionDependencyError);
   const plan: DevelopmentAbilityPlan | null = blockers.length
     ? null
     : {
@@ -580,9 +603,10 @@ export function compileDevelopmentAbility(
     attribute,
     ...(nonDamagingPresentation ? { nonDamagingPresentation } : {}),
     ...(conditionRecoveryHit ? { conditionRecoveryHit } : {}),
+    ...(ordinaryConditionPresentation ? {ordinaryConditionPresentation} : {}),
     presentation: !plan
       ? "unsupported"
-      : nonDamagingOnly||resourceAbsorption
+      : nonDamagingOnly||resourceAbsorption||ordinaryConditionSupport
         ? "source-effect-deferred"
       : rowOnly
         ? "row"

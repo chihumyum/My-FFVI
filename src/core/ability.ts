@@ -54,7 +54,9 @@ export type AbilityEffect =
       fixedHit: boolean;
       accuracy: number;
     }
-  | { slot: number; kind: "recover-condition"; conditionIds: number[] }
+  | { slot: number; kind: "recover-condition"; conditionIds: number[];
+      /** Source Fn11/12 select Miss when no requested condition is current. */
+      recoveryHit?: 'matching-current-condition-or-miss' }
   | {
       slot: number;
       kind: "recover-max-hp";

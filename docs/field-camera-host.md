@@ -69,3 +69,5 @@ node scripts/check-field-camera-host.mjs --compiled-dir build/v30-camera-dist
 13 项 host 专用测试与 22 项 pure camera 测试覆盖真实 player read、独立 dummy、偏移、来源 clamp、循环、task 进度、零时长显隐、失败和过期事务、fork 后一次发布及稳定 JSON 恢复。数字溢出、未知 callback / offset、Bird 视图、ChangeOffset 和错误二进制能力明确拒绝。共享 FieldGame/WorldSession/renderer 回归由集成线独立记录。
 
 native checker 复核既有 camera/player factory 回执，并增加 12 个完整方法、13 个固定机器码范围与 prefab offset 对象验证。source checker 执行全部 34 个真实目标 selector、`sc_e_0001` 的 2 个 camera motion 指令及 6 个时间点，以及 2 次零时长显隐候选，随后必须从 world catalog 的实际 URL 读取 map 609 包，验证内容摘要和 `cameraHost` 与同源编译结果完全一致；旧包或缺定义时失败，不将静态来源数量计为可玩地图。报告位于 ignored `build/reports/field-camera-host{,-native}-check.json`。原版运行、浏览器视口效果和完整序章贯通仍是独立验收项。
+
+相对 SetPos 现在通过同一 `prepareSetPosition` 消费已解析的真实引用坐标；Field 在发布前联合验证 selector/native 实例 read fence 和本 camera revision。命令不会写引用 actor，旧绝对形状不变。完整合同见 [source-setpos-owners.md](source-setpos-owners.md)。

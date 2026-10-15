@@ -287,6 +287,24 @@ function capture(host: NativeFieldActorEffectHost) {
   });
   return { snapshot, refs, fingerprint: canonical(serial(snapshot)) };
 }
+/** A native reference read is a short transaction, not a cached selector or a
+ * replacement actor owner. Useful when only the existing camera will publish. */
+export function prepareNativeFieldActorRead(host: NativeFieldActorEffectHost): {
+  snapshot: FieldPuppetHostSnapshot; validate(): void;
+} {
+  const initial = capture(host), motions = initial.refs.map(ref => ({ owner: ref.actor.motion, value: canonical(ref.actor.motion ?? null) }));
+  return { snapshot: initial.snapshot, validate: () => {
+    const current = capture(host);
+    if (current.fingerprint !== initial.fingerprint || current.refs.length !== initial.refs.length ||
+        current.refs.some((ref, index) => {
+          const before = initial.refs[index]!;
+          return ref.id !== before.id || ref.actor !== before.actor || ref.native !== before.native ||
+            ref.entity !== before.entity || ref.animation !== before.animation || ref.character !== before.character ||
+            ref.fieldAssetId !== before.fieldAssetId || ref.charaZOffset !== before.charaZOffset || ref.metadata !== before.metadata ||
+            ref.actor.motion !== motions[index]!.owner || canonical(ref.actor.motion ?? null) !== motions[index]!.value;
+        })) throw new Error("Stale native field reference transaction");
+  } };
+}
 function writable(entity: FieldPuppetHostActor, candidate: FieldPuppetHostActor): void {
   for (const key of Object.keys(candidate)) {
     if (key === "moving") continue;

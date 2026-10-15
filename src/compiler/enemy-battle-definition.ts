@@ -1,3 +1,4 @@
+import {parseWebEnemySpawnConditions,type WebEnemySpawnConditions} from '../core/battle-spawn-conditions.js';
 import { BattleConditions, type BattleConditionCatalog } from "../core/battle-conditions.js";
 import { battleAITargetBlocker } from "../core/battle-ai-targets.js";
 import type { AbilityDefinition, BattleEncounterDiagnostic } from "../core/battle-content.js";
@@ -28,6 +29,7 @@ export type EnemyBattleSource = Pick<SourceBattleEncounter["enemies"][number], "
 export type EnemyBattleDefinitionInput = {
   enemy: EnemyBattleSource;
   entryPhase: "initial" | "late";
+  spawnConditionPolicy?:WebEnemySpawnConditions;
   abilities: Readonly<Record<string, AbilityDefinition>>;
   conditions: BattleConditionCatalog;
   sprites: Readonly<Record<string, { file: string; width: number; height: number }>>;
@@ -51,6 +53,7 @@ const identity = (value: number) => Number.isInteger(value) && value > 0 && valu
  * Position and instance identity are assigned outside this immutable template.
  * Conditional capability gaps stay in the AI/ability programs and diagnostics. */
 export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleDefinitionInput): EnemyBattleDefinitionCompilation {
+  if(input.spawnConditionPolicy!==undefined)parseWebEnemySpawnConditions(input.spawnConditionPolicy);
   const { enemy, formationPlan } = input;
   let source: BattleRow["source"] | null = null;
   const diagnostics: EnemyBattleDefinitionDiagnostic[] = [];
@@ -71,10 +74,13 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
       if (int(row[key]) !== 0) throw new Error(`Unimplemented monster ${key}=${row[key]}`);
     let conditionIds: number[];
     try {
-      if (int(row.initial_condition) !== 0 && input.entryPhase !== "initial")
+      if (int(row.initial_condition) !== 0 && input.entryPhase !== "initial" && input.spawnConditionPolicy===undefined)
         throw new InitialConditionCompilationError("Nonzero initial conditions require an admitted late-entry initialization phase",
           { table: "monster.csv", id: enemy.monsterId, field: "initial_condition" });
       conditionIds = compileEnemyInitialConditions(reader, int(row.initial_condition), input.conditions).conditionIds;
+      if(input.entryPhase==='late'&&int(row.initial_condition)!==0&&input.spawnConditionPolicy)add('development-omission','enemy-spawn-condition-policy',
+        'Explicit Web fresh-enemy group expansion in complete master order before AI, resources and timers; native direct master lookup/filtering and activation timing are not inferred',
+        {dependency:{table:'monster.csv',id:enemy.monsterId,field:'initial_condition'}});
     } catch (error) {
       add("blocked", "enemy-initial-condition", `Monster ${enemy.monsterId} initial_condition=${row.initial_condition}: ` +
         (error instanceof Error ? error.message : String(error)), { dependency: error instanceof InitialConditionCompilationError

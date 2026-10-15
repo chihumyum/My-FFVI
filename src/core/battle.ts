@@ -1,4 +1,6 @@
 import {resourceAbsorptionEffect,type AbsorptionContext} from './resource-absorption.js';
+import {parseWebEnemySpawnConditions,type WebEnemySpawnConditions} from './battle-spawn-conditions.js';
+import {validateOrdinaryConditionAction} from './ordinary-condition-action.js';
 import { planCursedShieldCheck, planShadowSecedeLot } from './battle-post-checks.js';
 import {parseWebBattleForcedSave,BattleRetainedLootLedger,type BattleSavedForcedReturnResult,type WebBattleForcedSave} from './battle-forced-save.js';
 import type { BattleForcedReturnResult } from "./battle-forced-return.js";
@@ -376,6 +378,7 @@ export class BattleGame {
   private forceSaveRequested=false;
   private forcedSaveTerminal=false;
   private readonly forcedSavePolicy:WebBattleForcedSave|null;
+  private readonly spawnConditionPolicy:WebEnemySpawnConditions|null;
   private readonly retainedLoot=new BattleRetainedLootLedger();
   private currentPreferences: BattlePreferences;
   private currentPlayerControlMode:'manual'='manual';
@@ -450,6 +453,7 @@ export class BattleGame {
     validateScriptedBattleActionPolicy(eventHosts?.scriptedActions);
     validateBattleEventControls(eventHosts?.controls);
     this.lifecycle = parseBattleLifecycle(content.lifecycle ?? { kind: "battle-lifecycle-v1", mode: "none" });
+    this.spawnConditionPolicy=content.spawnConditionPolicy===undefined?null:parseWebEnemySpawnConditions(content.spawnConditionPolicy);
     this.forcedSavePolicy=content.forcedSavePolicy===undefined?null:parseWebBattleForcedSave(content.forcedSavePolicy);
     this.gauEntry=eventHosts?.gau===undefined?null:parseBattleGauEntry(eventHosts.gau);
     if(this.gauEntry&&this.gauEntry.catalogHash!==content.contentHash)throw new Error('Gau entry belongs to another battle catalog');
@@ -1161,6 +1165,7 @@ export class BattleGame {
       return false;
     this.conditions.validateActive(actor.conditionIds);
     resourceAbsorptionEffect(ability.plan);
+    validateOrdinaryConditionAction(ability);
     if (ability.plan.effects.some((effect) => effect.kind === "physical")) {
       try { this.physicalRows(actor, abilityId, actor); }
       catch { return false; }
@@ -1420,6 +1425,9 @@ export class BattleGame {
   }
   private prepareEnemy(definition: EnemyBattleDefinition, placement: BattleParticipantSlot, id: string): Combatant {
     if (this.combatants.some(unit => unit.id === id)) throw new Error("Duplicate battle identity");
+    if(this.usesSourceQualification&&definition.conditionIds.length&&!this.spawnConditionPolicy)
+      throw new Error('Source late enemy conditions require the explicit Web spawn initialization policy');
+    if(this.spawnConditionPolicy){this.conditions.validateOwner(definition.conditionIds,'enemy');if(definition.conditionIds.length>1)this.conditions.validateInitialComposition(definition.conditionIds);}
     const unit: Combatant = { ...structuredClone(definition), id,
       placement: structuredClone(placement), maxHp: definition.hp, maxMp: definition.mp,
       atb: 0, queued: false, behavior: initialEnemyBehavior() };
@@ -1721,6 +1729,7 @@ export class BattleGame {
     }
     this.conditions.validateActive(actor.conditionIds);
     resourceAbsorptionEffect(ability.plan);
+    validateOrdinaryConditionAction(ability);
     if(ability.plan.effects.some(effect=>effect.kind==="physical")){
       if(!actor.physical)throw new Error("Unresolved scripted physical owner");
       this.physicalRows(actor,ability.id,actor);
@@ -2844,6 +2853,7 @@ export class BattleGame {
     const actor = this.combatants.find((c) => c.id === action.actor)!;
     const ability = this.actionDefinition(action);
     if (action.resolved) return;
+    if(action.source.kind==='ability')validateOrdinaryConditionAction(this.content.abilities[action.source.id]!);
     if (!ability.plan) throw new Error("Unimplemented ability cannot execute");
     if (ability.plan.effects.some(effect => effect.kind === "non-damaging")) {
       if (!("nonDamagingPresentation" in ability) || !ability.nonDamagingPresentation || ability.presentation !== "source-effect-deferred")

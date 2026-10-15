@@ -181,7 +181,8 @@ export function fieldCameraSelectsDummyAtScriptStart(accepted: boolean): boolean
 }
 
 export type FieldCameraMapRange = { x: number; y: number; width: number; height: number };
-export type FieldCameraSetPosition = { kind: "set-position"; x: number; y: number; layer: 0 };
+export type FieldCameraSetPosition = { kind: "set-position"; x: number; y: number; layer: 0 } &
+  ({ mode?: never; referenceEntityId?: never } | { mode: 1; referenceEntityId: number });
 export type FieldCameraLerp = { kind: "lerp"; x: number; y: number; layer: 0; duration: number; arcHeight: number };
 export type FieldCameraMotion = FieldCameraSetPosition | FieldCameraLerp;
 export type FieldCameraMotionOp = { kind: "field-camera-motion"; command: FieldCameraMotion };
@@ -245,11 +246,14 @@ export function fieldCameraWorldToContinuousCell(map: FieldCameraMapRange, world
     y: f(f(f(f(map.height) * 0.5) - f(f(world.y) * 0.0625)) - 0.5) };
 }
 function motion(value: FieldCameraMotion): void {
-  checkpointKeys(value, value.kind === "set-position" ? "kind,x,y,layer" : "kind,x,y,layer,duration,arcHeight");
+  checkpointKeys(value, value.kind === "set-position" ? value.mode === 1
+    ? "kind,x,y,layer,mode,referenceEntityId" : "kind,x,y,layer" : "kind,x,y,layer,duration,arcHeight");
   if (value.kind !== "set-position" && value.kind !== "lerp") throw new Error("Unknown camera motion");
   checkpointInteger(value.x, -0x80000000, 0x7fffffff);
   checkpointInteger(value.y, -0x80000000, 0x7fffffff);
   if (value.layer !== 0) throw new Error("Camera motion layer-change host is unresolved");
+  if (value.kind === "set-position" && value.mode === 1)
+    checkpointInteger(value.referenceEntityId, -0x80000000, 0x7fffffff);
   if (value.kind === "lerp") {
     if (!Number.isFinite(value.duration) || !Number.isFinite(value.arcHeight))
       throw new Error("Invalid camera motion operand");
@@ -259,8 +263,32 @@ function localTarget(map: FieldCameraMapRange, command: FieldCameraMotion): Poin
   // C# Int32 subtraction retains wraparound before the later float conversion.
   return { x: (command.x - map.x) | 0, y: (command.y - map.y) | 0 };
 }
+/** Puppet.SetPos's common coordinate calculation for both actual actors and
+ * the scroll dummy. The reference is a resolved current native instance. */
+export function fieldSetPositionToWorld(map: FieldCameraMapRange, current: FieldCameraPoint,
+  command: { x: number; y: number; layer: 0 | 1 | 2 | 3; mode?: 1 }, reference?: FieldCameraPoint): FieldCameraPoint {
+  mapRange(map); position(current);
+  checkpointInteger(command.x, -0x80000000, 0x7fffffff);
+  checkpointInteger(command.y, -0x80000000, 0x7fffffff); checkpointInteger(command.layer, 0, 3);
+  if (command.mode !== undefined && command.mode !== 1) throw new Error("Unknown source SetPos mode");
+  const layer = command.layer === 0 ? [349, 249, 149].indexOf(Math.trunc(f(current.z))) : command.layer - 1;
+  if (layer < 0) throw new Error("Source SetPos cannot preserve this source Z layer");
+  let cell: Point;
+  if (command.mode === 1) {
+    if (!reference) throw new Error("Source relative SetPos reference entity is absent or unresolved");
+    position(reference);
+    const anchor = fieldCameraWorldToCell(map, { x: reference.x, y: reference.y });
+    cell = { x: f(f(command.x) + f(anchor.x)), y: f(f(command.y) + f(anchor.y)) };
+  } else {
+    if (reference !== undefined) throw new Error("Absolute source SetPos cannot consume a relative reference binding");
+    const anchor = fieldCameraWorldToCell(map, { x: current.x, y: current.y });
+    const x = (command.x - map.x) | 0, y = (command.y - map.y) | 0;
+    cell = { x: x < 0 ? anchor.x : x, y: y < 0 ? anchor.y : y };
+  }
+  return fieldCameraCellToWorld(map, cell, layer);
+}
 export function projectFieldCameraSetPosition(state: FieldCameraState,
-  command: FieldCameraSetPosition, map: FieldCameraMapRange): {
+  command: FieldCameraSetPosition, map: FieldCameraMapRange, reference?: FieldCameraPoint): {
     state: FieldCameraState;
     notifySetPosition: { sourceEntityId: 0; from: FieldCameraPoint; to: FieldCameraPoint };
   } {
@@ -268,12 +296,7 @@ export function projectFieldCameraSetPosition(state: FieldCameraState,
   const layer = layerFromZ(state.dummy.position.z);
   // GetChangeLayerValue(request=0) indexes the exact three-entry kLayerValues.
   if (![9, 10, 11].includes(layer)) throw new Error("Camera SetPos cannot preserve this source Z layer");
-  const current = fieldCameraWorldToCell(map, { x: state.dummy.position.x, y: state.dummy.position.y });
-  const target = localTarget(map, command);
-  const p = fieldCameraCellToWorld(map, {
-    x: target.x < 0 ? current.x : target.x,
-    y: target.y < 0 ? current.y : target.y,
-  }, layer - 9);
+  const p = fieldSetPositionToWorld(map, state.dummy.position, command, reference);
   const candidate = structuredClone(state); candidate.dummy.position = p;
   return { state: candidate, notifySetPosition: { sourceEntityId: 0,
     from: { ...state.dummy.position }, to: { ...p } } };

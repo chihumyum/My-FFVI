@@ -39,6 +39,7 @@ export type RosterLifecycleState<T extends RosterMember = RosterMember> = {
   releasedJobIds: number[];
 };
 export type RosterCommand =
+  | { kind: "reserve"; sourceId: number; refreshActors: true }
   | { kind: "unlock"; sourceId: number; refreshActors: false }
   | {
       kind: "join";
@@ -84,6 +85,7 @@ export type RosterLifecycleProviders<T extends RosterMember> = {
   validateMember: (member: T) => void;
 };
 export type RosterReceipt =
+  | { kind: "reserved"; id: string; position: PartyPosition | null }
   | { kind: "unlocked"; id: string; ownedId: number }
   | { kind: "enabled"; id: string; enabled: boolean }
   | { kind: "released-job"; jobId: number; released: boolean }
@@ -220,6 +222,10 @@ export function validateRosterCommand(command: RosterCommand): void {
     checkpointKeys(command, "kind,sourceId,refreshActors");
     if (command.refreshActors !== false)
       throw new Error("Invalid unlock refresh");
+  } else if (command.kind === "reserve") {
+    checkpointKeys(command, "kind,sourceId,refreshActors");
+    if (command.refreshActors !== true)
+      throw new Error("Invalid reserve refresh");
   } else if (command.kind === "secede") {
     checkpointKeys(command, "kind,sourceId,removeEquipment,refreshActors");
     if (
@@ -354,7 +360,7 @@ export function prepareRosterLifecycle<T extends RosterMember>(
     receipts.push({ kind: "released-job", jobId, released });
   };
 
-  if (!member && command.kind !== "secede") {
+  if (!member && (command.kind === "unlock" || command.kind === "join")) {
     if (!providers.initialize)
       throw new Error("Unimplemented complete owned-character initialization");
     const ownedId = state.roster.length + 1;
@@ -379,7 +385,15 @@ export function prepareRosterLifecycle<T extends RosterMember>(
   }
   if (!member) throw new Error("Roster lifecycle references unowned character");
 
-  if (command.kind === "secede") {
+  if (command.kind === "reserve") {
+    const slot = state.party.slots[state.party.selectedSlot];
+    const position = slot.findIndex((cell) => cell.id === member!.id);
+    if (position >= 0) slot[position]!.id = null;
+    receipts.push({
+      kind: "reserved", id: member.id,
+      position: position < 0 ? null : position as PartyPosition,
+    });
+  } else if (command.kind === "secede") {
     if (!command.removeEquipment) {
       const character = equipment.characters[member.sourceId];
       if (!character || character.emptySlots.length !== 6)

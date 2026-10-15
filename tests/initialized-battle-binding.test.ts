@@ -270,17 +270,18 @@ test('rehashing a v4 directory cannot hide missing/unknown branch policy, unknow
  }
 });
 
-async function dynamicDirectoryFixture({saved=false}:{saved?:boolean}={}){
+async function dynamicDirectoryFixture({saved=false,spawn=false}:{saved?:boolean;spawn?:boolean}={}){
  const f=await conditionPolicyFixture(),g=sourceParticipantFixture({child:true});
  g.input.conditions=f.sourceBattle.common.conditions;g.input.abilities=f.sourceBattle.common.abilities;
  g.input.handoff={policy:{kind:'framework-battle-handoff-v1',id:'controlled-directory',audio:'retain-field',introduction:'omit'}};
- if(saved){g.input.forcedSavePolicy={kind:'web-source-battle-forced-save-v1'};const script=g.input.encounters[0]!.script!.data as {Mnemonics:{mnemonic:string;type:number;operands:{iValues:number[];rValues:number[];sValues:string[]}}[];Segments:{Count:number}[]};script.Mnemonics.splice(script.Mnemonics.length-1,0,{mnemonic:'BattleForceExitOnSave',type:1,operands:{iValues:Array(8).fill(0),rValues:Array(8).fill(0),sValues:Array(8).fill('')}});script.Segments[0]!.Count++;}
+ if(spawn)g.input.spawnConditionPolicy={kind:'web-source-enemy-spawn-conditions-v1'};
+ if(saved||spawn){g.input.forcedSavePolicy={kind:'web-source-battle-forced-save-v1'};const script=g.input.encounters[0]!.script!.data as {Mnemonics:{mnemonic:string;type:number;operands:{iValues:number[];rValues:number[];sValues:string[]}}[];Segments:{Count:number}[]};script.Mnemonics.splice(script.Mnemonics.length-1,0,{mnemonic:'BattleForceExitOnSave',type:1,operands:{iValues:Array(8).fill(0),rValues:Array(8).fill(0),sValues:Array(8).fill('')}});script.Segments[0]!.Count++;}
  const closure=g.closure(),runtime=g.runtime(closure),producer=await import(pathToFileURL(resolve('scripts/source-battle-directory.mjs')).href),
   composed=await producer.composeFrameworkBattleDirectory({compiledDir:resolve(import.meta.dirname,'..'),baseCatalog:f.sourceBattle,runtime,conditionControlPolicy:{kind:'web-source-control-actions-v1'}}),
   catalog=composed.catalog as BattleCatalog;
  const report=seal({...f.directory.report,frameworkCatalogHash:catalog.contentHash,policyChanges:composed.policyChanges,
-  policy:{kind:saved?'source-battle-directory-policy-v6':'source-battle-directory-policy-v5',framework:{handoff:g.input.handoff.policy,entry:null,conditionControlPolicy:{kind:'web-source-control-actions-v1'},
-   manualControls:'web-manual-battle-controls-v1',branchExecution:'web-source-battle-branch-execution-v1',sourceParticipants:structuredClone(dynamicSourcePolicy),...(saved?{forcedSavePolicy:{kind:'web-source-battle-forced-save-v1'}}:{})}},
+  policy:{kind:spawn?'source-battle-directory-policy-v7':saved?'source-battle-directory-policy-v6':'source-battle-directory-policy-v5',framework:{handoff:g.input.handoff.policy,entry:null,conditionControlPolicy:{kind:'web-source-control-actions-v1'},
+   manualControls:'web-manual-battle-controls-v1',branchExecution:'web-source-battle-branch-execution-v1',sourceParticipants:structuredClone(dynamicSourcePolicy),...((saved||spawn)?{forcedSavePolicy:{kind:'web-source-battle-forced-save-v1'}}:{}),...(spawn?{spawnConditionPolicy:{kind:'web-source-enemy-spawn-conditions-v1'}}:{})}},
   sourceParticipantClosure:closure.report,entryDependencies:{scripts:g.entryScriptGroups()},
   framework:{...catalog.encounterReport!,analysis:analysis(catalog,[9201,9202])},
   diagnostics:{...f.directory.report.diagnostics,framework:catalog.encounterDiagnostics!}});
@@ -328,4 +329,13 @@ test('v6 rehash cannot hide a missing Save encounter lease, unknown policy or an
   const f=await dynamicDirectoryFixture({saved:true});change(f);f.directory.frameworkCatalog=seal(f.directory.frameworkCatalog);f.directory.report.frameworkCatalogHash=f.directory.frameworkCatalog.contentHash;f.directory.report=seal(f.directory.report);
   await assert.rejects(selectInitializedBattleCatalog(f));
  }
+});
+
+test('v7 explicit spawn policy binds the actual dynamic source compiler through both initialized consumers',async()=>{
+ const f=await dynamicDirectoryFixture({spawn:true}),selected=await selectInitializedBattleCatalog(f);assert.deepEqual(selected.catalog.encounters[9201]!.spawnConditionPolicy,{kind:'web-source-enemy-spawn-conditions-v1'});
+ const checker=await import(pathToFileURL(resolve('scripts/check-selected-source-batches.mjs')).href),binding=await checker.validateSelectedSourceCatalogBinding({built:{kind:'initialized-source-map-build-v1',recipeKind:'initialized-source-map-recipe-v3',battleCatalogSelection:'shared-framework-directory-v1',sourceAreaScopeReceipt:null,battleDirectory:selected.directoryBinding},battle:selected.catalog,sourceBattle:f.sourceBattle,sourceWorld:f.sourceWorld,directory:selected.catalog,requests:f.directory.requests,directoryReport:f.directory.report},{compiledDir:resolve(import.meta.dirname,'..')});assert.equal(binding.catalogHash,selected.catalog.contentHash);
+});
+test('v7 cannot omit the dynamic encounter policy or rehash an older/unknown declaration to grant it',async()=>{
+ for(const change of [(f:any)=>{delete f.directory.frameworkCatalog.encounters[9201].spawnConditionPolicy;},(f:any)=>{delete f.directory.report.policy.framework.spawnConditionPolicy;},(f:any)=>{f.directory.report.policy.framework.spawnConditionPolicy.kind='unknown';},(f:any)=>{f.directory.report.policy.kind='source-battle-directory-policy-v6';}]){
+ const f=await dynamicDirectoryFixture({spawn:true});change(f);f.directory.frameworkCatalog=seal(f.directory.frameworkCatalog);f.directory.report.frameworkCatalogHash=f.directory.frameworkCatalog.contentHash;f.directory.report=seal(f.directory.report);await assert.rejects(selectInitializedBattleCatalog(f));}
 });

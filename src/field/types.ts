@@ -278,6 +278,7 @@ export type Op = Site &
         seek: number;
       }
     | { kind: "environment-stop"; channel: number; fade: number }
+    | import('../core/field-puppet-replacement.js').FieldPuppetReplacementOp
     | { kind: "call"; target: number }
     | { kind: "wait"; seconds: number }
     | { kind: "standalone-wait" }

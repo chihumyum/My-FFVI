@@ -31,7 +31,7 @@ y = (height * 0.5 - 1 - cellY) * 16 + 8
 
 反向 `WorldPositionToCellPosition 0x2f5d50` 用 Floor，不保留小数：`floor(width/2+x/16)`、`floor(height/2-y/16)`。renderer 使用另一个连续转换 helper，避免把插值运动再次按格取整。逻辑层 0/1/2 是 ChangeLayer 的 Bottom/Ground/Upper，对应 Unity 9/10/11 与 Z 349/249/149。MapUtility 虽识别 Unity 12→Z49，Puppet 的 kLayerValues 实际只有 `[0,1,2]`，cell→world 也只恢复三层；本模块拒绝逻辑层 3，不补一条想象中的 Ceil 规则。
 
-`compileFieldCameraMotionInstruction` 只在宿主已经解析到 actor 0 时使用。它严格准入空动画、保层 operand i2=0；SetPos 只准入绝对模式 i3=0，Lerp 保留带符号 duration 与 arcHeight。其它位置模式、动画和换层需要另行闭合副作用，不因这里实现了位置算术而放行。
+`compileFieldCameraMotionInstruction` 只在宿主已经解析到 actor 0 时使用。它严格准入空动画、保层 operand i2=0；SetPos 准入绝对模式 i3=0 与完整 i3=1/i4 引用的相对模式，后者还须由实际 selector/native reference owner 验证；Lerp 保留带符号 duration 与 arcHeight。其它位置模式、动画和换层需要另行闭合副作用，不因这里实现了位置算术而放行。
 
 - SetPos 在减 mapRange origin 之后判断每个坐标是否小于 0；负轴保留当前 cell，因此会按来源 Floor 重新对齐格心。保层通过当前 Z 查表，不直接信另一个 layer 字段。返回 `notifySetPosition` 的 actor 0 / old / new 描述，宿主不能忽略已有 `Puppet.s_set_pos_callback`。静态构造设置 null，只能证明新实例初值，不能授予任意后续已注册回调 no-op。
 - Lerp 使用 Unity Time.time 的 float32 秒值，首调用保存当前 X/Y、Z 对应层与 time，然后同一次调用投影。正时长首帧 ratio=0、返回 Wait；零时长直接完成；负时长保持负数，不做 abs，也不会自行完成。
@@ -50,3 +50,5 @@ node scripts/check-field-camera.mjs --compiled-dir build/v30-camera-dist
 ```
 
 22 项专用测试覆盖 factory、target 切换、旧 dummy 目标、实际 player 跟踪、float32、坏依赖原子拒绝、v2 严格存档和零时长显隐、源 Start/End、解码边界、mapRange first-match / offset、负轴保持、首帧等待、零/负 duration、弧线和中途恢复。原生检查绑定 24 个已导出方法与 12 个完整原始机器码范围；v30 显隐和宿主证据另由宿主检查器绑定。来源检查编译 34 个 selector、执行 68 次双初态 target 变化，并把 `sc_e_0001` 两个运动指令与真实地图范围绑定，完成 6 个时间点及中途 JSON 恢复。来源脚本位置和纯模块执行不是可玩地图数量，也不证明完整序章已贯通；最终 FieldGame / WorldSession / 浏览器结论由共享集成验收独立给出。
+
+相对定位的全来源提名、共享坐标时序和实例/回调发布边界见 [source-setpos-owners.md](source-setpos-owners.md)。它不会创建第二 camera，也不从 camera-v4 存档授予能力。

@@ -13,7 +13,7 @@ async function prepare(scriptRoot,dist){
   source=await api.compileSharedBattleSource(root),shared=await api.compileGameCatalogModules(root,source),dep=input.dependencies,
   closure=api.compileSourceBattleParticipantClosure(input.snapshot.reader,{policy:policy.framework.sourceParticipants,encounters:dep.encounters,sources:input.encounterSources,eventMessages:input.input,branchExecution:policy.framework.branchExecution}),
   value={...shared.runtimeInput,requestedPartyIds:dep.requestedPartyIds,encounters:dep.encounters,sourceDiagnostics:[...dep.diagnostics,...closure.diagnostics],reserveEnemies:closure.reserveEnemies,enemyParties:closure.enemyParties,
-   branchExecution:policy.framework.branchExecution,manualControls:policy.framework.manualControls,conditionControlPolicy:policy.framework.conditionControlPolicy,...(policy.framework.forcedSavePolicy?{forcedSavePolicy:policy.framework.forcedSavePolicy}:{}),
+   branchExecution:policy.framework.branchExecution,manualControls:policy.framework.manualControls,conditionControlPolicy:policy.framework.conditionControlPolicy,...(policy.framework.spawnConditionPolicy?{spawnConditionPolicy:policy.framework.spawnConditionPolicy}:{}),...(policy.framework.forcedSavePolicy?{forcedSavePolicy:policy.framework.forcedSavePolicy}:{}),
    handoff:{policy:policy.framework.handoff},development:{...(policy.framework.entry?.formations?{formations:policy.framework.entry.formations}:{}),scripts:[],flagGroups:[],participants:closure.participants}},result=api.compileBattleEncounterRuntime(shared.reader,value);
  return {api,policy,policyBytes,runtime,input,closure,result,scriptRoot,dist};
 }

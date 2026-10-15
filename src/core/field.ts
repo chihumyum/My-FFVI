@@ -84,7 +84,7 @@ import { prepareFieldPartyQuery } from "./field-party-queries.js";
 import { prepareEventScriptTransition } from "./event-script-transition.js";
 import type { FieldPuppetRosterPort, FieldPuppetRosterRead } from "./field-puppet-roster.js";
 import { createNativeFieldActorProjection, createNativeFieldActorProjections, createNativeFieldPuppetActorsPort, readNativeFieldActors,
-  prepareNativeFieldActorProjection, prepareNativeFieldActorState, createNativeFieldActorDraft,
+  prepareNativeFieldActorProjection, prepareNativeFieldActorState, prepareNativeFieldActorRead, createNativeFieldActorDraft,
   type NativeFieldActorData, type NativeFieldActor } from "./field-native-actors.js";
 import { projectNativeFieldPosition } from "./field-native-position.js";
 import { prepareFieldActorMotionTick, prepareFieldScriptMove, projectFieldScriptLerp, resolveFieldScriptMoveToTarget,
@@ -108,6 +108,8 @@ import { createNpcActivity, prepareNpcActivity, settleNpcActivity, completeNpcAc
   type FieldNpcActivityInput } from "./field-npc-activity.js";
 import { captureFieldNpcActivities, restoreFieldNpcActivities,
   type FieldNpcActivitiesCheckpoint, type RestoredFieldNpcActivities } from "./field-npc-activity-checkpoint.js";
+import { parsePuppetReplacementState, projectPuppetReplacement,
+  type FieldPuppetReplacementCommand, type FieldPuppetReplacementState } from "./field-puppet-replacement.js";
 import { projectFieldPuppetCollision, projectFieldPuppetActorEffects, type FieldPuppetCollisionState, type FieldPuppetHostProviders } from "./field-puppet-effects.js";
 import type { FieldPuppetActorCatalog, FieldPuppetActorContext, FieldPuppetControlContext } from "./field-puppet-actors.js";
 import { partyActorMapArea, type PartyActorPlan } from "./party-actors.js";
@@ -267,6 +269,7 @@ type FieldCheckpointState = {
     actors: FieldNativeCheckpoint;
     birdViewActors?: FieldBirdViewActorCheckpoint;
     mobControls?: FieldMobCheckpoint;
+    puppetReplacement?: FieldPuppetReplacementState;
     collision: FieldPuppetCollisionState;
     updateMask: number;
     cameraOffset: Point;
@@ -489,9 +492,12 @@ export class FieldGame {
     const actor = this.actors[actorId];
     const actorKind = actorId === this.cameraActorId ? "camera" as const : this.effectBoard(actorId)
       ? "effect" as const : actor ? "actor" as const : "none" as const;
-    const cameraMotion = !!this.camera && (op.kind !== "field-script-motion" ||
-      op.command.animation === "" && (op.command.kind === "lerp" ? op.command.layer === 0 :
-        this.content.cameraHost?.callbacks === "fresh-normal-field-v1"));
+    const cameraMotion = !!this.camera && (op.kind === "position"
+      ? !!op.cameraCommand && this.content.cameraHost?.callbacks === "fresh-normal-field-v1" &&
+        (op.cameraCommand.mode !== 1 || !!(this.options.puppetActors && this.nativeActorProviders && this.nativeActorBindings && this.nativeRuntime?.mapLifecycle))
+      : op.kind !== "field-script-motion" ||
+        op.command.animation === "" && (op.command.kind === "lerp" ? op.command.layer === 0 :
+          this.content.cameraHost?.callbacks === "fresh-normal-field-v1"));
     const legacyMove = op.kind === "field-script-motion" && op.command.kind === "move" && !!actor &&
       !actor.native && !this.options.nativeActorPreparation && !this.options.puppetActors &&
       !this.content.scriptPuppetContexts && op.command.animation === "" && op.command.speedId !== null;
@@ -1134,7 +1140,7 @@ export class FieldGame {
         id: actor.id, motion: actor.motion, steps: actor.steps, fieldAssetId: actor.native!.fieldAssetId,
         mobColor: actor.mobColor ?? null, birdView: actor.birdView ?? null, charaZOffset: actor.native!.charaZOffset, mapAnimation: actor.native!.mapAnimation ?? null, mapObjectAsset: actor.native!.mapObjectAsset ?? null,
         scope: actor.native!.scope ?? null, updateAttribute: actor.native!.updateAttribute ?? null,
-      })), npcActivities: this.npcActivitySnapshot, assignedRoutes: this.assignedRouteSnapshot,
+      })), puppetReplacement: this.puppetReplacementSnapshot, npcActivities: this.npcActivitySnapshot, assignedRoutes: this.assignedRouteSnapshot,
       ...(this.eventActivation ? { eventActivation: this.eventActivation } : {}) });
   }
   private collisionSwitches: FieldPuppetCollisionState = projectFieldPuppetCollision(true);
@@ -2379,7 +2385,8 @@ export class FieldGame {
     }));
     const mobControls = this.mobControlsEnabled ? this.mobControlsOwner().checkpoint() : undefined;
     const birdViewActors = this.captureBirdViewActorPoses();
-    return { ...(mobControls ? {mobControls} : {}), ...(birdViewActors ? { birdViewActors } : {}), actors: captureFieldNativeCheckpoint(this.actors, this.nativeCheckpointContext(
+    const puppetReplacement = this.puppetReplacementValue ? this.validatePuppetReplacementState(this.puppetReplacementValue) : null;
+    return { ...(puppetReplacement ? {puppetReplacement} : {}), ...(mobControls ? {mobControls} : {}), ...(birdViewActors ? { birdViewActors } : {}), actors: captureFieldNativeCheckpoint(this.actors, this.nativeCheckpointContext(
       this.nativeActorBindings, this.nativeRuntime.mapLifecycle.factory, this.nativeActorProviders(), autonomousMotions,
       this.assignedCheckpoint ? restoreAssignedRoutes(this.assignedCheckpoint,this.content,this.entityList,this.time,this.options.assignedNpcRoutes).motions : undefined)),
       collision: { ...this.collisionSwitches }, updateMask: this.entityUpdateMask,
@@ -2714,10 +2721,11 @@ export class FieldGame {
   }
   private restoreNativeOwner(saved: NonNullable<FieldCheckpoint["native"]>, source: FieldNativeRestoreDependencies,
     restoredActivities?: RestoredFieldNpcActivities,assignedMotions?:FieldNativeCheckpointContext["assignedMotions"]): void {
+    const hasPuppetReplacement = Object.hasOwn(saved, "puppetReplacement");
     const hasMobControls = Object.hasOwn(saved, "mobControls");
     if (hasMobControls !== this.mobControlsEnabled) throw new Error("Saved Mob controls cannot grant or discard content/runtime policy");
     const hasBirdViewActors = Object.hasOwn(saved, "birdViewActors");
-    checkpointKeys(saved, "actors,collision,updateMask,cameraOffset,completedScript" + (hasBirdViewActors ? ",birdViewActors" : "") + (hasMobControls ? ",mobControls" : ""));
+    checkpointKeys(saved, "actors,collision,updateMask,cameraOffset,completedScript" + (hasBirdViewActors ? ",birdViewActors" : "") + (hasMobControls ? ",mobControls" : "") + (hasPuppetReplacement ? ",puppetReplacement" : ""));
     if (hasBirdViewActors !== this.birdViewActorsEnabled) throw new Error("Saved BirdView actor poses cannot grant or discard content/runtime policy");
     const birdPoses = hasBirdViewActors ? parseFieldBirdViewActorCheckpoint(saved.birdViewActors!) : null;
     checkpointKeys(saved.collision, "mapColliders,entityCollision,interactiveObservation");
@@ -2759,6 +2767,7 @@ export class FieldGame {
     }
     this.publishNativeActors(actors, bindings, source.catalog, providers, source.controlContext,
       source.animationKeys, { factory: structuredClone(source.factory) }, restoredActivities);
+    if (hasPuppetReplacement) this.puppetReplacementValue = this.validatePuppetReplacementState(saved.puppetReplacement!);
     if (hasMobControls) {
       for (const pose of saved.mobControls!.poses) {const actor=this.actors[pose.actorId];if(!actor)throw new Error("Saved Mob pose actor missing");this.requireMobActor(actor);}
       this.mobControlsOwner().restore(saved.mobControls!);
@@ -3462,6 +3471,59 @@ export class FieldGame {
       this.content.cameraHost!.mapRange, "source-absent", referenceActorId),
     () => { if (resolveReference() !== referenceActorId) throw new Error("Stale source relative SetPos selector"); });
   }
+  private prepareCameraPosition(op: Extract<Op, { kind: "position" }>): () => void {
+    const camera = this.camera, definition = this.content.cameraHost, command = op.cameraCommand;
+    if (!camera || !definition || definition.callbacks !== "fresh-normal-field-v1" || !command ||
+        op.x !== command.x || op.y !== command.y || op.animation !== "" ||
+        op.nativeCommand && (op.nativeCommand.x !== command.x || op.nativeCommand.y !== command.y || op.nativeCommand.layer !== 0 || op.nativeCommand.animation !== "" ||
+          op.nativeCommand.mode !== command.mode || op.nativeCommand.referenceEntityId !== command.referenceEntityId))
+      throw new Error("Source camera SetPos operand shape or callback host is unavailable");
+    if (this.#worldAutoDummyMotion || this.tasks.some(t => !t.done && t.actor === this.cameraActorId && (t.cameraLerp || t.cameraPath)))
+      throw new Error("Source camera SetPos during active movement is unresolved");
+    const port = this.options.puppetActors, fingerprint = canonical(definition), runtime = this.nativeRuntime,
+      bindings = this.nativeActorBindings, providers = this.nativeActorProviders, factory = runtime?.mapLifecycle?.factory,
+      sources = canonical({ runtime, bindings }), viewPolicy = this.options.viewChange,
+      retainedPolicy = this.options.retainedWorldTransportation;
+    const assertCurrentHost = () => {
+      if (this.camera !== camera || canonical(this.content.cameraHost) !== fingerprint ||
+          this.nativeRuntime !== runtime || this.nativeActorBindings !== bindings || this.nativeActorProviders !== providers ||
+          runtime?.mapLifecycle?.factory !== factory || canonical({ runtime, bindings }) !== sources ||
+          this.options.viewChange !== viewPolicy || this.options.retainedWorldTransportation !== retainedPolicy)
+        throw new Error("Stale source camera SetPos host");
+      const view = this.currentView;
+      if (view && (viewPolicy === undefined || canonical(fieldViewBinding(this.content, viewPolicy)) !== canonical(view.binding)))
+        throw new Error("Source camera SetPos dynamic view policy is unavailable");
+    };
+    assertCurrentHost();
+    let referenceId: string | undefined, referencePosition, validateReference = () => {};
+    if (command.mode === 1) {
+      if (!op.nativeCommand || !port || !this.nativeActorProviders || !this.nativeActorBindings || !this.nativeRuntime?.mapLifecycle)
+        throw new Error("Source relative camera SetPos selector owner is unavailable");
+      const resolveReference = () => {
+        if (this.options.puppetActors !== port) throw new Error("Source relative camera SetPos selector owner changed");
+        const { catalog, context } = port.read();
+        const resolved = resolveFieldPuppetActor(catalog, context, command.referenceEntityId);
+        if (resolved.actor === null) throw new Error("Source relative camera SetPos reference entity is unavailable");
+        return resolved.actor;
+      };
+      referenceId = resolveReference();
+      const read = prepareNativeFieldActorRead({ readActors: () => this.actors, readProviders: this.nativeActorProviders,
+        readCamera: () => { const state = camera.snapshot(); return { id: this.cameraActorId,
+          position: state.dummy.position, layer: state.dummy.layer }; } });
+      const reference = read.snapshot.actors.find(a => a.id === referenceId)
+        ?? (read.snapshot.camera?.id === referenceId ? read.snapshot.camera : null);
+      if (!reference) throw new Error("Source relative camera SetPos requires its actual native reference instance");
+      referencePosition = reference.position;
+      validateReference = () => {
+        if (resolveReference() !== referenceId) throw new Error("Stale source relative camera SetPos selector");
+        read.validate();
+      };
+    }
+    const prepared = camera.prepareSetPosition(command, referencePosition);
+    return () => {
+      assertCurrentHost(); validateReference(); prepared.commit();
+    };
+  }
   private executeActorVisibility(actorId: string, op: Extract<Op, { kind: "actor-visibility" }>,
     programName: string, webPc: number): void {
     const durationSeconds = op.timing?.durationSeconds ?? 0, delaySeconds = op.timing?.delaySeconds ?? 0;
@@ -3951,6 +4013,7 @@ export class FieldGame {
   }
   /** Integer 10 ms simulation steps make render-frame partitioning irrelevant. */
   advance(milliseconds: number): void {
+    if (this.puppetReplacementRetired && this.puppetReplacementValue) return;
     if(this.sourcePartySelectionRequest)return;
     if (this.coreRegisterPublishing) throw new Error("Core publication is in progress");
     if (
@@ -4229,6 +4292,7 @@ export class FieldGame {
   private beginRoot(script: string, publishStory?: () => void, entity?: FieldEntity): void {
     let activation: FieldEventActivationCheckpoint | null = null;
     try {
+      if (this.puppetReplacementRetired) throw new Error("Retired Puppet replacement/field owner cannot start scripts");
       if (entity?.eventActivation) {
         activation = captureFieldEventActivation(entity);
         restoreFieldEventActivation(activation, this.content, script);
@@ -4847,6 +4911,98 @@ export class FieldGame {
     this.prepareEncounterReturn(party)();
     this.pump();
   }
+  private puppetReplacementValue: FieldPuppetReplacementState | null = null;
+  private puppetReplacementRetired = false;
+  get puppetReplacementSnapshot(): FieldPuppetReplacementState | null {
+    return this.puppetReplacementValue && structuredClone(this.puppetReplacementValue);
+  }
+  private puppetReplacementSource() {
+    const catalog = this.nativeRuntime?.catalog;
+    if (this.puppetReplacementRetired || !catalog || !this.nativeActorBindings ||
+        !this.nativeRuntime?.mapLifecycle || !this.nativeActorProviders || !this.camera ||
+        !this.options.puppetActors || !this.options.puppetRoster?.replacement ||
+        this.options.puppetActors.controlContext().callback !== "absent")
+      throw new Error("Source Puppet replacement requires the actual native actor/three-Corps owner and an absent foreign callback");
+    return { sourceSetHash: this.content.sourceSetHash,
+      parentSourceSetHash: this.content.parentSourceSetHash, miscHash: catalog.miscHash };
+  }
+  private validatePuppetReplacementState(raw: FieldPuppetReplacementState): FieldPuppetReplacementState {
+    const state = parsePuppetReplacementState(raw, this.puppetReplacementSource());
+    const { catalog } = this.options.puppetActors!.read();
+    // The saved list is data only. Its resident domain comes from the current
+    // trusted catalog; it cannot introduce another resident or actor provider.
+    const known = new Set(catalog.residents.map(r => -r.characterStatusId));
+    for (const selector of state.selectors)
+      if (selector !== 0 && ![-1030, -1031, -1032].includes(selector) && !known.has(selector))
+        throw new Error("Saved Puppet replacement selector has no trusted resident identity");
+    return state;
+  }
+  /** Detached session callback transfer. No reference to an actor on the old
+   * map is transferred, and preparation never retires or edits the old owner. */
+  inheritPuppetReplacements(previous: FieldGame): void {
+    if (!previous.puppetReplacementValue) return;
+    const before = previous.validatePuppetReplacementState(previous.puppetReplacementValue);
+    const source = this.puppetReplacementSource();
+    if (before.parentSourceSetHash !== source.parentSourceSetHash || before.miscHash !== source.miscHash)
+      throw new Error("Puppet replacement cannot cross source/Misc universes");
+    this.puppetReplacementValue = this.validatePuppetReplacementState({ ...before, ...source });
+  }
+  retirePuppetReplacements(): void { this.puppetReplacementRetired = true; }
+  private executePuppetReplacement(command: FieldPuppetReplacementCommand): void {
+    const source = this.puppetReplacementSource(), port = this.options.puppetActors!, roster = this.options.puppetRoster!;
+    const old = this.puppetReplacementValue, before = canonical(port.read()), context = canonical(port.controlContext()), actors = this.nativeActorStateFingerprint;
+    const events = this.eventState, revision = events.mutationRevision, owned = roster.replacement!();
+    const selected = command.kind === "battle-party" ? events.read({ category: "ScenarioVariable", index: 4 }) : undefined;
+    const selectors = projectPuppetReplacement(command, old?.selectors ?? null, owned, selected);
+    const next = selectors === null ? null : this.validatePuppetReplacementState({ kind: "field-puppet-replacement-v1", ...source, selectors });
+    const nowSource = this.puppetReplacementSource(), nowContext = port.controlContext(), nowActors = port.read(), nowOwned = roster.replacement!();
+    if (this.puppetReplacementValue !== old || this.options.puppetActors !== port || this.options.puppetRoster !== roster ||
+        canonical(nowOwned) !== canonical(owned) || canonical(nowActors) !== before || canonical(nowContext) !== context ||
+        this.nativeActorStateFingerprint !== actors || this.eventState !== events || events.mutationRevision !== revision ||
+        canonical(nowSource) !== canonical(source))
+      throw new Error("Stale source Puppet replacement selection");
+    this.puppetReplacementValue = next;
+  }
+  /** This is Current.ExecPuppetCallbackCommon, before Ready. Native list index
+   * addresses track i, including sleeping holes; it never compacts Awake tracks. */
+  private preparePuppetReplacementExec() {
+    if (!this.puppetReplacementValue) return null;
+    const value = this.puppetReplacementValue, state = this.validatePuppetReplacementState(value);
+    const host = this.options.puppetActors!, read = host.read(), before = canonical(read), context = canonical(host.controlContext());
+    const actors = this.nativeActorStateFingerprint, tasks = this.tasks;
+    const selected: { child: Task; selector: number; actor: string; previousActor: string; previousSelector: number | null; pc: number; program: Op[] | undefined; bank: string }[] = [];
+    const effects: import("./field-puppet-actors.js").FieldPuppetActorEffect[] = [];
+    let dummy = false;
+    for (const [slot, selector] of state.selectors.entries()) {
+      const child = tasks.find(t => !t.done && t.slot === slot && t.state === "awake");
+      if (!child) continue;
+      const resolved = resolveFieldPuppetActor(read.catalog, read.context, selector);
+      if (!resolved.actor) throw new Error("Puppet replacement callback destination is absent");
+      if (selector === 0) {
+        if (resolved.actor !== this.cameraActorId || !this.camera || !this.player.native)
+          throw new Error("Puppet replacement zero is not the actual camera dummy");
+        dummy = true;
+      } else {
+        const actor = this.actors[resolved.actor];
+        if (!actor?.native || actor.motion || actor.native.entity.moving)
+          throw new Error("Puppet replacement needs a known idle native actor instance");
+        effects.push({ kind: "copy-position", actor: actor.id, from: read.context.player, mode: "player-z" },
+          { kind: "copy-layer", actor: actor.id, from: read.context.player },
+          { kind: "apply-view-properties", actor: actor.id }, { kind: "attach-transparent", actor: actor.id });
+      }
+      selected.push({ child, selector, actor: resolved.actor, previousActor: child.actor, previousSelector: child.sourceEntityId, pc: child.pc, program: this.content.scripts[child.script], bank: canonical(child.generalRegisters) });
+    }
+    const validate = () => {
+      if (this.puppetReplacementValue !== value || canonical(this.validatePuppetReplacementState(value)) !== canonical(state) ||
+          this.options.puppetActors !== host || canonical(host.read()) !== before || canonical(host.controlContext()) !== context ||
+          this.nativeActorStateFingerprint !== actors || this.tasks !== tasks || selected.some(row =>
+            !tasks.includes(row.child) || row.child.done || row.child.state !== "awake" ||
+            row.child.actor !== row.previousActor || row.child.sourceEntityId !== row.previousSelector || row.child.pc !== row.pc ||
+            this.content.scripts[row.child.script] !== row.program || canonical(row.child.generalRegisters) !== row.bank))
+        throw new Error("Stale source Puppet replacement callback");
+    };
+    return { selected, effects, dummy, validate };
+  }
   private puppetStatuses(): FieldPuppetStatus[] {
     const result = Array<FieldPuppetStatus>(32).fill("sleep");
     for (const task of this.tasks)
@@ -5370,7 +5526,7 @@ export class FieldGame {
           this.block(`无效脚本位置 ${t.script}:${t.pc}`);
           return;
         }
-        if ((actor?.motion || this.assignedRoutes.has(t.actor) || this.tasks.some((other) => !other.done && other.actor === t.actor && (other.scriptLerp || other.birdViewMove || other.cameraPath?.op.kind === "field-puppet-route" || op.kind === "field-puppet-route" && (other.cameraPath || other.cameraLerp)))) &&
+        if ((actor?.motion || this.assignedRoutes.has(t.actor) || this.tasks.some((other) => !other.done && other.actor === t.actor && (other.scriptLerp || other.birdViewMove || other.cameraPath?.op.kind === "field-puppet-route" || (op.kind === "field-puppet-route" || op.kind === "position") && (other.cameraPath || other.cameraLerp)))) &&
             ["move", "field-bird-view-move", "field-script-motion", "field-puppet-route", "field-camera-motion", "position", "look", "animation-play", "animation-cue"].includes(op.kind)) {
           this.block("Concurrent source actor movement arbitration is not implemented", op);
           return;
@@ -5809,6 +5965,10 @@ export class FieldGame {
               return;
             }
             break;
+          case "field-puppet-replacement":
+            try { this.executePuppetReplacement(op.command); }
+            catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
           case "join": // Old authored fixtures; source compilation uses exec-puppets.
           case "exec-puppets":
           case "finish-puppets":
@@ -5817,18 +5977,22 @@ export class FieldGame {
                 ? { ...op, kind: "finish-puppets" as const }
                 : { ...op, kind: "exec-puppets" as const,
                     asynchronous: op.kind === "exec-puppets" && op.asynchronous };
+              const replacement = command.kind === "exec-puppets" ? this.preparePuppetReplacementExec() : null;
+              const statuses = this.puppetStatuses();
+              for (const row of replacement?.selected ?? []) if (row.selector === 0) statuses[row.child.slot!] = "sleep";
               const result = fieldPuppetControlStep({ kind: command.kind === "finish-puppets" ? "finish" : "exec",
                 firstClock: true, asynchronous: command.kind === "exec-puppets" && command.asynchronous,
-                ...this.puppetControlContext(), slots: this.puppetStatuses() });
+                ...this.puppetControlContext(), slots: statuses });
               // Resolve and validate the whole starting batch before publishing
               // any Ready state or visibility change. No partial Exec on error.
               const ready = result.startSlots.map((slot) => {
                 const child = this.tasks.find((other) => !other.done && other.slot === slot)!;
-                let actor = child.actor;
+                const mapped = replacement?.selected.find(row => row.child === child);
+                let actor = mapped?.actor ?? child.actor;
                 let binding: "present" | "absent" | "unknown";
-                if (child.sourceEntityId !== null && this.options.puppetActors) {
+                if ((mapped?.selector ?? child.sourceEntityId) !== null && this.options.puppetActors) {
                   const { catalog, context } = this.options.puppetActors.read();
-                  const resolved = resolveFieldPuppetActor(catalog, context, child.sourceEntityId);
+                  const resolved = resolveFieldPuppetActor(catalog, context, mapped?.selector ?? child.sourceEntityId!);
                   binding = resolved.actor === null ? "absent" : "present";
                   actor = resolved.actor ?? actor;
                 } else binding = this.hasEntity(actor) ? "present" : "unknown";
@@ -5840,15 +6004,27 @@ export class FieldGame {
               // Ready's Show(0) also writes the sprite-less dummy's active and
               // fade state. Prepare it with the single camera owner, before
               // publishing any actor, collision or task changes.
-              const cameraShow = this.camera && ready.some((r) => r.plan.showActor && r.actor === this.cameraActorId)
-                ? this.camera.prepareVisibility(true) : null;
+              const showCamera = ready.some(r => r.plan.showActor && r.actor === this.cameraActorId);
+              let cameraShow: ReturnType<FieldCameraHost["prepareState"]> | null = null;
+              if (this.camera && (showCamera || replacement?.dummy)) {
+                const draft = this.camera.fork(this.content.cameraHost!, this.cameraPorts());
+                if (replacement?.dummy) {
+                  const state = draft.snapshot(), player = this.player.native!.entity;
+                  state.dummy.position.z = player.position.z;
+                  state.dummy.layer = player.layer;
+                  // Known sprite-less camera has no material attachments.
+                  draft.prepareState(state).commit();
+                }
+                if (showCamera) draft.prepareVisibility(true).commit();
+                cameraShow = this.camera.prepareState(draft.snapshot());
+              }
               const effectShows: FieldEffectOperation[] = [...new Set(ready.filter((r) => r.plan.showActor && this.effectBoard(r.actor))
                 .map((r) => r.actor))].map((id) => ({ kind: "visibility", id, visible: true, duration: 0 }));
               const effectShow = effectShows.length ? this.effects!.prepare(effectShows) : null;
               const publish = host && this.puppetLifecycle ? host.prepare({ leaderId: null,
                 assignments: result.clearAssignments ? fieldPuppetAssignments() : null,
-                effects: ready.filter((r) => r.plan.showActor && !(this.camera && r.actor === this.cameraActorId) && !this.effectBoard(r.actor))
-                  .map((r) => ({ kind: "show", actor: r.actor })) }) : () => {};
+                effects: [...(replacement?.effects ?? []), ...ready.filter((r) => r.plan.showActor && !(this.camera && r.actor === this.cameraActorId) && !this.effectBoard(r.actor))
+                  .map((r) => ({ kind: "show" as const, actor: r.actor }))] }) : () => {};
               if (typeof publish !== "function") throw new Error("Invalid source puppet Ready transaction");
               const publishCollision = this.preparePuppetCollision(result.collisionEnabled);
               const assignments = result.clearAssignments ? fieldPuppetAssignments() : null;
@@ -5859,8 +6035,13 @@ export class FieldGame {
                 // Source actor/collision ports promise a prepared no-fail
                 // publication. An opaque violation stops the field; it cannot
                 // be represented as rollback of a third-party write.
+                replacement?.validate();
                 publish();
                 publishCollision();
+                for (const row of replacement?.selected ?? []) {
+                  row.child.actor = row.actor; row.child.sourceEntityId = row.selector;
+                  if (row.selector === 0) { row.child.done = true; row.child.state = "awake"; }
+                }
                 if (assignments && this.puppetLifecycle) this.puppetLifecycle.assignments = assignments;
                 for (const { child, actor, plan } of ready) {
                   child.done = plan.status === "sleep";
@@ -5888,8 +6069,7 @@ export class FieldGame {
           case "position":
             if (this.camera && t.actor === this.cameraActorId) {
               try {
-                if (!op.cameraCommand) throw new Error("Source camera SetPos operand shape is not admitted");
-                this.camera.prepareSetPosition(op.cameraCommand).commit();
+                this.prepareCameraPosition(op)();
               } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
               break;
             }

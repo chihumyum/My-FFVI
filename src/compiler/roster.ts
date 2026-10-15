@@ -1,3 +1,4 @@
+import { rosterNativeSelectors } from "./roster-selectors.js";
 import {
   validateRosterCommand,
   type RosterCommand,
@@ -157,62 +158,23 @@ export function compileInitialRosterLifecycle(
   };
 }
 
-// Current.cctor's exact string/delegate pairs are checked from native ranges
-// 2a3cad..2a3d2e, 2a41de..2a4256 and 2a468e..2a4706. No translated-name inference.
-const commands: Record<string, RosterCommand> = {
-  "メンバー加入：ティナ": {
-    kind: "join",
-    sourceId: 1,
-    position: null,
-    row: "front",
-    refreshActors: true,
-    recovery: false,
-    refitEquipment: false,
-  },
-  "メンバー加入：ロック": {
-    kind: "join",
-    sourceId: 2,
-    position: null,
-    row: "front",
-    refreshActors: true,
-    recovery: false,
-    refitEquipment: false,
-  },
-  "メンバー離脱：ティナ": {
-    kind: "secede",
-    sourceId: 1,
-    removeEquipment: false,
-    refreshActors: true,
-  },
-  "メンバー離脱：ロック": {
-    kind: "secede",
-    sourceId: 2,
-    removeEquipment: false,
-    refreshActors: true,
-  },
-  "メンバー離脱：ビックス": {
-    kind: "secede",
-    sourceId: 32,
-    removeEquipment: true,
-    refreshActors: true,
-  },
-  "メンバー離脱：ウェッジ": {
-    kind: "secede",
-    sourceId: 31,
-    removeEquipment: true,
-    refreshActors: true,
-  },
-};
-export const rosterLifecycleSelectors = Object.keys(commands);
+/** All registered selectors include explicit special-owner gates. */
+export const rosterLifecycleKnownSelectors = Object.keys(rosterNativeSelectors);
+/** Selectors whose complete unconditional native command has been recovered. */
+export const rosterLifecycleSelectors = rosterLifecycleKnownSelectors.filter(
+  (selector) => rosterNativeSelectors[selector]!.command !== undefined,
+);
 
 /** Caller validates SysCall type/shape and all unused operands. */
 export function compileRosterLifecycleEvent(
   selector: string,
   tables: Tables,
 ): RosterLifecycleEventOp {
-  const command = commands[selector];
+  const binding = Object.hasOwn(rosterNativeSelectors, selector)
+    ? rosterNativeSelectors[selector] : undefined;
+  const command = binding?.command;
   if (!command)
-    throw new Error(`Unimplemented roster lifecycle selector ${selector}`);
+    throw new Error(`Unimplemented roster lifecycle selector ${selector}${binding?.gate ? `: ${binding.gate} (native ${binding.rva})` : ""}`);
   const dependencies: Dependency[] = [];
   const character = one(
     tables,

@@ -8,7 +8,7 @@ import {
   initializeFieldCameraDummy, projectFieldCamera, projectFieldCameraSetPosition,
   projectFieldCameraTarget, projectFieldCameraVisibility, stepFieldCameraLerp, validateFieldCameraState,
   type FieldCameraCommand, type FieldCameraLerp, type FieldCameraLerpProgress,
-  type FieldCameraMapRange, type FieldCameraSetPosition, type FieldCameraState,
+  type FieldCameraMapRange, type FieldCameraSetPosition, type FieldCameraState, type FieldCameraPoint,
 } from "./field-camera.js";
 
 /** Content-bound admission, never a field in a camera save. The native evidence
@@ -209,8 +209,8 @@ export class FieldCameraHost {
     const plan = projectFieldCameraTarget(this.#state, command, this.#player(), layerZ);
     return { ...this.#prepare(plan.state, true, "source-absent"), resetDummyMovement: plan.resetDummyMovement };
   }
-  prepareSetPosition(command: FieldCameraSetPosition): FieldCameraPrepared {
-    const plan = projectFieldCameraSetPosition(this.#state, command, this.#definition.mapRange);
+  prepareSetPosition(command: FieldCameraSetPosition, reference?: FieldCameraPoint): FieldCameraPrepared {
+    const plan = projectFieldCameraSetPosition(this.#state, command, this.#definition.mapRange, reference);
     return this.#prepare(plan.state, false, "source-absent");
   }
   /** Ready and exact zero-duration Hide publish native dummy visibility here,

@@ -98,12 +98,14 @@ export function assertSourceGameCatalog(catalog: BattleCatalog, profile: SourceC
       throw new Error("Source game catalog initial player seed differs from the source initializer");
   }
   // These are encounter declarations in every profile, never shared defaults.
-  for (const key of ["escapePolicy", "lifecycle", "rewardPolicy", "participants", "playerParticipants", "formationPlan", "controls", "sourceFlags", "forcedSavePolicy"])
+  for (const key of ["escapePolicy", "lifecycle", "rewardPolicy", "participants", "playerParticipants", "formationPlan", "controls", "sourceFlags", "forcedSavePolicy", "spawnConditionPolicy"])
     if (Object.hasOwn(catalog.common, key)) throw new Error("Source new game cannot use misplaced " + key + " policy");
   if (profile === "framework") return;
   if (Object.hasOwn(catalog.common, "conditionControlPolicy"))
     throw new Error("A strict source baseline cannot use a Web condition control policy");
   const encounters = Object.values(catalog.encounters);
+  if (encounters.some(encounter => Object.hasOwn(encounter, "spawnConditionPolicy")))
+    throw new Error("A strict source baseline cannot use a Web spawn condition policy");
   if (encounters.some(encounter => Object.hasOwn(encounter, "forcedSavePolicy")))
     throw new Error("A strict source baseline cannot use a Web forced-save policy");
   if (encounters.some(encounter => Object.hasOwn(encounter, "controls")))

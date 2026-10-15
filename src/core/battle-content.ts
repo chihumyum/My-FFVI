@@ -1,3 +1,4 @@
+import {parseWebEnemySpawnConditions,type WebEnemySpawnConditions} from './battle-spawn-conditions.js';
 import {parseWebBattleForcedSave,type WebBattleForcedSave} from './battle-forced-save.js';
 import type { SourceMessageFeeCatalog } from "./source-message-fees.js";
 import { parseSourceBattleControls } from './battle-controls.js';
@@ -71,6 +72,7 @@ export type BattleContent = {
   /** Optional declarations and an explicit handoff policy, not native admission. */
   handoff?: BattleHandoffContent;
   forcedSavePolicy?:WebBattleForcedSave;
+  spawnConditionPolicy?:WebEnemySpawnConditions;
   /** Reusable enemy content is separate from the current battle unit owner. */
   participants?: BattleParticipantContent;
   playerParticipants?: BattlePlayerPlan;
@@ -185,6 +187,7 @@ export type BattleEncounter = Pick<
   lifecycle?: BattleLifecycle;
   handoff?: BattleHandoffContent;
   forcedSavePolicy?:WebBattleForcedSave;
+  spawnConditionPolicy?:WebEnemySpawnConditions;
   participants?: BattleParticipantContent;
   playerParticipants?: BattlePlayerPlan;
 };
@@ -265,13 +268,14 @@ export function encounterContent(
   if (Object.hasOwn(catalog.common, "participants")) throw new Error("Battle participants must belong to an encounter");
   if (Object.hasOwn(catalog.common, "playerParticipants")) throw new Error("Battle player participants must belong to an encounter");
   if(Object.hasOwn(catalog.common,'controls'))throw new Error('Battle controls must belong to an encounter');
+  if(Object.hasOwn(catalog.common,'spawnConditionPolicy'))throw new Error('Spawn condition policy must belong to an encounter');
   if(Object.hasOwn(catalog.common,'forcedSavePolicy'))throw new Error('Forced save policy must belong to an encounter');
   if(Object.hasOwn(catalog.common,'sourceFlags'))throw new Error('Battle source flags must belong to an encounter');
   const encounter = catalog.encounters[String(id)];
   if (!encounter) return null;
   if (encounter.encounterId !== id) throw new Error("Inconsistent battle encounter identity");
   const options = encounterFormationOptions(encounter);
-  const { formationPlan, escapePolicy, rewardPolicy, lifecycle, handoff, participants, playerParticipants, controls, sourceFlags, forcedSavePolicy, ...definition } = encounter;
+  const { formationPlan, escapePolicy, rewardPolicy, lifecycle, handoff, participants, playerParticipants, controls, sourceFlags, forcedSavePolicy, spawnConditionPolicy, ...definition } = encounter;
   const manualControls=controls===undefined?{}:{controls:parseSourceBattleControls(controls)};
   const flagPlan=sourceFlags===undefined?undefined:parseSourceBattleFlags(sourceFlags);
   if(flagPlan){
@@ -289,7 +293,7 @@ export function encounterContent(
   if (catalog.gameState.characterInitializations && parsedLifecycle?.mode === "script" && parsedLifecycle.program.source === null)
     throw new Error("Source encounter battle lifecycle lacks source identity");
   const event = parsedLifecycle === undefined ? {} : { lifecycle: parsedLifecycle };
-  const saveContent=forcedSavePolicy===undefined?{}:{forcedSavePolicy:parseWebBattleForcedSave(forcedSavePolicy)};
+  const saveContent={...(forcedSavePolicy===undefined?{}:{forcedSavePolicy:parseWebBattleForcedSave(forcedSavePolicy)}),...(spawnConditionPolicy===undefined?{}:{spawnConditionPolicy:parseWebEnemySpawnConditions(spawnConditionPolicy)})};
   const handoffContent = handoff === undefined ? {} : { handoff: parseBattleHandoffContent(handoff, id) };
   const units = participants === undefined ? {} : { participants: parseBattleParticipantContent(participants, encounter.enemies) };
   const playerPlan = playerParticipants === undefined ? {} : { playerParticipants: parseBattlePlayerPlan(playerParticipants) };
@@ -301,6 +305,7 @@ export function encounterContent(
     contentHash: catalog.contentHash };
 }
 export type AbilityDefinition = {
+  ordinaryConditionPresentation?: import('./ordinary-condition-action.js').OrdinaryConditionPresentation;
   nonDamagingPresentation?: import("./non-damaging-ability.js").NonDamagingAbilityPresentation;
   /** Source AbilityUtility/FF6 hit classification, independent of the effect
    * plan. It does not itself authorize an effect or an active condition. */

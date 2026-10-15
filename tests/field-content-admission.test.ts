@@ -29,10 +29,10 @@ test("decoded actor controls retain unknown and missing owners as capability req
       x: 1, y: 2, layer: 0, animation: "" },
   })]) {
     assert.equal(assess(instruction).status, "conditional");
-    assert.equal(assess(instruction, context({ providers: { actorControl: "missing" } })).status, "blocked");
+    assert.equal(assess(instruction, context({ providers: { actorControl: "missing" }, actorKind: "actor" })).status, "blocked");
     const present = context({ providers: { actorControl: "available" }, actorKind: "actor" });
     assert.equal(assess(instruction, present).status, "ready");
-    assert.deepEqual(fieldInstructionRequirements(instruction).map(r => r.capability), ["actorControl"]);
+    assert.deepEqual(fieldInstructionRequirements(instruction).map(r => r.capability), [instruction.kind === "position" ? "sourcePosition" : "actorControl"]);
   }
   assert.deepEqual(fieldInstructionRequirements(op("position", { x: 1, y: 2, animation: "",
     nativeCommand: { x: 1, y: 2, layer: 0, animation: "" } })), []);

@@ -1,5 +1,5 @@
 import type { FieldCameraMapRange } from "./field-camera.js";
-import { fieldCameraCellToWorld, fieldCameraWorldToCell } from "./field-camera.js";
+import { fieldSetPositionToWorld } from "./field-camera.js";
 import { checkpointInteger, checkpointKeys } from "./checkpoint-validation.js";
 import { requireFieldTransportPose } from "./field-transport-pose.js";
 import { projectFieldPuppetActorEffects, type FieldPuppetHostProviders, type FieldPuppetHostSnapshot } from "./field-puppet-effects.js";
@@ -37,10 +37,7 @@ export function projectNativeFieldPosition(snapshot: FieldPuppetHostSnapshot,
   const target = next.actors.find((actor) => actor.id === actorId);
   requireFieldTransportPose(target, providers.transportationPresentation);
   if (target.moving) throw new Error("Source actor SetPos during active movement is unresolved");
-  const logicalLayer = command.layer === 0
-    ? [349, 249, 149].indexOf(Math.trunc(Math.fround(target.position.z))) : command.layer - 1;
-  if (logicalLayer < 0) throw new Error("Source actor SetPos cannot preserve this source Z layer");
-  let cell: { x: number; y: number };
+  let referencePosition;
   if (command.mode === 1) {
     // Puppet.SetPos resolves i4 with GetEntity, floors that entity's world
     // position to map-local cells, then adds the two Int32 offsets as floats.
@@ -48,19 +45,11 @@ export function projectNativeFieldPosition(snapshot: FieldPuppetHostSnapshot,
     const reference = next.actors.find((actor) => actor.id === referenceActorId)
       ?? (next.camera?.id === referenceActorId ? next.camera : null);
     if (!reference) throw new Error("Source relative SetPos reference entity is absent or unresolved");
-    const anchor = fieldCameraWorldToCell(map, { x: reference.position.x, y: reference.position.y });
-    cell = { x: Math.fround(Math.fround(command.x) + Math.fround(anchor.x)),
-      y: Math.fround(Math.fround(command.y) + Math.fround(anchor.y)) };
-  } else {
-    const current = fieldCameraWorldToCell(map, { x: target.position.x, y: target.position.y });
-    // ConversionMapRangeCell performs Int32 subtraction before checking each
-    // axis. A kept axis is floored by WorldPositionToCellPosition, not untouched.
-    const x = (command.x - map.x) | 0, y = (command.y - map.y) | 0;
-    cell = { x: x < 0 ? current.x : x, y: y < 0 ? current.y : y };
+    referencePosition = reference.position;
   }
   // MoveEntityLayerWithWorldPosition uses the destination actor's current Z,
   // even when the relative reference is on another layer.
-  target.position = fieldCameraCellToWorld(map, cell, logicalLayer);
+  target.position = fieldSetPositionToWorld(map, target.position, command, referencePosition);
   if (![target.position.x, target.position.y, target.position.z].every(Number.isFinite))
     throw new Error("Source actor SetPos coordinate overflow");
   if (command.layer !== 0) {

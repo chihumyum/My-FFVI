@@ -15,7 +15,7 @@ for(const p of source.programs)for(const[index,raw]of p.data.Mnemonics.entries()
  const selector=raw.operands.sValues[0],op=p.compiled.instructions[index].op;
  assert.equal(raw.operands.iValues.length,8);assert.equal(raw.operands.rValues.length,8);assert.equal(raw.operands.sValues.length,8);
  assert.ok(raw.operands.iValues.every(x=>x===0)&&raw.operands.rValues.every(x=>x===0)&&raw.operands.sValues.slice(1).every(x=>x===''));
- if(selector==='RemoveAllAct'){assert.equal(op.kind,'blocked');assert.match(op.reason,/staged-action cancellation.*executor state/);}
+ if(selector==='RemoveAllAct')assert.deepEqual(op,{kind:'remove-all-actions'});
  else assert.deepEqual(op,selector==='StopAutoBattle'?{kind:'stop-auto'}:{kind:'ui-visibility',visible:selector==='ShowBattleUI'});
  sites.push({program:p.id,index,source:p.source,rawHash:p.rawHash,raw,typed:op,runtimeExecution:'not-attempted'});
 }
@@ -36,11 +36,13 @@ const report={kind:'source-battle-event-controls-whole-family-v1',result:'passed
   battlePrograms:53,battleInstructions:2312,exportBoundPrograms:source.programs.filter(p=>p.battleExportBinding.kind==='exact-battle-export-source-binding-v1').length,
   exportUnboundPrograms:source.programs.filter(p=>p.battleExportBinding.kind==='unbound-battle-export-source-v1').length,
   nominatedSites:sites.length,typedSites:sites.filter(row=>row.typed.kind!=='blocked').length,
-  unresolvedCancellationSites:6,selectorSites:counts,requestedParties:490,sourceDescriptors:483,sourceDiagnostics:7,
+  typedCancellationSites:sites.filter(row=>row.raw.operands.sValues[0]==='RemoveAllAct'&&row.typed.kind==='remove-all-actions').length,
+  unresolvedCancellationSites:sites.filter(row=>row.raw.operands.sValues[0]==='RemoveAllAct'&&row.typed.kind==='blocked').length,
+  selectorSites:counts,requestedParties:490,sourceDescriptors:483,sourceDiagnostics:7,
   remainingBlockedSites:source.programs.reduce((n,p)=>n+p.compiled.instructions.filter(row=>row.op.kind==='blocked').length,0)},
  artifacts:[{path:file,sha256:createHash('sha256').update(bytes).digest('hex'),bytes:bytes.length}],
  sourceExecutions:0,worldCompilations:0,publications:0,sourceStoryReachability:false,nativeDynamicParity:false,browserVerified:false,
- limitations:['44 typed UI/manual-control requests are not completed source programs or playable encounters.',
+ limitations:['50 typed UI/manual-control/cancellation requests are not completed source programs or playable encounters.',
   'All 53 complete original bodies, 490 requested parties, 483 descriptors and 7 diagnostics remain retained.',
-  'RemoveAllAct retains all 6 source sites blocked until staged cancellation/state-machine callbacks and resources have a proven lifecycle.']};
+  'All 6 RemoveAllAct sites use the shared staged-action cancellation lifecycle; this audit does not execute those source bodies.']};
 await writeFile(resolve(out,'report.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({result:report.result,counts:report.counts,report:resolve(out,'report.json')}));

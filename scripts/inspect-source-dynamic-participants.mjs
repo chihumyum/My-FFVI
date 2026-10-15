@@ -11,7 +11,7 @@ const input=await loadBattleEventMessageSourceInputs(root,compiled,{branchExecut
 assert.equal(api.canonical(shared.runtimeInput.eventMessages),api.canonical(input.input));
 const c=api.compileSourceBattleParticipantClosure(input.snapshot.reader,{policy,encounters:dep.encounters,sources:input.encounterSources,eventMessages:input.input,branchExecution:declaration.framework.branchExecution}),
  common={...shared.runtimeInput,requestedPartyIds:dep.requestedPartyIds,encounters:dep.encounters,sourceDiagnostics:dep.diagnostics,
- ...(declaration.framework.forcedSavePolicy?{forcedSavePolicy:declaration.framework.forcedSavePolicy}:{}),branchExecution:declaration.framework.branchExecution,manualControls:declaration.framework.manualControls,conditionControlPolicy:declaration.framework.conditionControlPolicy,handoff:{policy:declaration.framework.handoff},
+ ...(declaration.framework.spawnConditionPolicy?{spawnConditionPolicy:declaration.framework.spawnConditionPolicy}:{}),...(declaration.framework.forcedSavePolicy?{forcedSavePolicy:declaration.framework.forcedSavePolicy}:{}),branchExecution:declaration.framework.branchExecution,manualControls:declaration.framework.manualControls,conditionControlPolicy:declaration.framework.conditionControlPolicy,handoff:{policy:declaration.framework.handoff},
  development:{...(declaration.framework.entry?.formations?{formations:declaration.framework.entry.formations}:{}),scripts:[],flagGroups:[]}},
  before=api.compileBattleEncounterRuntime(shared.reader,common),after=api.compileBattleEncounterRuntime(shared.reader,{...common,reserveEnemies:c.reserveEnemies,enemyParties:c.enemyParties,
  sourceDiagnostics:[...dep.diagnostics,...c.diagnostics],development:{...common.development,participants:c.participants}}),

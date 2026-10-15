@@ -306,6 +306,7 @@ export class GameState {
   /** Whole-roster source identities and the selected four Corps cells. */
   readonly fieldPuppetRoster: FieldPuppetRosterPort = {
     current: () => this.projectPuppetRoster(this.data),
+    replacement: () => this.projectPuppetReplacementRoster(this.data),
   };
   /** Character macros read the complete held roster, including disabled or
    * off-party owners, through its existing source/tag binding. */
@@ -1537,7 +1538,8 @@ export class GameState {
         ownedConditions,
         recovery,
         ...(options.scriptRandom === WEB_SOURCE_SCRIPT_RANDOM ? { scriptRandom } : {}),
-        puppetRoster: { current: () => this.projectPuppetRoster(published ? this.data : data) },
+        puppetRoster: { current: () => this.projectPuppetRoster(published ? this.data : data),
+          replacement: () => this.projectPuppetReplacementRoster(published ? this.data : data) },
         messageNames: { prepare: (refs) => {
           if (published) return this.fieldMessageNames.prepare(refs);
           const version = generation, current = data;
@@ -1577,6 +1579,10 @@ export class GameState {
   }
   get activeParty() {
     return activePartyMembers(this.data.party);
+  }
+  private projectPuppetReplacementRoster(data: GameStateSnapshot): import('./field-puppet-replacement.js').FieldPuppetReplacementRoster {
+    const owned=this.projectPuppetRoster(data).owned.map(({ownedId,sourceId})=>({ownedId,sourceId}));
+    return {selectedSlot:data.party.selectedSlot,owned,slots:data.party.slots.map(cells=>cells.map(cell=>cell.id===null?0:data.roster.find(member=>member.id===cell.id)!.ownedId))};
   }
   private projectPuppetRoster(data: GameStateSnapshot) {
     return projectFieldPuppetRoster(data.roster, data.party, this.ownedConditionDefinitions);

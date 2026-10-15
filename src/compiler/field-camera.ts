@@ -28,11 +28,14 @@ export function compileFieldCameraMotionInstruction(raw: unknown): FieldCameraMo
   const ints = z.array(z.unknown()).length(8).parse(operands.iValues).map(int32);
   const reals = z.array(z.number().finite()).length(8).parse(operands.rValues);
   const strings = z.array(z.string()).length(8).parse(operands.sValues);
-  if (ints.slice(2).some((v) => v !== 0) || strings.some((v) => v !== "") ||
+  const relative = instruction.mnemonic === "SetPos" && ints[3] === 1;
+  if ((relative ? ints[2] !== 0 || ints.slice(5).some(v => v !== 0)
+      : ints.slice(2).some((v) => v !== 0)) || strings.some((v) => v !== "") ||
       reals.slice(instruction.mnemonic === "SetPos" ? 0 : 2).some((v) => v !== 0))
-    throw new Error("Unsupported camera motion: requires absolute coordinates, unchanged layer and empty animation");
+    throw new Error("Unsupported camera motion: requires a bound SetPos mode, unchanged layer and empty animation");
   return { kind: "field-camera-motion", command: instruction.mnemonic === "SetPos"
-    ? { kind: "set-position", x: ints[0]!, y: ints[1]!, layer: 0 }
+    ? { kind: "set-position", x: ints[0]!, y: ints[1]!, layer: 0,
+        ...(relative ? { mode: 1 as const, referenceEntityId: ints[4]! } : {}) }
     : { kind: "lerp", x: ints[0]!, y: ints[1]!, layer: 0, duration: reals[0]!, arcHeight: reals[1]! } };
 }
 

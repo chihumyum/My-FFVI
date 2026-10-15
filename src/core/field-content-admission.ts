@@ -8,7 +8,7 @@ export const fieldProviders = Object.freeze([
 ] as const);
 export type FieldProvider = typeof fieldProviders[number];
 export type FieldProviderStatus = "available" | "missing" | "unknown";
-export type FieldCapability = FieldProvider | "conditionVisual" | "scriptMotion";
+export type FieldCapability = FieldProvider | "conditionVisual" | "scriptMotion" | "sourcePosition";
 export type FieldRequirement = {
   capability: FieldCapability;
   site: Site;
@@ -69,6 +69,7 @@ const codes: Record<FieldCapability, string> = {
   sourceBossEntry: 'FIELD_SOURCE_BOSS_ENTRY_PROVIDER', sourceBattleResult:'FIELD_SOURCE_BATTLE_RESULT_PROVIDER',
   assignedNpcRoutes: "FIELD_ASSIGNED_NPC_ROUTE_PROVIDER",
   conditionVisual: "FIELD_CONDITION_VISUAL_CONTEXT", scriptMotion: "FIELD_SCRIPT_MOTION_PROVIDER",
+  sourcePosition: "FIELD_SOURCE_POSITION_PROVIDER",
 };
 
 function record(value: unknown): asserts value is Record<string, unknown> {
@@ -159,7 +160,7 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     case "actor-visibility": add("actorControl", "Source actor visibility requires its bound control owner"); break;
     case "position":
       if (op.nativeCommand?.mode === 1)
-        add("actorControl", "Source relative SetPos requires its bound actor and exact selector owner");
+        add("sourcePosition", "Source SetPos requires its actual actor or camera owner and exact relative selector");
       break;
     case "source-message":
       if (op.command.kind === "sequence" || op.command.kind === "finish-wait")
@@ -226,6 +227,7 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     case "field-shake":
       add("cameraShake", "Source camera shake requires the explicit Web presentation stream and actual normal field camera host");
       break;
+    case "field-puppet-replacement": add("puppetRoster", "Missing complete source Corps/owned Puppet replacement provider"); add("sourceLeader", "Missing native Puppet replacement actor/camera owner"); break;
     case "field-party-query": add("puppetRoster", "Missing field party query roster provider"); break;
     case "field-sound": {
       const command = commandOf(op);
@@ -332,6 +334,10 @@ export function assessFieldRequirements(requirements: readonly FieldRequirement[
         if (context.actorKind === "camera") reason = "Camera source Move, animation or layer transition requires a separate provider";
         else if (context.actorKind === "effect") reason = "Source script motion requires a bound actor";
       }
+    } else if (capability === "sourcePosition") {
+      const provider = context.actorKind === "camera" ? "cameraMotion" : context.actorKind === "actor" ? "actorControl" : null;
+      status = context.actorKind === "unknown" ? "unknown" : provider ? context.providers[provider] ?? "unknown" : "missing";
+      if (context.actorKind === "camera") reason = "Source camera SetPos requires its bound mode, layer, callback and relative selector host";
     } else status = context.providers[capability] ?? "unknown";
     if (status !== "available") diagnostics.push({ capability, code, site: structuredClone(site), reason,
       status: status === "missing" ? "blocked" : "conditional" });

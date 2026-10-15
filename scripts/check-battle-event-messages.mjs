@@ -10,6 +10,7 @@ import {openSourceCandidate} from './source-candidate.mjs';
 import {sourceWebReplayRuntimePorts} from './source-web-replay-runtime.mjs';
 import {loadBattleEventMessageSourceInputs} from './battle-event-message-source-inputs.mjs';
 import {observerErrorDetails,observedBattleEffects,observationDraftJSON} from './battle-observer-results.mjs';
+import {chooseBattleObserverInput,BATTLE_OBSERVER_INPUT_POLICY} from './battle-observer-inputs.mjs';
 const root=resolve(import.meta.dirname,'..'),args=process.argv.slice(2),o={compiled:'dist',report:'build/reports/battle-event-messages/check.json'},seen=new Set();
 while(args.length){const f=args.shift();assert(['--compiled','--report','--candidate-dir','--smoke','--family'].includes(f)&&args[0]&&!seen.has(f));seen.add(f);o[f.slice(2)]=args.shift();}
 assert(o['candidate-dir']||['one','all'].includes(o.smoke),'Use --candidate-dir <same-runtime private candidate>, or --smoke one|all');
@@ -59,6 +60,7 @@ if(o['candidate-dir']){
  const requestedPartyIds=input.dependencies.requestedPartyIds,
   runtime=compileBattleEncounterRuntime(shared.reader,{...shared.runtimeInput,requestedPartyIds,encounters:input.dependencies.encounters,sourceDiagnostics:input.dependencies.diagnostics,
    ...(declaration.framework.forcedSavePolicy===undefined?{}:{forcedSavePolicy:declaration.framework.forcedSavePolicy}),
+   ...(declaration.framework.spawnConditionPolicy===undefined?{}:{spawnConditionPolicy:declaration.framework.spawnConditionPolicy}),
    ...(participantClosure?{reserveEnemies:participantClosure.reserveEnemies,enemyParties:participantClosure.enemyParties,
     sourceDiagnostics:[...input.dependencies.diagnostics,...participantClosure.diagnostics]}:{}),
    ...(declaration.framework.branchExecution===undefined?{}:{branchExecution:declaration.framework.branchExecution}),
@@ -137,10 +139,15 @@ async function run(program,{site=null,actualPc=null,endPc=null,partyOverride=nul
   row.stateBefore=game.state.snapshot();assert(game.field.startEvent(bound.script??'fight'),'Authored battle observer caller rejected');game.advance(10);assert(game.battleStartRequest,'Missing pending battle request');
   row.sessionBattlePreparationAttempted=true;
   const start=game.prepareBattleStart();assert(start,'Battle start candidate unavailable');assert(start.commit(),'Battle start did not publish');const battle=game.battle;
-  for(let n=0;n<12000;n++){
+  battleTicks: for(let n=0;n<12000;n++){
    const projection=battle.sourceMessage?.projection;
    if(projection?.acceptsInput){row.inputs.push({kind:'confirm',tick:row.ticks,key:projection.key,page:projection.page,ticket:projection.windowTicket,text:projection.text});assert(flow.confirm(),'Actual battle message input rejected');}
-   if(!site&&!battle.messageInputPending)for(const actor of battle.ready){const target=battle.targets(actor.id,10)[0];if(target){const accepted=battle.command(actor.id,10,target.id);row.inputs.push({kind:'battle-command',actor:actor.id,abilityId:10,target:target.id,accepted,tick:row.ticks});}}
+   if(!site&&!battle.messageInputPending)for(const actor of battle.ready){
+    const choice=chooseBattleObserverInput(battle,actor.id);
+    if(choice.kind==='unavailable'){row.result='battle-input-boundary';row.inputBoundary=choice;break battleTicks;}
+    const accepted=battle.command(choice.actorId,choice.abilityId,choice.selection,choice.commandId);
+    row.inputs.push({...choice,kind:'battle-command',accepted,tick:row.ticks});assert(accepted,'Current qualified menu input was rejected');
+   }
    flow.advance(10,ready);row.ticks++;
    if(site&&battle.eventExecution.state?.pc===endPc){
     const action=site.raw.mnemonic==='MsgClose'?'close':'open';assert(battle.messageExecution.some(e=>e.pc===actualPc&&e.action===action),'Actual source operation was not executed');
@@ -212,7 +219,7 @@ const report={kind:family==='all'?'source-battle-common-family-execution-v1':fam
   affectedProgramAttempts:programs.filter(r=>r.affected).length,affectedProgramFinished:programs.filter(r=>r.affected&&r.run.result==='whole-program-finished-and-restored').length,originalPartyAttempts:originalParties.length,originalPartyDirectoryRequests:familyDirectory?.requestedPartyIds.length??0,originalPartyDescriptorDiagnostics:input.dependencies.diagnostics.length},
  parameters,programs,originalParties,blockerGroups:[...blockerGroups.values()],sourceCampaignComplete:false,nativeParity:false,browserVerified:false,
  familyCounts:family==='branch-execution'?{programs:input.programs.length,rawInstructions:input.inventory.counts.instructions,deferredSites:input.programs.reduce((n,p)=>n+(p.compiled.branchExecution?.deferred.length??0),0)}:family==='system-messages'?{systemMessageSites:systemSites.length,physicalPrograms:systemPrograms.size,completeRawInstructions:input.programs.filter(p=>systemPrograms.has(p.id)).reduce((n,p)=>n+p.data.Mnemonics.length,0)}:family==='effects'?{playSites:effectSites.filter(s=>s.raw.mnemonic==='PlayBattleEffect').length,syncSites:effectSites.filter(s=>s.raw.mnemonic==='SyncBattleEffect').length,physicalPrograms:input.programs.filter(p=>p.data.Mnemonics.some(i=>['PlayBattleEffect','SyncBattleEffect'].includes(i.mnemonic))).length,completeRawInstructions:input.programs.filter(p=>p.data.Mnemonics.some(i=>['PlayBattleEffect','SyncBattleEffect'].includes(i.mnemonic))).reduce((n,p)=>n+p.data.Mnemonics.length,0)}:null,
- controlledHost:{input:'Explicit recorded confirmation and legal existing battle commands',caller:'Authored ordinary Session/placement; original battle body and all unknowns intact',clock:'10ms fixed Web manager-before-VM; no message-implied pause',policy:sourceWebReplayRuntimePorts(),messageOwner:'Actual Field.sourceMessage; no second window owner',smoke:!!o.smoke}};
+ controlledHost:{input:'Explicit recorded confirmation and current-menu qualified battle commands',battleInputPolicy:BATTLE_OBSERVER_INPUT_POLICY,caller:'Authored ordinary Session/placement; original battle body and all unknowns intact',clock:'10ms fixed Web manager-before-VM; no message-implied pause',policy:sourceWebReplayRuntimePorts(),messageOwner:'Actual Field.sourceMessage; no second window owner',smoke:!!o.smoke}};
 await writeFile(resolve(dirname(out),'attempts-draft.json'),observationDraftJSON(report));
 try{report.contentHash=api.hash(report);}catch(error){progress.status='failed-report-validation';progress.error=observerErrorDetails(error);await persistProgress();throw error;}
 await writeFile(out,JSON.stringify(report)+'\n');progress.status=report.result;progress.reportContentHash=report.contentHash;await persistProgress();console.log(JSON.stringify({result:report.result,counts:report.counts,hash:report.contentHash,report:out}));
