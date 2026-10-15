@@ -203,7 +203,8 @@
     "source-batches:check": "npm run build && node scripts/check-selected-source-batches.mjs",
     "source-services:check": "npm run build && node scripts/check-source-services-journey.mjs",
     "content-history:archive": "npm run build && node scripts/archive-content-release.mjs",
-    "content-history:check": "npm run build && node scripts/check-content-release-session.mjs && node scripts/check-audio-release-ui.mjs && node scripts/check-game-entry-ui.mjs"
+    "content-history:check": "npm run build && node scripts/check-content-release-session.mjs && node scripts/check-audio-release-ui.mjs && node scripts/check-game-entry-ui.mjs",
+    "source-encounters:check": "npm run build && .venv/bin/python tools/native/check_source_encounter.py --root . --output build/reports/source-encounter-native && node --max-old-space-size=8192 scripts/compile-source-encounter-candidates.mjs --output build/reports/source-encounter-candidates && node --max-old-space-size=8192 scripts/check-source-encounter-programs.mjs --candidate-dir build/reports/source-encounter-candidates --report build/reports/source-encounter-programs-check.json"
   },
   "dependencies": {
     "zod": "4.6.5"

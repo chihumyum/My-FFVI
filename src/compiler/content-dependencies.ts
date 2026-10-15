@@ -3,6 +3,7 @@ import type { SourceWalkEncounterDependencies, SourceWalkEncounterRowEvidence, W
 import { tableId } from "./table-id.js";
 import { canonical } from "../core/canonical.js";
 import { parseFrameworkWalkEncounterPolicy } from "../core/walk-encounters.js";
+import { parseSourceEncounterCommand } from "../core/source-encounter.js";
 import { fieldInstructionRequirements, assessFieldRequirements,
   type FieldRequirement, type FieldAdmissionContext } from "../core/field-content-admission.js";
 
@@ -354,6 +355,23 @@ export function analyzeContentDependencies(input: {
           if (!integer(op.party, 1)) diagnose("encounter-id-invalid", `Invalid encounter identity ${op.party}`, at);
           referenceScript(from, map, op.continuation, op);
           break;
+        case "source-encounter": {
+          try { parseSourceEncounterCommand(op.command); }
+          catch (error) { diagnose("source-encounter-command-invalid", error instanceof Error ? error.message : String(error), at); }
+          // Retain each physical slot edge, including repeated IDs. The final
+          // catalog request set deduplicates definitions, never probabilities.
+          if (Array.isArray(op.command.slots)) for (const [slotIndex, partyId] of op.command.slots.entries()) {
+            if (partyId === 0) continue;
+            const valid = slotIndex < 4 && integer(partyId, 1), site = { ...op, source: { ...op.source,
+              pointer: `${op.source.pointer ?? `/Mnemonics/${op.index}`}/operands/iValues/${slotIndex}` } };
+            if (valid) encounters.add(partyId);
+            edge(`${from}/source-encounter-slot:${slotIndex}`, "encounter", partyId,
+              valid ? `encounter:${partyId}` : null, valid ? "resolved" : "missing", site);
+            if (!valid) diagnose("encounter-id-invalid", `Invalid source encounter slot ${slotIndex}: ${partyId}`, at);
+          }
+          referenceScript(from, map, op.command.continuation, op);
+          break;
+        }
         case "change-map": referenceEntry(from, { kind: "entry", ...op.request }, op); break;
         case "entities": referenceGroup(from, map, op.group, op); break;
         case "call": case "jump": case "branch": case "branch-character": case "branch-leader": case "field-party-query": case "puppet":

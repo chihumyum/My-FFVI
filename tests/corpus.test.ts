@@ -39,6 +39,9 @@ const script = (name: string, ops: unknown[], bundle = "fixture.bundle") =>
     { Mnemonics: ops },
     bundle,
   );
+const sourceEncounter = (party: number, continuation: string) => ({ mnemonic: "Encount", type: 1,
+  operands: { iValues: [party, 0, 0, 0, 0, 0, 0, 0], rValues: Array(8).fill(0),
+    sValues: [continuation, "", "", "", "", "", "", ""] } });
 function fixture() {
   const assets = [
     asset("Assets/Fixture/package.json", "map-package", {
@@ -53,7 +56,7 @@ function fixture() {
         },
       ],
     }),
-    script("start", [op("Encount", [3], ["after"])]),
+    script("start", [sourceEncounter(3, "after")]),
     script("after", [op("Exit")]),
   ];
   const tables = {
@@ -91,7 +94,7 @@ test("missing continuations and invalid targets remain visible while SE decode r
   const { assets, tables } = fixture();
   assets[1] = script("start", [
     op("Call", [999]),
-    op("Encount", [3], ["missing"]),
+    sourceEncounter(3, "missing"),
     {
       mnemonic: "PlaySE", type: 1,
       operands: {

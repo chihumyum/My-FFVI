@@ -140,12 +140,14 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
   const load = name => import(pathToFileURL(resolve(root, compiled, "src/core", name + ".js")));
   const [{ GameSession }, { GameFlow }, { GameMapLoader }, { CheckpointStorage }, { GameEventSaveCoordinator },
     { GameEntryLoader }, { GameBattleHandoff }, { GameCommands }, { prepareGameDevelopmentEntry },
-    { NewGameFieldEntry }, { FieldFadeState }, { createSourcePresentationContext }, { contentDigest }] = await Promise.all([
+    { NewGameFieldEntry }, { FieldFadeState }, { createSourcePresentationContext }, { contentDigest },
+    { WEB_SOURCE_ENCOUNTER_POLICY }] = await Promise.all([
     load("game-session"), load("game-flow"), load("game-map-loader"), load("saved-game"), load("game-event-save"),
     load("game-entry-loader"), load("game-battle-handoff"), load("game-commands"), load("game-development-entry"),
     load("new-game-field-entry"), load("field-fade"), load("source-presentation"), load("content-integrity"),
+    load("source-encounter-entry"),
   ]);
-  const runtime = { ...controlledAudioRuntime(), battleHandoff: "prepared",
+  const runtime = { ...controlledAudioRuntime(), battleHandoff: "prepared", sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY,
     transportationTimestamp: () => "639273600000000000" };
   const host = { visible: true, mediaReady: true, overlayOpen: false };
   const extended = route.inputs.some(input => input.kind === "menu" || input.kind === "save-restore" ||

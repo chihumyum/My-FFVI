@@ -4,9 +4,11 @@ import type { CorpusAsset, loadCorpus } from "./corpus.js";
 import { canonical, hash, record } from "./content.js";
 import { tableId } from "./table-id.js";
 import { validateSourceWalkEncounterDependencies } from "./content-dependencies.js";
+import { compileSourceEncounterInstruction, sourceEncounterLiteralCandidates } from "./source-encounter.js";
 
 export type SourceBattleRequestSite = {
-  kind: "source-walking-slot" | "typed-field-encounter" | "blocked-field-primary" | "unbound-field-primary";
+  kind: "source-walking-slot" | "typed-field-encounter" | "typed-source-encounter" |
+    "blocked-field-primary" | "blocked-field-candidate" | "unbound-field-primary" | "unbound-field-candidate";
   partyId: number;
   mapId: number | null;
   script: string | null;
@@ -52,8 +54,9 @@ const rawAt = (asset: CorpusAsset, index: number): unknown | null => {
 };
 
 /** Whole-world discovery, independent of branch reachability or battle entry.
- * Every typed source reference and blocked literal primary candidate survives.
- * Extra Encount operands and region grids remain explicit unknowns. The caller
+ * Every original probability slot survives, including repeated/blocked literal
+ * candidates. Slot semantics are source-bound; other operands and region grids
+ * retain their actual diagnostics. The caller
  * verifies payload bytes; cross-bindings and completeness are checked here. */
 export function collectSourceBattleRequests(input: {
   catalog: WorldCatalog;
@@ -90,9 +93,8 @@ export function collectSourceBattleRequests(input: {
     const sites = references.get(site.partyId) ?? [];
     sites.push(structuredClone(site)); references.set(site.partyId, sites);
   };
-  const primary = (raw: unknown): number | null => {
-    try { const i = record(record(raw).operands).iValues; return Array.isArray(i) && identity(i[0]) ? i[0] : null; }
-    catch { return null; }
+  const candidates = (raw: unknown): ReturnType<typeof sourceEncounterLiteralCandidates> => {
+    try { return sourceEncounterLiteralCandidates(raw); } catch { return []; }
   };
   for (const map of [...maps.values()].sort((a, b) => a.mapId - b.mapId)) {
     const walking = map.sourceWalkEncounters;
@@ -116,28 +118,35 @@ export function collectSourceBattleRequests(input: {
         diagnose("source-walk-encounter-policy-unimplemented", "Source timing and lottery remain unimplemented", map.mapId, walking.map.source);
     }
     for (const [script, ops] of Object.entries(map.scripts)) for (const op of ops) {
-      if (op.kind !== "encounter" && !(op.kind === "blocked" && op.mnemonic === "Encount")) continue;
+      if (op.kind !== "encounter" && op.kind !== "source-encounter" && !(op.kind === "blocked" && op.mnemonic === "Encount")) continue;
       const key = sourceKey(op.source), asset = assets.get(key), raw = asset ? rawAt(asset, op.index) : null;
       if (!raw || record(raw).mnemonic !== "Encount") {
         diagnose("source-battle-field-source-missing", "Field encounter has no matching original instruction", map.mapId, op.source, script, op.index);
         continue;
       }
       mappedRaw.add(key + ":" + op.index);
-      const partyId = primary(raw);
-      if (op.kind === "encounter" && (!identity(op.party) || partyId !== op.party)) {
-        diagnose("source-battle-field-source-mismatch", "Typed field encounter disagrees with its original primary operand", map.mapId, op.source, script, op.index);
-        if (partyId !== null) add({ kind: "blocked-field-primary", partyId, mapId: map.mapId, script, index: op.index,
-          slot: null, source: op.source, rawPartyId: partyId, rawRate: null, rawInstruction: structuredClone(raw) });
-        continue;
+      const slots = candidates(raw);
+      let mismatch = false;
+      if (op.kind === "source-encounter") {
+        try { mismatch = canonical(compileSourceEncounterInstruction(raw).command) !== canonical(op.command); }
+        catch { mismatch = true; }
+      } else if (op.kind === "encounter") {
+        const original = record(record(raw).operands);
+        mismatch = slots.length !== 1 || slots[0]!.slotIndex !== 0 || !identity(op.party) || slots[0]!.partyId !== op.party ||
+          !Array.isArray(original.sValues) || original.sValues[0] !== op.continuation;
       }
+      if (mismatch) diagnose("source-battle-field-source-mismatch",
+        "Typed field encounter disagrees with its complete original probability slots or command", map.mapId, op.source, script, op.index);
       if (op.kind === "blocked") diagnose("source-battle-field-variant-unimplemented", op.reason, map.mapId, op.source, script, op.index);
-      if (partyId === null) {
-        diagnose("source-battle-primary-unresolved", "Source Encount primary operand is not a positive literal identity", map.mapId, op.source, script, op.index);
-        continue;
+      if (!slots.length) diagnose("source-battle-candidates-unresolved", "Source Encount has no source-proven positive literal probability slot",
+        map.mapId, op.source, script, op.index);
+      for (const { slotIndex, partyId } of slots) {
+        const kind = mismatch || op.kind === "blocked" ? slotIndex === 0 ? "blocked-field-primary" : "blocked-field-candidate"
+          : op.kind === "source-encounter" ? "typed-source-encounter" : "typed-field-encounter";
+        add({ kind, partyId, mapId: map.mapId, script, index: op.index,
+          slot: op.kind === "encounter" && !mismatch ? null : String(slotIndex), source: op.source,
+          rawPartyId: partyId, rawRate: null, rawInstruction: structuredClone(raw) });
       }
-      add({ kind: op.kind === "encounter" ? "typed-field-encounter" : "blocked-field-primary", partyId,
-        mapId: map.mapId, script, index: op.index, slot: null, source: op.source,
-        rawPartyId: partyId, rawRate: null, rawInstruction: structuredClone(raw) });
     }
   }
   // Raw scripts without a selected alias/map binding still remain visible.
@@ -147,10 +156,13 @@ export function collectSourceBattleRequests(input: {
     for (const [index, raw] of ((data as { Mnemonics: unknown[] }).Mnemonics).entries()) {
       if (!raw || typeof raw !== "object" || (raw as Record<string, unknown>).mnemonic !== "Encount" ||
           mappedRaw.has(sourceKey(asset.source) + ":" + index)) continue;
-      const partyId = primary(raw), source = { ...asset.source, pointer: `/Mnemonics/${index}` };
+      const slots = candidates(raw), source = { ...asset.source, pointer: `/Mnemonics/${index}` };
       diagnose("source-battle-field-map-binding-unresolved", "Original Encount has no matched compiled map/script site", null, source, null, index);
-      if (partyId !== null) add({ kind: "unbound-field-primary", partyId, mapId: null, script: null, index, slot: null,
-        source, rawPartyId: partyId, rawRate: null, rawInstruction: structuredClone(raw) });
+      if (!slots.length) diagnose("source-battle-candidates-unresolved", "Unbound source Encount has no source-proven positive literal probability slot",
+        null, source, null, index);
+      for (const { slotIndex, partyId } of slots) add({ kind: slotIndex === 0 ? "unbound-field-primary" : "unbound-field-candidate",
+        partyId, mapId: null, script: null, index, slot: String(slotIndex), source,
+        rawPartyId: partyId, rawRate: null, rawInstruction: structuredClone(raw) });
     }
   }
   const requestedPartyIds = [...references.keys()].sort((a, b) => a - b);
@@ -158,7 +170,8 @@ export function collectSourceBattleRequests(input: {
     parentSourceSetHash: catalog.parentSourceSetHash, worldCatalogHash: catalog.contentHash,
     mapBindings: [...maps.values()].map(({ mapId, contentHash }) => ({ mapId, contentHash })).sort((a, b) => a.mapId - b.mapId),
     requestedPartyIds, requests: requestedPartyIds.map(partyId => ({ partyId,
-      onlyBlockedCandidates: references.get(partyId)!.every(site => ["blocked-field-primary", "unbound-field-primary"].includes(site.kind)),
+      onlyBlockedCandidates: references.get(partyId)!.every(site =>
+        ["blocked-field-primary", "blocked-field-candidate", "unbound-field-primary", "unbound-field-candidate"].includes(site.kind)),
       sites: references.get(partyId)!.sort((a, b) => canonical(a).localeCompare(canonical(b))) })),
     diagnostics: diagnostics.sort((a, b) => canonical(a).localeCompare(canonical(b))), runtimeAdmission: "unassessed" as const };
   return { ...structuredClone(body), contentHash: hash(body) };

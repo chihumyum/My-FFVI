@@ -292,7 +292,7 @@ function controlledPng() {
 
 // Fixture composition and assertions follow below. They exercise the same
 // pinned initialized entry as the app; no legacy owner is patched into one.
-async function packages(packageId = "controlled-initialized-ui") {
+async function packages(packageId = "controlled-initialized-ui", sourceEncounters = false) {
   const { frameworkNewGameFixture } = await load("tests/fixtures/framework-new-game.js");
   const { compileFrameworkNewGame } = await load("src/compiler/framework-new-game.js");
   const { itemFixture } = await load("tests/fixtures/items.js");
@@ -335,6 +335,20 @@ async function packages(packageId = "controlled-initialized-ui") {
     "ui-practice": site("ui-practice", [{ kind: "encounter", party: entry.encounterId, continuation: "ui-return" }]),
     "ui-return": site("ui-return", [{ kind: "exit" }]),
   };
+  if (sourceEncounters) {
+    const { decodeFieldOp } = await load("src/compiler/field.js");
+    const raw = (mnemonic, iValues, s0 = "") => ({ type: mnemonic === "SetPos" ? 2 : 1, mnemonic,
+      operands: { iValues: [...iValues, ...Array(8 - iValues.length).fill(0)], rValues: Array(8).fill(0),
+        sValues: [s0, "", "", "", "", "", "", ""] } });
+    const compile = (instruction, name, index) => decodeFieldOp(instruction, { script: name, index, source }, {});
+    const single = compile(raw("Encount", [entry.encounterId], "ui-return"), "ui-practice", 2);
+    const pool = compile(raw("Encount", [entry.encounterId, entry.encounterId, entry.encounterId, entry.encounterId, 7], "ui-return"), "ui-source-pool", 0);
+    assert.equal(single.kind, "source-encounter"); assert.equal(pool.kind, "source-encounter");
+    scripts["ui-practice"] = site("ui-practice", [{ kind: "puppet", slot: 0, actor: "0", target: 5 },
+      { kind: "exec-puppets", asynchronous: false }, single, { kind: "exit" }, { kind: "exit" },
+      compile(raw("SetPos", [point.x + 3, point.y]), "ui-practice", 5), { kind: "exit" }]);
+    scripts["ui-source-pool"] = site("ui-source-pool", [pool, { kind: "exit" }]);
+  }
   const entity = (id, kind, dx, dy) => ({ id, kind, x: point.x + dx, y: point.y + dy, layer: point.layer,
     width: 1, height: 1, direction: "down", asset: null, script: null, collision: null, destinationLayer: null, source });
   const clerk = { ...entity("ui-counter", 5, 0, -1), mapObject: {
@@ -344,6 +358,7 @@ async function packages(packageId = "controlled-initialized-ui") {
   const entities = f.map.map.entities.filter(entity => entity.kind === 0);
   entities.push(clerk, { ...entity("ui-acquire", 2, 1, 0), script: "ui-acquire" },
     { ...entity("ui-practice", 2, 2, 0), script: "ui-practice" });
+  if (sourceEncounters) entities.push({ ...entity("ui-source-pool", 2, 4, 0), script: "ui-source-pool" });
   f.map.map.entities = entities;
   f.map.map.groups = { entity_default: { name: "entity_default", entities, blockers: [], source } };
   f.map.map.textures = { controlled: "/controlled/initialized-field.png" };
@@ -737,6 +752,86 @@ try {
       appPortCount: h.activityPorts.length, storageWrites: h.calls.writes,
       firstMapId: first.content.map.identity.mapId, secondMapId: second.content.map.identity.mapId,
       restoredMapId: restored.field.content.map.identity.mapId, sourceStoryReachability: false };
+  });
+  await check("source single-slot and probability-pool entry keep actual app ownership across media failure, cancellation, retry and restore", async () => {
+    const pack = await packages("controlled-source-encounter-ui", true), h = await host(pack), owner = await start(h);
+    const policy = core.WEB_SOURCE_ENCOUNTER_POLICY;
+    assert.equal(h.api.runtime.sourceEncounterPolicy, policy);
+    assert.equal(Reflect.get(owner.field, "options").sourceEncounter.policy, policy);
+    await move(h, "right"); // Real map trigger; no source event is invoked by the harness.
+    h.api.read().images.clear(); h.failedImages.add(`sha256:${pack.pngHash}`);
+    await move(h, "right");
+    for (let i = 0; i < 80 && h.$("retry-battle-load").hidden; i++) await h.frame();
+    assert.equal(h.$("retry-battle-load").hidden, false);
+    const request = owner.field.stop; assert.equal(request.kind, "encounter");
+    assert.deepEqual([...request.sourceEncounter.command.slots], [pack.encounterId, 0, 0, 0]);
+    assert.equal(request.sourceEncounter.command.effectId, 0);
+    const captured = structuredClone(request), before = owner.state.snapshot(),
+      player = owner.field.player, entity = player.native.entity, beforeNative = owner.field.nativeActorStateFingerprint;
+    assert.deepEqual(entity.position, request.sourceEncounter.foot.player.position);
+    assert.notDeepEqual(entity.position, owner.field.cameraSnapshot.dummy.position);
+    assert.equal(owner.battle, null); assert.equal(owner.state.inBattle, false);
+    h.failedImages.clear(); const held = deferred(), count = h.calls.imageBytes.length;
+    h.heldImages.set(`sha256:${pack.pngHash}`, held);
+    await h.click(h.$("retry-battle-load"));
+    await until(() => h.calls.imageBytes.length > count, "Source battle retry never prepared media");
+    const waitingTime = owner.field.time;
+    for (let i = 0; i < 8; i++) await h.frame();
+    assert.equal(owner.field.time, waitingTime, "Actual RAF frames must not advance a field owned by battle media preparation");
+    assert.equal(owner.field.nativeActorStateFingerprint, beforeNative);
+    assert.deepEqual(owner.state.snapshot(), before); assert.deepEqual(request, captured);
+    await h.click(h.$("cancel-battle-load")); held.resolve();
+    await until(() => h.calls.objectUrls.length === h.calls.revokedUrls.length,
+      "Cancelled image work did not release its Blob URLs");
+    await new Promise(setImmediate); h.healthy();
+    assert.equal(h.bound(), owner); assert.equal(owner.field.stop, request);
+    assert.deepEqual(request, captured); assert.deepEqual(owner.state.snapshot(), before);
+    assert.equal(owner.field.nativeActorStateFingerprint, beforeNative);
+    assert.equal(owner.state.inBattle, false); assert.equal(owner.battle, null);
+    h.heldImages.clear(); h.api.read().images.clear();
+    const successfulMedia = deferred(), retryCount = h.calls.imageBytes.length;
+    h.heldImages.set(`sha256:${pack.pngHash}`, successfulMedia);
+    await h.click(h.$("retry-battle-load"));
+    await until(() => h.calls.imageBytes.length > retryCount || !h.api.read().battleLoadAttempt?.running,
+      "Successful source retry never prepared media");
+    assert.ok(h.calls.imageBytes.length > retryCount,
+      "Source retry completed before media: " + (h.api.read().battleLoadAttempt?.error?.stack ?? "no pending error"));
+    const retryTime = owner.field.time;
+    for (let i = 0; i < 8; i++) await h.frame();
+    assert.equal(owner.field.time, retryTime, "Successful media preparation must retain the same source-entry fence across RAF frames");
+    assert.equal(owner.field.nativeActorStateFingerprint, beforeNative);
+    assert.deepEqual(owner.state.snapshot(), before); assert.deepEqual(request, captured);
+    successfulMedia.resolve(); h.heldImages.clear();
+    await until(() => !!owner.battle || !h.api.read().battleLoadAttempt?.running,
+      "Successful source retry did not finish its held media preparation");
+    h.healthy(); assert.ok(owner.battle, h.api.read().battleLoadAttempt?.error?.stack ?? "Source retry did not publish");
+    assert.equal(h.bound(), owner); assert.equal(owner.field.player, player); assert.equal(player.native.entity, entity);
+    assert.deepEqual(entity.position, owner.field.cameraSnapshot.dummy.position);
+    assert.deepEqual(request, captured); await win(h, pack);
+    const settled = owner.state.snapshot(), oldCommands = h.api.read().commands;
+    assert.equal(settled.completedBattles.length, 1);
+    await pauseMenu(h); await h.click(h.$("save-game")); await h.click(h.$("load-game"));
+    const restored = h.bound(); assert.notEqual(restored, owner); assert.deepEqual(restored.state.snapshot(), settled);
+    assert.equal(h.api.runtime.sourceEncounterPolicy, policy);
+    assert.equal(Reflect.get(restored.field, "options").sourceEncounter.policy, policy);
+    assert.equal(oldCommands.menuReady, false);
+    // Existing source Finish/Start returns to the retained leader's cell;
+    // restore preserves that actual result rather than re-running entry sync.
+    assert.equal(restored.field.player.x, pack.map.partyEntry.pointIns[0].x + 2);
+    await resume(h); await move(h, "right"); await move(h, "right");
+    for (let i = 0; i < 40 && !restored.battle; i++) await h.frame();
+    const poolRequest = restored.field.stop; assert.equal(poolRequest.kind, "encounter");
+    assert.deepEqual([...poolRequest.sourceEncounter.command.slots], Array(4).fill(pack.encounterId));
+    assert.equal(poolRequest.sourceEncounter.command.effectId, 7);
+    assert.equal(poolRequest.sourceEncounter.policy, policy);
+    assert.equal(oldCommands.command(restored.battle, pack.playerId, pack.attackId, restored.battle.enemies[0].id, pack.attackCommandId), false);
+    await win(h, pack); assert.equal(restored.state.snapshot().completedBattles.length, 2);
+    report.sourceEncounterLifecycle = { policy, appRuntimeBound: true, mediaFailureRetainedOwner: true,
+      cancelledWithoutSync: true, mediaWaitRafFrames: 16, mediaWaitFieldClockUnchanged: true,
+      sourceSingleSlots: captured.sourceEncounter.command.slots,
+      sourcePoolSlots: poolRequest.sourceEncounter.command.slots, effectId: poolRequest.sourceEncounter.command.effectId,
+      storageWrites: h.calls.writes, completedBattles: restored.state.snapshot().completedBattles.length,
+      originalGameExecuted: false, sourceStoryReachability: false, nativeRngParity: false };
   });
   assert.equal(await runtimeDigest(root, compiled), runtimeBefore, "Runtime changed during actual app checks");
   assert.equal(sha(await readFile(new URL(import.meta.url))), sha(checkerBefore), "App checker changed during checks");

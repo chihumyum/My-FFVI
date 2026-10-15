@@ -7,6 +7,7 @@ import { PartyView } from "./party-view.js";
 import { ChoiceView } from "./choice-view.js";
 import { ShopView } from "./shop-view.js";
 import { GameSession } from "/runtime/core/game-session.js";
+import { WEB_SOURCE_ENCOUNTER_POLICY } from "/runtime/core/source-encounter-entry.js";
 import { prepareGameDevelopmentEntry } from "/runtime/core/game-development-entry.js";
 import { GameFlow } from "/runtime/core/game-flow.js";
 import { GameCommands } from "/runtime/core/game-commands.js";
@@ -86,7 +87,10 @@ const readGameJson = async (url) => {
 };
 let contents = new GameContentRepository(readGameJson, contentProfile);
 // Same declared Web policy as the source-route audit; no native default claim.
-const runtime = { sourceMessageSequence: createWebFieldMessageSequencePort(),
+const runtime = {
+  // Source slots and entry ordering are retained; this seed mapping and
+  // deferred media-first publication are explicit Web policies, not Unity RNG.
+  sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY, sourceMessageSequence: createWebFieldMessageSequencePort(),
   // Explicit flat Web component/ancestor policy, rebound from each candidate's
   // trusted native factory. Saved activeSelf never grants this capability.
   conditionLeaderActivity: createWebFlatConditionLeaderActivityPort(),

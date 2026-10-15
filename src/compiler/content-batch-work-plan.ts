@@ -108,6 +108,8 @@ const diagnosticOwners: Readonly<Record<string, ContentBatchSystem>> = {
   "timer-callback-binding-invalid": "map-event-and-travel",
   "timer-callback-lottery-unimplemented": "map-event-and-travel",
   "encounter-id-invalid": "battle-and-return",
+  "source-encounter-command-invalid": "battle-and-return",
+  "source-battle-candidates-unresolved": "battle-and-return",
   "compiler-report": "battle-and-return",
   "compiler-evidence-missing": "battle-and-return",
   "missing-encounter": "battle-and-return",
@@ -174,7 +176,7 @@ const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
   screenEffects: "map-event-and-travel",
   eventSaveCompletion: "save-restore-and-continuation",
   sourceAutoSaveSync: "save-restore-and-continuation",
-  battleHandoff: "battle-and-return",
+  battleHandoff: "battle-and-return", sourceEncounter: "battle-and-return",
 };
 const byCode = (code: string): ContentBatchSystem => code === "instruction-blocked" ? "unclassified"
   : Object.hasOwn(diagnosticOwners, code) ? diagnosticOwners[code]! : "unclassified";

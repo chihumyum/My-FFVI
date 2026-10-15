@@ -1,3 +1,7 @@
+import { parseSourceEncounterCommand, selectSourceEncounterSlot } from "./source-encounter.js";
+import { captureSourceEncounterFootBackground } from "./source-encounter-foot.js";
+import { WEB_SOURCE_ENCOUNTER_POLICY, type FieldSourceEncounterPort,
+  type SourceEncounterRequest } from "./source-encounter-entry.js";
 import { actorFadeActive, sourceVisibilityDelayDue } from "./field-actor-visibility.js";
 import type {
   Direction,
@@ -309,6 +313,8 @@ export type Stop =
       site: Site | null;
       party?: number;
       continuation?: string;
+      /** Source Encount snapshot; it carries no mutable actor or RNG owner. */
+      sourceEncounter?: SourceEncounterRequest;
       /** Explicit ordinary walking return; never a fabricated event script. */
       returnTo?: { kind: "field-idle" };
     };
@@ -326,7 +332,15 @@ export type FieldEncounterReturnPublication = (() => void) & {
 // Input identity is deliberately outside the semantic/checkpoint state. A new
 // FieldGame (including restore) cannot accept a callback from an older owner.
 let nextChoiceNamespace = 1;
+export type PreparedFieldSourceEncounter = {
+  readonly request: SourceEncounterRequest;
+  readonly battleEntryContext: ReturnType<typeof projectFieldEntryContext>;
+  validate(): void;
+  commitWith(publishBattle: () => void): void;
+};
 export type FieldGameOptions = {
+  /** Trusted explicit Web selection policy; absent remains native-unknown. */
+  sourceEncounter?: FieldSourceEncounterPort;
   storyRuntimeSeed?: FieldStoryRuntimeSnapshot;
   storyTimerOrigin?: FieldTimerOriginContent;
   /** Explicit particle/material host. Content parsing never grants one. */
@@ -426,6 +440,9 @@ export class FieldGame {
       storyTimer: presence(this.timerState !== null),
       screenEffects: presence(this.ordinaryScreenEffectsAvailable),
       eventSaveCompletion: "unknown", battleHandoff: "unknown",
+      sourceEncounter: presence(this.options.sourceEncounter?.policy === WEB_SOURCE_ENCOUNTER_POLICY &&
+        !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.camera &&
+        typeof this.options.sourceEncounter.prepare === "function"),
     }, ...(refreshRequired === undefined ? {} : { refreshRequired }) };
     // A helper's source flag cannot stand in for the active event root.
     const visual = this.eventRootScript === null ? undefined : this.content.scriptSystemFlags?.[this.eventRootScript];
@@ -558,6 +575,8 @@ export class FieldGame {
   get npcActivitySnapshot(): Record<string, FieldNpcActivityState> {
     return structuredClone(Object.fromEntries([...this.npcActivities].map(([id, value]) => [id, value.state])));
   }
+  private sourceEncounterPending: { request: Extract<Stop, { kind: "unsupported" | "encounter" }>;
+    source: SourceEncounterRequest; validate(): void } | null = null;
   private nativeActorBindings: FieldActorFactoryBindings | null = null;
   private nativeActorProviders: (() => FieldPuppetHostProviders) | null = null;
   private nativeRuntime: { catalog: FieldPuppetActorCatalog; animationKeys: FieldNativeAnimationKeys | null;
@@ -3353,6 +3372,109 @@ export class FieldGame {
     return !!(this.actorVisibilityBusy || this.pendingChoice || this.messageWindow || this.sourceMessage.active || this.shopTask ||
       this.treasureHandoffBlocked() || Object.values(this.actors).some((actor) => actor.motion !== null && !this.isAutonomousMotion(actor)));
   }
+  /** Source Encount selects once and captures FootInfo while the actual
+   * player still has its pre-sync transform. No live actor is written here. */
+  private beginSourceEncounter(op: Extract<Op, { kind: "source-encounter" }>, task: Task): void {
+    const command = parseSourceEncounterCommand(op.command), port = this.options.sourceEncounter;
+    if (!port || port.policy !== WEB_SOURCE_ENCOUNTER_POLICY || !this.nativeActorBindings ||
+        !this.nativeRuntime?.mapLifecycle || !this.nativeActorProviders || !this.camera || !this.player.native)
+      throw new Error("Source encounter entry requires an explicit Web policy and native actor factory");
+    if (!this.content.scripts[command.continuation]) throw new Error("Missing source encounter continuation");
+    const camera = this.camera, bindings = this.nativeActorBindings, runtime = this.nativeRuntime,
+      player = this.player, native = player.native!, entity = native.entity, tasks = this.tasks,
+      program = this.content.scripts[task.script], pc = task.pc;
+    const fingerprint = () => canonical({ actors: this.nativeActorStateFingerprint, camera: this.cameraSnapshot,
+      event: this.eventState.snapshot(), time: this.time,
+      fade: this.fader.snapshot(), collision: this.collisionSwitches, mask: this.entityUpdateMask,
+      root: this.eventRootScript, lifecycle: this.puppetLifecycle, party: this.partyActorCheckpoint,
+      op, command, task: { script: task.script, pc: task.pc, done: task.done, generalRegisters: task.generalRegisters },
+      map: { sourceSetHash: this.content.sourceSetHash, parentSourceSetHash: this.content.parentSourceSetHash,
+        identity: this.content.map.identity ?? null, cameraHost: this.content.cameraHost ?? null,
+        factory: runtime.mapLifecycle!.factory, bindings,
+        entryContext: this.content.map.entryContext ?? null, terrain: this.content.map.worldTerrain ?? null } });
+    const before = fingerprint();
+    const validateOwner = () => {
+      if (this.options.sourceEncounter !== port || this.camera !== camera || this.nativeActorBindings !== bindings ||
+          this.nativeRuntime !== runtime || this.player !== player || player.native !== native || native.entity !== entity ||
+          this.tasks !== tasks || !tasks.includes(task) || this.content.scripts[task.script] !== program ||
+          task.pc !== pc || program?.[pc - 1] !== op || fingerprint() !== before)
+        throw new Error("Stale source encounter entry owner");
+    };
+    const selected = port.prepare(command);
+    if (!selected || typeof selected.validate !== "function") throw new Error("Invalid source encounter selection");
+    // All observed source slots are contiguous. A provider cannot select a
+    // different party/effect/continuation or manufacture a compressed hole.
+    const expected = selectSourceEncounterSlot(command, { policy: port.policy, drawIndex: selected.selection.slotIndex });
+    if (canonical(selected.selection) !== canonical(expected)) throw new Error("Source encounter selection identity mismatch");
+    const source: SourceEncounterRequest = { kind: "source-encounter-request-v1", policy: port.policy,
+      command, selection: structuredClone(expected), foot: captureSourceEncounterFootBackground({
+        definition: this.content.map.entryContext, mapId: this.content.map.identity?.mapId ?? 0,
+        entrySynchronized: this.synchronizedEntry,
+        player: { id: player.id, position: entity.position, layer: entity.layer } }) };
+    selected.validate(); validateOwner();
+    const request: Extract<Stop, { kind: "unsupported" | "encounter" }> = { kind: "encounter",
+      message: "正在准备来源战斗…", site: op, party: expected.partyId, continuation: command.continuation,
+      sourceEncounter: structuredClone(source) };
+    const key = canonical(request), sourceKey = canonical(source);
+    this.sourceEncounterPending = { request, source, validate: () => {
+      selected.validate(); validateOwner();
+      if (this.stop !== request || canonical(request) !== key || canonical(source) !== sourceKey)
+        throw new Error("Stale source encounter pending request");
+    } };
+    this.stop = request;
+  }
+  /** Private actor writes join the existing battle publication. A failed or
+   * cancelled media candidate retains the original request and player pose. */
+  prepareSourceEncounterStart(): PreparedFieldSourceEncounter | null {
+    if (this.stop?.kind !== "encounter" || this.stop.sourceEncounter === undefined) return null;
+    const pending = this.sourceEncounterPending, camera = this.camera, runtime = this.nativeRuntime,
+      bindings = this.nativeActorBindings, providers = this.nativeActorProviders;
+    if (!pending || pending.request !== this.stop || !camera || !runtime?.mapLifecycle ||
+        !bindings || !providers || !this.content.cameraHost || !this.options.partyAppearance)
+      throw new Error("Source encounter requires its original pending entry");
+    pending.validate();
+    const original = this.stop, key = canonical(original), cameraState = camera.snapshot();
+    const actors = Object.fromEntries(Object.values(this.actors).filter(actor => actor.native).map(actor => {
+      const copy = createNativeFieldActorDraft(actor, this.content.cameraHost!.mapRange,
+        this.options.partyAppearance!.catalog, this.transportationPresentation);
+      return [copy.id, copy];
+    }));
+    const player = actors[bindings.player];
+    if (!player || this.player.id !== bindings.player || player.motion || player.layer === null)
+      throw new Error("Source encounter actual player is unavailable");
+    // Web's admitted ordinary factory stores local transforms directly. No
+    // Look, material refresh, camera initialization or animation is inferred.
+    player.native.entity.position = { ...cameraState.dummy.position };
+    player.native.entity.layer = cameraState.dummy.layer;
+    const actorsPrepared = prepareNativeFieldActorState({ readActors: () => this.actors,
+      readCamera: () => null, readProviders: providers }, actors);
+    const cameraFence = camera.prepareState(cameraState);
+    let consumed = false;
+    const validate = () => {
+      if (consumed || this.stop !== original || canonical(original) !== key || this.camera !== camera ||
+          this.nativeRuntime !== runtime || this.nativeActorBindings !== bindings || this.nativeActorProviders !== providers)
+        throw new Error("Stale source encounter synchronization");
+      pending.validate(); actorsPrepared.validate(); cameraFence.validate();
+      pending.validate(); actorsPrepared.validate();
+    };
+    const battleEntryContext = projectFieldEntryContext(this.content.map.entryContext, {
+      ...(this.content.map.worldTerrain ? { terrain: this.content.map.worldTerrain,
+        sourceSetHash: this.content.sourceSetHash, parentSourceSetHash: this.content.parentSourceSetHash } : {}),
+      mapId: this.content.map.identity?.mapId ?? null, transportationId: this.transportationId,
+      activeGroups: [...this.activeGroups], player: { x: player.x, y: player.y, layer: player.layer! },
+      entrySynchronized: this.synchronizedEntry });
+    return Object.freeze({ request: structuredClone(pending.source),
+      get battleEntryContext() { return structuredClone(battleEntryContext); }, validate,
+      commitWith: (publishBattle: () => void): void => {
+        if (typeof publishBattle !== "function") throw new Error("Source encounter requires a synchronous battle publisher");
+        validate(); consumed = true;
+        cameraFence.commitWith(() => {
+          // The containing GameSession publisher is already prepared and may
+          // only perform owned plain writes. No fallible read follows it.
+          publishBattle(); actorsPrepared.commit(); return true;
+        });
+      } });
+  }
   /** Validate the handoff before consuming rewards. The commit only schedules
    * the continuation; normal simulation, not reward publication, runs its code. */
   prepareEncounterReturn(party: number, candidateOwned?: () => FieldEncounterReturnState,
@@ -3410,6 +3532,7 @@ export class FieldGame {
       this.tasks = [nextTask];
       this.nextTask = taskId + 1;
       this.stop = null;
+      this.sourceEncounterPending = null;
       this.remainder = 0;
     };
     const commitWith = (commitOwned: () => void) => {
@@ -4110,14 +4233,14 @@ export class FieldGame {
           this.block("Concurrent source message windows are not implemented", op);
           return;
         }
-        if (this.dialogue?.manual && ["change-map", "encounter"].includes(op.kind)) {
+        if (this.dialogue?.manual && ["change-map", "encounter", "source-encounter"].includes(op.kind)) {
           this.block("Field transition conflicts with an unfinished ordinary message", op);
           return;
         }
-        if (this.sourceMessage.active && op.kind === "encounter") {
+        if (this.sourceMessage.active && (op.kind === "encounter" || op.kind === "source-encounter")) {
           this.block("Source message must close before battle handoff", op); return;
         }
-        if (this.pendingChoice && ["message", "source-message", "choice", "change-map", "encounter", "treasure-box"].includes(op.kind)) {
+        if (this.pendingChoice && ["message", "source-message", "choice", "change-map", "encounter", "source-encounter", "treasure-box"].includes(op.kind)) {
           this.block("Concurrent field interaction conflicts with an unfinished choice task", op);
           return;
         }
@@ -4899,6 +5022,7 @@ export class FieldGame {
               this.dialogue = { ...presentation.message, task: t.id };
             } catch (error) { t.pc--; this.block(error instanceof Error ? error.message : String(error), op); }
             return;
+          case "source-encounter":
           case "encounter":
             if (this.hasUnfinishedInterpolation()) {
               this.block("Battle handoff requires completion of source interpolation tasks", op); return;
@@ -4914,6 +5038,11 @@ export class FieldGame {
             }
             if (this.treasureHandoffBlocked()) {
               this.block("宝箱任务尚未完成，尚不支持并发入战", op);
+              return;
+            }
+            if (op.kind === "source-encounter") {
+              try { this.beginSourceEncounter(op, t); }
+              catch (error) { this.block(error instanceof Error ? error.message : String(error), op); }
               return;
             }
             this.stop = {

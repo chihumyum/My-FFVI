@@ -1,3 +1,5 @@
+import { WEB_SOURCE_ENCOUNTER_POLICY, selectWebSourceEncounter, type WebSourceEncounterPolicy } from "./source-encounter-entry.js";
+import { sourceEncounterCandidates } from "./source-encounter.js";
 import type { FieldContent } from "../field/types.js";
 import type { GameEventSaveRequest, FieldGame, FieldGameOptions, Stop } from "./field.js";
 import { encounterContent, battleDefinitionBlocker, type BattleCatalog, type BattleContent } from "./battle-content.js";
@@ -65,7 +67,7 @@ export type GameCheckpoint = GameCheckpointBase & (
   { formatVersion: 4 } | { formatVersion: 5 | 6; walkEncounters: WalkEncounterSnapshot }
 );
 /** External observations are rebound by the host on load, never trusted from saves. */
-export type GameSessionRuntime = { audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
+export type GameSessionRuntime = { sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
   sourceMessageSequence?: NonNullable<FieldGameOptions["sourceMessageSequence"]>;
   conditionLeaderActivity?: NonNullable<FieldGameOptions["conditionLeaderActivity"]>;
@@ -213,6 +215,8 @@ export class GameSession {
     checkpointInteger(seed, 0, 0xffffffff);
     if (runtime.battleHandoff !== undefined && runtime.battleHandoff !== "prepared")
       throw new Error("Invalid session battle handoff mode");
+    if (runtime.sourceEncounterPolicy !== undefined && runtime.sourceEncounterPolicy !== WEB_SOURCE_ENCOUNTER_POLICY)
+      throw new Error("Unknown source encounter runtime policy");
     this.preparedBattleHandoff = runtime.battleHandoff === "prepared";
     this.walkEncounters = new WalkEncounterState(seed);
     this.currentBattlePreferences = parseBattlePreferences(battleCatalog.common.timing);
@@ -238,6 +242,16 @@ export class GameSession {
     this.world = new WorldSession(field, initialEvents, {
       current: {
         ...runtime,
+        ...(runtime.sourceEncounterPolicy === undefined ? {} : { sourceEncounter: {
+          policy: WEB_SOURCE_ENCOUNTER_POLICY,
+          prepare: (command: import("./source-encounter.js").SourceEncounterCommand) => {
+            const serial = this.encounterSerial;
+            const selection = selectWebSourceEncounter(command, this.seed, serial);
+            return { selection, validate: () => {
+              if (this.encounterSerial !== serial) throw new Error("Stale source encounter session serial");
+            } };
+          },
+        } }),
         ...(fresh ? { nativeActorPreparation: true,
           sourcePresentation: { context: () => structuredClone(fresh.presentation) } } : {}),
         puppetRoster: this.state.fieldPuppetRoster,
@@ -778,6 +792,28 @@ export class GameSession {
     try {
       const before = this.fieldBattleFingerprint(field);
       const seed = (this.seed + Math.imul(this.encounterSerial, 0x9e3779b1)) >>> 0;
+      const sourceEntry = field.prepareSourceEncounterStart();
+      const entryContext = sourceEntry?.battleEntryContext ?? field.battleEntryContext;
+      const profile = this.initializedEntry ? "framework" : !this.freshEntry ? "development-checkpoint" :
+        this.freshEntry.content.developmentProfile ? "framework" : "source";
+      // The whole declared probability pool must remain available. Selecting a
+      // ready primary cannot hide an unknown secondary or runtime dependency.
+      if (sourceEntry) for (const candidate of sourceEncounterCandidates(sourceEntry.request.command)) {
+        const candidateContent = encounterContent(this.battleCatalog, candidate.partyId, seed);
+        if (!candidateContent) throw new Error(`Source encounter candidate ${candidate.partyId} is unavailable`);
+        const candidateHandoff = assessBattleHandoff(candidateContent.handoff, profile);
+        if (candidateHandoff.status === "blocked") throw new Error(candidateHandoff.reason);
+        let candidateContext = candidateContent.qualificationContext;
+        if (candidateContent.battleEntry && candidateContext?.mode === "source") {
+          const projected = projectBattleFieldState(candidateContent.battleEntry, entryContext.state,
+            this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
+          if (projected.invalidContentIds === null || projected.blockers.length)
+            throw new Error(projected.blockers.join("; ") || "Unknown source encounter candidate field exclusions");
+          candidateContext = { ...candidateContext, invalidContentIds: projected.invalidContentIds, conditionContext: "current" };
+        }
+        const candidateBlocker = battleDefinitionBlocker(this.state.partyPlayers(), candidateContext, candidateContent.conditions);
+        if (candidateBlocker) throw new Error(candidateBlocker);
+      }
       let content = encounterContent(this.battleCatalog, request.party!, seed);
       if (!content) {
         const reasons = this.battleCatalog.encounterDiagnostics
@@ -787,7 +823,7 @@ export class GameSession {
           (reasons.length ? ` (${reasons.join("; ")})` : ""));
       }
       if (content.battleEntry && content.qualificationContext?.mode === "source") {
-        const projected = projectBattleFieldState(content.battleEntry, field.battleEntryContext.state,
+        const projected = projectBattleFieldState(content.battleEntry, entryContext.state,
           this.battleCatalog.gameState.fieldConditions?.transportations ?? []);
         if (projected.invalidContentIds === null || projected.blockers.length)
           throw new Error(projected.blockers.join("; ") || "Unknown battle field exclusions");
@@ -798,8 +834,9 @@ export class GameSession {
         const { escapePolicy: _, ...scripted } = content;
         content = scripted;
       }
-      const profile = !this.freshEntry ? "development-checkpoint" :
-        this.freshEntry.content.developmentProfile ? "framework" : "source";
+      if (sourceEntry && sourceEntry.request.foot.backgroundId !== 0 &&
+          sourceEntry.request.foot.backgroundId !== content.handoff?.source.metadata.backgroundId)
+        throw new Error("Captured source FootInfo background needs its exact battle asset binding");
       const handoff = assessBattleHandoff(content.handoff, profile);
       if (handoff.status === "blocked") throw new Error(handoff.reason);
       if (this.state.battlePartyBlocker) throw new Error(this.state.battlePartyBlocker);
@@ -817,13 +854,16 @@ export class GameSession {
       return this.createBattleHandoff("start", entry,
         () => this.field === field && field.stop === request && !this.battle && this.battleLease === ownedLease &&
           this.fieldBattleFingerprint(field) === before && canonical(this.state.snapshot()) === ownedBefore,
-        () => { this.state.battlePlayers(ownedLease); },
+        () => { this.state.battlePlayers(ownedLease); sourceEntry?.validate(); },
         () => {
           const battle = this.constructBattle(entry);
           return beginPublication => {
-            beginPublication();
-            this.battle = battle; this.battleEntry = entry;
-            this.encounterSerial++; this.encounterFailure = null;
+            const publish = () => {
+              beginPublication();
+              this.battle = battle; this.battleEntry = entry;
+              this.encounterSerial++; this.encounterFailure = null;
+            };
+            if (sourceEntry) sourceEntry.commitWith(publish); else publish();
           };
         },
         () => {

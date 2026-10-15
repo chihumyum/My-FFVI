@@ -55,6 +55,26 @@ test("walking encounter tables contribute every candidate to the batch closure w
   assert.ok(codes(f.analyze()).includes("walk-encounter-policy-invalid"));
 });
 
+test("source encounter closure keeps all weighted physical slots and the original continuation", () => {
+  const f = fixture();
+  script(f.a, "init", [{ kind: "source-encounter", command: { kind: "source-encounter", slots: [63, 63, 63, 47],
+    effectId: 7, continuation: "return", footCapture: "before-player-sync" } }]);
+  script(f.a, "return", [exit]);
+  const graph = f.analyze(); assert.equal(graph.referenceClosure, "closed");
+  assert.deepEqual(graph.encounterIds, [47, 63]);
+  const edges = graph.edges.filter(edge => edge.kind === "encounter");
+  assert.equal(edges.length, 4, "Weighted duplicates must remain four original dependency sites");
+  assert.deepEqual(edges.map(edge => edge.site && "source" in edge.site ? edge.site.source.pointer : null),
+    [0, 1, 2, 3].map(index => `/Mnemonics/0/operands/iValues/${index}`));
+  assert.ok(graph.edges.some(edge => edge.kind === "script" && edge.target === "map:2/script:return"));
+  const invalid = structuredClone(f.a.scripts.init![0]!);
+  if (invalid.kind !== "source-encounter") throw new Error("Fixture source encounter missing");
+  invalid.command.slots = [63, 0, 47, 0]; f.a.scripts.init = [invalid];
+  const rejected = f.analyze(); assert.ok(codes(rejected).includes("source-encounter-command-invalid"));
+  assert.deepEqual(rejected.encounterIds, [47, 63], "Unknown selection does not discard source dependency candidates");
+  assert.equal(rejected.referenceClosure, "incomplete"); assert.equal(rejected.runtimeAdmission, "unassessed");
+});
+
 test("entry selects continuation OR initializer, while null/empty continuation uses the initializer", () => {
   const f = fixture();
   script(f.a, "init", [{ kind: "blocked", mnemonic: "Unknown", reason: "controlled gap" }]);

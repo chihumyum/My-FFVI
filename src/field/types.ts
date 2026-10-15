@@ -43,6 +43,7 @@ import type { FieldTransportationOp } from "../core/field-transportation-command
 import type { FieldMessageTemplate } from "../core/field-message-template.js";
 import type { FrameworkWalkEncounterPolicy } from "../core/walk-encounters.js";
 import type { GameDevelopmentEntry } from "../core/game-development-entry.js";
+import type { SourceEncounterOp } from "../core/source-encounter.js";
 export type Point = { x: number; y: number };
 export type Direction = "up" | "right" | "down" | "left";
 export type Evidence = {
@@ -279,6 +280,7 @@ export type Op = Site &
         loop: boolean;
       }
     | ({ kind: "message"; manual?: FieldManualMessage } & FieldMessage)
+    | SourceEncounterOp
     | { kind: "encounter"; party: number; continuation: string }
     | { kind: "blocked"; mnemonic: string; reason: string }
   );

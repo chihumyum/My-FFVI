@@ -33,6 +33,7 @@ import { compileFieldTimerInstruction, fieldTimerMnemonics, fieldTimerSelectors 
 import { compileFieldScreenEffectInstruction, fieldScreenEffectMnemonics } from "./field-screen-effects.js";
 import { compileFieldAutoSaveInstruction } from "./field-auto-save.js";
 import { compileFieldInternalClockInstruction } from "./field-internal-clock.js";
+import { compileSourceEncounterInstruction } from "./source-encounter.js";
 import { compilePlayerVisibilityInstruction, compilePlayerVisibilityFactory, playerVisibilityMnemonics } from "./player-visibility.js";
 import { compileFieldTaskControlInstruction, fieldTaskControlMnemonics } from "./field-task-control.js";
 import { compileFieldFadeInstruction } from "./field-fade.js";
@@ -480,6 +481,10 @@ export function decodeFieldOp(
   }
   if (name === "LookAt" && form([0]) && directions[i[0]!])
     return { ...site, kind: "look", direction: directions[i[0]!]! };
+  if (name === "Encount" && Object.hasOwn(m, "type")) {
+    try { return { ...site, ...compileSourceEncounterInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (name === "Encount" && form([0], [], [0]))
     return { ...site, kind: "encounter", party: i[0]!, continuation: s[0]! };
   return blocked("Instruction or operand form has not been migrated");
