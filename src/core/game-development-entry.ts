@@ -101,6 +101,7 @@ export function gameDevelopmentEntryProfile(baseFieldHash: string, catalog: Worl
     ...(catalog.developmentProfile!.transportation ? { transportation: catalog.developmentProfile!.transportation } : {}),
     ...(catalog.developmentProfile!.worldMap ? { worldMap: catalog.developmentProfile!.worldMap } : {}),
     ...(catalog.developmentProfile!.fieldPresentation ? { fieldPresentation: catalog.developmentProfile!.fieldPresentation } : {}),
+    ...(catalog.developmentProfile!.worldAutoMove ? {worldAutoMove:catalog.developmentProfile!.worldAutoMove}:{}),
     ...(catalog.developmentProfile!.worldAutoTasks ? { worldAutoTasks: catalog.developmentProfile!.worldAutoTasks } : {}),
     ...(catalog.developmentProfile!.storyRuntime ? { storyRuntime: catalog.developmentProfile!.storyRuntime } : {}),
     ...(catalog.developmentProfile!.autoSave ? { autoSave: catalog.developmentProfile!.autoSave } : {}) };

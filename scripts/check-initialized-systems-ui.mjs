@@ -482,6 +482,12 @@ async function packages(packageId = "controlled-initialized-ui", sourceEncounter
       entry.lifecycle.program.end=entry.lifecycle.program.instructions.length;
     }
   }
+  if(packageId==='controlled-world-auto-move'){
+    for(const value of [f.map,f.world]){value.developmentProfile.worldAutoTasks=core.WEB_FLAT_WORLD_AUTO_TASKS;value.developmentProfile.worldAutoMove=core.WEB_FLAT_WORLD_AUTO_MOVE;}
+    const {compileFieldWorldAutoMove}=await load('src/compiler/field-world-auto-tasks.js');
+    const move=compileFieldWorldAutoMove({type:1,mnemonic:'AddAirShipMoveTask',operands:{iValues:Array(8).fill(0),rValues:[.05,1,0,0,0,0,0,0],sValues:Array(8).fill('')}});
+    scripts['ui-acquire']=site('ui-acquire',[{kind:'puppet',slot:0,actor:'0',target:5},{kind:'exec-puppets',asynchronous:true},move,{kind:'field-world-auto-task',command:{kind:'start'}},{kind:'exit'},{kind:'nop'},{kind:'exit'}]);
+  }
   if(packageId==='controlled-world-auto-tasks'){
     f.map.developmentProfile.worldAutoTasks=f.world.developmentProfile.worldAutoTasks=core.WEB_FLAT_WORLD_AUTO_TASKS;
     const {compileFieldWorldAutoInstruction}=await load('src/compiler/field-world-auto-tasks.js'),raw=(mnemonic,reals=[])=>({type:1,mnemonic,operands:{iValues:[1,0,0,0,0,0,0,0],rValues:[...reals,...Array(8-reals.length).fill(0)],sValues:Array(8).fill('')}});
@@ -1437,6 +1443,18 @@ try {
     const restored=h.bound();assert.notEqual(restored,owner);assert.deepEqual(restored.checkpoint(),saved);
     retained();assert.deepEqual(restored.checkpoint(),saved);assert.deepEqual(owner.state.snapshot().roster,before.roster);
     report.sourcePartySelection={actualApp:true,actualCommands:true,actualNativeOwner:true,detachedUi:true,storageWrites:h.calls.writes,sourceStoryReachability:false,nativeParity:false};
+  });
+  await check('shared world auto movement uses the actual app host/Field motion and preserves hidden-tab pause and stable native Storage pose',async()=>{
+    const pack=await packages('controlled-world-auto-move'),h=await host(pack),owner=await start(h),field=owner.field,before=owner.state.snapshot();
+    assert.equal(h.api.runtime.worldAutoMove,core.WEB_FLAT_WORLD_AUTO_MOVE);
+    // The authored source ExecPuppet declares the collision-free precondition
+    // through the actual VM; no native raycast grant is inferred.
+    h.$('game').focus();h.key('ArrowRight');assert(field.player.motion);for(let i=0;i<60&&!field.worldAutoTaskSnapshot.tasks.length;i++)await h.frame();assert.equal(field.stop,null,field.stop?.message);assert(field.worldAutoTaskSnapshot.tasks.length);
+    const native=field.player.native.entity,queue=field.worldAutoTaskSnapshot,position=structuredClone(native.position);assert(!owner.checkpointReady);
+    h.visibility(true);await h.frame(1000);assert.deepEqual(native.position,position);assert.deepEqual(field.worldAutoTaskSnapshot,queue);h.visibility(false);await resume(h);
+    for(let i=0;i<100&&!owner.checkpointReady;i++)await h.frame();assert(owner.checkpointReady,field.stop?.message);assert.equal(field.player.native.entity,native);assert.notDeepEqual(native.position,position);assert.deepEqual(owner.state.snapshot(),before);
+    const saved=owner.checkpoint();await pauseMenu(h);await h.click(h.$('save-game'));await h.click(h.$('load-game'));assert.deepEqual(h.bound().checkpoint(),saved);
+    report.worldAutoMove={actualApp:true,actualFollowingActor:true,actualMotionOwner:true,hiddenClockGate:true,stableNativeStorage:true,sourceProgramsExecuted:0,nativeParity:false};
   });
   await check('world auto scalar tasks use the actual app Field clock and host policy, preserve hidden-tab gating and restore one stable camera pose',async()=>{
     const pack=await packages('controlled-world-auto-tasks'),h=await host(pack),owner=await start(h),field=owner.field,before=owner.state.snapshot();

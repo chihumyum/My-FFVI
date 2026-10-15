@@ -2,9 +2,9 @@ import { fieldMessageNameReferences, fieldMessageUsesFee } from "./field-message
 import type { FieldContent, Op, Site } from "../field/types.js";
 
 export const fieldProviders = Object.freeze([
-  "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
+  "birdViewActors", "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
-  "sourcePartySelection", "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "viewChange", "worldAutoTasks", "sourceAutoSaveSync",
+  "sourcePartySelection", "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "viewChange", "worldAutoTasks", "worldAutoMove", "sourceAutoSaveSync",
 ] as const);
 export type FieldProvider = typeof fieldProviders[number];
 export type FieldProviderStatus = "available" | "missing" | "unknown";
@@ -42,6 +42,7 @@ export type FieldContentRequirements = {
 };
 
 const codes: Record<FieldCapability, string> = {
+  birdViewActors: "FIELD_BIRD_VIEW_ACTOR_PROVIDER",
   puppetRoutes: "FIELD_PUPPET_ROUTE_PROVIDER",
   messageValues: "FIELD_MESSAGE_VALUES_PROVIDER",
   scriptRandom: "FIELD_SCRIPT_RANDOM_PROVIDER",
@@ -59,6 +60,7 @@ const codes: Record<FieldCapability, string> = {
   cameraShake: "FIELD_CAMERA_SHAKE_PROVIDER",
   viewChange: "FIELD_VIEW_CHANGE_PROVIDER",
   worldAutoTasks: 'FIELD_WORLD_AUTO_TASK_PROVIDER',
+  worldAutoMove:'FIELD_WORLD_AUTO_MOVE_PROVIDER',
   contentInvalidations: "FIELD_CONTENT_INVALIDATIONS_PROVIDER",
   sourceAutoSaveSync: "FIELD_SOURCE_AUTO_SAVE_SYNC_PROVIDER",
   sourceEncounter: "FIELD_SOURCE_ENCOUNTER_PROVIDER",
@@ -151,6 +153,7 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
   };
   switch (op.kind) {
     case "field-view-change": add("viewChange", "ChangeView requires the explicit bound flat Web camera/party controller"); break;
+    case 'field-world-auto-move':add('worldAutoTasks','World auto movement requires the shared parallel task clock');add('worldAutoMove','World auto movement requires a bound following entity and explicit flat movement policy');break;
     case 'field-world-auto-task': add('worldAutoTasks','World auto tasks require the explicit current flat content/runtime camera and parallel task host');break;
     case "actor-visibility": add("actorControl", "Source actor visibility requires its bound control owner"); break;
     case "position":
@@ -232,6 +235,11 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       break;
     }
     case "bgm-ready": add("audioReadiness", "Missing BGM resource readiness provider"); break;
+    case "field-bird-view-move": {
+      add("birdViewActors", "MoveBirdView requires an explicit bound actor elevation component");
+      if (commandOf(op).move !== null) add("scriptMotion", "MoveBirdView delegates the existing ordinary source Move provider");
+      break;
+    }
     case "field-script-motion": {
       const command = commandOf(op);
       if (command.kind !== "move" && command.kind !== "move-to" && command.kind !== "lerp") throw new Error("Invalid field script motion requirement command");

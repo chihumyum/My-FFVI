@@ -30,3 +30,17 @@ test('complete candidate catalogs bind every original map even outside one consu
   const v=structuredClone({report,index,source,framework});change(v);assert.throws(()=>validate(v.report,v.index,v.source,v.framework));
  }
 });
+
+test('whole newgame candidate requires the same complete directory proof and exact policy input, without replacing legacy objects',async()=>{
+ const {validateSourceCandidateReport:validate}=await import(moduleUrl),f=fixture(),report:any=structuredClone(f.report),extra=[
+  '/framework/full-new-game.json','/framework/full-battle.json','/framework/full-content-refs.json','/framework/full-battle-binding.json',
+  '/framework/full-battle-directory-requests.json','/framework/full-battle-directory-report.json'];
+ report.objects.push(...extra.map((url,i)=>({url,sha256:'e'.repeat(64),bytes:1,...(i===2?{}:{contentHash:String(i+1).repeat(64)})})));
+ report.frameworkBattleDirectory={input:{path:'content-batches/source-battle-directory.policy.json',sha256:'d'.repeat(64),bytes:32,realPath:'/controlled/policy.json'},
+  entryHash:'1'.repeat(64),catalogHash:'2'.repeat(64),bindingHash:'4'.repeat(64),requestsHash:'5'.repeat(64),reportHash:'6'.repeat(64)};
+ assert.equal(validate(report,f).size,10);
+ for(const mutate of [(r:any)=>{r.objects=r.objects.filter((o:any)=>o.url!==extra[2]);},(r:any)=>{r.frameworkBattleDirectory.requestsHash='0'.repeat(64);},
+  (r:any)=>{r.frameworkBattleDirectory.reportHash='0'.repeat(64);},(r:any)=>{r.frameworkBattleDirectory.input.path='another-policy.json';}]){
+  const changed=structuredClone(report);mutate(changed);assert.throws(()=>validate(changed,f));
+ }
+});

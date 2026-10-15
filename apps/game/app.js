@@ -1,3 +1,4 @@
+import {WEB_FLAT_WORLD_AUTO_MOVE} from '/runtime/core/field-world-auto-move.js';
 import { WEB_BATTLE_BRANCH_EXECUTION } from '/runtime/core/battle-branch-execution.js';
 import { WEB_SCRIPTED_BATTLE_ACTIONS } from "/runtime/core/scripted-battle-action.js";
 import { WEB_FLAT_WORLD_AUTO_TASKS } from '/runtime/core/field-world-auto-tasks.js';
@@ -108,8 +109,9 @@ const runtime = {
   // deferred media-first publication are explicit Web policies, not Unity RNG.
   retainedWorldTransportation: "web-retained-walking-magitek-world-entry-v1",
   assignedNpcRoutes: "web-assigned-npc-route-grid-v1",
+  birdViewActors:"web-flat-bird-view-actors-v1",
   viewChange:"web-flat-field-view-change-v2",
-  worldAutoTasks:WEB_FLAT_WORLD_AUTO_TASKS,
+  worldAutoTasks:WEB_FLAT_WORLD_AUTO_TASKS,worldAutoMove:WEB_FLAT_WORLD_AUTO_MOVE,
   battleEventEffects:"web-source-battle-effects-pulse-v1",
   sourcePartySelection:WEB_SOURCE_PARTY_SELECTION,
   sourceBossEntry:WEB_SOURCE_BOSS_ENTRY,sourceBattleResult:WEB_COMMITTED_BATTLE_RESULT,

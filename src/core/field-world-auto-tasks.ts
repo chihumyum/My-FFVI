@@ -1,3 +1,4 @@
+import {parseWorldAutoMoveCommand,type WorldAutoMoveCommand} from './field-world-auto-move.js';
 import type { FieldContent, Site } from '../field/types.js';
 import { canonical } from './canonical.js';
 import { checkpointKeys, checkpointInteger } from './checkpoint-validation.js';
@@ -11,14 +12,14 @@ export type WorldAutoBinding = { mapId: number; fieldContentHash: string };
 export type WorldAutoPose = WorldAutoValues & {
   kind: 'web-flat-world-auto-pose-v1'; policy: WebFlatWorldAutoTasks; binding: WorldAutoBinding;
 };
-export type FieldWorldAutoCommand = { kind: 'start' } | {
+export type FieldWorldAutoCommand = WorldAutoMoveCommand | { kind: 'start' } | {
   kind: 'add-scalar'; channel: WorldAutoChannel; seconds: number;
   /** null reads the camera's current scalar immediately when added. */
   start: number | null; value: number;
 };
 export type FieldWorldAutoOp = { kind: 'field-world-auto-task'; command: FieldWorldAutoCommand };
-export type WorldAutoTask = { ticket: number; site: Site; channel: WorldAutoChannel;
-  seconds: number; start: number; value: number; elapsed: number; started: boolean };
+type WorldAutoTaskBase={ticket:number;site:Site;seconds:number;elapsed:number;started:boolean};
+export type WorldAutoTask=WorldAutoTaskBase&({channel:WorldAutoChannel;start:number;value:number}|{channel:'movement';movement:WorldAutoMoveCommand});
 export type WorldAutoQueue = { nextTicket: number; revision: number; tasks: WorldAutoTask[] };
 const f = Math.fround;
 const channels: WorldAutoChannel[] = ['rotation', 'flightAltitude', 'upDown'];
@@ -31,6 +32,7 @@ function scalar(raw: unknown): number {
   return raw;
 }
 export function parseFieldWorldAutoCommand(raw: FieldWorldAutoCommand): FieldWorldAutoCommand {
+  if(raw?.kind==='add-movement')return parseWorldAutoMoveCommand(raw);
   checkpointKeys(raw, raw?.kind === 'start' ? 'kind' : 'kind,channel,seconds,start,value');
   if (raw.kind === 'start') return { kind: 'start' };
   if (raw.kind !== 'add-scalar' || !channels.includes(raw.channel)) throw new Error('Unknown world auto-task command');
@@ -70,6 +72,8 @@ export function addWorldAutoCommand(queue: WorldAutoQueue, pose: WorldAutoPose, 
     // Start never consumes/clears the list. Explicit Web rule: already running
     // tasks keep their elapsed time; every newly appended task starts together.
     for (const task of next.tasks) task.started = true;
+  } else if(command.kind==='add-movement'){
+    next.tasks.push({ticket:next.nextTicket++,site:structuredClone(site),channel:'movement',movement:command,seconds:command.seconds,elapsed:0,started:false});
   } else {
     const start = command.start ?? pose[command.channel];
     // Fail before queue publication if even the eventual endpoint overflows.
@@ -79,21 +83,22 @@ export function addWorldAutoCommand(queue: WorldAutoQueue, pose: WorldAutoPose, 
   }
   next.revision++; return next;
 }
-export function advanceWorldAutoQueue(queue: WorldAutoQueue, current: WorldAutoPose): { queue: WorldAutoQueue; pose: WorldAutoPose; completed: number[] } {
-  const next = structuredClone(queue), pose = parseWorldAutoPose(current), completed: number[] = [];
+export function advanceWorldAutoQueue(queue: WorldAutoQueue, current: WorldAutoPose): { queue: WorldAutoQueue; pose: WorldAutoPose; completed: number[];movements:{ticket:number;command:WorldAutoMoveCommand;rotation:number}[] } {
+  const next = structuredClone(queue), pose = parseWorldAutoPose(current), completed: number[] = [],movements:{ticket:number;command:WorldAutoMoveCommand;rotation:number}[]=[];
   for (const task of next.tasks) {
     if (!task.started) continue;
     // Source coroutine tests before its next delta. Zero/negative duration does
     // not invoke a setter or force an endpoint, but still terminates on a tick.
     if (task.elapsed >= task.seconds) { completed.push(task.ticket); continue; }
     task.elapsed = scalar(f(task.elapsed + f(.01)));
+    if(task.channel==='movement'){if(!task.movement)throw Error('Missing world auto-movement command');movements.push({ticket:task.ticket,command:parseWorldAutoMoveCommand(task.movement),rotation:pose.rotation});continue;}
     const ratio = f(Math.max(0, Math.min(1, f(task.elapsed / task.seconds))));
     pose[task.channel] = scalar(task.channel === 'rotation' ? f(f(ratio * task.value) + task.start)
       : f(task.start + f(f(task.value - task.start) * ratio)));
   }
   next.tasks = next.tasks.filter(task => !completed.includes(task.ticket));
   if (queue.tasks.some(task => task.started)) next.revision++;
-  return { queue: next, pose, completed };
+  return { queue: next, pose, completed,movements };
 }
 /** Declared Canvas projection: source-angle rotation, bounded exponential zoom
  * from altitude, and source-pixel vertical offset. No 3D camera/RT simulation. */

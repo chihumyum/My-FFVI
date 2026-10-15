@@ -144,14 +144,16 @@ function parseBattleRebindings(raw=[]){
 
 async function frameworkUpgradeDeclaration(raw,root,compiledDir){
   if(raw===undefined)return null;
-  const worldAuto=raw?.kind==='compiled-framework-profile-upgrade-v5';
+  const worldMove=raw?.kind==='compiled-framework-profile-upgrade-v7';
+  const birdActors=raw?.kind==='compiled-framework-profile-upgrade-v6'||worldMove;
+  const worldAuto=raw?.kind==='compiled-framework-profile-upgrade-v5'||birdActors;
   const animated=raw?.kind==='compiled-framework-profile-upgrade-v4'||worldAuto;
   const periodic=raw?.kind==='compiled-framework-profile-upgrade-v3'||animated&&Object.hasOwn(raw?.markers??{},'worldMap');
   const logical=raw?.kind==='compiled-framework-profile-upgrade-v2'||(periodic||animated)&&Object.hasOwn(raw,'logicalFieldEffects');
   dataFields(raw,['kind','compilerDigest','markers',...(logical?['logicalFieldEffects']:[])],'framework profile upgrade declaration');
-  assert.ok(['compiled-framework-profile-upgrade-v1','compiled-framework-profile-upgrade-v2','compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5'].includes(raw.kind),'Unknown framework profile upgrade version');
+  assert.ok(['compiled-framework-profile-upgrade-v1','compiled-framework-profile-upgrade-v2','compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7'].includes(raw.kind),'Unknown framework profile upgrade version');
   assert.ok(typeof raw.compilerDigest==='string'&&digest.test(raw.compilerDigest),'Invalid framework profile upgrade compiler digest');
-  const hosts={...frameworkHostMarkers,...(worldAuto?{worldAutoTasks:{value:'web-flat-world-auto-tasks-v1',module:'field-world-auto-tasks',exportName:'WEB_FLAT_WORLD_AUTO_TASKS',provider:'worldAutoBinding'}}:{}),...(animated?{mapAnimatedEntities:{value:'web-field-animated-map-entities-v1',module:'field-map-animation',exportName:'WEB_FIELD_MAP_ANIMATION',provider:'prepareFieldMapAnimations'}}:{}),...(logical?{logicalFieldEffects:logicalMarker}:{}),...(periodic?periodicMarkers:{})};
+  const hosts={...frameworkHostMarkers,...(worldMove?{worldAutoMove:{value:'web-flat-world-auto-move-v1',module:'field-world-auto-move',exportName:'WEB_FLAT_WORLD_AUTO_MOVE',provider:'worldAutoMoveBinding'}}:{}),...(birdActors?{birdViewActors:{value:'web-flat-bird-view-actors-v1',module:'field-bird-view-actors',exportName:'WEB_FLAT_BIRD_VIEW_ACTORS',provider:'fieldBirdViewActorBinding'}}:{}),...(worldAuto?{worldAutoTasks:{value:'web-flat-world-auto-tasks-v1',module:'field-world-auto-tasks',exportName:'WEB_FLAT_WORLD_AUTO_TASKS',provider:'worldAutoBinding'}}:{}),...(animated?{mapAnimatedEntities:{value:'web-field-animated-map-entities-v1',module:'field-map-animation',exportName:'WEB_FIELD_MAP_ANIMATION',provider:'prepareFieldMapAnimations'}}:{}),...(logical?{logicalFieldEffects:logicalMarker}:{}),...(periodic?periodicMarkers:{})};
   dataFields(raw.markers,Object.keys(hosts),'framework profile upgrade markers');
   const result=structuredClone(raw),providers=[];
   for(const [marker,definition] of Object.entries(hosts)){
@@ -184,7 +186,7 @@ async function frameworkUpgradeDeclaration(raw,root,compiledDir){
 function comparableFrameworkUpgrade(before,after,ref,declaration,canonical){
   if(!declaration)return {after,upgrade:null};
   const previous=before.developmentProfile,next=after.developmentProfile;
-  if(['compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5'].includes(declaration.kind)&&
+  if(['compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7'].includes(declaration.kind)&&
       ['world-map-development','field-development'].includes(after.kind)) {
     // A marker proof is not a presentation/media/geometry migration proof.
     // In particular, same physical SourceRefs do not establish unchanged

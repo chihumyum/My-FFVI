@@ -39,10 +39,11 @@ export async function loadBattleEventMessageSourceInputs(root,compiledDir,{branc
  const ids=new Set(snapshot.tables['script.csv'].filter(row=>programs.some(p=>p.source.assetPath.endsWith('/'+row.script_name+'.json'))).map(row=>row.id)),
   partyIds=snapshot.tables['monster_party.csv'].filter(row=>Number(row.script_name)>0&&ids.has(row.script_name)).map(row=>Number(row.id)),
   nameAssets=new Map();for(const p of scripts){const key=p.source.assetPath.split('/').at(-1).replace(/\.json$/,'');const list=nameAssets.get(key)??[];list.push(p);nameAssets.set(key,list);}
- const dependencies=partyIds.length?api.compileBattleEncounterSources(snapshot.reader,{partyIds,json(name){const matches=nameAssets.get(name)??[];assert.equal(matches.length,1,'Exact source script/AI namespace required: '+name);const source=typedSource(matches[0]);assert(source,'Source dependency lacks its actual battle-export binding: '+name);return {data:matches[0].data,source};},
-  spritePath(suffix){const matches=Object.entries(battle.sprites).filter(([path])=>path.toLowerCase().endsWith(suffix.toLowerCase()));assert.equal(matches.length,1,'Unresolved exact source sprite '+suffix);return matches[0][0];}}):{requestedPartyIds:[],encounters:[],diagnostics:[]};
+ const encounterSources={json(name){const matches=nameAssets.get(name)??[];assert.equal(matches.length,1,'Exact source script/AI namespace required: '+name);const source=typedSource(matches[0]);assert(source,'Source dependency lacks its actual battle-export binding: '+name);return {data:matches[0].data,source};},
+  spritePath(suffix){const matches=Object.entries(battle.sprites).filter(([path])=>path.toLowerCase().endsWith(suffix.toLowerCase()));assert.equal(matches.length,1,'Unresolved exact source sprite '+suffix);return matches[0][0];}};
+ const dependencies=partyIds.length?api.compileBattleEncounterSources(snapshot.reader,{partyIds,...encounterSources}):{requestedPartyIds:[],encounters:[],diagnostics:[]};
  const analysis=api.analyzeCorpus(snapshot.assets,snapshot.tables,snapshot.messages,snapshot.sourceSetHash);
- return {api,snapshot,sourceDigest,input,scripts,programs:compiled,sites,dependencies,analysis,
+ return {api,snapshot,sourceDigest,input,scripts,programs:compiled,sites,dependencies,encounterSources,analysis,
   inventory:{kind:'battle-event-message-source-inventory-v1',sourceSetHash:snapshot.sourceSetHash,parentSourceSetHash:snapshot.manifest.parentSourceSetHash,sourceDigest,
    binding:input.binding,counts:{allPrograms:scripts.length,allInstructions:scripts.reduce((n,p)=>n+p.data.Mnemonics.length,0),programs:programs.length,
     instructions:programs.reduce((n,p)=>n+p.data.Mnemonics.length,0),affectedPrograms:compiled.filter(p=>p.messageSites.length).length,

@@ -1,3 +1,5 @@
+import {WEB_FLAT_WORLD_AUTO_MOVE} from '../core/field-world-auto-move.js';
+import { WEB_FLAT_BIRD_VIEW_ACTORS } from "../core/field-bird-view-actors.js";
 import { deriveFrameworkFieldEffectFlatContent, type FrameworkFieldEffectFlatAssessment } from "./framework-field-effect-flat-projection.js";
 import { deriveFrameworkNpcFlatContent, type FrameworkNpcFlatAssessment } from "./framework-npc-flat-projection.js";
 import { canonical, hash } from "./content.js";
@@ -22,7 +24,9 @@ export type LogicalFieldEffectsDeclaration = {
   mapIds: readonly number[]; reason: string;
 };
 export type FrameworkContentOptions = {
+  worldAutoMove?: typeof WEB_FLAT_WORLD_AUTO_MOVE;
   worldAutoTasks?: typeof WEB_FLAT_WORLD_AUTO_TASKS;
+  birdViewActors?: typeof WEB_FLAT_BIRD_VIEW_ACTORS;
   mapAnimatedEntities?: typeof WEB_FIELD_MAP_ANIMATION;
   logicalFieldEffects?: { catalog: FieldEffectCatalog; declaration: LogicalFieldEffectsDeclaration };
   periodicPresentations?: readonly FrameworkPeriodicAssessment[];
@@ -192,11 +196,14 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (!initial || strictEntry.mapContentHash !== initial.contentHash)
     throw new Error("Framework strict entry/map binding mismatch");
 
-  if (Object.keys(options).some(key => key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
+  if (Object.keys(options).some(key => key !== 'worldAutoMove' && key !== 'birdViewActors' && key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
     throw new Error("Unknown framework derivation option");
+  if(options.worldAutoMove!==undefined&&(options.worldAutoMove!==WEB_FLAT_WORLD_AUTO_MOVE||options.worldAutoTasks!==WEB_FLAT_WORLD_AUTO_TASKS))throw Error('World auto movement requires its declared flat task host');
   if(options.worldAutoTasks!==undefined&&options.worldAutoTasks!==WEB_FLAT_WORLD_AUTO_TASKS)throw new Error('Unknown framework world auto-task policy');
   if (options.mapAnimatedEntities !== undefined && options.mapAnimatedEntities !== WEB_FIELD_MAP_ANIMATION)
     throw new Error("Unknown framework animated map entity policy");
+  if (options.birdViewActors !== undefined && options.birdViewActors !== WEB_FLAT_BIRD_VIEW_ACTORS) throw new Error("Unknown framework BirdView actor policy");
+  const birdViewActors = options.birdViewActors;
   const mapAnimatedEntities = options.mapAnimatedEntities;
   const logical = options.logicalFieldEffects === undefined ? undefined : structuredClone(options.logicalFieldEffects);
   if (logical) {
@@ -216,7 +223,8 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
     validateLogicalEffectCatalog(logical.catalog);
   }
   const derivedProfile = (sourceContentHash: string, local: DevelopmentOmission[]): DevelopmentProfile => ({
-    ...profile(sourceContentHash, local), ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
+    ...profile(sourceContentHash, local), ...(birdViewActors ? { birdViewActors } : {}), ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
+    ...(options.worldAutoMove?{worldAutoMove:options.worldAutoMove}:{}),
     ...(options.worldAutoTasks?{worldAutoTasks:options.worldAutoTasks}:{}),
   });
   const retained: FrameworkContentRetained[] = [], omissions: DevelopmentOmission[] = [], scriptReferences = new Set<string>();

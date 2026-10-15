@@ -9,6 +9,11 @@ import { webSourceFrameworkInputs } from './source-web-framework-inputs.mjs';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 export const SHARED_SOURCE_CANDIDATE = 'shared-source-candidate-v1';
 const KINDS = [SHARED_SOURCE_CANDIDATE, 'source-map-animation-candidate-v1', 'source-play-animation-candidate-v1', 'source-flat-npc-candidate-v1', 'source-birdview-field-effect-candidate-v1'];
+const directoryPolicyPath='content-batches/source-battle-directory.policy.json';
+async function directoryPolicyInput(root,expected){
+ const file=resolve(root,directoryPolicyPath),bytes=await readFile(file),record={path:directoryPolicyPath,sha256:sha(bytes),bytes:bytes.length,realPath:await realpath(file)};
+ if(expected)assert.deepEqual(record,expected,'Whole newgame battle directory policy changed');return {record,policy:JSON.parse(bytes)};
+}
 export function parseSourceCandidateOptions(args) {
     assert.equal(args.length % 2, 0, 'Expected option/value pairs'); const result = {};
     for (let i = 0; i < args.length; i += 2) {
@@ -36,6 +41,17 @@ export function validateSourceCandidateReport(report, { runtimeSha256, inputByte
         assert.ok(/^[a-f0-9]{64}$/.test(row.sha256) && Number.isSafeInteger(row.bytes) && row.bytes > 0, 'Invalid candidate object binding');
         assert.ok(row.contentHash === undefined || row.contentHash === null || /^[a-f0-9]{64}$/.test(row.contentHash), 'Invalid candidate content hash');
         index.set(row.url, structuredClone(row));
+    }
+    if(report.frameworkBattleDirectory){
+        const binding=report.frameworkBattleDirectory;
+        assert.equal(binding.input?.path,directoryPolicyPath);assert.match(binding.input.sha256,/^[a-f0-9]{64}$/);
+        assert(Number.isSafeInteger(binding.input.bytes)&&binding.input.bytes>0&&typeof binding.input.realPath==='string');
+        for(const url of ['/framework/full-new-game.json','/framework/full-battle.json','/framework/full-content-refs.json','/framework/full-battle-binding.json','/framework/full-battle-directory-requests.json','/framework/full-battle-directory-report.json'])assert(index.has(url),'Missing whole newgame battle dependency '+url);
+        assert.equal(index.get('/framework/full-battle-binding.json').contentHash,binding.bindingHash);
+        assert.equal(index.get('/framework/full-battle.json').contentHash,binding.catalogHash);
+        assert.equal(index.get('/framework/full-new-game.json').contentHash,binding.entryHash);
+        assert.equal(index.get('/framework/full-battle-directory-requests.json').contentHash,binding.requestsHash);
+        assert.equal(index.get('/framework/full-battle-directory-report.json').contentHash,binding.reportHash);
     }
     for (const url of ['/world/catalog.json', '/framework/world/catalog.json', '/game/source-new-game.json', '/game/source-catalog.json'])
         assert.ok(index.has(url), 'Missing complete candidate dependency ' + url);
@@ -99,7 +115,9 @@ export async function openSourceCandidate({ root, runtimeRoot, compiledDir, cand
     const runtimeSha256 = await runtimeDigest(runtimeRoot, compiledDir), reportBytes = await readFile(resolve(candidateDir, 'report.json')),
         inputBytes = await readFile(resolve(candidateDir, 'inputs.json')), report = JSON.parse(reportBytes), lock = JSON.parse(inputBytes),
         index = validateSourceCandidateReport(report, { runtimeSha256, inputBytes, legacyKind });
+    if(report.frameworkBattleDirectory)await directoryPolicyInput(root,report.frameworkBattleDirectory.input);
     await validateSourcePrerequisiteInputs(lock, { root });
+    if(report.frameworkBattleDirectory)assert.deepEqual(lock.files.find(row=>row.path===directoryPolicyPath),report.frameworkBattleDirectory.input,'Whole directory policy is outside the candidate input fence');
     const cache = new Map();
     async function objectBytes(row) {
         const bytes = await readFile(await containedFile(candidateDir, row.url));
@@ -126,6 +144,7 @@ export async function openSourceCandidate({ root, runtimeRoot, compiledDir, cand
         assert.equal(sha(await readFile(resolve(candidateDir, 'report.json'))), sha(reportBytes), 'Candidate receipt changed');
         assert.equal(sha(await readFile(resolve(candidateDir, 'inputs.json'))), sha(inputBytes), 'Candidate input lock changed');
         assert.equal(await runtimeDigest(runtimeRoot, compiledDir), runtimeSha256, 'Runtime changed during candidate consumption');
+        if(report.frameworkBattleDirectory)await directoryPolicyInput(root,report.frameworkBattleDirectory.input);
         await validateSourcePrerequisiteInputs(lock, { root });
         for (const row of index.values()) await objectBytes(row);
     }
@@ -133,15 +152,32 @@ export async function openSourceCandidate({ root, runtimeRoot, compiledDir, cand
 }
 /** One full strict/framework compile and prerequisite link. The shared receipt
  * describes compilation provenance only; it awards no family/story readiness. */
-export async function compileSourceCandidate({ root, runtimeRoot, compiledDir, output, kind = SHARED_SOURCE_CANDIDATE }) {
+export async function compileSourceCandidate({ root, runtimeRoot, compiledDir, output, kind = SHARED_SOURCE_CANDIDATE, wholeBattleDirectory = kind === SHARED_SOURCE_CANDIDATE }) {
+    assert.equal(typeof wholeBattleDirectory,'boolean','Whole source battle directory requires an explicit boolean');
     assert.ok(KINDS.includes(kind)); root = resolve(root); compiledDir = resolve(root, compiledDir); output = resolve(root, output);
     const rel = relative(root, output);
     assert.ok(rel && !rel.startsWith('..') && !isAbsolute(rel) && rel.startsWith('build' + sep), 'Private candidate output must be inside root/build');
     assert.ok(!/^build\/(?:content-packages|content-releases|corpus|import|field-effect-media)(?:\/|$)/.test(rel.split(sep).join('/')), 'Candidate cannot overwrite public/raw input directories');
     const runtimeSha256 = await runtimeDigest(runtimeRoot, compiledDir), started = Date.now();
+    const directoryInput=wholeBattleDirectory?await directoryPolicyInput(root):null;
     const result = await compileSourcePrerequisites({ root, compiledDir, ...webSourceFrameworkInputs() });
+    if(directoryInput){assert(!result.inputs.files.some(row=>row.path===directoryPolicyPath));result.inputs.files.push(directoryInput.record);result.inputs.files.sort((a,b)=>a.path.localeCompare(b.path));}
     console.log('pure source prerequisite compiled');
     const linked = await linkSourcePrerequisites({ root, compiledDir, payloads: result.payloads, frameworkOptions: result.frameworkOptions });
+    let frameworkBattleDirectory;
+    if(directoryInput){
+        const {compileSourceBattleDirectory}=await import('./source-battle-directory.mjs'),{bindFrameworkSourceBattleDirectory}=await import('./framework-source-battle-binding.mjs');
+        const sourceWorld=linked.inputs.get('/world/catalog.json'),sourceBattle=linked.inputs.get('/game/source-catalog.json'),
+          maps=Object.values(sourceWorld.maps).map(ref=>{assert(linked.inputs.has(ref.url));return linked.inputs.get(ref.url);});
+        const directory=await compileSourceBattleDirectory({root,compiledDir,world:{catalog:sourceWorld,maps},baseCatalog:sourceBattle,policy:directoryInput.policy});
+        const bound=await bindFrameworkSourceBattleDirectory({root,compiledDir,sourceWorld,sourceBattle,sourceEntry:linked.inputs.get('/game/source-new-game.json'),
+          frameworkEntry:linked.inputs.get('/framework/new-game.json'),frameworkWorld:linked.inputs.get('/framework/world/catalog.json'),directory});
+        for(const[url,value]of bound.payloads){assert(!linked.inputs.has(url));linked.inputs.set(url,value);}
+        linked.inputs.set('/framework/full-battle-directory-requests.json',directory.requests);linked.inputs.set('/framework/full-battle-directory-report.json',directory.report);
+        await directoryPolicyInput(root,directoryInput.record);
+        frameworkBattleDirectory={input:directoryInput.record,bindingHash:bound.report.contentHash,catalogHash:bound.battle.contentHash,entryHash:bound.entry.contentHash,
+          requestsHash:directory.requests.contentHash,reportHash:directory.report.contentHash,requestedParties:directory.requests.requestedPartyIds.length,compiledDefinitions:Object.keys(bound.battle.encounters).length,sourceCampaignComplete:false};
+    }
     assert.equal(await runtimeDigest(runtimeRoot, compiledDir), runtimeSha256, 'Runtime changed during private source compilation');
     await validateSourcePrerequisiteInputs(result.inputs, { root });
     const staging = output + '.preparing-' + randomUUID(), objects = [];
@@ -154,11 +190,12 @@ export async function compileSourceCandidate({ root, runtimeRoot, compiledDir, o
     const inputBytes = JSON.stringify(result.inputs, null, 2) + '\n';
     const report = { kind, status: 'complete', runtimeSha256, producer: result.report, link: linked.report,
         inputLock: { file: 'inputs.json', sha256: sha(inputBytes), bytes: Buffer.byteLength(inputBytes) }, objects,
-        elapsedMs: Date.now() - started, pureCompilations: 1, prerequisiteLinks: 1, published: false, countsAreStoryReachability: false };
+        elapsedMs: Date.now() - started, pureCompilations: 1, prerequisiteLinks: 1, published: false, countsAreStoryReachability: false, ...(frameworkBattleDirectory?{frameworkBattleDirectory}:{}) };
     const index = validateSourceCandidateReport(report, { runtimeSha256, inputBytes: Buffer.from(inputBytes), legacyKind: kind });
     validateSourceCandidateCatalogs(report, index, linked.inputs.get('/world/catalog.json'), linked.inputs.get('/framework/world/catalog.json'));
     await writeFile(resolve(staging, 'inputs.json'), inputBytes); await writeFile(resolve(staging, 'report.json'), JSON.stringify(report, null, 2) + '\n');
     assert.equal(await runtimeDigest(runtimeRoot, compiledDir), runtimeSha256, 'Runtime changed before candidate installation');
+    if(directoryInput)await directoryPolicyInput(root,directoryInput.record);
     let previous;
     try { await rename(output, previous = output + '.previous-' + randomUUID()); } catch (error) { if (error.code !== 'ENOENT') throw error; previous = undefined; }
     try { await rename(staging, output); } catch (error) { if (previous) await rename(previous, output); throw error; }

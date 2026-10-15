@@ -592,7 +592,7 @@ export class WorldSession {
     const passiveEffects = target.map ? bindPassiveEffects({ ...target, map: target.map }) : new Set<string>();
     if (!this.effectOwner && Object.values(target.map?.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id))))
       throw new Error("Destination field-effect particle allocation requires a transactional map lifecycle provider");
-    const nativeActors = from.nativeActorCandidate, nativeRuntime = from.nativeActorRuntime;
+    const nativeActors = from.nativeMapDepartureCandidate, nativeRuntime = from.nativeActorRuntime;
     const nativeState = this.owned?.nativeState?.();
     if (from.player.native && (!nativeActors || !nativeRuntime || !nativeState))
       throw new Error("Native actor map handoff requires its actor and source state owners");
@@ -740,7 +740,9 @@ export class WorldSession {
           ...(this.owned?.current.sourceEncounter ? { sourceEncounter: this.owned.current.sourceEncounter } : {}),
           ...(this.owned?.current.sourceMessageSequence ? { sourceMessageSequence: this.owned.current.sourceMessageSequence } : {}),
           ...(this.owned?.current.conditionLeaderActivity ? { conditionLeaderActivity: this.owned.current.conditionLeaderActivity } : {}),
+          ...(this.owned?.current.birdViewActors ? {birdViewActors:this.owned.current.birdViewActors} : {}),
           ...(this.owned?.current.viewChange ? {viewChange:this.owned.current.viewChange} : {}),
+          ...(this.owned?.current.worldAutoMove ? {worldAutoMove:this.owned.current.worldAutoMove}:{}),
           ...(this.owned?.current.worldAutoTasks ? {worldAutoTasks:this.owned.current.worldAutoTasks} : {}),
           ...(this.owned?.current.retainedWorldTransportation ? {retainedWorldTransportation:this.owned.current.retainedWorldTransportation} : {}),
           ...(this.owned?.current.cameraShake ? { cameraShake: this.owned.current.cameraShake } : {}),

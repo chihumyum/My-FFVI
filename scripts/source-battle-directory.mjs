@@ -10,7 +10,7 @@ async function modules(root,compiledDir){
   const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src/'+name+'.js')).href);
   return Object.assign({},...await Promise.all([
     'compiler/source-battle-requests','compiler/battle','compiler/game-catalog','compiler/system-source',
-    'compiler/battle-encounters','compiler/battle-encounter-runtime','compiler/battle-handoff',
+    'compiler/battle-encounters','compiler/battle-encounter-runtime','compiler/battle-handoff','compiler/source-battle-participant-closure',
     'compiler/battle-batch-entry','compiler/content-batch-battle','compiler/integrity','compiler/content',
     'core/content-integrity','core/source-catalog','core/battle-rewards','core/battle-handoff-content',
   ].map(load)));
@@ -24,16 +24,17 @@ function fields(value,keys,label){
 }
 function parsePolicy(raw,api){
   fields(raw,'kind,framework','source battle directory policy');
-  assert.ok(['source-battle-directory-policy-v1','source-battle-directory-policy-v2','source-battle-directory-policy-v3','source-battle-directory-policy-v4'].includes(raw.kind),'Unknown source battle directory policy version');
-  fields(raw.framework,raw.kind==='source-battle-directory-policy-v4'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution':raw.kind==='source-battle-directory-policy-v3'?'handoff,entry,conditionControlPolicy,manualControls':raw.kind==='source-battle-directory-policy-v2'?'handoff,entry,conditionControlPolicy':'handoff,entry','framework battle directory policy');
-  const current=['source-battle-directory-policy-v3','source-battle-directory-policy-v4'].includes(raw.kind),manualControls=current?raw.framework.manualControls:undefined;
-  const branchExecution=raw.kind==='source-battle-directory-policy-v4'?raw.framework.branchExecution:undefined;
-  if(raw.kind==='source-battle-directory-policy-v4')assert.equal(branchExecution,'web-source-battle-branch-execution-v1','Missing or unknown source battle branch policy');
+  assert.ok(['source-battle-directory-policy-v1','source-battle-directory-policy-v2','source-battle-directory-policy-v3','source-battle-directory-policy-v4','source-battle-directory-policy-v5'].includes(raw.kind),'Unknown source battle directory policy version');
+  fields(raw.framework,raw.kind==='source-battle-directory-policy-v5'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution,sourceParticipants':raw.kind==='source-battle-directory-policy-v4'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution':raw.kind==='source-battle-directory-policy-v3'?'handoff,entry,conditionControlPolicy,manualControls':raw.kind==='source-battle-directory-policy-v2'?'handoff,entry,conditionControlPolicy':'handoff,entry','framework battle directory policy');
+  const current=['source-battle-directory-policy-v3','source-battle-directory-policy-v4','source-battle-directory-policy-v5'].includes(raw.kind),manualControls=current?raw.framework.manualControls:undefined;
+  const sourceParticipants=raw.kind==='source-battle-directory-policy-v5'?api.parseSourceBattleParticipantPolicy(raw.framework.sourceParticipants):undefined;
+  const branchExecution=['source-battle-directory-policy-v4','source-battle-directory-policy-v5'].includes(raw.kind)?raw.framework.branchExecution:undefined;
+  if(['source-battle-directory-policy-v4','source-battle-directory-policy-v5'].includes(raw.kind))assert.equal(branchExecution,'web-source-battle-branch-execution-v1','Missing or unknown source battle branch policy');
   if(current)assert.equal(manualControls,'web-manual-battle-controls-v1','Missing or unknown manual controls policy');
   const conditionControlPolicy=raw.kind!=='source-battle-directory-policy-v1'?parseConditionControlPolicy(raw.framework.conditionControlPolicy):undefined;
   return {kind:raw.kind,framework:{handoff:api.parseBattleHandoffPolicy(raw.framework.handoff),
     entry:raw.framework.entry===null?null:api.parseBattleBatchEntryPolicy(raw.framework.entry),
-    ...(conditionControlPolicy?{conditionControlPolicy}:{}),...(manualControls===undefined?{}:{manualControls}),...(branchExecution===undefined?{}:{branchExecution})}};
+    ...(conditionControlPolicy?{conditionControlPolicy}:{}),...(manualControls===undefined?{}:{manualControls}),...(branchExecution===undefined?{}:{branchExecution}),...(sourceParticipants?{sourceParticipants}:{})}};
 }
 function parseConditionControlPolicy(raw){
   fields(raw,'kind','Web condition control policy');
@@ -180,7 +181,7 @@ export async function compileSourceBattleDirectory({root=repository,compiledDir=
   const requestBody={kind:'source-battle-directory-requests-v1',sourceSetHash:corpus.sourceSetHash,parentSourceSetHash:catalog.parentSourceSetHash,
     sourceRequests,retainedBase:{catalogHash:base.contentHash,partyIds:retainedBaseRequests},requestedPartyIds};
   const requests={...requestBody,contentHash:api.hash(requestBody)};
-  const descriptors=api.compileBattleEncounterSources(reader,{partyIds:requestedPartyIds,json:name=>{
+  const descriptorSources={json:name=>{
     const found=Object.values(exported.assets).filter(asset=>asset.source.assetPath.endsWith('/'+name+'.json'));
     assert.equal(found.length,1,'Missing or ambiguous battle JSON: '+name);
     const asset=found[0],files=exported.sources.filter(file=>file.file===asset.source.file||file.file.endsWith('/'+asset.source.file));
@@ -190,7 +191,8 @@ export async function compileSourceBattleDirectory({root=repository,compiledDir=
   },spritePath:suffix=>{
     const found=Object.keys(exported.sprites).filter(path=>path.toLowerCase().endsWith(suffix.toLowerCase()));
     assert.equal(found.length,1,'Missing or ambiguous battle sprite: '+suffix);return found[0];
-  }});
+  }};
+  const descriptors=api.compileBattleEncounterSources(reader,{partyIds:requestedPartyIds,...descriptorSources});
   const shared=await api.compileGameCatalogModules(root,source);
   assert.equal(base.common.fieldSourceSetHash,shared.common.fieldSourceSetHash,'Source owner baseline field mismatch');
   const runtimeInput={...shared.runtimeInput,requestedPartyIds,encounters:descriptors.encounters,sourceDiagnostics:descriptors.diagnostics};
@@ -200,11 +202,14 @@ export async function compileSourceBattleDirectory({root=repository,compiledDir=
   assert.equal(api.canonical(strictCatalog.gameState),api.canonical(base.gameState),'Strict directory changed source initial owners');
   const {drops:oldDrops,...oldCommon}=base.common,{drops:newDrops,...newCommon}=strictCatalog.common;
   assert.equal(api.canonical(oldCommon),api.canonical(newCommon),'Strict directory changed shared source capabilities');
+  const participantClosure=declared.framework.sourceParticipants?api.compileSourceBattleParticipantClosure(reader,{policy:declared.framework.sourceParticipants,
+    encounters:descriptors.encounters,sources:descriptorSources,eventMessages:shared.runtimeInput.eventMessages,branchExecution:declared.framework.branchExecution}):null;
   const runtime=api.compileBattleEncounterRuntime(shared.reader,{...runtimeInput,
+    ...(participantClosure?{reserveEnemies:participantClosure.reserveEnemies,enemyParties:participantClosure.enemyParties,sourceDiagnostics:[...runtimeInput.sourceDiagnostics,...participantClosure.diagnostics]}:{}),
     ...(declared.framework.branchExecution===undefined?{}:{branchExecution:declared.framework.branchExecution}),
     ...(declared.framework.manualControls===undefined?{}:{manualControls:declared.framework.manualControls}),
     ...(declared.framework.conditionControlPolicy?{conditionControlPolicy:declared.framework.conditionControlPolicy}:{}),handoff:{policy:declared.framework.handoff},
-    development:bindEntryPolicy(declared.framework.entry,descriptors.encounters,api)});
+    development:{...bindEntryPolicy(declared.framework.entry,descriptors.encounters,api),...(participantClosure?{participants:participantClosure.participants}:{})}});
   const composed=await composeFrameworkBattleDirectory({root,compiledDir,baseCatalog:base,runtime,conditionControlPolicy:declared.framework.conditionControlPolicy});
   const frameworkCatalog=composed.catalog;
   const analyze=value=>{
@@ -222,7 +227,7 @@ export async function compileSourceBattleDirectory({root=repository,compiledDir=
   };
   const reportBody={kind:'source-battle-directory-build-v1',sourceSetHash:corpus.sourceSetHash,
     parentSourceSetHash:source.parentSourceSetHash,battleSourceSetHash:exported.sourceSetHash,policy:declared,
-    policyChanges:composed.policyChanges,baselineHash:base.contentHash,requestsHash:requests.contentHash,strictCatalogHash:strictCatalog.contentHash,frameworkCatalogHash:frameworkCatalog.contentHash,
+    policyChanges:composed.policyChanges,...(participantClosure?{sourceParticipantClosure:participantClosure.report}:{}),baselineHash:base.contentHash,requestsHash:requests.contentHash,strictCatalogHash:strictCatalog.contentHash,frameworkCatalogHash:frameworkCatalog.contentHash,
     requestedPartyIds,sourceDescriptors:{compiled:descriptors.encounters.length,blocked:descriptors.diagnostics.length,diagnostics:descriptors.diagnostics},
     strict:{...strictCatalog.encounterReport,analysis:analyze(strictCatalog)},framework:{...composed.runtime.report,analysis:analyze(frameworkCatalog)},
     entryDependencies:{scripts:groups('scriptId',encounter=>encounter.script).map(entry=>{

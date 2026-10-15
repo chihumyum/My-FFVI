@@ -1,5 +1,5 @@
 {
-  "kind": "source-battle-directory-policy-v4",
+  "kind": "source-battle-directory-policy-v5",
   "framework": {
     "handoff": {
       "kind": "framework-battle-handoff-v1",
@@ -41,6 +41,11 @@
       "kind": "web-source-control-actions-v1"
     },
     "manualControls": "web-manual-battle-controls-v1",
-    "branchExecution": "web-source-battle-branch-execution-v1"
+    "branchExecution": "web-source-battle-branch-execution-v1",
+    "sourceParticipants": {
+      "kind": "web-source-dynamic-participants-v1",
+      "slotLayout": "source-party-nine-slots",
+      "rewardScope": "all-entered"
+    }
   }
 }

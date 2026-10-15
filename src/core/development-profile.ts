@@ -24,6 +24,7 @@ export type DevelopmentProfile = {
   /** Ordinary source maps with explicit static RGBA character/layer display.
    * This does not grant native group-material or water-shader acceptance. */
   fieldPresentation?: "framework-ordinary-field-flat-v1";
+  worldAutoMove?: 'web-flat-world-auto-move-v1';
   worldAutoTasks?: 'web-flat-world-auto-tasks-v1';
   mapAnimatedEntities?: "web-field-animated-map-entities-v1";
   npcActivity?: "framework-npc-area-v1";
@@ -38,6 +39,8 @@ export type DevelopmentProfile = {
   /** Shared source event controls on a declared Web clock and screen host. */
   storyRuntime?: "web-field-story-runtime-v1";
   autoSave?: "web-field-autosave-barrier-v1";
+  /** Sprite-only elevation on actual native actors; logical ground pose is unchanged. */
+  birdViewActors?: "web-flat-bird-view-actors-v1";
 };
 /** Explicit current Web policies for newly authored framework derivatives. */
 export const FRAMEWORK_STORY_RUNTIME_DECLARATIONS: Readonly<Required<Pick<DevelopmentProfile, "storyRuntime" | "autoSave">>> =

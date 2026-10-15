@@ -1,5 +1,6 @@
+import { compileFieldBirdViewMoveInstruction } from "./field-bird-view-actors.js";
 import { compileFieldViewChangeInstruction } from './field-view-change.js';
-import { worldAutoMnemonics, compileFieldWorldAutoInstruction } from './field-world-auto-tasks.js';
+import { worldAutoMnemonics, compileFieldWorldAutoInstruction,compileFieldWorldAutoMove } from './field-world-auto-tasks.js';
 import { compileSourcePartySelectionInstruction, sourcePartySelectionSelectors } from './source-party-selection.js';
 import { compileSourceGilTagInstruction } from "./source-message-fees.js";
 import { compileFieldPuppetRouteInstruction } from "./field-puppet-route.js";
@@ -149,8 +150,7 @@ export function decodeFieldOp(
     try { return {...site,...compileFieldWorldAutoInstruction(raw)}; }
     catch(error) {return blocked(error instanceof Error ? error.message : String(error));}
   }
-  if(name==='AddAirShipMoveTask')return blocked('World auto spatial movement requires the source speed table, active following entity, movement/collision and camera-axis owner; scalar tasks do not grant it');
-  if(name==='MoveBirdView')return blocked('MoveBirdView requires its separate source entity/direction/speed/animation and Bird movement lifecycle; world auto scalar tasks do not grant it');
+  if(name==='AddAirShipMoveTask'){try{return {...site,...compileFieldWorldAutoMove(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if (name === "SetGilTag") {
     try { return { ...site, ...compileSourceGilTagInstruction(raw, tables) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
@@ -212,6 +212,10 @@ export function decodeFieldOp(
   if (fieldPartyQueryMnemonics.some(mnemonic => mnemonic === name)) {
     try { return { ...site, ...compileFieldPartyQueryInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "MoveBirdView") {
+    try { return { ...site, ...compileFieldBirdViewMoveInstruction(raw) }; }
+    catch (error) { return { ...site, kind: "blocked", mnemonic: name, reason: error instanceof Error ? error.message : String(error) }; }
   }
   if (fieldScriptMotionMnemonics.some(mnemonic => mnemonic === name)) {
     try { return { ...site, ...compileFieldScriptMotionInstruction(raw) }; }

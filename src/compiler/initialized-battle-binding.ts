@@ -1,3 +1,4 @@
+import {parseSourceBattleParticipantPolicy,validateSourceBattleParticipantProof} from './source-battle-participant-closure.js';
 import { WEB_BATTLE_BRANCH_EXECUTION } from "../core/battle-branch-execution.js";
 import { WEB_MANUAL_BATTLE_CONTROLS } from "../core/battle-controls.js";
 import type { BattleCatalog } from "../core/battle-content.js";
@@ -57,12 +58,12 @@ export function validateInitializedBattleSharedCapabilities(base: BattleCatalog,
   const report = directoryReport === undefined ? {} : record(directoryReport),
     policy = report.policy === undefined ? {} : record(report.policy),
     framework = policy.framework === undefined ? {} : record(policy.framework);
-  const manualPolicy = policy.kind === "source-battle-directory-policy-v3" || policy.kind === "source-battle-directory-policy-v4";
+  const manualPolicy = policy.kind === "source-battle-directory-policy-v3" || ["source-battle-directory-policy-v4", "source-battle-directory-policy-v5"].includes(String(policy.kind));
   if (manualPolicy) same(framework.manualControls, WEB_MANUAL_BATTLE_CONTROLS, "known Web manual controls policy");
   else require(!Object.hasOwn(framework, "manualControls"), "manual controls require the exact v3 or v4 directory declaration");
-  if (policy.kind === "source-battle-directory-policy-v4")
+  if (["source-battle-directory-policy-v4", "source-battle-directory-policy-v5"].includes(String(policy.kind)))
     same(framework.branchExecution, WEB_BATTLE_BRANCH_EXECUTION, "versioned directory branch execution policy");
-  else require(!Object.hasOwn(framework, "branchExecution"), "branch execution requires the exact v4 directory declaration");
+  else require(!Object.hasOwn(framework, "branchExecution"), "branch execution requires the exact v4 or v5 directory declaration");
   if (Object.hasOwn(nextCommon, "conditionControlPolicy")) {
     const declared = { kind: "web-source-control-actions-v1" };
     require(policy.kind === "source-battle-directory-policy-v2" || manualPolicy, "condition policy requires a known versioned directory declaration");
@@ -84,12 +85,18 @@ export function validateInitializedBattleSharedCapabilities(base: BattleCatalog,
   }
   if (report.policy !== undefined) {
     const versions = ["source-battle-directory-policy-v1", "source-battle-directory-policy-v2",
-      "source-battle-directory-policy-v3", "source-battle-directory-policy-v4"];
+      "source-battle-directory-policy-v3", "source-battle-directory-policy-v4", "source-battle-directory-policy-v5"];
     require(versions.includes(String(policy.kind)), "unknown versioned directory policy");
     require(Object.keys(policy).sort().join(",") === "framework,kind", "unknown versioned directory policy fields");
     const allowed = ["handoff", "entry", ...(policy.kind === versions[0] ? [] : ["conditionControlPolicy"]),
-      ...(manualPolicy ? ["manualControls"] : []), ...(policy.kind === versions[3] ? ["branchExecution"] : [])];
+      ...(manualPolicy ? ["manualControls"] : []), ...([versions[3],versions[4]].includes(String(policy.kind)) ? ["branchExecution"] : []), ...(policy.kind === versions[4] ? ["sourceParticipants"] : [])];
     require(Object.keys(framework).every(key => allowed.includes(key)), "unknown versioned directory framework fields");
+    if(policy.kind === versions[4]){
+      require(framework.sourceParticipants!==undefined&&report.sourceParticipantClosure!==undefined,"versioned directory dynamic participant proof missing");
+      parseSourceBattleParticipantPolicy(framework.sourceParticipants);
+      validateSourceBattleParticipantProof(framework.sourceParticipants,report.sourceParticipantClosure,{encounters:catalog.encounters,
+        diagnostics:catalog.encounterDiagnostics??[],entryScriptGroups:record(report.entryDependencies).scripts});
+    }else require(report.sourceParticipantClosure===undefined,"dynamic participants require the exact v5 directory declaration");
   }
 }
 function validateSharedContent(base: BattleCatalog, catalog: BattleCatalog, directoryReport?: unknown): void {

@@ -1,3 +1,7 @@
+import {WEB_FLAT_WORLD_AUTO_MOVE,validateWorldAutoMovePolicy,worldAutoMoveBinding,prepareFlatWorldAutoSegment,type WebFlatWorldAutoMove} from './field-world-auto-move.js';
+import { WEB_FLAT_BIRD_VIEW_ACTORS, validateBirdViewActorsPolicy, fieldBirdViewActorBinding, prepareFieldBirdViewMove, projectFieldBirdViewMove,
+  createFieldBirdViewActorPose, parseFieldBirdViewActorPose, parseFieldBirdViewActorCheckpoint,
+  type FieldBirdViewActorPose, type FieldBirdViewActorCheckpoint, type WebFlatBirdViewActors } from "./field-bird-view-actors.js";
 import { WEB_FLAT_FIELD_VIEW_CHANGE, WEB_FLAT_RETAINED_FIELD_VIEW_CHANGE, validateFieldViewChangePolicy, fieldViewBinding, parseFieldViewChangeCommand, type WebFlatFieldViewChange, type FieldViewChangeCommand } from './field-view-change.js';
 import { WEB_FLAT_WORLD_AUTO_TASKS, validateWorldAutoTaskPolicy, worldAutoBinding, parseFieldWorldAutoCommand,
   createWorldAutoQueue, addWorldAutoCommand, advanceWorldAutoQueue, type WebFlatWorldAutoTasks, type WorldAutoPose } from './field-world-auto-tasks.js';
@@ -150,7 +154,7 @@ import { projectPlayerVisibility } from "./player-visibility.js";
 import { FieldFadeState, type FieldFadeSnapshot } from "./field-fade.js";
 import { FieldCameraHost, type FieldCameraViewport } from "./field-camera-host.js";
 import type { FieldCameraState, FieldCameraLerp, FieldCameraLerpProgress } from "./field-camera.js";
-import { fieldCameraView, fieldCameraWorldToCell, fieldCameraCellToWorld } from "./field-camera.js";
+import { fieldCameraView, fieldCameraWorldToCell, fieldCameraCellToWorld,fieldCameraWorldToContinuousCell } from "./field-camera.js";
 import { projectFieldPuppetInitialization, projectFieldPuppetActorEntry, resolveFieldPuppetActor,
   fieldPuppetAssignments, type FieldPuppetActorsPort, type FieldPuppetScriptContext } from "./field-puppet-actors.js";
 import {
@@ -222,6 +226,8 @@ export type Actor = Point & {
   steps: number;
   animation: ActorAnimation | null;
   native?: NativeFieldActorData;
+  /** Component owned by this actual Actor instance, never its ground transform. */
+  birdView?: FieldBirdViewActorPose;
 };
 type PlacedActor = Actor & { layer: number; direction: Direction; asset: string };
 type NpcActivityRuntime = {
@@ -257,6 +263,7 @@ type FieldCheckpointState = {
   camera: FieldCameraState | null;
   native: {
     actors: FieldNativeCheckpoint;
+    birdViewActors?: FieldBirdViewActorCheckpoint;
     collision: FieldPuppetCollisionState;
     updateMask: number;
     cameraOffset: Point;
@@ -314,6 +321,8 @@ type Task = {
   cameraLerp: { op: Site; command: FieldCameraLerp;
     progress: FieldCameraLerpProgress } | null;
   scriptMove: Extract<Op, { kind: "field-script-motion" | "field-puppet-route" }> | null;
+  birdViewMove: { op: Extract<Op, { kind: "field-bird-view-move" }>; registers: FieldCoreRegisters;
+    actor: Actor; native: NativeFieldActorData; entity: NativeFieldActorData["entity"] } | null;
   scriptLerp: { op: Extract<Op, { kind: "field-script-motion" }>; progress: FieldScriptLerpProgress } | null;
   remaining: number;
   move: Extract<Op, { kind: "move" }> | null;
@@ -393,7 +402,9 @@ export type FieldGameOptions = {
   /** Explicit Web presentation stream. Saved state and source code cannot grant it. */
   cameraShake?: FieldCameraShakePolicy;
   viewChange?: WebFlatFieldViewChange;
+  worldAutoMove?:WebFlatWorldAutoMove;
   worldAutoTasks?: WebFlatWorldAutoTasks;
+  birdViewActors?: WebFlatBirdViewActors;
   storyTimerOrigin?: FieldTimerOriginContent;
   /** Explicit particle/material host. Content parsing never grants one. */
   fieldEffects?: FieldEffectRuntimeHost;
@@ -508,11 +519,14 @@ export class FieldGame {
       audioReadiness: presence(typeof this.options.audioReadiness?.isReady === "function"),
       soundPresentation: presence(typeof this.options.soundPresentation?.isPresented === "function"),
       actorControl: presence(actorControl),
+      birdViewActors: presence(!!actor && this.birdViewActorsEnabled && !!actor.native && actor.native.entity.character &&
+        !actor.native.entity.riding && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.nativeActorProviders && !!this.camera),
       actorMotion: presence(actorMotion), cameraMotion: presence(cameraMotion), effectMotion: "missing",
       storyTimer: presence(this.timerState !== null),
       screenEffects: presence(this.ordinaryScreenEffectsAvailable),
       cameraShake: presence(this.cameraShakeAvailable),
       viewChange: presence(this.options.viewChange !== undefined && !!this.camera && !!this.partyActors && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.nativeActorProviders && !!this.player.native && !!fieldViewBinding(this.content,this.options.viewChange)),
+      worldAutoMove:presence(this.#worldAutoMovePolicy===WEB_FLAT_WORLD_AUTO_MOVE&&this.content.developmentProfile?.worldAutoMove===this.#worldAutoMovePolicy),
       worldAutoTasks: presence(this.#worldAutoPolicy===WEB_FLAT_WORLD_AUTO_TASKS && this.worldAutoPose!==null && !this.#worldAutoRetired),
       eventSaveCompletion: "unknown", battleHandoff: "unknown",
       assignedNpcRoutes: presence(this.options.assignedNpcRoutes === WEB_ASSIGNED_ROUTE_POLICY),
@@ -625,6 +639,10 @@ export class FieldGame {
   readonly cameraActorId = "native:camera";
   get cameraSnapshot(): FieldCameraState | null { return this.camera?.snapshot() ?? null; }
   readonly #worldAutoPolicy:WebFlatWorldAutoTasks|undefined;
+  readonly #worldAutoMovePolicy:WebFlatWorldAutoMove|undefined;
+  #worldAutoActorMotion:{actor:Actor;entity:NonNullable<Actor["native"]>["entity"];motion:Motion;expected:string}|null=null;
+  #worldAutoDummyMotion:Motion|null=null;
+  #worldAutoDummyExpected:string|null=null;
   #worldAutoQueue=createWorldAutoQueue();
   #worldAutoPrepared=false;
   #worldAutoRetired=false;
@@ -632,8 +650,9 @@ export class FieldGame {
   get worldAutoPose():WorldAutoPose|null {
     const state=this.camera?.snapshot();return state?.kind==='field-camera-v4'?state.worldAuto:null;
   }
-  get worldAutoTaskSnapshot(){return this.worldAutoPose?{...structuredClone(this.#worldAutoQueue),prepared:this.#worldAutoPrepared,retired:this.#worldAutoRetired}:null;}
-  private get worldAutoTasksBusy(){return this.#worldAutoQueue.tasks.length>0;}
+  get worldAutoTaskSnapshot(){return this.worldAutoPose?{...structuredClone(this.#worldAutoQueue),prepared:this.#worldAutoPrepared,retired:this.#worldAutoRetired,...(this.#worldAutoActorMotion?{actorMovement:{actor:this.#worldAutoActorMotion.actor.id,motion:structuredClone(this.#worldAutoActorMotion.motion),expected:this.#worldAutoActorMotion.expected}}:{}),...(this.#worldAutoDummyMotion?{dummyMovement:structuredClone(this.#worldAutoDummyMotion),dummyExpected:this.#worldAutoDummyExpected}:{})}:null;}
+  private get worldAutoTasksBusy(){return this.#worldAutoQueue.tasks.length>0||this.#worldAutoActorMotion!==null||this.#worldAutoDummyMotion!==null;}
+  private get worldAutoMovementBusy(){return this.#worldAutoQueue.tasks.some(t=>t.channel==='movement')||this.#worldAutoActorMotion!==null||this.#worldAutoDummyMotion!==null;}
   /** World preparation may execute source Add/Start but cannot tick a private
    * candidate before its existing map publication. */
   holdWorldAutoTasks():void {if(this.#worldAutoQueue.tasks.length||this.#worldAutoRetired)throw new Error('Cannot prepare an active world auto-task owner');this.#worldAutoPrepared=true;}
@@ -641,25 +660,74 @@ export class FieldGame {
   retireWorldAutoTasks():void {
     if(this.#worldAutoRetired)return;
     const tickets=this.#worldAutoQueue.tasks.map(t=>t.ticket);this.#worldAutoQueue={...this.#worldAutoQueue,revision:this.#worldAutoQueue.revision+1,tasks:[]};
+    if(this.#worldAutoActorMotion?.actor.motion===this.#worldAutoActorMotion?.motion&&this.#worldAutoActorMotion){this.#worldAutoActorMotion.actor.motion=null;this.#worldAutoActorMotion.actor.animation?.stop();}
+    this.#worldAutoActorMotion=null;this.#worldAutoDummyMotion=null;this.#worldAutoDummyExpected=null;
     this.#worldAutoRetired=true;this.worldAutoTaskJournal.push({action:'retire',tickets,atMilliseconds:this.time});
   }
   private applyWorldAutoTask(op:Extract<Op,{kind:'field-world-auto-task'}>):void {
     const pose=this.worldAutoPose,binding=worldAutoBinding(this.content,this.#worldAutoPolicy);
     if(this.#worldAutoRetired||this.#worldAutoPolicy!==WEB_FLAT_WORLD_AUTO_TASKS||this.options.worldAutoTasks!==this.#worldAutoPolicy||!pose||!binding||canonical(pose.binding)!==canonical(binding))
       throw new Error('World auto tasks require the current runtime policy, trusted flat content and camera owner');
-    const command=parseFieldWorldAutoCommand(op.command),next=addWorldAutoCommand(this.#worldAutoQueue,pose,command,{script:op.script,index:op.index,source:op.source});
+    const command=parseFieldWorldAutoCommand(op.command);if(command.kind==='add-movement')this.assertWorldAutoMovement();
+    const next=addWorldAutoCommand(this.#worldAutoQueue,pose,command,{script:op.script,index:op.index,source:op.source});
     this.#worldAutoQueue=next;this.worldAutoTaskJournal.push({action:command.kind==='start'?'start':'add',tickets:command.kind==='start'?next.tasks.map(t=>t.ticket):[next.nextTicket-1],
       atMilliseconds:this.time,site:structuredClone({script:op.script,index:op.index,source:op.source})});
+  }
+  private assertWorldAutoMovement():void {
+    worldAutoMoveBinding(this.content,this.#worldAutoMovePolicy);
+    if(this.options.worldAutoMove!==this.#worldAutoMovePolicy)throw Error('World auto-movement runtime changed');
+    if(this.#worldAutoActorMotion){const held=this.#worldAutoActorMotion;
+      if(this.actors[held.actor.id]!==held.actor||held.actor.native?.entity!==held.entity||held.actor.motion!==held.motion||canonical(held.entity.position)!==held.expected)
+        throw Error('World auto-movement actor owner changed');}
+    if(this.#worldAutoDummyMotion&&canonical({position:this.camera?.snapshot().dummy.position,layer:this.camera?.snapshot().dummy.layer})!==this.#worldAutoDummyExpected)
+      throw Error('World auto-movement dummy owner changed');
   }
   private advanceWorldAutoTasks():void {
     if(!this.worldAutoTasksBusy||this.#worldAutoPrepared||this.#worldAutoRetired||this.options.npcActivityClock&&!this.options.npcActivityClock())return;
     const pose=this.worldAutoPose,binding=worldAutoBinding(this.content,this.#worldAutoPolicy);
     if(!pose||!this.camera||this.options.worldAutoTasks!==this.#worldAutoPolicy||!binding||canonical(pose.binding)!==canonical(binding))throw new Error('World auto-task camera/content/clock owner changed');
-    const before=this.#worldAutoQueue,next=advanceWorldAutoQueue(before,pose);
-    if(next.queue.revision===before.revision)return;
-    const camera=this.camera.prepareWorldAutoPose(next.pose);
-    if(!camera.commitWith(()=>{if(this.#worldAutoQueue!==before||this.#worldAutoRetired||this.#worldAutoPrepared)return false;this.#worldAutoQueue=next.queue;return true;}))
-      throw new Error('Stale world auto-task tick');
+    if(this.worldAutoMovementBusy)this.assertWorldAutoMovement();
+    const before=this.#worldAutoQueue,next=advanceWorldAutoQueue(before,pose),state=this.camera.snapshot();
+    if(state.kind!=='field-camera-v4')throw Error('World auto movement lost its camera');state.worldAuto=next.pose;
+    let dummy=this.#worldAutoDummyMotion,actorPlan:{actor:Actor;motion:Motion;animation:ActorAnimation;direction:Direction}|null=null;
+    for(const request of next.movements){
+      this.assertWorldAutoMovement();
+      // The source's absent following entity branch performs no MoveTo. The
+      // task clock still progresses and retires; no actor is manufactured.
+      if(state.target===null)continue;
+      if(this.collisionSwitches.mapColliders||this.collisionSwitches.entityCollision)
+        throw Error('World auto movement with active native collision/raycast remains unadmitted');
+      const definition=this.content.cameraHost!;
+      if(state.target==='dummy'){
+        if(dummy)continue;
+        if(this.tasks.some(t=>!t.done&&(t.cameraLerp||t.cameraPath)))throw Error('World auto movement conflicts with a scripted dummy path');
+        const from=fieldCameraWorldToContinuousCell(definition.mapRange,{x:state.dummy.position.x,y:state.dummy.position.y});
+        const plan=prepareFlatWorldAutoSegment(request.command,request.rotation,{x:from.x+definition.mapRange.x,y:from.y+definition.mapRange.y},definition.mapRange,definition.loop);
+        dummy=plan?.motion??null;continue;
+      }
+      const actor=this.player;
+      if(!actor.native||!this.nativeRuntime||!this.nativeActorProviders||!actor.animation||actor.layer===null||actor.layer>2)
+        throw Error('World auto movement requires its actual following player/native/media owner');
+      requireFieldTransportPose(actor.native.entity,this.transportationPresentation);
+      if(actor.motion||actorPlan)continue;
+      const plan=prepareFlatWorldAutoSegment(request.command,request.rotation,{x:actor.x,y:actor.y},definition.mapRange,definition.loop);
+      if(!plan)continue;
+      const animation=actor.animation.clone();animation.move(plan.direction,plan.motion.duration/1000);animation.frame();
+      actorPlan={actor,motion:plan.motion,animation,direction:plan.direction};
+    }
+    // Dummy progress uses the same motion integrator and the existing Camera
+    // state. No second dummy transform or new save authority is introduced.
+    if(dummy){const tick=prepareFieldActorMotionTick(dummy,null,10),range=this.content.cameraHost!.mapRange,
+      point=this.mapTopology?canonicalCell(this.mapTopology,tick.point):tick.point,
+      world=fieldCameraCellToWorld(range,{x:point.x-range.x,y:point.y-range.y},0);
+      state.dummy.position={...world,z:state.dummy.position.z};dummy=tick.motion;}
+    if(next.queue.revision===before.revision&&!dummy&&!this.#worldAutoDummyMotion&&!actorPlan)return;
+    const camera=this.camera.prepareState(state);
+    if(!camera.commitWith(()=>{if(this.#worldAutoQueue!==before||this.#worldAutoRetired||this.#worldAutoPrepared)return false;
+      this.#worldAutoQueue=next.queue;this.#worldAutoDummyMotion=dummy;this.#worldAutoDummyExpected=dummy?canonical({position:state.dummy.position,layer:state.dummy.layer}):null;
+      if(actorPlan){const {actor,motion,animation,direction}=actorPlan;actor.direction=direction;actor.animation=animation;actor.motion=motion;
+        this.#worldAutoActorMotion={actor,entity:actor.native!.entity,motion,expected:canonical(actor.native!.entity.position)};}
+      return true;}))throw Error('Stale world auto-task tick');
     if(next.completed.length)this.worldAutoTaskJournal.push({action:'complete',tickets:next.completed,atMilliseconds:this.time});
   }
   private get currentPartyViewType():0|1|2 {
@@ -1034,6 +1102,19 @@ export class FieldGame {
       })),
     };
   }
+  /** Private map-entry draft of the one controller-owned motion retirement.
+   * The ordinary native candidate remains a truthful moving snapshot. Only
+   * successful World publication calls retireWorldAutoTasks on the live owner. */
+  get nativeMapDepartureCandidate():FieldActorFactoryCandidate|null {
+    const owned=this.#worldAutoActorMotion;
+    if(!owned||this.stop?.kind!=='map-transition')return this.nativeActorCandidate;
+    this.assertWorldAutoMovement();const candidate=this.nativeActorCandidate;this.assertWorldAutoMovement();
+    if(!candidate)throw Error('World auto movement departure lost native actors');
+    const current=candidate.snapshot.actors.find(row=>row.id===owned.actor.id);
+    if(!current||!current.moving||canonical(current.position)!==owned.expected||owned.actor.motion!==owned.motion||owned.motion.manual)
+      throw Error('World auto movement departure is not the exact current instance/motion');
+    return {...candidate,snapshot:{...candidate.snapshot,actors:candidate.snapshot.actors.map(row=>row===current?{...row,moving:false}:row)}};
+  }
   /** Map handoff stale checks must include map-local actors even though those
    * instances are intentionally excluded from the destination factory. */
   get nativeActorStateFingerprint(): string | null {
@@ -1044,7 +1125,7 @@ export class FieldGame {
       ({ ...actor, animation: actor.animation?.snapshot() ?? null })) },
       metadata: Object.values(this.actors).filter((actor) => actor.native).map((actor) => ({
         id: actor.id, motion: actor.motion, steps: actor.steps, fieldAssetId: actor.native!.fieldAssetId,
-        charaZOffset: actor.native!.charaZOffset, mapAnimation: actor.native!.mapAnimation ?? null, mapObjectAsset: actor.native!.mapObjectAsset ?? null,
+        birdView: actor.birdView ?? null, charaZOffset: actor.native!.charaZOffset, mapAnimation: actor.native!.mapAnimation ?? null, mapObjectAsset: actor.native!.mapObjectAsset ?? null,
         scope: actor.native!.scope ?? null, updateAttribute: actor.native!.updateAttribute ?? null,
       })), npcActivities: this.npcActivitySnapshot, assignedRoutes: this.assignedRouteSnapshot,
       ...(this.eventActivation ? { eventActivation: this.eventActivation } : {}) });
@@ -1395,6 +1476,9 @@ export class FieldGame {
   ) {
     validateFieldViewChangePolicy(options.viewChange);
     validateWorldAutoTaskPolicy(options.worldAutoTasks);this.#worldAutoPolicy=options.worldAutoTasks;
+    validateWorldAutoMovePolicy(options.worldAutoMove);this.#worldAutoMovePolicy=options.worldAutoMove;
+    validateBirdViewActorsPolicy(options.birdViewActors);
+    validateBirdViewActorsPolicy(content.developmentProfile?.birdViewActors);
     if(options.sourcePartySelection!==undefined&&options.sourcePartySelection!==WEB_SOURCE_PARTY_SELECTION)throw new Error("Unknown source party selection policy");
     if (options.puppetRoutes !== undefined && options.puppetRoutes !== WEB_PUPPET_ROUTE_POLICY)
       throw new Error("Unknown Web puppet Route policy");
@@ -2200,7 +2284,8 @@ export class FieldGame {
   private mapPublicationState(): string {
     // Opaque callbacks remain under their existing owners; capture their
     // references separately above. Task data/cursors are an observation only.
-    const tasks = this.tasks.map(({ animationRepeat: repeat, bgmReplay: replay, ...task }) => ({ ...task,
+    const tasks = this.tasks.map(({ animationRepeat: repeat, bgmReplay: replay, birdViewMove: bird, ...task }) => ({ ...task,
+      birdViewMove: bird && { op: bird.op, actorId: bird.actor.id },
       animationRepeat: repeat && { op: repeat.op, fingerprint: repeat.fingerprint, script: repeat.script,
         webPC: repeat.webPC, actorId: repeat.actorId, registers: repeat.registers },
       bgmReplay: replay && { op: replay.op } }));
@@ -2282,7 +2367,8 @@ export class FieldGame {
         sourceSpeedEnum: r.binding.program.sourceSpeedEnum, commandId: r.state.pending.commandId,
         secondsPerCell: sourceNpcSecondsPerCell(r.binding.program.sourceSpeedEnum) }]] : [];
     }));
-    return { actors: captureFieldNativeCheckpoint(this.actors, this.nativeCheckpointContext(
+    const birdViewActors = this.captureBirdViewActorPoses();
+    return { ...(birdViewActors ? { birdViewActors } : {}), actors: captureFieldNativeCheckpoint(this.actors, this.nativeCheckpointContext(
       this.nativeActorBindings, this.nativeRuntime.mapLifecycle.factory, this.nativeActorProviders(), autonomousMotions,
       this.assignedCheckpoint ? restoreAssignedRoutes(this.assignedCheckpoint,this.content,this.entityList,this.time,this.options.assignedNpcRoutes).motions : undefined)),
       collision: { ...this.collisionSwitches }, updateMask: this.entityUpdateMask,
@@ -2368,7 +2454,7 @@ export class FieldGame {
         this.tasks.some((other) => other !== task && !other.done) ||
         task.done || task.slot !== null || task.treasureRoot || task.state !== "ready" ||
         task.wait !== 0 || task.puppetWait || task.fadeWait || task.colorFadeWait || task.flashWait || task.cameraPath || task.cameraLerp ||
-        task.scriptMove || task.scriptLerp || task.remaining !== 0 || task.move ||
+        task.scriptMove || task.scriptLerp || task.birdViewMove || task.remaining !== 0 || task.move ||
         task.animationWait || task.audioWait || task.bgmReplay || task.autoSaveWait || task.soundWait || task.treasure ||
         this.options.puppetActors && !this.nativeActorBindings)
       throw new Error("Event save requires a quiescent main task with supported field owners");
@@ -2617,7 +2703,10 @@ export class FieldGame {
   }
   private restoreNativeOwner(saved: NonNullable<FieldCheckpoint["native"]>, source: FieldNativeRestoreDependencies,
     restoredActivities?: RestoredFieldNpcActivities,assignedMotions?:FieldNativeCheckpointContext["assignedMotions"]): void {
-    checkpointKeys(saved, "actors,collision,updateMask,cameraOffset,completedScript");
+    const hasBirdViewActors = Object.hasOwn(saved, "birdViewActors");
+    checkpointKeys(saved, "actors,collision,updateMask,cameraOffset,completedScript" + (hasBirdViewActors ? ",birdViewActors" : ""));
+    if (hasBirdViewActors !== this.birdViewActorsEnabled) throw new Error("Saved BirdView actor poses cannot grant or discard content/runtime policy");
+    const birdPoses = hasBirdViewActors ? parseFieldBirdViewActorCheckpoint(saved.birdViewActors!) : null;
     checkpointKeys(saved.collision, "mapColliders,entityCollision,interactiveObservation");
     if (canonical(saved.collision) !== canonical(projectFieldPuppetCollision(saved.collision.mapColliders)))
       throw new Error("Saved native collision switches disagree");
@@ -2648,6 +2737,13 @@ export class FieldGame {
     const providers = source.providers(this);
     const actors = restoreFieldNativeCheckpoint(saved.actors,
       this.nativeCheckpointContext(bindings, source.factory, providers(), restoredActivities?.autonomousMotions,assignedMotions));
+    for (const row of birdPoses?.poses ?? []) {
+      const actor = actors.find(a => a.id === row.actorId) as Actor | undefined;
+      if (!actor || !actor.native || !actor.native.entity.character || actor.native.entity.riding || actor.mount || !this.content.map.identity)
+        throw new Error("Saved BirdView pose has no actual bound ordinary native actor");
+      actor.birdView = createFieldBirdViewActorPose({ mapId: this.content.map.identity.mapId,
+        contentHash: this.content.contentHash, actorId: actor.id }, row.height);
+    }
     this.publishNativeActors(actors, bindings, source.catalog, providers, source.controlContext,
       source.animationKeys, { factory: structuredClone(source.factory) }, restoredActivities);
     this.collisionSwitches = { ...saved.collision };
@@ -2854,7 +2950,7 @@ export class FieldGame {
   directionInput(direction: Direction): FieldDirectionInputResult {
     if (!Object.hasOwn(DELTA, direction)) throw new Error("Invalid field direction");
     const p = this.player;
-    if (this.busy || p.motion || this.movementBlocker) return { kind: "rejected" };
+    if (this.busy || p.motion || this.worldAutoMovementBusy || this.movementBlocker) return { kind: "rejected" };
     const prepareFace = () => {
       const animation = p.animation?.clone() ?? null;
       animation?.look(direction);
@@ -3005,6 +3101,57 @@ export class FieldGame {
     if (!prepared) throw new Error("Missing prepared source actor Lerp");
     publish();
     return { flow: prepared.flow, progress: prepared.progress };
+  }
+  private get birdViewActorsEnabled(): boolean {
+    return fieldBirdViewActorBinding(this.content, this.options.birdViewActors) !== undefined;
+  }
+  private birdViewActorBinding(actor: Actor) {
+    if (!this.birdViewActorsEnabled || !this.content.map.identity || !this.nativeActorBindings ||
+        !this.nativeRuntime?.mapLifecycle || !this.nativeActorProviders || !this.camera ||
+        this.actors[actor.id] !== actor || !actor.native || actor.native.entity.id !== actor.id ||
+        !actor.native.entity.character || actor.native.entity.riding || actor.mount || this.effectBoard(actor.id))
+      throw new Error("MoveBirdView requires its trusted Web policy and actual ordinary native actor owner");
+    return { ...fieldBirdViewActorBinding(this.content, this.options.birdViewActors)!, actorId: actor.id };
+  }
+  /** Presentation-only pixels. Missing source instances never become a known
+   * absent Bird puppet; unsupported actor bindings are rejected on execution. */
+  birdViewActorElevation(actorId: string): number {
+    const actor = this.actors[actorId];
+    if (!actor?.birdView) return 0;
+    return parseFieldBirdViewActorPose(actor.birdView, this.birdViewActorBinding(actor)).height;
+  }
+  private captureBirdViewActorPoses(): FieldBirdViewActorCheckpoint | undefined {
+    const poses = Object.values(this.actors).filter(actor => actor.birdView !== undefined);
+    if (!this.birdViewActorsEnabled) {
+      if (poses.length) throw new Error("BirdView actor poses cannot grant a missing runtime/content policy");
+      return undefined;
+    }
+    return { kind: "field-bird-view-actor-poses-v1", poses: poses.map(actor => ({ actorId: actor.id,
+      height: parseFieldBirdViewActorPose(actor.birdView!, this.birdViewActorBinding(actor)).height })) };
+  }
+  private startBirdViewMove(task: Task, actor: Actor, op: Extract<Op, { kind: "field-bird-view-move" }>): NonNullable<Task["birdViewMove"]> {
+    const binding = this.birdViewActorBinding(actor);
+    const pose = actor.birdView ? parseFieldBirdViewActorPose(actor.birdView, binding) : createFieldBirdViewActorPose(binding);
+    const progress = prepareFieldBirdViewMove(op.command, { kind: "present", height: pose.height }, this.time / 1000);
+    const registers = projectFieldCoreSlots(task.generalRegisters, { r: { 0: progress.start, 1: progress.target, 2: progress.startedAt } });
+    // All fallible height preparation precedes the existing Move publication.
+    // The delegated Move retains every actor, loop, collision and media gate.
+    if (op.command.move) this.startScriptMove(actor, { ...op, kind: "field-script-motion", command: op.command.move });
+    task.generalRegisters = registers; actor.birdView = pose;
+    return { op, registers, actor, native: actor.native!, entity: actor.native!.entity };
+  }
+  private tickBirdViewMove(task: Task, pending: NonNullable<Task["birdViewMove"]>): "wait" | "next" {
+    const { actor, native, entity, op } = pending;
+    if (task.generalRegisters !== pending.registers || this.actors[actor.id] !== actor || actor.native !== native || native.entity !== entity)
+      throw new Error("MoveBirdView lost its actual actor instance");
+    const binding = this.birdViewActorBinding(actor);
+    const pose = parseFieldBirdViewActorPose(actor.birdView!, binding);
+    const bank = parseFieldCoreRegisters(task.generalRegisters);
+    const progress = { start: bank.r[0]!, target: bank.r[1]!, startedAt: bank.r[2]! };
+    const next = projectFieldBirdViewMove(op.command, progress, { kind: "present", height: pose.height },
+      this.time / 1000, actor.motion !== null);
+    actor.birdView = createFieldBirdViewActorPose(binding, next.height!);
+    return next.flow;
   }
   private requireOrdinaryScriptMove(actor: Actor): void {
     if (!actor.native || !this.nativeRuntime ||
@@ -3690,7 +3837,7 @@ export class FieldGame {
       milliseconds > 60000
     )
       throw new Error("Invalid elapsed time");
-    if ((this.content.frameworkNpcActivity || this.assignedRoutes.size > 0 || this.tasks.some(task => !task.done && task.animationRepeat)) && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
+    if ((this.birdViewActorsEnabled || this.content.frameworkNpcActivity || this.assignedRoutes.size > 0 || this.tasks.some(task => !task.done && task.animationRepeat)) && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
     if (this.pendingEventSave) return;
     this.remainder += milliseconds;
     while (this.remainder >= 10) {
@@ -3769,7 +3916,7 @@ export class FieldGame {
               m.route.index + 1 < m.route.points.length &&
               !this.puppetRouteCanStep(a, m.to, m.route.points[m.route.index + 1]!)) continue;
           const next = prepareFieldActorMotionTick(m, a.animation, 10);
-          const point = this.mapTopology && m.manual && a.id === this.player.id
+          const point = this.mapTopology && (m.manual || this.#worldAutoActorMotion?.motion===m) && a.id === this.player.id
             ? canonicalCell(this.mapTopology, next.point) : next.point;
           const step = next.completedSegment && a.id === this.player.id ? this.pendingPlayerStep : null;
           const encounter = next.completedSegment && a.id === this.player.id && m.manual
@@ -3788,6 +3935,10 @@ export class FieldGame {
                 next.motion?.route && next.motion.route.animation === "") a.direction = next.motion.route.direction;
             a.animation = next.animation;
             a.motion = next.motion;
+            if(this.#worldAutoActorMotion?.actor===a&&this.#worldAutoActorMotion.motion===m){
+              if(next.motion){this.#worldAutoActorMotion.motion=next.motion;this.#worldAutoActorMotion.expected=canonical(a.native!.entity.position);}
+              else this.#worldAutoActorMotion=null;
+            }
             if (next.completedSegment) {
               if (a.id === this.player.id) {
                 this.pendingPlayerStep = null;
@@ -4021,7 +4172,7 @@ export class FieldGame {
     this.tasks = this.tasks.filter((other) => other === t || other.treasureRoot);
     Object.assign(t, plan, { stack: [], wait: 0, state: "ready", lastClock: this.time,
       generalRegisters: initialFieldCoreRegisters(),
-      puppetWait: null, scriptShop: null, fadeWait: null, colorFadeWait: null, flashWait: null, cameraPath: null, cameraLerp: null, scriptMove: null, scriptLerp: null, remaining: 0, move: null,
+      puppetWait: null, scriptShop: null, fadeWait: null, colorFadeWait: null, flashWait: null, cameraPath: null, cameraLerp: null, scriptMove: null, scriptLerp: null, birdViewMove: null, remaining: 0, move: null,
       animationWait: false, animationRepeat: null, audioWait: null, bgmReplay: null, autoSaveWait: null, sourceMessageWait: null, soundWait: null, treasure: null, done: false });
   }
   private restoreHookedScript(main: Task): void {
@@ -4081,9 +4232,9 @@ export class FieldGame {
     if (!this.camera) return () => {};
     const draft = this.camera.fork(this.content.cameraHost!, this.cameraPorts());
     if (initialize) draft.prepareInitializeDummy().commit();
-    draft.prepareSelect({ target: phase === "start" ? "dummy" : "player" }).commit();
+    const selection=draft.prepareSelect({ target: phase === "start" ? "dummy" : "player" });selection.commit();
     const transaction = this.camera.prepareState(draft.snapshot());
-    return () => { transaction.commit(); this.cameraEventActive = phase === "start"; };
+    return () => { transaction.commit(); if(initialize||selection.resetDummyMovement){this.#worldAutoDummyMotion=null;this.#worldAutoDummyExpected=null;}this.cameraEventActive = phase === "start"; };
   }
   private task(script: string, pc: number, actor: string, id = this.nextTask++): Task {
     return {
@@ -4105,6 +4256,7 @@ export class FieldGame {
       colorFadeWait: null, flashWait: null, cameraPath: null,
       cameraLerp: null,
       scriptMove: null,
+      birdViewMove: null,
       scriptLerp: null,
       remaining: 0,
       move: null,
@@ -4856,6 +5008,13 @@ export class FieldGame {
             site: structuredClone(t.scriptMove), actorId: t.actor, atMilliseconds: this.time });
           t.scriptMove = null;
         }
+        if (t.birdViewMove) {
+          const pending = t.birdViewMove;
+          try {
+            if (this.tickBirdViewMove(t, pending) === "wait") return;
+            t.birdViewMove = null;
+          } catch (error) { this.block(error instanceof Error ? error.message : String(error), pending.op); return; }
+        }
         if (t.scriptLerp) {
           const pending = t.scriptLerp;
           try {
@@ -5070,8 +5229,8 @@ export class FieldGame {
           this.block(`无效脚本位置 ${t.script}:${t.pc}`);
           return;
         }
-        if ((actor?.motion || this.assignedRoutes.has(t.actor) || this.tasks.some((other) => !other.done && other.actor === t.actor && (other.scriptLerp || other.cameraPath?.op.kind === "field-puppet-route" || op.kind === "field-puppet-route" && (other.cameraPath || other.cameraLerp)))) &&
-            ["move", "field-script-motion", "field-puppet-route", "field-camera-motion", "position", "look", "animation-play", "animation-cue"].includes(op.kind)) {
+        if ((actor?.motion || this.assignedRoutes.has(t.actor) || this.tasks.some((other) => !other.done && other.actor === t.actor && (other.scriptLerp || other.birdViewMove || other.cameraPath?.op.kind === "field-puppet-route" || op.kind === "field-puppet-route" && (other.cameraPath || other.cameraLerp)))) &&
+            ["move", "field-bird-view-move", "field-script-motion", "field-puppet-route", "field-camera-motion", "position", "look", "animation-play", "animation-cue"].includes(op.kind)) {
           this.block("Concurrent source actor movement arbitration is not implemented", op);
           return;
         }
@@ -5624,8 +5783,9 @@ export class FieldGame {
             try { this.executeActorVisibility(t.actor, op, t.script, t.pc - 1); }
             catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
+          case 'field-world-auto-move':
           case 'field-world-auto-task':
-            try {this.applyWorldAutoTask(op);}
+            try {this.applyWorldAutoTask({...op,kind:'field-world-auto-task'});}
             catch(error){this.block(error instanceof Error?error.message:String(error),op);return;}
             break;
           case "field-view-change":
@@ -5642,6 +5802,7 @@ export class FieldGame {
               if (selected.resetDummyMovement && this.tasks.some(task => !task.done && task.cameraPath?.op.kind === "field-puppet-route"))
                 throw new Error("Camera selection cannot cancel an active Puppet Route task");
               selected.commit();
+              if(selected.resetDummyMovement){this.#worldAutoDummyMotion=null;this.#worldAutoDummyExpected=null;}
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
           case "field-camera-motion":
@@ -5674,6 +5835,12 @@ export class FieldGame {
               if (flow === "wait") { t.scriptMove = op; return; }
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
+          case "field-bird-view-move":
+            try {
+              if (t.slot === null || !actor) throw new Error("MoveBirdView requires its actual PuppetCore native actor; camera/effect height is unadmitted");
+              t.birdViewMove = this.startBirdViewMove(t, actor, op);
+              return; // Native first clock always yields, even height-only/duration0.
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
           case "field-script-motion":
             try {
               if (t.actor === this.cameraActorId) {

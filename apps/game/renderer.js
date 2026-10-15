@@ -77,6 +77,11 @@ export class Renderer {
     );
     c.restore();
   }
+  actorElevation(game, actor) {
+    if (typeof game?.birdViewActorElevation === "function") return game.birdViewActorElevation(actor.id);
+    if (actor.birdView !== undefined) throw new Error("角色高度缺少已授权的实际游戏所有者");
+    return 0;
+  }
   point(a) {
     const m = a.motion;
     if (!m) return a;
@@ -218,7 +223,7 @@ export class Renderer {
       if (!sprite || !image || (image.naturalWidth ?? image.width) !== sprite.width ||
           (image.naturalHeight ?? image.height) !== sprite.height) throw new Error("平面世界角色帧缺少来源图像");
       const point = this.point(actor), x = (point.x + 0.5) * 16 - cx + frame.x,
-        y = (point.y + 0.5) * 16 - cy - frame.y + (mapAnimation ? mapAnimation.geometry.height * 0.5 : 0),
+        y = (point.y + 0.5) * 16 - cy - frame.y - this.actorElevation(game, actor) + (mapAnimation ? mapAnimation.geometry.height * 0.5 : 0),
         rect = { x: x - sprite.width * (frame.flip ? 1 - sprite.pivot[0] : sprite.pivot[0]),
           y: y - sprite.height * (1 - sprite.pivot[1]), width: sprite.width, height: sprite.height };
       for (const offset of this.periodicOffsets(rect, width, height, topology)) projected.push({
@@ -332,7 +337,7 @@ export class Renderer {
         const image = this.compositionPixels(sprite.file);
         if (image.width !== sprite.width || image.height !== sprite.height) throw new Error("原生角色图像几何不符");
         const x = (point.x + 0.5) * 16 - cx + pose.x,
-          y = (point.y + 0.5) * 16 - cy - pose.y - layer.lift;
+          y = (point.y + 0.5) * 16 - cy - pose.y - layer.lift - this.actorElevation(game, actor);
         // Source ordinary center anchor; framework rider offset is explicit.
         const left = pose.flip ? x - sprite.width * (1 - sprite.pivot[0]) : x - sprite.width * sprite.pivot[0];
         const destination = { x: left, y: y - sprite.height * (1 - sprite.pivot[1]),
@@ -440,12 +445,12 @@ export class Renderer {
     );
     c.restore();
   }
-  actor(a, cx, cy, p = this.point(a)) {
+  actor(a, cx, cy, p = this.point(a), elevation = 0) {
     // Fresh factory residents may be active without a selected sprite. A zero
     // direction is a native state, never an invitation to invent a facing.
     if (a.asset === null || a.direction === null || (a.native && !a.animation?.frame())) return;
     const x = (p.x + 0.5) * 16 - cx,
-      y = (p.y + 1) * 16 - 2 - cy;
+      y = (p.y + 1) * 16 - 2 - cy - elevation;
     const key = FACING[a.direction];
     if (a.mount) {
       this.sprite(a.mount, key, a, x, y);
@@ -453,7 +458,7 @@ export class Renderer {
       this.sprite(a.asset, ride, a, x, y, 8, 14);
     } else this.sprite(a.asset, key, a, x, y, 0, 0, a.animation?.frame());
   }
-  actorImages(actors, cx, cy, width, height, topology) {
+  actorImages(actors, cx, cy, width, height, topology, game = null) {
     if (!topology) return actors.map((actor) => ({ actor, point: this.point(actor) }));
     const images = [];
     for (const actor of actors) {
@@ -468,7 +473,7 @@ export class Renderer {
           sprite = this.content.characters[layer.asset].sprites[frame.sprite];
         if (!sprite || sprite.height <= layer.crop) throw new Error("角色帧缺少有效图像范围");
         const x = Math.round((point.x + 0.5) * 16 - cx + frame.x),
-          y = Math.round((point.y + 1) * 16 - 2 - cy - frame.y - layer.lift);
+          y = Math.round((point.y + 1) * 16 - 2 - cy - frame.y - layer.lift - this.actorElevation(game, actor));
         return { x: x - sprite.width * (frame.flip ? 1 - sprite.pivot[0] : sprite.pivot[0]),
           y: y - sprite.height * (1 - sprite.pivot[1]), width: sprite.width, height: sprite.height - layer.crop };
       });
@@ -603,7 +608,7 @@ export class Renderer {
     const native = this.prepareFrameworkFlatComposition(game, actors, sourceCamera, cx, cy, viewportWidth, viewportHeight, topology) ??
       this.prepareNativeComposition(game, actors, sourceCamera, cx, cy, viewportWidth, viewportHeight, topology);
     if (!native && game.fieldEffectsSnapshot != null && !this.effectsDeferred(game)) throw new Error("来源字段特效需要共享原生颜色与深度缓冲");
-    const actorImages = native ? [] : this.actorImages(actors, cx, cy, w, h, topology);
+    const actorImages = native ? [] : this.actorImages(actors, cx, cy, w, h, topology, game);
     c.imageSmoothingEnabled = false;
     const auto=game.worldAutoPose?projectFlatWorldAutoPose(game.worldAutoPose):null;
     if(auto){c.fillStyle='#09111b';c.fillRect(0,0,w,h);}
@@ -618,7 +623,7 @@ export class Renderer {
     }
     else this.background(c, sourceCamera, w, h);
     const drawActors = (layer) => {
-      for (const { actor, point } of actorImages) if (actor.layer === layer) this.actor(actor, cx, cy, point);
+      for (const { actor, point } of actorImages) if (actor.layer === layer) this.actor(actor, cx, cy, point, this.actorElevation(game, actor));
     };
     if (!native) for (const [li, l] of m.layers.entries()) {
         this.layer(l, cx, cy, w, h, game, li, topology);

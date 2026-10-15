@@ -16,7 +16,9 @@ export function sourceCatalogProfile(profile: DevelopmentProfile | undefined): S
       profile.transportation !== undefined && profile.transportation !== "walking-magitek-framework-v1" ||
       profile.worldMap !== undefined && profile.worldMap !== "framework-world-map-flat-v1" ||
       profile.fieldPresentation !== undefined && profile.fieldPresentation !== "framework-ordinary-field-flat-v1" ||
+      profile.worldAutoMove !== undefined && (profile.worldAutoMove !== 'web-flat-world-auto-move-v1'||profile.worldAutoTasks!=='web-flat-world-auto-tasks-v1') ||
       profile.worldAutoTasks !== undefined && profile.worldAutoTasks !== 'web-flat-world-auto-tasks-v1' ||
+      profile.birdViewActors !== undefined && profile.birdViewActors !== "web-flat-bird-view-actors-v1" ||
       profile.storyRuntime !== undefined && profile.storyRuntime !== "web-field-story-runtime-v1" ||
       profile.npcProjection !== undefined && profile.npcProjection !== "web-source-npc-flat-projection-v1" ||
       profile.mapAnimatedEntities !== undefined && profile.mapAnimatedEntities !== "web-field-animated-map-entities-v1" ||
@@ -56,7 +58,9 @@ export function assertSourceEntryProfiles(
         (dependency.developmentProfile!.transportation !== entry.developmentProfile!.transportation ||
           dependency.developmentProfile!.worldMap !== entry.developmentProfile!.worldMap ||
           dependency.developmentProfile!.fieldPresentation !== entry.developmentProfile!.fieldPresentation ||
+          dependency.developmentProfile!.worldAutoMove !== entry.developmentProfile!.worldAutoMove ||
           dependency.developmentProfile!.worldAutoTasks !== entry.developmentProfile!.worldAutoTasks ||
+          dependency.developmentProfile!.birdViewActors !== entry.developmentProfile!.birdViewActors ||
           dependency.developmentProfile!.storyRuntime !== entry.developmentProfile!.storyRuntime ||
           dependency.developmentProfile!.npcProjection !== entry.developmentProfile!.npcProjection ||
           dependency.developmentProfile!.mapAnimatedEntities !== entry.developmentProfile!.mapAnimatedEntities ||

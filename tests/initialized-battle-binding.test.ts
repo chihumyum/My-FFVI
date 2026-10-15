@@ -10,72 +10,13 @@ import type { SourceBattleRequests } from "../src/compiler/source-battle-request
 import type { BattleCatalog } from "../src/core/battle-content.js";
 import { encounterRuntimeFixture } from "./fixtures/battle-encounter-runtime.js";
 import { sourceNewGameFixture } from "./fixtures/source-new-game.js";
+import { sourceParticipantFixture, dynamicSourcePolicy } from './fixtures/source-battle-participants.js';
 
 function seal<T extends { contentHash?: string }>(value: T): T & { contentHash: string } {
   const { contentHash: _, ...body } = value;
   return { ...value, contentHash: hash(body) };
 }
-function analysis(catalog: BattleCatalog, ids: number[]) {
-  const result = analyzeBatchEncounters(catalog, ids);
-  return { ready: result.encounters.filter(entry => entry.status === "ready").length,
-    conditional: result.encounters.filter(entry => entry.status === "conditional").length,
-    blocked: result.encounters.filter(entry => entry.status === "blocked").length, entries: result.encounters };
-}
-
-/** Reuse the existing enemy compiler and source-shaped owner. Only request
- * provenance is authored; no test supplies a hand-written ready certificate. */
-async function fixture() {
-  const native = sourceNewGameFixture(), f = encounterRuntimeFixture();
-  f.tables["monster_party.csv"] = f.input.encounters.map(entry => ({ id: String(entry.partyId),
-    battle_background_asset_id: String(entry.metadata.backgroundId), battle_bgm_asset_id: String(entry.metadata.bgmId),
-    appearance_production: String(entry.metadata.appearanceProduction), not_escape: String(entry.metadata.notEscape) }));
-  f.tables["battle_background_asset.csv"] = [{ id: "1", asset_name: "controlled-background" }];
-  f.input.handoff = { policy: { kind: "framework-battle-handoff-v1", id: "controlled-directory",
-    audio: "retain-field", introduction: "omit" } };
-  f.input.encounters[1]!.patterns = [0, 0, 0, 0, 0, 1];
-  f.input.abilities[13]!.plan = null;
-  f.input.abilities[13]!.blockers = ["Controlled unimplemented effect on a conditional AI action"];
-  const rawBase = native.battle;
-  rawBase.encounters = {};
-  rawBase.common.abilities = structuredClone(f.input.abilities);
-  rawBase.common.sprites = structuredClone(f.input.sprites);
-  rawBase.common.drops = { kind: "battle-drops-v1", weights: [100, 0, 0, 0, 0, 0, 0, 0], monsters: [], contents: [] };
-  f.input.conditions = rawBase.common.conditions;
-  const sourceBattle = seal(rawBase);
-  native.world.parentSourceSetHash = f.aiIdentity.sourceSetHash;
-  native.world.maps[String(native.map.mapId)]!.contentHash = seal(native.map).contentHash;
-  const sourceWorld = seal(native.world);
-  const runtime = compileBattleEncounterRuntime(f.reader(), f.input);
-  const producer = await import(pathToFileURL(resolve("scripts/source-battle-directory.mjs")).href);
-  const composed = await producer.composeFrameworkBattleDirectory({ compiledDir: resolve(import.meta.dirname, ".."),
-    baseCatalog: sourceBattle, runtime }) as { catalog: BattleCatalog };
-  const catalog = composed.catalog, requestedPartyIds = [9201, 9202];
-  const rawRequests: SourceBattleRequests = {
-    kind: "source-battle-requests-v1", contentHash: "", sourceSetHash: sourceWorld.sourceSetHash,
-    parentSourceSetHash: sourceWorld.parentSourceSetHash, worldCatalogHash: sourceWorld.contentHash,
-    mapBindings: [{ mapId: native.map.mapId, contentHash: sourceWorld.maps[String(native.map.mapId)]!.contentHash }],
-    requestedPartyIds,
-    requests: requestedPartyIds.map(partyId => ({ partyId, onlyBlockedCandidates: false, sites: [{
-      kind: "typed-field-encounter", partyId, mapId: native.map.mapId, script: "controlled", index: partyId - 9201,
-      slot: null, source: { ...f.aiIdentity, pointer: "/controlled-encounters/" + partyId }, rawPartyId: partyId,
-      rawRate: null, rawInstruction: { mnemonic: "Encount", operands: { iValues: [partyId] } },
-    }] })), diagnostics: [], runtimeAdmission: "unassessed",
-  };
-  const requests = seal({ kind: "source-battle-directory-requests-v1", contentHash: "",
-    sourceSetHash: sourceWorld.sourceSetHash, parentSourceSetHash: sourceWorld.parentSourceSetHash,
-    sourceRequests: seal(rawRequests), retainedBase: { catalogHash: sourceBattle.contentHash, partyIds: [] as number[] },
-    requestedPartyIds });
-  const report = seal({ kind: "source-battle-directory-build-v1", contentHash: "",
-    sourceSetHash: sourceWorld.sourceSetHash, parentSourceSetHash: sourceWorld.parentSourceSetHash,
-    battleSourceSetHash: f.aiIdentity.battleSourceSetHash, baselineHash: sourceBattle.contentHash,
-    frameworkCatalogHash: catalog.contentHash, strictCatalogHash: hash({ controlled: "strict directory omitted from this input" }),
-    requestsHash: requests.contentHash, requestedPartyIds,
-    framework: { ...catalog.encounterReport!, analysis: analysis(catalog, requestedPartyIds) },
-    diagnostics: { requests: requests.sourceRequests.diagnostics, framework: catalog.encounterDiagnostics!, strict: [] },
-  });
-  return { selection: "shared-framework-directory-v1" as const, sourceBattle, sourceWorld,
-    directory: { frameworkCatalog: catalog, requests, report } };
-}
+import { directoryAnalysis as analysis, initializedBattleDirectoryFixture as fixture } from "./fixtures/initialized-battle-directory.js";
 
 test("baseline selection is an exact detached source catalog and needs no directory or walking policy", async () => {
   const f = await fixture(), before = structuredClone(f.sourceBattle);
@@ -326,5 +267,49 @@ test('rehashing a v4 directory cannot hide missing/unknown branch policy, unknow
   Object.assign(f.directory.report.policy.framework,{manualControls:'web-manual-battle-controls-v1',branchExecution:'web-source-battle-branch-execution-v1'});
   mutate(f.directory.report.policy);f.directory.report=seal(f.directory.report);
   await assert.rejects(selectInitializedBattleCatalog(f),/branch execution|versioned directory|manual controls/);
+ }
+});
+
+async function dynamicDirectoryFixture(){
+ const f=await conditionPolicyFixture(),g=sourceParticipantFixture({child:true});
+ g.input.conditions=f.sourceBattle.common.conditions;g.input.abilities=f.sourceBattle.common.abilities;
+ g.input.handoff={policy:{kind:'framework-battle-handoff-v1',id:'controlled-directory',audio:'retain-field',introduction:'omit'}};
+ const closure=g.closure(),runtime=g.runtime(closure),producer=await import(pathToFileURL(resolve('scripts/source-battle-directory.mjs')).href),
+  composed=await producer.composeFrameworkBattleDirectory({compiledDir:resolve(import.meta.dirname,'..'),baseCatalog:f.sourceBattle,runtime,conditionControlPolicy:{kind:'web-source-control-actions-v1'}}),
+  catalog=composed.catalog as BattleCatalog;
+ const report=seal({...f.directory.report,frameworkCatalogHash:catalog.contentHash,policyChanges:composed.policyChanges,
+  policy:{kind:'source-battle-directory-policy-v5',framework:{handoff:g.input.handoff.policy,entry:null,conditionControlPolicy:{kind:'web-source-control-actions-v1'},
+   manualControls:'web-manual-battle-controls-v1',branchExecution:'web-source-battle-branch-execution-v1',sourceParticipants:structuredClone(dynamicSourcePolicy)}},
+  sourceParticipantClosure:closure.report,entryDependencies:{scripts:g.entryScriptGroups()},
+  framework:{...catalog.encounterReport!,analysis:analysis(catalog,[9201,9202])},
+  diagnostics:{...f.directory.report.diagnostics,framework:catalog.encounterDiagnostics!}});
+ return {...f,directory:{...f.directory,frameworkCatalog:catalog,report}};
+}
+test('v5 initialized consumers bind the actual source-derived participant compiler output with complete child/source proof',async()=>{
+ const f=await dynamicDirectoryFixture(),selected=await selectInitializedBattleCatalog(f);
+ assert.equal(selected.catalog.encounters[9201]!.participants!.rewardScope,'all-entered');
+ assert.equal(Object.keys(selected.catalog.encounters[9201]!.participants!.slots).length,9);
+ assert.ok(selected.catalog.encounters[9201]!.participants!.enemyDefinitions[9103]);
+ const checker=await import(pathToFileURL(resolve('scripts/check-selected-source-batches.mjs')).href);
+ const binding=await checker.validateSelectedSourceCatalogBinding({built:{kind:'initialized-source-map-build-v1',recipeKind:'initialized-source-map-recipe-v3',
+  battleCatalogSelection:'shared-framework-directory-v1',sourceAreaScopeReceipt:null,battleDirectory:selected.directoryBinding},battle:selected.catalog,
+  sourceBattle:f.sourceBattle,sourceWorld:f.sourceWorld,directory:selected.catalog,requests:f.directory.requests,directoryReport:f.directory.report},
+  {compiledDir:resolve(import.meta.dirname,'..')});assert.equal(binding.catalogHash,selected.catalog.contentHash);
+ const producer=await import(pathToFileURL(resolve('scripts/source-battle-directory.mjs')).href);
+ assert.deepEqual(await producer.readSourceBattleDirectoryPolicy({compiledDir:resolve(import.meta.dirname,'..'),policy:f.directory.report.policy}),f.directory.report.policy);
+});
+test('v5 source binding cannot be inferred for older/future declarations or ignore rehashed missing/raw/slot/master proof',async()=>{
+ for(const change of [
+  (f:any)=>{delete f.directory.report.sourceParticipantClosure;},
+  (f:any)=>{f.directory.report.policy.kind='source-battle-directory-policy-v4';},
+  (f:any)=>{f.directory.report.policy.kind='source-battle-directory-policy-v6';},
+  (f:any)=>{f.directory.report.policy.framework.sourceParticipants.extra=true;},
+  (f:any)=>{f.directory.report.sourceParticipantClosure.bindings[0].templates=[];},
+  (f:any)=>{f.directory.report.sourceParticipantClosure.bindings[0].completeRawProgram.Mnemonics[0].operands.iValues[0]++;},
+  (f:any)=>{f.directory.frameworkCatalog.encounters[9201].participants.slots[2].x++;},
+ ]){
+  const f=await dynamicDirectoryFixture();change(f);f.directory.frameworkCatalog=seal(f.directory.frameworkCatalog);
+  f.directory.report.frameworkCatalogHash=f.directory.frameworkCatalog.contentHash;f.directory.report=seal(f.directory.report);
+  await assert.rejects(selectInitializedBattleCatalog(f));
  }
 });

@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { canonical, hash } from "../dist/src/compiler/content.js";
 import { verifyContent } from "../dist/src/core/content-integrity.js";
 import { parseGameContentRefs } from "../dist/src/core/game-content-refs.js";
+import { bindFrameworkSourceBattleDirectory } from "./framework-source-battle-binding.mjs";
 import { GameContentRepository } from "../dist/src/core/game-content.js";
 
 const repository = resolve(import.meta.dirname, "..");
@@ -11,7 +12,7 @@ const repository = resolve(import.meta.dirname, "..");
 /** Prepare all base package roles without changing the published collection.
  * A trusted reader may supply this build's private candidates; their payload
  * hashes and the existing repository source/profile gates remain mandatory. */
-export async function compileBaseContentPackages({ root = repository, readJson } = {}) {
+export async function compileBaseContentPackages({ root = repository, readJson, frameworkBattleDirectory } = {}) {
   const build = resolve(root, "build");
   const read = async url => {
     if (typeof url !== "string" || !/^\/(?:game|world|framework)\/[a-zA-Z0-9/_-]+\.json$/.test(url) ||
@@ -25,19 +26,24 @@ export async function compileBaseContentPackages({ root = repository, readJson }
   const [sourceEntry, sourceWorld, sourceBattle, developmentEntry, developmentBattle, frameworkEntry, frameworkWorld] =
     await Promise.all(["/game/source-new-game.json", "/world/catalog.json", "/game/source-catalog.json",
       "/game/narshe.json", "/game/opening-playable.json", "/framework/new-game.json", "/framework/world/catalog.json"].map(read));
+  const frameworkBinding = frameworkBattleDirectory === undefined ? null : await bindFrameworkSourceBattleDirectory({
+    root: repository, compiledDir: resolve(repository, "dist"),sourceEntry,sourceWorld,sourceBattle,frameworkEntry,frameworkWorld,directory:frameworkBattleDirectory });
+  const selectedFrameworkEntry=frameworkBinding?.entry??frameworkEntry;
   const payloads = new Map([
     ["/content-packages/source/entry.json", sourceEntry], ["/content-packages/source/world.json", sourceWorld],
     ["/content-packages/source/battle.json", sourceBattle], ["/content-packages/development/entry.json", developmentEntry],
-    ["/content-packages/development/battle.json", developmentBattle], ["/content-packages/framework/entry.json", frameworkEntry],
+    ["/content-packages/development/battle.json", developmentBattle], ["/content-packages/framework/entry.json", selectedFrameworkEntry],
     ["/content-packages/framework/world.json", frameworkWorld],
   ]);
+  if(frameworkBinding){payloads.set("/content-packages/framework/battle.json",frameworkBinding.battle);
+    payloads.set("/content-packages/framework/battle-binding.json",frameworkBinding.report);}
   const reference = path => ({ url: "/content-packages/" + path, contentHash: payloads.get("/content-packages/" + path).contentHash });
   const development = { entry: reference("development/entry.json"), battle: reference("development/battle.json") };
   const packages = new Map([
     ["source", parseGameContentRefs({ kind: "game-content-refs-v1", profile: "source", world: reference("source/world.json"),
       source: { entry: reference("source/entry.json"), battle: reference("source/battle.json") }, development })],
     ["framework", parseGameContentRefs({ kind: "game-content-refs-v1", profile: "framework", world: reference("framework/world.json"),
-      source: { entry: reference("framework/entry.json"), battle: reference("source/battle.json") }, development })],
+      source: { entry: reference("framework/entry.json"), battle: reference(frameworkBinding?"framework/battle.json":"source/battle.json") }, development })],
     ["development", parseGameContentRefs({ kind: "game-content-refs-v1", profile: "source", world: reference("source/world.json"),
       source: null, development })],
   ]);
@@ -61,7 +67,7 @@ export async function compileBaseContentPackages({ root = repository, readJson }
     if (repository.hasDevelopmentEntry) await repository.opening();
   }
   const report = { kind: "game-content-package-build-v1", packages: [...packages].map(([id, refs]) =>
-    ({ id, refs, refsSha256: hash(refs) })), sourcePayloadsChanged: false, sourceGameplayAdmitted: false };
+    ({ id, refs, refsSha256: hash(refs) })), sourcePayloadsChanged: false, sourceGameplayAdmitted: false, ...(frameworkBinding?{frameworkSourceBattleBinding:frameworkBinding.report}:{}) };
   return { payloads, refs: packages, report };
 }
 

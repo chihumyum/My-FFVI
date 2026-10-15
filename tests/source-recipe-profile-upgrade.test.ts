@@ -308,3 +308,102 @@ test('v5 world-auto declaration cannot replace an unavailable compiled provider 
  for(const[role,url]of Object.entries(f.urls))(f.recipe as any)[role].contentHash=f.current.get(url)!.contentHash;
  await assert.rejects(f.run({frameworkProfileUpgrade:f.proof}),/profile mismatch|cannot remove or change marker/);
 });
+
+async function birdActorProfileFixture() {
+  const f = await worldAutoProfileFixture(), birdViewActors = 'web-flat-bird-view-actors-v1';
+  for (const [url, value] of f.candidate) f.candidate.set(url, await seal({ ...value,
+    developmentProfile: { ...value.developmentProfile, birdViewActors } }));
+  const map = f.candidate.get(f.urls.sourceMap)!, world = f.candidate.get(f.urls.sourceWorld)!;
+  f.candidate.set(f.urls.sourceWorld, await seal({ ...world, maps: { ...world.maps,
+    [map.mapId]: { ...world.maps[map.mapId], contentHash: map.contentHash } } }));
+  const entry = f.candidate.get(f.urls.sourceEntry)!;
+  f.candidate.set(f.urls.sourceEntry, await seal({ ...entry, mapContentHash: map.contentHash,
+    worldCatalogHash: f.candidate.get(f.urls.sourceWorld)!.contentHash }));
+  return { ...f, proof: { ...f.proof, kind: 'compiled-framework-profile-upgrade-v6', markers: { ...f.proof.markers, birdViewActors } } };
+}
+test('exact v6 BirdView actor proof binds complete entry/world/map identities and cannot widen a previous declaration', async () => {
+  const f = await birdActorProfileFixture(), before = canonical({ recipe: f.recipe, current: [...f.current], candidate: [...f.candidate] });
+  const result = await f.run({ frameworkProfileUpgrade: f.proof });
+  assert.equal(result.report.frameworkProfileUpgrades.length, 3);
+  for (const row of result.report.frameworkProfileUpgrades) {
+    assert.equal(row.kind, f.proof.kind); assert.equal(row.grantsSourceAdmission, false); assert.equal(row.saveMigration, false);
+    assert.deepEqual(row.comparisonIdentityBefore, row.comparisonIdentityAfter);
+    assert.equal(row.profileAfter.birdViewActors, f.proof.markers.birdViewActors);
+    const provider = row.providers.find((p: any) => p.marker === 'birdViewActors');
+    assert.equal(provider.module, 'src/core/field-bird-view-actors.js'); assert.equal(provider.provider, 'fieldBirdViewActorBinding');
+    assert.match(provider.sha256, /^[a-f0-9]{64}$/);
+  }
+  assert.equal(canonical({ recipe: f.recipe, current: [...f.current], candidate: [...f.candidate] }), before);
+  for (const version of [1, 2, 3, 4, 5]) await assert.rejects(f.run({ frameworkProfileUpgrade: { ...f.proof,
+    kind: 'compiled-framework-profile-upgrade-v' + version } }), /framework profile upgrade/);
+  for (const mutate of [(p: any) => { delete p.markers.birdViewActors; }, (p: any) => { p.markers.birdViewActors = 'unknown'; },
+    (p: any) => { delete p.markers.worldAutoTasks; }, (p: any) => { p.markers.worldAutoMove = 'guessed'; },
+    (p: any) => { p.kind = 'compiled-framework-profile-upgrade-v7'; }]) {
+    const proof = structuredClone(f.proof); mutate(proof); await assert.rejects(f.run({ frameworkProfileUpgrade: proof }), /framework profile upgrade/);
+  }
+});
+test('v6 requires its compiled actual binding provider and preserves full source script/geometry checks', async () => {
+  const f = await birdActorProfileFixture(); await mkdir(resolve(root, 'build/wip'), { recursive: true });
+  const isolated = await mkdtemp(resolve(root, 'build/wip/bird-actor-provider-unavailable-'));
+  try {
+    await cp(resolve(compiledDir, 'src'), resolve(isolated, 'src'), { recursive: true });
+    await writeFile(resolve(isolated, 'src/core/field-bird-view-actors.js'),
+      'export const WEB_FLAT_BIRD_VIEW_ACTORS="web-flat-bird-view-actors-v1";\n');
+    await assert.rejects(f.run({ compiledDir: isolated, frameworkProfileUpgrade: f.proof }), /host unavailable: birdViewActors/);
+  } finally { await rm(isolated, { recursive: true, force: true }); }
+  const bad = structuredClone(f.candidate.get(f.urls.sourceMap)!); bad.scripts = { injected: [{ kind: 'exit' }] };
+  f.candidate.set(f.urls.sourceMap, await seal(bad));
+  await assert.rejects(f.run({ frameworkProfileUpgrade: f.proof }), /identity|dependency|media changed/i);
+});
+
+async function worldAutoMoveProfileFixture() {
+  const f = await birdActorProfileFixture(), worldAutoMove = 'web-flat-world-auto-move-v1';
+  for (const [url, value] of f.candidate) f.candidate.set(url, await seal({ ...value,
+    developmentProfile: { ...value.developmentProfile, worldAutoMove } }));
+  const map = f.candidate.get(f.urls.sourceMap)!, world = f.candidate.get(f.urls.sourceWorld)!;
+  f.candidate.set(f.urls.sourceWorld, await seal({ ...world, maps: { ...world.maps,
+    [map.mapId]: { ...world.maps[map.mapId], contentHash: map.contentHash } } }));
+  const entry = f.candidate.get(f.urls.sourceEntry)!;
+  f.candidate.set(f.urls.sourceEntry, await seal({ ...entry, mapContentHash: map.contentHash,
+    worldCatalogHash: f.candidate.get(f.urls.sourceWorld)!.contentHash }));
+  return { ...f, proof: { ...f.proof, kind: 'compiled-framework-profile-upgrade-v7', markers: { ...f.proof.markers, worldAutoMove } } };
+}
+test('exact v7 movement profile retains previous marker shapes and binds the actual following-entity provider', async () => {
+  const f = await worldAutoMoveProfileFixture(), before = canonical({ recipe: f.recipe, current: [...f.current], candidate: [...f.candidate] });
+  const result = await f.run({ frameworkProfileUpgrade: f.proof });
+  assert.equal(result.report.frameworkProfileUpgrades.length, 3);
+  for (const row of result.report.frameworkProfileUpgrades) {
+    assert.equal(row.kind, f.proof.kind); assert.equal(row.grantsSourceAdmission, false); assert.equal(row.saveMigration, false);
+    assert.deepEqual(row.comparisonIdentityBefore, row.comparisonIdentityAfter);
+    assert.equal(row.profileAfter.worldAutoMove, f.proof.markers.worldAutoMove);
+    const provider = row.providers.find((p: any) => p.marker === 'worldAutoMove');
+    assert.equal(provider.module, 'src/core/field-world-auto-move.js'); assert.equal(provider.provider, 'worldAutoMoveBinding');
+    const { createHash } = await import('node:crypto'), { readFile } = await import('node:fs/promises');
+    assert.equal(provider.sha256, createHash('sha256').update(await readFile(resolve(compiledDir, provider.module))).digest('hex'));
+  }
+  assert.equal(canonical({ recipe: f.recipe, current: [...f.current], candidate: [...f.candidate] }), before);
+  for (const version of [1, 2, 3, 4, 5, 6]) await assert.rejects(f.run({ frameworkProfileUpgrade: { ...f.proof,
+    kind: 'compiled-framework-profile-upgrade-v' + version } }), /framework profile upgrade/);
+  for (const mutate of [(p: any) => { delete p.markers.worldAutoMove; }, (p: any) => { p.markers.worldAutoMove = 'unknown'; },
+    (p: any) => { delete p.markers.birdViewActors; }, (p: any) => { delete p.markers.worldAutoTasks; },
+    (p: any) => { p.markers.invented = true; }, (p: any) => { p.kind = 'compiled-framework-profile-upgrade-v8'; }]) {
+    const proof = structuredClone(f.proof); mutate(proof); await assert.rejects(f.run({ frameworkProfileUpgrade: proof }), /framework profile upgrade/);
+  }
+});
+test('v7 rejects a missing real provider and does not authorize source geometry, media or script changes', async () => {
+  const f = await worldAutoMoveProfileFixture(); await mkdir(resolve(root, 'build/wip'), { recursive: true });
+  const isolated = await mkdtemp(resolve(root, 'build/wip/world-auto-move-provider-unavailable-'));
+  try {
+    await cp(resolve(compiledDir, 'src'), resolve(isolated, 'src'), { recursive: true });
+    await writeFile(resolve(isolated, 'src/core/field-world-auto-move.js'),
+      'export const WEB_FLAT_WORLD_AUTO_MOVE="web-flat-world-auto-move-v1";\n');
+    await assert.rejects(f.run({ compiledDir: isolated, frameworkProfileUpgrade: f.proof }), /host unavailable: worldAutoMove/);
+  } finally { await rm(isolated, { recursive: true, force: true }); }
+  for (const mutate of [(v: any) => { v.scripts = { injected: [{ kind: 'exit' }] }; },
+    (v: any) => { v.map.identity.areaId++; v.areaId++; }, (v: any) => { v.media = { injected: '/unverified.png' }; }]) {
+    const bad = structuredClone(f.candidate.get(f.urls.sourceMap)!); mutate(bad);
+    const old = f.candidate.get(f.urls.sourceMap)!; f.candidate.set(f.urls.sourceMap, await seal(bad));
+    await assert.rejects(f.run({ frameworkProfileUpgrade: f.proof }), /identity|dependency|media changed/i);
+    f.candidate.set(f.urls.sourceMap, old);
+  }
+});
