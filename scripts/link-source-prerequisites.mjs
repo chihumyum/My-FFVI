@@ -6,7 +6,7 @@ import {pathToFileURL} from 'node:url';
 
 const repository=resolve(import.meta.dirname,'..');
 
-export async function linkSourcePrerequisites({root=repository,compiledDir='dist',payloads}={}){
+export async function linkSourcePrerequisites({root=repository,compiledDir='dist',payloads,frameworkOptions={}}={}){
   assert.ok(payloads instanceof Map,'Missing source prerequisite candidates');
   const inputs=new Map([...payloads].map(([url,value])=>[url,structuredClone(value)]));
   const api=Object.assign({},...await Promise.all(['core/content-integrity','core/game-content',
@@ -42,7 +42,7 @@ export async function linkSourcePrerequisites({root=repository,compiledDir='dist
   const entry=seal({...originalEntry,worldCatalogHash:world.contentHash});
   // Derive after linking so every development profile pins the actual source
   // world/entry body used by this collection, rather than an old build alias.
-  const framework=api.compileFrameworkContent(world,sourceMaps,entry);
+  const framework=api.compileFrameworkContent(world,sourceMaps,entry,frameworkOptions);
   const frameworkWorld=rebase(framework.catalog,framework.maps,'/content-packages/framework/maps');
   const frameworkEntry=seal({...framework.entry,worldCatalogHash:frameworkWorld.contentHash});
   const packagePayloads=new Map();
@@ -63,5 +63,7 @@ export async function linkSourcePrerequisites({root=repository,compiledDir='dist
     originalWorldHash:originalWorld.contentHash,linkedWorldHash:world.contentHash,
     originalEntryHash:originalEntry.contentHash,linkedEntryHash:entry.contentHash,
     frameworkWorldHash:frameworkWorld.contentHash,frameworkEntryHash:frameworkEntry.contentHash,
+    logicalFieldEffects:framework.report.logicalFieldEffects??null,
+    ...(framework.report.periodicReport?{periodicReport:structuredClone(framework.report.periodicReport)}:{}),
     originalPayloadsChanged:false,sourceGameplayAdmitted:false,fullGameMigration:false}};
 }

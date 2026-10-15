@@ -109,7 +109,8 @@ export function prepareSourceNativeMap(input: SourceNativeMapInput): FieldActorF
     throw new Error("Unknown source native map lifecycle");
   const viewPlan = entry.viewPlan === undefined ? undefined : assertMapEntryViewBinding(entry.viewPlan,
     { mapId: definition.mapId, loopType: definition.loopType, presentationViewType: 0 });
-  if (definition.loopType !== 0 && !viewPlan?.isWorld)
+  if (definition.loopType !== 0 && (!viewPlan || !viewPlan.isWorld &&
+      !(view.kind === "framework-flat-field-view-v1" && view.policy === "framework-ordinary-field-flat-v1")))
     throw new Error("Unknown source native map lifecycle");
   same({ width: view.mapSize.width, height: view.mapSize.height }, { width: definition.mapRange.width, height: definition.mapRange.height },
     "Destination native map range/material size mismatch");

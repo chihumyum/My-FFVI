@@ -1,6 +1,7 @@
 import { fieldEffectBoardId, type FieldEffectCandidate, type FieldEffectOperation,
   type FieldEffectPrepared, type FieldEffectState, type FieldEffectCatalog, type FieldEffects } from "./field-effects.js";
 import { canonical } from "./canonical.js";
+import { WEB_LOGICAL_FIELD_EFFECTS } from "./field-logical-effects.js";
 
 type EffectAccess = Pick<FieldEffects, "snapshot" | "catalogSnapshot" | "prepare" | "prepareTick">;
 
@@ -12,9 +13,13 @@ export class FieldEffectMap {
   #publishing = false;
   readonly #ids: Map<string, string>;
   readonly #locals: Map<string, string>;
-  constructor(readonly scope: string, access: EffectAccess, localIds: readonly string[]) {
+  constructor(readonly scope: string, access: EffectAccess, localIds: readonly string[],
+    readonly logicalPolicy: typeof WEB_LOGICAL_FIELD_EFFECTS | null = null,
+    readonly restoreSeed = false) {
     if (new Set(localIds).size !== localIds.length) throw new Error("Duplicate map effect board identity");
     this.#access = access;
+    if (logicalPolicy && access.catalogSnapshot().webPolicy?.kind !== logicalPolicy)
+      throw new Error("Unbound logical effect map capability");
     this.#ids = new Map(localIds.map((id) => [id, fieldEffectBoardId(scope, id)]));
     this.#locals = new Map([...this.#ids].map(([local, global]) => [global, local]));
   }

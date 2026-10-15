@@ -6,6 +6,7 @@ import { compileProtectionCondition } from "./protection.js";
 import { compileSpeedCondition } from "./condition-speed.js";
 import { compileBlindCondition, compileBlindPresentation } from "./condition-blind.js";
 import { compileConditionResistanceProvider } from "./condition-resistance-provider.js";
+import { compileSourceControlCondition } from "./source-condition-application.js";
 import {
   ConditionRules,
   type ConditionCatalog,
@@ -223,6 +224,12 @@ export function compileBattleConditionCatalog(
         if (poison.behavior) {
           presentationSources.push(...poison.sources);
           return [poison.behavior];
+        }
+        const control = compileSourceControlCondition(reader, row, name, result.catalog.definitions);
+        providerBlockers.push(...control.blockers.map(reason => ({ conditionId: d.id, reason })));
+        if (control.behavior) {
+          presentationSources.push(...control.sources);
+          return [control.behavior];
         }
         return hasEscapeBehavior(row)
           ? [{ id: d.id, kind: "escape", untilType: 2,

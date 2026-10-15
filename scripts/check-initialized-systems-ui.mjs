@@ -187,8 +187,11 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
   }
   const actualActivityFactory = core.createWebFlatConditionLeaderActivityPort;
   assert.equal(typeof actualActivityFactory, "function", "Actual production app must import its activity factory");
-  const activityCalls = [], activityPorts = [];
-  const observedCore = { ...core, createWebFlatConditionLeaderActivityPort: () => {
+  const activityCalls = [], activityPorts = [], logicalEffectPorts = [];
+  const actualLogicalFactory = core.createWebLogicalFieldEffectsHost;
+  const observedCore = { ...core, createWebLogicalFieldEffectsHost: () => {
+    const port = actualLogicalFactory(); logicalEffectPorts.push(port); return port;
+  }, createWebFlatConditionLeaderActivityPort: () => {
     const actualPort = actualActivityFactory();
     const port = Object.freeze({ ...actualPort, prepare(scopeHost) {
       const scope = actualPort.prepare(scopeHost);
@@ -254,7 +257,7 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
     assert.equal(current.sourceBoot, null, "Initialized entry must not borrow source fade/launch");
     return owner;
   };
-  return { api, frame, click, bound, healthy, calls, slots, activityCalls, activityPorts, failedUrls, heldUrls, failedImages, heldImages,
+  return { api, frame, click, bound, healthy, calls, slots, activityCalls, activityPorts, logicalEffectPorts, failedUrls, heldUrls, failedImages, heldImages,
     $: id => document.getElementById(id),
     find: (id, predicate) => walk(document.getElementById(id)).find(predicate),
     key(code) { listeners.get("keydown")({ code, target: nodes.get("game"), repeat: false, preventDefault() {} });
@@ -521,6 +524,49 @@ async function conditionActivityPackages(packageId = "controlled-condition-activ
   media.set(`/content-releases/media/${pngHash}.png`, png);
   return { ...f, content, world, battle, map, worldMap: target, maps, packageId, refs, files, media, release, indexUrl, pngHash,
     targetTexture: target.map.textures.controlled };
+}
+async function logicalEffectsPackages(packageId = "controlled-logical-effects") {
+  const { logicalWorldEffectsFixture } = await load("tests/fixtures/logical-world-effects.js");
+  const { compileFrameworkNewGame } = await load("src/compiler/framework-new-game.js");
+  const f = await logicalWorldEffectsFixture(), png = controlledPng(), pngHash = sha(png);
+  for (const character of Object.values(f.world.characters)) for (const sprite of Object.values(character.sprites)) {
+    sprite.file = "/controlled/logical-actor.png"; sprite.sha256 = pngHash;
+  }
+  for (const sprite of Object.values(f.battle.common.sprites)) sprite.file = "/controlled/logical-battle.png";
+  const maps = [];
+  for (const original of f.maps) {
+    const value = structuredClone(original);
+    value.map.textures = { controlled: "/controlled/logical-field-" + value.mapId + ".png" };
+    maps.push(await seal(value));
+  }
+  const [map, target] = maps, worldDraft = structuredClone(f.world);
+  for (const value of maps) worldDraft.maps[String(value.mapId)].contentHash = value.contentHash;
+  const world = await seal(worldDraft), battle = await seal(f.battle), content = await compileFrameworkNewGame({
+    sourceEntry: f.sourceEntry, sourceBattle: f.sourceBattle, sourceMap: f.sourceMap, world, map, battle,
+    entrance: map.partyEntry.pointIns[0].id });
+  const prefix = "/content-packages/" + packageId, refs = { kind: "game-content-refs-v2", profile: "framework",
+    world: { url: prefix + "/world.json", contentHash: world.contentHash }, source: null, development: null,
+    initialized: { entry: { url: prefix + "/entry.json", contentHash: content.contentHash },
+      battle: { url: prefix + "/battle.json", contentHash: battle.contentHash } } };
+  const files = new Map([["/content-packages/" + packageId + ".json", refs], [refs.world.url, world],
+    [refs.initialized.entry.url, content], [refs.initialized.battle.url, battle],
+    ...maps.map(value => [world.maps[String(value.mapId)].url, value])]);
+  const bindings = Object.fromEntries([...files].filter(([, value]) => /^[a-f0-9]{64}$/.test(value.contentHash))
+    .map(([url, value]) => [url, value.contentHash]));
+  const mediaBindings = Object.fromEntries([...new Set([...maps.flatMap(value => core.fieldMediaUrls({ map: value.map,
+    characters: world.characters, minimap: value.minimap })), ...Object.values(battle.common.sprites).map(sprite => sprite.file)])]
+    .map(url => [url, { sha256: pngHash, extension: "png" }]));
+  const release = { id: await contentDigest({ packageId, refs, bindings, mediaBindings }),
+    sourceSetHash: content.parentSourceSetHash, refs, bindings, mediaBindings };
+  const indexUrl = `/content-releases/packages/${packageId}.json`, index = await seal({
+    kind: "game-content-release-index-v1", packageId, profile: "framework", objectRoot: "/content-releases",
+    currentReleaseId: release.id, releases: [release] });
+  for (const [url, hash] of Object.entries(bindings)) files.set(`/content-releases/objects/${hash}.json`, files.get(url));
+  files.set(indexUrl, index);
+  const media = new Map(Object.keys(mediaBindings).map(url => [url, png]));
+  media.set(`/content-releases/media/${pngHash}.png`, png);
+  return { ...f, content, world, battle, map, worldMap: target, maps, packageId, refs, files, media,
+    release, indexUrl, pngHash };
 }
 function assertActivity(h, field) {
   assert.equal(h.activityPorts.length, 1, "Whole actual app creates one runtime activity port");
@@ -832,6 +878,44 @@ try {
       sourcePoolSlots: poolRequest.sourceEncounter.command.slots, effectId: poolRequest.sourceEncounter.command.effectId,
       storageWrites: h.calls.writes, completedBattles: restored.state.snapshot().completedBattles.length,
       originalGameExecuted: false, sourceStoryReachability: false, nativeRngParity: false };
+  });
+  await check("production logical-effects port survives actual app initialization, rollback, map retry, save/load and source-shaped VM continuation", async () => {
+    const pack = await logicalEffectsPackages(), h = await host(pack), owner = await start(h), first = owner.field;
+    const port = h.api.runtime.fieldEffects, firstState = first.fieldEffectsSnapshot;
+    assert.equal(port.policy, "web-logical-all-loop-field-effects-v1");
+    assert.equal(Reflect.get(first, "options").fieldEffects, port);
+    assert.equal(first.fieldEffectsDisplayPolicy, port.policy);
+    assert.equal(firstState.instanceCount, 1); assert.equal(firstState.players[0].playing, true);
+    const owned = owner.state.snapshot();
+    h.api.read().images.clear(); h.failedImages.add(`sha256:${pack.pngHash}`);
+    await move(h, "right");
+    for (let i = 0; i < 30 && h.$("retry-map").hidden; i++) await h.frame();
+    assert.equal(h.$("retry-map").hidden, false); assert.equal(owner.field, first);
+    const failedFx = first.fieldEffectsSnapshot;
+    assert.equal(failedFx.instanceCount, 1); assert.equal(failedFx.players[0].cameraId, 1);
+    assert.deepEqual(owner.state.snapshot(), owned);
+    h.failedImages.clear(); await h.click(h.$("retry-map"));
+    for (let i = 0; i < 100 && owner.field === first; i++) await h.frame();
+    await activityIdle(h, owner); const second = owner.field;
+    assert.notEqual(second, first); assert.equal(second.fieldEffectsSnapshot.instanceCount, 2);
+    assert.equal(second.fieldEffectsSnapshot.players[0].cameraId, 2);
+    assert.equal(Reflect.get(second, "options").fieldEffectMap.logicalPolicy, port.policy);
+    assert.equal(Reflect.get(owner.world, "owned").current.fieldEffects, port);
+    await pauseMenu(h); const saved = owner.checkpoint(); await h.click(h.$("save-game"));
+    await h.click(h.$("load-game")); const restored = h.bound();
+    assert.notEqual(restored, owner); assert.deepEqual(restored.checkpoint(), saved);
+    assert.equal(h.api.runtime.fieldEffects, port); assert.equal(Reflect.get(restored.world, "owned").current.fieldEffects, port);
+    assert.equal(h.logicalEffectPorts.length, 1); assert.equal(h.logicalEffectPorts[0], port);
+    await resume(h); assert.equal(restored.field.startEvent("fx-play"), true);
+    for (let i = 0; i < 100 && restored.field.busy && !restored.field.stop; i++) await h.frame();
+    assert.equal(restored.field.stop, null); assert.equal(restored.field.busy, false);
+    const after = restored.field.fieldEffectsSnapshot;
+    assert.equal(after.instanceCount, 2); assert.equal(after.players[0].cameraId, 2);
+    assert.equal(after.players[0].playing, false); assert.equal(after.players[0].loopCount, 1);
+    assert.equal(after.boards[0].activeSelf, false);
+    report.logicalEffectsLifecycle = { policy: port.policy, nativeParity: false, display: "deferred",
+      first: firstState, failed: failedFx, saved: saved.world.logicalEffects, restoredAfterVm: after,
+      storageWrites: h.calls.writes, actualAppFactory: true, originalStoryReachability: false };
   });
   assert.equal(await runtimeDigest(root, compiled), runtimeBefore, "Runtime changed during actual app checks");
   assert.equal(sha(await readFile(new URL(import.meta.url))), sha(checkerBefore), "App checker changed during checks");

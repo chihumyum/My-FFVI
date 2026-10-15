@@ -232,7 +232,9 @@ export class GameContentRepository {
       header(saved, "game-checkpoint");
       if (saved.formatVersion !== 4 && saved.formatVersion !== 5 && saved.formatVersion !== 6)
         throw new Error("Game checkpoint version mismatch");
-      header(saved.world, saved.world?.kind === "event-world-v1" ? "event-world-v1" : "idle-world-v10");
+      if (!["idle-world-v10", "event-world-v1", "idle-world-v11", "event-world-v2"].includes(saved.world?.kind))
+        throw new Error("Unknown world checkpoint kind");
+      header(saved.world, saved.world.kind);
       text(saved.sourceSetHash); hash(saved.battleCatalogHash); hash(saved.world.initialHash);
       object(saved.origin);
       if (this.references !== undefined && saved.world.location !== null) {

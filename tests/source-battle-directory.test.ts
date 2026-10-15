@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { mkdtemp, mkdir, readdir, symlink, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { hash, canonical } from "../src/compiler/content.js";
 import { compileBattleEncounterRuntime } from "../src/compiler/battle-encounter-runtime.js";
 import { assertSourceGameCatalog } from "../src/core/source-catalog.js";
@@ -82,4 +84,67 @@ test("new missing owned drop definitions block affected parties without changing
   assert.ok(result.catalog.encounterDiagnostics.some((d: { code: string }) => d.code === "directory-owned-drop-content"));
   assert.equal(canonical(result.catalog.gameState), canonical(f.base.gameState));
   assert.equal(result.catalog.common.drops.contents.some((item: { id: number }) => item.id === 999999), false);
+});
+
+test("production Web control composition adds only its explicit marker and audits both complete shared bodies", async () => {
+  const f = fixture(), api = await producer(), runtime = compileBattleEncounterRuntime(f.reader(), f.input);
+  const original = canonical(f.base), conditionControlPolicy = { kind: "web-source-control-actions-v1" };
+  const result = await api.composeFrameworkBattleDirectory({ compiledDir, baseCatalog: f.base, runtime, conditionControlPolicy });
+  assert.deepEqual(result.catalog.common.conditionControlPolicy, conditionControlPolicy);
+  assert.equal(canonical(result.catalog.gameState), canonical(f.base.gameState));
+  assert.equal(canonical(f.base), original); assert.equal(Object.hasOwn(f.base.common, "conditionControlPolicy"), false);
+  assert.equal(result.policyChanges.length, 1);
+  const audit = result.policyChanges[0];
+  assert.equal(audit.field, "common.conditionControlPolicy"); assert.equal(audit.from, null);
+  assert.deepEqual(audit.to, conditionControlPolicy);
+  assert.equal(canonical(audit.beforeCommon), canonical(f.base.common));
+  assert.equal(canonical(audit.afterCommon), canonical(result.catalog.common));
+  assert.equal(audit.beforeCommonHash, hash(f.base.common)); assert.equal(audit.afterCommonHash, hash(result.catalog.common));
+  assert.equal(audit.beforeGameStateHash, audit.afterGameStateHash);
+  const { drops: _drops, conditionControlPolicy: _policy, ...after } = result.catalog.common;
+  const { drops: _old, ...before } = f.base.common;
+  assert.equal(canonical(after), canonical(before));
+});
+
+test("unknown, null, accessor and extra Web marker inputs reject without changing source or runtime", async () => {
+  const f = fixture(), api = await producer(), runtime = compileBattleEncounterRuntime(f.reader(), f.input);
+  const sourceBefore = canonical(f.base), runtimeBefore = canonical(runtime);
+  const accessor = Object.defineProperty({}, "kind", { enumerable: true, get: () => assert.fail("Policy getter ran") });
+  for (const conditionControlPolicy of [null, { kind: "unknown" }, { kind: "web-source-control-actions-v1", unrelated: true }, accessor])
+    await assert.rejects(api.composeFrameworkBattleDirectory({ compiledDir, baseCatalog: f.base, runtime, conditionControlPolicy }));
+  assert.equal(canonical(f.base), sourceBefore); assert.equal(canonical(runtime), runtimeBefore);
+});
+
+test("a strict source baseline never silently inherits or upgrades an existing Web control marker", async () => {
+  const f = fixture(), api = await producer(), runtime = compileBattleEncounterRuntime(f.reader(), f.input);
+  const common = { ...f.base.common, conditionControlPolicy: { kind: "web-source-control-actions-v1" } };
+  const { contentHash: _, ...body } = f.base, changed = { ...body, common };
+  await assert.rejects(api.composeFrameworkBattleDirectory({ compiledDir, baseCatalog: { ...changed, contentHash: hash(changed) },
+    runtime, conditionControlPolicy: { kind: "web-source-control-actions-v1" } }), /strict source baseline/);
+});
+
+test("Web control policy cannot suppress an unrelated unknown ability or change unresolved source diagnostics", async () => {
+  const f = fixture(), api = await producer();
+  f.input.abilities = structuredClone(f.input.abilities);
+  f.input.abilities[13]!.plan = null; f.input.abilities[13]!.blockers = ["Controlled unknown complete ability"];
+  const runtime = compileBattleEncounterRuntime(f.reader(), f.input), gaps = runtime.diagnostics.filter(d => d.code === "ability-plan");
+  assert.ok(gaps.length);
+  const result = await api.composeFrameworkBattleDirectory({ compiledDir, baseCatalog: f.base, runtime,
+    conditionControlPolicy: { kind: "web-source-control-actions-v1" } });
+  assert.equal(canonical(result.catalog.encounterDiagnostics.filter((d: { code: string }) => d.code === "ability-plan")), canonical(gaps));
+});
+
+test("a declared policy is unavailable when its compiled runtime module is absent", async () => {
+  const f = fixture(), api = await producer(), runtime = compileBattleEncounterRuntime(f.reader(), f.input);
+  const missing = await mkdtemp(resolve(tmpdir(), "ffvi-no-control-runtime-"));
+  try {
+    await mkdir(resolve(missing, "src", "core"), { recursive: true });
+    await symlink(resolve(compiledDir, "src", "compiler"), resolve(missing, "src", "compiler"), "dir");
+    for (const file of await readdir(resolve(compiledDir, "src", "core")))
+      if (file !== "condition-control-actions.js")
+        await symlink(resolve(compiledDir, "src", "core", file), resolve(missing, "src", "core", file));
+    await assert.rejects(api.composeFrameworkBattleDirectory({ compiledDir: missing, baseCatalog: f.base, runtime,
+      conditionControlPolicy: { kind: "web-source-control-actions-v1" } }), /Cannot find module.*condition-control-actions/);
+    assert.equal(Object.hasOwn(f.base.common, "conditionControlPolicy"), false);
+  } finally { await rm(missing, { recursive: true, force: true }); }
 });

@@ -1,4 +1,7 @@
 import type { Evidence } from "../field/types.js";
+import { checkpointKeys } from "./checkpoint-validation.js";
+import { WEB_LOGICAL_FIELD_EFFECTS, validateLogicalEffectCatalog, validateLogicalEffectMedia,
+  type LogicalFieldEffectsPolicy } from "./field-logical-effects.js";
 import { FieldEffectCandidate, type FieldEffectCandidateHost, type FieldEffectCandidateLimits,
   type FieldEffectCandidateOrigin } from "./field-effect-transaction.js";
 export { FieldEffectCandidate, type FieldEffectCandidateHost, type FieldEffectCandidateLimits,
@@ -25,7 +28,7 @@ export type FieldEffectMediaDefinition = {
   /** Extraction and lifecycle recovery are not particle/shader admission. */
   blockers: string[];
 };
-export type FieldEffectCatalog = { media: Record<string, FieldEffectMediaDefinition> };
+export type FieldEffectCatalog = { media: Record<string, FieldEffectMediaDefinition>; webPolicy?: LogicalFieldEffectsPolicy };
 export type FieldEffectMesh = {
   vertices: FieldEffectPoint[]; uv: { x: number; y: number }[]; triangles: number[];
   renderQueue: number; affectedMode: 0 | 2; zTest: 4 | 8; blendType: number;
@@ -48,7 +51,8 @@ export type FieldEffectState = {
    * A dangling shared entry cannot be silently replaced by a new instance. */
   shared: Record<string, number>; registeredCameraIds: number[];
 };
-export type FieldEffectObservation = { cameraId: number; particlePlaying: boolean[] };
+export type FieldEffectObservation = { cameraId: number; particlePlaying: boolean[]; kind?: never } |
+  { cameraId: number; kind: "all-loop-completion-independent-v1"; particlePlaying?: never };
 export type FieldEffectOperation =
   | { kind: "create"; id: string; definition: FieldEffectBoardDefinition; position: FieldEffectPoint }
   | { kind: "destroy"; id: string }
@@ -72,6 +76,7 @@ export type FieldEffectPublication = { validate(): void; commit(): void };
 /** The host must prepare all particle, material and board changes without
  * publishing. commit only installs already-prepared state and cannot fail. */
 export type FieldEffectProvider = {
+  readonly policy?: typeof WEB_LOGICAL_FIELD_EFFECTS;
   prepare(plan: Readonly<FieldEffectPlan>): FieldEffectPublication;
   /** Capture the current host generation now, not when the candidate is sealed.
    * The returned scope may stage private resources but cannot publish them. */
@@ -180,7 +185,8 @@ function media(catalog: FieldEffectCatalog, group: string, admit = true): FieldE
   if (new Set(result.particles.map((p) => p.id)).size !== result.particles.length ||
       result.particles.some((p) => !p.id || typeof p.loop !== "boolean" || !Array.isArray(p.enabledModules)))
     throw new Error("Invalid effect particle identity");
-  if (admit && result.blockers.length) throw new Error("Field effect particle provider unavailable: " + group + ": " + result.blockers.join("; "));
+  if (admit && result.blockers.length && !validateLogicalEffectMedia(catalog, group))
+    throw new Error("Field effect particle provider unavailable: " + group + ": " + result.blockers.join("; "));
   return result;
 }
 
@@ -286,7 +292,8 @@ export function projectFieldEffects(state: FieldEffectState, catalog: FieldEffec
       case "create": {
         identity(op.id); point(op.position);
         if (next.boards.some((b) => b.id === op.id)) throw new Error("Duplicate effect board: " + op.id);
-        const d = op.definition, blocked = fieldEffectBoardBlockers(d);
+        const d = op.definition, blocked = fieldEffectBoardBlockers(d).filter(reason =>
+          !(reason === "Field effect minimap provider is unavailable" && validateLogicalEffectMedia(catalog, d.assetGroup)));
         if (blocked.length) throw new Error(blocked.join("; "));
         const m = media(catalog, d.assetGroup), sharedId = d.playOnAwake ? next.shared[d.assetGroup] : undefined;
         let p: FieldEffectPlayerState;
@@ -354,13 +361,18 @@ export function projectFieldEffects(state: FieldEffectState, catalog: FieldEffec
           throw new Error("Missing/duplicate field effect observations");
         for (const p of updating) {
           const observation = op.observations.find((o) => o.cameraId === p.cameraId), m = media(catalog, p.assetGroup);
-          if (!observation || observation.particlePlaying.length !== m.particles.length || observation.particlePlaying.some((v) => typeof v !== "boolean"))
+          const independent = observation?.kind === "all-loop-completion-independent-v1";
+          if (!observation) throw new Error("Unknown particle playback state");
+          if (independent ? Object.keys(observation).sort().join(",") !== "cameraId,kind" ||
+              !validateLogicalEffectMedia(catalog, p.assetGroup) || !m.particles.every(particle => particle.loop) :
+              !Array.isArray(observation.particlePlaying) || observation.particlePlaying.length !== m.particles.length ||
+              observation.particlePlaying.some((v) => typeof v !== "boolean"))
             throw new Error("Unknown particle playback state");
           p.elapsedSec = f(p.elapsedSec + f(op.deltaSeconds));
           events.push({ kind: "elapsed", cameraId: p.cameraId, seconds: p.elapsedSec });
           // UpdateEntity only counts non-looping particles' isPlaying. A looped
           // emitter does not defer a caller-specified positive loop limit.
-          if (p.loopLimit > 0 && !m.particles.some((particle, i) => !particle.loop && observation.particlePlaying[i])) {
+          if (p.loopLimit > 0 && (independent || !m.particles.some((particle, i) => !particle.loop && observation.particlePlaying![i]))) {
             p.loopCount++; stop(p);
             if (p.loopCount < p.loopLimit) { p.effectActive = true; p.playing = true; events.push({ kind: "restart", cameraId: p.cameraId }); }
           }
@@ -384,10 +396,44 @@ export class FieldEffects {
   #publicationFailed = false;
   readonly #provider: FieldEffectProvider | undefined;
   constructor(catalog: FieldEffectCatalog, provider?: FieldEffectProvider) {
+    validateLogicalEffectCatalog(catalog);
+    if (catalog.webPolicy && provider?.policy !== WEB_LOGICAL_FIELD_EFFECTS ||
+        provider?.policy === WEB_LOGICAL_FIELD_EFFECTS && !catalog.webPolicy && Object.keys(catalog.media).length > 0)
+      throw new Error("Logical field effects require the explicit matching Web host and catalog");
     this.#catalog = structuredClone(catalog); this.#provider = provider;
   }
   snapshot(): FieldEffectState { return structuredClone(this.#state); }
   catalogSnapshot(): FieldEffectCatalog { return structuredClone(this.#catalog); }
+  get logicalPolicy(): typeof WEB_LOGICAL_FIELD_EFFECTS | null {
+    return this.#catalog.webPolicy && this.#provider?.policy === WEB_LOGICAL_FIELD_EFFECTS ? WEB_LOGICAL_FIELD_EFFECTS : null;
+  }
+  static restoreLogical(catalog: FieldEffectCatalog, provider: FieldEffectProvider, state: FieldEffectState): FieldEffects {
+    const owner = new FieldEffects(catalog, provider);
+    if (owner.logicalPolicy !== WEB_LOGICAL_FIELD_EFFECTS) throw new Error("Logical effect checkpoint requires its explicit Web host");
+    checkpointKeys(state, "kind,instanceCount,nextParticlePositionY,players,boards,shared,registeredCameraIds");
+    validateFieldEffectState(state, owner.#catalog);
+    if (state.nextParticlePositionY < 0 || Math.fround(state.nextParticlePositionY) !== state.nextParticlePositionY ||
+        Object.keys(state.shared).some(group => !Object.hasOwn(catalog.media, group)))
+      throw new Error("Invalid logical effect allocation history");
+    for (const player of state.players) {
+      checkpointKeys(player, "cameraId,assetGroup,references,autoPlaying,activeSelf,effectActive,playing,loopLimit,loopCount,elapsedSec,positionY");
+      if (Math.fround(player.elapsedSec) !== player.elapsedSec || Math.fround(player.positionY) !== player.positionY ||
+          player.positionY < 0 || player.loopCount > player.loopLimit || player.effectActive !== player.playing)
+        throw new Error("Invalid logical effect playback checkpoint");
+    }
+    for (const board of state.boards) {
+      if (fieldEffectBoardBlockers(board.definition).some(reason => reason !== "Field effect minimap provider is unavailable"))
+        throw new Error("Logical effect checkpoint has an unresolved gameplay board dependency");
+      checkpointKeys(board, "id,definition,cameraId,position,mesh,activeSelf,fadeAlpha,currentFadeStatus");
+      checkpointKeys(board.position, "x,y,z");
+      checkpointKeys(board.mesh, "vertices,uv,triangles,renderQueue,affectedMode,zTest,blendType,collider");
+      checkpointKeys(board.mesh.collider, "enabled,width,height");
+      for (const vertex of board.mesh.vertices) checkpointKeys(vertex, "x,y,z");
+      for (const uv of board.mesh.uv) checkpointKeys(uv, "x,y");
+    }
+    owner.#state = structuredClone(state);
+    return owner;
+  }
   #validateRevision(revision: number): void {
     if (this.#publicationFailed) throw new Error("Field effect host publication failed; the manager cannot be reused");
     if (this.#publishing || this.#revision !== revision) throw new Error("Stale field effect publication");
@@ -483,5 +529,7 @@ function mergeFieldEffectCatalog(base: FieldEffectCatalog, target: FieldEffectCa
       if (canonical(merged.media[group]) !== canonical(definition)) throw new Error("Changed field effect media definition: " + group);
     } else Object.defineProperty(merged.media, group, { value: structuredClone(definition), enumerable: true, writable: true, configurable: true });
   }
+  if (canonical(base.webPolicy ?? null) !== canonical(target.webPolicy ?? null))
+    throw new Error("Changed logical effects catalog/profile binding");
   return merged;
 }

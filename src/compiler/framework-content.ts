@@ -1,11 +1,24 @@
 import { canonical, hash } from "./content.js";
 import { fieldEffectCompilationBlockers } from "./field-effects.js";
-import { fieldEffectBoardBlockers } from "../core/field-effects.js";
+import { fieldEffectBoardBlockers, type FieldEffectCatalog } from "../core/field-effects.js";
+import { validateLogicalEffectCatalog, WEB_LOGICAL_FIELD_EFFECTS } from "../core/field-logical-effects.js";
 import type { DevelopmentOmission, DevelopmentProfile } from "../core/development-profile.js";
 import { FRAMEWORK_TRANSPORTATION_LIMITATIONS, FRAMEWORK_STORY_RUNTIME_DECLARATIONS } from "../core/development-profile.js";
 import type { SourceNewGameContent } from "../core/source-new-game.js";
 import type { EntityGroup, Evidence, FieldEntity } from "../field/types.js";
 import type { ContentIssue, WorldCatalog, WorldMapContent } from "../field/world.js";
+import { deriveFrameworkPeriodicContent, type FrameworkPeriodicAssessment } from "./framework-periodic-presentation.js";
+
+export type LogicalFieldEffectsDeclaration = {
+  kind: "web-logical-field-effects-declaration-v1";
+  policy: typeof WEB_LOGICAL_FIELD_EFFECTS;
+  sourceSetHash: string; parentSourceSetHash: string; catalogHash: string;
+  mapIds: readonly number[]; reason: string;
+};
+export type FrameworkContentOptions = {
+  logicalFieldEffects?: { catalog: FieldEffectCatalog; declaration: LogicalFieldEffectsDeclaration };
+  periodicPresentations?: readonly FrameworkPeriodicAssessment[];
+};
 
 export type FrameworkContentRetained = {
   mapId: number;
@@ -24,6 +37,8 @@ export type FrameworkContentReport = {
   maps: { mapId: number; sourceContentHash: string; contentHash: string }[];
   omissions: DevelopmentOmission[];
   retained: FrameworkContentRetained[];
+  logicalFieldEffects?: { declaration: LogicalFieldEffectsDeclaration; groups: number; additionalOmissions: 0; nativeParity: false };
+  periodicReport?: { maps: FrameworkPeriodicAssessment[]; compiled: number; unready: number; sourceGameplayAdmitted: false };
   transportation: { capability: NonNullable<DevelopmentProfile["transportation"]>; limitations: string[] };
 };
 export type FrameworkContent = {
@@ -132,7 +147,7 @@ function eligibility(map: WorldMapContent, groupKey: string, group: EntityGroup,
  * and an explicit transportation integration variant. Callers publish under /framework/;
  * strict packages remain independently loadable and verifiable. */
 export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps: readonly WorldMapContent[],
-  strictEntry: SourceNewGameContent): FrameworkContent {
+  strictEntry: SourceNewGameContent, options: FrameworkContentOptions = {}): FrameworkContent {
   verify(strictCatalog); verify(strictEntry);
   if (strictCatalog.kind !== "world-development" || strictCatalog.formatVersion !== 1 ||
       strictEntry.kind !== "source-new-game-content-v1" ||
@@ -161,6 +176,27 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (!initial || strictEntry.mapContentHash !== initial.contentHash)
     throw new Error("Framework strict entry/map binding mismatch");
 
+  if (Object.keys(options).some(key => key !== "logicalFieldEffects" && key !== "periodicPresentations"))
+    throw new Error("Unknown framework derivation option");
+  const logical = options.logicalFieldEffects === undefined ? undefined : structuredClone(options.logicalFieldEffects);
+  if (logical) {
+    if (Object.keys(logical).sort().join(",") !== "catalog,declaration") throw new Error("Invalid logical field effects option");
+    const d = logical.declaration, policy = logical.catalog.webPolicy;
+    if (Object.keys(d).sort().join(",") !== "catalogHash,kind,mapIds,parentSourceSetHash,policy,reason,sourceSetHash" ||
+        d.kind !== "web-logical-field-effects-declaration-v1" || d.policy !== WEB_LOGICAL_FIELD_EFFECTS ||
+        typeof d.reason !== "string" || !d.reason.trim() || !Array.isArray(d.mapIds) ||
+        d.mapIds.some(id => !Number.isInteger(id) || id <= 0) || new Set(d.mapIds).size !== d.mapIds.length ||
+        canonical([...ids].sort((a,b) => a-b)) !== canonical([...d.mapIds].sort((a,b) => a-b)) ||
+        !policy || d.sourceSetHash !== strictCatalog.sourceSetHash || d.parentSourceSetHash !== strictCatalog.parentSourceSetHash ||
+        policy.sourceSetHash !== d.sourceSetHash || policy.parentSourceSetHash !== d.parentSourceSetHash ||
+        d.catalogHash !== policy.catalogHash || policy.catalogHash !== hash({sourceSetHash:policy.sourceSetHash,
+          parentSourceSetHash:policy.parentSourceSetHash,media:logical.catalog.media,proofs:policy.proofs}))
+      throw new Error("Logical field effects declaration/catalog/source closure mismatch");
+    validateLogicalEffectCatalog(logical.catalog);
+  }
+  const derivedProfile = (sourceContentHash: string, local: DevelopmentOmission[]): DevelopmentProfile => ({
+    ...profile(sourceContentHash, local), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
+  });
   const retained: FrameworkContentRetained[] = [], omissions: DevelopmentOmission[] = [], scriptReferences = new Set<string>();
   for (const map of strictMaps) referenceStrings(map.scripts, scriptReferences);
   const maps = [...strictMaps].sort((a, b) => a.mapId - b.mapId).map((strictMap) => {
@@ -202,7 +238,8 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
       ({ kind, group, entityId, source: structuredClone(source), reason }));
     map.limitations.push(LIMITATION);
     omissions.push(...local);
-    return seal({ ...map, developmentProfile: profile(strictMap.contentHash, local) });
+    return seal({ ...map, ...(logical ? { fieldEffects: structuredClone(logical.catalog) } : {}),
+      developmentProfile: derivedProfile(strictMap.contentHash, local) });
   });
   const catalog = structuredClone(strictCatalog);
   for (const map of maps) {
@@ -214,14 +251,20 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
     index.blockers = structuredClone(map.blockers);
   }
   catalog.limitations.push(LIMITATION);
-  const derivedCatalog = seal({ ...catalog, developmentProfile: profile(strictCatalog.contentHash, omissions) });
+  const derivedCatalog = seal({ ...catalog, developmentProfile: derivedProfile(strictCatalog.contentHash, omissions) });
   const entry = seal({ ...structuredClone(strictEntry), worldCatalogHash: derivedCatalog.contentHash,
     mapContentHash: maps.find((map) => map.mapId === strictEntry.entry.mapId)!.contentHash,
-    developmentProfile: profile(strictEntry.contentHash, omissions) });
-  return { catalog: derivedCatalog, maps, entry,
+    developmentProfile: derivedProfile(strictEntry.contentHash, omissions) });
+  const result: FrameworkContent = { catalog: derivedCatalog, maps, entry,
     report: { profile: PROFILE, policy: POLICY, sourceCatalogHash: strictCatalog.contentHash,
+      ...(logical ? { logicalFieldEffects: { declaration: structuredClone(logical.declaration),
+        groups: Object.keys(logical.catalog.media).length, additionalOmissions: 0 as const, nativeParity: false as const } } : {}),
       transportation: { capability: "walking-magitek-framework-v1", limitations: [...FRAMEWORK_TRANSPORTATION_LIMITATIONS] },
       sourceEntryHash: strictEntry.contentHash, catalogHash: derivedCatalog.contentHash, entryHash: entry.contentHash,
       maps: maps.map((map) => ({ mapId: map.mapId, sourceContentHash: map.developmentProfile.sourceContentHash,
         contentHash: map.contentHash })), omissions: structuredClone(omissions), retained } };
+  if (options.periodicPresentations === undefined) return result;
+  if (!Array.isArray(options.periodicPresentations)) throw new Error("Invalid complete periodic presentation assessments");
+  const periodic = deriveFrameworkPeriodicContent(result, options.periodicPresentations);
+  return { ...periodic, report: { ...periodic.report, periodicReport: structuredClone(periodic.periodicReport) } };
 }

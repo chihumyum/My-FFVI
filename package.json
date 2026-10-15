@@ -204,7 +204,10 @@
     "source-services:check": "npm run build && node scripts/check-source-services-journey.mjs",
     "content-history:archive": "npm run build && node scripts/archive-content-release.mjs",
     "content-history:check": "npm run build && node scripts/check-content-release-session.mjs && node scripts/check-audio-release-ui.mjs && node scripts/check-game-entry-ui.mjs",
-    "source-encounters:check": "npm run build && .venv/bin/python tools/native/check_source_encounter.py --root . --output build/reports/source-encounter-native && node --max-old-space-size=8192 scripts/compile-source-encounter-candidates.mjs --output build/reports/source-encounter-candidates && node --max-old-space-size=8192 scripts/check-source-encounter-programs.mjs --candidate-dir build/reports/source-encounter-candidates --report build/reports/source-encounter-programs-check.json"
+    "source-encounters:check": "npm run build && .venv/bin/python tools/native/check_source_encounter.py --root . --output build/reports/source-encounter-native && node --max-old-space-size=8192 scripts/compile-source-encounter-candidates.mjs --output build/reports/source-encounter-candidates && node --max-old-space-size=8192 scripts/check-source-encounter-programs.mjs --candidate-dir build/reports/source-encounter-candidates --report build/reports/source-encounter-programs-check.json",
+    "logical-field-effects:check": "npm run build && node --max-old-space-size=8192 scripts/check-logical-field-effects-lifecycle.mjs",
+    "periodic-maps:check": "npm run build && node --max-old-space-size=8192 scripts/check-source-periodic-maps.mjs",
+    "source-condition-effects:check": "npm run build && .venv/bin/python scripts/inspect-source-condition-native.py && node --max-old-space-size=8192 scripts/compile-source-condition-candidates.mjs && node --max-old-space-size=8192 scripts/check-source-condition-programs.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"

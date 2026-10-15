@@ -102,8 +102,9 @@ export async function validateSelectedSourceCatalogBinding(input,{root=repositor
   assert.equal(requests.parentSourceSetHash,sourceWorld.parentSourceSetHash,'Directory request parent source changed');
   assert.equal(canonical(battle),canonical(directory),'Selected battle catalog is not the complete published shared directory');
   assert.equal(canonical(directory.gameState),canonical(sourceBattle.gameState),'Directory changed the owned source initializer');
-  const {drops:_baselineDrops,...baselineCommon}=sourceBattle.common,{drops:_directoryDrops,...directoryCommon}=directory.common;
-  assert.equal(canonical(directoryCommon),canonical(baselineCommon),'Directory changed shared source battle rules');
+  const {validateInitializedBattleSharedCapabilities}=await import(pathToFileURL(
+    resolve(root,compiledDir,'src/compiler/initialized-battle-binding.js')).href);
+  validateInitializedBattleSharedCapabilities(sourceBattle,directory,directoryReport);
   assertSourceGameCatalog(directory,'framework');
   return {selection:'shared-framework-directory-v1',catalogHash:directory.contentHash,baselineHash:sourceBattle.contentHash,
     directory:structuredClone(built.battleDirectory)};

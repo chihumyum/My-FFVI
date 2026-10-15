@@ -61,7 +61,9 @@ export type WorldMapContent = {
   actorViewBlockers?: ContentIssue[];
   /** Explicit alternative display. Strict source view/blockers are retained. */
   frameworkPresentation?: {
-    kind: "framework-ordinary-field-presentation-v1";
+    kind: "framework-ordinary-field-presentation-v1" | "framework-world-field-presentation-v1";
+    /** Exact raw top-level indices of the world backgrounds compiled below. */
+    backgroundBindings?: { index: number; layerId: number }[];
     view: FrameworkFlatFieldViewDefinition;
     composition: FieldNativeCompositionDefinition;
   };

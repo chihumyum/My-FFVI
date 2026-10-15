@@ -23,6 +23,8 @@ import { hasSpeedBehavior } from "./condition-speed.js";
 import { hasBlindBehavior } from "./condition-blind.js";
 import { compileUserConditionEffect, compileUniqueNoneEffect } from "./ability-user-conditions.js";
 import { compileBattleDerivedAction } from "./battle-derived-actions.js";
+import { compileSourceConditionApplication, compileSourceConditionRecoveryHit,
+  hasSourceControlConditionLifecycle } from "./source-condition-application.js";
 
 type Reader = ConditionReader;
 /** SerialBattleUtility 0x85e170; type and ID arrays recovered from 0x85f000.
@@ -209,6 +211,15 @@ export function compileDevelopmentAbility(
       effects.push({ slot: fn.slot, kind: "physical" });
     } else if (fn.type === 3 && v1 === 1 && v2 === 0 && v3 === 0) {
       effects.push({ slot: fn.slot, kind: "magic" });
+    } else if (fn.type === 9 && hasSourceControlConditionLifecycle(reader.row("condition.csv", v1))) {
+      try {
+        const compiled = compileSourceConditionApplication(reader, program);
+        if (compiled.effect) effects.push(compiled.effect);
+        blockers.push(...compiled.blockers);
+        for (const row of compiled.sources)
+          if (!sources.some(existing => existing.source.assetPath === row.source.assetPath && existing.source.rowId === row.source.rowId))
+            sources.push(row);
+      } catch (error) { blockers.push(error instanceof Error ? error.message : String(error)); }
     } else if (
       fn.type === 9 &&
       [0, 1].includes(v2) &&
@@ -355,6 +366,10 @@ export function compileDevelopmentAbility(
   const speedSupport = speedOnly && [1, 3].includes(r.type_id!) &&
     r.system_id === (int(reader.row("condition.csv", first.conditionId).values.condition_type) === 15 ? 2 : 5);
   const speedSpell = speedSupport && r.type_id === 1;
+  const controlOnly = effects.length === 1 && first?.kind === "add-condition" &&
+    hasSourceControlConditionLifecycle(reader.row("condition.csv", first.conditionId));
+  const controlSupport = controlOnly && [3, 13, 504].includes(r.type_id!) && r.system_id === 5;
+  if (controlOnly && !controlSupport) blockers.push(`unresolved control-condition ability type/system ${r.type_id}/${r.system_id}`);
   if (speedOnly && !speedSupport)
     blockers.push(`unresolved speed ability type/system ${r.type_id}/${r.system_id}`);
   const magicOnly =
@@ -389,6 +404,8 @@ export function compileDevelopmentAbility(
     ? [1, 3]
     : protectionSpell || speedSpell
       ? [1, 3]
+    : controlOnly
+      ? [1]
     : conditionOnly
       ? []
       : ordinaryMagic
@@ -402,7 +419,7 @@ export function compileDevelopmentAbility(
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (!defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
+  if (!defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !controlSupport && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
   if (!defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
@@ -428,7 +445,13 @@ export function compileDevelopmentAbility(
     limitations.push(
       "reflection unavailable: no-reflect development state required",
     );
-  const targeting = compileTargetRule(program.range, r.system_id!);
+  const targeting = controlSupport && program.range === 16
+    ? { life: "alive" as const, relation: "enemy" as const, modes: ["side" as const],
+        defaultMode: "side" as const, defaultRelation: "enemy" as const, normalFormationOnly: true }
+    : compileTargetRule(program.range, r.system_id!);
+  if (controlOnly) limitations.push("Control lifecycle requires explicit web-source-control-actions-v1; native automatic controller parity is not established.");
+  if (controlSupport && program.range === 16)
+    limitations.push("Source range16 uses the explicit Web normal-formation opposite-side group policy; native position-group targeting remains unverified.");
   if (
     targeting &&
     (revival ||
@@ -512,6 +535,18 @@ export function compileDevelopmentAbility(
             }
           : null,
       };
+  let conditionRecoveryHit: AbilityDefinition["conditionRecoveryHit"];
+  try {
+    const compiled = compileSourceConditionRecoveryHit(reader, program); conditionRecoveryHit = compiled.metadata;
+    for (const row of compiled.sources)
+      if (!sources.some(existing => existing.source.assetPath === row.source.assetPath && existing.source.rowId === row.source.rowId))
+        sources.push(row);
+  } catch (error) {
+    // A legacy/synthetic action without this newly required source provider
+    // cannot count recovery hits on a control condition. Other old execution
+    // domains stay available; the live condition owner checks this metadata.
+    limitations.push("Condition recovery-hit provider unresolved: " + (error instanceof Error ? error.message : String(error)));
+  }
   return {
     id: abilityId,
     name,
@@ -523,6 +558,7 @@ export function compileDevelopmentAbility(
     cost,
     wait,
     attribute,
+    ...(conditionRecoveryHit ? { conditionRecoveryHit } : {}),
     presentation: !plan
       ? "unsupported"
       : rowOnly

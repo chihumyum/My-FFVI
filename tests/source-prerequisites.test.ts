@@ -114,20 +114,29 @@ const loadLock = async () => import(pathToFileURL(resolve(process.cwd(), "script
 
 /** Redistributable file-system lock fixture. It tests freshness and closure;
  * it has no original media, source semantics or runnable compiler claims. */
-async function lockedDirectory(work: (root: string, lock: InputLock) => Promise<void>) {
+async function lockedDirectory(work: (root: string, lock: InputLock) => Promise<void>, logical = false) {
   const root = await mkdtemp(resolve(tmpdir(), "ffvi-source-input-lock-")), compiledDir = resolve(root, "compiled");
   const directories: string[] = [], fileNames: string[] = [];
   const write = async (path: string, value: string) => {
     await mkdir(resolve(root, path, ".."), { recursive: true }); await writeFile(resolve(root, path), value); fileNames.push(path);
   };
   try {
-    const sources = [{ file: "synthetic-source", sha256: "a".repeat(64) }], sourceSetHash = hash(sources), parentSourceSetHash = "b".repeat(64);
+    const sources = [{ file: "synthetic-source", sha256: sha("synthetic original effect bytes"), bytes: Buffer.byteLength("synthetic original effect bytes") }], sourceSetHash = hash(sources), parentSourceSetHash = "b".repeat(64);
     for (const name of ["import", "corpus", "battle", "field", "world-media", "field-background-media", "map-ui", "bgm", "environment", "se"]) {
       const dir = "build/" + name; directories.push(dir);
       const file = name === "corpus" ? "corpus.json" : "media.json";
       const body = name === "corpus" ? JSON.stringify({ sources, sourceSetHash, parentSourceSetHash }) : JSON.stringify({ controlled: name });
       await write(dir + "/" + file, body);
       await write(dir + "/snapshot.json", JSON.stringify({ formatVersion: 1, files: [{ file, sha256: sha(body) }] }));
+    }
+    if(logical) {
+      await write("build/runtime/game/synthetic-source","synthetic original effect bytes");
+      const dir = "build/field-effect-media", raw = "synthetic original serialized object";
+      directories.push(dir);await write(dir+"/raw.bin",raw);
+      const media = JSON.stringify({adapterVersion:"field-effect-media-lossless-wip-0.2.0",groups:{synthetic:{objects:[
+        {rawObject:{file:"raw.bin",sha256:sha(raw),bytes:Buffer.byteLength(raw)}}]}}});
+      await write(dir+"/media.json",media);await write(dir+"/snapshot.json",JSON.stringify({formatVersion:1,files:[
+        {file:"media.json",sha256:sha(media)},{file:"raw.bin",sha256:sha(raw)}]}));
     }
     await write("build/game/source-catalog.json", JSON.stringify({ controlled: "catalog" }));
     await write("build/game/opening-playable.json", JSON.stringify({ controlled: "development catalog" }));
@@ -152,6 +161,8 @@ async function lockedDirectory(work: (root: string, lock: InputLock) => Promise<
       compilerDigest: digest([{ path: "src/compiler.js", sha256: files.find(file => file.path === "compiled/src/compiler.js")!.sha256,
         bytes: files.find(file => file.path === "compiled/src/compiler.js")!.bytes }]), files,
       directories: await Promise.all(directories.map(async path => ({ path, entriesDigest: await entryDigest(path) }))) };
+    if(logical) Object.assign(lock,{kind:"source-prerequisite-input-lock-v2",logicalFieldEffects:{
+      kind:"web-logical-field-effects-input-v1",input:"build/field-effect-media",reason:"Synthetic explicit Web prerequisite."}});
     await work(root, lock);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
@@ -219,4 +230,21 @@ test("incomplete and malformed source locks cannot omit required snapshots or or
     const unknown = { ...lock, generatedApproval: true };
     await assert.rejects(api.validateSourcePrerequisiteInputs(unknown, { root }), /fields/);
   });
+});
+
+
+test("v2 logical input lock binds lossless raw objects and every original source instead of accepting a report as authority",async () => {
+  const api = await loadLock();
+  await lockedDirectory(async(root,lock) => {
+    assert.equal(await api.validateSourcePrerequisiteInputs(lock,{root}),true);
+    for(const path of ["build/field-effect-media/raw.bin","build/runtime/game/synthetic-source"]) {
+      const missing = structuredClone(lock);missing.files = missing.files.filter(row => row.path !== path);
+      await assert.rejects(api.validateSourcePrerequisiteInputs(missing,{root}),/Incomplete/);
+    }
+    const malformed = structuredClone(lock) as InputLock & {logicalFieldEffects:any};
+    malformed.logicalFieldEffects.input = "build/content-packages/forged";
+    await assert.rejects(api.validateSourcePrerequisiteInputs(malformed,{root}),/outside public/);
+    await writeFile(resolve(root,"build/field-effect-media/raw.bin"),"Changed original serialized bytes");
+    await assert.rejects(api.validateSourcePrerequisiteInputs(lock,{root}),/changed/);
+  },true);
 });

@@ -95,6 +95,23 @@ export function projectBattleAbilities(
   context: BattleAbilityContext,
   equipmentAbilities: readonly OwnedAbility[] = [],
 ): BattleAbilityProjection {
+  return projectBattleAbilityContext(catalog, member, context, equipmentAbilities, false);
+}
+
+/** FF6ActSelectConfusion asks CommandUtility.IsAvailable directly over the
+ * persistent command sequence. It neither runs GetReleaseCommand nor applies
+ * the ordinary menu hierarchy. Qualification still shares the same provider. */
+export function projectBattleCommandAvailability(
+  catalog: BattleAbilityCatalog,
+  member: BattleAbilityMember,
+  context: BattleAbilityContext,
+  equipmentAbilities: readonly OwnedAbility[] = [],
+): BattleAbilityProjection {
+  return projectBattleAbilityContext(catalog, member, context, equipmentAbilities, true);
+}
+
+function projectBattleAbilityContext(catalog: BattleAbilityCatalog, member: BattleAbilityMember,
+  context: BattleAbilityContext, equipmentAbilities: readonly OwnedAbility[], availabilityOnly: boolean): BattleAbilityProjection {
   if (catalog.kind !== "battle-abilities-v1" || ![0, 1].includes(context.battleType))
     throw new Error("Invalid battle ability projection context");
   validateOwnedCharacterAbilities(member.abilities, equipmentAbilities);
@@ -132,7 +149,7 @@ export function projectBattleAbilities(
     const blockers = [...globalBlockers, ...command.blockers];
     if (![1, 2, 5, 6].includes(command.type)) blockers.push("Unresolved command menu type: " + command.type);
     if (![0, 3, 5].includes(command.releaseType)) blockers.push("Unresolved command availability release type: " + command.releaseType);
-    const menu = command.type === 1 ? "normal" : command.type === 2 ||
+    const menu = availabilityOnly ? "normal" : command.type === 1 ? "normal" : command.type === 2 ||
       command.type === (context.battleType === 0 ? 6 : 5) ? "extra" : [5, 6].includes(command.type) ? "none" : "normal";
     let released: boolean | null = true;
     const directAbility = command.abilityId ? abilities.get(command.abilityId) : null;
@@ -140,7 +157,7 @@ export function projectBattleAbilities(
     // SetCommandData appends BattleType-specific commands after the sorted
     // type-2 menu, without calling GetReleaseCommand on those appended rows.
     const appended = command.type === (context.battleType === 0 ? 6 : 5);
-    if (!appended && [3, 5].includes(command.releaseType)) {
+    if (!availabilityOnly && !appended && [3, 5].includes(command.releaseType)) {
       if (active === null) {
         released = null;
         blockers.push("Unknown battle condition context for command release");
@@ -207,7 +224,7 @@ export function projectBattleAbilities(
   });
   const priority = (entry: BattleCommandEligibility) => entry.menu === "normal" ? 0 : entry.menu === "extra"
     ? commands.get(entry.commandId)?.type === 2 ? 1 : 2 : 3;
-  entries.sort((a, b) => priority(a) - priority(b) ||
+  if (!availabilityOnly) entries.sort((a, b) => priority(a) - priority(b) ||
     (priority(a) >= 2 ? 0 : battleCommandHierarchy(a.commandId) - battleCommandHierarchy(b.commandId)));
   return { entries, abilityIds: [...new Set(entries.filter((e) => e.released === true && e.available === true)
     .flatMap((e) => e.abilityIds))], blockers: [...new Set(entries.flatMap((e) => e.blockers))] };

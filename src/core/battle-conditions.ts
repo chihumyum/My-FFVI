@@ -2,6 +2,7 @@ import { ConditionRules, type ConditionCatalog } from "./conditions.js";
 import { accuracyHit } from "./battle-hit.js";
 import { applyDefend, clearDefendOnAdmission } from "./defend.js";
 import { blindConditionType, validateBlindBehavior, type BlindBehavior } from "./condition-blind.js";
+import { controlConditionTypes, validateControlBehavior, type ControlConditionBehavior } from "./condition-control.js";
 import {
   magicProtectionType,
   physicalProtectionType,
@@ -49,6 +50,7 @@ export type BattleConditionCatalog = {
     | ProtectionBehavior
     | SpeedBehavior
     | BlindBehavior
+    | ControlConditionBehavior
     | { id: number; kind: "unable-fight"; name: string; untilType: 3 }
     | { id: number; kind: "dying"; name: string; untilType: 3 }
     /** No timer or numeric modifier; a battle appearance host must execute
@@ -113,10 +115,12 @@ export class BattleConditions {
     if (this.behaviors.size !== catalog.behaviors.length)
       throw new Error("Duplicate battle condition behavior");
     for (const b of this.behaviors.values()) {
-      if ("resistanceProvider" in b && !["physical-protection", "magic-protection", "haste", "slow", "blind", "poison"].includes(b.kind))
+      if ("resistanceProvider" in b && !["physical-protection", "magic-protection", "haste", "slow", "blind", "poison", "sleep", "confusion", "temptation", "doom"].includes(b.kind))
         throw new Error("Unsupported condition resistance provider behavior");
       if (b.kind === "haste" || b.kind === "slow") validateSpeedBehavior(b);
       if (b.kind === "blind") validateBlindBehavior(b);
+      if (b.kind === "sleep" || b.kind === "confusion" || b.kind === "temptation" || b.kind === "doom")
+        validateControlBehavior(b);
       if (b.resistanceProvider !== undefined) {
         const provider = b.resistanceProvider;
         if (!provider || !Number.isInteger(provider.groupId) || provider.groupId <= 0 || provider.groupId > 0x7fffffff ||
@@ -126,7 +130,7 @@ export class BattleConditions {
         this.validateResistances(provider.conditions);
       }
       if (
-        (typeof b.name !== "string" || (!b.name && !["magitek", "defend", "escape"].includes(b.kind))) ||
+        (typeof b.name !== "string" || (!b.name && !["magitek", "defend", "escape", "sleep", "confusion", "temptation", "doom"].includes(b.kind))) ||
         !(b.kind === "defend"
           ? b.untilType === 1 && this.definitions.get(b.id)?.type === 1 &&
             this.definitions.get(b.id)?.overlapped === false
@@ -141,6 +145,9 @@ export class BattleConditions {
           : b.kind === "haste" || b.kind === "slow"
           ? b.untilType === 2 && this.definitions.get(b.id)?.overlapped === false &&
             this.definitions.get(b.id)?.type === (b.kind === "haste" ? hasteConditionType : slowConditionType)
+          : b.kind === "sleep" || b.kind === "confusion" || b.kind === "temptation" || b.kind === "doom"
+          ? this.definitions.get(b.id)?.overlapped === false &&
+            this.definitions.get(b.id)?.type === controlConditionTypes[b.kind]
           : b.untilType === 3 &&
             ((b.kind === "unable-fight" &&
               this.definitions.get(b.id)?.type === 5) ||
@@ -247,6 +254,8 @@ export class BattleConditions {
     if (!Number.isInteger(hp) || hp < 0 || hp > 0x7fffffff)
       throw new Error("Invalid life HP");
     this.validateActive(ids);
+    if (this.controlBehaviors(ids).length)
+      throw new Error("Battle action-control conditions cannot persist in stable owned state");
     const deaths = ids.filter((id) => this.behaviors.get(id)!.kind === "unable-fight");
     if ((hp === 0) !== (deaths.length > 0))
       throw new Error("Owned HP/death state mismatch");
@@ -259,6 +268,34 @@ export class BattleConditions {
   types(ids: readonly number[]): number[] {
     this.validateActive(ids);
     return ids.map((id) => this.definitions.get(id)!.type);
+  }
+  /** Read-only function definitions. Owning BattleGame must execute Start,
+   * Remove, automatic actions and timers; a definition alone is not a no-op
+   * implementation of those lifecycle consumers. */
+  controlBehaviors(ids: readonly number[]): ControlConditionBehavior[] {
+    this.validateActive(ids);
+    const result: ControlConditionBehavior[] = [];
+    for (const id of ids) {
+      const behavior = this.behaviors.get(id)!;
+      if (behavior.kind === "sleep" || behavior.kind === "confusion" || behavior.kind === "temptation" || behavior.kind === "doom") {
+        if (result.some(current => current.id === id)) throw new Error("Duplicate active control condition");
+        result.push(structuredClone(behavior));
+      }
+    }
+    return result;
+  }
+  /** Doom's ordinary branch uses the same InterruptAddCondition(5) conflict
+   * owner as the HP controller. It does not roll accuracy/resistance or directly
+   * zero HP. Undead qualification and final life settlement are host concerns. */
+  forceUnableFight(currentIds: readonly number[]): ConditionChange {
+    this.validateActive(currentIds);
+    const incomingId = this.hpZeroConditionId;
+    if (currentIds.includes(incomingId))
+      return { currentIds: [...currentIds], added: [], removed: [], missed: false };
+    const result = this.rules.resolveConflict({ currentIds: [...currentIds, incomingId], equipmentIds: [], incomingId });
+    this.validateActive(result.currentIds);
+    if (!this.isUnableFight(result.currentIds)) throw new Error("Unsupported forced death condition conflict");
+    return { currentIds: result.currentIds, added: [incomingId], removed: result.removed.map(removed => removed.id), missed: false };
   }
   /** Identity-only predicate read. This does not admit active effects, life
    * behavior or persistence for a known but unported master condition. */

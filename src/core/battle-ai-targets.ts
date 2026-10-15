@@ -11,6 +11,9 @@ export type BattleAITargetInput = {
   range: number;
   rule: TargetRule;
   formation: "normal" | "opposed";
+  /** Only the explicit ordinary Web side projection for control-only range16.
+   * It does not implement native side-attack coordinate grouping. */
+  controlPolicy?: { kind: "web-source-control-actions-v1" };
 };
 
 type RangeShape = { relation: TargetRule["relation"]; modes: readonly TargetMode[]; normalFormationOnly: boolean };
@@ -57,6 +60,7 @@ export function battleAITargetBlocker(
   rule: TargetRule,
   kind: "normal" | "counter",
   formation?: "normal" | "opposed",
+  controlPolicy?: { kind: "web-source-control-actions-v1" },
 ): string | null {
   if (!Number.isInteger(range) || range <= 0 || range > 0x7fffffff)
     return "Invalid automatic target range";
@@ -78,7 +82,14 @@ export function battleAITargetBlocker(
       !["alive", "include-fallen-players"].includes(fields.life!.value))
     return "Invalid automatic target rule";
   if (fields.life!.value !== "alive") return "Unimplemented automatic target life rule";
-  const shape = rangeShapes[range];
+  if (controlPolicy !== undefined) {
+    const policy = dataFields(controlPolicy);
+    if (!policy || Object.keys(policy).join(",") !== "kind" || policy.kind!.value !== "web-source-control-actions-v1")
+      return "Invalid control-condition target policy";
+  }
+  const shape = range === 16 && controlPolicy !== undefined
+    ? { relation: "enemy", modes: ["side"], normalFormationOnly: true } as const
+    : rangeShapes[range];
   if (!shape || kind === "counter" && range !== 3 && range !== 7)
     return `Unimplemented ${kind === "counter" ? "counter" : "automatic"} target range ${range}`;
   if (fields.relation!.value !== shape.relation || modes.length !== shape.modes.length ||
@@ -118,7 +129,7 @@ function currentUnits(value: unknown): BattleAITargetUnit[] {
 function rawChoice(range: number, targets: readonly BattleAITargetUnit[]): TargetChoice | null {
   if (!targets.length) return null;
   const targetIds = targets.map(target => target.id);
-  if (range === 2 || range === 4)
+  if (range === 2 || range === 4 || range === 16)
     return { selection: { kind: "side", side: range === 2 ? "enemy" : "player" }, targetIds };
   if (targets.length === 1) return { selection: { kind: "single", id: targets[0]!.id }, targetIds };
   const side = targets[0]!.side;
@@ -137,11 +148,11 @@ function rawChoice(range: number, targets: readonly BattleAITargetUnit[]): Targe
  * and resolution; these raw IDs alone do not authorize effects on fallen units. */
 export function planBattleAITarget(input: BattleAITargetInput, random: BattleRandom): TargetChoice | null {
   const fields = dataFields(input);
-  if (!fields || Object.keys(fields).sort().join(",") !== "actor,eligiblePlayers,formation,range,rule,units")
+  if (!fields || !["actor,eligiblePlayers,formation,range,rule,units", "actor,controlPolicy,eligiblePlayers,formation,range,rule,units"].includes(Object.keys(fields).sort().join(",")))
     throw new Error("Invalid automatic target input");
   if (input.formation !== "normal" && input.formation !== "opposed")
     throw new Error("Invalid automatic target formation");
-  const blocker = battleAITargetBlocker(input.range, input.rule, "normal", input.formation);
+  const blocker = battleAITargetBlocker(input.range, input.rule, "normal", input.formation, input.controlPolicy);
   if (blocker) throw new Error(blocker);
   if (typeof random !== "function") throw new Error("Missing automatic target random provider");
   const units = currentUnits(input.units), actor = unitFields(input.actor), eligible = currentUnits(input.eligiblePlayers);
@@ -164,7 +175,8 @@ export function planBattleAITarget(input: BattleAITargetInput, random: BattleRan
     case 1: return draw(rawEnemies);
     case 2: return rawChoice(input.range, rawEnemies);
     case 4:
-    case 8: return rawChoice(input.range, rawPlayers);
+    case 8:
+    case 16: return rawChoice(input.range, rawPlayers);
     case 5: return rawChoice(input.range, [actor]);
     case 9: return rawChoice(input.range, rawPlayers.concat(rawEnemies));
     default: return draw(eligible);

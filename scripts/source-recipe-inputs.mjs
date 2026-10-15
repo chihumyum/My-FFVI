@@ -15,6 +15,12 @@ const frameworkHostMarkers={storyRuntime:{value:'web-field-story-runtime-v1',mod
   exportName:'WEB_FIELD_STORY_RUNTIME',provider:'hasFieldStoryRuntime'},
   autoSave:{value:'web-field-autosave-barrier-v1',module:'field-auto-save',
     exportName:'WEB_AUTO_SAVE_POLICY',provider:'assertFieldEventSaveAdmission'}};
+const logicalMarker={value:'web-logical-all-loop-field-effects-v1',module:'field-logical-effects',
+  exportName:'WEB_LOGICAL_FIELD_EFFECTS',provider:'createWebLogicalFieldEffectsHost'};
+const periodicMarkers={worldMap:{value:'framework-world-map-flat-v1',module:'field-presentation',
+  exportName:'WEB_PERIODIC_WORLD_PRESENTATION',provider:'resolveFieldPresentation'},
+  fieldPresentation:{value:'framework-ordinary-field-flat-v1',module:'field-presentation',
+    exportName:'WEB_PERIODIC_FIELD_PRESENTATION',provider:'resolveFieldPresentation'}};
 const roles={sourceEntry:'source-new-game-content-v1',sourceBattle:'narshe-battle-catalog',
   sourceWorld:'world-development',sourceMap:'world-map-development',
   'sourceMaps.world':'world-map-development','sourceMaps.location':'world-map-development',
@@ -49,7 +55,14 @@ function recipeJSON(bytes){
 
 function declaredReferences(recipe){
   const refs=[],allowed=new Set();
-  const legacy=recipe.kind==='development-content-batch-recipe-v1';
+  const independent=recipe.kind==='development-content-batch-recipe-v2';
+  const legacy=recipe.kind==='development-content-batch-recipe-v1'||independent;
+  if(independent){
+    dataFields(recipe.frameworkPolicy,['kind','sourceEntry'],'independent development world policy');
+    assert.equal(recipe.frameworkPolicy.kind,'independent-source-framework-v1','Unknown independent development world policy');
+    assert.equal(recipe.frameworkPolicy.sourceEntry,'game/source-new-game.json','Independent development world requires the same candidate source entry');
+    assert.equal(recipe.world,'world/catalog.json','Independent development world requires a strict source world');
+  }
   if(legacy){
     for(const role of ['baseField','battle','world']){
       const value=recipe[role];assert.equal(typeof value,'string','Development recipe must retain unpinned string inputs');
@@ -123,12 +136,15 @@ function parseBattleRebindings(raw=[]){
 
 async function frameworkUpgradeDeclaration(raw,root,compiledDir){
   if(raw===undefined)return null;
-  dataFields(raw,['kind','compilerDigest','markers'],'framework profile upgrade declaration');
-  assert.equal(raw.kind,'compiled-framework-profile-upgrade-v1','Unknown framework profile upgrade version');
+  const periodic=raw?.kind==='compiled-framework-profile-upgrade-v3';
+  const logical=raw?.kind==='compiled-framework-profile-upgrade-v2'||periodic&&Object.hasOwn(raw,'logicalFieldEffects');
+  dataFields(raw,['kind','compilerDigest','markers',...(logical?['logicalFieldEffects']:[])],'framework profile upgrade declaration');
+  assert.ok(['compiled-framework-profile-upgrade-v1','compiled-framework-profile-upgrade-v2','compiled-framework-profile-upgrade-v3'].includes(raw.kind),'Unknown framework profile upgrade version');
   assert.ok(typeof raw.compilerDigest==='string'&&digest.test(raw.compilerDigest),'Invalid framework profile upgrade compiler digest');
-  dataFields(raw.markers,Object.keys(frameworkHostMarkers),'framework profile upgrade markers');
+  const hosts={...frameworkHostMarkers,...(logical?{logicalFieldEffects:logicalMarker}:{}),...(periodic?periodicMarkers:{})};
+  dataFields(raw.markers,Object.keys(hosts),'framework profile upgrade markers');
   const result=structuredClone(raw),providers=[];
-  for(const [marker,definition] of Object.entries(frameworkHostMarkers)){
+  for(const [marker,definition] of Object.entries(hosts)){
     assert.equal(result.markers[marker],definition.value,'Unavailable or unknown framework profile upgrade marker: '+marker);
     const path=resolve(root,compiledDir,'src/core',definition.module+'.js');
     let module,bytes;
@@ -139,6 +155,16 @@ async function frameworkUpgradeDeclaration(raw,root,compiledDir){
     providers.push({marker,value:definition.value,module:'src/core/'+definition.module+'.js',
       exportName:definition.exportName,provider:definition.provider,sha256:sha(bytes)});
   }
+  if(logical){
+    const [{validateLogicalEffectCatalog},{hash}]=await Promise.all([
+      import(pathToFileURL(resolve(root,compiledDir,'src/core/field-logical-effects.js')).href),
+      import(pathToFileURL(resolve(root,compiledDir,'src/compiler/content.js')).href)]);
+    const catalog=result.logicalFieldEffects,policy=catalog?.webPolicy;
+    assert.ok(policy,'Framework profile upgrade requires a compiled logical effect catalog');
+    validateLogicalEffectCatalog(catalog);
+    assert.equal(policy.catalogHash,hash({sourceSetHash:policy.sourceSetHash,parentSourceSetHash:policy.parentSourceSetHash,
+      media:catalog.media,proofs:policy.proofs}),'Framework profile upgrade logical catalog identity mismatch');
+  }
   return {...result,providers};
 }
 
@@ -148,7 +174,16 @@ async function frameworkUpgradeDeclaration(raw,root,compiledDir){
 function comparableFrameworkUpgrade(before,after,ref,declaration,canonical){
   if(!declaration)return {after,upgrade:null};
   const previous=before.developmentProfile,next=after.developmentProfile;
-  const keys=Object.keys(frameworkHostMarkers);
+  if(declaration.kind==='compiled-framework-profile-upgrade-v3'&&
+      ['world-map-development','field-development'].includes(after.kind)) {
+    // A marker proof is not a presentation/media/geometry migration proof.
+    // In particular, same physical SourceRefs do not establish unchanged
+    // topology, tile arrays, textures or a newly added alternative.
+    for(const key of ['map','frameworkPresentation','actorView','entryView','partyEntry','cameraHost'])
+      assert.equal(canonical(before[key]??null),canonical(after[key]??null),
+        'Framework profile upgrade periodic geometry or presentation changed: '+key);
+  }
+  const keys=Object.keys(declaration.markers);
   const changes=keys.filter(key=>Object.hasOwn(previous??{},key)!==Object.hasOwn(next??{},key)||
     canonical(previous?.[key]??null)!==canonical(next?.[key]??null));
   if(!changes.length)return {after,upgrade:null};
@@ -162,11 +197,28 @@ function comparableFrameworkUpgrade(before,after,ref,declaration,canonical){
     delete comparison.developmentProfile[key];
     addedMarkers.push({key,previous:null,next:next[key]});
   }
+  let logicalFieldEffects=null;
+  if(changes.includes('logicalFieldEffects')){
+    const catalog=declaration.logicalFieldEffects,policy=catalog.webPolicy;
+    assert.equal(after.sourceSetHash,policy.sourceSetHash,'Framework profile upgrade logical source mismatch');
+    assert.equal(after.parentSourceSetHash,policy.parentSourceSetHash,'Framework profile upgrade logical parent mismatch');
+    if(after.kind==='world-map-development'){
+      assert.equal(canonical(after.fieldEffects),canonical(catalog),'Framework profile upgrade requires the same compiled logical catalog on every map');
+      assert.equal(before.fieldEffects?.webPolicy,undefined,'Framework profile upgrade cannot replace an existing logical owner');
+      // This exact, separately audited catalog projection is the sole metadata
+      // exception. All physical map/entities/scripts/assets outside it remain
+      // in the ordinary full source/profile/media identity comparison.
+      if(before.fieldEffects===undefined)delete comparison.fieldEffects;
+      else comparison.fieldEffects=structuredClone(before.fieldEffects);
+      logicalFieldEffects={catalogHash:policy.catalogHash,previousCatalog:structuredClone(before.fieldEffects??null),
+        candidateCatalog:structuredClone(catalog),display:policy.display,nativeParity:false};
+    }else assert.equal(after.fieldEffects,undefined,'Framework logical catalog belongs to map owners');
+  }
   return {after:comparison,upgrade:{kind:declaration.kind,compilerDigest:declaration.compilerDigest,
     pointer:ref.pointer+'/developmentProfile',role:ref.role,url:ref.url,
     oldHash:before.contentHash,newHash:after.contentHash,addedMarkers,providers:structuredClone(declaration.providers),
     profileBefore:structuredClone(previous),profileAfter:structuredClone(next),
-    grantsSourceAdmission:false,saveMigration:false}};
+    logicalFieldEffects,grantsSourceAdmission:false,saveMigration:false}};
 }
 
 function identities(value,canonical,sourceCatalogProfile){

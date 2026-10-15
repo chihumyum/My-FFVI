@@ -29,7 +29,7 @@ export function assessStoryRuntimePublication({ receipt, runtimeSha256, compiled
         publicationStages.some(name => receipt.stages.filter(stage => stage.name === name).length !== 1))
       return unknown('publication-stage-proof-incomplete');
     const lock = receipt.sourceInputLock;
-    if (lock?.kind !== 'source-prerequisite-input-lock-v1' || !digest(lock.compilerDigest) ||
+    if (!['source-prerequisite-input-lock-v1','source-prerequisite-input-lock-v2'].includes(lock?.kind) || !digest(lock.compilerDigest) ||
         !digest(lock.runtimeSha256) || lock.runtimeSha256 !== runtimeSha256 ||
         typeof lock.compiledDir !== 'string' || resolve(root, lock.compiledDir) !== resolve(compiledDirectory))
       return unknown('same-runtime-compiler-lock-not-established');

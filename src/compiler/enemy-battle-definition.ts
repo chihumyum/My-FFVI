@@ -15,6 +15,7 @@ import { compileElementResistances } from "./elements.js";
 import { tableInteger as int } from "./table.js";
 import { compileConditionResistances, ConditionResistanceCompilationError } from "./condition-resistances.js";
 import { compileEnemyInitialConditions, InitialConditionCompilationError } from "./initial-conditions.js";
+import { compileSourceEnemyConditionTraits } from "./source-condition-application.js";
 
 type Reader = {
   row(table: string, id: string | number): BattleRow;
@@ -33,6 +34,8 @@ export type EnemyBattleDefinitionInput = {
   parameters: { temporary: ParameterValues; limits: ParameterLimits };
   physical: { temporary: PhysicalParameters; limits: PhysicalLimits };
   formationPlan: BattleFormationPlan | null;
+  /** Explicit Web condition/action policy; absence is the strict source lane. */
+  conditionControlPolicy?: { kind: "web-source-control-actions-v1" };
 };
 export type EnemyBattleDefinitionDiagnostic = Pick<BattleEncounterDiagnostic, "kind" | "code" | "reason"> &
   Partial<Pick<BattleEncounterDiagnostic, "dependency" | "pc">>;
@@ -139,8 +142,15 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
         else if (!ability.plan) add("runtime-dependency", "ability-plan",
           `Ability ${id}: ${ability.blockers.join("; ") || "unimplemented plan"}`, { pc, dependency });
         else {
+          const effect = ability.plan.effects[0], controlOnly = ability.plan.effects.length === 1 &&
+            effect?.kind === "add-condition" && input.conditions.behaviors.some(behavior =>
+              behavior.id === effect.conditionId && ["sleep", "confusion", "temptation", "doom"].includes(behavior.kind));
+          if (controlOnly && input.conditionControlPolicy?.kind !== "web-source-control-actions-v1")
+            add("runtime-dependency", "condition-control-policy", `Ability ${id}: source control condition requires an explicit Web lifecycle/action policy`,
+              { pc, dependency });
           const targetBlocker = battleAITargetBlocker(ability.program.range, ability.plan.targeting,
-            op.kind === "counter-act" && op.abilities.includes(id) ? "counter" : "normal");
+            op.kind === "counter-act" && op.abilities.includes(id) ? "counter" : "normal", undefined,
+            controlOnly ? input.conditionControlPolicy : undefined);
           if (targetBlocker)
             add("runtime-dependency", "automatic-target", `Ability ${id}: ${targetBlocker}`, { pc, dependency });
           else if (ability.plan.targeting.normalFormationOnly && formationPlan &&
@@ -151,6 +161,8 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
       }
     }
     return { source, diagnostics, definition: {
+      ...(Object.hasOwn(row, "monster_flag_group_id")
+        ? { conditionTraits: compileSourceEnemyConditionTraits(reader, enemy.monsterId).metadata } : {}),
       sourceId: enemy.monsterId, name: input.name(row.mes_id_name!), side: "enemy", row: "front",
       level: int(row.lv), attackElements: [],
       elementResistances: compileElementResistances(reader, int(row.resistance_attribute)).resistances,

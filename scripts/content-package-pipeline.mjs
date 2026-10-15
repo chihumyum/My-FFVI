@@ -94,7 +94,9 @@ async function validatePublicCAS(root,candidateHistory){
 }
 
 export async function compileSharedContentPackages({root=repository,compiledDir='dist',readJson,
-  sourceRecipePaths,sourceSelectionPath}={}){
+  sourceRecipePaths,sourceSelectionPath,periodicMaps={kind:'web-source-periodic-presentation-input-v1',
+    reason:'Explicit playable Web framework: fixed flat presentation for the complete source periodic-map family; strict diagnostics retained.'},logicalFieldEffects={kind:'web-logical-field-effects-input-v1',
+    input:'build/field-effect-media',reason:'Explicit playable Web framework: retain proven all-loop board logic while deferring particle/material/minimap display.'}}={}){
   root=await realpath(resolve(root));
   // Several existing producers still import the repository's default emitted
   // modules. Do not claim another compiler lock covers that mixed runtime.
@@ -131,8 +133,8 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     if(id!=='base')put('/content-packages/'+id+'/build-report.json',result.report);
     reports.push({id,report:result.report});
   };
-  const prerequisites=await compileSourcePrerequisites({root,compiledDir});
-  const linked=await linkSourcePrerequisites({root,compiledDir,payloads:prerequisites.payloads});
+  const prerequisites=await compileSourcePrerequisites({root,compiledDir,logicalFieldEffects,periodicMaps});
+  const linked=await linkSourcePrerequisites({root,compiledDir,payloads:prerequisites.payloads,frameworkOptions:prerequisites.frameworkOptions});
   const sourceRead=async url=>linked.inputs.has(url)?structuredClone(linked.inputs.get(url)):readJson(url);
   for(const [url,value] of linked.payloads)payloads.set(url,value);
   reports.push({id:'source-prerequisites',report:prerequisites.report},{id:'linked-source-prerequisites',report:linked.report});
@@ -161,9 +163,12 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     const original=await recipe(path);
     const resolved=await resolveSourceRecipeInputs({root,compiledDir,recipePath:path,recipeBytes:original.raw,
       readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence,battleRebindings,
-      frameworkProfileUpgrade:{kind:'compiled-framework-profile-upgrade-v1',
+      frameworkProfileUpgrade:{kind:prerequisites.frameworkOptions.periodicPresentations?'compiled-framework-profile-upgrade-v3':prerequisites.frameworkOptions.logicalFieldEffects?'compiled-framework-profile-upgrade-v2':'compiled-framework-profile-upgrade-v1',
         compilerDigest:prerequisites.inputs.compilerDigest,markers:{
-          storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1'}}});
+          storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1',
+          ...(prerequisites.frameworkOptions.logicalFieldEffects?{logicalFieldEffects:'web-logical-all-loop-field-effects-v1'}:{}),
+          ...(prerequisites.frameworkOptions.periodicPresentations?{worldMap:'framework-world-map-flat-v1',fieldPresentation:'framework-ordinary-field-flat-v1'}:{})},
+        ...(prerequisites.frameworkOptions.logicalFieldEffects?{logicalFieldEffects:prerequisites.frameworkOptions.logicalFieldEffects.catalog}:{})}});
     rebindings.push(resolved.report);return {...original,value:resolved.recipe};
   };
   const [playRecipe,initRecipe,travelRecipe,developmentRecipe,...sourceRecipes]=await Promise.all([

@@ -69,7 +69,7 @@ import { projectNativeFieldPosition } from "./field-native-position.js";
 import { prepareFieldActorMotionTick, prepareFieldScriptMove, projectFieldScriptLerp, resolveFieldScriptMoveToTarget,
   type FieldActorMotion, type FieldScriptLerpProgress } from "./field-script-motion.js";
 import { FieldEffects, FIELD_EFFECT_PARTICLE_UPDATE_ATTRIBUTE, fieldEffectAnimationLoopLimit,
-  projectFieldEffectPlacement, type FieldEffectRuntimeHost, type FieldEffectState,
+  projectFieldEffectPlacement, fieldEffectBoardBlockers, type FieldEffectRuntimeHost, type FieldEffectState,
   type FieldEffectPrepared, type FieldEffectOperation } from "./field-effects.js";
 import { FieldEffectMap } from "./field-effect-map.js";
 import { fieldPuppetContextFromActors, type FieldActorFactoryCandidate, type FieldActorFactoryBindings, type FieldActorFactoryCatalog } from "./field-actor-factory.js";
@@ -90,6 +90,7 @@ import type { FieldPuppetActorCatalog, FieldPuppetActorContext, FieldPuppetContr
 import { partyActorMapArea, type PartyActorPlan } from "./party-actors.js";
 import { bindFieldRelays, fieldRelayGroupBlockers } from "./field-relay-policy.js";
 import { bindPassiveEffects, passiveEffectsGroupBlockers } from "./field-passive-effects-host.js";
+import { WEB_LOGICAL_FIELD_EFFECTS, logicalEffectsGroupBlockers, validateLogicalEffectMedia, logicalEffectDisplayBlockers } from "./field-logical-effects.js";
 import { projectFieldRelaySearchRanges, canFieldRelayInteractToEntityPosition } from "./field-relay-interaction.js";
 import { fieldNativeMapObjectPosition } from "./field-native-npc.js";
 import type { FieldTreasurePort } from "./treasure-port.js";
@@ -341,6 +342,8 @@ export type PreparedFieldSourceEncounter = {
 export type FieldGameOptions = {
   /** Trusted explicit Web selection policy; absent remains native-unknown. */
   sourceEncounter?: FieldSourceEncounterPort;
+  /** Internal unpublished restore shell; it must never allocate/replay FX. */
+  deferLogicalEffectRestore?: true;
   storyRuntimeSeed?: FieldStoryRuntimeSnapshot;
   storyTimerOrigin?: FieldTimerOriginContent;
   /** Explicit particle/material host. Content parsing never grants one. */
@@ -516,6 +519,18 @@ export class FieldGame {
   private readonly effects: FieldEffects | FieldEffectMap | null;
   /** Read-only logical projection; not a particle/RNG checkpoint codec. */
   get fieldEffectsSnapshot(): FieldEffectState | null { return this.effects?.snapshot() ?? null; }
+  private get logicalEffectsPersistent(): boolean {
+    return this.content.developmentProfile?.logicalFieldEffects === WEB_LOGICAL_FIELD_EFFECTS &&
+      this.options.fieldEffectMap?.logicalPolicy === WEB_LOGICAL_FIELD_EFFECTS &&
+      this.content.fieldEffects?.webPolicy?.kind === WEB_LOGICAL_FIELD_EFFECTS;
+  }
+  get fieldEffectsDisplayPolicy(): typeof WEB_LOGICAL_FIELD_EFFECTS | null {
+    return this.content.developmentProfile?.logicalFieldEffects === WEB_LOGICAL_FIELD_EFFECTS &&
+      this.content.fieldEffects?.webPolicy?.kind === WEB_LOGICAL_FIELD_EFFECTS &&
+      (this.options.fieldEffectMap?.logicalPolicy === WEB_LOGICAL_FIELD_EFFECTS ||
+        this.effects instanceof FieldEffects && this.effects.logicalPolicy === WEB_LOGICAL_FIELD_EFFECTS)
+      ? WEB_LOGICAL_FIELD_EFFECTS : null;
+  }
   get effectMapHandoffBlocker(): string | null {
     if (this.options.fieldEffectMap?.active) return null;
     return this.effects ? "Field effect map retirement/particle checkpoint host is unresolved" : null;
@@ -1036,9 +1051,27 @@ export class FieldGame {
         return { kind: "create", id: entity.id, definition: entity.effect, position: placement.position };
       });
       operations.push({ kind: "setup", registeredBoards: sourceEffects.map((entity) => entity.id), groupUpdate: false });
+      if (content.fieldEffects.webPolicy && (content.developmentProfile?.logicalFieldEffects !== WEB_LOGICAL_FIELD_EFFECTS ||
+          content.fieldEffects.webPolicy.sourceSetHash !== content.sourceSetHash ||
+          content.fieldEffects.webPolicy.parentSourceSetHash !== content.parentSourceSetHash))
+        throw new Error("Logical field effects lack their source-bound Web profile");
       const effects = options.fieldEffectMap ?? new FieldEffects(content.fieldEffects, options.fieldEffects);
-      effects.prepare(operations).commit();
-      this.effects = effects;
+      if (options.deferLogicalEffectRestore) {
+        if (!restoringNative || !this.logicalEffectsPersistent || options.fieldEffectMap!.hasHistory ||
+            sourceEffects.some(entity => !validateLogicalEffectMedia(content.fieldEffects!, entity.effect!.assetGroup) ||
+              logicalEffectDisplayBlockers(entity.effect!, content.fieldEffects, fieldEffectBoardBlockers(entity.effect!)).length > 0))
+          throw new Error("Unbound unpublished logical effect restore shell");
+        // Only immutable source/placement admission was checked. No create,
+        // setup, host preparation, counter or manager state is replayed.
+      } else if (options.fieldEffectMap?.restoreSeed) {
+        if (!this.logicalEffectsPersistent) throw new Error("Unbound logical effect restore lease");
+        const boards = effects.snapshot().boards;
+        if (boards.length !== sourceEffects.length || operations.some(operation => operation.kind === "create" &&
+            !boards.some(board => board.id === operation.id && canonical(board.definition) === canonical(operation.definition) &&
+              canonical(board.position) === canonical(operation.position))))
+          throw new Error("Logical effect checkpoint board/source identity changed");
+      } else effects.prepare(operations).commit();
+      if (!options.deferLogicalEffectRestore) this.effects = effects;
     }
   }
   private initialAnimation(
@@ -1082,9 +1115,10 @@ export class FieldGame {
       !(this.npcBindings.has(entity.id) && reason === "Native NPC autonomous movement controller is unresolved"));
   }
   private groupBlockers(group: NonNullable<FieldContent["map"]["groups"]>[string]) {
-    return passiveEffectsGroupBlockers({ ...group, blockers: fieldRelayGroupBlockers({ ...group,
+    const blockers = passiveEffectsGroupBlockers({ ...group, blockers: fieldRelayGroupBlockers({ ...group,
       blockers: fieldNpcGroupBlockers(group, this.content.frameworkNpcActivity) }, this.content.frameworkRelayInteraction) },
       this.content.frameworkPassiveEffects);
+    return logicalEffectsGroupBlockers({ ...group, blockers }, this.content);
   }
   private prepareNpcActivities(actors: readonly Actor[], restored?: RestoredFieldNpcActivities,
     entities: readonly FieldEntity[] = this.entityList): Map<string, NpcActivityRuntime> {
@@ -1161,7 +1195,7 @@ export class FieldGame {
       this.options.partyAppearance!.catalog, this.transportationPresentation));
   }
   /** Source SetEventEntityGroup appends entities; it does not replace existing groups. */
-  private activateGroup(name: string): void {
+  private activateGroup(name: string, restoring = false): void {
     const group = this.content.map.groups?.[name];
     if (!group) throw new Error(`缺少实体组 ${name}`);
     if (this.activeGroups.has(name))
@@ -1189,7 +1223,7 @@ export class FieldGame {
       : this.createActors(group.entities);
     const treasures = this.prepareTreasureInitialization(group.entities);
     const activities = this.prepareNpcActivities(Object.values(actors), undefined, [...this.entityList, ...group.entities]);
-    const effectSetup = this.effects?.prepare([{ kind: "setup", registeredBoards:
+    const effectSetup = restoring && this.options.fieldEffectMap?.restoreSeed ? undefined : this.effects?.prepare([{ kind: "setup", registeredBoards:
       this.defaultProperties.filter((entity) => entity.kind === 11 && !this.passiveEffects.has(entity.id)).map((entity) => entity.id), groupUpdate: true }]);
     const properties = [...this.defaultProperties, ...group.entities];
     const publish = () => {
@@ -1587,6 +1621,7 @@ export class FieldGame {
    * actor, script and presentation gates even when FX prohibit checkpointing. */
   private get idleFieldReady(): boolean {
     return (
+      !this.options.deferLogicalEffectRestore &&
       (!this.options.puppetActors || !!(this.nativeActorBindings && this.nativeRuntime?.mapLifecycle &&
         this.nativeRuntime.animationKeys && this.nativeActorProviders && this.partyActors && this.camera)) &&
       !this.cameraEventActive && (!this.puppetLifecycle || this.puppetLifecycle.finished) &&
@@ -1603,7 +1638,7 @@ export class FieldGame {
   }
   get menuReady(): boolean { return !this.stop && this.idleFieldReady; }
   get checkpointReady(): boolean {
-    return this.menuReady && !this.effects && !this.options.fieldEffectMap?.hasHistory;
+    return this.menuReady && (this.logicalEffectsPersistent || !this.effects && !this.options.fieldEffectMap?.hasHistory);
   }
   get sourcePresentationContext(): SourcePresentationContext | null {
     return cloneSourcePresentationContext(this.options.sourcePresentation?.context() ?? null);
@@ -1700,7 +1735,7 @@ export class FieldGame {
   /** A barrier owns one quiescent main core. Other live coroutine registers
    * need their own codecs before a content package may save through them. */
   private requireEventSaveBoundary(task: Task): void {
-    if (this.stop || this.effects || this.options.fieldEffectMap?.hasHistory ||
+    if (this.stop || !this.logicalEffectsPersistent && (this.effects || this.options.fieldEffectMap?.hasHistory) ||
         this.options.fieldEffectMap && !this.options.fieldEffectMap.active ||
         this.sourcePresentationContext?.advertisementOpeningFader === "present" ||
         this.fader.active || this.colorFilterState?.active || this.actorVisibilityBusy || this.sourceMessage.active || this.messageWindow ||
@@ -1763,8 +1798,10 @@ export class FieldGame {
     if (options.puppetActors)
       throw new Error("Source puppet host checkpoints require a bound actor/camera/collision codec");
     const passiveEffects = bindPassiveEffects(content);
-    if (options.fieldEffectMap?.hasHistory || content.map.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id)) ||
-        Object.values(content.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id))))
+    if (!(options.fieldEffectMap?.restoreSeed && options.fieldEffectMap.logicalPolicy === WEB_LOGICAL_FIELD_EFFECTS &&
+          content.developmentProfile?.logicalFieldEffects === WEB_LOGICAL_FIELD_EFFECTS) &&
+        (options.fieldEffectMap?.hasHistory || content.map.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id)) ||
+        Object.values(content.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id)))))
       throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
     const s = structuredClone(raw);
     const hasStory = s.kind === "idle-field-v13" || s.kind === "event-field-v4";
@@ -1833,7 +1870,7 @@ export class FieldGame {
       throw new Error("Initial field groups changed in checkpoint");
     for (const id of s.activeGroups.slice(initial.length)) {
       if (native) next.restoreNativeGroup(id);
-      else next.activateGroup(id);
+      else next.activateGroup(id, true);
     }
     if (next.partyActors) {
       if (!s.partyActors) throw new Error("Missing saved party appearances");

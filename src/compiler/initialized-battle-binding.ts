@@ -4,7 +4,7 @@ import { assertSourceGameCatalog } from "../core/source-catalog.js";
 import { validateBattleDropCatalog } from "../core/battle-rewards.js";
 import type { WorldCatalog } from "../field/world.js";
 import { analyzeBatchEncounters } from "./content-batch-battle.js";
-import { canonical, record } from "./content.js";
+import { canonical, hash, record } from "./content.js";
 
 export type InitializedBattleSelection = "source-baseline-v1" | "shared-framework-directory-v1";
 /** These are the complete, hashed producer documents, not readiness flags or
@@ -45,12 +45,39 @@ async function document(value: unknown, kind: string): Promise<Record<string, un
   return result as Record<string, unknown> & { contentHash: string };
 }
 
-/** Extra enemies may extend drop definitions, but cannot change an existing
- * lottery or create an item/equipment owner absent from the source catalog. */
-function validateSharedContent(base: BattleCatalog, catalog: BattleCatalog): void {
+/** The only additive common policy needs its exact source-bound producer
+ * receipt. Other capabilities and owned initialization remain identical. */
+export function validateInitializedBattleSharedCapabilities(base: BattleCatalog, catalog: BattleCatalog,
+  directoryReport?: unknown): void {
   same(catalog.gameState, base.gameState, "source initializer and owned catalogs");
   const { drops: before, ...baseCommon } = base.common, { drops: after, ...nextCommon } = catalog.common;
-  same(nextCommon, baseCommon, "shared battle capabilities");
+  require(!Object.hasOwn(baseCommon, "conditionControlPolicy"), "strict baseline cannot carry a Web condition policy");
+  const report = directoryReport === undefined ? {} : record(directoryReport),
+    policy = report.policy === undefined ? {} : record(report.policy),
+    framework = policy.framework === undefined ? {} : record(policy.framework);
+  if (Object.hasOwn(nextCommon, "conditionControlPolicy")) {
+    const declared = { kind: "web-source-control-actions-v1" };
+    require(policy.kind === "source-battle-directory-policy-v2", "condition policy requires a versioned directory declaration");
+    same(nextCommon.conditionControlPolicy, declared, "known Web condition policy");
+    same(framework.conditionControlPolicy, declared, "declared Web condition policy");
+    same(report.policyChanges, [{ kind: "framework-condition-policy-binding-v1",
+      field: "common.conditionControlPolicy", from: null, to: declared,
+      beforeCommonHash: hash(base.common), afterCommonHash: hash(catalog.common),
+      beforeGameStateHash: hash(base.gameState), afterGameStateHash: hash(catalog.gameState),
+      beforeCommon: base.common, afterCommon: catalog.common,
+    }], "complete condition policy change receipt");
+    const { conditionControlPolicy: _, ...unchanged } = nextCommon;
+    same(unchanged, baseCommon, "shared battle capabilities");
+  } else {
+    require(!Object.hasOwn(framework, "conditionControlPolicy") &&
+      (report.policyChanges === undefined || canonical(report.policyChanges) === "[]"),
+    "condition policy declaration has no bound owner");
+    same(nextCommon, baseCommon, "shared battle capabilities");
+  }
+}
+function validateSharedContent(base: BattleCatalog, catalog: BattleCatalog, directoryReport?: unknown): void {
+  validateInitializedBattleSharedCapabilities(base, catalog, directoryReport);
+  const before = base.common.drops, after = catalog.common.drops;
   require(before !== null && after !== null, "directory requires bound drop catalogs");
   validateBattleDropCatalog(before); validateBattleDropCatalog(after);
   same(after.weights, before.weights, "drop weights");
@@ -130,7 +157,7 @@ export async function selectInitializedBattleCatalog(input: {
   ]);
   const sourceRequests = await document(requests.sourceRequests, "source-battle-requests-v1");
   const catalog = await verifyContent(directory.frameworkCatalog);
-  assertSourceGameCatalog(catalog, "framework"); validateSharedContent(sourceBattle, catalog);
+  assertSourceGameCatalog(catalog, "framework"); validateSharedContent(sourceBattle, catalog, report);
   require(report.baselineHash === sourceBattle.contentHash && report.frameworkCatalogHash === catalog.contentHash &&
     report.requestsHash === requests.contentHash && sha(report.strictCatalogHash), "directory payload binding mismatch");
   for (const proof of [requests, sourceRequests, report])

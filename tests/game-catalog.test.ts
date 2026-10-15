@@ -44,6 +44,8 @@ function catalogFixture() {
   const modules: GameCatalogModules = {
     common, tables, name: key => key, ordinaryDefinitions: [player, future],
     reader: runtime.reader(), runtimeInput,
+    readConditionSourceBindings: () => ({kind:"source-condition-read-ledger-v1", reader:"complete-verified-system-reader",
+      sourceSetHash:"a".repeat(64), parentSourceSetHash:"b".repeat(64), battleSourceSetHash:"c".repeat(64), rows:[]}),
     owned: {
       characterInitializations: { [member.id]: structuredClone(template) },
       battleDefinitions: [structuredClone(player), structuredClone(future)], sourceNewGame: definition,

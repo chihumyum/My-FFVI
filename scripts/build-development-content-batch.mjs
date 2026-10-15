@@ -6,6 +6,7 @@ import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } f
 import { isAbsolute, posix, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { compileDevelopmentMapEntry } from "../dist/src/compiler/development-map-entry.js";
+import { compileFrameworkContent } from "../dist/src/compiler/framework-content.js";
 import { ContentBatchManifest, planContentBatch } from "../dist/src/compiler/content-batch.js";
 import { canonical, hash } from "../dist/src/compiler/content.js";
 import { verifyContent } from "../dist/src/core/content-integrity.js";
@@ -32,8 +33,16 @@ export async function compileDevelopmentContentBatch({ root = repository,
     recipeSha256 = createHash("sha256").update(bytes).digest("hex");
     if (suppliedRecipeSha256 !== undefined) assert.equal(suppliedRecipeSha256, recipeSha256, "Original recipe bytes changed");
   }
-  assert.deepEqual(Object.keys(recipe).sort(), ["kind", "id", "baseField", "battle", "world", "startMap", "entrance", "manifest"].sort());
-  assert.equal(recipe.kind, "development-content-batch-recipe-v1");
+  const independent = recipe.kind === "development-content-batch-recipe-v2";
+  assert.deepEqual(Object.keys(recipe).sort(), ["kind", "id", "baseField", "battle", "world", "startMap", "entrance", "manifest",
+    ...(independent ? ["frameworkPolicy"] : [])].sort());
+  assert.ok(["development-content-batch-recipe-v1", "development-content-batch-recipe-v2"].includes(recipe.kind));
+  if (independent) {
+    assert.deepEqual(Object.keys(recipe.frameworkPolicy).sort(), ["kind", "sourceEntry"].sort());
+    assert.equal(recipe.frameworkPolicy.kind, "independent-source-framework-v1", "Unknown independent development world policy");
+    assert.equal(recipe.frameworkPolicy.sourceEntry, "game/source-new-game.json", "Independent development world requires the same candidate source entry");
+    assert.equal(recipe.world, "world/catalog.json", "Independent development world requires the strict source world");
+  }
   assert.match(recipe.id, /^[a-z0-9][a-z0-9-]{0,79}$/);
   const within = path => { const child = relative(build, path); return child && child !== ".." && !child.startsWith(".." + sep) && !isAbsolute(child); };
   const read = async (url, expectedHash) => {
@@ -52,18 +61,47 @@ export async function compileDevelopmentContentBatch({ root = repository,
   };
   for (const name of [recipe.baseField, recipe.battle, recipe.world])
     assert.match(name, /^(?:game|world|framework|content-batches)\/[A-Za-z0-9/_-]+\.json$/);
-  const [baseField, battle, catalog] = await Promise.all([recipe.baseField, recipe.battle, recipe.world].map(name => read("/" + name)));
+  const [baseField, battle, originalCatalog] = await Promise.all([recipe.baseField, recipe.battle, recipe.world].map(name => read("/" + name)));
+  let catalog = originalCatalog, independentMaps = null, worldDerivation = null;
+  if (independent) {
+    assert.equal(originalCatalog.developmentProfile, undefined, "Independent development world cannot strip an existing profile");
+    // The same candidate reader supplies the source entry and every exact map.
+    // A cached initializer cannot replace a missing or mismatched candidate.
+    const sourceEntry = await read("/" + recipe.frameworkPolicy.sourceEntry);
+    assert.equal(sourceEntry.developmentProfile, undefined, "Independent development world requires a strict source entry");
+    const sourceMaps = await Promise.all(Object.values(originalCatalog.maps).map(ref => read(ref.url, ref.contentHash)));
+    for (const map of sourceMaps) {
+      assert.equal(map.developmentProfile, undefined, "Independent development world cannot strip a map profile");
+      assert.equal(map.frameworkPresentation, undefined, "Independent development world cannot strip an alternative presentation");
+      assert.equal(map.fieldEffects?.webPolicy, undefined, "Independent development world cannot strip a logical effect owner");
+    }
+    // Reuse the common source derivation with its original fixed policies.
+    // It does not receive the global framework's logical-FX/periodic options.
+    const derived = compileFrameworkContent(originalCatalog, sourceMaps, sourceEntry, {});
+    independentMaps = derived.maps;
+    const world = structuredClone(derived.catalog);
+    for (const map of independentMaps) world.maps[map.mapId] = { ...world.maps[map.mapId],
+      url: `/content-packages/${recipe.id}/maps/${map.mapId}.json`, contentHash: map.contentHash };
+    const { contentHash: _, ...body } = world; catalog = { ...body, contentHash: hash(body) };
+    worldDerivation = { kind: "independent-source-framework-derivation-v1", declaration: structuredClone(recipe.frameworkPolicy),
+      sourceWorldHash: originalCatalog.contentHash, sourceEntryHash: sourceEntry.contentHash,
+      sourceSetHash: originalCatalog.sourceSetHash, parentSourceSetHash: originalCatalog.parentSourceSetHash,
+      sourceMaps: sourceMaps.map(map => ({ mapId: map.mapId, contentHash: map.contentHash })),
+      catalogHash: catalog.contentHash, maps: independentMaps.length, frameworkReport: derived.report,
+      globalFrameworkRead: false, sourceStateChanged: false, sourceStoryReachability: false };
+  }
   const initial = ContentBatchManifest.parse(recipe.manifest);
   assert.ok(initial.mapIds.includes(recipe.startMap));
   assert.ok(initial.routes.every(route => route.entry === "development-map"));
   const maps = await Promise.all(initial.mapIds.map(id => {
     const ref = catalog.maps[id]; assert.ok(ref, "Missing declared world map: " + id);
-    return read(ref.url, ref.contentHash);
+    return independentMaps ? independentMaps.find(map => map.mapId === id) : read(ref.url, ref.contentHash);
   }));
   const start = maps.find(map => map.mapId === recipe.startMap); assert.ok(start);
   const entry = await compileDevelopmentMapEntry({ baseField, baseBattle: battle, catalog, map: start, entrance: recipe.entrance });
   const payloads = new Map([[`/content-packages/${recipe.id}/entry.json`, entry],
     [`/content-packages/${recipe.id}/battle.json`, battle], [`/content-packages/${recipe.id}/world.json`, catalog]]);
+  if (independentMaps) for (const map of independentMaps) payloads.set(catalog.maps[map.mapId].url, map);
   const reference = name => ({ url: `/content-packages/${recipe.id}/${name}.json`, contentHash: payloads.get(`/content-packages/${recipe.id}/${name}.json`).contentHash });
   const refs = parseGameContentRefs({ kind: "game-content-refs-v1", profile: "framework", world: reference("world"),
     source: null, development: { entry: reference("entry"), battle: reference("battle") } });
@@ -77,6 +115,7 @@ export async function compileDevelopmentContentBatch({ root = repository,
   const report = { kind: "development-content-batch-build-v1", recipeHash: hash(recipe), recipeSha256, refs,
     manifest: `build/content-packages/${recipe.id}/manifest.json`, entryHash: entry.contentHash,
     baseFieldHash: baseField.contentHash, maps: maps.map(map => ({ mapId: map.mapId, contentHash: map.contentHash })),
+    ...(worldDerivation ? { worldDerivation } : {}),
     diagnostics: plan.diagnostics, sourcePackagesChanged: false, storyFlagsChanged: false, sourceCampaignComplete: false };
   return { payloads, refs: new Map([[recipe.id, refs]]), report, manifest, plan };
 }

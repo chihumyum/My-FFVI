@@ -4,7 +4,7 @@ import { projectAbilityCost, type AbilityCostOwner, type AbilityCostProjection }
 import { equipmentAbilityCostProviders, equipmentOwnedAbilities, validateEquipmentAbilityOwnership, validateEquipmentBattleRows } from "./equipment.js";
 import type { OwnedAbility } from "./owned-character.js";
 import { projectBattleDrops, validateBattleDropCatalog, type BattleDropPlan, type BattleDropGrant } from "./battle-rewards.js";
-import { projectBattleAbilities, type BattleAbilityProjection } from "./battle-abilities.js";
+import { projectBattleAbilities, projectBattleCommandAvailability, type BattleAbilityProjection } from "./battle-abilities.js";
 import {
   createBattleAppearanceState,
   reconcileBattleAppearance,
@@ -52,6 +52,9 @@ import { proposeForcedEscape, proposeRandomAbilityDispatch,
 import { projectActionTargets, type ActionUserConditionResult } from "./action-user-conditions.js";
 import { projectPhysicalRows, validateBattleRow, validateBattleRowCatalog, type PhysicalRowContext } from "./battle-row.js";
 import type { SlowState } from "./condition-speed.js";
+import { createControlRecoveryState, createDoomClock, validateControlRecoveryState, validateDoomClock,
+  projectControlRecovery, projectDoomClock, type ControlRecoveryState, type DoomClockState,
+  type ControlConditionBehavior } from "./condition-control.js";
 import {
   validateItemStacks,
   type ItemDefinition,
@@ -89,6 +92,8 @@ import { parseBattleParticipantContent, type BattleParticipantContent, type Batt
 import { createBattleParticipantState, projectEnemyReplacement, projectEnemyPartyReplacement, projectBattleParticipantRewards,
   type BattleParticipantState } from "./battle-participant-state.js";
 import { canonical } from "./canonical.js";
+import { sourceControlCommandIds, planWebControlAction, planWebControlTarget, webControlTargetChoices,
+  type ControlActionMetadata, type ControlActionCandidate } from "./condition-control-actions.js";
 import { parseBattlePlayerBorrow, parseBattlePlayerPlan, type BattlePlayerBorrow,
   type BattlePlayerReturn } from "./battle-player-participants.js";
 import { createBattlePlayerState, parseBattlePlayerState, projectPlayerJoin, projectPlayerGroup,
@@ -113,6 +118,8 @@ export type BattleAction = {
   /** Legacy CounterAct captures the attacker; command-conditioned interrupts
    * pass a null target to the native controller and use automatic selection. */
   targeting?: BattleAICounterTargeting;
+  /** Battle-local action authority under the explicit Web control policy. */
+  control?: ControlActionMetadata;
   actor: string;
   selection: TargetSelection;
   targetIds: string[];
@@ -150,6 +157,7 @@ export type BattleMenuCommand = {
   usesList: boolean;
   blockers: string[];
 };
+type ControlFunctionState = { recovery: ControlRecoveryState; doom: DoomClockState | null };
 
 /** Playability profile only. All provisional rules are enumerated in docs/battle-playability.md.
  * Fixed simulation steps + owned PRNG make failures reproducible; they do not reproduce Unity RNG.
@@ -168,10 +176,17 @@ export class BattleGame {
   private aiStates = new Map<string, BattleAIState>();
   private poisonStates = new Map<string, PoisonState>();
   private slowStates = new Map<string, SlowState>();
+  /** Function-local clocks/captured targeting, not a second condition list.
+   * Exact unit references prevent a retired target's ID being rebound. */
+  private controlStates = new Map<string, ControlFunctionState[]>();
+  private controlTargetUnits = new Map<string, Map<number, Combatant>>();
   private collected = false;
   private readonly escapeRule: FrameworkBattleEscapePolicy | null;
   private readonly rewardPolicy: Readonly<BattleRewardPolicy>;
   private readonly lifecycle: BattleLifecycle;
+  private readonly controlPolicy: BattleContent["conditionControlPolicy"] | null;
+  private readonly playerConditionTraits = new Map<number, Readonly<NonNullable<CombatantDefinition["conditionTraits"]>>>();
+  readonly #conditionUnitIdentities = new WeakMap<Combatant, { id: string; sourceId: number; side: "player" | "enemy" }>();
   private eventState: BattleEventState | null = null;
   private readonly eventShared: BattleEventSharedState | null;
   private readonly participantContent: BattleParticipantContent | null;
@@ -242,6 +257,21 @@ export class BattleGame {
     this.rewardPolicy = Object.freeze(parseBattleRewardPolicy(content.rewardPolicy === undefined
       ? { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 } : content.rewardPolicy));
     this.lifecycle = parseBattleLifecycle(content.lifecycle ?? { kind: "battle-lifecycle-v1", mode: "none" });
+    if (content.conditionControlPolicy !== undefined && (!content.conditionControlPolicy ||
+        Object.keys(content.conditionControlPolicy).length !== 1 || content.conditionControlPolicy.kind !== "web-source-control-actions-v1"))
+      throw new Error("Invalid condition-control scheduler policy");
+    this.controlPolicy = content.conditionControlPolicy === undefined ? null : Object.freeze({ ...content.conditionControlPolicy });
+    if (content.playerConditionTraits !== undefined) {
+      if (!content.playerConditionTraits || Array.isArray(content.playerConditionTraits) || typeof content.playerConditionTraits !== "object")
+        throw new Error("Invalid source player condition traits");
+      for (const [key, traits] of Object.entries(content.playerConditionTraits)) {
+        const sourceId = Number(key);
+        if (!Number.isSafeInteger(sourceId) || sourceId < 1 || String(sourceId) !== key || !traits ||
+            Object.keys(traits).length !== 2 || traits.kind !== "source-condition-traits-v1" || typeof traits.baseUndead !== "boolean")
+          throw new Error("Invalid source player condition traits");
+        this.playerConditionTraits.set(sourceId, Object.freeze({ ...traits }));
+      }
+    }
     this.entryEnemies = structuredClone(content.enemies);
     this.participantContent = content.participants === undefined ? null
       : parseBattleParticipantContent(content.participants, this.entryEnemies);
@@ -400,6 +430,9 @@ export class BattleGame {
         ),
       );
       this.slowStates.set(c.id, this.conditions.reconcileSlowState(c.conditionIds, []));
+      const control = this.prepareControlState(c, c.conditionIds, [], new Map(), null);
+      this.controlStates.set(c.id, control.state);
+      this.controlTargetUnits.set(c.id, control.targets);
     }
     this.reconcileAppearances();
     if (this.playerBorrow) {
@@ -440,7 +473,8 @@ export class BattleGame {
   }
   get ready() {
     if (this.escapeRequested || !this.eventControls.interactive) return [];
-    return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued);
+    return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued &&
+      !this.hasSleep(c) && !this.hasAutomaticControl(c));
   }
   get escapePending(): boolean { return this.escapeRequested; }
   get canRequestEscape(): boolean {
@@ -562,13 +596,13 @@ export class BattleGame {
       this.equipmentAbilities.get(actorId));
   }
   private commandQualificationFor(actor: Combatant | undefined, partySize: number,
-    inventory: BattleEntryInventory | undefined, equipmentAbilities: OwnedAbility[] | undefined) {
+    inventory: BattleEntryInventory | undefined, equipmentAbilities: OwnedAbility[] | undefined, availabilityOnly = false) {
     const catalog = this.content.battleAbilities,
       context = this.content.qualificationContext;
     if (!actor || !actor.ownedAbilities || !catalog || !context) return null;
     if (actor.ownedAbilities.sourceId !== actor.sourceId)
       throw new Error("Battle owned ability identity mismatch");
-    return projectBattleAbilities(catalog, actor.ownedAbilities, {
+    return (availabilityOnly ? projectBattleCommandAvailability : projectBattleAbilities)(catalog, actor.ownedAbilities, {
       conditionIds: context.conditionContext === "current" ? actor.conditionIds : null,
       battleType: context.battleType,
       magicLearningValue: actor.magicLearningValue ?? context.magicLearningValue,
@@ -694,6 +728,7 @@ export class BattleGame {
     if (
       !actor ||
       actor.hp <= 0 ||
+      this.hasSleep(actor) ||
       !item ||
       item.important ||
       !item.uses.battle.plan ||
@@ -796,6 +831,20 @@ export class BattleGame {
     };
   }
   private canUseAction(action: BattleAction) {
+    if (action.control) {
+      const actor = this.combatants.find(unit => unit.id === action.actor);
+      if (!actor || this.hasSleep(actor) || !this.controlPolicy || action.control.policy !== this.controlPolicy.kind ||
+          !this.conditions.controlBehaviors(actor.conditionIds).some(behavior =>
+            behavior.id === action.control!.conditionId && behavior.kind === action.control!.kind)) return false;
+      if (actor.side === "player") {
+        if (action.source.kind !== "ability" || !this.controlPlayerCandidates(actor).some(candidate => candidate.commandId === action.commandId &&
+            candidate.abilities.some(ability => ability.id === action.source.id))) return false;
+        const ability = this.content.abilities[action.source.id]!, command = this.content.commands[action.commandId!],
+          cost = this.abilityCost(actor.id, action.source.id);
+        return actor.hp > 0 && Boolean(command && cost && actor.mp >= cost.mp) &&
+          conditionsAllowAction(actor.conditionIds, ability.program.forbiddenConditionIds, command!.forbiddenConditionIds);
+      }
+    }
     return action.source.kind === "ability"
       ? this.canUse(action.actor, action.source.id, action.commandId)
       : action.commandId !== null &&
@@ -880,6 +929,7 @@ export class BattleGame {
       !ability?.plan ||
       !this.qualifiedAbility(actor, abilityId) ||
       actor.hp <= 0 ||
+      this.hasSleep(actor) ||
       this.enemyExits.has(actor.id) ||
       ability.plan.effects.some(effect =>
         (effect.kind === "random-ability" || effect.kind === "forced-escape") && actor.side !== "enemy") ||
@@ -1087,6 +1137,7 @@ export class BattleGame {
       gear: this.validateBorrowedPlayer(unit, qualification, players.length),
       poison: this.conditions.reconcilePoisonState(unit.conditionIds, [], this.atbSpeed),
       slow: this.conditions.reconcileSlowState(unit.conditionIds, []),
+      control: this.prepareControlState(unit, unit.conditionIds, [], new Map(), null),
     }));
     // All candidate owners/conditions/loadouts are admitted before owned RNG.
     for (const unit of units) unit.atb = unit.hp === 0 ? 0 : this.randomInt(...this.content.initialAtb.player);
@@ -1104,6 +1155,7 @@ export class BattleGame {
     for (const [index, unit] of next.units.entries()) {
       const entry = next.entries[index]!;
       this.poisonStates.set(unit.id, entry.poison); this.slowStates.set(unit.id, entry.slow);
+      this.controlStates.set(unit.id, entry.control.state); this.controlTargetUnits.set(unit.id, entry.control.targets);
       this.equipmentAbilities.set(unit.id, entry.gear.passives);
       if (entry.gear.cost) this.costOwners.set(unit.id, entry.gear.cost);
       if (entry.gear.unresolved) this.unresolvedCostOwners.add(unit.id);
@@ -1166,9 +1218,10 @@ export class BattleGame {
     this.admitAITurn(unit, planBattleAITurn(unit.ai, started.state, context));
     unit.behavior = started.behavior;
     const poison = this.conditions.reconcilePoisonState(unit.conditionIds, [], this.atbSpeed),
-      slow = this.conditions.reconcileSlowState(unit.conditionIds, []);
+      slow = this.conditions.reconcileSlowState(unit.conditionIds, []),
+      control = this.prepareControlState(unit, unit.conditionIds, [], new Map(), null);
     unit.atb = unit.hp === 0 ? 0 : this.randomInt(this.content.initialAtb.enemy[0], this.content.initialAtb.enemy[1]);
-    return { ai: started.state, poison, slow };
+    return { ai: started.state, poison, slow, control };
   }
   /** Both single-slot and complete-party transitions invalidate old instances
    * through one shared queue/timer boundary. Death/drop registrations survive. */
@@ -1185,6 +1238,7 @@ export class BattleGame {
       this.aiStates.delete(removedId);
       this.poisonStates.delete(removedId);
       this.slowStates.delete(removedId);
+      this.controlStates.delete(removedId); this.controlTargetUnits.delete(removedId);
       this.dropDead.delete(removedId);
       this.hiddenEnemyIds.delete(removedId);
     }
@@ -1193,6 +1247,7 @@ export class BattleGame {
     this.aiStates.set(unit.id, entry.ai);
     this.poisonStates.set(unit.id, entry.poison);
     this.slowStates.set(unit.id, entry.slow);
+    this.controlStates.set(unit.id, entry.control.state); this.controlTargetUnits.set(unit.id, entry.control.targets);
     this.observeDropLife(unit);
   }
   private changeEnemyParty(partyId: number, hidden: boolean): void {
@@ -1343,6 +1398,229 @@ export class BattleGame {
     if (!state) throw new Error("Unknown slow clock owner");
     return structuredClone(state);
   }
+  controlClockState(actorId: string): readonly ControlFunctionState[] {
+    const state = this.controlStates.get(actorId);
+    if (!state) throw new Error("Unknown condition-control owner");
+    return structuredClone(state);
+  }
+  private controlTargetPolicy(ability: AbilityDefinition): NonNullable<BattleContent["conditionControlPolicy"]> | undefined {
+    if (!this.controlPolicy || ability.program.range !== 16 || !ability.plan?.effects.length ||
+        ability.plan.effects.some(effect => effect.kind !== "add-condition" ||
+          this.conditions.controlBehaviors([effect.conditionId]).length !== 1)) return undefined;
+    return this.controlPolicy;
+  }
+  private prepareControlState(unit: Combatant, conditionIds: readonly number[], previous: readonly ControlFunctionState[],
+    targetedUnits: ReadonlyMap<number, Combatant>, addedBy: Combatant | null, resetIds: readonly number[] = []) {
+    if (!this.#conditionUnitIdentities.has(unit))
+      this.#conditionUnitIdentities.set(unit, { id: unit.id, sourceId: unit.sourceId, side: unit.side });
+    const behaviors = this.conditions.controlBehaviors(conditionIds), state: ControlFunctionState[] = [],
+      targets = new Map<number, Combatant>();
+    if (behaviors.length && !this.controlPolicy) throw new Error("Missing explicit Web condition-control scheduler policy");
+    const seen = new Set<number>();
+    for (const clock of previous) {
+      if (seen.has(clock.recovery.conditionId)) throw new Error("Duplicate condition-control clock");
+      seen.add(clock.recovery.conditionId);
+    }
+    for (const behavior of behaviors) {
+      const old = resetIds.includes(behavior.id) ? undefined : previous.find(clock => clock.recovery.conditionId === behavior.id);
+      const captured = old ? targetedUnits.get(behavior.id) ?? null : addedBy;
+      const recovery = old ? { ...old.recovery } : createControlRecoveryState(behavior, captured?.id ?? null);
+      validateControlRecoveryState(behavior, recovery);
+      if (recovery.targetedUnitId !== (captured?.id ?? null)) throw new Error("Condition targeting instance mismatch");
+      const doom = behavior.kind === "doom" ? old?.doom ? { ...old.doom } : createDoomClock(behavior) : null;
+      if (behavior.kind === "doom") validateDoomClock(behavior, doom!);
+      else if (old?.doom) throw new Error("Unexpected condition countdown owner");
+      state.push({ recovery, doom });
+      if (captured) targets.set(behavior.id, captured);
+    }
+    return { state, targets };
+  }
+  private hasSleep(unit: Pick<Combatant, "conditionIds">): boolean {
+    return this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.kind === "sleep");
+  }
+  private hasAutomaticControl(unit: Pick<Combatant, "conditionIds">): boolean {
+    return this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.kind === "confusion" || behavior.kind === "temptation");
+  }
+  private actionControl(unit: Combatant): ControlActionMetadata | null {
+    const active = this.conditions.controlBehaviors(unit.conditionIds).filter(behavior =>
+      behavior.kind === "confusion" || behavior.kind === "temptation");
+    if (!active.length) return null;
+    if (!this.controlPolicy || active.length !== 1) throw new Error("Unresolved overlapping action-control providers");
+    const behavior = active[0]!;
+    return { conditionId: behavior.id, kind: behavior.kind as "confusion" | "temptation", policy: this.controlPolicy.kind };
+  }
+  private controlPlayerCandidates(actor: Combatant): ControlActionCandidate[] {
+    if (!this.controlPolicy || actor.side !== "player") throw new Error("Missing current controlled player context");
+    const projection = this.usesSourceQualification
+      ? this.commandQualificationFor(actor, this.players.length, this.inventoryQualification, this.equipmentAbilities.get(actor.id), true)
+      : null;
+    if (this.usesSourceQualification && !projection) throw new Error("Missing owned control-command availability");
+    const entries = projection?.entries ?? actor.commands.map(commandId => {
+      const command = this.content.commands[commandId];
+      return { commandId, kind: command?.kind === "item" ? "item" : "direct",
+        abilityIds: command?.abilityIds.filter(id => actor.abilities.includes(id)) ?? [],
+        available: command ? conditionsAllowAction(actor.conditionIds, [], command.forbiddenConditionIds) : null,
+        blockers: command ? [] : ["Missing authored command"] };
+    });
+    const result: ControlActionCandidate[] = [];
+    for (const entry of entries) {
+      if (!sourceControlCommandIds.includes(entry.commandId) ||
+          entry.commandId === 26 && !this.conditions.types(actor.conditionIds).includes(607) || entry.available === false) continue;
+      if (entry.available !== true || entry.blockers.length || entry.kind === "item" || entry.kind === "unresolved")
+        throw new Error("Unresolved control-command availability: " + entry.commandId);
+      if (entry.commandId === 31) throw new Error("Unresolved double-action control command");
+      for (const id of entry.abilityIds) if (!this.content.abilities[id]) throw new Error("Missing control ability master: " + id);
+      const ids = entry.commandId === 7
+        ? entry.abilityIds.filter(id => [1, 2].includes(this.content.abilities[id]!.program.rules.type_id!))
+        : [...entry.abilityIds];
+      // GetAutoSelectAbility returns original master ability1 when its filtered
+      // list is empty. This temporary action never grants a held ability.
+      if (!ids.length && entry.commandId === 7) ids.push(1);
+      if (!ids.length) throw new Error("Missing control-command ability candidates: " + entry.commandId);
+      const abilities = ids.map(id => {
+        const ability = this.content.abilities[id];
+        if (!ability?.plan || !this.abilityCost(actor.id, id) ||
+            ability.plan.effects.some(effect => effect.kind === "random-ability" || effect.kind === "forced-escape") ||
+            ability.plan.effects.some(effect => effect.kind === "physical") && !actor.physical)
+          throw new Error(`Unresolved control ability ${id}: ${ability?.blockers.join("; ") ?? "missing definition"}`);
+        return { id, range: ability.program.range, rule: ability.plan.targeting };
+      });
+      result.push({ commandId: entry.commandId, abilities });
+    }
+    if (!result.length) throw new Error("No admitted owned control command");
+    return result;
+  }
+  private decideControlledPlayer(actor: Combatant): void {
+    const control = this.actionControl(actor);
+    if (!control) throw new Error("Missing player control function");
+    const result = planWebControlAction({ policy: control.policy, actor, units: this.activeCombatants,
+      formation: this.content.formation, candidates: this.controlPlayerCandidates(actor) }, (min, max) => this.randomInt(min, max));
+    const ability = this.content.abilities[result.abilityId]!, action = this.createAction(actor, ability, result.choice, result.commandId);
+    action.control = control;
+    const conditionIds = this.conditions.admitAtbAction(actor.conditionIds, [{ id: ability.id, type: ability.program.rules.type_id! }]);
+    this.queue.push(action); actor.conditionIds = conditionIds; actor.queued = true;
+  }
+  private conditionUndead(unit: Combatant, conditionIds: readonly number[]): boolean {
+    const identity = this.#conditionUnitIdentities.get(unit);
+    if (!identity || !this.combatants.includes(unit) || identity.id !== unit.id || identity.sourceId !== unit.sourceId || identity.side !== unit.side)
+      throw new Error("Undead condition owner identity changed");
+    const commonTraits = unit.side === "player" ? this.playerConditionTraits.get(unit.sourceId) : undefined,
+      traits = unit.conditionTraits ?? commonTraits;
+    if (unit.conditionTraits && commonTraits && canonical(unit.conditionTraits) !== canonical(commonTraits))
+      throw new Error("Conflicting source Undead condition provider");
+    if (!traits || traits.kind !== "source-condition-traits-v1" || typeof traits.baseUndead !== "boolean")
+      throw new Error("Missing explicit source Undead condition provider");
+    const types = this.conditions.types(conditionIds);
+    // The separate isUndeadFromRampage field cannot be inferred from missing
+    // metadata. This runtime has never installed a Rampage function; an entry
+    // carrying that unimplemented function is rejected by validateActive.
+    if (types.includes(9)) throw new Error("Unresolved Rampage Undead provider");
+    if (traits.baseUndead || types.includes(34)) return true;
+    if (unit.side === "enemy") return false;
+    const input = this.inventoryQualification,
+      loadout = input?.members.find(member => member.id === unit.id);
+    if (!input || !loadout) {
+      if (this.usesSourceQualification) throw new Error("Missing owned Undead equipment provider");
+      // The catalog-less synthetic profile has no mutable equipment owner.
+      return false;
+    }
+    if (loadout.sourceId !== unit.sourceId || loadout.equipment.length !== 6)
+      throw new Error("Undead equipment owner mismatch");
+    const equipment = loadout.equipment.map(id => {
+      const gear = input.equipmentCatalog.definitions[id];
+      if (!gear || gear.blockers.length || !gear.parameter)
+        throw new Error("Unresolved Undead equipment provider");
+      return gear;
+    });
+    // FF6 parameter provider checks armor master 124 in accessory slots 5/6,
+    // independently of the source parameter's fixed baseUndead flag.
+    return equipment.slice(4, 6).some(gear => gear.kind === "armor" && gear.equipmentId === 124);
+  }
+  private prepareControlAdvance(actor: Combatant, initialIds: readonly number[], initialHp: number, seconds: number) {
+    const previous = this.controlStates.get(actor.id), references = this.controlTargetUnits.get(actor.id);
+    if (!previous || !references) throw new Error("Missing condition-control function owner");
+    let conditionIds = [...initialIds], hp = initialHp;
+    const clocks: ControlFunctionState[] = [], removedIds: number[] = [];
+    const duration = Math.fround(Math.fround(seconds) * Math.fround(this.atbSpeed));
+    for (const behavior of this.conditions.controlBehaviors(initialIds)) {
+      const clock = previous.find(state => state.recovery.conditionId === behavior.id);
+      if (!clock) throw new Error("Missing active condition-control function");
+      const target = references.get(behavior.id);
+      if (behavior.kind === "temptation" && (!target || !this.combatants.includes(target)))
+        throw new Error("Retired or missing targeted condition unit");
+      const recovery = projectControlRecovery(behavior, clock.recovery, {
+        progress: true, durationSeconds: duration,
+        // Ordinary source entry constructs an empty list; unsupported weapon
+        // condition/function providers never enter this runtime domain.
+        normalAttackAdded: false,
+        targetedUnitGameOver: behavior.kind === "temptation" ? this.conditions.isUnableFight(target!.conditionIds) : null,
+      }, (min, max) => this.randomInt(min, max));
+      let doom = clock.doom ? { ...clock.doom } : null;
+      for (const _reason of recovery.naturalRemovals) {
+        const change = this.conditions.recover(conditionIds, [behavior.id]);
+        conditionIds = change.currentIds;
+        removedIds.push(...change.removed);
+      }
+      if (behavior.kind === "doom" && conditionIds.includes(behavior.id)) {
+        const projected = projectDoomClock(behavior, doom!, {
+          conditionTypes: this.conditions.types(conditionIds), seconds: duration, actionStaging: this.action !== null,
+        });
+        doom = projected.state;
+        if (projected.requestsDeath) {
+          if (this.conditionUndead(actor, conditionIds)) {
+            if (hp > 0) hp = actor.maxHp;
+            const ids = this.conditions.controlBehaviors(conditionIds).filter(current => current.kind === "doom").map(current => current.id);
+            const change = this.conditions.recover(conditionIds, ids);
+            conditionIds = change.currentIds; removedIds.push(...change.removed);
+          } else {
+            const change = this.conditions.forceUnableFight(conditionIds);
+            conditionIds = change.currentIds; removedIds.push(...change.removed);
+          }
+          doom = { ...doom, dead: true };
+        }
+      }
+      clocks.push({ recovery: recovery.state, doom });
+    }
+    const next = this.prepareControlState(actor, conditionIds, clocks, references, null);
+    return { hp, conditionIds, control: next, removedIds };
+  }
+  private prepareControlHit(unit: Combatant, conditionIds: readonly number[], control: ReturnType<BattleGame["prepareControlState"]>,
+    action: BattleAction, ability: ReturnType<BattleGame["actionDefinition"]>, effects: readonly AbilityEffectResult[],
+    projected: readonly Combatant[]) {
+    const activeFunctions = new Set(this.controlStates.get(unit.id)!.map(clock => clock.recovery.conditionId));
+    if (!control.state.some(clock => activeFunctions.has(clock.recovery.conditionId)))
+      return { conditionIds: [...conditionIds], control, removedIds: [] as number[] };
+    if (action.source.kind !== "ability") throw new Error("Missing item condition recovery-hit classification");
+    const classification = this.content.abilities[action.source.id]?.conditionRecoveryHit;
+    if (!classification || classification.kind !== "source-condition-recovery-hit-v1" ||
+        !Number.isInteger(classification.forAiType) || classification.forAiType < 0 || typeof classification.isMagic !== "boolean")
+      throw new Error("Missing explicit source condition recovery-hit classification");
+    if (classification.forAiType !== 1 || classification.isMagic ||
+        !effects.some(effect => effect.resource !== "none" && !effect.missed))
+      return { conditionIds: [...conditionIds], control, removedIds: [] as number[] };
+    if (!ability.plan) throw new Error("Missing condition recovery ability plan");
+    let ids = [...conditionIds];
+    const clocks: ControlFunctionState[] = [], removedIds: number[] = [];
+    for (const behavior of this.conditions.controlBehaviors(ids)) {
+      const clock = control.state.find(current => current.recovery.conditionId === behavior.id)!;
+      if (!activeFunctions.has(behavior.id)) { clocks.push(structuredClone(clock)); continue; }
+      const target = control.targets.get(behavior.id);
+      if (behavior.kind === "temptation" && (!target || !this.combatants.includes(target)))
+        throw new Error("Retired or missing targeted condition unit");
+      const targetState = target ? projected.find(current => current.id === target.id) : undefined;
+      const recovery = projectControlRecovery(behavior,
+        { ...clock.recovery, physicalHits: clock.recovery.physicalHits + 1 }, {
+          progress: false, durationSeconds: 0, normalAttackAdded: false,
+          targetedUnitGameOver: behavior.kind === "temptation"
+            ? this.conditions.isUnableFight(targetState!.conditionIds) : null,
+        }, () => { throw new Error("CountUpNumberOfExecutions must not draw random"); });
+      for (const _reason of recovery.naturalRemovals) {
+        const change = this.conditions.recover(ids, [behavior.id]); ids = change.currentIds; removedIds.push(...change.removed);
+      }
+      clocks.push({ recovery: recovery.state, doom: clock.doom ? { ...clock.doom } : null });
+    }
+    return { conditionIds: ids, control: this.prepareControlState(unit, ids, clocks, control.targets, null), removedIds };
+  }
   private admitAITurn(actor: Combatant, turn: BattleAITurn) {
     const program = actor.ai!;
     const fail = (pc: number, reason: string): never => {
@@ -1391,7 +1669,7 @@ export class BattleGame {
         if (targeting !== null && targeting !== "received-actor" && targeting !== "automatic")
           fail(act.pc, "invalid counter target provider");
         const targetBlocker = battleAITargetBlocker(ability!.program.range,
-          ability!.plan!.targeting, targeting === "received-actor" ? "counter" : "normal");
+          ability!.plan!.targeting, targeting === "received-actor" ? "counter" : "normal", undefined, this.controlTargetPolicy(ability!));
         if (targetBlocker)
           fail(
             act.pc,
@@ -1429,25 +1707,29 @@ export class BattleGame {
           // eligibility. In particular, an enemy corpse still in the current
           // list can be the initial random ally, and range 8 collapses to a
           // single only when the raw player list contains one instance.
-          const choice = planBattleAITarget({ actor, units: this.activeCombatants,
+          const control = this.actionControl(actor);
+          const choice = control ? planWebControlTarget({ id, range: ability.program.range, rule: ability.plan!.targeting },
+            actor, this.activeCombatants, this.content.formation, (min, max) => this.randomInt(min, max)) : planBattleAITarget({ actor, units: this.activeCombatants,
             eligiblePlayers: this.players.filter(player => player.hp > 0),
             range: ability.program.range, rule: ability.plan!.targeting,
-            formation: this.content.formation }, (min, max) => this.randomInt(min, max));
+            formation: this.content.formation,
+            ...(this.controlTargetPolicy(ability) ? { controlPolicy: this.controlPolicy! } : {}),
+          }, (min, max) => this.randomInt(min, max));
           if (!choice)
             throw new BattleAIError(
               actor.ai!.source,
               act.pc,
               `no admitted automatic target for ability ${id}`,
             );
-          decisions.push(
-            this.createAction(
+          const action = this.createAction(
               actor,
               ability,
               choice,
               null,
               act.kind === "loop-act" ? "loop" : "normal",
-            ),
-          );
+            );
+          if (control) action.control = control;
+          decisions.push(action);
         }
       }
       if (!decisions.length)
@@ -1638,6 +1920,8 @@ export class BattleGame {
       eventShared: this.eventShared?.snapshot() ?? null,
       poison: structuredClone(this.poisonStates),
       slow: structuredClone(this.slowStates),
+      control: structuredClone(this.controlStates),
+      controlTargets: new Map([...this.controlTargetUnits].map(([id, targets]) => [id, new Map(targets)])),
       stock: structuredClone(this.stock),
       consumedItems: structuredClone(this.consumedItems),
       observedAbilityIds: [...this.observedAbilityIds],
@@ -1682,6 +1966,8 @@ export class BattleGame {
       if (this.eventShared && before.eventShared) this.eventShared.restore(before.eventShared);
       this.poisonStates = before.poison;
       this.slowStates = before.slow;
+      this.controlStates = before.control;
+      this.controlTargetUnits = before.controlTargets;
       this.stock = before.stock;
       this.consumedItems = before.consumedItems;
       this.observedAbilityIds = before.observedAbilityIds;
@@ -1732,7 +2018,7 @@ export class BattleGame {
           this.atbSpeed,
         );
       for (const c of this.combatants) {
-        if (c.hp <= 0 || c.queued || this.enemyExits.has(c.id)) continue;
+        if (c.hp <= 0 || c.queued || this.enemyExits.has(c.id) || this.hasSleep(c)) continue;
         if (c.atb < 100)
           c.atb = Math.fround(
             c.atb +
@@ -1745,7 +2031,9 @@ export class BattleGame {
                 seconds: 0.01,
               }),
           );
-        if (!this.escapeRequested && !this.eventControls.enemyNoAct && c.side === "enemy" && c.atb >= 100 &&
+        if (!this.escapeRequested && c.side === "player" && c.atb >= 100 && this.hasAutomaticControl(c))
+          this.decideControlledPlayer(c);
+        if (!this.hasSleep(c) && !this.escapeRequested && !this.eventControls.enemyNoAct && c.side === "enemy" && c.atb >= 100 &&
             this.aiStates.get(c.id)?.status === "waiting") {
           if (!this.players.some((p) => p.hp > 0)) break;
           this.decideEnemyAction(c);
@@ -1764,7 +2052,8 @@ export class BattleGame {
     // SetBattleUpdateEnabled does not cancel staged or interrupt actions. Its
     // executor gate only prevents a new ordinary action from starting.
     const index = queue === this.queue && !this.eventControls.updateEnabled
-      ? -1 : queue.findIndex((a) => a.charge <= 0);
+      ? -1 : queue.findIndex((a) => a.charge <= 0 &&
+          !this.hasSleep(this.combatants.find(unit => unit.id === a.actor)!));
     if (index >= 0) {
       const action = queue.splice(index, 1)[0]!,
         actor = this.combatants.find((c) => c.id === action.actor)!;
@@ -1823,7 +2112,7 @@ export class BattleGame {
         // Time-stop types remain outside the active condition capability set.
         isTimeStopped: false,
       });
-      const life = result.ticks.length
+      let life = result.ticks.length
         ? this.conditions.settleLife(
             result.hp,
             this.conditions.updateDying(
@@ -1834,6 +2123,12 @@ export class BattleGame {
             this.conditions.isUnableFight(actor.conditionIds),
           )
         : { hp: actor.hp, conditionIds: [...actor.conditionIds] };
+      const control = this.prepareControlAdvance(actor, life.conditionIds, life.hp, seconds);
+      if (control.hp !== life.hp || canonical(control.conditionIds) !== canonical(life.conditionIds))
+        life = this.conditions.settleLife(control.hp,
+          this.conditions.updateDying(control.hp, actor.maxHp, control.conditionIds),
+          this.conditions.isUnableFight(life.conditionIds));
+      const finalControl = this.prepareControlState(actor, life.conditionIds, control.control.state, control.control.targets, null);
       const state = this.conditions.reconcilePoisonState(
         life.conditionIds,
         result.state,
@@ -1841,14 +2136,17 @@ export class BattleGame {
       );
       const slow = this.conditions.reconcileSlowState(life.conditionIds,
         this.conditions.advanceSlow(actor.conditionIds, this.slowStates.get(actor.id)!, seconds));
-      return { actor, life, state, slow, ticks: result.ticks };
+      return { actor, life, state, slow, control: finalControl, removedIds: control.removedIds, ticks: result.ticks };
     });
-    for (const { actor, life, state, slow, ticks } of staged) {
+    for (const { actor, life, state, slow, control, removedIds, ticks } of staged) {
       const died = actor.hp > 0 && life.hp === 0;
       Object.assign(actor, life);
       this.observeDropLife(actor);
       this.poisonStates.set(actor.id, state);
       this.slowStates.set(actor.id, slow);
+      this.controlStates.set(actor.id, control.state); this.controlTargetUnits.set(actor.id, control.targets);
+      if (removedIds.some(id => this.content.conditions.behaviors.find(behavior => behavior.id === id)?.kind === "sleep"))
+        for (const action of this.queue) if (action.actor === actor.id) action.charge = 0;
       if (died) {
         actor.atb = 0;
         actor.queued = false;
@@ -1882,6 +2180,12 @@ export class BattleGame {
     if (action.targeting !== undefined && (action.kind !== "counter" ||
         action.targeting !== "received-actor" && action.targeting !== "automatic"))
       throw new Error("Invalid interrupt target provider");
+    if (action.control) {
+      const actor = this.combatants.find(unit => unit.id === action.actor), ability = this.content.abilities[action.source.id];
+      if (!actor || action.source.kind !== "ability" || !ability?.plan || !this.canUseAction(action)) return [];
+      return webControlTargetChoices({ id: ability.id, range: ability.program.range, rule: ability.plan.targeting },
+        actor, this.activeCombatants, this.content.formation, action.selection.kind);
+    }
     if (action.kind === "counter" && action.targeting !== "automatic")
       return this.counterTargetChoices(this.activeCombatants);
     if (action.source.kind === "item") return this.itemTargetChoices(action.actor, action.source.id);
@@ -1908,7 +2212,7 @@ export class BattleGame {
     for (const result of results) {
       const actor = units.find((c) => c.id === result.target)!;
       if (actor.side !== "enemy") continue;
-      if (this.enemyExits.has(actor.id) || this.conditions.isEscaped(actor.conditionIds)) continue;
+      if (this.enemyExits.has(actor.id) || this.conditions.isEscaped(actor.conditionIds) || this.hasSleep(actor)) continue;
       if (this.aiStates.get(actor.id)?.status !== "waiting") continue;
       if (action.source.kind === "item")
         throw new Error("Unimplemented enemy item reaction");
@@ -1945,7 +2249,9 @@ export class BattleGame {
             ? planBattleAITarget({ actor, units: active,
                 eligiblePlayers: active.filter(unit => unit.side === "player" && unit.hp > 0),
                 range: ability.program.range, rule: ability.plan!.targeting,
-                formation: this.content.formation }, (min, max) => this.randomInt(min, max))
+                formation: this.content.formation,
+                ...(this.controlTargetPolicy(ability) ? { controlPolicy: this.controlPolicy! } : {}),
+              }, (min, max) => this.randomInt(min, max))
             : this.counterTargetChoices(active).find((c) => c.targetIds[0] === action.actor);
           if (!choice)
             throw new BattleAIError(
@@ -2016,7 +2322,7 @@ export class BattleGame {
     child: AbilityDefinition, parent: TargetChoice): TargetChoice {
     if (!child.plan || parent.selection.kind !== "single" || parent.targetIds.length !== 1)
       throw new Error("Unresolved derived child parent target scope");
-    const blocker = battleAITargetBlocker(child.program.range, child.plan.targeting, "normal", this.content.formation);
+    const blocker = battleAITargetBlocker(child.program.range, child.plan.targeting, "normal", this.content.formation, this.controlTargetPolicy(child));
     if (blocker) throw new Error(blocker);
     const selection = effect.retarget && child.program.range === 5
       ? { kind: "single" as const, id: actor.id } : parent.selection;
@@ -2122,7 +2428,6 @@ export class BattleGame {
         target: entry.target.id,
         effects: entry.effects,
       }));
-      const reactions = this.planReactions(action, projected, results);
       const userMessages: string[] = [];
       for (const result of projection.userResults) {
         for (const id of result.added)
@@ -2134,10 +2439,18 @@ export class BattleGame {
         ...(projection.userResults.length ? [actor.id] : [])])];
       const poison = changedIds.map(id => {
         const unit = projected.find(c => c.id === id)!;
-        const removed = (staged.find(entry => entry.target.id === id)?.effects ?? []).flatMap((effect) =>
+        const targetEntry = staged.find(entry => entry.target.id === id);
+        const removed = (targetEntry?.effects ?? []).flatMap((effect) =>
           effect.resource === "condition" ? effect.removed : [],
         );
         removed.push(...projection.userResults.filter(result => result.ownerId === id).flatMap(result => result.removed));
+        let control = this.prepareControlState(this.combatants.find(current => current.id === id)!, unit.conditionIds,
+          this.controlStates.get(id)!, this.controlTargetUnits.get(id)!, actor, removed);
+        if (targetEntry) {
+          const hit = this.prepareControlHit(targetEntry.target, unit.conditionIds, control, action, ability, targetEntry.effects, projected);
+          unit.conditionIds = hit.conditionIds; targetEntry.state.conditionIds = [...hit.conditionIds]; control = hit.control;
+          removed.push(...hit.removedIds);
+        }
         const previous = this.poisonStates
           .get(id)!
           .filter((clock) => !removed.includes(clock.conditionId));
@@ -2150,8 +2463,27 @@ export class BattleGame {
           ),
           slow: this.conditions.reconcileSlowState(unit.conditionIds,
             this.slowStates.get(id)!.filter((clock) => !removed.includes(clock.conditionId))),
+          control,
         };
       });
+      const reactions = this.planReactions(action, projected, results);
+      const controlStarts = new Set<string>(), sleepResets = new Set<string>();
+      for (const entry of staged) {
+        const added = entry.effects.flatMap(effect => effect.resource === "condition" ? effect.added : []);
+        const starts = this.conditions.controlBehaviors(added);
+        if (starts.some(behavior => behavior.kind === "sleep" || behavior.kind === "confusion" || behavior.kind === "temptation")) {
+          controlStarts.add(entry.target.id);
+          if (starts.some(behavior => behavior.kind === "sleep") &&
+              (entry.target.queued || this.queue.some(pending => pending.actor === entry.target.id) ||
+                this.action?.actor === entry.target.id && ["normal", "loop"].includes(this.action.kind))) sleepResets.add(entry.target.id);
+        }
+      }
+      const keepsControl = (pending: BattleAction) => !pending.control || projected.some(unit => unit.id === pending.actor &&
+        this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.id === pending.control!.conditionId && behavior.kind === pending.control!.kind));
+      const nextQueue = this.queue.filter(pending => !controlStarts.has(pending.actor) && keepsControl(pending));
+      const nextReactions = this.reactions.filter(pending => !controlStarts.has(pending.actor) && keepsControl(pending));
+      const cancelledControlOwners = new Set(this.queue.filter(pending => pending.control && !nextQueue.includes(pending))
+        .map(pending => pending.actor));
       // One transaction includes effects, enemy parameters, AI PCs, both queues,
       // result/log publication and the owned random stream.
       if (action.source.kind === "item") {
@@ -2178,10 +2510,17 @@ export class BattleGame {
         this.observedAbilityIds.push(action.source.id);
       }
       actor.mp -= payment;
+      this.queue = nextQueue; this.reactions = nextReactions;
+      for (const unit of this.combatants) {
+        if (controlStarts.has(unit.id) || cancelledControlOwners.has(unit.id) &&
+            !nextQueue.some(pending => pending.actor === unit.id) && this.action?.actor !== unit.id) unit.queued = false;
+        if (sleepResets.has(unit.id)) unit.atb = 0;
+      }
       if (projection.userResults.length) actor.conditionIds = [...projection.userConditionIds];
       for (const next of poison) {
         this.poisonStates.set(next.id, next.state);
         this.slowStates.set(next.id, next.slow);
+        this.controlStates.set(next.id, next.control.state); this.controlTargetUnits.set(next.id, next.control.targets);
       }
       for (const entry of staged) {
         const lifeChanged = (entry.target.hp === 0) !== (entry.state.hp === 0);
@@ -2313,6 +2652,7 @@ export class BattleGame {
     this.escapeRequested = false;
     this.poisonStates.clear();
     this.slowStates.clear();
+    this.controlStates.clear(); this.controlTargetUnits.clear();
     this.queue = [];
     this.reactions = [];
     this.reward = {
@@ -2345,6 +2685,7 @@ export class BattleGame {
       player.conditionIds = this.conditions.battleEnd(player.conditionIds);
     this.poisonStates.clear();
     this.slowStates.clear();
+    this.controlStates.clear(); this.controlTargetUnits.clear();
   }
   private finishEscape(): void {
     if (!this.escapeRule || !this.escapeRequested || this.phase !== "active" || this.action ||

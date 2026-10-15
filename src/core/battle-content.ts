@@ -40,6 +40,10 @@ export type BattleCommandDefinition = {
   /** Command.AbilityId is independent of the ability selected by the actor. */
   referencedAbility: { id: number; typeId: number; wait: number } | null;
 };
+export type SourceConditionTraits = {
+  kind: "source-condition-traits-v1";
+  baseUndead: boolean;
+};
 
 /** A deliberately bounded development profile, never a parity certificate. */
 export type BattleContent = {
@@ -67,6 +71,12 @@ export type BattleContent = {
   /** Defaults for this entry profile; live source speed slots and mode are session-owned. */
   timing: BattlePreferences;
   reactions: BattleReactionRules;
+  /** Explicit Web action/condition scheduling. Source controller parity and
+   * Unity's global random stream are not granted by a source status row. */
+  conditionControlPolicy?: { kind: "web-source-control-actions-v1" };
+  /** Fresh source player parameter facts, keyed by the exact source character.
+   * This does not change the owned initializer or represent live equipment. */
+  playerConditionTraits?: Readonly<Record<string, SourceConditionTraits>>;
   /** null explicitly marks an unported reward lane in development fixtures. */
   drops: BattleDropCatalog | null;
   initialAtb: { player: [number, number]; enemy: [number, number] };
@@ -110,6 +120,9 @@ export type CombatantDefinition = ParameterValues & {
   commands: number[];
   conditionIds: number[];
   conditionResistances: Record<string, number>;
+  /** Fixed source parameter facts only. Current conditions and actual equipped
+   * providers remain separate inputs to an IsUndead query. Missing is unknown. */
+  conditionTraits?: SourceConditionTraits;
   /** Current owned state, independent of the development action whitelist. */
   ownedAbilities?: BattleAbilityMember;
   /** Current owned learning counter; distinct from the MP resource. */
@@ -263,6 +276,9 @@ export function encounterContent(
     contentHash: catalog.contentHash };
 }
 export type AbilityDefinition = {
+  /** Source AbilityUtility/FF6 hit classification, independent of the effect
+   * plan. It does not itself authorize an effect or an active condition. */
+  conditionRecoveryHit?: { kind: "source-condition-recovery-hit-v1"; forAiType: number; isMagic: boolean };
   id: number;
   name: string;
   program: AbilityProgram;

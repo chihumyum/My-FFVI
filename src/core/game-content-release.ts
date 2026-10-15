@@ -166,9 +166,21 @@ export function gameContentCheckpointIdentity(checkpoint: GameCheckpoint): GameC
   const saved = record(raw, ["kind", "formatVersion", "sourceSetHash", "battleCatalogHash", "origin",
     "seed", "encounterSerial", "remainder", "battlePreferences", "owned", "world",
     ...(preliminary.formatVersion === 4 ? [] : ["walkEncounters"])]);
-  const world = record(saved.world, ["kind", "initialHash", "location", "field"]);
-  if (world.kind !== "idle-world-v10" && world.kind !== "event-world-v1")
+  const worldKind = record(saved.world).kind;
+  const logical = worldKind === "idle-world-v11" || worldKind === "event-world-v2";
+  const world = record(saved.world, ["kind", "initialHash", "location", "field", ...(logical ? ["logicalEffects"] : [])]);
+  if (!["idle-world-v10", "event-world-v1", "idle-world-v11", "event-world-v2"].includes(String(world.kind)))
     throw new Error("Unsupported game content release world checkpoint");
+  if (logical) {
+    // Identity selection is only a preflight. The trusted entry/catalog and
+    // WorldSession still validate the full logical owner state before restore.
+    const effects = record(world.logicalEffects, ["kind", "catalogHash", "scope", "nextScope", "state"]);
+    if (effects.kind !== "web-logical-field-effects-checkpoint-v1" ||
+        typeof effects.scope !== "string" || !/^(?:0|[1-9]\d*)$/.test(effects.scope) ||
+        typeof effects.nextScope !== "number" || !Number.isSafeInteger(effects.nextScope) || effects.nextScope < 1)
+      throw new Error("Invalid game content release logical effect checkpoint");
+    hash(effects.catalogHash);
+  }
   const entryHash = hash(world.initialHash), origin = record(saved.origin);
   let lane: GameContentCheckpointIdentity["entryLane"];
   if (origin.kind === "framework-new-game") {

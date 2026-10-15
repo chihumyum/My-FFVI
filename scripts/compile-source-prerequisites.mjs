@@ -105,29 +105,58 @@ async function readLockedJson(inputs, root, path) {
 
 async function modules(compiledDir) {
   const load = name => import(pathToFileURL(resolve(compiledDir, "src", name + ".js")).href);
-  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable] = await Promise.all([
+  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost] = await Promise.all([
     load("compiler/content"), load("core/content-integrity"), load("compiler/world"), load("compiler/source-new-game"),
     load("compiler/framework-content"), load("core/source-catalog"), load("core/field-native-composition"),
-    load("compiler/battle"), load("compiler/game-catalog"), load("compiler/opening-playable"),
+    load("compiler/battle"), load("compiler/game-catalog"), load("compiler/opening-playable"), load("compiler/field-logical-effects"),
+    load("compiler/corpus"), load("compiler/map-package"), load("compiler/field-background"),
+    load("compiler/framework-periodic-presentation"), load("compiler/field-native-composition"),
   ]);
   return { ...content, ...integrity, ...world, ...newGame, ...framework, ...sourceCatalog, ...composition,
-    ...battle, ...catalog, ...playable };
+    ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost };
+}
+
+/** Explicit Web producer input, not a source/save capability grant. */
+function logicalInput(raw, root) {
+  if (raw === undefined) return undefined;
+  exact(raw, "kind,input,reason", "logical field effects input");
+  if (raw.kind !== "web-logical-field-effects-input-v1" || typeof raw.reason !== "string" || !raw.reason.trim())
+    throw new Error("Invalid logical field effects input declaration");
+  const input = filePath(root, raw.input), part = relative(resolve(root,"build"),input);
+  if (!part || part === ".." || part.startsWith(".."+sep) || isAbsolute(part) ||
+      part.split(sep).some(name => ["content-packages","content-releases"].includes(name)))
+    throw new Error("Logical field effects require a local prerequisite snapshot outside public collections");
+  return { kind: raw.kind, input: displayPath(root,input), reason: raw.reason };
+}
+
+/** Fixed public Web policy only: no external rule file or source override is
+ * introduced. All source/media/host reads are already in the v1/v2 input lock. */
+export function sourcePeriodicMapsInput(raw) {
+  if (raw === undefined) return undefined;
+  exact(raw, "kind,reason", "periodic maps input");
+  const descriptors=Object.getOwnPropertyDescriptors(raw);
+  if (Reflect.ownKeys(raw).length!==2 || Object.values(descriptors).some(d=>!d.enumerable||!Object.hasOwn(d,"value")) ||
+      descriptors.kind.value!=="web-source-periodic-presentation-input-v1" ||
+      typeof descriptors.reason.value!=="string" || !descriptors.reason.value.trim())
+    throw new Error("Invalid periodic maps input declaration");
+  return {kind:descriptors.kind.value,reason:descriptors.reason.value};
 }
 
 /** Capture exactly the current compiler's input domain. Raw-source exports
  * retain their original source fingerprints; this does not hash all Unity
  * bundles or claim all source files are live-verified. */
-export async function captureSourcePrerequisiteInputs({ root = repository, compiledDir = "dist" } = {}) {
+export async function captureSourcePrerequisiteInputs({ root = repository, compiledDir = "dist", logicalFieldEffects } = {}) {
   root = resolve(root); compiledDir = resolve(root, compiledDir);
-  const files = [], directories = [], recorded = new Set();
+  const logical = logicalInput(logicalFieldEffects, root);
+  const files = [], directories = [], recorded = new Map();
   const add = async (file, expected) => {
     file = resolve(file);
     if (recorded.has(file)) {
-      if (expected !== undefined && files.find(item => filePath(root, item.path) === file).sha256 !== expected)
+      if (expected !== undefined && recorded.get(file).sha256 !== expected)
         throw new Error("Conflicting source prerequisite digest: " + file);
       return;
     }
-    files.push(await fingerprint(root, file, expected)); recorded.add(file);
+    const record = await fingerprint(root, file, expected);files.push(record);recorded.set(file,record);
   };
   const directory = async path => {
     const value = await directoryEntries(path);
@@ -154,11 +183,30 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
     hosts.set(source.file, source.sha256);
   }
   for (const [file, expected] of hosts) await add(resolve(root, "build/runtime/game", file), expected);
+  if (logical) {
+    const path = filePath(root, logical.input); await directory(path);
+    const manifestPath = resolve(path,"snapshot.json"); await add(manifestPath);
+    const manifest = snapshotManifest(JSON.parse(await readFile(manifestPath,"utf8")));
+    for (const item of manifest.files) await add(resolve(path,item.file),item.sha256);
+    const media = JSON.parse(await readFile(resolve(path,"media.json"),"utf8"));
+    if (media.adapterVersion !== "field-effect-media-lossless-wip-0.2.0")
+      throw new Error("Public logical field effects require the lossless typed-scalar/raw-object export");
+    // The whole original manifest is part of this publication fence. A receipt
+    // or mutable decoded JSON cannot substitute for the bundles' exact bytes.
+    const corpus = JSON.parse(await readFile(resolve(root,"build/corpus/corpus.json"),"utf8"));
+    for (const row of corpus.sources) {
+      const source = filePath(resolve(root,"build/runtime/game"),row.file);
+      if (!source.startsWith(resolve(root,"build/runtime/game")+sep)) throw new Error("Unsafe original effect source");
+      await add(source,row.sha256);
+      if (recorded.get(source).bytes !== row.bytes) throw new Error("Original effect source size changed");
+    }
+  }
   files.sort((a, b) => a.path.localeCompare(b.path)); directories.sort((a, b) => a.path.localeCompare(b.path));
   const corpus = JSON.parse(await readFile(resolve(root, "build/corpus/corpus.json"), "utf8"));
   hash(corpus.sourceSetHash, "corpus source set"); hash(corpus.parentSourceSetHash, "parent source set");
   if (api.hash(corpus.sources) !== corpus.sourceSetHash) throw new Error("Corpus source manifest fingerprint mismatch");
-  const inputs = { kind: "source-prerequisite-input-lock-v1", sourceSetHash: corpus.sourceSetHash,
+  const inputs = { kind: logical ? "source-prerequisite-input-lock-v2" : "source-prerequisite-input-lock-v1",
+    ...(logical ? { logicalFieldEffects: logical } : {}), sourceSetHash: corpus.sourceSetHash,
     parentSourceSetHash: corpus.parentSourceSetHash, compiledDir, compilerDigest: compilerIdentity(files, compiledDir, root), files, directories };
   await validateSourcePrerequisiteInputs(inputs, { root });
   return inputs;
@@ -169,19 +217,20 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
 export async function validateSourcePrerequisiteInputs(raw, { root = repository } = {}) {
   root = resolve(root);
   const lock = structuredClone(raw);
-  exact(lock, "kind,sourceSetHash,parentSourceSetHash,compiledDir,compilerDigest,files,directories", "source prerequisite lock");
-  if (lock.kind !== "source-prerequisite-input-lock-v1" || typeof lock.compiledDir !== "string" ||
+  const version2 = lock?.kind === "source-prerequisite-input-lock-v2";
+  exact(lock, "kind,sourceSetHash,parentSourceSetHash,compiledDir,compilerDigest,files,directories" + (version2 ? ",logicalFieldEffects" : ""), "source prerequisite lock");
+  if (!["source-prerequisite-input-lock-v1","source-prerequisite-input-lock-v2"].includes(lock.kind) || typeof lock.compiledDir !== "string" ||
       !isAbsolute(lock.compiledDir) || resolve(lock.compiledDir) !== lock.compiledDir ||
       !Array.isArray(lock.files) || !lock.files.length || !Array.isArray(lock.directories) || !lock.directories.length)
     throw new Error("Invalid source prerequisite input lock");
   for (const key of ["sourceSetHash", "parentSourceSetHash", "compilerDigest"]) hash(lock[key], key);
-  const seen = new Set();
+  const seen = new Set(), byPath = new Map();
   for (const item of lock.files) {
     exact(item, "path,sha256,bytes,realPath", "source prerequisite file"); hash(item.sha256, "input file");
     const file = filePath(root, item.path);
     if (seen.has(file) || !Number.isSafeInteger(item.bytes) || item.bytes < 0 ||
         typeof item.realPath !== "string" || !isAbsolute(item.realPath)) throw new Error("Invalid or duplicate source prerequisite file");
-    seen.add(file);
+    seen.add(file);byPath.set(file,item);
     const actual = await fingerprint(root, file, item.sha256);
     if (actual.bytes !== item.bytes || actual.realPath !== item.realPath) throw new Error("Source prerequisite path/size changed: " + item.path);
   }
@@ -198,28 +247,50 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
     if (!seen.has(resolve(root, path))) throw new Error("Missing source prerequisite snapshot directory: " + path);
     const manifest = snapshotManifest(await readLockedJson(lock, root, path + "/snapshot.json"));
     for (const file of manifest.files) {
-      const input = lock.files.find(item => filePath(root, item.path) === resolve(root, path, file.file));
+      const input = byPath.get(resolve(root,path,file.file));
       if (!input || input.sha256 !== file.sha256) throw new Error("Incomplete source prerequisite snapshot: " + path + "/" + file.file);
     }
   }
   if (!seen.has(resolve(lock.compiledDir, "src"))) throw new Error("Missing source prerequisite compiler directory");
   for (const path of [...CATALOG_EVIDENCE,"build/game/source-catalog.json", "build/game/opening-playable.json", "build/runtime/game/FINAL FANTASY VI_Data/level0",
     "build/runtime/game/FINAL FANTASY VI_Data/globalgamemanagers"])
-    if (!lock.files.some(item => filePath(root, item.path) === resolve(root, path)))
+    if (!byPath.has(resolve(root,path)))
       throw new Error("Missing source prerequisite dependency: " + path);
   if (compilerIdentity(lock.files, lock.compiledDir, root) !== lock.compilerDigest)
     throw new Error("Source prerequisite compiler identity mismatch");
   const corpus = await readLockedJson(lock, root, "build/corpus/corpus.json");
   if (corpus.sourceSetHash !== lock.sourceSetHash || corpus.parentSourceSetHash !== lock.parentSourceSetHash)
     throw new Error("Source prerequisite source identity changed");
+  if (version2) {
+    const logical = logicalInput(lock.logicalFieldEffects,root), directory = filePath(root,logical.input);
+    if (!seen.has(directory)) throw new Error("Missing logical effect snapshot directory");
+    const manifest = snapshotManifest(await readLockedJson(lock,root,displayPath(root,resolve(directory,"snapshot.json"))));
+    for (const row of manifest.files) {
+      const input = byPath.get(resolve(directory,row.file));
+      if (!input || input.sha256 !== row.sha256) throw new Error("Incomplete logical effect snapshot");
+    }
+    const media = await readLockedJson(lock,root,displayPath(root,resolve(directory,"media.json")));
+    if (media.adapterVersion !== "field-effect-media-lossless-wip-0.2.0") throw new Error("Logical effect snapshot is not lossless");
+    for (const row of corpus.sources) {
+      const file = filePath(resolve(root,"build/runtime/game"),row.file), input = byPath.get(file);
+      if (!file.startsWith(resolve(root,"build/runtime/game")+sep) || !input || input.sha256 !== row.sha256 || input.bytes !== row.bytes)
+        throw new Error("Incomplete original effect source binding");
+    }
+    const snapshotFiles = new Map(manifest.files.map(row => [row.file,row]));
+    for (const graph of Object.values(media.groups)) for (const object of graph.objects) {
+      const raw = object.rawObject, bound = raw && snapshotFiles.get(raw.file), input = bound && byPath.get(resolve(directory,bound.file));
+      if (!raw || !input || raw.sha256 !== input.sha256 || raw.bytes !== input.bytes) throw new Error("Unbound original effect object bytes");
+    }
+  }
   return true;
 }
 
 /** Pure upstream DAG: current battle capabilities -> source world/new game -> explicit framework
  * derivation. It never writes packages, generated recipes, reports or archives. */
-export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist" } = {}) {
+export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps } = {}) {
+  const periodicDeclaration = sourcePeriodicMapsInput(periodicMaps);
   root = resolve(root);
-  const inputs = await captureSourcePrerequisiteInputs({ root, compiledDir });
+  const inputs = await captureSourcePrerequisiteInputs({ root, compiledDir, logicalFieldEffects });
   const api = await modules(inputs.compiledDir);
   const [previousBattle, previousDevelopment, field] = await Promise.all([
     readLockedJson(inputs, root, "build/game/source-catalog.json"),
@@ -254,7 +325,59 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
     initializerHash: api.hash(battle.gameState.sourceNewGame) };
   const strict = await api.compileWorld(root);
   const entry = await api.compileSourceNewGame(root, battle, strict);
-  const framework = api.compileFrameworkContent(strict.catalog, strict.maps, entry);
+  const frameworkOptions = {};
+  let logicalReport = null;
+  if (inputs.kind === "source-prerequisite-input-lock-v2") {
+    const declaration = inputs.logicalFieldEffects, directory = filePath(root,declaration.input);
+    const media = await readLockedJson(inputs,root,displayPath(root,resolve(directory,"media.json")));
+    const corpus = await readLockedJson(inputs,root,"build/corpus/corpus.json");
+    const groups = new Set();
+    for (const map of strict.maps) for (const group of Object.values(map.map?.groups ?? {}))
+      for (const entity of group.entities) if (entity.kind === 11 && entity.effect) groups.add(entity.effect.assetGroup);
+    if (api.canonical([...groups].sort()) !== api.canonical(Object.keys(media.groups).sort()))
+      throw new Error("Lossless field effect export must retain the complete whole-world board asset-group cohort");
+    // Exactly one pure compilation is shared by original-URL and linked-URL
+    // framework derivatives. Neither strict maps nor scripts acquire policy.
+    const result = api.compileWebLogicalEffectCatalog(media,{sourceSetHash:corpus.sourceSetHash,
+      parentSourceSetHash:corpus.parentSourceSetHash,sources:corpus.sources});
+    frameworkOptions.logicalFieldEffects = { catalog: result.catalog, declaration: {
+      kind:"web-logical-field-effects-declaration-v1", policy:result.catalog.webPolicy.kind,
+      sourceSetHash:inputs.sourceSetHash,parentSourceSetHash:inputs.parentSourceSetHash,
+      catalogHash:result.catalog.webPolicy.catalogHash,mapIds:strict.maps.map(map => map.mapId),reason:declaration.reason,
+    }};
+    logicalReport = {input:declaration.input,graphs:Object.keys(media.groups).length,
+      accepted:Object.keys(result.catalog.media).length,rejected:result.rejected,catalogHash:result.catalog.webPolicy.catalogHash,
+      pureCompilations:1,originalSourceFilesVerified:corpus.sources.length,nativeParity:false,sourceProgramExecutionGranted:false};
+  }
+  let periodicReport = null;
+  if (periodicDeclaration) {
+    // Enumerate every original looping map, retaining failed assessments too.
+    // These exact corpus/background/boot snapshots are in the existing lock;
+    // none is read from public packages or from an external authored rule file.
+    const corpus = await api.loadCorpus(root), sources = corpus.manifest.sources.map(({file,sha256})=>({file,sha256}));
+    if (corpus.sourceSetHash!==inputs.sourceSetHash || corpus.manifest.parentSourceSetHash!==inputs.parentSourceSetHash)
+      throw new Error("Periodic presentation corpus/input-lock identity mismatch");
+    const assets = new Map(corpus.assets.map(asset=>[asset.id,asset])), bindings = api.bindMapPackages(corpus.assets,corpus.tables),
+      background = await api.loadFieldBackgroundMedia(root,corpus.sourceSetHash),
+      renderHost = await api.loadFieldCompositionRenderHost(root,sources), assessments=[];
+    for (const map of strict.maps.filter(map=>map.entryView?.loopType).sort((a,b)=>a.mapId-b.mapId)) {
+      let presentation=null; const blockers=[];
+      try {
+        const matches=bindings.filter(binding=>Number(binding.id)===map.mapId);
+        if(matches.length!==1||!matches[0].tilemap||!matches[0].packageId)throw new Error("Periodic source map package binding unavailable");
+        const binding=matches[0],tilemap=assets.get(binding.tilemap),mapPackage=assets.get(binding.packageId);
+        if(!tilemap||!mapPackage)throw new Error("Periodic source tilemap/package asset unavailable");
+        presentation=api.compileFrameworkPeriodicPresentation({map,sources,tilemap,mapPackage,
+          backgroundMedia:background.media,verify:background.verify,renderHost});
+      } catch(error) { blockers.push(String(error?.message??error)); }
+      assessments.push({mapId:map.mapId,sourceContentHash:map.contentHash,presentation,blockers});
+    }
+    frameworkOptions.periodicPresentations=assessments;
+    periodicReport={declaration:periodicDeclaration,assessmentsHash:api.hash(assessments),maps:assessments.length,
+      compiled:assessments.filter(row=>row.presentation).length,unready:assessments.filter(row=>!row.presentation).length,
+      pureCompilations:1,sourceGameplayAdmitted:false,nativeParity:false};
+  }
+  const framework = api.compileFrameworkContent(strict.catalog, strict.maps, entry,frameworkOptions);
   const payloads = new Map([["/game/source-catalog.json", battle], ["/game/opening-playable.json", development],
     ["/world/catalog.json", strict.catalog], ["/game/source-new-game.json", entry],
     ["/framework/world/catalog.json", framework.catalog], ["/framework/new-game.json", framework.entry]]);
@@ -269,10 +392,10 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
     battle: { mode: "same-candidate-rebuild", expectedSourceFields, dependencyRebindings: battleRebindings },
     strict: { catalogHash: strict.catalog.contentHash, entryHash: entry.contentHash, maps: strict.maps.length,
       mapsWithBlockers: strict.maps.filter(map => map.blockers.length).length },
-    framework: framework.report,
+    framework: framework.report, logicalFieldEffects: logicalReport, ...(periodicReport?{periodicMaps:periodicReport}:{}),
     inputScope: { snapshotRoots: SNAPSHOTS.map(name => "build/" + name), files: inputs.files.length,
       originalFiles: inputs.files.filter(file => file.path.startsWith("build/runtime/game/")).map(file => file.path),
-      nativeReceiptFiles: [...CATALOG_EVIDENCE], originalSourceFilesVerified: "composition-host-only", rawExports: "snapshot-and-source-manifest-bound" },
+      nativeReceiptFiles: [...CATALOG_EVIDENCE], originalSourceFilesVerified: logicalReport ? "whole-corpus" : "composition-host-only", rawExports: "snapshot-and-source-manifest-bound" },
     payloads: [...payloads].map(([url, content]) => ({ url, contentHash: content.contentHash })),
     sourceGameplayAdmitted: false, browserVerified: false, nativeVerified: false,
     limitations: ["Battle catalogs are rebuilt by the current compiler from the same locked source inputs; owned initialization is unchanged.",
@@ -280,7 +403,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
       "Only the directly consumed original composition host files are byte-checked here. Other original sources remain bound by verified export manifests.",
       "The publication owner must revalidate this input lock and explicitly rebind dependent recipes before its single publication."],
   };
-  return { payloads, report, inputs, battleRebindings };
+  return { payloads, report, inputs, battleRebindings, frameworkOptions };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

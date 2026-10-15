@@ -5,8 +5,8 @@ import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 // Read-only complete Encount source inventory plus all candidate battle dependencies.
 // The only writes are ignored output artifacts, never a publication or owner edit.
-const args=process.argv.slice(2),options={root:resolve(import.meta.dirname,'..'),compiled:'dist',output:'build/reports/source-encounter-candidates'};
-while(args.length){const flag=args.shift();assert.ok(['--root','--compiled','--output'].includes(flag)&&args[0],
+const args=process.argv.slice(2),options={root:resolve(import.meta.dirname,'..'),compiled:'dist',output:'build/reports/source-encounter-candidates',policy:'content-batches/source-battle-directory.policy.json'};
+while(args.length){const flag=args.shift();assert.ok(['--root','--compiled','--output','--policy'].includes(flag)&&args[0],
  'Use compile-source-encounter-candidates.mjs [--root dir] [--compiled dir] [--output dir]');options[flag.slice(2)]=args.shift();}
 const root=resolve(options.root),out=resolve(root,options.output),compiled=resolve(root,options.compiled),
  load=name=>import(pathToFileURL(resolve(compiled,'src',name+'.js')));
@@ -37,8 +37,8 @@ const selectedPrograms=new Set(sites.map(site=>site.assetId)),sourcePrograms=sna
  instructionCount:asset.data.Mnemonics.length,runtimeAdmission:'unassessed',storyReachability:'unassessed'})).sort((a,b)=>a.id.localeCompare(b.id));
 const partyIds=[...new Set(sites.flatMap(site=>site.candidates.map(row=>row.partyId)))].sort((a,b)=>a-b);
 assert.equal(partyIds.length,89);assert.equal(sites.flatMap(site=>site.candidates).length,284);
-const declaration=await input('content-batches/source-battle-directory.policy.json');
-assert.equal(declaration.kind,'source-battle-directory-policy-v1');
+const declaration=await input(options.policy);
+assert.ok(['source-battle-directory-policy-v1','source-battle-directory-policy-v2'].includes(declaration.kind));
 const source=await compileSharedBattleSource(root),base=await compileSharedGameCatalog(root,source),exportSnapshot=await readSnapshot(resolve(root,'build/battle')),
  exported=JSON.parse(snapshotFile(exportSnapshot,'battle.json').toString()),corpus=await loadSystemSource(root,snapshot.manifest.parentSourceSetHash),
  bindings=new Map(),reader={};
@@ -50,15 +50,15 @@ const descriptors=compileBattleEncounterSources(reader,{partyIds,json:name=>{
  const asset=found[0],files=exported.sources.filter(file=>file.file===asset.source.file||file.file.endsWith('/'+asset.source.file));assert.equal(files.length,1);
  return{data:asset.data,source:{...asset.source,sha256:files[0].sha256,sourceSetHash:source.parentSourceSetHash,battleSourceSetHash:source.sourceSetHash}};
 },spritePath:suffix=>{const found=Object.keys(exported.sprites).filter(path=>path.toLowerCase().endsWith(suffix.toLowerCase()));assert.equal(found.length,1);return found[0];}});
-const {compileSourceBattleDirectoryEntryPolicy,composeFrameworkBattleDirectory}=await import(pathToFileURL(resolve(root,'scripts/source-battle-directory.mjs'))),
+const {compileSourceBattleDirectoryEntryPolicy,composeFrameworkBattleDirectory}=await import(new URL('./source-battle-directory.mjs',import.meta.url)),
  shared=await compileGameCatalogModules(root,source),development=await compileSourceBattleDirectoryEntryPolicy({root,compiledDir:compiled,
  policy:declaration.framework.entry,encounters:descriptors.encounters}),
  common={...shared.runtimeInput,requestedPartyIds:partyIds,encounters:descriptors.encounters,sourceDiagnostics:descriptors.diagnostics},
- strict=compileBattleEncounterRuntime(reader,{...common,handoff:{policy:null},development:{scripts:[],flagGroups:[]}}),
- framework=compileBattleEncounterRuntime(reader,{...common,handoff:{policy:declaration.framework.handoff},development}),
- composed=await composeFrameworkBattleDirectory({root,compiledDir:compiled,baseCatalog:base,runtime:framework});
+ strict=compileBattleEncounterRuntime(shared.reader,{...common,handoff:{policy:null},development:{scripts:[],flagGroups:[]}}),
+ framework=compileBattleEncounterRuntime(shared.reader,{...common,...(declaration.framework.conditionControlPolicy?{conditionControlPolicy:declaration.framework.conditionControlPolicy}:{}),handoff:{policy:declaration.framework.handoff},development}),
+ composed=await composeFrameworkBattleDirectory({root,compiledDir:compiled,baseCatalog:base,runtime:framework,conditionControlPolicy:declaration.framework.conditionControlPolicy});
 assert.equal(canonical(composed.catalog.gameState),canonical(base.gameState));
-const strictCatalog=assembleGameCatalog({...shared,reader,runtimeInput:{...common,handoff:{policy:null}}},
+const strictCatalog=assembleGameCatalog({...shared,reader:shared.reader,runtimeInput:{...common,handoff:{policy:null}}},
  {kind:'source-new-game',limitations:[...base.common.limitations]});
 assert.equal(canonical(strictCatalog.gameState),canonical(base.gameState));
 const summarize=value=>({definitions:Object.keys(value.encounters).length,entries:value.report.entries.length,
@@ -70,8 +70,9 @@ const body={kind:'source-encounter-candidate-directory-proof-v1',tool:{path:'scr
  parentSourceSetHash:snapshot.manifest.parentSourceSetHash,sourceDigest,inputs:[...inputs].map(([path,sha256])=>({path,sha256})),
  counts:{sites:sites.length,physicalPrograms:new Set(sites.map(site=>site.assetId)).size,slots:284,candidates:partyIds.length},sourcePrograms,sites,partyIds,
  baseCatalogHash:base.contentHash,sourceDescriptors:descriptors,
+ conditionSourceBindings:shared.readConditionSourceBindings(),conditionSourceBindingsHash:hash(shared.readConditionSourceBindings()),
  sourceBindings:[...bindings.values()],strict:{runtime:strict,analysis:analyzeBatchEncounters(strictCatalog,partyIds)},
- web:{policy:declaration.framework,runtime:composed.runtime,analysis:analyzeBatchEncounters(composed.catalog,partyIds)},
+ web:{policyChanges:composed.policyChanges,policy:declaration.framework,runtime:composed.runtime,analysis:analyzeBatchEncounters(composed.catalog,partyIds)},
  catalogHash:composed.catalog.contentHash,sourceStoryReachability:false,completeSourceProgramExecution:'unassessed',
  limitations:['All source literal candidate slots, including duplicates; no authored lottery result or source flags changed.',
  'Catalog retains source initializer and owned GameState exactly. Native Unity random/entry scripts/flag omissions are not native parity.',

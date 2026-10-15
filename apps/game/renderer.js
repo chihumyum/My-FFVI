@@ -11,8 +11,14 @@ import { canonical } from "/runtime/core/canonical.js";
 import { canonicalCell, validateFieldMapTopology } from "/runtime/core/field-map-topology.js";
 import { validateFieldEffectBoardMaterial } from "/runtime/core/field-particle-geometry.js";
 import { prepareSourceFieldEffectBoards } from "./field-effect-renderer.js";
+import { WEB_LOGICAL_FIELD_EFFECTS } from "/runtime/core/field-logical-effects.js";
 import { drawStoryTimer } from "./story-overlay.js";
 export class Renderer {
+  effectsDeferred(game) {
+    return game.fieldEffectsDisplayPolicy === WEB_LOGICAL_FIELD_EFFECTS &&
+      this.content.developmentProfile?.logicalFieldEffects === WEB_LOGICAL_FIELD_EFFECTS &&
+      this.content.fieldEffects?.webPolicy?.kind === WEB_LOGICAL_FIELD_EFFECTS;
+  }
   constructor(canvas, content, images, effectProvider = null) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
@@ -162,7 +168,7 @@ export class Renderer {
         ? "平面世界展示缺少明确的框架策略" : "二维展示缺少与当前地图一致的框架策略");
     validateFieldNativeComposition(definition);
     assertFieldCompositionRenderTargets(definition);
-    if (!sourceCamera || !this.content.cameraHost || game.fieldEffectsSnapshot != null)
+    if (!sourceCamera || !this.content.cameraHost || game.fieldEffectsSnapshot != null && !this.effectsDeferred(game))
       throw new Error("平面世界展示缺少相机或包含未支持特效");
     const view = definition.view, range = this.content.cameraHost.mapRange;
     if (view.mapSize.width !== range.width || view.mapSize.height !== range.height)
@@ -328,7 +334,7 @@ export class Renderer {
     }
     let effects;
     const effectState = game.fieldEffectsSnapshot;
-    if (effectState != null) {
+    if (effectState != null && !this.effectsDeferred(game)) {
       if (topology) throw new Error("循环地图字段特效缺少周期投影宿主");
       if (typeof this.effectProvider?.prepare !== "function") throw new Error("来源字段特效缺少粒子、材质和离屏纹理渲染宿主");
       const prepared = this.effectProvider.prepare({ state: structuredClone(effectState),
@@ -537,7 +543,7 @@ export class Renderer {
     c.restore();
   }
   draw(game) {
-    if (game.fieldEffectsSnapshot != null && typeof this.effectProvider?.prepare !== "function")
+    if (game.fieldEffectsSnapshot != null && !this.effectsDeferred(game) && typeof this.effectProvider?.prepare !== "function")
       throw new Error("来源字段特效缺少粒子、材质和离屏纹理渲染宿主");
     const c = this.ctx,
       m = this.content.map,
@@ -577,7 +583,7 @@ export class Renderer {
       .sort((a, b) => this.point(a).y - this.point(b).y || a.id.localeCompare(b.id));
     const native = this.prepareFrameworkFlatComposition(game, actors, sourceCamera, cx, cy, viewportWidth, viewportHeight, topology) ??
       this.prepareNativeComposition(game, actors, sourceCamera, cx, cy, viewportWidth, viewportHeight, topology);
-    if (!native && game.fieldEffectsSnapshot != null) throw new Error("来源字段特效需要共享原生颜色与深度缓冲");
+    if (!native && game.fieldEffectsSnapshot != null && !this.effectsDeferred(game)) throw new Error("来源字段特效需要共享原生颜色与深度缓冲");
     const actorImages = native ? [] : this.actorImages(actors, cx, cy, w, h, topology);
     c.imageSmoothingEnabled = false;
     if (native) {

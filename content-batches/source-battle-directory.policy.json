@@ -1,5 +1,5 @@
 {
-  "kind": "source-battle-directory-policy-v1",
+  "kind": "source-battle-directory-policy-v2",
   "framework": {
     "handoff": {
       "kind": "framework-battle-handoff-v1",
@@ -13,7 +13,14 @@
       "formations": {
         "kind": "framework-battle-formations-v1",
         "id": "shared-source-enemy-normal-formation-v1",
-        "weights": [1, 0, 0, 0, 0, 0]
+        "weights": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
       },
       "scripts": [
         {
@@ -29,6 +36,9 @@
           "reason": "The Web systems variant explicitly defers this exact shared entry flag group. The complete original rows remain in the directory and strict source gate; no native flag behavior is inferred."
         }
       ]
+    },
+    "conditionControlPolicy": {
+      "kind": "web-source-control-actions-v1"
     }
   }
 }

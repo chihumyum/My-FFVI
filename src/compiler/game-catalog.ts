@@ -26,6 +26,8 @@ import { firstJoinLevelAdjustments } from "../core/character-growth.js";
 import { compileEquipmentCatalog } from "./equipment.js";
 import { createBattleHandoffMusicLookup } from "./battle-handoff.js";
 import { loadSystemSource } from "./system-source.js";
+import { trackSourceConditionReads, type SourceConditionReadLedger, type SourceConditionPhysicalFile } from "./source-condition-reader.js";
+import { compileSourceFreshPlayerConditionTraits } from "./source-condition-application.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { compileMagicStoneCatalog } from "./magic-stones.js";
@@ -50,6 +52,7 @@ export type GameCatalogModules = {
   reader: Parameters<typeof compileBattleEncounterRuntime>[0];
   runtimeInput: Omit<BattleEncounterRuntimeInput, "development">;
   name(key: string): string;
+  readConditionSourceBindings(): SourceConditionReadLedger;
 };
 export type GameCatalogEntry =
   | { kind: "source-new-game"; limitations: string[] }
@@ -136,8 +139,23 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
       return found;
     },
   };
+  // The original selected closure remains pinned. New condition/recovery/trait
+  // dependencies explicitly use the same-source complete verified reader, and
+  // every actual row is retained separately for audit (including later runtime
+  // encounter compilation). This does not refresh SharedBattleSource identity.
+  const handoffSystem = await loadSystemSource(root, source.parentSourceSetHash);
+  const battleSnapshot = record(JSON.parse(snapshotFile(await readSnapshot(root + "/build/battle"), "battle.json").toString()));
+  if (battleSnapshot.parentSourceSetHash !== source.parentSourceSetHash ||
+      hash(battleSnapshot.sources) !== battleSnapshot.sourceSetHash || !Array.isArray(battleSnapshot.sources))
+    throw new Error("Condition complete-reader source mismatch");
+  const conditionReads = trackSourceConditionReads(handoffSystem.reader, {
+    sourceSetHash: handoffSystem.sourceSetHash, parentSourceSetHash: source.parentSourceSetHash,
+    battleSourceSetHash: String(battleSnapshot.sourceSetHash),
+    physicalSources: battleSnapshot.sources as SourceConditionPhysicalFile[],
+  });
+  const conditionReader = conditionReads.reader;
   const conditions = compileBattleConditionCatalog(
-    parameterReader,
+    conditionReader,
     rows("condition.csv").map((r) => int(r.id)),
     name,
   ).catalog;
@@ -218,8 +236,7 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
       const uniqueValues = [...new Set(found)];
       return uniqueValues.length === 1 ? uniqueValues[0]! : null;
   };
-  const abilityContent = compileBattleAbilityContent(parameterReader,
-    Object.fromEntries(Object.keys(source.tables).map((table) => [table, rows(table)])), resolveAbilityName);
+  const abilityContent = compileBattleAbilityContent(conditionReader, handoffSystem.tables, resolveAbilityName);
   // Definitions describe executable capabilities, never acquisition. Commands
   // still use each actor's actual owned list and current source qualification.
   const { abilities, abilityContentIds } = abilityContent;
@@ -247,7 +264,6 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
   // Source.tables is a selected capability closure and cannot establish that
   // an unselected music row is absent. Resolve optional handoff declarations
   // against the existing complete, verified source reader instead.
-  const handoffSystem = await loadSystemSource(root, source.parentSourceSetHash);
   const [stoneReceipt, constructorC] = await Promise.all([
     readFile(resolve(root, "build/reports/v71-esper-native-complete/complete.json"), "utf8"),
     readFile(resolve(root, "build/reports/v71-esper-native-complete/856d80.c"), "utf8"),
@@ -267,6 +283,9 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
     matching: (table, key, value) => Object.values(source.tables[table] ?? {})
       .filter((r) => r.values[key] === String(value)),
     handoffMusic: createBattleHandoffMusicLookup(handoffSystem.tables, handoffSystem.reader),
+  };
+  const runtimeReader: GameCatalogModules["reader"] = { ...conditionReader,
+    handoffMusic: createBattleHandoffMusicLookup(handoffSystem.tables, conditionReader),
   };
   const runtimeInput: GameCatalogModules["runtimeInput"] = {
     requestedPartyIds: source.encounterPartyIds, encounters: source.encounters,
@@ -297,6 +316,8 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
     atb: source.atb,
     timing: { mode: "active", speedIndex: 2 },
     battleAbilities,
+    playerConditionTraits: Object.fromEntries(ordinary.definitions.map(definition => [definition.sourceId,
+      compileSourceFreshPlayerConditionTraits(conditionReader, definition.sourceId).metadata])),
     battleEntry: structuredClone(source.entryProviders.catalog),
     battleAppearance: structuredClone(source.battleAppearance.catalog),
     battleRows: compileBattleRowCatalog(parameterReader,
@@ -370,7 +391,7 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
     },
   };
   return { common, owned, ordinaryDefinitions: ordinary.definitions, tables: source.tables,
-    reader, runtimeInput, name };
+    reader: runtimeReader, runtimeInput, name, readConditionSourceBindings: conditionReads.snapshot };
 }
 
 /** Select initial owners once; potential templates never become additional

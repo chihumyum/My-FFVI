@@ -92,3 +92,22 @@ test("all source map producer objects and actual published raw bytes must match,
     const f = fixture(); change(f); assert.equal(assessStoryRuntimePublication(f).status, "unassessed");
   }
 });
+
+
+test("v2 source-input locks retain the complete runtime/source/byte proof and unknown versions stay unassessed", () => {
+  for(const kind of ["source-prerequisite-input-lock-v1","source-prerequisite-input-lock-v2"]) {
+    const f = fixture();f.receipt.sourceInputLock.kind = kind;
+    assert.equal(assessStoryRuntimePublication(f).status,"verified");
+    for(const mutate of [
+      (x:ReturnType<typeof fixture>) => { x.receipt.sourceInputLock.runtimeSha256 = h("8"); },
+      (x:ReturnType<typeof fixture>) => { x.receipt.sourceInputLock.sourceSetHash = h("8"); },
+      (x:ReturnType<typeof fixture>) => { x.receipt.publishedObjects.pop(); },
+      (x:ReturnType<typeof fixture>) => { x.receipt.stages = x.receipt.stages.filter(row => row.name !== "verify-published-source-objects"); },
+    ]) { const changed = fixture();changed.receipt.sourceInputLock.kind = kind;mutate(changed);
+      assert.equal(assessStoryRuntimePublication(changed).status,"unassessed"); }
+  }
+  for(const kind of ["source-prerequisite-input-lock-v0","source-prerequisite-input-lock-v3","source-prerequisite-input-lock-v2-unverified"]) {
+    const f = fixture();f.receipt.sourceInputLock.kind = kind;
+    assert.equal(assessStoryRuntimePublication(f).status,"unassessed");
+  }
+});

@@ -24,13 +24,18 @@ const runtime = resolve(root, options.get("--dist") ?? "dist");
 const load = (name) => import(pathToFileURL(resolve(runtime, "src/core", name + ".js")));
 const [{ GameContentRepository }, { GameSession }, { GameFlow }, { FieldFadeState },
   { NewGameFieldEntry }, { createSourcePresentationContext }, { GameMapLoader },
-  { createWebFieldMessageSequencePort }] = await Promise.all([
+  { createWebFieldMessageSequencePort }, { createWebFlatConditionLeaderActivityPort },
+  { createWebLogicalFieldEffectsHost }, { WEB_SOURCE_ENCOUNTER_POLICY }] = await Promise.all([
   load("game-content"), load("game-session"), load("game-flow"), load("field-fade"),
   load("new-game-field-entry"), load("source-presentation"), load("game-map-loader"), load("source-message-sequence"),
+  load("field-condition-activity"), load("field-logical-effects"), load("source-encounter-entry"),
 ]);
 const appBytes = await readFile(resolve(root, "apps/game/app.js"));
 assert.match(appBytes.toString(), /import \{ createWebFieldMessageSequencePort \} from "\/runtime\/core\/source-message-sequence\.js"/);
 assert.match(appBytes.toString(), /sourceMessageSequence: createWebFieldMessageSequencePort\(\)/);
+assert.match(appBytes.toString(), /conditionLeaderActivity: createWebFlatConditionLeaderActivityPort\(\)/);
+assert.match(appBytes.toString(), /fieldEffects: createWebLogicalFieldEffectsHost\(\)/);
+assert.match(appBytes.toString(), /sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY/);
 const policyModuleSha256 = createHash("sha256").update(await readFile(resolve(runtime, "src/core/source-message-sequence.js"))).digest("hex");
 const directory = resolve(root, options.get("--content") ?? "build/content-packages");
 const consumed = new Map(), runtimeSha256 = await runtimeDigest(root, runtime);
@@ -60,7 +65,9 @@ while (entry.phase !== "field-preparing") {
 const sourceMessageSequence = createWebFieldMessageSequencePort();
 const messageContext = sourceMessageSequence.prepare().context;
 const game = GameSession.prepareNewGame(content, catalog, map, battle, fade, presentation,
-  { sourceMessageSequence, audioReadiness: { isReady: () => true }, soundPresentation: { isPresented: () => true },
+  { sourceMessageSequence, conditionLeaderActivity: createWebFlatConditionLeaderActivityPort(),
+    fieldEffects: createWebLogicalFieldEffectsHost(), sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY,
+    battleHandoff: "prepared", audioReadiness: { isReady: () => true }, soundPresentation: { isPresented: () => true },
     transportationTimestamp: () => "639273600000000000" });
 const launch = entry.prepareLaunch(fade, game.newGamePreparation(true));
 game.launchNewGame(launch.launch); launch.commit();
@@ -89,7 +96,10 @@ const sampledActors = new Set();
 const report = { kind: "framework-source-route-check-v1", result: "running", profile: content.developmentProfile.kind,
   acceptanceScope: "bounded source boundary probe; passing does not complete the opening or campaign",
   maxElapsedMs,
-  runtimeSha256, contentRefs: refs, messageContext, policyModuleSha256, messagePolicy: "createWebFieldMessageSequencePort (same production module as app)", sourceCampaignComplete: false, browserVerified: false,
+  runtimeSha256, contentRefs: refs, messageContext, policyModuleSha256, messagePolicy: "createWebFieldMessageSequencePort (same production module as app)",
+  runtimePolicies: { conditionLeaderActivity: "createWebFlatConditionLeaderActivityPort", fieldEffects: "createWebLogicalFieldEffectsHost",
+    sourceEncounter: WEB_SOURCE_ENCOUNTER_POLICY, battleHandoff: "prepared", sameProductionModulesAsApp: true },
+  sourceCampaignComplete: false, browserVerified: false,
   entryHash: content.contentHash, catalogHash: catalog.contentHash, battleHash: battle.contentHash,
   sourceEntryHash: content.developmentProfile.sourceContentHash,
   controlledInputs: ["headless title, field UI and immediately ready audio", "10ms host updates", "automatic dialogue confirm; first displayed choice", "fixed explicit transportation timestamp"],
@@ -114,6 +124,7 @@ try {
         site: stop.site, omittedEnvironmentEffects: result.field.content.developmentProfile?.omissions.length ?? 0 });
     }
     if (game.field.stop?.kind === "unsupported") { boundary = structuredClone(game.field.stop); break; }
+    if (game.battleStartRequest) { boundary = { kind: "battle-entry-request", request: structuredClone(game.battleStartRequest) }; break; }
     if (game.battle) { boundary = { kind: "battle", encounter: game.battle.content.encounterId }; break; }
     if (game.field.choice) {
       const choice = game.field.choice;

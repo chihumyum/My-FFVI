@@ -1,9 +1,13 @@
 {
-  "kind": "development-content-batch-recipe-v1",
+  "kind": "development-content-batch-recipe-v2",
   "id": "figaro-development",
   "baseField": "game/narshe.json",
   "battle": "content-batches/ordinary-battles/battle.json",
-  "world": "framework/world/catalog.json",
+  "world": "world/catalog.json",
+  "frameworkPolicy": {
+    "kind": "independent-source-framework-v1",
+    "sourceEntry": "game/source-new-game.json"
+  },
   "startMap": 22,
   "entrance": 1,
   "manifest": {

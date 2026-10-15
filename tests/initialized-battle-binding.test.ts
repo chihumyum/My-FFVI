@@ -200,3 +200,75 @@ test("an optional strict catalog is also hash checked, never an ignored extra pa
     directory: { ...f.directory, strictCatalog: f.sourceBattle } }), /Content identity mismatch/);
   assert.equal(canonical(f.sourceBattle.gameState), canonical(f.directory.frameworkCatalog.gameState));
 });
+
+async function conditionPolicyFixture() {
+  const f = await fixture(), policy = { kind: "web-source-control-actions-v1" as const };
+  const catalog = seal({ ...f.directory.frameworkCatalog,
+    common: { ...f.directory.frameworkCatalog.common, conditionControlPolicy: policy } });
+  const report = seal({ ...f.directory.report, frameworkCatalogHash: catalog.contentHash,
+    policy: { kind: "source-battle-directory-policy-v2", framework: { conditionControlPolicy: policy } },
+    policyChanges: [{ kind: "framework-condition-policy-binding-v1", field: "common.conditionControlPolicy",
+      from: null, to: policy, beforeCommonHash: hash(f.sourceBattle.common), afterCommonHash: hash(catalog.common),
+      beforeGameStateHash: hash(f.sourceBattle.gameState), afterGameStateHash: hash(catalog.gameState),
+      beforeCommon: structuredClone(f.sourceBattle.common), afterCommon: structuredClone(catalog.common) }],
+  });
+  const producer = await import(pathToFileURL(resolve("scripts/source-battle-directory.mjs")).href);
+  const actual = await producer.composeFrameworkBattleDirectory({ compiledDir: resolve(import.meta.dirname, ".."),
+    baseCatalog: f.sourceBattle, conditionControlPolicy: policy, runtime: {
+      encounters: f.directory.frameworkCatalog.encounters, diagnostics: f.directory.frameworkCatalog.encounterDiagnostics,
+      report: f.directory.frameworkCatalog.encounterReport, drops: f.directory.frameworkCatalog.common.drops,
+    } });
+  assert.deepEqual(actual.catalog, catalog);
+  assert.deepEqual(actual.policyChanges, report.policyChanges);
+  return { ...f, directory: { ...f.directory, frameworkCatalog: catalog, report } };
+}
+
+test("a declared Web condition policy binds through both source selection consumers without changing owners", async () => {
+  const f = await conditionPolicyFixture(), selected = await selectInitializedBattleCatalog(f);
+  assert.deepEqual(selected.catalog.gameState, f.sourceBattle.gameState);
+  assert.deepEqual(selected.catalog.common.conditionControlPolicy, { kind: "web-source-control-actions-v1" });
+  const checker = await import(pathToFileURL(resolve("scripts/check-selected-source-batches.mjs")).href);
+  const binding = await checker.validateSelectedSourceCatalogBinding({ built: {
+    kind: "initialized-source-map-build-v1", recipeKind: "initialized-source-map-recipe-v3",
+    battleCatalogSelection: "shared-framework-directory-v1", sourceAreaScopeReceipt: null,
+    battleDirectory: selected.directoryBinding,
+  }, battle: selected.catalog, sourceBattle: f.sourceBattle, sourceWorld: f.sourceWorld,
+  directory: selected.catalog, requests: f.directory.requests, directoryReport: f.directory.report },
+  { compiledDir: resolve(import.meta.dirname, "..") });
+  assert.equal(binding.catalogHash, selected.catalog.contentHash);
+});
+
+test("rehashing cannot replace a missing, changed or unknown condition-policy receipt", async () => {
+  for (const mutate of [
+    (f: Awaited<ReturnType<typeof conditionPolicyFixture>>) => { f.directory.report.policyChanges.length = 0; },
+    (f: Awaited<ReturnType<typeof conditionPolicyFixture>>) => { f.directory.report.policyChanges[0]!.beforeCommonHash = "0".repeat(64); },
+    (f: Awaited<ReturnType<typeof conditionPolicyFixture>>) => { f.directory.report.policyChanges[0]!.afterGameStateHash = "0".repeat(64); },
+    (f: Awaited<ReturnType<typeof conditionPolicyFixture>>) => { f.directory.report.policy.kind = "source-battle-directory-policy-v1"; },
+    (f: Awaited<ReturnType<typeof conditionPolicyFixture>>) => { f.directory.report.policy.framework.conditionControlPolicy = { kind: "unknown" } as never; },
+    (f: Awaited<ReturnType<typeof conditionPolicyFixture>>) => { delete (f.directory.frameworkCatalog as BattleCatalog).common.conditionControlPolicy; },
+  ]) {
+    const f = await conditionPolicyFixture(); mutate(f);
+    f.directory.frameworkCatalog = seal(f.directory.frameworkCatalog);
+    f.directory.report.frameworkCatalogHash = f.directory.frameworkCatalog.contentHash;
+    f.directory.report = seal(f.directory.report);
+    await assert.rejects(selectInitializedBattleCatalog(f), /condition policy|condition-policy/);
+  }
+});
+
+test("a consistent policy receipt grants no other capability or owned-state change", async () => {
+  for (const owned of [false, true]) {
+    const f = await conditionPolicyFixture();
+    if (owned) f.directory.frameworkCatalog.gameState.initialGil++;
+    else f.directory.frameworkCatalog.common.timing.speedIndex = 4;
+    const catalog = f.directory.frameworkCatalog, change = f.directory.report.policyChanges[0]!;
+    change.afterCommon = structuredClone(catalog.common); change.afterCommonHash = hash(catalog.common);
+    change.afterGameStateHash = hash(catalog.gameState);
+    f.directory.frameworkCatalog = seal(catalog);
+    f.directory.report.frameworkCatalogHash = f.directory.frameworkCatalog.contentHash;
+    f.directory.report = seal(f.directory.report);
+    await assert.rejects(selectInitializedBattleCatalog(f), /owned catalogs|shared battle capabilities/);
+  }
+  const f = await conditionPolicyFixture();
+  await assert.rejects(selectInitializedBattleCatalog({ selection: "source-baseline-v1", sourceWorld: f.sourceWorld,
+    sourceBattle: f.directory.frameworkCatalog }), /strict source baseline cannot use a Web condition control policy/);
+});

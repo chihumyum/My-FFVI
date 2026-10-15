@@ -40,6 +40,8 @@ export type BattleEncounterRuntimeInput = {
   sourceDiagnostics: readonly SourceDiagnostic[];
   abilities: Readonly<Record<string, AbilityDefinition>>;
   conditions: BattleConditionCatalog;
+  /** Declared approximation lane, never a native condition/controller grant. */
+  conditionControlPolicy?: { kind: "web-source-control-actions-v1" };
   sprites: Readonly<Record<string, { file: string; width: number; height: number }>>;
   name(key: string): string;
   parameters: { temporary: ParameterValues; limits: ParameterLimits };
@@ -236,7 +238,8 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         const compiled = compileEnemyBattleDefinition(reader, { enemy,
           entryPhase: slot === undefined || childPartyId !== undefined ? "late" : "initial", abilities: input.abilities,
           conditions: input.conditions, sprites: input.sprites, name: input.name,
-          parameters: input.parameters, physical: input.physical, formationPlan });
+          parameters: input.parameters, physical: input.physical, formationPlan,
+          ...(input.conditionControlPolicy ? { conditionControlPolicy: input.conditionControlPolicy } : {}) });
         const context = { source: compiled.source ?? encounter.source,
           ...(slot === undefined ? {} : { enemySlot: slot }) };
         for (const diagnostic of compiled.diagnostics) {

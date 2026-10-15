@@ -29,6 +29,8 @@ export type DevelopmentProfile = {
   relayInteraction?: "framework-relay-interaction-v1";
   /** Source-bound, anonymous decorative boards keep their original diagnostics. */
   passiveEffects?: "framework-passive-field-effects-v1";
+  /** Logical all-loop playback is owned; particle/material display is deferred. */
+  logicalFieldEffects?: "web-logical-all-loop-field-effects-v1";
   /** Shared source event controls on a declared Web clock and screen host. */
   storyRuntime?: "web-field-story-runtime-v1";
   autoSave?: "web-field-autosave-barrier-v1";

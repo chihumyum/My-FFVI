@@ -14,6 +14,7 @@ import { canonical } from "./canonical.js";
 import { fieldNpcGroupBlockers } from "./field-npc-activity-host.js";
 import { fieldRelayGroupBlockers } from "./field-relay-policy.js";
 import { bindPassiveEffects, passiveEffectsGroupBlockers } from "./field-passive-effects-host.js";
+import { WEB_LOGICAL_FIELD_EFFECTS, logicalEffectsGroupBlockers, type LogicalFieldEffectsCheckpoint } from "./field-logical-effects.js";
 import { fieldCollisionRange, inCollisionRange } from "./collision.js";
 import { requireMinimapMedia } from "./minimap.js";
 import { StaticAudioState } from "./static-audio.js";
@@ -28,7 +29,7 @@ import type { FieldFadeState } from "./field-fade.js";
 import type { SourceNativeState } from "./source-native-state.js";
 import { prepareSourceNativeMap } from "./source-native-map.js";
 import { prepareNativeFieldProviders } from "./field-native-providers.js";
-import { resolveFieldPresentation } from "./field-presentation.js";
+import { resolveFieldPresentation, fieldMapPresentationBlockers, periodicEntryPresentation } from "./field-presentation.js";
 import type { NativeGameEntryContent } from "./source-new-game.js";
 import { assertSourceEntryProfiles, type SourceEntryProfileDependency } from "./source-catalog.js";
 import { FieldEffects, type FieldEffectCandidate, type FieldEffectCandidatePrepared } from "./field-effects.js";
@@ -48,7 +49,7 @@ type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount"> & {
   transportationId: number | null;
 };
 export type WorldCheckpoint = {
-  kind: "idle-world-v10" | "event-world-v1";
+  kind: "idle-world-v10" | "event-world-v1" | "idle-world-v11" | "event-world-v2";
   initialHash: string;
   location: {
     catalogHash: string;
@@ -59,6 +60,7 @@ export type WorldCheckpoint = {
     traveler: Traveler | null;
   } | null;
   field: FieldCheckpoint;
+  logicalEffects?: LogicalFieldEffectsCheckpoint;
 };
 
 /** Trusted metadata proves world applicability; presentation never changes the source request. */
@@ -114,15 +116,17 @@ export function worldFieldContent(
   const viewPlan = worldMapEntryView(target, request.birdview ? 1 : 0);
   if (viewPlan && viewPlan.presentationViewType !== 0)
     throw new Error("Native world-map Bird/FlatBird presentation is not implemented");
-  if (target.blockers.length) throw new Error(target.blockers[0]!.reason);
+  const presentationBlockers = fieldMapPresentationBlockers(target);
+  if (presentationBlockers.length) throw new Error(presentationBlockers[0]!.reason);
   const selectedPresentation = target.frameworkPresentation && actorEntry ? resolveFieldPresentation(target) : null;
   const map = target.map!,
     group = map.groups?.entity_default;
   if (map.backgrounds?.length && !sourceCamera)
     throw new Error("Source background requires a bound camera host");
   if (!group) throw new Error("Missing default entity group");
-  const groupBlockers = passiveEffectsGroupBlockers({ ...group, blockers: fieldRelayGroupBlockers({ ...group,
+  const passiveBlockers = passiveEffectsGroupBlockers({ ...group, blockers: fieldRelayGroupBlockers({ ...group,
     blockers: fieldNpcGroupBlockers(group, target.frameworkNpcActivity) }, target.frameworkRelayInteraction) }, target.frameworkPassiveEffects);
+  const groupBlockers = logicalEffectsGroupBlockers({ ...group, blockers: passiveBlockers }, target);
   if (groupBlockers.length) throw new Error(groupBlockers[0]!.reason);
   if (group.entities.some((e) => e.kind === 18) || catalog.minimap)
     requireMinimapMedia(group.entities, catalog.minimap);
@@ -278,7 +282,7 @@ export class WorldSession {
   private commitInProgress: MapCommit | null = null;
   private catalogHash: string | null = null;
   private readonly sourceOrigin: SourceWorldOrigin | null;
-  private readonly effectOwner: FieldEffects | null;
+  private effectOwner: FieldEffects | null;
   private effectMap: FieldEffectMap | null;
   private nextEffectScope = 1;
   readonly transitions: {
@@ -313,15 +317,22 @@ export class WorldSession {
     const effectHost = owned?.current.fieldEffects;
     const passiveEffects = bindPassiveEffects(initial),
       hasEffects = initial.map.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id));
-    if (hasEffects && owned?.current.nativeActorPreparation)
+    const logicalEffects = initial.developmentProfile?.logicalFieldEffects === WEB_LOGICAL_FIELD_EFFECTS;
+    if (logicalEffects && (initial.fieldEffects?.webPolicy?.kind !== WEB_LOGICAL_FIELD_EFFECTS ||
+        effectHost?.policy !== WEB_LOGICAL_FIELD_EFFECTS || initial.fieldEffects.webPolicy.sourceSetHash !== initial.sourceSetHash ||
+        initial.fieldEffects.webPolicy.parentSourceSetHash !== initial.parentSourceSetHash))
+      throw new Error("Logical world effects require their explicit trusted catalog and runtime host");
+    if (hasEffects && owned?.current.nativeActorPreparation && !logicalEffects)
       throw new Error("Initial native field effects require whole-session transactional publication");
     if (effectHost?.beginCandidate && typeof effectHost.observe !== "function")
       throw new Error("Field effect playback observation host is unavailable");
     this.effectOwner = typeof effectHost?.beginCandidate === "function"
       ? new FieldEffects(initial.fieldEffects ?? { media: {} }, effectHost) : null;
-    const candidate = hasEffects ? this.effectOwner?.fork() : undefined;
+    const deferredRestore = restoringNative && logicalEffects;
+    const candidate = hasEffects && !deferredRestore ? this.effectOwner?.fork() : undefined;
     this.effectMap = this.effectOwner ? new FieldEffectMap("0", candidate ?? this.effectOwner,
-      initial.map.entities.filter((entity) => entity.kind === 11 && !passiveEffects.has(entity.id)).map((entity) => entity.id)) : null;
+      deferredRestore ? [] : initial.map.entities.filter((entity) => entity.kind === 11 && !passiveEffects.has(entity.id)).map((entity) => entity.id),
+      this.effectOwner.logicalPolicy) : null;
     try {
       const field: FieldGame = new FieldGame(
         initial,
@@ -329,6 +340,7 @@ export class WorldSession {
         undefined,
         undefined,
         { ...(owned?.current ?? {}), npcActivityClock: () => this.current === field,
+          ...(deferredRestore ? { deferLogicalEffectRestore: true } : {}),
           ...(this.effectMap ? { fieldEffectMap: this.effectMap } : {}),
           ...(initial.playerFactory ? { playerVisibility: initial.playerFactory.capability } : {}) },
         initialFade,
@@ -343,17 +355,28 @@ export class WorldSession {
     return this.current;
   }
   checkpoint(): WorldCheckpoint {
+    const logicalEffects = this.logicalEffectsCheckpoint();
     return {
-      kind: "idle-world-v10",
+      kind: logicalEffects ? "idle-world-v11" : "idle-world-v10",
       initialHash: this.initial.contentHash,
       location: structuredClone(this.location),
       field: this.current.checkpoint(),
+      ...(logicalEffects ? { logicalEffects } : {}),
     };
   }
   eventCheckpoint(request: GameEventSaveRequest): WorldCheckpoint {
     if (this.commitInProgress) throw new Error("Cannot save during map publication");
-    return { kind: "event-world-v1", initialHash: this.initial.contentHash,
-      location: structuredClone(this.location), field: this.current.eventCheckpoint(request) };
+    const logicalEffects = this.logicalEffectsCheckpoint();
+    return { kind: logicalEffects ? "event-world-v2" : "event-world-v1", initialHash: this.initial.contentHash,
+      location: structuredClone(this.location), field: this.current.eventCheckpoint(request),
+      ...(logicalEffects ? { logicalEffects } : {}) };
+  }
+  private logicalEffectsCheckpoint(): LogicalFieldEffectsCheckpoint | null {
+    if (this.effectOwner?.logicalPolicy !== WEB_LOGICAL_FIELD_EFFECTS) return null;
+    if (this.commitInProgress || this.prepared.size || !this.effectMap?.active)
+      throw new Error("Cannot save while a logical effect map publication is prepared");
+    return { kind: "web-logical-field-effects-checkpoint-v1", catalogHash: this.effectOwner.catalogSnapshot().webPolicy!.catalogHash,
+      scope: this.effectMap.scope, nextScope: this.nextEffectScope, state: this.effectOwner.snapshot() };
   }
   /** Used on an unpublished candidate session; current host state is replaced only after media preparation. */
   restore(
@@ -369,13 +392,14 @@ export class WorldSession {
         throw new Error("Source world catalog changed during the session");
       assertSourceEntryProfiles(this.sourceOrigin, catalog, native?.initialMap ?? this.sourceOrigin, target);
     }
-    checkpointKeys(snapshot, "kind,initialHash,location,field");
+    const logical = snapshot.kind === "idle-world-v11" || snapshot.kind === "event-world-v2";
+    checkpointKeys(snapshot, "kind,initialHash,location,field" + (logical ? ",logicalEffects" : ""));
     if (
-      !["idle-world-v10", "event-world-v1"].includes(snapshot.kind) ||
+      !["idle-world-v10", "event-world-v1", "idle-world-v11", "event-world-v2"].includes(snapshot.kind) ||
       snapshot.initialHash !== this.initial.contentHash
     )
       throw new Error("World checkpoint source/version mismatch");
-    if ((snapshot.kind === "event-world-v1") !==
+    if ((snapshot.kind === "event-world-v1" || snapshot.kind === "event-world-v2") !==
         (snapshot.field.kind === "event-field-v1" || snapshot.field.kind === "event-field-v2" ||
           snapshot.field.kind === "event-field-v3" || snapshot.field.kind === "event-field-v4"))
       throw new Error("World and field continuation formats disagree");
@@ -418,7 +442,7 @@ export class WorldSession {
         // supplies immutable identities/riding structure; destination metadata
         // supplies new providers. Saved actors never validate their own origin.
         const plan = prepareMapPartyEntry(appearance.catalog, {
-          definition: target.partyEntry, entrance: loc.entrance, mapViewType: viewPlan?.presentationViewType ?? 0,
+          ...periodicEntryPresentation(target), definition: target.partyEntry, entrance: loc.entrance, mapViewType: viewPlan?.presentationViewType ?? 0,
           ...(viewPlan ? { viewPlan } : {}),
           prior: initialActors, playerVisible: true, party: appearance.current(),
           transportation: new Transportations(catalog.transportation).identity(transportationId),
@@ -462,8 +486,25 @@ export class WorldSession {
         animationKeys: native.content.animationKeys, controlContext: { worldMapScript: false, callback: "absent" },
         providers: (field) => prepareNativeFieldProviders(field, presentation.view, map.nativeFoot) };
     }
-    if (this.effectMap?.hasHistory) throw new Error("Field effect manager history cannot be restored without its particle/RNG codec");
-    const effectMap = this.effectOwner ? new FieldEffectMap(String(this.nextEffectScope), this.effectOwner, []) : null;
+    if (!logical && this.effectOwner?.logicalPolicy === WEB_LOGICAL_FIELD_EFFECTS)
+      throw new Error("Logical effect source requires its versioned world checkpoint");
+    let restoredOwner = this.effectOwner, effectScope = String(this.nextEffectScope), nextScope = this.nextEffectScope + 1;
+    if (logical) {
+      const saved = snapshot.logicalEffects, catalog = this.initial.fieldEffects, host = this.owned?.current.fieldEffects;
+      if (!saved || !catalog?.webPolicy || !host || this.effectOwner?.logicalPolicy !== WEB_LOGICAL_FIELD_EFFECTS ||
+          content.developmentProfile?.logicalFieldEffects !== WEB_LOGICAL_FIELD_EFFECTS ||
+          canonical(content.fieldEffects) !== canonical(catalog)) throw new Error("Unbound logical effect restore context");
+      checkpointKeys(saved, "kind,catalogHash,scope,nextScope,state");
+      if (saved.kind !== "web-logical-field-effects-checkpoint-v1" || saved.catalogHash !== catalog.webPolicy.catalogHash ||
+          !/^(0|[1-9]\d*)$/.test(saved.scope)) throw new Error("Logical effect checkpoint source changed");
+      checkpointInteger(Number(saved.scope), 0, 0x7fffffff); checkpointInteger(saved.nextScope, Number(saved.scope) + 1, 0x7fffffff);
+      restoredOwner = FieldEffects.restoreLogical(catalog, host, saved.state);
+      effectScope = saved.scope; nextScope = saved.nextScope;
+    } else if (this.effectMap?.hasHistory) throw new Error("Field effect manager history cannot be restored without its particle/RNG codec");
+    const passiveEffects = bindPassiveEffects(content);
+    const effectMap = restoredOwner ? new FieldEffectMap(effectScope, restoredOwner,
+      logical ? content.map.entities.filter(e => e.kind === 11 && !passiveEffects.has(e.id)).map(e => e.id) : [],
+      logical ? WEB_LOGICAL_FIELD_EFFECTS : null, logical) : null;
     const next: FieldGame = FieldGame.restore(
       content,
       snapshot.field,
@@ -473,10 +514,13 @@ export class WorldSession {
         ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}) },
       nativeDependencies,
     );
+    if (logical && restoredOwner!.snapshot().boards.length !== (next.fieldEffectsSnapshot?.boards.length ?? 0))
+      throw new Error("Logical effect checkpoint contains boards from an unbound map lease");
     for (const pending of this.prepared.keys()) this.discard(pending);
     if (this.effectMap) this.effectMap.retire(this.effectMap.snapshot());
     this.effectMap = effectMap;
-    this.nextEffectScope++;
+    this.effectOwner = restoredOwner;
+    this.nextEffectScope = nextScope;
     this.current = next;
     this.location = structuredClone(loc);
     this.catalogHash = loc?.catalogHash ?? this.sourceOrigin?.catalogHash ?? null;
@@ -488,6 +532,10 @@ export class WorldSession {
       stop = from.stop;
     if (stop?.kind !== "map-transition")
       throw new Error("No pending map transition");
+    if (this.effectOwner?.logicalPolicy === WEB_LOGICAL_FIELD_EFFECTS &&
+        (target.developmentProfile?.logicalFieldEffects !== WEB_LOGICAL_FIELD_EFFECTS ||
+          canonical(target.fieldEffects ?? null) !== canonical(this.initial.fieldEffects)))
+      throw new Error("Destination logical effect catalog/profile changed");
     // Native delayed callbacks capture the old entity instance. Until the
     // original cross-map lifetime is proved, never rebind them to a new map
     // or serialize an incomplete actor fade into the destination candidate.
@@ -620,7 +668,7 @@ export class WorldSession {
       if (transport.currentId !== from.transportationId)
         throw new Error("Map transportation switching is not implemented");
       const plan = prepareMapPartyEntry(appearance.catalog, {
-        definition: target.partyEntry, entrance: request.entrance,
+        ...periodicEntryPresentation(target), definition: target.partyEntry, entrance: request.entrance,
         mapViewType: viewPlan?.presentationViewType ?? (request.birdview ? 1 : 0), prior,
         ...(viewPlan ? { viewPlan } : {}),
         playerVisible: from.isEntityVisible(from.player.id), party: appearance.current(),
@@ -641,7 +689,8 @@ export class WorldSession {
     try {
       if (effectCandidate) this.effectMap!.prepareRetirement(effectCandidate);
       const effectMap = effectCandidate ? new FieldEffectMap(String(this.nextEffectScope), effectCandidate,
-        content.map.entities.filter((entity) => entity.kind === 11 && !bindPassiveEffects(content).has(entity.id)).map((entity) => entity.id)) : null;
+        content.map.entities.filter((entity) => entity.kind === 11 && !bindPassiveEffects(content).has(entity.id)).map((entity) => entity.id),
+        this.effectOwner!.logicalPolicy) : null;
       const field: FieldGame = new FieldGame(
         content,
         state,

@@ -10,6 +10,7 @@ import { assessBattleHandoff } from "./battle-handoff-content.js";
 import type { AudioReadinessPort } from "./audio-readiness.js";
 import type { FieldSoundPresentation } from "./field-sound-presentation.js";
 import type { FieldEffectRuntimeHost } from "./field-effects.js";
+import { WEB_LOGICAL_FIELD_EFFECTS } from "./field-logical-effects.js";
 import type { ShopTradeRequest } from "./shop.js";
 import { projectPartyMenu, type PartyMenuRequest } from "./party-menu.js";
 import { projectCharacterMenu } from "./character-menu.js";
@@ -599,7 +600,9 @@ export class GameSession {
       // opening field supplied by an older caller. Reject effect publication
       // before creating any native actor or external host during restoration.
       const map = source.initialMap.map;
-      if (map && (map.entities.some((entity) => entity.kind === 11) ||
+      if (map && !(source.content.developmentProfile?.logicalFieldEffects === WEB_LOGICAL_FIELD_EFFECTS &&
+            runtime.fieldEffects?.policy === WEB_LOGICAL_FIELD_EFFECTS) &&
+          (map.entities.some((entity) => entity.kind === 11) ||
           Object.values(map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11))))
         throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
       if (s.world.field.fade === null) throw new Error("Source new-game checkpoint cannot discard the title fade host");
@@ -697,7 +700,7 @@ export class GameSession {
   }
   private fieldBattleFingerprint(field: FieldGame): string {
     return canonical({ request: field.stop, events: field.eventState.snapshot(), entry: field.battleEntryContext.state,
-      time: field.time, fade: field.fader.snapshot() });
+      time: field.time, fade: field.fader.snapshot(), effects: field.fieldEffectsSnapshot });
   }
   private rememberEncounterFailure(field: FieldGame, request: SessionBattleRequest, error: unknown): void {
     if (this.field === field && field.stop === request && !this.battle)
@@ -930,14 +933,14 @@ export class GameSession {
     this.battleHandoffPreparing = true;
     try {
       const currentResult = () => outcome === "victory" ? battle.previewVictory() : battle.previewEscape();
-      const before = canonical({ result: currentResult(), shared: battle.eventSharedReturn });
+      const before = canonical({ result: currentResult(), shared: battle.eventSharedReturn, effects: field.fieldEffectsSnapshot });
       const owned = outcome === "victory" ? this.state.prepareVictory(entry.lease, battle.previewVictory()!) :
         this.state.prepareEscape(entry.lease, battle.previewEscape()!);
       const resume = field.prepareEncounterReturn(entry.content.encounterId, owned.fieldState, battle.eventSharedReturn);
       return this.createBattleHandoff("return", entry,
         () => this.field === field && field.stop === request && request === entry.request && field === entry.field &&
           this.battle === battle && this.battleLease === entry.lease && this.battleEntry === entry &&
-          canonical({ result: currentResult(), shared: battle.eventSharedReturn }) === before,
+          canonical({ result: currentResult(), shared: battle.eventSharedReturn, effects: field.fieldEffectsSnapshot }) === before,
         () => { owned.validate(); resume.validate(); },
         () => beginPublication => {
           let published = false;

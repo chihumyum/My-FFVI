@@ -30,6 +30,8 @@ export type MapPartyEntryInput = {
   /** Explicit content-bound world applicability and presentation. The old
    * normal non-looping path does not acquire a world capability by omission. */
   viewPlan?: MapEntryViewPlan;
+  /** Trusted alternative resolver, never loop bits or checkpoint data alone. */
+  ordinaryPeriodicPresentation?: "framework-ordinary-field-flat-v1";
   prior: FieldPartyActorCheckpoint;
   playerVisible: boolean;
   party: PartyAppearanceCandidate;
@@ -102,7 +104,10 @@ export function prepareMapPartyEntry(catalog: PartyActorCatalog, input: MapParty
   if (input.entrance < 0) throw new Error("Saved-position map party entry is not implemented");
   const viewPlan = input.viewPlan === undefined ? undefined : assertMapEntryViewBinding(input.viewPlan,
     { mapId: def.mapId, loopType: def.loopType, presentationViewType: input.mapViewType });
-  if (input.mapViewType !== 0 || def.loopType !== 0 && !viewPlan?.isWorld)
+  if (input.ordinaryPeriodicPresentation !== undefined && (input.ordinaryPeriodicPresentation !== "framework-ordinary-field-flat-v1" ||
+      def.loopType === 0 || viewPlan?.isWorld !== false))
+    throw new Error("Unknown ordinary periodic entry presentation policy");
+  if (input.mapViewType !== 0 || def.loopType !== 0 && !viewPlan?.isWorld && !input.ordinaryPeriodicPresentation)
     throw new Error("Map party entry view/loop presentation is not implemented");
   if (typeof input.playerVisible !== "boolean") throw new Error("Unknown map-entry player visibility");
   if (input.canPartySwitching === null || typeof input.canPartySwitching !== "boolean") throw new Error("Unknown map-entry party switching flag");

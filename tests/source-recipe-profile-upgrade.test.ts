@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { contentDigest, verifyContent } from "../src/core/content-integrity.js";
 import { canonical } from "../src/core/canonical.js";
+import { logicalEffectCatalog } from "./fixtures/logical-field-effects.js";
 import { sourceNewGameFixture } from "./fixtures/source-new-game.js";
 
 const root = process.cwd(), compiledDir = fileURLToPath(new URL("../", import.meta.url));
@@ -161,4 +162,92 @@ test("already upgraded inputs are no-op audited and never downgraded to old runt
   const result = await f.run({ frameworkProfileUpgrade: declaration() });
   assert.deepEqual(result.report.frameworkProfileUpgrades, []); assert.deepEqual(result.report.changes, []);
   assert.equal(result.recipe.sourceMap.contentHash, f.newMap.contentHash);
+});
+
+
+test("logical profile v2 audits the exact shared catalog addition while preserving every other source identity", async () => {
+  const f = await fixture(), effects = logicalEffectCatalog(f.newMap.sourceSetHash,f.newMap.parentSourceSetHash).catalog;
+  const logical = "web-logical-all-loop-field-effects-v1";
+  const map = await seal({...f.newMap,fieldEffects:effects,developmentProfile:{...f.newMap.developmentProfile,logicalFieldEffects:logical}});
+  const world = await seal({...f.newWorld,developmentProfile:{...f.newWorld.developmentProfile,logicalFieldEffects:logical},
+    maps:{[map.mapId]:{...f.newWorld.maps[map.mapId],contentHash:map.contentHash}}});
+  const entry = await seal({...f.newEntry,developmentProfile:{...f.newEntry.developmentProfile,logicalFieldEffects:logical},
+    mapContentHash:map.contentHash,worldCatalogHash:world.contentHash});
+  f.candidate.set(f.urls.sourceMap,map);f.candidate.set(f.urls.sourceWorld,world);f.candidate.set(f.urls.sourceEntry,entry);
+  const proof = {...declaration(),kind:"compiled-framework-profile-upgrade-v2",markers:{...markers,logicalFieldEffects:logical},logicalFieldEffects:effects};
+  await assert.rejects(f.run({frameworkProfileUpgrade:declaration()}),/identity\/profile\/media changed/);
+  const output = await f.run({frameworkProfileUpgrade:proof}), audit = output.report.frameworkProfileUpgrades.find(row => row.role === "sourceMap")!;
+  assert.equal(audit.providers.length,3);assert.equal(audit.logicalFieldEffects.catalogHash,effects.webPolicy!.catalogHash);
+  assert.deepEqual(audit.logicalFieldEffects.candidateCatalog,effects);
+  assert.deepEqual(audit.comparisonIdentityBefore,audit.comparisonIdentityAfter);
+  assert.notEqual(audit.sourceIdentityBefore.physicalSourceHash,audit.sourceIdentityAfter.physicalSourceHash,
+    "New catalog evidence is audited honestly rather than described as unchanged physical evidence");
+  assert.equal(output.recipe.sourceMap.contentHash,map.contentHash);
+  for(const mutate of [
+    (x:Document) => { x.map.source.objectId = "456"; },
+    (x:Document) => { x.map.textures.extra = "/world-media/extra.png"; },
+    (x:Document) => { x.fieldEffects.media.controlled_effect.orthographicSize++; },
+    (x:Document) => { x.developmentProfile.transportation = "walking-magitek-framework-v1"; },
+  ]) { const bad = structuredClone(map);mutate(bad);f.candidate.set(f.urls.sourceMap,await seal(bad));
+    await assert.rejects(f.run({frameworkProfileUpgrade:proof}),/identity\/profile\/media changed|same compiled logical catalog/); }
+});
+
+const periodicMarkers = { worldMap: "framework-world-map-flat-v1", fieldPresentation: "framework-ordinary-field-flat-v1" };
+async function periodicFixture(logical = false) {
+  const f = await fixture(), effects = logical ? logicalEffectCatalog(f.newMap.sourceSetHash, f.newMap.parentSourceSetHash).catalog : undefined;
+  const added = { ...periodicMarkers, ...(effects ? { logicalFieldEffects: "web-logical-all-loop-field-effects-v1" } : {}) };
+  const map = await seal({ ...f.newMap, ...(effects ? { fieldEffects: effects } : {}), developmentProfile: { ...f.newMap.developmentProfile, ...added } });
+  const world = await seal({ ...f.newWorld, developmentProfile: { ...f.newWorld.developmentProfile, ...added },
+    maps: { [map.mapId]: { ...f.newWorld.maps[map.mapId], contentHash: map.contentHash } } });
+  const entry = await seal({ ...f.newEntry, developmentProfile: { ...f.newEntry.developmentProfile, ...added },
+    worldCatalogHash: world.contentHash, mapContentHash: map.contentHash });
+  f.candidate.set(f.urls.sourceMap, map); f.candidate.set(f.urls.sourceWorld, world); f.candidate.set(f.urls.sourceEntry, entry);
+  const proof = { ...declaration(), kind: "compiled-framework-profile-upgrade-v3", markers: { ...markers, ...added },
+    ...(effects ? { logicalFieldEffects: effects } : {}) };
+  return { ...f, proof, map, world, entry };
+}
+test("profile v3 audits exact periodic markers with and without the existing logical catalog upgrade", async () => {
+  for (const logical of [false, true]) {
+    const f = await periodicFixture(logical), before = canonical([...f.candidate]);
+    await assert.rejects(f.run({ frameworkProfileUpgrade: declaration() }), /Source identity\/profile\/media changed/);
+    const result = await f.run({ frameworkProfileUpgrade: f.proof });
+    assert.equal(result.report.frameworkProfileUpgrades.length, 3);
+    for (const audit of result.report.frameworkProfileUpgrades) {
+      assert.equal(audit.kind, "compiled-framework-profile-upgrade-v3");
+      assert.equal(audit.providers.length, logical ? 5 : 4);
+      assert.deepEqual(audit.comparisonIdentityBefore, audit.comparisonIdentityAfter);
+      assert.deepEqual(audit.profileAfter, f.candidate.get(audit.url)!.developmentProfile);
+    }
+    assert.equal(canonical([...f.candidate]), before);
+  }
+});
+test("v3 cannot normalize geometry, topology, media, source, unknown profiles or existing marker changes", async () => {
+  for (const mutate of [
+    (map: Document) => { map.map.width++; },
+    (map: Document) => { map.map.topology = { range: { x: 0, y: 0, width: 1, height: 1 }, loop: { horizontal: true, vertical: true } }; },
+    (map: Document) => { map.map.textures.extra = "/world-media/new.png"; },
+    (map: Document) => { map.map.source.objectId = "9007199254740999"; },
+    (map: Document) => { map.developmentProfile.newHost = "unknown"; },
+    (map: Document) => { map.developmentProfile.worldMap = "unknown"; },
+  ]) { const f = await periodicFixture(), bad = structuredClone(f.map); mutate(bad);
+    f.candidate.set(f.urls.sourceMap, await seal(bad));
+    await assert.rejects(f.run({ frameworkProfileUpgrade: f.proof }), /identity\/profile\/media changed|periodic geometry or presentation changed|development profile mismatch|unavailable|unknown/i);
+  }
+  const f = await periodicFixture(), prior = await seal({ ...f.oldMap, developmentProfile: { ...f.oldMap.developmentProfile, worldMap: "old-policy" } });
+  f.current.set(f.urls.sourceMap, prior); (f.recipe as any).sourceMap.contentHash = prior.contentHash;
+  await assert.rejects(f.run({ frameworkProfileUpgrade: f.proof }), /cannot remove or change marker|development profile mismatch/);
+});
+test("v3 exact declaration cannot authorize absent, unknown or unavailable periodic providers", async () => {
+  const f = await periodicFixture();
+  for (const proof of [{ ...f.proof, markers: { ...markers, worldMap: periodicMarkers.worldMap } },
+    { ...f.proof, markers: { ...f.proof.markers, worldMap: "unavailable" } },
+    { ...f.proof, rules: "external" }, { ...f.proof, kind: "compiled-framework-profile-upgrade-v4" }])
+    await assert.rejects(f.run({ frameworkProfileUpgrade: proof }), /framework profile upgrade/);
+  await mkdir(resolve(root, "build/wip"), { recursive: true });
+  const isolated = await mkdtemp(resolve(root, "build/wip/periodic-provider-unavailable-"));
+  try {
+    await cp(resolve(compiledDir, "src"), resolve(isolated, "src"), { recursive: true });
+    await writeFile(resolve(isolated, "src/core/field-presentation.js"), 'export const WEB_PERIODIC_WORLD_PRESENTATION="unavailable"; export function resolveFieldPresentation() {}\n');
+    await assert.rejects(f.run({ compiledDir: isolated, frameworkProfileUpgrade: f.proof }), /host unavailable: worldMap/);
+  } finally { await rm(isolated, { recursive: true, force: true }); }
 });

@@ -65,7 +65,7 @@ function definition(raw: unknown, sourceId: number): EnemyBattleDefinition {
   const required = [...parameterNames, "sourceId", "name", "side", "row", "level", "physical",
     "attackElements", "elementResistances", "exp", "gil", "growthGroup", "abilities", "commands",
     "conditionIds", "conditionResistances", "ai", "sprites"];
-  const optional = ["ownedAbilities", "magicLearningValue", "appearance", "battleRequirements"];
+  const optional = ["ownedAbilities", "magicLearningValue", "appearance", "battleRequirements", "conditionTraits"];
   checkpointKeys(raw, [...required, ...optional.filter(key => Object.hasOwn(value, key))].join(","));
   if (value.sourceId !== sourceId || value.side !== "enemy" || !["front", "back"].includes(value.row))
     throw new Error("Battle participant master identity mismatch");
@@ -87,6 +87,11 @@ function definition(raw: unknown, sourceId: number): EnemyBattleDefinition {
   checkpointRecord(value.conditionResistances);
   for (const [key, resistance] of Object.entries(value.conditionResistances)) {
     identityKey(key); integer(resistance, 0);
+  }
+  if (Object.hasOwn(value, "conditionTraits")) {
+    checkpointKeys(value.conditionTraits, "kind,baseUndead");
+    if (value.conditionTraits?.kind !== "source-condition-traits-v1" || typeof value.conditionTraits.baseUndead !== "boolean")
+      throw new Error("Invalid source condition traits provider");
   }
   checkpointKeys(value.sprites, "idle,mount");
   text(value.sprites.idle);
@@ -112,7 +117,7 @@ function definition(raw: unknown, sourceId: number): EnemyBattleDefinition {
   }
   // Ordinary enemy templates have no owned-player or transformation provider.
   // Adding one needs a reviewed version instead of copying a GameState owner.
-  if (optional.some(key => Object.hasOwn(value, key)))
+  if (optional.filter(key => key !== "conditionTraits").some(key => Object.hasOwn(value, key)))
     throw new Error("Unsupported battle participant template provider");
   return structuredClone(value);
 }

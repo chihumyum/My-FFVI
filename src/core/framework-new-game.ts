@@ -15,7 +15,7 @@ import { prepareMapPartyEntry, readMapPartySwitching } from "./map-party-entry.j
 import { installFreshGameActors, type NativeGameEntryContent } from "./source-new-game.js";
 import { worldFieldContent, worldMapEntryView } from "./world-session.js";
 import type { MapViewType } from "./map-view.js";
-import { resolveFieldPresentation } from "./field-presentation.js";
+import { resolveFieldPresentation, periodicEntryPresentation } from "./field-presentation.js";
 
 /** The source initializer and source route retain their own identities. This
  * entry declares a separate authored map; it grants no source reachability. */
@@ -150,7 +150,7 @@ export function prepareFrameworkNewGameField(content: FrameworkNewGameContent, w
   const initial = createFrameworkFieldPartyActorCheckpoint({ content, catalog, fresh, party,
     map: map.partyEntry!, playerId: "-1001" });
   const viewPlan = worldMapEntryView(map, fresh.entry.viewType as MapViewType);
-  const plan = prepareMapPartyEntry(catalog, { definition: map.partyEntry!, entrance: content.entry.entrance,
+  const plan = prepareMapPartyEntry(catalog, { ...periodicEntryPresentation(map), definition: map.partyEntry!, entrance: content.entry.entrance,
     mapViewType: viewPlan?.presentationViewType ?? fresh.entry.viewType, prior: initial, playerVisible: true, party,
     ...(viewPlan ? { viewPlan } : {}),
     transportation: fresh.entry.transportation,

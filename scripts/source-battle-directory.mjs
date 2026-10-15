@@ -24,10 +24,24 @@ function fields(value,keys,label){
 }
 function parsePolicy(raw,api){
   fields(raw,'kind,framework','source battle directory policy');
-  assert.equal(raw.kind,'source-battle-directory-policy-v1');
-  fields(raw.framework,'handoff,entry','framework battle directory policy');
+  assert.ok(['source-battle-directory-policy-v1','source-battle-directory-policy-v2'].includes(raw.kind),'Unknown source battle directory policy version');
+  fields(raw.framework,raw.kind==='source-battle-directory-policy-v2'?'handoff,entry,conditionControlPolicy':'handoff,entry','framework battle directory policy');
+  const conditionControlPolicy=raw.kind==='source-battle-directory-policy-v2'?parseConditionControlPolicy(raw.framework.conditionControlPolicy):undefined;
   return {kind:raw.kind,framework:{handoff:api.parseBattleHandoffPolicy(raw.framework.handoff),
-    entry:raw.framework.entry===null?null:api.parseBattleBatchEntryPolicy(raw.framework.entry)}};
+    entry:raw.framework.entry===null?null:api.parseBattleBatchEntryPolicy(raw.framework.entry),
+    ...(conditionControlPolicy?{conditionControlPolicy}:{})}};
+}
+function parseConditionControlPolicy(raw){
+  fields(raw,'kind','Web condition control policy');
+  assert.equal(raw.kind,'web-source-control-actions-v1','Unknown Web condition control policy');
+  return {kind:raw.kind};
+}
+async function assertConditionControlRuntime(root,compiledDir,policy){
+  if(!policy)return;
+  const runtime=await import(pathToFileURL(resolve(root,compiledDir,'src/core/condition-control-actions.js')).href);
+  assert.equal(runtime.webSourceControlPolicyKind,policy.kind,'Compiled runtime has no matching Web condition policy');
+  assert.equal(typeof runtime.planWebControlAction,'function','Compiled runtime has no condition action planner');
+  assert.equal(typeof runtime.planWebControlTarget,'function','Compiled runtime has no condition target planner');
 }
 /** Bind omissions globally against actual complete descriptors. Formation
  * qualification belongs to the per-party runtime compiler, not this binding
@@ -68,9 +82,12 @@ const summary=(runtime)=>({requested:runtime.report.entries.length,compiledDefin
 /** Compose a source-initialized framework catalog without inventing owners or
  * dropping unsuccessful requests. Inputs are outputs of the existing compiler.
  * This is also independently testable with redistributable controlled data. */
-export async function composeFrameworkBattleDirectory({root=repository,compiledDir='dist',baseCatalog,runtime}){
+export async function composeFrameworkBattleDirectory({root=repository,compiledDir='dist',baseCatalog,runtime,conditionControlPolicy}){
   const api=await modules(root,compiledDir),base=await api.verifyContent(structuredClone(baseCatalog));
   api.assertSourceGameCatalog(base);
+  assert.ok(!Object.hasOwn(base.common,'conditionControlPolicy'),'A strict source baseline cannot already carry a Web condition policy');
+  const conditionPolicy=conditionControlPolicy===undefined?undefined:parseConditionControlPolicy(conditionControlPolicy);
+  await assertConditionControlRuntime(root,compiledDir,conditionPolicy);
   const result=structuredClone(runtime),blocked=new Set(result.diagnostics.filter(d=>d.kind==='blocked').map(d=>d.partyId));
   for(const content of result.drops.contents){
     const admitted=content.kind==='item'?base.gameState.items[content.id]:base.gameState.equipmentSystem?.catalog.definitions[content.id];
@@ -102,13 +119,22 @@ export async function composeFrameworkBattleDirectory({root=repository,compiledD
   assert.equal(api.canonical(base.common.drops.weights),api.canonical(result.drops.weights),'Source drop weights disagree');
   api.validateBattleDropCatalog(drops);
   const {contentHash:_,...body}=structuredClone(base);
-  body.common.drops=drops;body.encounters=result.encounters;body.encounterDiagnostics=result.diagnostics;body.encounterReport=result.report;
+  body.common.drops=drops;if(conditionPolicy)body.common.conditionControlPolicy=conditionPolicy;body.encounters=result.encounters;body.encounterDiagnostics=result.diagnostics;body.encounterReport=result.report;
   const catalog={...body,contentHash:api.hash(body)};
   await api.verifyContent(catalog);api.assertSourceGameCatalog(catalog,'framework');
   assert.equal(api.canonical(catalog.gameState),api.canonical(base.gameState),'Directory changed source initial owners');
   const {drops:beforeDrops,...before}=base.common,{drops:afterDrops,...after}=catalog.common;
-  assert.equal(api.canonical(before),api.canonical(after),'Directory changed shared source capabilities');
-  return {catalog,runtime:result};
+  if(conditionPolicy){
+    const {conditionControlPolicy:published,...other}=after;
+    assert.equal(api.canonical(published),api.canonical(conditionPolicy),'Directory changed its explicit condition policy');
+    assert.equal(api.canonical(before),api.canonical(other),'Directory changed unrelated shared source capabilities');
+  }else assert.equal(api.canonical(before),api.canonical(after),'Directory changed shared source capabilities');
+  const policyChanges=conditionPolicy?[{kind:'framework-condition-policy-binding-v1',
+    field:'common.conditionControlPolicy',from:null,to:structuredClone(conditionPolicy),
+    beforeCommonHash:api.hash(base.common),afterCommonHash:api.hash(catalog.common),
+    beforeGameStateHash:api.hash(base.gameState),afterGameStateHash:api.hash(catalog.gameState),
+    beforeCommon:structuredClone(base.common),afterCommon:structuredClone(catalog.common)}]:[];
+  return {catalog,runtime:result,policyChanges};
 }
 
 /** No file publication. Caller supplies the same candidate's whole source
@@ -149,15 +175,16 @@ export async function compileSourceBattleDirectory({root=repository,compiledDir=
   const shared=await api.compileGameCatalogModules(root,source);
   assert.equal(base.common.fieldSourceSetHash,shared.common.fieldSourceSetHash,'Source owner baseline field mismatch');
   const runtimeInput={...shared.runtimeInput,requestedPartyIds,encounters:descriptors.encounters,sourceDiagnostics:descriptors.diagnostics};
-  const strictCatalog=api.assembleGameCatalog({...shared,reader,runtimeInput:{...runtimeInput,handoff:{policy:null}}},
+  const strictCatalog=api.assembleGameCatalog({...shared,reader:shared.reader,runtimeInput:{...runtimeInput,handoff:{policy:null}}},
     {kind:'source-new-game',limitations:[...base.common.limitations]});
   api.assertSourceGameCatalog(strictCatalog);await api.verifyContent(strictCatalog);
   assert.equal(api.canonical(strictCatalog.gameState),api.canonical(base.gameState),'Strict directory changed source initial owners');
   const {drops:oldDrops,...oldCommon}=base.common,{drops:newDrops,...newCommon}=strictCatalog.common;
   assert.equal(api.canonical(oldCommon),api.canonical(newCommon),'Strict directory changed shared source capabilities');
-  const runtime=api.compileBattleEncounterRuntime(reader,{...runtimeInput,handoff:{policy:declared.framework.handoff},
+  const runtime=api.compileBattleEncounterRuntime(shared.reader,{...runtimeInput,
+    ...(declared.framework.conditionControlPolicy?{conditionControlPolicy:declared.framework.conditionControlPolicy}:{}),handoff:{policy:declared.framework.handoff},
     development:bindEntryPolicy(declared.framework.entry,descriptors.encounters,api)});
-  const composed=await composeFrameworkBattleDirectory({root,compiledDir,baseCatalog:base,runtime});
+  const composed=await composeFrameworkBattleDirectory({root,compiledDir,baseCatalog:base,runtime,conditionControlPolicy:declared.framework.conditionControlPolicy});
   const frameworkCatalog=composed.catalog;
   const analyze=value=>{
     const result=api.analyzeBatchEncounters(value,requestedPartyIds);
@@ -174,7 +201,7 @@ export async function compileSourceBattleDirectory({root=repository,compiledDir=
   };
   const reportBody={kind:'source-battle-directory-build-v1',sourceSetHash:corpus.sourceSetHash,
     parentSourceSetHash:source.parentSourceSetHash,battleSourceSetHash:exported.sourceSetHash,policy:declared,
-    baselineHash:base.contentHash,requestsHash:requests.contentHash,strictCatalogHash:strictCatalog.contentHash,frameworkCatalogHash:frameworkCatalog.contentHash,
+    policyChanges:composed.policyChanges,baselineHash:base.contentHash,requestsHash:requests.contentHash,strictCatalogHash:strictCatalog.contentHash,frameworkCatalogHash:frameworkCatalog.contentHash,
     requestedPartyIds,sourceDescriptors:{compiled:descriptors.encounters.length,blocked:descriptors.diagnostics.length,diagnostics:descriptors.diagnostics},
     strict:{...strictCatalog.encounterReport,analysis:analyze(strictCatalog)},framework:{...composed.runtime.report,analysis:analyze(frameworkCatalog)},
     entryDependencies:{scripts:groups('scriptId',encounter=>encounter.script).map(entry=>{
@@ -186,6 +213,8 @@ export async function compileSourceBattleDirectory({root=repository,compiledDir=
         flagIds:[...new Set(entry.source.map(row=>api.tableInteger(row.values.battle_flag_id)))].sort((a,b)=>a-b)}))},
     partySources:descriptors.encounters.map(encounter=>({partyId:encounter.partyId,source:encounter.source,patterns:encounter.patterns,
       metadata:encounter.metadata,background:encounter.background,scriptSource:encounter.script?.source??null})),
+    conditionSourceBindings:shared.readConditionSourceBindings(),
+    conditionSourceBindingsHash:api.hash(shared.readConditionSourceBindings()),
     sourceBindings:[...bindings.values()].sort((a,b)=>api.canonical(a).localeCompare(api.canonical(b))),
     diagnostics:{requests:sourceRequests.diagnostics,strict:strictCatalog.encounterDiagnostics,framework:frameworkCatalog.encounterDiagnostics},
     initialStateChanged:false,sourceRoutesChanged:false,sourceGameplayVerified:false,nativeHandoffVerified:false,browserVerified:false,

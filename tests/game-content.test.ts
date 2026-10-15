@@ -498,7 +498,7 @@ test("restore rejects changed game/world hashes, unknown map and old save schema
   ];
   for (const saved of variants)
     await assert.rejects(new GameContentRepository(loader(f.files).read).restoreWorld(saved as GameCheckpoint),
-      /mismatch|Unknown game checkpoint origin|Missing map content dependency/);
+      /mismatch|Unknown game checkpoint origin|Unknown world checkpoint kind|Missing map content dependency/);
   const fresh = await freshFixture();
   fresh.saved.origin = { kind: "source-new-game", sourceContentHash: "f".repeat(64) };
   await assert.rejects(new GameContentRepository(loader(fresh.files).read).restoreWorld(fresh.saved), /Content identity mismatch/);
