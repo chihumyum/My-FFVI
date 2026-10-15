@@ -19,12 +19,15 @@ import type { FieldSoundOp } from "../core/field-sound-command.js";
 import type { FieldBgmControlOp } from "../core/field-bgm-control.js";
 import type { FieldTimerOp } from "../core/field-timer.js";
 import type { FieldScreenEffectOp } from "../core/field-screen-effects.js";
+import type { FieldShakeOp } from "../core/field-camera-shake.js";
 import type { FieldEventSaveOp } from "../core/field-auto-save.js";
 import type { PlayerVisibilityOp, PlayerVisibilityFactory } from "../core/player-visibility.js";
 import type { FieldTaskControlOp } from "../core/field-task-control.js";
 import type { FieldFadeOp, FieldFadeInitial } from "../core/field-fade.js";
 import type { FieldPuppetScriptContext } from "../core/field-puppet-actors.js";
 import type { FieldCameraOp, FieldCameraMotionOp, FieldCameraSetPosition } from "../core/field-camera.js";
+import type { FieldAssignedRouteOp } from '../core/field-assigned-route.js';
+import type { FieldNpcRouteCatalog } from '../core/field-npc-route.js';
 import type { FieldScriptMotionOp } from "../core/field-script-motion.js";
 import type { FieldMoveAreaDefinition } from "../core/field-move-area.js";
 import type { FieldCameraHostDefinition } from "../core/field-camera-host.js";
@@ -121,6 +124,8 @@ export type FieldRelayDefinition = {
   source: Evidence & { objectId: string; pointer: string; serializedFile: string; sha256: string };
 };
 export type FieldEntity = Point & {
+  mapAnimation?: import("../core/field-map-animation.js").FieldMapAnimationDefinition;
+  mapAnimationBlockers?: string[];
   id: string;
   objectId?: number;
   minimap?: Point & { icon: number };
@@ -155,7 +160,7 @@ export type FieldEntity = Point & {
   width: number;
   height: number;
   asset: string | null;
-  direction: Direction;
+  direction: Direction | null;
   script: string | null;
   collision: number | null;
   destinationLayer: number | null;
@@ -223,11 +228,13 @@ export type Op = Site &
     | FieldBgmControlOp
     | FieldTimerOp
     | FieldScreenEffectOp
+    | FieldShakeOp
     | PlayerVisibilityOp
     | FieldTaskControlOp
     | FieldFadeOp
     | FieldCameraOp
     | FieldCameraMotionOp
+    | FieldAssignedRouteOp
     | FieldScriptMotionOp
     | SourceMessageOp
     | FieldChoiceOp
@@ -348,6 +355,8 @@ export type FieldContent = {
   /** Content-bound native camera factory and current map providers. */
   cameraHost?: FieldCameraHostDefinition;
   nativeNpcStandby?: FieldNativeNpcStandby;
+  /** Raw-preserved source catalog; runtime policy grants execution separately. */
+  npcRoutes?: FieldNpcRouteCatalog;
   fieldEffects?: FieldEffectCatalog;
   /** Explicit development presentation omissions; strict source packages keep
    * these entities and their full capability blockers. */

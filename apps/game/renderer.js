@@ -187,6 +187,22 @@ export class Renderer {
       if (!actor.native) throw new Error("平面世界混入未绑定演员");
       const entity = actor.native.entity, frame = actor.animation?.frame();
       if (!frame || actor.asset === null) continue;
+      const mapAnimation = actor.native.mapAnimation;
+      if (mapAnimation) {
+        if (this.content.developmentProfile?.mapAnimatedEntities !== "web-field-animated-map-entities-v1" ||
+            actor.native.scope?.kind !== "map-animated" || entity.character || entity.riding ||
+            !Object.values(m.groups ?? {}).some(group => group.entities.some(source => source.id === actor.id &&
+              source.kind === 10 && canonical(source.mapAnimation) === canonical(mapAnimation))) ||
+            !Number.isFinite(entity.fadeAlpha) || entity.fadeAlpha < 0 || entity.fadeAlpha > 1 ||
+            Math.fround(entity.fadeAlpha) !== entity.fadeAlpha)
+          throw new Error("地图动画实体缺少当前来源与明确Web显示策略");
+        if (!this.presentationOmissions.some(entry => entry.kind === "web-animated-map-entity" && entry.actorId === actor.id))
+          this.presentationOmissions.push({ kind: "web-animated-map-entity", actorId: actor.id,
+            policy: "web-field-animated-map-entities-v1", nativeParity: false,
+            omitted: ["native-building-shader", "source-stencil", "native-front-depth"],
+            initialFrame: "first-Default-frame-when-not-playing",
+            opacity: "frame-alpha-times-material-alpha-squared-Web-policy" });
+      } else {
       if (!entity.character || entity.riding || !entity.bodyOpaque ||
           !Number.isFinite(entity.fadeAlpha) || entity.fadeAlpha < 0 || entity.fadeAlpha > 1 || Math.fround(entity.fadeAlpha) !== entity.fadeAlpha)
         throw new Error("平面世界当前仅支持普通步行演员");
@@ -196,15 +212,17 @@ export class Renderer {
       const expected = fieldCompositionActorTextures(definition, entity.layer);
       if (canonical(expected) !== canonical(entity.transparentTextures))
         throw new Error("平面世界演员纹理绑定属于其他地图");
+      }
       const sprite = this.content.characters[actor.asset]?.sprites[frame.sprite], image = sprite && this.images.get(sprite.file);
       if (!sprite || !image || (image.naturalWidth ?? image.width) !== sprite.width ||
           (image.naturalHeight ?? image.height) !== sprite.height) throw new Error("平面世界角色帧缺少来源图像");
       const point = this.point(actor), x = (point.x + 0.5) * 16 - cx + frame.x,
-        y = (point.y + 0.5) * 16 - cy - frame.y,
+        y = (point.y + 0.5) * 16 - cy - frame.y + (mapAnimation ? mapAnimation.geometry.height * 0.5 : 0),
         rect = { x: x - sprite.width * (frame.flip ? 1 - sprite.pivot[0] : sprite.pivot[0]),
           y: y - sprite.height * (1 - sprite.pivot[1]), width: sprite.width, height: sprite.height };
       for (const offset of this.periodicOffsets(rect, width, height, topology)) projected.push({
-        actor, frame, sprite, image, x: x + offset.x, y: y + offset.y, row: point.y + offset.y / 16,
+        actor, frame, sprite, image, x: x + offset.x, y: y + offset.y,
+        row: mapAnimation?.front ? Number.MAX_SAFE_INTEGER + mapAnimation.zOffset : point.y + offset.y / 16,
       });
     }
     projected.sort((a, b) => a.row - b.row || a.actor.id.localeCompare(b.actor.id));

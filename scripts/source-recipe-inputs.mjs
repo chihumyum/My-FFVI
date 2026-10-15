@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {createSourceMapAnimationEvidenceReader,compareSourceMapAnimationAddition} from './source-map-animation-evidence.mjs';
 
 const repository=resolve(import.meta.dirname,'..');
 const digest=/^[a-f0-9]{64}$/;
@@ -136,12 +137,13 @@ function parseBattleRebindings(raw=[]){
 
 async function frameworkUpgradeDeclaration(raw,root,compiledDir){
   if(raw===undefined)return null;
-  const periodic=raw?.kind==='compiled-framework-profile-upgrade-v3';
-  const logical=raw?.kind==='compiled-framework-profile-upgrade-v2'||periodic&&Object.hasOwn(raw,'logicalFieldEffects');
+  const animated=raw?.kind==='compiled-framework-profile-upgrade-v4';
+  const periodic=raw?.kind==='compiled-framework-profile-upgrade-v3'||animated&&Object.hasOwn(raw?.markers??{},'worldMap');
+  const logical=raw?.kind==='compiled-framework-profile-upgrade-v2'||(periodic||animated)&&Object.hasOwn(raw,'logicalFieldEffects');
   dataFields(raw,['kind','compilerDigest','markers',...(logical?['logicalFieldEffects']:[])],'framework profile upgrade declaration');
-  assert.ok(['compiled-framework-profile-upgrade-v1','compiled-framework-profile-upgrade-v2','compiled-framework-profile-upgrade-v3'].includes(raw.kind),'Unknown framework profile upgrade version');
+  assert.ok(['compiled-framework-profile-upgrade-v1','compiled-framework-profile-upgrade-v2','compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4'].includes(raw.kind),'Unknown framework profile upgrade version');
   assert.ok(typeof raw.compilerDigest==='string'&&digest.test(raw.compilerDigest),'Invalid framework profile upgrade compiler digest');
-  const hosts={...frameworkHostMarkers,...(logical?{logicalFieldEffects:logicalMarker}:{}),...(periodic?periodicMarkers:{})};
+  const hosts={...frameworkHostMarkers,...(animated?{mapAnimatedEntities:{value:'web-field-animated-map-entities-v1',module:'field-map-animation',exportName:'WEB_FIELD_MAP_ANIMATION',provider:'prepareFieldMapAnimations'}}:{}),...(logical?{logicalFieldEffects:logicalMarker}:{}),...(periodic?periodicMarkers:{})};
   dataFields(raw.markers,Object.keys(hosts),'framework profile upgrade markers');
   const result=structuredClone(raw),providers=[];
   for(const [marker,definition] of Object.entries(hosts)){
@@ -174,7 +176,7 @@ async function frameworkUpgradeDeclaration(raw,root,compiledDir){
 function comparableFrameworkUpgrade(before,after,ref,declaration,canonical){
   if(!declaration)return {after,upgrade:null};
   const previous=before.developmentProfile,next=after.developmentProfile;
-  if(declaration.kind==='compiled-framework-profile-upgrade-v3'&&
+  if(['compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4'].includes(declaration.kind)&&
       ['world-map-development','field-development'].includes(after.kind)) {
     // A marker proof is not a presentation/media/geometry migration proof.
     // In particular, same physical SourceRefs do not establish unchanged
@@ -355,24 +357,119 @@ export function createSourceWalkEvidenceReader({root=repository,compiledDir='dis
   };
 }
 
+async function mapAnimationAdditionDeclaration(raw,root,compiledDir){
+  if(raw===undefined)return null;
+  dataFields(raw,['kind','compilerDigest','sourceSetHash','parentSourceSetHash'],'map animation source addition declaration');
+  assert.equal(raw.kind,'compiled-source-map-animation-import-addition-v1','Unknown map animation source addition declaration');
+  for(const key of ['compilerDigest','sourceSetHash','parentSourceSetHash'])assert.ok(typeof raw[key]==='string'&&digest.test(raw[key]),'Invalid map animation source addition '+key);
+  const modules=[];
+  for(const name of ['entity-group','world','field-animation-import']){
+    const file=resolve(root,compiledDir,'src/compiler',name+'.js'),bytes=await readFile(file);
+    modules.push({module:'src/compiler/'+name+'.js',sha256:sha(bytes)});
+  }
+  return {...structuredClone(raw),modules};
+}
+
+/** A complete verified source snapshot supplies the exact package-local raw
+ * aliases and route objects. Neither a recipe nor a save may supply this proof. */
+export function createSourceNpcRouteEvidenceReader({root=repository,compiledDir='dist'}={}){
+  let source=null;const results=new Map();
+  return async map=>{
+    source??=(async()=>{
+      const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src/compiler',name+'.js')).href);
+      const [{loadCorpus},{compileFieldNpcRoutes},{hash}]=await Promise.all([load('corpus'),load('field-npc-route'),load('content')]);
+      const snapshot=await loadCorpus(root);return {snapshot,compileFieldNpcRoutes,hash,sourceDigest:hash(snapshot)};
+    })();
+    const data=await source;
+    assert.equal(data.snapshot.sourceSetHash,map.sourceSetHash,'NPC route evidence corpus identity mismatch');
+    assert.equal(data.snapshot.manifest.parentSourceSetHash,map.parentSourceSetHash,'NPC route evidence parent identity mismatch');
+    if(!results.has(map.mapId)){
+      const result=data.compileFieldNpcRoutes(data.snapshot,map.mapId),catalog=result.catalog;
+      assert.ok(catalog,'Missing complete package-local source NPC route catalog');
+      const pkg=data.snapshot.assets.filter(a=>a.kind==='map-package'&&a.source.file===catalog.packageSource.file&&
+        a.source.assetPath===catalog.packageSource.assetPath&&a.source.objectId===catalog.packageSource.objectId);
+      assert.equal(pkg.length,1,'NPC route evidence package identity is ambiguous');
+      const selected=pkg[0].data.map.filter(m=>m.name===catalog.mapName);assert.equal(selected.length,1,'NPC route evidence map is ambiguous');
+      results.set(map.mapId,{kind:'verified-source-npc-route-evidence-v1',sourceDigest:data.sourceDigest,
+        sourceSetHash:data.snapshot.sourceSetHash,parentSourceSetHash:data.snapshot.manifest.parentSourceSetHash,
+        rawAliasHash:data.hash(selected[0].route_instruction??[]),rawAliases:structuredClone(selected[0].route_instruction??[]),
+        catalog,report:result.report,diagnostics:result.diagnostics});
+    }
+    return structuredClone(results.get(map.mapId));
+  };
+}
+
+async function npcRouteAdditionDeclaration(raw,root,compiledDir){
+  if(raw===undefined)return null;
+  dataFields(raw,['kind','compilerDigest','sourceSetHash','parentSourceSetHash'],'NPC route source addition declaration');
+  assert.equal(raw.kind,'compiled-source-npc-route-evidence-addition-v1','Unknown NPC route source addition declaration');
+  for(const key of ['compilerDigest','sourceSetHash','parentSourceSetHash'])assert.ok(typeof raw[key]==='string'&&digest.test(raw[key]),'Invalid NPC route addition '+key);
+  const path=resolve(root,compiledDir,'src/compiler/field-npc-route.js'),bytes=await readFile(path),module=await import(pathToFileURL(path).href);
+  assert.equal(typeof module.compileFieldNpcRoutes,'function','Source NPC route compiler unavailable');
+  return {...structuredClone(raw),compiler:{module:'src/compiler/field-npc-route.js',sha256:sha(bytes)}};
+}
+
 /** Readers return parsed JSON for the same logical URL. Each value is detached
  * before asynchronous verification. Callers retain byte/path freshness checks
  * and complete package validation at their publication boundary. */
 export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurrentJson,readCandidateJson,
-    root=repository,compiledDir='dist',sourceWalkEvidence,battleRebindings,frameworkProfileUpgrade}){
+    root=repository,compiledDir='dist',sourceWalkEvidence,battleRebindings,frameworkProfileUpgrade,sourceMapAnimationAddition,sourceMapAnimationEvidence,sourceNpcRoutesAddition,sourceNpcRouteEvidence}){
   assert.ok(typeof recipePath==='string'&&recipePath.length>0,'Missing original recipe path');
   assert.equal(typeof readCurrentJson,'function');assert.equal(typeof readCandidateJson,'function');
   const recipe=recipeJSON(recipeBytes),refs=declaredReferences(recipe),proofs=parseBattleRebindings(battleRebindings);
   const report={kind:'source-recipe-inputs-v1',id:recipe.id,recipeKind:recipe.kind,recipePath,
     recipeSha256:sha(recipeBytes),changes:[],dependencyRebindings:[],sourceIdentities:[],sourceEvidenceEnrichments:[],
-    battleCapabilityRebindings:[],frameworkProfileUpgrades:[]};
+    battleCapabilityRebindings:[],frameworkProfileUpgrades:[],sourceMapAnimationAdditions:[],sourceNpcRouteAdditions:[]};
   const frameworkUpgrade=await frameworkUpgradeDeclaration(frameworkProfileUpgrade,root,compiledDir);
+  const animationAddition=await mapAnimationAdditionDeclaration(sourceMapAnimationAddition,root,compiledDir);
+  sourceMapAnimationEvidence??=createSourceMapAnimationEvidenceReader({root,compiledDir});
+  const npcRouteAddition=await npcRouteAdditionDeclaration(sourceNpcRoutesAddition,root,compiledDir);
   if(refs.length===0)return {recipe,report};
   const load=name=>import(pathToFileURL(resolve(root,compiledDir,'src/core',name+'.js')).href);
   const [{canonical},{verifyContent},{sourceCatalogProfile}]=await Promise.all([
     load('canonical'),load('content-integrity'),load('source-catalog')]);
   const oldCache=new Map(),newCache=new Map(),documents=new Map(),omissionMaps=new Map();
   sourceWalkEvidence??=createSourceWalkEvidenceReader({root,compiledDir});
+  sourceNpcRouteEvidence??=createSourceNpcRouteEvidenceReader({root,compiledDir});
+  async function comparableNpcRoutes(before,after,role,url,actualBefore=before,actualAfter=after){
+    if(before.npcRoutes===undefined&&after.npcRoutes===undefined)return {before,after};
+    assert.equal(before.kind,'world-map-development','NPC route evidence belongs only to source map packages');
+    assert.equal(after.kind,'world-map-development','NPC route evidence belongs only to source map packages');
+    assert.ok(after.npcRoutes!==undefined,'Existing source NPC route catalog cannot be removed');
+    if(!npcRouteAddition){assert.equal(canonical(before.npcRoutes??null),canonical(after.npcRoutes),'NPC route source addition requires an explicit compiler declaration');return {before,after};}
+    assert.equal(after.sourceSetHash,npcRouteAddition.sourceSetHash,'NPC route addition source set mismatch');
+    assert.equal(after.parentSourceSetHash,npcRouteAddition.parentSourceSetHash,'NPC route addition parent mismatch');
+    const evidence=await sourceNpcRouteEvidence(after);
+    assert.equal(evidence.kind,'verified-source-npc-route-evidence-v1','Invalid NPC route source evidence');
+    for(const key of ['sourceDigest','rawAliasHash'])assert.ok(typeof evidence[key]==='string'&&digest.test(evidence[key]),'Invalid NPC route evidence '+key);
+    assert.equal(evidence.sourceSetHash,after.sourceSetHash,'NPC route evidence source mismatch');
+    assert.equal(evidence.parentSourceSetHash,after.parentSourceSetHash,'NPC route evidence parent mismatch');
+    const {parseFieldNpcRouteCatalog}=await load('field-npc-route');
+    const expected=parseFieldNpcRouteCatalog(evidence.catalog),candidate=parseFieldNpcRouteCatalog(after.npcRoutes);
+    const report=evidence.report;
+    assert.equal(expected.mapId,after.mapId,'NPC route addition map mismatch');
+    assert.equal(expected.sourceSetHash,after.sourceSetHash,'NPC route catalog source mismatch');
+    assert.equal(expected.parentSourceSetHash,after.parentSourceSetHash,'NPC route catalog parent mismatch');
+    assert.equal(canonical(candidate),canonical(expected),'NPC route addition differs from complete verified source catalog');
+    assert.ok(Array.isArray(evidence.rawAliases)&&report?.mapId===after.mapId&&report.parse?.invalid===0&&
+      report.parse.declared===evidence.rawAliases.length&&report.parse.parsed===evidence.rawAliases.length&&
+      Object.keys(expected.routes).length===evidence.rawAliases.length&&report.binding?.blocked===0,
+      'NPC route addition requires the complete unambiguous raw alias/catalog domain');
+    assert.equal(sha(canonical(evidence.rawAliases)),evidence.rawAliasHash,'NPC route raw alias digest mismatch');
+    for(const alias of evidence.rawAliases){assert.ok(plain(alias)&&Object.keys(alias).sort().join(',')==='asset,name'&&typeof alias.asset==='string','Invalid raw NPC route alias');
+      const found=Object.values(expected.routes).filter(r=>r.alias===alias.name);assert.equal(found.length,1,'NPC route raw alias is not retained');}
+    if(before.npcRoutes!==undefined)assert.equal(canonical(parseFieldNpcRouteCatalog(before.npcRoutes)),canonical(expected),'Existing source NPC route catalog cannot be changed');
+    const comparisonBefore=structuredClone(before),comparisonAfter=structuredClone(after);
+    delete comparisonBefore.npcRoutes;delete comparisonAfter.npcRoutes;
+    const fullBefore=identities(actualBefore,canonical,sourceCatalogProfile),fullAfter=identities(actualAfter,canonical,sourceCatalogProfile);
+    reportSourceRouteAddition({role,url,mapId:after.mapId,declaration:npcRouteAddition,evidence,
+      beforeCatalog:before.npcRoutes??null,candidateCatalog:after.npcRoutes,
+      sourceIdentityBefore:fullBefore,sourceIdentityAfter:fullAfter});
+    return {before:comparisonBefore,after:comparisonAfter};
+  }
+  function reportSourceRouteAddition(value){report.sourceNpcRouteAdditions.push({...structuredClone(value),
+    grantsSourceAdmission:false,saveMigration:false,normalization:'only exact verified npcRoutes metadata; all remaining whole identities compared unchanged'});}
+
   async function comparableWalkingEvidence(before,after,role,url){
     if(before.sourceWalkEncounters===undefined&&after.sourceWalkEncounters===undefined)return {before,after};
     assert.equal(before.kind,'world-map-development','Walking evidence requires a source map');
@@ -413,7 +510,8 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
         assert.ok(value.developmentProfile===undefined&&value.frameworkPresentation===undefined&&
           value.walkEncounters===undefined&&!(value.developmentOmissions?.length),'Omission requires a strict source map');
       }
-      const comparison=await comparableWalkingEvidence(before,after,'omission source map',url);
+      const routed=await comparableNpcRoutes(before,after,'omission source map',url);
+      const comparison=await comparableWalkingEvidence(routed.before,routed.after,'omission source map',url);
       assert.equal(canonical(identities(comparison.before,canonical,sourceCatalogProfile)),
         canonical(identities(comparison.after,canonical,sourceCatalogProfile)),'Omission source identity/profile/media changed');
       return {url,before,after};
@@ -466,10 +564,21 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
     const before=await read(readCurrentJson,oldCache,ref.url,ref.contentHash);
     const after=await read(readCandidateJson,newCache,ref.url);
     validateDocument(before,ref);validateDocument(after,ref);
-    const omissionsAfter=await comparableAfter(before,after,ref);
+    let animationAfter=after;
+    if(animationAddition&&['world-development','world-map-development'].includes(after.kind)){
+      assert.equal(after.sourceSetHash,animationAddition.sourceSetHash,'Animation source addition source mismatch');
+      assert.equal(after.parentSourceSetHash,animationAddition.parentSourceSetHash,'Animation source addition parent mismatch');
+      const evidence=await sourceMapAnimationEvidence(after),result=compareSourceMapAnimationAddition(before,after,evidence,animationAddition);
+      animationAfter=result.after;
+      if(result.audit)report.sourceMapAnimationAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,
+        previousHash:before.contentHash,candidateHash:after.contentHash,...result.audit,
+        sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile)});
+    }
+    const omissionsAfter=await comparableAfter(before,animationAfter,ref);
     const upgraded=comparableFrameworkUpgrade(before,omissionsAfter,ref,frameworkUpgrade,canonical);
     const comparisonAfter=upgraded.after;
-    const comparison=await comparableWalkingEvidence(before,comparisonAfter,ref.role,ref.url);
+    const routed=await comparableNpcRoutes(before,comparisonAfter,ref.role,ref.url,before,after);
+    const comparison=await comparableWalkingEvidence(routed.before,routed.after,ref.role,ref.url);
     const oldIdentity=identities(comparison.before,canonical,sourceCatalogProfile),
       newIdentity=identities(comparison.after,canonical,sourceCatalogProfile);
     const battleRebinding=ref.kind==='narshe-battle-catalog'

@@ -295,7 +295,7 @@ function controlledPng() {
 
 // Fixture composition and assertions follow below. They exercise the same
 // pinned initialized entry as the app; no legacy owner is patched into one.
-async function packages(packageId = "controlled-initialized-ui", sourceEncounters = false) {
+async function packages(packageId = "controlled-initialized-ui", sourceEncounters = false, cameraShake = false) {
   const { frameworkNewGameFixture } = await load("tests/fixtures/framework-new-game.js");
   const { compileFrameworkNewGame } = await load("src/compiler/framework-new-game.js");
   const { itemFixture } = await load("tests/fixtures/items.js");
@@ -338,6 +338,17 @@ async function packages(packageId = "controlled-initialized-ui", sourceEncounter
     "ui-practice": site("ui-practice", [{ kind: "encounter", party: entry.encounterId, continuation: "ui-return" }]),
     "ui-return": site("ui-return", [{ kind: "exit" }]),
   };
+  if (cameraShake) {
+    const parent = sha("declared-controlled-shake-ui-source-parent");
+    f.map.parentSourceSetHash = f.world.parentSourceSetHash = parent;
+    f.sourceMap = await seal({ ...f.sourceMap, parentSourceSetHash: parent });
+    f.sourceEntry = await seal({ ...f.sourceEntry, parentSourceSetHash: parent, mapContentHash: f.sourceMap.contentHash });
+    f.map.developmentProfile.storyRuntime = f.world.developmentProfile.storyRuntime = "web-field-story-runtime-v1";
+    const { compileFieldShakeInstruction } = await load("src/compiler/field-shake.js");
+    const shake = compileFieldShakeInstruction({ type: 1, mnemonic: "Shake", operands: {
+      iValues: [1, 2, 1, 30, 0, 0, 0, 0], rValues: Array(8).fill(0), sValues: Array(8).fill("") } });
+    scripts["ui-init"] = site("ui-init", [shake, { kind: "exit" }]);
+  }
   if (sourceEncounters) {
     const { decodeFieldOp } = await load("src/compiler/field.js");
     const raw = (mnemonic, iValues, s0 = "") => ({ type: mnemonic === "SetPos" ? 2 : 1, mnemonic,
@@ -372,6 +383,18 @@ async function packages(packageId = "controlled-initialized-ui", sourceEncounter
   f.map.scriptPuppetContexts = Object.fromEntries(Object.keys(scripts).map(name =>
     [name, { ...context, scriptHash: sha(name) }]));
   delete f.map.walkEncounters;
+
+  if (packageId === "controlled-animated-map-entities") {
+    const definitionSource={file:"synthetic-animated.bundle",assetPath:"Root/entities.json",pointer:"/layers/0/objects/0"};
+    const media=structuredClone(Object.values(f.world.characters)[0]);media.animations.Default.mode=1;
+    f.world.characters.animated=media;f.map.characterAssets.push("animated");
+    const definition={kind:"source-field-animated-map-entity-v1",group:"entity_default",entityId:"500",sourceEntityId:500,source:definitionSource,sourceDirection:15,
+      geometry:{x:point.x*16,y:point.y*16,width:16,height:16,layer:point.layer},
+      asset:{id:188,asset:"animated",animationAsset:"ANIMATED",source:definitionSource},playOnAwake:true,collision:true,front:true,split:false,building:false,affected:true,zOffset:1};
+    Object.assign(clerk,{id:"500",kind:10,asset:"animated",direction:null,source:definitionSource,mapAnimation:definition});
+    f.map.developmentProfile.mapAnimatedEntities="web-field-animated-map-entities-v1";
+    f.world.developmentProfile.mapAnimatedEntities="web-field-animated-map-entities-v1";
+  }
   f.map = await seal(f.map); f.battle = await seal(f.battle);
   f.world.maps[String(f.map.mapId)].contentHash = f.map.contentHash;
   f.world = await seal(f.world);
@@ -879,6 +902,48 @@ try {
       storageWrites: h.calls.writes, completedBattles: restored.state.snapshot().completedBattles.length,
       originalGameExecuted: false, sourceStoryReachability: false, nativeRngParity: false };
   });
+  await check("production camera-shake policy survives actual app frames, menu restore and prepared battle retry", async () => {
+    const pack = await packages("controlled-camera-shake-ui", true, true), h = await host(pack), owner = await start(h),
+      policy = h.api.runtime.cameraShake;
+    assert.equal(policy.kind, "web-field-camera-shake-v1");
+    assert.equal(Reflect.get(owner.field, "options").cameraShake, policy);
+    const state = () => owner.field.storyRuntimeSnapshot.cameraShake;
+    assert.equal(owner.field.storyRuntimeSnapshot.kind, "web-field-story-runtime-v2");
+    for (let i = 0; i < 6; i++) await h.frame();
+    assert.ok(state().samples > 0); const initialStream = structuredClone(state());
+    const logical = structuredClone(owner.field.cameraSnapshot);
+    const pixels = owner.field.cameraProjection({ aspect: 1.5, orthographicSize: 80, isClamp: true, effectOffset: { x: 0, y: 0 } });
+    assert.deepEqual(pixels.cameraPosition, { x: pixels.position.x + owner.field.cameraShakeOffset.x,
+      y: pixels.position.y + owner.field.cameraShakeOffset.y });
+    assert.deepEqual(owner.field.cameraSnapshot, logical);
+    await move(h, "right"); h.api.read().images.clear(); h.failedImages.add(`sha256:${pack.pngHash}`);
+    await move(h, "right");
+    for (let i = 0; i < 80 && h.$("retry-battle-load").hidden; i++) await h.frame();
+    assert.equal(h.$("retry-battle-load").hidden, false); const pending = structuredClone(state()), owned = owner.state.snapshot();
+    h.failedImages.clear(); const media = deferred(), count = h.calls.imageBytes.length;
+    h.heldImages.set(`sha256:${pack.pngHash}`, media); await h.click(h.$("retry-battle-load"));
+    await until(() => h.calls.imageBytes.length > count || !h.api.read().battleLoadAttempt?.running, "Shake entry did not request real media");
+    assert.ok(h.calls.imageBytes.length > count, h.api.read().battleLoadAttempt?.error?.stack);
+    for (let i = 0; i < 8; i++) await h.frame();
+    assert.deepEqual(state(), pending); assert.deepEqual(owner.state.snapshot(), owned); assert.equal(owner.battle, null);
+    media.resolve(); h.heldImages.clear();
+    await until(() => !!owner.battle || !h.api.read().battleLoadAttempt?.running, "Shake battle retry did not publish");
+    assert.ok(owner.battle, h.api.read().battleLoadAttempt?.error?.stack); assert.deepEqual(state(), pending);
+    await win(h, pack); assert.equal(owner.state.snapshot().completedBattles.length, 1);
+    assert.ok(state().active); assert.equal(state().active.command.reexecute, 30);
+    await pauseMenu(h); const saved = owner.checkpoint(), savedState = structuredClone(state());
+    for (let i = 0; i < 8; i++) await h.frame(); assert.deepEqual(state(), savedState);
+    await h.click(h.$("save-game")); await h.click(h.$("load-game")); const restored = h.bound();
+    assert.notEqual(restored, owner); assert.deepEqual(restored.checkpoint(), saved);
+    assert.equal(h.api.runtime.cameraShake, policy); assert.equal(Reflect.get(restored.field, "options").cameraShake, policy);
+    await resume(h); for (let i = 0; i < 4; i++) await h.frame();
+    assert.ok(restored.field.storyRuntimeSnapshot.cameraShake.samples > savedState.samples);
+    assert.deepEqual(state(), savedState, "Retired source owner cannot keep drawing through actual RAF frames");
+    report.cameraShakeLifecycle = { policy, actualApp: true, nativeParity: false, initialSamples: initialStream.samples,
+      pendingSamples: pending.samples, mediaWaitFrames: 8, savedSamples: savedState.samples,
+      restoredSamples: restored.field.storyRuntimeSnapshot.cameraShake.samples, completedBattles: 1, storageWrites: h.calls.writes,
+      renderer: "controlled-drawing-host; actual FieldCameraHost effect projection inspected", originalGameExecuted: false };
+  });
   await check("production logical-effects port survives actual app initialization, rollback, map retry, save/load and source-shaped VM continuation", async () => {
     const pack = await logicalEffectsPackages(), h = await host(pack), owner = await start(h), first = owner.field;
     const port = h.api.runtime.fieldEffects, firstState = first.fieldEffectsSnapshot;
@@ -916,6 +981,26 @@ try {
     report.logicalEffectsLifecycle = { policy: port.policy, nativeParity: false, display: "deferred",
       first: firstState, failed: failedFx, saved: saved.world.logicalEffects, restoredAfterVm: after,
       storageWrites: h.calls.writes, actualAppFactory: true, originalStoryReachability: false };
+  });
+
+  await check("animated map entity uses actual app/native owner, interaction commands, pause/save/restore without Default replay",async()=>{
+    const pack=await packages("controlled-animated-map-entities"),h=await host(pack),owner=await start(h),actor=owner.field.actors["500"],entity=actor.native.entity,animation=actor.animation;
+    assert.equal(entity.character,false);assert.equal(actor.direction,null);assert.equal(actor.native.scope.kind,"map-animated");
+    assert.equal(owner.field.interactionTarget()?.id,"500");const before=animation.snapshot();await h.frame(80);
+    assert.equal(owner.field.actors["500"],actor);assert.equal(actor.native.entity,entity);assert.equal(actor.animation,entity.animation);assert.notDeepEqual(actor.animation.snapshot(),before);
+    h.$("game").focus();h.key("Space");await h.frame();assert.equal(owner.field.currentShop.groupId,pack.groupId);
+    await h.click(button(h,"shop-menu","离开商店"));await h.frame();await pauseMenu(h);
+    const saved=owner.checkpoint(),playback=structuredClone(actor.animation.snapshot());await h.click(h.$("save-game"));await h.click(h.$("load-game"));
+    const restored=h.bound();assert.notEqual(restored,owner);assert.deepEqual(restored.field.actors["500"].animation.snapshot(),playback);assert.deepEqual(restored.checkpoint(),saved);
+    assert.equal(restored.field.actors["500"].direction,null);assert.equal(restored.field.actors["500"].native.entity.character,false);assert.equal(h.api.read().flow.paused,true);
+    await resume(h);await h.frame(80);assert.equal(restored.field.stop,null);assert.equal(owner.field.actors["500"],actor);
+    await move(h,"right");await move(h,"right");
+    for(let tick=0;tick<60&&!restored.battle;tick++)await h.frame();assert.ok(restored.battle);
+    const battleActor=restored.field.actors["500"],battleEntity=battleActor.native.entity,battlePlayback=structuredClone(battleActor.animation.snapshot());
+    for(let tick=0;tick<5;tick++)await h.frame();assert.deepEqual(battleActor.animation.snapshot(),battlePlayback);
+    await win(h,pack);assert.equal(restored.field.actors["500"],battleActor);assert.equal(battleActor.native.entity,battleEntity);
+    assert.equal(restored.state.snapshot().completedBattles.length,1);assert.equal(restored.continueVictory(),false);
+    report.animatedMapEntityLifecycle={actualApp:true,actualRepository:true,actualCommands:true,actorId:"500",policy:"web-field-animated-map-entities-v1",sourceDirection:15,savedPlayback:playback,storageWrites:h.calls.writes,battleAnimationPaused:true,onceBattleSettlement:true,sourceStoryReachability:false,nativeParity:false};
   });
   assert.equal(await runtimeDigest(root, compiled), runtimeBefore, "Runtime changed during actual app checks");
   assert.equal(sha(await readFile(new URL(import.meta.url))), sha(checkerBefore), "App checker changed during checks");

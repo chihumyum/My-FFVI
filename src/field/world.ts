@@ -11,6 +11,11 @@ import type { FrameworkFlatFieldViewDefinition } from "../core/field-actor-view.
 import type { FieldNativeCompositionDefinition } from "../core/field-native-composition.js";
 
 export type ContentIssue = { reason: string; source: Evidence };
+export type FieldAnimationImportObservation = {
+  kind: "native-AnimAssetDatas-json-2019.4-v1"; source: Evidence; rawHash: string;
+  field: "next_anim_name"; index: number; original: "missing" | "null";
+  nativeValue: null; runtimeValue: ""; interpretation: "no-successor";
+};
 export type SourceWalkEncounterRowEvidence = Evidence & { rowId?: string; serializedFile?: string };
 /** Source references only. Rates are observations, never runtime weights or
  * permission to implement native encounter timing/lottery. */
@@ -71,6 +76,7 @@ export type WorldMapContent = {
   nativeFoot?: FieldNativeFootDefinition;
   nativeFootBlockers?: ContentIssue[];
   nativeNpcStandby?: FieldContent["nativeNpcStandby"];
+  npcRoutes?: FieldContent["npcRoutes"];
   frameworkNpcActivity?: FieldContent["frameworkNpcActivity"];
   frameworkRelayInteraction?: FieldContent["frameworkRelayInteraction"];
   frameworkPassiveEffects?: NonNullable<FieldContent["frameworkPassiveEffects"]>;
@@ -100,6 +106,7 @@ export type WorldCatalog = {
   environment?: FieldContent["environment"];
   se?: FieldContent["se"];
   characterIssues: Record<string, ContentIssue[]>;
+  characterImports?: Record<string, FieldAnimationImportObservation[]>;
   maps: Record<
     string,
     {

@@ -83,6 +83,9 @@ const systemDetails: Record<ContentBatchSystem, {
 /** These are exact published codes, not a prefix, mnemonic or reason guess.
  * Unknown compiler codes remain visible under unclassified. */
 const diagnosticOwners: Readonly<Record<string, ContentBatchSystem>> = {
+  "assigned-route-missing": "map-event-and-travel", "assigned-route-target-invalid": "map-event-and-travel",
+  "assigned-route-action-blocked": "map-event-and-travel", "assigned-route-audio-missing": "map-event-and-travel",
+  "assigned-route-catalog-invalid": "map-event-and-travel",
   "map-outside-batch": "content-batch-interface",
   "source-walk-encounter-policy-unimplemented": "map-event-and-travel",
   "source-walk-encounter-binding-invalid": "map-event-and-travel",
@@ -171,9 +174,10 @@ const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
   cameraMotion: "map-event-and-travel",
   effectMotion: "map-event-and-travel",
   conditionVisual: "map-event-and-travel",
-  scriptMotion: "map-event-and-travel",
+  scriptMotion: "map-event-and-travel", assignedNpcRoutes: "map-event-and-travel",
   storyTimer: "map-event-and-travel",
   screenEffects: "map-event-and-travel",
+  cameraShake: "map-event-and-travel",
   eventSaveCompletion: "save-restore-and-continuation",
   sourceAutoSaveSync: "save-restore-and-continuation",
   battleHandoff: "battle-and-return", sourceEncounter: "battle-and-return",

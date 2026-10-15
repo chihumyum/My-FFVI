@@ -1,3 +1,4 @@
+import { validateFieldMapAnimation } from "./field-map-animation.js";
 import { ActorAnimation } from "./actor-animation.js";
 import { cloneFieldActorFade } from "./field-actor-visibility.js";
 import { canonical } from "./canonical.js";
@@ -23,7 +24,8 @@ export type NativeFieldActorData = {
   /** Mapobject rows are a different identity domain from field-character assets. */
   mapObjectAsset?: { id: number; asset: string; source: Evidence };
   updateAttribute?: 2 | 10;
-  scope?: { kind: "map-npc"; group: string; entityId: string; source: Evidence };
+  mapAnimation?: import("./field-map-animation.js").FieldMapAnimationDefinition;
+  scope?: { kind: "map-npc" | "map-animated"; group: string; entityId: string; source: Evidence };
 };
 export type NativeFieldMotion = { from: Point; to: Point; elapsed: number; duration: number; manual: boolean };
 export type NativeFieldActor = {
@@ -95,12 +97,19 @@ function cloneEntity(entity: FieldPuppetHostActor): FieldPuppetHostActor {
 }
 function validateMetadata(data: NativeFieldActorData): void {
   if (data.mapObjectAsset !== undefined) {
-    if (data.fieldAssetId !== null || !data.scope || data.scope.kind !== "map-npc" ||
+    if (data.fieldAssetId !== null || !data.scope || !["map-npc", "map-animated"].includes(data.scope.kind) ||
         !data.scope.group || data.scope.entityId !== data.entity.id ||
         !data.mapObjectAsset.asset || !data.mapObjectAsset.source?.file || !data.mapObjectAsset.source.assetPath ||
         !data.scope.source?.file || !data.scope.source.assetPath || ![2, 10].includes(data.updateAttribute!))
       throw new Error("Unbound native map-object asset/scope");
     checkpointInteger(data.mapObjectAsset.id, 1, 0x7fffffff);
+    if (data.scope.kind === "map-animated") {
+      if (!data.mapAnimation) throw new Error("Missing animated map actor source metadata");
+      validateFieldMapAnimation(data.mapAnimation);
+      if (data.entity.character || data.mapAnimation.entityId !== data.entity.id ||
+          data.mapAnimation.group !== data.scope.group || data.mapAnimation.asset.id !== data.mapObjectAsset.id ||
+          data.mapAnimation.asset.asset !== data.mapObjectAsset.asset) throw new Error("Animated map actor binding changed");
+    } else if (data.mapAnimation !== undefined) throw new Error("NPC cannot grant an animated map actor scope");
     return;
   }
   if (data.scope !== undefined || data.updateAttribute !== undefined)
@@ -154,6 +163,7 @@ export function createNativeFieldActorProjection(
     if (input.entity.moving) throw new Error("Already moving native actor cannot be installed");
     const entity = cloneEntity(input.entity), data: NativeFieldActorData = {
       entity, fieldAssetId: input.fieldAssetId, charaZOffset: finite(input.charaZOffset),
+      ...(input.mapAnimation !== undefined ? { mapAnimation: structuredClone(input.mapAnimation) } : {}),
       ...(input.mapObjectAsset !== undefined ? { mapObjectAsset: structuredClone(input.mapObjectAsset) } : {}),
       ...(input.updateAttribute !== undefined ? { updateAttribute: input.updateAttribute } : {}),
       ...(input.scope !== undefined ? { scope: structuredClone(input.scope) } : {}),
@@ -272,7 +282,7 @@ function capture(host: NativeFieldActorEffectHost) {
     const actor = owner[id]!, native = actor.native!;
     return { id, actor, native, entity: native.entity, animation: native.entity.animation,
       character: native.entity.animation?.character, fieldAssetId: native.fieldAssetId, charaZOffset: native.charaZOffset,
-      metadata: canonical({ mapObjectAsset: native.mapObjectAsset ?? null, scope: native.scope ?? null,
+      metadata: canonical({ mapAnimation: native.mapAnimation ?? null, mapObjectAsset: native.mapObjectAsset ?? null, scope: native.scope ?? null,
         updateAttribute: native.updateAttribute ?? null }) };
   });
   return { snapshot, refs, fingerprint: canonical(serial(snapshot)) };

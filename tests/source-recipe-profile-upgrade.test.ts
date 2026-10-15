@@ -251,3 +251,27 @@ test("v3 exact declaration cannot authorize absent, unknown or unavailable perio
     await assert.rejects(f.run({ compiledDir: isolated, frameworkProfileUpgrade: f.proof }), /host unavailable: worldMap/);
   } finally { await rm(isolated, { recursive: true, force: true }); }
 });
+
+test("animated map host uses a separate exact additive v4 declaration and cannot grant source or media edits", async () => {
+  const f = await fixture(), marker = "web-field-animated-map-entities-v1";
+  for (const [url, value] of f.candidate) f.candidate.set(url, await seal({ ...value,
+    developmentProfile: { ...value.developmentProfile, mapAnimatedEntities: marker } }));
+  // Restore the dependency chain after the explicitly changed profile hashes.
+  const map = f.candidate.get(f.urls.sourceMap)!, world = f.candidate.get(f.urls.sourceWorld)!;
+  f.candidate.set(f.urls.sourceWorld, await seal({ ...world, maps: { ...world.maps,
+    [map.mapId]: { ...world.maps[map.mapId], contentHash: map.contentHash } } }));
+  const entry = f.candidate.get(f.urls.sourceEntry)!;
+  f.candidate.set(f.urls.sourceEntry, await seal({ ...entry, mapContentHash: map.contentHash,
+    worldCatalogHash: f.candidate.get(f.urls.sourceWorld)!.contentHash }));
+  const proof = { ...declaration(), kind: "compiled-framework-profile-upgrade-v4", markers: { ...markers, mapAnimatedEntities: marker } };
+  await assert.rejects(f.run({ frameworkProfileUpgrade: declaration() }), /identity\/profile\/media changed/);
+  const result = await f.run({ frameworkProfileUpgrade: proof });
+  assert.equal(result.report.frameworkProfileUpgrades.length, 3);
+  for (const row of result.report.frameworkProfileUpgrades) {
+    assert.equal(row.grantsSourceAdmission, false); assert.equal(row.saveMigration, false);
+    assert.ok(row.providers.some((p: any) => p.marker === "mapAnimatedEntities" && p.provider === "prepareFieldMapAnimations"));
+  }
+  const bad = structuredClone(f.candidate.get(f.urls.sourceWorld)!); bad.characters = { ...bad.characters, invented: {} };
+  f.candidate.set(f.urls.sourceWorld, await seal(bad));
+  await assert.rejects(f.run({ frameworkProfileUpgrade: proof }), /identity|dependency|media changed/i);
+});

@@ -25,10 +25,10 @@ const load = (name) => import(pathToFileURL(resolve(runtime, "src/core", name + 
 const [{ GameContentRepository }, { GameSession }, { GameFlow }, { FieldFadeState },
   { NewGameFieldEntry }, { createSourcePresentationContext }, { GameMapLoader },
   { createWebFieldMessageSequencePort }, { createWebFlatConditionLeaderActivityPort },
-  { createWebLogicalFieldEffectsHost }, { WEB_SOURCE_ENCOUNTER_POLICY }] = await Promise.all([
+  { createWebLogicalFieldEffectsHost }, { WEB_SOURCE_ENCOUNTER_POLICY }, { createWebFieldCameraShakePolicy }] = await Promise.all([
   load("game-content"), load("game-session"), load("game-flow"), load("field-fade"),
   load("new-game-field-entry"), load("source-presentation"), load("game-map-loader"), load("source-message-sequence"),
-  load("field-condition-activity"), load("field-logical-effects"), load("source-encounter-entry"),
+  load("field-condition-activity"), load("field-logical-effects"), load("source-encounter-entry"), load("field-camera-shake"),
 ]);
 const appBytes = await readFile(resolve(root, "apps/game/app.js"));
 assert.match(appBytes.toString(), /import \{ createWebFieldMessageSequencePort \} from "\/runtime\/core\/source-message-sequence\.js"/);
@@ -36,6 +36,8 @@ assert.match(appBytes.toString(), /sourceMessageSequence: createWebFieldMessageS
 assert.match(appBytes.toString(), /conditionLeaderActivity: createWebFlatConditionLeaderActivityPort\(\)/);
 assert.match(appBytes.toString(), /fieldEffects: createWebLogicalFieldEffectsHost\(\)/);
 assert.match(appBytes.toString(), /sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY/);
+assert.match(appBytes.toString(), /cameraShake: createWebFieldCameraShakePolicy\(\)/);
+assert.match(appBytes.toString(), /assignedNpcRoutes: "web-assigned-npc-route-grid-v1"/);
 const policyModuleSha256 = createHash("sha256").update(await readFile(resolve(runtime, "src/core/source-message-sequence.js"))).digest("hex");
 const directory = resolve(root, options.get("--content") ?? "build/content-packages");
 const consumed = new Map(), runtimeSha256 = await runtimeDigest(root, runtime);
@@ -67,6 +69,7 @@ const messageContext = sourceMessageSequence.prepare().context;
 const game = GameSession.prepareNewGame(content, catalog, map, battle, fade, presentation,
   { sourceMessageSequence, conditionLeaderActivity: createWebFlatConditionLeaderActivityPort(),
     fieldEffects: createWebLogicalFieldEffectsHost(), sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY,
+    cameraShake: createWebFieldCameraShakePolicy(), assignedNpcRoutes: "web-assigned-npc-route-grid-v1",
     battleHandoff: "prepared", audioReadiness: { isReady: () => true }, soundPresentation: { isPresented: () => true },
     transportationTimestamp: () => "639273600000000000" });
 const launch = entry.prepareLaunch(fade, game.newGamePreparation(true));
@@ -98,7 +101,8 @@ const report = { kind: "framework-source-route-check-v1", result: "running", pro
   maxElapsedMs,
   runtimeSha256, contentRefs: refs, messageContext, policyModuleSha256, messagePolicy: "createWebFieldMessageSequencePort (same production module as app)",
   runtimePolicies: { conditionLeaderActivity: "createWebFlatConditionLeaderActivityPort", fieldEffects: "createWebLogicalFieldEffectsHost",
-    sourceEncounter: WEB_SOURCE_ENCOUNTER_POLICY, battleHandoff: "prepared", sameProductionModulesAsApp: true },
+    sourceEncounter: WEB_SOURCE_ENCOUNTER_POLICY, cameraShake: "createWebFieldCameraShakePolicy",
+    assignedNpcRoutes: "web-assigned-npc-route-grid-v1", battleHandoff: "prepared", sameProductionModulesAsApp: true },
   sourceCampaignComplete: false, browserVerified: false,
   entryHash: content.contentHash, catalogHash: catalog.contentHash, battleHash: battle.contentHash,
   sourceEntryHash: content.developmentProfile.sourceContentHash,

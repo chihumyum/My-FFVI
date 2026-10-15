@@ -12,7 +12,7 @@ const hook = registerHooks({ resolve(specifier, context, next) {
   return next(specifier.startsWith("/runtime/") ? pathToFileURL(resolve(compiled, "src", specifier.slice(9))).href : specifier, context);
 } });
 let Renderer;
-try { ({ Renderer } = await import("../apps/game/renderer.js")); } finally { hook.deregister(); }
+try { ({ Renderer } = await import(pathToFileURL(root + "apps/game/renderer.js").href)); } finally { hook.deregister(); }
 const [{ fieldActorFactoryFixture }, { createFieldActorFactoryCandidate }, { createNativeFieldActorProjections, createNativeFieldActorProjection },
   { compileFieldNativeComposition }, { fieldCameraCellToWorld }, { ordinaryFieldCompositionRenderHost },
   { compileFieldActorView }, { projectFieldActorView }] = await Promise.all([
@@ -290,8 +290,34 @@ run("ordinary fading does not grant mounted actor alpha propagation", () => {
   assert.throws(()=>t.renderer.draw(t.game),/骑乘/);assert.equal(t.canvas.puts,0);assert.equal(t.canvas.draws.length,0);
 });
 
-await mkdir(root + "build/reports", { recursive: true });
-const report = { kind: "field-native-composition-ui", tests, passed: tests.length, rendererSha256: (await import("node:crypto")).createHash("sha256")
-  .update(await readFile(root + "apps/game/renderer.js")).digest("hex"), controlledCanvas: true, browserVerified: false, originalGameParityVerified: false };
-await writeFile(root + "build/reports/field-native-composition-ui-check.json", JSON.stringify(report, null, 2) + "\n");
-console.log(JSON.stringify({ result: "pass", checks: tests.length, controlledCanvas: true, browserVerified: false }));
+
+const { prepareFieldMapAnimations } = await load("src/core/field-map-animation.js");
+function animatedFixture() {
+ const t=fixture({host:true}),tilemap=structuredClone(t.f.tilemap),group=tilemap.data.layers[0];
+ group.visible=true;group.opacity=1;for(const layer of group.layers)Object.assign(layer,{visible:true,opacity:1,width:20,height:16,data:Array(320).fill(0)});
+ const flat=compileFrameworkFieldPresentation({policy:"framework-ordinary-field-flat-v1",sources:t.f.sources,tilemap,mapPackage:t.f.mapPackage,mapSize:{width:20,height:16},mapRange:t.f.map.mapRange,renderHost:ordinaryFieldCompositionRenderHost()});
+ t.content.map.nativeComposition=flat.composition;t.content.map.layers=group.layers;t.content.developmentProfile={fieldPresentation:flat.view.policy,mapAnimatedEntities:"web-field-animated-map-entities-v1"};t.content.entry={viewPlan:{isWorld:false}};
+ for(const actor of Object.values(t.actors)){const entity=actor.native.entity;entity.viewBinding={map:flat.view.contextId,layer:entity.layer,properties:projectFieldActorView(flat.view,entity.layer)};entity.transparentTextures={first:null,second:null};entity.visible=false;}
+ const asset=t.player.asset,source={file:"synthetic-map.bundle",assetPath:"Root/animated.json",pointer:"/layers/0/objects/0"},definition={kind:"source-field-animated-map-entity-v1",group:"entity_default",entityId:"500",sourceEntityId:500,source,sourceDirection:15,geometry:{x:48,y:64,width:16,height:16,layer:0},asset:{id:188,asset,animationAsset:asset.toUpperCase(),source},playOnAwake:true,collision:true,front:true,split:false,building:true,affected:true,zOffset:2};
+ const row=prepareFieldMapAnimations({definitions:[definition],policy:"web-field-animated-map-entities-v1",factory:t.f.factory,characters:t.f.characters,mapRange:t.f.map.mapRange,providers:t.f.input.providers,existingActorIds:Object.keys(t.actors)}).actors[0];
+ const actor=createNativeFieldActorProjection(row,t.f.map.mapRange,t.f.partyCatalog);t.actors[actor.id]=actor;
+ t.content.map.groups={entity_default:{entities:[{id:"500",kind:10,mapAnimation:structuredClone(definition)}]}};
+ return{...t,animated:actor};
+}
+run("explicit Web kind10 draws exact source Default without cardinal facing and keeps playback/native owner",()=>{
+ const t=animatedFixture(),actor=t.animated,entity=actor.native.entity,animation=actor.animation,before=animation.snapshot();
+ assert.equal(actor.direction,null);assert.equal(entity.character,false);t.renderer.draw(t.game);
+ assert.equal(t.canvas.puts,1);assert.equal(actor.native.entity,entity);assert.equal(actor.animation,animation);assert.deepEqual(animation.snapshot(),before);
+ assert.deepEqual(pixel(t,56,3),[255,0,0,255]);assert.ok(t.renderer.presentationOmissions.some(x=>x.kind==="web-animated-map-entity"&&x.actorId==="500"&&x.nativeParity===false));
+ entity.visible=false;t.renderer.draw(t.game);assert.deepEqual(pixel(t,56,3),[9,17,27,255]);entity.visible=true;t.renderer.draw(t.game);assert.deepEqual(pixel(t,56,3),[255,0,0,255]);
+});
+run("kind10 cannot grant itself Web display through its source definition or native actor",()=>{
+ const t=animatedFixture();delete t.content.developmentProfile.mapAnimatedEntities;
+ assert.throws(()=>t.renderer.draw(t.game),/Web显示策略/);assert.equal(t.canvas.puts,0);
+});
+run("foreign source entity refuses draw before publishing an image",()=>{
+ const t=animatedFixture();t.animated.native.mapAnimation.source.pointer="/layers/0/objects/99";
+ assert.throws(()=>t.renderer.draw(t.game),/Web显示策略/);assert.equal(t.canvas.puts,0);
+});
+const report={kind:"animated-map-entity-actual-renderer-v1",passed:tests.length,tests,controlledCanvas:true,browserVerified:false,nativeParity:false};
+await writeFile(resolve(root, "build/reports/field-native-composition-ui-check.json"),JSON.stringify(report,null,2)+"\n");console.log(JSON.stringify({passed:tests.length,controlledCanvas:true,browserVerified:false}));

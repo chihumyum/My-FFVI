@@ -35,6 +35,7 @@ import { assertSourceEntryProfiles, type SourceEntryProfileDependency } from "./
 import { FieldEffects, type FieldEffectCandidate, type FieldEffectCandidatePrepared } from "./field-effects.js";
 import { FieldEffectMap } from "./field-effect-map.js";
 import type { FieldTimerOriginContent } from "./field-story-runtime.js";
+import { fieldStoryRuntimeForNewMap } from "./field-story-runtime.js";
 export type WorldStateOwner = {
   current: FieldGameOptions;
   prepare(): { ports: FieldGameOptions; commit(): boolean };
@@ -145,7 +146,7 @@ export function worldFieldContent(
       actorEntry.plan.player.layer !== entry.layer || actorEntry.plan.player.direction !== entry.direction))
     throw new Error("Map actor PointIn is not bound to the destination entity");
   if (
-    !Number.isInteger(entry.x) ||
+    entry.direction === null || !Number.isInteger(entry.x) ||
     !Number.isInteger(entry.y) ||
     entry.x < 0 ||
     entry.y < 0 ||
@@ -204,6 +205,7 @@ export function worldFieldContent(
     // The package describes conditional normal-view capability. Geometry-only
     // previews cannot acquire a native camera lifecycle just by loading it.
     ...(sourceCamera && target.cameraHost ? { cameraHost: target.cameraHost } : {}),
+    ...(sourceCamera && target.npcRoutes ? { npcRoutes: target.npcRoutes } : {}),
     ...(sourceCamera && target.nativeNpcStandby ? { nativeNpcStandby: target.nativeNpcStandby } : {}),
     ...(sourceCamera && target.frameworkNpcActivity ? { frameworkNpcActivity: target.frameworkNpcActivity } : {}),
     ...(sourceCamera && target.frameworkRelayInteraction ? { frameworkRelayInteraction: target.frameworkRelayInteraction } : {}),
@@ -401,7 +403,7 @@ export class WorldSession {
       throw new Error("World checkpoint source/version mismatch");
     if ((snapshot.kind === "event-world-v1" || snapshot.kind === "event-world-v2") !==
         (snapshot.field.kind === "event-field-v1" || snapshot.field.kind === "event-field-v2" ||
-          snapshot.field.kind === "event-field-v3" || snapshot.field.kind === "event-field-v4"))
+          snapshot.field.kind === "event-field-v3" || snapshot.field.kind === "event-field-v4" || snapshot.field.kind === "event-field-v5"))
       throw new Error("World and field continuation formats disagree");
     let content = this.initial;
     const loc = snapshot.location;
@@ -697,7 +699,7 @@ export class WorldSession {
         new StaticAudioState(bgm),
         new StaticAudioState(environment),
         { ...(owned?.ports ?? {}), npcActivityClock: () => this.current === field,
-          ...(story ? { storyRuntimeSeed: structuredClone(story) } : {}),
+          ...(story ? { storyRuntimeSeed: fieldStoryRuntimeForNewMap(story) } : {}),
           ...(storyOrigin ? { storyTimerOrigin: structuredClone(storyOrigin) } : {}),
           ...(nativeActors ? { nativeActorPreparation: true } : {}),
           ...(walkEncounters ? { walkEncounters } : {}),
@@ -706,9 +708,11 @@ export class WorldSession {
           ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}),
           ...(this.owned?.current.transportationTimestamp ? { transportationTimestamp: this.owned.current.transportationTimestamp } : {}),
           ...(this.owned?.current.soundPresentation ? { soundPresentation: this.owned.current.soundPresentation } : {}),
+          ...(this.owned?.current.assignedNpcRoutes ? { assignedNpcRoutes: this.owned.current.assignedNpcRoutes } : {}),
           ...(this.owned?.current.sourceEncounter ? { sourceEncounter: this.owned.current.sourceEncounter } : {}),
           ...(this.owned?.current.sourceMessageSequence ? { sourceMessageSequence: this.owned.current.sourceMessageSequence } : {}),
           ...(this.owned?.current.conditionLeaderActivity ? { conditionLeaderActivity: this.owned.current.conditionLeaderActivity } : {}),
+          ...(this.owned?.current.cameraShake ? { cameraShake: this.owned.current.cameraShake } : {}),
           ...(this.owned?.current.audioReadiness ? { audioReadiness: this.owned.current.audioReadiness } : {}) },
         from.fader.fork(),
         from.cameraSnapshot ?? undefined,

@@ -147,6 +147,8 @@ export class ActorAnimation {
     next.start(key, loop ? 1 : 0, scale);
     this.state = next.state;
   }
+  /** Source PlayByPlayMode keeps the authored mode, on this same clock. */
+  playSource(key: string): void { this.start(key, null, 1); }
   /** Entity PlayAnimation with a null time scale, without Puppet's preceding Cue. */
   playEntity(key: string, loop: boolean): void {
     this.start(key, loop ? 1 : 0, 1);

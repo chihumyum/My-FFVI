@@ -1,3 +1,4 @@
+import { compileFieldAssignedRouteInstruction } from './field-assigned-route.js';
 import { decodeSourceSystemFlags, type SourceFormatFlagImportBinding } from "./source-system-flags.js";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
@@ -31,6 +32,7 @@ import { compileFieldSoundInstruction, fieldSoundMnemonics } from "./field-sound
 import { compileFieldBgmControlInstruction, fieldBgmControlMnemonics } from "./field-bgm-control.js";
 import { compileFieldTimerInstruction, fieldTimerMnemonics, fieldTimerSelectors } from "./field-timer.js";
 import { compileFieldScreenEffectInstruction, fieldScreenEffectMnemonics } from "./field-screen-effects.js";
+import { compileFieldShakeInstruction } from "./field-shake.js";
 import { compileFieldAutoSaveInstruction } from "./field-auto-save.js";
 import { compileFieldInternalClockInstruction } from "./field-internal-clock.js";
 import { compileSourceEncounterInstruction } from "./source-encounter.js";
@@ -142,6 +144,10 @@ export function decodeFieldOp(
     try { return { ...site, ...compileFieldScreenEffectInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
+  if (name === "Shake") {
+    try { return { ...site, ...compileFieldShakeInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   const timerSelector = name === "SysCall" && record(m.operands).sValues;
   if ((fieldTimerMnemonics as readonly string[]).includes(name) ||
       Array.isArray(timerSelector) && (fieldTimerSelectors as readonly unknown[]).includes(timerSelector[0])) {
@@ -174,6 +180,10 @@ export function decodeFieldOp(
   }
   if (fieldScriptMotionMnemonics.some(mnemonic => mnemonic === name)) {
     try { return { ...site, ...compileFieldScriptMotionInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === 'AssignMoveRoute') {
+    try { return { ...site, ...compileFieldAssignedRouteInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   const o = record(m.operands), i = list(o.iValues).map(integer),

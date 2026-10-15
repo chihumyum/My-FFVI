@@ -10,7 +10,8 @@ import {loadSourceContentSelection,loadSourceRecipePaths} from './source-content
 import {runtimeDigest} from './runtime-digest.mjs';
 import {compileSourcePrerequisites,validateSourcePrerequisiteInputs} from './compile-source-prerequisites.mjs';
 import {linkSourcePrerequisites} from './link-source-prerequisites.mjs';
-import {resolveSourceRecipeInputs,resolveCompiledBattleReference,createSourceWalkEvidenceReader} from './source-recipe-inputs.mjs';
+import {createSourceMapAnimationEvidenceReader} from './source-map-animation-evidence.mjs';
+import {resolveSourceRecipeInputs,resolveCompiledBattleReference,createSourceWalkEvidenceReader,createSourceNpcRouteEvidenceReader} from './source-recipe-inputs.mjs';
 
 const repository=resolve(import.meta.dirname,'..');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -133,7 +134,8 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     if(id!=='base')put('/content-packages/'+id+'/build-report.json',result.report);
     reports.push({id,report:result.report});
   };
-  const prerequisites=await compileSourcePrerequisites({root,compiledDir,logicalFieldEffects,periodicMaps});
+  const prerequisites=await compileSourcePrerequisites({root,compiledDir,logicalFieldEffects,periodicMaps,
+    mapAnimatedEntities:'web-field-animated-map-entities-v1'});
   const linked=await linkSourcePrerequisites({root,compiledDir,payloads:prerequisites.payloads,frameworkOptions:prerequisites.frameworkOptions});
   const sourceRead=async url=>linked.inputs.has(url)?structuredClone(linked.inputs.get(url)):readJson(url);
   for(const [url,value] of linked.payloads)payloads.set(url,value);
@@ -159,13 +161,19 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
   const candidateRead=async url=>url==='/content-batches/ordinary-battles/battle.json'
     ? structuredClone(battles.catalog):sourceRead(url);
   const sourceWalkEvidence=createSourceWalkEvidenceReader({root,compiledDir});
+  const sourceMapAnimationEvidence=createSourceMapAnimationEvidenceReader({root,compiledDir});
+  const sourceNpcRouteEvidence=createSourceNpcRouteEvidenceReader({root,compiledDir});
   const resolveRecipe=async path=>{
     const original=await recipe(path);
     const resolved=await resolveSourceRecipeInputs({root,compiledDir,recipePath:path,recipeBytes:original.raw,
-      readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence,battleRebindings,
-      frameworkProfileUpgrade:{kind:prerequisites.frameworkOptions.periodicPresentations?'compiled-framework-profile-upgrade-v3':prerequisites.frameworkOptions.logicalFieldEffects?'compiled-framework-profile-upgrade-v2':'compiled-framework-profile-upgrade-v1',
+      readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence,battleRebindings,sourceMapAnimationEvidence,sourceNpcRouteEvidence,
+      sourceMapAnimationAddition:{kind:'compiled-source-map-animation-import-addition-v1',compilerDigest:prerequisites.inputs.compilerDigest,
+        sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
+      sourceNpcRoutesAddition:{kind:'compiled-source-npc-route-evidence-addition-v1',compilerDigest:prerequisites.inputs.compilerDigest,
+        sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
+      frameworkProfileUpgrade:{kind:'compiled-framework-profile-upgrade-v4',
         compilerDigest:prerequisites.inputs.compilerDigest,markers:{
-          storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1',
+          storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1',mapAnimatedEntities:'web-field-animated-map-entities-v1',
           ...(prerequisites.frameworkOptions.logicalFieldEffects?{logicalFieldEffects:'web-logical-all-loop-field-effects-v1'}:{}),
           ...(prerequisites.frameworkOptions.periodicPresentations?{worldMap:'framework-world-map-flat-v1',fieldPresentation:'framework-ordinary-field-flat-v1'}:{})},
         ...(prerequisites.frameworkOptions.logicalFieldEffects?{logicalFieldEffects:prerequisites.frameworkOptions.logicalFieldEffects.catalog}:{})}});

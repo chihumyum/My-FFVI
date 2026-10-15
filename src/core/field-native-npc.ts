@@ -233,7 +233,7 @@ export function fieldNativeNpcRetirement(actors: readonly NativeFieldActorData[]
       if (actor.mapObjectAsset !== undefined) throw new Error("Map NPC is missing its lifecycle scope");
       continue;
     }
-    if (actor.scope.kind !== "map-npc" || actor.scope.entityId !== actor.entity.id || !actor.scope.group ||
+    if (!["map-npc", "map-animated"].includes(actor.scope.kind) || actor.scope.entityId !== actor.entity.id || !actor.scope.group ||
         !actor.mapObjectAsset || actor.fieldAssetId !== null)
       throw new Error("Unbound native NPC retirement scope");
     evidence(actor.scope.source); result.push(actor.entity.id);

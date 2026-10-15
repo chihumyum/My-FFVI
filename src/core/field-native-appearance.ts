@@ -62,7 +62,7 @@ function capture(host: NativeFieldAppearanceHost) {
     const outer = owner[actor.id]!, native = outer.native!;
     return { id: actor.id, outer, native, entity: native.entity, animation: native.entity.animation,
       character: native.entity.animation?.character, fieldAssetId: native.fieldAssetId, charaZOffset: native.charaZOffset,
-      metadata: canonical({ mapObjectAsset: native.mapObjectAsset ?? null, scope: native.scope ?? null,
+      metadata: canonical({ mapAnimation: native.mapAnimation ?? null, mapObjectAsset: native.mapObjectAsset ?? null, scope: native.scope ?? null,
         updateAttribute: native.updateAttribute ?? null }) };
   });
   return { snapshot, refs, fingerprint: canonical(snapshot.actors.map(serialEntity)) };

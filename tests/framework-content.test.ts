@@ -9,6 +9,7 @@ import { EventState } from "../src/core/event-state.js";
 import type { FieldContent, FieldEntity, Op } from "../src/field/types.js";
 import type { WorldMapContent } from "../src/field/world.js";
 import { sourceNewGameFixture } from "./fixtures/source-new-game.js";
+import { WEB_FIELD_MAP_ANIMATION, NATIVE_MAP_ANIMATION_HOST } from "../src/core/field-map-animation.js";
 
 function seal<T extends { contentHash: string }>(value: T): T {
   const { contentHash: _, ...payload } = value;
@@ -107,6 +108,36 @@ test("framework derivation preserves strict bytes and all gameplay inputs while 
   result.maps[1]!.scripts.reserved![0]!.index = 900;
   assert.notEqual(result.catalog.developmentProfile.omissions[0]!.reason, "mutated report");
   assert.notEqual(f.target().scripts.reserved![0]!.index, 900);
+});
+
+test("animated map policy is explicit: default and independent derivation retain the source host blocker", () => {
+  const f = fixture(), properties = Object.entries({ object_type: 10, entity_id: 500, asset_id: 188,
+    direction: 15, action_id: 0, script_id: 0, birdview_puppet: false, affected: true, collision: true,
+    front: true, split: false, building: false, play_on_awake: true, zoffset: 1,
+    link_object_id: 0, flight_altitude_ratio: 1 }).map(([name, value]) => ({ name, value }));
+  const group = compileEntityGroup("entity_animated", {
+    source: { file: "controlled-animation.bundle", assetPath: "Controlled/animated.json" },
+    data: { layers: [{ name: "BottomObject", objects: [{ x: 48, y: 64, width: 16, height: 16, properties }] }] },
+  }, { "mapobject.csv": [{ id: "188", asset_name: "animated" }] });
+  assert.ok(group.entities[0]!.mapAnimation);
+  assert.ok(group.blockers.some(issue => issue.reason === NATIVE_MAP_ANIMATION_HOST));
+  f.target().map!.groups!.entity_animated = group;
+  f.target().blockers.push(...group.blockers);
+  f.bind();
+  const before = structuredClone({ catalog: f.catalog, maps: f.maps, entry: f.entry });
+  const legacy = f.compile(), explicit = compileFrameworkContent(f.catalog, f.maps, f.entry,
+    { mapAnimatedEntities: WEB_FIELD_MAP_ANIMATION });
+  for (const value of [legacy.catalog, legacy.entry, ...legacy.maps])
+    assert.equal(value.developmentProfile.mapAnimatedEntities, undefined);
+  assert.ok(legacy.maps[1]!.blockers.some(issue => issue.reason === NATIVE_MAP_ANIMATION_HOST));
+  assert.ok(legacy.maps[1]!.map!.groups!.entity_animated!.blockers.some(issue => issue.reason === NATIVE_MAP_ANIMATION_HOST));
+  for (const value of [explicit.catalog, explicit.entry, ...explicit.maps])
+    assert.equal(value.developmentProfile.mapAnimatedEntities, WEB_FIELD_MAP_ANIMATION);
+  assert.equal(explicit.maps[1]!.blockers.some(issue => issue.reason === NATIVE_MAP_ANIMATION_HOST), false);
+  assert.equal(explicit.maps[1]!.map!.groups!.entity_animated!.blockers.some(issue => issue.reason === NATIVE_MAP_ANIMATION_HOST), false);
+  for (const policy of ["unknown", false, null]) assert.throws(() =>
+    compileFrameworkContent(f.catalog, f.maps, f.entry, { mapAnimatedEntities: policy as never }), /Unknown framework animated/);
+  assert.deepEqual({ catalog: f.catalog, maps: f.maps, entry: f.entry }, before);
 });
 
 const unsafe: { name: string; change(f: ReturnType<typeof fixture>): void; reason: RegExp }[] = [

@@ -24,6 +24,7 @@ export type DevelopmentProfile = {
   /** Ordinary source maps with explicit static RGBA character/layer display.
    * This does not grant native group-material or water-shader acceptance. */
   fieldPresentation?: "framework-ordinary-field-flat-v1";
+  mapAnimatedEntities?: "web-field-animated-map-entities-v1";
   npcActivity?: "framework-npc-area-v1";
   /** Explicit Web counter-range observer; source observer diagnostics remain. */
   relayInteraction?: "framework-relay-interaction-v1";

@@ -1,11 +1,13 @@
+import { compileFieldNpcRoutes } from './field-npc-route.js';
 import { bindSourceFormatFlags } from "./source-system-flags.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { loadCorpus } from "./corpus.js";
-import { hash, record } from "./content.js";
+import { canonical, hash, record } from "./content.js";
 import { bindMapPackages, compileMapGroups } from "./map-package.js";
 import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
 import { compileFieldBackgroundLayers, loadFieldBackgroundMedia } from "./field-background.js";
+import { importFieldAnimationNext, NATIVE_ANIMATION_JSON, type NativeAnimationJsonImport, type FieldAnimationImportObservation } from "./field-animation-import.js";
 import { bindTileAnimationRegions } from "./tile-animation.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { decodeFieldOp, decodeScriptLocals, decodeConditionVisualFlag } from "./field.js";
@@ -106,13 +108,14 @@ export function compileSourceWalkEncounterDependencies(reader: { row(table: stri
 export function compileWorldCharacter(
   raw: unknown,
   verify: (file: string, sha256: string) => void,
+  nativeJson?: NativeAnimationJsonImport,
 ) {
   const c = record(raw),
     animation = record(c.animation),
     source = animation.source as Evidence;
   const sprites: Character["sprites"] = {},
     animations: Character["animations"] = {},
-    issues: ContentIssue[] = [];
+    issues: ContentIssue[] = [], imports: FieldAnimationImportObservation[] = [];
   for (const [name, value] of Object.entries(record(c.sprites))) {
     const sprite = record(value) as Sprite;
     verify(text(sprite.file), text(sprite.sha256));
@@ -129,7 +132,7 @@ export function compileWorldCharacter(
   }
   if (record(animation.data).shader_type !== 0) {
     issues.push({ reason: "Unsupported character shader", source });
-    return { character: { sprites, animations, source }, issues };
+    return { character: { sprites, animations, source }, issues, imports };
   }
   const seen = new Set<string>();
   for (const [index, value] of array(
@@ -163,12 +166,14 @@ export function compileWorldCharacter(
         };
       });
       if (!frames.length) throw new Error("Empty animation");
+      const next = nativeJson ? importFieldAnimationNext(animation.data, source, index, nativeJson) : { next: text(a.next_anim_name), observation: undefined };
+      if (next.observation) imports.push(next.observation);
       animations[name] = {
         frames,
         duration: finite(a.play_speed),
         mode: z.number().int().parse(a.play_mode),
         flip: z.boolean().parse(a.is_reverse),
-        next: text(a.next_anim_name),
+        next: next.next,
       };
     } catch (error) {
       issues.push({
@@ -177,7 +182,7 @@ export function compileWorldCharacter(
       });
     }
   }
-  return { character: { sprites, animations, source }, issues };
+  return { character: { sprites, animations, source }, issues, imports };
 }
 
 export async function compileWorld(root: string) {
@@ -252,17 +257,25 @@ export async function compileWorld(root: string) {
     if (sha(snapshotFile(files, file)) !== digest)
       throw new Error("Changed world media: " + file);
   };
+  const sourceFiles = array(corpus.manifest.sources).map(record)
+    .map((s) => ({ file: text(s.file), sha256: text(s.sha256) }));
+  const sourceAnimations = new Map(corpus.assets.filter(asset => asset.source.assetPath.endsWith("/anim_info.json"))
+    .map(asset => [canonical(asset.source), asset]));
   const characters: WorldCatalog["characters"] = {},
-    characterIssues: WorldCatalog["characterIssues"] = {};
+    characterIssues: WorldCatalog["characterIssues"] = {},
+    characterImports: Record<string, FieldAnimationImportObservation[]> = {};
   for (const [key, value] of Object.entries(record(media.characters))) {
-    const result = compileWorldCharacter(value, verify);
+    const animation = record(record(value).animation), source = animation.source as NativeAnimationJsonImport["source"],
+      physical = sourceAnimations.get(canonical(source));
+    const nativeJson: NativeAnimationJsonImport | undefined = physical && hash(physical.data) === hash(animation.data)
+      ? { kind: NATIVE_ANIMATION_JSON, source, rawHash: hash(physical.data), sources: sourceFiles } : undefined;
+    const result = compileWorldCharacter(value, verify, nativeJson);
     characters[key] = result.character;
     characterIssues[key] = result.issues;
+    if (result.imports.length) characterImports[key] = result.imports;
   }
   const byId = new Map(corpus.assets.map((a) => [a.id, a])),
     packageMedia = record(media.packages);
-  const sourceFiles = array(corpus.manifest.sources).map(record)
-    .map((s) => ({ file: text(s.file), sha256: text(s.sha256) }));
   const compositionRenderHost = await loadFieldCompositionRenderHost(root, sourceFiles);
   const miscAssets = systemSource.assets.filter((asset) => asset.source.assetPath.endsWith("/serial_misc_assets.json"));
   if (miscAssets.length !== 1) throw new Error("Missing source puppet settings");
@@ -488,13 +501,14 @@ export async function compileWorld(root: string) {
           });
         if (entity.asset) {
           const character = characters[entity.asset];
-          for (const key of missingFieldPoses(character))
+          for (const key of entity.kind === 10 ? (character?.animations.Default ? [] : ["Default"]) : missingFieldPoses(character))
             group.blockers.push({
               reason: `Missing character pose ${entity.asset}/${key}`,
               source: entity.source,
             });
         }
       }
+    const npcRoutes = compileFieldNpcRoutes({ ...corpus, manifest: { parentSourceSetHash: text(corpus.manifest.parentSourceSetHash) } }, Number(binding.id)).catalog;
     const sourceWalkEncounters = compileSourceWalkEncounterDependencies(systemSource.reader, Number(binding.id));
     const value: Omit<WorldMapContent, "contentHash"> = {
       formatVersion: 1,
@@ -502,6 +516,7 @@ export async function compileWorld(root: string) {
       sourceSetHash: corpus.sourceSetHash,
       parentSourceSetHash: text(corpus.manifest.parentSourceSetHash),
       mediaSourceSetHash: text(media.sourceSetHash),
+      ...(npcRoutes && Object.keys(npcRoutes.routes).length ? { npcRoutes } : {}),
       mapId: Number(binding.id),
       areaId: Number(binding.areaId),
       name: binding.name,
@@ -555,7 +570,7 @@ export async function compileWorld(root: string) {
       .map((s) => ({ file: text(s.file), sha256: text(s.sha256) }))),
     treasureInventoryLimits,
     systemMessageSource: systemMessages.source,
-    characterIssues,
+    characterIssues, characterImports,
     minimap,
     bgm,
     environment,

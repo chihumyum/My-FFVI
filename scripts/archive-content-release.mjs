@@ -73,6 +73,15 @@ function mediaReferences(doc){
 }
 
 async function immutableWrite(file,raw){
+  // Repeated packages share most CAS objects. Verify the retained bytes
+  // before staging another full temporary copy of an already present object.
+  let retained;
+  try{retained=await lstat(file);}catch(error){if(error.code!=='ENOENT')throw error;}
+  if(retained){
+    assert.ok(retained.isFile()&&!retained.isSymbolicLink(),'Invalid immutable object');
+    assert.ok((await readFile(file)).equals(raw),'Immutable object bytes changed or conflicting serialization: '+file);
+    return false;
+  }
   await mkdir(dirname(file),{recursive:true});
   const temporary=file+'.'+randomUUID()+'.tmp';
   try{

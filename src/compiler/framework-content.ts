@@ -8,6 +8,7 @@ import type { SourceNewGameContent } from "../core/source-new-game.js";
 import type { EntityGroup, Evidence, FieldEntity } from "../field/types.js";
 import type { ContentIssue, WorldCatalog, WorldMapContent } from "../field/world.js";
 import { deriveFrameworkPeriodicContent, type FrameworkPeriodicAssessment } from "./framework-periodic-presentation.js";
+import { WEB_FIELD_MAP_ANIMATION } from "../core/field-map-animation.js";
 
 export type LogicalFieldEffectsDeclaration = {
   kind: "web-logical-field-effects-declaration-v1";
@@ -16,6 +17,7 @@ export type LogicalFieldEffectsDeclaration = {
   mapIds: readonly number[]; reason: string;
 };
 export type FrameworkContentOptions = {
+  mapAnimatedEntities?: typeof WEB_FIELD_MAP_ANIMATION;
   logicalFieldEffects?: { catalog: FieldEffectCatalog; declaration: LogicalFieldEffectsDeclaration };
   periodicPresentations?: readonly FrameworkPeriodicAssessment[];
 };
@@ -118,7 +120,7 @@ function eligibility(map: WorldMapContent, groupKey: string, group: EntityGroup,
     reasons.push("Entity has an interaction, script, collision, media or unknown property");
   if (!Number.isInteger(entity.layer) || entity.layer < 0 || entity.layer > 3 ||
       ![entity.x, entity.y, entity.width, entity.height].every(Number.isFinite) || entity.width <= 0 || entity.height <= 0 ||
-      !["up", "right", "down", "left"].includes(entity.direction))
+      (entity.direction === null || !["up", "right", "down", "left"].includes(entity.direction)))
     reasons.push("Entity placement is unresolved");
   let particleBlockers = new Set<string>();
   try {
@@ -176,8 +178,11 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (!initial || strictEntry.mapContentHash !== initial.contentHash)
     throw new Error("Framework strict entry/map binding mismatch");
 
-  if (Object.keys(options).some(key => key !== "logicalFieldEffects" && key !== "periodicPresentations"))
+  if (Object.keys(options).some(key => key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "mapAnimatedEntities"))
     throw new Error("Unknown framework derivation option");
+  if (options.mapAnimatedEntities !== undefined && options.mapAnimatedEntities !== WEB_FIELD_MAP_ANIMATION)
+    throw new Error("Unknown framework animated map entity policy");
+  const mapAnimatedEntities = options.mapAnimatedEntities;
   const logical = options.logicalFieldEffects === undefined ? undefined : structuredClone(options.logicalFieldEffects);
   if (logical) {
     if (Object.keys(logical).sort().join(",") !== "catalog,declaration") throw new Error("Invalid logical field effects option");
@@ -195,7 +200,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
     validateLogicalEffectCatalog(logical.catalog);
   }
   const derivedProfile = (sourceContentHash: string, local: DevelopmentOmission[]): DevelopmentProfile => ({
-    ...profile(sourceContentHash, local), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
+    ...profile(sourceContentHash, local), ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
   });
   const retained: FrameworkContentRetained[] = [], omissions: DevelopmentOmission[] = [], scriptReferences = new Set<string>();
   for (const map of strictMaps) referenceStrings(map.scripts, scriptReferences);
@@ -233,7 +238,12 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
         group.blockers = group.blockers.filter((issue) => !omittedBlocker(issue));
       }
     }
-    map.blockers = map.blockers.filter((issue) => !omittedBlocker(issue));
+    const mapAnimationAdmitted = (issue: ContentIssue) => mapAnimatedEntities === WEB_FIELD_MAP_ANIMATION && issue.reason === "Native animated map entity presentation/lifecycle is unbound" &&
+      Object.values(map.map?.groups ?? {}).some(group => group.entities.some(entity => entity.kind === 10 &&
+        entity.mapAnimation && !entity.mapAnimationBlockers?.length && canonical(entity.source) === canonical(issue.source)));
+    if (map.map) for (const group of Object.values(map.map.groups ?? {}))
+      group.blockers = group.blockers.filter(issue => !mapAnimationAdmitted(issue));
+    map.blockers = map.blockers.filter((issue) => !omittedBlocker(issue) && !mapAnimationAdmitted(issue));
     map.developmentOmissions = local.map(({ kind, group, entityId, source, reason }) =>
       ({ kind, group, entityId, source: structuredClone(source), reason }));
     map.limitations.push(LIMITATION);

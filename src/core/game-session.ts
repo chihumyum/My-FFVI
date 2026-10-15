@@ -68,10 +68,11 @@ export type GameCheckpoint = GameCheckpointBase & (
   { formatVersion: 4 } | { formatVersion: 5 | 6; walkEncounters: WalkEncounterSnapshot }
 );
 /** External observations are rebound by the host on load, never trusted from saves. */
-export type GameSessionRuntime = { sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
+export type GameSessionRuntime = { assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
   sourceMessageSequence?: NonNullable<FieldGameOptions["sourceMessageSequence"]>;
   conditionLeaderActivity?: NonNullable<FieldGameOptions["conditionLeaderActivity"]>;
+  cameraShake?: NonNullable<FieldGameOptions["cameraShake"]>;
   /** Host prepares battle and return media before committing the same session
    * candidate used by the synchronous development compatibility adapter. */
   battleHandoff?: "prepared";
@@ -216,6 +217,8 @@ export class GameSession {
     checkpointInteger(seed, 0, 0xffffffff);
     if (runtime.battleHandoff !== undefined && runtime.battleHandoff !== "prepared")
       throw new Error("Invalid session battle handoff mode");
+    if (runtime.assignedNpcRoutes !== undefined && runtime.assignedNpcRoutes !== 'web-assigned-npc-route-grid-v1')
+      throw new Error('Unknown assigned NPC route policy');
     if (runtime.sourceEncounterPolicy !== undefined && runtime.sourceEncounterPolicy !== WEB_SOURCE_ENCOUNTER_POLICY)
       throw new Error("Unknown source encounter runtime policy");
     this.preparedBattleHandoff = runtime.battleHandoff === "prepared";

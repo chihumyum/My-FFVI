@@ -1,3 +1,5 @@
+import { compileAssignedRouteProgram } from '../core/field-assigned-route.js';
+import { parseFieldNpcRouteCatalog } from '../core/field-npc-route.js';
 import type { Evidence, FieldEntity, Op, Site } from "../field/types.js";
 import type { SourceWalkEncounterDependencies, SourceWalkEncounterRowEvidence, WorldCatalog, WorldMapContent } from "../field/world.js";
 import { tableId } from "./table-id.js";
@@ -12,7 +14,7 @@ export type ContentDependencyRoot =
   | { kind: "script"; mapId: number; script: string };
 export type ContentDependencyEdge = {
   from: string;
-  kind: "map" | "entrance" | "script" | "entity-group" | "instruction" | "encounter" | "character";
+  kind: "map" | "entrance" | "script" | "entity-group" | "instruction" | "encounter" | "character" | "npc-route" | "audio";
   reference: string | number;
   target: string | null;
   resolution: "resolved" | "missing" | "ambiguous" | "outside-batch";
@@ -355,6 +357,25 @@ export function analyzeContentDependencies(input: {
           if (!integer(op.party, 1)) diagnose("encounter-id-invalid", `Invalid encounter identity ${op.party}`, at);
           referenceScript(from, map, op.continuation, op);
           break;
+        case 'assign-npc-route': {
+          try {
+            const routes=map.npcRoutes&&parseFieldNpcRouteCatalog(map.npcRoutes);
+            if(!routes||routes.mapId!==map.mapId||routes.sourceSetHash!==map.sourceSetHash||routes.parentSourceSetHash!==map.parentSourceSetHash)
+              throw new Error('Assigned route catalog is missing or belongs to another map/source');
+            const route=routes.routes[String(op.routeId)];edge(from,'npc-route',op.routeId,route?`${mapKey(map.mapId)}/npc-route:${op.routeId}`:null,route?'resolved':'missing',op);
+            if(!route){diagnose('assigned-route-missing','Missing package-local assigned route '+op.routeId,at);break;}
+            const targets=Object.values(map.map?.groups??{}).flatMap(g=>g.entities.filter(e=>[6,17].includes(e.kind)&&e.id===String(op.entityId)).map(e=>({g,e})));
+            if(targets.length!==1)diagnose('assigned-route-target-invalid','Assigned route target source NPC is missing or ambiguous',at);
+            for(const target of targets){referenceGroup(from,map,target.g.name,op);if(target.e.nativeNpc?.controller!=='wait')diagnose('assigned-route-target-invalid','Assigned route requires source Wait NPC startup',at);}
+            for(const instruction of compileAssignedRouteProgram(route).instructions){
+              for(const reason of instruction.blockers)diagnose('assigned-route-action-blocked',`Route ${route.id} instruction ${instruction.index}: ${reason}`,{...at,source:instruction.source});
+              if(instruction.action?.kind==='play-se'){const id=instruction.action.soundId,found=Object.hasOwn(catalog.se?.tracks??{},String(id));
+                edge(`${from}/npc-route:${route.id}/instruction:${instruction.index}`,'audio',id,found?`se:${id}`:null,found?'resolved':'missing',instruction.source);
+                if(!found)diagnose('assigned-route-audio-missing','Missing assigned route SE '+id,{...at,source:instruction.source});}
+            }
+          }catch(error){diagnose('assigned-route-catalog-invalid',error instanceof Error?error.message:String(error),at);}
+          break;
+        }
         case "source-encounter": {
           try { parseSourceEncounterCommand(op.command); }
           catch (error) { diagnose("source-encounter-command-invalid", error instanceof Error ? error.message : String(error), at); }

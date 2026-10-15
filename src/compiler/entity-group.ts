@@ -2,6 +2,8 @@ import { z } from "zod";
 import { record } from "./content.js";
 import { tableId } from "./table-id.js";
 import { MINIMAP_ICON_TYPES } from "../core/minimap.js";
+import { compileFieldMapAnimation } from "./field-map-animation.js";
+import { NATIVE_MAP_ANIMATION_HOST } from "../core/field-map-animation.js";
 import { compileNpc } from "./npc.js";
 import { compileFieldEffectBoard, fieldEffectCompilationBlockers } from "./field-effects.js";
 import { compileFieldNativeNpc } from "./field-native-npc.js";
@@ -40,7 +42,9 @@ export function compileEntityGroup(
   tables: Record<string, unknown>,
   messages: Record<string, unknown> = {},
   tileSize = 16,
+  importProfile?: "source-map-animation-legacy-audit-v1",
 ): EntityGroup {
+  const legacyAnimation = importProfile === "source-map-animation-legacy-audit-v1";
   const entities: FieldEntity[] = [],
     blockers: EntityGroup["blockers"] = [];
   const data = record(asset.data);
@@ -92,7 +96,7 @@ export function compileEntityGroup(
           p = entityProperties(o.properties),
           kind = integer(p.object_type);
         const issue = (reason: string) => blockers.push({ reason, source });
-        if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 17, 18, 19, 27].includes(kind))
+        if (![0, 1, 2, 3, 4, 5, 6, 7, 8, ...(legacyAnimation ? [] : [10]), 11, 13, 17, 18, 19, 27].includes(kind))
           issue(`Unsupported entity kind ${kind}`);
         // Kind 11 has a distinct shared-particle/board owner. Recovering the
         // board does not admit its Unity particle and material providers.
@@ -199,7 +203,7 @@ export function compileEntityGroup(
           ? text(row("script.csv", scriptId).script_name)
           : null;
         const image =
-          (kind === 6 || kind === 17) && assetId
+          (kind === 6 || kind === 17 || kind === 10 && !legacyAnimation) && assetId
             ? text(row("mapobject.csv", assetId).asset_name)
             : null;
         // MapManager.CreateEntity cases 6 and 17 share PropertyNpc and
@@ -210,7 +214,7 @@ export function compileEntityGroup(
             : null;
         npc?.blockers.forEach(issue);
         const mapObject =
-          kind === 5 ? compileInteraction(p, script, tables, messages) : null;
+          kind === 5 || kind === 10 && !legacyAnimation ? compileInteraction(p, script, tables, messages) : null;
         mapObject?.blockers.forEach(issue);
         // Message failures stop the action, not the whole entity group. An
         // explicit message=false instruction can still use this reward binding.
@@ -238,7 +242,7 @@ export function compileEntityGroup(
             Direction
           >
         )[String(kind === 8 || kind === 5 || kind === 7 ? 0 : (p.direction ?? 0))];
-        if (!direction) issue("Unsupported entity direction");
+        if ((kind !== 10 || legacyAnimation) && !direction) issue("Unsupported entity direction");
         const width = finite(o.width) / tileSize,
           height = finite(o.height) / tileSize;
         if (width <= 0 || height <= 0) issue("Unsupported entity bounds");
@@ -250,12 +254,17 @@ export function compileEntityGroup(
           try { relay = compileFieldRelay({ group: name, entityId: id, layer: layerId, object: o, properties: p, source }); }
           catch (error) { issue(error instanceof Error ? error.message : String(error)); }
         }
+        const mapAnimation = legacyAnimation ? { definition: null, blockers: [] } : compileFieldMapAnimation({ group: name, object: o,
+          entity: { id, kind, layer: layerId, source }, properties: p, tables });
+        if (kind === 10 && !legacyAnimation) { issue(NATIVE_MAP_ANIMATION_HOST); mapAnimation.blockers.forEach(issue); }
         const nativeNpc = compileFieldNativeNpc({ group: name, object: o,
           entity: { id, kind, layer: layerId, source }, properties: p, tables });
         entities.push({
           id,
           ...(moveArea ? { moveArea } : {}),
           ...(relay ? { relay } : {}),
+          ...(mapAnimation.definition ? { mapAnimation: mapAnimation.definition } : {}),
+          ...(mapAnimation.blockers.length ? { mapAnimationBlockers: mapAnimation.blockers } : {}),
           ...(nativeNpc.definition ? { nativeNpc: nativeNpc.definition } : {}),
           ...(nativeNpc.blockers.length ? { nativeNpcBlockers: nativeNpc.blockers } : {}),
           objectId: integer(p.object_id ?? 0),
@@ -322,7 +331,7 @@ export function compileEntityGroup(
           y: finite(o.y) / tileSize - (o.gid && kind !== 1 ? height : 0),
           width,
           height,
-          direction: direction ?? "down",
+          direction: kind === 10 && !legacyAnimation ? null : direction ?? "down",
           asset: image,
           script,
           collision: kind === 19 ? integer(p.collision_type) : null,

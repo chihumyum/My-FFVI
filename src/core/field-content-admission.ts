@@ -3,7 +3,7 @@ import type { FieldContent, Op, Site } from "../field/types.js";
 export const fieldProviders = Object.freeze([
   "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
-  "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceLeader", "scriptShop", "storyTimer", "screenEffects", "sourceAutoSaveSync",
+  "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "assignedNpcRoutes", "sourceLeader", "scriptShop", "storyTimer", "screenEffects", "cameraShake", "sourceAutoSaveSync",
 ] as const);
 export type FieldProvider = typeof fieldProviders[number];
 export type FieldProviderStatus = "available" | "missing" | "unknown";
@@ -52,8 +52,10 @@ const codes: Record<FieldCapability, string> = {
   eventSaveCompletion: "FIELD_EVENT_SAVE_COMPLETION", battleHandoff: "FIELD_BATTLE_HANDOFF",
   sourceLeader: "FIELD_SOURCE_LEADER_PROVIDER", scriptShop: "FIELD_SCRIPT_SHOP_PROVIDER",
   storyTimer: "FIELD_STORY_TIMER_PROVIDER", screenEffects: "FIELD_SCREEN_EFFECTS_PROVIDER",
+  cameraShake: "FIELD_CAMERA_SHAKE_PROVIDER",
   sourceAutoSaveSync: "FIELD_SOURCE_AUTO_SAVE_SYNC_PROVIDER",
   sourceEncounter: "FIELD_SOURCE_ENCOUNTER_PROVIDER",
+  assignedNpcRoutes: "FIELD_ASSIGNED_NPC_ROUTE_PROVIDER",
   conditionVisual: "FIELD_CONDITION_VISUAL_CONTEXT", scriptMotion: "FIELD_SCRIPT_MOTION_PROVIDER",
 };
 
@@ -196,6 +198,9 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     case "field-color-fade": case "field-flash":
       add("screenEffects", "Source screen effect requires its declared Web policy and known field screen host");
       break;
+    case "field-shake":
+      add("cameraShake", "Source camera shake requires the explicit Web presentation stream and actual normal field camera host");
+      break;
     case "field-party-query": add("puppetRoster", "Missing field party query roster provider"); break;
     case "field-sound": {
       const command = commandOf(op);
@@ -221,6 +226,7 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       if (Object.hasOwn(op, "sourceAutoSave")) add("sourceAutoSaveSync",
         "Native AutoSave leader/player/camera synchronization is unassessed; the explicit Web barrier saves existing owners", "deferred");
       break;
+    case "assign-npc-route": add("assignedNpcRoutes", "Assigned NPC route requires an explicit source-bound Web controller"); break;
     case "source-encounter":
       add("sourceEncounter", "Source encounter requires an explicit selection, native player synchronization and captured FootInfo host");
       add("battleHandoff", "Battle preparation/return host is unavailable", "deferred");

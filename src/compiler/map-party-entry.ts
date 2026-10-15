@@ -90,7 +90,7 @@ export function compileMapPartyEntry(tables: Record<string, unknown>, mapId: num
           [layer.x ?? 0, layer.y ?? 0, layer.offsetx ?? 0, layer.offsety ?? 0].some((n) => n !== 0))
         throw new Error("Unsupported map party entry source transform");
       if (kind === 0) {
-        if (!Number.isInteger(entity.x) || !Number.isInteger(entity.y) || entity.width !== 1 || entity.height !== 1 ||
+        if (entity.direction === null || !Number.isInteger(entity.x) || !Number.isInteger(entity.y) || entity.width !== 1 || entity.height !== 1 ||
             entity.layer < 0 || entity.layer > 3 || entity.objectId === undefined ||
             !["1", "2", "4", "8"].includes(String(p.direction)))
           throw new Error("Unsupported map party entry PointIn shape");

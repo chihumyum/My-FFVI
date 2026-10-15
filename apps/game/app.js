@@ -1,5 +1,6 @@
 import { syncFieldMessageView } from "./source-message-view.js";
 import { createWebFieldMessageSequencePort } from "/runtime/core/source-message-sequence.js";
+import { createWebFieldCameraShakePolicy } from "/runtime/core/field-camera-shake.js";
 import { createWebFlatConditionLeaderActivityPort } from "/runtime/core/field-condition-activity.js";
 import { createWebLogicalFieldEffectsHost } from "/runtime/core/field-logical-effects.js";
 import { InventoryView } from "./inventory-view.js";
@@ -91,10 +92,14 @@ let contents = new GameContentRepository(readGameJson, contentProfile);
 const runtime = {
   // Source slots and entry ordering are retained; this seed mapping and
   // deferred media-first publication are explicit Web policies, not Unity RNG.
+  assignedNpcRoutes: "web-assigned-npc-route-grid-v1",
   sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY, sourceMessageSequence: createWebFieldMessageSequencePort(),
   // Explicit flat Web component/ancestor policy, rebound from each candidate's
   // trusted native factory. Saved activeSelf never grants this capability.
   conditionLeaderActivity: createWebFlatConditionLeaderActivityPort(),
+  // Fixed-field presentation sampling and RNG are an explicit Web policy.
+  // The original Unity global RNG/wall-clock re-seeding is not emulated.
+  cameraShake: createWebFieldCameraShakePolicy(),
   fieldEffects: createWebLogicalFieldEffectsHost(),
   battleHandoff: "prepared", audioReadiness: { isReady: (track) => audio.isReady(track) },
   soundPresentation: { isPresented: (voice, track) => audio.isSoundPresented(voice, track) },

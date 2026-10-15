@@ -1,3 +1,6 @@
+import { captureAssignedRoutes, restoreAssignedRoutes, type AssignedRoutesCheckpoint, type RestoredAssignedRoute } from './field-assigned-route-checkpoint.js';
+import { WEB_ASSIGNED_ROUTE_POLICY, compileAssignedRouteProgram, createAssignedRouteCursor, settleAssignedRouteCursor, searchAssignedRouteGrid, assignedRouteLineClear, type WebAssignedRoutePolicy, type AssignedRouteProgram, type AssignedRouteCursor } from './field-assigned-route.js';
+import { parseFieldNpcRouteCatalog } from './field-npc-route.js';
 import { parseSourceEncounterCommand, selectSourceEncounterSlot } from "./source-encounter.js";
 import { captureSourceEncounterFootBackground } from "./source-encounter-foot.js";
 import { WEB_SOURCE_ENCOUNTER_POLICY, type FieldSourceEncounterPort,
@@ -75,6 +78,7 @@ import { FieldEffectMap } from "./field-effect-map.js";
 import { fieldPuppetContextFromActors, type FieldActorFactoryCandidate, type FieldActorFactoryBindings, type FieldActorFactoryCatalog } from "./field-actor-factory.js";
 import { captureFieldNativeCheckpoint, restoreFieldNativeCheckpoint,
   type FieldNativeCheckpoint, type FieldNativeCheckpointContext } from "./field-native-checkpoint.js";
+import { mapAnimationGroupBlockers, mapAnimationSelector, prepareFieldMapAnimations, WEB_FIELD_MAP_ANIMATION, type FieldMapAnimationDefinition } from "./field-map-animation.js";
 import { prepareFieldNativeNpcGroup, fieldNativeNpcRetirement, fieldNativeNpcStandbyPosition, fieldNativeNpcSelectorBinding,
   type FieldNativeNpcDefinition } from "./field-native-npc.js";
 import { bindFieldNpcActivities, fieldNpcGroupBlockers } from "./field-npc-activity-host.js";
@@ -120,7 +124,9 @@ import { FieldColorFilterState, WEB_CLEAR_COLOR_FILTER, startFieldFlash, pollFie
   type FieldFlashTask } from "./field-screen-effects.js";
 import { WEB_FIELD_STORY_RUNTIME, hasFieldStoryRuntime, fieldScreenEffectsBinding,
   bindFieldStoryTimer, fieldTimerOriginContent, restoreFieldStoryRuntime,
+  bindFieldStoryShake, restoreFieldStoryShake,
   type FieldStoryRuntimeSnapshot, type FieldTimerOriginContent } from "./field-story-runtime.js";
+import { FieldCameraShakeState, type FieldCameraShakePolicy } from "./field-camera-shake.js";
 import type { FieldCameraPathProgress } from "./field-camera-path.js";
 import { assertFieldEventSaveAdmission } from "./field-auto-save.js";
 import { audioReadinessTrack, pollAudioReadiness, type AudioReadinessPort } from "./audio-readiness.js";
@@ -247,6 +253,8 @@ export type FieldCheckpoint = FieldCheckpointState & (
   | { kind: "event-field-v2"; viewPlan: MapEntryViewPlan; execution: FieldEventCheckpoint }
   | { kind: "idle-field-v12"; viewPlan?: MapEntryViewPlan; npcActivities: FieldNpcActivitiesCheckpoint }
   | { kind: "event-field-v3"; viewPlan?: MapEntryViewPlan; npcActivities: FieldNpcActivitiesCheckpoint; execution: FieldEventCheckpoint }
+  | { kind: "idle-field-v14"; assignedNpcRoutes: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint }
+  | { kind: "event-field-v5"; assignedNpcRoutes: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint; execution: FieldEventCheckpoint }
   | { kind: "idle-field-v13"; storyRuntime: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint }
   | { kind: "event-field-v4"; storyRuntime: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint; execution: FieldEventCheckpoint }
 );
@@ -340,11 +348,15 @@ export type PreparedFieldSourceEncounter = {
   commitWith(publishBattle: () => void): void;
 };
 export type FieldGameOptions = {
+  /** Explicit Web controller, never native search/raycast admission. */
+  assignedNpcRoutes?: WebAssignedRoutePolicy;
   /** Trusted explicit Web selection policy; absent remains native-unknown. */
   sourceEncounter?: FieldSourceEncounterPort;
   /** Internal unpublished restore shell; it must never allocate/replay FX. */
   deferLogicalEffectRestore?: true;
   storyRuntimeSeed?: FieldStoryRuntimeSnapshot;
+  /** Explicit Web presentation stream. Saved state and source code cannot grant it. */
+  cameraShake?: FieldCameraShakePolicy;
   storyTimerOrigin?: FieldTimerOriginContent;
   /** Explicit particle/material host. Content parsing never grants one. */
   fieldEffects?: FieldEffectRuntimeHost;
@@ -442,7 +454,9 @@ export class FieldGame {
       actorMotion: presence(actorMotion), cameraMotion: presence(cameraMotion), effectMotion: "missing",
       storyTimer: presence(this.timerState !== null),
       screenEffects: presence(this.ordinaryScreenEffectsAvailable),
+      cameraShake: presence(this.cameraShakeAvailable),
       eventSaveCompletion: "unknown", battleHandoff: "unknown",
+      assignedNpcRoutes: presence(this.options.assignedNpcRoutes === WEB_ASSIGNED_ROUTE_POLICY),
       sourceEncounter: presence(this.options.sourceEncounter?.policy === WEB_SOURCE_ENCOUNTER_POLICY &&
         !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.camera &&
         typeof this.options.sourceEncounter.prepare === "function"),
@@ -544,7 +558,11 @@ export class FieldGame {
   private cameraEventActive = false;
   readonly cameraActorId = "native:camera";
   get cameraSnapshot(): FieldCameraState | null { return this.camera?.snapshot() ?? null; }
-  cameraProjection(viewport: FieldCameraViewport) { return this.camera?.projection(viewport) ?? null; }
+  cameraProjection(viewport: FieldCameraViewport) {
+    const shake = this.cameraShakeOffset;
+    return this.camera?.projection({ ...viewport, effectOffset: {
+      x: viewport.effectOffset.x + shake.x, y: viewport.effectOffset.y + shake.y } }) ?? null;
+  }
   /** MapSetup selects the actual player after PointIn and party placement.
    * The constructor and checkpoint restoration do not replay that lifecycle. */
   initializeMapCamera(): void {
@@ -587,6 +605,195 @@ export class FieldGame {
   private readonly npcBindings: Map<string, FrameworkNpcActivityBinding>;
   private readonly npcActivities = new Map<string, NpcActivityRuntime>();
   private nextNpcEvent = 1;
+  private readonly assignedRoutes = new Map<string, { actor: Actor; entity: NonNullable<Actor['native']>['entity'];
+    definition: FieldNativeNpcDefinition; catalog: NonNullable<FieldContent['npcRoutes']>; fingerprint: string;
+    program: AssignedRouteProgram; site: Extract<Op,{kind:'assign-npc-route'}>; programName: string; webPc: number; assignmentFingerprint: string; cursor: AssignedRouteCursor;
+    motion: Motion|null; lerp: FieldScriptLerpProgress|null }>();
+  private readonly assignedRouteJournal: { phase: 'assigned'|'replaced'|'execute'|'completed'|'restored'; actorId:string; routeId:number; instructionIndex:number; site:Site; atMilliseconds:number }[]=[];
+  get assignedRouteExecutions(){return structuredClone(this.assignedRouteJournal);}
+  get assignedRouteSnapshot() { return structuredClone([...this.assignedRoutes].map(([id,r])=>({id,
+    routeId:r.program.routeId, site:r.site, cursor:r.cursor}))); }
+  private get assignedCheckpoint(): AssignedRoutesCheckpoint|null {
+    if(this.options.assignedNpcRoutes!==WEB_ASSIGNED_ROUTE_POLICY||!this.content.npcRoutes)return null;
+    const rows=[...this.assignedRoutes.values()].map(r=>{this.assertAssignedRoute(r);return {actorId:r.actor.id,
+      group:r.definition.group,routeId:r.program.routeId,script:r.programName,index:r.webPc,assignment:r.site,
+      cursor:r.cursor,lerp:r.lerp,moving:r.actor.motion!==null};});
+    const saved=captureAssignedRoutes(this.content.npcRoutes,rows);
+    const checked=restoreAssignedRoutes(saved,this.content,this.entityList,this.time,this.options.assignedNpcRoutes);
+    this.validateAssignedLerps(checked.rows,this.time);
+    return saved;
+  }
+  private validateAssignedLerps(rows:RestoredAssignedRoute[],time:number):void {
+    if(!rows.some(r=>r.row.lerp))return;
+    if(!this.nativeActorProviders||!this.camera||!this.content.cameraHost)throw new Error('Missing assigned Lerp restore host');
+    const c=this.camera.snapshot(),snapshot=readNativeFieldActors(this.actors,{id:this.cameraActorId,position:c.dummy.position,layer:c.dummy.layer});
+    for(const r of rows){if(!r.row.lerp)continue;const action=r.program.instructions[r.row.cursor.index]!.action!;
+      if(action.kind!=='move-lerp')throw new Error('Invalid assigned Lerp source');
+      const result=projectFieldScriptLerp(snapshot,this.nativeActorProviders(),r.row.actorId,{kind:'lerp',x:action.x,y:action.y,
+        layer:(action.layer+1) as 1|2|3,duration:action.duration,arcHeight:0,animation:action.animation},this.content.cameraHost.mapRange,r.row.lerp,time/1000);
+      const prior=snapshot.actors.find(a=>a.id===r.row.actorId)!,next=result.snapshot.actors.find(a=>a.id===r.row.actorId)!;
+      if(canonical(prior.position)!==canonical(next.position)||prior.layer!==next.layer)
+        throw new Error('Saved assigned Lerp pose disagrees with its source cursor/clock');
+    }
+  }
+  private installAssignedRoutes(rows:RestoredAssignedRoute[],time:number):void {
+    if(!this.content.npcRoutes)throw new Error('Missing assigned route restore catalog');
+    this.validateAssignedLerps(rows,time);
+    for(const r of rows){const actor=this.actors[r.row.actorId];
+      if(!actor?.native||actor.native.scope?.kind!=='map-npc'||actor.native.scope.group!==r.row.group||
+         canonical(actor.native.scope.source)!==canonical(r.definition.source)||!this.activeGroups.has(r.row.group)||
+         (actor.motion!==null)!==r.row.moving||this.npcActivities.has(actor.id))throw new Error('Restored assigned route lost its existing native actor');
+      this.assignedRouteJournal.push({phase:'restored',actorId:actor.id,routeId:r.program.routeId,instructionIndex:r.row.cursor.index,site:r.site,atMilliseconds:time});
+      this.assignedRoutes.set(actor.id,{actor,entity:actor.native.entity,definition:r.definition,catalog:this.content.npcRoutes,
+        fingerprint:canonical(this.content.npcRoutes),program:r.program,site:r.site,programName:r.row.script,webPc:r.row.index,assignmentFingerprint:canonical(r.site),cursor:r.row.cursor,motion:actor.motion,lerp:r.row.lerp});
+    }
+  }
+  private assertAssignedRoute(record: (typeof this.assignedRoutes extends Map<string,infer R> ? R : never)): void {
+    const a=record.actor;
+    if(this.options.assignedNpcRoutes!==WEB_ASSIGNED_ROUTE_POLICY || this.assignedRoutes.get(a.id)!==record ||
+       this.actors[a.id]!==a || a.native?.entity!==record.entity || a.motion!==record.motion ||
+       this.content.npcRoutes!==record.catalog || canonical(record.catalog)!==record.fingerprint ||
+       this.content.scripts[record.programName]?.[record.webPc]!==record.site || canonical(record.site)!==record.assignmentFingerprint ||
+       !this.activeGroups.has(record.definition.group)) throw new Error('Stale assigned NPC route authority');
+  }
+  private assignNpcRoute(op: Extract<Op,{kind:'assign-npc-route'}>, programName:string, webPc:number): void {
+    if(!Number.isSafeInteger(webPc)||webPc<0||this.content.scripts[programName]?.[webPc]!==op)
+      throw new Error('Assigned route lost its actual Web program/opcode binding');
+    if(this.options.assignedNpcRoutes!==WEB_ASSIGNED_ROUTE_POLICY || !this.content.npcRoutes ||
+       !this.content.cameraHost || !this.nativeActorProviders || !this.camera || !this.nativeRuntime)
+      throw new Error('Assigned NPC route requires its explicit Web host and source catalog');
+    const catalog=parseFieldNpcRouteCatalog(this.content.npcRoutes), range=this.content.cameraHost.mapRange;
+    if(catalog.mapId!==this.content.map.identity?.mapId || catalog.sourceSetHash!==this.content.sourceSetHash ||
+       catalog.parentSourceSetHash!==this.content.parentSourceSetHash) throw new Error('Assigned NPC route catalog/source mismatch');
+    if(this.content.cameraHost.loop.horizontal || this.content.cameraHost.loop.vertical)
+      throw new Error('Assigned NPC route wrap-grid provider is unavailable');
+    const entities=this.entityList.filter(e=>this.npcDefinition(e)?.sourceEntityId===op.entityId);
+    if(entities.length!==1)throw new Error('Assigned NPC route target is absent or ambiguous in active source groups');
+    const source=entities[0]!, definition=this.npcDefinition(source)!, actor=this.actors[source.id];
+    if(definition.controller!=='wait'||!actor?.native||!actor.animation||actor.layer===null||
+       actor.native.scope?.kind!=='map-npc'||actor.native.scope.group!==definition.group||
+       canonical(actor.native.scope.source)!==canonical(definition.source)||!this.activeGroups.has(definition.group)||
+       this.npcActivities.has(actor.id)||actor.mount||actor.native.entity.riding||actor.native.entity.childEntityObject!=='absent')
+      throw new Error('Assigned NPC route requires the exact active ordinary source Wait NPC');
+    const previous=this.assignedRoutes.get(actor.id);
+    if(previous)this.assertAssignedRoute(previous);
+    if(actor.motion && !previous)throw new Error('Assigned NPC route cannot cancel another movement owner');
+    if(this.interaction?.entityId===actor.id)throw new Error('Assigned NPC route cannot replace an event-held controller');
+    const route=catalog.routes[String(op.routeId)];if(!route)throw new Error('Missing package-local assigned NPC route');
+    const program=compileAssignedRouteProgram(route),cursor=createAssignedRouteCursor(program);
+    // Complete preflight precedes the native Init/Show pose publication.
+    for(const instruction of program.instructions){const action=instruction.action!,animation=actor.animation.clone();
+      if(action.kind==='cue-animation')animation.cue(action.animation,action.frame);
+      if(action.kind==='play-animation')animation.play(action.animation,action.loops<=0,action.speed);
+      if(action.kind==='move-to'||action.kind==='move-lerp'){
+        if(!Number.isInteger(action.x)||!Number.isInteger(action.y)||action.x<range.x||action.y<range.y||
+           action.x>=range.x+range.width||action.y>=range.y+range.height)throw new Error('Assigned NPC route target outside supported map range');
+        if(action.animation)animation.playEntity(action.animation,true);
+      }
+      if(action.kind==='set-variable')new EventState(this.eventState.snapshot()).write(action.ref,action.value);
+      if(action.kind==='compare-variable')this.eventState.read(action.ref);
+      if(action.kind==='play-se'){
+        if(!this.options.audioReadiness||!this.options.soundPresentation)throw new Error('Assigned route sound requires audio readiness/presentation providers');
+        FieldSoundState.restore(this.se.snapshot(),this.content.se).play({kind:'play',soundId:action.soundId,
+          asynchronous:true,handleSlot:null,fadeSeconds:action.fade,seekSeconds:action.seek,pan:action.pan},this.content.se);
+      }
+    }
+    const publish=prepareNativeFieldActorProjection({readActors:()=>this.actors,readProviders:this.nativeActorProviders,
+      readCamera:()=>{const state=this.camera!.snapshot();return {id:this.cameraActorId,position:state.dummy.position,layer:state.dummy.layer};}},
+      (snapshot,providers)=>{
+        let next=projectFieldPuppetActorEffects([{kind:'show',actor:actor.id}],snapshot,providers);
+        const target=next.actors.find(a=>a.id===actor.id)!;
+        target.position=fieldNativeMapObjectPosition({...definition.geometry,width:16,height:16},range,
+          this.content.nativeNpcStandby?fieldNativeNpcStandbyPosition(this.content.nativeNpcStandby):undefined);
+        target.layer=definition.geometry.layer+9;target.direction=definition.direction;
+        target.animation!.look(definition.direction);
+        return projectFieldPuppetActorEffects([{kind:'apply-view-properties',actor:actor.id},{kind:'attach-transparent',actor:actor.id}],next,providers);
+      },()=>{if(this.assignedRoutes.get(actor.id)!==previous)throw new Error('Stale assigned route replacement');});
+    publish(); actor.motion=null;
+    this.assignedRouteJournal.push({phase:previous?'replaced':'assigned',actorId:actor.id,routeId:program.routeId,instructionIndex:0,site:op,atMilliseconds:this.time});
+    this.assignedRoutes.set(actor.id,{actor,entity:actor.native.entity,definition,catalog:this.content.npcRoutes,
+      fingerprint:canonical(this.content.npcRoutes),program,site:op,programName,webPc,assignmentFingerprint:canonical(op),cursor,motion:null,lerp:null});
+  }
+  private advanceAssignedRoute(record: (typeof this.assignedRoutes extends Map<string,infer R> ? R : never)): void {
+    this.assertAssignedRoute(record);
+    const {actor,program,site}=record, instruction=program.instructions[record.cursor.index]!,action=instruction.action!;
+    if(this.interaction?.entityId===actor.id)return;
+    const cursor={...record.cursor};let complete=false;
+    const delayed=(seconds:number)=>{if(seconds>0&&cursor.elapsed<seconds){cursor.elapsed=Math.fround(cursor.elapsed+Math.fround(.01));return true;}return false;};
+    const canStep=(a:Point,b:Point,layer:number)=>{
+      const direction:Direction=b.x>a.x?'right':b.x<a.x?'left':b.y>a.y?'down':'up';
+      const start=this.collision(a,layer),end=this.collision(b,layer);
+      if(start===null||end===null)throw new Error('Assigned route collision provider is unresolved');
+      return !!((start&BIT[direction])&&(end&BIT[OPPOSITE[direction]]))&&!this.occupied([b],layer,actor.id);
+    };
+    const move=()=>{
+      if(action.kind!=='move-to')throw new Error('Expected assigned MoveTo');
+      if(actor.layer!==action.layer)throw new Error('Assigned MoveTo cross-layer path provider is unavailable');
+      if(actor.motion)return false;
+      const range=this.content.cameraHost!.mapRange, from={x:actor.x,y:actor.y},to={x:action.x,y:action.y};
+      const path=searchAssignedRouteGrid(from,to,range,(a,b)=>canStep(a,b,action.layer));
+      if(path===null)return false;if(!path.length)return true;
+      const toCell=path[0]!,direction:Direction=toCell.x>from.x?'right':toCell.x<from.x?'left':toCell.y>from.y?'down':'up';
+      const plan=prepareFieldScriptMove({kind:'move',direction,steps:1,speedId:action.speedId,animation:action.animation},from,
+        {loop:this.content.cameraHost!.loop,magnification:1});
+      const playback=actor.animation!.clone();playback.move(direction,plan.animationSecondsPerCell,action.animation||undefined);playback.frame();
+      actor.motion={from,to:toCell,elapsed:0,duration:plan.secondsPerCell*1000,manual:false};
+      if(!action.animation)actor.direction=direction;actor.animation=playback;
+      record.motion=actor.motion;return false;
+    };
+    if(cursor.phase==='execute')switch(action.kind){
+      case 'delay':complete=!delayed(action.seconds);break;
+      case 'move-to':{const wasMoving=actor.motion!==null;const reached=move();complete=reached||!wasMoving&&actor.motion!==null;break;}
+      case 'move-lerp':{
+        if(!assignedRouteLineClear({x:actor.x,y:actor.y},{x:action.x,y:action.y},(a,b)=>canStep(a,b,action.layer)))break;
+        const op:Extract<Op,{kind:'field-script-motion'}>={...site,kind:'field-script-motion',command:{kind:'lerp',x:action.x,y:action.y,
+          layer:(action.layer+1) as 1|2|3,duration:action.duration,arcHeight:0,animation:action.animation}};
+        const next=this.prepareActorScriptLerp(actor,op,null);record.lerp=next.progress;complete=true;break;
+      }
+      case 'play-animation':if(!delayed(action.delay)){const animation=actor.animation!.clone();animation.play(action.animation,action.loops<=0,action.speed);animation.frame();actor.animation=animation;complete=true;}break;
+      case 'cue-animation':{const animation=actor.animation!.clone();animation.cue(action.animation,action.frame);animation.frame();actor.animation=animation;complete=true;break;}
+      case 'show':case 'hide':if(!delayed(action.delay)){
+        if(action.kind==='show'&&this.occupied([{x:actor.x,y:actor.y}],actor.layer!,actor.id))break;
+        this.prepareActorControl(actor.id,{...site,kind:'actor-visibility',visible:action.kind==='show',
+          timing:{durationSeconds:action.duration,delaySeconds:0}})();complete=true;
+      }break;
+      case 'play-se':
+        // Flat Web policy declares this registered NPC component/ancestor active;
+        // source activeSelf remains the same live entity visibility owner.
+        if(!actor.native!.entity.visible)throw new Error('Inactive assigned route sound actor');
+        if(!this.soundResourceReady(action.soundId))break;
+        this.executeSound({...site,kind:'field-sound',command:{kind:'play',soundId:action.soundId,asynchronous:true,handleSlot:null,
+          fadeSeconds:action.fade,seekSeconds:action.seek,pan:action.pan}});complete=true;break;
+      case 'set-variable':this.eventState.write(action.ref,action.value);complete=true;break;
+      case 'compare-variable':complete=true;break;
+    }else switch(action.kind){
+      case 'move-to':complete=move();break;
+      case 'move-lerp':{
+        if(!record.lerp)throw new Error('Missing assigned route Lerp cursor');
+        const start=fieldCameraWorldToCell(this.content.cameraHost!.mapRange,record.lerp.start);
+        const from={x:start.x+this.content.cameraHost!.mapRange.x,y:start.y+this.content.cameraHost!.mapRange.y};
+        if(!assignedRouteLineClear(from,{x:action.x,y:action.y},(a,b)=>canStep(a,b,action.layer)))throw new Error('Assigned Lerp collision context changed during interpolation');
+        const op:Extract<Op,{kind:'field-script-motion'}>={...site,kind:'field-script-motion',command:{kind:'lerp',x:action.x,y:action.y,
+          layer:(action.layer+1) as 1|2|3,duration:action.duration,arcHeight:0,animation:action.animation}};
+        const next=this.prepareActorScriptLerp(actor,op,record.lerp);record.lerp=next.progress;complete=next.flow==='next';break;
+      }
+      case 'play-animation':
+        complete=action.loops<=0;
+        if(!complete&&!actor.animation!.playing){cursor.loops++;complete=cursor.loops>=action.loops;
+          if(!complete){const animation=actor.animation!.clone();animation.play(action.animation,false,action.speed);animation.frame();actor.animation=animation;}}
+        break;
+      case 'show':complete=actor.native!.entity.fadeAlpha>=1;break;
+      case 'hide':complete=actor.native!.entity.fadeAlpha<=0;break;
+      case 'compare-variable':complete=this.eventState.read(action.ref)===action.value;break;
+      default:complete=true;
+    }
+    if(cursor.phase==='execute'&&complete)this.assignedRouteJournal.push({phase:'execute',actorId:actor.id,routeId:program.routeId,instructionIndex:cursor.index,site,atMilliseconds:this.time});
+    const oldIndex=record.cursor.index;
+    record.cursor=settleAssignedRouteCursor(program,cursor,complete,site.loop);
+    if(record.cursor.index!==oldIndex||record.cursor.phase==='execute')record.lerp=null;
+    if(record.cursor.completed){this.assignedRouteJournal.push({phase:'completed',actorId:actor.id,routeId:program.routeId,instructionIndex:cursor.index,site,atMilliseconds:this.time});record.lerp=null;this.assignedRoutes.delete(actor.id);}
+  }
+
   get npcActivitySnapshot(): Record<string, FieldNpcActivityState> {
     return structuredClone(Object.fromEntries([...this.npcActivities].map(([id, value]) => [id, value.state])));
   }
@@ -625,9 +832,9 @@ export class FieldGame {
       ({ ...actor, animation: actor.animation?.snapshot() ?? null })) },
       metadata: Object.values(this.actors).filter((actor) => actor.native).map((actor) => ({
         id: actor.id, motion: actor.motion, steps: actor.steps, fieldAssetId: actor.native!.fieldAssetId,
-        charaZOffset: actor.native!.charaZOffset, mapObjectAsset: actor.native!.mapObjectAsset ?? null,
+        charaZOffset: actor.native!.charaZOffset, mapAnimation: actor.native!.mapAnimation ?? null, mapObjectAsset: actor.native!.mapObjectAsset ?? null,
         scope: actor.native!.scope ?? null, updateAttribute: actor.native!.updateAttribute ?? null,
-      })), npcActivities: this.npcActivitySnapshot });
+      })), npcActivities: this.npcActivitySnapshot, assignedRoutes: this.assignedRouteSnapshot });
   }
   private collisionSwitches: FieldPuppetCollisionState = projectFieldPuppetCollision(true);
   private entityUpdateMask = 3;
@@ -658,9 +865,9 @@ export class FieldGame {
         player.layer !== this.player.layer || player.direction !== this.player.direction || player.asset !== this.player.asset)
       throw new Error("Native factory player disagrees with prepared PointIn");
     const lifecycle = mapLifecycle ? structuredClone(mapLifecycle) : null;
-    const groups = new Set(this.entityList.filter((entity) => [6, 17].includes(entity.kind)).map((entity) => this.npcDefinition(entity)?.group));
+    const groups = new Set(this.entityList.filter((entity) => [6, 10, 17].includes(entity.kind)).map((entity) => entity.kind === 10 ? entity.mapAnimation?.group : this.npcDefinition(entity)?.group));
     for (const group of groups) {
-      const entities = this.entityList.filter((entity) => [6, 17].includes(entity.kind) && this.npcDefinition(entity)?.group === group);
+      const entities = this.entityList.filter((entity) => [6, 10, 17].includes(entity.kind) && (entity.kind === 10 ? entity.mapAnimation?.group : this.npcDefinition(entity)?.group) === group);
       projected.push(...this.prepareNativeNpcActors(entities, group, projected.map((actor) => actor.id), lifecycle, providers()));
     }
     this.publishNativeActors(projected, candidate.bindings, catalog, providers, controlContext, animationKeys, lifecycle);
@@ -682,6 +889,10 @@ export class FieldGame {
       readContext: () => ({ catalog: puppetCatalog, checkpoint: this.partyActors!.checkpoint(), bindings,
         ...this.options.puppetRoster!.current(), entities: this.entityList.filter((e) => (published ? this.actors : detachedActors)[e.id])
           .flatMap((e) => {
+            if (e.kind === 10) {
+              const binding = mapAnimationSelector(this.mapAnimationDefinition(e));
+              return binding ? [binding] : [];
+            }
             const definition = this.npcDefinition(e);
             if (!definition) throw new Error("Native map selector requires its source NPC identity");
             const binding = fieldNativeNpcSelectorBinding(definition);
@@ -762,11 +973,17 @@ export class FieldGame {
   get fade() { return this.fader.projection; }
   private timerState: FieldTimerSnapshot | null = null;
   private colorFilterState: FieldColorFilterState | null = null;
+  private cameraShakeState: FieldCameraShakeState | null = null;
   private timerOrigin: FieldTimerOriginContent | undefined;
   get storyRuntimeSnapshot(): FieldStoryRuntimeSnapshot | null {
-    return this.timerState ? { kind: WEB_FIELD_STORY_RUNTIME, timer: cloneFieldTimer(this.timerState),
-      colorFilter: this.colorFilterState!.snapshot() } : null;
+    if (!this.timerState) return null;
+    const timer = cloneFieldTimer(this.timerState), colorFilter = this.colorFilterState!.snapshot(),
+      cameraShake = this.cameraShakeState?.snapshot();
+    return cameraShake ? { kind: "web-field-story-runtime-v2", timer, colorFilter, cameraShake }
+      : { kind: WEB_FIELD_STORY_RUNTIME, timer, colorFilter };
   }
+  get cameraShakeOffset(): Point { return this.cameraShakeState?.projection ?? { x: 0, y: 0 }; }
+  private get cameraShakeAvailable(): boolean { return !!this.cameraShakeState && !!this.camera && this.ordinaryScreenEffectsAvailable; }
   get storyTimerOrigin(): FieldTimerOriginContent | undefined {
     return this.timerState?.active ? structuredClone(this.timerOrigin) : undefined;
   }
@@ -897,10 +1114,13 @@ export class FieldGame {
     readonly se: FieldSoundState = new FieldSoundState(),
   ) {
     if (hasFieldStoryRuntime(content)) {
-      const seed = options.storyRuntimeSeed && restoreFieldStoryRuntime(options.storyRuntimeSeed, content, options.storyTimerOrigin);
+      const seed = options.storyRuntimeSeed && restoreFieldStoryRuntime(options.storyRuntimeSeed, content, options.storyTimerOrigin, options.cameraShake);
       this.timerState = seed?.timer ?? createFieldTimer(WEB_FIELD_TIMER_POLICY, content.parentSourceSetHash);
       this.colorFilterState = seed ? FieldColorFilterState.restore(seed.colorFilter, fieldScreenEffectsBinding(content))
         : new FieldColorFilterState(fieldScreenEffectsBinding(content), { ...WEB_CLEAR_COLOR_FILTER });
+      this.cameraShakeState = seed?.kind === "web-field-story-runtime-v2"
+        ? restoreFieldStoryShake(seed.cameraShake, content, options.cameraShake!)
+        : options.cameraShake ? new FieldCameraShakeState(content.parentSourceSetHash, options.cameraShake) : null;
       if (this.timerState.active) this.timerOrigin = this.timerState.active.binding.mapContentHash === content.contentHash
         ? fieldTimerOriginContent(content) : options.storyTimerOrigin;
     } else if (options.storyRuntimeSeed || options.storyTimerOrigin) throw new Error("Story runtime host profile is unavailable");
@@ -1091,6 +1311,7 @@ export class FieldGame {
     entities: readonly FieldEntity[],
   ): Record<string, Actor> {
     const actors: Record<string, Actor> = {};
+    if (entities.some(entity => entity.kind === 10)) throw new Error("Animated map entities require the actual shared native actor owner");
     for (const e of entities)
       if ((e.kind === 6 || e.kind === 17) && e.asset)
         actors[e.id] = {
@@ -1103,7 +1324,7 @@ export class FieldGame {
           mount: null,
           motion: null,
           steps: 0,
-          animation: this.initialAnimation(e.asset, e.direction, null),
+          animation: this.initialAnimation(e.asset, e.direction!, null),
         };
     return actors;
   }
@@ -1118,7 +1339,7 @@ export class FieldGame {
     const blockers = passiveEffectsGroupBlockers({ ...group, blockers: fieldRelayGroupBlockers({ ...group,
       blockers: fieldNpcGroupBlockers(group, this.content.frameworkNpcActivity) }, this.content.frameworkRelayInteraction) },
       this.content.frameworkPassiveEffects);
-    return logicalEffectsGroupBlockers({ ...group, blockers }, this.content);
+    return mapAnimationGroupBlockers({ ...group, blockers: logicalEffectsGroupBlockers({ ...group, blockers }, this.content) }, this.content);
   }
   private prepareNpcActivities(actors: readonly Actor[], restored?: RestoredFieldNpcActivities,
     entities: readonly FieldEntity[] = this.entityList): Map<string, NpcActivityRuntime> {
@@ -1159,6 +1380,8 @@ export class FieldGame {
       throw new Error("Stale NPC activity Field, actor or movement authority");
   }
   private isAutonomousMotion(actor: Actor): boolean {
+    const assigned=this.assignedRoutes.get(actor.id);
+    if(assigned){this.assertAssignedRoute(assigned);return assigned.motion===actor.motion;}
     if (!actor.motion) return false;
     const record = this.npcActivities.get(actor.id);
     if (!record || record.state.holder) return false;
@@ -1171,11 +1394,20 @@ export class FieldGame {
       return [id, { program: r.binding.program, state: r.state, actor: r.actor }];
     }));
   }
+  private mapAnimationDefinition(entity: FieldEntity): FieldMapAnimationDefinition {
+    const d = entity.mapAnimation;
+    if (this.content.developmentProfile?.mapAnimatedEntities !== WEB_FIELD_MAP_ANIMATION || entity.kind !== 10 ||
+        entity.mapAnimationBlockers?.length || !d || d.entityId !== entity.id || d.asset.asset !== entity.asset ||
+        d.geometry.layer !== entity.layer || canonical(d.source) !== canonical(entity.source))
+      throw new Error("Animated map entity lacks its trusted Web/source lifecycle");
+    return d;
+  }
   private prepareNativeNpcActors(entities: readonly FieldEntity[], group: string | undefined,
     existingActorIds: readonly string[], lifecycle: NonNullable<FieldGame["nativeRuntime"]>["mapLifecycle"],
     providers: FieldPuppetHostProviders): NativeFieldActor[] {
     const npcs = entities.filter((entity) => [6, 17].includes(entity.kind));
-    if (!npcs.length) return [];
+    const animated = entities.filter(entity => entity.kind === 10);
+    if (!npcs.length && !animated.length) return [];
     if (!lifecycle || !this.content.cameraHost || !this.options.partyAppearance)
       throw new Error("Native map-local actor factory is unresolved");
     const definitions = npcs.map((entity) => {
@@ -1187,11 +1419,19 @@ export class FieldGame {
         throw new Error("Native NPC is not bound to its source entity group");
       return definition;
     });
-    return prepareFieldNativeNpcGroup({ definitions, factory: lifecycle.factory, characters: this.content.characters,
-      mapRange: this.content.cameraHost.mapRange, providers, existingActorIds,
+    const animatedDefinitions = animated.map(entity => {
+      const d = this.mapAnimationDefinition(entity);
+      if (d.group !== group) throw new Error("Animated map entity belongs to another group");
+      return d;
+    });
+    const animatedActors = prepareFieldMapAnimations({ definitions: animatedDefinitions, policy: WEB_FIELD_MAP_ANIMATION,
+      factory: lifecycle.factory, characters: this.content.characters, mapRange: this.content.cameraHost.mapRange, providers,
+      existingActorIds, ...(this.content.nativeNpcStandby ? { standbyAnchorPosition: fieldNativeNpcStandbyPosition(this.content.nativeNpcStandby) } : {}) }).actors;
+    return [...animatedActors, ...prepareFieldNativeNpcGroup({ definitions, factory: lifecycle.factory, characters: this.content.characters,
+      mapRange: this.content.cameraHost.mapRange, providers, existingActorIds: [...existingActorIds, ...animatedActors.map(actor => actor.entity.id)],
       ...(this.content.frameworkNpcActivity ? { activityPolicy: this.content.frameworkNpcActivity.policy } : {}),
       ...(this.content.nativeNpcStandby ? { standbyAnchorPosition: fieldNativeNpcStandbyPosition(this.content.nativeNpcStandby) } : {}),
-    }).actors.map((actor) => createNativeFieldActorProjection(actor, this.content.cameraHost!.mapRange,
+    }).actors].map((actor) => createNativeFieldActorProjection(actor, this.content.cameraHost!.mapRange,
       this.options.partyAppearance!.catalog, this.transportationPresentation));
   }
   /** Source SetEventEntityGroup appends entities; it does not replace existing groups. */
@@ -1644,7 +1884,8 @@ export class FieldGame {
     return cloneSourcePresentationContext(this.options.sourcePresentation?.context() ?? null);
   }
   private nativeCheckpointContext(bindings: FieldActorFactoryBindings, factory: FieldActorFactoryCatalog,
-    providers: FieldPuppetHostProviders, autonomousMotions?: FieldNativeCheckpointContext["autonomousMotions"]): FieldNativeCheckpointContext {
+    providers: FieldPuppetHostProviders, autonomousMotions?: FieldNativeCheckpointContext["autonomousMotions"],
+    assignedMotions?: FieldNativeCheckpointContext["assignedMotions"]): FieldNativeCheckpointContext {
     if (!this.partyActors || !this.options.partyAppearance || !this.content.cameraHost)
       throw new Error("Native checkpoint requires bound party, media and camera owners");
     const npcs = this.entityList.filter((entity) => [6, 17].includes(entity.kind)).map((entity) => {
@@ -1658,7 +1899,13 @@ export class FieldGame {
     return { mapRange: this.content.cameraHost.mapRange, bindings, factory,
       partyCatalog: this.options.partyAppearance.catalog, partyCheckpoint: this.partyActors.checkpoint(),
       characters: this.content.characters, npcs, providers,
+      animated: this.entityList.filter(entity => entity.kind === 10).map(entity => {
+        const d = this.mapAnimationDefinition(entity);
+        if (!this.activeGroups.has(d.group)) throw new Error("Animated checkpoint group is not active");
+        return d;
+      }), ...(this.content.developmentProfile?.mapAnimatedEntities ? { animatedPolicy: this.content.developmentProfile.mapAnimatedEntities } : {}),
       ...(autonomousMotions ? { autonomousMotions } : {}),
+      ...(assignedMotions ? { assignedMotions } : {}),
       ...(this.transportationPresentation ? { transportationPresentation: this.transportationPresentation } : {}) };
   }
   private nativeCheckpoint(continuation = false): FieldCheckpoint["native"] {
@@ -1678,7 +1925,8 @@ export class FieldGame {
         secondsPerCell: sourceNpcSecondsPerCell(r.binding.program.sourceSpeedEnum) }]] : [];
     }));
     return { actors: captureFieldNativeCheckpoint(this.actors, this.nativeCheckpointContext(
-      this.nativeActorBindings, this.nativeRuntime.mapLifecycle.factory, this.nativeActorProviders(), autonomousMotions)),
+      this.nativeActorBindings, this.nativeRuntime.mapLifecycle.factory, this.nativeActorProviders(), autonomousMotions,
+      this.assignedCheckpoint ? restoreAssignedRoutes(this.assignedCheckpoint,this.content,this.entityList,this.time,this.options.assignedNpcRoutes).motions : undefined)),
       collision: { ...this.collisionSwitches }, updateMask: this.entityUpdateMask,
       cameraOffset: { ...this.cameraOffset }, completedScript: lifecycle?.finished ? {
         name: lifecycle.name, leaderId: lifecycle.leaderId, assignments: [...lifecycle.assignments] } : null };
@@ -1721,6 +1969,11 @@ export class FieldGame {
     };
     const viewPlan = this.content.entry.viewPlan && structuredClone(this.content.entry.viewPlan);
     const storyRuntime = this.storyRuntimeSnapshot;
+    const assignedNpcRoutes=this.assignedCheckpoint;
+    if(assignedNpcRoutes) return execution ? {...snapshot,kind:'event-field-v5',assignedNpcRoutes,
+      ...(storyRuntime?{storyRuntime}:{}),...(npcActivities?{npcActivities}:{}),...(viewPlan?{viewPlan}:{}),execution}
+      : {...snapshot,kind:'idle-field-v14',assignedNpcRoutes,...(storyRuntime?{storyRuntime}:{}),
+        ...(npcActivities?{npcActivities}:{}),...(viewPlan?{viewPlan}:{})};
     if (storyRuntime) return execution ? { ...snapshot, kind: "event-field-v4", storyRuntime,
       ...(viewPlan ? { viewPlan } : {}), ...(npcActivities ? { npcActivities } : {}), execution }
       : { ...snapshot, kind: "idle-field-v13", storyRuntime,
@@ -1804,17 +2057,18 @@ export class FieldGame {
         Object.values(content.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id)))))
       throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
     const s = structuredClone(raw);
-    const hasStory = s.kind === "idle-field-v13" || s.kind === "event-field-v4";
-    const hasActivities = s.kind === "idle-field-v12" || s.kind === "event-field-v3" || hasStory && Object.hasOwn(s, "npcActivities");
-    const continuation = s.kind === "event-field-v1" || s.kind === "event-field-v2" || s.kind === "event-field-v3" || s.kind === "event-field-v4";
-    const hasView = s.kind === "idle-field-v11" || s.kind === "event-field-v2" || (hasActivities || hasStory) && Object.hasOwn(s, "viewPlan");
+    const hasAssigned = s.kind === "idle-field-v14" || s.kind === "event-field-v5";
+    const hasStory = s.kind === "idle-field-v13" || s.kind === "event-field-v4" || hasAssigned && Object.hasOwn(s,"storyRuntime");
+    const hasActivities = s.kind === "idle-field-v12" || s.kind === "event-field-v3" || (hasStory || hasAssigned) && Object.hasOwn(s, "npcActivities");
+    const continuation = s.kind === "event-field-v1" || s.kind === "event-field-v2" || s.kind === "event-field-v3" || s.kind === "event-field-v4" || s.kind === "event-field-v5";
+    const hasView = s.kind === "idle-field-v11" || s.kind === "event-field-v2" || (hasActivities || hasStory || hasAssigned) && Object.hasOwn(s, "viewPlan");
     checkpointKeys(
       s,
       "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,se,fade,camera,native" +
-        (continuation ? ",execution" : "") + (hasView ? ",viewPlan" : "") + (hasActivities ? ",npcActivities" : "") + (hasStory ? ",storyRuntime" : ""),
+        (continuation ? ",execution" : "") + (hasView ? ",viewPlan" : "") + (hasActivities ? ",npcActivities" : "") + (hasStory ? ",storyRuntime" : "") + (hasAssigned ? ",assignedNpcRoutes" : ""),
     );
-    if (!["idle-field-v10", "idle-field-v11", "idle-field-v12", "idle-field-v13", "event-field-v1", "event-field-v2", "event-field-v3", "event-field-v4"].includes(s.kind) ||
-        s.contentHash !== content.contentHash || hasActivities !== (content.frameworkNpcActivity !== undefined) || hasStory !== hasFieldStoryRuntime(content))
+    if (!["idle-field-v10", "idle-field-v11", "idle-field-v12", "idle-field-v13", "idle-field-v14", "event-field-v5", "event-field-v1", "event-field-v2", "event-field-v3", "event-field-v4"].includes(s.kind) ||
+        s.contentHash !== content.contentHash || hasAssigned !== (options.assignedNpcRoutes === WEB_ASSIGNED_ROUTE_POLICY && content.npcRoutes !== undefined) || hasActivities !== (content.frameworkNpcActivity !== undefined) || hasStory !== hasFieldStoryRuntime(content))
       throw new Error("Field checkpoint source/version mismatch");
     if (hasStory && (s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime.colorFilter?.tween)
       throw new Error("Stable field checkpoint cannot carry an unfinished color-filter tween");
@@ -1858,7 +2112,7 @@ export class FieldGame {
       StaticAudioState.restore(s.bgm, content.bgm),
       StaticAudioState.restore(s.environment, content.environment),
       { ...options, ...(native ? { nativeActorPreparation: true } : {}),
-        ...(hasStory ? { storyRuntimeSeed: restoreFieldStoryRuntime((s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime, content, options.storyTimerOrigin) } : {}) },
+        ...(hasStory ? { storyRuntimeSeed: restoreFieldStoryRuntime((s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime, content, options.storyTimerOrigin, options.cameraShake) } : {}) },
       FieldFadeState.restore(s.fade),
       s.camera ?? undefined,
       native !== undefined,
@@ -1886,7 +2140,10 @@ export class FieldGame {
       const binding = next.npcBindings.get(e.id); return binding ? [[e.id, binding.program]] : [];
     })), (s as { npcActivities: FieldNpcActivitiesCheckpoint }).npcActivities,
     { generation: next.choiceNamespace }) : undefined;
-    if (native) next.restoreNativeOwner(s.native!, native, restoredActivities);
+    const assignedRestore=hasAssigned ? restoreAssignedRoutes((s as {assignedNpcRoutes:AssignedRoutesCheckpoint}).assignedNpcRoutes,
+      content,next.entityList,s.time,options.assignedNpcRoutes) : undefined;
+    if (native) next.restoreNativeOwner(s.native!, native, restoredActivities,assignedRestore?.motions);
+    if(assignedRestore) next.installAssignedRoutes(assignedRestore.rows,s.time);
     checkpointIds(s.hiddenEntities);
     if (s.hiddenEntities.some((id) => !next.hasEntity(id) || (next.camera && id === next.cameraActorId) || next.actors[id]?.native))
       throw new Error("Unknown hidden saved entity");
@@ -1980,7 +2237,7 @@ export class FieldGame {
     this.currentProperties = [...this.defaultProperties, ...group.entities];
   }
   private restoreNativeOwner(saved: NonNullable<FieldCheckpoint["native"]>, source: FieldNativeRestoreDependencies,
-    restoredActivities?: RestoredFieldNpcActivities): void {
+    restoredActivities?: RestoredFieldNpcActivities,assignedMotions?:FieldNativeCheckpointContext["assignedMotions"]): void {
     checkpointKeys(saved, "actors,collision,updateMask,cameraOffset,completedScript");
     checkpointKeys(saved.collision, "mapColliders,entityCollision,interactiveObservation");
     if (canonical(saved.collision) !== canonical(projectFieldPuppetCollision(saved.collision.mapColliders)))
@@ -2011,7 +2268,7 @@ export class FieldGame {
     }
     const providers = source.providers(this);
     const actors = restoreFieldNativeCheckpoint(saved.actors,
-      this.nativeCheckpointContext(bindings, source.factory, providers(), restoredActivities?.autonomousMotions));
+      this.nativeCheckpointContext(bindings, source.factory, providers(), restoredActivities?.autonomousMotions,assignedMotions));
     this.publishNativeActors(actors, bindings, source.catalog, providers, source.controlContext,
       source.animationKeys, { factory: structuredClone(source.factory) }, restoredActivities);
     this.collisionSwitches = { ...saved.collision };
@@ -2073,20 +2330,28 @@ export class FieldGame {
       return null;
     }
   }
+  private animatedMapContains(entity: FieldEntity, point: Point): boolean {
+    const actor = this.actors[entity.id], definition = this.mapAnimationDefinition(entity);
+    if (!actor?.native || actor.native.scope?.kind !== "map-animated" ||
+        canonical(actor.native.mapAnimation) !== canonical(definition))
+      throw new Error("Animated map collider lost its actual owner");
+    return Math.abs(point.x - actor.x) < (definition.geometry.width - 2) / 32 &&
+      Math.abs(point.y - actor.y) < (definition.geometry.height - 2) / 32;
+  }
   private occupied(points: Point[], layer: number, exceptActorId: string = this.player.id): boolean {
     if (!this.collisionSwitches.entityCollision) return false;
     return (
       this.entityList.some(
         (e) =>
           ((e.kind === 8 && this.openTriggers.blocks(e.id)) ||
-            ((e.kind === 5 || e.kind === 7) && e.mapObject?.collision)) &&
-          e.layer === layer &&
+            ((e.kind === 5 || e.kind === 7 || e.kind === 10) && e.mapObject?.collision)) &&
+          (this.actors[e.id]?.layer ?? e.layer) === layer &&
           this.isEntityVisible(e.id) &&
-          points.some((p) => contains(e, p)),
+          points.some((p) => e.kind === 10 ? this.animatedMapContains(e, p) : contains(e, p)),
       ) ||
       Object.values(this.actors).some(
         (a) =>
-          a.id !== exceptActorId &&
+          a.id !== exceptActorId && a.native?.scope?.kind !== "map-animated" &&
           this.isEntityVisible(a.id) &&
           this.entityList.find((e) => e.id === a.id)?.npc?.collision !==
             false &&
@@ -2593,7 +2858,7 @@ export class FieldGame {
       mapArea = partyActorMapArea(range.width, range.height, (loop.horizontal ? 1 : 0) + (loop.vertical ? 2 : 0));
     const colocated: FieldEntity[] = [], front: FieldEntity[] = [];
     for (const entity of this.entityList) {
-      if (![5, 6, 7, 17].includes(entity.kind) ||
+      if (![5, 6, 7, 10, 17].includes(entity.kind) ||
           entity.kind === 7 && entity.mapObject?.collision === false && this.openedTreasures.has(entity.id)) continue;
       const properties = entity.npc ?? entity.mapObject, actor = this.actors[entity.id];
       if (!this.isEntityVisible(entity.id) || (actor?.layer ?? entity.layer) !== player.layer ||
@@ -2601,7 +2866,7 @@ export class FieldGame {
           properties && (!(properties.acceptDirection & ACTION_SIDE[OPPOSITE[direction]]) ||
             properties.interaction.kind !== "blocked" && !properties.talkMounts.includes(player.mount ?? ""))) continue;
       if (entity.kind !== 6 && entity.kind !== 17) {
-        if (contains(entity, target)) front.push(entity);
+        if (entity.kind === 10 ? this.animatedMapContains(entity, target) : contains(entity, target)) front.push(entity);
         continue;
       }
       if (!actor?.native) throw new Error("Relay target has no current native actor position");
@@ -2634,7 +2899,7 @@ export class FieldGame {
     const hits = this.entityList.filter((e) => {
       const properties = e.npc ?? e.mapObject;
       return (
-        (e.kind === 6 || e.kind === 17 || e.kind === 5 || e.kind === 7) &&
+        (e.kind === 6 || e.kind === 17 || e.kind === 5 || e.kind === 7 || e.kind === 10) &&
         !(e.kind === 7 && e.mapObject?.collision === false && this.openedTreasures.has(e.id)) &&
         this.isEntityVisible(e.id) && (this.actors[e.id]?.layer ?? e.layer) === p.layer &&
         (properties ? properties.interaction.kind !== "none" : !!e.script) &&
@@ -2643,7 +2908,7 @@ export class FieldGame {
             this.npcActivities.has(e.id) && this.actors[e.id]!.motion !== null &&
             [this.actors[e.id]!.motion!.from, this.actors[e.id]!.motion!.to]
               .some(cell => cell.x === target.x && cell.y === target.y))
-          : contains(e, target)) &&
+          : e.kind === 10 ? this.animatedMapContains(e, target) : contains(e, target)) &&
         (!properties || !!(properties.acceptDirection & ACTION_SIDE[OPPOSITE[direction]]) &&
           (properties.interaction.kind === "blocked" || properties.talkMounts.includes(p.mount ?? "")))
       );
@@ -2999,7 +3264,7 @@ export class FieldGame {
       milliseconds > 60000
     )
       throw new Error("Invalid elapsed time");
-    if (this.content.frameworkNpcActivity && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
+    if ((this.content.frameworkNpcActivity || this.assignedRoutes.size > 0) && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
     if (this.pendingEventSave) return;
     this.remainder += milliseconds;
     while (this.remainder >= 10) {
@@ -3025,6 +3290,8 @@ export class FieldGame {
       catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       this.fader.advance(0.01);
       this.colorFilterState?.advance(0.01);
+      try { this.cameraShakeState?.advance(); }
+      catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       this.advanceStoryTimer(10, this.messageWindow || this.choicePending || this.sourceMessage.active ? "message"
         : this.openTriggers.busy || this.treasureSceneState === "message" ? "gimmick" : this.fieldActivityBusy ? "event" : "player");
       this.sourceMessage.advance(0.01);
@@ -3047,6 +3314,8 @@ export class FieldGame {
         // tile animation (42), VM and the global fader continue separately.
         if (a.native && (this.entityUpdateMask & (a.native.updateAttribute ?? 2)) === 0) continue;
         try {
+          const assigned = this.assignedRoutes.get(a.id);
+          if (assigned) { this.assertAssignedRoute(assigned); if (this.interaction?.entityId === a.id) continue; }
           const activity = this.npcActivities.get(a.id);
           if (activity) { this.advanceNpcActivity(activity); continue; }
           const m = a.motion;
@@ -3099,6 +3368,14 @@ export class FieldGame {
         }
       }
       for (const t of this.tasks) t.wait = Math.max(0, t.wait - 10);
+      for (const record of [...this.assignedRoutes.values()]) {
+        if ((this.entityUpdateMask & (record.actor.native?.updateAttribute ?? 2)) === 0) continue;
+        // Generic actor tick above owns motion integration; only adopt the
+        // exact result of that tick, never another command's motion.
+        record.motion = record.actor.motion;
+        try { this.advanceAssignedRoute(record); }
+        catch (error) { this.block(error instanceof Error ? error.message : String(error), record.site); return; }
+      }
       const cellEvent = entered ? this.enter() : false;
       this.pump(0.01);
       // This explicit development rule gives destination events priority. A
@@ -3536,6 +3813,7 @@ export class FieldGame {
     if (!this.content.scripts[continuation])
       throw new Error("Missing battle continuation");
     const stop = this.stop, taskId = this.nextTask, tasks = this.tasks;
+    const shake = this.prepareCameraShakeReturn();
     const locals = structuredClone(
       this.content.scriptLocals?.[continuation] ?? null,
     );
@@ -3551,6 +3829,7 @@ export class FieldGame {
       ? this.prepareNativeEncounterReturn(continuation, candidateOwned) : null;
     let consumed = false;
     const validateField = () => {
+      shake.validate();
       if (consumed || this.stop !== stop || this.tasks !== tasks || this.nextTask !== taskId ||
           fingerprint() !== before)
         throw new Error("Stale battle continuation");
@@ -3571,6 +3850,7 @@ export class FieldGame {
       this.stop = null;
       this.sourceEncounterPending = null;
       this.remainder = 0;
+      shake.commit();
     };
     const commitWith = (commitOwned: () => void) => {
       validate(); consumed = true;
@@ -3596,6 +3876,7 @@ export class FieldGame {
         throw new Error("Ordinary battle return requires the suspended idle field");
     };
     requireIdle();
+    const shake = this.prepareCameraShakeReturn();
     const shared = eventShared ? prepareBattleEventSharedReturn(this.eventState, eventShared) : null;
     const owner = this.actors, tasks = this.tasks;
     const actors = Object.values(owner).map(actor => ({ actor, native: actor.native, entity: actor.native?.entity }));
@@ -3658,6 +3939,7 @@ export class FieldGame {
     }
     let consumed = false;
     const validateField = () => {
+      shake.validate();
       if (consumed || this.stop !== stop || this.actors !== owner || this.tasks !== tasks ||
           Object.keys(owner).length !== actors.length || actors.some(({ actor, native, entity }) =>
             owner[actor.id] !== actor || actor.native !== native || actor.native?.entity !== entity) ||
@@ -3676,8 +3958,16 @@ export class FieldGame {
       appearance?.commit();
       this.stop = null;
       this.remainder = 0;
+      shake.commit();
     };
     return Object.assign(() => commitWith(() => {}), { validate, commitWith });
+  }
+  private prepareCameraShakeReturn() {
+    const owner = this.cameraShakeState, before = canonical(owner?.snapshot() ?? null), after = owner?.afterBattle() ?? null;
+    return { validate: () => {
+      if (this.cameraShakeState !== owner || canonical(owner?.snapshot() ?? null) !== before)
+        throw new Error("Stale camera-shake battle return");
+    }, commit: () => { this.cameraShakeState = after; } };
   }
   /** Battle stops before the Web host runs the Integrator's final cleanup.
    * Stage that old-context finish, source asset refresh, and the next Execute
@@ -4261,7 +4551,7 @@ export class FieldGame {
           this.block(`无效脚本位置 ${t.script}:${t.pc}`);
           return;
         }
-        if ((actor?.motion || this.tasks.some((other) => !other.done && other.actor === t.actor && other.scriptLerp)) &&
+        if ((actor?.motion || this.assignedRoutes.has(t.actor) || this.tasks.some((other) => !other.done && other.actor === t.actor && other.scriptLerp)) &&
             ["move", "field-script-motion", "field-camera-motion", "position", "look", "animation-play", "animation-cue"].includes(op.kind)) {
           this.block("Concurrent source actor movement arbitration is not implemented", op);
           return;
@@ -4454,6 +4744,10 @@ export class FieldGame {
               this.block(error instanceof Error ? error.message : String(error), op);
               return;
             }
+            break;
+          case 'assign-npc-route':
+            try { this.assignNpcRoute(op,t.script,t.pc-1); }
+            catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
           case "animation-cue":
           case "animation-play":
@@ -4975,6 +5269,14 @@ export class FieldGame {
             try {
               if (!this.ordinaryScreenEffectsAvailable) throw new Error("Ordinary Web screen-effects host is unavailable");
               if (this.colorFilterState!.start(op) === "wait") { t.colorFadeWait = op; return; }
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
+          case "field-shake":
+            try {
+              if (!this.cameraShakeAvailable) throw new Error("Normal field camera / explicit Web camera-shake policy is unavailable");
+              const command = op.command, origin = command.kind === "play"
+                ? bindFieldStoryShake(this.content, t.script, t.pc - 1, command) : null;
+              this.cameraShakeState!.start(command, origin);
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
           case "field-flash":
