@@ -111,13 +111,13 @@ test("missing continuations and invalid targets remain visible while SE decode r
   assert.deepEqual(sound.blockedMaps, []);
   assert.equal(r.maps[0]!.status, "not-playable-certified");
 });
-test("source instructions without operands are retained as decoder gaps, not discarded", () => {
+test("source instructions requiring missing operands are retained as decoder gaps, not discarded", () => {
   const { assets, tables } = fixture();
-  assets[1] = script("start", [{ mnemonic: "Nop", type: 1 }]);
+  assets[1] = script("start", [{ mnemonic: "Jump", type: 1 }]);
   const r = analyzeCorpus(assets, tables, {}, sha);
   assert.equal(r.counts.instructions, 2);
-  assert.deepEqual(r.maps[0]!.blockers, ["Nop"]);
-  assert.equal(r.priorities.find((p) => p.id === "Nop")!.blockedSites, 1);
+  assert.deepEqual(r.maps[0]!.blockers, ["Jump"]);
+  assert.equal(r.priorities.find((p) => p.id === "Jump")!.blockedSites, 1);
 });
 test("map binding ambiguity, instruction domains and determinism survive corpus ordering", () => {
   const { assets, tables } = fixture();

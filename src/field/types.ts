@@ -257,6 +257,7 @@ export type Op = Site &
     | { kind: "environment-stop"; channel: number; fade: number }
     | { kind: "call"; target: number }
     | { kind: "wait"; seconds: number }
+    | { kind: "blank" }
     | { kind: "puppet"; slot: number; actor: string; target: number }
     | { kind: "position"; x: number; y: number; animation: string;
         nativeCommand?: FieldNativePosition;

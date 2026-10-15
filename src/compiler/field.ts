@@ -30,6 +30,7 @@ import { compileFieldBgmControlInstruction, fieldBgmControlMnemonics } from "./f
 import { compileFieldTimerInstruction, fieldTimerMnemonics, fieldTimerSelectors } from "./field-timer.js";
 import { compileFieldScreenEffectInstruction, fieldScreenEffectMnemonics } from "./field-screen-effects.js";
 import { compileFieldAutoSaveInstruction } from "./field-auto-save.js";
+import { compileFieldInternalClockInstruction } from "./field-internal-clock.js";
 import { compilePlayerVisibilityInstruction, compilePlayerVisibilityFactory, playerVisibilityMnemonics } from "./player-visibility.js";
 import { compileFieldTaskControlInstruction, fieldTaskControlMnemonics } from "./field-task-control.js";
 import { compileFieldFadeInstruction } from "./field-fade.js";
@@ -122,6 +123,10 @@ export function decodeFieldOp(
     mnemonic: name,
     reason,
   });
+  if ((name === "Nop" || name === "Blank") && Object.hasOwn(m, "type")) {
+    try { return { ...site, ...compileFieldInternalClockInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if (name === "AutoSave") {
     try { return { ...site, ...compileFieldAutoSaveInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }

@@ -4149,6 +4149,11 @@ export class FieldGame {
             break;
           case "nop":
             break;
+          case "blank":
+            // The existing task cursor already points to the next instruction.
+            // lastClock prevents any second pump this clock; the next clock
+            // resumes that same task. No elapsed-time or saveable timer exists.
+            return;
           case "exit":
             t.done = true;
             break;

@@ -76,7 +76,9 @@ test("unknown or rejected middle instructions are executable stops and never shi
   assert.equal(instructions[3]!.decoded!.kind, "exit");
   assert.equal(out.counts.instructions, 5);
   assert.equal(out.counts.rawPreservedInstructions, 5);
-  snapshot.assets[1] = script("start", [op("Nop"), { mnemonic: "Nop", type: 1 }, op("Jump", [3]), op("Exit")]);
+  // Unlike Nop (whose verified native leaf never reads operands), Jump needs
+  // its operand record. A rejected instruction must still retain its address.
+  snapshot.assets[1] = script("start", [op("Nop"), { mnemonic: "Jump", type: 1 }, op("Jump", [3]), op("Exit")]);
   const rejected = compileStoryCorpus(snapshot).scripts.find(s => s.id === snapshot.assets[1]!.id)!.instructions;
   assert.equal(rejected[1]!.diagnostic!.code, "FIELD_OPERAND_REJECTED");
   assert.equal(rejected[1]!.decoded!.index, 1);

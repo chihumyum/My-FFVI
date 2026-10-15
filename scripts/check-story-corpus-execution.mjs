@@ -36,7 +36,7 @@ assert.equal(new Set(corpus.scripts.map(script => script.id)).size, corpus.scrip
 assert.deepEqual(corpus.scripts.map(script => script.id).sort(), sourceScripts.map(asset => asset.id).sort(),
   'The whole translated/source script inventory changed');
 const compiledScripts = new Map(corpus.scripts.map(script => [script.id, script]));
-const allowed = new Set(['nop', 'exit', 'return', 'call', 'wait', 'jump', 'branch', 'calc', 'flag', 'message', 'choice',
+const allowed = new Set(['nop', 'blank', 'exit', 'return', 'call', 'wait', 'jump', 'branch', 'calc', 'flag', 'message', 'choice',
   'field-fade', 'field-color-fade', 'field-flash', 'field-timer', 'bgm-pause', 'bgm-replay', 'event-save']);
 const exclusions = [], programs = [];
 
