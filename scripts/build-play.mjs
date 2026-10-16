@@ -1,15 +1,41 @@
-import {readFile,writeFile,mkdir,access} from 'node:fs/promises';
+import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {recoverSourceMap} from './play-source-map.mjs';
 const root=resolve(import.meta.dirname,'..');
 const read=async p=>JSON.parse(await readFile(resolve(root,p),'utf8'));
+const npcBundles=new Map();
+function sourceBundle(source){
+ const file=source.file.split('/').pop().replace(/\.bundle$/,'.json');
+ if(!npcBundles.has(file))npcBundles.set(file,read('build/corpus/bundles/'+file));
+ return npcBundles.get(file);
+}
+export async function addNpcFlags(map){
+ map.routes={};
+ if(map.source?.file){
+  const prefix=map.source.assetPath.slice(0,map.source.assetPath.lastIndexOf('/')+1);
+  for(const asset of await sourceBundle(map.source)){
+   if(!asset.source.assetPath.startsWith(prefix))continue;
+   const match=asset.source.assetPath.match(/\/route_instruction_(\d+)\.json$/);
+   if(match)map.routes[match[1]]=asset.data.instruction_list||[];
+  }
+ }
+ for(const entity of [...map.entities||[],...Object.values(map.groups||{}).flatMap(group=>group.entities||[])]){
+  if((!entity.npc&&entity.kind!==30)||!entity.source?.pointer)continue;
+  const source=entity.source,assets=await sourceBundle(source),asset=assets.find(item=>item.source.assetPath===source.assetPath);
+  const object=source.pointer.split('/').filter(Boolean).reduce((value,key)=>value?.[key],asset?.data);
+  const props=Object.fromEntries((object?.properties||[]).map(row=>[row.name,row.value]));
+  if(entity.npc){entity.npc.allLayers=props.all_layers===true;entity.npc.birdview=props.birdview_puppet===true;}
+  if(entity.kind===30){entity.leaveScriptId=props.leave_script_id||0;entity.actionId=props.action_id||0;}
+ }
+}
 const omit=new Set(['source','sources','contentHash','sha256','blockers','limitations','rawHash','parentSourceSetHash','sourceSetHash']);
 function clean(v){if(Array.isArray(v))return v.map(clean);if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).filter(([k])=>!omit.has(k)&&!k.endsWith('Blockers')).map(([k,x])=>[k,clean(x)]));return v;}
 export async function preparePlayMap(id,{force=false}={}){
  const out=resolve(root,`build/play/maps/${id}.json`);
- if(!force){try{await access(out);return out;}catch{}}
+ if(!force){try{const old=JSON.parse(await readFile(out,'utf8'));const entities=[...old.entities||[],...Object.values(old.groups||{}).flatMap(g=>g.entities||[])];if(old.routes&&(old.layers?.length||old.entities?.length)&&entities.every(e=>(!e.npc||typeof e.npc.allLayers==='boolean')&&(e.kind!==30||'leaveScriptId'in e)))return out;}catch{}}
  const src=await read(`build/world/maps/${id}.json`);
- const map=src.map||{width:64,height:64,tileSize:16,layers:[],tilesets:[],textures:{},collisions:{},entities:[],groups:{}};const value=clean({id:Number(id),name:src.name,areaId:src.areaId,initializer:src.initializer,...map});value.id=Number(id);
+ const map=src.map||await recoverSourceMap(src)||{width:64,height:64,tileSize:16,layers:[],tilesets:[],textures:{},collisions:{},entities:[],groups:{}};await addNpcFlags(map);const value=clean({id:Number(id),name:src.name,areaId:src.areaId,initializer:src.initializer,...map});value.id=Number(id);
  await mkdir(resolve(root,'build/play/maps'),{recursive:true});await writeFile(out,JSON.stringify(value));return out;
 }
 export async function buildPlay(mapIds=[609,3]){
@@ -24,7 +50,7 @@ export async function buildPlay(mapIds=[609,3]){
  const speakers=text.story_cha_zhc.values;
  const characters=clean(media.characters||world.characters);
  for(const char of Object.values(characters))for(const sprite of Object.values(char.sprites||{}))if(sprite.file){sprite.file=sprite.file.startsWith('/')?sprite.file.replace('/world-media/','/source-media/'):'/source-media/'+sprite.file;}
- const systemTables=Object.fromEntries(['product','content','function_group','character_status','job','learning','transportation','product_group'].map(name=>[name.replace(/_([a-z])/g,(_,c)=>c.toUpperCase()),tables[name+'.csv']||[]]));
+ const systemTables=Object.fromEntries(['product','content','function_group','character_status','job','learning','transportation','transportation_group','landing_group','product_group'].map(name=>[name.replace(/_([a-z])/g,(_,c)=>c.toUpperCase()),tables[name+'.csv']||[]]));
  const data={systemTables,entry:{mapId:609,entrance:1,script:'sc_e_0001'},programs,byMap,global,messages,speakers,characters,
   maps:Object.fromEntries(Object.entries(world.maps).map(([id,m])=>[id,{name:m.name}])),
   audio:clean({bgm:world.bgm,se:world.se,environment:world.environment}),

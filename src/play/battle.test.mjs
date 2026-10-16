@@ -134,6 +134,26 @@ test('final reserve order reaches the source replacement handler and cannot recy
   assert.equal(units[3].hp, 50);
 });
 
+test('a source final-party replacement during the end check cannot settle the previous defeat', () => {
+  const units = { 1: { id: 1, hp: 100, maxHp: 100 }, 2: { id: 2, hp: 35, maxHp: 100 } };
+  let exits = 0;
+  const battle = new Battle({ data: { parties: { 1: { members: [{ monsterId: 1 }] } },
+    monsters: { 1: { id: 1, hp: 500, maxHp: 500 } } }, party: [units[1]], finalParty: [1, 2],
+    character: id => units[id], encounterId: 1, random: () => .5, onEnd: () => exits++ });
+  battle.events.beforeEnd = outcome => {
+    assert.equal(outcome, 'defeat');
+    battle.events.syscall('LB:プレイヤーパーティ変更', [], []);
+    return true;
+  };
+  units[1].hp = 0;
+  battle.checkEnd();
+  assert.equal(battle.players[0], units[2]);
+  assert.equal(units[2].hp, 35);
+  assert.equal(battle.phase, 'active');
+  assert.equal(battle.result, null);
+  assert.equal(exits, 0);
+});
+
 test('a source Gau return clears the previous leap removal without fabricating a heal', () => {
   const gau = { id: 12, enabled: false, veldtLeapt: true, removed: true, escaped: true, hp: 24, maxHp: 100 };
   const battle = new Battle({ data: { parties: { 1: { members: [{ monsterId: 1 }] } },

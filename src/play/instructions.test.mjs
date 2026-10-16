@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { executeInstruction } from './instructions.js';
 import { executeSyscall } from './syscalls.js';
+import { PlayGame } from './game.js';
 
 const game = () => ({
   player: { x: 14.5, y: 15.5, layer: 0, direction: 'down' }, camera: {},
@@ -56,4 +57,61 @@ test('field battle handoff preserves scripted return codes and restores Vargas p
   assert.equal(g.roster[1].removed, false);
   assert.equal(g.roster[1].hidden, false);
   assert.equal(g.banks.PlaySystems.battle0055, undefined);
+});
+test("field payments use the PR product group fee and return affordability without taking partial funds", () => {
+  const game = new PlayGame({ data: { programs: { 0: { name: "inn", ops: [["RemoveGil", [127], [], []]] } },
+    systemTables: { product: [{ id: 528, group_id: 127, content_id: 0, coefficient: 1 }] } } });
+  const task = () => ({ program: 0, pc: 0, actor: null, locals: [] });
+  game.gil = 2; game.step(task());
+  assert.equal(game.gil, 1);
+  assert.equal(game.banks.MapLocalVariable[0], 1);
+  game.gil = 0; game.step(task());
+  assert.equal(game.gil, 0);
+  assert.equal(game.banks.MapLocalVariable[0], 0);
+});
+
+test('assigned PR NPC routes preserve stored layers and set the correct bank after movement', () => {
+  const game = new PlayGame({ data: { programs: {}, global: {}, byMap: {} } });
+  game.mapId = 214;
+  game.map = { routes: { 201203: [
+    { instruction_type: 1, cellx: 21, celly: 54, layer: 2, speed_id: 1 },
+    { instruction_type: 9, category: 2, index: 63, value: 1 },
+  ] } };
+  const npc=game.actor(1); Object.assign(npc,{x:21,y:53,layer:2});
+  executeInstruction(game, {pc:0}, 'AssignMoveRoute', [1,201203,0]);
+  game.tick(.1);
+  assert.equal(npc.layer,2);
+  assert.equal(game.banks.ScenarioFlag3?.[63],undefined);
+  for(let n=0;n<8;n++)game.tick(.1);
+  assert.equal(npc.y,54);
+  assert.equal(game.banks.ScenarioFlag3[63],1);
+  assert.equal(game.banks.MapLocalVariable?.[63],undefined);
+});
+
+test('a field save resumes an NPC route cursor before its pending source flag write', async () => {
+  const map={width:4,height:4,collisions:{1:Array(16).fill(0)},entities:[],groups:{},routes:{12:[
+    {instruction_type:1,cellx:2,celly:1,layer:2,speed_id:1},
+    {instruction_type:9,category:2,index:63,value:1},
+  ]}};
+  const data={programs:{},global:{},byMap:{}};
+  const game=new PlayGame({data,loadMap:async()=>map});
+  game.warn=()=>{};await game.enter(1);Object.assign(game.actor(1),{x:1,y:1,layer:1});
+  executeInstruction(game,{pc:0},'AssignMoveRoute',[1,12,0]);game.tick(.1);
+  const saved=JSON.parse(JSON.stringify(game.snapshot()));
+  const restored=new PlayGame({data,loadMap:async()=>map});restored.warn=()=>{};await restored.restore(saved);
+  assert.equal(restored.banks.ScenarioFlag3?.[63],undefined);
+  for(let n=0;n<8;n++)restored.tick(.1);
+  assert.equal(restored.actor(1).x,2);assert.equal(restored.banks.ScenarioFlag3[63],1);
+  assert.equal(restored.actor(1).layer,1);
+});
+
+test('a boss defeat cannot start a victory continuation unless the source explicitly reads the result', () => {
+  class Encounter {constructor(options){this.complete=options.onEnd;}}
+  const make=ops=>new PlayGame({Battle:Encounter,data:{byMap:{},global:{after:0},programs:{0:{name:'after',ops,locals:[]}}}});
+  const game=make([['SetFlag',[99],[],['ScenarioFlag2']]]),task={};
+  game.encounter(472,'after',task);game.battle.complete({outcome:'defeat',code:2});
+  assert(game.over);assert.equal(game.history.length,0);assert.equal(game.tasks.length,0);
+  const handled=make([['SysCall',[],[],['戦闘結果取得']]]);
+  handled.encounter(472,'after',{});handled.battle.complete({outcome:'defeat',code:2});
+  assert.equal(handled.over,undefined);assert.equal(handled.history[0].script,'after');
 });

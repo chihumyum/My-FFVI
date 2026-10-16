@@ -78,17 +78,31 @@ export function navigationRegions(map, entries, isWarp) {
   }
   const regions = (e, adjacent = false) => {
     const near = around(e, adjacent);
-    if ([5, 6, 8].includes(e.kind)) {
-      const grid = map.collisions?.[e.layer] || map.collisions?.[0];
-      for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]])
-        if (grid?.[key(e.x + dx, e.y + dy)] === 1) {
-          const far = labels.get(e.layer || 0)?.[key(e.x + 2 * dx, e.y + 2 * dy)];
+    for(const point of e.routePoints||[])near.push(...around({...e,...point},true));
+    if ([5, 6, 7, 8, 10, 17].includes(e.kind)) {
+      for(const position of [e,...(e.routePoints||[]).map(point=>({...e,...point}))]){
+       const grid = map.collisions?.[position.layer] || map.collisions?.[0];
+       for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]])
+        if (grid?.[key(position.x + dx, position.y + dy)] === 1) {
+          const far = labels.get(position.layer || 0)?.[key(position.x + 2 * dx, position.y + 2 * dy)];
           if (far) near.push(far);
         }
+      }
     }
     return [...new Set(near.map(root))];
   };
   return {
+    regionRuns: Object.fromEntries([...labels].map(([layer, cells]) => {
+      const runs = [];
+      for (let cell = 0; cell < cells.length; cell++) {
+        const region = cells[cell] ? root(cells[cell]) : 0;
+        if (!runs.length || runs.at(-1)[1] !== region) runs.push([cell + 1, region]);
+        else runs.at(-1)[0] = cell + 1;
+      }
+      return [layer, runs];
+    })),
+    width,
+    height,
     entrances: Object.fromEntries(
       map.entities
         .filter((e) => e.kind === 0)
@@ -99,7 +113,7 @@ export function navigationRegions(map, entries, isWarp) {
     ),
     entries: entries.map((e) => ({
       ...e,
-      regions: regions(e, [3, 5, 6, 8].includes(e.kind) || isWarp(e)),
+      regions: regions(e, [3, 5, 6, 7, 8, 10, 17].includes(e.kind) || isWarp(e)),
     })),
   };
 }

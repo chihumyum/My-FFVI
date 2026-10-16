@@ -1,4 +1,5 @@
 import { executeEventSystem, updateSyscallSystems, configureSyscallTimer, finishSyscallTimer } from './event-systems.js';
+import { executeCooperativeSyscall } from './cooperative-input.js';
 export { updateSyscallSystems, configureSyscallTimer, finishSyscallTimer };
 // PR SysCall labels carry the selector; their eight numeric operands are normally zero.
 // These are source character IDs, including temporary characters, rather than party indices.
@@ -95,19 +96,9 @@ function formParties(game, count, preferred = []) {
   game.partyIndex = Math.min(game.partyIndex, count - 1);
   for (const unit of activeRoster(game)) unit.reserve = !used.has(unit.id);
 }
-function selectParty(game, slot) {
-  game.partyPositions ??= [];
-  game.partyPositions[game.partyIndex] = { ...pose(game.player), mapId: game.mapId };
-  game.partyIndex = Math.max(0, Math.min(2, slot));
-  const next = game.partyPositions[game.partyIndex];
-  if (next && (!next.mapId || next.mapId === game.mapId)) Object.assign(game.player, next);
-  game.player.visible = true;
-  game.player.motion = null;
-  refreshLeader(game);
-}
-
 export function executeSyscall(game, task, name, i = [], r = []) {
   const subject = suffix(name), id = characterSelectors[subject];
+  if (executeCooperativeSyscall(game, task, name)) return true;
   if (executeEventSystem(game, task, name, i, r, { characterSelectors, names, warn: message => warnOnce(game, task, message) })) return true;
   if (/^(メンバー加入|メンバー離脱|控えに移動)[：:]/.test(name)) {
     const joining = name.startsWith('メンバー加入');
@@ -247,26 +238,6 @@ export function executeSyscall(game, task, name, i = [], r = []) {
       game.rtsEncounterParty = null;
       refreshLeader(game);
     }
-    return true;
-  }
-  if (name === 'RTS：操作パーティ切替' || name === 'RTS：操作パーティ切替（後）') {
-    const variables = bank(game, 'ScenarioVariable');
-    const count = Math.max(1, Math.min(3, variables[5] || game.partySlots.filter(slot => slot.length).length));
-    const systems = bank(game, 'PlaySystems');
-    const next = systems.pendingPartySwitch ?? (game.partyIndex + 1) % count;
-    const destination = variables[11 + next];
-    variables[11 + game.partyIndex] = game.mapId;
-    if (name === 'RTS：操作パーティ切替' && destination && destination !== game.mapId && game.enter) {
-      game.partyPositions ??= [];
-      game.partyPositions[game.partyIndex] = { ...pose(game.player), mapId: game.mapId };
-      systems.pendingPartySwitch = next;
-      task.done = true;
-      game.pending = game.enter(destination, 1, 'sc_sht_corps_after');
-      return true;
-    }
-    selectParty(game, next);
-    variables[4] = next;
-    delete systems.pendingPartySwitch;
     return true;
   }
   if (name === 'RTS：マップスクリプト実行') {

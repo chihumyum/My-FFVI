@@ -1,6 +1,9 @@
 const dirs = ['up', 'right', 'down', 'left'];
 const deltas = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 const speeds = [.24, .48, .12, .96, .06, 1.92, .16];
+const routeBanks = ['ScenarioFlag1','ScenarioFlag2','ScenarioFlag3','ScenarioFlag4',
+  'TreasureFlag1','TreasureFlag2','TreasureFlag3','TreasureFlag4','ScenarioVariable',
+  'AreaLocalVariable','MapLocalVariable','ScriptLocalVariable','MessageSelection','ItemSelection'];
 const core = new Set(('Nop Blank Exit Return Call Jump JumpBattleAI ChangeScript Branch Calc SetFlag ResetFlag FlipFlag SetRandomValue Wait SetPuppet ExecPuppet FinishPuppet SetEntities LookAt Hide Show HidePlayer ShowPlayer CueAnim PlayAnim Msg MsgClose MsgFinishWait MsgFinishWaitAll Select ChangeMap Encount EncountBoss OrganizePartySlot ChangePartySlot GetItem RemoveItem RemoveGil RecoveryHP RecoveryMP SubtractionHP AddCondition RemoveCondition RideVehicleNPC LoseVehicle OnTheVehicle SetVehicle SwitchVehicleActive PlayBGM ReplayBgm StopBGM PlaySE PlayEnvSe StopEnvSe FadeIn FadeOut ShowMapTitle AutoSave RemoveTelepoCache AddTelepoCache CastTelepo HideMob RestoreMob SysCall TreasureBox GoToTitle OpenSaveWindow SetTimer FinishTimer').split(' '));
 const effects = new Set(('BackdropColor BattleAnim ChangeMapRenderArea ChangeView ColorFade Flash Orient PauseBGM PauseEnvSe PitchEnvSe PlayBattleEffect ReadyBGM ResetAnimOnlyJockey ScreenEffect SetAnimOnlyJockey SetVolume Shake StopSE SyncBGM SyncBattleEffect SyncSE Water LoadSE').split(' '));
 // PR SetPos/Lerp/MoveTo requests are 1-based; zero preserves the actor's layer.
@@ -29,18 +32,37 @@ function beginAssignedRoute(game, task, actorId, routeId, loop) {
   }
   const ops = [];
   const op = (name, i = [], r = [], s = []) => ops.push([name, i, r, s, 2, '']);
+  const routeLayer=row=>{
+    const raw=row.layer??actor.layer,layers=Object.keys(game.map.collisions||{}).map(Number);
+    if(!layers.length)return raw+1;
+    const candidates=[raw,raw-1].filter(layer=>layers.includes(layer));
+    const selected=candidates.includes(actor.layer)?actor.layer:candidates[0]??actor.layer;
+    if(selected!==raw)warning(game,task,`NPC route layer ${raw} resolves to existing walking layer ${selected}; PR route layer numbering is inferred from the map grid and actor.`);
+    return selected+1;
+  };
   for (const entry of instructions) {
     const row = entry.raw ?? entry;
     switch (row.instruction_type) {
-      case 1: op('Route', [row.cellx, row.celly, row.layer ?? 0, row.speed_id ?? -1], [], [row.animation_key ?? '']); break;
+      // NPC routes store a walking-layer index; puppet operands use index+1.
+      case 1: op('Route', [row.cellx, row.celly, routeLayer(row), row.speed_id ?? -1], [], [row.animation_key ?? '']); break;
       case 2: op('Wait', [], [Math.max(0, row.delay_sec ?? 0)]); break;
-      case 3: op('PlayAnim', [0, row.loop_cnt ?? 1], [], [row.animation_key ?? 'Default']); break;
+      case 3:
+        if(row.delay_sec>0)op('Wait',[],[row.delay_sec]);
+        op('PlayAnim', [0, row.loop_cnt ?? 1], [], [row.animation_key ?? 'Default']); break;
       case 4: op('CueAnim', [], [], [row.animation_key ?? 'Default']); break;
-      case 5: op('Show'); break;
-      case 6: op('Hide'); break;
-      case 7: op('Lerp', [row.cellx, row.celly, row.layer ?? 0], [row.duration ?? .24, row.jump_height ?? 0], [row.animation_key ?? '']); break;
+      case 5: case 6:
+        if(row.delay_sec>0)op('Wait',[],[row.delay_sec]);
+        op(row.instruction_type===5?'Show':'Hide');
+        if(row.duration>0)op('Wait',[],[row.duration]); break;
+      case 7: op('Lerp', [row.cellx, row.celly, routeLayer(row)], [row.duration ?? .24, row.jump_height ?? 0], [row.animation_key ?? '']); break;
       case 8: op('PlaySE', [row.se_id ?? 0]); break;
-      case 9: op('Calc', [row.index ?? 0, row.value ?? 0], [], [row.category === 1 ? 'ScenarioVariable' : 'MapLocalVariable', '←', 'imm']); break;
+      case 9: case 10: {
+        const bank=routeBanks[row.category];
+        if(!bank){warning(game,task,`NPC route storage category ${row.category} is unknown; instruction skipped.`);break;}
+        if(row.instruction_type===9)op('Calc',[row.index??0,row.value??0],[],[bank,'←','imm']);
+        else {const pc=ops.length;op('Branch',[row.index??0,row.value??0,pc+3],[],[bank,'＝','imm']);op('Wait',[],[.05]);op('Jump',[pc]);}
+        break;
+      }
       default: warning(game, task, `NPC route instruction ${row.instruction_type} is deferred.`); break;
     }
   }

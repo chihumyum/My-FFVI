@@ -80,3 +80,26 @@ test('story include/minimum/count are menu inputs, and final ordering excludes o
   assert.deepEqual(game.finalBattleOrder, [5, 7, 2]);
   assert.equal(executePartyInput(game, task(), 'toString'), false);
 });
+
+test('final ordering packs the tower walking teams into the first four fighters without healing', () => {
+  const game = host([7, 5, 10]), caller = task();
+  game.partySlots = [[7], [5], [10]];
+  game.rts = { active: true };
+  assert(executePartyInput(game, caller, 'パーティ編成：ラストバトル'));
+  assert(autoPartyInput(game).ok);
+  assert.deepEqual(game.partySlots, [[7, 5, 10], [], []]);
+  assert.deepEqual(game.finalBattleOrder, [7, 5, 10]);
+  assert.equal(game.partyIndex, 0);
+  assert.equal(game.rts.active, false);
+  assert.equal(game.roster[7].hp, 42);
+});
+
+test('manual final order remains flat across menu row gaps and preserves later substitutes', () => {
+  const game = host([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  game.partySlots = [[1, 2, 3, 4], [5, 6, 7, 8], [9]];
+  assert(executePartyInput(game, task(), 'パーティ編成：ラストバトル'));
+  assert(submitPartyInput(game, [[9, 8], [7, 6, 5], [4, 3, 2, 1]]).ok);
+  assert.deepEqual(game.partySlots, [[9, 8, 7, 6], [5, 4, 3, 2], [1]]);
+  assert.deepEqual(game.finalBattleOrder, [9, 8, 7, 6, 5, 4, 3, 2, 1]);
+  assert(Object.values(game.roster).every(unit => unit.hp === 42));
+});

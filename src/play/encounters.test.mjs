@@ -21,6 +21,10 @@ test('walking encounters charge PR terrain cost, wait for input, and cannot roll
   assert.equal(walkEncounter(game), false);
   assert.equal(game.walkEncounterState.remaining, 0);
   game.busy = false;
+  game.entities=[{kind:23,x:0,y:0,width:4,height:4}];
+  assert.equal(walkEncounter(game),false);
+  assert.equal(game.walkEncounterState.remaining,0);
+  game.entities=[];
   walkEncounter(game);
   assert.equal(walkEncounter(game), true);
   assert.equal(started[0][0], 2);

@@ -3,3 +3,5 @@
 #formation{inset:8% 8% 15%;overflow:auto;z-index:3}#formation-slots{display:flex;gap:12px;flex-wrap:wrap}#formation-slots fieldset{display:grid;gap:8px;flex:1}#formation select{font:inherit;min-width:130px;padding:6px;color:#fff;background:#1b2d58}#formation-problems{color:#f1c5a0}
 
 #shop{inset:8% 8% 15%;overflow:auto;z-index:3}#shop-stock{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+
+#vehicle{inset:22% 16% 30%;z-index:4}#vehicle-actions{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px}

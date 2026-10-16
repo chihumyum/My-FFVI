@@ -46,6 +46,12 @@ export function encounterPool(game) {
 export function walkEncounter(game) {
   if (game.busy || game.rts?.active || !game.Battle ||
       game.player.vehicle && game.player.vehicle !== 1) return false;
+  // PR publishes/removes these regions through its ordinary entity groups.
+  // Narshe's town-wide region, for example, exists before the world changes.
+  if((game.entities||[]).some(area=>area.kind===23&&area.visible!==false&&
+    (area.layer==null||area.layer===game.player.layer)&&
+    game.player.x>=area.x&&game.player.y>=area.y&&
+    game.player.x<area.x+area.width&&game.player.y<area.y+area.height))return false;
   const map = game.battleData.encounters?.maps[game.mapId], foot = currentFoot(game);
   if (!map || foot.subtract <= 0) return false;
   const pool = encounterPool(game);

@@ -189,8 +189,19 @@ export const storyChapters = [
     objective('follow-cid', '与希德乘升降梯离开容器室', [403], flag(193), { maps: [403], after: ['sc_e_0403_2'] }),
     objective('minecart', '跟随希德乘矿车逃出研究所', [404], flag(194)),
     objective('cranes', '到飞空艇与西捷亚会合，击败吊车', [405], flag(195)),
-    objective('esper-memory', '观看蒂娜身世的回忆并回到佐佐', [], flag(203), {
-      action: 'await-source', after: ['sc_e_0413_2'] }),
+    // The memory is playable: Maduin must find/help Madeline, talk in the
+    // house, follow her to the gate and respond to the invasion. It is not a
+    // single automatic continuation after the cranes.
+    objective('madeline-rescue', '以马丁找到倒下的玛德琳，把她带回去', [406], flag(196), {
+      choices: [{ script: scene(406), index: 1 }] }),
+    objective('madeline-awakes', '回屋与玛德琳交谈', [407], flag(197)),
+    objective('esper-gate-keeper', '向门口的幻兽询问人类的去向', [408], flag(198)),
+    objective('madeline-gate', '到幻兽界出口找到玛德琳', [409], flag(199)),
+    objective('esper-invasion', '回屋与长老交谈，得知帝国入侵', [410], flag(200)),
+    objective('madeline-leaves', '询问玛德琳与孩子的去向', [411], flag(201)),
+    objective('esper-seal', '赶往出口，目睹长老关闭封魔壁', [412], flag(202)),
+    objective('esper-memory', '追上玛德琳，完成蒂娜身世回忆并回到佐佐', [413], flag(203), {
+      after: ['sc_e_0413_2'] }),
   ] },
   { id: 'M6', title: '封魔壁、帝国晚宴与萨玛莎', complete: f2(28), objectives: [
     objective('narshe-report', '回纳尔谢向阿维斯报告', [430], seen('sc_e_0430_1')),
@@ -282,10 +293,12 @@ export const storyChapters = [
     objective('nikeah-thief-three', '与第三名盗贼交谈', [655], f2(68), { maps: [217] }),
     objective('nikeah-thieves', '与最后一名盗贼交谈，等盗贼团出发', [656], f2(70), { maps: [217], after: [scene(657)] }),
     objective('gerad', '追上酷似埃德加的“杰拉德”', [659, 660, 661], f2(72)),
-    objective('follow-ferry', '跟随盗贼团乘船到南费加罗', [662, 663], f2(73)),
+    objective('follow-ferry', '跟随盗贼团乘船到南费加罗', [662], f2(73)),
     objective('south-figaro-gerad', '在南费加罗继续追踪杰拉德', [665], f2(74)),
     objective('figaro-cave', '跟随盗贼团穿过洞窟潜入费加罗', [666], f2(75)),
     objective('figaro-sunken', '进入沉在地下的费加罗城', [667], f2(76)),
+    objective('figaro-follow-gerad', '跟随杰拉德穿过洞窟深处', [670], f2(77)),
+    objective('figaro-engine-approach', '跟随盗贼团进入机械通道', [671], f2(78)),
     objective('engine-room-edgar', '深入机械室，击败触手救下埃德加', [672], f2(79)),
     objective('figaro-surface', '修复王城机械，让费加罗上浮', [673], f2(80)),
     objective('figaro-west', '搭乘费加罗城到西边，前往科林根', [674], f2(81), { choices: [{ script: scene(674), index: 0 }] }),

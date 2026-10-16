@@ -10,31 +10,66 @@ const replaceTask = (game, task, name) => {
   task.locals = [...(game.data.programs[program].locals ?? [])]; task.done = false; task.waitFor = null;
 };
 
+function timerCanAdvance(game, timer) {
+  const inEvent = (game.tasks ?? []).some(task => !task.done && !task.background && task.actor === null);
+  return !timer.paused && !game.loading && (game.battle ? timer.battle : game.dialogue ? timer.message : inEvent ? timer.event : true);
+}
+const cidCanAdvance = (game, cid) => !game.busy && timerCanAdvance(game,
+  { ...cid, battle: false, message: false, event: false });
+const timerSource = (game, task) => ({ script: game.data.programs[task?.program]?.name,
+  index: task ? task.pc - 1 : -1, mapId: game.mapId });
+
+// Waiting is an ordinary input. A source SetTimer is the authorization for its
+// eventual callback; a story objective, a flag or an absent route is not.
+// Both manual UI and the auto driver can display this state. Reading it never
+// advances time, dispatches a callback, changes a flag or selects a battle.
+export function pendingEventInput(game) {
+  const state = game.banks?.PlaySystems, cid = state?.cid;
+  // The source Cid restart is a callback-free counter. Waiting until it runs
+  // out is legitimate input, but only the next ordinary talk/check determines
+  // the outcome; the host must not launch a death/recovery script here.
+  if (cid && !cid.paused && cid.remaining > 0) return { status: 'wait-event', counter: 'cid', callback: null,
+    remaining: cid.remaining, timer: { duration: cid.duration, visible: false, expired: false,
+      advancing: Boolean(cidCanAdvance(game, cid)), source: cid.source } };
+  const timer = state?.timer;
+  if (!timer || timer.dispatched || timer.paused) return null;
+  const callback = (timer.callbacks ?? []).find(name => game.resolve?.(name, game.mapId) !== undefined);
+  if (!callback) return null;
+  return { status: 'wait-event', callback, remaining: Math.max(0, Number(timer.remaining) || 0),
+    timer: { duration: timer.duration, visible: timer.visible, expired: Boolean(timer.expired),
+      advancing: !timer.expired && Boolean(timerCanAdvance(game, timer)), source: timer.source } };
+}
+
 export function configureSyscallTimer(game, task, i = [], r = [], s = []) {
   const duration = Math.max(0, Number(r[0] || 0));
+  systems(game).cid = null;
   systems(game).timer = { remaining: duration, duration, visible: i[0] === 0, battle: i[1] === 0,
-    message: i[2] === 1, event: i[3] === 1, callbacks: s.filter(Boolean), paused: false, expired: false, dispatched: false };
+    message: i[2] === 1, event: i[3] === 1, callbacks: s.filter(Boolean), paused: false, expired: false, dispatched: false,
+    source: timerSource(game, task) };
   game.timer = game.time + duration;
   game.event('timer', { duration, visible: i[0] === 0 });
 }
-export function finishSyscallTimer(game) { systems(game).timer = null; game.timer = null; }
+export function finishSyscallTimer(game) { systems(game).timer = null; systems(game).cid = null; game.timer = null; }
 
 export function updateSyscallSystems(game, seconds) {
   const state = systems(game), dt = Math.max(0, Number(seconds) || 0), timer = state.timer;
   if (timer && !timer.expired) {
-    const inEvent = game.tasks.some(task => !task.done && !task.background && task.actor === null);
-    const advance = !timer.paused && !game.loading && (game.battle ? timer.battle : game.dialogue ? timer.message : inEvent ? timer.event : true);
-    if (advance) timer.remaining = Math.max(0, timer.remaining - dt);
+    if (timerCanAdvance(game, timer)) timer.remaining = Math.max(0, timer.remaining - dt);
     game.timer = game.time + timer.remaining;
     if (timer.remaining === 0) { timer.expired = true; game.event('timer-expired'); }
   }
   if (timer?.expired && !timer.dispatched && !game.battle && !game.loading && !game.dialogue &&
+      !game.partySelection && !game.shop && !game.vehicleMenu &&
       !game.tasks.some(task => !task.done && !task.background)) {
     const callback = timer.callbacks.find(name => game.resolve(name) !== undefined);
     timer.dispatched = true;
     if (callback) game.startScript(callback);
   }
-  if (state.cid && !state.cid.paused) state.cid.remaining = Math.max(0, state.cid.remaining - dt);
+  if (state.cid && cidCanAdvance(game, state.cid)) {
+    const before = state.cid.remaining;
+    state.cid.remaining = Math.max(0, before - dt);
+    if (before > 0 && state.cid.remaining === 0) game.event('cid-timer-expired');
+  }
   if (state.shadow && !state.shadow.expired) {
     state.shadow.remaining = Math.max(0, state.shadow.remaining - dt);
     if (!state.shadow.remaining) { state.shadow.expired = true; game.event('shadow-timer'); }
@@ -144,12 +179,17 @@ export function executeEventSystem(game, task, name, i, r, { characterSelectors,
   if (name.startsWith('シドタイマー：')) {
     if (subject === 'HPチェック' || subject === '一時停止') {
       bank(game, 'ScenarioVariable')[2] = Math.trunc(state.cid?.remaining ?? state.timer?.remaining ?? 0);
-      if (subject === '一時停止' && state.cid) state.cid.paused = true;
-    } else {
+      if (subject === '一時停止') finishSyscallTimer(game);
+    } else if (subject === 'タイマーチェック' || subject === '再開') {
       const health = Number(bank(game, 'ScenarioVariable')[2] ?? 0);
-      state.cid = subject === 'タイマーチェック' && (health < 30 || health > 255) ? null :
-        health > 0 ? { remaining: health, paused: false } : null;
-    }
+      if (subject === 'タイマーチェック' && (health < 30 || health > 255)) finishSyscallTimer(game);
+      else if (health > 0) {
+        // Both selectors replace the one global timer, rather than leaving
+        // the initial120s callback alive beside a second health countdown.
+        finishSyscallTimer(game);
+        state.cid = { remaining: health, duration: health, paused: false, source: timerSource(game, task) };
+      } else if (health < 0) warn('Cid resume received a negative source counter; keeping it stopped.');
+    } else return false;
     return true;
   }
   if (name === 'シャドウタイマー設定') {

@@ -1,6 +1,8 @@
 import { advanceM1, pathTo } from "./m1-route.js";
 import { routeToStory } from "./navigation.js";
-import { randomEncounterInput } from "./story-actions.js";
+import { randomEncounterInput, vehicleJourneyInput, prepareStoryParty } from "./story-actions.js";
+import { pendingEventInput } from "./event-systems.js";
+import { cooperativeStoryInput } from "./cooperative-input.js";
 import {
   nextStoryObjective,
   storyChapters,
@@ -9,6 +11,9 @@ import {
 export const findStoryTarget = (game, objective) =>
   routeToStory(game, objective, pathTo);
 export function followTarget(game, input) {
+  if (input.status === "wait-npc") return input;
+  const vehicle = vehicleJourneyInput(game, input, pathTo);
+  if (vehicle) return vehicle;
   if (input.route?.length) {
     game.move(input.route[0]);
     return { ...input, status: "walk" };
@@ -26,7 +31,7 @@ export function followTarget(game, input) {
         : dy > 0
           ? "down"
           : "up";
-    if (input.target.approach && ![5, 6, 8].includes(input.target.kind))
+    if (input.target.approach && ![5, 6, 7, 8, 10, 17].includes(input.target.kind))
       game.move(game.player.direction);
     else game.confirm();
   }
@@ -56,17 +61,26 @@ export function advanceStory(game, { through = "all" } = {}) {
   const objective = nextStoryObjective(game);
   game.storyObjective = objective;
   if (!objective) return { status: "plan-end" };
+  // Cid's initial recovery timer only advances outside field dialogue. Let
+  // its real source callback run rather than continually restarting a talk.
+  if (objective.navigation === "fish-and-feed") {
+    const waiting = pendingEventInput(game);
+    if (waiting) return { ...waiting, objective: objective.id, chapter: objective.chapter };
+  }
   if (objective.action === "await-source")
     return {
-      status: "needs-input",
+      ...(pendingEventInput(game) || { status: "needs-input" }),
       objective: objective.id,
       chapter: objective.chapter,
     };
-  const input = objective.action === "random-encounter"
+  const cooperative=cooperativeStoryInput(game,objective,{condition:storyCondition,findTarget:findStoryTarget,followTarget});
+  if(cooperative)return {...cooperative,objective:objective.id,chapter:objective.chapter};
+  const input = prepareStoryParty(game, objective, pathTo) || (objective.action === "random-encounter"
     ? randomEncounterInput(game, objective, pathTo)
-    : findStoryTarget(game, objective);
+    : findStoryTarget(game, objective));
   return {
-    ...followTarget(game, input),
+    ...followTarget(game, ["no-route", "no-input", "needs-input"].includes(input.status)
+      ? pendingEventInput(game) || input : input),
     objective: objective.id,
     chapter: objective.chapter,
   };

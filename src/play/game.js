@@ -1,7 +1,9 @@
 import {executeInstruction} from './instructions.js';
 import {executePartyInput,autoPartyInput} from './party-input.js';
 import {walkEncounter} from './encounters.js';
+import {executeVehicleInstruction,executeVehicleSyscall,updateVehicleInput,moveVehicle,canVehicleMove} from './vehicle-input.js';
 import {autoShopInput} from './event-systems.js';
+import {updateCooperativeInput,saveCooperativePosition} from './cooperative-input.js';
 import {executeSyscall,updateSyscallSystems,configureSyscallTimer,finishSyscallTimer} from './syscalls.js';
 const dirs=['up','right','down','left'], delta=[[0,-1],[1,0],[0,1],[-1,0]];
 const presentation=new Set(['ColorFade','Shake','Flash','ScreenEffect','BackdropColor','Orient','Water','ChangeView','ChangeMapRenderArea','PlayBattleEffect','SyncBattleEffect','BattleAnim','BattleSyncAction','BattleCondition','SetVolume','PauseBGM','ReadyBGM','LoadSE','StopSE','SyncSE','SyncBGM','PitchEnvSe','PauseEnvSe','SetAnimOnlyJockey','ResetAnimOnlyJockey']);
@@ -12,7 +14,7 @@ export class PlayGame{
   if(!this.partySlots[0].length)this.partySlots[0]=[1,31,32];for(const id of this.partySlots[0])this.unit(id).magitek=true;
  }
  get party(){return this.partySlots[this.partyIndex].map(id=>this.unit(id));}
- get busy(){return !!(this.loading||this.battle||this.dialogue||this.partySelection||this.shop||this.tasks.some(t=>!t.done&&!t.background));}
+ get busy(){return !!(this.loading||this.battle||this.dialogue||this.partySelection||this.shop||this.vehicleMenu||this.tasks.some(t=>!t.done&&!t.background));}
  unit(id){if(!this.roster[id]){const src=this.battleData.characters?.[id]||{};this.roster[id]={id,name:src.name||({1:'蒂娜',2:'洛克',31:'魏吉',32:'比格斯'})[id]||`角色${id}`,maxHp:src.maxHp||src.hp||120,hp:src.maxHp||src.hp||120,maxMp:src.maxMp||src.mp||30,mp:src.maxMp||src.mp||30,level:src.level||3,strength:src.strength||25,magic:src.magic||25,defense:src.defense||20,magicDefense:src.magicDefense||20,speed:src.speed||30,...src};if(this.testBoost)Object.assign(this.roster[id],{level:99,hp:9999,maxHp:9999,mp:999,maxMp:999,strength:255,magic:255,attack:255,defense:250,magicDefense:250,speed:255,accuracy:255});}return this.roster[id];}
  warn(task,message){const name=this.data.programs[task?.program]?.name||'runtime',key=`${name}:${task?.pc-1}:${message}`;if(this.warned.has(key))return;this.warned.add(key);const value={script:name,index:task?task.pc-1:-1,message};this.warnings.push(value);console.warn('[play guess]',value);this.onEvent({kind:'warning',...value});}
  event(kind,value={}){this.onEvent({kind,time:this.time,mapId:this.mapId,...value});}
@@ -24,17 +26,18 @@ export class PlayGame{
  }
  async start(){await this.enter(this.data.entry.mapId,this.data.entry.entrance,this.data.entry.script);return this;}
  async enter(mapId,entrance=1,continuation=''){
-  this.loading=true;this.tasks=[];this.dialogue=null;this.partySelection=null;this.shop=null;
+  saveCooperativePosition(this);
+  this.loading=true;this.tasks=[];this.assignedRouteTasks=new Map();this.dialogue=null;this.partySelection=null;this.shop=null;this.vehicleMenu=null;
   try{this.map=await this.loadMap(mapId);this.mapId=+mapId;if(this.areaId!==this.map.areaId){this.banks.AreaLocalVariable={};this.areaId=this.map.areaId;}this.visited.push(+mapId);this.groups=new Set(['entity_default']);this.actors=new Map();this.banks.MapLocalVariable={};
    const point=this.map.entities.find(e=>e.kind===0&&e.objectId===entrance)||this.map.entities.find(e=>e.kind===0)||{x:1,y:1,layer:0,direction:'down'};
    Object.assign(this.player,{x:point.x,y:point.y,layer:point.layer,direction:point.direction||'down',motion:null,visible:true});Object.assign(this.camera,{x:point.x,y:point.y,manual:false,motion:null});
-   this.triggered=new Set();this.refreshActors();const init=this.startScript(this.map.initializer,{init:true});this.afterInit=continuation;this.loading=false;if(!continuation)this.fade={from:1,to:0,start:this.time,duration:.25};this.event('map',{name:this.map.name,entrance});
+   this.triggered=new Set();this.refreshActors();for(const guess of this.map.guesses||[])this.warn(null,guess);const init=this.startScript(this.map.initializer,{init:true});this.afterInit=continuation;this.loading=false;if(!continuation)this.fade={from:1,to:0,start:this.time,duration:.25};this.event('map',{name:this.map.name,entrance});
    if(!init)this.runAfterInit();
   }catch(error){this.loading=false;this.warn(null,`Map ${mapId} load failed: ${error.message}`);throw error;}
  }
  runAfterInit(){const next=this.afterInit;this.afterInit='';if(next)this.startScript(next);}
  refreshActors(){const entities=[...this.map.entities.filter(e=>!e.group||e.group==='entity_default')];for(const g of this.groups)if(g!=='entity_default')entities.push(...(this.map.groups?.[g]?.entities||[]));this.entities=entities;
-  for(const e of entities)if([6,7,14].includes(e.kind)&&!this.actors.has(String(e.id)))this.actors.set(String(e.id),{...e,visible:true,animation:'Default',motion:null});
+  for(const e of entities)if([6,7,10,14,17].includes(e.kind)&&!this.actors.has(String(e.id)))this.actors.set(String(e.id),{...e,visible:true,animation:'Default',motion:null});
  }
  actor(selector){
   if(selector===null||selector===undefined||selector===-1001)return this.player;if(selector===0)return this.camera;
@@ -57,7 +60,7 @@ export class PlayGame{
  text(key){return (this.data.messages[key]??key??'').replace(/\\n/g,'\n').replace(/\((TINA|LOCK|ROCK|EDGAR|MASH|CELES|MOG)\)/g,(_,n)=>this.unit({TINA:1,LOCK:2,ROCK:2,EDGAR:5,MASH:6,CELES:7,MOG:11}[n]).name).replace(/<C(\d+)>/g,(_,id)=>this.unit(+id).name).replace(/<P>/g,'\n').replace(/<[^>]*>/g,'');}
  confirm(choice=0){if(this.dialogue){const d=this.dialogue;this.dialogue=null;if(d.task){d.task.waitFor=null;d.task.locals[0]=choice;d.task.result=choice;(this.banks.MessageSelection??={})[0]=choice;}this.event('confirm',{key:d.key,choice});return true;}if(this.busy)return false;return this.interact();}
  tick(dt=1/60,{auto=false}={}){
-  if(this.loading||this.over)return;if(auto&&this.partySelection)autoPartyInput(this,this.storyObjective?.party);if(auto&&this.shop)autoShopInput(this,this.storyObjective?.buy);this.time+=dt;updateSyscallSystems(this,dt);
+  if(this.loading||this.over)return;updateVehicleInput(this);if(auto&&this.partySelection)autoPartyInput(this,this.storyObjective?.party);if(auto&&this.shop)autoShopInput(this,this.storyObjective?.buy);this.time+=dt;updateSyscallSystems(this,dt);
   for(const a of [this.player,this.camera,...this.actors.values()])if(a.motion){const m=a.motion;m.elapsed+=dt;const p=Math.min(1,m.elapsed/m.duration);a.x=m.x+(m.tx-m.x)*p;a.y=m.y+(m.ty-m.y)*p;if(p===1)a.motion=null;}
   if(this.battle){this.battle.tick(dt,auto);return;}
   if(auto&&this.dialogue){this.dialogue.elapsed+=dt;if(this.dialogue.elapsed>.15)this.confirm(this.autoChoice?.(this)??0);}else if(this.dialogue?.auto){this.dialogue.elapsed+=dt;if(this.dialogue.elapsed>this.dialogue.duration)this.confirm();}
@@ -73,10 +76,10 @@ export class PlayGame{
   }
   const init=this.tasks.find(t=>t.init&&!t.done);if(!init&&this.afterInit)this.runAfterInit();
   this.tasks=this.tasks.filter(t=>!t.done||this.tasks.some(o=>o.children.includes(t)));
-  if(!this.busy)this.tickNpc(dt);
+  updateCooperativeInput(this);if(!this.busy)this.tickNpc(dt);
  }
  finishTask(t){const caller=t.scriptFrames?.pop();if(caller){Object.assign(t,caller,{done:false,wait:0,waitFor:null});}else t.done=true;}
- step(t){const p=this.data.programs[t.program],op=p?.ops[t.pc++];if(!op){this.finishTask(t);return;}const [name,i,r,s]=op,a=this.actor(t.actor);this.lastInstruction={script:p.name,index:t.pc-1,name};if(executeInstruction(this,t,name,i,r,s,a))return;
+ step(t){const p=this.data.programs[t.program],op=p?.ops[t.pc++];if(!op){this.finishTask(t);return;}const [name,i,r,s]=op,a=this.actor(t.actor);this.lastInstruction={script:p.name,index:t.pc-1,name};if(executeVehicleInstruction(this,t,name,i,r,s)||executeInstruction(this,t,name,i,r,s,a))return;
   switch(name){
    case 'Nop':return;case 'Blank':t.wait=.001;return;case 'Exit':this.finishTask(t);return;
    case 'Return':if(t.stack.length){const f=t.stack.pop();Object.assign(t,f);}else this.finishTask(t);return;
@@ -108,9 +111,9 @@ export class PlayGame{
    case 'Encount':case 'EncountBoss':this.encounter(i[0],s[0],t);return;
    case 'OrganizePartySlot':this.partySlots[Math.max(0,i[0]-1)]=i.slice(1,5).filter(n=>n>0);return;
    case 'ChangePartySlot':this.partyIndex=Math.max(0,i[0]-1);return;
-   case 'GetItem':this.inventory[i[0]]=(this.inventory[i[0]]||0)+(i[1]||1);return;
+   case 'GetItem':{const content=this.battleData.contents?.[i[0]]||this.data.systemTables?.content?.find(row=>Number(row.id)===i[0]);if(Number(content?.type_id)===5)this.gil+=i[1];else if(Number(content?.type_id)===9)this.inventory[i[0]]=1;else this.inventory[i[0]]=(this.inventory[i[0]]||0)+(i[1]||1);return;}
    case 'RemoveItem':this.inventory[i[0]]=Math.max(0,(this.inventory[i[0]]||0)-(i[1]||1));return;
-   case 'RemoveGil':this.gil=Math.max(0,this.gil-i[0]);return;
+   case 'RemoveGil':{const fees=(this.data.systemTables?.product||[]).filter(row=>Number(row.group_id)===i[0]&&Number(row.content_id)===0);const amount=fees.length?Math.max(0,Number(fees[0].coefficient)):Math.max(0,i[0]);if(fees.length!==1)this.warn(t,`Payment group ${i[0]} has ${fees.length} fee rows; using ${amount} Gil.`);const paid=this.gil>=amount;if(paid)this.gil-=amount;this.write('MapLocalVariable',0,Number(paid),t);return;}
    case 'RecoveryHP':case 'RecoveryMP':for(const u of this.party)if(name==='RecoveryHP')u.hp=u.maxHp;else u.mp=u.maxMp;return;
    case 'SubtractionHP':for(const u of this.party)u.hp=Math.max(1,u.hp-i[0]);return;
    case 'AddCondition':case 'RemoveCondition':for(const u of this.party){u.conditions??=[];if(i[0]===607)u.magitek=name==='AddCondition';if(name==='AddCondition')u.conditions.push(i[0]);else{u.conditions=u.conditions.filter(n=>n!==i[0]);if(i[0]===5&&u.hp<=0)u.hp=1;}}return;
@@ -128,7 +131,7 @@ export class PlayGame{
    case 'HideMob':for(const e of this.actors.values())e.visible=false;return;case 'RestoreMob':for(const e of this.actors.values())e.visible=true;return;
    case 'SysCall':this.syscall(t,s[0]||'',i,r);return;
    case 'TreasureBox':this.inventory[i[0]]=(this.inventory[i[0]]||0)+1;this.warn(t,'TreasureBox reward uses provisional item operand');return;
-   case 'GoToTitle':this.event('title-screen');return;
+   case 'GoToTitle':this.titleScreen=true;this.event('title-screen');return;
    case 'OpenSaveWindow':this.event('save-menu');return;
    case 'SetTimer':configureSyscallTimer(this,t,i,r,s);return;case 'FinishTimer':finishSyscallTimer(this);return;
    default:if(presentation.has(name))return;this.warn(t,`${name}: provisional skip`);return;
@@ -136,6 +139,7 @@ export class PlayGame{
  }
  motion(t,a,x,y,duration,animation){if(a===this.camera)a.manual=true;const dx=x-a.x,dy=y-a.y;if(dx||dy)a.direction=Math.abs(dx)>Math.abs(dy)?dx>0?'right':'left':dy>0?'down':'up';a.animation=animation||'Walk'+({up:'B',down:'',left:'L',right:'R'}[a.direction]);a.motion={x:a.x,y:a.y,tx:x,ty:y,duration:Math.max(.01,duration),elapsed:0};t.waitFor='motion';}
  syscall(t,name,i,r){
+  if(executeVehicleSyscall(this,t,name,i,r))return;
   if(executePartyInput(this,t,name,this.storyObjective?.party))return;
   if(executeSyscall(this,t,name,i,r))return;
   if(/データ初期化|DataInitialize/.test(name))return;
@@ -147,7 +151,12 @@ export class PlayGame{
   if(/復活|回復|Recovery/.test(name)){for(const u of this.party){u.hp=u.maxHp;u.mp=u.maxMp;}return;}
   this.warn(t,`SysCall ${name}: skipped`);
  }
- encounter(id,continuation,t,context={}){if(!this.Battle){this.warn(t,`Battle ${id}: implementation pending`);return;}t.waitFor='battle';this.battle=new this.Battle({data:this.battleData,party:this.party,encounterId:id,...context,random:this.random,inventory:this.inventory,banks:this.banks,character:id=>this.unit(id),eventCallbacks:Object.fromEntries(['メンバー加入：ガウ','バトル加入：ガウ'].map(name=>[name,()=>{executeSyscall(this,t,'メンバー加入：ガウ',[],[]);return false;}])),event:(kind,payload)=>this.event(kind,payload),warn:msg=>this.warn(t,String(msg)),onEnd:result=>{this.battles.push({encounterId:id,...result});this.gil+=result.gil||0;for(const drop of result.drops||[])this.inventory[drop.id]=(this.inventory[drop.id]||0)+(drop.count||1);this.battle=null;t.waitFor=null;if(context.randomEncounter&&result.outcome==='defeat'){this.over={reason:'队伍在战斗中倒下了。请读取存档重试。'};this.event('game-over',this.over);}if(continuation){t.done=true;this.startScript(continuation);}else if(this.banks.PlaySystems?.reservedScript){const reserved=this.banks.PlaySystems.reservedScript;delete this.banks.PlaySystems.reservedScript;t.done=true;this.startScript(reserved);}this.event('battle-end',{encounterId:id,...result});}});this.event('battle',{encounterId:id});}
+ handlesBattleDefeat(name,seen=new Set()){
+  if(!name||seen.has(name))return false;seen.add(name);
+  const program=this.data.programs[this.resolve(name)];
+  return (program?.ops||[]).some(([op,,,strings=[]])=>op==='SysCall'&&strings[0]==='戦闘結果取得'||op==='ChangeScript'&&this.handlesBattleDefeat(strings[0],seen));
+ }
+ encounter(id,continuation,t,context={}){if(!this.Battle){this.warn(t,`Battle ${id}: implementation pending`);return;}t.waitFor='battle';this.battle=new this.Battle({data:this.battleData,party:this.party,encounterId:id,finalParty:this.finalBattleOrder||[],...context,random:this.random,inventory:this.inventory,banks:this.banks,character:id=>this.unit(id),eventCallbacks:Object.fromEntries(['メンバー加入：ガウ','バトル加入：ガウ'].map(name=>[name,()=>{executeSyscall(this,t,'メンバー加入：ガウ',[],[]);return false;}])),event:(kind,payload)=>this.event(kind,payload),warn:msg=>this.warn(t,String(msg)),onEnd:result=>{this.battles.push({encounterId:id,...result});this.gil+=result.gil||0;for(const drop of result.drops||[])this.inventory[drop.id]=(this.inventory[drop.id]||0)+(drop.count||1);this.battle=null;t.waitFor=null;if(result.outcome==='defeat'&&(context.randomEncounter||!this.handlesBattleDefeat(continuation))){t.done=true;this.over={reason:'队伍在战斗中倒下了。请读取存档重试。'};this.event('game-over',this.over);this.event('battle-end',{encounterId:id,...result});return;}if(continuation){t.done=true;this.startScript(continuation);}else if(this.banks.PlaySystems?.reservedScript){const reserved=this.banks.PlaySystems.reservedScript;delete this.banks.PlaySystems.reservedScript;t.done=true;this.startScript(reserved);}this.event('battle-end',{encounterId:id,...result});}});this.event('battle',{encounterId:id});}
  tickNpc(dt){
   if(!this.rts?.active)return;
   this.npcClock=(this.npcClock||0)+dt;if(this.npcClock<.65)return;this.npcClock=0;
@@ -160,10 +169,11 @@ export class PlayGame{
  }
  useItem(contentId,memberId){if(this.busy)return false;const item=this.battleData.items?.[this.battleData.contents?.[contentId]?.type_value],unit=this.unit(memberId);if(!item||!this.inventory[contentId])return false;const group=item.menu_function_group_id;if(![1,2,3,4].includes(group)||(group===2?unit.hp>0:unit.hp<=0))return false;this.inventory[contentId]--;if(group===2){unit.hp=Math.max(1,Math.floor(unit.maxHp/8));unit.conditions=(unit.conditions||[]).filter(n=>n!==5);}else{if([1,4].includes(group))unit.hp=Math.min(unit.maxHp,unit.hp+item.standard_value);if([3,4].includes(group))unit.mp=Math.min(unit.maxMp,unit.mp+item.standard_value);}return true;}
  switchParty(){if(this.busy||!this.rts?.active)return false;executeSyscall(this,{locals:[],pc:0},'RTS：操作パーティ切替',[],[]);return true;}
- canMove(x,y,layer=this.player.layer){if(x<0||y<0||x>=this.map.width||y>=this.map.height)return false;const grid=this.map.collisions?.[layer]||this.map.collisions?.[0],v=grid?.[Math.floor(y)*this.map.width+Math.floor(x)];return v===undefined||v!==1;}
- move(direction){if(this.busy||!this.control||this.player.motion)return false;const n=dirs.indexOf(direction);if(n<0)return false;this.player.direction=direction;this.player.animation='Walk'+({up:'B',down:'',left:'L',right:'R'}[direction]);const d=delta[n],x=this.player.x+d[0],y=this.player.y+d[1];if(!this.canMove(x,y))return false;this.player.x=x;this.player.y=y;this.camera.manual=false;this.checkTriggers();if(!this.busy)walkEncounter(this);return true;}
- checkTriggers(){if(this.busy)return;for(const e of this.entities){
-  const actual=this.actors.get(String(e.id))||e;if(actual.visible===false)continue;if(actual.layer&&actual.layer!==this.player.layer)continue;
+ canWalk(x,y,layer=this.player.layer){if(x<0||y<0||x>=this.map.width||y>=this.map.height)return false;const grid=this.map.collisions?.[layer]||this.map.collisions?.[0],v=grid?.[Math.floor(y)*this.map.width+Math.floor(x)];return v===undefined||v!==1;}
+ canMove(x,y,layer=this.player.layer){return this.player.vehicle>1&&this.map?.worldTerrain?canVehicleMove(this,x,y):this.canWalk(x,y,layer);}
+ move(direction){if(this.player.vehicle>1&&this.map?.worldTerrain)return moveVehicle(this,direction);if(this.busy||!this.control||this.player.motion)return false;const n=dirs.indexOf(direction);if(n<0)return false;this.player.direction=direction;this.player.animation='Walk'+({up:'B',down:'',left:'L',right:'R'}[direction]);const d=delta[n],x=this.player.x+d[0],y=this.player.y+d[1];if(!this.canMove(x,y))return false;this.player.x=x;this.player.y=y;this.camera.manual=false;updateCooperativeInput(this);this.checkTriggers();if(!this.busy)walkEncounter(this);return true;}
+ checkTriggers(){if(this.busy||this.map?.worldTerrain&&this.player.vehicle>1)return;for(const e of this.entities){
+  const actual=this.actors.get(String(e.id))||e;if(actual.visible===false)continue;if(actual.layer!=null&&actual.layer!==this.player.layer&&!e.npc?.allLayers)continue;
   const touchNpc=e.kind===6&&e.npc?.moveType===3&&this.rts?.active;
   if(Math.abs(actual.x-this.player.x)>(touchNpc?1:.6)||Math.abs(actual.y-this.player.y)>(touchNpc?1:.6))continue;
   const key=`${this.mapId}:${[...this.groups].join(',')}:${e.id}`;if(this.triggered.has(key))continue;
@@ -173,14 +183,15 @@ export class PlayGame{
  }}
 
  interactionDistance(target,x=this.player.x,y=this.player.y,layer=this.player.layer){
+  if(target.layer!=null&&target.layer!==layer&&!target.npc?.allLayers)return 0;
   const dx=Math.abs(target.x-x),dy=Math.abs(target.y-y);
   if(dx+dy===1)return 1;
-  if([5,6,8].includes(target.kind)&&dx+dy===2&&(!dx||!dy)&&!this.canMove((x+target.x)/2,(y+target.y)/2,layer))return 2;
+  if([5,6,7,8,10,17].includes(target.kind)&&dx+dy===2&&(!dx||!dy)&&!this.canMove((x+target.x)/2,(y+target.y)/2,layer))return 2;
   return 0;
  }
  interact(){if(this.busy)return false;const n=dirs.indexOf(this.player.direction),d=delta[n]||[0,1];
   for(const distance of [1,2])for(const e of this.entities){
-   const actual={...e,...this.actors.get(String(e.id))};if(actual.visible===false||actual.layer&&actual.layer!==this.player.layer)continue;
+   const actual={...e,...this.actors.get(String(e.id))};if(actual.visible===false||!this.interactionDistance(actual))continue;
    if(Math.abs(actual.x-this.player.x-d[0]*distance)>=.6||Math.abs(actual.y-this.player.y-d[1]*distance)>=.6)continue;
    if(distance===2&&this.interactionDistance(actual)!==2)continue;
    const name=e.script||e.npc?.interaction?.script||e.mapObject?.interaction?.script;
@@ -189,6 +200,6 @@ export class PlayGame{
   }return false;
  }
 
- snapshot(){return{walkEncounterState:this.walkEncounterState,finalBattleOrder:this.finalBattleOrder,completedStoryObjectives:this.completedStoryObjectives||[],testBoost:this.testBoost,mapId:this.mapId,player:{...this.player,motion:null},banks:this.banks,partySlots:this.partySlots,partyIndex:this.partyIndex,roster:this.roster,inventory:this.inventory,gil:this.gil,groups:[...this.groups],history:this.history,battles:this.battles};}
- async restore(saved){this.testBoost=!!saved.testBoost;await this.enter(saved.mapId,0);this.tasks=[];this.afterInit='';Object.assign(this,{walkEncounterState:saved.walkEncounterState,finalBattleOrder:saved.finalBattleOrder,completedStoryObjectives:saved.completedStoryObjectives||[],banks:saved.banks,partySlots:saved.partySlots,partyIndex:saved.partyIndex,roster:saved.roster,inventory:saved.inventory,gil:saved.gil,history:saved.history,battles:saved.battles});Object.assign(this.player,saved.player);this.groups=new Set(saved.groups);this.refreshActors();}
+ snapshot(){return{titleScreen:this.titleScreen,cooperativeState:this.cooperativeState,partyPositions:this.partyPositions,rts:this.rts,time:this.time,visited:this.visited,actors:[...this.actors],assignedRoutes:[...this.assignedRouteTasks||[]].filter(([,t])=>!t.done).map(([actor,t])=>({actor,route:this.actor(actor).routeId,loop:this.actor(actor).routeLoop,pc:t.pc,wait:t.wait,waitFor:t.waitFor,locals:t.locals})),walkEncounterState:this.walkEncounterState,finalBattleOrder:this.finalBattleOrder,completedStoryObjectives:this.completedStoryObjectives||[],testBoost:this.testBoost,mapId:this.mapId,player:{...this.player,motion:null},banks:this.banks,partySlots:this.partySlots,partyIndex:this.partyIndex,roster:this.roster,inventory:this.inventory,gil:this.gil,groups:[...this.groups],history:this.history,battles:this.battles};}
+ async restore(saved){this.testBoost=!!saved.testBoost;await this.enter(saved.mapId,0);this.tasks=[];this.afterInit='';Object.assign(this,{titleScreen:saved.titleScreen,cooperativeState:saved.cooperativeState,partyPositions:saved.partyPositions,rts:saved.rts,time:saved.time??this.time,visited:saved.visited??this.visited,walkEncounterState:saved.walkEncounterState,finalBattleOrder:saved.finalBattleOrder,completedStoryObjectives:saved.completedStoryObjectives||[],banks:saved.banks,partySlots:saved.partySlots,partyIndex:saved.partyIndex,roster:saved.roster,inventory:saved.inventory,gil:saved.gil,history:saved.history,battles:saved.battles});Object.assign(this.player,saved.player);this.groups=new Set(saved.groups);this.refreshActors();if(saved.actors)this.actors=new Map(saved.actors);else this.startScript(this.map.initializer,{init:true});for(const cursor of saved.assignedRoutes||[]){executeInstruction(this,{pc:0},'AssignMoveRoute',[cursor.actor,cursor.route,Number(cursor.loop)]);const task=this.assignedRouteTasks.get(cursor.actor);if(task)Object.assign(task,{pc:cursor.pc,wait:cursor.wait,waitFor:cursor.waitFor,locals:cursor.locals});}}
 }

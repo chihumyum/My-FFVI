@@ -1,24 +1,36 @@
 // Read-only projections choose ordinary player routes. They never execute a
 // field task, emit an event, or write a game flag.
+import { storyCondition } from "./story-plan.js";
+
 function project(
   game,
   mapId,
   name,
   { initializer = false, direction = "up", depth = 0,
     initialBanks = game.banks, previousArea = game.areaId, newEntry = false,
-    followContinuations = true } = {},
+    followContinuations = true, startPc = 0, actor = null, position = null,
+    sameMapContext = false } = {},
 ) {
   const data = game.data,
     map = data.navigation.maps[mapId];
   let programId = data.byMap[mapId]?.[name] ?? data.global[name],
-    pc = 0;
+    pc = startPc;
   let locals = [...(data.programs[programId]?.locals || [])],
     stack = [];
   const banks = {},
     groups = new Set(["entity_default"]),
     destinations = [],
     scripts = new Set([name]),
-    scriptFrames = [];
+    syscalls = new Set(),
+    scriptFrames = [], bindings = {};
+  let player = { ...(position || (mapId === game.mapId ? game.player : {})) }, moved = false, leavesMap = false;
+  const result = () => ({ groups, destinations, scripts, syscalls, banks, leavesMap, landing: moved && !leavesMap ? player : null });
+  const setPosition = (x, y, layer) => {
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      player = { x, y, layer: layer > 0 ? layer - 1 : player.layer ?? 1 };
+      moved = true;
+    }
+  };
   const resume = () => {
     if (!scriptFrames.length) return false;
     ({ programId, pc, locals, stack } = scriptFrames.pop());
@@ -28,7 +40,7 @@ function project(
     if (category === "ScriptLocalVariable") return locals;
     if (!(category in banks))
       banks[category] = {
-        ...((category === "MapLocalVariable" && (newEntry || mapId !== game.mapId)) ||
+        ...((category === "MapLocalVariable" && (newEntry || !sameMapContext && mapId !== game.mapId)) ||
         (category === "AreaLocalVariable" && map.areaId !== previousArea)
           ? {}
           : initialBanks[category]),
@@ -46,10 +58,10 @@ function project(
     switch (kind) {
       case "Exit":
         if (resume()) break;
-        return { groups, destinations, scripts };
+        return result();
       case "Return":
         if (!stack.length) {
-          if (!resume()) return { groups, destinations, scripts };
+          if (!resume()) return result();
         } else ({ programId, pc, locals } = stack.pop());
         break;
       case "Call":
@@ -93,11 +105,67 @@ function project(
         bank("MessageSelection")[0] = 0;
         locals[0] = 0;
         break;
+      case "SysCall":
+        syscalls.add(s[0]);
+        break;
+      case "BranchByLeader":
+        if (game.partySlots?.[game.partyIndex]?.[0] === i[0]) pc = i[1];
+        break;
+      case "BranchByCharacter": {
+        const present = i[2] === 0 ? game.partySlots?.[game.partyIndex]?.includes(i[0]) :
+          Boolean(game.roster?.[i[0]] && game.roster[i[0]].enabled !== false);
+        if (present === (i[1] === 0)) pc = i[3];
+        break;
+      }
+      case "BranchByNumOfMember": {
+        const count = i[0] === 0 ? game.partySlots?.[game.partyIndex]?.length || 0 :
+          Object.values(game.roster || {}).filter(unit => unit.enabled !== false).length;
+        if (game.compare(count, s[0] || "＝", i[1])) pc = i[2];
+        break;
+      }
       case "BranchByPlayerDirection":
         pc = i[["up", "right", "down", "left"].indexOf(direction)] ?? pc;
         break;
+      case "SetPuppet":
+        bindings[i[0]] = { actor: i[1], pc: i[2] };
+        break;
+      case "ExecPuppet":
+        if (i[0] === 0 && depth < 16) for (const binding of Object.values(bindings)) {
+          if (![-1001, -1010].includes(binding.actor)) continue;
+          const child = project(game, mapId, data.programs[programId].name, {
+            actor: binding.actor, startPc: binding.pc, position: player,
+            depth: depth + 1, initialBanks: { ...initialBanks, ...banks },
+            previousArea: map.areaId, sameMapContext: true, direction,
+          });
+          if (child.landing) { player = child.landing; moved = true; }
+          Object.assign(banks, child.banks);
+          destinations.push(...child.destinations);
+          for (const name of child.syscalls) syscalls.add(name);
+        }
+        for (const key of Object.keys(bindings)) delete bindings[key];
+        break;
+      case "SetPos":
+        if (actor === null || [-1001, -1010].includes(actor)) {
+          if (i[3] === 1 && [-1001, -1010].includes(i[4]))
+            setPosition(Math.floor(player.x) + i[0], Math.floor(player.y) + i[1], i[2]);
+          else if (i[3] !== 1) setPosition(i[0] < 0 ? player.x : i[0], i[1] < 0 ? player.y : i[1], i[2]);
+        }
+        break;
+      case "Lerp":
+      case "Route":
+        if (actor === null || [-1001, -1010].includes(actor)) setPosition(i[0], i[1], i[2]);
+        break;
+      case "Move":
+      case "MoveBirdView":
+        if (actor === null || [-1001, -1010].includes(actor)) {
+          const [dx, dy] = [[0, -1], [1, 0], [0, 1], [-1, 0]][i[0]] || [0, 0];
+          setPosition(Math.floor(player.x) + dx * i[1], Math.floor(player.y) + dy * i[1], 0);
+        }
+        break;
       case "ChangeMap":
+        leavesMap = true;
         if (s[0]) scripts.add(s[0]);
+        {const transitionIndex=destinations.length;
         destinations.push({ mapId: i[0], entrance: i[1] });
         // Temporary camera/staging maps return through their authored scene
         // continuation. Include that source chain in the route graph; walking
@@ -105,28 +173,40 @@ function project(
         if (followContinuations && s[0] && depth < 16 && data.navigation.maps[i[0]]) {
           const next = project(game, i[0], s[0], { direction, depth: depth + 1,
             initialBanks: { ...initialBanks, ...banks }, previousArea: map.areaId,
-            newEntry: true });
+            newEntry: true, position: data.navigation.maps[i[0]].entrances[i[1]] });
+          // A forced continuation owns this staging map until its next map
+          // transition. It never grants the player free access to its doors.
+          if(next.leavesMap||next.landing)destinations.splice(transitionIndex,1);
           destinations.push(...next.destinations);
           for (const name of next.scripts) scripts.add(name);
+          for (const name of next.syscalls) syscalls.add(name);
+          Object.assign(banks, next.banks);
+          if (next.landing) destinations.push({ mapId: i[0], position: next.landing });
         }
-        return { groups, destinations, scripts };
+        return result();
+        }
       case "Encount":
       case "EncountBoss":
         if (s[0]) {
           scripts.add(s[0]);
           if (followContinuations && depth < 16) {
             const next = project(game, mapId, s[0], { direction, depth: depth + 1,
-              initialBanks: { ...initialBanks, ...banks }, previousArea: map.areaId });
+              initialBanks: { ...initialBanks, ...banks }, previousArea: map.areaId,
+              sameMapContext: true, position: player });
             destinations.push(...next.destinations);
+            if (next.destinations.some(dest => dest.entrance !== undefined)) leavesMap = true;
             for (const name of next.scripts) scripts.add(name);
+            for (const name of next.syscalls) syscalls.add(name);
+            Object.assign(banks, next.banks);
+            if (next.landing) destinations.push({ mapId, position: next.landing });
           }
-          return { groups, destinations, scripts };
+          return result();
         }
         break;
       case "ChangeScript": {
         scripts.add(s[0]);
         if (initializer && /^sc_e_/.test(s[0]))
-          return { groups, destinations, scripts };
+          return result();
         const next = data.byMap[mapId]?.[s[0]] ?? data.global[s[0]];
         if (next === undefined) break;
         if (i[0]) scriptFrames.push({ programId, pc, locals, stack });
@@ -138,7 +218,7 @@ function project(
       }
     }
   }
-  return { groups, destinations, scripts };
+  return result();
 }
 
 function navigationState(game) {
@@ -146,6 +226,11 @@ function navigationState(game) {
     game.mapId,
     game.areaId,
     game.partySlots,
+    game.player.vehicle,
+    Object.entries(game.banks.PlaySystems?.vehicles || {}).filter(([id]) => [4, 5].includes(Number(id)))
+      .map(([id, value]) => [id, value.mapId, value.enabled,
+        Number(id) === game.player.vehicle ? null : [value.x, value.y, value.layer]]),
+    Object.values(game.roster || {}).filter(unit => unit.enabled !== false).map(unit => unit.id),
     Object.fromEntries(
       Object.entries(game.banks).filter(([name]) => !name.startsWith("Play")),
     ),
@@ -155,21 +240,26 @@ function navigationState(game) {
     return game.navigationCache;
   const maps = new Map(),
     projections = new Map();
-  const script = (mapId, name, initializer = false) => {
-    const key = `${mapId}:${name}:${initializer}`;
+  const script = (mapId, name, initializer = false, position = null) => {
+    const key = `${mapId}:${name}:${initializer}:${position?.x},${position?.y},${position?.layer}`;
     if (!projections.has(key)) {
-      const one = project(game, mapId, name, { initializer });
+      const one = project(game, mapId, name, { initializer, position });
       if (!initializer) {
         for (const direction of ["right", "down", "left"]) {
-          const extra = project(game, mapId, name, { direction });
+          const extra = project(game, mapId, name, { direction, position });
           for (const dest of extra.destinations)
             if (
               !one.destinations.some(
-                (d) => d.mapId === dest.mapId && d.entrance === dest.entrance,
+                (d) => d.mapId === dest.mapId && d.entrance === dest.entrance &&
+                  JSON.stringify(d.position) === JSON.stringify(dest.position),
               )
             )
               one.destinations.push(dest);
+          if (extra.landing && position && (extra.landing.x !== position.x ||
+              extra.landing.y !== position.y || extra.landing.layer !== position.layer))
+            one.destinations.push({ mapId, position: extra.landing });
           for (const target of extra.scripts) one.scripts.add(target);
+          for (const name of extra.syscalls) one.syscalls.add(name);
           for (const group of extra.groups) one.groups.add(group);
         }
       }
@@ -191,7 +281,7 @@ function navigationState(game) {
       seen.add(group);
       for (const entry of game.data.navigation.maps[mapId].entries) {
         if (entry.group !== group || !entry.script) continue;
-        const next = script(mapId, entry.script);
+        const next = script(mapId, entry.script, false, entry);
         for (const name of next.scripts) result.add(name);
         pending.push(...next.groups);
       }
@@ -210,17 +300,14 @@ function navigationState(game) {
         mapId,
         map.entries
           .filter((entry) => groups.has(entry.group))
-          .map((entry) => ({
-            ...entry,
-            destinations: entry.destination
-              ? [entry.destination]
-              : entry.script
-                ? script(mapId, entry.script).destinations
-                : [],
-            scripts: entry.script
-              ? reachableScripts(mapId, script(mapId, entry.script), groups)
-              : new Set(),
-          })),
+          .map((entry) => {
+            const projected = entry.script ? script(mapId, entry.script, false, entry) : null,
+              destinations = entry.destination ? [entry.destination] : [...(projected?.destinations || [])];
+            if (projected?.landing && (projected.landing.x !== entry.x || projected.landing.y !== entry.y || projected.landing.layer !== entry.layer))
+              destinations.push({ mapId, position: projected.landing });
+            return { ...entry, destinations, syscalls: projected?.syscalls || new Set(), scripts: projected
+              ? reachableScripts(mapId, projected, groups) : new Set() };
+          }),
       );
     }
     return maps.get(mapId);
@@ -243,15 +330,31 @@ export function isMapExit(game, entry) {
   ) || false;
 }
 
+function pointRegions(map, point) {
+  if (point.x < 0 || point.y < 0 || point.x >= map.width || point.y >= map.height) return [];
+  const runs = map.regionRuns?.[point.layer] || map.regionRuns?.[0],
+    cell = Math.round(point.y) * map.width + Math.round(point.x);
+  if (runs) {
+    let low = 0, high = runs.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (runs[mid][0] <= cell) low = mid + 1; else high = mid;
+    }
+    return runs[low]?.[1] ? [runs[low][1]] : [];
+  }
+  return Object.values(map.entrances).find(entrance => entrance.x === point.x &&
+    entrance.y === point.y && entrance.layer === point.layer)?.regions || [];
+}
+
 export function routeToStory(game, objective, pathTo) {
   const navigation = game.data.navigation;
   if (!navigation) return { status: "no-navigation" };
+  const requested = typeof objective === "string" ? [objective] :
+    [...(objective.scripts || []), ...(objective.after || [])];
   const state = navigationState(game),
     matches = (entry) =>
-      (typeof objective === "string"
-        ? [objective]
-        : objective.scripts || []
-      ).some((name) => entry.scripts.has(name));
+      requested.some((name) => entry.scripts.has(name)) ||
+      (typeof objective !== "string" && objective.syscalls?.some(name => entry.syscalls?.has(name)));
   const actual = (entry) => {
     const source = game.entities.find(
       (e) => e.id === entry.id && e.script === entry.script,
@@ -265,40 +368,89 @@ export function routeToStory(game, objective, pathTo) {
           ...(actor ? { x: actor.x, y: actor.y, layer: actor.layer } : {}),
         };
   };
+  const movingInput = (entry, target) => {
+    const actor = game.actors.get(String(target.id)), task = game.assignedRouteTasks?.get(Number(target.id));
+    if (!actor || !task || task.done) return null;
+    if (actor.routeLoop && entry.routePoints?.length) {
+      const options=entry.routePoints.map(point=>({target:{...target,...point},route:null}))
+        .map(value=>({...value,route:pathTo(game,value.target)})).filter(value=>value.route)
+        .sort((a,b)=>a.route.length-b.route.length);
+      if(!options.length)return null;
+      if(options[0].route.length)return{status:'target',...options[0]};
+    }
+    return {status:'wait-npc',target};
+  };
   const local = state.entries(game.mapId);
   for (const entry of local.filter(matches)) {
     const target = actual(entry);
     if (!target) continue;
-    if (entry.script && [5, 6, 8].includes(entry.kind)) {
-      const requested =
-        typeof objective === "string" ? [objective] : objective.scripts || [];
-      target.allowedDirections = ["up", "right", "down", "left"].filter(
-        (direction) => {
+    // An authored NPC route can still be crossing cells. Leaving the map
+    // here would restart it before its final source variable write.
+    const moving = game.actors.get(String(target.id));
+    if (moving && game.assignedRouteTasks?.get(Number(target.id))?.done === false && !moving.routeLoop)
+      return { status: "wait-npc", target };
+    if (entry.script && [5, 6, 7, 8, 10, 17].includes(entry.kind)) {
+      const directions = ["up", "right", "down", "left"].map(direction => {
           const projected = project(game, game.mapId, entry.script, {
-            direction,
+            direction, position: target,
           });
-          return requested.some((name) =>
+          return { direction, completes: typeof objective !== "string" && storyCondition({
+            ...game, banks: { ...game.banks, ...projected.banks },
+            history: [...game.history, ...[...projected.scripts].map(script => ({ script }))],
+          }, objective.complete), reaches: requested.some((name) =>
             state.reachableScripts(game.mapId, projected, game.groups).has(name),
-          );
-        },
-      );
+          ) || typeof objective !== "string" && objective.syscalls?.some(name => projected.syscalls.has(name)) };
+      });
+      // Some scripts keep their name on an immediate direction-guarded Exit.
+      // Prefer source branches that actually produce the objective's state;
+      // the projection is a copy and the real player still has to interact.
+      const completing = directions.filter(value => value.completes);
+      target.allowedDirections = (completing.length ? completing : directions.filter(value => value.reaches))
+        .map(value => value.direction);
     }
     const route = pathTo(game, target);
     if (route) return { status: "target", target, route };
+    const routeMotion=movingInput(entry,target);if(routeMotion)return routeMotion;
+  }
+  // Some source scenes update flags but deliberately leave their old entities
+  // alive until the next map entry. Walk out and back through normal portals
+  // when that initializer would publish the requested input.
+  const currentMap = navigation.maps[game.mapId];
+  if (currentMap) {
+    const fresh = project(game, game.mapId, currentMap.initializer, { initializer: true, newEntry: true });
+    const refreshedTarget = matches(fresh) || currentMap.entries.some(entry =>
+      entry.script && !game.groups.has(entry.group) && fresh.groups.has(entry.group) &&
+      matches(state.script(game.mapId, entry.script, false, entry)));
+    if (refreshedTarget) {
+      const doors = local.filter(entry => entry.kind === 3 && entry.destination?.mapId !== game.mapId)
+        .map(entry => actual(entry)).filter(Boolean)
+        .map(target => ({ target, route: pathTo(game, target) })).filter(value => value.route)
+        .sort((a, b) => a.route.length - b.route.length);
+      if (doors.length) return { status: "target", ...doors[0], refresh: true };
+    }
   }
   const intersects = (a, b) => a?.some((region) => b?.includes(region));
   const cacheKey = JSON.stringify(objective);
   if (!state.distances.has(cacheKey)) {
     const reverse = new Map(),
       distances = new Map(),
-      queue = [];
+      queue = [], virtual = new Map();
     const destinationKey = (dest) => {
       const map = navigation.maps[dest.mapId];
+      if (dest.position) return `${dest.mapId}:p:${dest.position.x},${dest.position.y},${dest.position.layer}`;
       const entrance = map?.entrances[dest.entrance]
         ? dest.entrance
         : Object.keys(map?.entrances || {})[0] || 0;
       return `${dest.mapId}:${entrance}`;
     };
+    for (const map of Object.values(navigation.maps))
+      for (const entry of state.entries(map.id))
+        for (const dest of entry.destinations) if (dest.position && navigation.maps[dest.mapId]) {
+          const key = destinationKey(dest), regions = pointRegions(navigation.maps[dest.mapId], dest.position);
+          if (!regions.length) continue;
+          virtual.set(key, { mapId: dest.mapId, point: { ...dest.position,
+            regions } });
+        }
     for (const map of Object.values(navigation.maps)) {
       const entries = state.entries(map.id),
         initial = state.script(map.id, map.initializer, true);
@@ -310,11 +462,18 @@ export function routeToStory(game, objective, pathTo) {
       const entrances = Object.keys(map.entrances).length
         ? Object.entries(map.entrances)
         : [[0, { regions: [] }]];
+      for (const [key, value] of virtual)
+        if (value.mapId === map.id) entrances.push([key.slice(String(map.id).length + 1), value.point]);
       for (const [id, entrance] of entrances) {
         const from = `${map.id}:${id}`;
+        const flight = map.world && ([4, 5].includes(game.player.vehicle) && game.mapId === map.id ||
+          Object.entries(game.banks.PlaySystems?.vehicles || {}).some(([id, vehicle]) =>
+            [4, 5].includes(Number(id)) && vehicle.mapId === map.id && vehicle.enabled !== false &&
+            intersects(entrance.regions, pointRegions(map, vehicle))));
         const reachable = entries.filter(
           (entry) =>
-            !entrance.regions.length ||
+            flight ||
+            !entrance.regions.length && !map.regionRuns ||
             intersects(entrance.regions, entry.regions),
         );
         if (autoTarget || reachable.some(matches)) {
@@ -361,17 +520,20 @@ export function routeToStory(game, objective, pathTo) {
   for (const { target, entry, distance } of exits) {
     if (entry?.script) {
       target.allowedDirections = ["up", "right", "down", "left"].filter(
-        (direction) =>
-          project(game, game.mapId, entry.script, { direction }).destinations.some(
+        (direction) => {
+          const projected = project(game, game.mapId, entry.script, { direction, position: target });
+          return projected.destinations.some(
             (dest) => distances.get(destinationKey(dest)) === distance,
-          ),
+          ) || projected.landing && distances.get(destinationKey({ mapId: game.mapId, position: projected.landing })) === distance;
+        },
       );
       // Touch exits can use facing as part of their source branch too. Walk
       // up to the selected side, then cross the trigger with that facing.
-      target.approach = target.allowedDirections.length < 4;
+      if(![5,6,7,8,10,17].includes(target.kind))target.approach = target.allowedDirections.length < 4;
     }
     const route = pathTo(game, target);
     if (route) return { status: "target", target, route };
+    const routeMotion=movingInput(entry,target);if(routeMotion)return routeMotion;
   }
   return {
     status: "no-route",

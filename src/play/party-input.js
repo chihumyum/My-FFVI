@@ -185,9 +185,12 @@ export function submitPartyInput(game, slots = game.partySelection?.slots, requi
     return outcome;
   }
   const menu = game.partySelection;
-  game.partySlots = outcome.slots;
+  const finalOrder = menu.mode === 'final' ? outcome.slots.flat() : null;
+  // The final menu orders combatants, rather than retaining the tower's three
+  // walking teams. The first four fight together; later rows are substitutes.
+  game.partySlots = finalOrder ? [finalOrder.slice(0, 4), finalOrder.slice(4, 8), finalOrder.slice(8, 12)] : outcome.slots;
   game.partyIndex = 0;
-  if (menu.slotCount === 1 && game.rts) game.rts.active = false;
+  if ((menu.slotCount === 1 || finalOrder) && game.rts) game.rts.active = false;
   // The existing RTS host reads the number of configured groups here. It is
   // a derived formation result, not story advancement: a later one-party
   // menu must replace the three-party count left by the Narshe defense.
@@ -199,7 +202,7 @@ export function submitPartyInput(game, slots = game.partySelection?.slots, requi
     unit.reserve = !selected.has(member.id);
     if (selected.has(member.id)) unit.row = 'front';
   }
-  if (menu.mode === 'final') game.finalBattleOrder = outcome.slots.flat();
+  if (finalOrder) game.finalBattleOrder = finalOrder;
   leaderAppearance(game);
   finish(game, true);
   emit(game, 'party', { partyIndex: 0, members: [...game.partySlots[0]], slots: game.partySlots.map(slot => [...slot]) });

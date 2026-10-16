@@ -886,13 +886,14 @@ export class Battle {
 
   checkEnd() {
     if (this.phase !== "active") return;
-    const outcome =
+    const terminalOutcome = () =>
       this.events?.forcedOutcome?.outcome ||
       (!this.players.some((unit) => this.alive(unit))
         ? "defeat"
         : !this.enemies.some((unit) => this.alive(unit))
           ? "victory"
           : null);
+    let outcome = terminalOutcome();
     if (!outcome) return;
     if (
       this.aiQueue.length ||
@@ -905,6 +906,10 @@ export class Battle {
     )
       return;
     if (this.events && !this.events.beforeEnd(outcome)) return;
+    // Source events can replace a fallen party or spawn the next enemy stage
+    // while accepting this check. Never settle the stale pre-callback result.
+    outcome = terminalOutcome();
+    if (!outcome) return;
     this.phase = outcome;
     this.outcome = outcome;
     this.result = {
