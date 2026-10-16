@@ -1,3 +1,4 @@
+import {parseBattleChildAdmission} from '../core/battle-child-admission.js';
 import { battleEventConditionDependencies } from "./battle-event-condition.js";
 import { parseSourceBattleControls } from '../core/battle-controls.js';
 import { BattleConditions } from "../core/battle-conditions.js";
@@ -90,6 +91,13 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
       if (catalog.kind !== "narshe-battle-catalog" || encounter.encounterId !== id)
         block("encounter-identity", "Encounter dictionary key and compiled identity disagree");
       enemyDefinitions = encounter.enemies;
+      checked('child-party-admission',()=>{
+        if(Object.hasOwn(catalog.common,'childPartyAdmission'))throw new Error('Child-party admission must belong to an encounter');
+        if(encounter.childPartyAdmission===undefined)return;
+        const plan=parseBattleChildAdmission(encounter.childPartyAdmission);if(plan.rootPartyId!==id)throw new Error('Changed child-party admission root');
+        for(const entry of Object.values(plan.entries))for(const gate of entry.gates)conditional(gate.code,`Enemy party ${entry.partyId}: ${gate.reason}`);
+        conditional('child-party-runtime-policy','Actual source child factory requires its separately declared runtime policy before touching any instance');
+      });
       checked("battle-participant-content", () => {
         if (Object.hasOwn(catalog.common, "participants")) throw new Error("Battle participants must belong to an encounter");
         if (encounter.participants === undefined) return; // Legacy is static-only.

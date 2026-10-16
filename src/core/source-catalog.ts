@@ -1,3 +1,4 @@
+import {parseBattleChildAdmission} from './battle-child-admission.js';
 import {parseBattleGauInstanceContent} from "./battle-gau-instances.js";
 import type { BattleCatalog } from "./battle-content.js";
 import { canonical } from "./canonical.js";
@@ -103,10 +104,12 @@ export function assertSourceGameCatalog(catalog: BattleCatalog, profile: SourceC
       throw new Error("Source game catalog initial player seed differs from the source initializer");
   }
   // These are encounter declarations in every profile, never shared defaults.
-  for (const key of ["escapePolicy", "lifecycle", "rewardPolicy", "participants", "playerParticipants", "formationPlan", "controls", "sourceFlags", "forcedSavePolicy", "spawnConditionPolicy", "gauInstancePolicy", "gauInstances"])
+  for (const key of ["escapePolicy", "lifecycle", "rewardPolicy", "participants", "playerParticipants", "formationPlan", "controls", "sourceFlags", "forcedSavePolicy", "spawnConditionPolicy", "gauInstancePolicy", "gauInstances", "childPartyAdmission"])
     if (Object.hasOwn(catalog.common, key)) throw new Error("Source new game cannot use misplaced " + key + " policy");
   for(const encounter of Object.values(catalog.encounters))if(encounter.gauInstances!==undefined)parseBattleGauInstanceContent(encounter.gauInstances);
+  for(const encounter of Object.values(catalog.encounters))if(encounter.childPartyAdmission!==undefined){const plan=parseBattleChildAdmission(encounter.childPartyAdmission);if(plan.rootPartyId!==encounter.encounterId)throw new Error("Changed source child-party admission root");}
   if (profile === "framework") return;
+  if(Object.values(catalog.encounters).some(encounter=>encounter.childPartyAdmission!==undefined))throw new Error("A strict source baseline cannot use Web child-party admission");
   if(Object.values(catalog.encounters).some(encounter=>Object.hasOwn(encounter,"gauInstancePolicy")))throw new Error("A strict source baseline cannot use a Web Gau instance policy");
   if (Object.hasOwn(catalog.common, "conditionControlPolicy"))
     throw new Error("A strict source baseline cannot use a Web condition control policy");

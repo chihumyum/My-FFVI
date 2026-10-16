@@ -104,6 +104,22 @@ export function validateSourceCandidateMapObject(value, binding) {
     }
 }
 
+/** New capability objects must agree with the complete immutable input-v4
+ * tuple. Old locks cannot acquire it through an edited candidate/save body. */
+export function validateSourceCandidateBoardTransforms(value,lock,{hash,canonical}){
+    const marker=value.developmentProfile?.fieldEffectTransforms,policy=value.fieldEffects?.boardTransforms;
+    if(lock.kind!=="source-prerequisite-input-lock-v4"){
+        assert.equal(marker,undefined,"Legacy candidate lock cannot grant board transforms");assert.equal(policy,undefined,"Legacy candidate lock cannot carry board transform metadata");return;
+    }
+    if(value.developmentProfile===undefined){assert.equal(policy,undefined,"Strict source cannot carry board transform policy");return;}
+    if(!["world-development","world-map-development","source-new-game-content-v1"].includes(value.kind))return;
+    assert.equal(marker,lock.fieldEffectTransforms,"Candidate board marker differs from current input-v4");
+    if(value.kind==="world-map-development"){
+        assert.equal(hash(value.fieldEffects),lock.fieldEffectCatalogHash,"Candidate complete board catalog differs from input-v4");
+        assert.equal(canonical(policy),canonical(lock.fieldEffectTransformCatalog.projection),"Candidate board assessment differs from input-v4");
+    }else assert.equal(policy,undefined,"Board catalog belongs to actual map owner");
+}
+
 async function containedFile(base, url) {
     safeUrl(url); const file = resolve(base, 'objects', url.slice(1)), actual = await realpath(file), parent = await realpath(resolve(base, 'objects'));
     assert.ok(actual.startsWith(parent + sep), 'Candidate object escapes its sealed directory'); return file;
@@ -118,6 +134,7 @@ export async function openSourceCandidate({ root, runtimeRoot, compiledDir, cand
     if(report.frameworkBattleDirectory)await directoryPolicyInput(root,report.frameworkBattleDirectory.input);
     await validateSourcePrerequisiteInputs(lock, { root });
     if(report.frameworkBattleDirectory)assert.deepEqual(lock.files.find(row=>row.path===directoryPolicyPath),report.frameworkBattleDirectory.input,'Whole directory policy is outside the candidate input fence');
+    const boardApi=await import(pathToFileURL(resolve(compiledDir,"src/compiler/content.js")).href);
     const cache = new Map();
     async function objectBytes(row) {
         const bytes = await readFile(await containedFile(candidateDir, row.url));
@@ -138,7 +155,9 @@ export async function openSourceCandidate({ root, runtimeRoot, compiledDir, cand
     const bindings = validateSourceCandidateCatalogs(report, index, await read('/world/catalog.json'), await read('/framework/world/catalog.json'));
     for (const row of index.values()) {
         const bytes = await objectBytes(row), binding = bindings.get(row.url);
-        if (binding) validateSourceCandidateMapObject(JSON.parse(bytes), binding);
+        const value=JSON.parse(bytes);
+        if (binding) validateSourceCandidateMapObject(value, binding);
+        validateSourceCandidateBoardTransforms(value,lock,boardApi);
     }
     async function validate() {
         assert.equal(sha(await readFile(resolve(candidateDir, 'report.json'))), sha(reportBytes), 'Candidate receipt changed');
@@ -146,7 +165,7 @@ export async function openSourceCandidate({ root, runtimeRoot, compiledDir, cand
         assert.equal(await runtimeDigest(runtimeRoot, compiledDir), runtimeSha256, 'Runtime changed during candidate consumption');
         if(report.frameworkBattleDirectory)await directoryPolicyInput(root,report.frameworkBattleDirectory.input);
         await validateSourcePrerequisiteInputs(lock, { root });
-        for (const row of index.values()) await objectBytes(row);
+        for (const row of index.values()) {const bytes=await objectBytes(row);validateSourceCandidateBoardTransforms(JSON.parse(bytes),lock,boardApi);}
     }
     return { report, reportBytes, lock, runtimeSha256, read, validate };
 }

@@ -1,3 +1,4 @@
+import {WEB_BATTLE_CHILD_ADMISSION} from "/runtime/core/battle-child-admission.js";
 import {createBattleGauMediaHost} from "/runtime/core/battle-gau-instances.js";
 import {WEB_FLAT_WORLD_AUTO_MOVE} from '/runtime/core/field-world-auto-move.js';
 import { WEB_BATTLE_BRANCH_EXECUTION } from '/runtime/core/battle-branch-execution.js';
@@ -103,6 +104,7 @@ const readGameJson = async (url) => {
 let contents = new GameContentRepository(readGameJson, contentProfile);
 // Same declared Web policy as the source-route audit; no native default claim.
 const runtime = {
+  battleChildPartyAdmission:WEB_BATTLE_CHILD_ADMISSION,
     battleEventConditions: "web-source-battle-condition-lists-v1",
   battleGauInstances:createBattleGauMediaHost(sprite=>{const image=images.get(sprite.file);return image?{complete:image.complete,width:image.naturalWidth,height:image.naturalHeight}:null;}),
   battleBranchExecution:WEB_BATTLE_BRANCH_EXECUTION,
@@ -116,6 +118,7 @@ const runtime = {
   mobColorFilter:"web-flat-mob-color-filter-v1",
   screenPresentation:"web-field-screen-presentation-2d-v1",
     skyboxPresentation:'web-flat-skybox-panorama-v1',
+  fieldEffectTransforms:'web-source-logical-board-transforms-v1',
   viewChange:"web-flat-field-view-change-v2",
   worldAutoTasks:WEB_FLAT_WORLD_AUTO_TASKS,worldAutoMove:WEB_FLAT_WORLD_AUTO_MOVE,
   battleEventEffects:"web-source-battle-effects-pulse-v1",
@@ -132,7 +135,7 @@ const runtime = {
   // Fixed-field presentation sampling and RNG are an explicit Web policy.
   // The original Unity global RNG/wall-clock re-seeding is not emulated.
   cameraShake: createWebFieldCameraShakePolicy(),
-  fieldEffects: createWebLogicalFieldEffectsHost(),
+  fieldEffects: createWebLogicalFieldEffectsHost({boardTransforms:'web-source-logical-board-transforms-v1'}),
   battleHandoff: "prepared", audioReadiness: { isReady: (track) => audio.isReady(track) },
   soundPresentation: { isPresented: (voice, track) => audio.isSoundPresented(voice, track) },
   // Source DateTime.Now.Ticks is local wall time. Keep its Int64 as a string.

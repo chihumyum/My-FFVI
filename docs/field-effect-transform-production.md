@@ -1,0 +1,21 @@
+# Logical-board transform production binding
+
+This is the producer/consumer binding for the common noncharacter transform family described in `field-effect-transforms.md`. It adds no source instruction decoder, actor, animation, movement controller or new source-story admission. The actual board lifetime, mutable pose, task clock and retirement remain owned by `FieldEffects` and its current binding.
+
+The exact declaration is `compiled-framework-profile-upgrade-v11`. It inherits the complete v10 host cohort and adds `fieldEffectTransforms: "web-source-logical-board-transforms-v1"`, supplied by `field-effect-transforms.WEB_FIELD_EFFECT_TRANSFORMS` and `fieldEffectTransformsBinding`. It also carries the complete `framework-field-effect-transform-assessment-v1` value in `fieldEffectTransformCatalog`. Previous v1–v10 declarations keep their exact field sets. Neither a profile marker nor a save payload can create a provider.
+
+The producer composes one shared catalog in this order:
+
+1. Compile the complete byte-locked lossless media into the existing logical catalog.
+2. Assess the complete strict source world and apply the existing flat-v1 assessment.
+3. Assess the complete strict world again for the distinct transform capability, preserving every rejected object and reason; apply only its top-level `boardTransforms` metadata.
+
+`logicalFieldEffects` in the upgrade declaration remains the original logical catalog. The legacy flat catalog's `webPolicy.catalogHash` does not change when the distinct transform metadata is added. The new complete catalog is pinned with `hash(fullCatalog)`, including `boardTransforms`; it is never substituted for a legacy logical/flat digest.
+
+`source-prerequisite-input-lock-v4` inherits v3's byte, original-source, runtime/compiler and Skybox input fence. It adds exactly four fields: the explicit `fieldEffectTransforms` marker, complete `fieldEffectTransformCatalog` assessment, complete `fieldEffectFlatAssessment`, and `fieldEffectCatalogHash`. Validation reconstructs logical → flat → transform from the locked lossless media, validates both assessments and their complete map scope, and compares the final catalog hash. Old input v1–v3 shapes do not accept these fields.
+
+For recipe rebinding, a separate `compiled-framework-field-effect-transform-addition-v1` records the exact assessment, old flat assessment, full catalog and complete source-map digests. Its evidence reader loads every strict source map and the original corpus, reuses the unchanged legacy flat evidence reader, and independently recomputes the whole transform assessment. Only that exact catalog addition is removed from the comparison before the existing flat/logical comparison runs. All original entities, raw object identities, immutable factories, script bodies, media and map geometry retain their existing comparisons. The proof is a local, trusted build declaration checked against source data; it is not a signature or authority loaded from storage.
+
+The public producer and private source-candidate producer use the same explicit inputs. The selected initialized builder receives the same complete assessment, final catalog and hash. It validates the complete strict world map set and actual selected-map group entities and immutable map ranges before attaching the shared catalog and the three logical/flat/transform markers. A marker-only builder call rejects. Candidate readers verify every framework map against the same input-v4 catalog and assessment; strict maps cannot carry this metadata. Publication provenance additionally requires the source and link reports to agree on the same assessment, flat assessment, complete catalog, map-set hashes and counts. This is provenance verification, not gameplay acceptance.
+
+Validation distinguishes controlled host/parameter tests from original source execution. Reusing a frozen strict world for a metadata-only projection does not create a current-runtime gameplay candidate or count as another world compilation. Unknown Sprite arcs, callbacks, layers, absent/stale resources, Move/MoveTo and all unrelated source gates remain explicit. No original source body execution or campaign completion follows from static catalog counts.

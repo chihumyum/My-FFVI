@@ -38,6 +38,7 @@ export type DevelopmentProfile = {
   /** Logical all-loop playback is owned; particle/material display is deferred. */
   logicalFieldEffects?: "web-logical-all-loop-field-effects-v1";
   fieldEffectProjection?: "web-source-field-effect-flat-v1";
+  fieldEffectTransforms?:import("./field-effect-transforms.js").WebFieldEffectTransforms;
   /** Shared source event controls on a declared Web clock and screen host. */
   storyRuntime?: "web-field-story-runtime-v1";
   autoSave?: "web-field-autosave-barrier-v1";

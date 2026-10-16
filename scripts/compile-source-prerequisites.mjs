@@ -1,3 +1,4 @@
+import {FIELD_EFFECT_TRANSFORMS,FIELD_EFFECT_TRANSFORM_REASON,verifyFieldEffectTransformLock} from "./framework-field-effect-transform-evidence.mjs";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, readFile, readdir, readlink, realpath } from "node:fs/promises";
@@ -103,19 +104,19 @@ async function readLockedJson(inputs, root, path) {
   return JSON.parse(bytes.toString("utf8"));
 }
 
-async function modules(compiledDir) {
+async function modules(compiledDir,{board=false}={}) {
   const load = name => import(pathToFileURL(resolve(compiledDir, "src", name + ".js")).href);
-  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost, npcArea, npcFlat, effectFlat, ordinary, skybox] = await Promise.all([
+  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost, npcArea, npcFlat, effectFlat, ordinary, skybox, boardTransforms] = await Promise.all([
     load("compiler/content"), load("core/content-integrity"), load("compiler/world"), load("compiler/source-new-game"),
     load("compiler/framework-content"), load("core/source-catalog"), load("core/field-native-composition"),
     load("compiler/battle"), load("compiler/game-catalog"), load("compiler/opening-playable"), load("compiler/field-logical-effects"),
     load("compiler/corpus"), load("compiler/map-package"), load("compiler/field-background"),
     load("compiler/framework-periodic-presentation"), load("compiler/field-native-composition"),
     load("compiler/framework-npc-area"), load("compiler/framework-npc-flat-projection"), load("compiler/framework-field-effect-flat-projection"),
-    load("compiler/framework-ordinary-presentation"), load("compiler/field-skybox"),
+    load("compiler/framework-ordinary-presentation"), load("compiler/field-skybox"), ...(board?[load("compiler/framework-field-effect-transforms")]:[]),
   ]);
   return { ...content, ...integrity, ...world, ...newGame, ...framework, ...sourceCatalog, ...composition,
-    ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost, ...npcArea, ...npcFlat, ...effectFlat, ...ordinary, ...skybox };
+    ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost, ...npcArea, ...npcFlat, ...effectFlat, ...ordinary, ...skybox, ...boardTransforms };
 }
 
 /** Explicit Web producer input, not a source/save capability grant. */
@@ -192,9 +193,12 @@ export function sourceFieldEffectFlatInput(raw) {
 /** Capture exactly the current compiler's input domain. Raw-source exports
  * retain their original source fingerprints; this does not hash all Unity
  * bundles or claim all source files are live-verified. */
-export async function captureSourcePrerequisiteInputs({ root = repository, compiledDir = "dist", logicalFieldEffects, skyboxPresentation } = {}) {
+export async function captureSourcePrerequisiteInputs({ root = repository, compiledDir = "dist", logicalFieldEffects, skyboxPresentation, fieldEffectTransforms, fieldEffectTransformCatalog, fieldEffectFlatAssessment, fieldEffectCatalogHash } = {}) {
   root = resolve(root); compiledDir = resolve(root, compiledDir);
   const logical = logicalInput(logicalFieldEffects, root);
+  if(fieldEffectTransforms!==undefined&&fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS)throw Error("Unknown board transform policy");
+  if(fieldEffectTransforms!==undefined&&(!logical||skyboxPresentation!=="web-flat-skybox-panorama-v1"||!fieldEffectTransformCatalog||!fieldEffectFlatAssessment||!HASH.test(fieldEffectCatalogHash??"")))throw Error("Board transform capture requires complete v4 assessment/catalog and logical/Skybox inputs");
+  if(fieldEffectTransforms===undefined&&[fieldEffectTransformCatalog,fieldEffectFlatAssessment,fieldEffectCatalogHash].some(v=>v!==undefined))throw Error("Undeclared board transform input");
   if(skyboxPresentation!==undefined&&skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown Skybox presentation policy");
   const files = [], directories = [], recorded = new Map();
   const add = async (file, expected) => {
@@ -257,8 +261,9 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
   const corpus = JSON.parse(await readFile(resolve(root, "build/corpus/corpus.json"), "utf8"));
   hash(corpus.sourceSetHash, "corpus source set"); hash(corpus.parentSourceSetHash, "parent source set");
   if (api.hash(corpus.sources) !== corpus.sourceSetHash) throw new Error("Corpus source manifest fingerprint mismatch");
-  const inputs = { kind: skyboxPresentation ? "source-prerequisite-input-lock-v3" : logical ? "source-prerequisite-input-lock-v2" : "source-prerequisite-input-lock-v1",
+  const inputs = { kind: fieldEffectTransforms ? "source-prerequisite-input-lock-v4" : skyboxPresentation ? "source-prerequisite-input-lock-v3" : logical ? "source-prerequisite-input-lock-v2" : "source-prerequisite-input-lock-v1",
     ...(skyboxPresentation?{skyboxPresentation}:{}),
+    ...(fieldEffectTransforms?{fieldEffectTransforms,fieldEffectTransformCatalog:structuredClone(fieldEffectTransformCatalog),fieldEffectFlatAssessment:structuredClone(fieldEffectFlatAssessment),fieldEffectCatalogHash}:{}),
     ...(logical ? { logicalFieldEffects: logical } : {}), sourceSetHash: corpus.sourceSetHash,
     parentSourceSetHash: corpus.parentSourceSetHash, compiledDir, compilerDigest: compilerIdentity(files, compiledDir, root), files, directories };
   await validateSourcePrerequisiteInputs(inputs, { root });
@@ -270,10 +275,11 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
 export async function validateSourcePrerequisiteInputs(raw, { root = repository } = {}) {
   root = resolve(root);
   const lock = structuredClone(raw);
-  const version3=lock?.kind==="source-prerequisite-input-lock-v3",version2 = lock?.kind === "source-prerequisite-input-lock-v2"||version3&&Object.hasOwn(lock,"logicalFieldEffects");
+  const version4=lock?.kind==="source-prerequisite-input-lock-v4",version3=lock?.kind==="source-prerequisite-input-lock-v3"||version4,version2 = lock?.kind === "source-prerequisite-input-lock-v2"||version3&&Object.hasOwn(lock,"logicalFieldEffects");
+  if(version4&&(lock.fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS||!version2))throw Error("Unknown locked board transform policy or missing logical base");
   if(version3&&lock.skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown locked Skybox presentation policy");
-  exact(lock, "kind,sourceSetHash,parentSourceSetHash,compiledDir,compilerDigest,files,directories" + (version2 ? ",logicalFieldEffects" : "")+(version3?",skyboxPresentation":""), "source prerequisite lock");
-  if (!["source-prerequisite-input-lock-v1","source-prerequisite-input-lock-v2","source-prerequisite-input-lock-v3"].includes(lock.kind) || typeof lock.compiledDir !== "string" ||
+  exact(lock, "kind,sourceSetHash,parentSourceSetHash,compiledDir,compilerDigest,files,directories" + (version2 ? ",logicalFieldEffects" : "")+(version3?",skyboxPresentation":"")+(version4?",fieldEffectTransforms,fieldEffectTransformCatalog,fieldEffectFlatAssessment,fieldEffectCatalogHash":""), "source prerequisite lock");
+  if (!["source-prerequisite-input-lock-v1","source-prerequisite-input-lock-v2","source-prerequisite-input-lock-v3","source-prerequisite-input-lock-v4"].includes(lock.kind) || typeof lock.compiledDir !== "string" ||
       !isAbsolute(lock.compiledDir) || resolve(lock.compiledDir) !== lock.compiledDir ||
       !Array.isArray(lock.files) || !lock.files.length || !Array.isArray(lock.directories) || !lock.directories.length)
     throw new Error("Invalid source prerequisite input lock");
@@ -315,6 +321,7 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
   const corpus = await readLockedJson(lock, root, "build/corpus/corpus.json");
   if (corpus.sourceSetHash !== lock.sourceSetHash || corpus.parentSourceSetHash !== lock.parentSourceSetHash)
     throw new Error("Source prerequisite source identity changed");
+  let lockedLogicalMedia;
   if (version2) {
     const logical = logicalInput(lock.logicalFieldEffects,root), directory = filePath(root,logical.input);
     if (!seen.has(directory)) throw new Error("Missing logical effect snapshot directory");
@@ -323,7 +330,7 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
       const input = byPath.get(resolve(directory,row.file));
       if (!input || input.sha256 !== row.sha256) throw new Error("Incomplete logical effect snapshot");
     }
-    const media = await readLockedJson(lock,root,displayPath(root,resolve(directory,"media.json")));
+    const media = await readLockedJson(lock,root,displayPath(root,resolve(directory,"media.json")));lockedLogicalMedia=media;
     if (media.adapterVersion !== "field-effect-media-lossless-wip-0.2.0") throw new Error("Logical effect snapshot is not lossless");
     for (const row of corpus.sources) {
       const file = filePath(resolve(root,"build/runtime/game"),row.file), input = byPath.get(file);
@@ -342,12 +349,19 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
     for(const row of media.sources)if(!corpus.sources.some(s=>s.file===row.file&&s.sha256===row.sha256&&s.bytes===row.bytes))throw Error("Foreign locked Skybox physical source");
     for(const row of media.sources){const file=filePath(resolve(root,"build/runtime/game"),row.file),bound=byPath.get(file);if(!file.startsWith(resolve(root,"build/runtime/game")+sep)||!bound||bound.sha256!==row.sha256||bound.bytes!==row.bytes)throw Error("Incomplete original Skybox source binding");}
   }
+  if(version4){
+    const api=await modules(lock.compiledDir,{board:true}),logical=api.compileWebLogicalEffectCatalog(lockedLogicalMedia,{sourceSetHash:corpus.sourceSetHash,parentSourceSetHash:corpus.parentSourceSetHash,sources:corpus.sources});
+    const verified=await verifyFieldEffectTransformLock({root,compiledDir:lock.compiledDir,assessment:lock.fieldEffectTransformCatalog,flatAssessment:lock.fieldEffectFlatAssessment,catalogHash:lock.fieldEffectCatalogHash,logicalCatalog:logical.catalog});
+    if(verified.assessment.projection.sourceSetHash!==lock.sourceSetHash||verified.assessment.projection.parentSourceSetHash!==lock.parentSourceSetHash)throw Error("Board transform locked source identity changed");
+  }
   return true;
 }
 
 /** Pure upstream DAG: current battle capabilities -> source world/new game -> explicit framework
  * derivation. It never writes packages, generated recipes, reports or archives. */
-export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation } = {}) {
+export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms } = {}) {
+  if(fieldEffectTransforms!==undefined&&fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS)throw Error("Unknown board transform policy");
+  if(fieldEffectTransforms!==undefined&&(!logicalFieldEffects||!fieldEffectFlat||skyboxPresentation!=="web-flat-skybox-panorama-v1"))throw Error("Board transform v11 requires logical, legacy flat and Skybox input cohort");
   if(skyboxPresentation!==undefined&&skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown Skybox presentation policy");
   if(screenPresentation!==undefined&&screenPresentation!=="web-field-screen-presentation-2d-v1")throw Error("Unknown screen presentation policy");
   if(worldAutoTasks!==undefined&&worldAutoTasks!=='web-flat-world-auto-tasks-v1')throw new Error('Unknown source world auto-task policy');
@@ -364,7 +378,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
   if(effectFlatDeclaration && logicalFieldEffects === undefined) throw new Error("Flat field effects require an explicit logical input");
   root = resolve(root);
   const inputs = await captureSourcePrerequisiteInputs({ root, compiledDir, logicalFieldEffects,skyboxPresentation });
-  const api = await modules(inputs.compiledDir);
+  const api = await modules(inputs.compiledDir,{board:fieldEffectTransforms!==undefined});
   const [previousBattle, previousDevelopment, field] = await Promise.all([
     readLockedJson(inputs, root, "build/game/source-catalog.json"),
     readLockedJson(inputs, root, "build/game/opening-playable.json"),
@@ -507,6 +521,13 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
     const p=frameworkOptions.fieldEffectFlat.projection;
     effectFlatReport={declaration:effectFlatDeclaration,assessmentHash:frameworkOptions.fieldEffectFlat.contentHash,maps:p.mapSources.length,declared:p.objects.length,derived:p.bindings.length,unready:p.objects.length-p.bindings.length,nativeParity:false};
   }
+  let effectTransformReport=null;
+  if(fieldEffectTransforms!==undefined){
+    const corpus=await api.loadCorpus(root),base=api.projectFrameworkFieldEffectCatalog(frameworkOptions.logicalFieldEffects.catalog,frameworkOptions.fieldEffectFlat),assessment=api.assessFrameworkFieldEffectTransformWorld(corpus,strict.catalog,strict.maps,base,FIELD_EFFECT_TRANSFORM_REASON),catalog=api.projectFrameworkFieldEffectTransformCatalog(base,assessment);
+    frameworkOptions.fieldEffectTransforms=fieldEffectTransforms;frameworkOptions.fieldEffectTransformCatalog=assessment;
+    Object.assign(inputs,{kind:"source-prerequisite-input-lock-v4",fieldEffectTransforms,fieldEffectTransformCatalog:structuredClone(assessment),fieldEffectFlatAssessment:structuredClone(frameworkOptions.fieldEffectFlat),fieldEffectCatalogHash:api.hash(catalog)});
+    effectTransformReport={policy:fieldEffectTransforms,assessmentHash:assessment.contentHash,flatAssessmentHash:frameworkOptions.fieldEffectFlat.contentHash,catalogHash:inputs.fieldEffectCatalogHash,logicalCatalogHash:base.webPolicy.catalogHash,sourceMapSetHash:assessment.projection.sourceMapSetHash,maps:assessment.projection.mapSources.length,declared:assessment.projection.objects.length,derived:assessment.projection.bindings.length,unready:assessment.projection.objects.length-assessment.projection.bindings.length,pureCompilations:1,nativeParity:false};
+  }
   if (birdViewActors !== undefined) frameworkOptions.birdViewActors = birdViewActors;
   if (mobColorFilter !== undefined) frameworkOptions.mobColorFilter = mobColorFilter;
   if(screenPresentation!==undefined){if(screenPresentation!=="web-field-screen-presentation-2d-v1")throw Error("Unknown screen presentation policy");frameworkOptions.screenPresentation=screenPresentation;}
@@ -531,6 +552,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
     ...(npcReport ? { npcAreas: npcReport } : {}),
     ...(npcFlatReport ? { npcProjection: npcFlatReport } : {}),
     ...(effectFlatReport ? { fieldEffectProjection: effectFlatReport } : {}),
+    ...(effectTransformReport?{fieldEffectTransforms:effectTransformReport}:{}),
     ...(skyboxPresentation?{skyboxPresentation:{policy:skyboxPresentation,catalogHash:frameworkOptions.skyboxCatalog.contentHash,mediaSourceSetHash:frameworkOptions.skyboxCatalog.mediaSourceSetHash,models:frameworkOptions.skyboxCatalog.models.data.length,images:Object.keys(frameworkOptions.skyboxCatalog.images).length}}:{}),
     inputScope: { snapshotRoots: [...SNAPSHOTS,...(skyboxPresentation?["field-skybox-media"]:[])].map(name => "build/" + name), files: inputs.files.length,
       originalFiles: inputs.files.filter(file => file.path.startsWith("build/runtime/game/")).map(file => file.path),

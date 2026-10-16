@@ -1,6 +1,8 @@
 import { sourceBossDataKeys } from "./source-boss-encounter.js";
 import { parseSourceBattleControls, type SourceBattleControls } from "./battle-controls.js";
 
+/** Complete currently recovered entry-only applicability family. */
+export function isEntryOnlySourceBattleFlag(id:unknown):id is 14|19{return id===14||id===19;}
 export type BattleFlagRowSource = {
   file: string; assetPath: string; serializedFile: string; objectId: string; rowId: string;
 };
@@ -40,7 +42,7 @@ export function parseSourceBattleFlags(raw: unknown): SourceBattleFlags {
     throw new Error("Unimplemented source battle flag context");
   const seen = new Set<string>(), rows = Array.from(raw.rows, row => {
     sourceBossDataKeys(row,"flagId,source");
-    if (row.flagId !== 14 && row.flagId !== 19)
+    if (!isEntryOnlySourceBattleFlag(row.flagId))
       throw new Error("Unimplemented source battle flag");
     const origin = source(row.source,"battle_flag_group.csv");
     if (seen.has(origin.rowId)) throw new Error("Duplicate source battle flag row");

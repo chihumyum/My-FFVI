@@ -17,7 +17,7 @@ function fields(raw, keys) {
   assert.deepEqual(Reflect.ownKeys(raw).sort(), keys.split(",").sort());
   assert.ok(Object.values(Object.getOwnPropertyDescriptors(raw)).every(value => value.enumerable && "value" in value));
 }
-async function modules(root, dist) {
+async function modules(root, dist,{board=false}={}) {
   const load = name => import(pathToFileURL(resolve(root, dist, "src", name + ".js")).href);
   return Object.assign({}, ...await Promise.all([
     "compiler/field-skybox","core/field-skybox","compiler/framework-field-presentation", "compiler/framework-new-game", "compiler/content-batch",
@@ -26,12 +26,14 @@ async function modules(root, dist) {
     "compiler/source-walk-policy",
     "compiler/initialized-battle-binding", "compiler/source-area-scope",
     "compiler/field-npc-activity", "core/field-npc-activity-source", "compiler/field-services", "compiler/framework-npc-area",
+    ...(board?["core/field-effect-transforms","core/field-logical-effects"]:[]),
   ].map(load)));
 }
 
 /** One explicit producer profile for every initialized entry/world/map body.
  * Runtime authorization is separate; this creates no source readiness grant. */
-export function initializedContentBatchProfile(sourceContentHash,{presentation,npcActivity,worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation}={}){
+export function initializedContentBatchProfile(sourceContentHash,{presentation,npcActivity,worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms}={}){
+  if(fieldEffectTransforms!==undefined&&fieldEffectTransforms!=="web-source-logical-board-transforms-v1")throw Error("Unknown initialized board transform policy");
   if(skyboxPresentation!==undefined&&skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown initialized Skybox presentation policy");
   if(screenPresentation!==undefined&&screenPresentation!=="web-field-screen-presentation-2d-v1")throw Error("Unknown initialized screen presentation policy");
   assert.match(sourceContentHash,digest);assert.equal(presentation,'framework-ordinary-field-flat-v1');
@@ -42,20 +44,25 @@ export function initializedContentBatchProfile(sourceContentHash,{presentation,n
   if(npcActivity!==undefined&&npcActivity!=='framework-npc-area-v1')throw new Error('Unknown initialized NPC activity policy');
   return {kind:'framework-development-v1',policy:'omit-anonymous-environment-particles-v1',sourceContentHash,omissions:[],
     storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1',fieldPresentation:presentation,
-    ...(npcActivity?{npcActivity}:{}),...(worldAutoTasks?{worldAutoTasks}:{}),...(birdViewActors?{birdViewActors}:{}),...(worldAutoMove?{worldAutoMove}:{}),...(mobColorFilter?{mobColorFilter}:{}),...(screenPresentation?{screenPresentation}:{}),...(skyboxPresentation?{skyboxPresentation}:{})};
+    ...(npcActivity?{npcActivity}:{}),...(worldAutoTasks?{worldAutoTasks}:{}),...(birdViewActors?{birdViewActors}:{}),...(worldAutoMove?{worldAutoMove}:{}),...(mobColorFilter?{mobColorFilter}:{}),...(screenPresentation?{screenPresentation}:{}),...(skyboxPresentation?{skyboxPresentation}:{}),...(fieldEffectTransforms?{fieldEffectTransforms,logicalFieldEffects:"web-logical-all-loop-field-effects-v1",fieldEffectProjection:"web-source-field-effect-flat-v1"}:{})};
 }
 
 /** All source references are verified before derivation. The manifest supplies
  * player inputs, not replacement scripts, flags, actors, rewards or assets. */
 export async function compileInitializedContentBatch(root, raw, recipeSha256,
-  { dist = "dist", readJson, sourceBattleDirectory, worldAutoTasks, birdViewActors, worldAutoMove, mobColorFilter,screenPresentation,skyboxPresentation } = {}) {
+  { dist = "dist", readJson, sourceBattleDirectory, worldAutoTasks, birdViewActors, worldAutoMove, mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,fieldEffectTransformCatalog,fieldEffectTransformContent,fieldEffectCatalogHash } = {}) {
+  if(fieldEffectTransforms!==undefined&&fieldEffectTransforms!=="web-source-logical-board-transforms-v1")throw Error("Unknown initialized board transform policy");
   if(skyboxPresentation!==undefined&&skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown initialized Skybox presentation policy");
   if(screenPresentation!==undefined&&screenPresentation!=="web-field-screen-presentation-2d-v1")throw Error("Unknown initialized screen presentation policy");
   if(worldAutoTasks!==undefined&&worldAutoTasks!=='web-flat-world-auto-tasks-v1')throw new Error('Unknown initialized world auto-task policy');
   if(mobColorFilter!==undefined&&mobColorFilter!=='web-flat-mob-color-filter-v1')throw new Error('Unknown initialized Mob color-filter policy');
   if(birdViewActors!==undefined&&birdViewActors!=='web-flat-bird-view-actors-v1')throw new Error('Unknown initialized BirdView actor policy');
   if(worldAutoMove!==undefined&&(worldAutoMove!=='web-flat-world-auto-move-v1'||worldAutoTasks!=='web-flat-world-auto-tasks-v1'))throw Error('Invalid initialized world auto-movement policy');
-  root = resolve(root); const api = await modules(root, dist), build = resolve(root, "build");
+  if(fieldEffectTransforms!==undefined&&(!fieldEffectTransformCatalog||!fieldEffectTransformContent||!digest.test(fieldEffectCatalogHash??"")))throw Error("Initialized board transforms require full same-producer assessment/catalog inputs");
+  if(fieldEffectTransforms===undefined&&[fieldEffectTransformCatalog,fieldEffectTransformContent,fieldEffectCatalogHash].some(v=>v!==undefined))throw Error("Undeclared initialized board transform catalog");
+  // Detach the same-producer tuple before any async loader/caller callback.
+  if(fieldEffectTransforms!==undefined){fieldEffectTransformCatalog=structuredClone(fieldEffectTransformCatalog);fieldEffectTransformContent=structuredClone(fieldEffectTransformContent);}
+  root = resolve(root); const api = await modules(root, dist,{board:fieldEffectTransforms!==undefined}), build = resolve(root, "build");
   const serviceVariant=raw?.kind==='initialized-source-map-recipe-v5';
   const npcVariant=raw?.kind==='initialized-source-map-recipe-v4'||serviceVariant;
   const directoryVariant=raw?.kind==='initialized-source-map-recipe-v3'||npcVariant;
@@ -143,14 +150,31 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
   const skyboxCatalog=skyboxPresentation?await api.loadFieldSkyboxCatalog(root,corpus):null;
   const sources = corpus.manifest.sources.map(({ file, sha256 }) => ({ file, sha256 }));
   const bindings = api.bindMapPackages(corpus.assets, corpus.tables), byId = new Map(corpus.assets.map(asset => [asset.id, asset]));
+  if(fieldEffectTransforms!==undefined){
+    api.validateLogicalEffectCatalog(fieldEffectTransformContent);api.validateFieldEffectTransformPolicy(fieldEffectTransformContent);
+    fields(fieldEffectTransformCatalog,"kind,contentHash,projection");assert.equal(fieldEffectTransformCatalog.kind,"framework-field-effect-transform-assessment-v1");
+    assert.equal(api.hash({kind:fieldEffectTransformCatalog.kind,projection:fieldEffectTransformCatalog.projection}),fieldEffectTransformCatalog.contentHash,"Initialized board assessment digest changed");
+    assert.equal(api.hash(fieldEffectTransformContent),fieldEffectCatalogHash,"Initialized complete board catalog digest changed");
+    assert.equal(api.canonical(fieldEffectTransformContent.boardTransforms),api.canonical(fieldEffectTransformCatalog.projection),"Initialized board assessment/catalog mismatch");
+    const p=fieldEffectTransformCatalog.projection;assert.equal(p.sourceSetHash,sourceWorld.sourceSetHash);assert.equal(p.parentSourceSetHash,sourceWorld.parentSourceSetHash);
+    const membership=Object.entries(sourceWorld.maps).map(([id,m])=>({mapId:Number(id),sourceMapHash:m.contentHash})).sort((a,b)=>a.mapId-b.mapId);
+    assert.equal(api.canonical(p.mapSources),api.canonical(membership),"Initialized board catalog must retain complete strict source map scope");
+    assert.equal(p.sourceMapSetHash,api.hash({sourceSetHash:p.sourceSetHash,parentSourceSetHash:p.parentSourceSetHash,maps:membership}));
+    for(const sourceMap of sourceMaps)for(const b of p.bindings.filter(b=>b.ref.mapId===sourceMap.mapId)){
+      assert.equal(api.canonical(sourceMap.cameraHost?.mapRange),api.canonical(b.factory.mapRange),"Initialized board immutable factory map range changed");
+      const actual=sourceMap.map?.groups?.[b.ref.group]?.entities.filter(e=>api.canonical(e.source)===api.canonical(b.entity.source))??[];
+      assert.equal(api.canonical(actual),api.canonical([b.entity]),"Initialized board exact original entity changed");
+    }
+  }
   const renderHost = await api.loadFieldCompositionRenderHost(root, sources);
   const seal = value => { const { contentHash: _, ...body } = value; return { ...body, contentHash: api.hash(body) }; };
   const profile = sourceContentHash => initializedContentBatchProfile(sourceContentHash,{presentation:recipe.presentation,
-    ...(npcVariant?{npcActivity:npcTemplate.policy}:{}),...(worldAutoTasks?{worldAutoTasks}:{}),...(birdViewActors?{birdViewActors}:{}),...(worldAutoMove?{worldAutoMove}:{}),...(mobColorFilter?{mobColorFilter}:{}),...(screenPresentation?{screenPresentation}:{}),...(skyboxPresentation?{skyboxPresentation}:{})});
+    ...(npcVariant?{npcActivity:npcTemplate.policy}:{}),...(worldAutoTasks?{worldAutoTasks}:{}),...(birdViewActors?{birdViewActors}:{}),...(worldAutoMove?{worldAutoMove}:{}),...(mobColorFilter?{mobColorFilter}:{}),...(screenPresentation?{screenPresentation}:{}),...(skyboxPresentation?{skyboxPresentation}:{}),...(fieldEffectTransforms?{fieldEffectTransforms}:{})});
   const prefix = "/content-packages/" + recipe.id, presentations = [], walkingResults=[],npcResults=[],serviceResults=[];
   const maps = sourceMaps.map(sourceMap => {
     const map = structuredClone(sourceMap);
     map.developmentProfile = profile(sourceMap.contentHash);
+    if(fieldEffectTransforms!==undefined)map.fieldEffects=structuredClone(fieldEffectTransformContent);
     if(skyboxCatalog&&map.map){const definition=api.fieldSkyboxDefinition(skyboxCatalog,sourceMap);if(definition)map.map.skybox=definition;}
     if(serviceMaps.has(map.mapId)){
       map.developmentProfile.relayInteraction=recipe.fieldServices.relayInteraction;
@@ -202,6 +226,12 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
     if(npcVariant)delete unchanged.frameworkNpcActivity;
     if(serviceMaps.has(map.mapId)){delete unchanged.frameworkRelayInteraction;delete unchanged.frameworkPassiveEffects;}
     if(walking.has(map.mapId)){delete unchanged.walkEncounters;delete unchanged.frameworkWalkBinding;}
+    if(fieldEffectTransforms!==undefined){
+      // Only the independently validated, explicitly opted-in shared catalog is
+      // derived. Compare every original field against its untouched source value.
+      assert.equal(api.canonical(map.fieldEffects),api.canonical(fieldEffectTransformContent));
+      if(Object.hasOwn(sourceMap,"fieldEffects"))unchanged.fieldEffects=structuredClone(sourceMap.fieldEffects);else delete unchanged.fieldEffects;
+    }
     assert.equal(api.canonical(unchanged), api.canonical(sourceMap));
     return seal(map);
   });

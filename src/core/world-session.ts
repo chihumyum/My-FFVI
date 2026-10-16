@@ -743,6 +743,7 @@ export class WorldSession {
           ...(this.owned?.current.sourceEncounter ? { sourceEncounter: this.owned.current.sourceEncounter } : {}),
           ...(this.owned?.current.sourceMessageSequence ? { sourceMessageSequence: this.owned.current.sourceMessageSequence } : {}),
           ...(this.owned?.current.conditionLeaderActivity ? { conditionLeaderActivity: this.owned.current.conditionLeaderActivity } : {}),
+          ...(this.owned?.current.fieldEffectTransforms?{fieldEffectTransforms:this.owned.current.fieldEffectTransforms}:{}),
           ...(this.owned?.current.skyboxPresentation?{skyboxPresentation:this.owned.current.skyboxPresentation}:{}),
           ...(this.owned?.current.screenPresentation?{screenPresentation:this.owned.current.screenPresentation}:{}),
           ...(this.owned?.current.mobColorFilter ? {mobColorFilter:this.owned.current.mobColorFilter} : {}),

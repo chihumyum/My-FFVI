@@ -1,9 +1,10 @@
+import type {FieldEffectBoardLifetime} from './field-effect-board-lifetime.js';
 import { fieldEffectBoardId, type FieldEffectCandidate, type FieldEffectOperation,
   type FieldEffectPrepared, type FieldEffectState, type FieldEffectCatalog, type FieldEffects } from "./field-effects.js";
 import { canonical } from "./canonical.js";
 import { WEB_LOGICAL_FIELD_EFFECTS } from "./field-logical-effects.js";
 
-type EffectAccess = Pick<FieldEffects, "snapshot" | "catalogSnapshot" | "prepare" | "prepareTick">;
+type EffectAccess = Pick<FieldEffects, "snapshot" | "catalogSnapshot" | "prepare" | "prepareTick" | "boardLifetime">;
 
 /** A map leases boards from the world's manager. It never resets that manager,
  * owns a second player pool, or turns a logical snapshot into a particle save. */
@@ -38,6 +39,12 @@ export class FieldEffectMap {
       .map((board) => ({ ...board, id: this.#locals.get(board.id)! }));
     return next;
   }
+  captureBoard(local:string):{readonly lifetime:FieldEffectBoardLifetime;validate():void} {
+    this.#active();const id=this.#id(local),lifetime=this.#access.boardLifetime(id);
+    // Access changes from the disposable candidate to its published owner.
+    // Its adopted token must stay the same across that successful handoff.
+    return {lifetime,validate:()=>{if(this.#retired)throw Error("Retired map effect board instance");if(this.#access.boardLifetime(id)!==lifetime)throw Error("Stale actual field effect board instance");}};
+  }
   snapshot(): FieldEffectState { return this.#retired ? structuredClone(this.#retired) : this.#project(this.#access.snapshot()); }
   /** Empty later maps still inherit allocation history. Until that history and
    * native particle state have a codec they cannot produce a stable save. */
@@ -45,6 +52,7 @@ export class FieldEffectMap {
   get active(): boolean { return this.#retired === null; }
   assertCatalog(catalog: FieldEffectCatalog): void {
     const bound = this.#access.catalogSnapshot();
+    if(canonical(catalog.boardTransforms??null)!==canonical(bound.boardTransforms??null))throw Error("Unbound current map board transform catalog");
     for (const [group, definition] of Object.entries(catalog.media)) {
       if (!bound.media[group] || canonical(definition) !== canonical(bound.media[group]))
         throw new Error("Unbound map effect media " + group);

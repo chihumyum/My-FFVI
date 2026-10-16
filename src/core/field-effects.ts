@@ -1,3 +1,6 @@
+import {canonical} from './canonical.js';
+import {WEB_FIELD_EFFECT_TRANSFORMS,fieldEffectTransformBinding,validateFieldEffectCurrentTransform,type FieldEffectTransformRef,type WebFieldEffectTransforms} from './field-effect-transforms.js';
+import {initialFieldEffectBoardLifetimes,projectFieldEffectBoardLifetimes,type FieldEffectBoardLifetime} from './field-effect-board-lifetime.js';
 import type { Evidence } from "../field/types.js";
 import { fieldEffectRuntimeBoardBlockers, type FieldEffectFlatRef } from "./field-effect-flat-projection.js";
 import { checkpointKeys } from "./checkpoint-validation.js";
@@ -29,7 +32,7 @@ export type FieldEffectMediaDefinition = {
   /** Extraction and lifecycle recovery are not particle/shader admission. */
   blockers: string[];
 };
-export type FieldEffectCatalog = { media: Record<string, FieldEffectMediaDefinition>; webPolicy?: LogicalFieldEffectsPolicy };
+export type FieldEffectCatalog = { media: Record<string, FieldEffectMediaDefinition>; webPolicy?: LogicalFieldEffectsPolicy; boardTransforms?:import('./field-effect-transforms.js').FieldEffectTransformPolicy };
 export type FieldEffectMesh = {
   vertices: FieldEffectPoint[]; uv: { x: number; y: number }[]; triangles: number[];
   renderQueue: number; affectedMode: 0 | 2; zTest: 4 | 8; blendType: number;
@@ -40,6 +43,7 @@ export type FieldEffectBoardState = {
   position: FieldEffectPoint; mesh: FieldEffectMesh;
   activeSelf: boolean; fadeAlpha: number; currentFadeStatus: 0;
   flatProjection?: FieldEffectFlatRef;
+  transformRef?:FieldEffectTransformRef;
 };
 export type FieldEffectPlayerState = {
   cameraId: number; assetGroup: string; references: number; autoPlaying: boolean;
@@ -56,7 +60,8 @@ export type FieldEffectState = {
 export type FieldEffectObservation = { cameraId: number; particlePlaying: boolean[]; kind?: never } |
   { cameraId: number; kind: "all-loop-completion-independent-v1"; particlePlaying?: never };
 export type FieldEffectOperation =
-  | { kind: "create"; id: string; definition: FieldEffectBoardDefinition; position: FieldEffectPoint; flatProjection?: FieldEffectFlatRef }
+  | { kind: "create"; id: string; definition: FieldEffectBoardDefinition; position: FieldEffectPoint; flatProjection?: FieldEffectFlatRef;transformRef?:FieldEffectTransformRef }
+  | {kind:"transform";id:string;position:FieldEffectPoint;source:FieldEffectTransformRef}
   | { kind: "destroy"; id: string }
   /** Asset unloading clears prefab/shared lookup caches, not live players or
    * allocation counters (ReleaseAlreadyLoadPrefabs 575150). */
@@ -79,6 +84,7 @@ export type FieldEffectPublication = { validate(): void; commit(): void };
  * publishing. commit only installs already-prepared state and cannot fail. */
 export type FieldEffectProvider = {
   readonly policy?: typeof WEB_LOGICAL_FIELD_EFFECTS;
+  readonly boardTransforms?:WebFieldEffectTransforms;
   prepare(plan: Readonly<FieldEffectPlan>): FieldEffectPublication;
   /** Capture the current host generation now, not when the candidate is sealed.
    * The returned scope may stage private resources but cannot publish them. */
@@ -259,8 +265,8 @@ export function validateFieldEffectState(state: FieldEffectState, catalog: Field
   }
   for (const board of state.boards) {
     identity(board.id); point(board.position); validateFieldEffectBoard(board.definition);
-    if (board.flatProjection !== undefined || board.definition.birdviewPuppet && catalog.webPolicy?.boardProjection) {
-      if (fieldEffectRuntimeBoardBlockers(board.definition,catalog,board.flatProjection,board.id,board.position).length)
+    if (board.transformRef!==undefined||board.flatProjection !== undefined || board.definition.birdviewPuppet && catalog.webPolicy?.boardProjection) {
+      if (fieldEffectRuntimeBoardBlockers(board.definition,catalog,board.flatProjection,board.id,board.position,board.transformRef).length)
         throw new Error("Unbound flat effect board state");
     }
     const player = state.players.find((p) => p.cameraId === board.cameraId);
@@ -298,8 +304,10 @@ export function projectFieldEffects(state: FieldEffectState, catalog: FieldEffec
       case "create": {
         identity(op.id); point(op.position);
         if (next.boards.some((b) => b.id === op.id)) throw new Error("Duplicate effect board: " + op.id);
-        const d = op.definition, blocked = fieldEffectRuntimeBoardBlockers(d,catalog,op.flatProjection,op.id,op.position);
+        const d = op.definition, blocked = fieldEffectRuntimeBoardBlockers(d,catalog,op.flatProjection,op.id,op.position,op.transformRef);
         if (blocked.length) throw new Error(blocked.join("; "));
+        const binding=fieldEffectTransformBinding(catalog,d,op.transformRef,op.id);
+        if(binding&&canonical(binding.factory.position)!==canonical(op.position))throw Error("Fresh board must retain immutable source factory placement");
         const m = media(catalog, d.assetGroup), sharedId = d.playOnAwake ? next.shared[d.assetGroup] : undefined;
         let p: FieldEffectPlayerState;
         if (sharedId !== undefined) p = player(sharedId);
@@ -316,8 +324,13 @@ export function projectFieldEffects(state: FieldEffectState, catalog: FieldEffec
         p.references++;
         next.boards.push({ id: op.id, definition: structuredClone(d), cameraId: p.cameraId, position: structuredClone(op.position),
           mesh: projectFieldEffectBoard(d, m.renderTexture), activeSelf: d.playOnAwake, fadeAlpha: d.playOnAwake ? 1 : 0, currentFadeStatus: 0,
-          ...(op.flatProjection ? {flatProjection:structuredClone(op.flatProjection)} : {}) });
+          ...(op.flatProjection ? {flatProjection:structuredClone(op.flatProjection)} : {}),...(op.transformRef?{transformRef:structuredClone(op.transformRef)}:{}) });
         events.push({ kind: "clear-render-texture", cameraId: p.cameraId }); break;
+      }
+      case "transform": {
+        checkpointKeys(op,"kind,id,position,source");const b=board(op.id),binding=fieldEffectTransformBinding(catalog,b.definition,op.source,op.id);
+        if(!binding||canonical(b.transformRef)!==canonical(op.source))throw Error("Board transform has no current source binding");
+        validateFieldEffectCurrentTransform(binding,op.position);b.position=structuredClone(op.position);break;
       }
       case "destroy": {
         const b = board(op.id), p = player(b.cameraId);
@@ -396,6 +409,7 @@ export function projectFieldEffects(state: FieldEffectState, catalog: FieldEffec
  * share one candidate. A stale provider/owner is rejected before any publish. */
 export class FieldEffects {
   #state = createFieldEffectState();
+  #boardLifetimes=new Map<string,FieldEffectBoardLifetime>();
   #revision = 0;
   #catalog: FieldEffectCatalog;
   #publishing = false;
@@ -403,10 +417,15 @@ export class FieldEffects {
   readonly #provider: FieldEffectProvider | undefined;
   constructor(catalog: FieldEffectCatalog, provider?: FieldEffectProvider) {
     validateLogicalEffectCatalog(catalog);
+    if(provider?.boardTransforms!==undefined&&provider.boardTransforms!==WEB_FIELD_EFFECT_TRANSFORMS||catalog.boardTransforms&&provider?.boardTransforms!==WEB_FIELD_EFFECT_TRANSFORMS)throw Error("Movable logical boards require an explicit matching runtime host");
     if (catalog.webPolicy && provider?.policy !== WEB_LOGICAL_FIELD_EFFECTS ||
         provider?.policy === WEB_LOGICAL_FIELD_EFFECTS && !catalog.webPolicy && Object.keys(catalog.media).length > 0)
       throw new Error("Logical field effects require the explicit matching Web host and catalog");
     this.#catalog = structuredClone(catalog); this.#provider = provider;
+  }
+  boardLifetime(id:string):FieldEffectBoardLifetime {
+    if(this.#publicationFailed)throw Error("Failed field effect board owner");const lifetime=this.#boardLifetimes.get(id);
+    if(!lifetime||!this.#state.boards.some(board=>board.id===id))throw Error("Retired or missing field effect board lifetime");return lifetime;
   }
   snapshot(): FieldEffectState { return structuredClone(this.#state); }
   catalogSnapshot(): FieldEffectCatalog { return structuredClone(this.#catalog); }
@@ -428,16 +447,17 @@ export class FieldEffects {
         throw new Error("Invalid logical effect playback checkpoint");
     }
     for (const board of state.boards) {
-      if (fieldEffectRuntimeBoardBlockers(board.definition,catalog,board.flatProjection,board.id,board.position).length)
+      if (fieldEffectRuntimeBoardBlockers(board.definition,catalog,board.flatProjection,board.id,board.position,board.transformRef).length)
         throw new Error("Logical effect checkpoint has an unresolved gameplay board dependency");
-      checkpointKeys(board, "id,definition,cameraId,position,mesh,activeSelf,fadeAlpha,currentFadeStatus" + (Object.hasOwn(board,"flatProjection") ? ",flatProjection" : ""));
+      checkpointKeys(board, "id,definition,cameraId,position,mesh,activeSelf,fadeAlpha,currentFadeStatus" + (Object.hasOwn(board,"flatProjection") ? ",flatProjection" : "")+(Object.hasOwn(board,"transformRef")?",transformRef":""));
+      const transform=fieldEffectTransformBinding(catalog,board.definition,board.transformRef,board.id);if(transform)validateFieldEffectCurrentTransform(transform,board.position,true);
       checkpointKeys(board.position, "x,y,z");
       checkpointKeys(board.mesh, "vertices,uv,triangles,renderQueue,affectedMode,zTest,blendType,collider");
       checkpointKeys(board.mesh.collider, "enabled,width,height");
       for (const vertex of board.mesh.vertices) checkpointKeys(vertex, "x,y,z");
       for (const uv of board.mesh.uv) checkpointKeys(uv, "x,y");
     }
-    owner.#state = structuredClone(state);
+    owner.#state = structuredClone(state);owner.#boardLifetimes=initialFieldEffectBoardLifetimes(state.boards.map(board=>board.id));
     return owner;
   }
   #validateRevision(revision: number): void {
@@ -445,9 +465,10 @@ export class FieldEffects {
     if (this.#publishing || this.#revision !== revision) throw new Error("Stale field effect publication");
   }
   #publish(revision: number, state: FieldEffectState, catalog: FieldEffectCatalog,
-    commit: () => void, commitOwned: () => boolean = () => true): boolean {
+    lifetimes:ReadonlyMap<string,FieldEffectBoardLifetime>,commit: () => void, commitOwned: () => boolean = () => true): boolean {
     // Finish every fallible copy before entering the host's no-fail publication.
-    const next = structuredClone(state), nextCatalog = structuredClone(catalog);
+    const next = structuredClone(state), nextCatalog = structuredClone(catalog),nextLifetimes=new Map(lifetimes);
+    if(next.boards.length!==nextLifetimes.size||next.boards.some(board=>!nextLifetimes.has(board.id)))throw Error("Field effect board lifetime closure changed");
     this.#validateRevision(revision);
     this.#publishing = true;
     try {
@@ -459,14 +480,14 @@ export class FieldEffects {
         // published externally. Do not replay that commit or reuse the manager.
         this.#publicationFailed = true; throw error;
       }
-      this.#state = next; this.#catalog = nextCatalog; this.#revision++;
+      this.#state = next; this.#catalog = nextCatalog;this.#boardLifetimes=nextLifetimes; this.#revision++;
       return true;
     } finally { this.#publishing = false; }
   }
   prepare(operations: readonly FieldEffectOperation[]): FieldEffectPrepared {
     const revision = this.#revision;
     this.#validateRevision(revision);
-    const plan = projectFieldEffects(this.#state, this.#catalog, operations);
+    const plan = projectFieldEffects(this.#state, this.#catalog, operations),lifetimes=projectFieldEffectBoardLifetimes(this.#boardLifetimes,operations);
     if (!this.#provider) throw new Error("Field effect renderer/particle host is unavailable");
     const publication = this.#provider.prepare(structuredClone(plan));
     this.#validateRevision(revision);
@@ -480,7 +501,7 @@ export class FieldEffects {
     };
     const commitWith = (commitOwned: () => boolean): boolean => {
       validate(); used = true;
-      return this.#publish(revision, plan.after, this.#catalog, () => publication.commit(), commitOwned);
+      return this.#publish(revision, plan.after, this.#catalog,lifetimes, () => publication.commit(), commitOwned);
     };
     return { get state() { return structuredClone(plan.after); }, validate,
       commit: () => { commitWith(() => true); }, commitWith };
@@ -508,8 +529,9 @@ export class FieldEffects {
       this.#validateRevision(revision);
       return new FieldEffectCandidate(origin, host, {
         validate: () => this.#validateRevision(revision),
+        lifetimes:()=>new Map(this.#boardLifetimes),
         project: projectFieldEffects,
-        publish: (state, candidateCatalog, commit, commitOwned) => this.#publish(revision, state, candidateCatalog, commit, commitOwned),
+        publish: (state, candidateCatalog,lifetimes, commit, commitOwned) => this.#publish(revision, state, candidateCatalog,lifetimes, commit, commitOwned),
       }, limits);
     } catch (error) { host.discard?.(); throw error; }
   }
@@ -535,7 +557,7 @@ function mergeFieldEffectCatalog(base: FieldEffectCatalog, target: FieldEffectCa
       if (canonical(merged.media[group]) !== canonical(definition)) throw new Error("Changed field effect media definition: " + group);
     } else Object.defineProperty(merged.media, group, { value: structuredClone(definition), enumerable: true, writable: true, configurable: true });
   }
-  if (canonical(base.webPolicy ?? null) !== canonical(target.webPolicy ?? null))
+  if (canonical(base.webPolicy ?? null) !== canonical(target.webPolicy ?? null)||canonical(base.boardTransforms??null)!==canonical(target.boardTransforms??null))
     throw new Error("Changed logical effects catalog/profile binding");
   return merged;
 }

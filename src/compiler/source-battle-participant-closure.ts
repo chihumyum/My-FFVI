@@ -1,3 +1,4 @@
+import {parseWebBattleChildAdmission,parseBattleChildAdmission,type WebBattleChildAdmission} from '../core/battle-child-admission.js';
 import type { BattleSourceFormatImportResolver } from "./battle-source-format-import.js";
 import {gauSourceParties,parseWebBattleGauInstances,type WebBattleGauInstances} from "../core/battle-gau-instances.js";
 import type {BattleRow} from './battle.js';
@@ -114,8 +115,9 @@ export function compileSourceBattleParticipantClosure(reader:Reader,input:{polic
 /** Validate the producer's complete source-root proof before a consumer can
  * select its Web directory. Failed dependencies stay per-party hard gates. */
 export function validateSourceBattleParticipantProof(rawPolicy:unknown,rawClosure:unknown,input:{
-  gauInstancePolicy?:WebBattleGauInstances;encounters:Record<string,import('../core/battle-content.js').BattleEncounter>;diagnostics:readonly BattleEncounterDiagnostic[];entryScriptGroups:unknown;
+  childPartyAdmission?:WebBattleChildAdmission;gauInstancePolicy?:WebBattleGauInstances;encounters:Record<string,import('../core/battle-content.js').BattleEncounter>;diagnostics:readonly BattleEncounterDiagnostic[];entryScriptGroups:unknown;
 }):void{
+  if(input.childPartyAdmission!==undefined)parseWebBattleChildAdmission(input.childPartyAdmission);
   const policy=parseSourceBattleParticipantPolicy(rawPolicy);if(input.gauInstancePolicy!==undefined)parseWebBattleGauInstances(input.gauInstancePolicy);checkpointKeys(rawClosure,'kind,policy,bindings,sourceExecutions,ownedStateChanged,nativeLayoutParity,webDifference'+(input.gauInstancePolicy?',gauInstancePolicy':''));
   const closure=rawClosure as {kind:string;gauInstancePolicy?:WebBattleGauInstances;policy:SourceBattleParticipantPolicy;bindings:Record<string,unknown>[];sourceExecutions:number;ownedStateChanged:boolean;nativeLayoutParity:boolean;webDifference:string};
   if(closure.kind!==(input.gauInstancePolicy?'source-battle-participant-closure-v2':'source-battle-participant-closure-v1')||closure.gauInstancePolicy!==input.gauInstancePolicy||canonical(closure.policy)!==canonical(policy)||closure.sourceExecutions!==0||
@@ -133,6 +135,9 @@ export function validateSourceBattleParticipantProof(rawPolicy:unknown,rawClosur
   for(const binding of closure.bindings){
     checkpointKeys(binding,'partyId,source,programSource,completeRawProgram,programRawHash,sites,templates,children,childSourceRows,dataStatus'+(binding.sourceRow===undefined?'':',sourceRow')+(binding.derivedPolicy===undefined?'':',derivedPolicy'));
     const id=binding.partyId as number,original=expected.get(id),catalog=input.encounters[String(id)];
+    const admission=catalog?.childPartyAdmission===undefined?undefined:parseBattleChildAdmission(catalog.childPartyAdmission);
+    if(admission&&(input.childPartyAdmission!==admission.policy||admission.rootPartyId!==id))throw new Error('Unbound source child-party admission policy');
+    if(catalog&&input.childPartyAdmission!==undefined&&Array.isArray(binding.children)&&binding.children.length&&!admission)throw new Error('Missing bound source child-party admission plan');
     if(!positive(id)||seen.has(id)||!original||canonical(original.raw)!==canonical(binding.completeRawProgram)||canonical(original.source)!==canonical(binding.programSource)||hash(binding.completeRawProgram)!==binding.programRawHash)
       throw new Error('Changed source dynamic participant root proof');
     seen.add(id);
@@ -176,12 +181,28 @@ export function validateSourceBattleParticipantProof(rawPolicy:unknown,rawClosur
           !actualSites.some(s=>siteChildren(s).includes(childId)))throw new Error('Changed source child party proof');
       childSlots[String(childId)]={slots:sourceBattleParticipantSlots(child.sourceRow)};
       if(canonical(child.descriptor.source)!==canonical(child.sourceRow.source)||canonical(childRows.get(childId))!==canonical(child.sourceRow))throw new Error('Changed source child row identity');
-      if(catalog&&canonical(catalog.participants?.enemyParties?.[String(childId)]?.slots)!==canonical(childSlots[String(childId)]!.slots))throw new Error('Selected dynamic child layout differs from its source proof');
+      if(catalog){
+        const entry=admission?.entries[String(childId)],ready=catalog.participants?.enemyParties?.[String(childId)];
+        if(admission){
+          if(!entry||canonical(entry.source)!==canonical(child.sourceRow.source)||canonical(entry.slots)!==canonical(childSlots[String(childId)]!.slots)||
+            canonical(entry.members)!==canonical(child.descriptor.enemies.map(e=>({sourceId:e.monsterId,uniqueId:e.slot})))||entry.flagGroupId!==child.descriptor.metadata.battleFlagGroupId||
+            canonical(entry.flagRows)!==canonical(child.descriptor.metadata.battleFlags.map(f=>({flagId:tableInteger(f.values.battle_flag_id),source:f.source})))||entry.notEscape!==child.descriptor.metadata.notEscape)
+            throw new Error('Changed complete child-party admission source facts');
+          if(entry.gates.length){
+            if(ready)throw new Error('Deferred child-party cannot also be ready');
+            for(const gate of entry.gates)if(!input.diagnostics.some(d=>d.partyId===id&&d.kind==='runtime-dependency'&&d.code===gate.code&&
+              (d.reason===gate.reason||d.reason===`Enemy party ${childId}: ${gate.reason}`)&&
+              canonical(d.dependency?{table:d.dependency.table,id:d.dependency.id,field:d.dependency.field??null}:null)===canonical(gate.dependency)))
+              throw new Error('Dropped exact source child-party execution gate');
+          }else if(canonical(ready?.members)!==canonical(entry.members)||canonical(ready?.slots)!==canonical(entry.slots))throw new Error('Ready child-party differs from its complete admission proof');
+        }else if(canonical(ready?.slots)!==canonical(childSlots[String(childId)]!.slots))throw new Error('Selected dynamic child layout differs from its source proof');
+      }
     }
     for(const site of actualSites)for(const id of siteChildren(site))if(!childSlots[String(id)]&&
         !(blockedDependency('monster_party.csv',id)||!catalog&&binding.dataStatus==='blocked'&&input.diagnostics.some(d=>d.partyId===binding.partyId&&d.code==='participant-source-reference'&&d.kind==='blocked'&&d.pc===site.pc)))
       throw new Error('Incomplete dynamic child party proof');
     if(canonical(derived.enemyParties??{})!==canonical(childSlots))throw new Error('Changed source child slot declaration');
+    if(admission&&canonical(Object.keys(admission.entries).sort())!==canonical(Object.keys(childSlots).sort()))throw new Error('Incomplete or extra source child admission entries');
     if(catalog&&(!catalog.participants||catalog.participants.rewardScope!==policy.rewardScope||canonical(catalog.participants.slots)!==canonical(derived.slots)))
       throw new Error('Selected dynamic participant layout/reward differs from source proof');
   }

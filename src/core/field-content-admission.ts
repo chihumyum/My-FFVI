@@ -336,10 +336,10 @@ export function assessFieldRequirements(requirements: readonly FieldRequirement[
         const provider = context.actorKind === "camera" ? "cameraMotion" : context.actorKind === "effect" ? "effectMotion" : "actorMotion";
         status = context.providers[provider] ?? "unknown";
         if (context.actorKind === "camera") reason = "Camera source Move, animation or layer transition requires a separate provider";
-        else if (context.actorKind === "effect") reason = "Source script motion requires a bound actor";
+        else if (context.actorKind === "effect") reason = "Source board motion requires its actual bound transform owner";
       }
     } else if (capability === "sourcePosition") {
-      const provider = context.actorKind === "camera" ? "cameraMotion" : context.actorKind === "actor" ? "actorControl" : null;
+      const provider = context.actorKind === "camera" ? "cameraMotion" : context.actorKind === "actor" ? "actorControl" : context.actorKind==="effect"?"effectMotion":null;
       status = context.actorKind === "unknown" ? "unknown" : provider ? context.providers[provider] ?? "unknown" : "missing";
       if (context.actorKind === "camera") reason = "Source camera SetPos requires its bound mode, layer, callback and relative selector host";
     } else status = context.providers[capability] ?? "unknown";

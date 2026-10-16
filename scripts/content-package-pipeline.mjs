@@ -1,3 +1,4 @@
+import {FIELD_EFFECT_TRANSFORMS,createFrameworkFieldEffectTransformAddition,createFrameworkFieldEffectTransformEvidenceReader,verifyFieldEffectTransformLock} from './framework-field-effect-transform-evidence.mjs';
 import {createFrameworkFieldEffectFlatAddition,createFrameworkFieldEffectFlatEvidenceReader} from './framework-field-effect-flat-evidence.mjs';
 import {createFrameworkOrdinaryPresentationAddition,createFrameworkOrdinaryPresentationEvidenceReader} from './framework-ordinary-presentation-evidence.mjs';
 import {createSourceMessageFeeEvidenceReader} from './source-message-fee-evidence.mjs';
@@ -104,7 +105,7 @@ async function validatePublicCAS(root,candidateHistory){
 const sourceFrameworkDefaults=webSourceFrameworkInputs();
 export async function compileSharedContentPackages({root=repository,compiledDir='dist',readJson,
   sourceRecipePaths,sourceSelectionPath,npcAreas=sourceFrameworkDefaults.npcAreas,npcFlat=sourceFrameworkDefaults.npcFlat,fieldEffectFlat=sourceFrameworkDefaults.fieldEffectFlat,
-  worldAutoTasks=sourceFrameworkDefaults.worldAutoTasks,birdViewActors=sourceFrameworkDefaults.birdViewActors,worldAutoMove=sourceFrameworkDefaults.worldAutoMove,mobColorFilter=sourceFrameworkDefaults.mobColorFilter,screenPresentation=sourceFrameworkDefaults.screenPresentation,skyboxPresentation=sourceFrameworkDefaults.skyboxPresentation,
+  worldAutoTasks=sourceFrameworkDefaults.worldAutoTasks,birdViewActors=sourceFrameworkDefaults.birdViewActors,worldAutoMove=sourceFrameworkDefaults.worldAutoMove,mobColorFilter=sourceFrameworkDefaults.mobColorFilter,screenPresentation=sourceFrameworkDefaults.screenPresentation,skyboxPresentation=sourceFrameworkDefaults.skyboxPresentation,fieldEffectTransforms=sourceFrameworkDefaults.fieldEffectTransforms,
   periodicMaps=sourceFrameworkDefaults.periodicMaps,ordinaryFields=sourceFrameworkDefaults.ordinaryFields,logicalFieldEffects=sourceFrameworkDefaults.logicalFieldEffects}={}){
   if(worldAutoTasks!==undefined&&worldAutoTasks!=='web-flat-world-auto-tasks-v1')throw Error('Unknown source world auto-task policy');
   if(mobColorFilter!==undefined&&mobColorFilter!=='web-flat-mob-color-filter-v1')throw Error('Unknown source framework Mob color-filter policy');
@@ -113,6 +114,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
   if(mobColorFilter!==undefined&&(worldAutoMove!=='web-flat-world-auto-move-v1'||worldAutoTasks!=='web-flat-world-auto-tasks-v1'||birdViewActors!=='web-flat-bird-view-actors-v1'))throw Error('Mob v8 recipe requires its exact v7 dependency cohort');
   if(screenPresentation!==undefined&&(screenPresentation!=="web-field-screen-presentation-2d-v1"||mobColorFilter!=="web-flat-mob-color-filter-v1"))throw Error("Screen v9 recipe requires its exact v8 dependency cohort");
   if(skyboxPresentation!==undefined&&(skyboxPresentation!=="web-flat-skybox-panorama-v1"||screenPresentation!=="web-field-screen-presentation-2d-v1"))throw Error("Skybox v10 recipe requires its exact v9 dependency cohort");
+  if(fieldEffectTransforms!==undefined&&(fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS||skyboxPresentation!=="web-flat-skybox-panorama-v1"||!logicalFieldEffects||!fieldEffectFlat))throw Error("Board transform v11 recipe requires its exact v10/logical/flat input cohort");
   root=await realpath(resolve(root));
   // Several existing producers still import the repository's default emitted
   // modules. Do not claim another compiler lock covers that mixed runtime.
@@ -150,7 +152,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     reports.push({id,report:result.report});
   };
   const prerequisites=await compileSourcePrerequisites({root,compiledDir,logicalFieldEffects,periodicMaps,ordinaryFields,npcAreas,npcFlat,fieldEffectFlat,
-    mapAnimatedEntities:sourceFrameworkDefaults.mapAnimatedEntities,worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation});
+    mapAnimatedEntities:sourceFrameworkDefaults.mapAnimatedEntities,worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms});
   const linked=await linkSourcePrerequisites({root,compiledDir,payloads:prerequisites.payloads,frameworkOptions:prerequisites.frameworkOptions});
   const sourceRead=async url=>linked.inputs.has(url)?structuredClone(linked.inputs.get(url)):readJson(url);
   for(const [url,value] of linked.payloads)payloads.set(url,value);
@@ -215,6 +217,9 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     catalog:await sourceRead('/framework/world/catalog.json'),entry:await sourceRead('/framework/new-game.json')}):undefined;
   const frameworkFieldEffectFlatEvidence=frameworkFieldEffectFlatAddition?createFrameworkFieldEffectFlatEvidenceReader({root,compiledDir,logicalInputDirectory:prerequisites.inputs.logicalFieldEffects.input,readSourceWorld:()=>sourceRead('/world/catalog.json'),
     readSourceMap:async mapId=>{const catalog=await sourceRead('/world/catalog.json');return sourceRead(catalog.maps[String(mapId)].url);}}):undefined;
+  const fieldEffectTransformContent=fieldEffectTransforms?(await verifyFieldEffectTransformLock({root,compiledDir,assessment:prerequisites.inputs.fieldEffectTransformCatalog,flatAssessment:prerequisites.inputs.fieldEffectFlatAssessment,catalogHash:prerequisites.inputs.fieldEffectCatalogHash,logicalCatalog:prerequisites.frameworkOptions.logicalFieldEffects.catalog})).catalog:undefined;
+  const frameworkFieldEffectTransformAddition=fieldEffectTransforms?createFrameworkFieldEffectTransformAddition({compilerDigest:prerequisites.inputs.compilerDigest,assessment:prerequisites.frameworkOptions.fieldEffectTransformCatalog,flatAssessment:prerequisites.frameworkOptions.fieldEffectFlat,projectedCatalogHash:prerequisites.inputs.fieldEffectCatalogHash,catalog:await sourceRead("/framework/world/catalog.json"),entry:await sourceRead("/framework/new-game.json")}):undefined;
+  const frameworkFieldEffectTransformEvidence=frameworkFieldEffectTransformAddition?createFrameworkFieldEffectTransformEvidenceReader({root,compiledDir,flatProof:frameworkFieldEffectFlatAddition,flatEvidence:frameworkFieldEffectFlatEvidence,readSourceWorld:()=>sourceRead("/world/catalog.json"),readSourceMap:async mapId=>{const world=await sourceRead("/world/catalog.json");return sourceRead(world.maps[String(mapId)].url);}}):undefined;
   const frameworkOrdinaryPresentationAddition=prerequisites.frameworkOptions.ordinaryPresentations?createFrameworkOrdinaryPresentationAddition({
     compilerDigest:prerequisites.inputs.compilerDigest,assessments:prerequisites.frameworkOptions.ordinaryPresentations,
     strictWorld:await sourceRead('/world/catalog.json'),catalog:await sourceRead('/framework/world/catalog.json'),entry:await sourceRead('/framework/new-game.json')}):undefined;
@@ -234,9 +239,10 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
         sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
       sourceNpcRoutesAddition:{kind:'compiled-source-npc-route-evidence-addition-v1',compilerDigest:prerequisites.inputs.compilerDigest,
         sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
-      frameworkNpcAreaAddition,frameworkNpcAreaEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,frameworkOrdinaryPresentationAddition,frameworkOrdinaryPresentationEvidence,
-      frameworkProfileUpgrade:{kind:prerequisites.frameworkOptions.skyboxPresentation?'compiled-framework-profile-upgrade-v10':prerequisites.frameworkOptions.screenPresentation?'compiled-framework-profile-upgrade-v9':prerequisites.frameworkOptions.mobColorFilter?'compiled-framework-profile-upgrade-v8':prerequisites.frameworkOptions.worldAutoMove?'compiled-framework-profile-upgrade-v7':prerequisites.frameworkOptions.birdViewActors?'compiled-framework-profile-upgrade-v6':prerequisites.frameworkOptions.worldAutoTasks?'compiled-framework-profile-upgrade-v5':'compiled-framework-profile-upgrade-v4',
-        compilerDigest:prerequisites.inputs.compilerDigest,...(prerequisites.frameworkOptions.skyboxPresentation?{skyboxCatalog:prerequisites.frameworkOptions.skyboxCatalog}:{}),markers:{
+      frameworkNpcAreaAddition,frameworkNpcAreaEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,frameworkFieldEffectTransformAddition,frameworkFieldEffectTransformEvidence,frameworkOrdinaryPresentationAddition,frameworkOrdinaryPresentationEvidence,
+      frameworkProfileUpgrade:{kind:fieldEffectTransforms?'compiled-framework-profile-upgrade-v11':prerequisites.frameworkOptions.skyboxPresentation?'compiled-framework-profile-upgrade-v10':prerequisites.frameworkOptions.screenPresentation?'compiled-framework-profile-upgrade-v9':prerequisites.frameworkOptions.mobColorFilter?'compiled-framework-profile-upgrade-v8':prerequisites.frameworkOptions.worldAutoMove?'compiled-framework-profile-upgrade-v7':prerequisites.frameworkOptions.birdViewActors?'compiled-framework-profile-upgrade-v6':prerequisites.frameworkOptions.worldAutoTasks?'compiled-framework-profile-upgrade-v5':'compiled-framework-profile-upgrade-v4',
+        compilerDigest:prerequisites.inputs.compilerDigest,...(fieldEffectTransforms?{fieldEffectTransformCatalog:prerequisites.frameworkOptions.fieldEffectTransformCatalog}:{}),...(prerequisites.frameworkOptions.skyboxPresentation?{skyboxCatalog:prerequisites.frameworkOptions.skyboxCatalog}:{}),markers:{
+          ...(fieldEffectTransforms?{fieldEffectTransforms}:{}),
           ...(prerequisites.frameworkOptions.skyboxPresentation?{skyboxPresentation:prerequisites.frameworkOptions.skyboxPresentation}:{}),
           ...(prerequisites.frameworkOptions.screenPresentation?{screenPresentation:prerequisites.frameworkOptions.screenPresentation}:{}),
           storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1',mapAnimatedEntities:'web-field-animated-map-entities-v1',
@@ -278,7 +284,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     compileInitializedSystems(root,initRecipe.value,initRecipe.sha256,{dist:compiledDir,readJson:candidateRead}),
     compileWorldTravel(root,travelRecipe.value,travelRecipe.sha256,{dist:compiledDir,readJson:candidateRead}),
     ...sourceRecipes.map(item=>compileInitializedContentBatch(root,item.value,item.sha256,
-      {dist:compiledDir,readJson:candidateRead,sourceBattleDirectory,...(skyboxPresentation?{skyboxPresentation}:{}),...(prerequisites.frameworkOptions.screenPresentation?{screenPresentation:prerequisites.frameworkOptions.screenPresentation}:{}),...(prerequisites.frameworkOptions.worldAutoTasks?{worldAutoTasks:prerequisites.frameworkOptions.worldAutoTasks}:{}),...(prerequisites.frameworkOptions.birdViewActors?{birdViewActors:prerequisites.frameworkOptions.birdViewActors}:{}),...(prerequisites.frameworkOptions.worldAutoMove?{worldAutoMove:prerequisites.frameworkOptions.worldAutoMove}:{}),...(prerequisites.frameworkOptions.mobColorFilter?{mobColorFilter:prerequisites.frameworkOptions.mobColorFilter}:{})})),
+      {dist:compiledDir,readJson:candidateRead,sourceBattleDirectory,...(fieldEffectTransforms?{fieldEffectTransforms,fieldEffectTransformCatalog:prerequisites.frameworkOptions.fieldEffectTransformCatalog,fieldEffectTransformContent,fieldEffectCatalogHash:prerequisites.inputs.fieldEffectCatalogHash}:{}),...(skyboxPresentation?{skyboxPresentation}:{}),...(prerequisites.frameworkOptions.screenPresentation?{screenPresentation:prerequisites.frameworkOptions.screenPresentation}:{}),...(prerequisites.frameworkOptions.worldAutoTasks?{worldAutoTasks:prerequisites.frameworkOptions.worldAutoTasks}:{}),...(prerequisites.frameworkOptions.birdViewActors?{birdViewActors:prerequisites.frameworkOptions.birdViewActors}:{}),...(prerequisites.frameworkOptions.worldAutoMove?{worldAutoMove:prerequisites.frameworkOptions.worldAutoMove}:{}),...(prerequisites.frameworkOptions.mobColorFilter?{mobColorFilter:prerequisites.frameworkOptions.mobColorFilter}:{})})),
   ]);
   for(const [index,id] of ['figaro-development','systems-playground','systems-initialized','world-travel'].entries())append(id,derived[index]);
   for(const [index,item] of sourceRecipes.entries())append(item.value.id,derived[index+4]);
@@ -340,7 +346,8 @@ export async function publishContentPackages({root=repository,compiledDir='dist'
     report.recipeRebindings=candidate.rebindings??[];
     report.battleCapabilityRebindings=candidate.battleRebindings??[];
     if(candidate.sourceInputs)report.sourceInputLock={kind:candidate.sourceInputs.kind,
-      ...(candidate.sourceInputs.kind==="source-prerequisite-input-lock-v3"?{skyboxPresentation:candidate.sourceInputs.skyboxPresentation}:{}),
+      ...(["source-prerequisite-input-lock-v3","source-prerequisite-input-lock-v4"].includes(candidate.sourceInputs.kind)?{skyboxPresentation:candidate.sourceInputs.skyboxPresentation}:{}),
+      ...(candidate.sourceInputs.kind==="source-prerequisite-input-lock-v4"?{fieldEffectTransforms:candidate.sourceInputs.fieldEffectTransforms,fieldEffectTransformAssessmentHash:candidate.sourceInputs.fieldEffectTransformCatalog.contentHash,fieldEffectFlatAssessmentHash:candidate.sourceInputs.fieldEffectFlatAssessment.contentHash,fieldEffectCatalogHash:candidate.sourceInputs.fieldEffectCatalogHash,fieldEffectSourceMapSetHash:candidate.sourceInputs.fieldEffectTransformCatalog.projection.sourceMapSetHash}:{}),
       runtimeSha256:candidate.runtimeSha256,sourceSetHash:candidate.sourceInputs.sourceSetHash,
       parentSourceSetHash:candidate.sourceInputs.parentSourceSetHash,compiledDir,
       compilerDigest:candidate.sourceInputs.compilerDigest,files:candidate.sourceInputs.files.length,

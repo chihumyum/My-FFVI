@@ -1,3 +1,4 @@
+import {parseBattleChildAdmission,parseWebBattleChildAdmission,prepareBattleChildParty,type BattleChildAdmission,type WebBattleChildAdmission} from './battle-child-admission.js';
 import { WEB_BATTLE_GAU_INSTANCES, parseBattleGauInstanceContent, gauAppearancePoses, gauAppearanceTimes, gauAppearanceDuration,
   type BattleGauInstanceContent, type BattleGauInstanceHost, type BattleGauOwnedFrame, type BattleGauMediaRequest } from "./battle-gau-instances.js";
 import { prepareSourceCatalogName } from "./source-catalog-name.js";
@@ -238,7 +239,7 @@ export class BattleGame {
       unvisitedDependencies:p.branchExecution!.deferred.filter(site=>!this.#branchVisited.has(site.pc)).map(site=>({...site,raw:structuredClone(p.branchExecution!.sourceProgram.Mnemonics[site.pc])})),
       lastFailure:structuredClone(this.#branchLastFailure)};
   }
-  private get deferredEventStart(){return !!(this.content.gauInstancePolicy&&this.#gauHost)||this.#hasGlobalFade||!!this.#messageHost||!!this.#effectHost||this.lifecycle.kind==="battle-lifecycle-v2"||this.lifecycle.mode==="script"&&this.lifecycle.program.instructions.some(row=>row.op.kind==="condition-list");}
+  private get deferredEventStart(){return !!this.#childAdmission||!!(this.content.gauInstancePolicy&&this.#gauHost)||this.#hasGlobalFade||!!this.#messageHost||!!this.#effectHost||this.lifecycle.kind==="battle-lifecycle-v2"||this.lifecycle.mode==="script"&&this.lifecycle.program.instructions.some(row=>row.op.kind==="condition-list");}
   readonly #fadeHost:BattleGlobalFadeHost|null;
   #hasGlobalFade=false;
   #fadeRevision=0;
@@ -381,6 +382,7 @@ export class BattleGame {
       this.#messageJournal.push({ action: "retire", pc: null, ticket: held?.ticket ?? null, time: this.time }); committed = true; } };
   }
   private readonly eventShared: BattleEventSharedState | null;
+  readonly #childAdmission:BattleChildAdmission|undefined;
   readonly #gauHost: BattleGauInstanceHost | null;
   readonly #gauContent: BattleGauInstanceContent | null;
   #gauFrame: BattleGauOwnedFrame | null = null;
@@ -457,14 +459,17 @@ export class BattleGame {
     initialPreferences?: BattlePreferences,
     eventShared?: BattleEventSharedSnapshot,
     playerBorrow?: BattlePlayerBorrow,
-    private readonly eventHosts?: { names?: FieldMessageNamesPort; gauInstances?:BattleGauInstanceHost; conditions?: WebBattleEventConditions; scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; fade?:BattleGlobalFadeHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; fieldContinuation?:BattleFieldReservationHost; branchExecution?:WebBattleBranchExecution },
+    private readonly eventHosts?: { names?: FieldMessageNamesPort; childPartyAdmission?:WebBattleChildAdmission; gauInstances?:BattleGauInstanceHost; conditions?: WebBattleEventConditions; scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; fade?:BattleGlobalFadeHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; fieldContinuation?:BattleFieldReservationHost; branchExecution?:WebBattleBranchExecution },
   ) {
     if (eventHosts !== undefined && (!eventHosts || typeof eventHosts !== "object" || Array.isArray(eventHosts) ||
-        Object.keys(eventHosts).some(key => key !== "names" && key !== "gauInstances" && key !== "conditions" && key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau" && key !== "fade" && key !== "fieldContinuation")))
+        Object.keys(eventHosts).some(key => key !== "names" && key !== "childPartyAdmission" && key !== "gauInstances" && key !== "conditions" && key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau" && key !== "fade" && key !== "fieldContinuation")))
       throw new Error("Unknown battle event host options");
     validateBattleBranchExecutionPolicy(eventHosts?.branchExecution);this.#branchPolicy=eventHosts?.branchExecution;
     validateBattleGlobalFadeHost(eventHosts?.fade);this.#fadeHost=eventHosts?.fade?Object.freeze({...eventHosts.fade}):null;
     this.#fadeRevision=this.#fadeHost?.owner.mutationRevision??0;
+    if(eventHosts?.childPartyAdmission!==undefined)parseWebBattleChildAdmission(eventHosts.childPartyAdmission);
+    this.#childAdmission=content.childPartyAdmission===undefined?undefined:parseBattleChildAdmission(content.childPartyAdmission);
+    if(this.#childAdmission&&(this.#childAdmission.rootPartyId!==content.encounterId||eventHosts?.childPartyAdmission!==this.#childAdmission.policy))throw new Error("Source child-party admission requires matching content and actual runtime policy");
     this.#gauContent=content.gauInstances===undefined?null:parseBattleGauInstanceContent(content.gauInstances);
     const gauHost=eventHosts?.gauInstances;
     if(gauHost&&(gauHost.policy!==WEB_BATTLE_GAU_INSTANCES||typeof gauHost.prepare!=="function"||
@@ -1507,7 +1512,7 @@ export class BattleGame {
     if(kind==="replace"){
       if(!this.eventShared)throw new Error("Gau replacement requires shared source ScenarioVariable[8]");
       partyId=this.eventShared.read({category:"ScenarioVariable",index:8})===0?this.#gauContent.firstPartyId:this.#gauContent.returnPartyId;
-      const party=this.participantContent?.enemyParties?.[partyId];if(!party)throw new Error("Missing complete source-selected Gau child party");
+      const party=this.#childAdmission?prepareBattleChildParty(this.#childAdmission,partyId,this.participantContent):this.participantContent?.enemyParties?.[partyId];if(!party)throw new Error("Missing complete source-selected Gau child party");
       if(this.players.some(player=>this.conditions.types(player.conditionIds).includes(506)))throw new Error("Gau replacement requires the active Quick condition exit lifecycle");
       for(const member of party.members){const binding=this.#gauContent.playerPrefabs.find(row=>row.monsterId===member.sourceId);
         if(!binding)throw new Error("Source-selected Gau child requires its actual enemy-player factory row");if(!binding.actor)throw new Error("Source Gau factory media gate: "+binding.gate);keys.push(...Object.values(binding.actor.bodySprites));}
@@ -1612,7 +1617,7 @@ export class BattleGame {
     this.observeDropLife(unit);
   }
   private changeEnemyParty(partyId: number, hidden: boolean): void {
-    const party = this.participantContent?.enemyParties?.[partyId];
+    const party = this.#childAdmission?prepareBattleChildParty(this.#childAdmission,partyId,this.participantContent):this.participantContent?.enemyParties?.[partyId];
     if (!party) throw new Error("Missing admitted replacement enemy party");
     const masters = party.members.map(member => {
       const definition = this.participantContent!.enemyDefinitions[member.sourceId], placement = party.slots[member.uniqueId];

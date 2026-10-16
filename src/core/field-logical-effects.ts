@@ -1,3 +1,4 @@
+import {WEB_FIELD_EFFECT_TRANSFORMS,validateFieldEffectTransformPolicy,type WebFieldEffectTransforms} from './field-effect-transforms.js';
 import { canonical } from "./canonical.js";
 import { validateFieldEffectFlatPolicy, flatFieldEffectGroupBlockers, type FieldEffectFlatPolicy } from "./field-effect-flat-projection.js";
 import type { Evidence, FieldContent } from "../field/types.js";
@@ -65,11 +66,11 @@ export function validateLogicalEffectMedia(catalog: FieldEffectCatalog, group: s
   return true;
 }
 export function validateLogicalEffectCatalog(catalog: FieldEffectCatalog): void {
-  if (!catalog.webPolicy) return;
+  if (!catalog.webPolicy) {if(catalog.boardTransforms)throw Error("Board transforms require a complete logical effect catalog");return;}
   if (canonical(Object.keys(catalog.media).sort()) !== canonical(Object.keys(catalog.webPolicy.proofs).sort()))
     throw new Error("Logical effect proof/catalog closure changed");
   for (const group of Object.keys(catalog.media)) validateLogicalEffectMedia(catalog, group);
-  validateFieldEffectFlatPolicy(catalog);
+  validateFieldEffectFlatPolicy(catalog);validateFieldEffectTransformPolicy(catalog);
 }
 export function logicalEffectDisplayBlockers(definition: { assetGroup: string; visibleMinimap: boolean },
   catalog: FieldEffectCatalog | undefined, reasons: readonly string[]): string[] {
@@ -99,7 +100,8 @@ export function logicalEffectsGroupBlockers(group: NonNullable<FieldContent["map
 /** This explicit Web display host allocates no native particles, RNG, textures
  * or renderer state. Actual board/player logic remains in FieldEffects. There
  * is no global generation shared between unrelated sessions/candidates. */
-export function createWebLogicalFieldEffectsHost(): FieldEffectRuntimeHost {
+export function createWebLogicalFieldEffectsHost(options:{boardTransforms?:WebFieldEffectTransforms}={}): FieldEffectRuntimeHost {
+  if(Object.keys(options).some(k=>k!=="boardTransforms")||options.boardTransforms!==undefined&&options.boardTransforms!==WEB_FIELD_EFFECT_TRANSFORMS)throw Error("Unknown logical board transform runtime option");
   const publication = () => {
     let phase: "prepared" | "published" = "prepared";
     const validate = () => { if (phase !== "prepared") throw new Error("Consumed logical effect display publication"); };
@@ -108,7 +110,7 @@ export function createWebLogicalFieldEffectsHost(): FieldEffectRuntimeHost {
   const observe = (state: { registeredCameraIds: number[]; players: { cameraId: number; activeSelf: boolean; playing: boolean }[] }): FieldEffectObservation[] =>
     state.players.filter(p => state.registeredCameraIds.includes(p.cameraId) && p.activeSelf && p.playing)
       .map(p => ({ cameraId: p.cameraId, kind: "all-loop-completion-independent-v1" }));
-  return Object.freeze({ policy: WEB_LOGICAL_FIELD_EFFECTS,
+  return Object.freeze({ policy: WEB_LOGICAL_FIELD_EFFECTS,...(options.boardTransforms?{boardTransforms:options.boardTransforms}:{}),
     prepare(_plan: Readonly<FieldEffectPlan>) { return publication(); },
     observe(state) { return observe(state); },
     beginCandidate(origin) {

@@ -1,3 +1,5 @@
+import {fieldEffectTransformsBinding,bindFieldEffectTransform,fieldEffectTransformBinding,validateFieldEffectCurrentTransform,type WebFieldEffectTransforms} from './field-effect-transforms.js';
+import {projectFieldBoardSetPosition,projectFieldBoardLerp,type FieldBoardLerpProgress} from './field-effect-transform-motion.js';
 import { parseSourceScriptAnimationCatalog, sourceScriptAnimationAsset, parseSourceFieldScriptAnimationState, type SourceScriptAnimationCatalog, type SourceFieldScriptAnimationState } from "./source-script-animations.js";
 import {FieldSkyboxState,fieldSkyboxBinding,skyboxScrollSample,type WebFlatSkybox,type FieldSkyboxSnapshot}from"./field-skybox.js";
 import { reservedScriptBinding, type FieldReservedScriptPort } from "./field-reserved-script.js";
@@ -340,6 +342,7 @@ type Task = {
   scriptMove: Extract<Op, { kind: "field-script-motion" | "field-puppet-route" }> | null;
   birdViewMove: { op: Extract<Op, { kind: "field-bird-view-move" }>; registers: FieldCoreRegisters;
     actor: Actor; native: NativeFieldActorData; entity: NativeFieldActorData["entity"] } | null;
+  boardLerp:{op:Extract<Op,{kind:"field-script-motion"}>;progress:FieldBoardLerpProgress;lease:ReturnType<FieldGame["captureBoardTransform"]>;expectedPosition:import('./field-effects.js').FieldEffectPoint;program:Op[];webPC:number;fingerprint:string;registers:FieldCoreRegisters}|null;
   scriptLerp: { op: Extract<Op, { kind: "field-script-motion" }>; progress: FieldScriptLerpProgress } | null;
   remaining: number;
   move: Extract<Op, { kind: "move" }> | null;
@@ -428,6 +431,7 @@ export type FieldGameOptions = {
   storyTimerOrigin?: FieldTimerOriginContent;
   /** Explicit particle/material host. Content parsing never grants one. */
   fieldEffects?: FieldEffectRuntimeHost;
+  fieldEffectTransforms?:WebFieldEffectTransforms;
   /** World-owned lease; a prepared map never allocates another live pool. */
   fieldEffectMap?: FieldEffectMap;
   /** The private source-session candidate installs native actors before any
@@ -546,7 +550,8 @@ export class FieldGame {
       mobColorFilter: presence(this.mobControlsEnabled && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.options.puppetActors),
       birdViewActors: presence(!!actor && this.birdViewActorsEnabled && !!actor.native && actor.native.entity.character &&
         !actor.native.entity.riding && !!this.nativeActorBindings && !!this.nativeRuntime?.mapLifecycle && !!this.nativeActorProviders && !!this.camera),
-      actorMotion: presence(actorMotion), cameraMotion: presence(cameraMotion), effectMotion: "missing",
+      actorMotion: presence(actorMotion), cameraMotion: presence(cameraMotion), effectMotion: presence(!!this.effects&&!!this.effectBoard(actorId)&&!!this.content.cameraHost&&!!fieldEffectTransformsBinding(this.content,this.options.fieldEffectTransforms)&&
+        (op.kind==="position"&&!!op.nativeCommand&&op.nativeCommand.animation===""&&op.nativeCommand.layer===0||op.kind==="field-script-motion"&&op.command.kind==="lerp"&&op.command.animation==="")),
       storyTimer: presence(this.timerState !== null),
       skyboxPresentation:presence(!!this.skyboxOwner&&!this.skyboxOwner.readiness&&!this.skyboxOwner.isRetired),
       screenPresentation:presence(!!this.screenPresentationState && !!fieldScreenPresentationBinding(this.content,this.options.screenPresentation)),
@@ -1535,7 +1540,7 @@ export class FieldGame {
       throw new Error("Unknown Web puppet Route policy");
     this.puppetRoutePolicy = options.puppetRoutes;
     this.contentInvalidations = new FieldContentInvalidations(content, options.contentInvalidations);
-    validateFieldEffectFlatContext(content);
+    validateFieldEffectFlatContext(content);fieldEffectTransformsBinding(content,options.fieldEffectTransforms);
     if (options.messageFees && options.messageFees.sourceSetHash !== content.parentSourceSetHash) throw new Error("Message fee catalog/source mismatch");
     this.sourceMessage = new SourceMessageState(options.messageFees, options.messageFeeSeed);
     if (hasFieldStoryRuntime(content)) {
@@ -1698,9 +1703,9 @@ export class FieldGame {
         ids.add(entity.id);
         const placement = projectFieldEffectPlacement(entity.effect, { range: content.cameraHost!.mapRange,
           tileMapPresent: true, standbyAnchor: content.nativeNpcStandby ? fieldNativeNpcStandbyPosition(content.nativeNpcStandby) : null }, entity.layer);
-        const flatProjection = bindFieldEffectFlatProjection(content,entity,"entity_default");
+        const flatProjection = bindFieldEffectFlatProjection(content,entity,"entity_default"),transformRef=bindFieldEffectTransform(content,entity,"entity_default",options.fieldEffectTransforms);
         return { kind: "create", id: entity.id, definition: entity.effect, position: placement.position,
-          ...(flatProjection ? {flatProjection} : {}) };
+          ...(flatProjection ? {flatProjection} : {}),...(transformRef?{transformRef}:{}) };
       });
       operations.push({ kind: "setup", registeredBoards: sourceEffects.map((entity) => entity.id), groupUpdate: false });
       if (content.fieldEffects.webPolicy && (content.developmentProfile?.logicalFieldEffects !== WEB_LOGICAL_FIELD_EFFECTS ||
@@ -1720,7 +1725,10 @@ export class FieldGame {
         const boards = effects.snapshot().boards;
         if (boards.length !== sourceEffects.length || operations.some(operation => operation.kind === "create" &&
             !boards.some(board => board.id === operation.id && canonical(board.definition) === canonical(operation.definition) &&
-              canonical(board.position) === canonical(operation.position) && canonical(board.flatProjection ?? null) === canonical(operation.flatProjection ?? null))))
+              (canonical(board.position) === canonical(operation.position)||operation.transformRef!==undefined&&canonical(board.transformRef)===canonical(operation.transformRef)&&
+                (()=>{const binding=fieldEffectTransformBinding(content.fieldEffects!,operation.definition,operation.transformRef,operation.id);if(!binding)return false;
+                  if(canonical(binding.factory.position)!==canonical(operation.position))throw Error("Restored board immutable source placement changed");validateFieldEffectCurrentTransform(binding,board.position,true);return true;})())&&
+              canonical(board.flatProjection ?? null) === canonical(operation.flatProjection ?? null)&&canonical(board.transformRef??null)===canonical(operation.transformRef??null))))
           throw new Error("Logical effect checkpoint board/source identity changed");
       } else effects.prepare(operations).commit();
       if (!options.deferLogicalEffectRestore) this.effects = effects;
@@ -2526,7 +2534,7 @@ export class FieldGame {
         this.tasks.some((other) => other !== task && !other.done) ||
         task.done || task.slot !== null || task.treasureRoot || task.state !== "ready" ||
         task.wait !== 0 || task.skyboxWait || task.standaloneWait || task.puppetWait || task.fadeWait || task.screenBackdropWait || task.colorFadeWait || task.flashWait || task.cameraPath || task.cameraLerp ||
-        task.scriptMove || task.scriptLerp || task.birdViewMove || task.remaining !== 0 || task.move ||
+        task.scriptMove || task.scriptLerp || task.boardLerp || task.birdViewMove || task.remaining !== 0 || task.move ||
         task.animationWait || task.audioWait || task.bgmReplay || task.autoSaveWait || task.soundWait || task.treasure ||
         this.options.puppetActors && !this.nativeActorBindings)
       throw new Error("Event save requires a quiescent main task with supported field owners");
@@ -3170,6 +3178,40 @@ export class FieldGame {
     if (mapId === undefined || !this.options.walkEncounters)
       throw new Error("Walking encounters require a bound map and scheduler owner");
     return this.options.walkEncounters.prepareStep(mapId, policy);
+  }
+  private captureBoardTransform(id:string) {
+    const owner=this.effects,definition=this.content.cameraHost,catalog=this.content.fieldEffects;
+    if(!owner||!definition||!catalog||!fieldEffectTransformsBinding(this.content,this.options.fieldEffectTransforms))throw Error("Board transform requires its actual current map/effect/runtime owner");
+    if(owner instanceof FieldEffectMap)owner.assertCatalog(catalog);
+    else if(canonical(owner.catalogSnapshot().boardTransforms)!==canonical(catalog.boardTransforms))throw Error("Board transform catalog differs from its actual manager");
+    const board=this.effectBoard(id);if(!board?.transformRef)throw Error("Board transform has no complete source/factory binding");
+    const binding=fieldEffectTransformBinding(catalog,board.definition,board.transformRef,id);if(!binding)throw Error("Board transform source identity is unavailable");
+    if(canonical(binding.factory.mapRange)!==canonical(definition.mapRange))throw Error("Board transform source map range changed");
+    const lease=owner instanceof FieldEffectMap?owner.captureBoard(id):(()=>{const lifetime=owner.boardLifetime(id);return{lifetime,validate:()=>{if(owner.boardLifetime(id)!==lifetime)throw Error("Stale actual field effect board instance");}};})();
+    const pin=canonical({definition,policy:catalog.boardTransforms,ref:board.transformRef,board:board.definition}),position=structuredClone(board.position);
+    const validate=()=>{lease.validate();if(this.effects!==owner||this.content.cameraHost!==definition||!fieldEffectTransformsBinding(this.content,this.options.fieldEffectTransforms)||
+      canonical({definition:this.content.cameraHost,policy:this.content.fieldEffects?.boardTransforms,ref:this.effectBoard(id)?.transformRef,board:this.effectBoard(id)?.definition})!==pin)throw Error("Stale actual source board transform host");};
+    validate();return{id,owner,lease,binding,position,validate};
+  }
+  private prepareBoardLerp(id:string,op:Extract<Op,{kind:"field-script-motion"}>,progress:FieldBoardLerpProgress|null,previous?:ReturnType<FieldGame["captureBoardTransform"]>){
+    if(op.command.kind!=="lerp")throw Error("Board source Move/MoveTo provider is unavailable");
+    const current=this.captureBoardTransform(id);previous?.validate();
+    const next=projectFieldBoardLerp(current.position,op.command,current.binding.factory.mapRange,progress,this.time/1000),prepared=current.owner.prepare([{kind:"transform",id,source:current.binding.ref,position:next.position}]);
+    prepared.commitWith(()=>{current.validate();previous?.validate();if(canonical(this.effectBoard(id)?.position)!==canonical(current.position))throw Error("Board transform changed during preparation");return true;});
+    return{...next,lease:previous??current};
+  }
+  private prepareBoardSetPosition(id:string,op:Extract<Op,{kind:"position"}>):void{
+    const current=this.captureBoardTransform(id),command=op.nativeCommand;
+    if(!command||op.x!==command.x||op.y!==command.y||op.animation!==command.animation||this.tasks.some(t=>!t.done&&t.actor===id&&t.boardLerp))throw Error("Board SetPos source operands or active motion are unavailable");
+    let reference:import('./field-effects.js').FieldEffectPoint|undefined,validateReference=()=>{};
+    if(command.mode===1){const port=this.options.puppetActors;if(!port)throw Error("Board SetPos relative selector owner is unavailable");
+      const resolve=()=>{if(this.options.puppetActors!==port)throw Error("Stale board relative selector owner");if(command.referenceEntityId>0&&this.effectBoard(String(command.referenceEntityId))){if(this.actors[String(command.referenceEntityId)])throw Error("Ambiguous actual relative board/actor owner");return String(command.referenceEntityId);}const{catalog,context}=port.read();const found=resolveFieldPuppetActor(catalog,context,command.referenceEntityId).actor;if(found===null)throw Error("Board SetPos relative entity is absent");return found;};
+      const referenceId=resolve();if(this.effectBoard(referenceId)){const captured=this.captureBoardTransform(referenceId);reference=captured.position;validateReference=()=>{if(resolve()!==referenceId)throw Error("Stale board relative selector");captured.validate();if(canonical(this.effectBoard(referenceId)?.position)!==canonical(reference))throw Error("Board relative transform changed");};}
+      else{if(!this.nativeActorProviders||!this.camera)throw Error("Board SetPos relative native transform owner is unavailable");const read=prepareNativeFieldActorRead({readActors:()=>this.actors,readProviders:this.nativeActorProviders,readCamera:()=>{const state=this.camera!.snapshot();return{id:this.cameraActorId,position:state.dummy.position,layer:state.dummy.layer};}}),native=read.snapshot.actors.find(a=>a.id===referenceId)??(read.snapshot.camera?.id===referenceId?read.snapshot.camera:null);
+        if(!native)throw Error("Board SetPos requires its actual native reference instance");reference=structuredClone(native.position);validateReference=()=>{if(resolve()!==referenceId)throw Error("Stale board relative selector");read.validate();};}
+    }
+    const position=projectFieldBoardSetPosition(current.position,command,current.binding.factory.mapRange,reference),prepared=current.owner.prepare([{kind:"transform",id,position,source:current.binding.ref}]);
+    prepared.commitWith(()=>{current.validate();validateReference();if(canonical(this.effectBoard(id)?.position)!==canonical(current.position))throw Error("Board SetPos transform changed during preparation");return true;});
   }
   private prepareActorScriptLerp(actor: Actor, op: Extract<Op, { kind: "field-script-motion" }>,
     progress: FieldScriptLerpProgress | null): { flow: "next" | "wait"; progress: FieldScriptLerpProgress } {
@@ -4095,7 +4137,7 @@ export class FieldGame {
       milliseconds > 60000
     )
       throw new Error("Invalid elapsed time");
-    if ((this.skyboxOwner || this.mobControlsEnabled || this.birdViewActorsEnabled || this.content.frameworkNpcActivity || this.assignedRoutes.size > 0 || this.tasks.some(task => !task.done && task.animationRepeat)) && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
+    if ((this.skyboxOwner || this.mobControlsEnabled || this.birdViewActorsEnabled || this.content.frameworkNpcActivity || this.assignedRoutes.size > 0 || this.tasks.some(task => !task.done && (task.animationRepeat||task.boardLerp))) && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
     if (this.pendingEventSave) return;
     this.remainder += milliseconds;
     while (this.remainder >= 10) {
@@ -4453,7 +4495,7 @@ export class FieldGame {
     Object.assign(t, plan, { stack: [], wait: 0, state: "ready", lastClock: this.time,
       skyboxWait:null, standaloneWait: null,
       generalRegisters: initialFieldCoreRegisters(),
-      puppetWait: null, scriptShop: null, fadeWait: null, screenBackdropWait:null, colorFadeWait: null, flashWait: null, cameraPath: null, cameraLerp: null, scriptMove: null, scriptLerp: null, birdViewMove: null, remaining: 0, move: null,
+      puppetWait: null, scriptShop: null, fadeWait: null, screenBackdropWait:null, colorFadeWait: null, flashWait: null, cameraPath: null, cameraLerp: null, scriptMove: null, scriptLerp: null, boardLerp:null, birdViewMove: null, remaining: 0, move: null,
       animationWait: false, animationRepeat: null, audioWait: null, bgmReplay: null, autoSaveWait: null, sourceMessageWait: null, soundWait: null, treasure: null, done: false });
   }
   private restoreHookedScript(main: Task): void {
@@ -4547,7 +4589,7 @@ export class FieldGame {
       cameraLerp: null,
       scriptMove: null,
       birdViewMove: null,
-      scriptLerp: null,
+      scriptLerp: null,boardLerp:null,
       remaining: 0,
       move: null,
       animationWait: false,
@@ -4572,7 +4614,7 @@ export class FieldGame {
   private hasUnfinishedInterpolation(): boolean {
     // Timing wrappers also own captured Core r0/r1 until their next-clock
     // completion. A script/map/battle replacement cannot discard that bank.
-    return this.tasks.some((task) => !task.done && !!(task.scriptLerp || task.cameraLerp || task.cameraPath || task.skyboxWait || task.standaloneWait));
+    return this.tasks.some((task) => !task.done && !!(task.scriptLerp || task.boardLerp || task.cameraLerp || task.cameraPath || task.skyboxWait || task.standaloneWait));
   }
   private hasUnfinishedNativeEncounterActivity(): boolean {
     return !!(Object.values(this.actors).some(actor=>actor.mobColor?.tween) || this.actorVisibilityBusy || this.pendingChoice || this.messageWindow || this.sourceMessage.active || this.shopTask ||
@@ -5445,6 +5487,12 @@ export class FieldGame {
             t.birdViewMove = null;
           } catch (error) { this.block(error instanceof Error ? error.message : String(error), pending.op); return; }
         }
+        if(t.boardLerp){const pending=t.boardLerp;try{
+          if(t.actor!==pending.lease.id||this.effects!==pending.lease.owner||this.content.scripts[t.script]!==pending.program||pending.program[pending.webPC]!==pending.op||canonical(pending.op)!==pending.fingerprint||t.generalRegisters!==pending.registers)throw Error("Stale source board Lerp instruction or task clock");
+          pending.lease.validate();if(canonical(this.effectBoard(t.actor)?.position)!==canonical(pending.expectedPosition))throw Error("Board Lerp current transform changed outside its task");
+          const next=this.prepareBoardLerp(t.actor,pending.op,pending.progress,pending.lease);
+          if(next.flow==="wait"){pending.progress=next.progress;pending.expectedPosition=next.position;return;}t.boardLerp=null;
+        }catch(error){this.block(error instanceof Error?error.message:String(error),pending.op);return;}}
         if (t.scriptLerp) {
           const pending = t.scriptLerp;
           try {
@@ -5660,7 +5708,7 @@ export class FieldGame {
           this.block(`无效脚本位置 ${t.script}:${t.pc}`);
           return;
         }
-        if ((actor?.motion || this.assignedRoutes.has(t.actor) || this.tasks.some((other) => !other.done && other.actor === t.actor && (other.scriptLerp || other.birdViewMove || other.cameraPath?.op.kind === "field-puppet-route" || (op.kind === "field-puppet-route" || op.kind === "position") && (other.cameraPath || other.cameraLerp)))) &&
+        if ((actor?.motion || this.assignedRoutes.has(t.actor) || this.tasks.some((other) => !other.done && other.actor === t.actor && (other.scriptLerp || other.boardLerp || other.birdViewMove || other.cameraPath?.op.kind === "field-puppet-route" || (op.kind === "field-puppet-route" || op.kind === "position") && (other.cameraPath || other.cameraLerp)))) &&
             ["move", "field-bird-view-move", "field-script-motion", "field-puppet-route", "field-camera-motion", "position", "look", "animation-play", "animation-cue"].includes(op.kind)) {
           this.block("Concurrent source actor movement arbitration is not implemented", op);
           return;
@@ -6212,6 +6260,9 @@ export class FieldGame {
               } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
               break;
             }
+            if(this.effectBoard(t.actor)){
+              try{this.prepareBoardSetPosition(t.actor,op);}catch(error){this.block(error instanceof Error?error.message:String(error),op);return;}break;
+            }
             if (!actor) {
               this.block("非角色实体不能定位", op);
               return;
@@ -6345,6 +6396,10 @@ export class FieldGame {
                 const next = this.camera.prepareLerp(command, null, this.time / 1000);
                 next.commit();
                 if (next.flow === "wait") { t.cameraLerp = { op, command, progress: next.progress }; return; }
+              } else if(this.effectBoard(t.actor)){
+                if(op.command.kind!=="lerp")throw Error("Board source Move/MoveTo route/collision provider is unavailable");
+                const next=this.prepareBoardLerp(t.actor,op,null),program=this.content.scripts[t.script]!;
+                if(next.flow==="wait"){t.boardLerp={op,progress:next.progress,lease:next.lease,expectedPosition:next.position,program,webPC:t.pc-1,fingerprint:canonical(op),registers:t.generalRegisters};return;}
               } else {
                 if (!actor) throw new Error("Source script motion requires a bound actor");
                 if (op.command.kind === "move-to") {

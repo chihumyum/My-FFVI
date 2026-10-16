@@ -1,3 +1,4 @@
+import {projectFieldEffectBoardLifetimes,type FieldEffectBoardLifetime} from './field-effect-board-lifetime.js';
 import type { FieldEffectCatalog, FieldEffectObservation, FieldEffectOperation, FieldEffectPlan,
   FieldEffectPrepared, FieldEffectPublication, FieldEffectState } from "./field-effects.js";
 
@@ -28,14 +29,16 @@ export type FieldEffectCandidateLimits = { maxPreparations?: number; maxOperatio
 export type FieldEffectCandidatePrepared = FieldEffectPrepared;
 type CandidateOwner = {
   validate(): void;
+  lifetimes():ReadonlyMap<string,FieldEffectBoardLifetime>;
   project(state: FieldEffectState, catalog: FieldEffectCatalog, operations: readonly FieldEffectOperation[]): FieldEffectPlan;
-  publish(state: FieldEffectState, catalog: FieldEffectCatalog, commit: () => void, commitOwned: () => boolean): boolean;
+  publish(state: FieldEffectState, catalog: FieldEffectCatalog,lifetimes:ReadonlyMap<string,FieldEffectBoardLifetime>, commit: () => void, commitOwned: () => boolean): boolean;
 };
 
 /** A disposable branch of FieldEffects, not another live manager. Only seal's
  * final publication may change its owner or the external particle host. */
 export class FieldEffectCandidate {
   #state: FieldEffectState;
+  #boardLifetimes:Map<string,FieldEffectBoardLifetime>;
   readonly #catalog: FieldEffectCatalog;
   readonly #host: FieldEffectCandidateHost;
   readonly #owner: CandidateOwner;
@@ -61,8 +64,12 @@ export class FieldEffectCandidate {
     this.#maxPreparations = limit(limits.maxPreparations, 1024);
     this.#maxOperations = limit(limits.maxOperations, 4096);
     this.#state = structuredClone(origin.state); this.#catalog = structuredClone(origin.catalog);
-    this.#host = host; this.#owner = owner;
+    this.#host = host; this.#owner = owner;this.#boardLifetimes=new Map(owner.lifetimes());
     this.#validateOrigin();
+  }
+  boardLifetime(id:string):FieldEffectBoardLifetime {
+    if(this.#phase!=="open"&&this.#phase!=="sealed")throw Error("Retired field effect candidate lifetime");this.#validateOrigin();
+    const token=this.#boardLifetimes.get(id);if(!token||!this.#state.boards.some(board=>board.id===id))throw Error("Retired or missing field effect board lifetime");return token;
   }
   snapshot(): FieldEffectState { return structuredClone(this.#state); }
   catalogSnapshot(): FieldEffectCatalog { return structuredClone(this.#catalog); }
@@ -97,6 +104,7 @@ export class FieldEffectCandidate {
       const plan = this.#owner.project(next, this.#catalog, [operation]);
       plans.push(plan); next = plan.after;
     }
+    const lifetimes=projectFieldEffectBoardLifetimes(this.#boardLifetimes,journal);
     this.#requireOpen();
     this.#preparations++; this.#operations += operations.length;
     let used = false;
@@ -112,7 +120,7 @@ export class FieldEffectCandidate {
       this.#localPublishing = true;
       try {
         if (commitOwned() !== true) return false;
-        this.#state = next; this.#plans = nextPlans; this.#operationJournal = nextJournal; this.#revision++;
+        this.#state = next;this.#boardLifetimes=lifetimes; this.#plans = nextPlans; this.#operationJournal = nextJournal; this.#revision++;
         return true;
       } finally { this.#localPublishing = false; }
     };
@@ -156,7 +164,7 @@ export class FieldEffectCandidate {
       this.#phase = "publishing";
       let hostCommitStarted = false;
       try {
-        const committed = this.#owner.publish(state, this.#catalog, () => {
+        const committed = this.#owner.publish(state, this.#catalog,this.#boardLifetimes, () => {
           hostCommitStarted = true;
           this.#callHost(() => publication.commit());
         }, commitOwned);

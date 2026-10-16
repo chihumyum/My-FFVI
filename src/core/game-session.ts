@@ -1,3 +1,4 @@
+import {parseWebBattleChildAdmission,type WebBattleChildAdmission} from './battle-child-admission.js';
 import {WEB_BATTLE_GAU_INSTANCES,type BattleGauMediaHost} from "./battle-gau-instances.js";
 import { WEB_BATTLE_GLOBAL_FADE } from "./battle-global-fade.js";
 import { BATTLE_RESERVED_SCRIPTS, parseFieldReservation, reservationFingerprint, reservationSourceFingerprint, type FieldReservationSnapshot, type BattleFieldReservation, type BattleFieldReservationHost, type FieldReservedScriptPort } from "./field-reserved-script.js";
@@ -84,7 +85,7 @@ export type GameCheckpoint = GameCheckpointBase & (
   { formatVersion: 7 | 8; walkEncounters: WalkEncounterSnapshot; fieldReservation: FieldReservationSnapshot }
 );
 /** External observations are rebound by the host on load, never trusted from saves. */
-export type GameSessionRuntime = { battleGauInstances?:BattleGauMediaHost; skyboxPresentation?: import("./field-skybox.js").WebFlatSkybox; battleEventConditions?: WebBattleEventConditions; screenPresentation?: import("./field-screen-presentation.js").WebFieldScreenPresentation; battleGlobalFade?:typeof WEB_BATTLE_GLOBAL_FADE; mobColorFilter?: import("./field-mob-controls.js").WebFlatMobColorFilter; birdViewActors?: import("./field-bird-view-actors.js").WebFlatBirdViewActors; worldAutoMove?:import("./field-world-auto-move.js").WebFlatWorldAutoMove; worldAutoTasks?:import("./field-world-auto-tasks.js").WebFlatWorldAutoTasks; battleBranchExecution?:WebBattleBranchExecution; battleEventEffects?:BattleEventEffectHost|typeof WEB_BATTLE_EVENT_EFFECTS; battleEventControls?: WebBattleEventControls; viewChange?: import("./field-view-change.js").WebFlatFieldViewChange; battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY; sourcePartySelection?: WebSourcePartySelection; scriptedBattleActions?: WebScriptedBattleActions; puppetRoutes?: import("./field-puppet-route.js").WebPuppetRoutePolicy; sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
+export type GameSessionRuntime = { battleChildPartyAdmission?:WebBattleChildAdmission; battleGauInstances?:BattleGauMediaHost; fieldEffectTransforms?:import("./field-effect-transforms.js").WebFieldEffectTransforms; skyboxPresentation?: import("./field-skybox.js").WebFlatSkybox; battleEventConditions?: WebBattleEventConditions; screenPresentation?: import("./field-screen-presentation.js").WebFieldScreenPresentation; battleGlobalFade?:typeof WEB_BATTLE_GLOBAL_FADE; mobColorFilter?: import("./field-mob-controls.js").WebFlatMobColorFilter; birdViewActors?: import("./field-bird-view-actors.js").WebFlatBirdViewActors; worldAutoMove?:import("./field-world-auto-move.js").WebFlatWorldAutoMove; worldAutoTasks?:import("./field-world-auto-tasks.js").WebFlatWorldAutoTasks; battleBranchExecution?:WebBattleBranchExecution; battleEventEffects?:BattleEventEffectHost|typeof WEB_BATTLE_EVENT_EFFECTS; battleEventControls?: WebBattleEventControls; viewChange?: import("./field-view-change.js").WebFlatFieldViewChange; battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY; sourcePartySelection?: WebSourcePartySelection; scriptedBattleActions?: WebScriptedBattleActions; puppetRoutes?: import("./field-puppet-route.js").WebPuppetRoutePolicy; sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
   sourceMessageSequence?: NonNullable<FieldGameOptions["sourceMessageSequence"]>;
   conditionLeaderActivity?: NonNullable<FieldGameOptions["conditionLeaderActivity"]>;
@@ -164,6 +165,7 @@ export class GameSession {
   private readonly battleEventConditions: WebBattleEventConditions | undefined;
   private readonly scriptedBattleActions: WebScriptedBattleActions | undefined;
   private readonly battleBranchExecution:WebBattleBranchExecution|undefined;
+  readonly #battleChildAdmission:WebBattleChildAdmission|undefined;
   readonly #battleGauRuntime:BattleGauMediaHost|undefined;
   private readonly battleGlobalFade:typeof WEB_BATTLE_GLOBAL_FADE|undefined;
   private readonly battleEventControls: WebBattleEventControls | undefined;
@@ -300,6 +302,7 @@ export class GameSession {
     this.battleEventConditions = runtime.battleEventConditions;
     if(runtime.battleGauInstances!==undefined&&(runtime.battleGauInstances.policy!==WEB_BATTLE_GAU_INSTANCES||typeof runtime.battleGauInstances.prepare!=="function"))throw new Error("Unknown source Gau media runtime");
     this.#battleGauRuntime=runtime.battleGauInstances;
+    this.#battleChildAdmission=runtime.battleChildPartyAdmission===undefined?undefined:parseWebBattleChildAdmission(runtime.battleChildPartyAdmission);
     validateScriptedBattleActionPolicy(runtime.scriptedBattleActions);
     this.scriptedBattleActions=runtime.scriptedBattleActions;
     validateBattleBranchExecutionPolicy(runtime.battleBranchExecution);this.battleBranchExecution=runtime.battleBranchExecution;
@@ -348,7 +351,7 @@ export class GameSession {
       initialEvents.write(ref, value);
     }
     const messageFees = battleCatalog.common.sourceMessageFees && parseSourceMessageFeeCatalog(battleCatalog.common.sourceMessageFees);
-    const { battleGauInstances:gauMedia, battleEventConditions: battleConditionsPolicy, battleGlobalFade:fadePolicy, battleBranchExecution: branchPolicy, battleEventEffects: battleEffectsHost, battleEventControls: battleControlsPolicy, battleEventMessages: battleMessagesPolicy, scriptRandom: scriptRandomPolicy, sourceBattleResult: resultPolicy, scriptedBattleActions: scriptActionsPolicy, ...fieldRuntime } = runtime;
+    const { battleChildPartyAdmission:childAdmissionPolicy, battleGauInstances:gauMedia, battleEventConditions: battleConditionsPolicy, battleGlobalFade:fadePolicy, battleBranchExecution: branchPolicy, battleEventEffects: battleEffectsHost, battleEventControls: battleControlsPolicy, battleEventMessages: battleMessagesPolicy, scriptRandom: scriptRandomPolicy, sourceBattleResult: resultPolicy, scriptedBattleActions: scriptActionsPolicy, ...fieldRuntime } = runtime;
     this.world = new WorldSession(field, initialEvents, {
       current: {
         ...fieldRuntime,
@@ -929,6 +932,7 @@ export class GameSession {
       { names: this.state.fieldMessageNames,
         ...(this.battleBranchExecution===undefined?{}:{branchExecution:this.battleBranchExecution}),
         ...(entry.gau?{gau:entry.gau}:{}),
+        ...(this.#battleChildAdmission?{childPartyAdmission:this.#battleChildAdmission}:{}),
         ...(this.#battleGauRuntime?{gauInstances:{...this.#battleGauRuntime,owned:this.state.battleGauOwnedHost(entry.lease)}}:{}),
         ...(this.battleGlobalFade?{fade:{policy:this.battleGlobalFade,owner:entry.field.fader}}:{}),
         fieldContinuation: entry.reservationHost,

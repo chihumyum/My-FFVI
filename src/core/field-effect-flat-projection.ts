@@ -1,3 +1,4 @@
+import {fieldEffectTransformBinding,validateFieldEffectCurrentTransform,type FieldEffectTransformRef} from './field-effect-transforms.js';
 import { canonical } from './canonical.js';
 import { checkpointKeys } from './checkpoint-validation.js';
 import { fieldEffectBoardBlockers, type FieldEffectPoint, type FieldEffectBoardDefinition, type FieldEffectCatalog } from './field-effects.js';
@@ -31,15 +32,21 @@ export function validateFieldEffectFlatRef(ref: FieldEffectFlatRef): void {
     throw new Error('Invalid flat effect source reference');
 }
 export function validateFieldEffectFlatBinding(binding: FieldEffectFlatBinding): void {
+  validateFieldEffectSourceBinding(binding,true);
+}
+/** Shared raw-object/definition proof. The legacy flat-v1 wrapper always
+ * requires Birdview=true; the new independent transform family also binds
+ * ordinary boards without granting them the legacy display capability. */
+export function validateFieldEffectSourceBinding(binding:FieldEffectFlatBinding,birdview:boolean):void {
   checkpointKeys(binding,'ref,entity,rawObject,position');validateFieldEffectFlatRef(binding.ref);
   const {ref,entity,rawObject:raw}=binding,d=entity.effect;
   checkpointKeys(binding.position,'x,y,z');
   if(![binding.position.x,binding.position.y,binding.position.z].every(v=>Number.isFinite(v)&&Math.fround(v)===v)||binding.position.z!==[349,249,149,49][ref.layer])throw new Error('Flat effect source placement mismatch');
   if (!d || entity.kind !== 11 || entity.id !== ref.entityId || entity.layer !== ref.layer ||
-      d.birdviewPuppet !== true || d.building || d.collision || d.screen || d.blendType !== 0 ||
+      d.birdviewPuppet !== birdview || d.building || d.collision || d.screen || d.blendType !== 0 ||
       canonical(d.source) !== canonical(entity.source) || prop(raw,'object_type') !== 11 ||
       typeof prop(raw,'entity_id') !== 'number' || !Number.isInteger(prop(raw,'entity_id')) || String(prop(raw,'entity_id')) !== entity.id || prop(raw,'asset_id') !== d.assetId ||
-      prop(raw,'birdview_puppet') !== true || (prop(raw,'building') ?? false) !== false ||
+      (prop(raw,'birdview_puppet')??false) !== birdview || (prop(raw,'building') ?? false) !== false ||
       (prop(raw,'collision') ?? false) !== false || (prop(raw,'screen') ?? false) !== false ||
       (prop(raw,'blend_type') ?? 0) !== 0 ||
       d.playOnAwake !== (prop(raw,'play_on_awake') ?? true) || d.front !== (prop(raw,'front') ?? true) ||
@@ -98,8 +105,10 @@ export function matchFieldEffectFlatProjection(catalog: FieldEffectCatalog, defi
 }
 /** One matcher is used for live creation, private candidates and restore. */
 export function fieldEffectRuntimeBoardBlockers(definition: FieldEffectBoardDefinition,catalog:FieldEffectCatalog,
-  ref?:FieldEffectFlatRef,boardId?:string,position?:FieldEffectPoint):string[]{
-  const bound=matchFieldEffectFlatProjection(catalog,definition,ref,boardId,position);
+  ref?:FieldEffectFlatRef,boardId?:string,position?:FieldEffectPoint,transformRef?:FieldEffectTransformRef):string[]{
+  const transform=fieldEffectTransformBinding(catalog,definition,transformRef,boardId);
+  if(transform&&position)validateFieldEffectCurrentTransform(transform,position);
+  const bound=matchFieldEffectFlatProjection(catalog,definition,ref,boardId,transform?.factory.position??position);
   if(ref!==undefined&&!bound)throw new Error('Flat effect operation source reference mismatch');
   return fieldEffectBoardBlockers(definition).filter(reason=>
     !(reason==='Field effect birdview scale provider is unavailable'&&bound) &&

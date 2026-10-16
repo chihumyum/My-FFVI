@@ -9,6 +9,7 @@ export function webSourceFrameworkInputs() {
     mobColorFilter: 'web-flat-mob-color-filter-v1',
     screenPresentation:'web-field-screen-presentation-2d-v1',
     skyboxPresentation:'web-flat-skybox-panorama-v1',
+    fieldEffectTransforms:'web-source-logical-board-transforms-v1',
     mapAnimatedEntities: 'web-field-animated-map-entities-v1',
     fieldEffectFlat: {kind:'web-source-field-effect-flat-input-v1',reason:'Explicit playable Web display deferral for source-bound Birdview boards with complete all-loop side-effect-free prefab proofs; retain original definitions, layers, logical playback and unresolved source gates.'},
     npcFlat: { kind: 'web-source-npc-flat-input-v1', reason: 'Explicit playable Web framework: retain original NPC layer/collision/selectors; use source all-layer interaction eligibility and flat display instead of Birdview perspective.' },

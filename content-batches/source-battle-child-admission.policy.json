@@ -1,0 +1,59 @@
+{
+  "kind": "source-battle-directory-policy-v9",
+  "framework": {
+    "handoff": {
+      "kind": "framework-battle-handoff-v1",
+      "id": "shared-source-enemy-web-handoff-v1",
+      "audio": "retain-field",
+      "introduction": "omit"
+    },
+    "entry": {
+      "kind": "framework-battle-batch-entry-v1",
+      "id": "shared-source-enemy-web-entry-v1",
+      "formations": {
+        "kind": "framework-battle-formations-v1",
+        "id": "shared-source-enemy-normal-formation-v1",
+        "weights": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "scripts": [
+        {
+          "id": 8010,
+          "sourceHash": "6d43711f9b9d4125509ae1ac2bcd89c4f77c5c9dde7d02e2bd55c102e808a1ed",
+          "reason": "The Web systems variant uses the existing BattleGame lifecycle and prepared handoff. This shared source entry routine is retained as evidence and its execution is explicitly deferred; native behavior is not granted."
+        }
+      ],
+      "flagGroups": [
+        {
+          "id": 11,
+          "sourceHash": "d184d029dff05c80a2b9e12f149aa6a627fe6c689c780b9a869e42d6bd8bb294",
+          "reason": "The Web systems variant explicitly defers this exact shared entry flag group. The complete original rows remain in the directory and strict source gate; no native flag behavior is inferred."
+        }
+      ]
+    },
+    "conditionControlPolicy": {
+      "kind": "web-source-control-actions-v1"
+    },
+    "manualControls": "web-manual-battle-controls-v1",
+    "branchExecution": "web-source-battle-branch-execution-v1",
+    "sourceParticipants": {
+      "kind": "web-source-dynamic-participants-v1",
+      "slotLayout": "source-party-nine-slots",
+      "rewardScope": "all-entered"
+    },
+    "forcedSavePolicy": {
+      "kind": "web-source-battle-forced-save-v1"
+    },
+    "spawnConditionPolicy": {
+      "kind": "web-source-enemy-spawn-conditions-v1"
+    },
+    "gauInstances": "web-source-battle-gau-instances-v1",
+    "childPartyAdmission": "web-source-child-party-entry-v1"
+  }
+}

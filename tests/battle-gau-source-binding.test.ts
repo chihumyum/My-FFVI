@@ -64,7 +64,7 @@ test('unavailable source child descriptors remain blocked while complete origina
 import {readFile} from 'node:fs/promises';import {resolve} from 'node:path';import {pathToFileURL,fileURLToPath} from 'node:url';
 test('v8 factory declaration is separate opt-in and cannot be smuggled into any unchanged legacy directory shape',async()=>{
  const compiledDir=fileURLToPath(new URL('../',import.meta.url)),api=await import(pathToFileURL(resolve('scripts/source-battle-directory.mjs')).href),
- v7=JSON.parse(await readFile('content-batches/source-battle-directory.policy.json','utf8')),v8=JSON.parse(await readFile('content-batches/source-battle-gau-instances.policy.json','utf8'));
+ v7=JSON.parse(await readFile('content-batches/source-battle-directory.v7-audit-policy.json','utf8')),v8=JSON.parse(await readFile('content-batches/source-battle-gau-instances.policy.json','utf8'));
  assert.equal(v7.kind,'source-battle-directory-policy-v7');assert.equal(v7.framework.gauInstances,undefined);
  assert.equal((await api.readSourceBattleDirectoryPolicy({compiledDir,policy:v8})).framework.gauInstances,WEB_BATTLE_GAU_INSTANCES);
  for(const change of [(p:typeof v8)=>{p.kind='source-battle-directory-policy-v7';},(p:typeof v8)=>{delete p.framework.gauInstances;},(p:typeof v8)=>{p.framework.gauInstances='unknown';},(p:typeof v8)=>{p.framework.extra=true;}]){

@@ -306,6 +306,14 @@ export function validateFieldCameraLerpProgress(progress: FieldCameraLerpProgres
   if (progress.startedAt < 0 || ![0, 9, 10, 11, 12].includes(progress.startLayer))
     throw new Error("Invalid source camera Lerp progress");
 }
+/** Pure Mathf.Lerp/arc arithmetic shared by actual camera and non-Sprite
+ * transforms. It owns no entity, camera state, register bank or callback. */
+export function sourcePuppetLerpCoordinates(start:Point,target:Point,ratio:number,arcHeight:number):Point {
+  const t=Math.max(0,Math.min(1,f(ratio)));
+  const lerp=(a:number,b:number)=>f(f(a)+f(f(f(b)-f(a))*t));
+  const arc=f((ratio-ratio*ratio)*arcHeight*4);number(arc);
+  return {x:lerp(start.x,target.x),y:f(lerp(start.y,target.y)+arc)};
+}
 /** One native instruction call. The host passes its source Time.time equivalent
  * in seconds, including the same time on first execution. Positive durations
  * first return Wait at ratio zero; negative durations are not made positive. */
@@ -323,15 +331,12 @@ export function stepFieldCameraLerp(state: FieldCameraState, command: FieldCamer
   validateFieldCameraLerpProgress(registers);
   if (time < registers.startedAt) throw new Error("Camera clock precedes its first instruction clock");
   const ratio = command.duration === 0 ? 1 : Math.min(1, (time - registers.startedAt) / command.duration);
-  const t = Math.max(0, Math.min(1, f(ratio)));
-  const lerp = (a: number, b: number): number => f(f(a) + f(f(f(b) - f(a)) * t));
-  const target = fieldCameraCellToWorld(map, localTarget(map, command), 0);
-  const arc = f((ratio - ratio * ratio) * command.arcHeight * 4);
-  number(arc);
+  const target = fieldCameraCellToWorld(map, localTarget(map, command), 0),
+    coordinates=sourcePuppetLerpCoordinates(registers.start,target,ratio,command.arcHeight);
   const candidate = structuredClone(state);
   candidate.dummy.position = {
-    x: lerp(registers.start.x, target.x),
-    y: f(lerp(registers.start.y, target.y) + arc),
+    x: coordinates.x,
+    y: coordinates.y,
     z: f((onLayerZ[registers.startLayer] ?? 0) - (ratio === 1 ? 0 : 5)),
   };
   return { state: candidate, progress: registers, flow: ratio === 1 ? "next" : "wait" };

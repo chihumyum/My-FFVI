@@ -4,6 +4,7 @@
 // result is supplied, and GameSession remains the only terminal producer.
 export function sourceWebReplayRuntimePorts() {
   return Object.freeze({
+    battleChildPartyAdmission:'web-source-child-party-entry-v1',
     battleEventConditions: "web-source-battle-condition-lists-v1",
     battleBranchExecution: 'web-source-battle-branch-execution-v1',
     worldAutoTasks: 'web-flat-world-auto-tasks-v1',
@@ -11,6 +12,7 @@ export function sourceWebReplayRuntimePorts() {
     birdViewActors: 'web-flat-bird-view-actors-v1',
     mobColorFilter: 'web-flat-mob-color-filter-v1',
     screenPresentation:'web-field-screen-presentation-2d-v1',
+    fieldEffectTransforms:'web-source-logical-board-transforms-v1',
     skyboxPresentation:'web-flat-skybox-panorama-v1',
     viewChange: 'web-flat-field-view-change-v2',
     battleEventEffects: 'web-source-battle-effects-pulse-v1',

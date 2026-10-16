@@ -8,6 +8,7 @@ import {createHash} from 'node:crypto';
 import {runtimeDigest} from './runtime-digest.mjs';
 import {openSourceCandidate} from './source-candidate.mjs';
 import {sourceWebReplayRuntimePorts} from './source-web-replay-runtime.mjs';
+import {createSourceReplayGauMedia,SOURCE_REPLAY_PNG_ACK} from './source-replay-gau-media.mjs';
 import {loadBattleEventMessageSourceInputs} from './battle-event-message-source-inputs.mjs';
 import {observerErrorDetails,observedBattleEffects,observationDraftJSON} from './battle-observer-results.mjs';
 import {chooseBattleObserverInput,BATTLE_OBSERVER_INPUT_POLICY} from './battle-observer-inputs.mjs';
@@ -22,9 +23,10 @@ const {readSourceBattleDirectoryPolicy:readObserverPolicy}=await import('./sourc
 const observerDeclaration=await readObserverPolicy({root,compiledDir:resolve(root,o.compiled),policy:JSON.parse(await readFile(resolve(root,'content-batches/source-battle-directory.policy.json')))});
 const load=n=>import(pathToFileURL(resolve(compiled,'src',n+'.js')).href),api=Object.assign({},...await Promise.all([
  'compiler/content','compiler/framework-new-game','compiler/content-dependencies','core/game-session','core/game-flow','core/saved-game','core/source-message-sequence',
- 'core/field-fade','core/field-condition-activity','core/field-camera-shake','core/field-logical-effects','core/content-integrity'].map(load))),runtime=await runtimeDigest(root,compiled),input=await loadBattleEventMessageSourceInputs(root,compiled,{branchExecution:observerDeclaration.framework.branchExecution,sourceFormatImport:true});
+ 'core/field-fade','core/field-condition-activity','core/field-camera-shake','core/field-logical-effects','core/content-integrity'].map(load))),runtime=await runtimeDigest(root,compiled),input=await loadBattleEventMessageSourceInputs(root,compiled,{branchExecution:observerDeclaration.framework.branchExecution,sourceFormatImport:true,...(observerDeclaration.framework.gauInstances?{gauInstancePolicy:observerDeclaration.framework.gauInstances}:{})});
+let gauMedia=null;
 const seal=v=>{const{contentHash,...body}=v;return {...body,contentHash:api.hash(body)};},ready={visible:true,mediaReady:true,overlayOpen:false},
- ports=()=>({...sourceWebReplayRuntimePorts(),battleHandoff:'prepared',sourceMessageSequence:api.createWebFieldMessageSequencePort(),
+ ports=()=>({...sourceWebReplayRuntimePorts(),...(gauMedia?{battleGauInstances:gauMedia.host}:{}),battleHandoff:'prepared',sourceMessageSequence:api.createWebFieldMessageSequencePort(),
  sourceEncounterPolicy:'web-source-encounter-uniform-slots-v1',scriptRandom:'web-source-script-random-field-stream-v1',assignedNpcRoutes:'web-assigned-npc-route-grid-v1',
  retainedWorldTransportation:'web-retained-walking-magitek-world-entry-v1',cameraShake:api.createWebFieldCameraShakePolicy(),fieldEffects:api.createWebLogicalFieldEffectsHost(),
  conditionLeaderActivity:api.createWebFlatConditionLeaderActivityPort(),audioReadiness:{isReady:()=>true},soundPresentation:{isPresented:()=>true},transportationTimestamp:()=>'639273600000000000'});
@@ -46,21 +48,24 @@ if(o['candidate-dir']){
  const {readSourceBattleDirectoryPolicy,composeFrameworkBattleDirectory}=await import('./source-battle-directory.mjs'),
   policyFile=resolve(root,'content-batches/source-battle-directory.policy.json'),policyBytes=await readFile(policyFile),
   declaration=await readSourceBattleDirectoryPolicy({root,compiledDir:compiled,policy:JSON.parse(policyBytes)}),
-  source=await compileSharedBattleSource(root),shared=await compileGameCatalogModules(root,source);
+  source=await compileSharedBattleSource(root),shared=await compileGameCatalogModules(root,source),
+  gauSource=declaration.framework.gauInstances?await compileSharedBattleSource(root,{gauInstances:declaration.framework.gauInstances}):null;
  assert.equal(source.parentSourceSetHash,input.snapshot.manifest.parentSourceSetHash);
  assert.equal(api.canonical(shared.runtimeInput.eventMessages),api.canonical(input.input),'Directory and observer must share exact bound message decoder input');
  const originalProgramBindings=input.dependencies.encounters.map(descriptor=>{
   const p=input.programs.find(p=>p.source.assetPath===descriptor.script?.source.assetPath);
   assert(p&&descriptor.script,'Original source party has no exact namespace/body binding');
   assert.equal(api.canonical(descriptor.script.data),api.canonical(p.data),'Original source descriptor/body differs');
-  assert.equal(api.canonical(input.api.compileBattleEvent(descriptor.script.data,descriptor.script.source,input.input,input.snapshot.reader,declaration.framework.branchExecution,input.sourceFormatImport?.(descriptor.script))),api.canonical(p.compiled),'Observer source program differs from production descriptor compilation');
+  assert.equal(api.canonical(input.api.compileBattleEvent(descriptor.script.data,descriptor.script.source,input.input,input.snapshot.reader,declaration.framework.branchExecution,input.sourceFormatImport?.(descriptor.script),declaration.framework.gauInstances)),api.canonical(p.compiled),'Observer source program differs from production descriptor compilation');
   return {partyId:descriptor.partyId,program:p.id,rawHash:p.rawHash,source:descriptor.script.source};
  });
  const participantClosure=declaration.framework.sourceParticipants?compileSourceBattleParticipantClosure(input.snapshot.reader,{
   policy:declaration.framework.sourceParticipants,encounters:input.dependencies.encounters,sources:input.encounterSources,
-  eventMessages:shared.runtimeInput.eventMessages,branchExecution:declaration.framework.branchExecution,...(input.sourceFormatImport?{sourceFormatImport:input.sourceFormatImport}:{})}):null;
+  eventMessages:shared.runtimeInput.eventMessages,branchExecution:declaration.framework.branchExecution,...(input.sourceFormatImport?{sourceFormatImport:input.sourceFormatImport}:{}),...(declaration.framework.gauInstances?{gauInstancePolicy:declaration.framework.gauInstances}:{})}):null;
  const requestedPartyIds=input.dependencies.requestedPartyIds,
   runtime=compileBattleEncounterRuntime(shared.reader,{...shared.runtimeInput,...(input.sourceFormatImport?{sourceFormatImport:input.sourceFormatImport}:{}),requestedPartyIds,encounters:input.dependencies.encounters,sourceDiagnostics:input.dependencies.diagnostics,
+   ...(gauSource?{gauInstancePolicy:declaration.framework.gauInstances,gauInstanceContent:gauSource.gauInstances.catalog}:{}),
+   ...(declaration.framework.childPartyAdmission?{childPartyAdmission:declaration.framework.childPartyAdmission}:{}),
    ...(declaration.framework.forcedSavePolicy===undefined?{}:{forcedSavePolicy:declaration.framework.forcedSavePolicy}),
    ...(declaration.framework.spawnConditionPolicy===undefined?{}:{spawnConditionPolicy:declaration.framework.spawnConditionPolicy}),
    ...(participantClosure?{reserveEnemies:participantClosure.reserveEnemies,enemyParties:participantClosure.enemyParties,
@@ -72,6 +77,7 @@ if(o['candidate-dir']){
     ...(participantClosure?{participants:participantClosure.participants}:{})}}),
   composed=await composeFrameworkBattleDirectory({root,compiledDir:compiled,baseCatalog:sourceBattle,runtime,conditionControlPolicy:declaration.framework.conditionControlPolicy});
  familyCatalog=composed.catalog;
+ if(declaration.framework.gauInstances)gauMedia=await createSourceReplayGauMedia({root,compiledDir:compiled,battleCatalog:familyCatalog,policy:declaration.framework.gauInstances,acknowledgement:SOURCE_REPLAY_PNG_ACK});
  assert.equal(api.canonical(familyCatalog.gameState),api.canonical(sourceBattle.gameState),'Complete party directory cannot change initial owners');
  assert.equal(familyCatalog.common.sourceContentHash,sourceBattle.common.sourceContentHash,'Complete party directory cannot change shared source content identity');
  familyDirectory={kind:'same-input-complete-battle-message-family-directory-v1',requestedPartyIds,baselineCatalogHash:sourceBattle.contentHash,catalogHash:familyCatalog.contentHash,
@@ -195,7 +201,7 @@ if(!o.smoke){for(const p of input.programs){programs.push({id:p.id,source:p.sour
    run:{lane:'original-source-party-availability-and-lifecycle',result:'source-program-binding-blocked',reason:'Complete original source body/namespace binding is unavailable',vmPreflightAttempted:false,sessionBattlePreparationAttempted:false,sourceStoryReachability:false}});progress.completed.originalParties=originalParties.length;await persistProgress();continue;}
   originalParties.push({partyId,program:p.id,source:descriptor.source,dependencies:descriptor,sourceDiagnostics:diagnostics,
    run:await trackedRun(p.compiled,{partyOverride:partyId,lane:'original-source-party-availability-and-lifecycle'})});progress.completed.originalParties=originalParties.length;await persistProgress();}}
-assert.equal(await runtimeDigest(root,compiled),runtime,'Runtime changed during family execution');if(candidate){await candidate.validate();assert.equal(sha(await readFile(familyDirectory.policy.file)),familyDirectory.policy.sha256,'Explicit family battle policy changed');}
+assert.equal(await runtimeDigest(root,compiled),runtime,'Runtime changed during family execution');if(candidate){await candidate.validate();assert.equal(sha(await readFile(familyDirectory.policy.file)),familyDirectory.policy.sha256,'Explicit family battle policy changed');}if(gauMedia)await gauMedia.validate();
 const now=await input.api.loadCorpus(root);assert.equal(api.hash({assets:now.assets,tables:now.tables,messages:now.messages,manifest:now.manifest}),input.sourceDigest,'Source snapshots changed');
 const artifacts={};async function artifact(file,value){const bytes=JSON.stringify(value)+'\n',path=resolve(dirname(out),file);await writeFile(path,bytes);return {file,sha256:sha(bytes),bytes:Buffer.byteLength(bytes)};}
 artifacts.inventory=await artifact('source-inventory.json',input.inventory);if(['effects','all'].includes(family))artifacts.effectSites=await artifact('all-battle-effect-sites.json',effectSites);if(fullGraph)artifacts.completeWorldDependencies=await artifact('all-world-dependencies.json',fullGraph);
@@ -222,7 +228,7 @@ const report={kind:family==='all'?'source-battle-common-family-execution-v1':fam
   affectedProgramAttempts:programs.filter(r=>r.affected).length,affectedProgramFinished:programs.filter(r=>r.affected&&r.run.result==='whole-program-finished-and-restored').length,originalPartyAttempts:originalParties.length,originalPartyDirectoryRequests:familyDirectory?.requestedPartyIds.length??0,originalPartyDescriptorDiagnostics:input.dependencies.diagnostics.length},
  parameters,programs,originalParties,blockerGroups:[...blockerGroups.values()],sourceCampaignComplete:false,nativeParity:false,browserVerified:false,
  familyCounts:family==='branch-execution'?{programs:input.programs.length,rawInstructions:input.inventory.counts.instructions,deferredSites:input.programs.reduce((n,p)=>n+(p.compiled.branchExecution?.deferred.length??0),0)}:family==='system-messages'?{systemMessageSites:systemSites.length,physicalPrograms:systemPrograms.size,completeRawInstructions:input.programs.filter(p=>systemPrograms.has(p.id)).reduce((n,p)=>n+p.data.Mnemonics.length,0)}:family==='effects'?{playSites:effectSites.filter(s=>s.raw.mnemonic==='PlayBattleEffect').length,syncSites:effectSites.filter(s=>s.raw.mnemonic==='SyncBattleEffect').length,physicalPrograms:input.programs.filter(p=>p.data.Mnemonics.some(i=>['PlayBattleEffect','SyncBattleEffect'].includes(i.mnemonic))).length,completeRawInstructions:input.programs.filter(p=>p.data.Mnemonics.some(i=>['PlayBattleEffect','SyncBattleEffect'].includes(i.mnemonic))).reduce((n,p)=>n+p.data.Mnemonics.length,0)}:null,
- controlledHost:{input:'Explicit recorded confirmation and current-menu qualified battle commands',battleInputPolicy:BATTLE_OBSERVER_INPUT_POLICY,battleUIInputPolicy:'current-app-message-and-raycast-v1',caller:'Authored ordinary Session/placement; original battle body and all unknowns intact',callerFade:{kind:callerFade??'unknown',origin:'Explicit authored caller presentation, not a source title-state assertion',sourceStateUnchanged:true},clock:'10ms fixed Web manager-before-VM; no message-implied pause',policy:sourceWebReplayRuntimePorts(),messageOwner:'Actual Field.sourceMessage; no second window owner',smoke:!!o.smoke}};
+ controlledHost:{input:'Explicit recorded confirmation and current-menu qualified battle commands',battleInputPolicy:BATTLE_OBSERVER_INPUT_POLICY,battleUIInputPolicy:'current-app-message-and-raycast-v1',caller:'Authored ordinary Session/placement; original battle body and all unknowns intact',callerFade:{kind:callerFade??'unknown',origin:'Explicit authored caller presentation, not a source title-state assertion',sourceStateUnchanged:true},clock:'10ms fixed Web manager-before-VM; no message-implied pause',policy:sourceWebReplayRuntimePorts(),gauMedia:gauMedia?.evidence??null,messageOwner:'Actual Field.sourceMessage; no second window owner',smoke:!!o.smoke}};
 await writeFile(resolve(dirname(out),'attempts-draft.json'),observationDraftJSON(report));
 try{report.contentHash=api.hash(report);}catch(error){progress.status='failed-report-validation';progress.error=observerErrorDetails(error);await persistProgress();throw error;}
 await writeFile(out,JSON.stringify(report)+'\n');progress.status=report.result;progress.reportContentHash=report.contentHash;await persistProgress();console.log(JSON.stringify({result:report.result,counts:report.counts,hash:report.contentHash,report:out}));

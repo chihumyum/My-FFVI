@@ -1,3 +1,5 @@
+import {deriveFrameworkFieldEffectTransformContent,type FrameworkFieldEffectTransformAssessment} from './framework-field-effect-transforms.js';
+import {WEB_FIELD_EFFECT_TRANSFORMS,type WebFieldEffectTransforms} from '../core/field-effect-transforms.js';
 import{verifyCompiledSkyboxCatalog}from"./field-skybox.js";import{fieldSkyboxDefinition,type FieldSkyboxCatalog,type WebFlatSkybox}from"../core/field-skybox.js";
 import {WEB_FLAT_WORLD_AUTO_MOVE} from '../core/field-world-auto-move.js';
 import { WEB_FLAT_BIRD_VIEW_ACTORS } from "../core/field-bird-view-actors.js";
@@ -38,6 +40,7 @@ export type FrameworkContentOptions = {
   npcAreaAssessments?: readonly FrameworkNpcAreaAssessment[];
   npcFlatAssessments?: readonly FrameworkNpcFlatAssessment[];
   fieldEffectFlat?: FrameworkFieldEffectFlatAssessment;
+  fieldEffectTransforms?:WebFieldEffectTransforms;fieldEffectTransformCatalog?:FrameworkFieldEffectTransformAssessment;
 };
 
 export type FrameworkContentRetained = {
@@ -62,6 +65,7 @@ export type FrameworkContentReport = {
   ordinaryPresentation?: FrameworkOrdinaryReport;
   npcActivity?: FrameworkNpcAreaReport;
   npcProjection?: {maps:number;declared:number;derived:number;unready:number;nativeParity:false};
+  fieldEffectTransforms?: {maps:number;declared:number;derived:number;unready:number;nativeParity:false};
   fieldEffectProjection?: {maps:number;declared:number;derived:number;unready:number;nativeParity:false};
   transportation: { capability: NonNullable<DevelopmentProfile["transportation"]>; limitations: string[] };
 };
@@ -200,8 +204,9 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (!initial || strictEntry.mapContentHash !== initial.contentHash)
     throw new Error("Framework strict entry/map binding mismatch");
 
-  if (Object.keys(options).some(key => key !== 'skyboxPresentation' && key !== 'skyboxCatalog' && key !== 'screenPresentation' && key !== 'mobColorFilter' && key !== 'worldAutoMove' && key !== 'birdViewActors' && key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
+  if (Object.keys(options).some(key => key !== 'fieldEffectTransforms' && key !== 'fieldEffectTransformCatalog' && key !== 'skyboxPresentation' && key !== 'skyboxCatalog' && key !== 'screenPresentation' && key !== 'mobColorFilter' && key !== 'worldAutoMove' && key !== 'birdViewActors' && key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
     throw new Error("Unknown framework derivation option");
+  if((options.fieldEffectTransforms===undefined)!==(options.fieldEffectTransformCatalog===undefined)||options.fieldEffectTransforms!==undefined&&options.fieldEffectTransforms!==WEB_FIELD_EFFECT_TRANSFORMS)throw Error('Board transforms require exact policy and complete compiled assessment');
   if(options.worldAutoMove!==undefined&&(options.worldAutoMove!==WEB_FLAT_WORLD_AUTO_MOVE||options.worldAutoTasks!==WEB_FLAT_WORLD_AUTO_TASKS))throw Error('World auto movement requires its declared flat task host');
   if(options.worldAutoTasks!==undefined&&options.worldAutoTasks!==WEB_FLAT_WORLD_AUTO_TASKS)throw new Error('Unknown framework world auto-task policy');
   if (options.mapAnimatedEntities !== undefined && options.mapAnimatedEntities !== WEB_FIELD_MAP_ANIMATION)
@@ -220,7 +225,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (logical) {
     if (Object.keys(logical).sort().join(",") !== "catalog,declaration") throw new Error("Invalid logical field effects option");
     const d = logical.declaration, policy = logical.catalog.webPolicy;
-    if (policy?.boardProjection !== undefined) throw new Error("Flat field effect projection requires its explicit full-source assessment option");
+    if (policy?.boardProjection !== undefined || logical.catalog.boardTransforms !== undefined) throw new Error("Flat field effect projection/board transforms require their explicit full-source assessment option");
     if (Object.keys(d).sort().join(",") !== "catalogHash,kind,mapIds,parentSourceSetHash,policy,reason,sourceSetHash" ||
         d.kind !== "web-logical-field-effects-declaration-v1" || d.policy !== WEB_LOGICAL_FIELD_EFFECTS ||
         typeof d.reason !== "string" || !d.reason.trim() || !Array.isArray(d.mapIds) ||
@@ -328,5 +333,6 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
     if (!Array.isArray(options.npcFlatAssessments)) throw new Error("Invalid complete NPC flat assessments");
     composed = deriveFrameworkNpcFlatContent(composed, strictMaps, options.npcFlatAssessments);
   }
-  return options.fieldEffectFlat === undefined ? composed : deriveFrameworkFieldEffectFlatContent(composed, strictMaps, options.fieldEffectFlat);
+  const flattened=options.fieldEffectFlat === undefined ? composed : deriveFrameworkFieldEffectFlatContent(composed, strictMaps, options.fieldEffectFlat);
+  return options.fieldEffectTransformCatalog===undefined?flattened:deriveFrameworkFieldEffectTransformContent(flattened,strictMaps,options.fieldEffectTransformCatalog);
 }

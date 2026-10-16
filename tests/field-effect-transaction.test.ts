@@ -445,3 +445,25 @@ test("publication blocks reentrant owner writes and snapshots never expose mutab
   assert.deepEqual(owner.catalogSnapshot().media.controlled_effect!.blockers, []);
   assert.equal(control.commits, 1);
 });
+
+import {FieldEffectMap} from '../src/core/field-effect-map.js';
+test('actual board lifetimes survive shared FX ticks but reject same-ID recreation even with the same shared camera',()=>{
+ const {host}=controlledHost(),owner=new FieldEffects(effectCatalog(),host),scope='source-map-lifetime',a=fieldEffectBoardId(scope,'a'),b=fieldEffectBoardId(scope,'b');
+ owner.prepare([create(a),create(b),setup([a,b])]).commit();const map=new FieldEffectMap(scope,owner,['a','b']),lease=map.captureBoard('a'),other=map.captureBoard('b'),camera=owner.snapshot().boards[0]!.cameraId;
+ owner.prepareTick(.01).commit();lease.validate();other.validate();assert.equal(owner.boardLifetime(a),lease.lifetime);
+ const prepared=owner.prepare([{kind:'destroy',id:a},create(a)]);lease.validate();prepared.commit();
+ assert.equal(owner.snapshot().boards.find(board=>board.id===a)!.cameraId,camera,'Sharing a particle player does not share the board lifetime');
+ assert.throws(lease.validate,/Stale actual field effect board instance/);other.validate();assert.notEqual(map.captureBoard('a').lifetime,lease.lifetime);
+ assert.deepEqual(Object.keys(owner.snapshot()).sort(),['boards','instanceCount','kind','nextParticlePositionY','players','registeredCameraIds','shared']);
+ assert(owner.snapshot().boards.every(board=>!Object.hasOwn(board,'lifetime')&&!Object.hasOwn(board,'boardLifetimes')),'Ephemeral authority is absent from state/JSON');
+});
+test('private board lifetimes publish only with the actual candidate, retain a running candidate lease and retire the previous map',()=>{
+ const {host,control}=controlledHost(),owner=new FieldEffects(effectCatalog(),host),scope='same-map',id=fieldEffectBoardId(scope,'a');owner.prepare([create(id,undefined,false)]).commit();
+ const map=new FieldEffectMap(scope,owner,['a']),old=map.captureBoard('a');
+ const cancelled=owner.fork();cancelled.prepare([{kind:'destroy',id},create(id,undefined,false)]).commit();const cancelledMap=new FieldEffectMap(scope,cancelled,['a']),cancelledLease=cancelledMap.captureBoard('a');
+ old.validate();cancelled.discard();old.validate();assert.throws(cancelledLease.validate,/Retired field effect candidate lifetime/);
+ const candidate=owner.fork();candidate.prepare([{kind:'destroy',id},create(id,undefined,false)]).commit();const nextMap=new FieldEffectMap(scope,candidate,['a']),next=nextMap.captureBoard('a');
+ const seal=candidate.seal();next.validate();control.failValidation=true;assert.throws(seal.commit,/controlled final validation failure/);old.validate();control.failValidation=false;
+ seal.commit();nextMap.publish(owner);next.validate();assert.throws(old.validate,/Stale actual field effect board instance/);
+ const snapshot=map.snapshot();map.retire(snapshot);assert.throws(()=>map.captureBoard('a'),/Retired map/);assert.throws(old.validate,/Retired map/);
+});

@@ -1,3 +1,4 @@
+import {parseFieldEffectTransformAssessment,parseFrameworkFieldEffectTransformAddition,comparableFrameworkFieldEffectTransformAddition} from './framework-field-effect-transform-evidence.mjs';
 import {parseFrameworkFieldEffectFlatAddition,comparableFrameworkFieldEffectFlatAddition} from './framework-field-effect-flat-evidence.mjs';
 import {parseFrameworkOrdinaryPresentationAddition,comparableFrameworkOrdinaryPresentationAddition} from './framework-ordinary-presentation-evidence.mjs';
 import {parseSourceMessageFeeAddition,createSourceMessageFeeEvidenceReader,auditSourceMessageFeeAddition} from './source-message-fee-evidence.mjs';
@@ -144,7 +145,8 @@ function parseBattleRebindings(raw=[]){
 
 async function frameworkUpgradeDeclaration(raw,root,compiledDir){
   if(raw===undefined)return null;
-  const skybox=raw?.kind==='compiled-framework-profile-upgrade-v10';
+  const transforms=raw?.kind==='compiled-framework-profile-upgrade-v11';
+  const skybox=raw?.kind==='compiled-framework-profile-upgrade-v10'||transforms;
   const screen=raw?.kind==='compiled-framework-profile-upgrade-v9'||skybox;
   const mob=raw?.kind==='compiled-framework-profile-upgrade-v8'||screen;
   const worldMove=raw?.kind==='compiled-framework-profile-upgrade-v7'||mob;
@@ -153,10 +155,10 @@ async function frameworkUpgradeDeclaration(raw,root,compiledDir){
   const animated=raw?.kind==='compiled-framework-profile-upgrade-v4'||worldAuto;
   const periodic=raw?.kind==='compiled-framework-profile-upgrade-v3'||animated&&Object.hasOwn(raw?.markers??{},'worldMap');
   const logical=raw?.kind==='compiled-framework-profile-upgrade-v2'||(periodic||animated)&&Object.hasOwn(raw,'logicalFieldEffects');
-  dataFields(raw,['kind','compilerDigest','markers',...(logical?['logicalFieldEffects']:[]),...(skybox?['skyboxCatalog']:[])],'framework profile upgrade declaration');
-  assert.ok(['compiled-framework-profile-upgrade-v1','compiled-framework-profile-upgrade-v2','compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10'].includes(raw.kind),'Unknown framework profile upgrade version');
+  dataFields(raw,['kind','compilerDigest','markers',...(logical?['logicalFieldEffects']:[]),...(skybox?['skyboxCatalog']:[]),...(transforms?['fieldEffectTransformCatalog']:[])],'framework profile upgrade declaration');
+  assert.ok(['compiled-framework-profile-upgrade-v1','compiled-framework-profile-upgrade-v2','compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11'].includes(raw.kind),'Unknown framework profile upgrade version');
   assert.ok(typeof raw.compilerDigest==='string'&&digest.test(raw.compilerDigest),'Invalid framework profile upgrade compiler digest');
-  const hosts={...frameworkHostMarkers,...(skybox?{skyboxPresentation:{value:"web-flat-skybox-panorama-v1",module:"field-skybox",exportName:"WEB_FLAT_SKYBOX",provider:"fieldSkyboxBinding"}}:{}),...(screen?{screenPresentation:{value:"web-field-screen-presentation-2d-v1",module:"field-screen-presentation",exportName:"WEB_FIELD_SCREEN_PRESENTATION",provider:"fieldScreenPresentationBinding"}}:{}),...(mob?{mobColorFilter:{value:'web-flat-mob-color-filter-v1',module:'field-mob-controls',exportName:'WEB_FLAT_MOB_COLOR_FILTER',provider:'fieldMobColorBinding'}}:{}),...(worldMove?{worldAutoMove:{value:'web-flat-world-auto-move-v1',module:'field-world-auto-move',exportName:'WEB_FLAT_WORLD_AUTO_MOVE',provider:'worldAutoMoveBinding'}}:{}),...(birdActors?{birdViewActors:{value:'web-flat-bird-view-actors-v1',module:'field-bird-view-actors',exportName:'WEB_FLAT_BIRD_VIEW_ACTORS',provider:'fieldBirdViewActorBinding'}}:{}),...(worldAuto?{worldAutoTasks:{value:'web-flat-world-auto-tasks-v1',module:'field-world-auto-tasks',exportName:'WEB_FLAT_WORLD_AUTO_TASKS',provider:'worldAutoBinding'}}:{}),...(animated?{mapAnimatedEntities:{value:'web-field-animated-map-entities-v1',module:'field-map-animation',exportName:'WEB_FIELD_MAP_ANIMATION',provider:'prepareFieldMapAnimations'}}:{}),...(logical?{logicalFieldEffects:logicalMarker}:{}),...(periodic?periodicMarkers:{})};
+  const hosts={...frameworkHostMarkers,...(transforms?{fieldEffectTransforms:{value:"web-source-logical-board-transforms-v1",module:"field-effect-transforms",exportName:"WEB_FIELD_EFFECT_TRANSFORMS",provider:"fieldEffectTransformsBinding"}}:{}),...(skybox?{skyboxPresentation:{value:"web-flat-skybox-panorama-v1",module:"field-skybox",exportName:"WEB_FLAT_SKYBOX",provider:"fieldSkyboxBinding"}}:{}),...(screen?{screenPresentation:{value:"web-field-screen-presentation-2d-v1",module:"field-screen-presentation",exportName:"WEB_FIELD_SCREEN_PRESENTATION",provider:"fieldScreenPresentationBinding"}}:{}),...(mob?{mobColorFilter:{value:'web-flat-mob-color-filter-v1',module:'field-mob-controls',exportName:'WEB_FLAT_MOB_COLOR_FILTER',provider:'fieldMobColorBinding'}}:{}),...(worldMove?{worldAutoMove:{value:'web-flat-world-auto-move-v1',module:'field-world-auto-move',exportName:'WEB_FLAT_WORLD_AUTO_MOVE',provider:'worldAutoMoveBinding'}}:{}),...(birdActors?{birdViewActors:{value:'web-flat-bird-view-actors-v1',module:'field-bird-view-actors',exportName:'WEB_FLAT_BIRD_VIEW_ACTORS',provider:'fieldBirdViewActorBinding'}}:{}),...(worldAuto?{worldAutoTasks:{value:'web-flat-world-auto-tasks-v1',module:'field-world-auto-tasks',exportName:'WEB_FLAT_WORLD_AUTO_TASKS',provider:'worldAutoBinding'}}:{}),...(animated?{mapAnimatedEntities:{value:'web-field-animated-map-entities-v1',module:'field-map-animation',exportName:'WEB_FIELD_MAP_ANIMATION',provider:'prepareFieldMapAnimations'}}:{}),...(logical?{logicalFieldEffects:logicalMarker}:{}),...(periodic?periodicMarkers:{})};
   dataFields(raw.markers,Object.keys(hosts),'framework profile upgrade markers');
   const result=structuredClone(raw),providers=[];
   for(const [marker,definition] of Object.entries(hosts)){
@@ -187,6 +189,11 @@ async function frameworkUpgradeDeclaration(raw,root,compiledDir){
     verifyCompiledSkyboxCatalog(result.skyboxCatalog);
     assert.equal(canonical(result.skyboxCatalog),canonical(await loadFieldSkyboxCatalog(root)),"Framework Skybox upgrade differs from exact verified source catalog");
   }
+  if(transforms){
+    const a=parseFieldEffectTransformAssessment(result.fieldEffectTransformCatalog),{hash}=await import(pathToFileURL(resolve(root,compiledDir,"src/compiler/content.js")).href);
+    assert.equal(hash({kind:a.kind,projection:a.projection}),a.contentHash,"Framework board transform assessment digest mismatch");
+    assert(logical,"Board transform profile requires its complete logical base");
+  }
   return {...result,providers};
 }
 
@@ -197,7 +204,7 @@ function comparableFrameworkUpgrade(before,after,ref,declaration,canonical){
   if(!declaration)return {after,upgrade:null};
   const previous=before.developmentProfile,next=after.developmentProfile,comparison=structuredClone(after);
   let skyboxPresentation=null;
-  if(declaration.kind==='compiled-framework-profile-upgrade-v10'){
+  if(['compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11'].includes(declaration.kind)){
     const catalog=declaration.skyboxCatalog;
     assert.equal(after.sourceSetHash,catalog.sourceSetHash,'Skybox upgrade source domain mismatch');
     assert.equal(after.parentSourceSetHash,catalog.parentSourceSetHash,'Skybox upgrade parent domain mismatch');
@@ -209,7 +216,7 @@ function comparableFrameworkUpgrade(before,after,ref,declaration,canonical){
       else if(expected){delete comparison.map.skybox;skyboxPresentation={catalogHash:catalog.contentHash,mapId:after.mapId,display:'Web2D top-third panorama behind all map layers/actors',clock:'Field-only; paused during battle',nativeParity:false};}
     }else if(after.kind==='field-development')assert.equal(after.map?.skybox,undefined,'Legacy field map cannot acquire a world Skybox provider');
   }
-  if(['compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10'].includes(declaration.kind)&&
+  if(['compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11'].includes(declaration.kind)&&
       ['world-map-development','field-development'].includes(after.kind)) {
     for(const key of ['map','frameworkPresentation','actorView','entryView','partyEntry','cameraHost'])
       assert.equal(canonical(before[key]??null),canonical(comparison[key]??null),
@@ -482,7 +489,7 @@ async function npcRouteAdditionDeclaration(raw,root,compiledDir){
  * and complete package validation at their publication boundary. */
 export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurrentJson,readCandidateJson,
     root=repository,compiledDir='dist',sourceWalkEvidence,battleRebindings,frameworkProfileUpgrade,sourceMapAnimationAddition,sourceMapAnimationEvidence,sourceNpcInitialPoseAddition,sourceNpcInitialPoseEvidence,sourceNpcRoutesAddition,sourceNpcRouteEvidence,
-    frameworkNpcAreaAddition,frameworkNpcAreaEvidence,sourceEventActivationAddition,sourceEventActivationEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,frameworkOrdinaryPresentationAddition,frameworkOrdinaryPresentationEvidence,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines}){
+    frameworkNpcAreaAddition,frameworkNpcAreaEvidence,sourceEventActivationAddition,sourceEventActivationEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,frameworkFieldEffectTransformAddition,frameworkFieldEffectTransformEvidence,frameworkOrdinaryPresentationAddition,frameworkOrdinaryPresentationEvidence,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines}){
   assert.ok(typeof recipePath==='string'&&recipePath.length>0,'Missing original recipe path');
   assert.equal(typeof readCurrentJson,'function');assert.equal(typeof readCandidateJson,'function');
   const recipe=recipeJSON(recipeBytes),refs=declaredReferences(recipe),proofs=parseBattleRebindings(battleRebindings);
@@ -508,6 +515,13 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
   if(npcFlatAddition)report.frameworkNpcFlatAdditions=[];
   const effectFlatAddition=parseFrameworkFieldEffectFlatAddition(frameworkFieldEffectFlatAddition);
   if(effectFlatAddition)report.frameworkFieldEffectFlatAdditions=[];
+  const effectTransformAddition=parseFrameworkFieldEffectTransformAddition(frameworkFieldEffectTransformAddition);
+  if(effectTransformAddition){
+    assert.equal(frameworkUpgrade?.kind,"compiled-framework-profile-upgrade-v11","Board transform addition requires exact v11 declaration");
+    assert.equal(frameworkUpgrade.fieldEffectTransformCatalog.contentHash,effectTransformAddition.assessmentHash,"Board transform declaration/addition assessment mismatch");
+    assert.equal(effectFlatAddition?.assessmentHash,effectTransformAddition.flatAssessmentHash,"Board transform addition requires exact legacy flat proof");
+    report.frameworkFieldEffectTransformAdditions=[];
+  }
   const ordinaryAddition=parseFrameworkOrdinaryPresentationAddition(frameworkOrdinaryPresentationAddition);
   if(ordinaryAddition)report.frameworkOrdinaryPresentationAdditions=[];
   if(refs.length===0)return {recipe,report};
@@ -695,7 +709,9 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
     const npcFlat=await comparableFrameworkNpcFlatAddition({before,after:npcArea.after,proof:npcFlatAddition,evidence:frameworkNpcFlatEvidence,canonical});
     if(npcFlat.addition)report.frameworkNpcFlatAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,previousHash:before.contentHash,candidateHash:after.contentHash,...npcFlat.addition,
       sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile)});
-    const effectFlat=await comparableFrameworkFieldEffectFlatAddition({before,after:npcFlat.after,proof:effectFlatAddition,evidence:frameworkFieldEffectFlatEvidence,canonical});
+    const effectTransform=await comparableFrameworkFieldEffectTransformAddition({before,after:npcFlat.after,proof:effectTransformAddition,evidence:frameworkFieldEffectTransformEvidence,assessment:frameworkUpgrade?.fieldEffectTransformCatalog,canonical});
+    if(effectTransform.addition)report.frameworkFieldEffectTransformAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,previousHash:before.contentHash,candidateHash:after.contentHash,...effectTransform.addition});
+    const effectFlat=await comparableFrameworkFieldEffectFlatAddition({before,after:effectTransform.after,proof:effectFlatAddition,evidence:frameworkFieldEffectFlatEvidence,canonical});
     if(effectFlat.addition)report.frameworkFieldEffectFlatAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,previousHash:before.contentHash,candidateHash:after.contentHash,...effectFlat.addition,
       sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile)});
     const ordinary=await comparableFrameworkOrdinaryPresentationAddition({before,after:effectFlat.after,actualBefore:before,actualAfter:after,

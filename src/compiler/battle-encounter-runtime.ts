@@ -1,4 +1,6 @@
 import type { CatalogNameResolver } from "./source-catalog-name.js";
+import {parseWebBattleChildAdmission,type WebBattleChildAdmission,type BattleChildPartyEntry,type BattleChildGate} from '../core/battle-child-admission.js';
+import {sourceChildPartyEntry,childMetadataGates,childGate,childAdmissionPlan} from './battle-child-admission.js';
 import type { BattleSourceFormatImportResolver } from "./battle-source-format-import.js";
 import { battleEventConditionDependencies } from "./battle-event-condition.js";
 import {parseWebBattleGauInstances,gauSourceParties,type WebBattleGauInstances} from "../core/battle-gau-instances.js";
@@ -48,6 +50,7 @@ type Reader = {
 };
 import {parseWebBattleForcedSave,type WebBattleForcedSave} from '../core/battle-forced-save.js';
 export type BattleEncounterRuntimeInput = {
+  childPartyAdmission?:WebBattleChildAdmission;
   gauInstancePolicy?:WebBattleGauInstances;
   gauInstanceContent?:import("../core/battle-gau-instances.js").BattleGauInstanceContent;
   forcedSavePolicy?:WebBattleForcedSave;
@@ -113,6 +116,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
   if(input.manualControls!==undefined&&input.manualControls!==WEB_MANUAL_BATTLE_CONTROLS)throw new Error('Unknown manual battle control policy');
   validateBattleBranchExecutionPolicy(input.branchExecution);
   if(input.gauInstancePolicy!==undefined)parseWebBattleGauInstances(input.gauInstancePolicy);
+  if(input.childPartyAdmission!==undefined){parseWebBattleChildAdmission(input.childPartyAdmission);if(input.branchExecution!==WEB_BATTLE_BRANCH_EXECUTION)throw new Error("Child-party admission requires explicit source battle branch execution");}
   if(input.spawnConditionPolicy!==undefined)parseWebEnemySpawnConditions(input.spawnConditionPolicy);
   if(input.forcedSavePolicy!==undefined)parseWebBattleForcedSave(input.forcedSavePolicy);
   const requested = [...input.requestedPartyIds];
@@ -163,6 +167,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     const selectedReserves = reserves.filter(entry => entry.partyId === partyId);
     const selectedWaves = waves.filter(entry => entry.partyId === partyId);
     const enemyParties: Record<string, BattleParticipantEnemyParty> = {};
+    const childEntries:Record<string,BattleChildPartyEntry>={};
     const participantPolicy = policies.find(entry => entry.partyId === partyId);
     let participants: BattleParticipantContent | undefined;
     let formationPlan: BattleFormationPlan | null = null;
@@ -292,7 +297,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       else if (m.bgmId) add("development-omission", "battle-bgm", "Source battle BGM is not played",
         { dependency: { table: "battle_bgm_asset.csv", id: m.bgmId } });
 
-      const compileEnemy = (enemy: EnemyBattleSource, slot?: number, childPartyId?: number): EnemyBattleDefinition | null => {
+      const compileEnemy = (enemy: EnemyBattleSource, slot?: number, childPartyId?: number,childGates?:BattleChildGate[]): EnemyBattleDefinition | null => {
         const compiled = compileEnemyBattleDefinition(reader, { enemy,
           entryPhase: slot === undefined || childPartyId !== undefined ? "late" : "initial",
           ...(input.spawnConditionPolicy?{spawnConditionPolicy:input.spawnConditionPolicy}:{}), abilities: input.abilities,
@@ -303,11 +308,14 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
           ...(slot === undefined ? {} : { enemySlot: slot }) };
         for (const diagnostic of compiled.diagnostics) {
           const { kind, code, reason, ...extra } = diagnostic;
-          add(kind, code, childPartyId === undefined ? reason : `Enemy party ${childPartyId}: ${reason}`, { ...context, ...extra });
+          if(kind==='blocked'&&childGates){childGates.push(childGate({code,reason,...extra}));add('runtime-dependency',code,`Enemy party ${childPartyId}: ${reason}`,{...context,...extra});}
+          else add(kind, code, childPartyId === undefined ? reason : `Enemy party ${childPartyId}: ${reason}`, { ...context, ...extra });
         }
-        for (const failure of drops.blockers.filter(diagnostic => diagnostic.monsterId === enemy.monsterId))
-          add("blocked", "monster-drops", failure.reason, { ...context,
-            dependency: { table: "monster.csv", id: enemy.monsterId } });
+        for (const failure of drops.blockers.filter(diagnostic => diagnostic.monsterId === enemy.monsterId)){
+          const dependency={table:"monster.csv",id:enemy.monsterId};
+          if(childGates)childGates.push(childGate({code:"monster-drops",reason:failure.reason,dependency}));
+          add(childGates?'runtime-dependency':"blocked", "monster-drops", failure.reason, { ...context,dependency });
+        }
         if (!compiled.definition) return null;
         const previous = enemyDefinitions[String(enemy.monsterId)];
         if (previous && canonical(previous) !== canonical(compiled.definition)) {
@@ -334,11 +342,14 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       }
       for (const selection of selectedWaves) {
         const child = selection.encounter, childId = child.partyId, childStart = diagnostics.length;
-        let childSource: BattleRow["source"] | null = null;
+        let childSource: BattleRow["source"] | null = null,childEntry:BattleChildPartyEntry|undefined;
         const stage = (kind: BattleEncounterDiagnostic["kind"], code: string, reason: string,
-          extra: Partial<Pick<BattleEncounterDiagnostic, "dependency" | "enemySlot" | "pc">> = {}) =>
-          add(kind, code, `Enemy party ${childId}: ${reason}`, { source: childSource,
-            dependency: { table: "monster_party.csv", id: childId }, ...extra });
+          extra: Partial<Pick<BattleEncounterDiagnostic, "dependency" | "enemySlot" | "pc">> = {}) =>{
+          const dependency=extra.dependency??{table:"monster_party.csv",id:childId};
+          const deferred=kind==='blocked'&&childEntry!==undefined&&code!=='enemy-party-provider';
+          if(deferred)childEntry!.gates.push(childGate({code,reason,dependency}));
+          add(deferred?'runtime-dependency':kind, code, `Enemy party ${childId}: ${reason}`, { source: childSource,dependency,...extra });
+        };
         try {
           if (!child.source || child.source.rowId !== String(childId) ||
               [child.source.file, child.source.assetPath, child.source.serializedFile, child.source.objectId]
@@ -364,20 +375,22 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
           if (!Array.isArray(metadata.battleFlags) ||
               (metadata.battleFlagGroupId === 0) !== (metadata.battleFlags.length === 0))
             throw new Error("Missing or inconsistent child battle flag binding");
+          if(input.childPartyAdmission){childEntry=sourceChildPartyEntry(reader,child,input);childEntries[String(childId)]=childEntry;}
           if (metadata.battleFlagGroupId) {
             for (const flag of metadata.battleFlags)
               if (int(flag.values.group_id) !== metadata.battleFlagGroupId ||
                   flag.source.rowId !== String(int(flag.values.id)) || !identity(int(flag.values.battle_flag_id)))
                 throw new Error("Inconsistent child battle flag source");
-            stage("blocked", "enemy-party-flags", "Child battle flags need a reviewed applicability provider",
+            if(!childEntry)stage("blocked", "enemy-party-flags", "Child battle flags need a reviewed applicability provider",
               { dependency: { table: "battle_flag_group.csv", id: metadata.battleFlagGroupId } });
+            else for(const gate of childMetadataGates(childEntry,input.manualControls,input.sourceFlagContext).filter(g=>g.code==='enemy-party-flags'))stage('blocked',gate.code,gate.reason,{dependency:{table:gate.dependency!.table,id:gate.dependency!.id}});
           }
           if ((metadata.scriptId === 0) !== (child.script === null) || metadata.scriptId !== 0 && !child.script)
             throw new Error("Missing or inconsistent child script binding");
           if (metadata.scriptId)
             stage("blocked", "enemy-party-script", "Child root applicability is not admitted; switching never executes a new root",
               { dependency: { table: "script.csv", id: metadata.scriptId } });
-          if (![0, 2].includes(metadata.notEscape))
+          if (!(childEntry?[0,2,3]:[0,2]).includes(metadata.notEscape))
             stage("blocked", "enemy-party-escape", "Unresolved child escape mode");
           if (![0, 1].includes(metadata.appearanceProduction))
             stage("blocked", "enemy-party-appearance", "Unresolved child introduction mode");
@@ -401,10 +414,10 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
               { dependency: { table: "monster_party.csv", id: childId, field: "battle_pattern1..6" } });
           if (child.background !== encounter.background)
             stage("development-omission", "enemy-party-metadata", "Source child background differs; Web retains entry scene");
-          const slots: Record<string, BattleParticipantSlot> = {};
+          const slots: Record<string, BattleParticipantSlot> = childEntry?structuredClone(childEntry.slots):{};
           for (const enemy of child.enemies) {
             slots[String(enemy.slot)] = { x: enemy.x, y: enemy.y, group: enemy.group };
-            compileEnemy(enemy, enemy.slot, childId);
+            compileEnemy(enemy, enemy.slot, childId,childEntry?.gates);
           }
           const authored = policyParties?.[String(childId)];
           if (authored !== undefined) {
@@ -415,7 +428,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
               slots[key] = structuredClone(placement);
             }
           }
-          if (!diagnostics.slice(childStart).some(diagnostic => diagnostic.kind === "blocked")) {
+          if (!diagnostics.slice(childStart).some(diagnostic => diagnostic.kind === "blocked")&&!childEntry?.gates.length) {
             enemyParties[String(childId)] = parseBattleParticipantEnemyParty({ members: child.enemies.map(enemy =>
               ({ sourceId: enemy.monsterId, uniqueId: enemy.slot })), slots }, enemyDefinitions);
             stage("development-omission", "enemy-party-policy", "Web swaps source members/layout within the same battle; parent formation, scene, reward policy and root remain fixed");
@@ -429,7 +442,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       if(lifecycle?.mode==='script')for(const[pc,{op}]of lifecycle.program.instructions.entries())if(['gau-replace','gau-appearance','gau-join'].includes(op.kind)){
         if(!input.gauInstancePolicy)add('blocked','gau-instance-policy','Source Gau instance operation requires its explicit Web content policy',{pc});
         else{add('runtime-dependency','gau-instance-owner','Actual source-selected child instance/AI/media ticket and already held owned/Corps join are execution-time requirements; equipment/Quick/saved merge gates remain',{pc});
-          if(op.kind==='gau-replace')for(const id of gauSourceParties)if(!enemyParties[String(id)])add('blocked','gau-child-party-reference','Missing complete native-selected Gau child party '+id,{pc,dependency:{table:'monster_party.csv',id}});}
+          if(op.kind==='gau-replace')for(const id of gauSourceParties)if(!enemyParties[String(id)])add(childEntries[String(id)]?.gates.length?'runtime-dependency':'blocked','gau-child-party-reference','Missing complete native-selected Gau child party '+id,{pc,dependency:{table:'monster_party.csv',id}});}
       }
       const dynamicEntries = lifecycle?.mode === "script" ? lifecycle.program.instructions.flatMap(({ op }, pc) =>
         op.kind === "add-enemy" || op.kind === "change-enemy-party" ? [{ op, pc }] : []) : [];
@@ -443,7 +456,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       for (const { op, pc } of dynamicEntries) {
         if (op.kind === "change-enemy-party") {
           if (!enemyParties[String(op.partyId)])
-            add("blocked", "enemy-party-reference", `Battle event PC ${pc} has no admitted source enemy party ${op.partyId}`,
+            add(childEntries[String(op.partyId)]?.gates.length?'runtime-dependency':"blocked", "enemy-party-reference", `Battle event PC ${pc} has no admitted source enemy party ${op.partyId}`,
               { pc, dependency: { table: "monster_party.csv", id: op.partyId } });
           continue;
         }
@@ -461,7 +474,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         // can reach this PC or inventing positions for an empty source slot.
         for (const wave of selectedWaves) {
           const childId = wave.encounter.partyId;
-          if (!enemyParties[String(childId)]?.slots[String(op.uniqueId)])
+          if (!(childEntries[String(childId)]?.slots??enemyParties[String(childId)]?.slots)?.[String(op.uniqueId)])
             add("blocked", "battle-participant-reference",
               `Battle event PC ${pc} slot ${op.uniqueId} is missing from enemy party ${childId}; all selected phases need an explicit layout`,
               { pc, dependency: { table: "monster_party.csv", id: childId } });
@@ -503,6 +516,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       input.sourceDiagnostics.some((d) => d.partyId === partyId);
     if (!blocked && formationPlan && rewardPolicy && lifecycle && participants) encounters[partyId] = { encounterId: partyId, enemies,
       background: encounter.background, formationPlan, rewardPolicy, lifecycle, participants,
+      ...(input.childPartyAdmission&&Object.keys(childEntries).length?{childPartyAdmission:childAdmissionPlan(partyId,childEntries)}:{}),
       ...(controls?{controls}:{}),...(forcedSavePolicy?{forcedSavePolicy}:{}),
       ...(input.gauInstancePolicy&&lifecycle.mode==='script'&&lifecycle.program.instructions.some(({op})=>['gau-replace','gau-appearance','gau-join'].includes(op.kind))?{gauInstancePolicy:input.gauInstancePolicy,...(input.gauInstanceContent?{gauInstances:input.gauInstanceContent}:{})}:{}),
       ...(input.spawnConditionPolicy&&lifecycle.mode==='script'&&lifecycle.program.instructions.some(({op})=>op.kind==='add-enemy'||op.kind==='change-enemy-party'||op.kind==='gau-replace')?{spawnConditionPolicy:structuredClone(input.spawnConditionPolicy)}:{}),
