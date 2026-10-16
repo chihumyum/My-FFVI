@@ -1,0 +1,412 @@
+{
+  "kind": "source-common-capability-registry-v1",
+  "sourceSetHash": "8aa0cbb9b09808824a8b4644ccdc5f2d57be1788ba11146a539e663328ac52ed",
+  "sourceDigest": "628033d243017b007e5e5932dce8b2d57bbbdf91f60d5f9a531c1a9796d5f05f",
+  "originNominationSha256": "ec50e23d7527370bf3600afca47844222a7e65f7c85f65722aa320849c0e2e8d",
+  "assignmentMeaning": "implementation workstream only; no runtime permission or semantic proof",
+  "families": [
+    {
+      "id": "ending-credits-presentation",
+      "owner": "map-event-and-travel",
+      "selectors": [
+        "SysCall:AndYou表示",
+        "SysCall:ED上下マスクのみ終了",
+        "SysCall:ED名前FI：ウーマロ",
+        "SysCall:ED名前FI：エドガー",
+        "SysCall:ED名前FI：カイエン",
+        "SysCall:ED名前FI：ガウ",
+        "SysCall:ED名前FI：ゴゴ",
+        "SysCall:ED名前FI：シャドウ",
+        "SysCall:ED名前FI：ストラゴス",
+        "SysCall:ED名前FI：セッツァー",
+        "SysCall:ED名前FI：セリス",
+        "SysCall:ED名前FI：ティナ",
+        "SysCall:ED名前FI：マッシュ",
+        "SysCall:ED名前FI：モグ",
+        "SysCall:ED名前FI：リルム",
+        "SysCall:ED名前FI：ロック",
+        "SysCall:ED名前FO：エドガー",
+        "SysCall:ED名前FO：ロック",
+        "SysCall:ED名前SI：ウーマロ",
+        "SysCall:ED名前SI：エドガー",
+        "SysCall:ED名前SI：カイエン",
+        "SysCall:ED名前SI：ガウ",
+        "SysCall:ED名前SI：ゴゴ",
+        "SysCall:ED名前SI：シャドウ",
+        "SysCall:ED名前SI：ストラゴス",
+        "SysCall:ED名前SI：セッツァー",
+        "SysCall:ED名前SI：セリス",
+        "SysCall:ED名前SI：ティナ",
+        "SysCall:ED名前SI：マッシュ",
+        "SysCall:ED名前SI：モグ",
+        "SysCall:ED名前SI：リルム",
+        "SysCall:ED名前SI：ロック",
+        "SysCall:ED名前SO：ウーマロ",
+        "SysCall:ED名前SO：エドガー",
+        "SysCall:ED名前SO：カイエン",
+        "SysCall:ED名前SO：ガウ",
+        "SysCall:ED名前SO：ゴゴ",
+        "SysCall:ED名前SO：シャドウ",
+        "SysCall:ED名前SO：ストラゴス",
+        "SysCall:ED名前SO：セッツァー",
+        "SysCall:ED名前SO：セリス",
+        "SysCall:ED名前SO：ティナ",
+        "SysCall:ED名前SO：マッシュ",
+        "SysCall:ED名前SO：モグ",
+        "SysCall:ED名前SO：リルム",
+        "SysCall:ED名前SO：ロック",
+        "SysCall:ED名前表示機能初期化",
+        "SysCall:ED名前表示終了",
+        "SysCall:スタッフロールテキスト生成：１",
+        "SysCall:スタッフロールテキスト生成：２",
+        "SysCall:スタッフロールテキスト生成：３",
+        "SysCall:スタッフロールテキスト生成：４",
+        "SysCall:スタッフロールテキスト生成：５",
+        "SysCall:スタッフロールテキスト生成：６",
+        "SysCall:スタッフロールテキスト生成：７",
+        "SysCall:スタッフロール再生：１",
+        "SysCall:スタッフロール再生：２",
+        "SysCall:スタッフロール再生：３",
+        "SysCall:スタッフロール再生：４",
+        "SysCall:スタッフロール再生：５",
+        "SysCall:スタッフロール再生：６",
+        "SysCall:スタッフロール再生：７",
+        "SysCall:スタッフロール終了待ち",
+        "SysCall:スタッフロール草原遠景４のみ表示",
+        "SysCall:スタッフロール読み込み",
+        "SysCall:スタッフロール読み込み待ち"
+      ]
+    },
+    {
+      "id": "field-background-layer-scrolling",
+      "owner": "map-event-and-travel",
+      "selectors": [
+        "SysCall:ファルコン号遠景４スクロール",
+        "SysCall:レイヤースクロール：EV",
+        "SysCall:レイヤースクロール：ゾーンイータ―（上げる）",
+        "SysCall:レイヤースクロール：ゾーンイータ―（初期化）",
+        "SysCall:レイヤースクロール：ゾーンイータ―（落とす）",
+        "SysCall:レイヤースクロール：バレンの滝停止",
+        "SysCall:レイヤースクロール：バレンの滝１",
+        "SysCall:レイヤースクロール：バレンの滝２",
+        "SysCall:レイヤースクロール：フィガロ城",
+        "SysCall:レイヤースクロール：ブラックジャック１",
+        "SysCall:レイヤースクロール：ブラックジャック２",
+        "SysCall:レイヤースクロール：モブリズの村崩落",
+        "SysCall:レイヤースクロール：中断30440_1",
+        "SysCall:レイヤースクロール：中断30450",
+        "SysCall:レイヤースクロール：停車",
+        "SysCall:レイヤースクロール：停車中",
+        "SysCall:レイヤースクロール：停車準備",
+        "SysCall:レイヤースクロール：切り離し",
+        "SysCall:レイヤースクロール：発車",
+        "SysCall:レイヤースクロール：砂漠",
+        "SysCall:レイヤースクロール：砂漠停止",
+        "SysCall:レイヤースクロール：魔大陸出現",
+        "SysCall:レイヤースクロール：魔大陸脱出コルツ山",
+        "SysCall:レイヤースクロール：魔大陸脱出レテ川",
+        "SysCall:レイヤースクロール：魔大陸脱出地割れ",
+        "SysCall:全レイヤーのスクロールリセット",
+        "SysCall:瓦礫の塔近景１スクロール",
+        "SysCall:瓦礫の塔頂上背景変更：すべて消去",
+        "SysCall:瓦礫の塔頂上背景変更：明るい1に変更",
+        "SysCall:瓦礫の塔頂上背景変更：明るい2をフェードアウト",
+        "SysCall:瓦礫の塔頂上背景変更：明るい2をフェードイン",
+        "SysCall:瓦礫の塔頂上背景変更：明るい2を表示",
+        "SysCall:瓦礫の塔頂上背景変更：通常をフェードアウト",
+        "SysCall:瓦礫の塔頂上背景変更：通常を表示",
+        "SysCall:瓦礫の塔頂上背景変更：黒+青をフェードイン",
+        "SysCall:瓦礫の塔頂上近景変更：雲消去",
+        "SysCall:瓦礫の塔頂上近景変更：雲表示",
+        "SysCall:背景変更：北の崖FO",
+        "SysCall:背景変更：飛空艇（特殊）",
+        "SysCall:背景変更：飛空艇（通常）",
+        "SysCall:背景変更：飛空艇（黒）",
+        "SysCall:近景１：表示",
+        "SysCall:魔大陸遠景１のみ表示",
+        "SysCall:魔大陸遠景１フェードアウト",
+        "SysCall:魔大陸遠景２のみ表示"
+      ]
+    },
+    {
+      "id": "field-ui-visibility-and-title",
+      "owner": "map-event-and-travel",
+      "selectors": [
+        "ShowMapTitle",
+        "SysCall:UI非表示",
+        "SysCall:マップUI全て表示",
+        "SysCall:ミニマップ表示"
+      ]
+    },
+    {
+      "id": "map-return-cache-and-trigger-owner",
+      "owner": "map-event-and-travel",
+      "selectors": [
+        "AddTelepoCache",
+        "ChangeGpsData",
+        "ChangeScriptAtOnTrigger",
+        "RemoveTelepoCache"
+      ]
+    },
+    {
+      "id": "native-npc-puppet-dictionary",
+      "owner": "map-event-and-travel",
+      "selectors": [
+        "SysCall:パペット入れ替え：オペラNPC",
+        "SysCall:パペット入れ替え：瓦礫の塔スロット２先頭NPC",
+        "SysCall:パペット入れ替え：瓦礫の塔スロット３先頭NPC"
+      ]
+    },
+    {
+      "id": "remaining-opcode-forms-and-unclassified",
+      "owner": "unclassified",
+      "selectors": [
+        "ExecPuppet",
+        "Exit",
+        "FadeOut",
+        "Flash",
+        "GoToTitle",
+        "Hide",
+        "Jump",
+        "LoadSE",
+        "OpenSaveWindow",
+        "PitchEnvSe",
+        "PlayAnim",
+        "ResetAnimOnlyJockey",
+        "SetAnimOnlyJockey",
+        "SetPuppet",
+        "Shake",
+        "ShowHelpAndExit",
+        "Tag"
+      ]
+    },
+    {
+      "id": "shared-input-audio-message-completion",
+      "owner": "map-event-and-travel",
+      "selectors": [
+        "SysCall:キー入力、BGM再生終了待ち",
+        "SysCall:一定時間後メッセージ消去"
+      ]
+    },
+    {
+      "id": "source-actor-and-map-transform-providers",
+      "owner": "map-event-and-travel",
+      "selectors": [
+        "ChangeMapRenderArea",
+        "Orient",
+        "Water"
+      ]
+    },
+    {
+      "id": "source-audio-remaining-operand-families",
+      "owner": "map-event-and-travel",
+      "selectors": [
+        "PauseEnvSe",
+        "PlayBGM",
+        "PlayEnvSe",
+        "SetVolume",
+        "StopBGM",
+        "StopEnvSe"
+      ]
+    },
+    {
+      "id": "source-battle-and-final-menu-handoffs",
+      "owner": "battle-and-return",
+      "selectors": [
+        "SysCall:コロシアム回復",
+        "SysCall:コロシアム開始",
+        "SysCall:バトルデータ復元：sc_b_0055",
+        "SysCall:パーティ編成：ラストバトル"
+      ]
+    },
+    {
+      "id": "source-bestiary-state",
+      "owner": "owned-menus-economy-and-growth",
+      "selectors": [
+        "SysCall:図鑑登録：オルトロス",
+        "SysCall:図鑑登録：シヴァ・イフリート",
+        "SysCall:図鑑登録：テュポーン"
+      ]
+    },
+    {
+      "id": "source-message-value-and-row-bindings",
+      "owner": "map-event-and-travel",
+      "selectors": [
+        "Msg"
+      ]
+    },
+    {
+      "id": "source-multi-corps-placement",
+      "owner": "owned-menus-economy-and-growth",
+      "selectors": [
+        "SysCall:パーティ配置：ティナ防衛戦",
+        "SysCall:パーティ配置：フェニックスの洞窟",
+        "SysCall:パーティ配置：幻獣防衛戦",
+        "SysCall:パーティ配置：瓦礫の塔",
+        "SysCall:夢のダンジョン：分離",
+        "SysCall:夢のダンジョン：１人目合流",
+        "SysCall:夢のダンジョン：２人目合流"
+      ]
+    },
+    {
+      "id": "source-opera-portrait-ui",
+      "owner": "map-event-and-travel",
+      "selectors": [
+        "SysCall:オペラアセット先読み",
+        "SysCall:オペラアセット再生開始",
+        "SysCall:オペラシステム終了",
+        "SysCall:オペラシステム開始",
+        "SysCall:オペラ用ロック戻す",
+        "SysCall:芝居のセリフ練習メッセージ表示",
+        "SysCall:顔グラ表示機能初期化",
+        "SysCall:顔グラ表示終了",
+        "SysCall:顔グラ表示：ウーマロ",
+        "SysCall:顔グラ表示：カイエン",
+        "SysCall:顔グラ表示：ガウ",
+        "SysCall:顔グラ表示：ゴゴ",
+        "SysCall:顔グラ表示：シャドウ",
+        "SysCall:顔グラ表示：ストラゴス",
+        "SysCall:顔グラ表示：モグ",
+        "SysCall:顔グラ表示：リルム"
+      ]
+    },
+    {
+      "id": "source-owned-condition-and-recovery",
+      "owner": "owned-menus-economy-and-growth",
+      "selectors": [
+        "AddCondition",
+        "RecoveryMP",
+        "RemoveCondition",
+        "SubtractionHP",
+        "SysCall:戦闘不能キャラを全て蘇生"
+      ]
+    },
+    {
+      "id": "source-owned-equipment-commands",
+      "owner": "owned-menus-economy-and-growth",
+      "selectors": [
+        "SysCall:全員の装備を外す",
+        "SysCall:控えメンバーの装備を外す",
+        "SysCall:最強装備：エドガー",
+        "SysCall:最強装備：ティナ"
+      ]
+    },
+    {
+      "id": "source-scenario-controller-state",
+      "owner": "map-event-and-travel",
+      "selectors": [
+        "SysCall:ギミック解除：sc_e_0443",
+        "SysCall:ギミック解除：sc_e_0444",
+        "SysCall:ギミック解除：アウザーの館",
+        "SysCall:ギミック開始：sc_e_0443",
+        "SysCall:ギミック開始：sc_e_0444",
+        "SysCall:ギミック開始：アウザーの館",
+        "SysCall:ダリルの墓",
+        "SysCall:デスゲイズ配置",
+        "SysCall:光の道ポリライン停止",
+        "SysCall:光の道ポリライン設定",
+        "SysCall:光の道判定",
+        "SysCall:宝箱リセット：サンゴのかけら",
+        "SysCall:獣ヶ原にいる"
+      ]
+    },
+    {
+      "id": "source-scenario-timers-and-callbacks",
+      "owner": "map-event-and-travel",
+      "selectors": [
+        "SysCall:シドタイマー：HPチェック",
+        "SysCall:シドタイマー：タイマーチェック",
+        "SysCall:シドタイマー：一時停止",
+        "SysCall:シドタイマー：再開",
+        "SysCall:シャドウタイマー解除",
+        "SysCall:シャドウタイマー設定",
+        "SysCall:タイマー表示"
+      ]
+    },
+    {
+      "id": "source-special-owned-members",
+      "owner": "owned-menus-economy-and-growth",
+      "selectors": [
+        "SysCall:メンバー加入：ゆうれい-１",
+        "SysCall:メンバー加入：ゆうれい-２",
+        "SysCall:メンバー加入：ガウ"
+      ]
+    },
+    {
+      "id": "source-vehicle-route-and-async-map",
+      "owner": "map-event-and-travel",
+      "selectors": [
+        "SysCall:チョコボパペット終了",
+        "SysCall:チョコボ降車後パペット",
+        "SysCall:トロッコ移動終了待",
+        "SysCall:トロッコ移動：sc_e_0404_1",
+        "SysCall:トロッコ移動：sc_e_0404_2",
+        "SysCall:トロッコ移動：sc_e_0404_3",
+        "SysCall:トロッコ移動：sc_e_0404_4",
+        "SysCall:トロッコ移動：sc_e_0404_5",
+        "SysCall:トロッコ移動：sc_e_0404_6",
+        "SysCall:トロッコ移動：sc_e_0404_7",
+        "SysCall:バードビュー情報を保存",
+        "SysCall:バードビュー情報を設定",
+        "SysCall:リーダーがチョコボに乗る",
+        "SysCall:蛇の道移動：sc_e_0246_2",
+        "SysCall:蛇の道移動：sc_e_0246_3",
+        "SysCall:蛇の道移動：sc_e_0246_4",
+        "SysCall:蛇の道移動：sc_e_0246_5",
+        "SysCall:蛇の道移動：sc_e_0246_6",
+        "SysCall:蛇の道移動：sc_e_1501_1",
+        "SysCall:蛇の道移動：sc_e_1501_2",
+        "SysCall:蛇の道移動：sc_e_1501_3",
+        "SysCall:蛇の道移動：sc_e_1501_4",
+        "SysCall:蛇の道移動：sc_e_1502_1",
+        "SysCall:非同期マップマネージャーの読み込み待機",
+        "SysCall:非同期マップマネージャーを作成する",
+        "SysCall:飛空艇目的地移動：sc_e_0405_8",
+        "SysCall:飛空艇目的地移動：sc_e_0461_3_1",
+        "SysCall:飛空艇目的地移動：sc_e_0461_3_2",
+        "SysCall:飛空艇目的地移動：sc_e_0555_4",
+        "SysCall:飛空艇目的地移動：sc_e_0555_9",
+        "SysCall:飛空艇目的地移動：sc_e_0703_10",
+        "SysCall:飛空艇目的地移動：sc_e_0703_12",
+        "SysCall:飛空艇目的地移動：sc_e_0729_1",
+        "SysCall:飛空艇目的地移動：sc_e_0744",
+        "SysCall:飛空艇着陸時演出開始"
+      ]
+    },
+    {
+      "id": "unresolved-special-source-providers",
+      "owner": "unclassified",
+      "selectors": [
+        "SysCall:Entity更新状態：メッセージ",
+        "SysCall:アビリティ習得：夢幻闘舞",
+        "SysCall:アビリティ習得：必殺剣",
+        "SysCall:エンディング用のシーン破棄",
+        "SysCall:エンディング：謝辞",
+        "SysCall:キー入力待ち",
+        "SysCall:ゲームオーバー設定：ティナ防衛戦",
+        "SysCall:ゲームオーバー設定：幻獣防衛戦",
+        "SysCall:コマンド追加：トランス",
+        "SysCall:コンティニュー表示",
+        "SysCall:タイルカラー変更：原色",
+        "SysCall:タイルカラー変更：白色",
+        "SysCall:ラストバトルの崖カラー変更：元に戻す",
+        "SysCall:ラストバトルの崖カラー変更：白色",
+        "SysCall:帝国軍陣地マスクあり",
+        "SysCall:帝国軍陣地マスクなし",
+        "SysCall:帝国軍陣地マスク拡大",
+        "SysCall:帝国軍陣地マスク縮小",
+        "SysCall:幻獣界フィルターをかける",
+        "SysCall:煙エフェクト追従Off",
+        "SysCall:煙エフェクト追従On",
+        "SysCall:状態異常エフェクト",
+        "SysCall:甲板で常時爆発：終了",
+        "SysCall:甲板で常時爆発：開始",
+        "SysCall:謎の幻獣戦バトルUI初期化",
+        "SysCall:謎の幻獣戦バトルUI表示",
+        "SysCall:謎の幻獣戦バトルUI非表示"
+      ]
+    }
+  ],
+  "unknownSelectors": "retain as unclassified tasks; never infer semantics or drop them",
+  "completion": "unassessed"
+}

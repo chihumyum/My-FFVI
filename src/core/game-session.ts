@@ -1,7 +1,8 @@
-import { validateSourceNonEncounterAreasRuntime, type SourceNonEncounterAreas } from "./field-non-encounter-areas.js";
+import { forwardFieldRuntimePorts, type SharedFieldRuntimePorts } from "./field-runtime-ports.js";
+import { validateSourceNonEncounterAreasRuntime } from "./field-non-encounter-areas.js";
 import { WEB_BATTLE_PERIODIC_NUMBERS, createWebBattlePeriodicNumberHost, validatePeriodicNumberHost, type BattlePeriodicNumberHost } from './battle-periodic-number.js';
 import {WEB_SOURCE_CHARACTER_NAMING} from './source-character-naming.js';
-import {WEB_RTS_PARTY_SWITCH,validateRtsPolicy,type WebRtsPartySwitch}from'./field-rts-party.js';
+import {WEB_RTS_PARTY_SWITCH,validateRtsPolicy}from'./field-rts-party.js';
 import {parseWebBattleChildAdmission,type WebBattleChildAdmission} from './battle-child-admission.js';
 import {WEB_BATTLE_GAU_INSTANCES,type BattleGauMediaHost} from "./battle-gau-instances.js";
 import { WEB_BATTLE_GLOBAL_FADE } from "./battle-global-fade.js";
@@ -10,7 +11,7 @@ import { validateBattleEventConditions, type WebBattleEventConditions } from "./
 import { validateBattleBranchExecutionPolicy, type WebBattleBranchExecution } from './battle-branch-execution.js';
 import { WEB_BATTLE_EVENT_EFFECTS, createWebBattleEventEffectHost, type BattleEventEffectHost } from './battle-event-effect.js';
 import { validateScriptedBattleActionPolicy, type WebScriptedBattleActions } from "./scripted-battle-action.js";
-import { WEB_SOURCE_PARTY_SELECTION, type WebSourcePartySelection, type SourcePartySelectionOutcome } from './source-party-selection.js';
+import { WEB_SOURCE_PARTY_SELECTION, type SourcePartySelectionOutcome } from './source-party-selection.js';
 import { WEB_BATTLE_EVENT_MESSAGE_POLICY, type BattleEventMessageHost } from "./battle-event-message.js";
 import { WEB_BATTLE_EVENT_CONTROLS, validateBattleEventControls, type WebBattleEventControls } from "./battle-controls.js";
 import { parseSourceMessageFeeCatalog } from "./source-message-fees.js";
@@ -18,19 +19,16 @@ import { WEB_SOURCE_SCRIPT_RANDOM, type WebSourceScriptRandom } from "./field-sc
 import { validateRetainedWorldTransportationPolicy } from "./world-transportation-entry.js";
 import type { BattleGauEntry } from './battle-gau.js';
 import { WEB_SOURCE_ENCOUNTER_POLICY, selectWebSourceEncounter, type WebSourceEncounterPolicy } from "./source-encounter-entry.js";
-import { WEB_SOURCE_BOSS_ENTRY, type WebSourceBossEntry } from './source-boss-encounter.js';
+import { WEB_SOURCE_BOSS_ENTRY } from './source-boss-encounter.js';
 import { WEB_COMMITTED_BATTLE_RESULT, projectCommittedBattleResult, type WebCommittedBattleResult } from './source-battle-result.js';
 import { sourceEncounterCandidates } from "./source-encounter.js";
 import type { FieldContent } from "../field/types.js";
-import type { GameEventSaveRequest, FieldGame, FieldGameOptions, Stop } from "./field.js";
+import type { GameEventSaveRequest, FieldGame, Stop } from "./field.js";
 import { encounterContent, battleDefinitionBlocker, type BattleCatalog, type BattleContent } from "./battle-content.js";
 import { BattleGame, type Combatant } from "./battle.js";
 import { EventState } from "./event-state.js";
 import { battleEventSharedSnapshot, type BattleEventSharedSnapshot } from "./battle-event-shared.js";
 import { assessBattleHandoff } from "./battle-handoff-content.js";
-import type { AudioReadinessPort } from "./audio-readiness.js";
-import type { FieldSoundPresentation } from "./field-sound-presentation.js";
-import type { FieldEffectRuntimeHost } from "./field-effects.js";
 import { WEB_LOGICAL_FIELD_EFFECTS } from "./field-logical-effects.js";
 import type { ShopTradeRequest } from "./shop.js";
 import { projectPartyMenu, type PartyMenuRequest } from "./party-menu.js";
@@ -90,18 +88,23 @@ export type GameCheckpoint = GameCheckpointBase & (
   { formatVersion: 7 | 8 | 9 | 10; walkEncounters: WalkEncounterSnapshot; fieldReservation: FieldReservationSnapshot }
 );
 /** External observations are rebound by the host on load, never trusted from saves. */
-export type GameSessionRuntime = { battlePeriodicNumbers?:BattlePeriodicNumberHost|typeof WEB_BATTLE_PERIODIC_NUMBERS; sourceNonEncounterAreas?:SourceNonEncounterAreas; sourceSnapshot?:import("./field-source-snapshot.js").ImmutableOwnedFieldSource; rtsPartySwitch?:WebRtsPartySwitch; sourceCharacterNaming?:typeof WEB_SOURCE_CHARACTER_NAMING; transportationParkingUpload?:import("./transportation-parking-upload.js").WebSourceTransportParkingUpload; vehicleLifecycle?:import("./field-vehicle-lifecycle.js").WebSourceVehicleLifecycle; battleChildPartyAdmission?:WebBattleChildAdmission; battleGauInstances?:BattleGauMediaHost; fieldEffectTransforms?:import("./field-effect-transforms.js").WebFieldEffectTransforms; skyboxPresentation?: import("./field-skybox.js").WebFlatSkybox; battleEventConditions?: WebBattleEventConditions; screenPresentation?: import("./field-screen-presentation.js").WebFieldScreenPresentation; battleGlobalFade?:typeof WEB_BATTLE_GLOBAL_FADE; mobColorFilter?: import("./field-mob-controls.js").WebFlatMobColorFilter; birdViewActors?: import("./field-bird-view-actors.js").WebFlatBirdViewActors; worldAutoMove?:import("./field-world-auto-move.js").WebFlatWorldAutoMove; worldAutoTasks?:import("./field-world-auto-tasks.js").WebFlatWorldAutoTasks; battleBranchExecution?:WebBattleBranchExecution; battleEventEffects?:BattleEventEffectHost|typeof WEB_BATTLE_EVENT_EFFECTS; battleEventControls?: WebBattleEventControls; viewChange?: import("./field-view-change.js").WebFlatFieldViewChange; battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY; sourcePartySelection?: WebSourcePartySelection; scriptedBattleActions?: WebScriptedBattleActions; puppetRoutes?: import("./field-puppet-route.js").WebPuppetRoutePolicy; sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
-  soundPresentation?: FieldSoundPresentation;
-  sourceMessageSequence?: NonNullable<FieldGameOptions["sourceMessageSequence"]>;
-  sourceMessageReady?: NonNullable<FieldGameOptions["sourceMessageReady"]>;
-  conditionLeaderActivity?: NonNullable<FieldGameOptions["conditionLeaderActivity"]>;
-  cameraShake?: NonNullable<FieldGameOptions["cameraShake"]>;
-  /** Host prepares battle and return media before committing the same session
-   * candidate used by the synchronous development compatibility adapter. */
+export type GameSessionRuntime = SharedFieldRuntimePorts & {
+  battlePeriodicNumbers?: BattlePeriodicNumberHost | typeof WEB_BATTLE_PERIODIC_NUMBERS;
+  battleChildPartyAdmission?: WebBattleChildAdmission;
+  battleGauInstances?: BattleGauMediaHost;
+  battleEventConditions?: WebBattleEventConditions;
+  battleGlobalFade?: typeof WEB_BATTLE_GLOBAL_FADE;
+  battleBranchExecution?: WebBattleBranchExecution;
+  battleEventEffects?: BattleEventEffectHost | typeof WEB_BATTLE_EVENT_EFFECTS;
+  battleEventControls?: WebBattleEventControls;
+  battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY;
+  sourceBattleResult?: WebCommittedBattleResult;
+  scriptedBattleActions?: WebScriptedBattleActions;
+  scriptRandom?: WebSourceScriptRandom;
+  sourceEncounterPolicy?: WebSourceEncounterPolicy;
+  /** The actual Session still owns battle preparation, not Field forwarding. */
   battleHandoff?: "prepared";
-  /** Host wall-clock observation for source parking timestamps; recorded as an
-   * exact decimal Int64, never sampled by deterministic core state. */
-  transportationTimestamp?: () => string };
+};
 type FreshSession = { content: SourceNewGameContent | FrameworkNewGameContent; state: GameState; events: EventState;
   map: WorldMapContent; fade?: FieldFadeState; presentation: SourcePresentationContext; restoring?: true };
 export type GameRestoreWorld = { catalog: WorldCatalog; map: WorldMapContent;
@@ -396,10 +399,10 @@ export class GameSession {
       initialEvents.write(ref, value);
     }
     const messageFees = battleCatalog.common.sourceMessageFees && parseSourceMessageFeeCatalog(battleCatalog.common.sourceMessageFees);
-    const { battlePeriodicNumbers:periodicNumbersHost, battleChildPartyAdmission:childAdmissionPolicy, battleGauInstances:gauMedia, battleEventConditions: battleConditionsPolicy, battleGlobalFade:fadePolicy, battleBranchExecution: branchPolicy, battleEventEffects: battleEffectsHost, battleEventControls: battleControlsPolicy, battleEventMessages: battleMessagesPolicy, scriptRandom: scriptRandomPolicy, sourceBattleResult: resultPolicy, scriptedBattleActions: scriptActionsPolicy, ...fieldRuntime } = runtime;
+    const scriptRandomPolicy = runtime.scriptRandom;
     this.world = new WorldSession(field, initialEvents, {
       current: {
-        ...fieldRuntime,
+        ...forwardFieldRuntimePorts(runtime, "session"),
         reservedScripts: this.fieldReservationPort,
         ...(runtime.sourceEncounterPolicy === undefined ? {} : { sourceEncounter: {
           policy: WEB_SOURCE_ENCOUNTER_POLICY,

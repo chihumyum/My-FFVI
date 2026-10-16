@@ -200,6 +200,10 @@ const byCode = (code: string): ContentBatchSystem => code === "instruction-block
   : Object.hasOwn(diagnosticOwners, code) ? diagnosticOwners[code]! : "unclassified";
 const byCapability = (capability: FieldCapability): ContentBatchSystem =>
   Object.hasOwn(capabilityOwners, capability) ? capabilityOwners[capability] : "unclassified";
+/** The global source scheduler and selected-package projection share these
+ * exact assignments. These identify workstreams, never runtime authority. */
+export const contentBatchDiagnosticSystem = byCode;
+export const contentBatchCapabilitySystem = byCapability;
 const lexical = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 function dense(value: unknown): asserts value is unknown[] {
   if (!Array.isArray(value) || Reflect.ownKeys(value).length !== value.length + 1)

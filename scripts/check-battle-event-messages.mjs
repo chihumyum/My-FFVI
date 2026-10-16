@@ -103,7 +103,9 @@ if(o['candidate-dir']){
  const roots=maps.flatMap(m=>[...Object.keys(m.scripts).map(script=>({kind:'script',mapId:m.mapId,script})),...(m.partyEntry?.pointIns??[]).map(p=>({kind:'entry',mapId:m.mapId,entrance:p.id,continuation:null}))]);
  fullGraph=api.analyzeContentDependencies({catalog:strict,maps,roots,mapIds:maps.map(m=>m.mapId)});
 }else fixture=await import(pathToFileURL(resolve(compiled,'tests/fixtures/battle-event-message.js')).href);
-const callerDefinitions=candidate?createVerifiedBattleObserverCallers(api,{systems,familyCatalog,familyDirectory,sourceEntry,sourceBattle,
+// Capture definition data only. The builder also returns a repository and a
+// payload Map; neither is source data or an observer-owned runtime capability.
+const callerDefinitions=candidate?createVerifiedBattleObserverCallers(api,{systems:{map:systems.map,catalog:systems.catalog,battle:systems.battle},familyCatalog,familyDirectory,sourceEntry,sourceBattle,
  sourceMap:await candidate.read(strict.maps[sourceEntry.entry.mapId].url),branchExecution:observerDeclaration.framework.branchExecution}):null;
 const journalProjection=game=>({field:game.field.stop,window:game.field.sourceMessage.projection,revision:game.field.sourceMessage.mutationRevision,
  mask:game.field.updateAttributeMask,effectRequests:game.battle?.effectExecution??[],effects:game.battle?.effectPresentation??[],branchExecution:game.battle?.eventBranchExecution??null,event:game.battle?.eventExecution??null,messages:game.battle?.messageExecution??[],battleTime:game.battle?.time??null,phase:game.battle?.phase??null});

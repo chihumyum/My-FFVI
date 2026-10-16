@@ -122,8 +122,9 @@ function declaredBattleInput(battle, program, refs, actor, channel) {
 }
 
 export async function runContentBatchRoute({ root, compiled = "dist", plan: suppliedPlan, routeId, repository, runtimeHash,
-  captureFinalState = false, continuation = null }) {
+  captureFinalState = false, continuation = null, captureSourceStory = false }) {
   assert.equal(typeof captureFinalState, "boolean", "Final state capture must be an explicit boolean");
+  assert.equal(typeof captureSourceStory, "boolean", "Source story capture must be explicit");
   // A continuation is independently identified evidence. It must never borrow
   // the new-game lane or be admitted as a route started from initialization.
   const resumed = continuation === null ? null : structuredClone(continuation);
@@ -148,7 +149,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     load("new-game-field-entry"), load("field-fade"), load("source-presentation"), load("content-integrity"),
     load("source-encounter-entry"),
   ]);
-  const runtime = { ...sourceWebReplayRuntimePorts(), ...controlledAudioRuntime(), battleHandoff: "prepared", sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY,
+  const runtime = { ...(captureSourceStory ? {sourceStoryExecution:"source-story-execution-evidence-v1"} : {}), ...sourceWebReplayRuntimePorts(), ...controlledAudioRuntime(), battleHandoff: "prepared", sourceEncounterPolicy: WEB_SOURCE_ENCOUNTER_POLICY,
     transportationTimestamp: () => "639273600000000000" };
   const host = { visible: true, mediaReady: true, overlayOpen: false };
   const extended = route.inputs.some(input => input.kind === "menu" || input.kind === "save-restore" ||
@@ -170,6 +171,24 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
         : "pause-menu readiness only; no undeclared menu mutation"], boundary: null,
     ...(extended ? { program } : {}) };
   const trace = [], flow = new GameFlow();
+  const story = {kind:"source-story-route-execution-v1", fields:[], candidateAttempts:[], checkpointRelays:[], overflow:false};
+  const storyFields = new WeakMap(), candidateFields = new WeakMap();
+  const observeStory = () => {
+    if (!captureSourceStory || !flow.hasSession) return;
+    const game=flow.session,field=game.field;
+    let row=storyFields.get(field);
+    if (!row) {
+      const programs=Object.entries(field.content.scripts).map(([script,body])=>({script,typedBody:structuredClone(body)}));
+      row={fieldId:story.fields.length,mapId:field.content.map.identity?.mapId??null,
+        contentHash:field.content.contentHash,sourceSetHash:field.content.sourceSetHash,
+        parentSourceSetHash:field.content.parentSourceSetHash,publication:{kind:"actual-session-field",worldTransition:structuredClone(game.world.transitions.at(-1)??null)},
+        candidateAttempt:candidateFields.get(field)??null,programs,events:[],cursor:0,enabled:false};
+      storyFields.set(field,row);story.fields.push(row);
+    }
+    const read=field.readSourceStoryExecution(row.cursor);row.enabled=read.enabled;row.events.push(...read.events);row.cursor=read.nextCursor;
+    story.overflow ||= read.overflow;
+  };
+
   const entries = new GameEntryLoader(flow, { discard: () => {} });
   const execution = { entry: "GameEntryLoader", battleHandoff: "prepared", commands: "GameCommands",
     entriesCommitted: 0, loadsCommitted: 0, preparedStarts: 0, committedStarts: 0,
@@ -222,7 +241,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     if (!receipt.visitedMapIds.includes(mapId)) receipt.visitedMapIds.push(mapId);
     assert.ok(plan.manifest.mapIds.includes(mapId), "Route reached a map outside its batch");
   };
-  const tick = () => { flow.advance(10, host); ticks++; };
+  const tick = () => { observeStory(); flow.advance(10, host); ticks++; observeStory(); };
   const bound = (key, value) => {
     assert.equal(value.contentHash, plan.contentHashes[key], `Route dependency changed: ${key}`);
     return value;
@@ -322,11 +341,11 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     if (captureFinalState) initialOwned = structuredClone(started.session.state.snapshot());
     commandChannel = new GameCommands(flow, started.session);
     assert.equal(commandChannel.settingsReady, false, "An entry clears previous media readiness");
-    flow.advance(0, host); visit(); trace.push({ kind: "start", mapId: receipt.finalMapId,
+    observeStory(); flow.advance(0, host); observeStory(); visit(); trace.push({ kind: "start", mapId: receipt.finalMapId,
       entry: "GameEntryLoader", battleHandoff: "prepared", commandOwnerBound: commandChannel.owner === current() });
     let owner = current(), state = owner.state, world = owner.world;
     maps = new GameMapLoader(flow, boundMaps, {
-      prepare: async field => { assert.notEqual(field, current().field); return null; }, discard: () => {},
+      prepare: async field => { assert.notEqual(field, current().field); if(captureSourceStory){const id=story.candidateAttempts.length;candidateFields.set(field,id);story.candidateAttempts.push({id,mapId:field.content.map.identity?.mapId??null,contentHash:field.content.contentHash,scope:"unpublished-candidate-attempt"});} return null; }, discard: () => {},
     });
     const bytes = new Map();
     const storage = new CheckpointStorage({ getItem: key => bytes.get(key) ?? null,
@@ -394,6 +413,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
       execution.staleCommandChannelsRejected++;
       flow.observeHost(host); assert.equal(commandChannel.menuReady, true);
       assert.equal(flow.pause(final), true); flow.observeHost(host);
+      if(captureSourceStory){const values=[...bytes.values()];assert.equal(values.length,1);story.checkpointRelays.push({final,inputIndex,slotBytes:values[0],beforeCheckpointHash:digest,restoredCheckpointHash:await contentDigest(owner.checkpoint()),inputCountAtRestore:program.inputCount});observeStory();}
       visit(); program.restoreCount++;
       trace.push({ kind: "save-restore", checkpointHash: digest, menuReady: commandChannel.menuReady,
         entry: "GameEntryLoader", paused: flow.paused, staleCommandsRejected: true,
@@ -410,6 +430,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     const ordinaryReturns=new Map();
     while (ticks < route.maxTicks) {
       assert.equal(current(), owner); assert.equal(current().state, state); assert.equal(current().world, world);
+      observeStory();
       const game = current(), field = game.field;
       if (game.eventSaveRequest) {
         const result = await saves.save(ticks);
@@ -686,12 +707,13 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
       }
     }
   }
+  observeStory();
   if (flow.hasSession) {
     receipt.finalMapId = current().field.content.map.identity?.mapId ?? receipt.finalMapId;
     receipt.checkpointReady = current().checkpointReady;
   }
   receipt.completedEncounterIds = [...new Set(receipt.completedEncounterIds)];
-  return { receipt, trace, execution, elapsedMs: ticks * 10, commands, checkpointHash,
+  return { ...(captureSourceStory ? {sourceStory:story} : {}), receipt, trace, execution, elapsedMs: ticks * 10, commands, checkpointHash,
     ...(captureFinalState ? { finalState: structuredClone({ initialOwned, firstStableCheckpoint,
       finalOwned: flow.hasSession ? current().state.snapshot() : null,
       checkpoint: flow.hasSession && current().checkpointReady ? current().checkpoint() : null }) } : {}) };

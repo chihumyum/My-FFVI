@@ -1,3 +1,4 @@
+import { WEB_SOURCE_STORY_EXECUTION, type FieldStoryExecutionEvent } from "./field-story-execution.js";
 import { fieldTransportationParkingBinding, transportationStoredPosition, transportationDirectionMask, type WebSourceTransportParkingUpload, type TransportationParkingObservation } from "./transportation-parking-upload.js";
 import { prepareSourceNonEncounterAreas, sourceStandingInNonEncounterArea, type SourceNonEncounterArea, type SourceNonEncounterAreas } from "./field-non-encounter-areas.js";
 import {prepareRtsNativeActors}from'./field-rts-actors.js';
@@ -415,6 +416,8 @@ export type PreparedFieldSourceEncounter = {
   commitWith(publishBattle: () => void): void;
 };
 export type FieldGameOptions = {
+  /** Opt-in observational evidence only; never serialized or consulted by gameplay. */
+  sourceStoryExecution?: typeof WEB_SOURCE_STORY_EXECUTION;
   /** Immutable catalog context supplied by the existing GameSession owner. */
   contentInvalidations?: FieldContentInvalidationCatalog;
   /** Explicit Web controller, never native search/raycast admission. */
@@ -1462,6 +1465,27 @@ export class FieldGame {
   stop: Stop | null = null;
   time = 0;
   private tasks: Task[] = [];
+  private readonly storyExecutionEvents: FieldStoryExecutionEvent[] = [];
+  private readonly storyFinishedTasks = new Set<number>();
+  private storyExecutionOverflow = false;
+  /** Detached bounded evidence, not a checkpoint or another task owner. */
+  readSourceStoryExecution(cursor = 0) {
+    if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > this.storyExecutionEvents.length)
+      throw new Error("Invalid story execution cursor");
+    return { enabled: this.options.sourceStoryExecution === WEB_SOURCE_STORY_EXECUTION,
+      overflow: this.storyExecutionOverflow, nextCursor: this.storyExecutionEvents.length,
+      events: structuredClone(this.storyExecutionEvents.slice(cursor)) };
+  }
+  private recordStoryExecution(kind: FieldStoryExecutionEvent["kind"], task: Task, pc: number, nextPc: number | null = null): void {
+    if (this.options.sourceStoryExecution !== WEB_SOURCE_STORY_EXECUTION) return;
+    if (this.storyExecutionEvents.length >= 100000) { this.storyExecutionOverflow = true; return; }
+    const op = this.content.scripts[task.script]?.[pc];
+    this.storyExecutionEvents.push({ kind, taskId: task.id, rootScript: this.eventRootScript ?? task.script,
+      script: task.script, pc, nextPc, slot: task.slot, atMilliseconds: this.time,
+      currentField: null, // Publication is measured by the existing Session/World runner, never a host callback here.
+      site: op ? { kind: op.kind, index: op.index ?? pc, source: structuredClone(op.source ?? null) } : null });
+  }
+
   private coreRegisterPublishing = false;
   private nextEventSave = 1;
   private pendingEventSave: { request: GameEventSaveRequest; task: Task;
@@ -4650,6 +4674,7 @@ export class FieldGame {
     this.eventActivation = activation && Object.freeze(activation);
     this.scriptHook = null;
     this.tasks = [this.task(script, 0, "-1001")];
+    this.recordStoryExecution("root-enter", this.tasks[0]!, 0);
     this.pump();
   }
   /** The same native MainCore remains the owner of windows and execution.
@@ -5008,6 +5033,7 @@ export class FieldGame {
       this.eventActivation = null;
       this.scriptHook = null;
       this.tasks = [nextTask];
+      this.recordStoryExecution("root-enter", nextTask, 0);
       this.nextTask = taskId + 1;
       this.stop = null;
       this.sourceEncounterPending = null;
@@ -5814,6 +5840,9 @@ export class FieldGame {
       // clock. Awake entries never start merely because main has ended.
       for (const task of this.tasks) if (task.slot !== null) task.done = true;
       this.eventActivation = null;
+      if (this.options.sourceStoryExecution === WEB_SOURCE_STORY_EXECUTION && !this.storyExecutionOverflow && !this.storyFinishedTasks.has(main.id)) {
+        this.storyFinishedTasks.add(main.id); this.recordStoryExecution("natural-finish", main, main.pc - 1);
+      }
     }
     this.finishInteraction();
     this.finishMapEntry();
@@ -6174,6 +6203,7 @@ export class FieldGame {
           this.block("Field control flow leaves the source task range", op);
           return;
         }
+        const storyPc = t.pc;
         t.pc++;
         try { this.requireInstructionProviders(op, t.actor); }
         catch (error) {
@@ -6182,15 +6212,10 @@ export class FieldGame {
           return;
         }
         try {
-          if (
-            executeEventControl(
-              op,
-              this.eventState,
-              t,
-              this.content.scripts[t.script]!.length,
-            )
-          )
+          if (executeEventControl(op, this.eventState, t, this.content.scripts[t.script]!.length)) {
+            if (op.kind.startsWith("branch")) this.recordStoryExecution("branch", t, storyPc, t.pc);
             continue;
+          }
         } catch (error) {
           this.block(
             error instanceof Error ? error.message : String(error),
@@ -6246,7 +6271,7 @@ export class FieldGame {
                 ...(roster ? { roster } : {}),
                 ...(op.kind === "branch-player-direction" ? { playerDirection: this.player.direction } : {}),
                 ...(leaderContext ? { playableCharacterCorpsId: leaderContext.savedLeaderIndex } : {}) });
-              t.pc = next.pc;
+              t.pc = next.pc; this.recordStoryExecution("branch", t, storyPc, t.pc);
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
           case 'source-character-naming': {
@@ -6520,6 +6545,7 @@ export class FieldGame {
               site: op,
               request: op.request,
             };
+            this.recordStoryExecution("map-handoff", t, storyPc);
             return;
           case "entities":
             try {
@@ -7166,9 +7192,9 @@ export class FieldGame {
               this.block("宝箱任务尚未完成，尚不支持并发入战", op);
               return;
             }
-            if(op.kind==='source-boss-encounter'){try{this.beginSourceBossEncounter(op,t);}catch(error){this.block(error instanceof Error?error.message:String(error),op);}return;}
+            if(op.kind==='source-boss-encounter'){try{this.beginSourceBossEncounter(op,t);if(this.stop?.kind==='encounter')this.recordStoryExecution('battle-handoff',t,storyPc);}catch(error){this.block(error instanceof Error?error.message:String(error),op);}return;}
             if (op.kind === "source-encounter") {
-              try { this.beginSourceEncounter(op, t); }
+              try { this.beginSourceEncounter(op, t); if(this.stop?.kind === "encounter") this.recordStoryExecution("battle-handoff",t,storyPc); }
               catch (error) { this.block(error instanceof Error ? error.message : String(error), op); }
               return;
             }
@@ -7179,6 +7205,7 @@ export class FieldGame {
               party: op.party,
               continuation: op.continuation,
             };
+            this.recordStoryExecution("battle-handoff", t, storyPc);
             return;
           case "blocked":
             this.block(`${op.mnemonic}：${op.reason}`, op);

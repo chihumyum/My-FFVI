@@ -16,6 +16,8 @@
     "story:build": "npm run build && node --max-old-space-size=8192 scripts/build-story-corpus.mjs",
     "story:execute": "npm run build && node --max-old-space-size=8192 scripts/check-story-corpus-execution.mjs",
     "story:plan": "npm run build && node --max-old-space-size=8192 scripts/plan-story-runtime.mjs",
+    "source-migration:plan": "npm run build && node --max-old-space-size=16384 scripts/plan-source-migration.mjs",
+    "source-story-batch:check": "npm run build && node --max-old-space-size=16384 scripts/source-story-batch.mjs",
     "story-runtime:check": "npm run build && node --max-old-space-size=8192 scripts/check-story-runtime-capabilities.mjs && node scripts/check-field-timer.mjs && node scripts/check-field-auto-save.mjs",
     "source-system-flags:check": "npm run build && node --max-old-space-size=8192 scripts/check-source-system-flags.mjs --compiled dist",
     "source-remove-all:check": "npm run story:build && .venv/bin/python scripts/inspect-owned-condition-all.py && node --max-old-space-size=8192 scripts/check-source-remove-all.mjs --audio-lane sha-verified-controlled-ack --leader-lane production-web-flat",
