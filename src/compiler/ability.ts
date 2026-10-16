@@ -1,3 +1,4 @@
+import {isSourceEnemyMagicProgram} from '../core/enemy-magic-carrier.js';
 import {compileResourceAbsorption} from './resource-absorption.js';
 import {compileOrdinaryConditionAction} from './ordinary-condition-action.js';
 import { compileNonDamagingAbility } from "./non-damaging-ability.js";
@@ -420,6 +421,21 @@ export function compileDevelopmentAbility(
   // MagicExecution path. Type 504 controls command/observation eligibility;
   // it does not replace this calculator or grant learning to an actor.
   const loreMagic = magicOnly && effects[0]!.kind === "magic" && r.type_id === 504;
+  // EnemyMagic uses this exact source Function3 calculator. Classification is
+  // retained for actual condition owners; it is not an actor/command grant.
+  let enemyMagic=false;
+  if(magicOnly&&isSourceEnemyMagicProgram(program)){
+    try{
+      if(int(a.ability_lv)!==0)throw new Error("Unresolved level-specific EnemyMagic consumption");
+      const classified=compileSourceConditionRecoveryHit(reader,program);
+      if(classified.metadata.forAiType!==2||!classified.metadata.isMagic)
+        throw new Error("Changed source EnemyMagic Chanting/hit classification");
+      for(const row of classified.sources)if(!sources.some(old=>old.source.assetPath===row.source.assetPath&&old.source.rowId===row.source.rowId))sources.push(row);
+      enemyMagic=true;
+      if(r.reaction_type!==0)blockers.push("unresolved source EnemyMagic reaction_type="+r.reaction_type+" provider");
+    }catch(error){blockers.push("EnemyMagic carrier dependency: "+(error instanceof Error?error.message:String(error)));}
+  }
+
   for (const key of [
     "attack_count",
     "Impact_status",
@@ -456,7 +472,7 @@ export function compileDevelopmentAbility(
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !resourceAbsorption && !ordinaryConditionSupport && !ordinaryMagic && !loreMagic && !protectionSpell && !speedSpell && !controlSupport && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
+  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !resourceAbsorption && !ordinaryConditionSupport && !ordinaryMagic && !loreMagic && !enemyMagic && !protectionSpell && !speedSpell && !controlSupport && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
   if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !resourceAbsorption && !ordinaryConditionSupport && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
@@ -548,6 +564,7 @@ export function compileDevelopmentAbility(
     limitations.push(
       "player revival only; enemy revival AI/rewards, items and summon execution remain unresolved",
     );
+  if(enemyMagic)limitations.push("Source single Function3 EnemyMagic retains original Type13/ReactionType and actual Chanting classification; ordinary enemy owner only, player/special acquisition and execution remain gated.");
   if (magicOnly)
     limitations.push(
       "reviewed magic and elemental arithmetic; no accessory, critical, counter-stat or weapon modifiers",

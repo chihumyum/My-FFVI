@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { runtimeDigest } from './runtime-digest.mjs';
 import { compileSourcePrerequisites, validateSourcePrerequisiteInputs } from './compile-source-prerequisites.mjs';
 import { linkSourcePrerequisites } from './link-source-prerequisites.mjs';
@@ -213,6 +214,11 @@ export async function compileSourceCandidate({ root, runtimeRoot, compiledDir, o
     const index = validateSourceCandidateReport(report, { runtimeSha256, inputBytes: Buffer.from(inputBytes), legacyKind: kind });
     validateSourceCandidateCatalogs(report, index, linked.inputs.get('/world/catalog.json'), linked.inputs.get('/framework/world/catalog.json'));
     await writeFile(resolve(staging, 'inputs.json'), inputBytes); await writeFile(resolve(staging, 'report.json'), JSON.stringify(report, null, 2) + '\n');
+    // Exercise the exact reader/complete input fence before this candidate can
+    // replace the previous output. Producer shape checks alone cannot verify
+    // the async compiled-module and all-map consumer path.
+    const readable=await openSourceCandidate({root,runtimeRoot,compiledDir,candidateDir:staging,legacyKind:kind});
+    await readable.validate();
     assert.equal(await runtimeDigest(runtimeRoot, compiledDir), runtimeSha256, 'Runtime changed before candidate installation');
     if(directoryInput)await directoryPolicyInput(root,directoryInput.record);
     let previous;

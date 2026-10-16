@@ -1,4 +1,5 @@
 import {parseBattleChildAdmission,parseWebBattleChildAdmission,prepareBattleChildParty,type BattleChildAdmission,type WebBattleChildAdmission} from './battle-child-admission.js';
+import {enemyMagicActorBlocker} from './enemy-magic-carrier.js';
 import { WEB_BATTLE_GAU_INSTANCES, parseBattleGauInstanceContent, gauAppearancePoses, gauAppearanceTimes, gauAppearanceDuration,
   type BattleGauInstanceContent, type BattleGauInstanceHost, type BattleGauOwnedFrame, type BattleGauMediaRequest } from "./battle-gau-instances.js";
 import { prepareSourceCatalogName } from "./source-catalog-name.js";
@@ -1227,6 +1228,7 @@ export class BattleGame {
       !actor ||
       !ability?.plan ||
       !this.qualifiedAbility(actor, abilityId) ||
+      enemyMagicActorBlocker(ability,actor.side)!==null ||
       actor.hp <= 0 ||
       this.actionSuspended(actor) ||
       this.enemyExits.has(actor.id) ||
@@ -1974,6 +1976,7 @@ export class BattleGame {
     this.registerActions([action]);this.reactions.push(action);
   }
   private validateScriptedAbility(actor:Combatant,ability:AbilityDefinition):void {
+    const carrier=enemyMagicActorBlocker(ability,actor.side);if(carrier)throw new Error(carrier);
     if(!ability.plan||ability.plan.effects.some(effect=>effect.kind==="random-ability"||effect.kind==="forced-escape"))
       throw new Error("Unresolved scripted derived-action provider");
     if(ability.plan.targeting.normalFormationOnly&&this.content.formation!=="normal")
@@ -2347,6 +2350,7 @@ export class BattleGame {
             act.pc,
             `unimplemented ability ${id}: ${ability?.blockers.join("; ") ?? "missing definition"}`,
           );
+        const carrier=enemyMagicActorBlocker(ability!,actor.side);if(carrier)fail(act.pc,carrier);
         const requestedTargeting = act.kind === "counter-act" ? act.targeting ?? "received-actor" : null;
         if (requestedTargeting !== null && requestedTargeting !== "received-actor" && requestedTargeting !== "automatic")
           fail(act.pc, "invalid counter target provider");
@@ -2455,6 +2459,7 @@ export class BattleGame {
       !actor ||
       !ability ||
       !this.qualifiedAbility(actor, abilityId) ||
+      enemyMagicActorBlocker(ability,actor.side)!==null ||
       !ability.plan
     )
       return [];
@@ -2522,6 +2527,7 @@ export class BattleGame {
     kind: BattleAction["kind"] = "normal",
     targeting?: BattleAICounterTargeting,
   ): BattleAction {
+    const carrier=enemyMagicActorBlocker(ability,actor.side);if(carrier)throw new Error(carrier);
     if (targeting !== undefined && (kind !== "counter" ||
         targeting !== "received-actor" && targeting !== "automatic"))
       throw new Error("Invalid interrupt target provider");
@@ -3182,6 +3188,7 @@ export class BattleGame {
     const actor = this.combatants.find((c) => c.id === action.actor)!;
     const ability = this.actionDefinition(action);
     if (action.resolved) return;
+    if(action.source.kind==='ability'){const carrier=enemyMagicActorBlocker(this.content.abilities[action.source.id]!,actor.side);if(carrier)throw new Error(carrier); }
     if(action.source.kind==='ability')validateOrdinaryConditionAction(this.content.abilities[action.source.id]!);
     if (!ability.plan) throw new Error("Unimplemented ability cannot execute");
     if (ability.plan.effects.some(effect => effect.kind === "non-damaging")) {

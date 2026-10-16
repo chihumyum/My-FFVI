@@ -1,3 +1,4 @@
+import {isSourceEnemyMagicProgram} from '../core/enemy-magic-carrier.js';
 import type { AbilityDefinition } from "../core/battle-content.js";
 import { compileDevelopmentAbility } from "./ability.js";
 import type { BattleRow } from "./battle.js";
@@ -16,6 +17,7 @@ export type BattleAbilityDisplay = {
 };
 
 export type BattleAbilityHostRequirement =
+  | "ordinary-enemy-magic-actor"
   | "current-owned-command-qualification"
   | "current-battle-content-exclusions"
   | "implemented-active-condition-behaviors"
@@ -159,6 +161,7 @@ export function compileBattleAbilityContent(
     if (definition.plan) {
       report.arithmeticPlans++;
       const effects = definition.plan.effects;
+      if(isSourceEnemyMagicProgram(definition.program)&&effects.length===1&&effects[0]?.kind==='magic')requirements.push("ordinary-enemy-magic-actor");
       const kind = effects.map((effect) => effect.kind === "recovery" ? effect.calculation + "-" + effect.resource + "-recovery" : effect.kind).join("+");
       report.effectPlans[kind] = (report.effectPlans[kind] ?? 0) + 1;
       if (definition.cost > 0) requirements.push("mp-payment-once", "no-mp-cost-equipment-provider");
