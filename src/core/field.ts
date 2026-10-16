@@ -1,4 +1,5 @@
 import { WEB_SOURCE_STORY_EXECUTION, type FieldStoryExecutionEvent } from "./field-story-execution.js";
+import { executeSourceEquipmentEvent } from "./source-owned-equipment.js";
 import { fieldTransportationParkingBinding, transportationStoredPosition, transportationDirectionMask, type WebSourceTransportParkingUpload, type TransportationParkingObservation } from "./transportation-parking-upload.js";
 import { prepareSourceNonEncounterAreas, sourceStandingInNonEncounterArea, type SourceNonEncounterArea, type SourceNonEncounterAreas } from "./field-non-encounter-areas.js";
 import {prepareRtsNativeActors}from'./field-rts-actors.js';
@@ -232,6 +233,7 @@ const OPPOSITE: Record<Direction, Direction> = {
   right: "left",
   down: "up",
 };
+import { FieldUiState, validateFieldUiPolicy, WEB_SOURCE_FIELD_UI, type WebSourceFieldUi, type FieldUiSnapshot, type FieldLocationPort } from "./field-ui.js";
 import { FieldMobControls, fieldMobColorBinding, validateMobPolicy, tickMobColor, cloneMobColor, parseMobControlCommand, type FieldMobCheckpoint, type FieldMobColor, type FieldMobControlOp, type WebFlatMobColorFilter } from "./field-mob-controls.js";
 export type Motion = FieldActorMotion;
 export type FieldDirectionInputResult = { kind: "movement" } |
@@ -296,6 +298,9 @@ type FieldCheckpointState = {
   } | null;
 };
 export type FieldCheckpoint = FieldCheckpointState & (
+  { kind: "idle-field-v18"; sourceUi: FieldUiSnapshot; scriptAnimations?: SourceFieldScriptAnimationState; sourceMessageValues?: SourceMessageFeeSnapshot; contentInvalidations?: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint }
+  | { kind: "event-field-v9"; sourceUi: FieldUiSnapshot; scriptAnimations?: SourceFieldScriptAnimationState; sourceMessageValues?: SourceMessageFeeSnapshot; contentInvalidations?: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint; execution: FieldEventCheckpoint }
+  |
   { kind: "idle-field-v17"; scriptAnimations: SourceFieldScriptAnimationState; sourceMessageValues?: SourceMessageFeeSnapshot; contentInvalidations?: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint }
   | { kind: "event-field-v8"; scriptAnimations: SourceFieldScriptAnimationState; sourceMessageValues?: SourceMessageFeeSnapshot; contentInvalidations?: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint; execution: FieldEventCheckpoint }
   |   { kind: "idle-field-v15"; contentInvalidations: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint }
@@ -418,6 +423,9 @@ export type PreparedFieldSourceEncounter = {
 export type FieldGameOptions = {
   /** Opt-in observational evidence only; never serialized or consulted by gameplay. */
   sourceStoryExecution?: typeof WEB_SOURCE_STORY_EXECUTION;
+  sourceFieldUi?: WebSourceFieldUi;
+  sourceFieldUiSeed?: FieldUiSnapshot;
+  fieldLocation?: FieldLocationPort;
   /** Immutable catalog context supplied by the existing GameSession owner. */
   contentInvalidations?: FieldContentInvalidationCatalog;
   /** Explicit Web controller, never native search/raycast admission. */
@@ -551,6 +559,8 @@ export class FieldGame {
       : !!(actor?.native && this.nativeActorProviders && this.camera && this.options.puppetActors &&
         this.content.cameraHost?.callbacks === "fresh-normal-field-v1");
     const context: FieldAdmissionContext = { actorKind, providers: {
+      sourceFieldUi: presence(this.options.sourceFieldUi === WEB_SOURCE_FIELD_UI && !this.sourceUiRetired),
+      sourceLocation: presence(typeof this.options.fieldLocation?.prepare === "function" && typeof this.options.fieldLocation?.read === "function"),
       contentInvalidations: presence(!!this.options.contentInvalidations),
       inventory: presence(typeof this.options.inventory?.prepare === "function"),
       messageNames: presence(typeof this.options.messageNames?.prepare === "function"),
@@ -561,6 +571,7 @@ export class FieldGame {
       ownedConditions: presence(typeof this.options.ownedConditions?.prepare === "function"),
       party: presence(typeof this.options.party?.prepare === "function"),
       roster: presence(typeof this.options.roster?.prepare === "function"),
+      rosterEquipment: presence(typeof this.options.roster?.prepareEquipment === "function"),
       treasure: presence(!!this.options.treasure),
       transportation: presence(!!this.options.transportation),
       vehicleLifecycle:presence(!!this.vehicleLifecyclePolicy&&!this.#vehicleLifecycle.retired&&!!this.nativeActorBindings&&!!this.options.transportation),
@@ -1405,6 +1416,20 @@ export class FieldGame {
     if(!owner||owner.isRetired||!binding||canonical(this.content.map.skybox)!==this.skyboxDefinitionPin||canonical(owner.binding)!==canonical(binding))throw Error("Source Skybox requires its current map/model/runtime/2D background owner");
     if(owner.readiness)throw Error(owner.readiness);return owner;
   }
+  private sourceUiOwner: FieldUiState | null = null;
+  private sourceUiRetired = false;
+  retireSourceFieldUi(): void { this.sourceUiRetired = true; }
+  get sourceFieldUiSnapshot(): FieldUiSnapshot | null { return this.sourceUiOwner?.snapshot() ?? null; }
+  /** Session uses its existing battle tick for the same global UI callbacks. */
+  advanceSourceFieldUi(milliseconds: number): void {
+    if (!this.sourceUiOwner) return;
+    if (this.options.npcActivityClock && !this.options.npcActivityClock()) return;
+    this.requireSourceUi().advance(milliseconds);
+  }
+  private requireSourceUi(): FieldUiState {
+    if (this.sourceUiRetired || this.options.sourceFieldUi !== WEB_SOURCE_FIELD_UI || !this.sourceUiOwner) throw new Error("Source Field UI runtime authority is unavailable");
+    return this.sourceUiOwner;
+  }
   private screenPresentationState:FieldScreenPresentationState|null=null;
   get screenPresentation(){return this.screenPresentationState?.projection??null;}
   private colorFilterState: FieldColorFilterState | null = null;
@@ -1723,6 +1748,9 @@ export class FieldGame {
         throw new Error("Unknown field entry synchronization source");
       this.synchronizedEntry = false;
     }
+    validateFieldUiPolicy(options.sourceFieldUi);
+    if (options.sourceFieldUiSeed && options.sourceFieldUi !== WEB_SOURCE_FIELD_UI) throw new Error("Source Field UI seed cannot grant runtime authority");
+    if (options.sourceFieldUiSeed) this.sourceUiOwner = FieldUiState.restore(options.sourceFieldUiSeed, content.parentSourceSetHash);
     fieldVehicleLifecycleBinding(content,options.vehicleLifecycle);
     fieldTransportationParkingBinding(content,options.transportationParkingUpload);
     this.currentTransportationId = content.entry.transportationId ?? null;
@@ -2495,7 +2523,7 @@ export class FieldGame {
   get menuReady(): boolean { return !this.rtsEncounterActive&&!this.stop && this.idleFieldReady && !this.options.reservedScripts?.read(); }
   get checkpointReady(): boolean {
     if(this.skyboxOwner&&!this.skyboxOwner.readiness&&!this.nativeActorBindings)return false;
-    return !this.rtsEncounterActive&&!Object.values(this.actors).some(actor=>actor.mobColor?.tween) && !this.stop && this.idleFieldReady && (this.logicalEffectsPersistent || !this.effects && !this.options.fieldEffectMap?.hasHistory);
+    return !this.sourceUiOwner?.active && !this.rtsEncounterActive&&!Object.values(this.actors).some(actor=>actor.mobColor?.tween) && !this.stop && this.idleFieldReady && (this.logicalEffectsPersistent || !this.effects && !this.options.fieldEffectMap?.hasHistory);
   }
   get sourcePresentationContext(): SourcePresentationContext | null {
     return cloneSourcePresentationContext(this.options.sourcePresentation?.context() ?? null);
@@ -2665,6 +2693,21 @@ export class FieldGame {
     const assignedNpcRoutes=this.assignedCheckpoint;
     const contentInvalidations = this.contentInvalidationsSnapshot;
     const sourceMessageValues = this.sourceMessage.feeSnapshot;
+    if (this.sourceUiOwner) {
+      const sourceUi = FieldUiState.restore(this.requireSourceUi().snapshot(), this.content.parentSourceSetHash, true).snapshot();
+      let scriptAnimations: SourceFieldScriptAnimationState | undefined;
+      if (this.sourceAnimationCatalog) {
+        if (this.scriptHook !== null && this.hookedCustomAnimationAsset === undefined) throw new Error("Source custom animation hook owner is missing");
+        scriptAnimations = parseSourceFieldScriptAnimationState({ kind: "source-field-script-animation-state-v1",
+          catalogHash: this.sourceAnimationCatalog.contentHash, currentAsset: this.currentCustomAnimationAsset,
+          ...(this.scriptHook ? { hookedAsset: this.hookedCustomAnimationAsset } : {}) }, this.sourceAnimationCatalog, this.scriptHook !== null);
+      }
+      return { ...snapshot, kind: execution ? "event-field-v9" : "idle-field-v18", sourceUi,
+        ...(scriptAnimations ? { scriptAnimations } : {}), ...(sourceMessageValues ? { sourceMessageValues } : {}),
+        ...(contentInvalidations ? { contentInvalidations } : {}), ...(assignedNpcRoutes ? { assignedNpcRoutes } : {}),
+        ...(storyRuntime ? { storyRuntime } : {}), ...(npcActivities ? { npcActivities } : {}),
+        ...(viewPlan ? { viewPlan } : {}), ...(execution ? { execution } : {}) } as FieldCheckpoint;
+    }
     if (this.sourceAnimationCatalog) {
       if (this.scriptHook !== null && this.hookedCustomAnimationAsset === undefined)
         throw new Error("Source custom animation hook owner is missing");
@@ -2707,7 +2750,7 @@ export class FieldGame {
     if (this.stop || this.worldAutoTasksBusy || !this.logicalEffectsPersistent && (this.effects || this.options.fieldEffectMap?.hasHistory) ||
         this.options.fieldEffectMap && !this.options.fieldEffectMap.active ||
         this.sourcePresentationContext?.advertisementOpeningFader === "present" ||
-        this.fader.active || this.skyboxOwner?.active || this.colorFilterState?.active || this.screenPresentationState?.active || this.actorVisibilityBusy || Object.values(this.actors).some(actor=>actor.mobColor?.tween) || this.sourceMessage.active || this.messageWindow ||
+        this.sourceUiOwner?.active || this.fader.active || this.skyboxOwner?.active || this.colorFilterState?.active || this.screenPresentationState?.active || this.actorVisibilityBusy || Object.values(this.actors).some(actor=>actor.mobColor?.tween) || this.sourceMessage.active || this.messageWindow ||
         this.pendingChoice || this.shopTask || this.sourcePartySelectionRequest || this.characterNamingRequest || this.treasureSceneState !== "player" ||
         this.openTriggers.busy || this.interaction || this.pendingPlayerStep ||
         Object.values(this.actors).some((actor) => actor.motion !== null && !this.isAutonomousMotion(actor)) ||
@@ -2774,22 +2817,25 @@ export class FieldGame {
         Object.values(content.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id)))))
       throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
     const s = structuredClone(raw);
-    const hasCustom = s.kind === "idle-field-v17" || s.kind === "event-field-v8";
-    const hasValues = s.kind === "idle-field-v16" || s.kind === "event-field-v7" || hasCustom && Object.hasOwn(s,"sourceMessageValues");
-    const hasInvalidations = s.kind === "idle-field-v15" || s.kind === "event-field-v6" || (hasCustom || hasValues) && Object.hasOwn(s,"contentInvalidations");
-    const hasAssigned = s.kind === "idle-field-v14" || s.kind === "event-field-v5" || (hasCustom || hasInvalidations || hasValues) && Object.hasOwn(s,"assignedNpcRoutes");
-    const hasStory = s.kind === "idle-field-v13" || s.kind === "event-field-v4" || (hasCustom || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s,"storyRuntime");
-    const hasActivities = s.kind === "idle-field-v12" || s.kind === "event-field-v3" || (hasCustom || hasStory || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s, "npcActivities");
-    const continuation = s.kind === "event-field-v1" || s.kind === "event-field-v2" || s.kind === "event-field-v3" || s.kind === "event-field-v4" || s.kind === "event-field-v5" || s.kind === "event-field-v6" || s.kind === "event-field-v7" || s.kind === "event-field-v8";
-    const hasView = s.kind === "idle-field-v11" || s.kind === "event-field-v2" || (hasCustom || hasActivities || hasStory || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s, "viewPlan");
+    const hasUi = s.kind === "idle-field-v18" || s.kind === "event-field-v9";
+    const hasCustom = s.kind === "idle-field-v17" || s.kind === "event-field-v8" || hasUi && Object.hasOwn(s, "scriptAnimations");
+    const hasValues = s.kind === "idle-field-v16" || s.kind === "event-field-v7" || (hasUi || hasCustom) && Object.hasOwn(s,"sourceMessageValues");
+    const hasInvalidations = s.kind === "idle-field-v15" || s.kind === "event-field-v6" || (hasUi || hasCustom || hasValues) && Object.hasOwn(s,"contentInvalidations");
+    const hasAssigned = s.kind === "idle-field-v14" || s.kind === "event-field-v5" || (hasUi || hasCustom || hasInvalidations || hasValues) && Object.hasOwn(s,"assignedNpcRoutes");
+    const hasStory = s.kind === "idle-field-v13" || s.kind === "event-field-v4" || (hasUi || hasCustom || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s,"storyRuntime");
+    const hasActivities = s.kind === "idle-field-v12" || s.kind === "event-field-v3" || (hasUi || hasCustom || hasStory || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s, "npcActivities");
+    const continuation = s.kind === "event-field-v1" || s.kind === "event-field-v2" || s.kind === "event-field-v3" || s.kind === "event-field-v4" || s.kind === "event-field-v5" || s.kind === "event-field-v6" || s.kind === "event-field-v7" || s.kind === "event-field-v8" || s.kind === "event-field-v9";
+    const hasView = s.kind === "idle-field-v11" || s.kind === "event-field-v2" || (hasUi || hasCustom || hasActivities || hasStory || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s, "viewPlan");
     checkpointKeys(
       s,
       "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,se,fade,camera,native" +
-        (continuation ? ",execution" : "") + (hasView ? ",viewPlan" : "") + (hasActivities ? ",npcActivities" : "") + (hasStory ? ",storyRuntime" : "") + (hasAssigned ? ",assignedNpcRoutes" : "") + (hasInvalidations ? ",contentInvalidations" : "") + (hasValues ? ",sourceMessageValues" : "") + (hasCustom ? ",scriptAnimations" : ""),
+        (continuation ? ",execution" : "") + (hasView ? ",viewPlan" : "") + (hasActivities ? ",npcActivities" : "") + (hasStory ? ",storyRuntime" : "") + (hasAssigned ? ",assignedNpcRoutes" : "") + (hasInvalidations ? ",contentInvalidations" : "") + (hasValues ? ",sourceMessageValues" : "") + (hasCustom ? ",scriptAnimations" : "") + (hasUi ? ",sourceUi" : ""),
     );
-    if (!["idle-field-v17", "event-field-v8", "idle-field-v16", "event-field-v7", "idle-field-v10", "idle-field-v11", "idle-field-v12", "idle-field-v13", "idle-field-v14", "idle-field-v15", "event-field-v6", "event-field-v5", "event-field-v1", "event-field-v2", "event-field-v3", "event-field-v4"].includes(s.kind) ||
+    if (!["idle-field-v18", "event-field-v9", "idle-field-v17", "event-field-v8", "idle-field-v16", "event-field-v7", "idle-field-v10", "idle-field-v11", "idle-field-v12", "idle-field-v13", "idle-field-v14", "idle-field-v15", "event-field-v6", "event-field-v5", "event-field-v1", "event-field-v2", "event-field-v3", "event-field-v4"].includes(s.kind) ||
         hasCustom !== (content.sourceScriptAnimations !== undefined) || s.contentHash !== content.contentHash || hasAssigned !== (options.assignedNpcRoutes === WEB_ASSIGNED_ROUTE_POLICY && content.npcRoutes !== undefined) || hasActivities !== (content.frameworkNpcActivity !== undefined) || hasStory !== hasFieldStoryRuntime(content))
       throw new Error("Field checkpoint source/version mismatch");
+    if (hasUi && options.sourceFieldUi !== WEB_SOURCE_FIELD_UI) throw new Error("Source Field UI checkpoint cannot grant runtime authority");
+    if (hasUi) FieldUiState.restore((s as { sourceUi: FieldUiSnapshot }).sourceUi, content.parentSourceSetHash, true);
     if(hasStory){const saved=(s as {storyRuntime:FieldStoryRuntimeSnapshot}).storyRuntime;if(saved.kind==='web-field-story-runtime-v3'&&(saved.screenPresentation.tasks.length||saved.screenPresentation.backdrop.tween))throw new Error("Stable checkpoint cannot carry unfinished screen presentation");}
     if (hasStory && (s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime.colorFilter?.tween)
       throw new Error("Stable field checkpoint cannot carry an unfinished color-filter tween");
@@ -2832,7 +2878,7 @@ export class FieldGame {
       new EventState(s.eventState),
       StaticAudioState.restore(s.bgm, content.bgm),
       StaticAudioState.restore(s.environment, content.environment),
-      { ...options, ...(native ? { nativeActorPreparation: true } : {}),
+      { ...options, ...(hasUi ? { sourceFieldUiSeed: (s as { sourceUi: FieldUiSnapshot }).sourceUi } : {}), ...(native ? { nativeActorPreparation: true } : {}),
         ...(hasValues ? { messageFeeSeed: (s as { sourceMessageValues: SourceMessageFeeSnapshot }).sourceMessageValues } : {}),
         ...(hasStory ? { storyRuntimeSeed: restoreFieldStoryRuntime((s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime, content, options.storyTimerOrigin, options.cameraShake,options.screenPresentation) } : {}) },
       FieldFadeState.restore(s.fade),
@@ -4345,7 +4391,7 @@ export class FieldGame {
       milliseconds > 60000
     )
       throw new Error("Invalid elapsed time");
-    if ((this.skyboxOwner || this.mobControlsEnabled || this.birdViewActorsEnabled || this.content.frameworkNpcActivity || this.assignedRoutes.size > 0 || this.tasks.some(task => !task.done && (task.animationRepeat||task.boardLerp))) && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
+    if ((this.sourceUiOwner || this.skyboxOwner || this.mobControlsEnabled || this.birdViewActorsEnabled || this.content.frameworkNpcActivity || this.assignedRoutes.size > 0 || this.tasks.some(task => !task.done && (task.animationRepeat||task.boardLerp))) && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
     if (this.pendingEventSave) return;
     this.remainder += milliseconds;
     while (this.remainder >= 10) {
@@ -4381,6 +4427,7 @@ export class FieldGame {
       catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       this.advanceStoryTimer(10, this.messageWindow || this.choicePending || this.sourceMessage.active ? "message"
         : this.openTriggers.busy || this.treasureSceneState === "message" ? "gimmick" : this.fieldActivityBusy ? this.eventActivation ? "gimmick" : "event" : "player");
+      if (this.sourceUiOwner) { try { this.advanceSourceFieldUi(10); } catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; } }
       this.sourceMessage.advance(0.01);
       // Use the same post-message update mask as the existing actor loop.
       // Actor animation and this callback-free scalar fade commute within the
@@ -6312,6 +6359,18 @@ export class FieldGame {
               t.pc = next.pc;
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
+          case "source-field-ui": {
+            try {
+            if (this.sourceUiRetired || this.options.sourceFieldUi !== WEB_SOURCE_FIELD_UI) throw new Error("Source Field UI runtime authority is unavailable");
+            const ui = this.sourceUiOwner ?? new FieldUiState(this.content.parentSourceSetHash), transaction = ui.prepare(op.command);
+            const location = op.command.kind === "title" ? this.options.fieldLocation?.prepare(op.command.location) : null;
+            if (op.command.kind === "title" && !location) throw new Error("Source map title CurrentArea/CurrentLocation owner is unavailable");
+            transaction.validate(); location?.validate();
+            const publish = () => { transaction.commit(); this.sourceUiOwner = ui; };
+            if (location) location.commitWith(publish); else publish();
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
+          }
           case "source-presentation":
             try {
               if (executeSourcePresentation(op, this.eventState, this.options.sourcePresentation) === "end")
@@ -6341,6 +6400,10 @@ export class FieldGame {
               actors.validate();transaction.validate();
               transaction.commitWith(validateOwned=>actors(validateOwned));
             } catch(error) {this.block(error instanceof Error?error.message:String(error),op);return;}
+            break;
+          case "source-owned-equipment":
+            try { this.requireInstructionProviders(op, t.actor, true); executeSourceEquipmentEvent(op, this.options.roster); }
+            catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
           case "roster":
             try {

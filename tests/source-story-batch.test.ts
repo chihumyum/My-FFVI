@@ -94,6 +94,10 @@ test("complete synthetic source contract uses normal Main, real battle return, b
   }
   const omitted=structuredClone(x.contract);for(const route of omitted.routes)route.branches=[];
   assert(x.assess(x.report.runs,omitted).issues.some(i=>i.code==="undeclared-branch-requirement"));
+  const reduced=structuredClone(x.contract);reduced.roots=reduced.roots.filter(r=>r.id!=="after");
+  reduced.roots[0]!.successorRootIds=[];
+  for(const route of reduced.routes){route.rootIds=route.rootIds.filter(id=>id!=="after");route.branches=[];}
+  assert(x.assess(x.report.runs,reduced).issues.some(i=>i.code==="undeclared-executed-root"));
   const promoted=structuredClone(x.contract);promoted.lane="original-source";assert.equal(x.assess(x.report.runs,promoted).status,"blocked");
   const missing=x.assess([],null);assert.equal(missing.status,"unassessed");assert.equal(missing.issues[0]!.code,"missing-contract");
   await mkdir(resolve(process.cwd(),"build/reports"),{recursive:true});

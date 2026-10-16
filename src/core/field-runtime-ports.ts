@@ -11,6 +11,9 @@ type Route = "shared" | "entry" | "stable" | "local";
  * `entry` hosts are rebuilt by World for a destination; `stable` ports already
  * belong to the session; `local` ports/seeds belong to its actual draft/map. */
 export const FIELD_RUNTIME_PORT_ROUTES = Object.freeze({
+  sourceFieldUi: "shared",
+  sourceFieldUiSeed: "local",
+  fieldLocation: "local",
   retainedWorldTransportation: "shared",
   assignedNpcRoutes: "shared",
   sourceCharacterNaming: "shared",

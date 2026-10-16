@@ -1,3 +1,4 @@
+import type { FieldUiOp } from "../core/field-ui.js";
 import type {RtsPartyOp}from'../core/field-rts-party.js';
 import type { SourceGilTagOp } from "../core/source-message-fees.js";
 import type { FieldScriptRandomOp } from "../core/field-script-random.js";
@@ -237,6 +238,7 @@ export type Op = Site &
     | InventoryEventOp
     | TreasureBoxRequest
     | PartyEventOp
+    | import("../core/source-owned-equipment.js").SourceEquipmentEventOp
     | RosterLifecycleEventOp
     | RtsPartyOp
   | RosterGroupEventOp
@@ -245,6 +247,7 @@ export type Op = Site &
     | SourceGilTagOp
   | FieldScriptRandomOp
     | FieldRecoveryEventOp
+    | FieldUiOp
     | SourcePresentationOp
     | AudioReadinessOp
     | FieldSoundOp

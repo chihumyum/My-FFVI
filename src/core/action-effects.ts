@@ -7,6 +7,7 @@ import { calculateRevivalEffects, revivalEffects } from "./battle-revival.js";
 import type { BattleConditions } from "./battle-conditions.js";
 import type { BattleRow, PhysicalRowContext } from "./battle-row.js";
 import { changeBattleRow } from "./battle-row-change.js";
+import {baseHpMagicEffect,calculateBaseHpMagic,type BaseHpMagicContext} from './base-hp-magic.js';
 
 /** Effects need numerical and condition state, not a battle renderer, command
  * queue or encounter definition. Owned characters can use menu items before a
@@ -37,6 +38,7 @@ export function projectActionTarget(
   physicalRows?: PhysicalRowContext,
   abilityId?: number,
   automaticLife: "settle" | "defer-to-battle-owner" = "settle",
+  baseHpContext?: BaseHpMagicContext,
 ) {
   if (automaticLife !== "settle" && automaticLife !== "defer-to-battle-owner") throw new Error("Invalid action automatic life owner");
   for (const key of ["hp", "mp", "maxHp", "maxMp"] as const)
@@ -61,7 +63,11 @@ export function projectActionTarget(
   let effects: AbilityEffectResult[];
   let row: BattleRow | undefined;
   const first = plan.effects[0];
-  if (revivalEffects(plan)) {
+  const baseHp=baseHpMagicEffect(plan);
+  if (baseHp) {
+    conditions.validateActive(actor.conditionIds); conditions.validateActive(target.conditionIds);
+    effects=[calculateBaseHpMagic(baseHp,actor,target,conditions.types(target.conditionIds),random,targetCount,baseHpContext)];
+  } else if (revivalEffects(plan)) {
     ({ effects, conditionIds } = calculateRevivalEffects(
       plan,
       conditions,

@@ -7,6 +7,7 @@ import { BattleEnemyMpParameters } from "./source-enemy-mp-parameter.js";
 import { BattleFinalAttackTickets, sourceFinalReady, FINAL_ATTACK_EXCLUDED_TYPES } from "./battle-final-attack.js";
 import {parseBattleChildAdmission,parseWebBattleChildAdmission,prepareBattleChildParty,type BattleChildAdmission,type WebBattleChildAdmission} from './battle-child-admission.js';
 import {enemyMagicActorBlocker} from './enemy-magic-carrier.js';
+import {baseHpMagicEffect,parseSourceEnemyBossParameter,type SourceEnemyBossParameter,type BaseHpMagicContext} from './base-hp-magic.js';
 import { WEB_BATTLE_GAU_INSTANCES, parseBattleGauInstanceContent, gauAppearancePoses, gauAppearanceTimes, gauAppearanceDuration,
   type BattleGauInstanceContent, type BattleGauInstanceHost, type BattleGauOwnedFrame, type BattleGauMediaRequest } from "./battle-gau-instances.js";
 import { prepareSourceCatalogName } from "./source-catalog-name.js";
@@ -237,10 +238,12 @@ export class BattleGame {
   #numbers: { unit: Combatant; projection: BattlePeriodicNumberProjection; resource: BattlePeriodicNumberLease }[] = [];
   #numberCommits: BattlePeriodicNumberLease[] = [];
   #numberDiscards: BattlePeriodicNumberLease[] = [];
-  #parameterOrigins = new Map<Combatant, { kind: "player" | "enemy"; id: string; sourceId: number; side: "player" | "enemy" }>();
+  #parameterOrigins = new Map<Combatant, { kind: "player" | "enemy"; id: string; sourceId: number; side: "player" | "enemy"; boss?:Readonly<SourceEnemyBossParameter> }>();
   private bindParameterOrigin(unit: Combatant, kind: "player" | "enemy") {
     if (this.#parameterOrigins.has(unit)) throw Error("Repeated actual battle parameter construction");
-    this.#parameterOrigins.set(unit, Object.freeze({ kind, id: unit.id, sourceId: unit.sourceId, side: unit.side }));
+    if(kind==='player'&&unit.bossParameter!==undefined)throw Error('Enemy boss parameter cannot authorize a player override');
+    const boss=unit.bossParameter===undefined?undefined:Object.freeze(parseSourceEnemyBossParameter(unit.bossParameter,unit.sourceId));
+    this.#parameterOrigins.set(unit, Object.freeze({ kind, id: unit.id, sourceId: unit.sourceId, side: unit.side,...(boss?{boss}:{}) }));
   }
   private periodicParameter(unit: Combatant): number {
     const origin = this.#parameterOrigins.get(unit);
@@ -1409,6 +1412,7 @@ export class BattleGame {
       return false;
     this.conditions.validateActive(actor.conditionIds);
     resourceAbsorptionEffect(ability.plan);
+    baseHpMagicEffect(ability.plan,ability.program);
     validateOrdinaryConditionAction(ability);
     if (ability.plan.effects.some((effect) => effect.kind === "physical")) {
       try { this.physicalRows(actor, abilityId, actor); }
@@ -2167,6 +2171,7 @@ export class BattleGame {
     }
     this.conditions.validateActive(actor.conditionIds);
     resourceAbsorptionEffect(ability.plan);
+    baseHpMagicEffect(ability.plan,ability.program);
     validateOrdinaryConditionAction(ability);
     if(ability.plan.effects.some(effect=>effect.kind==="physical")){
       if(!actor.physical)throw new Error("Unresolved scripted physical owner");
@@ -3441,6 +3446,35 @@ export class BattleGame {
       throw Error('Unresolved source absorption reverse-recovery context');
     return {kind:'source-non-reversing-absorption-v1',actorId:actor.id,targetId:target.id};
   }
+  private baseHpMagicContext(actor:Combatant,ability:Pick<AbilityDefinition,'plan'|'program'>,targetIds:readonly string[]):BaseHpMagicContext|undefined {
+    if(!ability.plan||!baseHpMagicEffect(ability.plan,ability.program))return undefined;
+    return {actorId:actor.id,targets:targetIds.map(id=>{
+      const unit=this.combatants.find(value=>value.id===id),origin=unit&&this.#parameterOrigins.get(unit);
+      if(!unit||!origin||origin.id!==unit.id||origin.sourceId!==unit.sourceId||origin.side!==unit.side)
+        throw Error('Missing/stale actual source base HP magic parameter instance');
+      if(origin.kind==='player'){
+        // ExchangeValueForEquipment3d5ac0 is a real target-owned provider. Its
+        // armor exception family is not inferred from a generic stat plan.
+        // Admit only a proved empty six-slot source loadout. A catalog-less
+        // synthetic battle has no mutable equipment provider at all.
+        const input=this.inventoryQualification;
+        if(!input){if(this.usesSourceQualification)throw Error('Missing source base HP magic target equipment owner');}
+        else{
+          const held=input.members.find(member=>member.id===unit.id);
+          if(!held||held.sourceId!==unit.sourceId||held.equipment.length!==6)
+            throw Error('Changed source base HP magic target equipment owner');
+          for(const contentId of held.equipment){const gear=input.equipmentCatalog.definitions[contentId];
+            if(!gear||gear.id!==contentId||gear.blockers.length||typeof gear.empty!=='boolean'||!gear.empty)
+              throw Error('Unresolved source base HP magic target equipment override');
+          }
+        }
+        return{targetId:id,parameter:'player' as const,boss:false};
+      }
+      const current=parseSourceEnemyBossParameter(unit.bossParameter,unit.sourceId);
+      if(!origin.boss||canonical(current)!==canonical(origin.boss))throw Error('Changed actual source enemy boss parameter instance');
+      return{targetId:id,parameter:'enemy' as const,boss:current.bossFlag>0};
+    })};
+  }
   private resolve(action: BattleAction) {
     // Stale presentation/executor completions cannot revive a cancelled action
     // or a retired battle. No RNG, cost, lookup or effect precedes this fence.
@@ -3501,6 +3535,7 @@ export class BattleGame {
           action.source.kind === "ability" ? action.source.id : undefined,
           this.absorptionContext(actor,ability,choice.targetIds),
           "defer-to-battle-owner",
+          action.source.kind==='ability'?this.baseHpMagicContext(actor,this.content.abilities[action.source.id]!,choice.targetIds):undefined,
         );
       const staged = projection.targets.map(({ targetId, state, effects }) => {
         const target = this.combatants.find(c => c.id === targetId)!;

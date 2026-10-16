@@ -1,4 +1,5 @@
 import type {ResourceAbsorptionEffect} from './resource-absorption.js';
+import type {BaseHpMagicEffect} from './base-hp-magic.js';
 import type { NonDamagingAbilityEffect, NonDamagingAbilityResult } from "./non-damaging-ability.js";
 import {
   calculatePhysical,
@@ -39,6 +40,7 @@ export type AbilityProgram = {
   elements: number[];
 };
 export type AbilityEffect =
+  | BaseHpMagicEffect
   | ResourceAbsorptionEffect
   | BattleDerivedActionPlan
   | DefendEffect

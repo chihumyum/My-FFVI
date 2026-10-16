@@ -144,6 +144,8 @@ export type CombatantDefinition = ParameterValues & {
   /** Exact source EnemyCharacterParameter constructor, independent of player
    * overrides and legacy missing data. Battle owns actual-instance binding. */
   mpParameter?: import("./source-enemy-mp-parameter.js").SourceEnemyMpParameter;
+  /** Exact EnemyCharacterParameter constructor bossFlag, never an encounter flag. */
+  bossParameter?: import('./base-hp-magic.js').SourceEnemyBossParameter;
   /** Current owned state, independent of the development action whitelist. */
   ownedAbilities?: BattleAbilityMember;
   /** Current owned learning counter; distinct from the MP resource. */

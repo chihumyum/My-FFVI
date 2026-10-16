@@ -1,4 +1,5 @@
 import { parseSourceEnemyMpParameter } from "./source-enemy-mp-parameter.js";
+import {parseSourceEnemyBossParameter} from './base-hp-magic.js';
 import { parseSourceCatalogName } from "./source-catalog-name.js";
 import type { CombatantDefinition } from "./battle-content.js";
 import { parameterNames } from "./parameters.js";
@@ -67,7 +68,7 @@ function definition(raw: unknown, sourceId: number): EnemyBattleDefinition {
   const required = [...parameterNames, "sourceId", "name", "side", "row", "level", "physical",
     "attackElements", "elementResistances", "exp", "gil", "growthGroup", "abilities", "commands",
     "conditionIds", "conditionResistances", "ai", "sprites"];
-  const optional = ["ownedAbilities", "magicLearningValue", "appearance", "battleRequirements", "conditionTraits", "mpParameter", "nameSource"];
+  const optional = ["ownedAbilities", "magicLearningValue", "appearance", "battleRequirements", "conditionTraits", "mpParameter", "nameSource", "bossParameter"];
   checkpointKeys(raw, [...required, ...optional.filter(key => Object.hasOwn(value, key))].join(","));
   if (value.sourceId !== sourceId || value.side !== "enemy" || !["front", "back"].includes(value.row))
     throw new Error("Battle participant master identity mismatch");
@@ -97,6 +98,7 @@ function definition(raw: unknown, sourceId: number): EnemyBattleDefinition {
       throw new Error("Invalid source condition traits provider");
   }
   if (Object.hasOwn(value, "mpParameter")) parseSourceEnemyMpParameter(value.mpParameter, sourceId);
+  if (Object.hasOwn(value, 'bossParameter')) parseSourceEnemyBossParameter(value.bossParameter,sourceId);
   checkpointKeys(value.sprites, "idle,mount");
   text(value.sprites.idle);
   if (value.sprites.mount !== null) text(value.sprites.mount);
@@ -121,7 +123,7 @@ function definition(raw: unknown, sourceId: number): EnemyBattleDefinition {
   }
   // Ordinary enemy templates have no owned-player or transformation provider.
   // Adding one needs a reviewed version instead of copying a GameState owner.
-  if (optional.filter(key => key !== "conditionTraits" && key !== "mpParameter" && key !== "nameSource").some(key => Object.hasOwn(value, key)))
+  if (optional.filter(key => key !== "conditionTraits" && key !== "mpParameter" && key !== "nameSource" && key !== 'bossParameter').some(key => Object.hasOwn(value, key)))
     throw new Error("Unsupported battle participant template provider");
   return structuredClone(value);
 }

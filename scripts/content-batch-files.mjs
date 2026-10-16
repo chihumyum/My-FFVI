@@ -3,7 +3,8 @@ import { isAbsolute, posix, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /** Fresh reads for each audit. Runtime caching belongs to Repository only. */
-export async function readSourceBatch(root, manifestPath, compiled = "dist") {
+export async function readSourceBatch(root, manifestPath, compiled = "dist", { readJson } = {}) {
+  if (readJson !== undefined && typeof readJson !== "function") throw new Error("Invalid trusted batch content reader");
   const { ContentBatchManifest, planContentBatch } = await import(pathToFileURL(resolve(root, compiled, "src/compiler/content-batch.js")));
   const { GameContentRepository } = await import(pathToFileURL(resolve(root, compiled, "src/core/game-content.js")));
   const manifest = ContentBatchManifest.parse(JSON.parse(await readFile(resolve(root, manifestPath), "utf8")));
@@ -22,6 +23,9 @@ export async function readSourceBatch(root, manifestPath, compiled = "dist") {
     // Explicit host references are exact. Compatibility aliases apply only
     // when the old manifest did not nominate a reference package.
     const selected = manifest.contentRefs ? url : (aliases[url] ?? url);
+    // A verified private candidate can supply the same exact URLs without
+    // publication. Repository still verifies every manifest/catalog hash.
+    if (readJson) return readJson(selected);
     const path = resolve(buildRoot, "." + selected);
     if (!withinBuild(path)) throw new Error("Unexpected content path outside build");
     const [base, file] = await Promise.all([realpath(buildRoot), realpath(path)]);

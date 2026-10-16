@@ -602,3 +602,8 @@ a {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* Current source title; Field owns the two-second clock. */
+.source-map-title { position:absolute; top:12%; left:50%; transform:translateX(-50%); z-index:4; padding:.65rem 1.5rem; text-align:center; color:#fff; background:rgba(10,18,32,.82); border:1px solid rgba(255,255,255,.5); pointer-events:none; min-width:12rem; }
+.source-map-title[hidden] { display:none; }
+.source-map-title > div + div { margin-top:.2rem; }

@@ -17,6 +17,7 @@ export type BattleAbilityDisplay = {
 };
 
 export type BattleAbilityHostRequirement =
+  | 'actual-source-enemy-boss-parameter'
   | "ordinary-enemy-magic-actor"
   | "current-owned-command-qualification"
   | "current-battle-content-exclusions"
@@ -161,6 +162,10 @@ export function compileBattleAbilityContent(
     if (definition.plan) {
       report.arithmeticPlans++;
       const effects = definition.plan.effects;
+      if(effects.some(effect=>effect.kind==='base-hp-magic')){
+        requirements.push('actual-source-enemy-boss-parameter','admitted-equipment-and-parameter-providers','no-runic-undead-or-other-value-overrides');
+        if(definition.program.rules.type_id===13)requirements.push('ordinary-enemy-magic-actor');
+      }
       if(isSourceEnemyMagicProgram(definition.program)&&effects.length===1&&effects[0]?.kind==='magic')requirements.push("ordinary-enemy-magic-actor");
       const kind = effects.map((effect) => effect.kind === "recovery" ? effect.calculation + "-" + effect.resource + "-recovery" : effect.kind).join("+");
       report.effectPlans[kind] = (report.effectPlans[kind] ?? 0) + 1;

@@ -5,6 +5,7 @@ import { projectActionTarget, type ActionParticipant } from "./action-effects.js
 import { projectUserConditionPhase, projectUniqueNoneEffect, type UserConditionEffect } from "./ability-user-conditions.js";
 import type { BattleConditions } from "./battle-conditions.js";
 import type { PhysicalRowContext } from "./battle-row.js";
+import type {BaseHpMagicContext} from './base-hp-magic.js';
 
 type UserProjection = ReturnType<typeof projectUserConditionPhase>;
 export type ActionUserConditionResult = UserProjection & { slot: number; ownerId: string; targetId: string };
@@ -19,6 +20,7 @@ export function projectActionTargets<T extends ActionParticipant>(plan: Developm
   abilityId?: number,
   absorptionContext?:AbsorptionContext,
   automaticLife: "settle" | "defer-to-battle-owner" = "settle",
+  baseHpContext?: BaseHpMagicContext,
 ): {targets:(ReturnType<typeof projectActionTarget>&{targetId:string})[];userConditionIds:number[];userResults:ActionUserConditionResult[];
   userResourceState?:ActionResourceState;userResourceResults?:{ownerId:string;slot:number;resource:'hp'|'mp';recovery:true;amount:number;missed:boolean;nullified?:boolean}[]} {
   if (automaticLife !== "settle" && automaticLife !== "defer-to-battle-owner") throw new Error("Invalid action automatic life owner");
@@ -49,7 +51,7 @@ export function projectActionTargets<T extends ActionParticipant>(plan: Developm
   const userEffects = plan.effects.filter((effect): effect is UserConditionEffect => effect.kind === "user-condition");
   if (!userEffects.length) return {
     targets: targets.map(target => ({ targetId: target.id,
-      ...projectActionTarget(plan, power, actor, target, conditions, random, targets.length, cost, rows?.(target), abilityId, automaticLife) })),
+      ...projectActionTarget(plan, power, actor, target, conditions, random, targets.length, cost, rows?.(target), abilityId, automaticLife, baseHpContext) })),
     userConditionIds: [...actor.conditionIds], userResults: [] as ActionUserConditionResult[],
   };
   // The currently closed source composition has an empty primary calculator

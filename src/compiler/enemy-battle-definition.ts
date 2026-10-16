@@ -19,6 +19,7 @@ import { compileConditionResistances, ConditionResistanceCompilationError } from
 import { compileEnemyInitialConditions, InitialConditionCompilationError } from "./initial-conditions.js";
 import { compileSourceEnemyConditionTraits } from "./source-condition-application.js";
 import { compileSourceEnemyMpParameter } from "./source-enemy-mp-parameter.js";
+import {compileSourceEnemyBossParameter} from './base-hp-magic.js';
 
 type Reader = {
   ordered?(table: string): BattleRow[];
@@ -183,6 +184,7 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
       "Source name template requires the current held-name owner at instance entry",
       { dependency: { table: "monster.csv", id: enemy.monsterId, field: "mes_id_name" } });
     return { source, diagnostics, definition: {
+      ...(Object.hasOwn(row,'boss')?{bossParameter:compileSourceEnemyBossParameter(reader,enemy.monsterId).metadata}:{}),
       ...(Object.hasOwn(row, "monster_flag_group_id")
         ? { conditionTraits: compileSourceEnemyConditionTraits(reader, enemy.monsterId).metadata,
             mpParameter: mpParameter! } : {}),

@@ -329,12 +329,17 @@ for (const declaration of [...appModule.imports, ...audioModule.imports]) {
     coreBindings[binding.name.text] = loaded[(binding.propertyName ?? binding.name).text];
 }
 const viewNames = new Set(["InventoryView", "EquipmentView", "PartyView", "SourcePartySelectionView", "SourceCharacterNameView", "ChoiceView", "ShopView", "Renderer", "BattleView"]);
-const overlayBindings = { drawStoryTimer: (await import("../apps/game/story-overlay.js")).drawStoryTimer,
+const overlayBindings = { SourceFieldUiView: (await import("../apps/game/source-field-ui-view.js")).SourceFieldUiView, drawStoryTimer: (await import("../apps/game/story-overlay.js")).drawStoryTimer,
   syncFieldMessageView: (await import("../apps/game/source-message-view.js")).syncFieldMessageView,
   createFieldMessageWindowReadiness: (await import("../apps/game/source-message-view.js")).createFieldMessageWindowReadiness };
 for (const declaration of appModule.imports) {
   const path = declaration.moduleSpecifier.text;
   if (path.startsWith("/runtime/core/") || path === "./audio.js") continue;
+  if (path === "./source-field-ui-view.js") {
+    for (const binding of declaration.importClause.namedBindings.elements)
+      assert.equal(typeof overlayBindings[binding.name.text], "function", "Use the actual production Field UI helper");
+    continue;
+  }
   if (path === "./story-overlay.js") {
     for (const binding of declaration.importClause.namedBindings.elements)
       assert.equal(typeof overlayBindings[binding.name.text], "function", "Use the actual production overlay helper");

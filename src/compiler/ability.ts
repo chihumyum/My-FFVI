@@ -1,4 +1,5 @@
 import { hasSlipBehavior } from "./condition-slip.js";
+import {compileBaseHpMagic} from './base-hp-magic.js';
 import {isSourceEnemyMagicProgram} from '../core/enemy-magic-carrier.js';
 import {compileResourceAbsorption} from './resource-absorption.js';
 import {compileOrdinaryConditionAction} from './ordinary-condition-action.js';
@@ -227,6 +228,10 @@ export function compileDevelopmentAbility(
       effects.push({ slot: fn.slot, kind: "physical" });
     } else if (fn.type === 3 && v1 === 1 && v2 === 0 && v3 === 0) {
       effects.push({ slot: fn.slot, kind: "magic" });
+    } else if (fn.type === 33) {
+      try { const compiled=compileBaseHpMagic(reader,program,fn); effects.push(compiled.effect);
+        for(const row of compiled.sources)if(!sources.some(old=>old.source.assetPath===row.source.assetPath&&old.source.rowId===row.source.rowId))sources.push(row);
+      }catch(error){blockers.push(error instanceof Error?error.message:String(error));}
     } else if (fn.type === 9 && hasSourceControlConditionLifecycle(reader.row("condition.csv", v1))) {
       try {
         const compiled = compileSourceConditionApplication(reader, program);
@@ -377,6 +382,18 @@ export function compileDevelopmentAbility(
     );
   }
   const r = program.rules;
+  const baseHpMagicOnly=effects.length===1&&first?.kind==='base-hp-magic'&&program.functions.length===1&&program.functions[0]?.slot===1;
+  if(effects.some(effect=>effect.kind==='base-hp-magic')&&!baseHpMagicOnly)
+    blockers.push('Unresolved source base HP magic companion phases, condition effects or native override');
+  const baseHpMagicSupport=baseHpMagicOnly&&[1,2,3,13,504].includes(r.type_id!)&&r.system_id===3;
+  if(baseHpMagicOnly&&r.type_id===13&&r.reaction_type!==0)
+    blockers.push('Unresolved source EnemyMagic fixed-base HP reaction_type provider');
+  if(baseHpMagicOnly&&(int(a.ability_lv)!==0||program.elements.length||int(a.attribute_id)!==0||r.attribute_group_id!==0))
+    blockers.push('Unresolved source base HP magic level or element provider');
+  if(baseHpMagicSupport){try{const bound=compileSourceConditionRecoveryHit(reader,program);
+    if(bound.metadata.forAiType!==2||!bound.metadata.isMagic)throw Error('Changed source base HP magic Chanting/hit classification');
+    for(const row of bound.sources)if(!sources.some(old=>old.source.assetPath===row.source.assetPath&&old.source.rowId===row.source.rowId))sources.push(row);
+  }catch(error){blockers.push('Source base HP magic carrier dependency: '+(error instanceof Error?error.message:String(error)));}}
   const nonDamagingOnly = effects.length === 1 && first?.kind === "non-damaging";
   const physicalOnly = (effects.length === 1||resourceAbsorption) && effects[0]!.kind === "physical";
   const defendOnly = effects.length === 1 && effects[0]!.kind === "defend";
@@ -455,10 +472,10 @@ export function compileDevelopmentAbility(
     if (r[key] !== 0) blockers.push(`unresolved ${key}=${r[key]}`);
   if (
     r.accuracy_rate !== 100 &&
-    !((conditionOnly || magicOnly || physicalOnly) && r.accuracy_rate! >= 0)
+    !((conditionOnly || magicOnly || physicalOnly || baseHpMagicOnly) && r.accuracy_rate! >= 0)
   )
     blockers.push(`unresolved accuracy_rate=${r.accuracy_rate}`);
-  const allowedFlags = revival
+  const allowedFlags = baseHpMagicOnly ? [1,2,3,5] : revival
     ? [1, 3]
     : ordinaryConditionSupport
       ? [1, 3]
@@ -479,9 +496,9 @@ export function compileDevelopmentAbility(
     limitations.push(
       `content flags ${program.contentFlags.join(",")}: opening development restriction`,
     );
-  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !resourceAbsorption && !ordinaryConditionSupport && !ordinaryMagic && !loreMagic && !enemyMagic && !protectionSpell && !speedSpell && !controlSupport && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
+  if (!baseHpMagicSupport && !nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !resourceAbsorption && !ordinaryConditionSupport && !ordinaryMagic && !loreMagic && !enemyMagic && !protectionSpell && !speedSpell && !controlSupport && !(revival ? [1] : [3, 4, 604]).includes(r.type_id!))
     blockers.push(`unresolved ability type ${r.type_id}`);
-  if (!nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !resourceAbsorption && !ordinaryConditionSupport && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
+  if (!baseHpMagicSupport && !nonDamagingOnly && !defendOnly && !rowOnly && !userRemovalOnly && !forcedEscapeOnly && !resourceAbsorption && !ordinaryConditionSupport && !protectionSupport && !speedSupport && !(conditionOnly ? [1, 5] : [1, 3]).includes(r.system_id!))
     blockers.push(`unresolved ability system ${r.system_id}`);
   if ((ordinaryMagic || loreMagic || protectionSpell || speedSpell) && int(a.ability_lv) !== 0)
     blockers.push("unresolved level-specific ability consumption");
@@ -554,6 +571,7 @@ export function compileDevelopmentAbility(
     blockers.push("unresolved non-magic element carrier");
   if (elements.length > 8) blockers.push("unreviewed magic element count");
   if(resourceAbsorption)limitations.push("Source resource absorption binds its complete two-slot plan and effect/SE dependencies under web-source-resource-absorption-deferred-v1; joint target/caster resources use the existing action transaction. Reverse recovery, unknown traits and equipment carriers remain hard gates.");
+  if(baseHpMagicSupport)limitations.push('Source Function33 uses fixed-base HP magic, actual parameter Boss facts, source hit/flags and the existing action transaction. Mixed functions and the native mixed self-condition override remain blocked; native effect/SE is deferred under web-source-base-hp-magic-deferred-v1.');
   if (nonDamagingOnly) limitations.push("Native battle effect assets are deferred under web-source-non-damaging-effect-deferred-v1; the existing Web action stages preserve queue, fixed Hit, reactions and continuation, not native animation timing.");
   if(ordinaryConditionSupport)limitations.push('Source ordinary single-slot condition actions retain original flags, rows and effect/SE dependencies under web-source-ordinary-condition-action-deferred-v1. Existing active behavior/owner, Runic/reflect, special source overrides and mixed-phase gates remain required.');
   limitations.push(
@@ -630,7 +648,7 @@ export function compileDevelopmentAbility(
     ...(ordinaryConditionPresentation ? {ordinaryConditionPresentation} : {}),
     presentation: !plan
       ? "unsupported"
-      : nonDamagingOnly||resourceAbsorption||ordinaryConditionSupport
+      : nonDamagingOnly||resourceAbsorption||ordinaryConditionSupport||baseHpMagicSupport
         ? "source-effect-deferred"
       : rowOnly
         ? "row"

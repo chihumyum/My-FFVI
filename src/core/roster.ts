@@ -116,6 +116,7 @@ export type RosterLifecycleTransaction = {
   commitWith(publish: () => void): void;
 };
 export interface FieldRosterPort {
+  prepareEquipment?(command: import("./source-owned-equipment.js").SourceEquipmentCommand): import("./source-owned-equipment.js").SourceEquipmentTransaction;
   /** Requires the current trusted source catalog and the same owned-state phase. */
   prepareGroup?(command: import("./roster-groups.js").RosterGroupCommand): import("./roster-groups.js").RosterGroupTransaction;
   prepare(command: RosterCommand): RosterLifecycleTransaction;

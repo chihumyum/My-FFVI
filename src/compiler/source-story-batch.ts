@@ -109,6 +109,13 @@ export function assessSourceStoryBatch(input:{id:string;contract:unknown|null;bi
     }
     const evidence=run.sourceStory;
     if(!evidence||evidence.kind!=="source-story-route-execution-v1"){fail("missing-root-execution","No actual Field execution journal",route.id);continue;}
+    // A contract cannot improve its result by omitting an actually entered
+    // source Main. Candidate fields are already excluded by the runner.
+    for(const field of evidence.fields)for(const event of field.events)if(event.kind==="root-enter"&&event.slot===null){
+      const declared=contract.roots.find(r=>r.mapId===field.mapId&&r.script===event.script);
+      if(!declared||!route.rootIds.includes(declared.id))
+        fail("undeclared-executed-root","Actual published source Main is outside this route's complete contract",route.id,declared?.id??null);
+    }
     if(evidence.fields.at(-1)?.mapId!==receipt.finalMapId)fail("wrong-actual-exit-map","Receipt final map differs from the actual published field",route.id);
     if(evidence.overflow)fail("execution-evidence-overflow","Bounded observation overflowed; evidence is incomplete",route.id);
     if(!evidence.checkpointRelays.length||run.execution.loadsCommitted<1)fail("missing-storage-relay","No real committed Storage/EntryLoader restore",route.id);

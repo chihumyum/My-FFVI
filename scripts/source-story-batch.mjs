@@ -15,6 +15,8 @@ export async function runSourceStoryBatch({root,compiled='dist',plan,contract:ra
   assert.equal(binding.runtimeHash,runtimeHash,'Complete story batch requires this actual compiled runtime');
   assert.equal(contract.manifestHash,plan.manifestHash);assert.equal(contract.dependencyHash,plan.dependencyHash);
   assert.deepEqual(contract.routes.map(r=>r.id).sort(),plan.manifest.routes.map(r=>r.id).sort(),'All nominated routes require contracts');
+  for(const root of plan.manifest.roots)if(root.kind==='script')
+    assert(contract.roots.some(r=>r.mapId===root.mapId&&r.script===root.script),'Cannot omit a nominated source script root');
   for(const declaration of contract.routes){
     const route=plan.manifest.routes.find(r=>r.id===declaration.id);assert.ok(route);
     assert.deepEqual([...declaration.requiredEncounterIds].sort((a,b)=>a-b),[...route.requiredEncounterIds].sort((a,b)=>a-b),'Cannot omit required source battles');
@@ -44,10 +46,12 @@ export async function runSourceStoryBatch({root,compiled='dist',plan,contract:ra
 
 if(process.argv[1]&&resolve(process.argv[1])===resolve(fileURLToPath(import.meta.url))){
   const args=process.argv.slice(2),options={};
-  for(let i=0;i<args.length;i+=2){assert.ok(['--input-root','--compiled-dir','--manifest','--contract','--report'].includes(args[i])&&args[i+1]);assert.equal(options[args[i]],undefined);options[args[i]]=args[i+1];}
+  for(let i=0;i<args.length;i+=2){assert.ok(['--input-root','--compiled-dir','--candidate-dir','--manifest','--contract','--report'].includes(args[i])&&args[i+1]);assert.equal(options[args[i]],undefined);options[args[i]]=args[i+1];}
   const root=resolve(options['--input-root']??resolve(import.meta.dirname,'..')),compiled=options['--compiled-dir']??'dist';
   assert.ok(options['--manifest']&&options['--contract']&&options['--report'],'Explicit manifest, complete contract and report required');
-  const {plan,repository,packages}=await readSourceBatch(root,options['--manifest'],compiled),
+  const candidate=options['--candidate-dir']?await(await import('./source-candidate.mjs')).openSourceCandidate({root,runtimeRoot:root,compiledDir:resolve(root,compiled),candidateDir:resolve(root,options['--candidate-dir'])}):null;
+  const reader=candidate?{readJson:url=>candidate.read(url)}:undefined;
+  const {plan,repository,packages}=await readSourceBatch(root,options['--manifest'],compiled,reader),
     contract=JSON.parse(await readFile(resolve(root,options['--contract']),'utf8')),
     {loadCorpus}=await import(pathToFileURL(resolve(root,compiled,'src/compiler/corpus.js'))),corpus=await loadCorpus(root);
   assert.equal(contract.lane,'original-source','CLI never promotes synthetic fixtures to source story');
@@ -63,7 +67,8 @@ if(process.argv[1]&&resolve(process.argv[1])===resolve(fileURLToPath(import.meta
       source:asset.source,rawBody:asset.data.Mnemonics,typedBody};
   });
   const report=await runSourceStoryBatch({root,compiled,plan,contract,repository,binding,witnesses});
-  const after=await readSourceBatch(root,options['--manifest'],compiled);
+  const after=await readSourceBatch(root,options['--manifest'],compiled,reader);
+  if(candidate)await candidate.validate();
   const {hash}=await import(pathToFileURL(resolve(root,compiled,"src/compiler/content.js")));
   assert.equal(hash(await loadCorpus(root)),hash(corpus),"Verified original raw source changed during execution");
   assert.equal(after.plan.manifestHash,plan.manifestHash);assert.equal(after.plan.dependencyHash,plan.dependencyHash);

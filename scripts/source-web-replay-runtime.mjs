@@ -58,6 +58,7 @@ export function sourceWebReplayRuntimePorts(options = {}) {
     screenPresentation:'web-field-screen-presentation-2d-v1',
     fieldEffectTransforms:'web-source-logical-board-transforms-v1',
     sourceSnapshot:'immutable-owned-field-source-v1',
+    sourceFieldUi:'web-source-field-ui-v1',
     sourceNonEncounterAreas:'source-non-encounter-areas-v1',
     skyboxPresentation:'web-flat-skybox-panorama-v1',
     viewChange: 'web-flat-field-view-change-v2',

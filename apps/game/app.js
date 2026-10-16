@@ -51,8 +51,10 @@ import { Renderer } from "./renderer.js";
 import { BattleView } from "./battle-view.js";
 import { AudioOutput, audioProjection } from "./audio.js";
 import { drawStoryTimer } from "./story-overlay.js";
+import { SourceFieldUiView } from "./source-field-ui-view.js";
 const $ = (id) => document.getElementById(id),
   canvas = $("game");
+let sourceFieldUiView;
 let flow,
   commands,
   entryLoader,
@@ -131,6 +133,7 @@ const runtime = {
     skyboxPresentation:'web-flat-skybox-panorama-v1',
   fieldEffectTransforms:'web-source-logical-board-transforms-v1',
   sourceSnapshot:'immutable-owned-field-source-v1',
+  sourceFieldUi:'web-source-field-ui-v1',
   sourceNonEncounterAreas:'source-non-encounter-areas-v1',
   viewChange:"web-flat-field-view-change-v2",
   worldAutoTasks:WEB_FLAT_WORLD_AUTO_TASKS,worldAutoMove:WEB_FLAT_WORLD_AUTO_MOVE,
@@ -503,6 +506,7 @@ function sync() {
   syncEventSave();
   syncBattleLoad();
   if (!flow.started || !game) {
+    sourceFieldUiView?.render(null, true);
     choiceView?.reset(); shopView?.reset();
     $("map-button").disabled = true;
     $("menu-button").disabled = true;
@@ -529,6 +533,9 @@ function sync() {
     flow.session,
     flow.inputReady && !document.hidden && !flow.session.battle && !game.stop,
   );
+  const sourceUiLayout = flow.session.field.sourceFieldUiSnapshot
+    ? (sourceFieldUiView ??= new SourceFieldUiView(canvas.parentElement)).render(flow.session.field, failed || document.hidden || mapOpen || flow.paused || flow.busy || !!flow.session.battle)
+    : (sourceFieldUiView?.render(null, true), { source: false, event: false, view: null });
   const mapName = game.content.map.id;
   text("map-label", mapName);
   const canMap =
@@ -537,12 +544,15 @@ function sync() {
     !flow.busy &&
     !flow.session.battle &&
     !game.busy &&
-    !!game.content.minimap;
+    !!game.content.minimap && !(sourceUiLayout.source && sourceUiLayout.event && sourceUiLayout.view !== "all");
   if (!canMap) mapOpen = false;
   $("map-button").disabled = !canMap;
   $("map-button").setAttribute("aria-expanded", String(mapOpen));
   $("map-overview").hidden = !mapOpen;
-  $("minimap-button").hidden = !canMap || mapOpen;
+  const naviVisible = sourceUiLayout.source && sourceUiLayout.view === "navi" && !sourceUiLayout.event &&
+    flow.started && !flow.paused && !flow.busy && !flow.session.battle && !!game.content.minimap;
+  $("minimap-button").hidden = !(canMap || naviVisible) || mapOpen;
+  $("minimap-button").disabled = !canMap;
   text("overview-title", mapName);
   if (flow.session.battle) {
     held.clear();

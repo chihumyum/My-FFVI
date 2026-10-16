@@ -1,3 +1,5 @@
+import { compileFieldUiInstruction, sourceFieldUiSelectors } from "./field-ui.js";
+import { sourceOwnedEquipmentSelectors, compileSourceOwnedEquipmentInstruction } from "./source-owned-equipment.js";
 import {sourceRtsPartySelectors,compileRtsPartyInstruction}from'./field-rts-party.js';
 import { rosterGroupSelectors, compileRosterGroupEvent } from "./roster-groups.js";
 import {compileSourceCharacterNamingInstruction,sourceCharacterNamingSelectors} from './source-character-naming.js';
@@ -149,6 +151,10 @@ export function decodeFieldOp(
   });
   if ((name === "Nop" || name === "Blank") && Object.hasOwn(m, "type")) {
     try { return { ...site, ...compileFieldInternalClockInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "ShowMapTitle" || name === "SysCall" && (sourceFieldUiSelectors as readonly unknown[]).includes(record(m.operands).sValues instanceof Array ? (record(m.operands).sValues as unknown[])[0] : undefined)) {
+    try { return { ...site, ...compileFieldUiInstruction(raw, messages) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if (name === "ChangeView") {
@@ -321,6 +327,10 @@ export function decodeFieldOp(
   if (name === "ReadyBGM" || name === "SyncBGM") {
     try { return { ...site, ...compileAudioReadinessInstruction(raw) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "SysCall" && (sourceOwnedEquipmentSelectors as readonly string[]).includes(s[0]!)) {
+    try { return { ...site, ...compileSourceOwnedEquipmentInstruction(m) }; }
+    catch (error) { return { ...site, kind: "blocked", mnemonic: name, reason: error instanceof Error ? error.message : String(error) }; }
   }
   if (name === "SysCall" && sourcePresentationSelectors.some((selector) => selector === s[0])) {
     try { return { ...site, ...compileSourcePresentationInstruction(raw) }; }

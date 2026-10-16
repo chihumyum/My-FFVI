@@ -1,8 +1,9 @@
+import { parseFieldUiCommand } from "./field-ui.js";
 import { fieldMessageNameReferences, fieldMessageUsesFee } from "./field-message-template.js";
 import type { FieldContent, Op, Site } from "../field/types.js";
 
 export const fieldProviders = Object.freeze([
-  "skyboxPresentation", "screenPresentation", "mobColorFilter", "birdViewActors", "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "vehicleLifecycle", "puppetRoster",
+  "sourceFieldUi", "sourceLocation", "skyboxPresentation", "screenPresentation", "mobColorFilter", "birdViewActors", "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "rosterEquipment", "treasure", "transportation", "vehicleLifecycle", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
   "sourceCharacterNaming", "rtsParty", "sourcePartySelection", "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "viewChange", "worldAutoTasks", "worldAutoMove", "sourceAutoSaveSync",
 ] as const);
@@ -42,6 +43,8 @@ export type FieldContentRequirements = {
 };
 
 const codes: Record<FieldCapability, string> = {
+  sourceFieldUi: "FIELD_SOURCE_FIELD_UI_PROVIDER",
+  sourceLocation: "FIELD_SOURCE_LOCATION_PROVIDER",
   skyboxPresentation:"FIELD_SKYBOX_PRESENTATION_PROVIDER",
   screenPresentation:"FIELD_SCREEN_PRESENTATION_PROVIDER",
   mobColorFilter: "FIELD_MOB_COLOR_FILTER_PROVIDER",
@@ -52,7 +55,7 @@ const codes: Record<FieldCapability, string> = {
   inventory: "FIELD_INVENTORY_PROVIDER", recovery: "FIELD_RECOVERY_PROVIDER",
   messageNames: "FIELD_MESSAGE_NAMES_PROVIDER", sourceMessageSequence: "FIELD_SOURCE_MESSAGE_SEQUENCE_PROVIDER",
   ownedConditions: "FIELD_OWNED_CONDITIONS_PROVIDER", party: "FIELD_PARTY_PROVIDER",
-  roster: "FIELD_ROSTER_PROVIDER", treasure: "FIELD_TREASURE_PROVIDER",
+  rosterEquipment: "FIELD_ROSTER_EQUIPMENT_PROVIDER", roster: "FIELD_ROSTER_PROVIDER", treasure: "FIELD_TREASURE_PROVIDER",
   vehicleLifecycle:"FIELD_VEHICLE_LIFECYCLE_PROVIDER", transportation: "FIELD_TRANSPORTATION_PROVIDER", puppetRoster: "FIELD_PUPPET_ROSTER_PROVIDER",
   partyActors: "FIELD_PARTY_ACTORS_PROVIDER", audioReadiness: "FIELD_AUDIO_READINESS_PROVIDER",
   soundPresentation: "FIELD_SOUND_PRESENTATION_PROVIDER", actorControl: "FIELD_ACTOR_CONTROL_PROVIDER", actorMotion: "FIELD_ACTOR_MOTION_PROVIDER",
@@ -158,6 +161,11 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     if (conditionVisual) add("conditionVisual", "Unknown or unsupported owned condition-visual context", "refresh");
   };
   switch (op.kind) {
+    case "source-field-ui":
+      parseFieldUiCommand(op.command);
+      add("sourceFieldUi", "Source Field UI requires its explicit Web projection and existing Field/Session clock");
+      if (op.command.kind === "title") add("sourceLocation", "Source map title requires the existing GameState CurrentArea/CurrentLocation owner");
+      break;
     case "field-skybox-scroll":add("skyboxPresentation","Source Skybox requires the actual current map model, verified textures and explicit Web2D clock/render owner");break;
     case "field-screen-presentation":add("screenPresentation","Source screen presentation requires an explicit bound Web2D renderer and clock owner");break;
     case "field-view-change": add("viewChange", "ChangeView requires the explicit bound flat Web camera/party controller"); break;
@@ -208,6 +216,7 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
         add("conditionVisual", "Group recovery condition-visual context is unavailable");
       break;
     }
+    case "source-owned-equipment": add("rosterEquipment", "Source owned equipment transaction is unavailable"); break;
     case "roster": {
       add("roster", "Field roster state is unavailable");
       const command = commandOf(op);

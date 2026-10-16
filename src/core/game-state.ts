@@ -1,3 +1,5 @@
+import { parseSourceLocation, type SourceLocation, type FieldLocationPort } from "./field-ui.js";
+import { sourceEquipmentTargets, type SourceEquipmentCommand, type SourceEquipmentTransaction } from "./source-owned-equipment.js";
 import { projectTransportationParkingUpload, type TransportationParkingObservation } from "./transportation-parking-upload.js";
 import type {PartySlotIndex}from'./party.js';
 import {validateRtsCatalog,type SourceRtsPartyCatalog,type FieldRtsPartyPort,type RtsOwnedTransaction,type RtsOwnedView}from'./field-rts-party.js';
@@ -33,7 +35,7 @@ import { projectShopTrade, shopBuyOptions, shopSellOptions, validateShopCatalog,
   type ShopCatalog, type ShopInventoryRead, type ShopTradeRequest } from "./shop.js";
 import { WEB_BATTLE_GAU_INSTANCES, type BattleGauOwnedHost } from "./battle-gau-instances.js";
 import {
-  prepareRosterNativeStep, rosterJoinLevel,
+  prepareRosterNativeStep, rosterJoinLevel, lifecycleEquipmentCatalog,
   type RosterNativeStep,
   validateRosterLifecycle,
   type RosterMember,
@@ -206,7 +208,9 @@ export type OwnedCharacter = RosterMember & {
   growth: CharacterGrowthProgress | null;
 };
 export type GameStateSnapshot = {
-  formatVersion: 12 | 13 | 14 | 15;
+  formatVersion: 12 | 13 | 14 | 15 | 16;
+  /** Last explicit source ShowMapTitle write. Absence is unknown, not an empty initializer. */
+  sourceLocation?: SourceLocation;
   kind: "owned-game-state";
   catalogHash: string;
   initialization: "development-checkpoint" | "source-new-game";
@@ -304,6 +308,10 @@ export class GameState {
   private readonly conditions: BattleConditions;
   private readonly ownedConditionDefinitions: { id: number; type: number }[];
   private readonly fieldConditions: FieldConditions | null;
+  readonly fieldLocation: FieldLocationPort = {
+    read: () => this.data.sourceLocation ? { ...this.data.sourceLocation } : null,
+    prepare: value => this.prepareSourceLocation(value),
+  };
   readonly fieldSteps: FieldConditionPort = {
     prepareStep: (transportationId) => this.prepareFieldStep(transportationId),
   };
@@ -315,6 +323,7 @@ export class GameState {
     prepare: (command) => this.preparePartyEvent(command),
   };
   readonly fieldRoster: FieldRosterPort = {
+    prepareEquipment: command => this.prepareSourceEquipment(command),
     prepare: (command) => this.prepareRosterEvent(command),
     prepareGroup: (command) => this.prepareRosterGroup(command),
   };
@@ -548,10 +557,11 @@ export class GameState {
     return plan;
   }
   private validate(data: GameStateSnapshot) {
-    keys(data, ownedSnapshotFields + (this.content.fieldAbilities ? ",fieldRandom" : ""));
+    keys(data, ownedSnapshotFields + (this.content.fieldAbilities ? ",fieldRandom" : "") + (Object.hasOwn(data, "sourceLocation") ? ",sourceLocation" : ""));
+    if (Object.hasOwn(data, "sourceLocation")) parseSourceLocation(data.sourceLocation!);
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== (Array.isArray(data.completedBattles)&&data.completedBattles.some(b=>b.outcome==='forced-save')?15:this.content.magicStones ? 14 : this.content.fieldAbilities ? 13 : 12) ||
+      data.formatVersion !== (data.sourceLocation ? 16 : Array.isArray(data.completedBattles)&&data.completedBattles.some(b=>b.outcome==='forced-save')?15:this.content.magicStones ? 14 : this.content.fieldAbilities ? 13 : 12) ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -642,7 +652,7 @@ export class GameState {
       if (b.serial !== index)
         throw new Error("Invalid battle receipt sequence");
       integer(b.encounterId, 0x7fffffff, 1);
-      if (b.outcome !== "victory" && b.outcome !== "escaped" && b.outcome !== "forced" && (b.outcome!=="forced-save"||data.formatVersion!==15))
+      if (b.outcome !== "victory" && b.outcome !== "escaped" && b.outcome !== "forced" && (b.outcome!=="forced-save"||![15,16].includes(data.formatVersion)))
         throw new Error("Invalid battle receipt outcome");
     }
   }
@@ -1396,6 +1406,49 @@ export class GameState {
       this.commitMenuPresentation(next,validate,() => publish(current)); consumed=true;
     }};
   }
+  private sourceEquipmentIdentity() {
+    return canonical({ equipment: this.content.equipmentSystem ?? null, currentJobs: this.content.currentJobs ?? null });
+  }
+  private projectSourceEquipment(data: GameStateSnapshot, command: SourceEquipmentCommand) {
+    const system = this.content.equipmentSystem;
+    if (!system) throw Error("Equipment system is unavailable");
+    const next = structuredClone(data), targets = sourceEquipmentTargets(next.roster, next.party, command);
+    const catalog = lifecycleEquipmentCatalog(this.currentEquipment(next.roster));
+    const changes: SourceEquipmentTransaction["changes"] = [];
+    for (const id of targets) for (const slot of [6, 5, 4, 3, 2, 1]) {
+      const member = next.roster.find(p => p.id === id)!;
+      const empty = selectEmptyEquipment(catalog, next.equipmentStock, member.sourceId, slot);
+      if (empty === null) throw Error("Missing owned empty equipment for source member removal");
+      const preview = previewEquipmentChange(catalog, next.roster.filter(p => p.enabled), next.equipmentStock, id, slot, empty);
+      const loadout = preview.roster.find(p => p.id === id)!;
+      if (member.abilities) member.abilities.owned = applyEquipmentAbilityChange(member.abilities.owned, member, loadout, catalog);
+      else if (equipmentAbilityCostProviders(catalog, loadout).length) throw Error("Equipment passive lacks owned ability state");
+      member.equipment = [...loadout.equipment];
+      // Native RemoveAllEquip runs SetEquip in reverse slot order. Preserve
+      // each step's resource clamps/passive removal rather than only the final
+      // loadout; stock Count never changes when a registration is removed.
+      const projected = this.projectOwnedParameters(member);
+      member.maxHp = projected.maxHp; member.maxMp = projected.maxMp;
+      member.hp = Math.min(member.hp, member.maxHp); member.mp = Math.min(member.mp, member.maxMp);
+      member.conditionIds = this.conditions.updateDying(member.hp, member.maxHp, member.conditionIds);
+      changes.push(...preview.changes.map(change => ({ targetId: id, ...change })));
+      this.validate(next);
+    }
+    this.validate(next);
+    return { next, targets, changes };
+  }
+  private prepareSourceEquipment(command: SourceEquipmentCommand): SourceEquipmentTransaction {
+    this.requireIdle();
+    const { next, targets, changes } = this.projectSourceEquipment(this.data, command), revision = this.revision, identity = this.sourceEquipmentIdentity();
+    let consumed = false;
+    const validate = () => {
+      this.requireIdle();
+      if (consumed || this.revision !== revision || this.sourceEquipmentIdentity() !== identity)
+        throw Error("Stale source owned equipment transaction");
+    };
+    return { get targets() { return [...targets]; }, get changes() { return structuredClone(changes); }, validate,
+      commitWith: publish => { this.commitMenuPresentation(next, validate, publish); consumed = true; } };
+  }
   private projectOwnedConditionEvent(data: GameStateSnapshot, command: OwnedConditionCommand) {
     const next = structuredClone(data);
     const preview: { roster: GameStateSnapshot["roster"]; targets: string[];
@@ -1475,6 +1528,7 @@ export class GameState {
    * same ports to live state so later events keep a single state owner. */
   prepareFieldState(options: { scriptRandom?: WebSourceScriptRandom } = {}): {
     ports: {
+      fieldLocation: FieldLocationPort;
       inventory: FieldInventoryPort;
       treasure: FieldTreasurePort;
       party: FieldPartyPort;
@@ -1507,6 +1561,22 @@ export class GameState {
       transportationPublishing = false,
       sealedGeneration: number | undefined,
       publicationRevision: number | null = null;
+    const fieldLocation: FieldLocationPort = {
+      read: () => { const current = published ? this.data : data; return current.sourceLocation ? { ...current.sourceLocation } : null; },
+      prepare: value => {
+        if (published) return this.prepareSourceLocation(value);
+        this.requireIdle(); const next = this.projectSourceLocation(data, value), version = generation; let used = false;
+        const validate = () => { this.requireIdle(); if (used || published || transportationPublishing || generation !== version || this.revision !== revision)
+          throw new Error("Stale candidate CurrentArea/CurrentLocation transaction"); };
+        return { validate, commitWith: publish => {
+          validate(); if (typeof publish !== "function" || publish.constructor.name === "AsyncFunction") throw new Error("Source location publication must be synchronous");
+          transportationPublishing = true;
+          try { const result: unknown = publish(); if (result && typeof (result as { then?: unknown }).then === "function") throw new Error("Source location publication must be synchronous");
+            data = next; generation++; used = true;
+          } finally { transportationPublishing = false; }
+        } };
+      },
+    };
     const scriptRandom: FieldScriptRandomPort = { prepare: upper => {
       if (published) return this.prepareScriptRandom(upper);
       this.requireIdle(); validateScriptRandomUpper(upper);
@@ -1641,6 +1711,27 @@ export class GameState {
               data=next;generation++;consumed=true;}finally{transportationPublishing=false;this.menuPublication=false;}}};
       }};
     const roster: FieldRosterPort = {
+      prepareEquipment: command => {
+        if (published) return this.prepareSourceEquipment(command);
+        this.requireIdle();
+        const { next, targets, changes } = this.projectSourceEquipment(data, command), owner = data, version = generation, identity = this.sourceEquipmentIdentity();
+        let consumed = false;
+        const validate = () => {
+          this.requireIdle();
+          if (consumed || transportationPublishing || published || data !== owner || generation !== version || this.revision !== revision || this.sourceEquipmentIdentity() !== identity)
+            throw Error("Stale candidate source owned equipment transaction");
+        };
+        return { get targets() { return [...targets]; }, get changes() { return structuredClone(changes); }, validate,
+          commitWith: publish => {
+            validate();
+            if (typeof publish !== "function" || publish.constructor.name === "AsyncFunction") throw Error("Source owned equipment publication must be synchronous");
+            transportationPublishing = true; this.menuPublication = true;
+            try { const result: unknown = publish();
+              if (result && typeof (result as { then?: unknown }).then === "function") throw Error("Source owned equipment publication must be synchronous");
+              data = next; generation++; consumed = true;
+            } finally { transportationPublishing = false; this.menuPublication = false; }
+          } };
+      },
       prepareGroup: (command) => {
         if (published) return this.prepareRosterGroup(command);
         this.requireIdle();
@@ -1817,6 +1908,7 @@ export class GameState {
         ...(options.scriptRandom === WEB_SOURCE_SCRIPT_RANDOM ? { scriptRandom } : {}),
         puppetRoster: { current: () => this.projectPuppetRoster(published ? this.data : data),
           replacement: () => this.projectPuppetReplacementRoster(published ? this.data : data) },
+        fieldLocation,
         characterNamingPort: {prepareOpen:command=>this.prepareCharacterNamingOpen(characterNamingContext,command)},
         messageNames: { prepare: (refs) => {
           if (published) return this.fieldMessageNames.prepare(refs);
@@ -1857,6 +1949,16 @@ export class GameState {
   }
   get activeParty() {
     return activePartyMembers(this.data.party);
+  }
+  private projectSourceLocation(data: GameStateSnapshot, value: SourceLocation): GameStateSnapshot {
+    const next = structuredClone(data); next.sourceLocation = parseSourceLocation(value); next.formatVersion = 16;
+    this.validate(next); return next;
+  }
+  private prepareSourceLocation(value: SourceLocation): ReturnType<FieldLocationPort["prepare"]> {
+    this.requireIdle(); const next = this.projectSourceLocation(this.data, value), revision = this.revision; let consumed = false;
+    const validate = () => { this.requireIdle(); if (consumed || this.transportationPublication || this.menuPublication || this.revision !== revision)
+      throw new Error("Stale source CurrentArea/CurrentLocation transaction"); };
+    return { validate, commitWith: publish => { validate(); this.commitMenuPresentation(next, validate, publish); consumed = true; } };
   }
   private projectPuppetReplacementRoster(data: GameStateSnapshot): import('./field-puppet-replacement.js').FieldPuppetReplacementRoster {
     const owned=this.projectPuppetRoster(data).owned.map(({ownedId,sourceId})=>({ownedId,sourceId}));
@@ -2862,7 +2964,7 @@ export class GameState {
     }
     if(saved){
       for(const owner of next.roster)owner.conditionIds=this.conditions.battleEnd(owner.conditionIds);
-      next.formatVersion=15;
+      next.formatVersion=next.sourceLocation ? 16 : 15;
     }
     next.completedBattles.push({ ...lease, outcome: exit.outcome });
     if (victory && next.nativeState) next.nativeState.ownedMagic = this.observedMagic(next);

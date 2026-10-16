@@ -29,6 +29,8 @@ Core 不宣称其 Field 已发布；journal 的 `currentField` 固定 null。run
 
 每个根必须由正常 Main 原入口开始，完整 raw body 中的 Main 标签、typed body 和来源文件指纹均一致。分支 requirements 必须列出每个来源 Branch 的显式目标与 fall-through，执行 journal 逐项匹配。此版本不猜测不可达分支，也不把 Puppet/ChangeScript 等未闭合的根轨迹自动视为完成；它们保持缺证据的 blocked 状态。
 
+合同不能省略manifest已提名的script根，也不能删除实际当前Field已经进入的Main来减少验收范围；任一实际执行根未被本route声明时，整批保持blocked。
+
 runner 从实际 CheckpointStorage 读取保存槽原始字节，核对其中 checkpoint 与恢复后的实际 owner hash。必须有中途恢复及恢复后的正常输入，最终保存一次不能代替续玩。后段从前段真实 Storage current 字节截取实际 checkpoint payload，并复用 `assessStoryCheckpointLink`；多个 route 的 checkpoint 链也必须字节精确相等，不能把两个独立运行的末状态拼成连续流程。必要战斗要有真实 handoff/return、胜利 trace 和 owned settlement。
 
 纯评估函数接收可信 runner 的证据；hash 相等本身不证明任意调用方 JSON 被执行。正式 CLI 不接受调用方自称 verified 的原始正文，而是从 `loadCorpus` 已核对快照重新定位唯一物理 script，核对完整 raw body、来源 bundle SHA 与实际内容包中的 typed body。它不运行内容 producer，也不发布内容。
@@ -39,10 +41,13 @@ runner 从实际 CheckpointStorage 读取保存槽原始字节，核对其中 ch
 node scripts/source-story-batch.mjs \
   --input-root /absolute/project \
   --compiled-dir /absolute/isolated/dist \
+  --candidate-dir /absolute/private-candidate \
   --manifest content-batches/declared-batch.json \
   --contract /absolute/local/complete-story-contract.json \
   --report build/reports/complete-story-batch.json
 ```
+
+`--candidate-dir`使同代验收直接读取已封存、输入与内容均经过核验的私有候选，无需先发布公共集合。所有引用仍由同一Repository核对；缺对象或摘要不符即失败，没有公共目录回退。省略时沿用现有公共内容读取。
 
 没有来源完整 route 合同的静态 cohort 由 planner 调用评估函数并传 `contract: null`，不能创建假 route 或拿示例合同补数。
 

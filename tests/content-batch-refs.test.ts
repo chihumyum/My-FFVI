@@ -143,10 +143,10 @@ test("matching reference pins cannot bless an edited payload or source developme
 });
 
 const compiled = fileURLToPath(new URL("../", import.meta.url));
-async function readBatch(root: string) {
+async function readBatch(root: string, readJson?: (url: string) => Promise<unknown>) {
   const script = pathToFileURL(resolve(process.cwd(), "scripts/content-batch-files.mjs")).href;
   const { readSourceBatch } = await import(script);
-  return readSourceBatch(root, "manifest.json", compiled) as Promise<ReturnType<typeof sourceReadResult>>;
+  return readSourceBatch(root, "manifest.json", compiled, readJson ? {readJson} : undefined) as Promise<ReturnType<typeof sourceReadResult>>;
 }
 function sourceReadResult() {
   const f = sourceFixture();
@@ -184,6 +184,25 @@ test("a legacy source manifest still uses the old default URLs and aliases", asy
     assert.deepEqual(loaded.packages, f.packages);
     assert.equal(Object.hasOwn(loaded.plan.manifest, "contentRefs"), false);
   } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test("a private candidate supplies exact batch references without public fallback and still cannot bless changed payloads", async () => {
+  const f = await filesFixture();
+  try {
+    const payloads = new Map<string, unknown>([
+      [f.contentRefs.world.url, f.packages.catalog], [f.contentRefs.source.entry.url, f.packages.entry],
+      [f.contentRefs.source.battle.url, f.packages.battle],
+      [f.packages.catalog.maps[String(f.packages.maps[0]!.mapId)]!.url, f.packages.maps[0]],
+    ]);
+    await rm(join(f.root, "build"), {recursive:true});
+    const readJson = async (url: string) => { assert(payloads.has(url), "Missing private candidate object"); return structuredClone(payloads.get(url)); };
+    assert.deepEqual((await readBatch(f.root, readJson)).packages, f.packages);
+    const changed = structuredClone(f.packages.entry); changed.entry.mapId++;
+    payloads.set(f.contentRefs.source.entry.url, changed);
+    await assert.rejects(readBatch(f.root, readJson), /hash|digest|payload/i);
+    payloads.delete(f.contentRefs.source.entry.url);
+    await assert.rejects(readBatch(f.root, readJson), /Missing private candidate object/);
+  } finally { await rm(f.root, {recursive:true, force:true}); }
 });
 
 test("the file adapter rejects undeclared fixture execution lanes", async () => {

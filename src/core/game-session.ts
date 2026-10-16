@@ -420,6 +420,7 @@ export class GameSession {
         ...(battleCatalog.common.battleEntry ? { contentInvalidations: {
           catalogHash: battleCatalog.contentHash, catalog: battleCatalog.common.battleEntry } } : {}),
         ...(messageFees ? { messageFees } : {}),
+        fieldLocation: this.state.fieldLocation,
         puppetRoster: this.state.fieldPuppetRoster,
         inventory: this.state.fieldInventory,
         messageNames: this.state.fieldMessageNames,
@@ -867,6 +868,7 @@ export class GameSession {
       if (this.battle) {
         if (!this.field.soundReady) continue;
         this.field.advanceStoryTimer(10, "battle");
+        this.field.advanceSourceFieldUi(10);
         this.field.bgm.advance(10, this.field.content.bgm);
         this.field.environment.advance(10, this.field.content.environment);
         this.field.se.advance(10, this.field.content.se);
@@ -907,7 +909,7 @@ export class GameSession {
   private fieldBattleFingerprint(field: FieldGame): string {
     return canonical({ request: field.stop, contentInvalidations: field.contentInvalidationsSnapshot, events: field.eventState.snapshot(), entry: field.battleEntryContext.state,
       time: field.time, fade: field.fader.snapshot(), effects: field.fieldEffectsSnapshot,
-      message: field.sourceMessage.snapshot(), messageRevision: field.sourceMessage.mutationRevision });
+      sourceUi: field.sourceFieldUiSnapshot, message: field.sourceMessage.snapshot(), messageRevision: field.sourceMessage.mutationRevision });
   }
   private rememberEncounterFailure(field: FieldGame, request: SessionBattleRequest, error: unknown): void {
     if (this.field === field && field.stop === request && !this.battle)
