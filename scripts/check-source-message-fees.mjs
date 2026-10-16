@@ -1,4 +1,4 @@
-import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
+import { sourceWebReplayRuntimePorts, sourceWebReplayFieldEffectsHost } from './source-web-replay-runtime.mjs';
 // Whole source bodies plus every actual source-site operand. No separate VM,
 // edited source flags, injected RNG state, HP or roster. Two lanes stay distinct.
 import assert from 'node:assert/strict';
@@ -22,7 +22,7 @@ async function pair(id){if(!pairs.has(id)){const p=resolve(dir,'maps/'+id+'.json
 const initialSource=(await pair(sourceEntry.entry.mapId)).source,ready={visible:true,mediaReady:true,overlayOpen:false},seal=value=>{const{contentHash,...body}=value;return{...body,contentHash:api.hash(body)};},bundleCache=new Map();
 const runtimePorts=()=>({ ...sourceWebReplayRuntimePorts(),scriptRandom:api.WEB_SOURCE_SCRIPT_RANDOM,battleHandoff:'prepared',sourceEncounterPolicy:api.WEB_SOURCE_ENCOUNTER_POLICY,
  sourceMessageSequence:api.createWebFieldMessageSequencePort(),conditionLeaderActivity:api.createWebFlatConditionLeaderActivityPort(),
- cameraShake:api.createWebFieldCameraShakePolicy(),fieldEffects:api.createWebLogicalFieldEffectsHost(),assignedNpcRoutes:'web-assigned-npc-route-grid-v1',retainedWorldTransportation:'web-retained-walking-magitek-world-entry-v1',
+ cameraShake:api.createWebFieldCameraShakePolicy(),fieldEffects:sourceWebReplayFieldEffectsHost(api.createWebLogicalFieldEffectsHost),assignedNpcRoutes:'web-assigned-npc-route-grid-v1',retainedWorldTransportation:'web-retained-walking-magitek-world-entry-v1',
  audioReadiness:{isReady:()=>true},soundPresentation:{isPresented:()=>true},transportationTimestamp:()=>'639273600000000000'});
 async function bind(rootRecord,lane,sourceSite){const key=api.hash({mapId:rootRecord.mapId,alias:rootRecord.alias,lane,site:sourceSite?.site??null});if(bundleCache.has(key))return bundleCache.get(key);
  const original=(await pair(rootRecord.mapId)),map=structuredClone(lane==='original-source-map'?original.framework:systems.map),world=structuredClone(lane==='original-source-map'?framework:systems.world),battle=structuredClone(systems.battle);

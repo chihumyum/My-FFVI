@@ -245,6 +245,7 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
   }, {
     tables: Object.fromEntries(Object.keys(source.tables).map((table) => [table, rows(table)])),
     initializations: source.ownedInitializations, characterMedia: source.characterMedia,
+    equipmentStateKind: "source-equipment-state-v2",
     ordinaryWeaponEffects: source.ordinaryWeaponEffects.catalog,
     sprites: source.sprites, name,
   });
@@ -378,7 +379,7 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
     Object.fromEntries(Object.values(source.ownedInitializations).map((t) => [
       t.initial.sourceId, { hasTwoSwordStyle: t.equipmentCharacter.hasTwoSwordStyle,
         hasTwoHand: t.equipmentCharacter.hasTwoHand, equipAnyJob: t.equipmentCharacter.equipAnyJob },
-    ])), source.ordinaryWeaponEffects.catalog,
+    ])), source.ordinaryWeaponEffects.catalog, "source-equipment-state-v2",
   ).catalog;
   const newGame = compileNewGame(reader, tables, name, source.ordinaryWeaponEffects.catalog);
   const owned: GameCatalogModules["owned"] = {

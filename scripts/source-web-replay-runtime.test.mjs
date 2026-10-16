@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
-import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
+import { sourceWebReplayRuntimePorts, sourceWebReplayFieldEffectsHost } from './source-web-replay-runtime.mjs';
 
 const root=resolve(import.meta.dirname,'..'),compiled=resolve(root,process.env.FFVI_REPLAY_PORTS_COMPILED??'dist'),
  load=path=>import(pathToFileURL(resolve(compiled,path+'.js')));
@@ -49,4 +49,19 @@ test('an explicit Web policy never turns a legacy unknown result into fresh None
  assert.notEqual(before.initialization,'source-new-game');assert.equal(game.field.startEvent('result-query'),true);game.advance(10);
  assert.equal(game.field.stop.kind,'unsupported');assert.match(game.field.stop.message,/Fresh native result context is unavailable/);
  assert.equal(game.field.eventState.read({category:'ScriptLocalVariable',index:0}),-1);assert.equal(game.state,owner);assert.deepEqual(game.state.snapshot(),before);
+});
+
+test('positive replay composes the actual board host before Session entry and keeps the missing-host rejection',async()=>{
+ const [{movableFieldEffectsFixture},{createWebLogicalFieldEffectsHost},{GameFlow}]=await Promise.all([load('tests/fixtures/movable-field-effects'),load('src/core/field-logical-effects'),load('src/core/game-flow')]);
+ const f=await movableFieldEffectsFixture(),ready={visible:true,mediaReady:true,overlayOpen:false};
+ f.runtime.fieldEffects=createWebLogicalFieldEffectsHost();
+ await assert.rejects(async()=>f.make(),/Movable logical boards require an explicit matching runtime host/);
+ f.runtime.fieldEffects=sourceWebReplayFieldEffectsHost(createWebLogicalFieldEffectsHost);
+ const game=await f.make(),flow=new GameFlow(game);flow.start();flow.advance(10,ready);
+ assert.equal(game.field.stop,null);const before=game.field.fieldEffectsSnapshot.boards[0].position;
+ assert.equal(game.field.startEvent('fx-transform'),true);
+ for(let i=0;i<100&&game.field.busy&&!game.field.stop;i++)flow.advance(10,ready);
+ assert.equal(game.field.stop,null);assert.notDeepEqual(game.field.fieldEffectsSnapshot.boards[0].position,before);
+ assert.equal(game.checkpointReady,true);assert.deepEqual(f.restore(game.checkpoint()).checkpoint(),game.checkpoint());
+ assert.throws(()=>sourceWebReplayFieldEffectsHost(null),/Missing compiled/);
 });

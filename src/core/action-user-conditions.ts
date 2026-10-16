@@ -18,8 +18,10 @@ export function projectActionTargets<T extends ActionParticipant>(plan: Developm
   rows?: (target: T) => PhysicalRowContext,
   abilityId?: number,
   absorptionContext?:AbsorptionContext,
+  automaticLife: "settle" | "defer-to-battle-owner" = "settle",
 ): {targets:(ReturnType<typeof projectActionTarget>&{targetId:string})[];userConditionIds:number[];userResults:ActionUserConditionResult[];
   userResourceState?:ActionResourceState;userResourceResults?:{ownerId:string;slot:number;resource:'hp'|'mp';recovery:true;amount:number;missed:boolean;nullified?:boolean}[]} {
+  if (automaticLife !== "settle" && automaticLife !== "defer-to-battle-owner") throw new Error("Invalid action automatic life owner");
   if (!targets.length || new Set(targets.map(target => target.id)).size !== targets.length)
     throw new Error("Invalid joint action targets");
   conditions.validateOwner(actor.conditionIds, actor.side);
@@ -42,12 +44,12 @@ export function projectActionTargets<T extends ActionParticipant>(plan: Developm
   }
   if(resourceAbsorptionEffect(plan)){
     if(targets.length!==1)throw Error('Unresolved absorption multi-target scope');
-    return projectResourceAbsorption(plan,power,actor,targets[0]!,conditions,random,cost,absorptionContext,rows?.(targets[0]!),abilityId);
+    return projectResourceAbsorption(plan,power,actor,targets[0]!,conditions,random,cost,absorptionContext,rows?.(targets[0]!),abilityId,automaticLife);
   }
   const userEffects = plan.effects.filter((effect): effect is UserConditionEffect => effect.kind === "user-condition");
   if (!userEffects.length) return {
     targets: targets.map(target => ({ targetId: target.id,
-      ...projectActionTarget(plan, power, actor, target, conditions, random, targets.length, cost, rows?.(target), abilityId) })),
+      ...projectActionTarget(plan, power, actor, target, conditions, random, targets.length, cost, rows?.(target), abilityId, automaticLife) })),
     userConditionIds: [...actor.conditionIds], userResults: [] as ActionUserConditionResult[],
   };
   // The currently closed source composition has an empty primary calculator

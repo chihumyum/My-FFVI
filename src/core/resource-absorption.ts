@@ -37,7 +37,8 @@ export function resourceAbsorptionEffect(plan:DevelopmentAbilityPlan):ResourceAb
  * The primary uses the ordinary numeric calculator exactly once. */
 export function projectResourceAbsorption(plan:DevelopmentAbilityPlan,power:number,actor:ActionParticipant,target:ActionParticipant,
   conditions:BattleConditions,random:(min:number,max:number)=>number,cost:number,context:AbsorptionContext|undefined,
-  rows?:PhysicalRowContext,abilityId?:number){
+  rows?:PhysicalRowContext,abilityId?:number,automaticLife:"settle"|"defer-to-battle-owner"="settle"){
+  if (automaticLife !== "settle" && automaticLife !== "defer-to-battle-owner") throw new Error("Invalid action automatic life owner");
   const effect=resourceAbsorptionEffect(plan);if(!effect)throw Error('Missing resource absorption effect');
   if(context?.kind!=='source-non-reversing-absorption-v1'||context.actorId!==actor.id||context.targetId!==target.id)
     throw Error('Resource absorption needs current non-reversing actor/target providers');
@@ -69,12 +70,12 @@ export function projectResourceAbsorption(plan:DevelopmentAbilityPlan,power:numb
   if(effect.resource==='hp')targetState.conditionIds=conditions.updateDying(targetState.hp,target.maxHp,targetState.conditionIds);
   // A shared self-target settles only after both slots; its intermediate zero
   // resource is a draft, never a newly published death component.
-  if(target.id!==actor.id)Object.assign(targetState,conditions.settleLife(targetState.hp,targetState.conditionIds,conditions.isUnableFight(recipient.conditionIds)));
+  if(automaticLife==="settle"&&target.id!==actor.id)Object.assign(targetState,conditions.settleLife(targetState.hp,targetState.conditionIds,conditions.isUnableFight(recipient.conditionIds)));
   const userState:ActionResourceState=target.id===actor.id?{...targetState,conditionIds:[...targetState.conditionIds]}:
     {hp:paid.hp,mp:paid.mp,conditionIds:[...paid.conditionIds]};
   userState[effect.resource]+=amount;
   if(effect.resource==='hp')userState.conditionIds=conditions.updateDying(userState.hp,actor.maxHp,userState.conditionIds);
-  Object.assign(userState,conditions.settleLife(userState.hp,userState.conditionIds,conditions.isUnableFight(paid.conditionIds)));
+  if(automaticLife==="settle")Object.assign(userState,conditions.settleLife(userState.hp,userState.conditionIds,conditions.isUnableFight(paid.conditionIds)));
   if(target.id===actor.id)Object.assign(targetState,userState,{conditionIds:[...userState.conditionIds]});
   const result:NumericalEffectResult={...primary,resource:effect.resource,amount,recovery:false,
     ...(!primary.missed&&(primary.nullified||amount===0)?{nullified:true}:{})};

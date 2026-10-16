@@ -40,7 +40,9 @@ const published = JSON.parse(await readFile(resolve(root, option("--catalog", "b
 const source = JSON.parse(await readFile(root + "build/game/opening-battle.json", "utf8"));
 for (const document of [source, published]) { const { contentHash, ...body } = document; assert.equal(hash(body), contentHash); }
 const templates = Object.values(source.ownedInitializations);
-assert.equal(templates.length, 18);
+const equipmentStateKind = published.gameState.equipmentSystem.catalog.kind;
+assert.ok(["equipment-development-v1", "source-equipment-state-v2"].includes(equipmentStateKind));
+assert.equal(templates.length, equipmentStateKind === "source-equipment-state-v2" ? 27 : 18);
 const providers = Object.fromEntries(templates.map((template) => [template.initial.sourceId, {
   hasTwoSwordStyle: template.equipmentCharacter.hasTwoSwordStyle,
   hasTwoHand: template.equipmentCharacter.hasTwoHand,
@@ -50,7 +52,7 @@ const names = new Map(Object.values(published.gameState.equipmentSystem.catalog.
   [reader.row("content.csv", item.id).values.mes_id_name, item.name]));
 const contentIds = corpus.tables["content.csv"].filter((row) => ["2", "3"].includes(row.type_id)).map((row) => Number(row.id));
 const compiled = compileEquipmentCatalog(reader, contentIds, templates.map((template) => template.initial.sourceId),
-  (key) => { assert.ok(names.has(key)); return names.get(key); }, providers, effects.catalog);
+  (key) => { assert.ok(names.has(key)); return names.get(key); }, providers, effects.catalog, equipmentStateKind);
 const equipment = compiled.catalog, rows = compileBattleRowCatalog(reader, corpus.tables).catalog;
 const definitions = Object.values(equipment.definitions), admitted = definitions.filter((item) => !item.blockers.length);
 assert.equal(definitions.length, 223); assert.equal(admitted.length, 129);

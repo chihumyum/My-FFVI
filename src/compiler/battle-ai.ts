@@ -213,10 +213,10 @@ export function compileBattleAI(
           target: i[2],
         };
       if (
-        ["Act", "CounterAct"].includes(m.mnemonic) &&
+        ["Act", "CounterAct", "FinalAttackAct"].includes(m.mnemonic) &&
         i.length &&
         i.every((id) => id > 0) &&
-        s.every((v) => v === "") &&
+        (m.mnemonic === "FinalAttackAct" || s.every((v) => v === "")) &&
         (!r.length ||
           (r.length === i.length &&
             r.every((w) => w >= 0 && Number.isFinite(Math.fround(w))) &&
@@ -226,7 +226,9 @@ export function compileBattleAI(
             r.some((w) => Math.fround(w) > 0)))
       )
         op = {
-          kind: m.mnemonic === "Act" ? "act" : "counter-act",
+          ...(m.mnemonic === "FinalAttackAct"
+            ? { kind: "final-act" as const, messages: [...s] }
+            : { kind: m.mnemonic === "Act" ? "act" as const : "counter-act" as const }),
           abilities: i,
           weights: r,
         };
@@ -273,7 +275,7 @@ export function battleAIAbilities(program: BattleAIProgram): number[] {
   return [
     ...new Set(
       program.instructions.flatMap(({ op }) =>
-        op.kind === "act" || op.kind === "loop-act" || op.kind === "counter-act" || op.kind === "counter-received-command"
+        op.kind === "act" || op.kind === "loop-act" || op.kind === "counter-act" || op.kind === "counter-received-command" || op.kind === "final-act"
           ? op.abilities
           : [],
       ),

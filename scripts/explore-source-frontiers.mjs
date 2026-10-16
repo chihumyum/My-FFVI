@@ -1,4 +1,4 @@
-import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
+import { sourceWebReplayRuntimePorts, sourceWebReplayFieldEffectsHost } from './source-web-replay-runtime.mjs';
 import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
@@ -52,7 +52,7 @@ assert.equal(snapshot.sourceSetHash,catalog.sourceSetHash);assert.equal(snapshot
 assert.equal(binding.selected.release.sourceSetHash,catalog.parentSourceSetHash,'Release parent source identity changed');
 const runtimePorts=()=>({ ...sourceWebReplayRuntimePorts(),scriptRandom:WEB_SOURCE_SCRIPT_RANDOM,assignedNpcRoutes:'web-assigned-npc-route-grid-v1',retainedWorldTransportation:'web-retained-walking-magitek-world-entry-v1',
  sourceEncounterPolicy:WEB_SOURCE_ENCOUNTER_POLICY,sourceMessageSequence:createWebFieldMessageSequencePort(),
- conditionLeaderActivity:createWebFlatConditionLeaderActivityPort(),fieldEffects:createWebLogicalFieldEffectsHost(),cameraShake:createWebFieldCameraShakePolicy(),
+ conditionLeaderActivity:createWebFlatConditionLeaderActivityPort(),fieldEffects:sourceWebReplayFieldEffectsHost(createWebLogicalFieldEffectsHost),cameraShake:createWebFieldCameraShakePolicy(),
  battleHandoff:'prepared',audioReadiness:{isReady:()=>true},soundPresentation:{isPresented:()=>true},transportationTimestamp:()=>'639273600000000000'});
 const bundle=game=>{const flow=new GameFlow(game);flow.start();flow.observeHost({visible:true,mediaReady:true,overlayOpen:false});return{game,flow,contents:repo};};
 const host={origin:'source-new-game',sourceWitness:{entry:entryContent.content.entry.evidence,map:map.map.source},create:async()=>{const presentation=createSourcePresentationContext({kind:'title-new-game',titleCleanupComplete:true,openingCallbackStarted:false}),

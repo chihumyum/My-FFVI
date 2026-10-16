@@ -158,6 +158,17 @@ function rawChoice(range: number, targets: readonly BattleAITargetUnit[]): Targe
  * later decision/effect fails, and revalidates the returned selection at start
  * and resolution; these raw IDs alone do not authorize effects on fallen units. */
 export function planBattleAITarget(input: BattleAITargetInput, random: BattleRandom): TargetChoice | null {
+  return planAutomaticTarget(input, random, false);
+}
+
+/** Pure selection helper, not runtime authority. The Battle owner separately
+ * requires its current epoch/instance/parent ticket for every Final action. */
+export function planBattleFinalTarget(input: BattleAITargetInput, random: BattleRandom): TargetChoice | null {
+  if (input.controlPolicy !== undefined) throw new Error("Unresolved Final control-only target policy");
+  return planAutomaticTarget(input, random, true);
+}
+
+function planAutomaticTarget(input: BattleAITargetInput, random: BattleRandom, final: boolean): TargetChoice | null {
   const fields = dataFields(input);
   if (!fields || !["actor,eligiblePlayers,formation,range,rule,units", "actor,controlPolicy,eligiblePlayers,formation,range,rule,units"].includes(Object.keys(fields).sort().join(",")))
     throw new Error("Invalid automatic target input");
@@ -178,7 +189,7 @@ export function planBattleAITarget(input: BattleAITargetInput, random: BattleRan
     if (index <= previousPlayerIndex) throw new Error("Invalid eligible automatic player order");
     previousPlayerIndex = index;
   }
-  if (actor.hp <= 0) return null;
+  if (actor.hp <= 0 && !final) return null;
   const rawPlayers = units.filter(unit => unit.side === "player"), rawEnemies = units.filter(unit => unit.side === "enemy");
   const draw = (candidates: readonly BattleAITargetUnit[]) => candidates.length
     ? rawChoice(input.range, [candidates[drawBattleRandom(random, 0, candidates.length - 1)]!]) : null;

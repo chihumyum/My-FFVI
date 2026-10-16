@@ -7,7 +7,7 @@ import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {openSourceCandidate} from './source-candidate.mjs';
 import {runtimeDigest} from './runtime-digest.mjs';
-import {sourceWebReplayRuntimePorts} from './source-web-replay-runtime.mjs';
+import { sourceWebReplayRuntimePorts, sourceWebReplayFieldEffectsHost } from './source-web-replay-runtime.mjs';
 const args=process.argv.slice(2),options={root:resolve(import.meta.dirname,'..'),compiled:'dist',candidate:'build/source-candidate',report:'build/reports/source-initial-npc-pose'},seen=new Set(),names={'--root':'root','--compiled-dir':'compiled','--candidate-dir':'candidate','--report':'report'};
 while(args.length){const name=args.shift();assert.ok(Object.hasOwn(names,name)&&args.length&&!seen.has(name),'Expected unique --root/--compiled-dir/--candidate-dir/--report paths');seen.add(name);options[names[name]]=args.shift();}
 const root=resolve(options.root),runtimeRoot=resolve(import.meta.dirname,'..'),compiled=resolve(root,options.compiled),candidateDir=resolve(root,options.candidate),output=resolve(root,options.report),part=relative(resolve(root,'build'),output),
@@ -69,7 +69,7 @@ async function track(value){if(!value)return;assert.match(value.file,/^\/(bgm|en
 const ready={visible:true,mediaReady:true,overlayOpen:false},runtime=()=>({...sourceWebReplayRuntimePorts(),scriptRandom:'web-source-script-random-field-stream-v1',
  transportationTimestamp:()=>'639273600000000000',sourceEncounterPolicy:api.WEB_SOURCE_ENCOUNTER_POLICY,battleHandoff:'prepared',
  retainedWorldTransportation:api.WEB_RETAINED_WORLD_TRANSPORTATION,cameraShake:api.createWebFieldCameraShakePolicy(),assignedNpcRoutes:api.WEB_ASSIGNED_ROUTE_POLICY,
- sourceMessageSequence:api.createWebFieldMessageSequencePort(),conditionLeaderActivity:api.createWebFlatConditionLeaderActivityPort(),fieldEffects:api.createWebLogicalFieldEffectsHost(),
+ sourceMessageSequence:api.createWebFieldMessageSequencePort(),conditionLeaderActivity:api.createWebFlatConditionLeaderActivityPort(),fieldEffects:sourceWebReplayFieldEffectsHost(api.createWebLogicalFieldEffectsHost),
  audioReadiness:{isReady:value=>audio.has(api.hash(value))},soundPresentation:{isPresented:(voice,value)=>audio.has(api.hash(value))&&presented.has(api.canonical({id:voice.id,track:voice.track,started:voice.started}))}});
 async function fieldAudio(game){for(const value of game.field.pendingAudioTracks)await track(value);for(const voice of game.field.se.voices){await track(game.field.content.se?.tracks[voice.track]);presented.add(api.canonical({id:voice.id,track:voice.track,started:voice.started}));}}
 function actors(game){return Object.values(game.field.actors).filter(a=>a.native?.scope?.kind==='map-npc').map(a=>({id:a.id,scope:a.native.scope,asset:a.asset,

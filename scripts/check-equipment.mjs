@@ -37,7 +37,8 @@ const contentIds = tables["content.csv"]
   .filter((r) => ["2", "3"].includes(r.type_id))
   .map((r) => Number(r.id));
 const characterIds = Object.values(catalog.gameState.characterInitializations).map((t) => t.initial.sourceId);
-assert.equal(characterIds.length, 18);
+assert.ok(["equipment-development-v1", "source-equipment-state-v2"].includes(system.catalog.kind));
+assert.equal(characterIds.length, system.catalog.kind === "source-equipment-state-v2" ? 27 : 18);
 const providers = Object.fromEntries(
   characterIds.map((id) => [
     id,
@@ -59,7 +60,7 @@ const decoded = compileEquipmentCatalog(
     return names.get(key);
   },
   providers,
-  weaponEffects,
+  weaponEffects, system.catalog.kind,
 );
 assert.equal(contentIds.length, 223);
 assert.deepEqual(system.catalog, decoded.catalog);

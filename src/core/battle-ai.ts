@@ -54,6 +54,7 @@ export type BattleAIOp =
   | { kind: "mode-branch"; value: number; equal: boolean; target: number }
   | { kind: "start-table"; tableId: number | null }
   | { kind: "act" | "counter-act"; abilities: number[]; weights: number[] }
+  | { kind: "final-act"; abilities: number[]; weights: number[]; messages: string[] }
   | { kind: "counter-received-command"; receivedTypeId: number; targeting: "automatic";
       abilities: number[]; weights: number[] }
   | { kind: "loop-act"; abilities: number[]; counts: number[] }
@@ -106,6 +107,7 @@ export type BattleAIAct = {
   selected: boolean;
 } & (
   | { kind: "act"; abilities: number[]; weights: number[] }
+  | { kind: "final-act"; abilities: number[]; weights: number[]; messages: string[] }
   | { kind: "counter-act"; abilities: number[]; weights: number[];
       /** Undefined preserves source CounterAct selected-ability dispatch: self
        * range5 uses automatic self; bounded nonself uses the received actor.
@@ -123,6 +125,8 @@ export type BattleAITurn = {
 export type BattleAIReaction = {
   /** A missed/Non calculation wakes received-ability AI, without counter readiness. */
   counterReady: boolean;
+  /** Only the Battle owner supplies native Final readiness from a death ticket. */
+  finalReady?: boolean;
   receivedAbilityId: number;
   receivedSystemId: number;
   /** Source IActSelectEnemy.GetReceiveAbilityTypeId, independent of commandId. */
@@ -201,7 +205,8 @@ function route(
     if (
       wake.receivedAbilityId <= 0 ||
       wake.receivedSystemId < 0 ||
-      typeof wake.counterReady !== "boolean"
+      typeof wake.counterReady !== "boolean" ||
+      wake.finalReady !== undefined && typeof wake.finalReady !== "boolean"
     )
       fail("invalid reaction readiness");
     if (wake.receivedAbilityTypeId !== undefined) {
@@ -229,7 +234,10 @@ function route(
     if (state.receivedAbility !== null)
       fail("suspended SyncAI retained received ability state");
     if (typeof wake !== "string")
-      state.receivedAbility = {
+      // Final ExecuteCounter invokes ActSelectFinalAttack (ready only) and
+      // removes this receiver from the ordinary received/counter lists. It
+      // does not call ActReceivedAbility; SyncAI already cleared the old ref.
+      state.receivedAbility = wake.finalReady ? null : {
         id: wake.receivedAbilityId,
         systemId: wake.receivedSystemId,
         ...(wake.receivedAbilityTypeId === undefined
@@ -379,6 +387,16 @@ function route(
             selected: state.actTurn === state.turnCounter,
           });
           state.turnCounter++;
+        }
+        break;
+      case "final-act":
+        // 820c00: no draw and no emitted action when IsReadyFinal is false.
+        // Strings survive compilation; the native message execution phase is
+        // still a specific gate only when this Final is actually ready.
+        if (typeof wake !== "string" && wake.finalReady && context.self.hp === 0) {
+          if (op.messages.some(value => value !== "")) fail("Source FinalAttackAct message execution phase is unresolved");
+          acts.push({ kind: "final-act", pc: state.pc, selected: true,
+            abilities: [...op.abilities], weights: [...op.weights], messages: [...op.messages] });
         }
         break;
       case "counter-act":

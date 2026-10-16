@@ -26,3 +26,11 @@ export function sourceWebReplayRuntimePorts() {
     puppetRoutes: 'web-source-puppet-route-grid-v1',
   });
 }
+
+// A content/runtime transform policy alone cannot authorize the separate
+// display host. Use the same explicit capability as the app while preserving
+// the caller's exact compiled factory and per-session host lifetime.
+export function sourceWebReplayFieldEffectsHost(createHost) {
+  if (typeof createHost !== 'function') throw new Error('Missing compiled logical field effects factory');
+  return createHost({boardTransforms:sourceWebReplayRuntimePorts().fieldEffectTransforms});
+}

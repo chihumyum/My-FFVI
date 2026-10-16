@@ -30,6 +30,20 @@ export function battleTargetChoices(
   units: readonly Unit[],
   formation: "normal" | "opposed",
 ): TargetChoice[] {
+  return targetChoices(rule, actor, units, formation);
+}
+
+/** Final caller supplies the native staged first-target predicate. A missing
+ * predicate cannot acquire fallen targets; ordinary menus remain unchanged. */
+export function battleFinalTargetChoices(rule: TargetRule, actor: Unit, units: readonly Unit[],
+  formation: "normal" | "opposed", firstTargetSide: BattleSide | null): TargetChoice[] {
+  if (firstTargetSide !== null && firstTargetSide !== "player" && firstTargetSide !== "enemy")
+    throw new Error("Invalid staged Final first-target side");
+  return targetChoices(rule, actor, units, formation, firstTargetSide);
+}
+
+function targetChoices(rule: TargetRule, actor: Unit, units: readonly Unit[],
+  formation: "normal" | "opposed", finalFirstTargetSide?: BattleSide | null): TargetChoice[] {
   if (
     !["alive", "include-fallen-players"].includes(rule.life) ||
     !["ally", "enemy", "self", "either"].includes(rule.relation) ||
@@ -43,11 +57,11 @@ export function battleTargetChoices(
     (rule.modes.includes("all") && rule.relation !== "either")
   )
     throw new Error("Invalid battle target rule");
-  if (actor.hp <= 0 || (rule.normalFormationOnly && formation !== "normal"))
+  if (actor.hp <= 0 && finalFirstTargetSide === undefined || (rule.normalFormationOnly && formation !== "normal"))
     return [];
   const eligible = units.filter(
     (u) =>
-      (u.hp > 0 ||
+      (u.hp > 0 || finalFirstTargetSide === "enemy" ||
         (rule.life === "include-fallen-players" && u.side === "player")) &&
       (rule.relation === "self"
         ? u.id === actor.id

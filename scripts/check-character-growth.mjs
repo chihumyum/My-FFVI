@@ -57,20 +57,23 @@ assert.deepEqual(catalog.gameState.magicStones, magicStones);
 const unextendedSource = JSON.parse(await readFile(root + "build/game/opening-battle.json", "utf8"));
 const { contentHash: unextendedHash, ...unextendedInput } = unextendedSource;
 assert.equal(hash(unextendedInput), unextendedHash);
+const equipmentStateKind = catalog.gameState.equipmentSystem.catalog.kind;
+assert.ok(["equipment-development-v1", "source-equipment-state-v2"].includes(equipmentStateKind));
+const expectedTemplates = equipmentStateKind === "source-equipment-state-v2" ? 27 : 18;
 const decoded = [], blocked = [], templates = new Map(), plans = new Map();
 for (const character of corpus.tables["character_status.csv"]) {
   const sourceId = Number(character.id);
   let stage = "initialization";
   try {
-    const { template } = compileOwnedCharacterInitialization(reader(), corpus.tables, sourceId, name, weaponEffects);
+    const { template } = compileOwnedCharacterInitialization(reader(), corpus.tables, sourceId, name, weaponEffects, equipmentStateKind);
     stage = "growth";
     const { plan, sources } = compileCharacterGrowth(reader(), corpus.tables, template, observedLearning);
     templates.set(sourceId, template); plans.set(sourceId, plan);
     decoded.push({ sourceId, jobId: plan.jobId, baseExp: plan.baseExp, initialLevel: plan.initialLevel, naturalLearningRows: plan.learning.length, sources });
   } catch (error) { blocked.push({ sourceId, stage, reason: error.message }); }
 }
-assert.equal(decoded.length, 18);
-assert.equal(blocked.length, 16);
+assert.equal(decoded.length, expectedTemplates);
+assert.equal(blocked.length, 34 - expectedTemplates);
 assert.ok(blocked.every((b) => b.stage === "initialization"));
 assert.equal(Object.keys(catalog.gameState.characterGrowth).length, decoded.length);
 const conditionRules = new BattleConditions(catalog.common.conditions);

@@ -3,7 +3,7 @@ import { canonical } from "./content.js";
 import { tableInteger as int } from "./table.js";
 import { compileOwnedCharacterInitialization } from "./owned-character.js";
 import { compileEquipmentCatalog } from "./equipment.js";
-import { equipmentAttackArm, projectEquipmentParameters } from "../core/equipment.js";
+import { equipmentAttackArm, projectEquipmentParameters, type EquipmentCatalog } from "../core/equipment.js";
 import type { OwnedCharacterInitializationTemplate } from "../core/owned-character.js";
 import type { CombatantDefinition } from "../core/battle-content.js";
 import type { OrdinaryWeaponEffectsCatalog } from "../core/ordinary-weapon.js";
@@ -25,6 +25,8 @@ export type PlayerBattleSprite = {
 export type PlayerBattleInput = {
   tables: Tables;
   ordinaryWeaponEffects: OrdinaryWeaponEffectsCatalog;
+  /** Trusted compilation contract; saved state never selects this mode. */
+  equipmentStateKind?: EquipmentCatalog["kind"];
   initializations: Record<string, OwnedCharacterInitializationTemplate>;
   characterMedia: Record<string, {
     characterId: number;
@@ -113,7 +115,7 @@ export function compilePlayerBattleDefinitions(
       if (!published) throw new Error("Missing source owned initialization: " + sourceId);
       // Re-establish the actual initializer dependencies. A copied or altered
       // template cannot supply invented passives, level, current HP or skills.
-      const { template } = compileOwnedCharacterInitialization(tracked, input.tables, sourceId, input.name, input.ordinaryWeaponEffects);
+      const { template } = compileOwnedCharacterInitialization(tracked, input.tables, sourceId, input.name, input.ordinaryWeaponEffects, input.equipmentStateKind);
       // The source inspection package retains the localization key as its
       // display value; the playable package resolves that same key. Neither
       // form changes source initialization, and runtime custom names are not
@@ -132,7 +134,7 @@ export function compilePlayerBattleDefinitions(
           hasTwoSwordStyle: owner.hasTwoSwordStyle,
           hasTwoHand: owner.hasTwoHand,
           equipAnyJob: owner.equipAnyJob,
-        } }, input.ordinaryWeaponEffects).catalog;
+        } }, input.ordinaryWeaponEffects, input.equipmentStateKind).catalog;
       const projection = projectEquipmentParameters(equipment, template.initial.equipment,
         template.parameterContext, template.limits);
       if (canonical(projection.parameters) !== canonical(template.confirmed))

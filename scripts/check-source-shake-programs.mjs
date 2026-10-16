@@ -1,4 +1,4 @@
-import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
+import { sourceWebReplayRuntimePorts, sourceWebReplayFieldEffectsHost } from './source-web-replay-runtime.mjs';
 import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdir,readdir} from 'node:fs/promises';
 import {resolve,dirname} from 'node:path';
@@ -183,7 +183,7 @@ async function execute(group,lane,seed,prefix){const binding=await build(group,l
  if(binding.buildError)return{...input,result:'entry-provider-blocked',stage:'framework-entry-binding',error:binding.buildError,sourceInitializationAttempted:false,
   sourceMapHash:binding.sourceMap.contentHash,sourceInitializer:binding.sourceMap.initializer,sourceMapBlockers:binding.sourceMap.blockers,programBindings:binding.programBindings};
  const presented=new Set(),frames=[],requests=[],commands=[],choices=[],messages=[];
- const runtime={ ...sourceWebReplayRuntimePorts(),scriptRandom:'web-source-script-random-field-stream-v1',transportationTimestamp:()=>'639273600000000000',sourceEncounterPolicy:WEB_SOURCE_ENCOUNTER_POLICY,cameraShake:createWebFieldCameraShakePolicy(),fieldEffects:createWebLogicalFieldEffectsHost(),assignedNpcRoutes:WEB_ASSIGNED_ROUTE_POLICY,retainedWorldTransportation:WEB_RETAINED_WORLD_TRANSPORTATION,battleHandoff:'prepared',sourceMessageSequence:createWebFieldMessageSequencePort(),
+ const runtime={ ...sourceWebReplayRuntimePorts(),scriptRandom:'web-source-script-random-field-stream-v1',transportationTimestamp:()=>'639273600000000000',sourceEncounterPolicy:WEB_SOURCE_ENCOUNTER_POLICY,cameraShake:createWebFieldCameraShakePolicy(),fieldEffects:sourceWebReplayFieldEffectsHost(createWebLogicalFieldEffectsHost),assignedNpcRoutes:WEB_ASSIGNED_ROUTE_POLICY,retainedWorldTransportation:WEB_RETAINED_WORLD_TRANSPORTATION,battleHandoff:'prepared',sourceMessageSequence:createWebFieldMessageSequencePort(),
   conditionLeaderActivity:createWebFlatConditionLeaderActivityPort(),audioReadiness:{isReady:track=>audioBindings.has(hash(track))},
   soundPresentation:{isPresented:(voice,track)=>audioBindings.has(hash(track))&&presented.has(canonical({id:voice.id,track:voice.track,started:voice.started}))}};
  let game,flow,channel,stage='initialization',elapsed=0,frontier=null,error=null,saved=null,battles=0;

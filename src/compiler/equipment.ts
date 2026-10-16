@@ -200,7 +200,10 @@ export function compileEquipmentCatalog(
     Pick<EquipmentCharacter, "hasTwoSwordStyle" | "hasTwoHand" | "equipAnyJob">
   >,
   effects: OrdinaryWeaponEffectsCatalog,
+  stateKind: EquipmentCatalog["kind"] = "equipment-development-v1",
 ) {
+  if (stateKind !== "equipment-development-v1" && stateKind !== "source-equipment-state-v2")
+    throw new Error("Unsupported compiled equipment state contract");
   validateOrdinaryWeaponEffects(effects);
   const sources: BattleRow["source"][] = [];
   const definitions: EquipmentCatalog["definitions"] = {};
@@ -235,7 +238,7 @@ export function compileEquipmentCatalog(
   const limit = reader.unique("game_constant_int.csv", "key_name", "MAX_ITEM");
   sources.push(limit.source);
   const catalog: EquipmentCatalog = {
-    kind: "equipment-development-v1",
+    kind: stateKind,
     limit: int(limit.values.value1),
     definitions,
     characters,

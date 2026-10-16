@@ -6,7 +6,7 @@ import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {openSourceCandidate} from './source-candidate.mjs';
-import {sourceWebReplayRuntimePorts} from './source-web-replay-runtime.mjs';
+import { sourceWebReplayRuntimePorts, sourceWebReplayFieldEffectsHost } from './source-web-replay-runtime.mjs';
 import {controlledAudioRuntime} from './controlled-audio.mjs';
 import {assertSourceProgramOrigin} from './source-program-origin.mjs';
 const args=process.argv.slice(2),opts={},runtimeRoot=resolve(import.meta.dirname,'..');
@@ -38,7 +38,7 @@ const start=sourceIds.find(id=>{const m=originals.get(id);return m.partyEntry?.p
 // The shared candidate already carries every explicitly declared Web sidecar.
 // Do not compile another 649-map source/initialized collection here.
 const byId=frameworks,world=framework;
-const seal=v=>{const{contentHash,...body}=v;return{...body,contentHash:api.hash(body)};},ready={visible:true,mediaReady:true,overlayOpen:false},runtimePorts=()=>({...sourceWebReplayRuntimePorts(),...controlledAudioRuntime(),viewChange:api.WEB_FLAT_RETAINED_FIELD_VIEW_CHANGE,scriptRandom:'web-source-script-random-field-stream-v1',retainedWorldTransportation:'web-retained-walking-magitek-world-entry-v1',assignedNpcRoutes:'web-assigned-npc-route-grid-v1',sourceEncounterPolicy:'web-source-encounter-uniform-slots-v1',transportationTimestamp:()=>'639273600000000000',battleHandoff:'prepared',sourceMessageSequence:api.createWebFieldMessageSequencePort(),conditionLeaderActivity:api.createWebFlatConditionLeaderActivityPort(),cameraShake:api.createWebFieldCameraShakePolicy(),fieldEffects:api.createWebLogicalFieldEffectsHost()});
+const seal=v=>{const{contentHash,...body}=v;return{...body,contentHash:api.hash(body)};},ready={visible:true,mediaReady:true,overlayOpen:false},runtimePorts=()=>({...sourceWebReplayRuntimePorts(),...controlledAudioRuntime(),viewChange:api.WEB_FLAT_RETAINED_FIELD_VIEW_CHANGE,scriptRandom:'web-source-script-random-field-stream-v1',retainedWorldTransportation:'web-retained-walking-magitek-world-entry-v1',assignedNpcRoutes:'web-assigned-npc-route-grid-v1',sourceEncounterPolicy:'web-source-encounter-uniform-slots-v1',transportationTimestamp:()=>'639273600000000000',battleHandoff:'prepared',sourceMessageSequence:api.createWebFieldMessageSequencePort(),conditionLeaderActivity:api.createWebFlatConditionLeaderActivityPort(),cameraShake:api.createWebFieldCameraShakePolicy(),fieldEffects:sourceWebReplayFieldEffectsHost(api.createWebLogicalFieldEffectsHost)});
 const boundCache=new Map();async function bind(row,lane){const key=row.mapId+':'+lane;if(boundCache.has(key))return boundCache.get(key);const map=structuredClone(byId.get(row.mapId)),w=structuredClone(world);
  if(lane!=='original-source-map'){const original=byId.get(row.mapId);map.scripts=structuredClone(original.scripts);for(const k of ['scriptLocals','scriptPuppetContexts','scriptSystemFlags','scriptTransitionMetadata'])map[k]=structuredClone(original[k]??{});
   const name='__declared_view_observer_init',context=byId.get(start).scriptPuppetContexts[byId.get(start).initializer];assert(context,'Controlled scaffold source init context missing');map.initializer=name;map.scripts[name]=[{kind:'exit',script:name,index:0,source:{file:'authored-observer',assetPath:'controlled-view-entry'}}];map.scriptLocals[name]=null;map.scriptPuppetContexts[name]={...structuredClone(context),scriptHash:api.hash({authored:name})};map.scriptSystemFlags[name]={keepBadStatusVisual:false};}

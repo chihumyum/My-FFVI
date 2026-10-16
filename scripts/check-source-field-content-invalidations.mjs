@@ -1,4 +1,4 @@
-import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
+import { sourceWebReplayRuntimePorts, sourceWebReplayFieldEffectsHost } from './source-web-replay-runtime.mjs';
 // Whole installed source programs on original maps and an explicitly authored
 // contact map. This uses the real Session/Flow/handoff/storage engine only.
 import assert from 'node:assert/strict';
@@ -77,7 +77,7 @@ async function execute(root,lane,prefix){const row={mapId:root.mapId,alias:root.
  try{bound=await bind(root,lane);const runtime={ ...sourceWebReplayRuntimePorts(),scriptRandom:'web-source-script-random-field-stream-v1',transportationTimestamp:()=>'639273600000000000',battleHandoff:'prepared',sourceEncounterPolicy:api.WEB_SOURCE_ENCOUNTER_POLICY,
   sourceMessageSequence:api.createWebFieldMessageSequencePort(),conditionLeaderActivity:api.createWebFlatConditionLeaderActivityPort(),
   cameraShake:api.createWebFieldCameraShakePolicy(),assignedNpcRoutes:api.WEB_ASSIGNED_ROUTE_POLICY,
-  fieldEffects:api.createWebLogicalFieldEffectsHost(),retainedWorldTransportation:api.WEB_RETAINED_WORLD_TRANSPORTATION,
+  fieldEffects:sourceWebReplayFieldEffectsHost(api.createWebLogicalFieldEffectsHost),retainedWorldTransportation:api.WEB_RETAINED_WORLD_TRANSPORTATION,
   audioReadiness:{isReady:t=>audioReady.has(api.hash(t))},soundPresentation:{isPresented:(v,t)=>audioReady.has(api.hash(t))&&presented.has(api.canonical({id:v.id,track:v.track,started:v.started}))}};
   row.stage='prepare-session';game=await api.GameSession.prepareFrameworkNewGame(bound.content,bound.world,bound.map,bound.battle,runtime,314);
   row.sourceMapInitializerStarted=lane==='original-source-map';

@@ -43,11 +43,14 @@ const name = (key) => {
 };
 const reader = () => battleTableIndex(corpus.tables, battle.tableSources);
 const weaponEffects = exportedOrdinaryWeaponEffects(battle, reader(), compileOrdinaryWeaponEffects).catalog;
+const equipmentStateKind = catalog.gameState.equipmentSystem.catalog.kind;
+assert.ok(["equipment-development-v1", "source-equipment-state-v2"].includes(equipmentStateKind));
+const expectedTemplates = equipmentStateKind === "source-equipment-state-v2" ? 27 : 18;
 const templates = new Map(), decoded = [], blocked = [];
 for (const row of corpus.tables["character_status.csv"]) {
   const sourceId = Number(row.id);
   try {
-    const { template, sources } = compileOwnedCharacterInitialization(reader(), corpus.tables, sourceId, name, weaponEffects);
+    const { template, sources } = compileOwnedCharacterInitialization(reader(), corpus.tables, sourceId, name, weaponEffects, equipmentStateKind);
     templates.set(sourceId, template);
     decoded.push({ sourceId, level: template.initial.level, hp: template.initial.hp, maxHp: template.initial.maxHp, mp: template.initial.mp,
       maxMp: template.initial.maxMp, commandIds: template.initial.abilities.commandIds,
@@ -57,8 +60,8 @@ for (const row of corpus.tables["character_status.csv"]) {
   } catch (error) { blocked.push({ sourceId, reason: error.message }); }
 }
 assert.equal(decoded.length + blocked.length, 34);
-assert.equal(decoded.length, 18);
-assert.equal(blocked.length, 16);
+assert.equal(decoded.length, expectedTemplates);
+assert.equal(blocked.length, 34 - expectedTemplates);
 assert.equal(Object.keys(catalog.gameState.characterInitializations).length, decoded.length);
 for (const [id, template] of Object.entries(catalog.gameState.characterInitializations)) {
   assert.deepEqual(template, templates.get(template.initial.sourceId), id + ": published source template");
@@ -122,7 +125,7 @@ for (const [label, mutate] of Object.entries(mutations)) {
 const sourceIds = [1, 2, 31, 32];
 const gearIds = corpus.tables["content.csv"].filter((r) => ["2", "3"].includes(r.type_id)).map((r) => Number(r.id));
 const equipment = compileEquipmentCatalog(reader(), gearIds, sourceIds, name,
-  Object.fromEntries(sourceIds.map((id) => [id, { hasTwoSwordStyle: false, hasTwoHand: false, equipAnyJob: false }])), weaponEffects).catalog;
+  Object.fromEntries(sourceIds.map((id) => [id, { hasTwoSwordStyle: false, hasTwoHand: false, equipAnyJob: false }])), weaponEffects, equipmentStateKind).catalog;
 const lifecycle = { roster: initial.roster, party: initial.party, equipmentStock: initial.equipmentStock, releasedJobIds: initial.releasedJobIds };
 const original = structuredClone(lifecycle);
 let sideEffects;

@@ -1,4 +1,4 @@
-import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
+import { sourceWebReplayRuntimePorts, sourceWebReplayFieldEffectsHost } from './source-web-replay-runtime.mjs';
 // Attempts every original affected map's complete initializer through the
 // existing initialized entry/Flow/Storage owners. Placement is an explicit
 // Web entry, not an assertion of source-story reachability.
@@ -44,7 +44,7 @@ async function track(value){if(!value)return;assert.match(value.file,/^\/(bgm|se
  const path=resolve(root,'build'+value.file);if(!media.has(path)){const bytes=await readFile(path);assert.equal(bytes.subarray(0,4).toString(),'fLaC');assert.equal(sha(bytes),value.sha256);media.set(path,value.sha256);}
  assert.equal(media.get(path),value.sha256);audio.set(api.hash(value),true);}
 const runtimePorts=()=>({ ...sourceWebReplayRuntimePorts(),scriptRandom:'web-source-script-random-field-stream-v1',transportationTimestamp:()=>'639273600000000000',sourceEncounterPolicy:api.WEB_SOURCE_ENCOUNTER_POLICY,battleHandoff:'prepared',
- retainedWorldTransportation:api.WEB_RETAINED_WORLD_TRANSPORTATION,fieldEffects:api.createWebLogicalFieldEffectsHost(),
+ retainedWorldTransportation:api.WEB_RETAINED_WORLD_TRANSPORTATION,fieldEffects:sourceWebReplayFieldEffectsHost(api.createWebLogicalFieldEffectsHost),
  sourceMessageSequence:api.createWebFieldMessageSequencePort(),conditionLeaderActivity:api.createWebFlatConditionLeaderActivityPort(),
  cameraShake:api.createWebFieldCameraShakePolicy(),assignedNpcRoutes:api.WEB_ASSIGNED_ROUTE_POLICY,
  audioReadiness:{isReady:value=>audio.has(api.hash(value))},soundPresentation:{isPresented:(voice,value)=>audio.has(api.hash(value))&&presented.has(api.canonical({id:voice.id,track:voice.track,started:voice.started}))}});

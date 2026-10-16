@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { openSourceCandidate } from './source-candidate.mjs';
 import { runtimeDigest } from './runtime-digest.mjs';
 import { controlledAudioRuntime } from './controlled-audio.mjs';
-import { sourceWebReplayRuntimePorts } from './source-web-replay-runtime.mjs';
+import { sourceWebReplayRuntimePorts, sourceWebReplayFieldEffectsHost } from './source-web-replay-runtime.mjs';
 import { sourcePuppetRouteCohort } from './source-puppet-route-cohort.mjs';
 import { createPuppetRouteParameterHost } from './source-puppet-route-parameter-host.mjs';
 const args = process.argv.slice(2), flags = new Map(); assert.equal(args.length % 2, 0);
@@ -26,7 +26,7 @@ const api = Object.assign({}, ...await Promise.all(['compiler/corpus', 'compiler
 const host = { visible: true, mediaReady: true, overlayOpen: false }, runtime = () => ({ ...controlledAudioRuntime(), ...sourceWebReplayRuntimePorts(),
   assignedNpcRoutes: 'web-assigned-npc-route-grid-v1', scriptRandom: 'web-source-script-random-field-stream-v1',
   retainedWorldTransportation: 'web-retained-walking-magitek-world-entry-v1', sourceEncounterPolicy: 'web-source-encounter-uniform-slots-v1', battleHandoff: 'prepared',
-  fieldEffects: api.createWebLogicalFieldEffectsHost(), sourceMessageSequence: api.createWebFieldMessageSequencePort(),
+  fieldEffects: sourceWebReplayFieldEffectsHost(api.createWebLogicalFieldEffectsHost), sourceMessageSequence: api.createWebFieldMessageSequencePort(),
   conditionLeaderActivity: api.createWebFlatConditionLeaderActivityPort(), cameraShake: api.createWebFieldCameraShakePolicy(), transportationTimestamp: () => '639273600000000000' });
 const before = await runtimeDigest(runtimeRoot, compiled), checkerHash = sha(await readFile(new URL(import.meta.url))), corpus = await api.loadCorpus(root),
   sourceDigest = api.hash(corpus), system = await api.loadSystemMessages(root, corpus.manifest.parentSourceSetHash, corpus.manifest.sources),

@@ -64,7 +64,8 @@ export type EquipmentCharacter = {
   emptySlots: number[];
 };
 export type EquipmentCatalog = {
-  kind: "equipment-development-v1";
+  /** Source FixedEquip validates physical assignment; menu job eligibility is a separate selection rule. */
+  kind: "equipment-development-v1" | "source-equipment-state-v2";
   limit: number;
   definitions: Record<string, EquipmentDefinition>;
   characters: Record<string, EquipmentCharacter>;
@@ -109,9 +110,13 @@ function character(catalog: EquipmentCatalog, sourceId: number) {
     result.equipAnyJob !== false
   )
     throw new Error("Unimplemented equipment character provider");
+  integer(result.jobId, 1);
   return result;
 }
 function executable(catalog: EquipmentCatalog, item: EquipmentDefinition) {
+  if (!Array.isArray(item.jobIds) || new Set(item.jobIds).size !== item.jobIds.length)
+    throw new Error("Invalid equipment job eligibility identity");
+  item.jobIds.forEach((id) => integer(id, 1));
   if (item.blockers.length || !item.parameter)
     throw new Error("Unimplemented equipment effects: " + item.id);
   if (
@@ -177,7 +182,7 @@ export function equipmentSlotAllowed(
 
 /** Validate slot/effect identity without inventing or requiring ownership. */
 export function validateEquipmentLoadout(catalog: EquipmentCatalog, loadout: EquipmentLoadout) {
-  if (catalog.kind !== "equipment-development-v1")
+  if (catalog.kind !== "equipment-development-v1" && catalog.kind !== "source-equipment-state-v2")
     throw new Error("Unsupported equipment catalog");
   const owner = character(catalog, loadout.sourceId);
   if (!loadout.id || loadout.equipment.length !== 6)
@@ -187,7 +192,9 @@ export function validateEquipmentLoadout(catalog: EquipmentCatalog, loadout: Equ
     executable(catalog, item);
     if (!equipmentSlotAllowed(item, i + 1, owner))
       throw new Error("Equipment slot mismatch");
-    if (!item.empty && !item.jobIds.includes(owner.jobId))
+    // Native FixedEquip does not call CanEquipped(job). Existing source equipment
+    // remains physical state; the player incoming check below still enforces jobs.
+    if (catalog.kind === "equipment-development-v1" && !item.empty && !item.jobIds.includes(owner.jobId))
       throw new Error("Equipment job mismatch");
     // Umaro's source initial gear remains visible, but the menu may only edit accessories.
     if (owner.accessoriesOnly && i < 4 && id !== owner.initialSlots[i])
@@ -218,7 +225,7 @@ export function equipmentAbilityCostProviders(catalog: EquipmentCatalog, loadout
  * from the trusted catalog; unknown eligibility must not erase known copies. */
 export function equipmentOwnedAbilities(catalog: EquipmentCatalog, loadout: EquipmentLoadout): OwnedAbility[] {
   const owner = catalog.characters[loadout.sourceId];
-  if (catalog.kind !== "equipment-development-v1" || !owner || owner.sourceId !== loadout.sourceId ||
+  if ((catalog.kind !== "equipment-development-v1" && catalog.kind !== "source-equipment-state-v2") || !owner || owner.sourceId !== loadout.sourceId ||
       !loadout.id || !Array.isArray(loadout.equipment) || loadout.equipment.length !== 6)
     throw new Error("Invalid equipment ability owner");
   return loadout.equipment.flatMap((id) => {
@@ -286,7 +293,7 @@ export function applyEquipmentAbilityChange(
 }
 
 function equipmentStockCounts(catalog: EquipmentCatalog, stock: readonly EquipmentStock[]) {
-  if (catalog.kind !== "equipment-development-v1")
+  if (catalog.kind !== "equipment-development-v1" && catalog.kind !== "source-equipment-state-v2")
     throw new Error("Unsupported equipment catalog");
   validateOrdinaryWeaponEffects(catalog.ordinaryWeaponEffects);
   integer(catalog.limit, 1);

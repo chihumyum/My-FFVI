@@ -647,7 +647,7 @@ async function compileSourceData(root: string, includeCheckpoint: boolean,gauPol
     try {
       ownedInitializations[sourceId] = compileOwnedCharacterInitialization(
         { row, matching, group: tableGroup, unique }, tables, sourceId, (key) => key,
-        ordinaryWeaponEffects.catalog,
+        ordinaryWeaponEffects.catalog, "source-equipment-state-v2",
       ).template;
     } catch (error) {
       if (initialParty.some((p) => p.characterId === sourceId)) throw error;

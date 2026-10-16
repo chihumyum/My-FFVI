@@ -25,7 +25,7 @@
       "scripts": [
         {
           "id": 8010,
-          "sourceHash": "6d43711f9b9d4125509ae1ac2bcd89c4f77c5c9dde7d02e2bd55c102e808a1ed",
+          "sourceHash": "422c32267ced455d680a72f6582e7bfaf5a3a34d21995a5ead31f17fb97e6c92",
           "reason": "The Web systems variant uses the existing BattleGame lifecycle and prepared handoff. This shared source entry routine is retained as evidence and its execution is explicitly deferred; native behavior is not granted."
         }
       ],

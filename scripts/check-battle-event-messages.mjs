@@ -7,7 +7,7 @@ import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {runtimeDigest} from './runtime-digest.mjs';
 import {openSourceCandidate} from './source-candidate.mjs';
-import {sourceWebReplayRuntimePorts} from './source-web-replay-runtime.mjs';
+import { sourceWebReplayRuntimePorts, sourceWebReplayFieldEffectsHost } from './source-web-replay-runtime.mjs';
 import {createSourceReplayGauMedia,SOURCE_REPLAY_PNG_ACK} from './source-replay-gau-media.mjs';
 import {loadBattleEventMessageSourceInputs} from './battle-event-message-source-inputs.mjs';
 import {observerErrorDetails,observedBattleEffects,observationDraftJSON} from './battle-observer-results.mjs';
@@ -28,7 +28,7 @@ let gauMedia=null;
 const seal=v=>{const{contentHash,...body}=v;return {...body,contentHash:api.hash(body)};},ready={visible:true,mediaReady:true,overlayOpen:false},
  ports=()=>({...sourceWebReplayRuntimePorts(),...(gauMedia?{battleGauInstances:gauMedia.host}:{}),battleHandoff:'prepared',sourceMessageSequence:api.createWebFieldMessageSequencePort(),
  sourceEncounterPolicy:'web-source-encounter-uniform-slots-v1',scriptRandom:'web-source-script-random-field-stream-v1',assignedNpcRoutes:'web-assigned-npc-route-grid-v1',
- retainedWorldTransportation:'web-retained-walking-magitek-world-entry-v1',cameraShake:api.createWebFieldCameraShakePolicy(),fieldEffects:api.createWebLogicalFieldEffectsHost(),
+ retainedWorldTransportation:'web-retained-walking-magitek-world-entry-v1',cameraShake:api.createWebFieldCameraShakePolicy(),fieldEffects:sourceWebReplayFieldEffectsHost(api.createWebLogicalFieldEffectsHost),
  conditionLeaderActivity:api.createWebFlatConditionLeaderActivityPort(),audioReadiness:{isReady:()=>true},soundPresentation:{isPresented:()=>true},transportationTimestamp:()=>'639273600000000000'});
 let candidate=null,systems=null,sourceBattle=null,sourceEntry=null,strict=null,framework=null,fullGraph=null,fixture=null,recipeBinding=null,familyCatalog=null,familyDirectory=null;
 if(o['candidate-dir']){

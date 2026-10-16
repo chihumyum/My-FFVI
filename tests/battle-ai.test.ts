@@ -858,7 +858,7 @@ test("unknown branches stay inspectable and block precisely when reached", () =>
     ["EndTable"],
     ["JumpBattleAI", [0]],
     ["Nop"],
-    ["FinalAttackAct", [701]],
+    ["FinalLoopAttackAct", [701]],
   ]);
   const state = startBattleAI(program, context).state;
   assert.equal(program.instructions[8]!.op.kind, "blocked");

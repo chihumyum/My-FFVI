@@ -36,7 +36,9 @@ export function projectActionTarget(
   cost = 0,
   physicalRows?: PhysicalRowContext,
   abilityId?: number,
+  automaticLife: "settle" | "defer-to-battle-owner" = "settle",
 ) {
+  if (automaticLife !== "settle" && automaticLife !== "defer-to-battle-owner") throw new Error("Invalid action automatic life owner");
   for (const key of ["hp", "mp", "maxHp", "maxMp"] as const)
     if (
       !Number.isSafeInteger(target[key]) ||
@@ -151,7 +153,7 @@ export function projectActionTarget(
         state.conditionIds,
       );
   }
-  Object.assign(
+  if (automaticLife === "settle") Object.assign(
     state,
     conditions.settleLife(
       state.hp,

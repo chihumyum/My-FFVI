@@ -1,3 +1,4 @@
+import { BattleFinalAttackTickets, sourceFinalReady, FINAL_ATTACK_EXCLUDED_TYPES } from "./battle-final-attack.js";
 import {parseBattleChildAdmission,parseWebBattleChildAdmission,prepareBattleChildParty,type BattleChildAdmission,type WebBattleChildAdmission} from './battle-child-admission.js';
 import {enemyMagicActorBlocker} from './enemy-magic-carrier.js';
 import { WEB_BATTLE_GAU_INSTANCES, parseBattleGauInstanceContent, gauAppearancePoses, gauAppearanceTimes, gauAppearanceDuration,
@@ -67,7 +68,7 @@ import {
   type BattleAITurn,
   type BattleAICounterTargeting,
 } from "./battle-ai.js";
-import { battleAITargetBlocker, planBattleAITarget, sourceCounterTargeting } from "./battle-ai-targets.js";
+import { battleAITargetBlocker, planBattleAITarget, planBattleFinalTarget, sourceCounterTargeting } from "./battle-ai-targets.js";
 import { battleReaction, validateReactionRules } from "./battle-reactions.js";
 import { proposeForcedEscape, proposeRandomAbilityDispatch,
   type RandomAbilityDispatchPlan } from "./battle-derived-actions.js";
@@ -85,6 +86,7 @@ import {
 import { validateElements, validateElementResistances } from "./elements.js";
 import {
   battleTargetChoices,
+  battleFinalTargetChoices,
   resolveBattleTargets,
   sameTargetSelection,
   type TargetChoice,
@@ -143,7 +145,7 @@ export type BattleStatProjection = Omit<ParameterValues, "hp" | "mp"> &
 export type BattleAction = {
   /** Assigned once by this BattleGame when actually enqueued; never saved. */
   executionTicket?: number;
-  kind: "normal" | "loop" | "counter" | "derived" | "event";
+  kind: "normal" | "loop" | "counter" | "final" | "derived" | "event";
   scripted?: { pc: number; command: ScriptedBattleAction; targetInstanceIds: string[] };
   /** Legacy CounterAct captures the attacker; command-conditioned interrupts
    * pass a null target to the native controller and use automatic selection. */
@@ -213,6 +215,8 @@ export class BattleGame {
     currentTicket:this.action?.executionTicket??null,fixedPlayerActions:[...this.#fixedPlayerActions].map(([sourceId,ticket])=>({sourceId,ticket})),
     cancellations:structuredClone(this.#actionCancellations)};}
 
+  readonly #finalTickets = new BattleFinalAttackTickets<Combatant>();
+  get finalAttackExecution() { return this.#finalTickets.projection; }
   private reactions: BattleAction[] = [];
   private aiStates = new Map<string, BattleAIState>();
   private poisonStates = new Map<string, PoisonState>();
@@ -321,7 +325,7 @@ export class BattleGame {
   prepareEventRetirement(){const message=this.prepareMessageRetirement(),effect=this.prepareEffectRetirement(),
     task=this.#gauTask,resource=task?.resource;let used=false;
     const validate=()=>{if(used||this.#gauTask!==task)throw new Error("Stale source Gau retirement");message.validate();effect.validate();resource?.validate();};
-    return {validate,commit:()=>{validate();message.commit();effect.commit();used=true;this.#gauHost?.owned.retire();this.#gauTask=null;
+    return {validate,commit:()=>{validate();message.commit();effect.commit();used=true;this.#finalTickets.retire();this.#gauHost?.owned.retire();this.#gauTask=null;
       this.#gauJournal.push({action:"retire",pc:-1,time:this.time,actorId:null,value:null});if(resource)this.discardBattleEffectResources([resource],"retire");}};}
   readonly #messageHost: BattleEventMessageHost | null;
   #messageFrame: ReturnType<SourceMessageState["prepareFrame"]> | null = null;
@@ -1129,7 +1133,74 @@ export class BattleGame {
       },
     };
   }
+  private finalFirstTargetSide(action: BattleAction): "player" | "enemy" | null {
+    if (action.kind !== "final" || !action.targetIds.length) return null;
+    const actor = this.combatants.find(unit => unit.id === action.actor);
+    if (!actor || !this.#finalTickets.owns(actor, action.executionTicket)) return null;
+    const target = this.combatants.find(unit => unit.id === action.targetIds[0]);
+    if (!target) throw new Error("Unresolved Final first-target instance");
+    return target.side;
+  }
+  private get stagedFinalFirstTargetSide() { return this.action ? this.finalFirstTargetSide(this.action) : null; }
+  private validateFinalAbility(actor: Combatant, ability: AbilityDefinition, pc: number): void {
+    const fail = (reason: string): never => { throw new BattleAIError(actor.ai?.source ?? null, pc, reason); };
+    if (!ability.plan || !this.qualifiedAbility(actor, ability.id)) fail("Missing Final ability dependency");
+    if (this.hasAutomaticControl(actor) || this.actionSuspended(actor)) fail("Unresolved Final active control owner");
+    if (ability.program.range === 16) fail("Unresolved Final target range 16");
+    const blocker = battleAITargetBlocker(ability.program.range, ability.plan!.targeting, "normal", this.content.formation);
+    if (blocker) fail(blocker);
+    if (ability.plan!.effects.some(effect => effect.kind === "random-ability" || effect.kind === "forced-escape"))
+      fail("Unresolved Final derived-action lifecycle");
+    const cost = this.abilityCost(actor.id, ability.id);
+    if (!cost) fail("Missing Final actual MP cost owner");
+    // Native UseMp is a Finishing write. The established ordinary Web owner
+    // charges before projection; without a self MP write both commute.
+    const mayTargetSelf = ability.plan!.targeting.relation !== "enemy";
+    if (cost!.mp > 0 && ability.plan!.effects.some(effect => effect.kind === "user-condition" ||
+        "resource" in effect && effect.resource === "mp" && (mayTargetSelf || effect.kind === "absorb-resource")))
+      fail("Unresolved Final positive-fee MP/user-write order");
+  }
+  private validateFinalMpTransition(actor: Combatant, ability: AbilityDefinition): void {
+    const cost = this.abilityCost(actor.id, ability.id);
+    if (!cost) throw new Error("Missing Final actual MP cost owner");
+    if (actor.mp - Math.min(actor.mp, cost.mp) === 0)
+      throw new Error("Source Final MP-zero lifecycle requires actual IsUnableMP parameter owner");
+  }
+  private canUseFinal(action: BattleAction): boolean {
+    const actor = this.combatants.find(unit => unit.id === action.actor);
+    if (!actor || actor.side !== "enemy" || action.source.kind !== "ability" || action.commandId !== null ||
+        !this.#finalTickets.owns(actor, action.executionTicket) || this.enemyExits.has(actor.id) ||
+        this.conditions.types(actor.conditionIds).some(type => (FINAL_ATTACK_EXCLUDED_TYPES as readonly number[]).includes(type))) return false;
+    if (!this.#finalTickets.targetsCurrent(action.executionTicket, this.activeCombatants))
+      throw new Error("Unresolved retired or unbound Final target instance");
+    const ability = this.content.abilities[action.source.id];
+    if (!ability?.plan) throw new Error("Missing Final actual ability");
+    this.validateFinalAbility(actor, ability, actor.ai ? this.aiStates.get(actor.id)!.pc : -1);
+    this.validateFinalMpTransition(actor, ability);
+    this.conditions.validateActive(actor.conditionIds);
+    return conditionsAllowAction(actor.conditionIds, ability.program.forbiddenConditionIds, []);
+  }
+  private settleBattleLife(unit: Combatant, hp: number, ids: readonly number[], wasUnable: boolean, preparedFinal = false) {
+    if (unit.side === "enemy" && wasUnable && !this.conditions.isUnableFight(ids))
+      throw new Error("Source enemy UnableFight removal requires AI re-entry lifecycle");
+    if ((preparedFinal || this.combatants.includes(unit) && this.#finalTickets.has(unit)) &&
+        !wasUnable && !this.conditions.types(ids).some(type => (FINAL_ATTACK_EXCLUDED_TYPES as readonly number[]).includes(type)))
+      return { hp, conditionIds: [...ids] };
+    return this.conditions.settleLife(hp, ids, wasUnable);
+  }
+  private pruneFinalTickets(): void {
+    const pending = [...this.reactions, ...(this.action ? [this.action] : [])];
+    for (const unit of this.combatants) if (this.#finalTickets.has(unit) &&
+        (this.enemyExits.has(unit.id) || this.conditions.types(unit.conditionIds).some(type =>
+          (FINAL_ATTACK_EXCLUDED_TYPES as readonly number[]).includes(type)))) this.#finalTickets.cancel(unit);
+    for (const ticket of this.#finalTickets.projection)
+      for (const action of ticket.actions) if (!pending.some(candidate => candidate.kind === "final" && candidate.executionTicket === action))
+        this.#finalTickets.complete(action);
+    this.reactions = this.reactions.filter(action => action.kind !== "final" ||
+      this.combatants.some(unit => unit.id === action.actor && this.#finalTickets.owns(unit, action.executionTicket)));
+  }
   private canUseAction(action: BattleAction) {
+    if(action.kind === "final") return this.canUseFinal(action);
     if(action.kind==="event")return this.canUseScriptedAction(action);
     if (action.control) {
       const actor = this.combatants.find(unit => unit.id === action.actor);
@@ -1308,9 +1379,9 @@ export class BattleGame {
         selfId: actor.id,
         units: units.map((c) => ({ id: c.id, side: c.side, conditionIds: [...c.conditionIds],
           // Retired instances and their AI owners have left this live roster.
-          // Staged ActType.FinalAttack remains a separate unavailable lane.
+          // Only the actual executor supplies the staged Final exception.
           removed: false })),
-        finalAttackFirstTargetSide: null,
+        finalAttackFirstTargetSide: this.stagedFinalFirstTargetSide,
       } } : {}),
     };
   }
@@ -1594,6 +1665,7 @@ export class BattleGame {
    * through one shared queue/timer boundary. Death/drop registrations survive. */
   private retireActors(ids: readonly string[]): void {
     const removed = new Set(ids);
+    for (const unit of this.combatants) if (removed.has(unit.id)) this.#finalTickets.cancelReferences(unit);
     this.queue = this.queue.filter(action => !removed.has(action.actor));
     this.reactions = this.reactions.filter(action => !removed.has(action.actor));
     if (this.action && (removed.has(this.action.actor) || this.action.targetIds.some(id => removed.has(id)))) {
@@ -1899,7 +1971,7 @@ export class BattleGame {
     const planned = targets.map(unit => {
       const change = this.conditions.eventListChange(unit.conditionIds, op.conditionId, op.action, unit.side);
       const changed = canonical(unit.conditionIds) !== canonical(change.currentIds);
-      const life = changed ? this.conditions.settleLife(unit.hp, change.currentIds,
+      const life = changed ? this.settleBattleLife(unit, unit.hp, change.currentIds,
         this.conditions.isUnableFight(unit.conditionIds)) : { hp: unit.hp, conditionIds: [...unit.conditionIds] };
       if (life.hp !== unit.hp) life.conditionIds = this.conditions.updateDying(life.hp, unit.maxHp, life.conditionIds);
       const control = this.prepareControlState(unit, life.conditionIds, this.controlStates.get(unit.id)!,
@@ -2326,7 +2398,7 @@ export class BattleGame {
       );
     if (
       turn.trigger === "reaction" &&
-      turn.acts.some((a) => a.kind !== "counter-act")
+      turn.acts.some((a) => a.kind !== "counter-act" && a.kind !== "final-act")
     )
       fail(turn.state.pc, "reaction path emitted a normal action");
     if (turn.acts.length > 1000)
@@ -2351,6 +2423,7 @@ export class BattleGame {
             `unimplemented ability ${id}: ${ability?.blockers.join("; ") ?? "missing definition"}`,
           );
         const carrier=enemyMagicActorBlocker(ability!,actor.side);if(carrier)fail(act.pc,carrier);
+        if (act.kind === "final-act") this.validateFinalAbility(actor, ability!, act.pc);
         const requestedTargeting = act.kind === "counter-act" ? act.targeting ?? "received-actor" : null;
         if (requestedTargeting !== null && requestedTargeting !== "received-actor" && requestedTargeting !== "automatic")
           fail(act.pc, "invalid counter target provider");
@@ -2362,7 +2435,7 @@ export class BattleGame {
             ability!.program.range === 5 && this.hasAutomaticControl(actor))
           fail(act.pc, "Source self-counter target under active action control is unresolved");
         const targetBlocker = battleAITargetBlocker(ability!.program.range,
-          ability!.plan!.targeting, targeting === "received-actor" ? "counter" : "normal", undefined, this.controlTargetPolicy(ability!));
+          ability!.plan!.targeting, targeting === "received-actor" ? "counter" : "normal", undefined, act.kind === "final-act" ? undefined : this.controlTargetPolicy(ability!));
         if (targetBlocker)
           fail(
             act.pc,
@@ -2542,7 +2615,7 @@ export class BattleGame {
       // ActDecision 0x1587aa0 routes Interrupt directly to the executor;
       // it never enters Progress.SetActData/GetChantingTime.
       charge:
-        kind === "counter" || kind === "derived" || kind === "event"
+        kind === "counter" || kind === "final" || kind === "derived" || kind === "event"
           ? 0
           : chantingSeconds({
               actor: actor.side,
@@ -2579,6 +2652,7 @@ export class BattleGame {
   private releaseStagedAction(reason:'completed'|'cancelled'|'actor-retired'):void {
     const action=this.action;if(!action)return;
     this.action=null;
+    if (action.kind === "final") this.#finalTickets.complete(action.executionTicket);
     // Cancellation is not normal completion: native clears staging before its
     // state transition, so no staged actor reaches the ordinary ATB delegate.
     if(reason!=='cancelled'){
@@ -2601,7 +2675,7 @@ export class BattleGame {
       queued:pending.map(action=>action.executionTicket!),fixed:[...this.#fixedPlayerActions].map(([sourceId,ticket])=>({sourceId,ticket}))};
     // Web controls V1 cancels both source side-filters atomically before idle
     // entry; it never dispatches a surviving enemy interrupt between the two.
-    this.queue=[];this.reactions=[];this.#fixedPlayerActions.clear();
+    this.queue=[];this.reactions=[];this.#finalTickets.cancelAll();this.#fixedPlayerActions.clear();
     this.releaseStagedAction('cancelled');
     for(const unit of this.combatants)unit.queued=false;
     this.#actionCancellations.push(journal);
@@ -2613,7 +2687,7 @@ export class BattleGame {
   private finishActorAction(actor: Combatant, kind: BattleAction["kind"]) {
     // Interrupt actions have no ordinary ATB completion delegate. In particular,
     // a counter must preserve a partially filled gauge or an already queued turn.
-    if (kind === "counter") return;
+    if (kind === "counter" || kind === "final") return;
     // Native ActExectionEndDelegate keeps the gauge while normal/Loop actions
     // remain in chanting or execution stacks. One LoopAct is one table turn.
     actor.queued = this.queue.some((pending) => pending.actor === actor.id);
@@ -2647,6 +2721,7 @@ export class BattleGame {
     // One failed simulation step consumes neither logical time nor randomness.
     // Definitions/media/AI programs stay shared; only mutable runtime values are copied.
     const before = {
+      finalTickets: this.#finalTickets.snapshot(),
       conditionJournal: structuredClone(this.#conditionJournal),
       unitOwners: [...this.combatants],
       participantState: structuredClone(this.participantState),
@@ -2764,6 +2839,7 @@ export class BattleGame {
       this.#nextActionTicket=before.nextActionTicket;this.#fixedPlayerActions=before.fixedPlayerActions;this.#actionCancellations=before.actionCancellations;
       this.queue = before.queue;
       this.reactions = before.reactions;
+      this.#finalTickets.restore(before.finalTickets);
       this.enemyExits = before.enemyExits;
       this.rewardRegisteredInstances = before.rewardRegisteredInstances;
       this.aiStates = before.ai;
@@ -2874,15 +2950,16 @@ export class BattleGame {
           this.eventControls.endEnabled) this.finishEscape();
       return;
     }
+    this.pruneFinalTickets();
     const eligible = (a: BattleAction) => a.charge <= 0 &&
-      (a.kind === "event" || !this.actionSuspended(this.combatants.find(unit => unit.id === a.actor)!));
+      (a.kind === "event" || a.kind === "final" || !this.actionSuspended(this.combatants.find(unit => unit.id === a.actor)!));
     const reactionIndex = this.reactions.findIndex(eligible);
     // Explicit web-source-control-actions-v1 scheduler rule, not inferred
     // native priority parity: only already-ready interrupts whose known live
     // function owner is suspended may yield to another ordinary actor. Unknown
     // owners/charges and legacy content retain the strict interrupt boundary.
     const suspendedInterrupts = this.controlPolicy !== null && this.reactions.length > 0 &&
-      this.reactions.every(a => a.kind !== "event" && a.charge <= 0 &&
+      this.reactions.every(a => a.kind !== "event" && a.kind !== "final" && a.charge <= 0 &&
         this.actionSuspended(this.combatants.find(unit => unit.id === a.actor)!));
     const queue = this.reactions.length && !suspendedInterrupts ? this.reactions : this.queue;
     // SetBattleUpdateEnabled does not cancel staged or interrupt actions. Its
@@ -2892,11 +2969,13 @@ export class BattleGame {
       const action = queue.splice(index, 1)[0]!,
         actor = this.combatants.find((c) => c.id === action.actor)!;
       if (!this.canUseAction(action)) {
+        if (action.kind === "final") this.#finalTickets.complete(action.executionTicket);
         this.finishActorAction(actor, action.kind);
         this.log(`${actor.name} 的行动已失效。`);
         this.checkOutcome();
         return;
       }
+      if (action.kind === "final") this.action = action;
       const choice = resolveBattleTargets(
         action.selection,
         this.actionTargetChoices(action),
@@ -2904,6 +2983,7 @@ export class BattleGame {
         (min, max) => this.randomInt(min, max),
       );
       if (!choice) {
+        if (action.kind === "final") throw new Error("Unresolved Final empty/default target phase");
         this.finishActorAction(actor, action.kind);
         this.checkOutcome();
         return;
@@ -2948,7 +3028,7 @@ export class BattleGame {
         isTimeStopped: false,
       });
       let life = result.ticks.length
-        ? this.conditions.settleLife(
+        ? this.settleBattleLife(actor,
             result.hp,
             this.conditions.updateDying(
               result.hp,
@@ -2960,7 +3040,7 @@ export class BattleGame {
         : { hp: actor.hp, conditionIds: [...actor.conditionIds] };
       const control = this.prepareControlAdvance(actor, life.conditionIds, life.hp, seconds);
       if (control.hp !== life.hp || canonical(control.conditionIds) !== canonical(life.conditionIds))
-        life = this.conditions.settleLife(control.hp,
+        life = this.settleBattleLife(actor, control.hp,
           this.conditions.updateDying(control.hp, actor.maxHp, control.conditionIds),
           this.conditions.isUnableFight(life.conditionIds));
       const finalControl = this.prepareControlState(actor, life.conditionIds, control.control.state, control.control.targets, null);
@@ -2990,7 +3070,7 @@ export class BattleGame {
         actor.queued = false;
         this.queue = this.queue.filter((action) => action.actor !== actor.id);
         this.reactions = this.reactions.filter(
-          (action) => action.actor !== actor.id,
+          (action) => action.actor !== actor.id || action.kind === "final" && this.#finalTickets.owns(actor, action.executionTicket),
         );
       }
       for (const tick of ticks)
@@ -3015,6 +3095,15 @@ export class BattleGame {
       }));
   }
   private actionTargetChoices(action: BattleAction) {
+    if (action.kind === "final") {
+      const actor = this.combatants.find(unit => unit.id === action.actor);
+      if (!actor || !this.canUseFinal(action)) return [];
+      const ability = this.content.abilities[action.source.id]!;
+      const side = this.action === action ? this.finalFirstTargetSide(action) : null;
+      const mode = action.selection.kind;
+      return battleFinalTargetChoices({ ...ability.plan!.targeting, modes: [mode], defaultMode: mode },
+        actor, this.activeCombatants, this.content.formation, side);
+    }
     if(action.kind==="event")return this.scriptedTargetChoices(action);
     if (action.targeting !== undefined && (action.kind !== "counter" ||
         action.targeting !== "received-actor" && action.targeting !== "automatic"))
@@ -3048,37 +3137,57 @@ export class BattleGame {
     const ability = this.actionDefinition(action);
     const updates: { actor: string; turn: BattleAITurn }[] = [];
     const decisions: BattleAction[] = [];
+    const finals: { unit: Combatant; ticket: ReturnType<BattleFinalAttackTickets<Combatant>["prepare"]>; actions: BattleAction[] }[] = [];
     for (const result of results) {
       const actor = units.find((c) => c.id === result.target)!;
       if (actor.side !== "enemy") continue;
-      if (this.enemyExits.has(actor.id) || this.conditions.isEscaped(actor.conditionIds) || this.actionSuspended(actor)) continue;
+      if (this.enemyExits.has(actor.id) || this.conditions.isEscaped(actor.conditionIds)) continue;
       if (this.aiStates.get(actor.id)?.status !== "waiting") continue;
       if (action.source.kind === "item")
         throw new Error("Unimplemented enemy item reaction");
+      const live = this.combatants.find(unit => unit.id === actor.id)!;
+      const finalReady = !this.#finalTickets.has(live) && sourceFinalReady({ hp: actor.hp,
+        conditionTypes: this.conditions.types(actor.conditionIds),
+        incomingInterrupt: action.kind === "counter" || action.kind === "final",
+        primarySlot: ability.program.functions[0]?.slot ?? -1, effects: result.effects });
       const reaction = battleReaction(this.content.reactions, {
         actor: action.actor,
         target: actor.id,
-        isCounter: action.kind === "counter",
+        isCounter: action.kind === "counter" || action.kind === "final",
         abilityId: action.source.id,
         systemId: ability.program.rules.system_id!,
         primarySlot: ability.program.functions[0]?.slot ?? -1,
         effects: result.effects,
       });
-      if (!reaction) continue;
+      if (!reaction && !finalReady || this.actionSuspended(actor) && !finalReady) continue;
       const receivedTypeId = this.content.abilities[action.source.id]!.program.rules.type_id;
       const turn = planBattleAIReaction(
         actor.ai!,
         this.aiStates.get(actor.id)!,
         this.aiContext(actor, units),
-        { ...reaction, ...(receivedTypeId === undefined ? {} : { receivedAbilityTypeId: receivedTypeId }) },
+        { ...(reaction ?? { counterReady: false, receivedAbilityId: action.source.id, receivedSystemId: ability.program.rules.system_id! }),
+          ...(finalReady ? { finalReady: true, counterReady: false } : {}), ...(receivedTypeId === undefined ? {} : { receivedAbilityTypeId: receivedTypeId }) },
       );
       this.admitAITurn(actor, turn);
+      const finalActions: BattleAction[] = [];
       for (const act of turn.acts) {
         for (const id of selectBattleAIAbilities(act, {
           integer: (min, max) => this.randomInt(min, max),
           float: (min, max) =>
             Math.fround(min + this.randomUnit() * (max - min)),
         })) {
+          if (act.kind === "final-act") {
+            const definition = this.content.abilities[id]!;
+            const active = units.filter(unit => !this.enemyExits.has(unit.id) && !this.conditions.isEscaped(unit.conditionIds));
+            const choice = planBattleFinalTarget({ actor, units: active,
+              eligiblePlayers: active.filter(unit => unit.side === "player" && unit.hp > 0),
+              range: definition.program.range, rule: definition.plan!.targeting, formation: this.content.formation,
+            }, (min, max) => this.randomInt(min, max));
+            if (!choice) throw new BattleAIError(actor.ai!.source, act.pc, "Unresolved Final empty/default target phase");
+            this.validateFinalMpTransition(actor, definition);
+            finalActions.push(this.createAction(actor, definition, choice, null, "final"));
+            continue;
+          }
           const requestedTargeting = act.kind === "counter-act" ? act.targeting ?? "received-actor" : null;
           if (requestedTargeting === null) throw new Error("Reaction emitted a noninterrupt action");
           const ability = this.content.abilities[id]!;
@@ -3111,9 +3220,10 @@ export class BattleGame {
           );
         }
       }
+      if (finalActions.length) finals.push({ unit: live, ticket: this.#finalTickets.prepare(live, action.executionTicket!), actions: finalActions });
       updates.push({ actor: actor.id, turn });
     }
-    return { updates, decisions };
+    return { updates, decisions, finals };
   }
   /** Parent calculations and child queue proposals stay private until every
    * target, receiver, condition and dependency of the action has admitted. */
@@ -3213,6 +3323,7 @@ export class BattleGame {
         (min, max) => this.randomInt(min, max),
       );
       if (!choice) {
+        if (action.kind === "final") throw new Error("Unresolved Final empty/default target phase");
         action.targetIds = [];
         action.resolved = true;
         return;
@@ -3235,6 +3346,7 @@ export class BattleGame {
             : undefined,
           action.source.kind === "ability" ? action.source.id : undefined,
           this.absorptionContext(actor,ability,choice.targetIds),
+          "defer-to-battle-owner",
         );
       const staged = projection.targets.map(({ targetId, state, effects }) => {
         const target = this.combatants.find(c => c.id === targetId)!;
@@ -3289,6 +3401,41 @@ export class BattleGame {
         target: entry.target.id,
         effects: entry.effects,
       }));
+      // Preserve the existing ordinary reaction contract: non-Final programs
+      // observe completed automatic life/condition projection. Only an actual
+      // qualified receiver with this shared opcode can enter the pre-type5
+      // Final phase; a source name, PC or party never selects this capability.
+      for (const unit of projected) {
+        const live = this.combatants.find(current => current.id === unit.id)!;
+        const entry = staged.find(candidate => candidate.target === live);
+        const changed = entry || live === actor && (payment > 0 || projection.userResourceState || projection.userResults.length);
+        if (!changed) continue;
+        const candidate = !!entry && !!unit.ai?.instructions.some(row => row.op.kind === "final-act") &&
+          this.aiStates.get(unit.id)?.status === "waiting" && !this.enemyExits.has(unit.id) && sourceFinalReady({
+            hp: unit.hp, conditionTypes: this.conditions.types(unit.conditionIds),
+            incomingInterrupt: action.kind === "counter" || action.kind === "final",
+            primarySlot: ability.program.functions[0]?.slot ?? -1, effects: entry.effects });
+        const life = this.settleBattleLife(live, unit.hp, unit.conditionIds,
+          this.conditions.isUnableFight(live.conditionIds), candidate);
+        Object.assign(unit, life);
+        if (entry) Object.assign(entry.state, life);
+        if (live === actor && projection.userResourceState) Object.assign(projection.userResourceState, life);
+      }
+      const reactions = this.planReactions(action, projected, results);
+      for (const unit of projected) {
+        const live = this.combatants.find(current => current.id === unit.id)!;
+        const entry = staged.find(candidate => candidate.target === live);
+        const changed = entry || live === actor && (payment > 0 || projection.userResourceState || projection.userResults.length);
+        if (!changed) continue;
+        if (action.kind === "final" && unit.mp === 0 &&
+            (live === actor && payment > 0 || entry?.effects.some(effect => effect.resource === "mp" && !effect.missed)))
+          throw new Error("Source Final MP-zero lifecycle requires actual IsUnableMP parameter owner");
+        const life = this.settleBattleLife(live, unit.hp, unit.conditionIds,
+          this.conditions.isUnableFight(live.conditionIds), reactions.finals.some(candidate => candidate.unit === live));
+        Object.assign(unit, life);
+        if (entry) Object.assign(entry.state, life);
+        if (live === actor && projection.userResourceState) Object.assign(projection.userResourceState, life);
+      }
       const userMessages: string[] = [];
       for(const result of projection.userResourceResults??[])if(!result.missed&&!result.nullified&&result.amount>0)
         userMessages.push(`${actor.name} 恢复 ${result.amount} ${result.resource.toUpperCase()}。`);
@@ -3327,7 +3474,6 @@ export class BattleGame {
           control,
         };
       });
-      const reactions = this.planReactions(action, projected, results);
       const controlStarts = new Set<string>(), sleepResets = new Set<string>();
       for (const entry of staged) {
         const added = entry.effects.flatMap(effect => effect.resource === "condition" ? effect.added : []);
@@ -3403,7 +3549,7 @@ export class BattleGame {
           entry.target.queued = false;
           this.queue = this.queue.filter((a) => a.actor !== entry.target.id);
           this.reactions = this.reactions.filter(
-            (a) => a.actor !== entry.target.id,
+            (a) => a.actor !== entry.target.id || a.kind === "final" && this.#finalTickets.owns(entry.target, a.executionTicket),
           );
         }
         if (this.conditions.isEscaped(entry.target.conditionIds) && !this.enemyExits.has(entry.target.id)) {
@@ -3424,7 +3570,12 @@ export class BattleGame {
       }
       // Function46 enqueues its child during HitCalc, before the parent's
       // completed result wakes receivers. Both preparations commit together.
-      this.registerActions([...derived,...reactions.decisions]);this.reactions.push(...derived, ...reactions.decisions);
+      const finalActions = reactions.finals.flatMap(next => next.actions);
+      this.registerActions([...finalActions,...derived,...reactions.decisions]);
+      for (const next of reactions.finals) this.#finalTickets.publish(next.ticket, next.actions.map(action => action.executionTicket!),
+        next.actions.map(action => ({ action: action.executionTicket!, units: action.targetIds.map(id => this.combatants.find(unit => unit.id === id)!) })));
+      this.reactions.unshift(...finalActions);
+      this.reactions.push(...derived, ...reactions.decisions);
       action.selection = choice.selection;
       action.targetIds = choice.targetIds;
       action.results = results;
@@ -3447,6 +3598,8 @@ export class BattleGame {
       // Native Forced=4 precedes ordinary death/victory judgment, even with
       // staged work. Keep that work suspended until the whole battle owner is
       // retired by the prepared handoff; this is not RemoveAllAct cancellation.
+      this.#finalTickets.cancelAll();
+      this.reactions = this.reactions.filter(action => action.kind !== "final");
       this.forcedSaveTerminal=!this.forceReturnRequested&&this.forceSaveRequested;
       if(this.forcedSaveTerminal){
         if(!this.forcedSavePolicy)throw new Error('Missing explicit Web forced-save policy');
@@ -3456,18 +3609,30 @@ export class BattleGame {
       this.phase = "forced"; this.escapeRequested = false;
       this.log(this.forcedSaveTerminal?'战斗结束，保存当前状态并返回。':"战斗结束，返回进入战斗前的状态。"); return;
     }
+    this.pruneFinalTickets();
     if (this.action || this.reactions[0]?.kind === "derived") return;
     for (const c of this.combatants) {
-      Object.assign(c, this.conditions.settleLife(c.hp, c.conditionIds, false));
+      const life = this.settleBattleLife(c, c.hp, c.conditionIds, false);
+      if (canonical(life.conditionIds) !== canonical(c.conditionIds)) {
+        const removed = c.conditionIds.filter(id => !life.conditionIds.includes(id));
+        const control = this.prepareControlState(c, life.conditionIds, this.controlStates.get(c.id)!, this.controlTargetUnits.get(c.id)!, null, removed);
+        const stop = this.prepareStopTransition(c, life.conditionIds,
+          this.conditions.reconcilePoisonState(life.conditionIds, this.poisonStates.get(c.id)!, this.atbSpeed), removed);
+        this.poisonStates.set(c.id, stop.state);
+        this.slowStates.set(c.id, this.conditions.reconcileSlowState(life.conditionIds, this.slowStates.get(c.id)!));
+        this.controlStates.set(c.id, control.state); this.controlTargetUnits.set(c.id, control.targets);
+        if (stop.removed) c.atb = 0;
+      }
+      Object.assign(c, life);
       this.observeDropLife(c);
       if (c.hp === 0) {
         c.atb = 0;
         c.queued = false;
         this.queue = this.queue.filter((a) => a.actor !== c.id);
-        this.reactions = this.reactions.filter((a) => a.actor !== c.id);
+        this.reactions = this.reactions.filter((a) => a.actor !== c.id || a.kind === "final" && this.#finalTickets.owns(c, a.executionTicket));
       }
     }
-    if (this.reactions.some(action=>action.kind==="event")) return;
+    if (this.reactions.some(action=>action.kind==="event" || action.kind === "final")) return;
     if (!this.eventControls.endEnabled) return;
     if (!this.players.some((c) => c.hp > 0)) {
       this.clearBattleConditions();

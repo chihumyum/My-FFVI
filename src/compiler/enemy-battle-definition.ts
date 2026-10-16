@@ -142,7 +142,9 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
       if (op.kind === "condition" && !input.conditions.rules.definitions.some(condition => condition.id === op.conditionId))
         add("blocked", "ai-condition", `Missing AI condition ${op.conditionId}`,
           { pc, dependency: { table: "condition.csv", id: op.conditionId } });
-      if (!("abilities" in op) || !["act", "counter-act", "loop-act", "counter-received-command"].includes(op.kind)) continue;
+      if (op.kind === "final-act" && op.messages.some(value => value !== ""))
+        add("runtime-dependency", "ai-final-message", "Source FinalAttackAct message execution phase is unresolved", { pc });
+      if (!("abilities" in op) || !["act", "counter-act", "loop-act", "counter-received-command", "final-act"].includes(op.kind)) continue;
       for (const id of [...new Set(op.abilities.flatMap(id => dependencyAbilities(id, pc)))]) {
         if (!abilityIds.includes(id)) abilityIds.push(id);
         const ability = input.abilities[id], dependency = { table: "ability.csv", id };
@@ -158,7 +160,7 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
               { pc, dependency });
           const targetBlocker = battleAITargetBlocker(ability.program.range, ability.plan.targeting,
             op.kind === "counter-act" && op.abilities.includes(id) ? "counter" : "normal", undefined,
-            controlOnly ? input.conditionControlPolicy : undefined);
+            op.kind !== "final-act" && controlOnly ? input.conditionControlPolicy : undefined);
           if (targetBlocker)
             add("runtime-dependency", "automatic-target", `Ability ${id}: ${targetBlocker}`, { pc, dependency });
           else if (ability.plan.targeting.normalFormationOnly && formationPlan &&

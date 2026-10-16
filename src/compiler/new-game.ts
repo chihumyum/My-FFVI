@@ -13,6 +13,7 @@ import {
 import type { CorpusAsset } from "./corpus.js";
 import { hash, record } from "./content.js";
 import type { OrdinaryWeaponEffectsCatalog } from "../core/ordinary-weapon.js";
+import type { EquipmentCatalog } from "../core/equipment.js";
 
 type Tables = Record<string, Record<string, string>[]>;
 type Reader = {
@@ -29,6 +30,7 @@ export function compileNewGame(
   tables: Tables,
   name: (key: string) => string,
   ordinaryWeaponEffects: OrdinaryWeaponEffectsCatalog,
+  equipmentStateKind: EquipmentCatalog["kind"] = "equipment-development-v1",
 ): {
   definition: NewGameDefinition;
   sources: BattleRow["source"][];
@@ -71,7 +73,7 @@ export function compileNewGame(
       tables,
       owner.sourceId,
       name,
-      ordinaryWeaponEffects,
+      ordinaryWeaponEffects, equipmentStateKind,
     );
     sources.push(...initialized.sources);
     return { id: owner.id, template: initialized.template };
@@ -129,7 +131,7 @@ export function compileNewGame(
         { hasTwoSwordStyle: false, hasTwoHand: false, equipAnyJob: false },
       ]),
     ),
-    ordinaryWeaponEffects,
+    ordinaryWeaponEffects, equipmentStateKind,
   );
   sources.push(...equipment.sources);
   const transportationRows = all("transportation.csv");
