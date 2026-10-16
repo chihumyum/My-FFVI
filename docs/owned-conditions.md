@@ -1,5 +1,15 @@
 # 字段持有状态指令
 
+## 非零濒死/死亡解除
+
+`RemoveCondition` type4/type5 共33个来源调用（8/25），保留33份完整正文、1,844条原操作、16图及233个完整依赖原对象。它们共用既有 `GameState.fieldOwnedConditions`、地图私有 draft 和逐目标 Field 外观事务；其余13个未实现 RemoveCondition、AddCondition 和 MP-count 的门槛不变。静态33处解码不代表正文或剧情已执行。
+
+这条非零路径先记录当前列表是否含死亡type5，按匹配主表行删除所有同ID项，全部删除后仅在请求type5且先前死亡时恢复一次1HP，并沿既有HP setter维护濒死。type4只删除当前濒死行，不改HP，也不提前重建濒死。每个目标最后仍执行一次 `Refresh(false)` 和 `AffectLeader`，包括没有可删状态的目标；非零路径不写Core寄存器。它不复用type0的原列表循环、hook或逐记录HP恢复。
+
+可信来源的完整100行条件目录是该 Web 投影的既有 authority。源type5有row5与row100，全部保为身份依赖；未知活动100仍拒绝，不能以“即将删除”为由清洗非法状态。原生 `GetList<Condition>` 的两个rgctx实际provider尚未恢复，不声称知道字典插入次序。这里可以忽略枚举顺序，仅因为每行删除是保序过滤、缺行不写状态、不同ID删除可交换、HP和外观都在全部行删除后发生；该证明不授权 first-row AddCondition、未知状态行为、type0 hook或任意提供器。
+
+完整来源比较使用 `scripts/check-owned-condition-remove-life-source.mjs`，要求显式基线compiled、物理loader捕获和其SHA；逐条对照全部3,304/186,003，仅允许这33处投影改变。机制测试用预先声明的受控战斗让实际BattleGame伤害造成死亡，唯一返场后执行原type4/5 target0参数，覆盖原生演员刷新、地图候选失败/取消/重试、stale发布和Storage继续。受控战斗与参数探针不计来源剧情可达性，正式原版动态对照仍未进行。
+
 当前 v98 的 type0、逐目标领队交接、同任务银行及明确 Web 活动策略见 [共用生命周期](story-shared-lifecycles.md)。下述 v22 数量是历史范围；665/666显式移除、MP-count及未知活动状态没有随本批放行。
 
 v22 将来源 `AddCondition` / `RemoveCondition` 的 type 607 接入唯一 `GameState`，并把每个目标对应的队伍外观刷新纳入同一准备阶段。它不是完整状态指令集：真实语料共 210 个调用点，本批 8 个 607 调用点可进入该实现，其余 202 个保留 blocker。是否能执行完整脚本，还取决于旗标、队伍、演员、媒体和其余指令。

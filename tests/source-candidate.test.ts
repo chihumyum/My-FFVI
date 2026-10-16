@@ -44,3 +44,10 @@ test('whole newgame candidate requires the same complete directory proof and exa
   const changed=structuredClone(report);mutate(changed);assert.throws(()=>validate(changed,f));
  }
 });
+
+test('parking candidate requires new lock and the identical complete source catalog, never an old lock or self declared saved grant',async()=>{
+ const {validateSourceCandidateParkingUpload:validate}=await import(moduleUrl),hash=(v:any)=>digest(JSON.stringify(v)),catalog={definitions:[{id:47,type:4,assetId:38}]},marker='web-source-transport-parking-upload-v1',lock={kind:'source-prerequisite-input-lock-v5',transportationParkingUpload:marker,transportationCatalogHash:hash(catalog)},profile={vehicleLifecycle:'web-source-vehicle-lifecycle-v1',transportationParkingUpload:marker};
+ const world={kind:'world-development',transportation:catalog,developmentProfile:profile};validate(world,lock,{hash});validate({kind:'world-development',transportation:catalog},lock,{hash});
+ for(const version of[1,2,3,4])assert.throws(()=>validate(world,{...lock,kind:'source-prerequisite-input-lock-v'+version},{hash}),/Legacy/);
+ for(const change of[(v:any)=>v.transportation.definitions[0].assetId++,(v:any)=>delete v.developmentProfile.vehicleLifecycle,(v:any)=>delete v.developmentProfile.transportationParkingUpload]){const bad=structuredClone(world);change(bad);assert.throws(()=>validate(bad,lock,{hash}));}
+});

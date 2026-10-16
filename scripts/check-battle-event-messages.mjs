@@ -12,6 +12,7 @@ import {createSourceReplayGauMedia,SOURCE_REPLAY_PNG_ACK} from './source-replay-
 import {loadBattleEventMessageSourceInputs} from './battle-event-message-source-inputs.mjs';
 import {observerErrorDetails,observedBattleEffects,observationDraftJSON} from './battle-observer-results.mjs';
 import {chooseBattleObserverInput,BATTLE_OBSERVER_INPUT_POLICY} from './battle-observer-inputs.mjs';
+import {createVerifiedBattleObserverCallers} from './battle-observer-verified-callers.mjs';
 const root=resolve(import.meta.dirname,'..'),args=process.argv.slice(2),o={compiled:'dist',report:'build/reports/battle-event-messages/check.json'},seen=new Set();
 while(args.length){const f=args.shift();assert(['--compiled','--report','--candidate-dir','--smoke','--family','--caller-fade'].includes(f)&&args[0]&&!seen.has(f));seen.add(f);o[f.slice(2)]=args.shift();}
 assert(o['candidate-dir']||['one','all'].includes(o.smoke),'Use --candidate-dir <same-runtime private candidate>, or --smoke one|all');
@@ -23,9 +24,9 @@ const {readSourceBattleDirectoryPolicy:readObserverPolicy}=await import('./sourc
 const observerDeclaration=await readObserverPolicy({root,compiledDir:resolve(root,o.compiled),policy:JSON.parse(await readFile(resolve(root,'content-batches/source-battle-directory.policy.json')))});
 const load=n=>import(pathToFileURL(resolve(compiled,'src',n+'.js')).href),api=Object.assign({},...await Promise.all([
  'compiler/content','compiler/framework-new-game','compiler/content-dependencies','core/game-session','core/game-flow','core/saved-game','core/source-message-sequence',
- 'core/field-fade','core/field-condition-activity','core/field-camera-shake','core/field-logical-effects','core/content-integrity'].map(load))),runtime=await runtimeDigest(root,compiled),input=await loadBattleEventMessageSourceInputs(root,compiled,{branchExecution:observerDeclaration.framework.branchExecution,sourceFormatImport:true,...(observerDeclaration.framework.gauInstances?{gauInstancePolicy:observerDeclaration.framework.gauInstances}:{})});
+ 'core/verified-content','core/field-source-snapshot','core/field-fade','core/field-condition-activity','core/field-camera-shake','core/field-logical-effects','core/content-integrity'].map(load))),runtime=await runtimeDigest(root,compiled),input=await loadBattleEventMessageSourceInputs(root,compiled,{branchExecution:observerDeclaration.framework.branchExecution,sourceFormatImport:true,...(observerDeclaration.framework.gauInstances?{gauInstancePolicy:observerDeclaration.framework.gauInstances}:{})});
 let gauMedia=null;
-const seal=v=>{const{contentHash,...body}=v;return {...body,contentHash:api.hash(body)};},ready={visible:true,mediaReady:true,overlayOpen:false},
+const ready={visible:true,mediaReady:true,overlayOpen:false},
  ports=()=>({...sourceWebReplayRuntimePorts(),...(gauMedia?{battleGauInstances:gauMedia.host}:{}),battleHandoff:'prepared',sourceMessageSequence:api.createWebFieldMessageSequencePort(),
  sourceEncounterPolicy:'web-source-encounter-uniform-slots-v1',scriptRandom:'web-source-script-random-field-stream-v1',assignedNpcRoutes:'web-assigned-npc-route-grid-v1',
  retainedWorldTransportation:'web-retained-walking-magitek-world-entry-v1',cameraShake:api.createWebFieldCameraShakePolicy(),fieldEffects:sourceWebReplayFieldEffectsHost(api.createWebLogicalFieldEffectsHost),
@@ -102,46 +103,14 @@ if(o['candidate-dir']){
  const roots=maps.flatMap(m=>[...Object.keys(m.scripts).map(script=>({kind:'script',mapId:m.mapId,script})),...(m.partyEntry?.pointIns??[]).map(p=>({kind:'entry',mapId:m.mapId,entrance:p.id,continuation:null}))]);
  fullGraph=api.analyzeContentDependencies({catalog:strict,maps,roots,mapIds:maps.map(m=>m.mapId)});
 }else fixture=await import(pathToFileURL(resolve(compiled,'tests/fixtures/battle-event-message.js')).href);
+const callerDefinitions=candidate?createVerifiedBattleObserverCallers(api,{systems,familyCatalog,familyDirectory,sourceEntry,sourceBattle,
+ sourceMap:await candidate.read(strict.maps[sourceEntry.entry.mapId].url),branchExecution:observerDeclaration.framework.branchExecution}):null;
 const journalProjection=game=>({field:game.field.stop,window:game.field.sourceMessage.projection,revision:game.field.sourceMessage.mutationRevision,
  mask:game.field.updateAttributeMask,effectRequests:game.battle?.effectExecution??[],effects:game.battle?.effectPresentation??[],branchExecution:game.battle?.eventBranchExecution??null,event:game.battle?.eventExecution??null,messages:game.battle?.messageExecution??[],battleTime:game.battle?.time??null,phase:game.battle?.phase??null});
 async function create(program,partyOverride){
  if(fixture){const f=fixture.battleMessageSessionFixture(program);if(callerFade)f.field.entry.fade=structuredClone(api.DEVELOPMENT_TRANSPARENT_FADE);if(program.kind==='battle-event-v2')f.battle.encounters[1000].lifecycle={kind:'battle-lifecycle-v2',mode:'script',scriptId:9000,program,branchExecution:observerDeclaration.framework.branchExecution};const game=new api.GameSession(f.field,f.battle,314,{...f.runtime,...sourceWebReplayRuntimePorts()});return {game,field:f.field,battle:f.battle,restore:saved=>api.GameSession.restore(saved,f.field,f.battle,undefined,{...f.runtime,...sourceWebReplayRuntimePorts()})};}
- const map=structuredClone(systems.map),world=structuredClone(systems.catalog),battle=structuredClone(partyOverride?familyCatalog:systems.battle),partyId=partyOverride??Number(Object.keys(battle.encounters)[0]);
- if(partyOverride){
-  const encounter=battle.encounters[partyId],assessment=familyDirectory.report.entries.find(row=>row.partyId===partyId),diagnostics=familyDirectory.diagnostics.filter(row=>row.partyId===partyId);
-  assert(encounter,'Original source party is blocked in the complete pure family directory: '+JSON.stringify({partyId,assessment,diagnostics}));
-  assert.equal(encounter.lifecycle?.mode,'script','Original source lifecycle is absent; it cannot be replaced by the observer');
-  assert.equal(api.canonical(encounter.lifecycle.program),api.canonical(program),'Original source lifecycle/program binding differs');
-  // Only the existing initialized recipe's authored map qualification is added
-  // to this controlled caller. No original row, common source identity or owner
-  // is replaced. The exact original encounter lifecycle/scriptId stays intact.
-  const rows=systems.battle.common.battleEntry.maps.filter(row=>row.id===map.mapId);assert.equal(rows.length,1);
-  assert(!battle.common.battleEntry.maps.some(row=>row.id===map.mapId));battle.common.battleEntry.maps.push(structuredClone(rows[0]));
- }else{
-  assert(battle.encounters[partyId],'Controlled recipe has no legal encounter');
-  battle.encounters[partyId].lifecycle={kind:program.kind==='battle-event-v2'?'battle-lifecycle-v2':'battle-lifecycle-v1',mode:'script',scriptId:900000,program,
-    ...(program.kind==='battle-event-v2'?{branchExecution:observerDeclaration.framework.branchExecution}:{})};
- }
- const script='__authored_battle_message_observer__',source={file:'authored-message-observer',assetPath:'controlled-whole-program-caller'};
- const continuation=script+'return';assert(!map.scripts[script]&&!map.scripts[continuation]);
- map.scripts[script]=[{kind:'encounter',party:partyId,continuation,script,index:0,source},{kind:'exit',script,index:1,source}];
- map.scripts[continuation]=[{kind:'exit',script:continuation,index:0,source}];
- // Caller and placement are explicitly authored. No original battle program,
- // source flags, roster, resources or source initializer is edited.
- (map.scriptSystemFlags??={})[script]={keepBadStatusVisual:false};map.scriptSystemFlags[continuation]={keepBadStatusVisual:false};
- // These two scripts are authored callers, so they require the same explicit
- // native task metadata as the initialized recipe's other authored programs.
- // The original BattleScript body, root flags and locals remain unchanged.
- const template=Object.entries(map.scriptPuppetContexts??{}).find(([,v])=>v&&v.characteristics===true);
- assert(template,'Controlled recipe lacks an authored native script context');
- for(const alias of [script,continuation]){
-  map.scriptPuppetContexts[alias]={...structuredClone(template[1]),scriptHash:api.hash(map.scripts[alias])};
-  map.scriptTransitionMetadata[alias]={customAnimations:'none'};
-  map.scriptLocals[alias]={labels:[],values:[]};
- }
- const sealedMap=seal(map);world.maps[map.mapId].contentHash=sealedMap.contentHash;const sealedWorld=seal(world),sealedBattle=seal(battle),
-  content=await api.compileFrameworkNewGame({sourceEntry,sourceBattle,sourceMap:await candidate.read(strict.maps[sourceEntry.entry.mapId].url),world:sealedWorld,map:sealedMap,battle:sealedBattle,entrance:sealedMap.partyEntry.pointIns[0].id}),
-  game=await api.GameSession.prepareFrameworkNewGame(content,sealedWorld,sealedMap,sealedBattle,ports(),20261010,
+ const {map:sealedMap,world:sealedWorld,battle:sealedBattle,content,verified,script}=await callerDefinitions.prepare(program,partyOverride),
+  game=await api.GameSession.prepareFrameworkNewGameFromVerified(verified.content,verified.world,verified.map,verified.battle,ports(),20261010,
     callerFade?new api.FieldFadeState(api.DEVELOPMENT_TRANSPARENT_FADE):undefined);
  return {game,field:null,battle:sealedBattle,restore:saved=>api.GameSession.restore(saved,undefined,sealedBattle,{catalog:sealedWorld,map:sealedMap,initialized:{content,initialMap:sealedMap}},ports()),script};
 }
@@ -234,7 +203,7 @@ const familyViews=family==='all'?Object.fromEntries(Object.entries(familyDefinit
   parameterAttempts:actualParameters.length,parameterCompleted:actualParameters.filter(p=>p.run?.result==='parameter-protocol-completed').length,
   sourceStoryReachability:false,independentEvidence:false}];})):undefined;
 if(family==='all'&&!o.smoke){assert.equal(programs.length,input.programs.length);assert.equal(originalParties.length,input.dependencies.requestedPartyIds.length);assert.equal(parameters.length,input.sites.length);}
-const report={kind:family==='all'?'source-battle-common-family-execution-v1':family==='branch-execution'?'source-battle-branch-execution-v1':family==='system-messages'?'source-battle-system-message-execution-v1':family==='effects'?'source-battle-event-effect-execution-v1':'source-battle-event-message-execution-v1',family,result:o.smoke?'smoke-attempts-recorded':'complete-attempts-recorded',runtimeSha256:runtime,sourceDigest:input.sourceDigest,
+const report={kind:family==='all'?'source-battle-common-family-execution-v1':family==='branch-execution'?'source-battle-branch-execution-v1':family==='system-messages'?'source-battle-system-message-execution-v1':family==='effects'?'source-battle-event-effect-execution-v1':'source-battle-event-message-execution-v1',family,result:o.smoke?'smoke-attempts-recorded':'complete-attempts-recorded',runtimeSha256:runtime,sourceDigest:input.sourceDigest,callerDefinitionGroups:callerDefinitions?.stats()??null,
  ...(familyViews?{familyViews,sharedExecution:{kind:'one-source-battle-lifecycle-experiment-v1',repeats:1,independentEvidence:false,wholeSourceScopeUnchanged:true}}:{}),
  candidate:candidate?{reportSha256:sha(candidate.reportBytes),runtimeSha256:candidate.runtimeSha256,objects:candidate.report.objects.length,link:candidate.report.link,inputLock:candidate.report.inputLock}:null,recipeBinding,familyDirectory,artifacts,
  counts:{...input.inventory.counts,...(['effects','all'].includes(family)?{effectSites:effectSites.length,decodedEffectSites:effectSites.filter(s=>['play-battle-effect','sync-battle-effect'].includes(s.typed.kind)).length,actualEffectRequests:programs.reduce((n,p)=>n+observedBattleEffects(p.run).filter(e=>e.action==='request').length,0),actualEffectCompletions:programs.reduce((n,p)=>n+observedBattleEffects(p.run).filter(e=>e.action==='complete').length,0)}:{}),parameterAttempts:parameters.length,parameterCompleted:parameters.filter(r=>r.run?.result==='parameter-protocol-completed').length,

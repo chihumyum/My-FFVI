@@ -755,6 +755,7 @@ export class WorldSession {
           ...(effectMap ? { fieldEffectMap: effectMap } : {}),
           ...(sourcePresentation ? { sourcePresentation } : {}),
           ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}),
+          ...(this.owned?.current.transportationParkingUpload?{transportationParkingUpload:this.owned.current.transportationParkingUpload}:{}),
           ...(this.owned?.current.vehicleLifecycle?{vehicleLifecycle:this.owned.current.vehicleLifecycle}:{}),
           ...(this.owned?.current.transportationTimestamp ? { transportationTimestamp: this.owned.current.transportationTimestamp } : {}),
           ...(this.owned?.current.soundPresentation ? { soundPresentation: this.owned.current.soundPresentation } : {}),

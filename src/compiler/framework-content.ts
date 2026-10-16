@@ -1,3 +1,4 @@
+import { WEB_SOURCE_TRANSPORT_PARKING_UPLOAD, type WebSourceTransportParkingUpload } from "../core/transportation-parking-upload.js";
 import {fieldVehicleActionAdmitted} from "../core/field-vehicle-action.js";
 import{WEB_SOURCE_VEHICLE_LIFECYCLE,type WebSourceVehicleLifecycle}from "../core/field-vehicle-lifecycle.js";
 import {deriveFrameworkFieldEffectTransformContent,type FrameworkFieldEffectTransformAssessment} from './framework-field-effect-transforms.js';
@@ -29,6 +30,7 @@ export type LogicalFieldEffectsDeclaration = {
   mapIds: readonly number[]; reason: string;
 };
 export type FrameworkContentOptions = {
+  transportationParkingUpload?:WebSourceTransportParkingUpload;
   vehicleLifecycle?:WebSourceVehicleLifecycle;
   skyboxPresentation?:WebFlatSkybox;skyboxCatalog?:FieldSkyboxCatalog;
   screenPresentation?:import("../core/field-screen-presentation.js").WebFieldScreenPresentation;
@@ -207,8 +209,9 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (!initial || strictEntry.mapContentHash !== initial.contentHash)
     throw new Error("Framework strict entry/map binding mismatch");
 
-  if (Object.keys(options).some(key => key !== 'vehicleLifecycle' && key !== 'fieldEffectTransforms' && key !== 'fieldEffectTransformCatalog' && key !== 'skyboxPresentation' && key !== 'skyboxCatalog' && key !== 'screenPresentation' && key !== 'mobColorFilter' && key !== 'worldAutoMove' && key !== 'birdViewActors' && key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
+  if (Object.keys(options).some(key => key !== 'transportationParkingUpload' && key !== 'vehicleLifecycle' && key !== 'fieldEffectTransforms' && key !== 'fieldEffectTransformCatalog' && key !== 'skyboxPresentation' && key !== 'skyboxCatalog' && key !== 'screenPresentation' && key !== 'mobColorFilter' && key !== 'worldAutoMove' && key !== 'birdViewActors' && key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
     throw new Error("Unknown framework derivation option");
+  if(options.transportationParkingUpload!==undefined&&(options.transportationParkingUpload!==WEB_SOURCE_TRANSPORT_PARKING_UPLOAD||options.vehicleLifecycle!==WEB_SOURCE_VEHICLE_LIFECYCLE))throw Error("Unknown framework parking upload policy/dependency");
   if(options.vehicleLifecycle!==undefined&&options.vehicleLifecycle!==WEB_SOURCE_VEHICLE_LIFECYCLE)throw Error("Unknown framework source vehicle lifecycle policy");
   if((options.fieldEffectTransforms===undefined)!==(options.fieldEffectTransformCatalog===undefined)||options.fieldEffectTransforms!==undefined&&options.fieldEffectTransforms!==WEB_FIELD_EFFECT_TRANSFORMS)throw Error('Board transforms require exact policy and complete compiled assessment');
   if(options.worldAutoMove!==undefined&&(options.worldAutoMove!==WEB_FLAT_WORLD_AUTO_MOVE||options.worldAutoTasks!==WEB_FLAT_WORLD_AUTO_TASKS))throw Error('World auto movement requires its declared flat task host');
@@ -243,7 +246,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
     validateLogicalEffectCatalog(logical.catalog);
   }
   const derivedProfile = (sourceContentHash: string, local: DevelopmentOmission[]): DevelopmentProfile => ({
-    ...profile(sourceContentHash, local), ...(options.vehicleLifecycle?{vehicleLifecycle:options.vehicleLifecycle}:{}), ...(options.skyboxPresentation?{skyboxPresentation:options.skyboxPresentation}:{}), ...(screenPresentation?{screenPresentation}:{}), ...(mobColorFilter ? {mobColorFilter} : {}), ...(birdViewActors ? { birdViewActors } : {}), ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
+    ...profile(sourceContentHash, local), ...(options.transportationParkingUpload?{transportationParkingUpload:options.transportationParkingUpload}:{}), ...(options.vehicleLifecycle?{vehicleLifecycle:options.vehicleLifecycle}:{}), ...(options.skyboxPresentation?{skyboxPresentation:options.skyboxPresentation}:{}), ...(screenPresentation?{screenPresentation}:{}), ...(mobColorFilter ? {mobColorFilter} : {}), ...(birdViewActors ? { birdViewActors } : {}), ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
     ...(options.worldAutoMove?{worldAutoMove:options.worldAutoMove}:{}),
     ...(options.worldAutoTasks?{worldAutoTasks:options.worldAutoTasks}:{}),
   });

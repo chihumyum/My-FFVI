@@ -64,6 +64,7 @@ export async function linkSourcePrerequisites({root=repository,compiledDir='dist
     originalEntryHash:originalEntry.contentHash,linkedEntryHash:entry.contentHash,
     frameworkWorldHash:frameworkWorld.contentHash,frameworkEntryHash:frameworkEntry.contentHash,
     logicalFieldEffects:framework.report.logicalFieldEffects??null,
+    ...(frameworkOptions.transportationParkingUpload?{transportationParkingUpload:{policy:frameworkOptions.transportationParkingUpload,catalogHash:api.hash(frameworkWorld.transportation)}}:{}),
     ...(frameworkOptions.fieldEffectTransforms?{fieldEffectTransforms:{...framework.report.fieldEffectTransforms,policy:frameworkOptions.fieldEffectTransforms,assessmentHash:frameworkOptions.fieldEffectTransformCatalog.contentHash,flatAssessmentHash:frameworkOptions.fieldEffectFlat.contentHash,catalogHash:api.hash(framework.maps[0].fieldEffects),sourceMapSetHash:frameworkOptions.fieldEffectTransformCatalog.projection.sourceMapSetHash}}:{}),
     ...(frameworkOptions.fieldEffectFlat?{fieldEffectProjection:{...framework.report.fieldEffectProjection,assessmentHash:frameworkOptions.fieldEffectFlat.contentHash,declaration:{kind:"web-source-field-effect-flat-input-v1",reason:frameworkOptions.fieldEffectFlat.projection.reason}}}:{}),
     ...(framework.report.npcProjection?{npcProjection:structuredClone(framework.report.npcProjection)}:{}),

@@ -16,6 +16,7 @@ export function sourceCatalogProfile(profile: DevelopmentProfile | undefined): S
       typeof profile.sourceContentHash !== "string" || !/^[a-f0-9]{64}$/.test(profile.sourceContentHash) ||
       !Array.isArray(profile.omissions) ||
       profile.transportation !== undefined && profile.transportation !== "walking-magitek-framework-v1" ||
+      profile.transportationParkingUpload!==undefined&&(profile.transportationParkingUpload!=="web-source-transport-parking-upload-v1"||profile.vehicleLifecycle!=="web-source-vehicle-lifecycle-v1") ||
       profile.vehicleLifecycle !== undefined && (profile.vehicleLifecycle!=="web-source-vehicle-lifecycle-v1"||profile.transportation!=="walking-magitek-framework-v1") ||
       profile.worldMap !== undefined && profile.worldMap !== "framework-world-map-flat-v1" ||
       profile.fieldPresentation !== undefined && profile.fieldPresentation !== "framework-ordinary-field-flat-v1" ||
@@ -61,7 +62,8 @@ export function assertSourceEntryProfiles(
     const declared = sourceCatalogProfile(dependency.developmentProfile);
     if (declared !== profile || profile === "source" && dependency.walkEncounters !== undefined ||
         profile === "framework" &&
-        (dependency.developmentProfile!.vehicleLifecycle !== entry.developmentProfile!.vehicleLifecycle ||
+        (dependency.developmentProfile!.transportationParkingUpload!==entry.developmentProfile!.transportationParkingUpload||
+          dependency.developmentProfile!.vehicleLifecycle !== entry.developmentProfile!.vehicleLifecycle ||
           dependency.developmentProfile!.transportation !== entry.developmentProfile!.transportation ||
           dependency.developmentProfile!.worldMap !== entry.developmentProfile!.worldMap ||
           dependency.developmentProfile!.fieldPresentation !== entry.developmentProfile!.fieldPresentation ||

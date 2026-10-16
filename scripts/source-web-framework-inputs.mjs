@@ -3,6 +3,7 @@
 // Return new records: one caller's override cannot alter another build's policy.
 export function webSourceFrameworkInputs() {
   return {
+    transportationParkingUpload:'web-source-transport-parking-upload-v1',
     vehicleLifecycle:'web-source-vehicle-lifecycle-v1',
     worldAutoTasks: 'web-flat-world-auto-tasks-v1',
     worldAutoMove: 'web-flat-world-auto-move-v1',

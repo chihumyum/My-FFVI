@@ -8,10 +8,10 @@ import {createHash} from 'node:crypto';
 import {runtimeDigest} from './runtime-digest.mjs';
 import {loadBattleEventMessageSourceInputs} from './battle-event-message-source-inputs.mjs';
 const view=resolve(import.meta.dirname,'..'),options={inputRoot:view,compiled:resolve(view,'dist'),report:resolve(view,'build/reports/source-world-auto-tasks.json')},args=process.argv.slice(2),seen=new Set();
-while(args.length){const f=args.shift();assert(['--input-root','--compiled-dir','--report'].includes(f)&&args[0]&&!seen.has(f));seen.add(f);options[f==='--input-root'?'inputRoot':f==='--compiled-dir'?'compiled':'report']=resolve(view,args.shift());}
+while(args.length){const f=args.shift();assert(['--input-root','--compiled-dir','--report','--proposal'].includes(f)&&args[0]&&!seen.has(f));seen.add(f);options[f==='--input-root'?'inputRoot':f==='--compiled-dir'?'compiled':f==='--proposal'?'proposal':'report']=resolve(view,args.shift());}
 assert(options.report.startsWith(resolve(view,'build')+'/'));await mkdir(dirname(options.report),{recursive:true});
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex'),load=n=>import(pathToFileURL(resolve(options.compiled,n+'.js')).href),runtime=await runtimeDigest(view,options.compiled),
- proposalFile=resolve(options.inputRoot,'build/wip/source-world-auto-task-proposal/proposal.json'),proposalBytes=await readFile(proposalFile),proposal=JSON.parse(proposalBytes);
+ proposalFile=options.proposal??resolve(options.inputRoot,'build/wip/source-world-auto-task-proposal/proposal.json'),proposalBytes=await readFile(proposalFile),proposal=JSON.parse(proposalBytes);
 assert.equal(sha(proposalBytes),'b303b3f136c33bfe9de3f3d17b09db3704cc768f1b88739424bba8d49831ed6f');
 const input=await loadBattleEventMessageSourceInputs(options.inputRoot,options.compiled),api=Object.assign({},input.api,...await Promise.all([
  'src/compiler/field','src/compiler/framework-new-game','src/core/game-session','src/core/game-flow','src/core/field-world-auto-tasks','tests/fixtures/world-auto-tasks'].map(load)));
@@ -47,7 +47,7 @@ for(const site of scalars){
 }
 assert.equal(sha(await readFile(proposalFile)),sha(proposalBytes));assert.equal(await runtimeDigest(view,options.compiled),runtime);
 const corpus=await input.api.loadCorpus(options.inputRoot);assert.equal(api.hash({assets:corpus.assets,tables:corpus.tables,messages:corpus.messages,manifest:corpus.manifest}),input.sourceDigest);
-const report={kind:'source-world-auto-task-family-check-v1',result:'passed-controlled-parameters-and-whole-source-audit',runtimeSha256:runtime,proposalSha256:sha(proposalBytes),sourceDigest:input.sourceDigest,
+const report={kind:'source-world-auto-task-family-check-v1',result:'passed-controlled-parameters-and-whole-source-audit',runtimeSha256:runtime,proposalSha256:sha(proposalBytes),proposalInput:{path:proposalFile,bytes:proposalBytes.length,sha256:sha(proposalBytes)},sourceDigest:input.sourceDigest,
  counts:{...proposal.counts,decodedSharedSites:scalars.length,decodedMovementSites:movements.length,explicitSpatialGates:spatialGates.length,existingBirdViewSites:birdViewSites.length,actualSourceOperandSessionAttempts:attempts.length,actualSourceOperandSessionCompleted:attempts.length,completeOriginalProgramExecutions:0,worldCompilations:0},
  programs,sites,completeReferenceAnalysis:input.analysis,parameterAttempts:attempts,explicitSpatialGates:spatialGates,existingBirdViewSites:birdViewSites,
  webPolicy:{runtime:api.WEB_FLAT_WORLD_AUTO_TASKS,trustedContent:'framework profile.worldAutoMove + worldAutoTasks; current map/camera binding',clock:'Existing Field 10ms, all running tasks in insertion order',start:'Does not clear or consume queue; repeated Start preserves running progress, newly appended tasks wait for Start',projection:'Camera-owned flat rotation/zoom/vertical offset; not native 3D/RT',zeroDuration:'No endpoint setter; completes on a real tick',battle:'Field task queue paused while independently committed Session passive clocks continue'},

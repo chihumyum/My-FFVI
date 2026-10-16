@@ -57,6 +57,7 @@ import { prepareSourceNewGameField, installSourceNewGameActors, validateSourceNe
 import { assertFrameworkNewGameBindings, prepareFrameworkNewGameField, installFrameworkNewGameActors,
   type FrameworkNewGameContent } from "./framework-new-game.js";
 import { verifyContent } from "./content-integrity.js";
+import { verifiedContentValue, type VerifiedContent } from "./verified-content.js";
 import type { NewGameFieldLaunch, NewGameFieldPreparation } from "./new-game-field-entry.js";
 import { FieldFadeState } from "./field-fade.js";
 import { cloneSourcePresentationContext, createSourcePresentationContext, type SourcePresentationContext } from "./source-presentation.js";
@@ -87,7 +88,7 @@ export type GameCheckpoint = GameCheckpointBase & (
   { formatVersion: 7 | 8 | 9 | 10; walkEncounters: WalkEncounterSnapshot; fieldReservation: FieldReservationSnapshot }
 );
 /** External observations are rebound by the host on load, never trusted from saves. */
-export type GameSessionRuntime = { sourceSnapshot?:import("./field-source-snapshot.js").ImmutableOwnedFieldSource; rtsPartySwitch?:WebRtsPartySwitch; sourceCharacterNaming?:typeof WEB_SOURCE_CHARACTER_NAMING; vehicleLifecycle?:import("./field-vehicle-lifecycle.js").WebSourceVehicleLifecycle; battleChildPartyAdmission?:WebBattleChildAdmission; battleGauInstances?:BattleGauMediaHost; fieldEffectTransforms?:import("./field-effect-transforms.js").WebFieldEffectTransforms; skyboxPresentation?: import("./field-skybox.js").WebFlatSkybox; battleEventConditions?: WebBattleEventConditions; screenPresentation?: import("./field-screen-presentation.js").WebFieldScreenPresentation; battleGlobalFade?:typeof WEB_BATTLE_GLOBAL_FADE; mobColorFilter?: import("./field-mob-controls.js").WebFlatMobColorFilter; birdViewActors?: import("./field-bird-view-actors.js").WebFlatBirdViewActors; worldAutoMove?:import("./field-world-auto-move.js").WebFlatWorldAutoMove; worldAutoTasks?:import("./field-world-auto-tasks.js").WebFlatWorldAutoTasks; battleBranchExecution?:WebBattleBranchExecution; battleEventEffects?:BattleEventEffectHost|typeof WEB_BATTLE_EVENT_EFFECTS; battleEventControls?: WebBattleEventControls; viewChange?: import("./field-view-change.js").WebFlatFieldViewChange; battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY; sourcePartySelection?: WebSourcePartySelection; scriptedBattleActions?: WebScriptedBattleActions; puppetRoutes?: import("./field-puppet-route.js").WebPuppetRoutePolicy; sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
+export type GameSessionRuntime = { sourceSnapshot?:import("./field-source-snapshot.js").ImmutableOwnedFieldSource; rtsPartySwitch?:WebRtsPartySwitch; sourceCharacterNaming?:typeof WEB_SOURCE_CHARACTER_NAMING; transportationParkingUpload?:import("./transportation-parking-upload.js").WebSourceTransportParkingUpload; vehicleLifecycle?:import("./field-vehicle-lifecycle.js").WebSourceVehicleLifecycle; battleChildPartyAdmission?:WebBattleChildAdmission; battleGauInstances?:BattleGauMediaHost; fieldEffectTransforms?:import("./field-effect-transforms.js").WebFieldEffectTransforms; skyboxPresentation?: import("./field-skybox.js").WebFlatSkybox; battleEventConditions?: WebBattleEventConditions; screenPresentation?: import("./field-screen-presentation.js").WebFieldScreenPresentation; battleGlobalFade?:typeof WEB_BATTLE_GLOBAL_FADE; mobColorFilter?: import("./field-mob-controls.js").WebFlatMobColorFilter; birdViewActors?: import("./field-bird-view-actors.js").WebFlatBirdViewActors; worldAutoMove?:import("./field-world-auto-move.js").WebFlatWorldAutoMove; worldAutoTasks?:import("./field-world-auto-tasks.js").WebFlatWorldAutoTasks; battleBranchExecution?:WebBattleBranchExecution; battleEventEffects?:BattleEventEffectHost|typeof WEB_BATTLE_EVENT_EFFECTS; battleEventControls?: WebBattleEventControls; viewChange?: import("./field-view-change.js").WebFlatFieldViewChange; battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY; sourcePartySelection?: WebSourcePartySelection; scriptedBattleActions?: WebScriptedBattleActions; puppetRoutes?: import("./field-puppet-route.js").WebPuppetRoutePolicy; sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
   sourceMessageSequence?: NonNullable<FieldGameOptions["sourceMessageSequence"]>;
   conditionLeaderActivity?: NonNullable<FieldGameOptions["conditionLeaderActivity"]>;
@@ -273,6 +274,26 @@ export class GameSession {
     if (!input.battle.gameState.sourceNewGame) throw new Error("Missing framework source initializer");
     await Promise.all([verifyContent(input.content), verifyContent(input.world), verifyContent(input.map), verifyContent(input.battle),
       verifyContent({ ...input.battle.gameState.sourceNewGame, contentHash: input.content.initializerHash })]);
+    return GameSession.#instantiateFrameworkNewGame(input, host, seed, fade);
+  }
+  /** Explicit immutable definitions. Field/World retain their own R2 snapshots
+   * and live identities; this capability cannot come from a checkpoint. */
+  static async prepareFrameworkNewGameFromVerified(content: VerifiedContent<FrameworkNewGameContent>,
+    world: VerifiedContent<WorldCatalog>, map: VerifiedContent<WorldMapContent>, battle: VerifiedContent<BattleCatalog>,
+    runtime: GameSessionRuntime = {}, seed = 20261010, initialFade?: FieldFadeState): Promise<GameSession> {
+    if (initialFade !== undefined && !(initialFade instanceof FieldFadeState))
+      throw new Error("Framework presentation requires an actual Field fade owner");
+    const fade = initialFade?.fork(), host = { ...runtime };
+    if (host.sourceSnapshot !== 'immutable-owned-field-source-v1')
+      throw new Error("Verified framework definitions require immutable owned Field source mode");
+    const input = { content: verifiedContentValue(content), world: verifiedContentValue(world),
+      map: verifiedContentValue(map), battle: verifiedContentValue(battle) };
+    if (!input.battle.gameState.sourceNewGame) throw new Error("Missing framework source initializer");
+    await verifyContent({ ...input.battle.gameState.sourceNewGame, contentHash: input.content.initializerHash });
+    return GameSession.#instantiateFrameworkNewGame(input, host, seed, fade);
+  }
+  static #instantiateFrameworkNewGame(input: { content: FrameworkNewGameContent; world: WorldCatalog;
+    map: WorldMapContent; battle: BattleCatalog }, host: GameSessionRuntime, seed: number, fade?: FieldFadeState): GameSession {
     assertFrameworkNewGameBindings(input.content, input.world, input.map, input.battle);
     const state = GameState.createNewGame(input.battle.gameState, input.battle.common.players,
       input.battle.contentHash, input.battle.common.conditions);

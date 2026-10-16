@@ -529,3 +529,20 @@ test('v12 source comparison proves the exact whole map/index blocker projection 
  const result=await f.run(f.options),map=result.report.frameworkProfileUpgrades.find(r=>r.role==='sourceMap')!;assert.equal(map.vehicleActions.count,1);assert.equal(map.vehicleActions.nativeParity,false);assert.deepEqual(map.comparisonIdentityBefore,map.comparisonIdentityAfter);assert.equal(f.current.get(f.urls.sourceMap)!.blockers[0].reason,'Unsupported entity kind 21');assert.equal(f.candidate.get(f.urls.sourceMap)!.blockers.length,0);
  const old=f.current.get(f.urls.sourceMap)!,bad=structuredClone(old);bad.map.groups.entity_default.entities.find((e:any)=>e.kind===21).vehicleAction.properties.gimmick=true;f.current.set(f.urls.sourceMap,await seal(bad));(f.recipe as any).sourceMap.contentHash=f.current.get(f.urls.sourceMap)!.contentHash;await assert.rejects(f.run(f.options));
 });
+
+async function parkingUploadProfileFixture(){
+ const f=await vehicleProfileFixture(),transportationParkingUpload='web-source-transport-parking-upload-v1';
+ for(const[url,value]of f.candidate)f.candidate.set(url,await seal({...value,developmentProfile:{...value.developmentProfile,transportationParkingUpload}}));
+ const m=f.candidate.get(f.urls.sourceMap)!,w=f.candidate.get(f.urls.sourceWorld)!;f.candidate.set(f.urls.sourceWorld,await seal({...w,maps:{...w.maps,[m.mapId]:{...w.maps[m.mapId],contentHash:m.contentHash}}}));
+ const e=f.candidate.get(f.urls.sourceEntry)!;f.candidate.set(f.urls.sourceEntry,await seal({...e,mapContentHash:m.contentHash,worldCatalogHash:f.candidate.get(f.urls.sourceWorld)!.contentHash}));
+ const proof={...f.proof,kind:'compiled-framework-profile-upgrade-v13',markers:{...f.proof.markers,transportationParkingUpload}},options={...f.options,frameworkProfileUpgrade:proof};
+ for(const key of['frameworkFieldEffectTransformAddition','frameworkFieldEffectFlatAddition']as const)Object.assign(options[key],{catalogHash:f.candidate.get(f.urls.sourceWorld)!.contentHash,entryHash:f.candidate.get(f.urls.sourceEntry)!.contentHash});
+ return{...f,proof,options};
+}
+test('parking v13 binds its actual batch owner and cannot be granted by any old declaration or unrelated candidate edit',async()=>{
+ const f=await parkingUploadProfileFixture(),r=await f.run(f.options);assert.equal(r.report.frameworkProfileUpgrades.length,3);
+ for(const row of r.report.frameworkProfileUpgrades){assert.equal(row.kind,'compiled-framework-profile-upgrade-v13');assert.equal(row.providers.find((p:any)=>p.marker==='transportationParkingUpload').provider,'fieldTransportationParkingBinding');assert.deepEqual(row.comparisonIdentityBefore,row.comparisonIdentityAfter);assert.equal(row.saveMigration,false);}
+ for(let version=1;version<=12;version++)await assert.rejects(f.run({...f.options,frameworkProfileUpgrade:{...f.proof,kind:'compiled-framework-profile-upgrade-v'+version}}));
+ for(const change of[(p:any)=>delete p.markers.vehicleLifecycle,(p:any)=>delete p.markers.transportationParkingUpload,(p:any)=>p.markers.transportationParkingUpload='unknown']){const bad=structuredClone(f.proof);change(bad);await assert.rejects(f.run({...f.options,frameworkProfileUpgrade:bad}));}
+ const original=f.candidate.get(f.urls.sourceMap)!,bad=structuredClone(original);bad.vehicleParking=[];f.candidate.set(f.urls.sourceMap,await seal(bad));await assert.rejects(f.run(f.options));
+});

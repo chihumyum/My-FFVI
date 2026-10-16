@@ -98,6 +98,7 @@ export function gameDevelopmentEntryProfile(baseFieldHash: string, catalog: Worl
   if (sourceCatalogProfile(catalog.developmentProfile) !== "framework") throw new Error("Development map entry requires a framework catalog");
   return { kind: "framework-development-v1", policy: "omit-anonymous-environment-particles-v1",
     sourceContentHash: baseFieldHash, omissions: [],
+    ...(catalog.developmentProfile!.transportationParkingUpload?{transportationParkingUpload:catalog.developmentProfile!.transportationParkingUpload}:{}),
     ...(catalog.developmentProfile!.vehicleLifecycle?{vehicleLifecycle:catalog.developmentProfile!.vehicleLifecycle}:{}),
     ...(catalog.developmentProfile!.transportation ? { transportation: catalog.developmentProfile!.transportation } : {}),
     ...(catalog.developmentProfile!.worldMap ? { worldMap: catalog.developmentProfile!.worldMap } : {}),

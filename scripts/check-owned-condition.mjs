@@ -61,11 +61,13 @@ assert.equal(sourceSites.filter((site) => site.mnemonic === "RemoveCondition").l
 // checker; decoder coverage must not be confused with this controlled subset.
 const admitted = decoded.filter(site => site.type === 607);
 const removeAll = decoded.filter(site => site.type === 0 && site.mnemonic === "RemoveCondition");
-assert.equal(decoded.length, 158);
+const removeLife = decoded.filter(site => [4, 5].includes(site.type) && site.mnemonic === "RemoveCondition");
+assert.equal(decoded.length, 191);
 assert.equal(removeAll.length, 150);
 assert.equal(admitted.length, 8);
-assert.equal(blocked.length, 52);
-assert.equal(admitted.length + removeAll.length + blocked.length, sourceSites.length);
+assert.equal(removeLife.length, 33);
+assert.equal(blocked.length, 19);
+assert.equal(admitted.length + removeAll.length + removeLife.length + blocked.length, sourceSites.length);
 assert.ok(admitted.every((site) => site.type === 607 && [0, 1].includes(site.target)));
 assert.equal(admitted.filter((site) => site.mnemonic === "AddCondition").length, 4);
 assert.equal(admitted.filter((site) => site.mnemonic === "RemoveCondition").length, 4);
@@ -153,6 +155,8 @@ const report = {
   admittedSites: admitted.length, blockedSites: blocked.length,
   delegatedRemoveAll: { checker: "scripts/check-source-remove-all.mjs", sites: removeAll,
     scope: "Decoder admission only here; complete-program lifecycle and MainCore writes are independently checked" },
+  delegatedRemoveLife: { checker: "scripts/check-owned-condition-remove-life-source.mjs", sites: removeLife,
+    scope: "Full-source before/after and100-row authority are checked separately; legal battle/Field/Storage mechanism tests are not source-story reachability" },
   controlledChecks: { sourceEventExecutions: calls.length * 2, saveBattleRoundTrips: calls.length,
     completedFieldSteps: calls.length, selectorCases: 4 },
   calls, blocked,

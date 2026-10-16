@@ -29,11 +29,12 @@ export function assessStoryRuntimePublication({ receipt, runtimeSha256, compiled
         publicationStages.some(name => receipt.stages.filter(stage => stage.name === name).length !== 1))
       return unknown('publication-stage-proof-incomplete');
     const lock = receipt.sourceInputLock;
-    if (!['source-prerequisite-input-lock-v1','source-prerequisite-input-lock-v2','source-prerequisite-input-lock-v3','source-prerequisite-input-lock-v4'].includes(lock?.kind) || !digest(lock.compilerDigest) ||
+    if (!['source-prerequisite-input-lock-v1','source-prerequisite-input-lock-v2','source-prerequisite-input-lock-v3','source-prerequisite-input-lock-v4','source-prerequisite-input-lock-v5'].includes(lock?.kind) || !digest(lock.compilerDigest) ||
         !digest(lock.runtimeSha256) || lock.runtimeSha256 !== runtimeSha256 ||
         typeof lock.compiledDir !== 'string' || resolve(root, lock.compiledDir) !== resolve(compiledDirectory))
       return unknown('same-runtime-compiler-lock-not-established');
-    const transformLock=lock.kind==='source-prerequisite-input-lock-v4',skyboxLock=lock.kind==='source-prerequisite-input-lock-v3'||transformLock;
+    const parkingLock=lock.kind==='source-prerequisite-input-lock-v5',transformLock=lock.kind==='source-prerequisite-input-lock-v4'||parkingLock,skyboxLock=lock.kind==='source-prerequisite-input-lock-v3'||transformLock;
+    if(parkingLock?(lock.transportationParkingUpload!=="web-source-transport-parking-upload-v1"||!digest(lock.transportationCatalogHash)):Object.hasOwn(lock,"transportationParkingUpload")||Object.hasOwn(lock,"transportationCatalogHash"))return unknown("source-parking-upload-lock-policy-not-established");
     const transformKeys=['fieldEffectTransforms','fieldEffectTransformAssessmentHash','fieldEffectFlatAssessmentHash','fieldEffectCatalogHash','fieldEffectSourceMapSetHash'];
     if(transformLock?(lock.fieldEffectTransforms!=='web-source-logical-board-transforms-v1'||transformKeys.slice(1).some(key=>!digest(lock[key]))):transformKeys.some(key=>Object.hasOwn(lock,key)))return unknown('source-board-transform-lock-policy-not-established');
     if(skyboxLock?lock.skyboxPresentation!=='web-flat-skybox-panorama-v1':Object.hasOwn(lock,'skyboxPresentation'))return unknown('source-skybox-lock-policy-not-established');
@@ -48,6 +49,7 @@ export function assessStoryRuntimePublication({ receipt, runtimeSha256, compiled
         base?.kind !== 'game-content-package-build-v1' || source.compilerDigest !== lock.compilerDigest ||
         source.sourceSetHash !== manifest.sourceSetHash || source.parentSourceSetHash !== manifest.parentSourceSetHash)
       return unknown('source-producer-identity-not-established');
+    if(parkingLock&&[source,linked].some(p=>p.transportationParkingUpload?.policy!==lock.transportationParkingUpload||p.transportationParkingUpload?.catalogHash!==lock.transportationCatalogHash))return unknown("source-parking-upload-producer-proof-not-established");
     if(skyboxLock&&(!source.inputScope?.snapshotRoots?.includes('build/field-skybox-media')||source.skyboxPresentation?.policy!==lock.skyboxPresentation||!digest(source.skyboxPresentation?.catalogHash)||!digest(source.skyboxPresentation?.mediaSourceSetHash)||!Number.isSafeInteger(source.skyboxPresentation?.models)||source.skyboxPresentation.models<1||!Number.isSafeInteger(source.skyboxPresentation?.images)||source.skyboxPresentation.images<1))return unknown('source-skybox-media-producer-proof-not-established');
     if(transformLock){
       const p=source.fieldEffectTransforms,q=linked.fieldEffectTransforms;

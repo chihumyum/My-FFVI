@@ -1,3 +1,4 @@
+import { WEB_SOURCE_TRANSPORT_PARKING_UPLOAD, transportationStoredPosition, type WebSourceTransportParkingUpload } from "./transportation-parking-upload.js";
 import type { SourceScriptAnimationCatalog } from "./source-script-animations.js";
 import type { FieldNativeAnimationKeys } from "./field-native-appearance.js";
 import { validateFieldMapAnimation, WEB_FIELD_MAP_ANIMATION, type FieldMapAnimationDefinition } from "./field-map-animation.js";
@@ -79,6 +80,7 @@ export type FieldNativeCheckpointContext = {
   npcs: readonly FieldNativeNpcDefinition[];
   /** Rebuilt from actual source transportation rows/owned parking/flags by the
    * dual authorized Field. Saves never supply a vehicle identity or asset. */
+  transportationParkingUpload?:WebSourceTransportParkingUpload;
   vehicles?:readonly (import("./field-vehicle-lifecycle.js").FieldVehicleInstance & {position:{x:number;y:number;z:number};layer:number})[];
   animated?: readonly FieldMapAnimationDefinition[];
   animatedPolicy?: typeof WEB_FIELD_MAP_ANIMATION;
@@ -336,7 +338,9 @@ function restoreActor(row: FieldNativeActorCheckpoint | FieldNativeActorMotionCh
     bodyOpaque: row.bodyOpaque, shadowVisible: row.shadowVisible, moving: false, riding: expected.riding, riderAssetId: expected.riderAssetId,
     childEntityObject: expected.childEntityObject, rideOnEntity: expected.rideOnEntity,
     viewBinding: material(row, context, expected), transparentTextures: { ...row.transparentTextures } };
-  if(expected.metadata.sourceTransportationId!==undefined){const vehicle=context.vehicles!.find(v=>v.id===expected.metadata.sourceTransportationId)!;if(canonical(row.position)!==canonical(vehicle.position)||row.layer!==vehicle.layer)throw Error("Source vehicle saved pose differs from actual owned parking");}
+  if(expected.metadata.sourceTransportationId!==undefined){const vehicle=context.vehicles!.find(v=>v.id===expected.metadata.sourceTransportationId)!;const position=context.transportationParkingUpload===WEB_SOURCE_TRANSPORT_PARKING_UPLOAD?transportationStoredPosition(context.mapRange,row.position):row.position;
+    const expectedPosition=context.transportationParkingUpload===WEB_SOURCE_TRANSPORT_PARKING_UPLOAD?vehicle.record.position:vehicle.position;
+    if(canonical(position)!==canonical(expectedPosition)||row.layer!==vehicle.layer)throw Error("Source vehicle saved pose differs from actual owned parking");}
   const actor = createNativeFieldActorProjection({ ...structuredClone(expected.metadata), entity }, context.mapRange, context.partyCatalog,
     context.transportationPresentation);
   actor.steps = row.steps;

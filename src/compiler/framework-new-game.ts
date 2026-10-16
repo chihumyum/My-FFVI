@@ -7,6 +7,7 @@ import { assertSourceGameCatalog } from "../core/source-catalog.js";
 import { contentDigest, verifyContent } from "../core/content-integrity.js";
 import { canonical, hash } from "./content.js";
 import { resolveFieldPresentation } from "../core/field-presentation.js";
+import { verifiedContentValue, type VerifiedContent } from "../core/verified-content.js";
 
 export type FrameworkNewGameInput = {
   sourceEntry: SourceNewGameContent;
@@ -24,6 +25,26 @@ export async function compileFrameworkNewGame(input: FrameworkNewGameInput): Pro
   const data = structuredClone(input);
   const { sourceEntry, sourceBattle, sourceMap, world, map, battle, entrance } = data;
   await Promise.all([sourceEntry, sourceBattle, sourceMap, world, map, battle].map(value => verifyContent(value)));
+  return compileOwnedFrameworkNewGame(data);
+}
+
+export type VerifiedFrameworkNewGameInput = {
+  [K in keyof Omit<FrameworkNewGameInput, "entrance">]: VerifiedContent<FrameworkNewGameInput[K]>;
+} & { entrance: number };
+
+/** Only immutable, fully verified definition documents may use this entry.
+ * Domain/source/profile/initializer bindings still run for every tuple. */
+export async function compileFrameworkNewGameFromVerified(input: VerifiedFrameworkNewGameInput): Promise<FrameworkNewGameContent> {
+  const data: FrameworkNewGameInput = {
+    sourceEntry: verifiedContentValue(input.sourceEntry), sourceBattle: verifiedContentValue(input.sourceBattle),
+    sourceMap: verifiedContentValue(input.sourceMap), world: verifiedContentValue(input.world),
+    map: verifiedContentValue(input.map), battle: verifiedContentValue(input.battle), entrance: input.entrance,
+  };
+  return compileOwnedFrameworkNewGame(data);
+}
+
+async function compileOwnedFrameworkNewGame(data: FrameworkNewGameInput): Promise<FrameworkNewGameContent> {
+  const { sourceEntry, sourceBattle, sourceMap, world, map, battle, entrance } = data;
   assertSourceGameCatalog(sourceBattle);
   assertSourceGameCatalog(battle, "framework");
   if (sourceEntry.kind !== "source-new-game-content-v1" || sourceEntry.developmentProfile !== undefined ||

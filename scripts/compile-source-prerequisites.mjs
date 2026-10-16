@@ -119,6 +119,17 @@ async function modules(compiledDir,{board=false}={}) {
     ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost, ...npcArea, ...npcFlat, ...effectFlat, ...ordinary, ...skybox, ...boardTransforms };
 }
 
+/** A v5 tuple pins the full compiler-derived source transport catalog. This
+ * uses raw locked table metadata, not a candidate/saved catalog or a map list. */
+async function sourceTransportationCatalogHash(lock,root){
+  const api=await modules(lock.compiledDir),{compileTransportationCatalog}=await import(pathToFileURL(resolve(lock.compiledDir,"src/compiler/transportation.js")).href);
+  const snapshot=await api.loadCorpus(root),battle=await readLockedJson(lock,root,"build/battle/battle.json");
+  if(snapshot.sourceSetHash!==lock.sourceSetHash||snapshot.manifest.parentSourceSetHash!==lock.parentSourceSetHash||battle.parentSourceSetHash!==lock.parentSourceSetHash)throw Error("Parking transport input source identity changed");
+  const sources=Object.fromEntries(Object.entries(battle.tableSources).map(([name,x])=>[name,{file:x.file,assetPath:x.assetPath,objectId:x.objectId,serializedFile:x.serializedFile}]));
+  const reader=api.battleTableIndex(snapshot.tables,sources),result=compileTransportationCatalog(reader,snapshot.tables["transportation.csv"].map(row=>Number(row.id)));
+  return api.hash(result.catalog);
+}
+
 /** Explicit Web producer input, not a source/save capability grant. */
 function logicalInput(raw, root) {
   if (raw === undefined) return undefined;
@@ -193,8 +204,9 @@ export function sourceFieldEffectFlatInput(raw) {
 /** Capture exactly the current compiler's input domain. Raw-source exports
  * retain their original source fingerprints; this does not hash all Unity
  * bundles or claim all source files are live-verified. */
-export async function captureSourcePrerequisiteInputs({ root = repository, compiledDir = "dist", logicalFieldEffects, skyboxPresentation, fieldEffectTransforms, fieldEffectTransformCatalog, fieldEffectFlatAssessment, fieldEffectCatalogHash } = {}) {
+export async function captureSourcePrerequisiteInputs({ root = repository, compiledDir = "dist", logicalFieldEffects, skyboxPresentation, fieldEffectTransforms, fieldEffectTransformCatalog, fieldEffectFlatAssessment, fieldEffectCatalogHash, transportationParkingUpload } = {}) {
   root = resolve(root); compiledDir = resolve(root, compiledDir);
+  if(transportationParkingUpload!==undefined&&(transportationParkingUpload!=="web-source-transport-parking-upload-v1"||fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS))throw Error("Unknown parking upload input policy or incomplete v5 cohort");
   const logical = logicalInput(logicalFieldEffects, root);
   if(fieldEffectTransforms!==undefined&&fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS)throw Error("Unknown board transform policy");
   if(fieldEffectTransforms!==undefined&&(!logical||skyboxPresentation!=="web-flat-skybox-panorama-v1"||!fieldEffectTransformCatalog||!fieldEffectFlatAssessment||!HASH.test(fieldEffectCatalogHash??"")))throw Error("Board transform capture requires complete v4 assessment/catalog and logical/Skybox inputs");
@@ -266,6 +278,7 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
     ...(fieldEffectTransforms?{fieldEffectTransforms,fieldEffectTransformCatalog:structuredClone(fieldEffectTransformCatalog),fieldEffectFlatAssessment:structuredClone(fieldEffectFlatAssessment),fieldEffectCatalogHash}:{}),
     ...(logical ? { logicalFieldEffects: logical } : {}), sourceSetHash: corpus.sourceSetHash,
     parentSourceSetHash: corpus.parentSourceSetHash, compiledDir, compilerDigest: compilerIdentity(files, compiledDir, root), files, directories };
+  if(transportationParkingUpload!==undefined)Object.assign(inputs,{kind:"source-prerequisite-input-lock-v5",transportationParkingUpload,transportationCatalogHash:await sourceTransportationCatalogHash(inputs,root)});
   await validateSourcePrerequisiteInputs(inputs, { root });
   return inputs;
 }
@@ -275,11 +288,13 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
 export async function validateSourcePrerequisiteInputs(raw, { root = repository } = {}) {
   root = resolve(root);
   const lock = structuredClone(raw);
-  const version4=lock?.kind==="source-prerequisite-input-lock-v4",version3=lock?.kind==="source-prerequisite-input-lock-v3"||version4,version2 = lock?.kind === "source-prerequisite-input-lock-v2"||version3&&Object.hasOwn(lock,"logicalFieldEffects");
+  const version5=lock?.kind==="source-prerequisite-input-lock-v5";
+  const version4=version5||lock?.kind==="source-prerequisite-input-lock-v4",version3=lock?.kind==="source-prerequisite-input-lock-v3"||version4,version2 = lock?.kind === "source-prerequisite-input-lock-v2"||version3&&Object.hasOwn(lock,"logicalFieldEffects");
+  if(version5&&(lock.transportationParkingUpload!=="web-source-transport-parking-upload-v1"||!HASH.test(lock.transportationCatalogHash??"")))throw Error("Invalid locked parking upload capability");
   if(version4&&(lock.fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS||!version2))throw Error("Unknown locked board transform policy or missing logical base");
   if(version3&&lock.skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown locked Skybox presentation policy");
-  exact(lock, "kind,sourceSetHash,parentSourceSetHash,compiledDir,compilerDigest,files,directories" + (version2 ? ",logicalFieldEffects" : "")+(version3?",skyboxPresentation":"")+(version4?",fieldEffectTransforms,fieldEffectTransformCatalog,fieldEffectFlatAssessment,fieldEffectCatalogHash":""), "source prerequisite lock");
-  if (!["source-prerequisite-input-lock-v1","source-prerequisite-input-lock-v2","source-prerequisite-input-lock-v3","source-prerequisite-input-lock-v4"].includes(lock.kind) || typeof lock.compiledDir !== "string" ||
+  exact(lock, "kind,sourceSetHash,parentSourceSetHash,compiledDir,compilerDigest,files,directories" + (version2 ? ",logicalFieldEffects" : "")+(version3?",skyboxPresentation":"")+(version4?",fieldEffectTransforms,fieldEffectTransformCatalog,fieldEffectFlatAssessment,fieldEffectCatalogHash":"")+(version5?",transportationParkingUpload,transportationCatalogHash":""), "source prerequisite lock");
+  if (!["source-prerequisite-input-lock-v1","source-prerequisite-input-lock-v2","source-prerequisite-input-lock-v3","source-prerequisite-input-lock-v4","source-prerequisite-input-lock-v5"].includes(lock.kind) || typeof lock.compiledDir !== "string" ||
       !isAbsolute(lock.compiledDir) || resolve(lock.compiledDir) !== lock.compiledDir ||
       !Array.isArray(lock.files) || !lock.files.length || !Array.isArray(lock.directories) || !lock.directories.length)
     throw new Error("Invalid source prerequisite input lock");
@@ -354,12 +369,14 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
     const verified=await verifyFieldEffectTransformLock({root,compiledDir:lock.compiledDir,assessment:lock.fieldEffectTransformCatalog,flatAssessment:lock.fieldEffectFlatAssessment,catalogHash:lock.fieldEffectCatalogHash,logicalCatalog:logical.catalog});
     if(verified.assessment.projection.sourceSetHash!==lock.sourceSetHash||verified.assessment.projection.parentSourceSetHash!==lock.parentSourceSetHash)throw Error("Board transform locked source identity changed");
   }
+  if(version5&&await sourceTransportationCatalogHash(lock,root)!==lock.transportationCatalogHash)throw Error("Locked transportation catalog differs from complete current source rows");
   return true;
 }
 
 /** Pure upstream DAG: current battle capabilities -> source world/new game -> explicit framework
  * derivation. It never writes packages, generated recipes, reports or archives. */
-export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,vehicleLifecycle } = {}) {
+export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,vehicleLifecycle,transportationParkingUpload } = {}) {
+  if(transportationParkingUpload!==undefined&&(transportationParkingUpload!=="web-source-transport-parking-upload-v1"||vehicleLifecycle!=="web-source-vehicle-lifecycle-v1"||fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS))throw Error("Unknown source parking upload policy/dependency");
   if(vehicleLifecycle!==undefined&&vehicleLifecycle!=="web-source-vehicle-lifecycle-v1")throw Error("Unknown source vehicle lifecycle policy");
   if(fieldEffectTransforms!==undefined&&fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS)throw Error("Unknown board transform policy");
   if(fieldEffectTransforms!==undefined&&(!logicalFieldEffects||!fieldEffectFlat||skyboxPresentation!=="web-flat-skybox-panorama-v1"))throw Error("Board transform v11 requires logical, legacy flat and Skybox input cohort");
@@ -530,6 +547,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
     effectTransformReport={policy:fieldEffectTransforms,assessmentHash:assessment.contentHash,flatAssessmentHash:frameworkOptions.fieldEffectFlat.contentHash,catalogHash:inputs.fieldEffectCatalogHash,logicalCatalogHash:base.webPolicy.catalogHash,sourceMapSetHash:assessment.projection.sourceMapSetHash,maps:assessment.projection.mapSources.length,declared:assessment.projection.objects.length,derived:assessment.projection.bindings.length,unready:assessment.projection.objects.length-assessment.projection.bindings.length,pureCompilations:1,nativeParity:false};
   }
   if(vehicleLifecycle!==undefined)frameworkOptions.vehicleLifecycle=vehicleLifecycle;
+  if(transportationParkingUpload!==undefined){frameworkOptions.transportationParkingUpload=transportationParkingUpload;Object.assign(inputs,{kind:"source-prerequisite-input-lock-v5",transportationParkingUpload,transportationCatalogHash:await sourceTransportationCatalogHash(inputs,root)});if(api.hash(strict.catalog.transportation)!==inputs.transportationCatalogHash)throw Error("Locked source parking catalog differs from strict world");}
   if (birdViewActors !== undefined) frameworkOptions.birdViewActors = birdViewActors;
   if (mobColorFilter !== undefined) frameworkOptions.mobColorFilter = mobColorFilter;
   if(screenPresentation!==undefined){if(screenPresentation!=="web-field-screen-presentation-2d-v1")throw Error("Unknown screen presentation policy");frameworkOptions.screenPresentation=screenPresentation;}
@@ -549,6 +567,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
     battle: { mode: "same-candidate-rebuild", expectedSourceFields, dependencyRebindings: battleRebindings },
     strict: { catalogHash: strict.catalog.contentHash, entryHash: entry.contentHash, maps: strict.maps.length,
       mapsWithBlockers: strict.maps.filter(map => map.blockers.length).length },
+    ...(transportationParkingUpload?{transportationParkingUpload:{policy:transportationParkingUpload,catalogHash:inputs.transportationCatalogHash}}:{}),
     framework: framework.report, logicalFieldEffects: logicalReport, ...(periodicReport?{periodicMaps:periodicReport}:{}),
     ...(ordinaryReport?{ordinaryFields:ordinaryReport}:{}),
     ...(npcReport ? { npcAreas: npcReport } : {}),

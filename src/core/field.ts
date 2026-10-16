@@ -1,3 +1,4 @@
+import { fieldTransportationParkingBinding, transportationStoredPosition, transportationDirectionMask, type WebSourceTransportParkingUpload, type TransportationParkingObservation } from "./transportation-parking-upload.js";
 import {prepareRtsNativeActors}from'./field-rts-actors.js';
 import {WEB_RTS_PARTY_SWITCH,validateRtsPolicy,type WebRtsPartySwitch,type FieldRtsPartyPort,rtsLinearRatio,rtsNextSlot,rtsMapScript,type RtsPartyOp,type RtsParkingPose,validateRtsPoses}from'./field-rts-party.js';
 import { validateRosterGroupCommand, type RosterGroupEventOp, type RosterGroupAppearanceStep } from "./roster-groups.js";
@@ -496,6 +497,7 @@ export type FieldGameOptions = {
   transportation?: FieldTransportationPort;
   transportationTimestamp?: () => string;
   vehicleLifecycle?: WebSourceVehicleLifecycle;
+  transportationParkingUpload?:WebSourceTransportParkingUpload;
   /** Read the current owned-state draft; unsupported step effects must not disappear. */
   movementBlocker?: (transportationId: number | null, manual: boolean) => string | null;
 };
@@ -659,6 +661,7 @@ export class FieldGame {
     omissions: readonly string[] }[] = [];
   private transportationExecuting = false;
   readonly #vehicleLifecycle = new FieldVehicleLifecycle();
+  get transportationParkingUploadPolicy(){return fieldTransportationParkingBinding(this.content,this.options.transportationParkingUpload);}
   get vehicleLifecyclePolicy(){return fieldVehicleLifecycleBinding(this.content,this.options.vehicleLifecycle);}
   get vehicleLifecycleRetired(){return this.#vehicleLifecycle.retired;}
   retireVehicleLifecycle(){this.#vehicleLifecycle.retire();}
@@ -1673,6 +1676,7 @@ export class FieldGame {
       this.synchronizedEntry = false;
     }
     fieldVehicleLifecycleBinding(content,options.vehicleLifecycle);
+    fieldTransportationParkingBinding(content,options.transportationParkingUpload);
     this.currentTransportationId = content.entry.transportationId ?? null;
     const offset = content.entry.cameraOffset ?? { x: 0, y: 0 };
     checkpointKeys(offset, "x,y");
@@ -2525,6 +2529,7 @@ export class FieldGame {
     return { mapRange: this.content.cameraHost.mapRange, bindings, factory,
       partyCatalog: this.options.partyAppearance.catalog, partyCheckpoint: this.partyActors.checkpoint(),
       characters: this.content.characters, npcs, providers,
+      ...(this.transportationParkingUploadPolicy?{transportationParkingUpload:this.transportationParkingUploadPolicy}:{}),
       ...(this.vehicleLifecyclePolicy?{vehicles:this.sourceVehicleDefinitions().map(d=>({...d,...sourceVehicleParkingPose(d.record,this.content.cameraHost!.mapRange)}))}:{}),
       ...(this.sourceAnimationCatalog ? {sourceScriptAnimations:this.sourceAnimationCatalog} : {}),
       ...(animationKeys ? {animationKeys} : {}),
@@ -5534,6 +5539,29 @@ export class FieldGame {
   }
   /** One transaction across the existing owned, event, actor and controller
    * owners. This explicit framework variant is never an exact-source host. */
+  /** Complete explicit Web registry, rebuilt from the same owned/flag/factory
+   * data which created actual Field bodies. Away/disabled bodies are known
+   * absent in this Web owner, not inferred native MapObjects. */
+  private prepareTransportationParking(actors:Readonly<Record<string,Actor>>) {
+    if(!this.transportationParkingUploadPolicy)return null;
+    const port=this.options.transportation,map=this.content.cameraHost?.mapRange;
+    if(!port?.prepareUpload||!map||!this.vehicleLifecyclePolicy||this.#vehicleLifecycle.retired||!this.nativeActorBindings||!this.nativeActorProviders)
+      throw Error("Transportation parking upload needs actual owned, factory, camera and live vehicle owners");
+    const records=port.read(),definitions=this.sourceVehicleDefinitions(records),expected=new Map(definitions.map(d=>[d.id,d]));
+    const live=Object.values(actors).filter(a=>a.native?.sourceTransportationId!==undefined),ids=live.map(a=>a.native!.sourceTransportationId!);
+    if(new Set(ids).size!==ids.length||live.length!==expected.size||live.some(a=>expected.get(a.native!.sourceTransportationId!)?.actorId!==a.id))
+      throw Error("Actual transportation parking registry is incomplete or ambiguous");
+    const observations:TransportationParkingObservation[]=records.map(record=>{
+      const d=expected.get(record.id);if(!d)return{id:record.id,info:{stayMapId:record.mapId,pose:null}};
+      const actor=actors[d.actorId],native=actor?.native;
+      if(!actor||!native||native.sourceTransportationId!==d.id||native.fieldAssetId!==d.assetId||actor.motion||native.entity.moving)
+        throw Error("Actual transportation parking instance is absent, changed or moving");
+      const vector=({up:{x:0,y:1},right:{x:1,y:0},down:{x:0,y:-1},left:{x:-1,y:0}}as const)[native.entity.direction!];
+      if(!vector)throw Error("Actual transportation parking direction is unavailable");
+      return{id:record.id,info:{stayMapId:record.mapId,pose:{position:transportationStoredPosition(map,native.entity.position),direction:transportationDirectionMask(vector.x,vector.y)}}};
+    });
+    return port.prepareUpload(observations);
+  }
   private executeTransportation(command: FieldTransportationCommand, site: Site): void {
     if(command.kind==="lose"||command.kind==="active"||command.kind==="set-position"||command.kind==="place"&&this.vehicleLifecyclePolicy){this.executeVehicleLifecycle(command,site);return;}
     if (this.transportationExecuting) throw new Error("Transportation publication cannot be reentered");
@@ -5620,11 +5648,15 @@ export class FieldGame {
         const partyPublication = party.prepareTransportation({ operations,
           ...(currentTransport !== undefined ? { currentTransport } : {}) });
         const collision = command.kind === "change" ? projectFieldPuppetCollision(command.changeCollisionEnable) : this.collisionSwitches;
-        actorPublication.validate(); partyPublication.validate();
+        // Native Change's upload phase is after its mapping/collision setup.
+        // It observes actual parked instances in the prepared actor set, not
+        // the player/current ID. NPC appearance has no such source phase.
+        const parking=command.kind==="change"?this.prepareTransportationParking(candidate):null;
+        actorPublication.validate(); partyPublication.validate();parking?.validate();
         if (fingerprint() !== before) throw new Error("Stale transportation actor/controller transaction");
-        // Only prevalidated plain writes remain; actor identities are retained.
-        actorPublication.commit(); partyPublication.commit();
-        this.currentTransportationId = currentId; this.mapScrollOffset = offset; this.collisionSwitches = collision;
+        const publish=()=>{actorPublication.commit();partyPublication.commit();
+          this.currentTransportationId=currentId;this.mapScrollOffset=offset;this.collisionSwitches=collision;};
+        if(parking)parking.commitWith(publish);else publish();
       }
       this.transportationExecutions.push({ site, command: structuredClone(command), currentId: this.transportationId,
         omissions: FRAMEWORK_TRANSPORTATION_LIMITATIONS });

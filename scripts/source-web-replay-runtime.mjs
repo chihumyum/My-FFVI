@@ -4,6 +4,7 @@
 // result is supplied, and GameSession remains the only terminal producer.
 export function sourceWebReplayRuntimePorts() {
   return Object.freeze({
+    transportationParkingUpload:'web-source-transport-parking-upload-v1',
     vehicleLifecycle:'web-source-vehicle-lifecycle-v1',
     battleChildPartyAdmission:'web-source-child-party-entry-v1',
     battleEventConditions: "web-source-battle-condition-lists-v1",

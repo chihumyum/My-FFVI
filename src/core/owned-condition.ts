@@ -55,7 +55,7 @@ export function validateOwnedConditionCommand(command: OwnedConditionCommand): v
   if (command.kind !== "add-condition" && command.kind !== "remove-condition")
     throw new Error("Unknown owned condition operation");
   if (int32(command.conditionType) !== 607 &&
-      !(command.kind === "remove-condition" && command.conditionType === 0))
+      !(command.kind === "remove-condition" && [0, 4, 5].includes(command.conditionType)))
     throw new Error("Unimplemented owned condition behavior: " + command.conditionType);
   if (int32(command.target) < -1)
     throw new Error("Unknown owned character status selector: " + command.target);
@@ -90,7 +90,8 @@ export function projectOwnedCondition<T extends OwnedConditionMember>(
   definitions: readonly { id: number; type: number }[],
 ): { roster: T[]; targets: string[]; steps: { targetId: string; roster: T[] }[] } {
   validateOwnedConditionCommand(command);
-  if (command.conditionType === 0) throw new Error("Remove-all conditions requires the owned resource projection");
+  if ([0, 4, 5].includes(command.conditionType))
+    throw new Error("Condition removal requires the owned resource projection");
   const identities = new Set<number>();
   for (const definition of definitions) {
     if (int32(definition.id) <= 0 || int32(definition.type) < 0 || identities.has(definition.id))
@@ -126,6 +127,56 @@ export function projectOwnedCondition<T extends OwnedConditionMember>(
  * Their corresponding types are checked, but same-type aliases are NOT kept. */
 const retainedRows = Object.freeze([{ id: 53, type: 607 }, { id: 79, type: 665 }, { id: 80, type: 666 }]);
 export type OwnedConditionResourceMember = OwnedConditionMember & { hp: number; maxHp: number };
+
+/** Nonzero RemoveCondition4/5: the source checks death BEFORE enumerating
+ * master rows, deletes matching row IDs, then calls HP+1 at most once. There
+ * is no per-master-row publication. Stable deletion of distinct IDs commutes;
+ * this does not assume the native GetList<Condition> dictionary order.
+ * The existing complete GameState condition catalog is the Web authority. */
+export function projectOwnedConditionRemoveLife<T extends OwnedConditionResourceMember>(
+  roster: readonly T[], party: PartyState, command: OwnedConditionCommand,
+  definitions: readonly { id: number; type: number }[], conditions: BattleConditions,
+): { roster: T[]; targets: string[]; steps: { targetId: string; roster: T[] }[] } {
+  validateOwnedConditionCommand(command);
+  if (command.kind !== "remove-condition" || ![4, 5].includes(command.conditionType))
+    throw new Error("Expected source RemoveCondition type4/5");
+  const identities = new Set<number>();
+  for (const definition of definitions) {
+    if (int32(definition.id) <= 0 || int32(definition.type) < 0 || identities.has(definition.id))
+      throw new Error("Invalid owned condition master identity");
+    identities.add(definition.id);
+    if (conditions.referenceTypes([definition.id])[0] !== definition.type)
+      throw new Error("Owned condition master type mismatch");
+  }
+  const matching = new Set(definitions.filter(row => row.type === command.conditionType).map(row => row.id));
+  if (!matching.size) throw new Error("Missing owned condition type");
+  for (const member of roster) {
+    if (!Array.isArray(member.conditionIds) || member.conditionIds.some(id => !identities.has(id)))
+      throw new Error("Unknown owned condition reference");
+    // Identity-only removal never launders an unknown active behavior into a
+    // valid state, even when the instruction would remove that very row.
+    conditions.validateActive(member.conditionIds);
+  }
+  const targets = ownedConditionTargets(roster, party, command.target), next = structuredClone([...roster]);
+  const steps: { targetId: string; roster: T[] }[] = [];
+  for (const targetId of targets) {
+    const member = next.find(row => row.id === targetId)!;
+    if (int32(member.maxHp) < 1 || int32(member.hp) < 0 || member.hp > member.maxHp)
+      throw new Error("Invalid owned condition HP");
+    const hadDeath = conditions.referenceTypes(member.conditionIds).includes(5);
+    if ((member.hp === 0) !== hadDeath) throw new Error("Owned HP/death state mismatch");
+    member.conditionIds = member.conditionIds.filter(id => !matching.has(id));
+    if (command.conditionType === 5 && hadDeath) {
+      if (member.hp === 0x7fffffff) throw new Error("Owned condition HP addition overflow");
+      member.hp = Math.min(member.hp + 1, member.maxHp);
+      member.conditionIds = conditions.updateDying(member.hp, member.maxHp, member.conditionIds);
+    }
+    // Unchanged targets still refresh once; preserve target order and the
+    // complete intermediate roster for the existing appearance transaction.
+    steps.push({ targetId, roster: structuredClone(next) });
+  }
+  return { roster: next, targets, steps };
+}
 
 /** This pure storage projection does not admit any previously unknown active
  * condition behavior. GameState validates the complete input/result as usual.

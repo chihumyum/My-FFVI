@@ -39,6 +39,7 @@ export type FieldTransportationPort = {
   readonly catalog: TransportationCatalog;
   read(): OwnedTransportation[];
   prepare(command: TransportationStateCommand): FieldTransportationTransaction;
+  prepareUpload?(observations: readonly import("./transportation-parking-upload.js").TransportationParkingObservation[]): import("./transportation-parking-upload.js").FieldTransportationParkingTransaction;
 };
 
 const int32 = (value: number) => checkpointInteger(value, -0x80000000, 0x7fffffff);

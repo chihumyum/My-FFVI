@@ -26,3 +26,13 @@ node scripts/check-source-battle-common.mjs --compiled dist \
 
 
 联合全局 Fade 后，观察器以 `current-app-message-and-raycast-v1` 跟随当前 App 的普通输入窗口：消息或共享 Fade 的 raycast 阻挡期间只继续实际时钟，不发送普通菜单命令，也不把短暂遮挡误记成无合法能力边界。源脚本、AI 与返场操作沿既有自身合同推进；此规则仅描述当前 Web UI，不声称 Unity Image 也能阻挡原生键盘/菜单控制器。旧代输入与报告不改写。
+
+## 观察器内部的调用定义分组
+
+完整候选/来源读取后，`battle-observer-callers.mjs` 将该次实验的输入同步取得私有不可变数据副本。相同真实 party 操作数复用同一调用 map/world；原敌队目录只追加同一已有初始化地图资格行并 seal 一次。每条原敌队请求仍检查 encounter、原 script lifecycle、完整 program 相等和地图资格行，失败不缓存、不过滤。受控程序每次重新捕获实际 program 并派生 battle，不能凭外部对象身份或 claimed hash 复用。
+
+这只复用静态定义。每条记录通过显式 verified 文档入口，复用此前已真实完整摘要验证的私有只读定义；每条 tuple 仍执行原领域/source/profile/initializer 绑定检查，新建 GameState/EventState/World/Field/VM/RNG/时钟/宿主端口并实际执行初始化、战斗、返场和 Storage。原 mutable compiler/Session 的逐次完整捕获和摘要行为不改，详见 `verified-framework-content.md`。既有明确共享的媒体宿主仍按原合同共享。未知 fade/provider/source/owner 及765逻辑记录（222参数、53正文、490请求）的范围不变；765不代表全部都能创建 Session。报告新增 `callerDefinitionGroups` 仅说明定义构造/命中数量，不授予来源或剧情可达性。
+
+调用方和公开内容不被 freeze；只有观察器自己的数据副本与派生定义只读。公开 compiler/Session API、同运行时候选校验、首末完整对象/输入 fence 及旧 smoke 模式均保留。跨代选中候选对象的私有受控量测不是 same-runtime 候选或原剧情验收。
+
+`callerDefinitionGroups.capturedDocuments` 只计去重的六文档输入 cap；`preparedRows` 每条另新建并验证一个 framework envelope cap，不缓存执行或失败。

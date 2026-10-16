@@ -1,3 +1,4 @@
+import { projectTransportationParkingUpload, type TransportationParkingObservation } from "./transportation-parking-upload.js";
 import type {PartySlotIndex}from'./party.js';
 import {validateRtsCatalog,type SourceRtsPartyCatalog,type FieldRtsPartyPort,type RtsOwnedTransaction,type RtsOwnedView}from'./field-rts-party.js';
 import { rosterGroupSteps, validateRosterGroupCommand, validateSourceRosterGroupCatalog, type SourceRosterGroupCatalog, type RosterGroupCommand, type RosterGroupTransaction, type RosterGroupAppearanceStep } from "./roster-groups.js";
@@ -99,7 +100,7 @@ import { createSourceNativeState, validateSourceNativeState,
   type SourceNativeState } from "./source-native-state.js";
 import { projectTransportationState, type FieldTransportationPort,
   type FieldTransportationTransaction, type TransportationStateCommand } from "./transportation-state.js";
-import { projectOwnedCondition, projectOwnedConditionRemoveAll, type FieldOwnedConditionPort,
+import { projectOwnedCondition, projectOwnedConditionRemoveAll, projectOwnedConditionRemoveLife, type FieldOwnedConditionPort,
   type OwnedConditionCommand, type OwnedConditionTransaction } from "./owned-condition.js";
 import { projectFieldRecovery, type FieldRecoveryCommand,
   type FieldRecoveryPort, type FieldRecoveryTransaction } from "./field-recovery.js";
@@ -347,6 +348,7 @@ export class GameState {
       catalog: structuredClone(this.content.sourceNewGame.transportation),
       read: () => this.readTransportations(this.data),
       prepare: (command) => this.prepareTransportation(command),
+      prepareUpload: observations => this.prepareTransportationParkingUpload(observations),
     };
   }
   readonly fieldShop = { validate: (groupId: number): void => { this.shopOptions(groupId); } };
@@ -927,6 +929,19 @@ export class GameState {
     this.validate(next);
     return { next, ...change };
   }
+  private projectTransportationParkingUpload(data:GameStateSnapshot,observations:readonly TransportationParkingObservation[]) {
+    if(!data.nativeState||!this.content.sourceNewGame)throw Error("Missing source transportation ownership");
+    const change=projectTransportationParkingUpload(this.content.sourceNewGame.transportation,data.nativeState.ownedTransportations,observations),next=structuredClone(data);
+    next.nativeState!.ownedTransportations=structuredClone(change.after);this.validate(next);return{next,...change};
+  }
+  private prepareTransportationParkingUpload(observations:readonly TransportationParkingObservation[]) {
+    this.requireIdle();const {next,...change}=this.projectTransportationParkingUpload(this.data,observations),revision=this.revision;let consumed=false;
+    const validate=()=>{this.requireIdle();if(consumed||this.transportationPublication||this.revision!==revision)throw Error("Stale transportation parking upload");};
+    const commitWith=(publish:()=>void)=>{validate();if(typeof publish!=="function"||publish.constructor.name==="AsyncFunction")throw Error("Transportation parking publication must be synchronous");
+      this.transportationPublication=true;try{const result:unknown=publish();if(result&&typeof(result as {then?:unknown}).then==="function")throw Error("Transportation parking publication must be synchronous");
+        this.data=next;this.revision++;consumed=true;}finally{this.transportationPublication=false;}};
+    return{...change,validate,commit:()=>commitWith(()=>{}),commitWith};
+  }
   private prepareTransportation(command: TransportationStateCommand): FieldTransportationTransaction {
     this.requireIdle();
     const { next, ...change } = this.projectTransportation(this.data, command), revision = this.revision;
@@ -1387,6 +1402,8 @@ export class GameState {
       steps: { targetId: string; roster: GameStateSnapshot["roster"] }[]; coreI0Writes?: readonly number[] } =
       command.kind === "remove-condition" && command.conditionType === 0
       ? projectOwnedConditionRemoveAll(next.roster, next.party, command, this.conditions)
+      : command.kind === "remove-condition" && [4, 5].includes(command.conditionType)
+      ? projectOwnedConditionRemoveLife(next.roster, next.party, command, this.ownedConditionDefinitions, this.conditions)
       : projectOwnedCondition(next.roster, next.party, command, this.ownedConditionDefinitions);
     next.roster = preview.roster;
     this.validate(next);
@@ -1751,6 +1768,15 @@ export class GameState {
     const transportation: FieldTransportationPort | undefined = data.nativeState && this.content.sourceNewGame ? {
       catalog: structuredClone(this.content.sourceNewGame.transportation),
       read: () => this.readTransportations(published ? this.data : data),
+      prepareUpload: observations => {
+        if(published)return this.prepareTransportationParkingUpload(observations);
+        this.requireIdle();const {next,...change}=this.projectTransportationParkingUpload(data,observations),version=generation;let consumed=false;
+        const validate=()=>{this.requireIdle();if(consumed||transportationPublishing||published||generation!==version||this.revision!==revision)throw Error("Stale candidate transportation parking upload");};
+        const commitWith=(publish:()=>void)=>{validate();if(typeof publish!=="function"||publish.constructor.name==="AsyncFunction")throw Error("Transportation parking publication must be synchronous");
+          transportationPublishing=true;this.transportationPublication=true;try{const result:unknown=publish();if(result&&typeof(result as {then?:unknown}).then==="function")throw Error("Transportation parking publication must be synchronous");
+            data=next;generation++;consumed=true;}finally{transportationPublishing=false;this.transportationPublication=false;}};
+        return{...change,validate,commit:()=>commitWith(()=>{}),commitWith};
+      },
       prepare: (command) => {
         if (published) return this.prepareTransportation(command);
         const { next, ...change } = this.projectTransportation(data, command), version = generation;

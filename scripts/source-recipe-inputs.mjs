@@ -145,7 +145,8 @@ function parseBattleRebindings(raw=[]){
 
 async function frameworkUpgradeDeclaration(raw,root,compiledDir){
   if(raw===undefined)return null;
-  const vehicles=raw?.kind==='compiled-framework-profile-upgrade-v12';
+  const parking=raw?.kind==='compiled-framework-profile-upgrade-v13';
+  const vehicles=raw?.kind==='compiled-framework-profile-upgrade-v12'||parking;
   const transforms=raw?.kind==='compiled-framework-profile-upgrade-v11'||vehicles;
   const skybox=raw?.kind==='compiled-framework-profile-upgrade-v10'||transforms;
   const screen=raw?.kind==='compiled-framework-profile-upgrade-v9'||skybox;
@@ -157,9 +158,9 @@ async function frameworkUpgradeDeclaration(raw,root,compiledDir){
   const periodic=raw?.kind==='compiled-framework-profile-upgrade-v3'||animated&&Object.hasOwn(raw?.markers??{},'worldMap');
   const logical=raw?.kind==='compiled-framework-profile-upgrade-v2'||(periodic||animated)&&Object.hasOwn(raw,'logicalFieldEffects');
   dataFields(raw,['kind','compilerDigest','markers',...(logical?['logicalFieldEffects']:[]),...(skybox?['skyboxCatalog']:[]),...(transforms?['fieldEffectTransformCatalog']:[])],'framework profile upgrade declaration');
-  assert.ok(['compiled-framework-profile-upgrade-v1','compiled-framework-profile-upgrade-v2','compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11','compiled-framework-profile-upgrade-v12'].includes(raw.kind),'Unknown framework profile upgrade version');
+  assert.ok(['compiled-framework-profile-upgrade-v1','compiled-framework-profile-upgrade-v2','compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11','compiled-framework-profile-upgrade-v12','compiled-framework-profile-upgrade-v13'].includes(raw.kind),'Unknown framework profile upgrade version');
   assert.ok(typeof raw.compilerDigest==='string'&&digest.test(raw.compilerDigest),'Invalid framework profile upgrade compiler digest');
-  const hosts={...frameworkHostMarkers,...(vehicles?{vehicleLifecycle:{value:"web-source-vehicle-lifecycle-v1",module:"field-vehicle-lifecycle",exportName:"WEB_SOURCE_VEHICLE_LIFECYCLE",provider:"fieldVehicleLifecycleBinding"}}:{}),...(transforms?{fieldEffectTransforms:{value:"web-source-logical-board-transforms-v1",module:"field-effect-transforms",exportName:"WEB_FIELD_EFFECT_TRANSFORMS",provider:"fieldEffectTransformsBinding"}}:{}),...(skybox?{skyboxPresentation:{value:"web-flat-skybox-panorama-v1",module:"field-skybox",exportName:"WEB_FLAT_SKYBOX",provider:"fieldSkyboxBinding"}}:{}),...(screen?{screenPresentation:{value:"web-field-screen-presentation-2d-v1",module:"field-screen-presentation",exportName:"WEB_FIELD_SCREEN_PRESENTATION",provider:"fieldScreenPresentationBinding"}}:{}),...(mob?{mobColorFilter:{value:'web-flat-mob-color-filter-v1',module:'field-mob-controls',exportName:'WEB_FLAT_MOB_COLOR_FILTER',provider:'fieldMobColorBinding'}}:{}),...(worldMove?{worldAutoMove:{value:'web-flat-world-auto-move-v1',module:'field-world-auto-move',exportName:'WEB_FLAT_WORLD_AUTO_MOVE',provider:'worldAutoMoveBinding'}}:{}),...(birdActors?{birdViewActors:{value:'web-flat-bird-view-actors-v1',module:'field-bird-view-actors',exportName:'WEB_FLAT_BIRD_VIEW_ACTORS',provider:'fieldBirdViewActorBinding'}}:{}),...(worldAuto?{worldAutoTasks:{value:'web-flat-world-auto-tasks-v1',module:'field-world-auto-tasks',exportName:'WEB_FLAT_WORLD_AUTO_TASKS',provider:'worldAutoBinding'}}:{}),...(animated?{mapAnimatedEntities:{value:'web-field-animated-map-entities-v1',module:'field-map-animation',exportName:'WEB_FIELD_MAP_ANIMATION',provider:'prepareFieldMapAnimations'}}:{}),...(logical?{logicalFieldEffects:logicalMarker}:{}),...(periodic?periodicMarkers:{})};
+  const hosts={...frameworkHostMarkers,...(parking?{transportationParkingUpload:{value:"web-source-transport-parking-upload-v1",module:"transportation-parking-upload",exportName:"WEB_SOURCE_TRANSPORT_PARKING_UPLOAD",provider:"fieldTransportationParkingBinding"}}:{}),...(vehicles?{vehicleLifecycle:{value:"web-source-vehicle-lifecycle-v1",module:"field-vehicle-lifecycle",exportName:"WEB_SOURCE_VEHICLE_LIFECYCLE",provider:"fieldVehicleLifecycleBinding"}}:{}),...(transforms?{fieldEffectTransforms:{value:"web-source-logical-board-transforms-v1",module:"field-effect-transforms",exportName:"WEB_FIELD_EFFECT_TRANSFORMS",provider:"fieldEffectTransformsBinding"}}:{}),...(skybox?{skyboxPresentation:{value:"web-flat-skybox-panorama-v1",module:"field-skybox",exportName:"WEB_FLAT_SKYBOX",provider:"fieldSkyboxBinding"}}:{}),...(screen?{screenPresentation:{value:"web-field-screen-presentation-2d-v1",module:"field-screen-presentation",exportName:"WEB_FIELD_SCREEN_PRESENTATION",provider:"fieldScreenPresentationBinding"}}:{}),...(mob?{mobColorFilter:{value:'web-flat-mob-color-filter-v1',module:'field-mob-controls',exportName:'WEB_FLAT_MOB_COLOR_FILTER',provider:'fieldMobColorBinding'}}:{}),...(worldMove?{worldAutoMove:{value:'web-flat-world-auto-move-v1',module:'field-world-auto-move',exportName:'WEB_FLAT_WORLD_AUTO_MOVE',provider:'worldAutoMoveBinding'}}:{}),...(birdActors?{birdViewActors:{value:'web-flat-bird-view-actors-v1',module:'field-bird-view-actors',exportName:'WEB_FLAT_BIRD_VIEW_ACTORS',provider:'fieldBirdViewActorBinding'}}:{}),...(worldAuto?{worldAutoTasks:{value:'web-flat-world-auto-tasks-v1',module:'field-world-auto-tasks',exportName:'WEB_FLAT_WORLD_AUTO_TASKS',provider:'worldAutoBinding'}}:{}),...(animated?{mapAnimatedEntities:{value:'web-field-animated-map-entities-v1',module:'field-map-animation',exportName:'WEB_FIELD_MAP_ANIMATION',provider:'prepareFieldMapAnimations'}}:{}),...(logical?{logicalFieldEffects:logicalMarker}:{}),...(periodic?periodicMarkers:{})};
   dataFields(raw.markers,Object.keys(hosts),'framework profile upgrade markers');
   const result=structuredClone(raw),providers=[];
   for(const [marker,definition] of Object.entries(hosts)){
@@ -205,7 +206,7 @@ async function comparableFrameworkUpgrade(before,after,ref,declaration,canonical
   if(!declaration)return {after,upgrade:null};
   const previous=before.developmentProfile,next=after.developmentProfile,comparison=structuredClone(after);
   let vehicleActions=null;
-  if(declaration.kind==='compiled-framework-profile-upgrade-v12'){
+  if(['compiled-framework-profile-upgrade-v12','compiled-framework-profile-upgrade-v13'].includes(declaration.kind)){
     const {fieldVehicleActionAdmitted}=await import(pathToFileURL(resolve(root,compiledDir,'src/core/field-vehicle-action.js')).href);
     const project=(issues,entities)=>issues.filter(issue=>!(issue.reason==='Unsupported entity kind 21'&&entities.some(entity=>canonical(entity.source)===canonical(issue.source)&&fieldVehicleActionAdmitted(entity))));
     if(after.kind==='world-map-development'&&before.map&&comparison.map){
@@ -232,7 +233,7 @@ async function comparableFrameworkUpgrade(before,after,ref,declaration,canonical
     }
   }
   let skyboxPresentation=null;
-  if(['compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11','compiled-framework-profile-upgrade-v12'].includes(declaration.kind)){
+  if(['compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11','compiled-framework-profile-upgrade-v12','compiled-framework-profile-upgrade-v13'].includes(declaration.kind)){
     const catalog=declaration.skyboxCatalog;
     assert.equal(after.sourceSetHash,catalog.sourceSetHash,'Skybox upgrade source domain mismatch');
     assert.equal(after.parentSourceSetHash,catalog.parentSourceSetHash,'Skybox upgrade parent domain mismatch');
@@ -244,7 +245,7 @@ async function comparableFrameworkUpgrade(before,after,ref,declaration,canonical
       else if(expected){delete comparison.map.skybox;skyboxPresentation={catalogHash:catalog.contentHash,mapId:after.mapId,display:'Web2D top-third panorama behind all map layers/actors',clock:'Field-only; paused during battle',nativeParity:false};}
     }else if(after.kind==='field-development')assert.equal(after.map?.skybox,undefined,'Legacy field map cannot acquire a world Skybox provider');
   }
-  if(['compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11','compiled-framework-profile-upgrade-v12'].includes(declaration.kind)&&
+  if(['compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11','compiled-framework-profile-upgrade-v12','compiled-framework-profile-upgrade-v13'].includes(declaration.kind)&&
       ['world-map-development','field-development'].includes(after.kind)) {
     for(const key of ['map','frameworkPresentation','actorView','entryView','partyEntry','cameraHost'])
       assert.equal(canonical(before[key]??null),canonical(comparison[key]??null),
@@ -545,7 +546,7 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
   if(effectFlatAddition)report.frameworkFieldEffectFlatAdditions=[];
   const effectTransformAddition=parseFrameworkFieldEffectTransformAddition(frameworkFieldEffectTransformAddition);
   if(effectTransformAddition){
-    assert.ok(["compiled-framework-profile-upgrade-v11","compiled-framework-profile-upgrade-v12"].includes(frameworkUpgrade?.kind),"Board transform addition requires exact v11 or v12 declaration");
+    assert.ok(["compiled-framework-profile-upgrade-v11","compiled-framework-profile-upgrade-v12","compiled-framework-profile-upgrade-v13"].includes(frameworkUpgrade?.kind),"Board transform addition requires exact v11-v13 declaration");
     assert.equal(frameworkUpgrade.fieldEffectTransformCatalog.contentHash,effectTransformAddition.assessmentHash,"Board transform declaration/addition assessment mismatch");
     assert.equal(effectFlatAddition?.assessmentHash,effectTransformAddition.flatAssessmentHash,"Board transform addition requires exact legacy flat proof");
     report.frameworkFieldEffectTransformAdditions=[];

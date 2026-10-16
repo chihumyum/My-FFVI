@@ -119,6 +119,7 @@ const runtime = {
   retainedWorldTransportation: "web-retained-walking-magitek-world-entry-v1",
   assignedNpcRoutes: "web-assigned-npc-route-grid-v1",
   birdViewActors:"web-flat-bird-view-actors-v1",
+  transportationParkingUpload:"web-source-transport-parking-upload-v1",
   vehicleLifecycle:"web-source-vehicle-lifecycle-v1",
   mobColorFilter:"web-flat-mob-color-filter-v1",
   screenPresentation:"web-field-screen-presentation-2d-v1",

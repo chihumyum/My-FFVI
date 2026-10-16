@@ -39,6 +39,21 @@ export function compileOwnedConditionInstruction(
     return { kind: "owned-condition", command, dependencies };
   }
   const rows = data.filter((row) => tableId(row.condition_type) === command.conditionType);
+  if (command.kind === "remove-condition" && [4, 5].includes(command.conditionType)) {
+    const ids = data.map(row => tableId(row.id));
+    if (new Set(ids).size !== ids.length) throw new Error("Ambiguous owned condition master identity");
+    if (!rows.length) throw new Error("Missing owned condition type");
+    // Retain EVERY matching source row as an identity dependency. This does
+    // not authorize its active behavior (notably source death alias100).
+    const dependencies = rows.map(row => ({ table: "condition.csv", id: tableId(row.id) }));
+    if (command.target > 0) {
+      const characters = z.array(z.record(z.string(), z.string())).parse(tables["character_status.csv"]);
+      if (characters.filter(row => tableId(row.id) === command.target).length !== 1)
+        throw new Error("Missing or ambiguous owned character source reference");
+      dependencies.push({ table: "character_status.csv", id: command.target });
+    }
+    return { kind: "owned-condition", command, dependencies };
+  }
   if (rows.length !== 1 || !hasMagitekBehavior({ values: rows[0]! }))
     throw new Error("Unresolved owned Magitek condition provider");
   const dependencies = [{ table: "condition.csv", id: tableId(rows[0]!.id) }];

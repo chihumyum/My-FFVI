@@ -32,7 +32,8 @@ async function modules(root, dist,{board=false}={}) {
 
 /** One explicit producer profile for every initialized entry/world/map body.
  * Runtime authorization is separate; this creates no source readiness grant. */
-export function initializedContentBatchProfile(sourceContentHash,{presentation,npcActivity,worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,vehicleLifecycle}={}){
+export function initializedContentBatchProfile(sourceContentHash,{presentation,npcActivity,worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,vehicleLifecycle,transportationParkingUpload}={}){
+  if(transportationParkingUpload!==undefined&&(transportationParkingUpload!=="web-source-transport-parking-upload-v1"||vehicleLifecycle!=="web-source-vehicle-lifecycle-v1"))throw Error("Unknown initialized transportation parking upload policy/dependency");
   if(vehicleLifecycle!==undefined&&vehicleLifecycle!=="web-source-vehicle-lifecycle-v1")throw Error("Unknown initialized vehicle lifecycle policy");
   if(fieldEffectTransforms!==undefined&&fieldEffectTransforms!=="web-source-logical-board-transforms-v1")throw Error("Unknown initialized board transform policy");
   if(skyboxPresentation!==undefined&&skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown initialized Skybox presentation policy");
@@ -45,13 +46,14 @@ export function initializedContentBatchProfile(sourceContentHash,{presentation,n
   if(npcActivity!==undefined&&npcActivity!=='framework-npc-area-v1')throw new Error('Unknown initialized NPC activity policy');
   return {kind:'framework-development-v1',policy:'omit-anonymous-environment-particles-v1',sourceContentHash,omissions:[],
     storyRuntime:'web-field-story-runtime-v1',autoSave:'web-field-autosave-barrier-v1',fieldPresentation:presentation,
-    ...(vehicleLifecycle?{vehicleLifecycle,transportation:"walking-magitek-framework-v1"}:{}),...(npcActivity?{npcActivity}:{}),...(worldAutoTasks?{worldAutoTasks}:{}),...(birdViewActors?{birdViewActors}:{}),...(worldAutoMove?{worldAutoMove}:{}),...(mobColorFilter?{mobColorFilter}:{}),...(screenPresentation?{screenPresentation}:{}),...(skyboxPresentation?{skyboxPresentation}:{}),...(fieldEffectTransforms?{fieldEffectTransforms,logicalFieldEffects:"web-logical-all-loop-field-effects-v1",fieldEffectProjection:"web-source-field-effect-flat-v1"}:{})};
+    ...(transportationParkingUpload?{transportationParkingUpload}:{}),...(vehicleLifecycle?{vehicleLifecycle,transportation:"walking-magitek-framework-v1"}:{}),...(npcActivity?{npcActivity}:{}),...(worldAutoTasks?{worldAutoTasks}:{}),...(birdViewActors?{birdViewActors}:{}),...(worldAutoMove?{worldAutoMove}:{}),...(mobColorFilter?{mobColorFilter}:{}),...(screenPresentation?{screenPresentation}:{}),...(skyboxPresentation?{skyboxPresentation}:{}),...(fieldEffectTransforms?{fieldEffectTransforms,logicalFieldEffects:"web-logical-all-loop-field-effects-v1",fieldEffectProjection:"web-source-field-effect-flat-v1"}:{})};
 }
 
 /** All source references are verified before derivation. The manifest supplies
  * player inputs, not replacement scripts, flags, actors, rewards or assets. */
 export async function compileInitializedContentBatch(root, raw, recipeSha256,
-  { dist = "dist", readJson, sourceBattleDirectory, worldAutoTasks, birdViewActors, worldAutoMove, mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,vehicleLifecycle,fieldEffectTransformCatalog,fieldEffectTransformContent,fieldEffectCatalogHash } = {}) {
+  { dist = "dist", readJson, sourceBattleDirectory, worldAutoTasks, birdViewActors, worldAutoMove, mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,vehicleLifecycle,transportationParkingUpload,transportationCatalogHash,fieldEffectTransformCatalog,fieldEffectTransformContent,fieldEffectCatalogHash } = {}) {
+  if(transportationParkingUpload!==undefined&&(transportationParkingUpload!=="web-source-transport-parking-upload-v1"||vehicleLifecycle!=="web-source-vehicle-lifecycle-v1"))throw Error("Unknown initialized transportation parking upload policy/dependency");
   if(vehicleLifecycle!==undefined&&vehicleLifecycle!=="web-source-vehicle-lifecycle-v1")throw Error("Unknown initialized vehicle lifecycle policy");
   if(fieldEffectTransforms!==undefined&&fieldEffectTransforms!=="web-source-logical-board-transforms-v1")throw Error("Unknown initialized board transform policy");
   if(skyboxPresentation!==undefined&&skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown initialized Skybox presentation policy");
@@ -60,6 +62,7 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
   if(mobColorFilter!==undefined&&mobColorFilter!=='web-flat-mob-color-filter-v1')throw new Error('Unknown initialized Mob color-filter policy');
   if(birdViewActors!==undefined&&birdViewActors!=='web-flat-bird-view-actors-v1')throw new Error('Unknown initialized BirdView actor policy');
   if(worldAutoMove!==undefined&&(worldAutoMove!=='web-flat-world-auto-move-v1'||worldAutoTasks!=='web-flat-world-auto-tasks-v1'))throw Error('Invalid initialized world auto-movement policy');
+  if(transportationParkingUpload!==undefined&&!digest.test(transportationCatalogHash??""))throw Error("Initialized parking upload requires full same-producer transportation catalog digest");
   if(fieldEffectTransforms!==undefined&&(!fieldEffectTransformCatalog||!fieldEffectTransformContent||!digest.test(fieldEffectCatalogHash??"")))throw Error("Initialized board transforms require full same-producer assessment/catalog inputs");
   if(fieldEffectTransforms===undefined&&[fieldEffectTransformCatalog,fieldEffectTransformContent,fieldEffectCatalogHash].some(v=>v!==undefined))throw Error("Undeclared initialized board transform catalog");
   // Detach the same-producer tuple before any async loader/caller callback.
@@ -97,6 +100,7 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
   assert.equal(sourceEntry.worldCatalogHash, sourceWorld.contentHash);
   for (const value of [sourceEntry, sourceWorld]) assert.equal(value.developmentProfile, undefined);
   api.assertSourceGameCatalog(sourceBattle);
+  if(transportationParkingUpload!==undefined)assert.equal(api.hash(sourceWorld.transportation),transportationCatalogHash,"Initialized parking catalog must match the same locked source world");
   const battleCatalogSelection=directoryVariant?recipe.battleCatalogSelection:
     walkingVariant?'shared-framework-directory-v1':'source-baseline-v1';
   if(walkingVariant)assert.equal(battleCatalogSelection,'shared-framework-directory-v1',
@@ -171,7 +175,7 @@ export async function compileInitializedContentBatch(root, raw, recipeSha256,
   const renderHost = await api.loadFieldCompositionRenderHost(root, sources);
   const seal = value => { const { contentHash: _, ...body } = value; return { ...body, contentHash: api.hash(body) }; };
   const profile = sourceContentHash => initializedContentBatchProfile(sourceContentHash,{presentation:recipe.presentation,
-    ...(vehicleLifecycle?{vehicleLifecycle}:{}),...(npcVariant?{npcActivity:npcTemplate.policy}:{}),...(worldAutoTasks?{worldAutoTasks}:{}),...(birdViewActors?{birdViewActors}:{}),...(worldAutoMove?{worldAutoMove}:{}),...(mobColorFilter?{mobColorFilter}:{}),...(screenPresentation?{screenPresentation}:{}),...(skyboxPresentation?{skyboxPresentation}:{}),...(fieldEffectTransforms?{fieldEffectTransforms}:{})});
+    ...(transportationParkingUpload?{transportationParkingUpload}:{}),...(vehicleLifecycle?{vehicleLifecycle}:{}),...(npcVariant?{npcActivity:npcTemplate.policy}:{}),...(worldAutoTasks?{worldAutoTasks}:{}),...(birdViewActors?{birdViewActors}:{}),...(worldAutoMove?{worldAutoMove}:{}),...(mobColorFilter?{mobColorFilter}:{}),...(screenPresentation?{screenPresentation}:{}),...(skyboxPresentation?{skyboxPresentation}:{}),...(fieldEffectTransforms?{fieldEffectTransforms}:{})});
   const prefix = "/content-packages/" + recipe.id, presentations = [], walkingResults=[],npcResults=[],serviceResults=[];
   const maps = sourceMaps.map(sourceMap => {
     const map = vehicleLifecycle?api.projectFrameworkVehicleActions(sourceMap):structuredClone(sourceMap);
