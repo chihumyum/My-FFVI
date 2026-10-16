@@ -94,6 +94,8 @@ export async function buildPlayBattle({
   const abilityNames = {
     1: "战斗",
     2: "防御",
+    8: "偷窃",
+    132: "爆裂拳",
     31: "疗伤",
     32: "中疗伤",
     33: "大疗伤",

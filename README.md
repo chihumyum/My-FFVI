@@ -11,11 +11,12 @@ npm run dev
 
 打开 http://127.0.0.1:4173/game/ 。方向键 / WASD 移动，Enter / 空格确认，Esc 打开队伍与道具，Q 切换防卫战队伍。战斗选择指令后选择目标；「自动推进」同时加速对白和自动战斗。「剧情测试」使用 99 级、9999 HP 和高攻防队伍；与普通模式分开存档。自动游玩默认强化，`PLAY_TEST_BOOST=0 npm run play:through` 使用普通属性。
 
-「自动行走」按 M1 的预设正常输入演示路线，到世界地图停止，可随时关闭手动操作。存档保存在此浏览器中。
+「自动行走」按主线目标输入移动、交谈、选项和战斗指令，可随时关闭手动操作。普通自动推进为 4 倍速，强化剧情测试为 16 倍速；存档保存在此浏览器中。测试地址加 `?through=M2` 可在三分线选择处停止。
 
 ```sh
 npm run play:through
 PLAY_THROUGH=M1 PLAY_TEST_BOOST=0 npm run play:through
+PLAY_THROUGH=M2 npm run play:through
 npm run play:ai-smoke
 npm run play:events-smoke
 node --test src/play/*.test.mjs
@@ -27,4 +28,4 @@ node --test src/play/*.test.mjs
 
 `src/play/` 为精简脚本、战斗与输入运行时；`apps/play/` 为 Canvas 画面和操作界面；`scripts/build-play*.mjs` 复用已有提取数据。原始游戏资产及生成数据不进入 Git。旧 `src/core` 和旧检查脚本仅供查阅，不再作为迁移门禁。
 
-当前只验收 M1：新游戏 → 纳尔谢 → 尤弥尔 → 冰封幻兽 → 蒂娜苏醒 → 矿洞 → 洛克与莫古战 → 世界地图。各里程碑由 Agent 自行验收后继续，目标为全部主线至结局。真实进度、推测实现与已知问题记录在 [STATUS.md](STATUS.md)。
+已验收 M1 普通属性，以及 M2 强化剧情路线：从新游戏经纳尔谢、费加罗、南方洞窟、科尔兹山、回归者与雷特河到三分线选择。M3 正在推进，尚未贯通结局。各里程碑由 Agent 自行验收后继续，目标为全部主线至结局。真实进度、推测实现与已知问题记录在 [STATUS.md](STATUS.md)。

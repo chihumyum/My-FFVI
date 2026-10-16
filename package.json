@@ -211,7 +211,7 @@
     "periodic-maps:check": "npm run build && node --max-old-space-size=8192 scripts/check-source-periodic-maps.mjs",
     "source-condition-effects:check": "npm run build && .venv/bin/python scripts/inspect-source-condition-native.py && node --max-old-space-size=8192 scripts/compile-source-condition-candidates.mjs && node --max-old-space-size=8192 scripts/check-source-condition-programs.mjs",
     "dev:legacy": "node scripts/serve.mjs",
-    "play:build": "node scripts/build-play.mjs && node scripts/build-play-battle.mjs",
+    "play:build": "node scripts/build-play.mjs && node scripts/build-play-battle.mjs && node scripts/build-play-navigation.mjs",
     "play:through": "node scripts/playthrough.mjs",
     "play:ai-smoke": "node scripts/smoke-monster-ai.mjs",
     "play:events-smoke": "node scripts/smoke-battle-events.mjs"

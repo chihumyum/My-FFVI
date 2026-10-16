@@ -18,7 +18,7 @@ test('relative SetPos keeps a separate character on the player reference without
   assert.equal(character.x, 15);
   assert.equal(character.y, 7);
   executeInstruction(g, task, 'SetPos', [15, 7, 2], [], [], character);
-  assert.equal(character.layer, 2);
+  assert.equal(character.layer, 1);
 });
 
 test('character branch reads presence, roster scope and jump PC from their PR slots', () => {

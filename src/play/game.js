@@ -16,7 +16,7 @@ export class PlayGame{
  resolve(name,map=this.mapId){return this.data.byMap[map]?.[name]??this.data.global[name];}
  startScript(name,{actor=null,pc=0,background=false,init=false}={}){
   const program=this.resolve(name);if(program===undefined){this.warn(null,`Missing script ${name}; skipped`);return null;}
-  const task={id:this.nextTask++,program,pc,actor,stack:[],bindings:{},children:[],locals:[...(this.data.programs[program].locals||[])],wait:0,waitFor:null,done:false,background,init};this.tasks.push(task);
+  const task={id:this.nextTask++,program,pc,actor,stack:[],bindings:{},children:[],locals:[...(this.data.programs[program].locals||[])],scriptFrames:[],wait:0,waitFor:null,done:false,background,init};this.tasks.push(task);
   if(!init&&actor===null){this.furthest={script:name,scene:this.data.programs[program].title||name,mapId:this.mapId};this.history.push({...this.furthest,time:this.time});this.event('script',this.furthest);}return task;
  }
  async start(){await this.enter(this.data.entry.mapId,this.data.entry.entrance,this.data.entry.script);return this;}
@@ -39,6 +39,8 @@ export class PlayGame{
   if(selector<=-1030&&selector>=-1032){const n=-1030-selector;return this.partyPositions?.[n]||this.player;}
   if(selector<=-1002&&selector>=-1005)selector=-(this.partySlots[this.partyIndex][-selector-1001]||1);
   const key=String(selector);if(!this.actors.has(key)){
+   const entity=selector>0?this.entities?.find(entry=>String(entry.id)===key):null;
+   if(entity){this.actors.set(key,{...entity,visible:entity.visible!==false,animation:'Default',motion:null});return this.actors.get(key);}
    const id=selector<0?-selector:null,asset=id?(this.data.fieldAssets?.[id]?.asset_name||`mo_ff6_p${String(id).padStart(3,'0')}`):undefined;
    this.actors.set(key,{id:selector,x:this.player.x,y:this.player.y,layer:this.player.layer,direction:'down',visible:false,asset,animation:'Default'});
   }return this.actors.get(key);
@@ -55,7 +57,7 @@ export class PlayGame{
   if(this.loading||this.over)return;this.time+=dt;updateSyscallSystems(this,dt);
   for(const a of [this.player,this.camera,...this.actors.values()])if(a.motion){const m=a.motion;m.elapsed+=dt;const p=Math.min(1,m.elapsed/m.duration);a.x=m.x+(m.tx-m.x)*p;a.y=m.y+(m.ty-m.y)*p;if(p===1)a.motion=null;}
   if(this.battle){this.battle.tick(dt,auto);return;}
-  if(auto&&this.dialogue){this.dialogue.elapsed+=dt;if(this.dialogue.elapsed>.15)this.confirm();}else if(this.dialogue?.auto){this.dialogue.elapsed+=dt;if(this.dialogue.elapsed>this.dialogue.duration)this.confirm();}
+  if(auto&&this.dialogue){this.dialogue.elapsed+=dt;if(this.dialogue.elapsed>.15)this.confirm(this.autoChoice?.(this)??0);}else if(this.dialogue?.auto){this.dialogue.elapsed+=dt;if(this.dialogue.elapsed>this.dialogue.duration)this.confirm();}
   for(const task of [...this.tasks]){
    if(task.done)continue;if(task.wait>0){task.wait-=dt;continue;}
    if(task.waitFor==='message'){if(this.dialogue)continue;task.waitFor=null;}
@@ -70,13 +72,14 @@ export class PlayGame{
   this.tasks=this.tasks.filter(t=>!t.done||this.tasks.some(o=>o.children.includes(t)));
   if(!this.busy)this.tickNpc(dt);
  }
- step(t){const p=this.data.programs[t.program],op=p?.ops[t.pc++];if(!op){t.done=true;return;}const [name,i,r,s]=op,a=this.actor(t.actor);this.lastInstruction={script:p.name,index:t.pc-1,name};if(executeInstruction(this,t,name,i,r,s,a))return;
+ finishTask(t){const caller=t.scriptFrames?.pop();if(caller){Object.assign(t,caller,{done:false,wait:0,waitFor:null});}else t.done=true;}
+ step(t){const p=this.data.programs[t.program],op=p?.ops[t.pc++];if(!op){this.finishTask(t);return;}const [name,i,r,s]=op,a=this.actor(t.actor);this.lastInstruction={script:p.name,index:t.pc-1,name};if(executeInstruction(this,t,name,i,r,s,a))return;
   switch(name){
-   case 'Nop':return;case 'Blank':t.wait=.001;return;case 'Exit':t.done=true;return;
-   case 'Return':if(t.stack.length){const f=t.stack.pop();Object.assign(t,f);}else t.done=true;return;
+   case 'Nop':return;case 'Blank':t.wait=.001;return;case 'Exit':this.finishTask(t);return;
+   case 'Return':if(t.stack.length){const f=t.stack.pop();Object.assign(t,f);}else this.finishTask(t);return;
    case 'Call':t.stack.push({program:t.program,pc:t.pc,locals:t.locals});t.pc=i[0];return;
    case 'Jump':case 'JumpBattleAI':t.pc=i[0];return;
-   case 'ChangeScript':{const target=this.resolve(s[0]);if(target===undefined){this.warn(t,`Missing script ${s[0]}`);return;}if(i[0])t.stack.push({program:t.program,pc:t.pc,locals:t.locals});else t.stack=[];if(s[0]===this.map.initializer){this.groups=new Set(['entity_default']);this.actors=new Map();this.refreshActors();}else if(t.actor===null&&/^sc_e_/.test(s[0])){this.furthest={script:s[0],scene:this.data.programs[target].title||s[0],mapId:this.mapId};this.history.push({...this.furthest,time:this.time});this.event('script',this.furthest);}t.program=target;t.pc=0;t.locals=[...(this.data.programs[target].locals||[])];return;}
+   case 'ChangeScript':{const target=this.resolve(s[0]);if(target===undefined){this.warn(t,`Missing script ${s[0]}`);return;}if(i[0]){t.scriptFrames??=[];if(t.scriptFrames.length>=16){this.warn(t,'Script call depth exceeded 16; ignored recursive call');return;}t.scriptFrames.push({program:t.program,pc:t.pc,locals:t.locals,stack:t.stack});}t.stack=[];if(s[0]===this.map.initializer){this.groups=new Set(['entity_default']);this.actors=new Map();this.refreshActors();}else if(t.actor===null&&/^sc_e_/.test(s[0])){this.furthest={script:s[0],scene:this.data.programs[target].title||s[0],mapId:this.mapId};this.history.push({...this.furthest,time:this.time});this.event('script',this.furthest);}t.program=target;t.pc=0;t.locals=[...(this.data.programs[target].locals||[])];return;}
    case 'Branch':{const b=s[2]==='imm'?i[1]:this.read(s[2],i[1],t);if(this.compare(this.read(s[0],i[0],t),s[1],b))t.pc=i[2];return;}
    case 'Calc':this.write(s[0],i[0],this.calculate(this.read(s[0],i[0],t),s[1],s[2]==='imm'?i[1]:this.read(s[2],i[1],t)),t);return;
    case 'SetFlag':case 'ResetFlag':case 'FlipFlag':this.write(s[0],i[0],name==='SetFlag'?1:name==='ResetFlag'?0:1-this.read(s[0],i[0],t),t);return;
@@ -156,7 +159,7 @@ export class PlayGame{
  canMove(x,y,layer=this.player.layer){if(x<0||y<0||x>=this.map.width||y>=this.map.height)return false;const grid=this.map.collisions?.[layer]||this.map.collisions?.[0],v=grid?.[Math.floor(y)*this.map.width+Math.floor(x)];return v===undefined||v!==1;}
  move(direction){if(this.busy||!this.control||this.player.motion)return false;const n=dirs.indexOf(direction);if(n<0)return false;this.player.direction=direction;this.player.animation='Walk'+({up:'B',down:'',left:'L',right:'R'}[direction]);const d=delta[n],x=this.player.x+d[0],y=this.player.y+d[1];if(!this.canMove(x,y))return false;this.player.x=x;this.player.y=y;this.camera.manual=false;this.checkTriggers();return true;}
  checkTriggers(){if(this.busy)return;for(const e of this.entities){
-  const actual=this.actors.get(String(e.id))||e;if(actual.visible===false)continue;if(e.layer&&e.layer!==this.player.layer)continue;
+  const actual=this.actors.get(String(e.id))||e;if(actual.visible===false)continue;if(actual.layer&&actual.layer!==this.player.layer)continue;
   const touchNpc=e.kind===6&&e.npc?.moveType===3&&this.rts?.active;
   if(Math.abs(actual.x-this.player.x)>(touchNpc?1:.6)||Math.abs(actual.y-this.player.y)>(touchNpc?1:.6))continue;
   const key=`${this.mapId}:${[...this.groups].join(',')}:${e.id}`;if(this.triggered.has(key))continue;
@@ -165,7 +168,7 @@ export class PlayGame{
   if(e.kind===4&&e.destinationLayer!==null){this.player.layer=e.destinationLayer;break;}
  }}
 
- interact(){const n=dirs.indexOf(this.player.direction),d=delta[n]||[0,1];for(const e of this.entities){if(Math.abs(e.x-this.player.x-d[0])<=1&&Math.abs(e.y-this.player.y-d[1])<=1){const name=e.script||e.npc?.interaction?.script||e.mapObject?.interaction?.script;if(name){this.startScript(name);return true;}if(e.destination){this.pending=this.enter(e.destination.mapId,e.destination.entrance);return true;}}}return false;}
- snapshot(){return{testBoost:this.testBoost,mapId:this.mapId,player:{...this.player,motion:null},banks:this.banks,partySlots:this.partySlots,partyIndex:this.partyIndex,roster:this.roster,inventory:this.inventory,gil:this.gil,groups:[...this.groups],history:this.history,battles:this.battles};}
- async restore(saved){this.testBoost=!!saved.testBoost;await this.enter(saved.mapId,0);this.tasks=[];this.afterInit='';Object.assign(this,{banks:saved.banks,partySlots:saved.partySlots,partyIndex:saved.partyIndex,roster:saved.roster,inventory:saved.inventory,gil:saved.gil,history:saved.history,battles:saved.battles});Object.assign(this.player,saved.player);this.groups=new Set(saved.groups);this.refreshActors();}
+ interact(){const n=dirs.indexOf(this.player.direction),d=delta[n]||[0,1];for(const e of this.entities){const actual=this.actors.get(String(e.id))||e;if(actual.visible===false||actual.layer&&actual.layer!==this.player.layer)continue;if(Math.abs(actual.x-this.player.x-d[0])<.6&&Math.abs(actual.y-this.player.y-d[1])<.6){const name=e.script||e.npc?.interaction?.script||e.mapObject?.interaction?.script;if(name){this.startScript(name);return true;}if(e.destination&&e.kind!==3){this.pending=this.enter(e.destination.mapId,e.destination.entrance);return true;}}}return false;}
+ snapshot(){return{completedStoryObjectives:this.completedStoryObjectives||[],testBoost:this.testBoost,mapId:this.mapId,player:{...this.player,motion:null},banks:this.banks,partySlots:this.partySlots,partyIndex:this.partyIndex,roster:this.roster,inventory:this.inventory,gil:this.gil,groups:[...this.groups],history:this.history,battles:this.battles};}
+ async restore(saved){this.testBoost=!!saved.testBoost;await this.enter(saved.mapId,0);this.tasks=[];this.afterInit='';Object.assign(this,{completedStoryObjectives:saved.completedStoryObjectives||[],banks:saved.banks,partySlots:saved.partySlots,partyIndex:saved.partyIndex,roster:saved.roster,inventory:saved.inventory,gil:saved.gil,history:saved.history,battles:saved.battles});Object.assign(this.player,saved.player);this.groups=new Set(saved.groups);this.refreshActors();}
 }
