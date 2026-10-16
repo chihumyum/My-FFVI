@@ -72,6 +72,7 @@ export class MonsterAI {
     this.pending = [];
     this.timerBase = battle.elapsed;
     this.timerWake = battle.elapsed;
+    this.clockAt = battle.elapsed;
     this.timerDelay = Math.min(
       Infinity,
       ...this.program.ops
@@ -211,6 +212,11 @@ export class MonsterAI {
     this.run();
   }
   tick() {
+    const paused = this.battle.events?.paused || this.battle.events?.enemySleeping ||
+      this.unit.hidden || this.unit.removed || this.unit.escaped;
+    const elapsed = Math.max(0, this.battle.elapsed - this.clockAt);
+    this.clockAt = this.battle.elapsed;
+    if (paused) { this.timerBase += elapsed; this.timerWake += elapsed; }
     if (this.running && this.resumeAt <= this.battle.elapsed) {
       this.resumeAt = 0;
       this.run();
@@ -222,6 +228,7 @@ export class MonsterAI {
     const delay = this.timerDelay;
     if (
       !this.running &&
+      !paused &&
       this.unit.hp > 0 &&
       this.battle.elapsed - this.timerWake >= delay
     ) {
@@ -431,7 +438,11 @@ export class MonsterAI {
           this.branch(this.received && (a.elements || []).includes(i[0]), i[1]);
           break;
         case "IsEnemyAttackJump":
-          this.branch(this.received && evt.actor?.side === "enemy", i[0]);
+          // These PR branches sit after the monster's Act rows and update
+          // its own turn counter (Guardian, Ultros and Chadarnook), rather
+          // than testing whether another monster attacked this combatant.
+          this.branch(this.normal, i[0]);
+          this.warn('IsEnemyAttackJump tests the acting monster normal/timer phase; inferred from PR post-Act counters and SNES turn counters.', pc);
           break;
         case "IsReverseUnit":
           this.branch(

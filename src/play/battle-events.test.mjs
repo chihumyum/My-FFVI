@@ -48,3 +48,27 @@ test('Vargas ordinary damage preserves the scene defeat condition and Sabin sele
   events.execute(['BattleCondition', [2, 9, 5, 1]]);
   assert.equal(battle.enemies[0].hp, 0);
 });
+
+test('Ultros position bodies hide, carry shared HP on a source swap and all finish when the active body falls', () => {
+  const enemies = [2, 4, 8].map((slot, index) => ({ id: 302, monsterId: 302, slot, hp: index === 1 ? 37 : 100,
+    maxHp: 100, hidden: index !== 1, conditions: index === 1 ? [] : [67], aiState: { vars: Array(15).fill(0) } }));
+  const battle = host({ name: 'event', ops: [] }, enemies), events = new BattleEvents(battle);
+  battle.data.conditions[67] = { condition_type: 625 };
+  enemies[1].aiState.vars[9] = 3;
+  events.syscall('オルトロス移動チェック');
+  assert.equal(events.locals[1], 1);
+  events.syscall('オルトロス移動アクションOut');
+  assert.equal(events.paused, true);
+  assert.equal(enemies[1].hidden, true);
+  events.syscall('オルトロス移動アクションIn');
+  assert.equal(enemies[0].hidden, false);
+  assert.equal(enemies[0].hp, 37);
+  events.syscall('オルトロス移動後処理');
+  assert.equal(events.paused, false);
+  assert.equal(enemies[0].aiState.vars[9], 0);
+  enemies[0].hp = 0;
+  events.syscall('オルトロスバトル終了時処理');
+  assert(enemies.every(unit => unit.hp === 0));
+  assert.equal(events.locals[0], 1);
+  assert.equal(events.forcedOutcome, null);
+});

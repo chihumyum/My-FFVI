@@ -96,7 +96,42 @@ test('ADD_VARIABLE_CALC advances the acting PR monster variable without a Fight 
   assert.equal(gau.hp, 50000);
   assert.equal(battle.players[0].hp, 100);
   assert.equal(battle.warnings.has('Ability 1199 effect is not implemented; using Fight.'), false);
-  assert.equal(battle.supported({ process: 'ADD_VARIABLE_CALC', dataB: 1, dataC: 1 }), false);
+  battle.perform(gau, gau, { id: 1202, functions: [{ id: 19 }, { id: 23 }],
+    process: 'ADD_VARIABLE_CALC', dataA: 0, dataB: 3, dataC: 1 });
+  assert.equal(gau.aiState.vars[3], 1);
+  assert.equal(gau.aiState.vars[0], 1);
+  assert.equal(battle.supported({ process: 'ADD_VARIABLE_CALC', dataB: 15, dataC: 1 }), false);
+});
+
+test('the PR variable companion runs once for an area action without discarding its damage', () => {
+  const ability = { id: 333, functions: [{ id: 2 }, { id: 23 }], kind: 'physical', range: 4,
+    power: 0, accuracy: 255, process: 'ADD_VARIABLE_CALC', dataA: 0, dataB: 2, dataC: 1 };
+  const battle = new Battle({ data: { parties: { 1: { members: [{ monsterId: 1 }] } },
+    monsters: { 1: { id: 1, hp: 500, maxHp: 500, attack: 40 } }, abilities: { 333: ability } },
+  party: [{ id: 1, hp: 1000, maxHp: 1000 }, { id: 2, hp: 1000, maxHp: 1000 }], encounterId: 1, random: () => .5 });
+  const enemy = battle.enemies[0];
+  battle.queueAIAction({ actor: enemy, abilityId: 333, script: 'fixture', index: 0 });
+  battle.drainAI();
+  assert.equal(enemy.aiState.vars[2], 1);
+  assert(battle.players.every(unit => unit.hp < 1000));
+});
+
+test('final reserve order reaches the source replacement handler and cannot recycle departed members', () => {
+  const units = { 1: { id: 1, hp: 100, maxHp: 100 },
+    2: { id: 2, hp: 35, maxHp: 100, removed: true, escaped: true }, 3: { id: 3, hp: 50, maxHp: 100 } };
+  const battle = new Battle({ data: { parties: { 1: { members: [{ monsterId: 1 }] } },
+    monsters: { 1: { id: 1, hp: 500, maxHp: 500 } } }, party: [units[1]], finalParty: [1, 2, 3],
+  character: id => units[id], encounterId: 1, random: () => .5 });
+  units[1].removed = true;
+  battle.events.syscall('LB:プレイヤーパーティ変更', [], []);
+  assert.equal(battle.players[0], units[2]);
+  assert.equal(units[2].hp, 35);
+  assert.equal(units[2].removed, false);
+  assert.equal(units[2].escaped, false);
+  units[2].removed = true;
+  battle.events.syscall('LB:プレイヤーパーティ変更', [], []);
+  assert.equal(battle.players[0], units[3]);
+  assert.equal(units[3].hp, 50);
 });
 
 test('a source Gau return clears the previous leap removal without fabricating a heal', () => {

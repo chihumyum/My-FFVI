@@ -86,6 +86,35 @@ test("timer wake follows a PR time branch without waiting for another ATB turn",
   );
 });
 
+test('a scene pause freezes AI timers and hidden bodies do not initiate timer actions', () => {
+  const { ai, battle, actions, unit } = interpreter([
+    op('SyncAI'), op('IsTimerJump', [4], [2]), op('JumpBattleAI', [0]), op('Exit'),
+    op('Act', [15], [100]), op('JumpBattleAI', [0]),
+  ]);
+  battle.events = { paused: true };
+  battle.elapsed = 2; ai.tick();
+  assert.equal(actions.length, 0);
+  battle.events.paused = false;
+  battle.elapsed = 3; ai.tick();
+  assert.equal(actions.length, 0);
+  battle.elapsed = 4; ai.tick();
+  assert.equal(actions.length, 1);
+  unit.hidden = true;
+  battle.elapsed = 20; ai.tick();
+  assert.equal(actions.length, 1);
+});
+
+test('IsEnemyAttackJump advances the acting monster turn counter, not an enemy-hit counter', () => {
+  const { ai, unit } = interpreter([
+    op('SyncAI'), op('IsEnemyAttackJump', [4]), op('JumpBattleAI', [0]), op('Exit'),
+    op('ValueCalc', [10, 1], [], ['＋']), op('JumpBattleAI', [0]),
+  ]);
+  ai.wake('normal');
+  assert.equal(ai.vars[10], 1);
+  ai.wake('reaction', { actor: { side: 'enemy' }, target: unit, hit: true, amount: 1 });
+  assert.equal(ai.vars[10], 1);
+});
+
 const fight = {
   id: 1,
   name: "Fight",

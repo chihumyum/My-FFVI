@@ -111,6 +111,7 @@ export class Battle {
     eventCallbacks = {},
     isVeldt = false,
     context = {},
+    finalParty = null,
   }) {
     this.data = data;
     this.banks = banks;
@@ -118,6 +119,7 @@ export class Battle {
     this.event = event;
     this.eventCallbacks = eventCallbacks;
     this.context = context;
+    this.finalParty = finalParty ?? context.finalParty ?? [];
     this.isVeldt = Boolean(isVeldt || context.isVeldt);
     this.aiQueue = [];
     this.ais = [];
@@ -310,11 +312,11 @@ export class Battle {
   }
   supported(ability) {
     if (!ability) return false;
-    if (ability.process === "ADD_VARIABLE_CALC" &&
-        ((ability.dataB ?? 0) !== 0 || ability.dataC === undefined)) return false;
+    if (["ADD_VARIABLE_CALC", "SET_VARIABLE_CALC"].includes(ability.process) &&
+        (!Number.isInteger(ability.dataB) || ability.dataB < 0 || ability.dataB >= 15 || !Number.isFinite(ability.dataC))) return false;
     if (ability.functions && !ability.functions.length) return false;
     if (
-      !["None", "multiply", "SM_ERASER", "BATTLE_FORCE", "ADD_VARIABLE_CALC"].includes(
+      !["None", "multiply", "SM_ERASER", "BATTLE_FORCE", "BATTLE_FORCE_ON_SAVE", "ADD_VARIABLE_CALC", "SET_VARIABLE_CALC"].includes(
         ability.process || "None",
       )
     )
@@ -324,7 +326,7 @@ export class Battle {
     ).every(
       (f) =>
         [0, 1, 2, 3, 11, 15, 16, 23, 38, 52].includes(f.id) ||
-        (f.id === 19 && ability.process === "ADD_VARIABLE_CALC") ||
+        (f.id === 19 && ["ADD_VARIABLE_CALC", "SET_VARIABLE_CALC"].includes(ability.process)) ||
         (f.id === 9 &&
           ((f.values?.[0] || 0) >= 60 ||
             [5, 12, 17, 26].includes(f.values?.[0]))),
@@ -398,8 +400,8 @@ export class Battle {
         );
         const previousDepth = this.actionDepth;
         this.actionDepth = action.depth;
-        for (const target of targets)
-          this.perform(action.actor, target, ability, targets.length);
+        for (const [index, target] of targets.entries())
+          this.perform(action.actor, target, ability, targets.length, { updateVariables: index === 0 });
         this.actionDepth = previousDepth;
         this.events?.advance();
       }
@@ -528,6 +530,7 @@ export class Battle {
       !actor ||
       !this.targetable(actor) ||
       !this.events.interactive ||
+      this.events.paused ||
       !actor.ready ||
       !command ||
       actor.stopUntil > this.elapsed
@@ -730,8 +733,8 @@ export class Battle {
       const targets = ability.all
         ? pool.filter((unit) => this.targetable(unit))
         : [target];
-      targets.forEach((unit) =>
-        this.perform(actor, unit, ability, targets.length),
+      targets.forEach((unit, index) =>
+        this.perform(actor, unit, ability, targets.length, { updateVariables: index === 0 }),
       );
     }
     this.consumeTurn(actor);
@@ -752,7 +755,7 @@ export class Battle {
     this.checkEnd();
   }
 
-  perform(actor, target, ability, targetCount = 1) {
+  perform(actor, target, ability, targetCount = 1, { updateVariables = true } = {}) {
     if (!actor || !target || !ability) return;
     let original = ability;
     if (!this.supported(ability)) {
@@ -773,16 +776,13 @@ export class Battle {
       damage =
         (ability.functions || []).some((f) => [1, 2, 3].includes(f.id)) ||
         !ability.functions;
-    if (ability.process === "ADD_VARIABLE_CALC") {
-      const variable = Math.max(0, ability.dataA ?? 0), vars = actor.aiState?.vars;
-      if (vars) {
-        const operand = ability.dataC;
-        if (operand === undefined) this.warning(`Ability ${ability.id} lacks PR dataC; variable update skipped.`);
-        else if ((ability.dataB ?? 0) === 0) vars[variable] = ((vars[variable] ?? 0) + operand) | 0;
-        else this.warning(`Ability ${ability.id} ADD_VARIABLE_CALC operation ${ability.dataB} is unknown; variable update skipped.`);
-        this.warning("ADD_VARIABLE_CALC operation0 adds PR dataC to the acting monster's variable dataA; other operations are deferred.");
-      }
-      damage = false;
+    if (updateVariables && ["ADD_VARIABLE_CALC", "SET_VARIABLE_CALC"].includes(ability.process)) {
+      // PR dataB selects the attacker's fifteen-cell variable bank; dataC is
+      // the operand. This companion effect runs once for the entire action,
+      // including an all-target action, without suppressing its primary damage.
+      const variable = ability.dataB, vars = actor.aiState?.vars;
+      if (vars) vars[variable] = (ability.process === "SET_VARIABLE_CALC" ? ability.dataC :
+        (vars[variable] ?? 0) + ability.dataC) | 0;
     }
     if (ability.process === "SM_ERASER") {
       target.hp = 0;

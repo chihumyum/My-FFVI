@@ -141,6 +141,7 @@ export class BattleEvents {
       unit.conditions = add ? [...new Set([...unit.conditions, conditionId])] : unit.conditions.filter(value => value !== conditionId);
       if (type === 5) { if (add) { unit.hp = 0; unit.ready = false; unit.atb = 0; } else if (unit.hp <= 0) unit.hp = 1; }
       if (type === 667) unit.untargetable = add;
+      if (type === 625 || type === 673 || conditionId === 67) unit.hidden = add;
       if (type === 665 || type === 666) unit.disguise = add ? type === 665 ? 2 : 1 : 0;
       if (type === 13 || conditionId === 98) { unit.escaped = add; unit.hidden = add; }
       this.event('battle-condition', { side, id: unit.id, uniqueId: unit.uniqueId, conditionId, add });
@@ -155,7 +156,8 @@ export class BattleEvents {
     // Function 19 is the event-only change-animation routine (e.g. Locke's
     // change-of-clothes poses). It must not become the AI's Fight fallback.
     if (ability.functionId !== 19)
-      for (const actor of actors) for (const target of targets) b.perform(actor, target, ability, targets.length);
+      for (const actor of actors) for (const [index, target] of targets.entries())
+        b.perform(actor, target, ability, targets.length, { updateVariables: index === 0 });
     this.event('battle-action', { actorSide: i[0], actorId: i[1], abilityId: i[2], targetSide: side, targetId: i[4] });
   }
 
@@ -171,6 +173,15 @@ export class BattleEvents {
   }
   onAction(action) {
     this.lastAction = action;
+    if (['BATTLE_FORCE', 'BATTLE_FORCE_ON_SAVE'].includes(action?.ability?.process)) {
+      // Some PR AI streams (Ifrit/Shiva) request the saved return themselves;
+      // other scenes (Vargas/Relm) own a later explicit BattleForceExit opcode.
+      // In the latter case the authored event and its waits retain ownership.
+      if (!this.program?.ops.some(op => ['BattleForceExit', 'BattleForceExitOnSave'].includes(op[0]))) {
+        this.forcedOutcome = { outcome: 'victory', code: 4, saved: action.ability.process === 'BATTLE_FORCE_ON_SAVE' };
+        this.done = true;
+      }
+    }
     if (action?.actor?.id === 1 && action.actor.side === 'player' && action.ability &&
         (action.ability.typeId === 1 || action.ability.kind === 'magic' || action.ability.kind === 'heal')) this.state.terraMagic = true;
     this.advance();
@@ -288,6 +299,96 @@ export class BattleEvents {
       return;
     }
     if (name === 'オルトロス潜る') { state.ultrosDiving = true; this.event('battle-effect', { name }); return; }
+    if (name === 'イフリート・シヴァ移動チェック') {
+      const active = b.enemies.find(unit => !unit.hidden && this.alive(unit));
+      // Their shared PR AI requests a swap in variable9. Its five-hit branch
+      // uses a separate native helper; read that authored guard as a fallback.
+      const guard = b.data.aiPrograms?.[active?.aiName]?.ops.find(op =>
+        op[0] === 'IsVariableComparison' && op[1][0] === 3 && op[1][1] > 0);
+      const vars = active?.aiState?.vars;
+      const requested = vars?.[9] || guard && compare(vars?.[3] ?? 0, guard[3][0], guard[1][1]);
+      state.esperOutgoing = requested ? active : null;
+      this.locals[1] = Number(Boolean(state.esperOutgoing && b.enemies.some(unit => unit !== active && this.alive(unit))));
+      return;
+    }
+    if (name === 'イフリート・シヴァ出現アクション') {
+      const outgoing = state.esperOutgoing, incoming = b.enemies.find(unit => unit !== outgoing && this.alive(unit));
+      if (outgoing && incoming) {
+        this.condition(2, outgoing.uniqueId ?? outgoing.slot + 1, 67, true);
+        this.condition(2, incoming.uniqueId ?? incoming.slot + 1, 67, false);
+        for (const unit of [outgoing, incoming]) {
+          if (unit.aiState) for (const index of [2, 3, 9]) unit.aiState.vars[index] = 0;
+          unit.ready = false; unit.atb = 0;
+        }
+        this.event('battle-form-change', { outgoingId: outgoing.monsterId, incomingId: incoming.monsterId });
+        this.warning('Ifrit/Shiva use their PR AI swap request and authored hit-count guard; transition geometry is simplified.');
+      }
+      state.esperOutgoing = null; this.locals[1] = 0; return;
+    }
+    if (name === 'オルトロスバトル終了時処理') {
+      const active = b.enemies.find(unit => !unit.hidden);
+      if (active && !this.alive(active)) {
+        for (const unit of b.enemies) if (unit.monsterId === active.monsterId) { unit.hp = 0; unit.ready = false; }
+        this.locals[0] = 1;
+      }
+      return;
+    }
+    if (name === 'オルトロス移動チェック') {
+      const active = b.enemies.find(unit => !unit.hidden && this.alive(unit));
+      const destination = this.enemy(active?.aiState?.vars?.[9]);
+      state.ultrosMove = active && destination && destination !== active ? { outgoing: active, incoming: destination } : null;
+      this.locals[1] = Number(Boolean(state.ultrosMove)); return;
+    }
+    if (name === 'オルトロス移動アクションOut' || name === 'オルトロス移動アクションIn') {
+      const move = state.ultrosMove;
+      if (move) {
+        if (name.endsWith('Out')) { move.previousPause = this.paused; this.paused = true; }
+        else {
+          move.incoming.hp = move.outgoing.hp;
+          if (move.outgoing.aiState && move.incoming.aiState) move.incoming.aiState.vars = [...move.outgoing.aiState.vars];
+        }
+        this.condition(2, (name.endsWith('Out') ? move.outgoing : move.incoming).slot + 1, 67, name.endsWith('Out'));
+      }
+      return;
+    }
+    if (name === 'オルトロス移動後処理') {
+      const move = state.ultrosMove;
+      if (move) {
+        if (move.outgoing.aiState && move.incoming.aiState) {
+          for (const index of [8, 9]) { move.incoming.aiState.vars[index] = 0; move.outgoing.aiState.vars[index] = 0; }
+        }
+        this.paused = move.previousPause ?? false;
+        this.event('battle-form-change', { outgoingSlot: move.outgoing.slot, incomingSlot: move.incoming.slot });
+        this.warning('Ultros uses the authored destination slot, carrying HP and AI variables between PR position bodies; movement geometry is simplified.');
+      }
+      state.ultrosMove = null; this.locals[1] = 0; return;
+    }
+    if (name === 'チャダルヌーク切り替え処理') {
+      const waiting = b.enemies.find(unit => unit.conditions?.includes(84));
+      state.paintingDemon ??= waiting;
+      const demon = state.paintingDemon, woman = b.enemies.find(unit => unit !== demon);
+      if (!demon || !woman) { this.locals[2] = 0; return; }
+      const active = demon.hidden ? woman : demon, vars = active.aiState?.vars;
+      if (!this.alive(demon)) {
+        woman.hp = 0; woman.ready = false; this.locals[0] = 1;
+      } else {
+        // Woman restores after falling; only the demon's death ends this boss.
+        // The actual PR AI owns variable9 requests and its own turn/timer
+        // guards. There is no separate invented form timer in the event host.
+        if (!this.alive(woman) || vars?.[9]) {
+          if (woman.hp <= 0) woman.hp = woman.maxHp;
+          const incoming = active === demon ? woman : demon;
+          this.condition(2, active.slot + 1, 67, true);
+          this.condition(2, incoming.slot + 1, 67, false);
+          this.condition(2, demon.slot + 1, 84, incoming !== demon);
+          if (vars) vars[9] = 0;
+          if (incoming.aiState) incoming.aiState.timerBase = b.elapsed;
+          this.event('battle-form-change', { outgoingId: active.monsterId, incomingId: incoming.monsterId });
+          this.warning('Chadarnook follows PR variable9 form requests; woman restoration uses SNES behavior and transition geometry is simplified.');
+        }
+      }
+      this.locals[2] = 0; return;
+    }
     if (name === 'フンババブレスで離脱') {
       for (const unit of b.players) if (unit.conditions?.some(id => Number(b.data.conditions?.[id]?.condition_type) === 13)) {
         unit.hidden = true; unit.removed = true;
@@ -304,22 +405,34 @@ export class BattleEvents {
     if (name === 'LB:ケフカ降臨') { for (const unit of b.enemies) unit.hidden = false; return; }
     if (name === 'LB:プレイヤーパーティ変更') {
       const replacements = b.finalParty ?? [];
+      const used = state.finalUsed ??= new Set(this.entryPlayers.map(unit => unit.id));
       for (let index = 0; index < b.players.length; index++) {
         if (this.alive(b.players[index])) continue;
         const replacement = replacements.map(id => typeof id === 'object' ? id : b.character?.(id)).find(unit => unit &&
-          unit.hp > 0 && !b.players.includes(unit));
+          unit.hp > 0 && !used.has(unit.id));
         if (!replacement) continue;
+        const outgoing = b.players[index];
         b.completeUnit(replacement, b.data.characters?.[replacement.id] ?? {}, 'player', index);
+        replacement.removed = false; replacement.escaped = false;
+        used.add(replacement.id);
         b.players.splice(index, 1, replacement); this.locals[2] = (this.locals[2] ?? 0) + 1;
+        this.event('battle-replacement', { index, outgoingId: outgoing.id, incomingId: replacement.id });
       }
       this.warning('Final-battle replacements use the supplied living reserve order; portrait selection is simplified.'); return;
     }
     if (name === 'キングベヒーモス乱入') {
-      const reinforcement = Object.values(b.data.monsters ?? {}).find(unit => /Behemoth/i.test(unit.name ?? '') &&
-        unit.id !== b.enemies[0]?.monsterId && (unit.undead || /Undead|Zombie/i.test(unit.name ?? '')));
+      const original = b.enemies.find(unit => !unit.reinforcement);
+      const reinforcement = Object.values(b.data.monsters ?? {}).find(unit =>
+        unit.id !== original?.monsterId && (unit.nameKey === original?.nameKey || unit.name === original?.name) &&
+        (unit.undead || Number(unit.species) === 1));
       if (!state.behemothSecond && this.aiEnded() && reinforcement) {
-        state.behemothSecond = true; this.addEnemy(reinforcement.id, 5); this.locals[0] = 0;
+        state.behemothSecond = true;
+        const added = this.addEnemy(reinforcement.id, original.uniqueId ?? original.slot + 1);
+        if (added) added.reinforcement = true;
+        this.locals[0] = 0;
+        this.event('battle-reinforcement', { monsterId: reinforcement.id });
       }
+      if (!reinforcement && !state.behemothSecond) this.warning('Undead Behemoth reinforcement is absent from the PR monster rows; retaining the completed first round.');
       this.locals[2] = 0; return;
     }
     if (name === '夢の三兄弟バトル' || name === 'しょくしゅバトル') {

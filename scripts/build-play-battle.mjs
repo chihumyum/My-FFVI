@@ -294,6 +294,8 @@ export async function buildPlayBattle({
                   .replace(/^sc_ai_[^_]+_/, "")
                   .replace(/([a-z])([A-Z])/g, "$1 $2") || `怪物 ${row.id}`,
         nameKey: row.mes_id_name,
+        species: row.species,
+        undead: row.species === 1,
         hp: row.hp,
         maxHp: row.hp,
         mp: row.mp,
