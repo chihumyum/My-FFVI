@@ -1,3 +1,4 @@
+import { compileSourceRosterGroups } from "./roster-groups.js";
 import { createSourceCatalogNameResolver } from "./source-catalog-name.js";
 import { compileSourceMessageFees } from "./source-message-fees.js";
 import { bindBattleEventMessageInput } from "./battle-event-message-bindings.js";
@@ -52,7 +53,7 @@ export type GameCatalogCompileOptions = {
 export type GameCatalogModules = {
   common: Omit<BattleCatalog["common"], "players" | "limitations" | "drops">;
   owned: Pick<GameStateContent, "shops" | "characterInitializations" | "characterGrowth" |
-    "partyActors" | "battleDefinitions" | "fieldConditions" | "fieldAbilities" | "magicStones"> & {
+    "partyActors" | "battleDefinitions" | "fieldConditions" | "fieldAbilities" | "magicStones" | "sourceRosterGroups"> & {
     sourceNewGame: NewGameDefinition;
     equipmentSystem: NonNullable<GameStateContent["equipmentSystem"]>;
   };
@@ -384,6 +385,7 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
   const newGame = compileNewGame(reader, tables, name, source.ordinaryWeaponEffects.catalog);
   const owned: GameCatalogModules["owned"] = {
     shops: shops.catalog, characterInitializations, characterGrowth,
+    sourceRosterGroups: compileSourceRosterGroups(tables).catalog,
     partyActors: structuredClone(source.partyActors),
     battleDefinitions: structuredClone(ordinary.definitions), fieldConditions, fieldAbilities, magicStones,
     sourceNewGame: newGame.definition,

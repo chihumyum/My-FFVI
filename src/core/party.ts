@@ -227,6 +227,22 @@ export function previewPartyCommand(
   };
 }
 
+/** CorpsClient.SetSlot/RemoveSlot: saved bank edit; selected bank is the same
+ * projection in this representation. Removal retains row; setting writes front. */
+export function projectNativePartyCell(current: PartyState, roster: readonly PartyRosterEntry[],
+  slot: PartySlotIndex, index: PartyPosition, source: number | null): PartyState {
+  validatePartyState(current, roster); slotIndex(slot);
+  if (!Number.isInteger(index) || index < 0 || index > 3) throw new Error("Invalid native party position");
+  const state = structuredClone(current);
+  if (source === null) state.slots[slot][index].id = null;
+  else {
+    const id = rosterIndex(roster).sources.get(sourceId(source));
+    if (id === undefined) throw new Error("Native party references unowned source character " + source);
+    state.slots[slot][index] = {id,row:"front"};
+  }
+  validatePartyState(state, roster); return state;
+}
+
 export function executePartyEvent(
   op: PartyEventOp,
   party: FieldPartyPort | undefined,

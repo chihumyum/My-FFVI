@@ -7,6 +7,7 @@ import type { MinimapMedia } from "../core/minimap.js";
 import type { AudioMedia } from "../core/static-audio.js";
 import type { InventoryEventOp } from "../core/inventory-event.js";
 import type { PartyEventOp } from "../core/party.js";
+import type { RosterGroupEventOp } from "../core/roster-groups.js";
 import type { RosterLifecycleEventOp } from "../core/roster.js";
 import type { FieldPartyActorCheckpoint } from "../core/field-party-actors.js";
 import type { PartyActorContext } from "../core/party-actors.js";
@@ -231,6 +232,7 @@ export type Op = Site &
     | TreasureBoxRequest
     | PartyEventOp
     | RosterLifecycleEventOp
+    | RosterGroupEventOp
     | FieldTransportationOp
     | OwnedConditionEventOp
     | SourceGilTagOp

@@ -18,6 +18,7 @@ import { tableInteger as int } from "./table.js";
 import { compileConditionResistances, ConditionResistanceCompilationError } from "./condition-resistances.js";
 import { compileEnemyInitialConditions, InitialConditionCompilationError } from "./initial-conditions.js";
 import { compileSourceEnemyConditionTraits } from "./source-condition-application.js";
+import { compileSourceEnemyMpParameter } from "./source-enemy-mp-parameter.js";
 
 type Reader = {
   ordered?(table: string): BattleRow[];
@@ -108,6 +109,8 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
       throw new Error("Invalid initial enemy level, life or rewards");
     const ai = compileBattleAI(enemy.ai.data, enemy.ai.source);
     if (ai.blockers.length) throw new Error("Unresolved AI entry: " + ai.blockers.join("; "));
+    const mpParameter = Object.hasOwn(row, "monster_flag_group_id")
+      ? compileSourceEnemyMpParameter(reader, enemy.monsterId).metadata : undefined;
     const abilityIds = battleAIAbilities(ai);
     const dependencyAbilities = (id: number, pc: number, ancestors: readonly number[] = []): number[] => {
       if (ancestors.includes(id)) {
@@ -152,6 +155,11 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
         else if (!ability.plan) add("runtime-dependency", "ability-plan",
           `Ability ${id}: ${ability.blockers.join("; ") || "unimplemented plan"}`, { pc, dependency });
         else {
+          if (mpParameter?.isUnableMP && ability.cost > 0 && ability.plan.effects.some(effect =>
+              "resource" in effect && effect.resource === "mp" &&
+              (ability.plan!.targeting.relation !== "enemy" || effect.kind === "absorb-resource")))
+            add("runtime-dependency", "enemy-mp-fee-phase",
+              `Ability ${id}: source enemy positive-fee MP self-write order requires a reached phase owner`, { pc, dependency });
           const effect = ability.plan.effects[0], controlOnly = ability.plan.effects.length === 1 &&
             effect?.kind === "add-condition" && input.conditions.behaviors.some(behavior =>
               behavior.id === effect.conditionId && ["sleep", "confusion", "temptation", "doom"].includes(behavior.kind));
@@ -176,7 +184,8 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
       { dependency: { table: "monster.csv", id: enemy.monsterId, field: "mes_id_name" } });
     return { source, diagnostics, definition: {
       ...(Object.hasOwn(row, "monster_flag_group_id")
-        ? { conditionTraits: compileSourceEnemyConditionTraits(reader, enemy.monsterId).metadata } : {}),
+        ? { conditionTraits: compileSourceEnemyConditionTraits(reader, enemy.monsterId).metadata,
+            mpParameter: mpParameter! } : {}),
       sourceId: enemy.monsterId, ...label, side: "enemy", row: "front",
       level: int(row.lv), attackElements: [],
       elementResistances: compileElementResistances(reader, int(row.resistance_attribute)).resistances,

@@ -4,8 +4,10 @@ import type { AbilityEffectResult } from './ability.js';
 /** Native values are ConditionType selectors, never condition-master IDs. */
 export const FINAL_ATTACK_EXCLUDED_TYPES = [5, 659, 660, 502] as const;
 export function sourceFinalReady(input: { hp: number; conditionTypes: readonly number[];
+  /** The actual Battle instance's verified parameter, never MP0 alone. */
+  mpUnableFight?: boolean;
   incomingInterrupt: boolean; primarySlot: number; effects: readonly AbilityEffectResult[] }): boolean {
-  if (input.incomingInterrupt || input.hp !== 0 ||
+  if (input.incomingInterrupt || input.hp !== 0 && input.mpUnableFight !== true ||
       input.conditionTypes.some(type => (FINAL_ATTACK_EXCLUDED_TYPES as readonly number[]).includes(type))) return false;
   const first = input.effects[0];
   if (!first) throw new Error('Missing Final primary calculation');

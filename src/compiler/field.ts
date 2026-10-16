@@ -1,3 +1,4 @@
+import { rosterGroupSelectors, compileRosterGroupEvent } from "./roster-groups.js";
 import {compileFieldSkyboxScroll,sourceSkyboxScrollSelectors}from"./field-skybox-scroll.js";
 import { compileFieldPuppetReplacementInstruction,sourcePuppetReplacementSelectors } from './field-puppet-replacement.js';
 import {compileFieldScreenPresentation,screenPresentationMnemonics,screenPresentationSelectors} from "./field-screen-presentation.js";
@@ -330,7 +331,8 @@ export function decodeFieldOp(
     rosterLifecycleKnownSelectors.includes(s[0]!)
   ) {
     try {
-      return { ...site, ...compileRosterLifecycleEvent(s[0]!, tables) };
+      return { ...site, ...((rosterGroupSelectors as readonly string[]).includes(s[0]!)
+        ? compileRosterGroupEvent(s[0]!,tables) : compileRosterLifecycleEvent(s[0]!, tables)) };
     } catch (error) {
       return blocked(error instanceof Error ? error.message : String(error));
     }

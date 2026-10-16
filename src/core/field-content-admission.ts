@@ -195,6 +195,13 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       add("party", "Field party state is unavailable");
       if (booleanField(commandOf(op), "refreshActors")) refresh(false);
       break;
+    case "roster-group": {
+      add("roster", "Source grouped roster state is unavailable");
+      refresh(false);
+      if(commandOf(op).kind === "join")
+        add("conditionVisual", "Group recovery condition-visual context is unavailable");
+      break;
+    }
     case "roster": {
       add("roster", "Field roster state is unavailable");
       const command = commandOf(op);

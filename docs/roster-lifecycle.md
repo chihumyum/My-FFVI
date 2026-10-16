@@ -103,6 +103,6 @@ Current.cctor 的 62 个原始字符串／MethodInfo 注册映射现分别保留
 
 这是 `MoveReserveCommon` → 真实拥有 ID → 当前 Corps 查找 → `CorpsClient.Remove(index)` → `ChangeAssetPartyCharacter(true)` 的共同语义。原生委托 MethodInfo 绑定到 `0x5f8d40`；地图接口第 43 槽是外观刷新。原生与 Web 字段世界都不从前后排枚举推导角色身份。
 
-五个带额外原生调用的包装器仍明确拒绝：嘎乌加入、幽灵一／二加入、莫古利群体加入／离队。它们分别需要其学习敌人／指令初始化、原始幽灵拥有角色选择与等级职业投影、群体队伍与拥有状态的独立 owner；不会降低成普通加入或离队。完整原始数据中的 Battle 命名空间嘎乌调用也保持 Battle VM 门槛。
+首轮的五个额外包装器曾全部拒绝。后续[莫古利集团事务](source-roster-groups.md)补齐群体加入／离队的完整来源定义与同一个 `GameState` owner；它们不降低成普通加入。嘎乌加入、幽灵一／二加入继续要求学习敌人／指令初始化、原始幽灵拥有角色选择与等级职业投影。完整原始数据中的 Battle 命名空间嘎乌调用也保持 Battle VM 门槛。
 
 全量来源检查命令：`node scripts/check-source-roster-syscalls.mjs --compiled-dir <绝对本代 dist> --before-compiled-dir <绝对基线 dist> --input-root <只读原始输入仓库>`。它保留全部 3304 体／186003 操作、56 个已用选择器的 144 站点／100 完整体／19315 操作，以及 53 个战斗体／2312 操作、490 请求（483 描述＋7 诊断）。类型化统计不宣称源剧情已经执行。

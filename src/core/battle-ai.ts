@@ -127,6 +127,9 @@ export type BattleAIReaction = {
   counterReady: boolean;
   /** Only the Battle owner supplies native Final readiness from a death ticket. */
   finalReady?: boolean;
+  /** Qualified targeted MP death from the actual Parameter owner. Pure AI
+   * cannot create a death ticket; the Battle action transaction supplies it. */
+  finalMpDeath?: boolean;
   receivedAbilityId: number;
   receivedSystemId: number;
   /** Source IActSelectEnemy.GetReceiveAbilityTypeId, independent of commandId. */
@@ -206,7 +209,9 @@ function route(
       wake.receivedAbilityId <= 0 ||
       wake.receivedSystemId < 0 ||
       typeof wake.counterReady !== "boolean" ||
-      wake.finalReady !== undefined && typeof wake.finalReady !== "boolean"
+      wake.finalReady !== undefined && typeof wake.finalReady !== "boolean" ||
+      wake.finalMpDeath !== undefined && (typeof wake.finalMpDeath !== "boolean" ||
+        wake.finalMpDeath && (wake.finalReady !== true || context.self.mp !== 0))
     )
       fail("invalid reaction readiness");
     if (wake.receivedAbilityTypeId !== undefined) {
@@ -393,7 +398,7 @@ function route(
         // 820c00: no draw and no emitted action when IsReadyFinal is false.
         // Strings survive compilation; the native message execution phase is
         // still a specific gate only when this Final is actually ready.
-        if (typeof wake !== "string" && wake.finalReady && context.self.hp === 0) {
+        if (typeof wake !== "string" && wake.finalReady && (context.self.hp === 0 || wake.finalMpDeath === true)) {
           if (op.messages.some(value => value !== "")) fail("Source FinalAttackAct message execution phase is unresolved");
           acts.push({ kind: "final-act", pc: state.pc, selected: true,
             abilities: [...op.abilities], weights: [...op.weights], messages: [...op.messages] });

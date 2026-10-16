@@ -20,7 +20,7 @@ const source={file:'authored-roster-family',assetPath:'controlled-roster'};
 const site={script:'authored-roster-family',index:0,source};
 const tables={ 'character_status.csv':Array.from({length:34},(_,i)=>({id:String(i+1),job_id:'12'})), 'job.csv':[{id:'12'}] };
 
-test('all 62 actual native registrations retain 57 proved commands and five specific owner gates',()=>{
+test('all 62 native registrations retain 57 ordinary commands, two grouped commands and three specific owner gates',()=>{
   assert.equal(rosterLifecycleKnownSelectors.length,62);assert.equal(rosterLifecycleSelectors.length,57);
   const counts={join:0,secede:0,reserve:0};
   for(const selector of rosterLifecycleKnownSelectors){
@@ -28,7 +28,8 @@ test('all 62 actual native registrations retain 57 proved commands and five spec
     if(binding.command){assert.equal(decoded.kind,'roster');const op=compileRosterLifecycleEvent(selector,tables);counts[op.command.kind as keyof typeof counts]++;
       assert.deepEqual(op.command,binding.command);assert.deepEqual(op.dependencies,[{table:'character_status.csv',id:op.command.sourceId},{table:'job.csv',id:12}]);
       op.command.sourceId=999;assert.notEqual(compileRosterLifecycleEvent(selector,tables).command.sourceId,999);
-    }else {assert.equal(decoded.kind,'blocked');assert.match(decoded.kind==='blocked'?decoded.reason:'',/Unimplemented roster lifecycle selector.*native 0x/);}
+    }else if(selector==='メンバー加入：モーグリたち'||selector==='メンバー離脱：モーグリたち'){assert.equal(decoded.kind,'roster-group');}
+    else {assert.equal(decoded.kind,'blocked');assert.match(decoded.kind==='blocked'?decoded.reason:'',/Unimplemented roster lifecycle selector.*native 0x/);}
     for(const corrupt of [(m:Mnemonic)=>{m.operands.iValues[7]=1;},(m:Mnemonic)=>{m.operands.sValues[1]='unexpected';},(m:Mnemonic)=>{m.type=0;},(m:Mnemonic)=>{m.operands.rValues.pop();}]){
       const m=raw(selector);corrupt(m);assert.equal(decodeFieldOp(m,site,{},tables).kind,'blocked');
     }

@@ -1,3 +1,5 @@
+import { rosterGroupSteps, validateRosterGroupCommand, validateSourceRosterGroupCatalog, type SourceRosterGroupCatalog, type RosterGroupCommand, type RosterGroupTransaction, type RosterGroupAppearanceStep } from "./roster-groups.js";
+import { projectNativePartyCell } from "./party.js";
 import { previewSourcePartySelection, type FieldSourcePartySelectionPort, type SourcePartySelectionModel, type SourcePartySelectionOutcome } from './source-party-selection.js';
 import { parseBattleGauEntry, type BattleGauEntry } from './battle-gau.js';
 import type { BattleFieldState } from './field-battle-entry.js';
@@ -25,7 +27,8 @@ import { projectShopTrade, shopBuyOptions, shopSellOptions, validateShopCatalog,
   type ShopCatalog, type ShopInventoryRead, type ShopTradeRequest } from "./shop.js";
 import { WEB_BATTLE_GAU_INSTANCES, type BattleGauOwnedHost } from "./battle-gau-instances.js";
 import {
-  prepareRosterLifecycle,
+  prepareRosterNativeStep,
+  type RosterNativeStep,
   validateRosterLifecycle,
   type RosterMember,
   type RosterCommand,
@@ -138,6 +141,8 @@ export type GameStateContent = {
   fieldConditions?: FieldConditionCatalog;
   characterInitializations?: Record<string, OwnedCharacterInitializationTemplate>;
   characterGrowth?: Record<string, CharacterGrowthPlan>;
+  /** Trusted source capability, never part of a saved owned-state grant. */
+  sourceRosterGroups?: SourceRosterGroupCatalog;
   partyActors?: PartyActorCatalog;
   shops?: ShopCatalog;
   /** Field execution is independent of an ability's battle plan and creates no
@@ -297,6 +302,7 @@ export class GameState {
   };
   readonly fieldRoster: FieldRosterPort = {
     prepare: (command) => this.prepareRosterEvent(command),
+    prepareGroup: (command) => this.prepareRosterGroup(command),
   };
   readonly fieldOwnedConditions: FieldOwnedConditionPort = {
     prepare: (command) => this.prepareOwnedConditionEvent(command),
@@ -353,6 +359,7 @@ export class GameState {
       ? new FieldConditions(structuredClone(content.fieldConditions))
       : null;
     this.content = structuredClone(content);
+    if(this.content.sourceRosterGroups)validateSourceRosterGroupCatalog(this.content.sourceRosterGroups);
     if (content.fieldAbilities) validateFieldAbilityCatalog(this.content.fieldAbilities!, this.conditions);
     if (content.magicStones) validateMagicStoneCatalog(this.content.magicStones!);
     if (content.shops) {
@@ -1115,10 +1122,10 @@ export class GameState {
       commitWith,
     };
   }
-  private projectRosterEvent(data: GameStateSnapshot, command: RosterCommand) {
+  private projectRosterEvent(data: GameStateSnapshot, command: RosterNativeStep) {
     const next = structuredClone(data);
     let candidateRosterSize = next.roster.length;
-    const preview = prepareRosterLifecycle(
+    const preview = prepareRosterNativeStep(
       this.rosterState(next),
       command,
       this.rosterCatalog(),
@@ -1187,6 +1194,46 @@ export class GameState {
       ...projection,
       commit: () => commitWith(() => {}), commitWith,
     };
+  }
+  private projectRosterGroup(data: GameStateSnapshot, command: RosterGroupCommand) {
+    validateRosterGroupCommand(command);
+    const catalog = this.content.sourceRosterGroups;
+    if (!catalog) throw new Error("Source roster group catalog is unavailable");
+    validateSourceRosterGroupCatalog(catalog);
+    let next = structuredClone(data);
+    const steps: RosterGroupAppearanceStep[] = [];
+    for (const step of rosterGroupSteps(catalog, command)) {
+      if (step.kind === "owned") next = this.projectRosterEvent(next, step.command).next;
+      else if (step.kind === "set-slot")
+        next.party = projectNativePartyCell(next.party,next.roster,step.slot,step.index,step.sourceId);
+      else if (step.kind === "remove-slot")
+        next.party = projectNativePartyCell(next.party,next.roster,step.slot,step.index,null);
+      else if (step.kind === "select-slot") next.party.selectedSlot = step.slot;
+      else {
+        // Every native requested refresh observes its exact intermediate banks
+        // and owned state. Only detached appearance data crosses to Field.
+        this.validate(next);
+        steps.push({appearance:this.projectPartyAppearance(next),setDummy:step.setDummy,sourceId:step.sourceId});
+      }
+    }
+    this.validate(next);
+    return {next,steps};
+  }
+  private prepareRosterGroup(command: RosterGroupCommand): RosterGroupTransaction {
+    this.requireIdle();
+    const catalog = this.content.sourceRosterGroups;
+    if(!catalog)throw new Error("Source roster group catalog is unavailable");
+    const identity = canonical(catalog), revision = this.revision;
+    const {next,steps} = this.projectRosterGroup(this.data,command);
+    let consumed = false;
+    const current = () => {
+      if (consumed || this.active || this.revision !== revision || this.content.sourceRosterGroups !== catalog ||
+          canonical(catalog) !== identity) throw new Error("Stale source roster group transaction");
+    };
+    const validate = () => {this.requireIdle();current();};
+    return {get steps(){return structuredClone(steps);},validate,commitWith:publish => {
+      this.commitMenuPresentation(next,validate,() => publish(current)); consumed=true;
+    }};
   }
   private projectOwnedConditionEvent(data: GameStateSnapshot, command: OwnedConditionCommand) {
     const next = structuredClone(data);
@@ -1401,6 +1448,32 @@ export class GameState {
       },
     };
     const roster: FieldRosterPort = {
+      prepareGroup: (command) => {
+        if (published) return this.prepareRosterGroup(command);
+        this.requireIdle();
+        const catalog=this.content.sourceRosterGroups;
+        if(!catalog)throw new Error("Source roster group catalog is unavailable");
+        const identity=canonical(catalog), owner=data, version=generation;
+        const {next,steps}=this.projectRosterGroup(data,command); let consumed=false;
+        const current=()=>{
+          if(consumed||published||data!==owner||generation!==version||this.active||this.revision!==revision||
+             this.content.sourceRosterGroups!==catalog||canonical(catalog)!==identity)
+            throw new Error("Stale candidate source roster group transaction");
+        };
+        const validate=()=>{this.requireIdle();if(transportationPublishing)throw new Error("Candidate owned publication in progress");current();};
+        return {get steps(){return structuredClone(steps);},validate,commitWith:publish=>{
+          validate();
+          if(typeof publish!=="function"||publish.constructor.name==="AsyncFunction")
+            throw new Error("Source roster group publication must be synchronous");
+          transportationPublishing=true;this.menuPublication=true;
+          try {
+            const result:unknown=publish(current);
+            if(result&&typeof(result as {then?:unknown}).then==="function")
+              throw new Error("Source roster group publication must be synchronous");
+            data=next;generation++;consumed=true;
+          } finally {transportationPublishing=false;this.menuPublication=false;}
+        }};
+      },
       prepare: (command) => {
         if (published) return this.prepareRosterEvent(command);
         const { next, ...projection } = this.projectRosterEvent(data, command),

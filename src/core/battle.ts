@@ -1,3 +1,4 @@
+import { BattleEnemyMpParameters } from "./source-enemy-mp-parameter.js";
 import { BattleFinalAttackTickets, sourceFinalReady, FINAL_ATTACK_EXCLUDED_TYPES } from "./battle-final-attack.js";
 import {parseBattleChildAdmission,parseWebBattleChildAdmission,prepareBattleChildParty,type BattleChildAdmission,type WebBattleChildAdmission} from './battle-child-admission.js';
 import {enemyMagicActorBlocker} from './enemy-magic-carrier.js';
@@ -216,6 +217,7 @@ export class BattleGame {
     cancellations:structuredClone(this.#actionCancellations)};}
 
   readonly #finalTickets = new BattleFinalAttackTickets<Combatant>();
+  readonly #mpParameters = new BattleEnemyMpParameters<Combatant>();
   get finalAttackExecution() { return this.#finalTickets.projection; }
   private reactions: BattleAction[] = [];
   private aiStates = new Map<string, BattleAIState>();
@@ -325,7 +327,7 @@ export class BattleGame {
   prepareEventRetirement(){const message=this.prepareMessageRetirement(),effect=this.prepareEffectRetirement(),
     task=this.#gauTask,resource=task?.resource;let used=false;
     const validate=()=>{if(used||this.#gauTask!==task)throw new Error("Stale source Gau retirement");message.validate();effect.validate();resource?.validate();};
-    return {validate,commit:()=>{validate();message.commit();effect.commit();used=true;this.#finalTickets.retire();this.#gauHost?.owned.retire();this.#gauTask=null;
+    return {validate,commit:()=>{validate();message.commit();effect.commit();used=true;this.#finalTickets.retire();this.#mpParameters.retireAll();this.#gauHost?.owned.retire();this.#gauTask=null;
       this.#gauJournal.push({action:"retire",pc:-1,time:this.time,actorId:null,value:null});if(resource)this.discardBattleEffectResources([resource],"retire");}};}
   readonly #messageHost: BattleEventMessageHost | null;
   #messageFrame: ReturnType<SourceMessageState["prepareFrame"]> | null = null;
@@ -697,6 +699,7 @@ export class BattleGame {
     for (const c of this.combatants) {
       if (this.conditions.isEscaped(c.conditionIds))
         throw new Error("Source initial Escape component lifecycle is not admitted");
+      this.#mpParameters.bind(c);
       validateElements(c.attackElements);
       validateElementResistances(c.elementResistances);
     }
@@ -705,7 +708,7 @@ export class BattleGame {
       const range = content.initialAtb[c.side];
       c.atb = this.randomInt(range[0], range[1]);
       c.queued = false;
-      Object.assign(c, this.conditions.settleLife(c.hp, c.conditionIds, false));
+      Object.assign(c, this.settleBattleLife(c, c.hp, c.conditionIds, false));
       this.observeDropLife(c);
       if (c.hp === 0) c.atb = 0;
       this.poisonStates.set(
@@ -1160,11 +1163,10 @@ export class BattleGame {
         "resource" in effect && effect.resource === "mp" && (mayTargetSelf || effect.kind === "absorb-resource")))
       fail("Unresolved Final positive-fee MP/user-write order");
   }
-  private validateFinalMpTransition(actor: Combatant, ability: AbilityDefinition): void {
+  private validateFinalMpTransition(actor: Combatant, ability: AbilityDefinition, currentMp = actor.mp): void {
     const cost = this.abilityCost(actor.id, ability.id);
     if (!cost) throw new Error("Missing Final actual MP cost owner");
-    if (actor.mp - Math.min(actor.mp, cost.mp) === 0)
-      throw new Error("Source Final MP-zero lifecycle requires actual IsUnableMP parameter owner");
+    if (currentMp - Math.min(currentMp, cost.mp) === 0) this.#mpParameters.query(actor, true);
   }
   private canUseFinal(action: BattleAction): boolean {
     const actor = this.combatants.find(unit => unit.id === action.actor);
@@ -1180,13 +1182,15 @@ export class BattleGame {
     this.conditions.validateActive(actor.conditionIds);
     return conditionsAllowAction(actor.conditionIds, ability.program.forbiddenConditionIds, []);
   }
-  private settleBattleLife(unit: Combatant, hp: number, ids: readonly number[], wasUnable: boolean, preparedFinal = false) {
+  private settleBattleLife(unit: Combatant, hp: number, ids: readonly number[], wasUnable: boolean, preparedFinal = false, mp = unit.mp) {
+    if (!Number.isInteger(mp) || mp < 0 || mp > 0x7fffffff) throw new Error("Invalid life MP");
+    const mpDeath = mp === 0 && this.#mpParameters.query(unit) === true;
     if (unit.side === "enemy" && wasUnable && !this.conditions.isUnableFight(ids))
       throw new Error("Source enemy UnableFight removal requires AI re-entry lifecycle");
     if ((preparedFinal || this.combatants.includes(unit) && this.#finalTickets.has(unit)) &&
         !wasUnable && !this.conditions.types(ids).some(type => (FINAL_ATTACK_EXCLUDED_TYPES as readonly number[]).includes(type)))
       return { hp, conditionIds: [...ids] };
-    return this.conditions.settleLife(hp, ids, wasUnable);
+    return this.conditions.settleLife(mpDeath ? 0 : hp, ids, wasUnable);
   }
   private pruneFinalTickets(): void {
     const pending = [...this.reactions, ...(this.action ? [this.action] : [])];
@@ -1212,7 +1216,7 @@ export class BattleGame {
             candidate.abilities.some(ability => ability.id === action.source.id))) return false;
         const ability = this.content.abilities[action.source.id]!, command = this.content.commands[action.commandId!],
           cost = this.abilityCost(actor.id, action.source.id);
-        return actor.hp > 0 && Boolean(command && cost && actor.mp >= cost.mp) &&
+        return actor.hp > 0 && !(actor.mp === 0 && this.#mpParameters.query(actor) === true) && !this.#finalTickets.has(actor) && Boolean(command && cost && actor.mp >= cost.mp) &&
           conditionsAllowAction(actor.conditionIds, ability.program.forbiddenConditionIds, command!.forbiddenConditionIds);
       }
     }
@@ -1300,7 +1304,7 @@ export class BattleGame {
       !ability?.plan ||
       !this.qualifiedAbility(actor, abilityId) ||
       enemyMagicActorBlocker(ability,actor.side)!==null ||
-      actor.hp <= 0 ||
+      actor.hp <= 0 || actor.mp === 0 && this.#mpParameters.query(actor) === true || this.#finalTickets.has(actor) ||
       this.actionSuspended(actor) ||
       this.enemyExits.has(actor.id) ||
       ability.plan.effects.some(effect =>
@@ -1639,11 +1643,12 @@ export class BattleGame {
       placement: structuredClone(placement), maxHp: definition.hp, maxMp: definition.mp,
       atb: 0, queued: false, behavior: initialEnemyBehavior() };
     this.validateConditionState([unit]);
+    this.#mpParameters.bind(unit);
     validateElements(unit.attackElements);
     validateElementResistances(unit.elementResistances);
     if (this.content.drops !== null && !this.content.drops.monsters.some(row => row.id === definition.sourceId))
       throw new Error("Missing enemy drop definition");
-    Object.assign(unit, this.conditions.settleLife(unit.hp, unit.conditionIds, false));
+    Object.assign(unit, this.settleBattleLife(unit, unit.hp, unit.conditionIds, false));
     return unit;
   }
   private prepareEnemyEntry(unit: Combatant, nextUnits: readonly Combatant[]) {
@@ -1665,7 +1670,7 @@ export class BattleGame {
    * through one shared queue/timer boundary. Death/drop registrations survive. */
   private retireActors(ids: readonly string[]): void {
     const removed = new Set(ids);
-    for (const unit of this.combatants) if (removed.has(unit.id)) this.#finalTickets.cancelReferences(unit);
+    for (const unit of this.combatants) if (removed.has(unit.id)) { this.#finalTickets.cancelReferences(unit); this.#mpParameters.retire(unit); }
     this.queue = this.queue.filter(action => !removed.has(action.actor));
     this.reactions = this.reactions.filter(action => !removed.has(action.actor));
     if (this.action && (removed.has(this.action.actor) || this.action.targetIds.some(id => removed.has(id)))) {
@@ -2722,6 +2727,7 @@ export class BattleGame {
     // Definitions/media/AI programs stay shared; only mutable runtime values are copied.
     const before = {
       finalTickets: this.#finalTickets.snapshot(),
+      mpParameters: this.#mpParameters.snapshot(),
       conditionJournal: structuredClone(this.#conditionJournal),
       unitOwners: [...this.combatants],
       participantState: structuredClone(this.participantState),
@@ -2840,6 +2846,7 @@ export class BattleGame {
       this.queue = before.queue;
       this.reactions = before.reactions;
       this.#finalTickets.restore(before.finalTickets);
+      this.#mpParameters.restore(before.mpParameters);
       this.enemyExits = before.enemyExits;
       this.rewardRegisteredInstances = before.rewardRegisteredInstances;
       this.aiStates = before.ai;
@@ -2920,7 +2927,7 @@ export class BattleGame {
           this.atbSpeed,
         );
       for (const c of this.combatants) {
-        if (c.hp <= 0 || c.queued || this.enemyExits.has(c.id) || this.actionSuspended(c)) continue;
+        if (c.hp <= 0 || c.queued || this.#finalTickets.has(c) || c.mp === 0 && this.#mpParameters.query(c) === true || this.enemyExits.has(c.id) || this.actionSuspended(c)) continue;
         if (c.atb < 100)
           c.atb = Math.fround(
             c.atb +
@@ -3027,7 +3034,7 @@ export class BattleGame {
         // The old explicit caller input is not inferred from condition types.
         isTimeStopped: false,
       });
-      let life = result.ticks.length
+      let life = result.ticks.length || actor.mp === 0 && this.#mpParameters.query(actor) === true
         ? this.settleBattleLife(actor,
             result.hp,
             this.conditions.updateDying(
@@ -3133,6 +3140,7 @@ export class BattleGame {
     action: BattleAction,
     units: readonly Combatant[],
     results: readonly { target: string; effects: AbilityEffectResult[] }[],
+    parentPayment: number,
   ) {
     const ability = this.actionDefinition(action);
     const updates: { actor: string; turn: BattleAITurn }[] = [];
@@ -3146,7 +3154,10 @@ export class BattleGame {
       if (action.source.kind === "item")
         throw new Error("Unimplemented enemy item reaction");
       const live = this.combatants.find(unit => unit.id === actor.id)!;
-      const finalReady = !this.#finalTickets.has(live) && sourceFinalReady({ hp: actor.hp,
+      // Native Hit observes resources before the parent's Finishing fee. The
+      // fee commutes only when this actor has no self MP write (guarded below).
+      const hitMp = actor.mp + (actor.id === action.actor ? parentPayment : 0);
+      const finalReady = !this.#finalTickets.has(live) && sourceFinalReady({ hp: actor.hp, mpUnableFight: hitMp === 0 && this.#mpParameters.query(live) === true,
         conditionTypes: this.conditions.types(actor.conditionIds),
         incomingInterrupt: action.kind === "counter" || action.kind === "final",
         primarySlot: ability.program.functions[0]?.slot ?? -1, effects: result.effects });
@@ -3166,7 +3177,7 @@ export class BattleGame {
         this.aiStates.get(actor.id)!,
         this.aiContext(actor, units),
         { ...(reaction ?? { counterReady: false, receivedAbilityId: action.source.id, receivedSystemId: ability.program.rules.system_id! }),
-          ...(finalReady ? { finalReady: true, counterReady: false } : {}), ...(receivedTypeId === undefined ? {} : { receivedAbilityTypeId: receivedTypeId }) },
+          ...(finalReady ? { finalReady: true, counterReady: false, ...(actor.hp > 0 && actor.mp === 0 ? { finalMpDeath: true } : {}) } : {}), ...(receivedTypeId === undefined ? {} : { receivedAbilityTypeId: receivedTypeId }) },
       );
       this.admitAITurn(actor, turn);
       const finalActions: BattleAction[] = [];
@@ -3184,7 +3195,7 @@ export class BattleGame {
               range: definition.program.range, rule: definition.plan!.targeting, formation: this.content.formation,
             }, (min, max) => this.randomInt(min, max));
             if (!choice) throw new BattleAIError(actor.ai!.source, act.pc, "Unresolved Final empty/default target phase");
-            this.validateFinalMpTransition(actor, definition);
+            this.validateFinalMpTransition(live, definition, actor.mp);
             finalActions.push(this.createAction(actor, definition, choice, null, "final"));
             continue;
           }
@@ -3328,6 +3339,10 @@ export class BattleGame {
         action.resolved = true;
         return;
       }
+      if (payment > 0 && this.#mpParameters.query(actor) === true &&
+          ability.plan.effects.some(effect => "resource" in effect && effect.resource === "mp" &&
+            (choice.targetIds.includes(actor.id) || effect.kind === "absorb-resource")))
+        throw new Error("Unresolved source enemy positive-fee MP self-write order");
       const derived: BattleAction[] = [];
       const first = ability.plan.effects[0];
       const projection = first?.kind === "random-ability" || first?.kind === "forced-escape"
@@ -3412,16 +3427,16 @@ export class BattleGame {
         if (!changed) continue;
         const candidate = !!entry && !!unit.ai?.instructions.some(row => row.op.kind === "final-act") &&
           this.aiStates.get(unit.id)?.status === "waiting" && !this.enemyExits.has(unit.id) && sourceFinalReady({
-            hp: unit.hp, conditionTypes: this.conditions.types(unit.conditionIds),
+            hp: unit.hp, mpUnableFight: unit.mp + (live === actor ? payment : 0) === 0 && this.#mpParameters.query(live) === true, conditionTypes: this.conditions.types(unit.conditionIds),
             incomingInterrupt: action.kind === "counter" || action.kind === "final",
             primarySlot: ability.program.functions[0]?.slot ?? -1, effects: entry.effects });
         const life = this.settleBattleLife(live, unit.hp, unit.conditionIds,
-          this.conditions.isUnableFight(live.conditionIds), candidate);
+          this.conditions.isUnableFight(live.conditionIds), candidate, unit.mp);
         Object.assign(unit, life);
         if (entry) Object.assign(entry.state, life);
         if (live === actor && projection.userResourceState) Object.assign(projection.userResourceState, life);
       }
-      const reactions = this.planReactions(action, projected, results);
+      const reactions = this.planReactions(action, projected, results, payment);
       for (const unit of projected) {
         const live = this.combatants.find(current => current.id === unit.id)!;
         const entry = staged.find(candidate => candidate.target === live);
@@ -3429,9 +3444,9 @@ export class BattleGame {
         if (!changed) continue;
         if (action.kind === "final" && unit.mp === 0 &&
             (live === actor && payment > 0 || entry?.effects.some(effect => effect.resource === "mp" && !effect.missed)))
-          throw new Error("Source Final MP-zero lifecycle requires actual IsUnableMP parameter owner");
+          this.#mpParameters.query(live, true);
         const life = this.settleBattleLife(live, unit.hp, unit.conditionIds,
-          this.conditions.isUnableFight(live.conditionIds), reactions.finals.some(candidate => candidate.unit === live));
+          this.conditions.isUnableFight(live.conditionIds), reactions.finals.some(candidate => candidate.unit === live), unit.mp);
         Object.assign(unit, life);
         if (entry) Object.assign(entry.state, life);
         if (live === actor && projection.userResourceState) Object.assign(projection.userResourceState, life);
@@ -3446,7 +3461,7 @@ export class BattleGame {
           if (this.conditions.name(id)) userMessages.push(`${actor.name} 的${this.conditions.name(id)}已解除。`);
       }
       const changedIds = [...new Set([...staged.map(entry => entry.target.id),
-        ...(projection.userResults.length||projection.userResourceState ? [actor.id] : [])])];
+        ...(payment > 0 || projection.userResults.length||projection.userResourceState ? [actor.id] : [])])];
       const poison = changedIds.map(id => {
         const unit = projected.find(c => c.id === id)!;
         const targetEntry = staged.find(entry => entry.target.id === id);
@@ -3521,8 +3536,13 @@ export class BattleGame {
         // log; growth still rejects matching observations without a provider.
         this.observedAbilityIds.push(action.source.id);
       }
+      const actorProjection = projected.find(unit => unit.id === actor.id)!;
+      const actorIsTarget = staged.some(entry => entry.target === actor);
+      const actorLifeChanged = !actorIsTarget && (actor.hp === 0) !== (actorProjection.hp === 0);
       actor.mp -= payment;
       if(projection.userResourceState)Object.assign(actor,projection.userResourceState);
+      if (!actorIsTarget) Object.assign(actor, { hp: actorProjection.hp, mp: actorProjection.mp,
+        conditionIds: [...actorProjection.conditionIds] });
       this.queue = nextQueue; this.reactions = nextReactions;
       for (const pending of stopCancelled) {
         const owner = this.combatants.find(unit => unit.id === pending.actor)!;
@@ -3534,14 +3554,24 @@ export class BattleGame {
             !nextQueue.some(pending => pending.actor === unit.id) && this.action?.actor !== unit.id) unit.queued = false;
         if (sleepResets.has(unit.id) || stopReady.has(unit.id) || poison.some(next => next.id === unit.id && next.stopRemoved)) unit.atb = 0;
       }
-      if (projection.userResults.length) actor.conditionIds = [...projection.userConditionIds];
+      if (projection.userResults.length) actor.conditionIds = [...actorProjection.conditionIds];
       for (const next of poison) {
         this.poisonStates.set(next.id, next.state);
         this.slowStates.set(next.id, next.slow);
         this.controlStates.set(next.id, next.control.state); this.controlTargetUnits.set(next.id, next.control.targets);
       }
+      if (!actorIsTarget) {
+        this.observeDropLife(actor);
+        if (actorLifeChanged) {
+          actor.atb = 0; actor.queued = false;
+          this.queue = this.queue.filter(pending => pending.actor !== actor.id);
+          this.reactions = this.reactions.filter(pending => pending.actor !== actor.id ||
+            pending.kind === "final" && this.#finalTickets.owns(actor, pending.executionTicket));
+        }
+      }
       for (const entry of staged) {
-        const lifeChanged = (entry.target.hp === 0) !== (entry.state.hp === 0);
+        const sourceMpDeath = this.#mpParameters.query(entry.target) === true;
+        const lifeChanged = (entry.target.hp === 0 || sourceMpDeath && entry.target.mp === 0) !== (entry.state.hp === 0 || sourceMpDeath && entry.state.mp === 0);
         Object.assign(entry.target, entry.state);
         this.observeDropLife(entry.target);
         if (lifeChanged) {

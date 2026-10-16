@@ -115,6 +115,8 @@ export type RosterLifecycleTransaction = {
   commitWith(publish: () => void): void;
 };
 export interface FieldRosterPort {
+  /** Requires the current trusted source catalog and the same owned-state phase. */
+  prepareGroup?(command: import("./roster-groups.js").RosterGroupCommand): import("./roster-groups.js").RosterGroupTransaction;
   prepare(command: RosterCommand): RosterLifecycleTransaction;
 }
 
@@ -285,6 +287,23 @@ export function prepareRosterLifecycle<T extends RosterMember>(
   providers: RosterLifecycleProviders<T>,
 ): RosterLifecyclePreview<T> {
   validateRosterCommand(command);
+  return prepareRosterNativeStep(current, command, catalog, providers);
+}
+/** Native group calls use these exact primitives, not the full Join wrapper. */
+export type RosterNativeStep = RosterCommand
+  | { kind: "enable-release"; sourceId: number }
+  | { kind: "correct-level"; sourceId: number; firstJoin: true }
+  | { kind: "recover"; sourceId: number };
+export function prepareRosterNativeStep<T extends RosterMember>(
+  current: RosterLifecycleState<T>, command: RosterNativeStep,
+  catalog: RosterLifecycleCatalog, providers: RosterLifecycleProviders<T>,
+): RosterLifecyclePreview<T> {
+  if (command.kind === "enable-release" || command.kind === "recover") {
+    checkpointKeys(command, "kind,sourceId"); positive(command.sourceId);
+  } else if (command.kind === "correct-level") {
+    checkpointKeys(command, "kind,sourceId,firstJoin"); positive(command.sourceId);
+    if (command.firstJoin !== true) throw new Error("Unknown native group level correction");
+  } else validateRosterCommand(command);
   validateRosterLifecycle(current, catalog, providers.validateMember);
   const state = structuredClone(current),
     receipts: RosterReceipt[] = [];
@@ -385,7 +404,20 @@ export function prepareRosterLifecycle<T extends RosterMember>(
   }
   if (!member) throw new Error("Roster lifecycle references unowned character");
 
-  if (command.kind === "reserve") {
+  if (command.kind === "enable-release") {
+    setEnabled(true); releaseJob(true);
+  } else if (command.kind === "correct-level") {
+    const targetLevel = rosterJoinLevel(state, member, command.firstJoin, catalog);
+    if (targetLevel > member.additionalLevel) {
+      if (!providers.correctLevel) throw new Error("Unimplemented source join growth provider");
+      replace(providers.correctLevel(structuredClone(member), targetLevel), true);
+      receipts.push({kind:"level-correction",id:member.id,targetLevel});
+    }
+  } else if (command.kind === "recover") {
+    if (!providers.recover) throw new Error("Unimplemented roster full recovery");
+    replace(providers.recover(structuredClone(member)));
+    receipts.push({kind:"recovered",id:member.id});
+  } else if (command.kind === "reserve") {
     const slot = state.party.slots[state.party.selectedSlot];
     const position = slot.findIndex((cell) => cell.id === member!.id);
     if (position >= 0) slot[position]!.id = null;
@@ -461,7 +493,7 @@ export function prepareRosterLifecycle<T extends RosterMember>(
   return {
     state,
     activeMembers: activePartyMembers(state.party),
-    refreshActors: command.refreshActors,
+    refreshActors: "refreshActors" in command ? command.refreshActors : false,
     receipts,
   };
 }

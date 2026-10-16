@@ -37,9 +37,23 @@ if(o['candidate-dir']){
  const recipeBytes=await readFile(resolve(root,'content-batches/systems-initialized.recipe.json')),recipe=JSON.parse(recipeBytes),fresh=new Map([
  [recipe.sourceEntry.url,sourceEntry],[recipe.sourceBattle.url,sourceBattle],[recipe.sourceWorld.url,strict],[recipe.sourceMap.url,await candidate.read(recipe.sourceMap.url)]]);
  for(const key of ['sourceEntry','sourceBattle','sourceWorld','sourceMap'])recipe[key].contentHash=fresh.get(recipe[key].url).contentHash;
+ // This controlled caller already derives its compiled references from the
+ // sealed candidate. Its raw battle generation must come from that same
+ // locked input, rather than the historical public recipe's media snapshot.
+ // Keep the tracked recipe unchanged and record the derivation explicitly.
+ const battleSnapshot=await input.api.readSnapshot(resolve(root,'build/battle')),
+  battleExport=JSON.parse(input.api.snapshotFile(battleSnapshot,'battle.json').toString());
+ assert.equal(api.hash(battleExport.sources),battleExport.sourceSetHash,'Controlled caller battle export identity differs');
+ assert.equal(battleExport.parentSourceSetHash,sourceEntry.parentSourceSetHash,'Controlled caller battle parent differs from source entry');
+ assert.equal(battleExport.parentSourceSetHash,input.snapshot.manifest.parentSourceSetHash,'Controlled caller battle parent differs from source inputs');
+ const battleSourceRebinding={kind:'same-candidate-controlled-caller-battle-input-v1',
+  historicalRecipeSourceSetHash:recipe.battleSourceSetHash,sourceSetHash:battleExport.sourceSetHash,
+  parentSourceSetHash:battleExport.parentSourceSetHash,exportContentHash:api.hash(battleExport)};
+ recipe.battleSourceSetHash=battleExport.sourceSetHash;
+
  const {compileInitializedSystems}=await import('./build-initialized-systems.mjs');systems=await compileInitializedSystems(root,recipe,api.hash(recipe),{dist:compiled,readJson:async url=>{assert(fresh.has(url),'Unexpected mutable collection read '+url);return fresh.get(url);}});
  assert.equal(api.canonical(systems.battle.gameState),api.canonical(sourceBattle.gameState),'Message capability cannot change the source initializer/owned state');
- recipeBinding={originalRecipeSha256:sha(recipeBytes),detachedPins:recipe,sourceStateUnchanged:true};
+ recipeBinding={originalRecipeSha256:sha(recipeBytes),detachedPins:recipe,battleSourceRebinding,sourceStateUnchanged:true};
  // The shared map prerequisite catalog deliberately selects a small baseline.
  // Its absence is not source party admission: compile the entire family from
  // the locked raw inputs through the same pure runtime/directory producer.

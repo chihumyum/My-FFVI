@@ -141,6 +141,9 @@ export type CombatantDefinition = ParameterValues & {
   /** Fixed source parameter facts only. Current conditions and actual equipped
    * providers remain separate inputs to an IsUndead query. Missing is unknown. */
   conditionTraits?: SourceConditionTraits;
+  /** Exact source EnemyCharacterParameter constructor, independent of player
+   * overrides and legacy missing data. Battle owns actual-instance binding. */
+  mpParameter?: import("./source-enemy-mp-parameter.js").SourceEnemyMpParameter;
   /** Current owned state, independent of the development action whitelist. */
   ownedAbilities?: BattleAbilityMember;
   /** Current owned learning counter; distinct from the MP resource. */

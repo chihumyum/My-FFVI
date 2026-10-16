@@ -1,3 +1,4 @@
+import { validateRosterGroupCommand, type RosterGroupEventOp, type RosterGroupAppearanceStep } from "./roster-groups.js";
 import {fieldEffectTransformsBinding,bindFieldEffectTransform,fieldEffectTransformBinding,validateFieldEffectCurrentTransform,type WebFieldEffectTransforms} from './field-effect-transforms.js';
 import {projectFieldBoardSetPosition,projectFieldBoardLerp,type FieldBoardLerpProgress} from './field-effect-transform-motion.js';
 import { parseSourceScriptAnimationCatalog, sourceScriptAnimationAsset, parseSourceFieldScriptAnimationState, type SourceScriptAnimationCatalog, type SourceFieldScriptAnimationState } from "./source-script-animations.js";
@@ -2108,6 +2109,26 @@ export class FieldGame {
   private preparePartyAppearance(appearance: PartyAppearanceCandidate | undefined, setDummy = true): FieldPartyActorPublication {
     if (!this.partyActors || !appearance) throw new Error("Party actor refresh is unavailable");
     return this.partyActors.prepare(appearance, this.partyRenderer(), setDummy);
+  }
+  /** One native actor/camera draft carries every source-ordered group refresh.
+   * It never publishes an intermediate owned bank or invokes a late callback. */
+  private prepareRosterGroupAppearance(task:Task,op:RosterGroupEventOp,steps:readonly RosterGroupAppearanceStep[]):FieldPartyActorPublication {
+    this.requireInstructionProviders(op as Op,task.actor,true);
+    if(!this.partyActors)throw new Error("Source roster group actor owner is unavailable");
+    const tasks=this.tasks,script=task.script,pc=task.pc,actor=task.actor,time=this.time,
+      root=this.eventRootScript,source=canonical(op),stack=canonical(task.stack),bank=task.generalRegisters,
+      flag=this.content.scriptSystemFlags?.[root??script]?.keepBadStatusVisual;
+    const current=()=>{
+      if(this.tasks!==tasks||!tasks.includes(task)||task.done||task.script!==script||task.pc!==pc||task.actor!==actor||
+         this.time!==time||this.eventRootScript!==root||task.generalRegisters!==bank||canonical(task.stack)!==stack||this.stop||
+         this.content.scriptSystemFlags?.[root??script]?.keepBadStatusVisual!==flag||
+         canonical(this.content.scripts[script]?.[pc-1])!==source)
+        throw new Error("Stale source roster group task or content");
+    };
+    const prepared=this.partyActors.prepareSequence(steps,this.partyRenderer());
+    const validate=()=>{prepared.validate();current();};
+    const publish=(beforeWrite?:()=>void)=>prepared(()=>{current();beforeWrite?.();});
+    return Object.assign(publish,{validate});
   }
   get partyMenuBlocker(): string | null {
     if (!this.menuReady) return "请在地图空闲时调整编队。";
@@ -5857,6 +5878,19 @@ export class FieldGame {
               this.block(error instanceof Error ? error.message : String(error), op);
               return;
             }
+            break;
+          case "roster-group":
+            try {
+              validateRosterGroupCommand(op.command);
+              if(op.command.kind==="join"&&this.content.scriptSystemFlags?.[this.eventRootScript??t.script]?.keepBadStatusVisual!==false)
+                throw new Error("Group recovery condition-visual context is unavailable");
+              const prepare=this.options.roster?.prepareGroup;
+              if(!prepare)throw new Error("Source roster group state is unavailable");
+              const transaction=prepare.call(this.options.roster,op.command);
+              const actors=this.prepareRosterGroupAppearance(t,op,transaction.steps);
+              actors.validate();transaction.validate();
+              transaction.commitWith(validateOwned=>actors(validateOwned));
+            } catch(error) {this.block(error instanceof Error?error.message:String(error),op);return;}
             break;
           case "roster":
             try {
