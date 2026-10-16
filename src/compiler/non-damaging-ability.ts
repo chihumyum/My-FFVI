@@ -3,6 +3,7 @@ import type { NonDamagingAbilityEffect, NonDamagingAbilityPresentation } from ".
 import { WEB_NON_DAMAGING_PRESENTATION, validateNonDamagingPresentation } from "../core/non-damaging-ability.js";
 import type { ConditionReader } from "./conditions.js";
 import { tableInteger as int } from "./table.js";
+import { validateSourceEnemyVariableMetadata, type SourceEnemyVariableAction } from '../core/enemy-variable-action.js';
 
 /** Source-family contract, not an ability-ID list. FunctionProvider 3419c0 /
  * 342080 maps Function19 to NonFunction/NonFixedMiss. NonFunction 66b580 calls
@@ -10,13 +11,15 @@ import { tableInteger as int } from "./table.js";
  * 33f780 maps source type35 to NonAct. Other companions, processes, carriers,
  * ranges, Runic/reflect flags and metadata remain independently unresolved.
  * The existing Web action stages defer native VFX, not calculation/continuation. */
-export function compileNonDamagingAbility(reader: ConditionReader, program: AbilityProgram, fn: AbilityFunction):
+export function compileNonDamagingAbility(reader: ConditionReader, program: AbilityProgram, fn: AbilityFunction,
+    variable?: SourceEnemyVariableAction):
   { effect: NonDamagingAbilityEffect; presentation: NonDamagingAbilityPresentation; sources: ReturnType<ConditionReader["row"]>[] } {
-  if (program.functions.length !== 1 || program.functions[0] !== fn || fn.slot !== 1 || fn.type !== 19 ||
+  if (variable) validateSourceEnemyVariableMetadata(program, variable);
+  if (program.functions.length !== (variable ? 2 : 1) || program.functions[0] !== fn || fn.slot !== 1 || fn.type !== 19 ||
       fn.series !== 0 || fn.values.length !== 3 || fn.values.some(v => v !== 0) ||
-      program.process.key !== "None" || program.process.values.some(v => v !== 0) ||
+      (!variable && (program.process.key !== "None" || program.process.values.some(v => v !== 0))) ||
       program.range !== 5 || program.rules.type_id !== 35 || program.rules.system_id !== 2 ||
-      program.forbiddenConditionIds.length || program.contentFlags.length || program.elements.length)
+      program.forbiddenConditionIds.length || program.contentFlags.some(flag => !variable || flag !== 1) || program.elements.length)
     throw new Error("Unresolved non-damaging ability composition");
   const ability = reader.row("ability.csv", program.abilityId), group = reader.row("function_group.csv", program.groupId),
     functionRow = reader.row("function.csv", fn.functionId);
@@ -28,7 +31,8 @@ export function compileNonDamagingAbility(reader: ConditionReader, program: Abil
   const exact: Record<string, number> = { ability_lv: 0, standard_value: 0, use_value: 0, ability_wait: 0,
     attribute_id: 0, accuracy_rate: 100, attack_count: 0, Impact_status: 0, invalid_boss: 0,
     invalid_reflection: 1, resistance_attribute: 0, adding_hit_rate: 0, valid_hit_rate: 0, weak_hit_rate: 0,
-    reaction_type: 0, condition_group_id: 0, content_flag_group_id: 0, attribute_group_id: 0 };
+    reaction_type: 0, condition_group_id: 0, attribute_group_id: 0,
+    ...(!variable ? { content_flag_group_id: 0 } : {}) };
   for (const [key, value] of Object.entries(exact))
     if (int(ability.values[key]) !== value) throw new Error(`Unresolved non-damaging ability input ${key}`);
   const effectAssetId = int(ability.values.battle_effect_asset_id);

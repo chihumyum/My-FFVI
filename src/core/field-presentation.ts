@@ -1,3 +1,4 @@
+import { WEB_FIELD_MAP_TRANSFORMS, fieldMapTransformsBinding } from "./field-map-transforms.js";
 import type { WorldMapContent } from "../field/world.js";
 import { canonical } from "./canonical.js";
 import { checkpointKeys } from "./checkpoint-validation.js";
@@ -91,7 +92,19 @@ export function resolveFieldPresentation(map: WorldMapContent): ResolvedFieldPre
       throw new Error("World flat presentation background media binding mismatch");
   validateFieldNativeComposition(composition, view);
   assertFieldCompositionRenderTargets(composition);
-  if (canonical(composition.layers) !== canonical(geometry.layers.map(layer => layer.name)))
+  const waterLayers = geometry.layers.filter(layer => layer.sourceGroup === "WaterGroup");
+  // WaterGroup retains its own source catalog, geometry and renderer. A flat
+  // TileGroup composition does not acquire those layers as material inputs.
+  // Exclusion is legal only after validating the exact source projection.
+  if (geometry.water && geometry.water.rawHash !== view.sources[0]!.contentHash)
+    throw new Error("Ordinary flat presentation water source data mismatch");
+  if ((waterLayers.length || profile?.mapTransforms === WEB_FIELD_MAP_TRANSFORMS && geometry.water) &&
+      (profile?.mapTransforms !== WEB_FIELD_MAP_TRANSFORMS || !geometry.water || geometry.water.unresolved.length))
+    throw new Error("Ordinary flat presentation has unbound WaterGroup geometry");
+  if (profile?.mapTransforms === WEB_FIELD_MAP_TRANSFORMS)
+    fieldMapTransformsBinding({...map,map:geometry},WEB_FIELD_MAP_TRANSFORMS);
+  const tileLayers = geometry.layers.filter(layer => layer.sourceGroup !== "WaterGroup");
+  if (canonical(composition.layers) !== canonical(tileLayers.map(layer => layer.name)))
     throw new Error("Ordinary flat field presentation tile layers mismatch");
   for (const layer of geometry.layers) {
     if (layer.width !== geometry.width || layer.height !== geometry.height ||
@@ -100,7 +113,7 @@ export function resolveFieldPresentation(map: WorldMapContent): ResolvedFieldPre
       throw new Error("Ordinary flat field presentation tile data is incomplete");
   }
   for (const [name, target] of [["UpperLayer", "upper"], ["CeilLayer", "ceil"]] as const) {
-    const layer = geometry.layers.find(value => value.name === name);
+    const layer = tileLayers.find(value => value.name === name);
     const expected = layer === undefined ? "disabled"
       : layer.data.some(value => (value & 0x0fffffff) !== 0) ? "source-rendered" : "clear-only";
     if (composition.renderTargets[target] !== expected)

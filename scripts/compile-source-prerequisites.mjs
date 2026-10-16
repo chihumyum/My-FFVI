@@ -1,5 +1,8 @@
+import {LEGACY_SOURCE_COMPATIBILITY,FRESH_SOURCE_PRODUCTS,FRESH_SOURCE_INPUT_LOCK,sourceProductionMode,sourceInputEnvelopeKind,sourceInputLockKind,promoteSourceInputLockKind,freshSourceInputLock} from './source-production-mode.mjs';
+import {sourceWorldMediaStages} from './source-world-stage-cache.mjs';
 import {ownedCapabilityCatalogAdditions,sourceOwnedCapabilityProjection,projectSourceOwnedCapabilityAdditions} from './source-owned-capability-additions.mjs';
 import {FIELD_EFFECT_TRANSFORMS,FIELD_EFFECT_TRANSFORM_REASON,verifyFieldEffectTransformLock} from "./framework-field-effect-transform-evidence.mjs";
+import {verifySourceSpriteMediaPair,createSourceSpriteMediaComparison} from "./source-sprite-media-evidence.mjs";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, readFile, readdir, readlink, realpath } from "node:fs/promises";
@@ -144,6 +147,31 @@ function logicalInput(raw, root) {
   return { kind: raw.kind, input: displayPath(root,input), reason: raw.reason };
 }
 
+/** Two real immutable generations. This is a build input, never a saved or
+ * candidate supplied runtime grant. Old input-lock versions cannot carry it. */
+export function sourceSpriteMediaInput(raw, root = repository) {
+  if (raw === undefined) return undefined;
+  exact(raw, "kind,input,baselineInput", "source Sprite media input");
+  if (raw.kind !== "source-sprite-logical-canvas-input-v1") throw Error("Unknown source Sprite media input");
+  const result = {kind:raw.kind};
+  for (const key of ["input","baselineInput"]) {
+    const file=filePath(root,raw[key]),part=relative(resolve(root,"build"),file);
+    if (!part || part === ".." || part.startsWith(".."+sep) || isAbsolute(part) ||
+        part.split(sep).some(name=>["content-packages","content-releases"].includes(name)))
+      throw Error("Source Sprite media requires separate local source snapshots outside public collections");
+    result[key]=displayPath(root,file);
+  }
+  if (filePath(root,result.input)===filePath(root,result.baselineInput)) throw Error("Source Sprite media generations must be separate");
+  return result;
+}
+
+/** CLI spelling for the same explicit two-directory producer input. */
+export function sourceSpriteMediaCliInput(options,root=repository){
+ const input=options['--source-sprite-media'],baselineInput=options['--baseline-sprite-media'];
+ if((input===undefined)!==(baselineInput===undefined))throw Error('Both source Sprite media CLI directories are required');
+ return input===undefined?undefined:sourceSpriteMediaInput({kind:'source-sprite-logical-canvas-input-v1',input,baselineInput},root);
+}
+
 /** Fixed public Web policy only: no external rule file or source override is
  * introduced. All source/media/host reads are already in the v1/v2 input lock. */
 export function sourcePeriodicMapsInput(raw) {
@@ -205,10 +233,12 @@ export function sourceFieldEffectFlatInput(raw) {
 /** Capture exactly the current compiler's input domain. Raw-source exports
  * retain their original source fingerprints; this does not hash all Unity
  * bundles or claim all source files are live-verified. */
-export async function captureSourcePrerequisiteInputs({ root = repository, compiledDir = "dist", logicalFieldEffects, skyboxPresentation, fieldEffectTransforms, fieldEffectTransformCatalog, fieldEffectFlatAssessment, fieldEffectCatalogHash, transportationParkingUpload } = {}) {
+export async function captureSourcePrerequisiteInputs({ root = repository, compiledDir = "dist", logicalFieldEffects, skyboxPresentation, fieldEffectTransforms, fieldEffectTransformCatalog, fieldEffectFlatAssessment, fieldEffectCatalogHash, transportationParkingUpload, sourceSpriteMedia, productMode = LEGACY_SOURCE_COMPATIBILITY } = {}) {
+  productMode=sourceProductionMode(productMode);
   root = resolve(root); compiledDir = resolve(root, compiledDir);
   if(transportationParkingUpload!==undefined&&(transportationParkingUpload!=="web-source-transport-parking-upload-v1"||fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS))throw Error("Unknown parking upload input policy or incomplete v5 cohort");
   const logical = logicalInput(logicalFieldEffects, root);
+  const spriteMedia = sourceSpriteMediaInput(sourceSpriteMedia,root);
   if(fieldEffectTransforms!==undefined&&fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS)throw Error("Unknown board transform policy");
   if(fieldEffectTransforms!==undefined&&(!logical||skyboxPresentation!=="web-flat-skybox-panorama-v1"||!fieldEffectTransformCatalog||!fieldEffectFlatAssessment||!HASH.test(fieldEffectCatalogHash??"")))throw Error("Board transform capture requires complete v4 assessment/catalog and logical/Skybox inputs");
   if(fieldEffectTransforms===undefined&&[fieldEffectTransformCatalog,fieldEffectFlatAssessment,fieldEffectCatalogHash].some(v=>v!==undefined))throw Error("Undeclared board transform input");
@@ -232,6 +262,7 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
   // field/contracts imports. Tests and unrelated reports are outside this lock.
   for (const file of await directory(resolve(compiledDir, "src"))) if (file.endsWith(".js")) await add(file);
   await add(resolve(import.meta.dirname, "compile-source-prerequisites.mjs"));
+  if(spriteMedia)await add(resolve(import.meta.dirname,"source-sprite-media-evidence.mjs"));
   const api = await modules(compiledDir);
   for (const name of [...SNAPSHOTS,...(skyboxPresentation?["field-skybox-media"]:[])]) {
     const path = resolve(root, "build", name); await directory(path);
@@ -239,8 +270,22 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
     const manifest = snapshotManifest(JSON.parse(await readFile(manifestPath, "utf8")));
     for (const item of manifest.files) await add(resolve(path, item.file), item.sha256);
   }
-  await add(resolve(root, "build/game/source-catalog.json"));
-  await add(resolve(root, "build/game/opening-playable.json"));
+  if(spriteMedia)for(const key of ["input","baselineInput"]){
+    const path=filePath(root,spriteMedia[key]);if(!directories.some(d=>filePath(root,d.path)===path))await directory(path);
+    const manifestPath=resolve(path,"snapshot.json");await add(manifestPath);
+    const manifest=snapshotManifest(JSON.parse(await readFile(manifestPath,"utf8")));
+    for(const item of manifest.files)await add(resolve(path,item.file),item.sha256);
+    const media=JSON.parse(await readFile(resolve(path,"media.json"),"utf8"));
+    for(const source of media.sources){const file=filePath(resolve(root,"build/runtime/game"),source.file);
+      if(!file.startsWith(resolve(root,"build/runtime/game")+sep))throw Error("Unsafe original Sprite source");
+      await add(file,source.sha256);if(recorded.get(file).bytes!==source.bytes)throw Error("Original Sprite source size changed");}
+  }
+  await add(resolve(import.meta.dirname,"source-production-mode.mjs"));
+  await add(resolve(import.meta.dirname,"source-world-stage-cache.mjs"));
+  if(productMode===LEGACY_SOURCE_COMPATIBILITY){
+    await add(resolve(root, "build/game/source-catalog.json"));
+    await add(resolve(root, "build/game/opening-playable.json"));
+  }
   for(const path of CATALOG_EVIDENCE)await add(resolve(root,path));
   const hosts = new Map();
   for (const source of api.ordinaryFieldCompositionRenderHost().sources) {
@@ -274,12 +319,14 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
   const corpus = JSON.parse(await readFile(resolve(root, "build/corpus/corpus.json"), "utf8"));
   hash(corpus.sourceSetHash, "corpus source set"); hash(corpus.parentSourceSetHash, "parent source set");
   if (api.hash(corpus.sources) !== corpus.sourceSetHash) throw new Error("Corpus source manifest fingerprint mismatch");
-  const inputs = { kind: fieldEffectTransforms ? "source-prerequisite-input-lock-v4" : skyboxPresentation ? "source-prerequisite-input-lock-v3" : logical ? "source-prerequisite-input-lock-v2" : "source-prerequisite-input-lock-v1",
+  let inputs = { kind: fieldEffectTransforms ? "source-prerequisite-input-lock-v4" : skyboxPresentation ? "source-prerequisite-input-lock-v3" : logical ? "source-prerequisite-input-lock-v2" : "source-prerequisite-input-lock-v1",
     ...(skyboxPresentation?{skyboxPresentation}:{}),
     ...(fieldEffectTransforms?{fieldEffectTransforms,fieldEffectTransformCatalog:structuredClone(fieldEffectTransformCatalog),fieldEffectFlatAssessment:structuredClone(fieldEffectFlatAssessment),fieldEffectCatalogHash}:{}),
     ...(logical ? { logicalFieldEffects: logical } : {}), sourceSetHash: corpus.sourceSetHash,
     parentSourceSetHash: corpus.parentSourceSetHash, compiledDir, compilerDigest: compilerIdentity(files, compiledDir, root), files, directories };
-  if(transportationParkingUpload!==undefined)Object.assign(inputs,{kind:"source-prerequisite-input-lock-v5",transportationParkingUpload,transportationCatalogHash:await sourceTransportationCatalogHash(inputs,root)});
+  if(transportationParkingUpload!==undefined){promoteSourceInputLockKind(inputs,"source-prerequisite-input-lock-v5");Object.assign(inputs,{transportationParkingUpload,transportationCatalogHash:await sourceTransportationCatalogHash(inputs,root)});}
+  if(spriteMedia)Object.assign(inputs,{kind:"source-prerequisite-input-lock-v6",baseLockKind:inputs.kind,sourceSpriteMedia:spriteMedia});
+  if(productMode===FRESH_SOURCE_PRODUCTS)inputs=freshSourceInputLock(inputs);
   await validateSourcePrerequisiteInputs(inputs, { root });
   return inputs;
 }
@@ -289,13 +336,15 @@ export async function captureSourcePrerequisiteInputs({ root = repository, compi
 export async function validateSourcePrerequisiteInputs(raw, { root = repository } = {}) {
   root = resolve(root);
   const lock = structuredClone(raw);
-  const version5=lock?.kind==="source-prerequisite-input-lock-v5";
-  const version4=version5||lock?.kind==="source-prerequisite-input-lock-v4",version3=lock?.kind==="source-prerequisite-input-lock-v3"||version4,version2 = lock?.kind === "source-prerequisite-input-lock-v2"||version3&&Object.hasOwn(lock,"logicalFieldEffects");
+  const fresh=lock?.kind===FRESH_SOURCE_INPUT_LOCK,envelope=sourceInputEnvelopeKind(lock),version6=envelope==="source-prerequisite-input-lock-v6",baseKind=sourceInputLockKind(lock);
+  if(!["source-prerequisite-input-lock-v1","source-prerequisite-input-lock-v2","source-prerequisite-input-lock-v3","source-prerequisite-input-lock-v4","source-prerequisite-input-lock-v5"].includes(baseKind))throw Error("Unknown source prerequisite base lock");
+  const version5=baseKind==="source-prerequisite-input-lock-v5";
+  const version4=version5||baseKind==="source-prerequisite-input-lock-v4",version3=baseKind==="source-prerequisite-input-lock-v3"||version4,version2 = baseKind === "source-prerequisite-input-lock-v2"||version3&&Object.hasOwn(lock,"logicalFieldEffects");
   if(version5&&(lock.transportationParkingUpload!=="web-source-transport-parking-upload-v1"||!HASH.test(lock.transportationCatalogHash??"")))throw Error("Invalid locked parking upload capability");
   if(version4&&(lock.fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS||!version2))throw Error("Unknown locked board transform policy or missing logical base");
   if(version3&&lock.skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown locked Skybox presentation policy");
-  exact(lock, "kind,sourceSetHash,parentSourceSetHash,compiledDir,compilerDigest,files,directories" + (version2 ? ",logicalFieldEffects" : "")+(version3?",skyboxPresentation":"")+(version4?",fieldEffectTransforms,fieldEffectTransformCatalog,fieldEffectFlatAssessment,fieldEffectCatalogHash":"")+(version5?",transportationParkingUpload,transportationCatalogHash":""), "source prerequisite lock");
-  if (!["source-prerequisite-input-lock-v1","source-prerequisite-input-lock-v2","source-prerequisite-input-lock-v3","source-prerequisite-input-lock-v4","source-prerequisite-input-lock-v5"].includes(lock.kind) || typeof lock.compiledDir !== "string" ||
+  exact(lock, "kind,sourceSetHash,parentSourceSetHash,compiledDir,compilerDigest,files,directories" + (fresh?",sourceLockKind,packageNamespace":"") + (version2 ? ",logicalFieldEffects" : "")+(version3?",skyboxPresentation":"")+(version4?",fieldEffectTransforms,fieldEffectTransformCatalog,fieldEffectFlatAssessment,fieldEffectCatalogHash":"")+(version5?",transportationParkingUpload,transportationCatalogHash":"")+(version6?",baseLockKind,sourceSpriteMedia":""), "source prerequisite lock");
+  if (typeof lock.compiledDir !== "string" ||
       !isAbsolute(lock.compiledDir) || resolve(lock.compiledDir) !== lock.compiledDir ||
       !Array.isArray(lock.files) || !lock.files.length || !Array.isArray(lock.directories) || !lock.directories.length)
     throw new Error("Invalid source prerequisite input lock");
@@ -306,6 +355,7 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
     const file = filePath(root, item.path);
     if (seen.has(file) || !Number.isSafeInteger(item.bytes) || item.bytes < 0 ||
         typeof item.realPath !== "string" || !isAbsolute(item.realPath)) throw new Error("Invalid or duplicate source prerequisite file");
+    if(fresh&&(file===resolve(root,"build/game")||file.startsWith(resolve(root,"build/game")+sep)))throw Error("Fresh source lock cannot consume legacy game seeds");
     seen.add(file);byPath.set(file,item);
     const actual = await fingerprint(root, file, item.sha256);
     if (actual.bytes !== item.bytes || actual.realPath !== item.realPath) throw new Error("Source prerequisite path/size changed: " + item.path);
@@ -327,8 +377,24 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
       if (!input || input.sha256 !== file.sha256) throw new Error("Incomplete source prerequisite snapshot: " + path + "/" + file.file);
     }
   }
+  if(version6){
+    if(!byPath.has(resolve(import.meta.dirname,"source-sprite-media-evidence.mjs")))throw Error("Missing source Sprite media comparison owner");
+    const declaration=sourceSpriteMediaInput(lock.sourceSpriteMedia,root);
+    for(const key of ["input","baselineInput"]){const directory=filePath(root,declaration[key]);
+      if(!seen.has(directory))throw Error("Missing source Sprite media directory");
+      const manifest=snapshotManifest(await readLockedJson(lock,root,displayPath(root,resolve(directory,"snapshot.json"))));
+      for(const file of manifest.files){const input=byPath.get(resolve(directory,file.file));if(!input||input.sha256!==file.sha256)throw Error("Incomplete source Sprite media snapshot");}
+      const media=await readLockedJson(lock,root,displayPath(root,resolve(directory,"media.json")));
+      if(media.adapterVersion!==(key==="input"?"world-media-0.2.0":"world-media-0.1.0")||media.parentSourceSetHash!==lock.sourceSetHash)
+        throw Error("Source Sprite media generation/source mismatch");
+      for(const source of media.sources){const file=filePath(resolve(root,"build/runtime/game"),source.file),input=byPath.get(file);
+        if(!input||input.sha256!==source.sha256||input.bytes!==source.bytes||!file.startsWith(resolve(root,"build/runtime/game")+sep))throw Error("Incomplete original Sprite source binding");}
+    }
+    if(await realpath(filePath(root,declaration.input))===await realpath(filePath(root,declaration.baselineInput)))throw Error("Source Sprite media generations share a physical directory");
+  }else{const media=await readLockedJson(lock,root,"build/world-media/media.json");
+    if(media.adapterVersion!=="world-media-0.1.0"||Object.hasOwn(media,"spriteLogicalCanvas"))throw Error("Source Sprite media requires its explicit v6 dual-generation input lock");}
   if (!seen.has(resolve(lock.compiledDir, "src"))) throw new Error("Missing source prerequisite compiler directory");
-  for (const path of [...CATALOG_EVIDENCE,"build/game/source-catalog.json", "build/game/opening-playable.json", "build/runtime/game/FINAL FANTASY VI_Data/level0",
+  for (const path of [...CATALOG_EVIDENCE,...(fresh?[]:["build/game/source-catalog.json", "build/game/opening-playable.json"]), "build/runtime/game/FINAL FANTASY VI_Data/level0",
     "build/runtime/game/FINAL FANTASY VI_Data/globalgamemanagers"])
     if (!byPath.has(resolve(root,path)))
       throw new Error("Missing source prerequisite dependency: " + path);
@@ -372,6 +438,13 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
   }
   if(version5&&await sourceTransportationCatalogHash(lock,root)!==lock.transportationCatalogHash)throw Error("Locked transportation catalog differs from complete current source rows");
   return true;
+}
+
+/** Fresh raw master -> full shared catalog. No historical seed or recipe is read. */
+export async function compileFreshSourceBattleProducts({root=repository,compiledDir="dist"}={}){
+ root=resolve(root);compiledDir=resolve(root,compiledDir);const api=await modules(compiledDir);
+ const source=await api.compileSharedBattleSource(root),battle=await api.compileSharedGameCatalog(root,source);
+ await api.verifyContent(battle);api.assertSourceGameCatalog(battle);return {battle};
 }
 
 /** Same-source Battle catalog stage only. No world compilation/publication.
@@ -420,7 +493,10 @@ export async function compileSourceBattlePrerequisites({root=repository,compiled
 
 /** Pure upstream DAG: current battle capabilities -> source world/new game -> explicit framework
  * derivation. It never writes packages, generated recipes, reports or archives. */
-export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,vehicleLifecycle,transportationParkingUpload,fieldLayerScrolling,mapTransforms } = {}) {
+export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,vehicleLifecycle,transportationParkingUpload,fieldLayerScrolling,mapTransforms,sourceSpriteMedia,productMode=LEGACY_SOURCE_COMPATIBILITY,strictWorldCache,...unknownOptions } = {}) {
+  productMode=sourceProductionMode(productMode);
+  if(productMode===FRESH_SOURCE_PRODUCTS&&Object.keys(unknownOptions).length)throw Error("Unknown fresh source product options");
+  if(productMode===FRESH_SOURCE_PRODUCTS&&strictWorldCache===undefined)strictWorldCache={kind:"strict-source-world-stage-cache-v1",directory:"build/cache/strict-source-world"};
   if(transportationParkingUpload!==undefined&&(transportationParkingUpload!=="web-source-transport-parking-upload-v1"||vehicleLifecycle!=="web-source-vehicle-lifecycle-v1"||fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS))throw Error("Unknown source parking upload policy/dependency");
   if(vehicleLifecycle!==undefined&&vehicleLifecycle!=="web-source-vehicle-lifecycle-v1")throw Error("Unknown source vehicle lifecycle policy");
   if(fieldEffectTransforms!==undefined&&fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS)throw Error("Unknown board transform policy");
@@ -440,25 +516,30 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
   const effectFlatDeclaration = fieldEffectFlat === undefined ? undefined : sourceFieldEffectFlatInput(fieldEffectFlat);
   if(effectFlatDeclaration && logicalFieldEffects === undefined) throw new Error("Flat field effects require an explicit logical input");
   root = resolve(root);
-  const inputs = await captureSourcePrerequisiteInputs({ root, compiledDir, logicalFieldEffects,skyboxPresentation });
+  const inputs = await captureSourcePrerequisiteInputs({ root, compiledDir, logicalFieldEffects,skyboxPresentation,sourceSpriteMedia,productMode });
   const api = await modules(inputs.compiledDir,{board:fieldEffectTransforms!==undefined});
-  const [previousBattle, previousDevelopment, field] = await Promise.all([
-    readLockedJson(inputs, root, "build/game/source-catalog.json"),
-    readLockedJson(inputs, root, "build/game/opening-playable.json"),
-    readLockedJson(inputs, root, "build/field/field.json"),
-  ]);
-  await api.verifyContent(previousBattle); api.assertSourceGameCatalog(previousBattle);
-  await api.verifyContent(previousDevelopment);
-  const {battle,development,battleRebindings,sourceMessageFeeBaselines,sourceOwnedCapabilityBaselines,compileBattleAuditBaseline}=await compileSourceBattlePrerequisites({
-    root,compiledDir:inputs.compiledDir,previousBattle,previousDevelopment,compilerDigest:inputs.compilerDigest});
+  const field=await readLockedJson(inputs,root,"build/field/field.json");
+  let products;
+  if(productMode===FRESH_SOURCE_PRODUCTS)products={...await compileFreshSourceBattleProducts({root,compiledDir:inputs.compiledDir}),battleRebindings:[],sourceMessageFeeBaselines:new Map(),sourceOwnedCapabilityBaselines:new Map()};
+  else {
+    const [previousBattle,previousDevelopment]=await Promise.all([readLockedJson(inputs,root,"build/game/source-catalog.json"),readLockedJson(inputs,root,"build/game/opening-playable.json")]);
+    products=await compileSourceBattlePrerequisites({root,compiledDir:inputs.compiledDir,previousBattle,previousDevelopment,compilerDigest:inputs.compilerDigest});
+  }
+  const {battle,development,battleRebindings,sourceMessageFeeBaselines,sourceOwnedCapabilityBaselines,compileBattleAuditBaseline}=products;
   if (field.parentSourceSetHash !== inputs.parentSourceSetHash || api.hash(field.sources) !== field.sourceSetHash ||
       battle.common.fieldSourceSetHash !== field.sourceSetHash)
     throw new Error("Source prerequisite battle/field source mismatch");
   const expectedSourceFields = { kind: battle.kind, contentHash: battle.contentHash,
     fieldSourceSetHash: field.sourceSetHash, parentSourceSetHash: inputs.parentSourceSetHash,
     initializerHash: api.hash(battle.gameState.sourceNewGame) };
-  const strict = await api.compileWorld(root);
-  const entry = await api.compileSourceNewGame(root, battle, strict);
+  const corpusForStage=await api.loadCorpus(root),stageMapIds=api.bindMapPackages(corpusForStage.assets,corpusForStage.tables).map(map=>Number(map.id)).sort((a,b)=>a-b);
+  const worldStages=await sourceWorldMediaStages({root,compiledDir:inputs.compiledDir,inputs,productMode,cache:strictWorldCache,expectedMapIds:stageMapIds,
+    compile:worldOptions=>api.compileWorld(root,worldOptions),validateInputs:()=>validateSourcePrerequisiteInputs(inputs,{root})});
+  const strictStage=worldStages.selected,strict=strictStage.world,strictOptions=worldStages.selectedOptions;
+  const spriteMediaBaselineStage=worldStages.baseline,spriteMediaBaseline=spriteMediaBaselineStage?.world;
+  const sourceSpriteMediaComparison=spriteMediaBaseline?createSourceSpriteMediaComparison({baseline:spriteMediaBaseline,candidate:strict,
+    pair:await verifySourceSpriteMediaPair({root,compiledDir:inputs.compiledDir,...inputs.sourceSpriteMedia}),compilerDigest:inputs.compilerDigest}):undefined;
+  const entry = await api.compileSourceNewGame(root, battle, strict,strictOptions);
   const frameworkOptions = { ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(worldAutoTasks?{worldAutoTasks}:{}),...(worldAutoMove?{worldAutoMove}:{}) };
   let logicalReport = null;
   if (Object.hasOwn(inputs,"logicalFieldEffects")) {
@@ -557,31 +638,32 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
   if(fieldEffectTransforms!==undefined){
     const corpus=await api.loadCorpus(root),base=api.projectFrameworkFieldEffectCatalog(frameworkOptions.logicalFieldEffects.catalog,frameworkOptions.fieldEffectFlat),assessment=api.assessFrameworkFieldEffectTransformWorld(corpus,strict.catalog,strict.maps,base,FIELD_EFFECT_TRANSFORM_REASON),catalog=api.projectFrameworkFieldEffectTransformCatalog(base,assessment);
     frameworkOptions.fieldEffectTransforms=fieldEffectTransforms;frameworkOptions.fieldEffectTransformCatalog=assessment;
-    Object.assign(inputs,{kind:"source-prerequisite-input-lock-v4",fieldEffectTransforms,fieldEffectTransformCatalog:structuredClone(assessment),fieldEffectFlatAssessment:structuredClone(frameworkOptions.fieldEffectFlat),fieldEffectCatalogHash:api.hash(catalog)});
+    promoteSourceInputLockKind(inputs,"source-prerequisite-input-lock-v4");Object.assign(inputs,{fieldEffectTransforms,fieldEffectTransformCatalog:structuredClone(assessment),fieldEffectFlatAssessment:structuredClone(frameworkOptions.fieldEffectFlat),fieldEffectCatalogHash:api.hash(catalog)});
     effectTransformReport={policy:fieldEffectTransforms,assessmentHash:assessment.contentHash,flatAssessmentHash:frameworkOptions.fieldEffectFlat.contentHash,catalogHash:inputs.fieldEffectCatalogHash,logicalCatalogHash:base.webPolicy.catalogHash,sourceMapSetHash:assessment.projection.sourceMapSetHash,maps:assessment.projection.mapSources.length,declared:assessment.projection.objects.length,derived:assessment.projection.bindings.length,unready:assessment.projection.objects.length-assessment.projection.bindings.length,pureCompilations:1,nativeParity:false};
   }
   if(fieldLayerScrolling!==undefined){if(fieldLayerScrolling!=="web-field-layer-scrolling-v1")throw new Error("Unknown Field scrolling policy");frameworkOptions.fieldLayerScrolling=fieldLayerScrolling;frameworkOptions.fieldSceneryCatalog=await api.loadFieldSceneryWorldCatalog(root);}
   if(vehicleLifecycle!==undefined)frameworkOptions.vehicleLifecycle=vehicleLifecycle;
-  if(transportationParkingUpload!==undefined){frameworkOptions.transportationParkingUpload=transportationParkingUpload;Object.assign(inputs,{kind:"source-prerequisite-input-lock-v5",transportationParkingUpload,transportationCatalogHash:await sourceTransportationCatalogHash(inputs,root)});if(api.hash(strict.catalog.transportation)!==inputs.transportationCatalogHash)throw Error("Locked source parking catalog differs from strict world");}
+  if(transportationParkingUpload!==undefined){frameworkOptions.transportationParkingUpload=transportationParkingUpload;promoteSourceInputLockKind(inputs,"source-prerequisite-input-lock-v5");Object.assign(inputs,{transportationParkingUpload,transportationCatalogHash:await sourceTransportationCatalogHash(inputs,root)});if(api.hash(strict.catalog.transportation)!==inputs.transportationCatalogHash)throw Error("Locked source parking catalog differs from strict world");}
   if (birdViewActors !== undefined) frameworkOptions.birdViewActors = birdViewActors;
   if (mobColorFilter !== undefined) frameworkOptions.mobColorFilter = mobColorFilter;
   if(screenPresentation!==undefined){if(screenPresentation!=="web-field-screen-presentation-2d-v1")throw Error("Unknown screen presentation policy");frameworkOptions.screenPresentation=screenPresentation;}
   if(skyboxPresentation){frameworkOptions.skyboxPresentation=skyboxPresentation;frameworkOptions.skyboxCatalog=await api.loadFieldSkyboxCatalog(root);}
   const framework = api.compileFrameworkContent(strict.catalog, strict.maps, entry,frameworkOptions);
-  const payloads = new Map([["/game/source-catalog.json", battle], ["/game/opening-playable.json", development],
+  const payloads = new Map([["/game/source-catalog.json", battle], ...(development?[["/game/opening-playable.json", development]]:[]),
     ["/world/catalog.json", strict.catalog], ["/game/source-new-game.json", entry],
     ["/framework/world/catalog.json", framework.catalog], ["/framework/new-game.json", framework.entry]]);
   for (const map of strict.maps) payloads.set(`/world/maps/${map.mapId}.json`, map);
   for (const map of framework.maps) payloads.set(`/framework/world/maps/${map.mapId}.json`, map);
   await validateSourcePrerequisiteInputs(inputs, { root });
-  const report = { kind: "source-prerequisite-candidate-v1", published: false,
+  const report = { kind: "source-prerequisite-candidate-v1", published: false,productMode,strictWorldStage:strictStage.receipt,...(spriteMediaBaselineStage?{spriteMediaBaselineStage:spriteMediaBaselineStage.receipt}:{}),
     sourceSetHash: inputs.sourceSetHash, parentSourceSetHash: inputs.parentSourceSetHash, compilerDigest: inputs.compilerDigest,
-    stages: [{ name: "capture-inputs", status: "passed" }, { name: "battle-capability-rebuild", status: "passed" },
+    stages: [{ name: "capture-inputs", status: "passed" }, { name: productMode===FRESH_SOURCE_PRODUCTS?"fresh-source-battle-products":"battle-capability-rebuild", status: "passed" },
       { name: "source-world", status: "passed" }, { name: "source-new-game", status: "passed" },
       { name: "framework-derivation", status: "passed" }, { name: "revalidate-inputs", status: "passed" }],
-    battle: { mode: "same-candidate-rebuild", expectedSourceFields, dependencyRebindings: battleRebindings },
+    battle: { mode: productMode===FRESH_SOURCE_PRODUCTS?"fresh-raw-source":"same-candidate-rebuild", expectedSourceFields, dependencyRebindings: battleRebindings },
     strict: { catalogHash: strict.catalog.contentHash, entryHash: entry.contentHash, maps: strict.maps.length,
       mapsWithBlockers: strict.maps.filter(map => map.blockers.length).length },
+    ...(sourceSpriteMediaComparison?{sourceSpriteMedia:sourceSpriteMediaComparison.report}:{}),
     ...(transportationParkingUpload?{transportationParkingUpload:{policy:transportationParkingUpload,catalogHash:inputs.transportationCatalogHash}}:{}),
     framework: framework.report, logicalFieldEffects: logicalReport, ...(periodicReport?{periodicMaps:periodicReport}:{}),
     ...(ordinaryReport?{ordinaryFields:ordinaryReport}:{}),
@@ -595,12 +677,20 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
       nativeReceiptFiles: [...CATALOG_EVIDENCE], originalSourceFilesVerified: logicalReport ? "whole-corpus" : "composition-host-only", rawExports: "snapshot-and-source-manifest-bound" },
     payloads: [...payloads].map(([url, content]) => ({ url, contentHash: content.contentHash })),
     sourceGameplayAdmitted: false, browserVerified: false, nativeVerified: false,
-    limitations: ["Battle catalogs are rebuilt by the current compiler from the same locked source inputs; owned initialization is unchanged.",
+    limitations: [productMode===FRESH_SOURCE_PRODUCTS?"Fresh current-source initialization is compiled from raw inputs; no historical recipe or seed compatibility is claimed.":"Battle catalogs are rebuilt by the current compiler from the same locked source inputs; owned initialization is unchanged.",
       "All indexed source maps and unresolved diagnostics are retained; candidate compilation is not gameplay admission.",
       "Only the directly consumed original composition host files are byte-checked here. Other original sources remain bound by verified export manifests.",
       "The publication owner must revalidate this input lock and explicitly rebind dependent recipes before its single publication."],
   };
-  return { payloads, report, inputs, battleRebindings, frameworkOptions, sourceMessageFeeBaselines,sourceOwnedCapabilityBaselines,compileBattleAuditBaseline };
+  return { payloads, report, inputs, battleRebindings, frameworkOptions, sourceMessageFeeBaselines,sourceOwnedCapabilityBaselines,compileBattleAuditBaseline,
+    ...(sourceSpriteMediaComparison?{sourceSpriteMediaComparison}:{} ) };
+}
+
+/** Explicit closed fresh producer; ordinary authored recipe compatibility stays
+ * in compileSourcePrerequisites default mode and is never auto-upgraded. */
+export async function compileFreshSourceProducts(options={}){
+ if(Object.hasOwn(options,'productMode'))throw Error('Fresh source product entry fixes its mode');
+ return compileSourcePrerequisites({...options,productMode:FRESH_SOURCE_PRODUCTS});
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

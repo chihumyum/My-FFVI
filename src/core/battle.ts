@@ -9,6 +9,7 @@ import { BattleEnemyMpParameters } from "./source-enemy-mp-parameter.js";
 import { BattleFinalAttackTickets, sourceFinalReady, FINAL_ATTACK_EXCLUDED_TYPES } from "./battle-final-attack.js";
 import {parseBattleChildAdmission,parseWebBattleChildAdmission,prepareBattleChildParty,type BattleChildAdmission,type WebBattleChildAdmission} from './battle-child-admission.js';
 import {enemyMagicActorBlocker} from './enemy-magic-carrier.js';
+import { enemyVariableActorBlocker, projectEnemyVariableAction, type EnemyVariableActionResult } from './enemy-variable-action.js';
 import {baseHpMagicEffect,parseSourceEnemyBossParameter,type SourceEnemyBossParameter,type BaseHpMagicContext} from './base-hp-magic.js';
 import {sourceDeathApplication,type SourceConditionDeathContext} from './condition-application.js';
 import { WEB_BATTLE_GAU_INSTANCES, parseBattleGauInstanceContent, gauAppearancePoses, gauAppearanceTimes, gauAppearanceDuration,
@@ -140,6 +141,10 @@ import { parseBattlePlayerBorrow, parseBattlePlayerPlan, type BattlePlayerBorrow
 import { createBattlePlayerState, parseBattlePlayerState, projectPlayerJoin, projectPlayerGroup, projectPlayerRetirement, projectPlayerJoinAt,
   firstEnteredOwnerIds, type BattlePlayerState, type BattlePlayerProjection } from "./battle-player-state.js";
 
+function battleAbilityActorBlocker(ability: AbilityDefinition, side: 'player' | 'enemy'): string | null {
+  return enemyMagicActorBlocker(ability, side) ?? enemyVariableActorBlocker(ability, side);
+}
+
 export type Combatant = CombatantDefinition & {
   maxHp: number;
   maxMp: number;
@@ -179,6 +184,7 @@ export type BattleAction = {
   results: { target: string; effects: AbilityEffectResult[] }[];
   /** Independent caster results; never substituted for target calculation. */
   userConditionResults?: ActionUserConditionResult[];
+  enemyVariableResult?: EnemyVariableActionResult;
   /** Caster recovery is presentation data, never another received target hit. */
   userResourceResults?: {ownerId:string;slot:number;resource:'hp'|'mp';recovery:true;amount:number;missed:boolean;nullified?:boolean}[];
 };
@@ -1441,7 +1447,7 @@ export class BattleGame {
       !actor ||
       !ability?.plan ||
       !this.qualifiedAbility(actor, abilityId) ||
-      enemyMagicActorBlocker(ability,actor.side)!==null ||
+      battleAbilityActorBlocker(ability,actor.side)!==null ||
       actor.hp <= 0 || actor.mp === 0 && this.#mpParameters.query(actor) === true || this.#finalTickets.has(actor) ||
       this.actionSuspended(actor) ||
       this.enemyExits.has(actor.id) ||
@@ -2289,7 +2295,7 @@ export class BattleGame {
     this.registerActions([action]);this.reactions.push(action);
   }
   private validateScriptedAbility(actor:Combatant,ability:AbilityDefinition):void {
-    const carrier=enemyMagicActorBlocker(ability,actor.side);if(carrier)throw new Error(carrier);
+    const carrier=battleAbilityActorBlocker(ability,actor.side);if(carrier)throw new Error(carrier);
     if(!ability.plan||ability.plan.effects.some(effect=>effect.kind==="random-ability"||effect.kind==="forced-escape"))
       throw new Error("Unresolved scripted derived-action provider");
     if(ability.plan.targeting.normalFormationOnly&&this.content.formation!=="normal")
@@ -2406,13 +2412,23 @@ export class BattleGame {
   private actionSuspended(unit: Pick<Combatant, "conditionIds">): boolean {
     // The closed live function contributions stay independent. Stop.Remove
     // cannot release another active Sleep (native actNotPossibleCounter).
-    return this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.kind === "sleep" || behavior.kind === "stop");
+    return this.conditions.isMineralized(unit.conditionIds) ||
+      this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.kind === "sleep" || behavior.kind === "stop");
   }
-  /** Current presentation/interaction projection, never an external setter. */
+  private unitGameOver(unit: Pick<Combatant, 'conditionIds'>): boolean {
+    const closed = this.conditions.isGameOver(unit.conditionIds);
+    if (!this.content.battleEvents) return closed;
+    const source = battleEventUnitGameOver(this.content.battleEvents, unit.conditionIds);
+    if (source !== closed) throw new Error('Active condition game-over metadata differs from its implemented lifecycle');
+    return source;
+  }
+  /** Current stopped-animation projection, including each independent Stop
+   * and Mineralization contribution; never an external setter. */
   isStopped(actorId: string): boolean {
     const unit = this.combatants.find(current => current.id === actorId);
     if (!unit) throw new Error("Missing current Stop presentation unit");
-    return this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.kind === "stop");
+    return this.conditions.isMineralized(unit.conditionIds) ||
+      this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.kind === "stop");
   }
   private prepareStopTransition(unit: Combatant, conditionIds: readonly number[], poison: Readonly<PoisonState>,
     removedIds: readonly number[] = [], nextSlip?: Readonly<SlipState>) {
@@ -2676,7 +2692,7 @@ export class BattleGame {
             act.pc,
             `unimplemented ability ${id}: ${ability?.blockers.join("; ") ?? "missing definition"}`,
           );
-        const carrier=enemyMagicActorBlocker(ability!,actor.side);if(carrier)fail(act.pc,carrier);
+        const carrier=battleAbilityActorBlocker(ability!,actor.side);if(carrier)fail(act.pc,carrier);
         if (act.kind === "final-act") this.validateFinalAbility(actor, ability!, act.pc);
         const requestedTargeting = act.kind === "counter-act" ? act.targeting ?? "received-actor" : null;
         if (requestedTargeting !== null && requestedTargeting !== "received-actor" && requestedTargeting !== "automatic")
@@ -2839,7 +2855,7 @@ export class BattleGame {
       !actor ||
       !ability ||
       !this.qualifiedAbility(actor, abilityId) ||
-      enemyMagicActorBlocker(ability,actor.side)!==null ||
+      battleAbilityActorBlocker(ability,actor.side)!==null ||
       !ability.plan
     )
       return [];
@@ -2907,7 +2923,7 @@ export class BattleGame {
     kind: BattleAction["kind"] = "normal",
     targeting?: BattleAICounterTargeting,
   ): BattleAction {
-    const carrier=enemyMagicActorBlocker(ability,actor.side);if(carrier)throw new Error(carrier);
+    const carrier=battleAbilityActorBlocker(ability,actor.side);if(carrier)throw new Error(carrier);
     if (targeting !== undefined && (kind !== "counter" ||
         targeting !== "received-actor" && targeting !== "automatic"))
       throw new Error("Invalid interrupt target provider");
@@ -3719,6 +3735,15 @@ export class BattleGame {
         if (action.kind === "final") throw new Error("Unresolved Final empty/default target phase");
         return null;
       }
+      // Existing whole-wake candidates are unpublished. A variable writer
+      // cannot overwrite their older bank or silently publish their prefix.
+      // Ordinary queued and held-parent paths have a settled actor bank; the
+      // received AI then starts from this action's detached new value.
+      if (action.source.kind === 'ability' && this.content.abilities[action.source.id]!.enemyVariableAction &&
+          (this.aiStates.get(actor.id)?.continuation || this.aiClockOwners.has(actor.id)))
+        throw new Error('Unresolved Function23 mutation during an earlier unpublished AI wake');
+      const variable = action.source.kind === 'ability'
+        ? projectEnemyVariableAction(this.content.abilities[action.source.id]!, actor) : null;
       if (payment > 0 && this.#mpParameters.query(actor) === true &&
           ability.plan.effects.some(effect => "resource" in effect && effect.resource === "mp" &&
             (choice.targetIds.includes(actor.id) || effect.kind === "absorb-resource")))
@@ -3793,6 +3818,7 @@ export class BattleGame {
         ...staged.find((entry) => entry.target.id === c.id)?.state,
         ...(c===actor&&projection.userResourceState?projection.userResourceState:{}),
         ...(c === actor && projection.userResults.length ? { conditionIds: projection.userConditionIds } : {}),
+        ...(c === actor && variable ? { behavior: variable.after } : {}),
       }));
       const results = staged.map((entry) => ({
         target: entry.target.id,
@@ -3820,7 +3846,7 @@ export class BattleGame {
         if (entry) Object.assign(entry.state, life);
         if (live === actor && projection.userResourceState) Object.assign(projection.userResourceState, life);
       }
-      return { choice, projection, staged, projected, results, derived };
+      return { choice, projection, staged, projected, results, derived, variable };
   }
   private reactionResolutionBaseline(): string {
     return canonical({ units: this.combatants.map(unit => ({ ...unit, ai: null })),
@@ -3843,7 +3869,7 @@ export class BattleGame {
     const held = this.reactionResolution;
     if (held) this.validateReactionResolution(held, action, ability);
     if (action.resolved) return;
-    if(action.source.kind==='ability'){const carrier=enemyMagicActorBlocker(this.content.abilities[action.source.id]!,actor.side);if(carrier)throw new Error(carrier); }
+    if(action.source.kind==='ability'){const carrier=battleAbilityActorBlocker(this.content.abilities[action.source.id]!,actor.side);if(carrier)throw new Error(carrier); }
     if(action.source.kind==='ability')validateOrdinaryConditionAction(this.content.abilities[action.source.id]!);
     if (!ability.plan) throw new Error("Unimplemented ability cannot execute");
     if (ability.plan.effects.some(effect => effect.kind === "non-damaging")) {
@@ -3869,7 +3895,7 @@ export class BattleGame {
         for (const entry of candidate.staged) entry.target = held.owners.find(unit => unit.id === entry.target.id)!;
         for (const unit of candidate.projected) unit.ai = held.programs[held.owners.findIndex(owner => owner.id === unit.id)]!;
       }
-      const {choice, projection, staged, projected, results, derived} = candidate;
+      const {choice, projection, staged, projected, results, derived, variable} = candidate;
       const reactions = this.planReactions(action, projected, results, payment, held?.turns);
       if (reactions.pending) {
         const random = this.randomState; this.randomState = randomBefore;
@@ -3988,6 +4014,7 @@ export class BattleGame {
       const actorIsTarget = staged.some(entry => entry.target === actor);
       const actorLifeChanged = !actorIsTarget && (actor.hp === 0) !== (actorProjection.hp === 0);
       actor.mp -= payment;
+      if (variable) actor.behavior = structuredClone(actorProjection.behavior);
       if(projection.userResourceState)Object.assign(actor,projection.userResourceState);
       if (!actorIsTarget) Object.assign(actor, { hp: actorProjection.hp, mp: actorProjection.mp,
         conditionIds: [...actorProjection.conditionIds] });
@@ -4062,6 +4089,7 @@ export class BattleGame {
       action.selection = choice.selection;
       action.targetIds = choice.targetIds;
       action.results = results;
+      if (variable) action.enemyVariableResult = structuredClone(variable);
       if (projection.userResults.length) action.userConditionResults = structuredClone(projection.userResults);
       if(projection.userResourceResults)action.userResourceResults=structuredClone(projection.userResourceResults);
       action.resolved = true; this.reactionResolution = null;
@@ -4095,7 +4123,12 @@ export class BattleGame {
     this.pruneFinalTickets();
     if (this.action || this.#numbers.length || this.reactions[0]?.kind === "derived") return;
     for (const c of this.combatants) {
-      const life = this.settleBattleLife(c, c.hp, c.conditionIds, false);
+      // Explicit Web action/down boundary: only after staged work completes.
+      // Source Start never zeros FF6 HP. ActEndUpdate visits ALL current units;
+      // its shared DownStart body zeros enemy HP, then the existing controller
+      // adds the actual death identity and runs conflicts/drop registration.
+      const hp = this.conditions.mineralizationPhaseHp(c.side, c.hp, c.conditionIds);
+      const life = this.settleBattleLife(c, hp, c.conditionIds, false);
       if (canonical(life.conditionIds) !== canonical(c.conditionIds)) {
         const removed = c.conditionIds.filter(id => !life.conditionIds.includes(id));
         const control = this.prepareControlState(c, life.conditionIds, this.controlStates.get(c.id)!, this.controlTargetUnits.get(c.id)!, null, removed);
@@ -4118,7 +4151,7 @@ export class BattleGame {
     }
     if (this.reactions.some(action=>action.kind==="event" || action.kind === "final")) return;
     if (!this.eventControls.endEnabled) return;
-    if (!this.players.some((c) => c.hp > 0)) {
+    if (this.players.length > 0 && this.players.every(c => this.unitGameOver(c))) {
       this.clearBattleConditions();
       this.retireAIClocks(); this.phase = "defeat";
       this.escapeRequested = false;

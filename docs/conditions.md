@@ -43,3 +43,7 @@ IL2CPP 共享 getter 名会误导语义。本批按元数据与机器指令核�
 - 各状态行为、周期效果与 until 生命周期，随后接回伤害、目标、行动调度和完整保存。
 
 扩展任何状态仍需闭合其行为依赖；列表冲突通过不能代替状态效果验收。
+
+# Type11 lifecycle increment
+
+The source-wide Mineralization action/game-over/target/persistence increment is documented in [source-mineralization.md](source-mineralization.md). Its explicit Web action/down boundary keeps Start, enemy HP-zero settlement and positive-HP player game-over separate. Numeric effect consumers and unknown condition families retain their gates.

@@ -30,6 +30,7 @@ export function projectActionTargets<T extends ActionParticipant>(plan: Developm
     throw new Error("Invalid joint action targets");
   conditions.validateOwner(actor.conditionIds, actor.side);
   for (const target of targets) conditions.validateOwner(target.conditionIds, target.side);
+  conditions.validateMineralizationEffects(plan.effects.map(effect => effect.kind), [actor.conditionIds, ...targets.map(target => target.conditionIds)]);
   if (plan.effects.length === 1 && plan.effects[0]?.kind === "non-damaging") {
     const result = projectNonDamagingEffect(plan.effects[0]);
     if (!Number.isSafeInteger(cost) || cost < 0 || cost > actor.mp) throw new Error("Invalid non-damaging action cost");

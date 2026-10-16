@@ -1,4 +1,5 @@
 import {sourceBattleHandoffAdditionOptions,legacySourceBattleHandoffAudit} from './source-battle-handoff-addition.mjs';
+import {parseSourceSpriteMediaAddition} from './source-sprite-media-evidence.mjs';
 import {parseSourceOwnedCapabilityAdditions,createSourceOwnedCapabilityEvidenceReader,auditSourceOwnedCapabilityAdditions,ownedCapabilityCatalogAdditions,sourceOwnedCapabilityProjection} from './source-owned-capability-additions.mjs';
 import {parseFieldEffectTransformAssessment,parseFrameworkFieldEffectTransformAddition,comparableFrameworkFieldEffectTransformAddition} from './framework-field-effect-transform-evidence.mjs';
 import {parseFrameworkFieldEffectFlatAddition,comparableFrameworkFieldEffectFlatAddition} from './framework-field-effect-flat-evidence.mjs';
@@ -592,13 +593,15 @@ async function npcRouteAdditionDeclaration(raw,root,compiledDir){
  * and complete package validation at their publication boundary. */
 export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurrentJson,readCandidateJson,
     root=repository,compiledDir='dist',sourceWalkEvidence,battleRebindings,frameworkProfileUpgrade,sourceMapAnimationAddition,sourceMapAnimationEvidence,sourceNpcInitialPoseAddition,sourceNpcInitialPoseEvidence,sourceNpcRoutesAddition,sourceNpcRouteEvidence,
-    frameworkNpcAreaAddition,frameworkNpcAreaEvidence,sourceEventActivationAddition,sourceEventActivationEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,frameworkFieldEffectTransformAddition,frameworkFieldEffectTransformEvidence,frameworkOrdinaryPresentationAddition,frameworkOrdinaryPresentationEvidence,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines,sourceOwnedCapabilityAdditions,sourceBattleHandoffAddition,sourceBattleHandoffEvidence,sourceBattleHandoffBaselines}){
+    frameworkNpcAreaAddition,frameworkNpcAreaEvidence,sourceEventActivationAddition,sourceEventActivationEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,frameworkFieldEffectTransformAddition,frameworkFieldEffectTransformEvidence,frameworkOrdinaryPresentationAddition,frameworkOrdinaryPresentationEvidence,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines,sourceOwnedCapabilityAdditions,sourceBattleHandoffAddition,sourceBattleHandoffEvidence,sourceBattleHandoffBaselines,sourceSpriteMediaAddition,sourceSpriteMediaComparison}){
   assert.ok(typeof recipePath==='string'&&recipePath.length>0,'Missing original recipe path');
   assert.equal(typeof readCurrentJson,'function');assert.equal(typeof readCandidateJson,'function');
   const recipe=recipeJSON(recipeBytes),refs=declaredReferences(recipe),proofs=parseBattleRebindings(battleRebindings);
   const report={kind:'source-recipe-inputs-v1',id:recipe.id,recipeKind:recipe.kind,recipePath,
     recipeSha256:sha(recipeBytes),changes:[],dependencyRebindings:[],sourceIdentities:[],sourceEvidenceEnrichments:[],
     battleCapabilityRebindings:[],frameworkProfileUpgrades:[],sourceMapAnimationAdditions:[],sourceNpcRouteAdditions:[]};
+  const spriteAddition=parseSourceSpriteMediaAddition(sourceSpriteMediaAddition);
+  if(spriteAddition){assert.equal(typeof sourceSpriteMediaComparison?.compare,'function','Source Sprite addition needs current pure compilation evidence');report.sourceSpriteMediaAdditions=[];}
   parseSourceMessageFeeAddition(sourceMessageFeeAddition);
   const owned=ownedAdditionOptions({sourceOwnedCapabilityAdditions,sourceBattleHandoffAddition,sourceBattleHandoffEvidence,sourceBattleHandoffBaselines,root,compiledDir});
   if(owned.options)report.sourceOwnedCapabilityAdditions=[];if(owned.legacy)report.sourceBattleHandoffAdditions=[];
@@ -634,6 +637,11 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
   const [{canonical},{verifyContent},{sourceCatalogProfile}]=await Promise.all([
     load('canonical'),load('content-integrity'),load('source-catalog')]);
   const oldCache=new Map(),newCache=new Map(),documents=new Map(),omissionMaps=new Map();
+  function comparableSprite(before,after,ref){
+    if(!spriteAddition||!['world-development','world-map-development'].includes(after.kind))return{before,after};
+    const value=sourceSpriteMediaComparison.compare(before,after,spriteAddition);
+    report.sourceSpriteMediaAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,...value.audit});return value;
+  }
   sourceWalkEvidence??=createSourceWalkEvidenceReader({root,compiledDir});
   sourceNpcRouteEvidence??=createSourceNpcRouteEvidenceReader({root,compiledDir});
   async function comparableNpcRoutes(before,after,role,url,actualBefore=before,actualAfter=after){
@@ -718,7 +726,8 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
   async function omissionSourceMaps(mapId){
     if(!omissionMaps.has(mapId))omissionMaps.set(mapId,(async()=>{
       const url='/world/maps/'+mapId+'.json';
-      const before=await read(readCurrentJson,oldCache,url),after=await read(readCandidateJson,newCache,url);
+      const actualBefore=await read(readCurrentJson,oldCache,url),actualAfter=await read(readCandidateJson,newCache,url),
+        {before,after}=comparableSprite(actualBefore,actualAfter,{pointer:'/developmentProfile/omissions',role:'omission source map',url});
       for(const value of [before,after]){
         validateDocument(value,{kind:'world-map-development',role:'omission source map'});
         assert.equal(value.mapId,mapId,'Omission source map identity mismatch');
@@ -730,7 +739,7 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
       const comparison=await comparableWalkingEvidence(routed.before,routed.after,'omission source map',url);
       assert.equal(canonical(identities(comparison.before,canonical,sourceCatalogProfile)),
         canonical(identities(comparison.after,canonical,sourceCatalogProfile)),'Omission source identity/profile/media changed');
-      return {url,before,after};
+      return {url,before:actualBefore,after:actualAfter};
     })());
     return omissionMaps.get(mapId);
   }
@@ -777,8 +786,9 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
     return comparison;
   }
   for(const ref of refs){
-    const before=await read(readCurrentJson,oldCache,ref.url,ref.contentHash);
-    const after=await read(readCandidateJson,newCache,ref.url);
+    const actualBefore=await read(readCurrentJson,oldCache,ref.url,ref.contentHash);
+    const actualAfter=await read(readCandidateJson,newCache,ref.url);
+    const {before,after}=comparableSprite(actualBefore,actualAfter,ref);
     validateDocument(before,ref);validateDocument(after,ref);
     let eventAfter=after;
     if(['world-development','world-map-development'].includes(after.kind)){
@@ -862,7 +872,7 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
         Object.fromEntries(Object.entries(map).filter(([key])=>!['url','contentHash','blockers','defaultGroupReady','geometryReady'].includes(key)))]));
       assert.equal(canonical(index(before)),canonical(index(after)),'World map physical index changed');
     }
-    documents.set(ref.role,{before,after,ref});
+    documents.set(ref.role,{before:actualBefore,after:actualAfter,ref});
     report.sourceIdentities.push({pointer:ref.pointer,role:ref.role,url:ref.url,...oldIdentity});
     if(before.contentHash!==after.contentHash){
       let destination=recipe;for(const part of ref.parts)destination=destination[part];

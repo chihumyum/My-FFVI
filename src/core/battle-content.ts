@@ -1,4 +1,5 @@
 import {parseBattlePartyContext,validateBattlePartyContextBinding,type BattlePartyContext} from "./battle-party-context.js";
+import type { SourceEnemyVariableAction } from './enemy-variable-action.js';
 import {parseBattleChildAdmission,type BattleChildAdmission} from './battle-child-admission.js';
 import {parseWebBattleGauInstances,type WebBattleGauInstances,type BattleGauInstanceContent} from "./battle-gau-instances.js";
 import {parseWebEnemySpawnConditions,type WebEnemySpawnConditions} from './battle-spawn-conditions.js';
@@ -332,6 +333,8 @@ export function encounterContent(
     contentHash: catalog.contentHash };
 }
 export type AbilityDefinition = {
+  /** Separate whole-action source HitCalc phase, with the same combatant owner. */
+  enemyVariableAction?: SourceEnemyVariableAction;
   ordinaryConditionPresentation?: import('./ordinary-condition-action.js').OrdinaryConditionPresentation;
   nonDamagingPresentation?: import("./non-damaging-ability.js").NonDamagingAbilityPresentation;
   /** Source AbilityUtility/FF6 hit classification, independent of the effect

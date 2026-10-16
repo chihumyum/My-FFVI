@@ -11,7 +11,7 @@
 - getter 的 IL2CPP 地址有共享别名。本批按 FunctionGroup 元数据核对：槽一 `4A4A40/4A4A80/4A4F60/4A4F20`，槽二 `4A5970/4A5930/4A5F30/4A5FB0`，槽三 `4A5EF0/4A58B0/4A5FF0/4A6030`；不使用反编译器误标出的 Ability getter 名作为语义依据。
 - FF6 的 `FunctionProvider.GetFunctionClass 0x342080` 与 `GetFunctionBaseCalc 0x3419C0` 分别选择战斗包装和计算器。类型 1/2/3 的计算器为 Recovery/NormalAttack/Magic；包装并不必然使用同编号 BattleFunction 类，FF6 的恢复和魔法走共用 BattleFunction4。
 - `RecoveryFunction.Calc 0x66FD90` 的 value1=1 选择固定恢复，value1=2 选择计算恢复；value2=2/3 对应 HP/MP 结果。`GetFixedRecoveryStatus 0x3D8660` 的 ability 普通分支读取 standard_value；目标状态、等级条件、Runic 和 ExchangeValueForCondition 仍有额外分支。此次只执行显式无这些修正的开发上下文。
-- 类型 23 是 Unique，不能理解成“解除异常”。`BattleFunction23.GetUniqueKey 0x97C3F0` 读取 process_prog，交给 FF6 特殊 provider。其 FixedTarget/HitCalc/UpdateParameter 为 `0x755940/0x759140/0x75DEB0`。对于无 item/equipment 载体的 None/multiply，没有额外数值分支；仍存在共用目标与准备阶段。其他 key 保持阻塞。multiply 的伤害倍率顺序仍沿用已有临时实现。
+- 类型 23 是 Unique，不能理解成“解除异常”。`BattleFunction23.GetUniqueKey 0x97C3F0` 读取 process_prog，交给 FF6 特殊 provider。其 FixedTarget/HitCalc/UpdateParameter 为 `0x755940/0x759140/0x75DEB0`。对于无 item/equipment 载体的 None/multiply，没有额外数值分支；仍存在共用目标与准备阶段。三条通用敌方变量 key 的完整共用合同见 [Fn23 敌方变量](source-enemy-variable-action.md)：真实攻击者 bank 只写一次，独立攻击者 Non 与每目标 fallback Miss 保留，原第一槽仍决定 received；其它 key 保持阻塞。multiply 的伤害倍率顺序仍沿用已有临时实现。
 
 本地原生输出在 `build/native/ability-{dispatch,functions,providers,recovery}/`；30 个方法范围和反编译文件摘要均重新核对。收据 `build/reports/ability-native-check.json` SHA-256 为 `ab792bd7f61da727821632d537f8c778a20de2ab3bac0dd740266bb7a18cfbd4`。这只证明来源与输出身份，不证明原版动态一致性。
 

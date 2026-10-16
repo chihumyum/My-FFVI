@@ -9,6 +9,7 @@ import { compileSpeedCondition } from "./condition-speed.js";
 import { compileBlindCondition, compileBlindPresentation } from "./condition-blind.js";
 import { compileConditionResistanceProvider } from "./condition-resistance-provider.js";
 import { compileSourceControlCondition } from "./source-condition-application.js";
+import { compileMineralizationCondition } from './condition-mineralization.js';
 import {
   ConditionRules,
   type ConditionCatalog,
@@ -202,6 +203,12 @@ export function compileBattleConditionCatalog(
     behaviors: result.catalog.definitions.flatMap(
       (d): BattleConditionCatalog["behaviors"] => {
         const row = reader.row("condition.csv", d.id);
+        const mineralization = compileMineralizationCondition(reader, row, name, result.catalog.definitions);
+        providerBlockers.push(...mineralization.blockers.map(reason => ({ conditionId: d.id, reason })));
+        if (mineralization.behavior) {
+          presentationSources.push(...mineralization.sources);
+          return [mineralization.behavior];
+        }
         const levitate = compileLevitateCondition(reader, row, name, result.catalog.definitions);
         providerBlockers.push(...levitate.blockers.map(reason => ({ conditionId: d.id, reason })));
         if (levitate.behavior) {

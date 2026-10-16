@@ -1,4 +1,5 @@
 import { reconcileSlipClocks, type SlipState, type SlipBehavior } from "./condition-slip.js";
+import { mineralizationBoundaryHp, validateMineralizationBehavior, type MineralizationBehavior } from './condition-mineralization.js';
 import { ConditionRules, type ConditionCatalog } from "./conditions.js";
 import { validateLevitateBehavior, type LevitateBehavior } from "./condition-levitate.js";
 import { mergeElementResistances, validateElementResistances, type ElementResistances } from "./elements.js";
@@ -57,6 +58,7 @@ export type BattleConditionCatalog = {
     | SpeedBehavior
     | BlindBehavior
     | ControlConditionBehavior
+    | MineralizationBehavior
     | { id: number; kind: "unable-fight"; name: string; untilType: 3 }
     | { id: number; kind: "dying"; name: string; untilType: 3 }
     /** No timer or numeric modifier; a battle appearance host must execute
@@ -121,8 +123,9 @@ export class BattleConditions {
     if (this.behaviors.size !== catalog.behaviors.length)
       throw new Error("Duplicate battle condition behavior");
     for (const b of this.behaviors.values()) {
-      if ("resistanceProvider" in b && !["levitate", "physical-protection", "magic-protection", "haste", "slow", "blind", "poison", "sleep", "confusion", "temptation", "doom", "stop"].includes(b.kind))
+      if ("resistanceProvider" in b && !["mineralization", "levitate", "physical-protection", "magic-protection", "haste", "slow", "blind", "poison", "sleep", "confusion", "temptation", "doom", "stop"].includes(b.kind))
         throw new Error("Unsupported condition resistance provider behavior");
+      if (b.kind === 'mineralization') validateMineralizationBehavior(b);
       if (b.kind === "levitate") {
         validateLevitateBehavior(b);
         const entries = Object.entries(b.resistanceProvider?.conditions ?? {});
@@ -166,6 +169,8 @@ export class BattleConditions {
             ((b.kind === "unable-fight" &&
               this.definitions.get(b.id)?.type === 5) ||
               (b.kind === "dying" && this.definitions.get(b.id)?.type === 4) ||
+              (b.kind === 'mineralization' && this.definitions.get(b.id)?.type === 11 &&
+                this.definitions.get(b.id)?.overlapped === false) ||
               (b.kind === "blind" && this.definitions.get(b.id)?.type === blindConditionType &&
                 this.definitions.get(b.id)?.overlapped === false) ||
               (b.kind === "levitate" && this.definitions.get(b.id)?.type === 409 &&
@@ -271,6 +276,27 @@ export class BattleConditions {
   isUnableFight(ids: readonly number[]) {
     this.validateActive(ids);
     return ids.some((id) => this.behaviors.get(id)!.kind === "unable-fight");
+  }
+  isMineralized(ids: readonly number[]): boolean {
+    this.validateActive(ids);
+    return ids.some(id => this.behaviors.get(id)!.kind === 'mineralization');
+  }
+  /** Closed active behaviors' game_over_target projection. HP/death, ordinary
+   * targetability and until-type retention remain independent consumers. */
+  isGameOver(ids: readonly number[]): boolean {
+    this.validateActive(ids);
+    return ids.some(id => ['unable-fight', 'mineralization'].includes(this.behaviors.get(id)!.kind));
+  }
+  mineralizationPhaseHp(side: 'player' | 'enemy', hp: number, ids: readonly number[]): number {
+    return mineralizationBoundaryHp(side, hp, this.isMineralized(ids));
+  }
+  /** A lifecycle is not an ExchangeValue/recovery-invalid provider. Until the
+   * respective numeric consumers are closed, they cannot silently acquire a
+   * newly admitted active-state domain. Source status application/recovery
+   * still uses the already implemented conflict/resistance owner. */
+  validateMineralizationEffects(kinds: readonly string[], lists: readonly (readonly number[])[]): void {
+    if (lists.some(ids => this.isMineralized(ids)) && kinds.some(kind => !['add-condition', 'recover-condition'].includes(kind)))
+      throw new Error('Unresolved Mineralization numeric/other effect consumer');
   }
   get escapeConditionId(): number {
     const candidates = [...this.definitions.values()].filter((definition) => definition.type === 3);
@@ -544,7 +570,7 @@ export class BattleConditions {
     if (currentIds.includes(conditionId))
       throw new Error("Source repeated condition append needs a duplicate lifecycle owner");
     const behavior = this.behaviors.get(conditionId)!;
-    if (["unable-fight", "dying", "escape", "sleep", "confusion", "temptation", "doom"].includes(behavior.kind))
+    if (["mineralization", "unable-fight", "dying", "escape", "sleep", "confusion", "temptation", "doom"].includes(behavior.kind))
       throw new Error("Source condition append requires its explicit life/control/instance activation owner: " + conditionId);
     const next = [...currentIds, conditionId];
     // This checks admission only. EventCommand did not call Conflict, so never

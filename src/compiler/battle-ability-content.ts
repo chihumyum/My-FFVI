@@ -17,6 +17,7 @@ export type BattleAbilityDisplay = {
 };
 
 export type BattleAbilityHostRequirement =
+  | 'actual-attacker-enemy-variable-bank-and-whole-action-phase'
   | 'source-function9-death-override-provider'
   | 'enemy-only-levitate-lifecycle'
   | 'actual-source-enemy-boss-parameter'
@@ -164,6 +165,7 @@ export function compileBattleAbilityContent(
     if (definition.plan) {
       report.arithmeticPlans++;
       const effects = definition.plan.effects;
+      if (definition.enemyVariableAction) requirements.push('actual-attacker-enemy-variable-bank-and-whole-action-phase');
       if(effects.some(effect=>effect.kind==='base-hp-magic')){
         requirements.push('actual-source-enemy-boss-parameter','admitted-equipment-and-parameter-providers','no-runic-undead-or-other-value-overrides');
         if(definition.program.rules.type_id===13)requirements.push('ordinary-enemy-magic-actor');

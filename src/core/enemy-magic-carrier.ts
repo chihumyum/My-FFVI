@@ -1,14 +1,16 @@
 import type {AbilityProgram} from './ability.js';
 import type {AbilityDefinition} from './battle-content.js';
 import {baseHpMagicEffect} from './base-hp-magic.js';
+import { isSourceEnemyVariableKey } from './enemy-variable-action.js';
 
 /** Source EnemyMagic is a carrier, never permission to replace arbitrary
  * Function3 operands, learning/owned commands or actual actor providers. */
 export function isSourceEnemyMagicProgram(program:AbilityProgram):boolean {
  const fn=program.functions[0];return program.rules.type_id===13&&program.rules.system_id===3&&
-  program.functions.length===1&&fn?.type===3&&fn.series===0&&
+  (program.functions.length===1||program.functions.length===2&&program.functions[1]?.slot===2&&
+    program.functions[1].type===23&&program.functions[1].series===0&&program.functions[1].values.every(value=>value===0)&&isSourceEnemyVariableKey(program.process.key))&&fn?.type===3&&fn.series===0&&
   fn.values[0]===1&&fn.values[1]===0&&fn.values[2]===0&&
-  program.process.key==='None'&&program.process.values.every(value=>value===0);
+  (program.functions.length===2||program.process.key==='None'&&program.process.values.every(value=>value===0));
 }
 /** Existing Type13 control/absorption families keep their own contracts.
  * This only guards the newly admitted single numerical magic carrier. */

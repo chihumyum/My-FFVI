@@ -7,6 +7,20 @@ import type { BattleRow } from "./battle.js";
 import { hasMagitekBehavior, hasPoisonBehavior, type ConditionReader } from "./conditions.js";
 import { tableInteger as int } from "./table.js";
 import { hasBlindBehavior } from "./condition-blind.js";
+import { hasMineralizationLifecycle } from './condition-mineralization.js';
+import { validateMineralizationBehavior } from '../core/condition-mineralization.js';
+import { canonical } from '../core/canonical.js';
+
+// New Battle behaviors must make an explicit Field-domain decision. The
+// historical passive branch is not a default for newly admitted lifecycles.
+const fieldConditionDomain = {
+  slip: 'battle-only', levitate: 'battle-only', escape: 'battle-only', defend: 'battle-only',
+  'physical-protection': 'battle-only', 'magic-protection': 'battle-only', haste: 'battle-only', slow: 'battle-only',
+  sleep: 'battle-only', confusion: 'battle-only', temptation: 'battle-only', doom: 'battle-only', stop: 'battle-only',
+  mineralization: 'source-bound-battle-only',
+  poison: 'ordinary-field', blind: 'ordinary-field', magitek: 'ordinary-field',
+  dying: 'ordinary-field', 'unable-fight': 'ordinary-field', silence: 'ordinary-field',
+} satisfies Record<BattleConditionCatalog['behaviors'][number]['kind'], 'battle-only' | 'source-bound-battle-only' | 'ordinary-field'>;
 
 /** Compile only independently admitted active conditions. Decoding the generic
  * condition damage dispatcher is not support for unknown status providers. */
@@ -22,11 +36,31 @@ export function compileFieldConditionCatalog(
   // Escape, Defend, ordinary protection, speed and action-control states are removed at battle end. Their field
   // application/appearance is not admitted; a checkpoint cannot inject them
   // as passive statuses and carry them into another encounter.
-  const behaviors = battle.behaviors.filter((behavior) =>
-    !["slip", "levitate", "escape", "defend", "physical-protection", "magic-protection", "haste", "slow", "sleep", "confusion", "temptation", "doom", "stop"].includes(behavior.kind)).flatMap(
+  const behaviors = battle.behaviors.flatMap(
     (behavior): FieldConditionCatalog["behaviors"] => {
+      const domain = fieldConditionDomain[behavior.kind];
+      if (!domain) throw new Error('Unknown Battle condition Field-domain projection');
+      if (domain === 'battle-only') return [];
       const row = reader.row("condition.csv", behavior.id);
       sources.push(row);
+      // Battle admission does not establish an active Field provider. Bind the
+      // same master definition and lifecycle before withholding that projection.
+      // Battle owns its renderer/effect dependencies; this narrow Field reader
+      // must not recompile them or reinterpret persistent Stone as generic `none`.
+      if (behavior.kind === 'mineralization') {
+        validateMineralizationBehavior(behavior);
+        const definitions = battle.rules.definitions.filter(d => d.id === behavior.id),
+          sourceDefinition = { id: int(row.values.id), type: int(row.values.condition_type),
+            overlapped: int(row.values.overlapped_type) === 1, eraseGroupId: int(row.values.erase_condition_group_id) };
+        const groupId = int(row.values.condition_group_id);
+        if (!hasMineralizationLifecycle(row) || row.source.rowId !== row.values.id ||
+            sourceDefinition.id !== behavior.id || !row.values.mes_id_name || row.values.mes_id_name === 'None' ||
+            definitions.length !== 1 || canonical(definitions[0]) !== canonical(sourceDefinition))
+          throw new Error('Changed battle-only Mineralization source definition');
+        if (groupId === 0 ? behavior.resistanceProvider !== undefined : behavior.resistanceProvider?.groupId !== groupId)
+          throw new Error('Changed battle-only Mineralization resistance group');
+        return [];
+      }
       // A separately admitted battle function does not grant field persistence.
       // Keep its master definition/reference, but expose no active field behavior.
       // Only the known generic dictionary differs; malformed ordinary lifecycle

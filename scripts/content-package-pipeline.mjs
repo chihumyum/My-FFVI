@@ -1,3 +1,5 @@
+import {sourceInputEnvelopeKind,sourceInputLockKind,FRESH_SOURCE_PRODUCTS} from './source-production-mode.mjs';
+import {compileSourceProductCollection} from './compile-source-product-collection.mjs';
 import {createSourceOwnedCapabilityEvidenceReader,sourceOwnedCapabilityCatalogKeys,compileDerivedOwnedCapabilityBaselines} from './source-owned-capability-additions.mjs';
 import {FIELD_EFFECT_TRANSFORMS,createFrameworkFieldEffectTransformAddition,createFrameworkFieldEffectTransformEvidenceReader,verifyFieldEffectTransformLock} from './framework-field-effect-transform-evidence.mjs';
 import {createFrameworkFieldEffectFlatAddition,createFrameworkFieldEffectFlatEvidenceReader} from './framework-field-effect-flat-evidence.mjs';
@@ -15,7 +17,7 @@ import {acquireContentPackageLock} from './content-package-lock.mjs';
 import {loadSourceContentSelection,loadSourceRecipePaths} from './source-content-selection.mjs';
 import {runtimeDigest} from './runtime-digest.mjs';
 import {webSourceFrameworkInputs} from './source-web-framework-inputs.mjs';
-import {compileSourcePrerequisites,validateSourcePrerequisiteInputs} from './compile-source-prerequisites.mjs';
+import {compileSourcePrerequisites,validateSourcePrerequisiteInputs,sourceSpriteMediaInput} from './compile-source-prerequisites.mjs';
 import {linkSourcePrerequisites} from './link-source-prerequisites.mjs';
 import {createSourceEventActivationEvidenceReader} from './source-event-activation-evidence.mjs';
 import {createSourceMapAnimationEvidenceReader} from './source-map-animation-evidence.mjs';
@@ -45,10 +47,11 @@ async function fingerprint(directory){
 }
 
 // Retain exact consumed upstream bytes and reject changes before publication.
-function inputReader(root){
-  const build=resolve(root,'build'),inputs=new Map(),mediaInputs=new Map(),bindings=new Map();
-  async function boundPath(file){
-    const actual=await realpath(file);assert.ok(within(build,actual),'Content input escapes build');
+function inputReader(root,{worldMediaDirectory}={}){
+  const build=resolve(root,'build'),inputs=new Map(),mediaInputs=new Map(),bindings=new Map(),sourceMediaPins=new Map();
+  async function boundPath(file,mediaRoot,isMedia=false){
+    const actual=await realpath(file);
+    if(mediaRoot||!within(build,actual)){const pin=isMedia?sourceMediaPins.get(file):undefined;assert.ok(pin&&pin.realPath===actual,'Content input escapes build or its exact source media pin');}
     if(bindings.has(file))assert.equal(actual,bindings.get(file),'Content input changed its path binding');
     else bindings.set(file,actual);
     return actual;
@@ -60,14 +63,19 @@ function inputReader(root){
     return inputs.get(actual);
   }
   return {inputs,mediaInputs,bytes,json:async url=>JSON.parse((await bytes(url)).toString()),
+    bindSourceInputs(lock){
+      assert.equal(sourceMediaPins.size,0,'Source media inputs already bound');
+      for(const row of lock?.files??[]){assert(row&&typeof row.path==='string'&&typeof row.realPath==='string'&&isAbsolute(row.realPath)&&/^[a-f0-9]{64}$/.test(row.sha256)&&Number.isSafeInteger(row.bytes)&&row.bytes>=0,'Invalid exact source media input pin');const file=resolve(root,row.path);assert(!sourceMediaPins.has(file),'Duplicate source media input pin');sourceMediaPins.set(file,structuredClone(row));}
+    },
     async media(url){
       assert.match(url,mediaURL);
       assert.ok(['/world-media/','/field-skybox-media/','/field-background-media/','/map-ui/','/field/sprites/','/battle/sprites/',
         '/bgm/tracks/','/se/tracks/','/environment/tracks/','/imports/textures/'].some(prefix=>url.startsWith(prefix)),
         'Unexpected runtime media URL');
       const mapped=url.startsWith('/imports/')?'/import/'+url.slice('/imports/'.length):url;
-      const file=await boundPath(resolve(build,'.'+mapped));
-      const raw=await readFile(file),digest=sha(raw);
+      const override=worldMediaDirectory&&mapped.startsWith('/world-media/');
+      const logicalFile=override?resolve(worldMediaDirectory,mapped.slice('/world-media/'.length)):resolve(build,'.'+mapped),file=await boundPath(logicalFile,override?worldMediaDirectory:undefined,true);
+      const raw=await readFile(file),digest=sha(raw),pin=sourceMediaPins.get(logicalFile);if(pin){assert.equal(digest,pin.sha256,'Media differs from exact source input pin');assert.equal(raw.length,pin.bytes,'Media size differs from exact source input pin');}
       if(mediaInputs.has(file))assert.equal(digest,mediaInputs.get(file),'Media changed during candidate preparation');
       else mediaInputs.set(file,digest);
       return raw;
@@ -107,7 +115,7 @@ const sourceFrameworkDefaults=webSourceFrameworkInputs();
 export async function compileSharedContentPackages({root=repository,compiledDir='dist',readJson,
   sourceRecipePaths,sourceSelectionPath,npcAreas=sourceFrameworkDefaults.npcAreas,npcFlat=sourceFrameworkDefaults.npcFlat,fieldEffectFlat=sourceFrameworkDefaults.fieldEffectFlat,
   mapTransforms=sourceFrameworkDefaults.mapTransforms,fieldLayerScrolling=sourceFrameworkDefaults.fieldLayerScrolling,transportationParkingUpload=sourceFrameworkDefaults.transportationParkingUpload,vehicleLifecycle=sourceFrameworkDefaults.vehicleLifecycle,worldAutoTasks=sourceFrameworkDefaults.worldAutoTasks,birdViewActors=sourceFrameworkDefaults.birdViewActors,worldAutoMove=sourceFrameworkDefaults.worldAutoMove,mobColorFilter=sourceFrameworkDefaults.mobColorFilter,screenPresentation=sourceFrameworkDefaults.screenPresentation,skyboxPresentation=sourceFrameworkDefaults.skyboxPresentation,fieldEffectTransforms=sourceFrameworkDefaults.fieldEffectTransforms,
-  periodicMaps=sourceFrameworkDefaults.periodicMaps,ordinaryFields=sourceFrameworkDefaults.ordinaryFields,logicalFieldEffects=sourceFrameworkDefaults.logicalFieldEffects}={}){
+  periodicMaps=sourceFrameworkDefaults.periodicMaps,ordinaryFields=sourceFrameworkDefaults.ordinaryFields,logicalFieldEffects=sourceFrameworkDefaults.logicalFieldEffects,sourceSpriteMedia}={}){
   if(mapTransforms!==undefined&&(mapTransforms!=="web-flat-field-map-transforms-v1"||fieldLayerScrolling!=="web-field-layer-scrolling-v1"))throw Error("Map transforms v15 requires exact v14 cohort");
   if(fieldLayerScrolling!==undefined&&fieldLayerScrolling!=="web-field-layer-scrolling-v1")throw Error("Unknown Field scrolling policy");
   if(worldAutoTasks!==undefined&&worldAutoTasks!=='web-flat-world-auto-tasks-v1')throw Error('Unknown source world auto-task policy');
@@ -158,7 +166,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     reports.push({id,report:result.report});
   };
   const prerequisites=await compileSourcePrerequisites({root,compiledDir,logicalFieldEffects,periodicMaps,ordinaryFields,npcAreas,npcFlat,fieldEffectFlat,
-    mapAnimatedEntities:sourceFrameworkDefaults.mapAnimatedEntities,mapTransforms,fieldLayerScrolling,transportationParkingUpload,vehicleLifecycle,worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms});
+    mapAnimatedEntities:sourceFrameworkDefaults.mapAnimatedEntities,mapTransforms,fieldLayerScrolling,transportationParkingUpload,vehicleLifecycle,worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,sourceSpriteMedia});
   const linked=await linkSourcePrerequisites({root,compiledDir,payloads:prerequisites.payloads,frameworkOptions:prerequisites.frameworkOptions});
   const sourceRead=async url=>linked.inputs.has(url)?structuredClone(linked.inputs.get(url)):readJson(url);
   for(const [url,value] of linked.payloads)payloads.set(url,value);
@@ -201,7 +209,8 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     ? structuredClone(battles.catalog):sourceRead(url);
   const sourceWalkEvidence=createSourceWalkEvidenceReader({root,compiledDir});
   const sourceEventActivationEvidence=createSourceEventActivationEvidenceReader({root,compiledDir});
-  const sourceMapAnimationEvidence=createSourceMapAnimationEvidenceReader({root,compiledDir});
+  const sourceMapAnimationEvidence=createSourceMapAnimationEvidenceReader({root,compiledDir,
+    ...(prerequisites.inputs.sourceSpriteMedia?{mediaDirectory:resolve(root,prerequisites.inputs.sourceSpriteMedia.baselineInput)}:{})});
   const sourceNpcRouteEvidence=createSourceNpcRouteEvidenceReader({root,compiledDir});
   const frameworkNpcAreaAddition=prerequisites.frameworkOptions.npcAreaAssessments?createFrameworkNpcAreaAddition({
     compilerDigest:prerequisites.inputs.compilerDigest,assessments:prerequisites.frameworkOptions.npcAreaAssessments,
@@ -230,6 +239,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     const original=await recipe(path);
     const resolved=await resolveSourceRecipeInputs({root,compiledDir,recipePath:path,recipeBytes:original.raw,
       readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence,battleRebindings,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines,sourceOwnedCapabilityAdditions,sourceMapAnimationEvidence,sourceNpcRouteEvidence,
+      ...(prerequisites.sourceSpriteMediaComparison?{sourceSpriteMediaAddition:prerequisites.sourceSpriteMediaComparison.proof,sourceSpriteMediaComparison:prerequisites.sourceSpriteMediaComparison}:{}),
       sourceEventActivationEvidence,sourceEventActivationAddition:{kind:'compiled-source-event-activation-addition-v1',
         compilerDigest:prerequisites.inputs.compilerDigest,sourceSetHash:prerequisites.inputs.sourceSetHash,
         parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},
@@ -315,15 +325,19 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     }};
 }
 
-export async function publishContentPackages({root=repository,compiledDir='dist',compile=compileSharedContentPackages,
+export async function publishContentPackages({root=repository,compiledDir='dist',compile,
   archive=archivePublishedContentPackages,reportPath='build/reports/versioned-content-package-build.json',
-  sourceRecipePaths,sourceSelectionPath}={}){
+  sourceRecipePaths,sourceSelectionPath,sourceSpriteMedia,collectionMode='legacy-recipe-collection-v1',sourceCandidateDir,runtimeRoot=root}={}){
+  assert(['legacy-recipe-collection-v1','fresh-source-product-collection-v1'].includes(collectionMode),'Unknown content collection mode');
+  if(collectionMode==='fresh-source-product-collection-v1')assert(sourceCandidateDir&&sourceRecipePaths===undefined&&sourceSelectionPath===undefined,'Fresh collection requires only an explicit complete source candidate');
+  else assert(sourceCandidateDir===undefined,'Legacy collection cannot consume a fresh source candidate silently');
+  compile??=collectionMode==='fresh-source-product-collection-v1'?compileSourceProductCollection:compileSharedContentPackages;
   root=await realpath(resolve(root));const build=resolve(root,'build'),target=resolve(build,'content-packages');
   const backup=resolve(build,'.previous-package-collection');
   const output=resolve(root,reportPath);
   assert.ok(within(resolve(build,'reports'),output),'Pipeline report must be inside build/reports');
   const report={kind:'versioned-content-package-build-v2',result:'running',published:false,stages:[],
-    sourceGameplayAdmitted:false,fullGameMigration:false,browserVerified:false};
+    sourceGameplayAdmitted:false,fullGameMigration:false,browserVerified:false,collectionMode};
   const persist=()=>writeFile(output,JSON.stringify(report,null,2)+'\n');
   let lock=null,staged=null,candidateHistory=null;
   async function stage(name,work){const item={name,status:'running'};report.stages.push(item);await persist();
@@ -336,20 +350,29 @@ export async function publishContentPackages({root=repository,compiledDir='dist'
     await persist();
     try{await stat(backup);throw new Error('Inspect interrupted content package collection publication');}
     catch(error){if(error.code!=='ENOENT')throw error;}
-    const previousFingerprint=await fingerprint(target),reader=inputReader(root);
-    const candidate=await stage('compile-private-candidate',()=>compile({root,compiledDir,sourceRecipePaths,sourceSelectionPath,
+    const spriteMediaDeclaration=sourceSpriteMediaInput(sourceSpriteMedia,root);
+    const previousFingerprint=await fingerprint(target),reader=inputReader(root,{...(spriteMediaDeclaration?{worldMediaDirectory:resolve(root,spriteMediaDeclaration.input)}:{})});
+    const candidate=await stage('compile-private-candidate',()=>compile({root,runtimeRoot,compiledDir,sourceRecipePaths,sourceSelectionPath,sourceSpriteMedia:spriteMediaDeclaration,...(sourceCandidateDir?{candidateDir:sourceCandidateDir}:{}),
       readJson:url=>reader.json(url)}));
     assert.ok(candidate?.payloads instanceof Map&&candidate.payloads.size>0,'Content candidate has no payloads');
+    if(spriteMediaDeclaration||sourceInputEnvelopeKind(candidate.sourceInputs)==='source-prerequisite-input-lock-v6'){
+      assert.equal(sourceInputEnvelopeKind(candidate.sourceInputs),'source-prerequisite-input-lock-v6','Sprite media publication requires its same candidate v6 input lock');
+      assert.deepEqual(candidate.sourceInputs.sourceSpriteMedia,spriteMediaDeclaration,'Sprite media compiler/archive input mapping differs');
+    }
     if(candidate.sourceInputs)assert.match(candidate.runtimeSha256,/^[a-f0-9]{64}$/,
       'Source publication requires the candidate runtime identity');
+    if(collectionMode==='fresh-source-product-collection-v1')assert.equal(candidate.sourceProductMode,FRESH_SOURCE_PRODUCTS,'Fresh publication cannot upgrade a legacy compiled collection');
+    reader.bindSourceInputs(candidate.sourceInputs);
     report.producers=candidate.reports??[];
     if(candidate.sourceSelection)report.sourceSelection=candidate.sourceSelection;
     report.recipeRebindings=candidate.rebindings??[];
     report.battleCapabilityRebindings=candidate.battleRebindings??[];
-    if(candidate.sourceInputs)report.sourceInputLock={kind:candidate.sourceInputs.kind,
-      ...(["source-prerequisite-input-lock-v3","source-prerequisite-input-lock-v4","source-prerequisite-input-lock-v5"].includes(candidate.sourceInputs.kind)?{skyboxPresentation:candidate.sourceInputs.skyboxPresentation}:{}),
-      ...(["source-prerequisite-input-lock-v4","source-prerequisite-input-lock-v5"].includes(candidate.sourceInputs.kind)?{fieldEffectTransforms:candidate.sourceInputs.fieldEffectTransforms,fieldEffectTransformAssessmentHash:candidate.sourceInputs.fieldEffectTransformCatalog.contentHash,fieldEffectFlatAssessmentHash:candidate.sourceInputs.fieldEffectFlatAssessment.contentHash,fieldEffectCatalogHash:candidate.sourceInputs.fieldEffectCatalogHash,fieldEffectSourceMapSetHash:candidate.sourceInputs.fieldEffectTransformCatalog.projection.sourceMapSetHash}:{}),
-      ...(candidate.sourceInputs.kind==="source-prerequisite-input-lock-v5"?{transportationParkingUpload:candidate.sourceInputs.transportationParkingUpload,transportationCatalogHash:candidate.sourceInputs.transportationCatalogHash}:{}),
+    const sourceInputBaseKind=sourceInputLockKind(candidate.sourceInputs);
+    if(candidate.sourceInputs)report.sourceInputLock={kind:candidate.sourceInputs.kind,...(candidate.sourceInputs.sourceLockKind?{sourceLockKind:candidate.sourceInputs.sourceLockKind,packageNamespace:candidate.sourceInputs.packageNamespace}:{}),
+      ...(sourceInputEnvelopeKind(candidate.sourceInputs)==='source-prerequisite-input-lock-v6'?{baseLockKind:candidate.sourceInputs.baseLockKind,sourceSpriteMedia:candidate.sourceInputs.sourceSpriteMedia}:{}),
+      ...(["source-prerequisite-input-lock-v3","source-prerequisite-input-lock-v4","source-prerequisite-input-lock-v5"].includes(sourceInputBaseKind)?{skyboxPresentation:candidate.sourceInputs.skyboxPresentation}:{}),
+      ...(["source-prerequisite-input-lock-v4","source-prerequisite-input-lock-v5"].includes(sourceInputBaseKind)?{fieldEffectTransforms:candidate.sourceInputs.fieldEffectTransforms,fieldEffectTransformAssessmentHash:candidate.sourceInputs.fieldEffectTransformCatalog.contentHash,fieldEffectFlatAssessmentHash:candidate.sourceInputs.fieldEffectFlatAssessment.contentHash,fieldEffectCatalogHash:candidate.sourceInputs.fieldEffectCatalogHash,fieldEffectSourceMapSetHash:candidate.sourceInputs.fieldEffectTransformCatalog.projection.sourceMapSetHash}:{}),
+      ...(sourceInputBaseKind==="source-prerequisite-input-lock-v5"?{transportationParkingUpload:candidate.sourceInputs.transportationParkingUpload,transportationCatalogHash:candidate.sourceInputs.transportationCatalogHash}:{}),
       runtimeSha256:candidate.runtimeSha256,sourceSetHash:candidate.sourceInputs.sourceSetHash,
       parentSourceSetHash:candidate.sourceInputs.parentSourceSetHash,compiledDir,
       compilerDigest:candidate.sourceInputs.compilerDigest,files:candidate.sourceInputs.files.length,
@@ -429,7 +452,7 @@ export async function publishContentPackages({root=repository,compiledDir='dist'
     if(candidate.sourceInputs)await stage('verify-published-source-objects',async()=>{
       report.publishedObjects=[];
       for(const [url,value] of [...candidate.payloads].filter(([url])=>
-        url==='/content-packages/source.json'||url.startsWith('/content-packages/source/')).sort(([a],[b])=>a.localeCompare(b))){
+        candidate.sourceProductMode===FRESH_SOURCE_PRODUCTS?(url.startsWith('/content-packages/source-products/')||/^\/content-packages\/source-products-(?:source|framework)\.json$/.test(url)):(url==='/content-packages/source.json'||url.startsWith('/content-packages/source/'))).sort(([a],[b])=>a.localeCompare(b))){
         assert.match(url,packageURL);
         const file=await realpath(resolve(target,url.slice('/content-packages/'.length)));
         assert.ok(within(target,file),'Published source object escapes its collection');
@@ -438,7 +461,7 @@ export async function publishContentPackages({root=repository,compiledDir='dist'
         report.publishedObjects.push({url,contentHash:typeof value.contentHash==='string'?value.contentHash:null,
           sha256:sha(raw),bytes:raw.length});
       }
-      assert.equal(await runtimeDigest(root,resolve(root,compiledDir)),candidate.runtimeSha256,
+      assert.equal(await runtimeDigest(runtimeRoot,resolve(root,compiledDir)),candidate.runtimeSha256,
         'Runtime changed during complete collection publication');
     });
     report.upstreamJSONFiles=reader.inputs.size;report.upstreamMediaFiles=reader.mediaInputs.size;

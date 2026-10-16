@@ -106,7 +106,8 @@ test("strict verified candidates retain the existing framework derivation shape 
 });
 
 type InputLock = { kind: string; sourceSetHash: string; parentSourceSetHash: string; compiledDir: string; compilerDigest: string;
-  files: { path: string; sha256: string; bytes: number; realPath: string }[]; directories: { path: string; entriesDigest: string }[];skyboxPresentation?:string };
+  files: { path: string; sha256: string; bytes: number; realPath: string }[]; directories: { path: string; entriesDigest: string }[];skyboxPresentation?:string;
+  baseLockKind?:string;sourceSpriteMedia?:{kind:string;input:string;baselineInput:string} };
 const sha = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const digest = (value: unknown) => sha(JSON.stringify(value));
 const loadLock = async () => import(pathToFileURL(resolve(process.cwd(), "scripts/compile-source-prerequisites.mjs")).href) as
@@ -114,7 +115,7 @@ const loadLock = async () => import(pathToFileURL(resolve(process.cwd(), "script
 
 /** Redistributable file-system lock fixture. It tests freshness and closure;
  * it has no original media, source semantics or runnable compiler claims. */
-async function lockedDirectory(work: (root: string, lock: InputLock) => Promise<void>, logical = false, skybox = false) {
+async function lockedDirectory(work: (root: string, lock: InputLock) => Promise<void>, logical = false, skybox = false, sprite = false) {
   const root = await mkdtemp(resolve(tmpdir(), "ffvi-source-input-lock-")), compiledDir = resolve(root, "compiled");
   const directories: string[] = [], fileNames: string[] = [];
   const write = async (path: string, value: string) => {
@@ -125,11 +126,21 @@ async function lockedDirectory(work: (root: string, lock: InputLock) => Promise<
     for (const name of ["import", "corpus", "battle", "field", "world-media", "field-background-media", "map-ui", "bgm", "environment", "se",...(skybox?["field-skybox-media"]:[])]) {
       const dir = "build/" + name; directories.push(dir);
       const file = name === "corpus" ? "corpus.json" : "media.json";
-      const body = name === "corpus" ? JSON.stringify({ sources, sourceSetHash, parentSourceSetHash }) : name==="field-skybox-media"?JSON.stringify({formatVersion:1,adapterVersion:"field-skybox-0.1.0",parentSourceSetHash:sourceSetHash,sourceSetHash:hash(sources),sources}):JSON.stringify({ controlled: name });
+      const body = name === "corpus" ? JSON.stringify({ sources, sourceSetHash, parentSourceSetHash }) : name==="world-media"?JSON.stringify({formatVersion:1,adapterVersion:"world-media-0.1.0",sources,sourceSetHash:hash(sources),parentSourceSetHash:sourceSetHash}):name==="field-skybox-media"?JSON.stringify({formatVersion:1,adapterVersion:"field-skybox-0.1.0",parentSourceSetHash:sourceSetHash,sourceSetHash:hash(sources),sources}):JSON.stringify({ controlled: name });
       await write(dir + "/" + file, body);
       await write(dir + "/snapshot.json", JSON.stringify({ formatVersion: 1, files: [{ file, sha256: sha(body) }] }));
     }
-    if(logical||skybox)await write("build/runtime/game/synthetic-source","synthetic original effect bytes");
+    if(logical||skybox||sprite)await write("build/runtime/game/synthetic-source","synthetic original effect bytes");
+    if(sprite){
+      const dir="build/source-sprite-media";directories.push(dir);
+      const png="synthetic file; input-lock freshness only, never PNG/provider acceptance",media=JSON.stringify({formatVersion:1,
+        adapterVersion:"world-media-0.2.0",sources,sourceSetHash:hash(sources),parentSourceSetHash:sourceSetHash,
+        spriteLogicalCanvas:{kind:"source-sprite-logical-canvas-v1",projections:[],unresolved:[]}});
+      await write(dir+"/sprite.png",png);await write(dir+"/media.json",media);
+      await write(dir+"/snapshot.json",JSON.stringify({formatVersion:1,files:[{file:"media.json",sha256:sha(media)},{file:"sprite.png",sha256:sha(png)}]}));
+      // The exact existing source comparison owner is read-only fixture input.
+      fileNames.push(resolve(process.cwd(),"scripts/source-sprite-media-evidence.mjs"));
+    }
     if(logical) {
       const dir = "build/field-effect-media", raw = "synthetic original serialized object";
       directories.push(dir);await write(dir+"/raw.bin",raw);
@@ -163,6 +174,8 @@ async function lockedDirectory(work: (root: string, lock: InputLock) => Promise<
       directories: await Promise.all(directories.map(async path => ({ path, entriesDigest: await entryDigest(path) }))) };
     if(logical) Object.assign(lock,{kind:"source-prerequisite-input-lock-v2",logicalFieldEffects:{
       kind:"web-logical-field-effects-input-v1",input:"build/field-effect-media",reason:"Synthetic explicit Web prerequisite."}});
+    if(sprite)Object.assign(lock,{kind:"source-prerequisite-input-lock-v6",baseLockKind:lock.kind,sourceSpriteMedia:{
+      kind:"source-sprite-logical-canvas-input-v1",input:"build/source-sprite-media",baselineInput:"build/world-media"}});
     if(skybox)Object.assign(lock,{kind:"source-prerequisite-input-lock-v3",skyboxPresentation:"web-flat-skybox-panorama-v1"});
     await work(root, lock);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -251,3 +264,22 @@ test("v2 logical input lock binds lossless raw objects and every original source
 });
 
 test("Skybox lock v3 binds media/physical bytes and optional logical cohort without widening v1/v2",async()=>{const api=await loadLock();for(const logical of[false,true])await lockedDirectory(async(root,lock)=>{const before=structuredClone(lock);assert.equal(await api.validateSourcePrerequisiteInputs(lock,{root}),true);assert.deepEqual(lock,before);for(const kind of['source-prerequisite-input-lock-v1','source-prerequisite-input-lock-v2'])await assert.rejects(api.validateSourcePrerequisiteInputs({...lock,kind},{root}),/fields/);for(const key of['media','physical','marker']){const candidate=structuredClone(lock);if(key==='media')candidate.directories=candidate.directories.filter(d=>d.path!=='build/field-skybox-media');if(key==='physical')candidate.files=candidate.files.filter(f=>f.path!=='build/runtime/game/synthetic-source');if(key==='marker')candidate.skyboxPresentation='unknown';await assert.rejects(api.validateSourcePrerequisiteInputs(candidate,{root}),/Skybox|snapshot directory|original effect source binding/);}await writeFile(resolve(root,'build/field-skybox-media/media.json'),'Changed after candidate build');await assert.rejects(api.validateSourcePrerequisiteInputs(lock,{root}),/changed/);},logical,true);});
+
+test("v6 Sprite media requires two complete source generations, physical PNG/metadata and the exact comparison owner",async()=>{
+  const api=await loadLock();await lockedDirectory(async(root,lock)=>{
+    const before=structuredClone(lock);assert.equal(await api.validateSourcePrerequisiteInputs(lock,{root}),true);assert.deepEqual(lock,before);
+    for(const kind of ['source-prerequisite-input-lock-v1','source-prerequisite-input-lock-v2','source-prerequisite-input-lock-v3','source-prerequisite-input-lock-v4','source-prerequisite-input-lock-v5'])
+      await assert.rejects(api.validateSourcePrerequisiteInputs({...lock,kind},{root}),/fields|Skybox|board transform|parking/);
+    for(const path of ['build/world-media/media.json','build/source-sprite-media/media.json','build/source-sprite-media/sprite.png',
+      'build/runtime/game/synthetic-source',resolve(process.cwd(),'scripts/source-sprite-media-evidence.mjs')]){
+      const changed=structuredClone(lock);changed.files=changed.files.filter(f=>f.path!==path);
+      await assert.rejects(api.validateSourcePrerequisiteInputs(changed,{root}),/Incomplete|comparison owner/);
+    }
+    for(const key of ['input','baselineInput'] as const){const changed=structuredClone(lock);changed.sourceSpriteMedia![key]='build/content-releases/forged';
+      await assert.rejects(api.validateSourcePrerequisiteInputs(changed,{root}),/outside public/);}
+    const unknown=structuredClone(lock);unknown.sourceSpriteMedia!.kind='self-reported-provider';await assert.rejects(api.validateSourcePrerequisiteInputs(unknown,{root}),/Unknown source Sprite/);
+  },false,false,true);
+  for(const path of ['build/world-media/media.json','build/source-sprite-media/sprite.png'])await lockedDirectory(async(root,lock)=>{
+    await writeFile(resolve(root,path),'Changed generation bytes');await assert.rejects(api.validateSourcePrerequisiteInputs(lock,{root}),/changed/);
+  },false,false,true);
+});

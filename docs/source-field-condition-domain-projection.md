@@ -1,0 +1,15 @@
+# Battle and Field condition domains
+
+`compileBattleConditionCatalog` and `compileFieldConditionCatalog` admit separate capabilities. A Battle lifecycle does not grant an active Field behavior. Field master definitions retain every condition reference; `FieldConditions.validateActive` independently requires a supported Field provider for each active condition.
+
+The Field compiler classifies every Battle behavior kind through a closed TypeScript record. The thirteen previously excluded Battle kinds remain excluded. The existing Poison, Blind, Magitek and passive Field projections retain their exact behavior. A new Battle kind requires an explicit Field-domain decision instead of inheriting `none` from a generic fallback.
+
+Mineralization remains Battle only. The Field projection positively checks its exact source identity and definition, recovered lifecycle, Web phase metadata and resistance group identity before retaining the master definition and source row without creating an active Field behavior. Complete renderer, effect, icon, sound and resistance dependencies remain the responsibility of the existing Battle compiler and its complete verified source-read ledger. The narrow Field reader does not recompile Battle assets.
+
+This change does not implement Field Mineralization. It does not map the condition to `none`, zero player HP, or remove the condition at Battle end. A Field active list containing Mineralization still fails the original `FieldConditions.validateActive` gate.
+
+`GameState` validates Field activation while preparing the existing return transaction, after constructing and validating the candidate owned state and before publishing it. It uses exactly `activePartyMembers(next.party)`, the same moving-party selection as a Field step. An unused roster member keeps its condition reference and does not require an active Field provider at this boundary. If content has no Field condition capability, the existing optional boundary remains unchanged.
+
+Victory, escape and a saved forced return validate the actual returned resources. A forced return without saving validates the retained owned snapshot, because Battle resources are discarded by that existing policy. Failure publishes no reward, receipt, owned state or lease change and leaves the original Battle available for retry. There is still one `GameState` owner.
+
+Validation covers positive source binding, malformed source/metadata rejection, the unchanged Field whitelist, actual scripted application and cure, failed/repeated victory and saved-forced return, media retry, forced no-save resource conservation and unused-roster references. Complete raw `compileGameCatalogModules` is checked independently of World production: the unmodified before reproduces the Field-domain error, while the candidate preserves all 1530 ability results and all 3304 source programs/186003 instructions. Catalog compilation and these synthetic lifecycle tests do not certify a completed source campaign or original-game dynamic parity.

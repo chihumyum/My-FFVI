@@ -29,6 +29,7 @@ import { compileFieldPuppetScriptContext } from "./field-puppet-actors.js";
 import { compileFieldEntityPoseBlockers } from "./field-initial-npc-pose.js";
 import { fieldCollisionRange } from "../core/collision.js";
 import { tableId } from "./table-id.js";
+import { assertWorldMediaAdapter, SPRITE_LOGICAL_CANVAS, validateSpriteLogicalCanvas } from "./sprite-logical-canvas.js";
 import { loadMinimapMedia } from "./map-ui.js";
 import { loadAudioMedia } from "./audio.js";
 import { compileMapPartyEntry } from "./map-party-entry.js";
@@ -111,7 +112,7 @@ export function compileSourceWalkEncounterDependencies(reader: { row(table: stri
 /** Individual unsupported animations stay absent and diagnosed; usable poses retain the same source. */
 export function compileWorldCharacter(
   raw: unknown,
-  verify: (file: string, sha256: string) => void,
+  verify: (file: string, sha256: string) => Buffer | void,
   nativeJson?: NativeAnimationJsonImport,
 ) {
   const c = record(raw),
@@ -121,8 +122,8 @@ export function compileWorldCharacter(
     animations: Character["animations"] = {},
     issues: ContentIssue[] = [], imports: FieldAnimationImportObservation[] = [];
   for (const [name, value] of Object.entries(record(c.sprites))) {
-    const sprite = record(value) as Sprite;
-    verify(text(sprite.file), text(sprite.sha256));
+    const rawSprite = record(value), sprite = rawSprite as Sprite;
+    const bytes = verify(text(sprite.file), text(sprite.sha256));
     if (
       !Number.isInteger(sprite.width) ||
       !Number.isInteger(sprite.height) ||
@@ -132,6 +133,11 @@ export function compileWorldCharacter(
       sprite.pivot.some((v) => !Number.isFinite(v))
     )
       throw new Error("Invalid source sprite bounds");
+    if (rawSprite.representation === SPRITE_LOGICAL_CANVAS) {
+      if (!Buffer.isBuffer(bytes)) throw new Error("Source Sprite projection requires verified PNG bytes");
+      validateSpriteLogicalCanvas(rawSprite.logicalCanvas, sprite, bytes);
+    } else if (rawSprite.logicalCanvas !== undefined || rawSprite.representation !== undefined && rawSprite.representation !== "source-texture-full-rect")
+      throw new Error("Unknown source Sprite representation");
     sprites[name] = { ...sprite, file: "/world-media/" + sprite.file };
   }
   if (record(animation.data).shader_type !== 0) {
@@ -189,9 +195,9 @@ export function compileWorldCharacter(
   return { character: { sprites, animations, source }, issues, imports };
 }
 
-export async function compileWorld(root: string) {
+export async function compileWorld(root: string, options: { mediaDirectory?: string } = {}) {
   const corpus = await loadCorpus(root),
-    files = await readSnapshot(root + "/build/world-media");
+    files = await readSnapshot(options.mediaDirectory ?? root + "/build/world-media");
   const scriptAnimations = compileSourceScriptAnimations({...corpus,manifest:{parentSourceSetHash:text(corpus.manifest.parentSourceSetHash),sources:corpus.manifest.sources}});
   const systemSource = await loadSystemSource(root, text(corpus.manifest.parentSourceSetHash));
   const backgroundMedia = await loadFieldBackgroundMedia(root, corpus.sourceSetHash);
@@ -246,11 +252,11 @@ export async function compileWorld(root: string) {
   );
   if (
     media.formatVersion !== 1 ||
-    media.adapterVersion !== "world-media-0.1.0" ||
     media.parentSourceSetHash !== corpus.sourceSetHash ||
     hash(media.sources) !== media.sourceSetHash
   )
     throw new Error("World media source mismatch");
+  assertWorldMediaAdapter(media);
   const sources = new Map(
     array(corpus.manifest.sources)
       .map(record)
@@ -260,8 +266,10 @@ export async function compileWorld(root: string) {
     if (sources.get(s.file) !== s.sha256)
       throw new Error("Foreign media source");
   const verify = (file: string, digest: string) => {
-    if (sha(snapshotFile(files, file)) !== digest)
+    const bytes = snapshotFile(files, file);
+    if (sha(bytes) !== digest)
       throw new Error("Changed world media: " + file);
+    return bytes;
   };
   const sourceFiles = array(corpus.manifest.sources).map(record)
     .map((s) => ({ file: text(s.file), sha256: text(s.sha256) }));

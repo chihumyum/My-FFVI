@@ -1,4 +1,6 @@
 import { hasSlipBehavior } from "./condition-slip.js";
+import { compileSourceEnemyVariableAction } from './enemy-variable-action.js';
+import { compileMineralizationCondition, hasMineralizationLifecycle } from './condition-mineralization.js';
 import {compileBaseHpMagic} from './base-hp-magic.js';
 import {compileLevitateCondition} from './condition-levitate.js';
 import {isSourceEnemyMagicProgram} from '../core/enemy-magic-carrier.js';
@@ -168,6 +170,13 @@ export function compileDevelopmentAbility(
     "fixed 10 ms stepping, 400/900 ms action presentation and UI time-scale/settings remain provisional",
   ];
   const effects: AbilityEffect[] = [];
+  let enemyVariableAction: AbilityDefinition['enemyVariableAction'];
+  try {
+    const variable = compileSourceEnemyVariableAction(reader, program);
+    if (variable) { enemyVariableAction = variable.value;
+      for (const row of variable.sources) if (!sources.some(old => old.source.assetPath === row.source.assetPath && old.source.rowId === row.source.rowId)) sources.push(row);
+    }
+  } catch (error) { blockers.push(error instanceof Error ? error.message : String(error)); }
   let resourceAbsorption=false;
   if(program.functions.some(fn=>[13,69,77].includes(fn.type))){
     try {const compiled=compileResourceAbsorption(reader,program);effects.push(...compiled.effects);resourceAbsorption=true;
@@ -233,6 +242,19 @@ export function compileDevelopmentAbility(
       try { const compiled=compileBaseHpMagic(reader,program,fn); effects.push(compiled.effect);
         for(const row of compiled.sources)if(!sources.some(old=>old.source.assetPath===row.source.assetPath&&old.source.rowId===row.source.rowId))sources.push(row);
       }catch(error){blockers.push(error instanceof Error?error.message:String(error));}
+    } else if (fn.type === 9 && [0, 1].includes(v2) && v3 === 0 && hasMineralizationLifecycle(reader.row('condition.csv', v1))) {
+      try {
+      const row = reader.row('condition.csv', v1), groupId = int(row.values.condition_group_id),
+        ids = [v1, ...(groupId === 0 ? [] : reader.group('condition_group.csv', 'group_id', groupId).map(source => int(source.values.condition_id)))];
+      const definitions = [...new Set(ids)].map(id => { const source = reader.row('condition.csv', id), values = source.values;
+        return { id, type: int(values.condition_type), overlapped: int(values.overlapped_type) === 1, eraseGroupId: int(values.erase_condition_group_id) }; });
+      const compiled = compileMineralizationCondition(reader, row, key => key, definitions);
+      if (!compiled.behavior) blockers.push(...compiled.blockers);
+      else { effects.push({ slot: fn.slot, kind: 'add-condition', conditionId: v1, fixedHit: v2 === 1,
+        accuracy: program.contentFlags.includes(1) ? 255 : program.rules.accuracy_rate! });
+        for (const source of compiled.sources) if (!sources.some(old => old.source.assetPath === source.source.assetPath && old.source.rowId === source.source.rowId)) sources.push(source);
+      }
+      } catch (error) { blockers.push('Mineralization lifecycle dependency: ' + (error instanceof Error ? error.message : String(error))); }
     } else if (fn.type === 9 && [0,1].includes(v2) && v3===0 && hasUnableFightBehavior(reader.row('condition.csv',v1))) {
       effects.push({slot:fn.slot,kind:'add-condition',conditionId:v1,fixedHit:v2===1,
         accuracy:program.contentFlags.includes(1)?255:program.rules.accuracy_rate!});
@@ -323,11 +345,14 @@ export function compileDevelopmentAbility(
         calculation: v1 === 1 ? "fixed" : "magic",
       });
     } else if (fn.type === 19) {
-      try { const compiled = compileNonDamagingAbility(reader, program, fn);
+      try { const compiled = compileNonDamagingAbility(reader, program, fn, enemyVariableAction);
         effects.push(compiled.effect); nonDamagingPresentation = compiled.presentation;
         for (const row of compiled.sources) if (!sources.some(existing => existing.source.assetPath === row.source.assetPath &&
           existing.source.rowId === row.source.rowId)) sources.push(row);
       } catch (error) { blockers.push(error instanceof Error ? error.message : String(error)); }
+    } else if (fn.type === 23 && enemyVariableAction && fn.slot === enemyVariableAction.slot) {
+      // This source HitCalc is executed once by the whole action owner. Its
+      // separate attacker dictionary is not another target numeric effect.
     } else if (
       fn.type === 23 &&
       zero(fn.values) &&
@@ -389,7 +414,7 @@ export function compileDevelopmentAbility(
     zero(program.process.values.slice(1))
   ) {
     multiplyPercent = program.process.values[0];
-  } else if (program.process.key !== "None" || !zero(program.process.values)) {
+  } else if (!enemyVariableAction && (program.process.key !== "None" || !zero(program.process.values))) {
     blockers.push(
       `unresolved process ${program.process.key}(${program.process.values.join(",")})`,
     );
@@ -659,6 +684,7 @@ export function compileDevelopmentAbility(
     ...(nonDamagingPresentation ? { nonDamagingPresentation } : {}),
     ...(conditionRecoveryHit ? { conditionRecoveryHit } : {}),
     ...(ordinaryConditionPresentation ? {ordinaryConditionPresentation} : {}),
+    ...(enemyVariableAction ? { enemyVariableAction } : {}),
     presentation: !plan
       ? "unsupported"
       : nonDamagingOnly||resourceAbsorption||ordinaryConditionSupport||baseHpMagicSupport

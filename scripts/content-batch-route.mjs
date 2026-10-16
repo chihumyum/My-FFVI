@@ -122,9 +122,11 @@ function declaredBattleInput(battle, program, refs, actor, channel) {
 }
 
 export async function runContentBatchRoute({ root, compiled = "dist", plan: suppliedPlan, routeId, repository, runtimeHash,
-  captureFinalState = false, continuation = null, captureSourceStory = false }) {
+  captureFinalState = false, continuation = null, captureSourceStory = false, captureExplorationFrontier = false }) {
   assert.equal(typeof captureFinalState, "boolean", "Final state capture must be an explicit boolean");
   assert.equal(typeof captureSourceStory, "boolean", "Source story capture must be explicit");
+  assert.equal(typeof captureExplorationFrontier, "boolean", "Exploration must be explicit");
+  assert.ok(!captureExplorationFrontier || captureSourceStory && captureFinalState, "Exploration requires complete existing owner evidence");
   // A continuation is independently identified evidence. It must never borrow
   // the new-game lane or be admitted as a route started from initialization.
   const resumed = continuation === null ? null : structuredClone(continuation);
@@ -171,6 +173,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
         : "pause-menu readiness only; no undeclared menu mutation"], boundary: null,
     ...(extended ? { program } : {}) };
   const trace = [], flow = new GameFlow();
+  let explorationFrontier = null;
   const story = {kind:"source-story-route-execution-v1", fields:[], candidateAttempts:[], checkpointRelays:[], overflow:false};
   const storyFields = new WeakMap(), candidateFields = new WeakMap();
   const observeStory = () => {
@@ -567,12 +570,23 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
             }
           }
         }
+      } else if (captureExplorationFrontier && game.currentCharacterNaming) {
+        const request=game.currentCharacterNaming;
+        explorationFrontier={kind:'source-character-naming',stage:request.stage,model:structuredClone(request.model)};
+        receipt.boundary={kind:'source-ui-input-required',request:explorationFrontier};break;
+      } else if (captureExplorationFrontier && game.currentSourcePartySelection) {
+        explorationFrontier={kind:'source-party-selection',model:structuredClone(game.currentSourcePartySelection.model)};
+        receipt.boundary={kind:'source-ui-input-required',request:explorationFrontier};break;
       } else if (field.choice) {
         const answer = route.choiceAnswers[answerIndex++];
-        if (answer === undefined) { receipt.boundary = { kind: "missing-choice-input", requestId: field.choice.id }; break; }
+        if (answer === undefined) {
+          if(captureExplorationFrontier)explorationFrontier={kind:'choice',options:field.choice.options.map(option=>({key:option.key})),answerIndex:answerIndex-1};
+          receipt.boundary = { kind: "missing-choice-input", requestId: field.choice.id }; break;
+        }
         assert.equal(flow.choose(field.choice.id, answer), true);
       } else if (field.dialogue) {
         const message = field.dialogue;
+        if(message.manual && field.time<message.manual.availableAt){tick();continue;}
         trace.push({ kind: "message-confirm", mapId: receipt.finalMapId, taskId: message.task,
           key: message.key, speaker: message.speaker, text: message.text,
           documentHash: await contentDigest({ key: message.key, speaker: message.speaker, text: message.text }) });
@@ -676,6 +690,15 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
           if (!accepted) { receipt.boundary = { kind: "rejected-player-input", inputIndex, input }; break; }
           completeInput(input);
         } else {
+          if(captureExplorationFrontier){
+            explorationFrontier={kind:'stable',mapId:receipt.finalMapId,player:{...position(field.player),direction:field.player.direction},
+              inputs:[{kind:'move',direction:'up'},{kind:'move',direction:'right'},{kind:'move',direction:'down'},{kind:'move',direction:'left'},{kind:'confirm'}]};
+            if(!await saveRestore(true))break;
+            receipt.saveRestored=true;
+            receipt.boundary={kind:'exploration-stable-frontier'};
+            // A resumable inspection frontier is deliberately not a completed route.
+            break;
+          }
           const missingMaps = route.requiredMapIds.filter(id => !receipt.visitedMapIds.includes(id));
           const missingEncounters = route.requiredEncounterIds.filter(id => !receipt.completedEncounterIds.includes(id));
           if (receipt.finalMapId !== route.expectedMapId || missingMaps.length || missingEncounters.length || answerIndex !== route.choiceAnswers.length) {
@@ -713,7 +736,7 @@ export async function runContentBatchRoute({ root, compiled = "dist", plan: supp
     receipt.checkpointReady = current().checkpointReady;
   }
   receipt.completedEncounterIds = [...new Set(receipt.completedEncounterIds)];
-  return { ...(captureSourceStory ? {sourceStory:story} : {}), receipt, trace, execution, elapsedMs: ticks * 10, commands, checkpointHash,
+  return { ...(captureExplorationFrontier ? {explorationFrontier} : {}), ...(captureSourceStory ? {sourceStory:story} : {}), receipt, trace, execution, elapsedMs: ticks * 10, commands, checkpointHash,
     ...(captureFinalState ? { finalState: structuredClone({ initialOwned, firstStableCheckpoint,
       finalOwned: flow.hasSession ? current().state.snapshot() : null,
       checkpoint: flow.hasSession && current().checkpointReady ? current().checkpoint() : null }) } : {}) };

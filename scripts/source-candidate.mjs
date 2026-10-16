@@ -1,10 +1,11 @@
+import {LEGACY_SOURCE_COMPATIBILITY,FRESH_SOURCE_PRODUCTS,FRESH_SOURCE_INPUT_LOCK,FRESH_SOURCE_PACKAGE_NAMESPACE,sourceProductionMode,sourceInputLockKind} from './source-production-mode.mjs';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runtimeDigest } from './runtime-digest.mjs';
-import { compileSourcePrerequisites, validateSourcePrerequisiteInputs } from './compile-source-prerequisites.mjs';
+import { compileSourcePrerequisites, validateSourcePrerequisiteInputs, sourceSpriteMediaInput, sourceSpriteMediaCliInput } from './compile-source-prerequisites.mjs';
 import { linkSourcePrerequisites } from './link-source-prerequisites.mjs';
 import { webSourceFrameworkInputs } from './source-web-framework-inputs.mjs';
 import { createSourceCandidateBoardByteValidator } from './source-candidate-board-validation.mjs';
@@ -19,9 +20,10 @@ async function directoryPolicyInput(root,expected){
 export function parseSourceCandidateOptions(args) {
     assert.equal(args.length % 2, 0, 'Expected option/value pairs'); const result = {};
     for (let i = 0; i < args.length; i += 2) {
-        assert.ok(['--root', '--compiled-dir', '--output'].includes(args[i]) && args[i + 1] && !args[i + 1].startsWith('--'), 'Unknown or missing option value');
+        assert.ok(['--root', '--runtime-root', '--compiled-dir', '--output', '--strict-world-cache', '--source-sprite-media', '--baseline-sprite-media'].includes(args[i]) && args[i + 1] && !args[i + 1].startsWith('--'), 'Unknown or missing option value');
         assert.equal(result[args[i]], undefined, 'Duplicate options'); result[args[i]] = args[i + 1];
     }
+    sourceSpriteMediaCliInput(result,resolve(result['--root']??resolve(import.meta.dirname,'..')));
     return result;
 }
 function safeUrl(url) {
@@ -29,6 +31,9 @@ function safeUrl(url) {
 }
 export function validateSourceCandidateReport(report, { runtimeSha256, inputBytes, legacyKind } = {}) {
     assert.ok(report && (report.kind === SHARED_SOURCE_CANDIDATE || report.kind === legacyKind) && KINDS.includes(report.kind), 'Unsupported source candidate kind');
+    sourceProductionMode(report.productMode);
+    if(report.productMode===FRESH_SOURCE_PRODUCTS){assert.equal(report.kind,SHARED_SOURCE_CANDIDATE);assert(report.frameworkBattleDirectory,'Fresh whole source requires the complete Battle directory');assert.equal(report.producer?.productMode,FRESH_SOURCE_PRODUCTS,'Fresh candidate producer mode differs');assert.equal(report.link?.productMode,FRESH_SOURCE_PRODUCTS);assert.equal(report.link?.packageNamespace,FRESH_SOURCE_PACKAGE_NAMESPACE,'Fresh candidate namespace differs');assert(inputBytes,'Fresh source candidate requires its own raw input lock');assert.equal(JSON.parse(inputBytes).kind,FRESH_SOURCE_INPUT_LOCK,'Fresh source receipt cannot upgrade an old lock');assert(report.producerPaths&&Object.keys(report.producerPaths).sort().join(',')==='compiledDir,runtimeRoot,sourceRoot','Fresh candidate requires exact producer paths');for(const path of Object.values(report.producerPaths))assert(typeof path==='string'&&isAbsolute(path),'Invalid fresh producer path');}
+    else if(inputBytes)assert.notEqual(JSON.parse(inputBytes).kind,FRESH_SOURCE_INPUT_LOCK,'Legacy receipt cannot smuggle fresh mode');
     assert.equal(report.status, 'complete'); assert.equal(report.published, false, 'Source candidate cannot be a public cache');
     assert.ok(/^[a-f0-9]{64}$/.test(report.runtimeSha256));
     assert.equal(report.runtimeSha256, runtimeSha256, 'Candidate must come from this exact compiled/tool/app runtime');
@@ -84,6 +89,7 @@ export function validateSourceCandidateCatalogs(report, index, source, framework
         for (const id of ids) {
             assert.ok(/^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id)), 'Invalid candidate map ID');
             const ref = world.maps[id]; safeUrl(ref.url);
+            if(report.productMode===FRESH_SOURCE_PRODUCTS)assert.equal(ref.url,FRESH_SOURCE_PACKAGE_NAMESPACE+'/'+role+'/maps/'+id+'.json','Fresh map namespace differs from the captured producer mode');
             assert.ok(/^[a-f0-9]{64}$/.test(ref.contentHash), 'Invalid candidate indexed map hash');
             const row = index.get(ref.url); assert.ok(row, 'Missing complete candidate map dependency ' + ref.url);
             assert.equal(row.contentHash, ref.contentHash, 'Candidate indexed map content hash mismatch: ' + ref.url);
@@ -110,7 +116,7 @@ export function validateSourceCandidateMapObject(value, binding) {
  * tuple. Old locks cannot acquire it through an edited candidate/save body. */
 export function validateSourceCandidateBoardTransforms(value,lock,{hash,canonical}){
     const marker=value.developmentProfile?.fieldEffectTransforms,policy=value.fieldEffects?.boardTransforms;
-    if(!["source-prerequisite-input-lock-v4","source-prerequisite-input-lock-v5"].includes(lock.kind)){
+    if(!["source-prerequisite-input-lock-v4","source-prerequisite-input-lock-v5"].includes(sourceInputLockKind(lock))){
         assert.equal(marker,undefined,"Legacy candidate lock cannot grant board transforms");assert.equal(policy,undefined,"Legacy candidate lock cannot carry board transform metadata");return;
     }
     if(value.developmentProfile===undefined){assert.equal(policy,undefined,"Strict source cannot carry board transform policy");return;}
@@ -124,7 +130,7 @@ export function validateSourceCandidateBoardTransforms(value,lock,{hash,canonica
 
 export function validateSourceCandidateParkingUpload(value,lock,{hash}){
  const marker=value.developmentProfile?.transportationParkingUpload;
- if(lock.kind!=="source-prerequisite-input-lock-v5"){assert.equal(marker,undefined,"Legacy candidate lock cannot grant parking upload");return;}
+ if(sourceInputLockKind(lock)!=="source-prerequisite-input-lock-v5"){assert.equal(marker,undefined,"Legacy candidate lock cannot grant parking upload");return;}
  if(value.developmentProfile===undefined)return;
  if(!["world-development","world-map-development","source-new-game-content-v1"].includes(value.kind))return;
  assert.equal(marker,lock.transportationParkingUpload,"Candidate parking marker differs from v5 lock");
@@ -150,6 +156,13 @@ export async function openSourceCandidate({ root, runtimeRoot, compiledDir, cand
     const runtimeSha256 = await runtimeDigest(runtimeRoot, compiledDir), reportBytes = await readFile(resolve(candidateDir, 'report.json')),
         inputBytes = await readFile(resolve(candidateDir, 'inputs.json')), report = JSON.parse(reportBytes), lock = JSON.parse(inputBytes),
         index = validateSourceCandidateReport(report, { runtimeSha256, inputBytes, legacyKind });
+    async function validateFreshPaths(){if(report.productMode===FRESH_SOURCE_PRODUCTS){
+        assert.deepEqual(report.producerPaths,{sourceRoot:await realpath(root),runtimeRoot:await realpath(runtimeRoot),compiledDir:await realpath(compiledDir)},'Fresh candidate source/runtime/module paths differ');
+        assert.equal(lock.packageNamespace,report.link.packageNamespace);
+        assert.equal(lock.compiledDir,compiledDir,'Fresh candidate cannot borrow a foreign compiled input lock');
+        assert.equal(report.producer.compilerDigest,lock.compilerDigest);assert.equal(report.producer.sourceSetHash,lock.sourceSetHash);assert.equal(report.producer.parentSourceSetHash,lock.parentSourceSetHash);
+    }}
+    await validateFreshPaths();
     if(report.frameworkBattleDirectory)await directoryPolicyInput(root,report.frameworkBattleDirectory.input);
     await validateSourcePrerequisiteInputs(lock, { root });
     if(report.frameworkBattleDirectory)assert.deepEqual(lock.files.find(row=>row.path===directoryPolicyPath),report.frameworkBattleDirectory.input,'Whole directory policy is outside the candidate input fence');
@@ -182,6 +195,7 @@ export async function openSourceCandidate({ root, runtimeRoot, compiledDir, cand
         assert.equal(sha(await readFile(resolve(candidateDir, 'report.json'))), sha(reportBytes), 'Candidate receipt changed');
         assert.equal(sha(await readFile(resolve(candidateDir, 'inputs.json'))), sha(inputBytes), 'Candidate input lock changed');
         assert.equal(await runtimeDigest(runtimeRoot, compiledDir), runtimeSha256, 'Runtime changed during candidate consumption');
+        await validateFreshPaths();
         if(report.frameworkBattleDirectory)await directoryPolicyInput(root,report.frameworkBattleDirectory.input);
         await validateSourcePrerequisiteInputs(lock, { root });
         for (const row of index.values()) {const bytes=await objectBytes(row);boardValidation.parseAndValidate(bytes);}
@@ -190,18 +204,22 @@ export async function openSourceCandidate({ root, runtimeRoot, compiledDir, cand
 }
 /** One full strict/framework compile and prerequisite link. The shared receipt
  * describes compilation provenance only; it awards no family/story readiness. */
-export async function compileSourceCandidate({ root, runtimeRoot, compiledDir, output, kind = SHARED_SOURCE_CANDIDATE, wholeBattleDirectory = kind === SHARED_SOURCE_CANDIDATE }) {
+export async function compileSourceCandidate({ root, runtimeRoot, compiledDir, output, kind = SHARED_SOURCE_CANDIDATE, wholeBattleDirectory = kind === SHARED_SOURCE_CANDIDATE, productMode=LEGACY_SOURCE_COMPATIBILITY, strictWorldCache, sourceSpriteMedia, ...unknownOptions }) {
+    productMode=sourceProductionMode(productMode);
+    if(productMode===FRESH_SOURCE_PRODUCTS)assert.equal(Object.keys(unknownOptions).length,0,'Unknown fresh candidate options');
+    if(productMode===FRESH_SOURCE_PRODUCTS)assert(kind===SHARED_SOURCE_CANDIDATE&&wholeBattleDirectory===true,"Fresh whole-source products require the complete directory");
     assert.equal(typeof wholeBattleDirectory,'boolean','Whole source battle directory requires an explicit boolean');
-    assert.ok(KINDS.includes(kind)); root = resolve(root); compiledDir = resolve(root, compiledDir); output = resolve(root, output);
+    assert.ok(KINDS.includes(kind)); root = resolve(root); runtimeRoot=resolve(runtimeRoot??root); compiledDir = resolve(root, compiledDir); output = resolve(root, output);
     const rel = relative(root, output);
     assert.ok(rel && !rel.startsWith('..') && !isAbsolute(rel) && rel.startsWith('build' + sep), 'Private candidate output must be inside root/build');
     assert.ok(!/^build\/(?:content-packages|content-releases|corpus|import|field-effect-media)(?:\/|$)/.test(rel.split(sep).join('/')), 'Candidate cannot overwrite public/raw input directories');
+    const spriteMediaDeclaration=sourceSpriteMediaInput(sourceSpriteMedia,root);
     const runtimeSha256 = await runtimeDigest(runtimeRoot, compiledDir), started = Date.now();
     const directoryInput=wholeBattleDirectory?await directoryPolicyInput(root):null;
-    const result = await compileSourcePrerequisites({ root, compiledDir, ...webSourceFrameworkInputs() });
+    const result = await compileSourcePrerequisites({ root, compiledDir, ...webSourceFrameworkInputs(),productMode,strictWorldCache,sourceSpriteMedia:spriteMediaDeclaration });
     if(directoryInput){assert(!result.inputs.files.some(row=>row.path===directoryPolicyPath));result.inputs.files.push(directoryInput.record);result.inputs.files.sort((a,b)=>a.path.localeCompare(b.path));}
     console.log('pure source prerequisite compiled');
-    const linked = await linkSourcePrerequisites({ root, compiledDir, payloads: result.payloads, frameworkOptions: result.frameworkOptions });
+    const linked = await linkSourcePrerequisites({ root, compiledDir, payloads: result.payloads, frameworkOptions: result.frameworkOptions,productMode });
     let frameworkBattleDirectory;
     if(directoryInput){
         const {compileSourceBattleDirectory}=await import('./source-battle-directory.mjs'),{bindFrameworkSourceBattleDirectory}=await import('./framework-source-battle-binding.mjs');
@@ -226,7 +244,7 @@ export async function compileSourceCandidate({ root, runtimeRoot, compiledDir, o
         objects.push({ url, sha256: sha(bytes), bytes: Buffer.byteLength(bytes), ...(value.contentHash ? { contentHash: value.contentHash } : {}) });
     }
     const inputBytes = JSON.stringify(result.inputs, null, 2) + '\n';
-    const report = { kind, status: 'complete', runtimeSha256, producer: result.report, link: linked.report,
+    const report = { kind, status: 'complete', productMode,...(productMode===FRESH_SOURCE_PRODUCTS?{producerPaths:{sourceRoot:await realpath(root),runtimeRoot:await realpath(runtimeRoot),compiledDir:await realpath(compiledDir)}}:{}),runtimeSha256, producer: result.report, link: linked.report,
         inputLock: { file: 'inputs.json', sha256: sha(inputBytes), bytes: Buffer.byteLength(inputBytes) }, objects,
         elapsedMs: Date.now() - started, pureCompilations: 1, prerequisiteLinks: 1, published: false, countsAreStoryReachability: false, ...(frameworkBattleDirectory?{frameworkBattleDirectory}:{}) };
     const index = validateSourceCandidateReport(report, { runtimeSha256, inputBytes: Buffer.from(inputBytes), legacyKind: kind });
@@ -244,8 +262,12 @@ export async function compileSourceCandidate({ root, runtimeRoot, compiledDir, o
     try { await rename(staging, output); } catch (error) { if (previous) await rename(previous, output); throw error; }
     return report;
 }
-export async function sourceCandidateCli({ args = process.argv.slice(2), runtimeRoot = resolve(import.meta.dirname, '..'), kind, defaultOutput = 'build/source-candidate' } = {}) {
+export async function compileFreshSourceCandidate(options){
+    assert(options&&!Object.hasOwn(options,'productMode'),'Fresh candidate fixes its production mode');
+    return compileSourceCandidate({...options,kind:SHARED_SOURCE_CANDIDATE,wholeBattleDirectory:true,productMode:FRESH_SOURCE_PRODUCTS});
+}
+export async function sourceCandidateCli({ args = process.argv.slice(2), runtimeRoot = resolve(import.meta.dirname, '..'), kind, defaultOutput = 'build/source-candidate',productMode=LEGACY_SOURCE_COMPATIBILITY } = {}) {
     const options = parseSourceCandidateOptions(args), root = resolve(options['--root'] ?? runtimeRoot),
-        report = await compileSourceCandidate({ root, runtimeRoot, compiledDir: options['--compiled-dir'] ?? 'dist', output: options['--output'] ?? defaultOutput, ...(kind ? { kind } : {}) });
+        report = await compileSourceCandidate({ root, runtimeRoot:resolve(options['--runtime-root']??runtimeRoot), compiledDir: options['--compiled-dir'] ?? 'dist', output: options['--output'] ?? defaultOutput, productMode,sourceSpriteMedia:sourceSpriteMediaCliInput(options,root),...(options['--strict-world-cache']?{strictWorldCache:{kind:'strict-source-world-stage-cache-v1',directory:options['--strict-world-cache']}}:{}),...(kind ? { kind } : {}) });
     console.log(JSON.stringify({ objects: report.objects.length, strict: report.producer.strict, framework: report.link.frameworkWorldHash, published: false, pureCompilations: 1 }));
 }

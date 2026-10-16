@@ -46,7 +46,8 @@ export function projectFieldWaterLayers(map:{layers:FieldContent["map"]["layers"
   validateFieldWaterCatalog(water);if(water.unresolved.length)throw Error(water.unresolved.join("; "));
   return[...structuredClone(map.layers.filter(l=>l.sourceGroup!=="WaterGroup")),...water.layers.map(l=>({name:l.name,sourceGroup:"WaterGroup",width:l.width,height:l.height,data:[...l.data],opacity:l.visible?l.opacity:0}))];
 }
-export function fieldMapTransformsBinding(content:FieldContent,policy:WebFieldMapTransforms|undefined):string|null{
+export type FieldMapTransformsBindingInput = Pick<FieldContent,"sourceSetHash"|"parentSourceSetHash"|"contentHash"|"developmentProfile"> & {map:Pick<FieldContent["map"],"identity"|"id"|"layers"|"source"|"water">};
+export function fieldMapTransformsBinding(content:FieldMapTransformsBindingInput,policy:WebFieldMapTransforms|undefined):string|null{
   if(policy!==undefined&&policy!==WEB_FIELD_MAP_TRANSFORMS)throw Error("Unknown flat map-transform policy");
   if(policy!==WEB_FIELD_MAP_TRANSFORMS||content.developmentProfile?.mapTransforms!==WEB_FIELD_MAP_TRANSFORMS)return null;
   if(content.map.water){const water=content.map.water;validateFieldWaterCatalog(water);if(water.sourceSetHash!==content.sourceSetHash||water.parentSourceSetHash!==content.parentSourceSetHash||canonical(water.source)!==canonical(content.map.source))throw Error("Foreign map water source identity");

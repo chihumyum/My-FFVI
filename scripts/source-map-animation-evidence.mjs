@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 /** One collection-scoped reader. Both sides are reconstructed from the same
  * physical corpus and original media, never inferred from candidate metadata. */
-export function createSourceMapAnimationEvidenceReader({ root, compiledDir = 'dist' }) {
+export function createSourceMapAnimationEvidenceReader({ root, compiledDir = 'dist', mediaDirectory = resolve(root, 'build/world-media') }) {
     let context;
     const maps = new Map();
     return async (document) => {
@@ -17,7 +17,7 @@ export function createSourceMapAnimationEvidenceReader({ root, compiledDir = 'di
                 load('field-animation-import'), load('integrity'), load('content')
             ]);
             const { missingFieldPoses } = await import(pathToFileURL(resolve(root, compiledDir, 'src/core/character-media.js')).href);
-            const corpus = await loadCorpus(root), system = await loadSystemMessages(root, corpus.manifest.parentSourceSetHash, corpus.manifest.sources), mediaFiles = await readSnapshot(resolve(root, 'build/world-media')), media = JSON.parse(snapshotFile(mediaFiles, 'media.json'));
+            const corpus = await loadCorpus(root), system = await loadSystemMessages(root, corpus.manifest.parentSourceSetHash, corpus.manifest.sources), mediaFiles = await readSnapshot(mediaDirectory), media = JSON.parse(snapshotFile(mediaFiles, 'media.json'));
             assert.equal(media.parentSourceSetHash, corpus.sourceSetHash, 'Animation import media/corpus mismatch');
             assert.equal(media.formatVersion, 1);
             assert.equal(media.adapterVersion, 'world-media-0.1.0');

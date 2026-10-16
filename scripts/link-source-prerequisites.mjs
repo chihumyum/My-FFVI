@@ -1,3 +1,4 @@
+import {LEGACY_SOURCE_COMPATIBILITY,FRESH_SOURCE_PRODUCTS,FRESH_SOURCE_PACKAGE_NAMESPACE,sourceProductionMode} from './source-production-mode.mjs';
 // Contain every indexed map in the same publication as its world and entry.
 // Logical compiler input URLs remain stable; live package URLs are separate.
 import assert from 'node:assert/strict';
@@ -6,7 +7,8 @@ import {pathToFileURL} from 'node:url';
 
 const repository=resolve(import.meta.dirname,'..');
 
-export async function linkSourcePrerequisites({root=repository,compiledDir='dist',payloads,frameworkOptions={}}={}){
+export async function linkSourcePrerequisites({root=repository,compiledDir='dist',payloads,frameworkOptions={},productMode=LEGACY_SOURCE_COMPATIBILITY}={}){
+  productMode=sourceProductionMode(productMode);const packageNamespace=productMode===FRESH_SOURCE_PRODUCTS?FRESH_SOURCE_PACKAGE_NAMESPACE:'/content-packages';
   assert.ok(payloads instanceof Map,'Missing source prerequisite candidates');
   const inputs=new Map([...payloads].map(([url,value])=>[url,structuredClone(value)]));
   const api=Object.assign({},...await Promise.all(['core/content-integrity','core/game-content',
@@ -35,7 +37,7 @@ export async function linkSourcePrerequisites({root=repository,compiledDir='dist
       url:prefix+'/'+map.mapId+'.json',contentHash:map.contentHash};
     return seal(linked);
   };
-  const world=rebase(originalWorld,sourceMaps,'/content-packages/source/maps');
+  const world=rebase(originalWorld,sourceMaps,packageNamespace+'/source/maps');
   const entryMap=sourceMaps.find(map=>map.mapId===originalEntry.entry.mapId);
   assert.ok(entryMap,'Candidate source entry map is absent');
   assert.equal(entryMap.contentHash,originalEntry.mapContentHash,'Candidate entry map mismatch');
@@ -43,7 +45,7 @@ export async function linkSourcePrerequisites({root=repository,compiledDir='dist
   // Derive after linking so every development profile pins the actual source
   // world/entry body used by this collection, rather than an old build alias.
   const framework=api.compileFrameworkContent(world,sourceMaps,entry,frameworkOptions);
-  const frameworkWorld=rebase(framework.catalog,framework.maps,'/content-packages/framework/maps');
+  const frameworkWorld=rebase(framework.catalog,framework.maps,packageNamespace+'/framework/maps');
   const frameworkEntry=seal({...framework.entry,worldCatalogHash:frameworkWorld.contentHash});
   const packagePayloads=new Map();
   for(const [catalog,maps,logicalCatalog,logicalEntry,selectedEntry] of [
@@ -58,7 +60,7 @@ export async function linkSourcePrerequisites({root=repository,compiledDir='dist
       inputs.set((logicalCatalog.startsWith('/framework/')?'/framework/world/maps/':'/world/maps/')+map.mapId+'.json',map);
     }
   }
-  return {inputs,payloads:packagePayloads,report:{kind:'linked-source-prerequisites-v1',
+  return {inputs,payloads:packagePayloads,report:{kind:'linked-source-prerequisites-v1',productMode,packageNamespace,
     sourceMaps:sourceMaps.length,frameworkMaps:framework.maps.length,
     originalWorldHash:originalWorld.contentHash,linkedWorldHash:world.contentHash,
     originalEntryHash:originalEntry.contentHash,linkedEntryHash:entry.contentHash,

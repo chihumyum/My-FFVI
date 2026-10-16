@@ -15,6 +15,7 @@ import type { WorldCatalog, WorldMapContent } from "../field/world.js";
 import { assertSourceGameCatalog } from "../core/source-catalog.js";
 import { assertGameWorldMapIdentity } from "../core/game-content.js";
 import { tableId } from "./table-id.js";
+import { assertWorldMediaAdapter } from "./sprite-logical-canvas.js";
 
 export type SourceNewGameWorld = { catalog: WorldCatalog; maps: readonly WorldMapContent[] };
 export type SourceNewGameWorldFacts = {
@@ -60,20 +61,21 @@ export async function verifySourceNewGameWorld(supplied: SourceNewGameWorld,
   return value;
 }
 
-async function sourceWorldFacts(root: string, corpus: Awaited<ReturnType<typeof loadCorpus>>): Promise<SourceNewGameWorldFacts> {
+async function sourceWorldFacts(root: string, corpus: Awaited<ReturnType<typeof loadCorpus>>, mediaDirectory = root + "/build/world-media"): Promise<SourceNewGameWorldFacts> {
   // Only this small header is needed here; compileWorld already consumes the
   // complete media snapshot. Do not retain another copy of every image.
   const snapshot = z.object({ formatVersion: z.literal(1), files: z.array(z.object({ file: z.string(),
-    sha256: Hash }).strict()).min(1) }).strict().parse(JSON.parse(await readFile(root + "/build/world-media/snapshot.json", "utf8")));
+    sha256: Hash }).strict()).min(1) }).strict().parse(JSON.parse(await readFile(mediaDirectory + "/snapshot.json", "utf8")));
   const refs = snapshot.files.filter((file) => file.file === "media.json");
   if (refs.length !== 1) throw new Error("Unbound candidate world media header");
-  const bytes = await readFile(root + "/build/world-media/media.json");
+  const bytes = await readFile(mediaDirectory + "/media.json");
   if (createHash("sha256").update(bytes).digest("hex") !== refs[0]!.sha256)
     throw new Error("Changed candidate world media header");
   const media = record(JSON.parse(bytes.toString("utf8")));
-  if (media.formatVersion !== 1 || media.adapterVersion !== "world-media-0.1.0" ||
+  if (media.formatVersion !== 1 ||
       media.parentSourceSetHash !== corpus.sourceSetHash || hash(media.sources) !== media.sourceSetHash || !Array.isArray(media.sources))
     throw new Error("Candidate world media source mismatch");
+  assertWorldMediaAdapter(media);
   const sourceFiles = (corpus.manifest.sources as unknown[]).map(record);
   for (const file of media.sources.map(record))
     if (sourceFiles.filter((source) => source.file === file.file && source.sha256 === file.sha256).length !== 1)
@@ -84,7 +86,7 @@ async function sourceWorldFacts(root: string, corpus: Awaited<ReturnType<typeof 
 }
 
 export async function compileSourceNewGame(root: string, suppliedCatalog?: BattleCatalog,
-  suppliedWorld?: SourceNewGameWorld): Promise<SourceNewGameContent> {
+  suppliedWorld?: SourceNewGameWorld, options: { mediaDirectory?: string } = {}): Promise<SourceNewGameContent> {
   // Capture caller-owned candidates before any asynchronous source read.
   const candidateBattle = suppliedCatalog === undefined ? undefined : structuredClone(suppliedCatalog);
   const candidateWorld = suppliedWorld === undefined ? undefined : structuredClone(suppliedWorld);
@@ -104,7 +106,7 @@ export async function compileSourceNewGame(root: string, suppliedCatalog?: Battl
   const system = await loadSystemSource(root, world.parentSourceSetHash);
   const entry = compileNewGameFieldEntry(system.reader, battle.gameState.sourceNewGame, corpus.assets).definition;
   const verifiedWorld = candidateWorld === undefined ? undefined :
-    await verifySourceNewGameWorld(candidateWorld, await sourceWorldFacts(root, corpus));
+    await verifySourceNewGameWorld(candidateWorld, await sourceWorldFacts(root, corpus, options.mediaDirectory));
   const map = verifiedWorld === undefined
     ? await verifyContent(JSON.parse(await readFile(root + `/build/world/maps/${entry.mapId}.json`, "utf8")) as WorldMapContent,
       world.maps[String(entry.mapId)]?.contentHash)

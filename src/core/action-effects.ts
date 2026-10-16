@@ -61,6 +61,7 @@ export function projectActionTarget(
     throw new Error("Invalid action resource bounds/cost");
   conditions.validateOwner(actor.conditionIds, actor.side);
   conditions.validateOwner(target.conditionIds, target.side);
+  conditions.validateMineralizationEffects(plan.effects.map(effect => effect.kind), [actor.conditionIds, target.conditionIds]);
   let conditionIds = [...target.conditionIds];
   let effects: AbilityEffectResult[];
   let row: BattleRow | undefined;

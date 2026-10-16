@@ -2187,6 +2187,14 @@ export class GameState {
     this.validate(next);
     return { next, result };
   }
+  /** Crossing back into Field requires its independently admitted active
+   * providers for the same moving party as a foot-monitor step. References on
+   * unused roster members do not grant or require Field activation here. */
+  private validateFieldReturnConditions(data: GameStateSnapshot): void {
+    if (!this.fieldConditions) return;
+    for (const { id } of activePartyMembers(data.party))
+      this.fieldConditions.validateActive(data.roster.find(member => member.id === id)!.conditionIds);
+  }
   private prepareFieldStep(transportationId: number) {
     this.requireIdle();
     const revision = this.revision;
@@ -2965,6 +2973,7 @@ export class GameState {
     this.applySourceBattleHandoffReturn(next, lease, handoffs);
     next.completedBattles.push({ ...lease, outcome: "forced" });
     this.validate(next);
+    this.validateFieldReturnConditions(next);
     const validate = () => { if (this.active?.lease !== lease || this.revision !== revision) throw new Error("Stale forced-return transaction"); gauReturn.validate();if(this.active.contextBattle!==contextOwner||canonical(contextOwner?.partyContextExecution??null)!==contextBefore)throw new Error("Battle party context changed before forced return"); };
     const commit = () => { validate(); this.data = next; this.active = null; this.revision++; };
     return Object.assign(commit, { validate, fieldState: () => { validate(); return {
@@ -3173,6 +3182,7 @@ export class GameState {
     next.completedBattles.push({ ...lease, outcome: exit.outcome });
     if (victory && next.nativeState) next.nativeState.ownedMagic = this.observedMagic(next);
     this.validate(next);
+    this.validateFieldReturnConditions(next);
     const validate = () => {
       if (this.active?.lease !== lease || this.revision !== revision)
         throw new Error(`Stale ${victory ? "victory" : "escape"} transaction`);
