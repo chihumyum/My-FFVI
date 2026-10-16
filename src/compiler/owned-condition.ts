@@ -11,6 +11,8 @@ export function compileOwnedConditionInstruction(
   raw: unknown, tables: Record<string, unknown>,
 ): OwnedConditionEventOp {
   const instruction = record(raw), operands = record(instruction.operands);
+  if(Object.keys(operands).sort().join(",")!=="iValues,rValues,sValues")
+    throw new Error("Unsupported owned condition operand banks");
   if (instruction.type !== 1 || !["AddCondition", "RemoveCondition"].includes(String(instruction.mnemonic)))
     throw new Error("Expected source owned condition instruction");
   const values = z.array(z.unknown()).length(8).parse(operands.iValues).map(int32);
@@ -21,6 +23,7 @@ export function compileOwnedConditionInstruction(
   const command = { kind: instruction.mnemonic === "AddCondition" ? "add-condition" as const : "remove-condition" as const,
     conditionType: values[0]!, target: values[1]! };
   validateOwnedConditionCommand(command);
+  if(!Object.hasOwn(tables,'condition.csv'))throw new Error('Missing owned condition master');
   const data = z.array(z.record(z.string(), z.string())).parse(tables["condition.csv"]);
   if (command.kind === "remove-condition" && command.conditionType === 0) {
     for (const [id, type] of [[53, 607], [79, 665], [80, 666]]) {
@@ -39,12 +42,13 @@ export function compileOwnedConditionInstruction(
     return { kind: "owned-condition", command, dependencies };
   }
   const rows = data.filter((row) => tableId(row.condition_type) === command.conditionType);
-  if (command.kind === "remove-condition" && [4, 5].includes(command.conditionType)) {
+  if (command.kind === "remove-condition" && command.conditionType > 0) {
     const ids = data.map(row => tableId(row.id));
     if (new Set(ids).size !== ids.length) throw new Error("Ambiguous owned condition master identity");
     if (!rows.length) throw new Error("Missing owned condition type");
     // Retain EVERY matching source row as an identity dependency. This does
-    // not authorize its active behavior (notably source death alias100).
+    // not authorize an unknown active lifecycle, even when this instruction
+    // would delete it. The actual GameState requires a valid prior snapshot.
     const dependencies = rows.map(row => ({ table: "condition.csv", id: tableId(row.id) }));
     if (command.target > 0) {
       const characters = z.array(z.record(z.string(), z.string())).parse(tables["character_status.csv"]);

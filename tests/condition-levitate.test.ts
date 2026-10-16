@@ -171,9 +171,9 @@ test("player initial lifecycle is rejected and a same-frame later target failure
   assert.deepEqual(b.action?.results,clean.action?.results);assert.deepEqual(b.combatants,clean.combatants);
 });
 
-test("unclosed player application stays blocked in the source compiler and before actual battle publication",()=>{
+test("source application reuses the enemy lifecycle while unclosed player publication remains blocked",()=>{
   const f=levitateFixture(),ability=conditionBlindAbilityFixture();Object.assign(ability.tables,f.tables);
-  for(const id of [117,196]){ability.group.function1_value1=String(id);assert.equal(compileDevelopmentAbility(ability.reader(),801,"unclosed float").plan,null);}
+  for(const id of [117,196]){ability.group.function1_value1=String(id);assert(compileDevelopmentAbility(ability.reader(),801,"source float").plan);}
   const c=battle(),a=c.abilities[11]!;a.plan!.effects=[{kind:"add-condition",slot:1,conditionId:117,accuracy:100,fixedHit:true}];
   const b=new BattleGame(c,2);assert(b.command("a",11,"b"));b.advance(400);
   const before={units:structuredClone(b.combatants),action:structuredClone(b.action),queue:b.pendingActions,time:b.time,events:structuredClone(b.events)};

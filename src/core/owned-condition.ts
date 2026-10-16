@@ -55,7 +55,7 @@ export function validateOwnedConditionCommand(command: OwnedConditionCommand): v
   if (command.kind !== "add-condition" && command.kind !== "remove-condition")
     throw new Error("Unknown owned condition operation");
   if (int32(command.conditionType) !== 607 &&
-      !(command.kind === "remove-condition" && [0, 4, 5].includes(command.conditionType)))
+      !(command.kind === "remove-condition" && command.conditionType >= 0))
     throw new Error("Unimplemented owned condition behavior: " + command.conditionType);
   if (int32(command.target) < -1)
     throw new Error("Unknown owned character status selector: " + command.target);
@@ -90,7 +90,7 @@ export function projectOwnedCondition<T extends OwnedConditionMember>(
   definitions: readonly { id: number; type: number }[],
 ): { roster: T[]; targets: string[]; steps: { targetId: string; roster: T[] }[] } {
   validateOwnedConditionCommand(command);
-  if ([0, 4, 5].includes(command.conditionType))
+  if (command.conditionType !== 607)
     throw new Error("Condition removal requires the owned resource projection");
   const identities = new Set<number>();
   for (const definition of definitions) {
@@ -128,18 +128,18 @@ export function projectOwnedCondition<T extends OwnedConditionMember>(
 const retainedRows = Object.freeze([{ id: 53, type: 607 }, { id: 79, type: 665 }, { id: 80, type: 666 }]);
 export type OwnedConditionResourceMember = OwnedConditionMember & { hp: number; maxHp: number };
 
-/** Nonzero RemoveCondition4/5: the source checks death BEFORE enumerating
+/** Nonzero RemoveCondition: the source checks death BEFORE enumerating
  * master rows, deletes matching row IDs, then calls HP+1 at most once. There
  * is no per-master-row publication. Stable deletion of distinct IDs commutes;
  * this does not assume the native GetList<Condition> dictionary order.
  * The existing complete GameState condition catalog is the Web authority. */
-export function projectOwnedConditionRemoveLife<T extends OwnedConditionResourceMember>(
+export function projectOwnedConditionRemoveType<T extends OwnedConditionResourceMember>(
   roster: readonly T[], party: PartyState, command: OwnedConditionCommand,
   definitions: readonly { id: number; type: number }[], conditions: BattleConditions,
 ): { roster: T[]; targets: string[]; steps: { targetId: string; roster: T[] }[] } {
   validateOwnedConditionCommand(command);
-  if (command.kind !== "remove-condition" || ![4, 5].includes(command.conditionType))
-    throw new Error("Expected source RemoveCondition type4/5");
+  if (command.kind !== "remove-condition" || command.conditionType <= 0)
+    throw new Error("Expected source nonzero RemoveCondition type");
   const identities = new Set<number>();
   for (const definition of definitions) {
     if (int32(definition.id) <= 0 || int32(definition.type) < 0 || identities.has(definition.id))
@@ -155,7 +155,7 @@ export function projectOwnedConditionRemoveLife<T extends OwnedConditionResource
       throw new Error("Unknown owned condition reference");
     // Identity-only removal never launders an unknown active behavior into a
     // valid state, even when the instruction would remove that very row.
-    conditions.validateActive(member.conditionIds);
+    conditions.validateOwner(member.conditionIds,"player");
   }
   const targets = ownedConditionTargets(roster, party, command.target), next = structuredClone([...roster]);
   const steps: { targetId: string; roster: T[] }[] = [];
@@ -176,6 +176,17 @@ export function projectOwnedConditionRemoveLife<T extends OwnedConditionResource
     steps.push({ targetId, roster: structuredClone(next) });
   }
   return { roster: next, targets, steps };
+}
+
+/** Compatibility entry for the previously closed death/dying family. The
+ * common projection owns every nonzero type; this entry grants no new domain. */
+export function projectOwnedConditionRemoveLife<T extends OwnedConditionResourceMember>(
+  roster: readonly T[], party: PartyState, command: OwnedConditionCommand,
+  definitions: readonly { id: number; type: number }[], conditions: BattleConditions,
+) {
+  if(command.kind!=="remove-condition"||![4,5].includes(command.conditionType))
+    throw new Error("Expected source RemoveCondition type4/5");
+  return projectOwnedConditionRemoveType(roster,party,command,definitions,conditions);
 }
 
 /** This pure storage projection does not admit any previously unknown active

@@ -88,6 +88,20 @@ function fixture({ targets = false, host = false, width = 320, height = host ? 1
 }
 const tests = [];
 const run = (name, fn) => { fn(); tests.push(name); };
+const {FieldLayerScrolling,fieldLayerTweenSample}=await load("src/core/field-layer-scrolling.js");
+run("one finite scrolling owner moves native CPU tile sampling and keeps native actor coordinates and collision anchors",()=>{
+  const t=fixture(),image={width:32,height:16,data:new Uint8ClampedArray(32*16*4)};
+  for(let y=0;y<16;y++)for(let x=0;x<32;x++)image.data.set(x<16?[0,255,0,255]:[0,0,255,255],(y*32+x)*4);
+  t.renderer.images.set("scroll-tiles.png",image);t.renderer.sets=[{firstgid:1,tilewidth:16,tileheight:16,columns:2,image:"scroll"}];t.content.map.textures.scroll="scroll-tiles.png";
+  const layer={name:"BottomLayer",opacity:1,width:20,height:16,data:Array.from({length:320},(_,i)=>i%20%2+1)};t.content.map.layers=[layer];
+  const owner=new FieldLayerScrolling("controlled-renderer-map",["BottomLayer"]),command={kind:"tween",mask:1,layers:[0],axis:"x",from:0,to:16,seconds:1,easing:"linear"};
+  t.game.fieldTileLayerOffset=name=>owner.tileOffset(name);const before=structuredClone(t.player.native.entity.position),cells=[...layer.data];
+  t.renderer.draw(t.game);assert.deepEqual([...t.canvas.getContext().data.slice(0,4)],[0,255,0,255]);
+  owner.prepare({kind:"apply",actions:fieldLayerTweenSample(command,.5,0).actions}).commit();t.renderer.draw(t.game);
+  assert.deepEqual([...t.canvas.getContext().data.slice(8*4,8*4+4)],[0,0,255,255]);assert.deepEqual([...t.canvas.getContext().data.slice(0,4)],[0,255,0,255]);
+  owner.prepare({kind:"apply",actions:fieldLayerTweenSample(command,1,0).actions}).commit();t.renderer.draw(t.game);assert.deepEqual([...t.canvas.getContext().data.slice(0,4)],[0,0,255,255]);
+  assert.deepEqual(t.player.native.entity.position,before);assert.deepEqual(layer.data,cells);
+});
 run("real native owner renders source center anchor rather than legacy bottom-minus-two", () => {
   const t = fixture(), position = { ...t.player.native.entity.position }, entity = t.player.native.entity;
   t.renderer.draw(t.game);

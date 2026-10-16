@@ -8,7 +8,7 @@ import { loadCorpus } from "./corpus.js";
 import { canonical, hash, record } from "./content.js";
 import { bindMapPackages, compileMapGroups } from "./map-package.js";
 import { compileMapGeometry, type MapTexture } from "./map-geometry.js";
-import { compileFieldBackgroundLayers, loadFieldBackgroundMedia } from "./field-background.js";
+import { compileFieldBackgroundLayers, compileFlatFieldScenery, loadFieldBackgroundMedia } from "./field-background.js";
 import { importFieldAnimationNext, NATIVE_ANIMATION_JSON, type NativeAnimationJsonImport, type FieldAnimationImportObservation } from "./field-animation-import.js";
 import { bindTileAnimationRegions } from "./tile-animation.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
@@ -389,6 +389,8 @@ export async function compileWorld(root: string) {
       const { blockers: _unused, ...geometryData } = geometry;
       map = {
         ...geometryData,
+        scenery: compileFlatFieldScenery({ sources: sourceFiles, sourceSetHash: corpus.sourceSetHash, parentSourceSetHash: String(corpus.manifest.parentSourceSetHash),
+          tilemap: { data: tile.data, source: { ...tile.source, objectId: tile.source.objectId } }, ...backgroundMedia }),
         id: binding.name,
         identity: { mapId: Number(binding.id), areaId: Number(binding.areaId) },
         entryContext: compileFieldEntryContext(corpus.assets, corpus.tables, Number(binding.id), worldTerrain),

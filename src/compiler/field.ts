@@ -1,5 +1,6 @@
 import { compileFieldUiInstruction, sourceFieldUiSelectors } from "./field-ui.js";
 import { sourceOwnedEquipmentSelectors, compileSourceOwnedEquipmentInstruction } from "./source-owned-equipment.js";
+import { compileFieldLayerInstruction, sourceFieldLayerSelectors } from "./field-layer-scrolling.js";
 import {sourceRtsPartySelectors,compileRtsPartyInstruction}from'./field-rts-party.js';
 import { rosterGroupSelectors, compileRosterGroupEvent } from "./roster-groups.js";
 import {compileSourceCharacterNamingInstruction,sourceCharacterNamingSelectors} from './source-character-naming.js';
@@ -44,7 +45,7 @@ import { compileNarsheMapEntrySeed } from "./map-party-entry.js";
 import { compileFieldTransportationInstruction, fieldTransportationMnemonics, fieldTransportationSelectors } from "./field-transportation.js";
 import { compilePartyEvent } from "./party.js";
 import { compileOwnedConditionInstruction } from "./owned-condition.js";
-import { compileFieldRecoveryInstruction } from "./field-recovery.js";
+import { compileFieldRecoveryInstruction,sourceOwnedRevivalSelector } from "./field-recovery.js";
 import { compileSourcePresentationInstruction, sourcePresentationSelectors } from "./source-presentation.js";
 import { compileAudioReadinessInstruction } from "./audio-readiness.js";
 import { compileFieldSoundInstruction, fieldSoundMnemonics } from "./field-sound.js";
@@ -249,6 +250,7 @@ export function decodeFieldOp(
   }
   const o = record(m.operands), i = list(o.iValues).map(integer),
     r = list(o.rValues).map(Number), s = list(o.sValues).map(string);
+  if (name === "SysCall" && sourceFieldLayerSelectors.includes(s[0] ?? "")) { try { return { ...site, ...compileFieldLayerInstruction(raw) }; } catch (error) { return blocked(error instanceof Error ? error.message : String(error)); } }
   if(name==='SysCall'&&(sourceSkyboxScrollSelectors as readonly string[]).includes(s[0]??'')){try{return {...site,...compileFieldSkyboxScroll(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if(name==='SysCall'&&(screenPresentationSelectors as readonly string[]).includes(s[0]??'')){try{return {...site,...compileFieldScreenPresentation(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if(name==='SysCall'&&Object.hasOwn(sourceCharacterNamingSelectors,s[0]??'')){try{return {...site,...compileSourceCharacterNamingInstruction(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
@@ -379,7 +381,7 @@ export function decodeFieldOp(
     try { return { ...site, ...compileOwnedConditionInstruction(raw, tables) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
-  if (name === "RecoveryHP" || name === "RecoveryMP") {
+  if (name === "RecoveryHP" || name === "RecoveryMP" || name==='SubtractionHP' || name==='SysCall'&&s[0]===sourceOwnedRevivalSelector) {
     try { return { ...site, ...compileFieldRecoveryInstruction(raw, tables) }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }

@@ -155,6 +155,7 @@ const diagnosticOwners: Readonly<Record<string, ContentBatchSystem>> = {
 };
 const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
   sourceFieldUi: "map-event-and-travel",
+  fieldLayerScrolling: "map-event-and-travel",
   sourceLocation: "owned-menus-economy-and-growth",
   sourceCharacterNaming:"owned-menus-economy-and-growth",
   rtsParty:"owned-menus-economy-and-growth",

@@ -242,7 +242,7 @@ test("event prepares the complete appearance sequence and publishes actors befor
   const calls: string[] = [], steps = [presentationStep("a"), presentationStep("b")];
   const op = event({ allowUnableFight: true }), original = structuredClone(op);
   const port: FieldRecoveryPort = { prepare(c) {
-    calls.push("prepare-owned"); assert.deepEqual(c, op.command); c.amount = 999;
+    calls.push("prepare-owned"); assert.deepEqual(c, op.command); assert('amount'in c);c.amount = 999;
     return { targets: ["a", "b"], steps, commit: () => { calls.push("commit-owned"); },
       commitWith: (publish) => { publish(); calls.push("commit-owned"); } };
   } };

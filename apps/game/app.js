@@ -130,6 +130,7 @@ const runtime = {
   vehicleLifecycle:"web-source-vehicle-lifecycle-v1",
   mobColorFilter:"web-flat-mob-color-filter-v1",
   screenPresentation:"web-field-screen-presentation-2d-v1",
+    fieldLayerScrolling:'web-field-layer-scrolling-v1',
     skyboxPresentation:'web-flat-skybox-panorama-v1',
   fieldEffectTransforms:'web-source-logical-board-transforms-v1',
   sourceSnapshot:'immutable-owned-field-source-v1',

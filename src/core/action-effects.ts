@@ -8,6 +8,7 @@ import type { BattleConditions } from "./battle-conditions.js";
 import type { BattleRow, PhysicalRowContext } from "./battle-row.js";
 import { changeBattleRow } from "./battle-row-change.js";
 import {baseHpMagicEffect,calculateBaseHpMagic,type BaseHpMagicContext} from './base-hp-magic.js';
+import {sourceDeathApplication,validateSourceDeathContext,type SourceConditionDeathContext} from './condition-application.js';
 
 /** Effects need numerical and condition state, not a battle renderer, command
  * queue or encounter definition. Owned characters can use menu items before a
@@ -39,6 +40,7 @@ export function projectActionTarget(
   abilityId?: number,
   automaticLife: "settle" | "defer-to-battle-owner" = "settle",
   baseHpContext?: BaseHpMagicContext,
+  conditionDeathContext?: SourceConditionDeathContext,
 ) {
   if (automaticLife !== "settle" && automaticLife !== "defer-to-battle-owner") throw new Error("Invalid action automatic life owner");
   for (const key of ["hp", "mp", "maxHp", "maxMp"] as const)
@@ -63,6 +65,8 @@ export function projectActionTarget(
   let effects: AbilityEffectResult[];
   let row: BattleRow | undefined;
   const first = plan.effects[0];
+  const sourceDeath=sourceDeathApplication(plan,conditions);
+  if(sourceDeath)validateSourceDeathContext(conditionDeathContext,actor,target,sourceDeath.conditionId,abilityId);
   const baseHp=baseHpMagicEffect(plan);
   if (baseHp) {
     conditions.validateActive(actor.conditionIds); conditions.validateActive(target.conditionIds);

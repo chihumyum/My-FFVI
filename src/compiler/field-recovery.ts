@@ -3,6 +3,30 @@ import { int32 } from "../core/script-integer.js";
 import { validateFieldRecoveryCommand, type FieldRecoveryEventOp } from "../core/field-recovery.js";
 import { record } from "./content.js";
 import { tableId } from "./table-id.js";
+import {validateFieldHpChangeCommand} from '../core/field-hp-changes.js';
+
+export const sourceOwnedRevivalSelector='戦闘不能キャラを全て蘇生';
+function sourceHpChange(raw:unknown,tables:Record<string,unknown>):FieldRecoveryEventOp {
+  const instruction=record(raw),operands=record(instruction.operands);
+  if(Object.keys(operands).sort().join(',')!=='iValues,rValues,sValues'||instruction.type!==1)
+    throw Error('Unsupported source field HP operand banks');
+  const i=z.array(z.unknown()).length(8).parse(operands.iValues).map(int32),
+    r=z.array(z.number().finite()).length(8).parse(operands.rValues),s=z.array(z.string()).length(8).parse(operands.sValues);
+  const subtract=instruction.mnemonic==='SubtractionHP';
+  if(i.some(Boolean)||r.slice(subtract?1:0).some(Boolean)||s.some((value,index)=>value!==(subtract||index>0?'':sourceOwnedRevivalSelector))||
+      !subtract&&instruction.mnemonic!=='SysCall')throw Error('Unsupported source field HP mode or operand shape');
+  const command=subtract?{kind:'subtract-hp' as const,amount:r[0]!}:{kind:'revive-current-corps' as const};
+  validateFieldHpChangeCommand(command);
+  const rows=z.array(z.record(z.string(),z.string())).parse(tables['condition.csv']);
+  const ids=rows.map(row=>tableId(row.id));if(ids.some(id=>id<=0)||new Set(ids).size!==ids.length)throw Error('Ambiguous source field HP condition master');
+  const requiredTypes=subtract?[4]:[4,5],dependencies:FieldRecoveryEventOp['dependencies']=[];
+  for(const type of requiredTypes){const matching=rows.filter(row=>tableId(row.condition_type)===type);
+    if(!matching.length||type===4&&matching.length!==1)throw Error('Missing or ambiguous source field HP condition type');
+    for(const row of matching)dependencies.push({table:'condition.csv',id:tableId(row.id)});
+  }
+  if(!subtract&&!rows.some(row=>tableId(row.id)===5&&tableId(row.condition_type)===5))throw Error('Changed source revival master row5');
+  return{kind:'field-recovery',command,dependencies};
+}
 
 /** Decode the complete source operand banks. MP count recovery is a different
  * resource provider and cannot be represented as ordinary owned scalar MP. */
@@ -10,6 +34,8 @@ export function compileFieldRecoveryInstruction(
   raw: unknown, tables: Record<string, unknown>,
 ): FieldRecoveryEventOp {
   const instruction = record(raw), operands = record(instruction.operands);
+  if(instruction.mnemonic==='SubtractionHP'||instruction.mnemonic==='SysCall'&&record(instruction.operands).sValues instanceof Array&&
+      (record(instruction.operands).sValues as unknown[])[0]===sourceOwnedRevivalSelector)return sourceHpChange(raw,tables);
   if (Object.keys(operands).sort().join(",") !== "iValues,rValues,sValues")
     throw new Error("Unsupported field recovery operand banks");
   if (instruction.type !== 1 || !["RecoveryHP", "RecoveryMP"].includes(String(instruction.mnemonic)))

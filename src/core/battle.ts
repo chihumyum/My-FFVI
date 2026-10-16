@@ -8,6 +8,7 @@ import { BattleFinalAttackTickets, sourceFinalReady, FINAL_ATTACK_EXCLUDED_TYPES
 import {parseBattleChildAdmission,parseWebBattleChildAdmission,prepareBattleChildParty,type BattleChildAdmission,type WebBattleChildAdmission} from './battle-child-admission.js';
 import {enemyMagicActorBlocker} from './enemy-magic-carrier.js';
 import {baseHpMagicEffect,parseSourceEnemyBossParameter,type SourceEnemyBossParameter,type BaseHpMagicContext} from './base-hp-magic.js';
+import {sourceDeathApplication,type SourceConditionDeathContext} from './condition-application.js';
 import { WEB_BATTLE_GAU_INSTANCES, parseBattleGauInstanceContent, gauAppearancePoses, gauAppearanceTimes, gauAppearanceDuration,
   type BattleGauInstanceContent, type BattleGauInstanceHost, type BattleGauOwnedFrame, type BattleGauMediaRequest } from "./battle-gau-instances.js";
 import { prepareSourceCatalogName } from "./source-catalog-name.js";
@@ -71,6 +72,8 @@ import {
   planBattleAITurn,
   planBattleAIReaction,
   startBattleAI,
+  resumeBattleAI,
+  type BattleAIProgram,
   type BattleAIState,
   type BattleAITurn,
   type BattleAICounterTargeting,
@@ -227,6 +230,10 @@ export class BattleGame {
   get finalAttackExecution() { return this.#finalTickets.projection; }
   private reactions: BattleAction[] = [];
   private aiStates = new Map<string, BattleAIState>();
+  /** Instance guards for unpublished AI wakes; the existing 10 ms step is the
+   * only resumption owner. No action, behavior prefix or RNG is published here. */
+  private aiClockOwners = new Map<string, { actor: Combatant; program: BattleAIProgram;
+    before: BattleAIState | null; behavior: string }>();
   private poisonStates = new Map<string, PoisonState>();
   private slipStates = new Map<string, SlipState>();
   readonly #numberEpoch = nextPeriodicNumberEpoch++;
@@ -409,7 +416,7 @@ export class BattleGame {
     const numberState = this.periodicNumbers, numberResources = this.#numbers.map(n => n.resource);
     const validate=()=>{if(used||this.#gauTask!==task || canonical(this.periodicNumbers)!==canonical(numberState))throw new Error("Stale source Gau/number retirement");
       message.validate();effect.validate();resource?.validate();for (const number of numberResources)this.observeMessageProvider(() => number.validate());};
-    return {validate,commit:()=>{validate();message.commit();effect.commit();used=true;this.#finalTickets.retire();this.#mpParameters.retireAll();this.#numberRetired=true;
+    return {validate,commit:()=>{validate();message.commit();effect.commit();used=true;this.retireAIClocks();this.#finalTickets.retire();this.#mpParameters.retireAll();this.#numberRetired=true;
       this.discardPeriodicResources(this.#numbers.map(n => n.resource));this.#numbers=[];this.slipStates.clear();this.#parameterOrigins.clear();this.#gauHost?.owned.retire();this.#gauTask=null;
       this.#gauJournal.push({action:"retire",pc:-1,time:this.time,actorId:null,value:null});if(resource)this.discardBattleEffectResources([resource],"retire");}};}
   readonly #messageHost: BattleEventMessageHost | null;
@@ -1466,6 +1473,7 @@ export class BattleGame {
   ) {
     if (!actor.behavior) throw new Error("Missing enemy behavior parameters");
     return {
+      clock: this.time,
       self: {
         hp: actor.hp,
         mp: actor.mp,
@@ -1757,10 +1765,8 @@ export class BattleGame {
       throw new Error("Source initial Escape component lifecycle is not admitted");
     if (!unit.ai) throw new BattleAIError(null, 0, "missing enemy AI program");
     const started = startBattleAI(unit.ai, this.aiContext(unit, nextUnits));
-    const context = this.aiContext(unit, nextUnits);
-    context.self.behavior = started.behavior;
-    this.admitAITurn(unit, planBattleAITurn(unit.ai, started.state, context));
-    unit.behavior = started.behavior;
+    this.preflightInitialAI(unit, started, nextUnits);
+    if (!started.state.continuation) unit.behavior = started.behavior;
     const poison = this.conditions.reconcilePoisonState(unit.conditionIds, [], this.atbSpeed),
       slow = this.conditions.reconcileSlowState(unit.conditionIds, []),
       control = this.prepareControlState(unit, unit.conditionIds, [], new Map(), null);
@@ -1782,6 +1788,7 @@ export class BattleGame {
     for(const unit of this.combatants)if(removed.has(unit.id)&&unit.side==='player')this.#fixedPlayerActions.delete(unit.sourceId);
     for (const removedId of removed) {
       this.aiStates.delete(removedId);
+      this.aiClockOwners.delete(removedId);
       // Function clocks belong to this retired instance, including Stop's
       // Poison write. A new Gau/party actor initializes from [] below.
       this.poisonStates.delete(removedId); this.slipStates.delete(removedId);
@@ -1793,6 +1800,7 @@ export class BattleGame {
   }
   private publishEnemyEntry(unit: Combatant, entry: ReturnType<BattleGame["prepareEnemyEntry"]>): void {
     this.aiStates.set(unit.id, entry.ai);
+    if (entry.ai.continuation) this.bindAIClock(unit, entry.ai, null);
     this.slipStates.set(unit.id, entry.slip);
     this.poisonStates.set(unit.id, entry.poison);
     this.slowStates.set(unit.id, entry.slow);
@@ -1846,14 +1854,12 @@ export class BattleGame {
     const initial = this.enemies.map(actor => {
       if (!actor.ai) throw new BattleAIError(null, 0, "missing enemy AI program");
       const turn = startBattleAI(actor.ai, this.aiContext(actor));
-      const context = this.aiContext(actor);
-      context.self.behavior = turn.behavior;
-      this.admitAITurn(actor, planBattleAITurn(actor.ai, turn.state, context));
+      this.preflightInitialAI(actor, turn);
       return { actor, turn };
     });
     for (const { actor, turn } of initial) {
-      actor.behavior = turn.behavior;
-      this.aiStates.set(actor.id, turn.state);
+      if (turn.state.continuation) this.bindAIClock(actor, turn.state, null);
+      else { actor.behavior = turn.behavior; this.aiStates.set(actor.id, turn.state); }
     }
     this.eventControls.aiStarted = true;
   }
@@ -2035,7 +2041,10 @@ export class BattleGame {
               break;
             case "exec-ai": this.startEnemyAI(); break;
             case "sync-ai":
-              for (const id of cores.exitedIds) this.aiStates.get(id)!.status = "exited";
+              for (const id of cores.exitedIds) {
+                const state = this.aiStates.get(id)!; state.status = "exited";
+                delete state.continuation; this.aiClockOwners.delete(id);
+              }
               if (cores.alive !== this.eventControls.aiAliveLastSync)
                 this.eventControls.updateEnabled = cores.alive;
               this.eventControls.aiAliveLastSync = cores.alive;
@@ -2387,7 +2396,9 @@ export class BattleGame {
     // The separate isUndeadFromRampage field cannot be inferred from missing
     // metadata. This runtime has never installed a Rampage function; an entry
     // carrying that unimplemented function is rejected by validateActive.
-    if (types.includes(9)) throw new Error("Unresolved Rampage Undead provider");
+    // These are condition master types, not condition-function enum values:
+    // source Rampage is type616; type9 is the supported Blind lifecycle.
+    if (types.includes(616)) throw new Error("Unresolved Rampage Undead provider");
     if (traits.baseUndead || types.includes(34)) return true;
     if (unit.side === "enemy") return false;
     const input = this.inventoryQualification,
@@ -2500,14 +2511,17 @@ export class BattleGame {
     const fail = (pc: number, reason: string): never => {
       throw new BattleAIError(program.source, pc, reason);
     };
-    if (turn.state.status !== "waiting")
+    const pending = turn.state.continuation;
+    if (pending && turn.trigger === "reaction")
+      fail(turn.state.pc, "Internal.Blank reaction/Final requires a prepared parent-action continuation transaction");
+    if (turn.state.status !== "waiting" && !(pending && turn.state.status === "running"))
       fail(
         turn.state.pc,
         `${turn.trigger} action path does not return to SyncAI`,
       );
     if (
       turn.trigger === "normal" &&
-      turn.acts.filter((a) => a.selected).length !== 1
+      (pending ? turn.acts.filter((a) => a.selected).length > 1 : turn.acts.filter((a) => a.selected).length !== 1)
     )
       fail(
         turn.state.pc,
@@ -2571,10 +2585,63 @@ export class BattleGame {
       }
     }
   }
+  private preflightInitialAI(actor: Combatant, turn: BattleAITurn, units: readonly Combatant[] = this.combatants) {
+    if (turn.state.continuation) { this.admitAITurn(actor, turn); return; }
+    const context = this.aiContext(actor, units); context.self.behavior = turn.behavior;
+    this.admitAITurn(actor, planBattleAITurn(actor.ai!, turn.state, context));
+  }
+  private bindAIClock(actor: Combatant, state: BattleAIState, before: BattleAIState | null) {
+    if (!state.continuation || !actor.ai || !actor.behavior)
+      throw new Error("Missing AI clock candidate owner");
+    this.aiStates.set(actor.id, state);
+    this.aiClockOwners.set(actor.id, { actor, program: actor.ai,
+      before: before && structuredClone(before), behavior: canonical(actor.behavior) });
+  }
+  private retireAIClocks() {
+    for (const [id] of this.aiClockOwners) {
+      const state = this.aiStates.get(id);
+      if (state) { delete state.continuation; state.status = "exited"; }
+    }
+    this.aiClockOwners.clear();
+  }
+  private advanceAIClocks() {
+    for (const [id, owner] of this.aiClockOwners) {
+      const actor = this.combatants.find(unit => unit.id === id), state = this.aiStates.get(id);
+      if (actor !== owner.actor || actor.ai !== owner.program || !state?.continuation)
+        throw new Error("Stale AI clock instance or program owner");
+      if (canonical(actor.behavior) !== owner.behavior)
+        throw new Error("Unpublished AI behavior candidate lost its original owner");
+      if (state.continuation.wake !== "initial" && state.continuation.wake !== "normal")
+        throw new Error("Reaction AI clock requires a prepared parent-action transaction");
+      // Normal ATB eligibility still belongs to the live condition/action owner.
+      // Death/escape invalidates the unfinished decision; Stop-like suspension
+      // retains it, without publishing its prefix or creating another wake.
+      if (actor.hp <= 0 || this.conditions.isEscaped(actor.conditionIds) ||
+          this.enemyExits.has(id) || actor.queued || this.#finalTickets.has(actor) ||
+          actor.mp === 0 && this.#mpParameters.query(actor) === true) {
+        if (owner.before) this.aiStates.set(id, structuredClone(owner.before));
+        else { delete state.continuation; state.status = "exited"; }
+        this.aiClockOwners.delete(id); continue;
+      }
+      if (this.actionSuspended(actor) || state.continuation.blankClock >= this.time) continue;
+      const turn = resumeBattleAI(owner.program, state, this.aiContext(actor));
+      this.admitAITurn(actor, turn);
+      if (turn.state.continuation) { this.aiStates.set(id, turn.state); continue; }
+      if (turn.trigger === "initial") {
+        this.preflightInitialAI(actor, turn);
+        actor.behavior = turn.behavior; this.aiStates.set(id, turn.state);
+      } else this.publishEnemyTurn(actor, turn);
+      this.aiClockOwners.delete(id);
+    }
+  }
   private decideEnemyAction(actor: Combatant) {
     const state = this.aiStates.get(actor.id)!;
     const turn = planBattleAITurn(actor.ai!, state, this.aiContext(actor));
     this.admitAITurn(actor, turn);
+    if (turn.state.continuation) { this.bindAIClock(actor, turn.state, state); return; }
+    this.publishEnemyTurn(actor, turn);
+  }
+  private publishEnemyTurn(actor: Combatant, turn: BattleAITurn) {
     const previousRandom = this.randomState;
     try {
       const decisions: BattleAction[] = [];
@@ -2618,7 +2685,7 @@ export class BattleGame {
       if (!decisions.length)
         throw new BattleAIError(
           actor.ai!.source,
-          state.pc,
+          turn.state.pc,
           "no normal action decision",
         );
       // Commit the whole group only after every target has been selected. A
@@ -2867,7 +2934,7 @@ export class BattleGame {
       nextActionTicket:this.#nextActionTicket,fixedPlayerActions:new Map(this.#fixedPlayerActions),actionCancellations:structuredClone(this.#actionCancellations),
       queue: structuredClone(this.queue),
       reactions: structuredClone(this.reactions),
-      ai: structuredClone(this.aiStates),
+      ai: structuredClone(this.aiStates), aiClockOwners: new Map(this.aiClockOwners),
       gauTask:this.#gauTask?{...this.#gauTask}:null,gauJournal:structuredClone(this.#gauJournal),
       fadeJournal:structuredClone(this.#fadeJournal),
       eventState: structuredClone(this.eventState),branchVisited:new Set(this.#branchVisited),
@@ -2967,7 +3034,7 @@ export class BattleGame {
       this.#mpParameters.restore(before.mpParameters);
       this.enemyExits = before.enemyExits;
       this.rewardRegisteredInstances = before.rewardRegisteredInstances;
-      this.aiStates = before.ai;
+      this.aiStates = before.ai; this.aiClockOwners = before.aiClockOwners;
       this.eventState = before.eventState;this.#branchVisited=before.branchVisited;
       if(this.lifecycle.kind==='battle-lifecycle-v2'&&error instanceof BattleEventError)this.#branchLastFailure={
         pc:error.pc,reason:error.reason,raw:structuredClone(this.lifecycle.program.branchExecution!.sourceProgram.Mnemonics[error.pc]),
@@ -3040,6 +3107,7 @@ export class BattleGame {
       }
     }
     if (gate.conditions) this.advanceConditions(0.01);
+    this.advanceAIClocks();
     if (gate.progress) {
       for (const pending of this.queue)
         pending.charge = advanceChanting(
@@ -3294,7 +3362,8 @@ export class BattleGame {
       const actor = units.find((c) => c.id === result.target)!;
       if (actor.side !== "enemy") continue;
       if (this.enemyExits.has(actor.id) || this.conditions.isEscaped(actor.conditionIds)) continue;
-      if (this.aiStates.get(actor.id)?.status !== "waiting") continue;
+      const aiState = this.aiStates.get(actor.id);
+      if (aiState?.status !== "waiting" && !aiState?.continuation) continue;
       if (action.source.kind === "item")
         throw new Error("Unimplemented enemy item reaction");
       const live = this.combatants.find(unit => unit.id === actor.id)!;
@@ -3315,6 +3384,9 @@ export class BattleGame {
         effects: result.effects,
       });
       if (!reaction && !finalReady || this.actionSuspended(actor) && !finalReady) continue;
+      if (aiState?.continuation)
+        throw new BattleAIError(actor.ai!.source, aiState.pc,
+          "Internal.Blank pending wake received an action; prepared parent-action continuation transaction is required");
       const receivedTypeId = this.content.abilities[action.source.id]!.program.rules.type_id;
       const turn = planBattleAIReaction(
         actor.ai!,
@@ -3475,6 +3547,21 @@ export class BattleGame {
       return{targetId:id,parameter:'enemy' as const,boss:current.bossFlag>0};
     })};
   }
+  private conditionDeathContext(actor:Combatant,ability:AbilityDefinition,targetIds:readonly string[]):SourceConditionDeathContext|undefined {
+    if(!ability.plan)return undefined;
+    const effect=sourceDeathApplication(ability.plan,this.conditions,ability.program);if(!effect)return undefined;
+    const normalBranch=ability.program.rules.type_id===3?'native-type3' as const:'known-non-undead' as const;
+    for(const id of targetIds){const target=this.combatants.find(unit=>unit.id===id);
+      if(!target)throw Error('Retired source Function9 death target');
+      // FF6 CheckOverrideUnnableFightToUndead33bf40 returns false for Type3
+      // independently of the IsUndead result. Other types require the actual
+      // current provider; unknown and reversing domains remain reached gates.
+      if(normalBranch==='known-non-undead'&&this.conditionUndead(target,target.conditionIds))
+        throw Error('Unresolved source Function9 Undead death reversal provider');
+    }
+    return{kind:'source-function9-death-override-v1',actorId:actor.id,abilityId:ability.id,conditionId:effect.conditionId,
+      targetIds:[...targetIds],normalBranch};
+  }
   private resolve(action: BattleAction) {
     // Stale presentation/executor completions cannot revive a cancelled action
     // or a retired battle. No RNG, cost, lookup or effect precedes this fence.
@@ -3536,6 +3623,7 @@ export class BattleGame {
           this.absorptionContext(actor,ability,choice.targetIds),
           "defer-to-battle-owner",
           action.source.kind==='ability'?this.baseHpMagicContext(actor,this.content.abilities[action.source.id]!,choice.targetIds):undefined,
+          action.source.kind==='ability'?this.conditionDeathContext(actor,this.content.abilities[action.source.id]!,choice.targetIds):undefined,
         );
       const staged = projection.targets.map(({ targetId, state, effects }) => {
         const target = this.combatants.find(c => c.id === targetId)!;
@@ -3599,11 +3687,16 @@ export class BattleGame {
         const entry = staged.find(candidate => candidate.target === live);
         const changed = entry || live === actor && (payment > 0 || projection.userResourceState || projection.userResults.length);
         if (!changed) continue;
-        const candidate = !!entry && !!unit.ai?.instructions.some(row => row.op.kind === "final-act") &&
-          this.aiStates.get(unit.id)?.status === "waiting" && !this.enemyExits.has(unit.id) && sourceFinalReady({
+        const finalEligible = !!entry && !!unit.ai?.instructions.some(row => row.op.kind === "final-act") &&
+          (this.aiStates.get(unit.id)?.status === "waiting" || !!this.aiStates.get(unit.id)?.continuation) &&
+          !this.enemyExits.has(unit.id) && sourceFinalReady({
             hp: unit.hp, mpUnableFight: unit.mp + (live === actor ? payment : 0) === 0 && this.#mpParameters.query(live) === true, conditionTypes: this.conditions.types(unit.conditionIds),
             incomingInterrupt: action.kind === "counter" || action.kind === "final",
             primarySlot: ability.program.functions[0]?.slot ?? -1, effects: entry.effects });
+        if (finalEligible && this.aiStates.get(unit.id)?.continuation)
+          throw new BattleAIError(unit.ai!.source, this.aiStates.get(unit.id)!.pc,
+            "Internal.Blank pending wake received Final readiness; prepared parent-action continuation transaction is required");
+        const candidate = finalEligible && this.aiStates.get(unit.id)?.status === "waiting";
         const life = this.settleBattleLife(live, unit.hp, unit.conditionIds,
           this.conditions.isUnableFight(live.conditionIds), candidate, unit.mp);
         Object.assign(unit, life);
@@ -3811,7 +3904,7 @@ export class BattleGame {
         for(const player of this.players)Object.assign(player,this.conditions.settleLife(player.hp,player.conditionIds,false));
         this.clearBattleConditions();
       }
-      this.phase = "forced"; this.escapeRequested = false;
+      this.retireAIClocks(); this.phase = "forced"; this.escapeRequested = false;
       this.log(this.forcedSaveTerminal?'战斗结束，保存当前状态并返回。':"战斗结束，返回进入战斗前的状态。"); return;
     }
     this.pruneFinalTickets();
@@ -3842,7 +3935,7 @@ export class BattleGame {
     if (!this.eventControls.endEnabled) return;
     if (!this.players.some((c) => c.hp > 0)) {
       this.clearBattleConditions();
-      this.phase = "defeat";
+      this.retireAIClocks(); this.phase = "defeat";
       this.escapeRequested = false;
       this.queue = [];
       this.reactions = [];
@@ -3907,7 +4000,7 @@ export class BattleGame {
       if (live) Object.assign(live, player, { id: live.id });
       if (this.playerBorrow) this.playerResources.set(player.id, structuredClone(player));
     }
-    this.phase = "victory";
+    this.retireAIClocks(); this.phase = "victory";
     this.escapeRequested = false;
     this.slipStates.clear(); this.retirePeriodicNumbers();
     this.poisonStates.clear();
@@ -3953,7 +4046,7 @@ export class BattleGame {
         !this.eventControls.endEnabled || this.#numbers.length)
       throw new Error("Battle escape is not at a safe action boundary");
     this.clearBattleConditions();
-    this.phase = "escaped";
+    this.retireAIClocks(); this.phase = "escaped";
     this.escapeRequested = false;
     this.queue = [];
     this.reactions = [];

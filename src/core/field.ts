@@ -1,5 +1,6 @@
 import { WEB_SOURCE_STORY_EXECUTION, type FieldStoryExecutionEvent } from "./field-story-execution.js";
 import { executeSourceEquipmentEvent } from "./source-owned-equipment.js";
+import { FieldLayerScrolling, fieldLayerScrollingBinding, fieldLayerTweenSample, WEB_FIELD_LAYER_SCROLLING, type WebFieldLayerScrolling, type FieldLayerSnapshot } from "./field-layer-scrolling.js";
 import { fieldTransportationParkingBinding, transportationStoredPosition, transportationDirectionMask, type WebSourceTransportParkingUpload, type TransportationParkingObservation } from "./transportation-parking-upload.js";
 import { prepareSourceNonEncounterAreas, sourceStandingInNonEncounterArea, type SourceNonEncounterArea, type SourceNonEncounterAreas } from "./field-non-encounter-areas.js";
 import {prepareRtsNativeActors}from'./field-rts-actors.js';
@@ -298,7 +299,9 @@ type FieldCheckpointState = {
   } | null;
 };
 export type FieldCheckpoint = FieldCheckpointState & (
-  { kind: "idle-field-v18"; sourceUi: FieldUiSnapshot; scriptAnimations?: SourceFieldScriptAnimationState; sourceMessageValues?: SourceMessageFeeSnapshot; contentInvalidations?: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint }
+  { kind: "idle-field-v19"; fieldLayers: FieldLayerSnapshot; sourceUi?: FieldUiSnapshot; scriptAnimations?: SourceFieldScriptAnimationState; sourceMessageValues?: SourceMessageFeeSnapshot; contentInvalidations?: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint }
+  | { kind: "event-field-v10"; fieldLayers: FieldLayerSnapshot; sourceUi?: FieldUiSnapshot; scriptAnimations?: SourceFieldScriptAnimationState; sourceMessageValues?: SourceMessageFeeSnapshot; contentInvalidations?: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint; execution: FieldEventCheckpoint }
+  | { kind: "idle-field-v18"; sourceUi: FieldUiSnapshot; scriptAnimations?: SourceFieldScriptAnimationState; sourceMessageValues?: SourceMessageFeeSnapshot; contentInvalidations?: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint }
   | { kind: "event-field-v9"; sourceUi: FieldUiSnapshot; scriptAnimations?: SourceFieldScriptAnimationState; sourceMessageValues?: SourceMessageFeeSnapshot; contentInvalidations?: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint; execution: FieldEventCheckpoint }
   |
   { kind: "idle-field-v17"; scriptAnimations: SourceFieldScriptAnimationState; sourceMessageValues?: SourceMessageFeeSnapshot; contentInvalidations?: FieldContentInvalidationsCheckpoint; assignedNpcRoutes?: AssignedRoutesCheckpoint; storyRuntime?: FieldStoryRuntimeSnapshot; viewPlan?: MapEntryViewPlan; npcActivities?: FieldNpcActivitiesCheckpoint }
@@ -339,6 +342,7 @@ type Task = {
   sourceEntityId: number | null;
   wait: number;
   rtsWait:{op:Extract<Op,{kind:"rts-party"}>;program:Op[];webPC:number;registers:FieldCoreRegisters;camera:FieldCameraHost;cameraState:string;bindings:FieldActorFactoryBindings;actors:readonly {id:string;actor:Actor;native:NonNullable<Actor["native"]>}[]}|null;
+  layerWait: { op: Extract<Op,{kind:"field-layer-scrolling"}>; program: Op[]; webPC: number; fingerprint: string; registers: FieldCoreRegisters; owner: FieldLayerScrolling } | null;
   skyboxWait: { op:Extract<Op,{kind:"field-skybox-scroll"}>;program:Op[];webPC:number;fingerprint:string;registers:FieldCoreRegisters;owner:FieldSkyboxState } | null;
   standaloneWait: { op: Extract<Op, { kind: "standalone-wait" }>; program: Op[];
     webPC: number; fingerprint: string; registers: FieldCoreRegisters } | null;
@@ -423,6 +427,8 @@ export type PreparedFieldSourceEncounter = {
 export type FieldGameOptions = {
   /** Opt-in observational evidence only; never serialized or consulted by gameplay. */
   sourceStoryExecution?: typeof WEB_SOURCE_STORY_EXECUTION;
+  fieldLayerScrolling?: WebFieldLayerScrolling;
+  fieldLayerScrollingSeed?: FieldLayerSnapshot | null;
   sourceFieldUi?: WebSourceFieldUi;
   sourceFieldUiSeed?: FieldUiSnapshot;
   fieldLocation?: FieldLocationPort;
@@ -559,6 +565,7 @@ export class FieldGame {
       : !!(actor?.native && this.nativeActorProviders && this.camera && this.options.puppetActors &&
         this.content.cameraHost?.callbacks === "fresh-normal-field-v1");
     const context: FieldAdmissionContext = { actorKind, providers: {
+      fieldLayerScrolling: presence(!!fieldLayerScrollingBinding(this.content, this.options.fieldLayerScrolling) && !this.layersRetired),
       sourceFieldUi: presence(this.options.sourceFieldUi === WEB_SOURCE_FIELD_UI && !this.sourceUiRetired),
       sourceLocation: presence(typeof this.options.fieldLocation?.prepare === "function" && typeof this.options.fieldLocation?.read === "function"),
       contentInvalidations: presence(!!this.options.contentInvalidations),
@@ -1416,6 +1423,27 @@ export class FieldGame {
     if(!owner||owner.isRetired||!binding||canonical(this.content.map.skybox)!==this.skyboxDefinitionPin||canonical(owner.binding)!==canonical(binding))throw Error("Source Skybox requires its current map/model/runtime/2D background owner");
     if(owner.readiness)throw Error(owner.readiness);return owner;
   }
+  private layerOwner: FieldLayerScrolling | null = null;
+  private layersRetired = false;
+  private layerBindingPin: string | null = null;
+  retireFieldLayerScrolling(): void { this.layersRetired = true; }
+  get fieldLayerSnapshot(): FieldLayerSnapshot | null { return this.layerOwner?.snapshot() ?? null; }
+  get fieldSceneryProjection(): { catalog: NonNullable<FieldContent["map"]["scenery"]>; state: FieldLayerSnapshot } | null {
+    if(!this.layerOwner || !this.content.map.scenery)return null;
+    return {catalog:structuredClone(this.content.map.scenery),state:this.requireLayerOwner().snapshot()};
+  }
+  fieldTileLayerOffset(name: string): Point { return this.layerOwner ? this.requireLayerOwner().tileOffset(name) : {x:0,y:0}; }
+  private requireLayerOwner(): FieldLayerScrolling {
+    const binding=fieldLayerScrollingBinding(this.content,this.options.fieldLayerScrolling);
+    if(this.layersRetired||!binding||binding!==this.layerBindingPin||!this.layerOwner)throw new Error("Field layer runtime/content owner is unavailable");
+    return this.layerOwner;
+  }
+  private prepareLayerOwner(): FieldLayerScrolling {
+    const binding=fieldLayerScrollingBinding(this.content,this.options.fieldLayerScrolling);
+    if(this.layersRetired||!binding)throw new Error("Source Field layer projection requires its explicit runtime and content policy");
+    if(this.layerOwner)return this.requireLayerOwner();
+    return new FieldLayerScrolling(binding,this.content.map.layers.map(l=>l.name),this.content.map.scenery);
+  }
   private sourceUiOwner: FieldUiState | null = null;
   private sourceUiRetired = false;
   retireSourceFieldUi(): void { this.sourceUiRetired = true; }
@@ -1748,6 +1776,10 @@ export class FieldGame {
         throw new Error("Unknown field entry synchronization source");
       this.synchronizedEntry = false;
     }
+    this.layerBindingPin=fieldLayerScrollingBinding(content,options.fieldLayerScrolling);
+    if(options.fieldLayerScrollingSeed && !this.layerBindingPin)throw new Error("Field layer seed cannot grant runtime authority");
+    if(options.fieldLayerScrollingSeed)this.layerOwner=FieldLayerScrolling.restore(options.fieldLayerScrollingSeed,this.layerBindingPin!,content.map.layers.map(l=>l.name),content.map.scenery,true);
+    else if(options.fieldLayerScrollingSeed!==null && this.layerBindingPin && content.map.scenery?.layers.length)this.layerOwner=new FieldLayerScrolling(this.layerBindingPin,content.map.layers.map(l=>l.name),content.map.scenery);
     validateFieldUiPolicy(options.sourceFieldUi);
     if (options.sourceFieldUiSeed && options.sourceFieldUi !== WEB_SOURCE_FIELD_UI) throw new Error("Source Field UI seed cannot grant runtime authority");
     if (options.sourceFieldUiSeed) this.sourceUiOwner = FieldUiState.restore(options.sourceFieldUiSeed, content.parentSourceSetHash);
@@ -2523,7 +2555,7 @@ export class FieldGame {
   get menuReady(): boolean { return !this.rtsEncounterActive&&!this.stop && this.idleFieldReady && !this.options.reservedScripts?.read(); }
   get checkpointReady(): boolean {
     if(this.skyboxOwner&&!this.skyboxOwner.readiness&&!this.nativeActorBindings)return false;
-    return !this.sourceUiOwner?.active && !this.rtsEncounterActive&&!Object.values(this.actors).some(actor=>actor.mobColor?.tween) && !this.stop && this.idleFieldReady && (this.logicalEffectsPersistent || !this.effects && !this.options.fieldEffectMap?.hasHistory);
+    return !this.layerOwner?.active && !this.sourceUiOwner?.active && !this.rtsEncounterActive&&!Object.values(this.actors).some(actor=>actor.mobColor?.tween) && !this.stop && this.idleFieldReady && (this.logicalEffectsPersistent || !this.effects && !this.options.fieldEffectMap?.hasHistory);
   }
   get sourcePresentationContext(): SourcePresentationContext | null {
     return cloneSourcePresentationContext(this.options.sourcePresentation?.context() ?? null);
@@ -2693,6 +2725,12 @@ export class FieldGame {
     const assignedNpcRoutes=this.assignedCheckpoint;
     const contentInvalidations = this.contentInvalidationsSnapshot;
     const sourceMessageValues = this.sourceMessage.feeSnapshot;
+    if (this.layerOwner) {
+      const fieldLayers=FieldLayerScrolling.restore(this.requireLayerOwner().snapshot(),this.layerBindingPin!,this.content.map.layers.map(l=>l.name),this.content.map.scenery,true).snapshot();
+      const scriptAnimations=this.sourceAnimationCatalog?parseSourceFieldScriptAnimationState({kind:"source-field-script-animation-state-v1",catalogHash:this.sourceAnimationCatalog.contentHash,currentAsset:this.currentCustomAnimationAsset,...(this.scriptHook?{hookedAsset:this.hookedCustomAnimationAsset}:{})},this.sourceAnimationCatalog,this.scriptHook!==null):undefined;
+      const sourceUi=this.sourceUiOwner?FieldUiState.restore(this.requireSourceUi().snapshot(),this.content.parentSourceSetHash,true).snapshot():undefined;
+      return {...snapshot,kind:execution?"event-field-v10":"idle-field-v19",fieldLayers,...(sourceUi?{sourceUi}:{}),...(scriptAnimations?{scriptAnimations}:{}),...(sourceMessageValues?{sourceMessageValues}:{}),...(contentInvalidations?{contentInvalidations}:{}),...(assignedNpcRoutes?{assignedNpcRoutes}:{}),...(storyRuntime?{storyRuntime}:{}),...(npcActivities?{npcActivities}:{}),...(viewPlan?{viewPlan}:{}),...(execution?{execution}:{})} as FieldCheckpoint;
+    }
     if (this.sourceUiOwner) {
       const sourceUi = FieldUiState.restore(this.requireSourceUi().snapshot(), this.content.parentSourceSetHash, true).snapshot();
       let scriptAnimations: SourceFieldScriptAnimationState | undefined;
@@ -2750,13 +2788,13 @@ export class FieldGame {
     if (this.stop || this.worldAutoTasksBusy || !this.logicalEffectsPersistent && (this.effects || this.options.fieldEffectMap?.hasHistory) ||
         this.options.fieldEffectMap && !this.options.fieldEffectMap.active ||
         this.sourcePresentationContext?.advertisementOpeningFader === "present" ||
-        this.sourceUiOwner?.active || this.fader.active || this.skyboxOwner?.active || this.colorFilterState?.active || this.screenPresentationState?.active || this.actorVisibilityBusy || Object.values(this.actors).some(actor=>actor.mobColor?.tween) || this.sourceMessage.active || this.messageWindow ||
+        this.layerOwner?.active || this.sourceUiOwner?.active || this.fader.active || this.skyboxOwner?.active || this.colorFilterState?.active || this.screenPresentationState?.active || this.actorVisibilityBusy || Object.values(this.actors).some(actor=>actor.mobColor?.tween) || this.sourceMessage.active || this.messageWindow ||
         this.pendingChoice || this.shopTask || this.sourcePartySelectionRequest || this.characterNamingRequest || this.treasureSceneState !== "player" ||
         this.openTriggers.busy || this.interaction || this.pendingPlayerStep ||
         Object.values(this.actors).some((actor) => actor.motion !== null && !this.isAutonomousMotion(actor)) ||
         this.tasks.some((other) => other !== task && !other.done) ||
         task.done || task.slot !== null || task.treasureRoot || task.state !== "ready" ||
-        task.wait !== 0 || task.rtsWait || this.rtsEncounterActive || task.skyboxWait || task.standaloneWait || task.puppetWait || task.fadeWait || task.screenBackdropWait || task.colorFadeWait || task.flashWait || task.cameraPath || task.cameraLerp ||
+        task.wait !== 0 || task.rtsWait || this.rtsEncounterActive || task.layerWait || task.skyboxWait || task.standaloneWait || task.puppetWait || task.fadeWait || task.screenBackdropWait || task.colorFadeWait || task.flashWait || task.cameraPath || task.cameraLerp ||
         task.scriptMove || task.scriptLerp || task.boardLerp || task.birdViewMove || task.remaining !== 0 || task.move ||
         task.animationWait || task.audioWait || task.bgmReplay || task.autoSaveWait || task.soundWait || task.treasure ||
         this.options.puppetActors && !this.nativeActorBindings)
@@ -2817,23 +2855,25 @@ export class FieldGame {
         Object.values(content.map.groups ?? {}).some((group) => group.entities.some((entity) => entity.kind === 11 && !passiveEffects.has(entity.id)))))
       throw new Error("Field effect particle/RNG checkpoint codec is unresolved");
     const s = structuredClone(raw);
-    const hasUi = s.kind === "idle-field-v18" || s.kind === "event-field-v9";
-    const hasCustom = s.kind === "idle-field-v17" || s.kind === "event-field-v8" || hasUi && Object.hasOwn(s, "scriptAnimations");
-    const hasValues = s.kind === "idle-field-v16" || s.kind === "event-field-v7" || (hasUi || hasCustom) && Object.hasOwn(s,"sourceMessageValues");
-    const hasInvalidations = s.kind === "idle-field-v15" || s.kind === "event-field-v6" || (hasUi || hasCustom || hasValues) && Object.hasOwn(s,"contentInvalidations");
-    const hasAssigned = s.kind === "idle-field-v14" || s.kind === "event-field-v5" || (hasUi || hasCustom || hasInvalidations || hasValues) && Object.hasOwn(s,"assignedNpcRoutes");
-    const hasStory = s.kind === "idle-field-v13" || s.kind === "event-field-v4" || (hasUi || hasCustom || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s,"storyRuntime");
-    const hasActivities = s.kind === "idle-field-v12" || s.kind === "event-field-v3" || (hasUi || hasCustom || hasStory || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s, "npcActivities");
-    const continuation = s.kind === "event-field-v1" || s.kind === "event-field-v2" || s.kind === "event-field-v3" || s.kind === "event-field-v4" || s.kind === "event-field-v5" || s.kind === "event-field-v6" || s.kind === "event-field-v7" || s.kind === "event-field-v8" || s.kind === "event-field-v9";
-    const hasView = s.kind === "idle-field-v11" || s.kind === "event-field-v2" || (hasUi || hasCustom || hasActivities || hasStory || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s, "viewPlan");
+    const hasLayers=s.kind==="idle-field-v19"||s.kind==="event-field-v10";
+    const hasUi = s.kind === "idle-field-v18" || s.kind === "event-field-v9" || hasLayers && Object.hasOwn(s,"sourceUi");
+    const hasCustom = s.kind === "idle-field-v17" || s.kind === "event-field-v8" || (hasLayers || hasUi) && Object.hasOwn(s, "scriptAnimations");
+    const hasValues = s.kind === "idle-field-v16" || s.kind === "event-field-v7" || (hasLayers || hasUi || hasCustom) && Object.hasOwn(s,"sourceMessageValues");
+    const hasInvalidations = s.kind === "idle-field-v15" || s.kind === "event-field-v6" || (hasLayers || hasUi || hasCustom || hasValues) && Object.hasOwn(s,"contentInvalidations");
+    const hasAssigned = s.kind === "idle-field-v14" || s.kind === "event-field-v5" || (hasLayers || hasUi || hasCustom || hasInvalidations || hasValues) && Object.hasOwn(s,"assignedNpcRoutes");
+    const hasStory = s.kind === "idle-field-v13" || s.kind === "event-field-v4" || (hasLayers || hasUi || hasCustom || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s,"storyRuntime");
+    const hasActivities = s.kind === "idle-field-v12" || s.kind === "event-field-v3" || (hasLayers || hasUi || hasCustom || hasStory || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s, "npcActivities");
+    const continuation = s.kind === "event-field-v1" || s.kind === "event-field-v2" || s.kind === "event-field-v3" || s.kind === "event-field-v4" || s.kind === "event-field-v5" || s.kind === "event-field-v6" || s.kind === "event-field-v7" || s.kind === "event-field-v8" || s.kind === "event-field-v9" || s.kind === "event-field-v10";
+    const hasView = s.kind === "idle-field-v11" || s.kind === "event-field-v2" || (hasLayers || hasUi || hasCustom || hasActivities || hasStory || hasAssigned || hasInvalidations || hasValues) && Object.hasOwn(s, "viewPlan");
     checkpointKeys(
       s,
       "kind,contentHash,time,remainder,nextTask,transportationId,entrySynchronized,partyActors,sourcePresentation,eventState,activeGroups,hiddenEntities,openedTreasures,actors,tiles,doors,bgm,environment,se,fade,camera,native" +
-        (continuation ? ",execution" : "") + (hasView ? ",viewPlan" : "") + (hasActivities ? ",npcActivities" : "") + (hasStory ? ",storyRuntime" : "") + (hasAssigned ? ",assignedNpcRoutes" : "") + (hasInvalidations ? ",contentInvalidations" : "") + (hasValues ? ",sourceMessageValues" : "") + (hasCustom ? ",scriptAnimations" : "") + (hasUi ? ",sourceUi" : ""),
+        (continuation ? ",execution" : "") + (hasView ? ",viewPlan" : "") + (hasActivities ? ",npcActivities" : "") + (hasStory ? ",storyRuntime" : "") + (hasAssigned ? ",assignedNpcRoutes" : "") + (hasInvalidations ? ",contentInvalidations" : "") + (hasValues ? ",sourceMessageValues" : "") + (hasCustom ? ",scriptAnimations" : "") + (hasUi ? ",sourceUi" : "") + (hasLayers ? ",fieldLayers" : ""),
     );
-    if (!["idle-field-v18", "event-field-v9", "idle-field-v17", "event-field-v8", "idle-field-v16", "event-field-v7", "idle-field-v10", "idle-field-v11", "idle-field-v12", "idle-field-v13", "idle-field-v14", "idle-field-v15", "event-field-v6", "event-field-v5", "event-field-v1", "event-field-v2", "event-field-v3", "event-field-v4"].includes(s.kind) ||
+    if (!["idle-field-v19", "event-field-v10", "idle-field-v18", "event-field-v9", "idle-field-v17", "event-field-v8", "idle-field-v16", "event-field-v7", "idle-field-v10", "idle-field-v11", "idle-field-v12", "idle-field-v13", "idle-field-v14", "idle-field-v15", "event-field-v6", "event-field-v5", "event-field-v1", "event-field-v2", "event-field-v3", "event-field-v4"].includes(s.kind) ||
         hasCustom !== (content.sourceScriptAnimations !== undefined) || s.contentHash !== content.contentHash || hasAssigned !== (options.assignedNpcRoutes === WEB_ASSIGNED_ROUTE_POLICY && content.npcRoutes !== undefined) || hasActivities !== (content.frameworkNpcActivity !== undefined) || hasStory !== hasFieldStoryRuntime(content))
       throw new Error("Field checkpoint source/version mismatch");
+    if(hasLayers){const binding=fieldLayerScrollingBinding(content,options.fieldLayerScrolling);if(!binding)throw new Error("Field layer checkpoint cannot grant runtime authority");FieldLayerScrolling.restore((s as {fieldLayers:FieldLayerSnapshot}).fieldLayers,binding,content.map.layers.map(l=>l.name),content.map.scenery,true);}
     if (hasUi && options.sourceFieldUi !== WEB_SOURCE_FIELD_UI) throw new Error("Source Field UI checkpoint cannot grant runtime authority");
     if (hasUi) FieldUiState.restore((s as { sourceUi: FieldUiSnapshot }).sourceUi, content.parentSourceSetHash, true);
     if(hasStory){const saved=(s as {storyRuntime:FieldStoryRuntimeSnapshot}).storyRuntime;if(saved.kind==='web-field-story-runtime-v3'&&(saved.screenPresentation.tasks.length||saved.screenPresentation.backdrop.tween))throw new Error("Stable checkpoint cannot carry unfinished screen presentation");}
@@ -2878,7 +2918,7 @@ export class FieldGame {
       new EventState(s.eventState),
       StaticAudioState.restore(s.bgm, content.bgm),
       StaticAudioState.restore(s.environment, content.environment),
-      { ...options, ...(hasUi ? { sourceFieldUiSeed: (s as { sourceUi: FieldUiSnapshot }).sourceUi } : {}), ...(native ? { nativeActorPreparation: true } : {}),
+      { ...options, fieldLayerScrollingSeed: hasLayers ? (s as {fieldLayers:FieldLayerSnapshot}).fieldLayers : null, ...(hasUi ? { sourceFieldUiSeed: (s as { sourceUi: FieldUiSnapshot }).sourceUi } : {}), ...(native ? { nativeActorPreparation: true } : {}),
         ...(hasValues ? { messageFeeSeed: (s as { sourceMessageValues: SourceMessageFeeSnapshot }).sourceMessageValues } : {}),
         ...(hasStory ? { storyRuntimeSeed: restoreFieldStoryRuntime((s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime, content, options.storyTimerOrigin, options.cameraShake,options.screenPresentation) } : {}) },
       FieldFadeState.restore(s.fade),
@@ -4391,7 +4431,7 @@ export class FieldGame {
       milliseconds > 60000
     )
       throw new Error("Invalid elapsed time");
-    if ((this.sourceUiOwner || this.skyboxOwner || this.mobControlsEnabled || this.birdViewActorsEnabled || this.content.frameworkNpcActivity || this.assignedRoutes.size > 0 || this.tasks.some(task => !task.done && (task.animationRepeat||task.boardLerp))) && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
+    if ((this.layerOwner || this.sourceUiOwner || this.skyboxOwner || this.mobControlsEnabled || this.birdViewActorsEnabled || this.content.frameworkNpcActivity || this.assignedRoutes.size > 0 || this.tasks.some(task => !task.done && (task.animationRepeat||task.boardLerp))) && this.options.npcActivityClock && !this.options.npcActivityClock()) return;
     if (this.pendingEventSave) return;
     this.remainder += milliseconds;
     while (this.remainder >= 10) {
@@ -4415,6 +4455,7 @@ export class FieldGame {
       this.tileAnimations.advance(10);
       this.openTriggers.advance();
       this.time += 10;
+      try { if(this.layerOwner)this.requireLayerOwner().advance(10); } catch(error){this.block(error instanceof Error?error.message:String(error));return;}
       try { this.advanceWorldAutoTasks(); }
       catch(error){this.block(error instanceof Error?error.message:String(error));return;}
       try { this.advanceActorVisibilityTimers(); }
@@ -4771,7 +4812,7 @@ export class FieldGame {
     // treasure coroutines are not cores and keep their existing owner.
     this.tasks = this.tasks.filter((other) => other === t || other.treasureRoot);
     Object.assign(t, plan, { stack: [], wait: 0, state: "ready", lastClock: this.time,
-      rtsWait:null, skyboxWait:null, standaloneWait: null,
+      rtsWait:null, layerWait:null, skyboxWait:null, standaloneWait: null,
       generalRegisters: initialFieldCoreRegisters(),
       puppetWait: null, scriptShop: null, fadeWait: null, screenBackdropWait:null, colorFadeWait: null, flashWait: null, cameraPath: null, cameraLerp: null, scriptMove: null, scriptLerp: null, boardLerp:null, birdViewMove: null, remaining: 0, move: null,
       animationWait: false, animationRepeat: null, audioWait: null, bgmReplay: null, autoSaveWait: null, sourceMessageWait: null, soundWait: null, treasure: null, done: false });
@@ -4855,7 +4896,7 @@ export class FieldGame {
       sourceEntityId: null,
       stack: [],
       wait: 0,
-      rtsWait:null, skyboxWait:null, standaloneWait: null,
+      rtsWait:null, layerWait:null, skyboxWait:null, standaloneWait: null,
       slot: null,
       state: "ready",
       range: { min: 0, max: (this.content.scripts[script]?.length ?? 0) - 1 },
@@ -4892,7 +4933,7 @@ export class FieldGame {
   private hasUnfinishedInterpolation(): boolean {
     // Timing wrappers also own captured Core r0/r1 until their next-clock
     // completion. A script/map/battle replacement cannot discard that bank.
-    return this.tasks.some((task) => !task.done && !!(task.scriptLerp || task.boardLerp || task.cameraLerp || task.cameraPath || task.rtsWait || task.skyboxWait || task.standaloneWait));
+    return this.tasks.some((task) => !task.done && !!(task.scriptLerp || task.boardLerp || task.cameraLerp || task.cameraPath || task.rtsWait || task.layerWait || task.skyboxWait || task.standaloneWait));
   }
   private hasUnfinishedNativeEncounterActivity(): boolean {
     return !!(Object.values(this.actors).some(actor=>actor.mobColor?.tween) || this.actorVisibilityBusy || this.pendingChoice || this.messageWindow || this.sourceMessage.active || this.shopTask ||
@@ -5967,6 +6008,10 @@ export class FieldGame {
     for (let budget = 0; budget < 4096; budget++) {
         if (t.done || t.wait > 0 || this.dialogue?.task === t.id) return;
         if(t.rtsWait){try{if(!this.advanceRtsWait(t))return;}catch(error){this.block(error instanceof Error?error.message:String(error),t.rtsWait?.op);return;}}
+        if(t.layerWait){const pending=t.layerWait;try{
+          if(pending.op.command.kind!=="tween"||this.content.scripts[t.script]!==pending.program||t.pc!==pending.webPC+1||pending.program[pending.webPC]!==pending.op||canonical(pending.op)!==pending.fingerprint||t.generalRegisters!==pending.registers||this.requireLayerOwner()!==pending.owner)throw new Error("Layer tween lost its original Core/program/map owner");
+          const sample=fieldLayerTweenSample(pending.op.command,Math.fround(this.time/1000),t.generalRegisters.r[0]!);pending.owner.prepare({kind:"apply",actions:sample.actions}).commit();if(!sample.complete)return;t.layerWait=null;
+        }catch(error){this.block(error instanceof Error?error.message:String(error),pending.op);return;}}
         if(t.skyboxWait){const pending=t.skyboxWait;try{
           if(this.content.scripts[t.script]!==pending.program||t.pc!==pending.webPC+1||pending.program[pending.webPC]!==pending.op||canonical(pending.op)!==pending.fingerprint||t.generalRegisters!==pending.registers||this.requireSkyboxOwner()!==pending.owner)throw Error("Skybox wait lost its original Core/program/model owner");
           const sample=skyboxScrollSample(pending.op.command,Math.fround(this.time/1000),Math.fround(t.generalRegisters.r[0]!));pending.owner.sampleOffset(sample.offset);if(!sample.complete)return;t.skyboxWait=null;
@@ -6646,6 +6691,19 @@ export class FieldGame {
             t.wait = Math.ceil(op.seconds * 100);
             t.wait *= 10;
             break;
+          case "field-layer-scrolling":
+            try {
+              const owner=this.prepareLayerOwner(),command=op.command,mask=command.kind==="reset"?this.eventState.read({category:"ScenarioVariable",index:0}):undefined;
+              const write=command.kind!=="reset"&&command.mask!==undefined?this.eventState.prepareWrites([{ref:{category:"ScenarioVariable",index:0},value:command.mask}]):null;
+              const program=this.content.scripts[t.script]!,webPC=t.pc-1,now=Math.fround(this.time/1000);
+              const registers=command.kind==="tween"?projectFieldCoreSlots(t.generalRegisters,{r:{0:now}}):t.generalRegisters;
+              const effective=command.kind==="tween"?{kind:"apply" as const,actions:fieldLayerTweenSample(command,now,now).actions}:command;
+              const transaction=owner.prepare(effective,mask);transaction.validate();write?.validate();
+              if(this.layersRetired||fieldLayerScrollingBinding(this.content,this.options.fieldLayerScrolling)!==owner.binding||program[webPC]!==op)throw new Error("Stale Field scrolling instruction");
+              transaction.commit();write?.commit();this.layerOwner=owner;this.layerBindingPin=owner.binding;t.generalRegisters=registers;
+              if(command.kind==="tween"){t.layerWait={op,program,webPC,fingerprint:canonical(op),registers,owner};return;}
+              break;
+            }catch(error){this.block(error instanceof Error?error.message:String(error),op);return;}
           case "field-skybox-scroll":
             try{const owner=this.requireSkyboxOwner(),program=this.content.scripts[t.script]!,webPC=t.pc-1,now=Math.fround(this.time/1000),registers=projectFieldCoreSlots(t.generalRegisters,{r:{0:now}}),transaction=owner.prepareStart(op.command,now);
               if(this.requireSkyboxOwner()!==owner||program[webPC]!==op)throw Error("Stale source Skybox first clock");transaction.commit();t.generalRegisters=registers;t.skyboxWait={op,program,webPC,fingerprint:canonical(op),registers,owner};return;

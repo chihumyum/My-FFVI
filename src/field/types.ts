@@ -1,4 +1,5 @@
 import type { FieldUiOp } from "../core/field-ui.js";
+import type { FieldLayerOp, FieldSceneryCatalog } from "../core/field-layer-scrolling.js";
 import type {RtsPartyOp}from'../core/field-rts-party.js';
 import type { SourceGilTagOp } from "../core/source-message-fees.js";
 import type { FieldScriptRandomOp } from "../core/field-script-random.js";
@@ -295,6 +296,7 @@ export type Op = Site &
     | { kind: "call"; target: number }
     | { kind: "wait"; seconds: number }
     | { kind: "field-skybox-scroll"; command: import("../core/field-skybox.js").FieldSkyboxScrollCommand }
+    | FieldLayerOp
     | { kind: "standalone-wait" }
     | { kind: "blank" }
     | { kind: "puppet"; slot: number; actor: string; target: number }
@@ -375,6 +377,8 @@ export type FieldContent = {
     tileSize: number;
     layers: TileLayer[];
     backgrounds?: FieldBackgroundLayer[];
+    /** Source image providers for the separately opted-in flat Web owner. */
+    scenery?: FieldSceneryCatalog;
     tilesets: Tileset[];
     textures: Record<string, string>;
     collisions: Record<string, number[]>;

@@ -909,7 +909,7 @@ export class GameSession {
   private fieldBattleFingerprint(field: FieldGame): string {
     return canonical({ request: field.stop, contentInvalidations: field.contentInvalidationsSnapshot, events: field.eventState.snapshot(), entry: field.battleEntryContext.state,
       time: field.time, fade: field.fader.snapshot(), effects: field.fieldEffectsSnapshot,
-      sourceUi: field.sourceFieldUiSnapshot, message: field.sourceMessage.snapshot(), messageRevision: field.sourceMessage.mutationRevision });
+      fieldLayers: field.fieldLayerSnapshot, sourceUi: field.sourceFieldUiSnapshot, message: field.sourceMessage.snapshot(), messageRevision: field.sourceMessage.mutationRevision });
   }
   private rememberEncounterFailure(field: FieldGame, request: SessionBattleRequest, error: unknown): void {
     if (this.field === field && field.stop === request && !this.battle)

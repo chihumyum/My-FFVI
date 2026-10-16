@@ -22,7 +22,7 @@ test('missing or changed source dependencies never acquire new carrier admission
   (f:ReturnType<typeof ordinaryConditionSource>)=>{f.ability.battle_renge_id='16';},
   (f:ReturnType<typeof ordinaryConditionSource>)=>{f.ability.type_id='999';},
   (f:ReturnType<typeof ordinaryConditionSource>)=>{f.group.function1_value1='1999';},
-  (f:ReturnType<typeof ordinaryConditionSource>)=>{f.group.function1_value1='5';},
+  (f:ReturnType<typeof ordinaryConditionSource>)=>{f.group.function1_value1='5';f.tables['condition.csv']!.find(row=>row.id==='5')!.game_over_target='0';},
   (f:ReturnType<typeof ordinaryConditionSource>)=>{f.tables['content_flag_group.csv']![0]!.content_flag_id='4';}]){
   const f=ordinaryConditionSource();change(f);const a=f.compileAbility().abilities[901]!;assert.equal(a.plan,null);assert(a.blockers.length);
  }

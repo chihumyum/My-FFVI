@@ -23,7 +23,7 @@ export type BattleAISource = {
 };
 export type BattleAIOp =
   | BattleEventBranchOp
-  | { kind: "nop" | "sync" | "exit" | "end-table" }
+  | { kind: "nop" | "blank" | "sync" | "exit" | "end-table" }
   | { kind: "jump"; target: number }
   | { kind: "condition"; conditionId: number; target: number }
   | {
@@ -69,6 +69,14 @@ export type BattleAIProgram = {
   blockers: string[];
 };
 export type BattleAIState = {
+  /** Unpublished whole-wake candidate. The existing Battle clock owns resumption. */
+  continuation?: {
+    wake: "initial" | "normal" | BattleAIReaction;
+    blankClock: number;
+    behavior: EnemyBehaviorState;
+    acts: BattleAIAct[];
+    visited: number[];
+  };
   pc: number;
   status: "running" | "waiting" | "exited";
   tableId: number;
@@ -87,6 +95,8 @@ export type BattleAIState = {
   } | null;
 };
 export type BattleAIContext = {
+  /** Existing host logical clock; required only when reaching Internal.Blank. */
+  clock?: number;
   /** Required only by source population-event instructions. Derived from the
    * current or transactional candidate units, never from initial formation. */
   events?: BattleEventContext;
@@ -156,17 +166,14 @@ function route(
   current: BattleAIState,
   context: BattleAIContext,
   wake: "initial" | "normal" | BattleAIReaction,
+  resuming = false,
 ): BattleAITurn {
   const normalReady = wake === "normal";
   const trigger = typeof wake === "string" ? wake : "reaction";
-  const state = {
-      ...current,
-      receivedAbility: current.receivedAbility
-        ? { ...current.receivedAbility }
-        : current.receivedAbility,
-    },
-    acts: BattleAIAct[] = [],
-    visited: number[] = [];
+  const state: BattleAIState = structuredClone(current);
+  const pending = state.continuation;
+  const acts: BattleAIAct[] = pending && resuming ? structuredClone(pending.acts) : [];
+  const visited: number[] = pending && resuming ? [...pending.visited] : [];
   const fail = (reason: string): never => {
     throw new BattleAIError(program.source, state.pc, reason);
   };
@@ -177,7 +184,7 @@ function route(
       return fail(error instanceof Error ? error.message : String(error));
     }
   };
-  const behavior = guarded(() => copyEnemyBehavior(context.self.behavior));
+  const behavior = guarded(() => copyEnemyBehavior(pending && resuming ? pending.behavior : context.self.behavior));
   guarded(() => int32(state.advancedActCount));
   if (typeof state.guardianActIsDadaluma !== "boolean")
     fail("invalid action-controller loop state");
@@ -230,7 +237,16 @@ function route(
   )
     fail("invalid program segment");
   if (state.status === "exited") fail("AI already exited");
-  if (wake !== "initial") {
+  if (resuming) {
+    if (!pending || state.status !== "running" || program.instructions[state.pc]?.op.kind !== "blank")
+      fail("AI continuation requires its suspended Blank");
+    if (!Number.isSafeInteger(context.clock) || context.clock! < pending!.blankClock)
+      fail("AI continuation requires a monotonic host clock");
+    if (context.clock === pending!.blankClock) return { trigger, state, behavior, acts, visited };
+    delete state.continuation;
+    state.pc++;
+  } else if (pending) fail("unfinished AI wake requires clock continuation");
+  else if (wake !== "initial") {
     if (
       state.status !== "waiting" ||
       program.instructions[state.pc]?.op.kind !== "sync"
@@ -256,6 +272,7 @@ function route(
   // control/parameter states, and bound growing loops independently. This is a
   // host safety limit, not an inferred original-game instruction budget.
   const seen = new Set<string>();
+  let steps = 0;
   while (true) {
     if (state.pc < program.entry || state.pc >= program.end)
       fail("PC outside program segment");
@@ -271,14 +288,24 @@ function route(
       behavior.variables,
     ]);
     if (seen.has(signature)) fail("cycle without SyncAI");
-    if (visited.length >= 10000)
+    if (steps++ >= 10000)
       fail("AI route exceeded host instruction budget before SyncAI");
     seen.add(signature);
-    visited.push(state.pc);
+    if (!resuming || !visited.includes(state.pc)) visited.push(state.pc);
     const op = program.instructions[state.pc]!.op;
     switch (op.kind) {
       case "blocked":
         fail(op.reason);
+      case "blank": {
+        if (!Number.isSafeInteger(context.clock) || context.clock! < 0)
+          fail("Internal.Blank requires the existing host clock");
+        if (acts.length > 1000) fail("AI exceeded host action budget");
+        visited.splice(0, visited.length, ...new Set(visited));
+        state.continuation = { wake: typeof wake === "string" ? wake : { ...wake },
+          blankClock: context.clock!, behavior: copyEnemyBehavior(behavior),
+          acts: structuredClone(acts), visited: [...new Set(visited)] };
+        return { trigger, state, behavior, acts, visited };
+      }
       case "sync":
         // SyncAI 0x828fe0 calls controller ResetReadyFlag on its first clock;
         // 0x15b8460 clears recevieAbility even when the previous wake missed.
@@ -515,6 +542,14 @@ export function planBattleAIReaction(
   reaction: BattleAIReaction,
 ) {
   return route(program, state, context, reaction);
+}
+
+/** Continue the same wake, including its received ability and unpublished acts.
+ * This is deliberately separate from readiness: Blank creates no new wake. */
+export function resumeBattleAI(program: BattleAIProgram, state: BattleAIState, context: BattleAIContext) {
+  if (!state.continuation)
+    throw new BattleAIError(program.source, state.pc, "missing AI clock continuation");
+  return route(program, state, context, state.continuation.wake, true);
 }
 
 export type BattleAIRandom = {

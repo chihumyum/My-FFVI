@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { hash, record } from "./content.js";
 import { readSnapshot, snapshotFile } from "./integrity.js";
 import { validateFieldBackground, type FieldBackgroundLayer, type FieldBackgroundSource, type FieldBackgroundRenderHost } from "../core/field-background.js";
+import { validateFieldSceneryCatalog, type FieldSceneryCatalog, type FieldSceneryLayer } from "../core/field-layer-scrolling.js";
+import { loadCorpus } from "./corpus.js";
+import { bindMapPackages } from "./map-package.js";
 
 type Asset = { data: unknown; source: FieldBackgroundSource };
 type Verify = (file: string, sha256: string) => void;
@@ -144,4 +147,57 @@ export function compileFieldBackgroundLayers(input: {
     } catch (error) { blockers.push({ layerId: id, reason: error instanceof Error ? error.message : String(error) }); }
   }
   return { layers, blockers };
+}
+
+/** Provider catalog only. It does not replace compileFieldBackgroundLayers'
+ * strict native diagnostics or authorize a runtime. All original image-layer
+ * properties remain bound through their complete tilemap source identity. */
+export function compileFlatFieldScenery(input: {
+  sources: readonly { file: string; sha256: string }[]; tilemap: Asset;
+  sourceSetHash: string; parentSourceSetHash: string; media: FieldBackgroundMedia; verify: Verify;
+}): FieldSceneryCatalog {
+  const source = provenance(input.tilemap.source, input.sources), map=record(input.tilemap.data);
+  if(input.media.parentSourceSetHash!==input.sourceSetHash || hash(input.media.sources)!==input.media.sourceSetHash) throw new Error("Foreign scenery media/source set");
+  const result:FieldSceneryCatalog={kind:"web-flat-field-scenery-v1",sourceSetHash:input.sourceSetHash,parentSourceSetHash:input.parentSourceSetHash,layers:[],unresolved:[]};
+  for(const raw of list(map.layers)) {
+    const l=record(raw);if(l.type!=="imagelayer"||typeof l.name!=="string")continue;
+    const match=/^(Far|Near)BGLayer([1-9][0-9]*)$/.exec(l.name);if(!match)continue;
+    const id=Number(match[2]),scenery=match[1]==="Far"?1 as const:3 as const;
+    try {
+      const p:Record<string,unknown>={};for(const raw of list(l.properties)){const v=record(raw);if(typeof v.name!=="string"||Object.hasOwn(p,v.name))throw new Error("Ambiguous scenery property");p[v.name]=v.value;}
+      const bool=(name:string,fallback:boolean)=>{const value=p[name]??fallback;if(typeof value!=="boolean")throw new Error("Invalid scenery "+name);return value;};
+      if(l.visible!==true||l.opacity!==1||(l.x??0)!==0||(l.y??0)!==0)throw new Error("Scenery transform/visibility provider is unresolved");
+      if(bool("screen_effect",false)||num(p.asset_id??0)!==0)throw new Error("Scenery requires the independent particle/effect provider");
+      if(typeof p.tex_asset_group!=="string"||typeof l.image!=="string"||!l.image)throw new Error("Missing source scenery texture reference");
+      const rawImage=input.media.images[p.tex_asset_group]?.[posix.basename(l.image)];if(!rawImage)throw new Error("Missing exact source scenery image");
+      const image=record(rawImage),sprite=provenance(image.source,input.sources),texture=provenance(image.textureSource,input.sources);
+      if(posix.basename(sprite.assetPath)!==posix.basename(l.image)||sprite.file!==texture.file||!posix.basename(sprite.file).startsWith(p.tex_asset_group+"_assets_all_")||image.filterMode!==0||image.rowOrder!=="top-to-bottom"||image.pixelsPerUnit!==1||hash(image.spriteRect)!==hash([0,0,image.width,image.height]))throw new Error("Scenery image sampler/identity is unresolved");
+      if(typeof image.sha256!=="string"||image.file!==`textures/${image.sha256}.png`)throw new Error("Invalid scenery media digest");input.verify(String(image.file),image.sha256);
+      const blend=num(p.blend_type??0);if(![0,1,2].includes(blend))throw new Error("Scenery blend mode is unresolved");
+      const layer:FieldSceneryLayer={id,scenery,name:l.name,source:{...source},active:bool("active",true),autoScroll:bool("auto_scroll",false),speed:{x:num(p.h_speed??0),y:num(p.v_speed??0)},
+        size:{width:num(p.width),height:num(p.height)},offset:{x:num(l.offsetx??0),y:num(l.offsety??0)},manualSpeed:{x:bool("h_manual_scroll",false)?num(p.h_manual_speed_scale??1):0,y:bool("v_manual_scroll",false)?num(p.v_manual_speed_scale??1):0},blend:blend as 0|1|2,
+        texture:{url:"/field-background-media/"+image.file,sha256:image.sha256,width:num(image.width),height:num(image.height),source:sprite,textureSource:texture}};
+      result.layers.push(layer);
+    }catch(error){result.unresolved.push({id,scenery,reason:error instanceof Error?error.message:String(error),source:{...source}});}
+  }
+  validateFieldSceneryCatalog(result);return result;
+}
+
+export type FieldSceneryWorldCatalog = {kind:"source-flat-field-scenery-world-v1";sourceSetHash:string;parentSourceSetHash:string;mediaSourceSetHash:string;maps:Record<string,FieldSceneryCatalog>;contentHash:string};
+/** Pure, complete source provider compilation. No world candidate, package or
+ * public output is built. Used by v14's explicitly authorized metadata upgrade. */
+export async function loadFieldSceneryWorldCatalog(root:string):Promise<FieldSceneryWorldCatalog> {
+  const corpus=await loadCorpus(root),media=await loadFieldBackgroundMedia(root,corpus.sourceSetHash),byId=new Map(corpus.assets.map(a=>[a.id,a])),maps:Record<string,FieldSceneryCatalog>={};
+  const sources=list(corpus.manifest.sources).map(record).map(s=>({file:String(s.file),sha256:String(s.sha256)}));
+  for(const binding of bindMapPackages(corpus.assets,corpus.tables)) {
+    const tile=byId.get(binding.tilemap??"");if(!tile)continue;
+    maps[binding.id]=compileFlatFieldScenery({sources,tilemap:{data:tile.data,source:{...tile.source,objectId:String(tile.source.objectId)}},sourceSetHash:corpus.sourceSetHash,parentSourceSetHash:String(corpus.manifest.parentSourceSetHash),...media});
+  }
+  const body={kind:"source-flat-field-scenery-world-v1" as const,sourceSetHash:corpus.sourceSetHash,parentSourceSetHash:String(corpus.manifest.parentSourceSetHash),mediaSourceSetHash:media.media.sourceSetHash,maps};
+  return {...body,contentHash:hash(body)};
+}
+export function verifyFieldSceneryWorldCatalog(raw:FieldSceneryWorldCatalog):void {
+  const {contentHash,...body}=raw;
+  if(raw.kind!=="source-flat-field-scenery-world-v1"||hash(body)!==contentHash||![raw.sourceSetHash,raw.parentSourceSetHash,raw.mediaSourceSetHash].every(s=>/^[a-f0-9]{64}$/.test(s)))throw new Error("Invalid source scenery world catalog");
+  for(const [id,catalog]of Object.entries(raw.maps)){if(!/^[1-9][0-9]*$/.test(id)||catalog.sourceSetHash!==raw.sourceSetHash||catalog.parentSourceSetHash!==raw.parentSourceSetHash)throw new Error("Foreign scenery map identity");validateFieldSceneryCatalog(catalog);}
 }

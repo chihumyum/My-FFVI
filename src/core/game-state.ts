@@ -102,9 +102,9 @@ import { createSourceNativeState, validateSourceNativeState,
   type SourceNativeState } from "./source-native-state.js";
 import { projectTransportationState, type FieldTransportationPort,
   type FieldTransportationTransaction, type TransportationStateCommand } from "./transportation-state.js";
-import { projectOwnedCondition, projectOwnedConditionRemoveAll, projectOwnedConditionRemoveLife, type FieldOwnedConditionPort,
+import { projectOwnedCondition, projectOwnedConditionRemoveAll, projectOwnedConditionRemoveType, type FieldOwnedConditionPort,
   type OwnedConditionCommand, type OwnedConditionTransaction } from "./owned-condition.js";
-import { projectFieldRecovery, type FieldRecoveryCommand,
+import { projectFieldRecovery, type FieldResourceCommand,
   type FieldRecoveryPort, type FieldRecoveryTransaction } from "./field-recovery.js";
 import { projectOwnedMessageNames, type FieldMessageNamesPort,
   type PreparedFieldMessageNames } from "./owned-message-names.js";
@@ -1455,8 +1455,8 @@ export class GameState {
       steps: { targetId: string; roster: GameStateSnapshot["roster"] }[]; coreI0Writes?: readonly number[] } =
       command.kind === "remove-condition" && command.conditionType === 0
       ? projectOwnedConditionRemoveAll(next.roster, next.party, command, this.conditions)
-      : command.kind === "remove-condition" && [4, 5].includes(command.conditionType)
-      ? projectOwnedConditionRemoveLife(next.roster, next.party, command, this.ownedConditionDefinitions, this.conditions)
+      : command.kind === "remove-condition" && command.conditionType > 0
+      ? projectOwnedConditionRemoveType(next.roster, next.party, command, this.ownedConditionDefinitions, this.conditions)
       : projectOwnedCondition(next.roster, next.party, command, this.ownedConditionDefinitions);
     next.roster = preview.roster;
     this.validate(next);
@@ -1483,7 +1483,7 @@ export class GameState {
     };
     return { ...projection, commit: () => commitWith(() => {}), commitWith };
   }
-  private projectFieldRecoveryState(data: GameStateSnapshot, command: FieldRecoveryCommand) {
+  private projectFieldRecoveryState(data: GameStateSnapshot, command: FieldResourceCommand) {
     const next = structuredClone(data);
     const preview = projectFieldRecovery(next.roster, next.party, command, this.conditions);
     next.roster = preview.roster;
@@ -1498,7 +1498,7 @@ export class GameState {
         setDummy: false as const, affectLeader: true as const };
     }) };
   }
-  private prepareFieldRecovery(command: FieldRecoveryCommand): FieldRecoveryTransaction {
+  private prepareFieldRecovery(command: FieldResourceCommand): FieldRecoveryTransaction {
     this.requireIdle();
     const { next, ...projection } = this.projectFieldRecoveryState(this.data, command), revision = this.revision;
     let consumed = false;

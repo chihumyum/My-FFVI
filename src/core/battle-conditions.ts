@@ -452,6 +452,16 @@ export class BattleConditions {
     } else if (index >= 0) result.splice(index, 1);
     return result;
   }
+  /** Source Owned.SubtractionHp337810 first calls the current HP setter, then
+   * independently appends the unique Dying master at a float32 product bound.
+   * This second comparison is not the setter's float32 hp/maxHp ratio. */
+  afterFieldHpSubtraction(hp:number,maxHp:number,currentIds:readonly number[]) {
+    if(hp===0)throw Error('Field HP subtraction setter requires a living owner');
+    const result=this.updateDying(hp,maxHp,currentIds);
+    const threshold=Math.fround(Math.fround(maxHp)*Math.fround(1/Math.fround(this.dying.thresholdDivisor)));
+    if(threshold>=Math.fround(hp)&&!result.includes(this.dying.conditionId))result.push(this.dying.conditionId);
+    return result;
+  }
   /** HP controller 0x459980 -> InterruptAddCondition(5); behavior Start/Remove
    * 0x5282a0/0x527eb0. Run once after an action's effect updates, before outcome.
    * Only admitted non-undead, non-permanent conditions are represented here. */

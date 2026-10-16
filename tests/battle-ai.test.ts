@@ -874,7 +874,7 @@ test("unknown branches stay inspectable and block precisely when reached", () =>
   assert.equal(state.actTurn, 0);
 });
 
-test("bad jumps, silent nonzero operands and non-progressing loops cannot be no-ops", () => {
+test("bad jumps and non-progressing loops cannot be no-ops", () => {
   const invalid = syntheticAI([["SyncAI"], ["JumpBattleAI", [99]]]);
   assert.throws(
     () =>
@@ -886,11 +886,8 @@ test("bad jumps, silent nonzero operands and non-progressing loops cannot be no-
     () => planBattleAITurn(cycle, startBattleAI(cycle, context).state, context),
     /cycle without SyncAI/,
   );
-  const malformed = syntheticAI([["Nop", [12]], ["SyncAI"]]);
-  assert.throws(
-    () => startBattleAI(malformed, context).state,
-    /unsupported AI/,
-  );
+  const legacy = syntheticAI([["Nop", [12]], ["SyncAI"]]);
+  assert.equal(startBattleAI(legacy, context).state.pc, 1);
 });
 
 test("messages, invalid weight arity and nonpositive abilities remain explicit blockers", () => {

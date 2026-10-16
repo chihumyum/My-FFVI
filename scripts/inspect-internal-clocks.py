@@ -86,6 +86,29 @@ for rva, name in [(0x5f5d00, "MainCore"), (0x5f6390, "PuppetCore")]:
     instructions = method(rva, "Last.Interpreter." + name + "$$Execute")
     contains(instructions, "call", "0x82d820")
 
+# BattleAICore uses this exact Internal dictionary before its BattleAI table.
+# Consume the existing complete bounded export; no native export is requested.
+ai_execute = method(0x81b120, "Last.Interpreter.BattleAICore$$Execute")
+ai_by_address = {i.address: i for i in ai_execute}
+assert rip(ai_by_address[0x81b15f]) == rip(by_address[0x2baa13])
+contains(ai_execute, "mov", "rdx, qword ptr [rdx + 0x18]")
+contains(ai_execute, "call", "0x2ba250")
+contains(ai_execute, "jne", "0x81b2bb")  # Internal has_value skips the BattleAI dictionary.
+ai_receipt_path = root / "build/native/ai-control/complete.json"
+ai_receipt_bytes = ai_receipt_path.read_bytes()
+ai_receipt = json.loads(ai_receipt_bytes)
+assert ai_receipt["status"] == "complete" and ai_receipt["semanticsVerified"] is False
+for key, value in identity.items():
+    assert ai_receipt[key] == value
+ai_record = next(row for row in ai_receipt["methods"] if row["rva"] == "0x81b120")
+assert ai_record["nextSymbolRva"] == "0x81b360"
+assert blocks[0x81b120]["sha256"] == ai_record["nativeRangeSha256"] == "3e02ce4ac67c2b654eeb6b7b9eaa594eff14cbdfd3d4699efc307f43396b4e3c"
+ai_text = (root / "build/native/ai-control/81b120.c").read_bytes()
+assert hashlib.sha256(ai_text).hexdigest() == ai_record["decompiledSha256"] == "e07ec6a00ea51b4bc59eb36ad63f293c6e2d389e6d6c52cc70ccb627cc70bd3b"
+assert b"(pLVar1->fields).mnemonic" in ai_text
+assert b"(pLVar1->fields).operands" not in ai_text and b"(pLVar1->fields).type" not in ai_text
+assert ai_receipt_path.read_bytes() == ai_receipt_bytes
+
 # Existing complete Core.Clock receipt independently retains its counter/PC loop.
 receipt_path = root / "build/native/ai-state/complete.json"
 receipt_bytes = receipt_path.read_bytes()
@@ -104,6 +127,7 @@ for key, path in paths.items():
 assert receipt_path.read_bytes() == receipt_bytes
 result = {"kind": "internal-clock-native-evidence-v1", "result": "passed", "identity": identity,
           "bindings": bindings, "methods": list(blocks.values()),
+          "battleAIExecuteReceipt": {"path": str(ai_receipt_path.relative_to(root)), "sha256": hashlib.sha256(ai_receipt_bytes).hexdigest()},
           "coreClockReceipt": {"path": str(receipt_path.relative_to(root)), "sha256": hashlib.sha256(receipt_bytes).hexdigest()},
           "sourceInstructionSemantics": {"Nop": "Next without reading operands", "Blank": "first clock Blank; later clock Next"},
           "nativeRuntimeVerified": False, "originalGameExecuted": False}

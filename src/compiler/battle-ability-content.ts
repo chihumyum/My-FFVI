@@ -17,6 +17,8 @@ export type BattleAbilityDisplay = {
 };
 
 export type BattleAbilityHostRequirement =
+  | 'source-function9-death-override-provider'
+  | 'enemy-only-levitate-lifecycle'
   | 'actual-source-enemy-boss-parameter'
   | "ordinary-enemy-magic-actor"
   | "current-owned-command-qualification"
@@ -179,6 +181,11 @@ export function compileBattleAbilityContent(
         requirements.push("no-runic-undead-or-other-value-overrides");
       for (const effect of effects) {
         if (effect.kind === "add-condition" || effect.kind === "defend") {
+          if(effect.kind==='add-condition'){
+            const type=tableInteger(reader.row('condition.csv',effect.conditionId).values.condition_type);
+            if(type===5)requirements.push('source-function9-death-override-provider');
+            if(type===409)requirements.push('enemy-only-levitate-lifecycle');
+          }
           conditionDependencies.added.push(effect.conditionId);
           if (effect.kind === "add-condition") requirements.push("target-condition-resistances");
         } else if (effect.kind === "recover-condition") conditionDependencies.recovered.push(...effect.conditionIds);

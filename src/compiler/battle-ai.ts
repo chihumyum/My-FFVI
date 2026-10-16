@@ -1,3 +1,4 @@
+import { compileInternalClockInstruction } from "./internal-clock.js";
 import { z } from "zod";
 import { enemyVariableCount } from "../core/enemy-behavior.js";
 import { isOperator } from "../core/script-integer.js";
@@ -66,6 +67,11 @@ export function compileBattleAI(
   )
     blockers.push("unresolved AI script flags or animations");
   const instructions = data.Mnemonics.map((raw) => {
+    // The exact AI core checks Internal before its BattleAI dictionary. Nop
+    // never reads stale/omitted operand banks. Keep unobserved types blocked.
+    if (raw && typeof raw === "object" && !Array.isArray(raw) &&
+        (raw as Record<string, unknown>).type === 1 && ["Nop", "Blank"].includes((raw as Record<string, unknown>).mnemonic as string))
+      return { mnemonic: (raw as Record<string, unknown>).mnemonic as string, op: compileInternalClockInstruction(raw, [1]) as BattleAIOp };
     const parsed = instruction.safeParse(raw);
     if (!parsed.success)
       return {

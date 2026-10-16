@@ -145,7 +145,8 @@ function parseBattleRebindings(raw=[]){
 
 async function frameworkUpgradeDeclaration(raw,root,compiledDir){
   if(raw===undefined)return null;
-  const parking=raw?.kind==='compiled-framework-profile-upgrade-v13';
+  const layers=raw?.kind==='compiled-framework-profile-upgrade-v14';
+  const parking=raw?.kind==='compiled-framework-profile-upgrade-v13'||layers;
   const vehicles=raw?.kind==='compiled-framework-profile-upgrade-v12'||parking;
   const transforms=raw?.kind==='compiled-framework-profile-upgrade-v11'||vehicles;
   const skybox=raw?.kind==='compiled-framework-profile-upgrade-v10'||transforms;
@@ -157,10 +158,10 @@ async function frameworkUpgradeDeclaration(raw,root,compiledDir){
   const animated=raw?.kind==='compiled-framework-profile-upgrade-v4'||worldAuto;
   const periodic=raw?.kind==='compiled-framework-profile-upgrade-v3'||animated&&Object.hasOwn(raw?.markers??{},'worldMap');
   const logical=raw?.kind==='compiled-framework-profile-upgrade-v2'||(periodic||animated)&&Object.hasOwn(raw,'logicalFieldEffects');
-  dataFields(raw,['kind','compilerDigest','markers',...(logical?['logicalFieldEffects']:[]),...(skybox?['skyboxCatalog']:[]),...(transforms?['fieldEffectTransformCatalog']:[])],'framework profile upgrade declaration');
-  assert.ok(['compiled-framework-profile-upgrade-v1','compiled-framework-profile-upgrade-v2','compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11','compiled-framework-profile-upgrade-v12','compiled-framework-profile-upgrade-v13'].includes(raw.kind),'Unknown framework profile upgrade version');
+  dataFields(raw,['kind','compilerDigest','markers',...(logical?['logicalFieldEffects']:[]),...(skybox?['skyboxCatalog']:[]),...(transforms?['fieldEffectTransformCatalog']:[]),...(layers?['fieldSceneryCatalog']:[])],'framework profile upgrade declaration');
+  assert.ok(['compiled-framework-profile-upgrade-v1','compiled-framework-profile-upgrade-v2','compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11','compiled-framework-profile-upgrade-v12','compiled-framework-profile-upgrade-v13','compiled-framework-profile-upgrade-v14'].includes(raw.kind),'Unknown framework profile upgrade version');
   assert.ok(typeof raw.compilerDigest==='string'&&digest.test(raw.compilerDigest),'Invalid framework profile upgrade compiler digest');
-  const hosts={...frameworkHostMarkers,...(parking?{transportationParkingUpload:{value:"web-source-transport-parking-upload-v1",module:"transportation-parking-upload",exportName:"WEB_SOURCE_TRANSPORT_PARKING_UPLOAD",provider:"fieldTransportationParkingBinding"}}:{}),...(vehicles?{vehicleLifecycle:{value:"web-source-vehicle-lifecycle-v1",module:"field-vehicle-lifecycle",exportName:"WEB_SOURCE_VEHICLE_LIFECYCLE",provider:"fieldVehicleLifecycleBinding"}}:{}),...(transforms?{fieldEffectTransforms:{value:"web-source-logical-board-transforms-v1",module:"field-effect-transforms",exportName:"WEB_FIELD_EFFECT_TRANSFORMS",provider:"fieldEffectTransformsBinding"}}:{}),...(skybox?{skyboxPresentation:{value:"web-flat-skybox-panorama-v1",module:"field-skybox",exportName:"WEB_FLAT_SKYBOX",provider:"fieldSkyboxBinding"}}:{}),...(screen?{screenPresentation:{value:"web-field-screen-presentation-2d-v1",module:"field-screen-presentation",exportName:"WEB_FIELD_SCREEN_PRESENTATION",provider:"fieldScreenPresentationBinding"}}:{}),...(mob?{mobColorFilter:{value:'web-flat-mob-color-filter-v1',module:'field-mob-controls',exportName:'WEB_FLAT_MOB_COLOR_FILTER',provider:'fieldMobColorBinding'}}:{}),...(worldMove?{worldAutoMove:{value:'web-flat-world-auto-move-v1',module:'field-world-auto-move',exportName:'WEB_FLAT_WORLD_AUTO_MOVE',provider:'worldAutoMoveBinding'}}:{}),...(birdActors?{birdViewActors:{value:'web-flat-bird-view-actors-v1',module:'field-bird-view-actors',exportName:'WEB_FLAT_BIRD_VIEW_ACTORS',provider:'fieldBirdViewActorBinding'}}:{}),...(worldAuto?{worldAutoTasks:{value:'web-flat-world-auto-tasks-v1',module:'field-world-auto-tasks',exportName:'WEB_FLAT_WORLD_AUTO_TASKS',provider:'worldAutoBinding'}}:{}),...(animated?{mapAnimatedEntities:{value:'web-field-animated-map-entities-v1',module:'field-map-animation',exportName:'WEB_FIELD_MAP_ANIMATION',provider:'prepareFieldMapAnimations'}}:{}),...(logical?{logicalFieldEffects:logicalMarker}:{}),...(periodic?periodicMarkers:{})};
+  const hosts={...frameworkHostMarkers,...(layers?{fieldLayerScrolling:{value:"web-field-layer-scrolling-v1",module:"field-layer-scrolling",exportName:"WEB_FIELD_LAYER_SCROLLING",provider:"fieldLayerScrollingBinding"}}:{}),...(parking?{transportationParkingUpload:{value:"web-source-transport-parking-upload-v1",module:"transportation-parking-upload",exportName:"WEB_SOURCE_TRANSPORT_PARKING_UPLOAD",provider:"fieldTransportationParkingBinding"}}:{}),...(vehicles?{vehicleLifecycle:{value:"web-source-vehicle-lifecycle-v1",module:"field-vehicle-lifecycle",exportName:"WEB_SOURCE_VEHICLE_LIFECYCLE",provider:"fieldVehicleLifecycleBinding"}}:{}),...(transforms?{fieldEffectTransforms:{value:"web-source-logical-board-transforms-v1",module:"field-effect-transforms",exportName:"WEB_FIELD_EFFECT_TRANSFORMS",provider:"fieldEffectTransformsBinding"}}:{}),...(skybox?{skyboxPresentation:{value:"web-flat-skybox-panorama-v1",module:"field-skybox",exportName:"WEB_FLAT_SKYBOX",provider:"fieldSkyboxBinding"}}:{}),...(screen?{screenPresentation:{value:"web-field-screen-presentation-2d-v1",module:"field-screen-presentation",exportName:"WEB_FIELD_SCREEN_PRESENTATION",provider:"fieldScreenPresentationBinding"}}:{}),...(mob?{mobColorFilter:{value:'web-flat-mob-color-filter-v1',module:'field-mob-controls',exportName:'WEB_FLAT_MOB_COLOR_FILTER',provider:'fieldMobColorBinding'}}:{}),...(worldMove?{worldAutoMove:{value:'web-flat-world-auto-move-v1',module:'field-world-auto-move',exportName:'WEB_FLAT_WORLD_AUTO_MOVE',provider:'worldAutoMoveBinding'}}:{}),...(birdActors?{birdViewActors:{value:'web-flat-bird-view-actors-v1',module:'field-bird-view-actors',exportName:'WEB_FLAT_BIRD_VIEW_ACTORS',provider:'fieldBirdViewActorBinding'}}:{}),...(worldAuto?{worldAutoTasks:{value:'web-flat-world-auto-tasks-v1',module:'field-world-auto-tasks',exportName:'WEB_FLAT_WORLD_AUTO_TASKS',provider:'worldAutoBinding'}}:{}),...(animated?{mapAnimatedEntities:{value:'web-field-animated-map-entities-v1',module:'field-map-animation',exportName:'WEB_FIELD_MAP_ANIMATION',provider:'prepareFieldMapAnimations'}}:{}),...(logical?{logicalFieldEffects:logicalMarker}:{}),...(periodic?periodicMarkers:{})};
   dataFields(raw.markers,Object.keys(hosts),'framework profile upgrade markers');
   const result=structuredClone(raw),providers=[];
   for(const [marker,definition] of Object.entries(hosts)){
@@ -196,6 +197,13 @@ async function frameworkUpgradeDeclaration(raw,root,compiledDir){
     assert.equal(hash({kind:a.kind,projection:a.projection}),a.contentHash,"Framework board transform assessment digest mismatch");
     assert(logical,"Board transform profile requires its complete logical base");
   }
+  if(layers){
+    const [{loadFieldSceneryWorldCatalog,verifyFieldSceneryWorldCatalog},{canonical}]=await Promise.all([
+      import(pathToFileURL(resolve(root,compiledDir,'src/compiler/field-background.js')).href),
+      import(pathToFileURL(resolve(root,compiledDir,'src/core/canonical.js')).href)]);
+    verifyFieldSceneryWorldCatalog(result.fieldSceneryCatalog);
+    assert.equal(canonical(result.fieldSceneryCatalog),canonical(await loadFieldSceneryWorldCatalog(root)),"Framework scenery upgrade differs from complete verified source providers");
+  }
   return {...result,providers};
 }
 
@@ -206,7 +214,7 @@ async function comparableFrameworkUpgrade(before,after,ref,declaration,canonical
   if(!declaration)return {after,upgrade:null};
   const previous=before.developmentProfile,next=after.developmentProfile,comparison=structuredClone(after);
   let vehicleActions=null;
-  if(['compiled-framework-profile-upgrade-v12','compiled-framework-profile-upgrade-v13'].includes(declaration.kind)){
+  if(['compiled-framework-profile-upgrade-v12','compiled-framework-profile-upgrade-v13','compiled-framework-profile-upgrade-v14'].includes(declaration.kind)){
     const {fieldVehicleActionAdmitted}=await import(pathToFileURL(resolve(root,compiledDir,'src/core/field-vehicle-action.js')).href);
     const project=(issues,entities)=>issues.filter(issue=>!(issue.reason==='Unsupported entity kind 21'&&entities.some(entity=>canonical(entity.source)===canonical(issue.source)&&fieldVehicleActionAdmitted(entity))));
     if(after.kind==='world-map-development'&&before.map&&comparison.map){
@@ -232,8 +240,18 @@ async function comparableFrameworkUpgrade(before,after,ref,declaration,canonical
       }
     }
   }
+  let fieldLayerScrolling=null;
+  if(declaration.kind==='compiled-framework-profile-upgrade-v14'&&after.kind==='world-map-development'&&after.map){
+    const catalog=declaration.fieldSceneryCatalog;
+    assert.equal(after.sourceSetHash,catalog.sourceSetHash,'Scenery upgrade source identity mismatch');
+    assert.equal(after.parentSourceSetHash,catalog.parentSourceSetHash,'Scenery upgrade parent identity mismatch');
+    const expected=catalog.maps[String(after.mapId)];assert(expected,'Scenery upgrade lacks complete source map provider');
+    assert.equal(canonical(after.map.scenery),canonical(expected),'Scenery map differs from complete source catalog');
+    if(before.map?.scenery!==undefined)assert.equal(canonical(before.map.scenery),canonical(expected),'Scenery upgrade cannot replace an old provider');
+    else{delete comparison.map.scenery;fieldLayerScrolling={catalogHash:catalog.contentHash,mapId:after.mapId,provider:structuredClone(expected),display:'Web flat source-pixel repeat; independent native shader/particle gates retained',clock:'existing Field clock; no cross-map state transfer',nativeParity:false};}
+  }
   let skyboxPresentation=null;
-  if(['compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11','compiled-framework-profile-upgrade-v12','compiled-framework-profile-upgrade-v13'].includes(declaration.kind)){
+  if(['compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11','compiled-framework-profile-upgrade-v12','compiled-framework-profile-upgrade-v13','compiled-framework-profile-upgrade-v14'].includes(declaration.kind)){
     const catalog=declaration.skyboxCatalog;
     assert.equal(after.sourceSetHash,catalog.sourceSetHash,'Skybox upgrade source domain mismatch');
     assert.equal(after.parentSourceSetHash,catalog.parentSourceSetHash,'Skybox upgrade parent domain mismatch');
@@ -245,7 +263,7 @@ async function comparableFrameworkUpgrade(before,after,ref,declaration,canonical
       else if(expected){delete comparison.map.skybox;skyboxPresentation={catalogHash:catalog.contentHash,mapId:after.mapId,display:'Web2D top-third panorama behind all map layers/actors',clock:'Field-only; paused during battle',nativeParity:false};}
     }else if(after.kind==='field-development')assert.equal(after.map?.skybox,undefined,'Legacy field map cannot acquire a world Skybox provider');
   }
-  if(['compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11','compiled-framework-profile-upgrade-v12','compiled-framework-profile-upgrade-v13'].includes(declaration.kind)&&
+  if(['compiled-framework-profile-upgrade-v3','compiled-framework-profile-upgrade-v4','compiled-framework-profile-upgrade-v5','compiled-framework-profile-upgrade-v6','compiled-framework-profile-upgrade-v7','compiled-framework-profile-upgrade-v8','compiled-framework-profile-upgrade-v9','compiled-framework-profile-upgrade-v10','compiled-framework-profile-upgrade-v11','compiled-framework-profile-upgrade-v12','compiled-framework-profile-upgrade-v13','compiled-framework-profile-upgrade-v14'].includes(declaration.kind)&&
       ['world-map-development','field-development'].includes(after.kind)) {
     for(const key of ['map','frameworkPresentation','actorView','entryView','partyEntry','cameraHost'])
       assert.equal(canonical(before[key]??null),canonical(comparison[key]??null),
@@ -254,7 +272,7 @@ async function comparableFrameworkUpgrade(before,after,ref,declaration,canonical
   const keys=Object.keys(declaration.markers);
   const changes=keys.filter(key=>Object.hasOwn(previous??{},key)!==Object.hasOwn(next??{},key)||
     canonical(previous?.[key]??null)!==canonical(next?.[key]??null));
-  if(!changes.length&&!skyboxPresentation&&!vehicleActions)return {after,upgrade:null};
+  if(!changes.length&&!skyboxPresentation&&!vehicleActions&&!fieldLayerScrolling)return {after,upgrade:null};
   assert.ok(previous?.kind==='framework-development-v1'&&next?.kind==='framework-development-v1',
     'Framework profile upgrade requires an existing framework profile');
   const addedMarkers=[];
@@ -286,7 +304,7 @@ async function comparableFrameworkUpgrade(before,after,ref,declaration,canonical
     pointer:ref.pointer+'/developmentProfile',role:ref.role,url:ref.url,
     oldHash:before.contentHash,newHash:after.contentHash,addedMarkers,providers:structuredClone(declaration.providers),
     profileBefore:structuredClone(previous),profileAfter:structuredClone(next),
-    logicalFieldEffects,skyboxPresentation,vehicleActions,grantsSourceAdmission:false,saveMigration:false}};
+    logicalFieldEffects,skyboxPresentation,vehicleActions,fieldLayerScrolling,grantsSourceAdmission:false,saveMigration:false}};
 }
 
 function identities(value,canonical,sourceCatalogProfile){
@@ -546,7 +564,7 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
   if(effectFlatAddition)report.frameworkFieldEffectFlatAdditions=[];
   const effectTransformAddition=parseFrameworkFieldEffectTransformAddition(frameworkFieldEffectTransformAddition);
   if(effectTransformAddition){
-    assert.ok(["compiled-framework-profile-upgrade-v11","compiled-framework-profile-upgrade-v12","compiled-framework-profile-upgrade-v13"].includes(frameworkUpgrade?.kind),"Board transform addition requires exact v11-v13 declaration");
+    assert.ok(["compiled-framework-profile-upgrade-v11","compiled-framework-profile-upgrade-v12","compiled-framework-profile-upgrade-v13","compiled-framework-profile-upgrade-v14"].includes(frameworkUpgrade?.kind),"Board transform addition requires exact v11-v13 declaration");
     assert.equal(frameworkUpgrade.fieldEffectTransformCatalog.contentHash,effectTransformAddition.assessmentHash,"Board transform declaration/addition assessment mismatch");
     assert.equal(effectFlatAddition?.assessmentHash,effectTransformAddition.flatAssessmentHash,"Board transform addition requires exact legacy flat proof");
     report.frameworkFieldEffectTransformAdditions=[];

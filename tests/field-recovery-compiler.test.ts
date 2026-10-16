@@ -15,7 +15,8 @@ test("field recovery uses selector slot four and retains separate source conditi
     allowUnableFight: true, allowMineralization: true }, dependencies: [
     { table: "condition.csv", id: 4 }, { table: "condition.csv", id: 5 }, { table: "condition.csv", id: 100 },
     { table: "character_status.csv", id: 12 }] });
-  for (const selector of [0, -1]) assert.equal(compileFieldRecoveryInstruction(raw("RecoveryMP", 0, selector), {}).command.target, selector);
+  for (const selector of [0, -1]) {const command=compileFieldRecoveryInstruction(raw("RecoveryMP", 0, selector), {}).command;
+    assert('target'in command);assert.equal(command.target,selector);}
 });
 
 test("eligibility predicates bind exact type references without admitting their effects", () => {

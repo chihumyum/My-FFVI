@@ -1,5 +1,6 @@
 import { hasSlipBehavior } from "./condition-slip.js";
 import {compileBaseHpMagic} from './base-hp-magic.js';
+import {compileLevitateCondition} from './condition-levitate.js';
 import {isSourceEnemyMagicProgram} from '../core/enemy-magic-carrier.js';
 import {compileResourceAbsorption} from './resource-absorption.js';
 import {compileOrdinaryConditionAction} from './ordinary-condition-action.js';
@@ -232,6 +233,18 @@ export function compileDevelopmentAbility(
       try { const compiled=compileBaseHpMagic(reader,program,fn); effects.push(compiled.effect);
         for(const row of compiled.sources)if(!sources.some(old=>old.source.assetPath===row.source.assetPath&&old.source.rowId===row.source.rowId))sources.push(row);
       }catch(error){blockers.push(error instanceof Error?error.message:String(error));}
+    } else if (fn.type === 9 && [0,1].includes(v2) && v3===0 && hasUnableFightBehavior(reader.row('condition.csv',v1))) {
+      effects.push({slot:fn.slot,kind:'add-condition',conditionId:v1,fixedHit:v2===1,
+        accuracy:program.contentFlags.includes(1)?255:program.rules.accuracy_rate!});
+    } else if (fn.type===9 && [0,1].includes(v2) && v3===0 && int(reader.row('condition.csv',v1).values.condition_type)===409) {
+      const row=reader.row('condition.csv',v1),v=row.values;
+      const ids=[v1,...(int(v.condition_group_id)===0?[]:reader.group('condition_group.csv','group_id',int(v.condition_group_id)).map(source=>int(source.values.condition_id)))];
+      const definitions=[...new Set(ids)].map(id=>{const source=reader.row('condition.csv',id),values=source.values;
+        return{id,type:int(values.condition_type),overlapped:int(values.overlapped_type)===1,eraseGroupId:int(values.erase_condition_group_id)};});
+      const compiled=compileLevitateCondition(reader,row,key=>key,definitions);
+      if(!compiled.behavior)blockers.push(...compiled.blockers);
+      else{effects.push({slot:fn.slot,kind:'add-condition',conditionId:v1,fixedHit:v2===1,accuracy:program.contentFlags.includes(1)?255:program.rules.accuracy_rate!});
+        for(const source of compiled.sources)if(!sources.some(old=>old.source.assetPath===source.source.assetPath&&old.source.rowId===source.source.rowId))sources.push(source);}
     } else if (fn.type === 9 && hasSourceControlConditionLifecycle(reader.row("condition.csv", v1))) {
       try {
         const compiled = compileSourceConditionApplication(reader, program);
@@ -424,9 +437,9 @@ export function compileDevelopmentAbility(
       for(const row of compiled.sources)if(!sources.some(existing=>existing.source.assetPath===row.source.assetPath&&existing.source.rowId===row.source.rowId))sources.push(row);
     }catch(error){ordinaryConditionDependencyError='Ordinary condition carrier dependency: '+(error instanceof Error?error.message:String(error));if(newSingleRecovery)blockers.push(ordinaryConditionDependencyError);}
   }
-  if (effects.some(effect => effect.kind === "add-condition" && hasSlipBehavior(reader.row("condition.csv", effect.conditionId))) &&
-      program.rules.accuracy_rate! > 100 && !program.contentFlags.includes(1))
-    blockers.push("Type407 nonordinary accuracy provider remains unclosed");
+  // AddConditionExection a91a90 clamps to255, including rates above100.
+  // The same reviewed conditionHit path serves every ordinary sole Fn9;
+  // Type407 has no separate accuracy branch in Calc/GetAddConditionStatus.
   if (effects.some(effect => effect.kind === "add-condition" && hasSlipBehavior(reader.row("condition.csv", effect.conditionId))) && !ordinaryConditionSupport)
     blockers.push("Type407 requires the complete ordinary sole Function9 carrier: " + (ordinaryConditionDependencyError ?? "mixed function/phase"));
   if (controlOnly && !controlSupport && !ordinaryConditionSupport) blockers.push(`unresolved control-condition ability type/system ${r.type_id}/${r.system_id}`);

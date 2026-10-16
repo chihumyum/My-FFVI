@@ -3,6 +3,7 @@ import { checkpointKeys } from "./checkpoint-validation.js";
 import { ownedConditionTargets, type OwnedConditionAppearanceStep, type OwnedConditionMember } from "./owned-condition.js";
 import type { PartyPresentationPublication, PartyState } from "./party.js";
 import { int32 } from "./script-integer.js";
+import {projectFieldHpChange,validateFieldHpChangeCommand,type FieldHpChangeCommand} from './field-hp-changes.js';
 
 export type FieldRecoveryCommand = {
   kind: "recover-hp" | "recover-mp";
@@ -12,9 +13,10 @@ export type FieldRecoveryCommand = {
   allowUnableFight: boolean;
   allowMineralization: boolean;
 };
+export type FieldResourceCommand = FieldRecoveryCommand | FieldHpChangeCommand;
 export type FieldRecoveryEventOp = {
   kind: "field-recovery";
-  command: FieldRecoveryCommand;
+  command: FieldResourceCommand;
   dependencies: { table: string; id: number }[];
 };
 export type FieldRecoveryTransaction = {
@@ -25,7 +27,7 @@ export type FieldRecoveryTransaction = {
   commitWith(publish: () => void): void;
 };
 export type FieldRecoveryPort = {
-  prepare(command: FieldRecoveryCommand): FieldRecoveryTransaction;
+  prepare(command: FieldResourceCommand): FieldRecoveryTransaction;
 };
 export type FieldRecoveryMember = OwnedConditionMember & {
   hp: number;
@@ -49,6 +51,10 @@ export function validateFieldRecoveryCommand(command: FieldRecoveryCommand): voi
     throw new Error("Field recovery absolute amount overflow");
   if (typeof command.allowUnableFight !== "boolean" || typeof command.allowMineralization !== "boolean")
     throw new Error("Invalid field recovery condition flags");
+}
+export function validateFieldResourceCommand(command:FieldResourceCommand):void {
+  if(command.kind==='subtract-hp'||command.kind==='revive-current-corps')validateFieldHpChangeCommand(command);
+  else validateFieldRecoveryCommand(command);
 }
 
 function dense(values: readonly unknown[], label: string): void {
@@ -89,8 +95,10 @@ function addClamped(current: number, amount: number, maximum: number): number {
  * no owner is created, enabled or moved by this instruction. The GameState
  * adapter also validates the complete resulting persistent snapshot. */
 export function projectFieldRecovery<T extends FieldRecoveryMember>(
-  roster: readonly T[], party: PartyState, command: FieldRecoveryCommand, conditions: BattleConditions,
+  roster: readonly T[], party: PartyState, command: FieldResourceCommand, conditions: BattleConditions,
 ): FieldRecoveryProjection<T> {
+  if(command.kind==='subtract-hp'||command.kind==='revive-current-corps')
+    return projectFieldHpChange(roster,party,command,conditions);
   validateFieldRecoveryCommand(command);
   dense(roster, "roster");
   const targets = ownedConditionTargets(roster, party, command.target);
@@ -144,7 +152,7 @@ export function executeFieldRecoveryEvent(
   preparePresentation?: (steps: readonly OwnedConditionAppearanceStep[]) => PartyPresentationPublication,
 ): void {
   if (op.kind !== "field-recovery") throw new Error("Invalid field recovery event");
-  validateFieldRecoveryCommand(op.command);
+  validateFieldResourceCommand(op.command);
   if (!port) throw new Error("Field recovery owned state is unavailable");
   const transaction = port.prepare(structuredClone(op.command));
   let publish: PartyPresentationPublication | undefined;

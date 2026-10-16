@@ -84,12 +84,15 @@ const raw = (type = 0, target = 0) => ({ type: 1, mnemonic: "RemoveCondition", o
   iValues: [type, target, 0, 0, 0, 0, 0, 0], rValues: Array(8).fill(0), sValues: Array(8).fill("") } });
 const tables = () => ({ "condition.csv": [{ ...magitekMasterRow(), id: "53" },
   { id: "79", condition_type: "665" }, { id: "80", condition_type: "666" }], "character_status.csv": [{ id: "12" }] });
-test("decoder admits only full source type0 shape and exact native row identities, leaving explicit 665/666 blocked", () => {
+test("decoder preserves exact type0 retention and explicit removal references while unknown additions remain blocked", () => {
   assert.deepEqual(compileOwnedConditionInstruction(raw(0, 12), tables()).dependencies, [
     { table: "condition.csv", id: 53 }, { table: "condition.csv", id: 79 }, { table: "condition.csv", id: 80 },
     { table: "character_status.csv", id: 12 },
   ]);
-  for (const type of [665, 666]) assert.throws(() => compileOwnedConditionInstruction(raw(type), tables()), /Unimplemented/);
+  for (const [type,id] of [[665,79],[666,80]]) {
+    assert.deepEqual(compileOwnedConditionInstruction(raw(type),tables()).dependencies,[{table:'condition.csv',id}]);
+    const addition=raw(type);addition.mnemonic='AddCondition';assert.throws(()=>compileOwnedConditionInstruction(addition,tables()),/Unimplemented/);
+  }
   const add = raw(); add.mnemonic = "AddCondition";
   assert.throws(() => compileOwnedConditionInstruction(add, tables()), /Unimplemented/);
   for (const mutate of [(r: ReturnType<typeof raw>) => r.type = 2,

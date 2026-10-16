@@ -1,8 +1,11 @@
 import { parseFieldUiCommand } from "./field-ui.js";
+import { parseFieldLayerCommand } from "./field-layer-scrolling.js";
+import {validateFieldHpChangeCommand} from './field-hp-changes.js';
 import { fieldMessageNameReferences, fieldMessageUsesFee } from "./field-message-template.js";
 import type { FieldContent, Op, Site } from "../field/types.js";
 
 export const fieldProviders = Object.freeze([
+  "fieldLayerScrolling",
   "sourceFieldUi", "sourceLocation", "skyboxPresentation", "screenPresentation", "mobColorFilter", "birdViewActors", "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "rosterEquipment", "treasure", "transportation", "vehicleLifecycle", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
   "sourceCharacterNaming", "rtsParty", "sourcePartySelection", "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "viewChange", "worldAutoTasks", "worldAutoMove", "sourceAutoSaveSync",
@@ -43,6 +46,7 @@ export type FieldContentRequirements = {
 };
 
 const codes: Record<FieldCapability, string> = {
+  fieldLayerScrolling: "FIELD_LAYER_SCROLLING_PROVIDER",
   sourceFieldUi: "FIELD_SOURCE_FIELD_UI_PROVIDER",
   sourceLocation: "FIELD_SOURCE_LOCATION_PROVIDER",
   skyboxPresentation:"FIELD_SKYBOX_PRESENTATION_PROVIDER",
@@ -161,6 +165,10 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     if (conditionVisual) add("conditionVisual", "Unknown or unsupported owned condition-visual context", "refresh");
   };
   switch (op.kind) {
+    case "field-layer-scrolling":
+      parseFieldLayerCommand(op.command);
+      add("fieldLayerScrolling", "Source layer and scenery commands require the current source-bound map and explicit flat Web owner");
+      break;
     case "source-field-ui":
       parseFieldUiCommand(op.command);
       add("sourceFieldUi", "Source Field UI requires its explicit Web projection and existing Field/Session clock");
@@ -196,6 +204,9 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     case "field-recovery": {
       add("recovery", "Field recovery owned state is unavailable");
       const command = commandOf(op);
+      if(op.command.kind==='subtract-hp'||op.command.kind==='revive-current-corps'){
+        validateFieldHpChangeCommand(op.command);break;
+      }
       if (command.kind !== "recover-hp" && command.kind !== "recover-mp") throw new Error("Invalid field recovery requirement command");
       if (command.kind === "recover-hp" && booleanField(command, "allowUnableFight")) refresh(true);
       break;

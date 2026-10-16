@@ -9,7 +9,7 @@ test('complete type407 source shape admits ordinary sole Fn9; changed fields and
  const f=slipSource();assert.equal(f.compile().catalog.behaviors.find(b=>b.id===f.conditionId)?.kind,'slip');assert(f.compileAbility().abilities[901]!.plan);
  for(const [k,v] of [['until_type','3'],['system_type','1'],['condition_group_id','9'],['game_over_target','1'],['rate_value1','1'],['erase_condition_group_id','1']] as const){const x=slipSource();Reflect.set(x.sleep,k,v);assert(!x.compile().catalog.behaviors.some(b=>b.id===x.conditionId),k);assert.equal(x.compileAbility().abilities[901]!.plan,null);}
  const mixed=slipSource();mixed.group.function2_id='809';mixed.group.function2_value1=String(mixed.conditionId);assert.equal(mixed.compileAbility().abilities[901]!.plan,null);
- const accuracy=slipSource();accuracy.ability.accuracy_rate='120';assert.equal(accuracy.compileAbility().abilities[901]!.plan,null);
+ const accuracy=slipSource();accuracy.ability.accuracy_rate='120';const high=accuracy.compileAbility().abilities[901]!;assert(high.plan);assert.equal(high.plan.effects[0]!.kind,'add-condition');assert.equal(high.program.rules.accuracy_rate,120);
  const flags=slipSource();flags.tables['content_flag_group.csv']!.push({id:'98',group_id:'91',content_flag_id:'4'});assert.equal(flags.compileAbility().abilities[901]!.plan,null);
 });
 test('battle-only type407 cannot persist or gain unknown mixed-initial order',()=>{

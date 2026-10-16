@@ -1,0 +1,43 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {GameFlow} from '../src/core/game-flow.js';
+import {GameBattleHandoff} from '../src/core/game-battle-handoff.js';
+import {CheckpointStorage} from '../src/core/saved-game.js';
+import {sourceOwnedRecoverySessionFixture} from './fixtures/source-owned-recovery-session.js';
+import {encounterReady} from './fixtures/source-encounter-session.js';
+
+test('actual battle return → current-Corps HP changes and generic type removal → Storage restore → next battle keeps one owned owner',async()=>{
+ const f=sourceOwnedRecoverySessionFixture(),live=await f.enter(),game=live.game,owner=game.state,field=game.field,before=owner.snapshot();
+ assert.equal(before.roster.find(m=>m.id===live.deadId)!.hp,0);
+ assert(field.startEvent('resource-change'));live.flow.advance(10,encounterReady);assert.equal(field.stop,null);
+ assert.equal(game.field,field);assert.equal(game.state,owner);assert(game.checkpointReady);
+ const after=owner.snapshot();assert.deepEqual(after.roster.map(m=>m.hp),before.roster.map(m=>m.hp===0?1:Math.max(1,m.hp-8)));
+ assert.deepEqual(after.roster.map(m=>[m.ownedId,m.sourceId,m.enabled,m.mp,m.equipment]),before.roster.map(m=>[m.ownedId,m.sourceId,m.enabled,m.mp,m.equipment]));
+ assert.equal(after.completedBattles.length,1);assert.equal(game.continueVictory(),false);
+ const checkpoint=game.checkpoint(),data=new Map<string,string>();let quota=true;
+ const storage=new CheckpointStorage({getItem:key=>data.get(key)??null,setItem:(key,value)=>{if(quota)throw Error('quota');data.set(key,value);}});
+ await assert.rejects(storage.save(checkpoint,1),/quota/);assert.equal(data.size,0);assert.deepEqual(game.checkpoint(),checkpoint);
+ quota=false;await storage.save(checkpoint,2);const restored=f.restore((await storage.load())!.checkpoint);assert.deepEqual(restored.checkpoint(),checkpoint);
+ restored.advance(10);assert.deepEqual(restored.state.snapshot(),after);
+ const flow=new GameFlow(restored);flow.start();flow.advance(0,encounterReady);assert(restored.field.startEvent('source-fight'));
+ for(let i=0;i<100&&!restored.field.stop;i++)flow.advance(10,encounterReady);
+ const handoff=new GameBattleHandoff(flow,{prepareStart:async()=>({}),prepareReturn:async()=>({}),discard(){}});
+ assert.equal((await handoff.start()).status,'committed');assert.deepEqual(restored.battle!.players.map(p=>p.hp),after.roster.filter(m=>m.enabled).map(m=>m.hp));
+ assert.deepEqual(restored.state.snapshot(),after);assert.equal(restored.checkpointReady,false);
+});
+test('native destination draft resource/removal sequence cancels without publication, rejects later failure, then commits once and retires old ports',async()=>{
+ const f=sourceOwnedRecoverySessionFixture(),live=await f.enter(),game=live.game,owner=game.state,field=game.field,before=owner.snapshot();
+ const destination=structuredClone(f.map);destination.initializer='resource-change';const world=structuredClone(f.world);
+ const staleRecovery=owner.fieldRecovery.prepare({kind:'subtract-hp',amount:8}),staleRemoval=owner.fieldOwnedConditions.prepare({kind:'remove-condition',conditionType:665,target:0});
+ field.previewMap(destination.mapId,f.content.entry.entrance);assert.equal(field.stop?.kind,'map-transition');
+ const failed=structuredClone(destination);failed.scripts['resource-change']!.splice(-1,0,{kind:'blocked',mnemonic:'ControlledLaterOwnerFailure',reason:'controlled later resource map failure',script:'resource-change',index:3,source:f.source});
+ assert.throws(()=>game.world.prepare(world,failed),/controlled later resource map failure/);assert.equal(game.field,field);assert.deepEqual(owner.snapshot(),before);
+ const first=game.world.prepare(world,destination);assert.equal(first.field.stop,null);assert.deepEqual(owner.snapshot(),before);
+ game.world.discard(first);assert.equal(game.world.commit(first),false);assert.equal(game.field,field);assert.deepEqual(owner.snapshot(),before);
+ const retry=game.world.prepare(world,destination);assert.equal(game.world.commit(retry),true);game.advance(10);
+ assert.equal(game.state,owner);assert.notEqual(game.field,field);assert.equal(game.field.stop,null);
+ const after=owner.snapshot();assert.deepEqual(after.roster.map(m=>m.hp),before.roster.map(m=>m.hp===0?1:Math.max(1,m.hp-8)));
+ assert.throws(()=>staleRecovery.commitWith(()=>assert.fail('retired recovery')),/Stale/);
+ assert.throws(()=>staleRemoval.commitWith(()=>assert.fail('retired removal')),/Stale/);
+ assert.equal(game.world.commit(retry),false);assert.deepEqual(owner.snapshot(),after);
+ const checkpoint=game.checkpoint();assert.deepEqual(f.restore(checkpoint).checkpoint(),checkpoint);
+});
