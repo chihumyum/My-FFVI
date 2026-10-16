@@ -1,4 +1,5 @@
 import {captureSourceTakeOver0055,parseSourceBattleHandoffEntry, type SourceBattleHandoffEntry,type SourceBattleHandoffReturn} from './source-battle-handoffs.js';
+import {parseBattlePartyContext,validateBattlePartyContextBinding,currentBattlePartyReward,type BattlePartyContext} from "./battle-party-context.js";
 import { advanceSlipClock, slipDamage, writeSlipTimeStop, type SlipState } from "./condition-slip.js";
 import { validatePeriodicNumberHost, WEB_PERIODIC_NUMBER_MILLISECONDS, type BattlePeriodicNumberHost,
   type BattlePeriodicNumberLease, type BattlePeriodicNumberProjection, type BattlePeriodicNumberRequest } from "./battle-periodic-number.js";
@@ -330,7 +331,7 @@ export class BattleGame {
   private controlTargetUnits = new Map<string, Map<number, Combatant>>();
   private collected = false;
   private readonly escapeRule: FrameworkBattleEscapePolicy | null;
-  private readonly rewardPolicy: Readonly<BattleRewardPolicy>;
+  private readonly entryRewardPolicy: Readonly<BattleRewardPolicy>;
   private readonly lifecycle: BattleLifecycle;
   private readonly controlPolicy: BattleContent["conditionControlPolicy"] | null;
   private readonly playerConditionTraits = new Map<number, Readonly<NonNullable<CombatantDefinition["conditionTraits"]>>>();
@@ -515,6 +516,8 @@ export class BattleGame {
   private readonly entryEnemies: CombatantDefinition[];
   private participantState: BattleParticipantState;
   private currentEnemyPartyId: number;
+  private currentEnemyPartyGeneration=0;
+  readonly #partyContext:BattlePartyContext|null;
   private currentEnemySlots: Record<string, BattleParticipantSlot>;
   private hiddenEnemyIds = new Set<string>();
   private readonly playerBorrow: BattlePlayerBorrow | null;
@@ -622,8 +625,10 @@ export class BattleGame {
       assertSourceBattleFlagsControls(this.sourceFlags,content.controls);
     }
     this.escapeRule = content.escapePolicy === undefined ? null : parseBattleEscapePolicy(content.escapePolicy);
-    this.rewardPolicy = Object.freeze(parseBattleRewardPolicy(content.rewardPolicy === undefined
+    this.entryRewardPolicy = Object.freeze(parseBattleRewardPolicy(content.rewardPolicy === undefined
       ? { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 } : content.rewardPolicy));
+    this.#partyContext=content.partyContext===undefined?null:parseBattlePartyContext(content.partyContext);
+    if(this.#partyContext)validateBattlePartyContextBinding(this.#partyContext,content.encounterId,this.entryRewardPolicy,this.#childAdmission,this.sourceFlags??undefined);
     validateBattleEventConditions(eventHosts?.conditions);
     validateScriptedBattleActionPolicy(eventHosts?.scriptedActions);
     validateBattleEventControls(eventHosts?.controls);
@@ -1540,6 +1545,10 @@ export class BattleGame {
   get gauLifecycle(){return {entry:this.gauEntry&&structuredClone(this.gauEntry),encounteredEnemyIds:structuredClone(this.gauEnemyIds),journal:structuredClone(this.gauModeJournal)};}
   get eventSharedReturn() { return this.eventShared?.prepareReturn() ?? null; }
   get participantExecution(): BattleParticipantState { return structuredClone(this.participantState); }
+  /** Read-only facts from the actual battle instance; never accepted from a result or save. */
+  get partyContextContent():BattlePartyContext|null{return this.#partyContext===null?null:structuredClone(this.#partyContext);}
+  get partyContextExecution(){return this.#partyContext===null?null:{rootPartyId:this.#partyContext.rootPartyId,partyId:this.currentEnemyPartyId,generation:this.currentEnemyPartyGeneration};}
+  private get rewardPolicy():Readonly<BattleRewardPolicy>{return this.#partyContext?currentBattlePartyReward(this.#partyContext,this.currentEnemyPartyId):this.entryRewardPolicy;}
   get enemyPartyExecution() {
     return { partyId: this.currentEnemyPartyId, slots: structuredClone(this.currentEnemySlots),
       hiddenEnemyIds: [...this.hiddenEnemyIds] };
@@ -1885,6 +1894,16 @@ export class BattleGame {
   private changeEnemyParty(partyId: number, hidden: boolean): void {
     const party = this.#childAdmission?prepareBattleChildParty(this.#childAdmission,partyId,this.participantContent):this.participantContent?.enemyParties?.[partyId];
     if (!party) throw new Error("Missing admitted replacement enemy party");
+    if(this.#partyContext){
+      const policy=currentBattlePartyReward(this.#partyContext,partyId);
+      if(policy.magicPoints>0){
+        if(!this.projectProgression)throw new Error("Magic point rewards require an owned progression provider before child preparation");
+        for(const player of this.settlementPlayers()){
+          if(player.magicLearningValue===undefined)throw new Error("Missing owned magic learning value before child preparation");
+          projectMagicLearningValue(player.magicLearningValue,0,false);
+        }
+      }
+    }
     const masters = party.members.map(member => {
       const definition = this.participantContent!.enemyDefinitions[member.sourceId], placement = party.slots[member.uniqueId];
       if (!definition || !placement) throw new Error("Missing replacement enemy definition or slot");
@@ -1916,6 +1935,7 @@ export class BattleGame {
     this.participantState = planned.state;
     this.currentEnemySlots = structuredClone(party.slots);
     this.currentEnemyPartyId = partyId;
+    this.currentEnemyPartyGeneration++;
     units.forEach((unit, index) => { this.publishEnemyEntry(unit, entries[index]!);
       if (hidden) this.hiddenEnemyIds.add(unit.id); });
     this.eventControls.aiStarted = true;
@@ -3017,6 +3037,7 @@ export class BattleGame {
       unitOwners: [...this.combatants],
       participantState: structuredClone(this.participantState),
       currentEnemyPartyId: this.currentEnemyPartyId,
+      currentEnemyPartyGeneration:this.currentEnemyPartyGeneration,
       currentEnemySlots: structuredClone(this.currentEnemySlots),
       hiddenEnemyIds: new Set(this.hiddenEnemyIds),
       playerState: structuredClone(this.playerState),
@@ -3122,6 +3143,7 @@ export class BattleGame {
         Object.assign(this.combatants[index]!, unit);
       this.participantState = before.participantState;
       this.currentEnemyPartyId = before.currentEnemyPartyId;
+      this.currentEnemyPartyGeneration=before.currentEnemyPartyGeneration;
       this.currentEnemySlots = before.currentEnemySlots;
       this.hiddenEnemyIds = before.hiddenEnemyIds;
       this.playerState = before.playerState;

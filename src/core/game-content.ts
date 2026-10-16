@@ -10,7 +10,7 @@ import { parseGameDevelopmentEntry, assertGameDevelopmentEntry } from "./game-de
 import { assertFrameworkNewGameBindings, parseFrameworkNewGameContent, prepareFrameworkNewGameField,
   type FrameworkNewGameContent } from "./framework-new-game.js";
 import { GameState } from "./game-state.js";
-import { fieldTimerOriginContent, type FieldTimerOriginContent } from "./field-story-runtime.js";
+import { fieldTimerRequiredOrigins, fieldTimerOriginContent, type FieldTimerOriginContent } from "./field-story-runtime.js";
 
 export type { GameContentProfile } from "./game-content-refs.js";
 
@@ -294,11 +294,12 @@ export class GameContentRepository {
         const map = await this.readMap(read, location.mapId, catalog);
         result = { ...result, world: { ...result.world, catalog, map } };
       }
-      const active = "storyRuntime" in saved.world.field ? saved.world.field.storyRuntime.timer.active : null;
-      if (active) {
-        object(active.binding); integer(active.binding.mapId, 1); hash(active.binding.mapContentHash);
+      const savedTimer = "storyRuntime" in saved.world.field ? saved.world.field.storyRuntime.timer : null;
+      const origins: FieldTimerOriginContent[] = [];
+      for (const binding of savedTimer ? fieldTimerRequiredOrigins(savedTimer) : []) {
+        object(binding); integer(binding.mapId, 1); hash(binding.mapContentHash);
         let origin: FieldTimerOriginContent;
-        if (active.binding.mapContentHash === saved.world.initialHash) {
+        if (binding.mapContentHash === saved.world.initialHash) {
           // The entry wrapper has a different digest from the indexed map
           // body. Rebuild its metadata from independently pinned entry data,
           // never from scripts or authority supplied by the saved timer.
@@ -320,17 +321,19 @@ export class GameContentRepository {
           const world = result.world;
           if (!world || world.catalog.parentSourceSetHash !== saved.sourceSetHash)
             throw new Error("Story timer origin requires its trusted map catalog");
-          const map = await this.readMap(read, active.binding.mapId, world.catalog);
-          if (map.contentHash !== active.binding.mapContentHash)
+          const map = await this.readMap(read, binding.mapId, world.catalog);
+          if (map.contentHash !== binding.mapContentHash)
             throw new Error("Story timer origin map content changed");
           origin = { mapId: map.mapId, mapContentHash: map.contentHash, scripts: structuredClone(map.scripts) };
         }
-        if (origin.mapId !== active.binding.mapId || origin.mapContentHash !== active.binding.mapContentHash)
+        if (origin.mapId !== binding.mapId || origin.mapContentHash !== binding.mapContentHash)
           throw new Error("Story timer origin identity differs from trusted content");
-        if (result.world) result.world.timerOrigin = origin;
+        origins.push(origin);
+        if (result.world && savedTimer?.active?.binding.mapContentHash === origin.mapContentHash) result.world.timerOrigin = origin;
         // A standalone initial field rebinds directly from result.initial;
         // it has no WorldSession map package to carry another dependency.
       }
+      if (result.world && origins.length) result.world.timerOrigins = origins;
       return result;
     });
   }

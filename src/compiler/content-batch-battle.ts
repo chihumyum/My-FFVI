@@ -1,3 +1,4 @@
+import {parseBattlePartyContext,validateBattlePartyContextBinding} from "../core/battle-party-context.js";
 import {parseBattleChildAdmission} from '../core/battle-child-admission.js';
 import { battleEventConditionDependencies } from "./battle-event-condition.js";
 import { parseSourceBattleControls } from '../core/battle-controls.js';
@@ -91,6 +92,10 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
       if (catalog.kind !== "narshe-battle-catalog" || encounter.encounterId !== id)
         block("encounter-identity", "Encounter dictionary key and compiled identity disagree");
       enemyDefinitions = encounter.enemies;
+      checked("battle-party-context",()=>{
+        if(Object.hasOwn(catalog.common,"partyContext"))throw new Error("Battle party context must belong to an encounter");
+        if(encounter.partyContext)validateBattlePartyContextBinding(parseBattlePartyContext(encounter.partyContext),id,encounter.rewardPolicy,encounter.childPartyAdmission,encounter.sourceFlags);
+      });
       checked('child-party-admission',()=>{
         if(Object.hasOwn(catalog.common,'childPartyAdmission'))throw new Error('Child-party admission must belong to an encounter');
         if(encounter.childPartyAdmission===undefined)return;

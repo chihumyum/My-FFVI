@@ -50,6 +50,9 @@ export type EquipmentDefinition = {
   abilityCost?: EquipmentAbilityCost;
   /** An identity may be stored before all its effects are executable. */
   blockers: string[];
+  /** Native GetEquipItems sorts descending OwnedItemData.SortId; this is
+   * copied from the weapon/armor master, independently of confirmed attack. */
+  strongest?: { sortId: number; weaponCategory: number | null; twoHanded: boolean };
 };
 export type EquipmentCharacter = {
   sourceId: number;
@@ -442,6 +445,52 @@ export function previewEquipmentChange(
   }
   validateEquipmentState(catalog, next, stock);
   return { roster: next, stock: structuredClone([...stock]), changes };
+}
+
+/** Source NonAccessories first removes slots 1..4, then selects each from a
+ * fresh owned-list projection. Unsupported effects remain candidates: selecting
+ * one fails in the original equipment transaction rather than picking weaker
+ * executable gear. Equal SortId needs native owned-list order, which stock does
+ * not preserve; never turn content identity into an invented tie breaker. */
+export function selectStrongestEquipment(
+  catalog: EquipmentCatalog, roster: readonly EquipmentLoadout[],
+  stock: readonly EquipmentStock[], playerId: string, slot: number,
+): number | null {
+  validateEquipmentState(catalog, roster, stock);
+  integer(slot, 1, 4);
+  const target = roster.find(p => p.id === playerId);
+  if (!target) throw Error("Unknown strongest equipment owner");
+  const owner = character(catalog, target.sourceId), counts = equipmentStockCounts(catalog, stock);
+  const occupied = new Map<number, number>();
+  for (const member of roster) for (const id of member.equipment)
+    occupied.set(id, (occupied.get(id) ?? 0) + 1);
+  const candidates: EquipmentDefinition[] = [];
+  for (const [id, count] of counts) {
+    const item = definition(catalog, id);
+    if (count === 0 || item.empty || count === (occupied.get(id) ?? 0) ||
+        !equipmentSlotAllowed(item, slot, owner) || !item.jobIds.includes(owner.jobId)) continue;
+    // GetDominantArmItems: without two-sword style, a non-dominant slot
+    // receives Armor only. Slot/parts filtering still decides body/head.
+    if (slot !== owner.dominantArm && item.kind !== "armor") continue;
+    const rank = item.strongest;
+    if (!rank || Object.keys(rank).sort().join(',') !== 'sortId,twoHanded,weaponCategory' ||
+        !Number.isInteger(rank.sortId) || rank.sortId < -0x80000000 || rank.sortId > 0x7fffffff ||
+        typeof rank.twoHanded !== 'boolean' ||
+        (item.kind === 'weapon' ? !Number.isInteger(rank.weaponCategory) || rank.weaponCategory! < 0 || rank.weaponCategory! > 0x7fffffff : rank.weaponCategory !== null))
+      throw Error("Missing strongest equipment source selection identity: " + id);
+    candidates.push(item);
+  }
+  candidates.sort((a, b) => b.strongest!.sortId - a.strongest!.sortId);
+  const selected = candidates[0];
+  if (!selected) return null;
+  if (candidates[1]?.strongest!.sortId === selected.strongest!.sortId)
+    throw Error("Ambiguous strongest equipment: original owned-list order is unavailable");
+  // Bow/arrow and two-hand corrections require their complete hand/provider
+  // contracts. Their absence in this build is a source-table fact, not a
+  // default supplied to another catalog or an excuse to select weaker gear.
+  if (selected.strongest!.twoHanded || [12, 13].includes(selected.strongest!.weaponCategory ?? -1))
+    throw Error("Unimplemented strongest equipment hand provider");
+  return selected.id;
 }
 
 /** CreateItems grants precede AddFromMaster: each of the six initial slots,

@@ -1,3 +1,5 @@
+import {parseWebBattlePartyContext,type WebBattlePartyContext,type BattlePartyContext} from "../core/battle-party-context.js";
+import {compileBattlePartyContext} from "./battle-party-context.js";
 import type { CatalogNameResolver } from "./source-catalog-name.js";
 import {parseWebBattleChildAdmission,type WebBattleChildAdmission,type BattleChildPartyEntry,type BattleChildGate} from '../core/battle-child-admission.js';
 import {sourceChildPartyEntry,childMetadataGates,childGate,childAdmissionPlan} from './battle-child-admission.js';
@@ -51,6 +53,7 @@ type Reader = {
 import {parseWebBattleForcedSave,type WebBattleForcedSave} from '../core/battle-forced-save.js';
 export type BattleEncounterRuntimeInput = {
   childPartyAdmission?:WebBattleChildAdmission;
+  partyContext?:WebBattlePartyContext;
   gauInstancePolicy?:WebBattleGauInstances;
   gauInstanceContent?:import("../core/battle-gau-instances.js").BattleGauInstanceContent;
   forcedSavePolicy?:WebBattleForcedSave;
@@ -116,6 +119,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
   if(input.manualControls!==undefined&&input.manualControls!==WEB_MANUAL_BATTLE_CONTROLS)throw new Error('Unknown manual battle control policy');
   validateBattleBranchExecutionPolicy(input.branchExecution);
   if(input.gauInstancePolicy!==undefined)parseWebBattleGauInstances(input.gauInstancePolicy);
+  if(input.partyContext!==undefined){parseWebBattlePartyContext(input.partyContext);if(!input.childPartyAdmission)throw new Error("Battle party context requires the complete source child admission directory");}
   if(input.childPartyAdmission!==undefined){parseWebBattleChildAdmission(input.childPartyAdmission);if(input.branchExecution!==WEB_BATTLE_BRANCH_EXECUTION)throw new Error("Child-party admission requires explicit source battle branch execution");}
   if(input.spawnConditionPolicy!==undefined)parseWebEnemySpawnConditions(input.spawnConditionPolicy);
   if(input.forcedSavePolicy!==undefined)parseWebBattleForcedSave(input.forcedSavePolicy);
@@ -178,7 +182,9 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     let handoff: BattleHandoffContent | undefined;
     let controls:SourceBattleControls|undefined;
     let sourceFlags:SourceBattleFlags|undefined;
+    let partyContext:BattlePartyContext|undefined;
     try {
+      if(input.partyContext)partyContext=compileBattlePartyContext(reader,encounter,selectedWaves.map(w=>w.encounter));
       const m = encounter.metadata;
       if (!encounter.source || encounter.source.rowId !== String(partyId) || !m)
         throw new Error("Invalid runtime encounter source binding");
@@ -397,7 +403,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
           try { createBattleFormationPlan(child.patterns); }
           catch (error) { stage("blocked", "enemy-party-formation", message(error)); }
           try { compileBattleRewardPolicy({ getAp: metadata.getAp, getValue: metadata.getValue,
-            battleFlags: metadata.battleFlags.map(flag => int(flag.values.battle_flag_id)) }); }
+            battleFlags: (input.partyContext?encounter.metadata:metadata).battleFlags.map(flag => int(flag.values.battle_flag_id)) }); }
           catch (error) { stage("blocked", "enemy-party-rewards", message(error)); }
           media(child.background);
           const fields: Record<string, string> = { battleFlagGroupId: "battle_flag_group_id", backgroundId: "battle_background_asset_id",
@@ -405,6 +411,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
             getAp: "get_ap", getValue: "get_value", scriptId: "script_name" };
           for (const [key, field] of Object.entries(fields)) {
             const childValue = metadata[key as keyof typeof metadata], parentValue = encounter.metadata[key as keyof typeof metadata];
+            if(input.partyContext&&(key==="getAp"||key==="getValue"))continue;
             if (canonical(childValue) !== canonical(parentValue))
               stage("development-omission", "enemy-party-metadata", `${field}=${childValue} differs from entry ${parentValue}; Web retains parent context`,
                 { dependency: { table: "monster_party.csv", id: childId, field } });
@@ -431,7 +438,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
           if (!diagnostics.slice(childStart).some(diagnostic => diagnostic.kind === "blocked")&&!childEntry?.gates.length) {
             enemyParties[String(childId)] = parseBattleParticipantEnemyParty({ members: child.enemies.map(enemy =>
               ({ sourceId: enemy.monsterId, uniqueId: enemy.slot })), slots }, enemyDefinitions);
-            stage("development-omission", "enemy-party-policy", "Web swaps source members/layout within the same battle; parent formation, scene, reward policy and root remain fixed");
+            stage("development-omission", "enemy-party-policy", input.partyContext?"Web swaps source members/layout and current descriptor within the same battle; reward AP/MP read the current descriptor, entry flags/escape/root remain captured, scene and formation consumers remain separately limited":"Web swaps source members/layout within the same battle; parent formation, scene, reward policy and root remain fixed");
           }
         } catch (error) { stage("blocked", "enemy-party-provider", message(error)); }
       }
@@ -518,6 +525,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       input.sourceDiagnostics.some((d) => d.partyId === partyId);
     if (!blocked && formationPlan && rewardPolicy && lifecycle && participants) encounters[partyId] = { encounterId: partyId, enemies,
       background: encounter.background, formationPlan, rewardPolicy, lifecycle, participants,
+      ...(partyContext?{partyContext}:{}),
       ...(input.childPartyAdmission&&Object.keys(childEntries).length?{childPartyAdmission:childAdmissionPlan(partyId,childEntries)}:{}),
       ...(controls?{controls}:{}),...(forcedSavePolicy?{forcedSavePolicy}:{}),
       ...(input.gauInstancePolicy&&lifecycle.mode==='script'&&lifecycle.program.instructions.some(({op})=>['gau-replace','gau-appearance','gau-join'].includes(op.kind))?{gauInstancePolicy:input.gauInstancePolicy,...(input.gauInstanceContent?{gauInstances:input.gauInstanceContent}:{})}:{}),

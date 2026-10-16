@@ -233,6 +233,10 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       add('rtsParty','Source multi-Corps permanent owned/native instance transaction host is unavailable');
       if(op.command==='dream-separate')refresh(false);
       break;
+    case "special-owned-join":
+      if(!['gau','ghost-1','ghost-2'].includes(op.member))throw Error("Unknown source special-owned member requirement");
+      add("roster", "Source special-owned roster state is unavailable");refresh(false);
+      add("conditionVisual", "Special-owned recovery condition-visual context is unavailable");break;
     case "roster-group": {
       add("roster", "Source grouped roster state is unavailable");
       refresh(false);
@@ -262,6 +266,10 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       add("sourceLeader", "Missing current source map leader index provider");
       break;
     case "field-script-shop": add("scriptShop", "Missing shared script shop lifecycle provider"); break;
+    case "field-scenario-timer":
+      if (!["cid-hp", "cid-suspend", "cid-check", "cid-resume", "shadow-setup", "shadow-reset"].includes(op.command)) throw new Error("Unknown scenario timer command");
+      add("storyTimer", "Scenario timer requires the same source-bound global/named timer owner and shared logical clock");
+      break;
     case "field-timer": {
       const command = commandOf(op);
       if (!["set", "finish", "pause", "resume", "change-script-if-expired"].includes(command.kind as string))

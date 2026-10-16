@@ -9,9 +9,17 @@ const input=async()=>JSON.parse(await readFile(resolve("content-batches/source-b
 test("all source producers share the exact known directory versions and compiled runtime markers",async()=>{
  const api=await import(modulePath),base=await input(),before=JSON.stringify(base);
  const current=await api.readSourceBattleDirectoryPolicy({compiledDir,policy:base});
- assert.equal(current.kind,"source-battle-directory-policy-v9");
+ assert.equal(current.kind,"source-battle-directory-policy-v10");
+ assert.equal(current.framework.partyContext,"web-source-battle-party-context-v1");
  assert.equal(current.framework.gauInstances,"web-source-battle-gau-instances-v1");
  assert.equal(current.framework.childPartyAdmission,"web-source-child-party-entry-v1");
+ for(const version of ["v8","v9"]){
+  const legacy=structuredClone(base);legacy.kind="source-battle-directory-policy-"+version;delete legacy.framework.partyContext;
+  if(version==="v8")delete legacy.framework.childPartyAdmission;
+  const parsed=await api.readSourceBattleDirectoryPolicy({compiledDir,policy:legacy});
+  assert.equal(parsed.kind,legacy.kind);assert.equal(parsed.framework.partyContext,undefined);
+  assert.equal(parsed.framework.childPartyAdmission,version==="v9"?base.framework.childPartyAdmission:undefined);
+ }
  const legacyV7=JSON.parse(await readFile(resolve("content-batches/source-battle-directory.v7-audit-policy.json"),"utf8"));
  assert.equal(legacyV7.kind,"source-battle-directory-policy-v7");
  assert.equal(legacyV7.framework.gauInstances,undefined);assert.equal(legacyV7.framework.childPartyAdmission,undefined);
@@ -39,7 +47,12 @@ test("the shared directory reader rejects missing or unknown controls, old-versi
   (p:Record<string,any>)=>{delete p.framework.childPartyAdmission;},
   (p:Record<string,any>)=>{p.framework.childPartyAdmission="future";},
   (p:Record<string,any>)=>{p.kind="source-battle-directory-policy-v7";},
-  (p:Record<string,any>)=>{p.kind="source-battle-directory-policy-v10";},
+  (p:Record<string,any>)=>{p.kind="source-battle-directory-policy-v11";},
+  (p:Record<string,any>)=>{p.kind="source-battle-directory-policy-v9";},
+  (p:Record<string,any>)=>{delete p.framework.partyContext;},
+  (p:Record<string,any>)=>{p.framework.partyContext=null;},
+  (p:Record<string,any>)=>{p.framework.partyContext="future";},
+  (p:Record<string,any>)=>{p.framework.partyContext={kind:"web-source-battle-party-context-v1"};},
   (p:Record<string,any>)=>{delete p.framework.manualControls;},
   (p:Record<string,any>)=>{p.framework.manualControls=undefined;},
   (p:Record<string,any>)=>{p.framework.manualControls=null;},

@@ -12,7 +12,7 @@ export function compileSourceOwnedEquipmentInstruction(raw: unknown): SourceEqui
   if (i.some(v => v !== 0) || r.some(v => v !== 0) || s.slice(1).some(v => v !== ''))
     throw Error('Unsupported source owned equipment operand banks');
   if (s[0] === '最強装備：ティナ' || s[0] === '最強装備：エドガー')
-    throw Error('Source strongest non-accessory equipment selection is unavailable (Current 0x297840 -> OwnedCharacterClient 0x334c20)');
+    return { kind: 'source-owned-equipment', command: { kind: 'strongest-non-accessories', sourceId: s[0] === '最強装備：ティナ' ? 1 : 5 } };
   if (s[0] !== '全員の装備を外す' && s[0] !== '控えメンバーの装備を外す')
     throw Error('Unknown source owned equipment selector');
   return { kind: 'source-owned-equipment', command: { kind: 'remove-equipment-members', scope: s[0] === '全員の装備を外す' ? 'all' : 'reserve' } };

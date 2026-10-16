@@ -18,9 +18,9 @@ type Mnemonic={mnemonic:string;type:number;operands:{iValues:number[];rValues:nu
 const raw=(selector:string):Mnemonic=>({mnemonic:'SysCall',type:1,operands:{iValues:Array(8).fill(0),rValues:Array(8).fill(0),sValues:[selector,...Array(7).fill('')]}});
 const source={file:'authored-roster-family',assetPath:'controlled-roster'};
 const site={script:'authored-roster-family',index:0,source};
-const tables={ 'character_status.csv':Array.from({length:34},(_,i)=>({id:String(i+1),job_id:'12'})), 'job.csv':[{id:'12'}] };
+const tables={ 'character_status.csv':Array.from({length:34},(_,i)=>({id:String(i+1),job_id:'12'})), 'job.csv':[{id:'12'}], 'exp_table.csv':[{id:'1',total_exp:'0'}] };
 
-test('all 62 native registrations retain 57 ordinary commands, two grouped commands and three specific owner gates',()=>{
+test('all 62 native registrations retain 57 ordinary commands, two groups and three distinct special-owned wrappers',()=>{
   assert.equal(rosterLifecycleKnownSelectors.length,62);assert.equal(rosterLifecycleSelectors.length,57);
   const counts={join:0,secede:0,reserve:0};
   for(const selector of rosterLifecycleKnownSelectors){
@@ -29,7 +29,7 @@ test('all 62 native registrations retain 57 ordinary commands, two grouped comma
       assert.deepEqual(op.command,binding.command);assert.deepEqual(op.dependencies,[{table:'character_status.csv',id:op.command.sourceId},{table:'job.csv',id:12}]);
       op.command.sourceId=999;assert.notEqual(compileRosterLifecycleEvent(selector,tables).command.sourceId,999);
     }else if(selector==='メンバー加入：モーグリたち'||selector==='メンバー離脱：モーグリたち'){assert.equal(decoded.kind,'roster-group');}
-    else {assert.equal(decoded.kind,'blocked');assert.match(decoded.kind==='blocked'?decoded.reason:'',/Unimplemented roster lifecycle selector.*native 0x/);}
+    else {assert.equal(decoded.kind,'special-owned-join');assert.throws(()=>compileRosterLifecycleEvent(selector,tables),/Unimplemented roster lifecycle selector.*native 0x/);}
     for(const corrupt of [(m:Mnemonic)=>{m.operands.iValues[7]=1;},(m:Mnemonic)=>{m.operands.sValues[1]='unexpected';},(m:Mnemonic)=>{m.type=0;},(m:Mnemonic)=>{m.operands.rValues.pop();}]){
       const m=raw(selector);corrupt(m);assert.equal(decodeFieldOp(m,site,{},tables).kind,'blocked');
     }
@@ -111,6 +111,6 @@ test('actual actor preflight failure leaves roster and actors untouched; retry p
   run(h,'roster-reserve');const after=h.game.state.snapshot();assert.notDeepEqual(after.party,before.party);assert.deepEqual(after.roster,before.roster);assert.throws(prepared.commit,/Stale/);
   for(const name of ['roster-unowned','roster-special']){
     const fresh=f.make(),owned=fresh.game.state.snapshot(),native=fresh.game.field.nativeActorStateFingerprint;assert(fresh.game.field.startEvent(name));fresh.flow.advance(10,selectionHost);
-    assert.equal(fresh.game.field.stop?.kind,'unsupported');assert.match(fresh.game.field.stop!.message,name==='roster-unowned'?/unowned character/:/Gau join native learned/);assert.deepEqual(fresh.game.state.snapshot(),owned);assert.equal(fresh.game.field.nativeActorStateFingerprint,native);
+    assert.equal(fresh.game.field.stop?.kind,'unsupported');assert.match(fresh.game.field.stop!.message,name==='roster-unowned'?/unowned character/:/special-owned catalog is unavailable/);assert.deepEqual(fresh.game.state.snapshot(),owned);assert.equal(fresh.game.field.nativeActorStateFingerprint,native);
   }
 });

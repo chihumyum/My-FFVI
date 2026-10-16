@@ -165,11 +165,12 @@ import type { FieldSoundPresentation } from "./field-sound-presentation.js";
 import type { StaticAudioReplay } from "./static-audio.js";
 import { createFieldTimer, cloneFieldTimer, advanceFieldTimer, prepareFieldTimerCommand,
   pendingFieldTimerCallback, acknowledgeFieldTimerCallback, fieldTimerProjection, WEB_FIELD_TIMER_POLICY,
+  fieldTimerRemainingSeconds, prepareFieldScenarioTimer, settleFieldShadowTimerTick, pendingFieldShadowCallback, acknowledgeFieldShadowCallback,
   type FieldTimerSnapshot, type FieldTimerScene, type FieldTimerCallbackRequest } from "./field-timer.js";
 import { FieldColorFilterState, WEB_CLEAR_COLOR_FILTER, startFieldFlash, pollFieldFlash,
   type FieldFlashTask } from "./field-screen-effects.js";
 import { WEB_FIELD_STORY_RUNTIME, hasFieldStoryRuntime, fieldScreenEffectsBinding,
-  bindFieldStoryTimer, fieldTimerOriginContent, restoreFieldStoryRuntime,
+  bindFieldStoryTimer, bindFieldScenarioTimerOrigin, fieldTimerRequiredOrigins, fieldTimerOriginContent, restoreFieldStoryRuntime,
   bindFieldStoryShake, restoreFieldStoryShake,
   type FieldStoryRuntimeSnapshot, type FieldTimerOriginContent } from "./field-story-runtime.js";
 import { FieldCameraShakeState, type FieldCameraShakePolicy } from "./field-camera-shake.js";
@@ -472,6 +473,7 @@ export type FieldGameOptions = {
   birdViewActors?: WebFlatBirdViewActors;
   mobColorFilter?: WebFlatMobColorFilter;
   storyTimerOrigin?: FieldTimerOriginContent;
+  storyTimerOrigins?: readonly FieldTimerOriginContent[];
   /** Explicit particle/material host. Content parsing never grants one. */
   fieldEffects?: FieldEffectRuntimeHost;
   fieldEffectTransforms?:WebFieldEffectTransforms;
@@ -1501,7 +1503,7 @@ export class FieldGame {
   get screenPresentation(){return this.screenPresentationState?.projection??null;}
   private colorFilterState: FieldColorFilterState | null = null;
   private cameraShakeState: FieldCameraShakeState | null = null;
-  private timerOrigin: FieldTimerOriginContent | undefined;
+  private readonly timerOrigins = new Map<string, FieldTimerOriginContent>();
   get storyRuntimeSnapshot(): FieldStoryRuntimeSnapshot | null {
     if (!this.timerState) return null;
     const timer = cloneFieldTimer(this.timerState), colorFilter = this.colorFilterState!.snapshot(),
@@ -1513,16 +1515,42 @@ export class FieldGame {
   get cameraShakeOffset(): Point { return this.cameraShakeState?.projection ?? { x: 0, y: 0 }; }
   private get cameraShakeAvailable(): boolean { return !!this.cameraShakeState && !!this.camera && this.ordinaryScreenEffectsAvailable; }
   get storyTimerOrigin(): FieldTimerOriginContent | undefined {
-    return this.timerState?.active ? structuredClone(this.timerOrigin) : undefined;
+    return this.timerState?.active ? structuredClone(this.timerOrigins.get(this.timerState.active.binding.mapContentHash)) : undefined;
+  }
+  get storyTimerOrigins(): FieldTimerOriginContent[] | undefined {
+    if (!this.timerState) return undefined;
+    const required = fieldTimerRequiredOrigins(this.timerState);
+    return required.length ? required.map(binding => {
+      const origin = this.timerOrigins.get(binding.mapContentHash);
+      if (!origin || origin.mapId !== binding.mapId) throw new Error("Story timer origin owner is missing");
+      return structuredClone(origin);
+    }) : undefined;
   }
   get colorFilter() { return this.colorFilterState?.projection ?? null; }
-  get timerProjection() { return this.timerState ? fieldTimerProjection(this.timerState) : null; }
+  get timerProjection() {
+    if (!this.timerState) return null;
+    const projection = fieldTimerProjection(this.timerState), view = this.sourceUiOwner?.snapshot().view;
+    return view === "timer" ? {...projection, visible: true} : projection;
+  }
   private get ordinaryScreenEffectsAvailable(): boolean {
     return !!this.colorFilterState?.known && (this.content.entry.viewPlan?.presentationViewType ?? 0) === 0;
   }
   /** Battle clocks the same field timer owner; callbacks wait for safe field publication. */
   advanceStoryTimer(milliseconds: number, scene: FieldTimerScene): void {
-    if (this.timerState) this.timerState = advanceFieldTimer(this.timerState, milliseconds, scene);
+    if (!this.timerState) return;
+    if (this.puppetReplacementRetired) throw new Error("Retired Field cannot advance its story timer owner");
+    const next = advanceFieldTimer(this.timerState, milliseconds, scene);
+    let sample: {flag: number; cell?: Point} | undefined;
+    if (next.kind === "web-field-timer-v2" && next.scenario.shadow?.expired) {
+      const flag = this.eventState.read({category: "ScenarioFlag1", index: 40});
+      sample = {flag};
+      if (flag === 1) {
+        const player = this.player, range = this.content.cameraHost?.mapRange;
+        if (!player.native || !range) throw new Error("Shadow timer requires its current actual player transform and source map-cell provider");
+        sample.cell = fieldCameraWorldToCell(range, {x: player.native.entity.position.x, y: player.native.entity.position.y});
+      }
+    }
+    this.timerState = settleFieldShadowTimerTick(next, sample);
   }
   private validateTimerCallback(request: FieldTimerCallbackRequest): void {
     const target = this.content.scripts[request.binding.callback.name]?.[0];
@@ -1532,7 +1560,18 @@ export class FieldGame {
   private dispatchExpiredTimer(): void {
     if (!this.timerState || !this.idleFieldReady || this.stop) return;
     const request = pendingFieldTimerCallback(this.timerState);
-    if (!request) return;
+    if (!request) {
+      const shadow = pendingFieldShadowCallback(this.timerState);
+      if (!shadow) return;
+      try {
+        const target = this.content.scripts[shadow.binding.callback.name]?.[0];
+        if (!target || canonical(target.source) !== canonical(shadow.binding.callback.source))
+          throw new Error("Shadow callback is unavailable in the current trusted script namespace");
+        const acknowledged = acknowledgeFieldShadowCallback(this.timerState, shadow);
+        this.beginRoot(shadow.binding.callback.name, () => { this.timerState = acknowledged; });
+      } catch (error) { this.block(error instanceof Error ? error.message : String(error)); }
+      return;
+    }
     try {
       this.validateTimerCallback(request);
       const acknowledged = acknowledgeFieldTimerCallback(this.timerState, request);
@@ -1784,16 +1823,20 @@ export class FieldGame {
     if (options.messageFees && options.messageFees.sourceSetHash !== content.parentSourceSetHash) throw new Error("Message fee catalog/source mismatch");
     this.sourceMessage = new SourceMessageState(options.messageFees, options.messageFeeSeed);
     if (hasFieldStoryRuntime(content)) {
-      const seed = options.storyRuntimeSeed && restoreFieldStoryRuntime(options.storyRuntimeSeed, content, options.storyTimerOrigin, options.cameraShake,options.screenPresentation);
+      const seed = options.storyRuntimeSeed && restoreFieldStoryRuntime(options.storyRuntimeSeed, content, options.storyTimerOrigin, options.cameraShake,options.screenPresentation,options.storyTimerOrigins);
       this.timerState = seed?.timer ?? createFieldTimer(WEB_FIELD_TIMER_POLICY, content.parentSourceSetHash);
       this.colorFilterState = seed ? FieldColorFilterState.restore(seed.colorFilter, fieldScreenEffectsBinding(content))
         : new FieldColorFilterState(fieldScreenEffectsBinding(content), { ...WEB_CLEAR_COLOR_FILTER });
       this.cameraShakeState = (seed?.kind === "web-field-story-runtime-v2" || seed?.kind === "web-field-story-runtime-v3") && seed.cameraShake
         ? restoreFieldStoryShake(seed.cameraShake, content, options.cameraShake!)
         : options.cameraShake ? new FieldCameraShakeState(content.parentSourceSetHash, options.cameraShake) : null;
-      if (this.timerState.active) this.timerOrigin = this.timerState.active.binding.mapContentHash === content.contentHash
-        ? fieldTimerOriginContent(content) : options.storyTimerOrigin;
-    } else if (options.storyRuntimeSeed || options.storyTimerOrigin) throw new Error("Story runtime host profile is unavailable");
+      for (const binding of fieldTimerRequiredOrigins(this.timerState)) {
+        const origin = binding.mapContentHash === content.contentHash ? fieldTimerOriginContent(content)
+          : [options.storyTimerOrigin, ...(options.storyTimerOrigins ?? [])].find(value => value?.mapId === binding.mapId && value.mapContentHash === binding.mapContentHash);
+        if (!origin) throw new Error("Story timer origin metadata is unavailable");
+        this.timerOrigins.set(binding.mapContentHash, structuredClone(origin));
+      }
+    } else if (options.storyRuntimeSeed || options.storyTimerOrigin || options.storyTimerOrigins) throw new Error("Story runtime host profile is unavailable");
     const screenBinding=fieldScreenPresentationBinding(content,options.screenPresentation);
     if(screenBinding)this.screenPresentationState=options.storyRuntimeSeed?.kind==='web-field-story-runtime-v3'?FieldScreenPresentationState.restore(options.storyRuntimeSeed.screenPresentation,screenBinding):new FieldScreenPresentationState(screenBinding);
     const skyboxBinding=fieldSkyboxBinding(content,options.skyboxPresentation);
@@ -2368,7 +2411,7 @@ export class FieldGame {
   }
   /** One native actor/camera draft carries every source-ordered group refresh.
    * It never publishes an intermediate owned bank or invokes a late callback. */
-  private prepareRosterGroupAppearance(task:Task,op:RosterGroupEventOp|Extract<Op,{kind:'multi-corps'}>,steps:readonly RosterGroupAppearanceStep[]):FieldPartyActorPublication {
+  private prepareRosterGroupAppearance(task:Task,op:RosterGroupEventOp|Extract<Op,{kind:'multi-corps'|'special-owned-join'}>,steps:readonly RosterGroupAppearanceStep[]):FieldPartyActorPublication {
     this.requireInstructionProviders(op as Op,task.actor,true);
     if(!this.partyActors)throw new Error("Source roster group actor owner is unavailable");
     const tasks=this.tasks,script=task.script,pc=task.pc,actor=task.actor,time=this.time,
@@ -2648,7 +2691,7 @@ export class FieldGame {
       mapTransforms:this.mapTransformSnapshot, fade: this.fader.snapshot(), camera: this.cameraSnapshot, worldAutoTasks:this.worldAutoTaskSnapshot, cameraOffset: this.cameraOffset, effects: this.fieldEffectsSnapshot,
       collision: this.collisionSwitches, updateMask: this.entityUpdateMask, transportation: this.transportationId,
       synchronizedEntry: this.synchronizedEntry, entryTaskStarted: this.entryTaskStarted, cameraEventActive: this.cameraEventActive,
-      skybox: this.skyboxSnapshot, story: this.storyRuntimeSnapshot, storyOrigin: this.storyTimerOrigin ?? null,
+      skybox: this.skyboxSnapshot, story: this.storyRuntimeSnapshot, storyOrigin: this.storyTimerOrigin ?? null, storyOrigins: this.storyTimerOrigins ?? null,
       dialogue: this.dialogue, retainedMessage: this.retainedMessage, message: this.sourceMessage.snapshot(), sourceMessageTask: this.sourceMessageTask,
       choice: this.pendingChoice && { request: this.pendingChoice.request, taskId: this.pendingChoice.task.id,
         op: this.pendingChoice.op, answer: this.pendingChoice.answer },
@@ -2973,7 +3016,7 @@ export class FieldGame {
       StaticAudioState.restore(s.environment, content.environment),
       { ...options, mapTransformsSeed:hasTransforms?(s as {mapTransforms:FieldMapTransformSnapshot}).mapTransforms:null, fieldLayerScrollingSeed: hasLayers ? (s as {fieldLayers:FieldLayerSnapshot}).fieldLayers : null, ...(hasUi ? { sourceFieldUiSeed: (s as { sourceUi: FieldUiSnapshot }).sourceUi } : {}), ...(native ? { nativeActorPreparation: true } : {}),
         ...(hasValues ? { messageFeeSeed: (s as { sourceMessageValues: SourceMessageFeeSnapshot }).sourceMessageValues } : {}),
-        ...(hasStory ? { storyRuntimeSeed: restoreFieldStoryRuntime((s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime, content, options.storyTimerOrigin, options.cameraShake,options.screenPresentation) } : {}) },
+        ...(hasStory ? { storyRuntimeSeed: restoreFieldStoryRuntime((s as { storyRuntime: FieldStoryRuntimeSnapshot }).storyRuntime, content, options.storyTimerOrigin, options.cameraShake,options.screenPresentation,options.storyTimerOrigins) } : {}) },
       FieldFadeState.restore(s.fade),
       s.camera ?? undefined,
       native !== undefined,
@@ -4521,8 +4564,9 @@ export class FieldGame {
       try{if(this.screenPresentationState){if(!fieldScreenPresentationBinding(this.content,this.options.screenPresentation))throw new Error("Screen presentation runtime/content authorization revoked");if(!this.options.npcActivityClock||this.options.npcActivityClock())this.screenPresentationState.advance(10);}}catch(error){this.block(error instanceof Error?error.message:String(error));return;}
       try { this.cameraShakeState?.advance(); }
       catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; }
-      this.advanceStoryTimer(10, this.messageWindow || this.choicePending || this.sourceMessage.active ? "message"
-        : this.openTriggers.busy || this.treasureSceneState === "message" ? "gimmick" : this.fieldActivityBusy ? this.eventActivation ? "gimmick" : "event" : "player");
+      try { this.advanceStoryTimer(10, this.messageWindow || this.choicePending || this.sourceMessage.active ? "message"
+        : this.openTriggers.busy || this.treasureSceneState === "message" ? "gimmick" : this.fieldActivityBusy ? this.eventActivation ? "gimmick" : "event" : "player"); }
+      catch(error) { this.block(error instanceof Error ? error.message : String(error)); return; }
       if (this.sourceUiOwner) { try { this.advanceSourceFieldUi(10); } catch (error) { this.block(error instanceof Error ? error.message : String(error)); return; } }
       this.sourceMessage.advance(0.01);
       // Use the same post-message update mask as the existing actor loop.
@@ -6523,6 +6567,17 @@ export class FieldGame {
               return;
             }
             break;
+          case "special-owned-join":
+            try {
+              if(this.content.scriptSystemFlags?.[this.eventRootScript??t.script]?.keepBadStatusVisual!==false)
+                throw Error("Special-owned recovery condition-visual context is unavailable");
+              const prepare=this.options.roster?.prepareSpecial;if(!prepare)throw Error("Source special-owned state is unavailable");
+              const command=op.member==="gau"?{kind:"gau" as const,firstEncounter:this.eventState.read({category:"ScenarioVariable",index:8})===0}:
+                op.member==="ghost-1"?{kind:"ghost" as const,sourceId:17 as const}:op.member==="ghost-2"?{kind:"ghost" as const,sourceId:18 as const}:null;
+              if(!command)throw Error("Unknown source special-owned member");
+              const transaction=prepare.call(this.options.roster,command),actors=this.prepareRosterGroupAppearance(t,op,transaction.steps);
+              actors.validate();transaction.validate();transaction.commitWith(validateOwned=>actors(validateOwned));
+            }catch(error){this.block(error instanceof Error?error.message:String(error),op);return;}break;
           case "roster-group":
             try {
               validateRosterGroupCommand(op.command);
@@ -6723,6 +6778,22 @@ export class FieldGame {
               if (handle) { t.bgmReplay = { op, handle }; return; }
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
+          case "field-scenario-timer":
+            try {
+              if (!this.timerState) throw new Error("Story timer host profile is unavailable");
+              const variable = {category: "ScenarioVariable" as const, index: 2}, value = op.command === "cid-check" || op.command === "cid-resume" ? this.eventState.read(variable) : undefined,
+                remaining = fieldTimerRemainingSeconds(this.timerState), origin = fieldTimerOriginContent(this.content);
+              const canCounter = op.command === "cid-check" ? value! >= 30 && value! <= 255 : op.command === "cid-resume" && value! > 0;
+              const canShadow = op.command === "shadow-setup" && remaining !== null && remaining > 5 &&
+                !(this.timerState.kind === "web-field-timer-v2" && this.timerState.scenario.shadow);
+              const binding = canCounter || canShadow ? bindFieldScenarioTimerOrigin(origin, this.content.parentSourceSetHash, op,
+                canShadow ? Math.fround(remaining! - 5) : value!) : undefined;
+              const prepared = prepareFieldScenarioTimer(this.timerState, op, value, binding);
+              const write = prepared.variable2 === undefined ? null : this.eventState.prepareWrites([{ref: variable, value: prepared.variable2}]);
+              write?.validate(); write?.commit(); this.timerState = prepared.snapshot;
+              if (binding) this.timerOrigins.set(origin.mapContentHash, origin);
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            break;
           case "field-timer":
             try {
               if (!this.timerState) throw new Error("Story timer host profile is unavailable");
@@ -6736,8 +6807,7 @@ export class FieldGame {
                   targetScript: prepared.callback.binding.callback.name, returnToCaller: false });
                 this.timerState = acknowledged;
               } else this.timerState = prepared.snapshot;
-              if (origin) this.timerOrigin = origin;
-              if (!this.timerState.active) this.timerOrigin = undefined;
+              if (origin) this.timerOrigins.set(origin.mapContentHash, origin);
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
             break;
           case "change-map":

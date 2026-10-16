@@ -1,3 +1,4 @@
+import {createSourceOwnedCapabilityEvidenceReader,sourceOwnedCapabilityCatalogKeys,compileDerivedOwnedCapabilityBaselines} from './source-owned-capability-additions.mjs';
 import {FIELD_EFFECT_TRANSFORMS,createFrameworkFieldEffectTransformAddition,createFrameworkFieldEffectTransformEvidenceReader,verifyFieldEffectTransformLock} from './framework-field-effect-transform-evidence.mjs';
 import {createFrameworkFieldEffectFlatAddition,createFrameworkFieldEffectFlatEvidenceReader} from './framework-field-effect-flat-evidence.mjs';
 import {createFrameworkOrdinaryPresentationAddition,createFrameworkOrdinaryPresentationEvidenceReader} from './framework-ordinary-presentation-evidence.mjs';
@@ -167,30 +168,23 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
   const sourceMessageFeeAddition={kind:'compiled-source-message-fee-addition-v1',compilerDigest:prerequisites.inputs.compilerDigest,sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash};
   const sourceMessageFeeEvidence=createSourceMessageFeeEvidenceReader({root,compiledDir});
   const sourceMessageFeeBaselines=new Map(prerequisites.sourceMessageFeeBaselines);
+  const sourceOwnedCapabilityBaselines=new Map(prerequisites.sourceOwnedCapabilityBaselines);
+  const sourceOwnedCapabilityAdditions={declaration:{kind:'compiled-source-owned-capability-additions-v1',compilerDigest:prerequisites.inputs.compilerDigest,sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash,catalogKeys:sourceOwnedCapabilityCatalogKeys},evidence:createSourceOwnedCapabilityEvidenceReader({root,compiledDir}),baselines:sourceOwnedCapabilityBaselines};
   const ordinaryReference=await resolveCompiledBattleReference({root,compiledDir,
-    reference:ordinary.value.baseCatalogRef,readCurrentJson:readJson,readCandidateJson:sourceRead,battleRebindings,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines});
+    reference:ordinary.value.baseCatalogRef,readCurrentJson:readJson,readCandidateJson:sourceRead,battleRebindings,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines,sourceOwnedCapabilityAdditions});
   const ordinaryDeclaration={...ordinary.value,baseCatalogRef:ordinaryReference.reference};
   if(ordinaryReference.report)rebindings.push({id:'ordinary-battles',kind:'battle-declaration-inputs-v1',
     recipePath:ordinary.path,recipeSha256:ordinary.sha256,battleCapabilityRebindings:[ordinaryReference.report]});
-  const noFeeBase=sourceMessageFeeBaselines.get(ordinary.value.baseCatalogRef.url);
-  assert.ok(noFeeBase,'Ordinary content requires the same producer fee baseline');
-  const noFeeDeclaration={...ordinaryDeclaration,baseCatalogRef:{
-    ...ordinaryDeclaration.baseCatalogRef,contentHash:noFeeBase.baseline.contentHash}};
-  const [battles,noFeeBattles]=await Promise.all([
-    compileBattleContentBatch(root,ordinaryDeclaration,{readJson:sourceRead}),
-    compileBattleContentBatch(root,noFeeDeclaration,{readJson:async url=>
-      url===ordinary.value.baseCatalogRef.url?structuredClone(noFeeBase.baseline):sourceRead(url)})]);
-  assert.ok(noFeeBattles.catalog,'Ordinary fee audit baseline is blocked');
-  assert.ok(battles.catalog,'Ordinary battle content candidate is blocked');
   const {verifyContent,hash}=Object.assign({},...await Promise.all([
     import(pathToFileURL(resolve(root,compiledDir,'src/core/content-integrity.js')).href),
     import(pathToFileURL(resolve(root,compiledDir,'src/compiler/content.js')).href)]));
   const previousOrdinary=await verifyContent(structuredClone(await readJson('/content-batches/ordinary-battles/battle.json')));
-  battleRebindings.push({kind:'compiled-battle-rebinding-v1',url:'/content-batches/ordinary-battles/battle.json',
-    previousHash:previousOrdinary.contentHash,candidateHash:battles.catalog.contentHash,
-    compilerDigest:prerequisites.inputs.compilerDigest,sourceContentHash:battles.catalog.common.sourceContentHash,
-    fieldSourceSetHash:battles.catalog.common.fieldSourceSetHash,gameStateHash:hash(battles.catalog.gameState)});
-  const ordinaryFeeBaseline=noFeeBattles.catalog;
+  const derive=parent=>compileBattleContentBatch(root,{...ordinaryDeclaration,baseCatalogRef:{...ordinaryDeclaration.baseCatalogRef,contentHash:parent.contentHash}},{readJson:async url=>url===ordinary.value.baseCatalogRef.url?structuredClone(parent):sourceRead(url)});
+  const [battles,auditDerived]=await Promise.all([compileBattleContentBatch(root,ordinaryDeclaration,{readJson:sourceRead}),compileDerivedOwnedCapabilityBaselines({rootUrl:ordinary.value.baseCatalogRef.url,previousDerived:previousOrdinary,compileBattleAuditBaseline:prerequisites.compileBattleAuditBaseline,derive,verifyContent,hash})]);
+  assert.ok(battles.catalog,'Ordinary battle content candidate is blocked');const {baseline,feeBaseline:ordinaryFeeBaseline,omittedCatalogs}=auditDerived;
+  const ordinaryProof=candidate=>({kind:'compiled-battle-rebinding-v1',url:'/content-batches/ordinary-battles/battle.json',previousHash:previousOrdinary.contentHash,candidateHash:candidate.contentHash,compilerDigest:prerequisites.inputs.compilerDigest,sourceContentHash:candidate.common.sourceContentHash,fieldSourceSetHash:candidate.common.fieldSourceSetHash,gameStateHash:hash(candidate.gameState)});
+  battleRebindings.push(ordinaryProof(battles.catalog));
+  if(omittedCatalogs.length)sourceOwnedCapabilityBaselines.set('/content-batches/ordinary-battles/battle.json',{baseline,rebinding:ordinaryProof(baseline),omittedCatalogs});
   await verifyContent(ordinaryFeeBaseline);
   sourceMessageFeeBaselines.set('/content-batches/ordinary-battles/battle.json',{baseline:ordinaryFeeBaseline,rebinding:{
     kind:'compiled-battle-rebinding-v1',url:'/content-batches/ordinary-battles/battle.json',
@@ -202,6 +196,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
     sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash,
     policy:'omit-source-message-fees-for-addition-audit-v1',grantsSourceAdmission:false,
     baselines:[...sourceMessageFeeBaselines].map(([url,value])=>({url,...value}))}});
+  reports.push({id:'source-owned-capability-baselines',report:{kind:'same-input-compiled-owned-capability-baselines-v1',compilerDigest:prerequisites.inputs.compilerDigest,sourceSetHash:prerequisites.inputs.sourceSetHash,parentSourceSetHash:prerequisites.inputs.parentSourceSetHash,registeredCatalogs:sourceOwnedCapabilityCatalogKeys,grantsSourceAdmission:false,baselines:[...sourceOwnedCapabilityBaselines].map(([url,value])=>({url,...value}))}});
   const candidateRead=async url=>url==='/content-batches/ordinary-battles/battle.json'
     ? structuredClone(battles.catalog):sourceRead(url);
   const sourceWalkEvidence=createSourceWalkEvidenceReader({root,compiledDir});
@@ -234,7 +229,7 @@ export async function compileSharedContentPackages({root=repository,compiledDir=
   const resolveRecipe=async path=>{
     const original=await recipe(path);
     const resolved=await resolveSourceRecipeInputs({root,compiledDir,recipePath:path,recipeBytes:original.raw,
-      readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence,battleRebindings,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines,sourceMapAnimationEvidence,sourceNpcRouteEvidence,
+      readCurrentJson:readJson,readCandidateJson:candidateRead,sourceWalkEvidence,battleRebindings,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines,sourceOwnedCapabilityAdditions,sourceMapAnimationEvidence,sourceNpcRouteEvidence,
       sourceEventActivationEvidence,sourceEventActivationAddition:{kind:'compiled-source-event-activation-addition-v1',
         compilerDigest:prerequisites.inputs.compilerDigest,sourceSetHash:prerequisites.inputs.sourceSetHash,
         parentSourceSetHash:prerequisites.inputs.parentSourceSetHash},

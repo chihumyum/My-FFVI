@@ -284,12 +284,14 @@ type Ownership = {
   worldAutoTasks:string;
   story: string;
   storyOrigin: string;
+  storyOrigins: string;
   messageValues: string;
   messageOwner: FieldGame["sourceMessage"];
   messageRevision: number;
   candidateMessageValues: string;
   candidateStory: string;
   candidateStoryOrigin: string;
+  candidateStoryOrigins: string;
   invalidations: string;
   candidateInvalidations: string;
   candidateIsCurrent(): boolean;
@@ -417,6 +419,7 @@ export class WorldSession {
     target?: WorldMapContent,
     native?: { content: NativeGameEntryContent; initialMap: WorldMapContent },
     timerOrigin?: FieldTimerOriginContent,
+    timerOrigins?: readonly FieldTimerOriginContent[],
   ): void {
     if (this.commitInProgress) throw new Error("Cannot restore during map publication");
     if (this.sourceOrigin) {
@@ -544,6 +547,7 @@ export class WorldSession {
       snapshot.field,
       { ...forwardFieldRuntimePorts(this.owned?.current, "entry"), npcActivityClock: () => this.current === next,
         ...(timerOrigin ? { storyTimerOrigin: timerOrigin } : {}),
+        ...(timerOrigins ? { storyTimerOrigins: timerOrigins } : {}),
         ...(effectMap ? { fieldEffectMap: effectMap } : {}),
         ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}) },
       nativeDependencies,
@@ -605,7 +609,7 @@ export class WorldSession {
       fromCamera = canonical(from.cameraSnapshot), fromPresentation = from.sourcePresentationContext;
     const messageOwner = from.sourceMessage, messageRevision = messageOwner.mutationRevision,
       messageValues = messageOwner.feeSnapshot;
-    const story = from.storyRuntimeSnapshot, storyOrigin = structuredClone(from.storyTimerOrigin);
+    const story = from.storyRuntimeSnapshot, storyOrigin = structuredClone(from.storyTimerOrigin), storyOrigins = structuredClone(from.storyTimerOrigins);
     const sourceUi = from.sourceFieldUiSnapshot;
     const fieldLayers = from.fieldLayerSnapshot;
     const mapTransforms = from.mapTransformSnapshot;
@@ -759,6 +763,7 @@ export class WorldSession {
           ...(messageValues ? { messageFeeSeed: messageValues } : {}), npcActivityClock: () => this.current === field,
           ...(story ? { storyRuntimeSeed: fieldStoryRuntimeForNewMap(story) } : {}),
           ...(storyOrigin ? { storyTimerOrigin: structuredClone(storyOrigin) } : {}),
+          ...(storyOrigins ? { storyTimerOrigins: structuredClone(storyOrigins) } : {}),
           ...(nativeActors ? { nativeActorPreparation: true } : {}),
           ...(walkEncounters ? { walkEncounters } : {}),
           ...(effectMap ? { fieldEffectMap: effectMap } : {}),
@@ -823,12 +828,12 @@ export class WorldSession {
         fade: fromFade,
         camera: fromCamera,
         worldAutoTasks:canonical(from.worldAutoTaskSnapshot),
-        story: fromStory, storyOrigin: fromStoryOrigin,
+        story: fromStory, storyOrigin: fromStoryOrigin, storyOrigins: canonical(storyOrigins ?? null),
         invalidations: canonical(from.contentInvalidationsSnapshot), candidateInvalidations: canonical(field.contentInvalidationsSnapshot),
         candidateIsCurrent: () => fieldIsCurrent() && (ownedIsCurrent?.() ?? true),
         messageValues: canonical(messageValues), messageOwner, messageRevision,
         candidateMessageValues: canonical(field.sourceMessage.feeSnapshot),
-        candidateStory: canonical(field.storyRuntimeSnapshot), candidateStoryOrigin: canonical(field.storyTimerOrigin ?? null),
+        candidateStory: canonical(field.storyRuntimeSnapshot), candidateStoryOrigin: canonical(field.storyTimerOrigin ?? null), candidateStoryOrigins: canonical(field.storyTimerOrigins ?? null),
         publishPresentation: () => { presentationPublished = true; },
         validateWalkPolicy: () => {
           if (from.puppetRoutePolicy !== puppetRoutePolicy)
@@ -964,9 +969,9 @@ export class WorldSession {
       ownership.messageOwner === this.current.sourceMessage && ownership.messageRevision === this.current.sourceMessage.mutationRevision &&
       ownership.candidateMessageValues === canonical(value.field.sourceMessage.feeSnapshot) &&
       ownership.story === canonical(this.current.storyRuntimeSnapshot) &&
-      ownership.storyOrigin === canonical(this.current.storyTimerOrigin ?? null) &&
+      ownership.storyOrigin === canonical(this.current.storyTimerOrigin ?? null) && ownership.storyOrigins === canonical(this.current.storyTimerOrigins ?? null) &&
       ownership.candidateStory === canonical(value.field.storyRuntimeSnapshot) &&
-      ownership.candidateStoryOrigin === canonical(value.field.storyTimerOrigin ?? null) &&
+      ownership.candidateStoryOrigin === canonical(value.field.storyTimerOrigin ?? null) && ownership.candidateStoryOrigins === canonical(value.field.storyTimerOrigins ?? null) &&
       (ownership.walkFieldState === undefined || ownership.walkFieldState === this.effectFieldState(value.field)) &&
       (ownership.npcFieldState === undefined || ownership.npcFieldState === this.effectFieldState(value.field)) &&
       (!ownership.effects || ownership.effects.fieldState === this.effectFieldState(value.field));

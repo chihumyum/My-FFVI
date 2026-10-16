@@ -1,9 +1,10 @@
 import {FieldScreenPresentationState,fieldScreenPresentationBinding,type FieldScreenPresentationSnapshot,type WebFieldScreenPresentation}from"./field-screen-presentation.js";
-import type { FieldContent, Op } from "../field/types.js";
+import type { FieldContent, Op, Site } from "../field/types.js";
 import { canonical } from "./canonical.js";
 import { checkpointKeys } from "./checkpoint-validation.js";
 import { cloneFieldTimer, restoreFieldTimer, WEB_FIELD_TIMER_POLICY,
-  type FieldTimerSnapshot, type FieldTimerStartBinding } from "./field-timer.js";
+  fieldScenarioTimerBindings, validateScenarioTimerBinding, SOURCE_SHADOW_CALLBACK,
+  type FieldScenarioTimerBinding, type FieldScenarioTimerOp, type FieldTimerOriginBinding, type FieldTimerSnapshot, type FieldTimerStartBinding } from "./field-timer.js";
 import { FieldColorFilterState, type FieldColorFilterSnapshot, type FieldScreenEffectsBinding } from "./field-screen-effects.js";
 import { FieldCameraShakeState, type FieldCameraShakeSnapshot, type FieldCameraShakePolicy,
   type FieldShakeBinding, type FieldShakeCommand } from "./field-camera-shake.js";
@@ -64,25 +65,59 @@ export function bindFieldStoryTimerOrigin(origin: FieldTimerOriginContent, sourc
     site: { script: op.script, index: op.index, source: structuredClone(op.source) },
     callback: { name, source: structuredClone(callback[0]!.source) } };
 }
+/** All metadata still required by this one owner, including callbacks awaiting
+ * safe publication after their named timer has retired. */
+export function fieldTimerRequiredOrigins(timer: FieldTimerSnapshot): FieldTimerOriginBinding[] {
+  const values: FieldTimerOriginBinding[] = [...(timer.active ? [timer.active.binding] : []), ...fieldScenarioTimerBindings(timer)];
+  return values.filter((value, index) => values.findIndex(other => other.mapContentHash === value.mapContentHash && other.mapId === value.mapId) === index);
+}
+export function bindFieldScenarioTimerOrigin(origin: FieldTimerOriginContent, sourceSetHash: string,
+  op: FieldScenarioTimerOp & Site, captured: number): FieldScenarioTimerBinding {
+  const original = origin.scripts[op.script]?.[op.index];
+  if (!original || canonical(original) !== canonical(op)) throw new Error("Scenario timer origin instruction changed");
+  const base = {sourceSetHash, mapId: origin.mapId, mapContentHash: origin.mapContentHash,
+    site: {script: op.script, index: op.index, source: structuredClone(op.source)}};
+  let binding: FieldScenarioTimerBinding;
+  if (op.command === "cid-check" || op.command === "cid-resume")
+    binding = {...base, kind: "source-cid-counter-v1", command: op.command, value: captured};
+  else if (op.command === "shadow-setup") {
+    const callback = origin.scripts[SOURCE_SHADOW_CALLBACK];
+    if (!callback?.length) throw new Error("Shadow timer callback is missing from its exact trusted map/Resident namespace");
+    binding = {...base, kind: "source-shadow-timer-v1", seconds: captured,
+      callback: {name: SOURCE_SHADOW_CALLBACK, source: structuredClone(callback[0]!.source)}};
+  } else throw new Error("Scenario timer command cannot allocate a timer");
+  validateScenarioTimerBinding(binding); return binding;
+}
 /** A saved timer can identify required content, but cannot supply that content. */
 export function restoreFieldStoryRuntime(raw: FieldStoryRuntimeSnapshot, content: FieldContent,
-  origin?: FieldTimerOriginContent, cameraShakePolicy?: FieldCameraShakePolicy, screenPolicy?:WebFieldScreenPresentation): FieldStoryRuntimeSnapshot {
+  origin?: FieldTimerOriginContent, cameraShakePolicy?: FieldCameraShakePolicy, screenPolicy?:WebFieldScreenPresentation, origins?: readonly FieldTimerOriginContent[]): FieldStoryRuntimeSnapshot {
   const hasScreen = raw.kind === "web-field-story-runtime-v3",hasShake = raw.kind === "web-field-story-runtime-v2" || hasScreen;
   checkpointKeys(raw, "kind,timer,colorFilter" + (hasShake ? ",cameraShake" : "") + (hasScreen?",screenPresentation":""));
   if (raw.kind !== WEB_FIELD_STORY_RUNTIME && !hasShake || !hasFieldStoryRuntime(content))
     throw new Error("Story runtime checkpoint cannot grant its content policy");
   const saved = cloneFieldTimer(raw.timer), active = saved.active;
+  const resolve = (binding: FieldTimerOriginBinding): FieldTimerOriginContent => {
+    const metadata = binding.mapContentHash === content.contentHash ? fieldTimerOriginContent(content)
+      : [origin, ...(origins ?? [])].find(value => value?.mapId === binding.mapId && value.mapContentHash === binding.mapContentHash);
+    if (!metadata || metadata.mapId !== binding.mapId || metadata.mapContentHash !== binding.mapContentHash)
+      throw new Error("Active story timer requires its trusted origin content");
+    return metadata;
+  };
   let binding: FieldTimerStartBinding | undefined;
   if (active) {
-    const metadata = active.binding.mapContentHash === content.contentHash ? fieldTimerOriginContent(content) : origin;
-    if (!metadata || metadata.mapId !== active.binding.mapId || metadata.mapContentHash !== active.binding.mapContentHash)
-      throw new Error("Active story timer requires its trusted origin content");
+    const metadata = resolve(active.binding);
     const op = metadata.scripts[active.binding.site.script]?.[active.binding.site.index];
     if (op?.kind !== "field-timer" || canonical(op.command) !== canonical(active.command))
       throw new Error("Saved story timer command differs from trusted source");
     binding = bindFieldStoryTimerOrigin(metadata, content.parentSourceSetHash, op);
   }
-  const timer = restoreFieldTimer(saved, { policy: WEB_FIELD_TIMER_POLICY, sourceSetHash: content.parentSourceSetHash,
+  const scenarioBindings = fieldScenarioTimerBindings(saved).map(savedBinding => {
+    const metadata = resolve(savedBinding), op = metadata.scripts[savedBinding.site.script]?.[savedBinding.site.index];
+    if (op?.kind !== "field-scenario-timer") throw new Error("Saved scenario timer instruction differs from trusted source");
+    return bindFieldScenarioTimerOrigin(metadata, content.parentSourceSetHash, op,
+      savedBinding.kind === "source-cid-counter-v1" ? savedBinding.value : savedBinding.seconds);
+  });
+  const timer = restoreFieldTimer(saved, { scenarioBindings, policy: WEB_FIELD_TIMER_POLICY, sourceSetHash: content.parentSourceSetHash,
     ...(binding ? { binding } : {}) });
   const colorFilter = FieldColorFilterState.restore(raw.colorFilter, fieldScreenEffectsBinding(content)).snapshot();
   if (hasScreen) {

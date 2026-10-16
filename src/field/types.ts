@@ -1,3 +1,4 @@
+import type {SourceSpecialOwnedEventOp} from "../core/source-special-owned-members.js";
 import type {SourceBattleHandoffOp} from '../core/source-battle-handoffs.js';
 import type { FieldUiOp } from "../core/field-ui.js";
 import type { FieldMapTransformOp, FieldWaterCatalog } from "../core/field-map-transforms.js";
@@ -26,7 +27,7 @@ import type { SourcePresentationOp } from "../core/source-presentation.js";
 import type { AudioReadinessOp } from "../core/audio-readiness.js";
 import type { FieldSoundOp } from "../core/field-sound-command.js";
 import type { FieldBgmControlOp } from "../core/field-bgm-control.js";
-import type { FieldTimerOp } from "../core/field-timer.js";
+import type { FieldTimerOp, FieldScenarioTimerOp } from "../core/field-timer.js";
 import type { FieldScreenEffectOp } from "../core/field-screen-effects.js";
 import type { FieldShakeOp } from "../core/field-camera-shake.js";
 import type { FieldContentInvalidationOp } from "../core/field-content-invalidations.js";
@@ -246,6 +247,7 @@ export type Op = Site &
     | RosterLifecycleEventOp
     | RtsPartyOp
     | MultiCorpsOp
+  | SourceSpecialOwnedEventOp
   | RosterGroupEventOp
     | FieldTransportationOp
     | OwnedConditionEventOp
@@ -259,6 +261,7 @@ export type Op = Site &
     | FieldSoundOp
     | FieldBgmControlOp
     | FieldTimerOp
+    | FieldScenarioTimerOp
     | FieldScreenEffectOp
     | FieldShakeOp | FieldContentInvalidationOp
     | PlayerVisibilityOp

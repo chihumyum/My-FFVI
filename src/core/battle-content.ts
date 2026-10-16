@@ -1,3 +1,4 @@
+import {parseBattlePartyContext,validateBattlePartyContextBinding,type BattlePartyContext} from "./battle-party-context.js";
 import {parseBattleChildAdmission,type BattleChildAdmission} from './battle-child-admission.js';
 import {parseWebBattleGauInstances,type WebBattleGauInstances,type BattleGauInstanceContent} from "./battle-gau-instances.js";
 import {parseWebEnemySpawnConditions,type WebEnemySpawnConditions} from './battle-spawn-conditions.js';
@@ -77,6 +78,7 @@ export type BattleContent = {
   spawnConditionPolicy?:WebEnemySpawnConditions;
   gauInstancePolicy?:WebBattleGauInstances;
   childPartyAdmission?:BattleChildAdmission;
+  partyContext?:BattlePartyContext;
   /** Reusable enemy content is separate from the current battle unit owner. */
   participants?: BattleParticipantContent;
   playerParticipants?: BattlePlayerPlan;
@@ -203,6 +205,7 @@ export type BattleEncounter = Pick<
   spawnConditionPolicy?:WebEnemySpawnConditions;
   gauInstancePolicy?:WebBattleGauInstances;
   childPartyAdmission?:BattleChildAdmission;
+  partyContext?:BattlePartyContext;
   gauInstances?:BattleGauInstanceContent;
   participants?: BattleParticipantContent;
   playerParticipants?: BattlePlayerPlan;
@@ -289,12 +292,13 @@ export function encounterContent(
   if(Object.hasOwn(catalog.common,'spawnConditionPolicy'))throw new Error('Spawn condition policy must belong to an encounter');
   if(Object.hasOwn(catalog.common,'forcedSavePolicy'))throw new Error('Forced save policy must belong to an encounter');
   if(Object.hasOwn(catalog.common,'sourceFlags'))throw new Error('Battle source flags must belong to an encounter');
+  if(Object.hasOwn(catalog.common,'partyContext'))throw new Error('Battle party context must belong to an encounter');
   if(Object.hasOwn(catalog.common,'childPartyAdmission'))throw new Error('Child-party admission must belong to an encounter');
   const encounter = catalog.encounters[String(id)];
   if (!encounter) return null;
   if (encounter.encounterId !== id) throw new Error("Inconsistent battle encounter identity");
   const options = encounterFormationOptions(encounter);
-  const { formationPlan, escapePolicy, rewardPolicy, lifecycle, handoff, participants, playerParticipants, controls, sourceFlags, forcedSavePolicy, spawnConditionPolicy, gauInstancePolicy, childPartyAdmission, ...definition } = encounter;
+  const { formationPlan, escapePolicy, rewardPolicy, lifecycle, handoff, participants, playerParticipants, controls, sourceFlags, forcedSavePolicy, spawnConditionPolicy, gauInstancePolicy, childPartyAdmission, partyContext, ...definition } = encounter;
   const manualControls=controls===undefined?{}:{controls:parseSourceBattleControls(controls)};
   const flagPlan=sourceFlags===undefined?undefined:parseSourceBattleFlags(sourceFlags);
   if(flagPlan){
@@ -314,7 +318,9 @@ export function encounterContent(
   const event = parsedLifecycle === undefined ? {} : { lifecycle: parsedLifecycle };
   const childContent=childPartyAdmission===undefined?{}:{childPartyAdmission:parseBattleChildAdmission(childPartyAdmission)};
   if(childContent.childPartyAdmission&&childContent.childPartyAdmission.rootPartyId!==id)throw new Error("Child-party admission belongs to another encounter");
-  const saveContent={...childContent,...(gauInstancePolicy===undefined?{}:{gauInstancePolicy:parseWebBattleGauInstances(gauInstancePolicy)}),...(forcedSavePolicy===undefined?{}:{forcedSavePolicy:parseWebBattleForcedSave(forcedSavePolicy)}),...(spawnConditionPolicy===undefined?{}:{spawnConditionPolicy:parseWebEnemySpawnConditions(spawnConditionPolicy)})};
+  const contextContent=partyContext===undefined?{}:{partyContext:parseBattlePartyContext(partyContext)};
+  if(contextContent.partyContext)validateBattlePartyContextBinding(contextContent.partyContext,id,rewards.rewardPolicy,childContent.childPartyAdmission,flagPlan);
+  const saveContent={...childContent,...contextContent,...(gauInstancePolicy===undefined?{}:{gauInstancePolicy:parseWebBattleGauInstances(gauInstancePolicy)}),...(forcedSavePolicy===undefined?{}:{forcedSavePolicy:parseWebBattleForcedSave(forcedSavePolicy)}),...(spawnConditionPolicy===undefined?{}:{spawnConditionPolicy:parseWebEnemySpawnConditions(spawnConditionPolicy)})};
   const handoffContent = handoff === undefined ? {} : { handoff: parseBattleHandoffContent(handoff, id) };
   const units = participants === undefined ? {} : { participants: parseBattleParticipantContent(participants, encounter.enemies) };
   const playerPlan = playerParticipants === undefined ? {} : { playerParticipants: parseBattlePlayerPlan(playerParticipants) };

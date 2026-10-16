@@ -1,0 +1,60 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {resolve} from 'node:path';import {fileURLToPath,pathToFileURL} from 'node:url';
+import {fixture as battleFixture} from './fixtures/battle-content.js';
+import {ownedCapabilitySourceFixture} from './fixtures/source-owned-capability-additions.js';
+import {parseSourceOwnedCapabilityAdditionAudit} from '../src/compiler/source-owned-capability-catalogs.js';
+const compiledDir=fileURLToPath(new URL('../',import.meta.url)),load=(name:string)=>import(pathToFileURL(resolve('scripts',name+'.mjs')).href);
+function fixture(h=false,s=false,fee=false){
+ const source=ownedCapabilitySourceFixture(),{hash,canonical}=source,c=battleFixture(),{encounterId:_e,formation:_f,enemies:_n,background:_b,contentHash:_h,...common}=c;
+ Object.assign(common,{sourceContentHash:'c'.repeat(64),fieldSourceSetHash:'a'.repeat(64)});
+ const seal=(v:any)=>{const {contentHash:_,...body}=v;return {...body,contentHash:hash(body)};},catalogs=Object.fromEntries(Object.entries(source.expected).map(([key,value])=>[key,value.catalog])),owned={kind:'controlled-initializer',owned:[{id:'actual',hp:71,row:'back'}]},oldOwned={...owned,...h?{sourceBattleHandoffs:catalogs.sourceBattleHandoffs}:{},...s?{sourceSpecialOwnedMembers:catalogs.sourceSpecialOwnedMembers}:{}};
+ const old=seal({kind:'narshe-battle-catalog',common,gameState:oldOwned,encounters:{}}),noFee=seal({...structuredClone(old),common:{...structuredClone(common),timing:{...common.timing,speedIndex:3}}}),feeCatalog={kind:'source-message-fees-v1',sourceSetHash:'b'.repeat(64),blockers:[],fees:[]},baseline=fee?seal({...noFee,common:{...noFee.common,sourceMessageFees:feeCatalog}}):noFee,next=seal({...structuredClone(baseline),gameState:{...owned,...structuredClone(catalogs)}}),omittedCatalogs=['sourceBattleHandoffs','sourceSpecialOwnedMembers'].filter(key=>!(key in oldOwned)),url='/game/source-catalog.json';
+ const declaration={kind:'compiled-source-owned-capability-additions-v1',compilerDigest:'e'.repeat(64),sourceSetHash:'a'.repeat(64),parentSourceSetHash:'b'.repeat(64),catalogKeys:['sourceBattleHandoffs','sourceSpecialOwnedMembers']},proof=(value:any)=>({kind:'compiled-battle-rebinding-v1',url,previousHash:old.contentHash,candidateHash:value.contentHash,compilerDigest:declaration.compilerDigest,sourceContentHash:common.sourceContentHash,fieldSourceSetHash:common.fieldSourceSetHash,gameStateHash:hash(value.gameState)});
+ const bag={declaration,evidence:source.evidence,baselines:new Map([[url,{baseline,rebinding:proof(baseline),omittedCatalogs}]])};
+ const input={compiledDir,reference:{url,contentHash:old.contentHash},readCurrentJson:async()=>old,readCandidateJson:async()=>next,battleRebindings:[proof(next)],sourceOwnedCapabilityAdditions:bag,
+ ...fee?{sourceMessageFeeAddition:{kind:'compiled-source-message-fee-addition-v1',compilerDigest:declaration.compilerDigest,sourceSetHash:declaration.sourceSetHash,parentSourceSetHash:declaration.parentSourceSetHash},sourceMessageFeeEvidence:async()=>({kind:'verified-source-message-fee-evidence-v1',sourceSetHash:declaration.sourceSetHash,parentSourceSetHash:declaration.parentSourceSetHash,sourceDigest:'c'.repeat(64),catalog:feeCatalog,rows:[],physicalSources:[],compiler:{module:'controlled-fee-compiler',sha256:'d'.repeat(64)}}),sourceMessageFeeBaselines:new Map([[url,{baseline:noFee,rebinding:proof(noFee)}]])}:{}};
+ return {...source,old,next,seal,baseline,noFee,proof,input,bag,url,omittedCatalogs,canonical};
+}
+test('four historical catalog presence shapes use one actual resolver and independent fee history without changing owned state/pins',async()=>{
+ const api=await load('source-recipe-inputs');for(const h of [false,true])for(const s of [false,true])for(const fee of [false,true]){
+  const f=fixture(h,s,fee),before=structuredClone(f.old),result=await api.resolveCompiledBattleReference(f.input);assert.equal(result.reference.contentHash,f.next.contentHash);assert.deepEqual(f.old,before);assert.equal(f.input.reference.contentHash,f.old.contentHash);
+  if(f.omittedCatalogs.length){const audit=result.report.sourceOwnedCapabilityAdditions;assert.deepEqual(audit.catalogKeys,f.omittedCatalogs);assert.deepEqual(audit.compilationBaseline.omittedCatalogs,f.omittedCatalogs);assert.equal(audit.actualOwnedInitializationUnchanged,true);for(const key of f.omittedCatalogs)assert(audit.catalogs[key].rows.length);}
+  if(fee){assert.equal(result.report.sourceMessageFeeAddition.compilationBaseline.contentHash,f.noFee.contentHash);assert.equal(result.report.sourceMessageFeeAddition.beforeGameStateHash,result.report.sourceMessageFeeAddition.afterGameStateHash);}
+ }
+});
+test('two registered catalogs retain raw-row and compiler provenance; forged rows or an expected value copied from candidate cannot grant them',async()=>{
+ const api=await load('source-recipe-inputs');for(const mutate of [
+  (v:any)=>{v.sourceTables['condition.csv'][0].values.condition_type='9';},
+  (v:any)=>{v.sourceTables['character_status.csv'][1].values.id='19';},
+  (v:any)=>{v.sourceTables['exp_table.csv'][0].values.total_exp='1';},
+  (v:any)=>{v.expected.sourceSpecialOwnedMembers.catalog.gauSourceId=13;},
+  (v:any)=>{v.compilers[3].sha256='f'.repeat(64);},
+ ]){const f=fixture(),evidence=async()=>{const v=await f.evidence();mutate(v);return v;};await assert.rejects(api.resolveCompiledBattleReference({...f.input,sourceOwnedCapabilityAdditions:{...f.bag,evidence}}));}
+ const f=fixture(),evidence=async()=>{const v=await f.evidence();v.sourceTables['exp_table.csv']![0]!.values.total_exp='1';v.sourceTableHashes['exp_table.csv']=f.hash(v.sourceTables['exp_table.csv']);return v;};await assert.rejects(api.resolveCompiledBattleReference({...f.input,sourceOwnedCapabilityAdditions:{...f.bag,evidence}}),/Unsupported Ghost/);
+ const changedOrigin=fixture(),wrongOrigin=async()=>{const v=await changedOrigin.evidence();v.sourceTables['character_status.csv']![0]!.source.assetPath='Assets/Master/condition.csv';v.sourceTableHashes['character_status.csv']=changedOrigin.hash(v.sourceTables['character_status.csv']);return v;};await assert.rejects(api.resolveCompiledBattleReference({...changedOrigin.input,sourceOwnedCapabilityAdditions:{...changedOrigin.bag,evidence:wrongOrigin}}),/raw row identity/);
+});
+test('existing catalogs cannot change or disappear, and additions reject moved actual state, extra fields, forged omission sets and old pins',async()=>{
+ const api=await load('source-recipe-inputs');for(const mutate of [(v:any)=>{v.gameState.owned[0].hp++;},(v:any)=>{v.gameState.extra={};},(v:any)=>{v.common.timing.speedIndex=4;},(v:any)=>{v.encounters.unreviewed={};}]){const f=fixture(),v=structuredClone(f.next);mutate(v);const next=f.seal(v);await assert.rejects(api.resolveCompiledBattleReference({...f.input,readCandidateJson:async()=>next,battleRebindings:[f.proof(next)]}));}
+ for(const key of ['sourceBattleHandoffs','sourceSpecialOwnedMembers'])for(const remove of [false,true]){const f=fixture(true,true),v=structuredClone(f.next);if(remove)delete v.gameState[key];else v.gameState[key].kind='forged';const next=f.seal(v);await assert.rejects(api.resolveCompiledBattleReference({...f.input,readCandidateJson:async()=>next,battleRebindings:[f.proof(next)]}),/cannot (change|be removed)/);}
+ const f=fixture();await assert.rejects(api.resolveCompiledBattleReference({...f.input,reference:{...f.input.reference,contentHash:'f'.repeat(64)}}));await assert.rejects(api.resolveCompiledBattleReference({...f.input,sourceOwnedCapabilityAdditions:{...f.bag,baselines:new Map([[f.url,{baseline:f.baseline,rebinding:f.proof(f.baseline),omittedCatalogs:['sourceBattleHandoffs']}]])}}),/omission set/);
+ await assert.rejects(api.resolveCompiledBattleReference({...f.input,sourceOwnedCapabilityAdditions:{...f.bag,declaration:{...f.bag.declaration,catalogKeys:['sourceBattleHandoffs','unknown']}}}),/Unknown owned capability/);
+});
+test('the actual recipe resolver leaves caller recipes unchanged after late source failure and supports source/opening/ordinary historical shapes',async()=>{
+ const api=await load('source-recipe-inputs');for(const [h,s,url]of [[false,false,'/game/source-catalog.json'],[true,false,'/game/opening-playable.json'],[false,true,'/content-batches/ordinary-battles/battle.json']] as const){const f=fixture(h,s,true),recipe={kind:'controlled-owned-capability-additions',id:'controlled-two-catalogs',battle:{url,contentHash:f.old.contentHash}},bytes=JSON.stringify(recipe),rebind=(v:any)=>({...f.proof(v),url});let fail=true;
+  const input={...f.input,recipePath:'content-batches/controlled-two-catalogs.json',recipeBytes:bytes,battleRebindings:[rebind(f.next)],sourceOwnedCapabilityAdditions:{...f.bag,evidence:async()=>{const v=await f.evidence();if(fail)throw Error('controlled late source row read');return v;},baselines:new Map([[url,{baseline:f.baseline,rebinding:rebind(f.baseline),omittedCatalogs:f.omittedCatalogs}]])},sourceMessageFeeBaselines:new Map([[url,{baseline:f.noFee,rebinding:rebind(f.noFee)}]])};
+  await assert.rejects(api.resolveSourceRecipeInputs(input),/controlled late source row read/);assert.equal(JSON.stringify(recipe),bytes);fail=false;const result=await api.resolveSourceRecipeInputs(input);assert.equal(result.recipe.battle.contentHash,f.next.contentHash);assert.equal(JSON.stringify(recipe),bytes);assert.equal(result.report.sourceOwnedCapabilityAdditions.length,1);assert.equal(result.report.sourceMessageFeeAdditions.length,1);
+ }
+});
+test('typed audited omissions are a closed exact set; accessors do not execute and old option combinations remain explicit',()=>{
+ for(const omit of [[],['unknown'],['sourceBattleHandoffs','sourceBattleHandoffs']])assert.throws(()=>parseSourceOwnedCapabilityAdditionAudit({kind:'omit-source-owned-capability-catalogs-for-addition-audit-v1',omit}));
+ let reads=0;const omit:any=[];Object.defineProperty(omit,0,{enumerable:true,get(){reads++;return 'sourceBattleHandoffs';}});assert.throws(()=>parseSourceOwnedCapabilityAdditionAudit({kind:'omit-source-owned-capability-catalogs-for-addition-audit-v1',omit}));assert.equal(reads,0);
+});
+
+test('the shared ordinary DAG selects its own historical presence shape, then uses the same actual resolver; late derivation failure is unpublished',async()=>{
+ const api=await load('source-recipe-inputs'),owner=await load('source-owned-capability-additions'),{verifyContent}=await import('../src/core/content-integrity.js');
+ for(const [h,s]of [[true,false],[false,true],[false,false],[true,true]]){
+  const f=fixture(h,s,true),calls:any[]=[],previous=structuredClone(f.old);let fail=true;
+  const input={rootUrl:'/game/opening-playable.json',previousDerived:f.old,compileBattleAuditBaseline:async(request:any)=>{calls.push(structuredClone(request));assert.deepEqual(request.omittedCatalogs,f.omittedCatalogs);return structuredClone(request.omitMessageFees?f.noFee:f.baseline);},derive:async(parent:any)=>{if(fail)throw Error('controlled late ordinary compiler resource failure');return {catalog:structuredClone(parent)};},verifyContent,hash:f.hash};
+  await assert.rejects(owner.compileDerivedOwnedCapabilityBaselines(input),/controlled late ordinary/);assert.deepEqual(f.old,previous);fail=false;const derived=await owner.compileDerivedOwnedCapabilityBaselines(input);assert.deepEqual(derived.omittedCatalogs,f.omittedCatalogs);assert.equal(calls.filter(c=>c.omitMessageFees).length,2);
+  const url='/content-batches/ordinary-battles/battle.json',proof=(v:any)=>({...f.proof(v),url});const result=await api.resolveCompiledBattleReference({...f.input,reference:{url,contentHash:f.old.contentHash},battleRebindings:[proof(f.next)],sourceOwnedCapabilityAdditions:{...f.bag,baselines:new Map([[url,{baseline:derived.baseline,rebinding:proof(derived.baseline),omittedCatalogs:derived.omittedCatalogs}]])},sourceMessageFeeBaselines:new Map([[url,{baseline:derived.feeBaseline,rebinding:proof(derived.feeBaseline)}]])});assert.equal(result.reference.contentHash,f.next.contentHash);assert.deepEqual(f.old,previous);
+ }
+});

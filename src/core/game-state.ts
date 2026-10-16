@@ -1,7 +1,9 @@
+import {validateSourceSpecialOwnedCatalog,validateSpecialOwnedCommand,type SourceSpecialOwnedCatalog,type SourceSpecialOwnedCommand,type SourceSpecialOwnedTransaction} from "./source-special-owned-members.js";
 import { validateSourceBattleHandoffCatalog, validateSourceBattleHandoffState, projectSourceColosseumRecovery,
   projectSourceRestore0055, projectSourceHandoffReturn, sourceFinalWaiting, type SourceBattleHandoffCatalog,
   type SourceBattleHandoffState, type SourceBattleHandoffReturn, type FieldSourceBattleHandoffPort,
   type SourceBattleHandoffOp } from './source-battle-handoffs.js';
+import {parseBattlePartyContext,currentBattlePartyReward,type BattlePartyContext} from "./battle-party-context.js";
 import { parseSourceLocation, type SourceLocation, type FieldLocationPort } from "./field-ui.js";
 import { sourceEquipmentTargets, type SourceEquipmentCommand, type SourceEquipmentTransaction } from "./source-owned-equipment.js";
 import { projectTransportationParkingUpload, type TransportationParkingObservation } from "./transportation-parking-upload.js";
@@ -19,7 +21,7 @@ import type { BattleFieldState } from './field-battle-entry.js';
 import { WEB_SOURCE_SCRIPT_RANDOM, validateScriptRandomUpper, type WebSourceScriptRandom, type FieldScriptRandomPort } from "./field-script-random.js";
 import type { CombatantDefinition, BattleContent } from "./battle-content.js";
 import type { BattleEntryInventory, BattleInventoryWithQualification } from "./battle-entry.js";
-import type { Combatant, BattleStatProjection } from "./battle.js";
+import {BattleGame, type Combatant, type BattleStatProjection} from "./battle.js";
 import { parseBattlePlayerBorrow, parseBattlePlayerPlan, parseBattlePlayerReturn,
   type BattlePlayerBorrow, type BattlePlayerPlan, type BattlePlayerReturn } from "./battle-player-participants.js";
 import { firstEnteredOwnerIds,
@@ -61,7 +63,7 @@ import {
 import { previewPartyMenu, type PartyMenuRequest } from "./party-menu.js";
 import {
   equipmentAvailability,
-  selectEmptyEquipment,
+  selectEmptyEquipment, selectStrongestEquipment,
   previewEquipmentChange,
   projectEquipmentParameters,
   validateEquipmentState,
@@ -156,6 +158,7 @@ export type GameStateContent = {
   characterGrowth?: Record<string, CharacterGrowthPlan>;
   /** Trusted source capability, never part of a saved owned-state grant. */
   sourceRosterGroups?: SourceRosterGroupCatalog;
+  sourceSpecialOwnedMembers?: SourceSpecialOwnedCatalog;
   /** Source-proven equivalent current contexts; never supplied by saves. */
   currentJobs?: CurrentJobCatalog;
   /** Immutable source defaults; current names always belong to this roster. */
@@ -306,6 +309,8 @@ export class GameState {
     qualification: BattleEntryInventory | null;
     forcedSavePolicy:WebBattleForcedSave|null;
     rewardPolicy: Readonly<BattleRewardPolicy>;
+    partyContext:BattlePartyContext|null;
+    contextBattle:BattleGame|null;
     playerBorrow: BattlePlayerBorrow | undefined;
     gauOwned?: { data: GameStateSnapshot; revision: number; retired: boolean; reservation: object | null };
   } | null = null;
@@ -334,6 +339,7 @@ export class GameState {
     prepareEquipment: command => this.prepareSourceEquipment(command),
     prepare: (command) => this.prepareRosterEvent(command),
     prepareGroup: (command) => this.prepareRosterGroup(command),
+    prepareSpecial: command => this.prepareSpecialOwned(command),
   };
   readonly fieldOwnedConditions: FieldOwnedConditionPort = {
     prepare: (command) => this.prepareOwnedConditionEvent(command),
@@ -397,6 +403,7 @@ export class GameState {
       : null;
     this.content = structuredClone(content);
     if(this.content.sourceRosterGroups)validateSourceRosterGroupCatalog(this.content.sourceRosterGroups);
+    if(this.content.sourceSpecialOwnedMembers)validateSourceSpecialOwnedCatalog(this.content.sourceSpecialOwnedMembers);
     if(this.content.sourceRtsParty)validateRtsCatalog(this.content.sourceRtsParty);
     if(this.content.currentJobs){
       const system=this.content.equipmentSystem;
@@ -1419,6 +1426,44 @@ export class GameState {
     this.validate(next);
     return {next,steps};
   }
+  private projectSpecialOwned(data:GameStateSnapshot,command:SourceSpecialOwnedCommand) {
+    validateSpecialOwnedCommand(command);const catalog=this.content.sourceSpecialOwnedMembers;
+    if(!catalog)throw Error("Source special-owned catalog is unavailable");validateSourceSpecialOwnedCatalog(catalog);
+    const sourceId=command.kind==="gau"?catalog.gauSourceId:command.sourceId;
+    let next=structuredClone(data),member=next.roster.find(m=>m.sourceId===sourceId);
+    if(command.kind==="gau"){
+      if(!member)throw Error("Source Gau join requires its actual already held owned character");
+      // The whole wrapper stays inside prepareRosterNativeStep so its
+      // intermediate enable cannot be mistaken for a valid equipment save.
+    }else if(member){
+      const template=this.content.characterInitializations?.[member.id],plan=this.currentGrowth(member);
+      if(!template||!plan||plan.baseExp!==catalog.ghostResetAdditionalExp||plan.initialLevel!==1||
+          member.jobId!==template.initial.jobId)throw Error("Ghost reset requires its actual source status/experience/growth context");
+      // SetCharacterStatus(true) replaces only the parameter block. Owned IDs,
+      // equipment, name, commands and learned abilities remain their owners'.
+      // A changed learning/stone context needs the separate ordered reset codec;
+      // never discard it as though resetting parameters also forgot abilities.
+      if(member.magicStoneId!==0||member.growth?.observedLearning.length||
+          canonical(member.abilities)!==canonical(plan.initialAbilities))
+        throw Error("Ghost parameter reset requires preserved external ability/stone history");
+      member.growth=initialCharacterGrowth(plan);member.exp=plan.baseExp;
+      member.level=plan.initialLevel;member.additionalLevel=plan.initialLevel;member.conditionIds=[];
+      const projected=this.projectOwnedParameters(member);member.maxHp=projected.maxHp;member.maxMp=projected.maxMp;
+      member.hp=member.maxHp;member.mp=member.maxMp;this.validate(next);
+    }
+    const projected=this.projectRosterEvent(next,command.kind==="gau"?{kind:"gau-join",sourceId,firstEncounter:command.firstEncounter}:
+      {kind:"join",sourceId,position:null,row:"front",refreshActors:true,recovery:true,refitEquipment:false});
+    next=projected.next;return{next,steps:[{appearance:projected.appearance,setDummy:false,sourceId},
+      {appearance:projected.appearance,setDummy:true,sourceId}]};
+  }
+  private prepareSpecialOwned(command:SourceSpecialOwnedCommand):SourceSpecialOwnedTransaction {
+    this.requireIdle();const catalog=this.content.sourceSpecialOwnedMembers;if(!catalog)throw Error("Source special-owned catalog is unavailable");
+    const identity=canonical(catalog),revision=this.revision,{next,steps}=this.projectSpecialOwned(this.data,command);let consumed=false;
+    const current=()=>{if(consumed||this.active||this.revision!==revision||this.content.sourceSpecialOwnedMembers!==catalog||canonical(catalog)!==identity)
+      throw Error("Stale source special-owned transaction");};
+    const validate=()=>{this.requireIdle();current();};return{get steps(){return structuredClone(steps);},validate,commitWith:publish=>{
+      this.commitMenuPresentation(next,validate,()=>publish(current));consumed=true;}};
+  }
   private prepareRosterGroup(command: RosterGroupCommand): RosterGroupTransaction {
     this.requireIdle();
     const catalog = this.content.sourceRosterGroups;
@@ -1444,24 +1489,39 @@ export class GameState {
     const next = structuredClone(data), targets = sourceEquipmentTargets(next.roster, next.party, command);
     const catalog = lifecycleEquipmentCatalog(this.currentEquipment(next.roster));
     const changes: SourceEquipmentTransaction["changes"] = [];
-    for (const id of targets) for (const slot of [6, 5, 4, 3, 2, 1]) {
+    const setSlot = (id: string, slot: number, contentId: number) => {
       const member = next.roster.find(p => p.id === id)!;
-      const empty = selectEmptyEquipment(catalog, next.equipmentStock, member.sourceId, slot);
-      if (empty === null) throw Error("Missing owned empty equipment for source member removal");
-      const preview = previewEquipmentChange(catalog, next.roster.filter(p => p.enabled), next.equipmentStock, id, slot, empty);
+      const preview = previewEquipmentChange(catalog, next.roster.filter(p => p.enabled), next.equipmentStock, id, slot, contentId);
       const loadout = preview.roster.find(p => p.id === id)!;
       if (member.abilities) member.abilities.owned = applyEquipmentAbilityChange(member.abilities.owned, member, loadout, catalog);
       else if (equipmentAbilityCostProviders(catalog, loadout).length) throw Error("Equipment passive lacks owned ability state");
       member.equipment = [...loadout.equipment];
-      // Native RemoveAllEquip runs SetEquip in reverse slot order. Preserve
-      // each step's resource clamps/passive removal rather than only the final
-      // loadout; stock Count never changes when a registration is removed.
+      // Each native SetEquip confirms parameters and clamps resources before
+      // the next selection; a final-loadout-only projection loses that history.
       const projected = this.projectOwnedParameters(member);
       member.maxHp = projected.maxHp; member.maxMp = projected.maxMp;
       member.hp = Math.min(member.hp, member.maxHp); member.mp = Math.min(member.mp, member.maxMp);
       member.conditionIds = this.conditions.updateDying(member.hp, member.maxHp, member.conditionIds);
       changes.push(...preview.changes.map(change => ({ targetId: id, ...change })));
       this.validate(next);
+    };
+    for (const id of targets) {
+      const member = next.roster.find(p => p.id === id)!;
+      const slots = command.kind === 'strongest-non-accessories' ? [1, 2, 3, 4] : [6, 5, 4, 3, 2, 1];
+      for (const slot of slots) {
+        const empty = selectEmptyEquipment(catalog, next.equipmentStock, member.sourceId, slot);
+        if (empty === null) throw Error("Missing owned empty equipment for source member removal");
+        setSlot(id, slot, empty);
+      }
+      if (command.kind === 'strongest-non-accessories') {
+        const dominant = catalog.characters[member.sourceId]!.dominantArm;
+        for (const slot of [dominant, dominant === 1 ? 2 : 1, 3, 4]) {
+          const selected = selectStrongestEquipment(catalog, next.roster.filter(p => p.enabled), next.equipmentStock, id, slot);
+          const incoming = selected ?? selectEmptyEquipment(catalog, next.equipmentStock, member.sourceId, slot);
+          if (incoming === null) throw Error('Missing owned empty equipment for strongest fallback');
+          setSlot(id, slot, incoming);
+        }
+      }
     }
     this.validate(next);
     return { next, targets, changes };
@@ -1791,6 +1851,19 @@ export class GameState {
               data=next;generation++;consumed=true;}finally{transportationPublishing=false;this.menuPublication=false;}}};
       };
     const roster: FieldRosterPort = {
+      prepareSpecial: command => {
+        if(published)return this.prepareSpecialOwned(command);this.requireIdle();
+        const catalog=this.content.sourceSpecialOwnedMembers;if(!catalog)throw Error("Source special-owned catalog is unavailable");
+        const identity=canonical(catalog),owner=data,version=generation,{next,steps}=this.projectSpecialOwned(data,command);let consumed=false;
+        const current=()=>{if(consumed||published||data!==owner||generation!==version||this.active||this.revision!==revision||
+          this.content.sourceSpecialOwnedMembers!==catalog||canonical(catalog)!==identity)throw Error("Stale candidate source special-owned transaction");};
+        const validate=()=>{this.requireIdle();if(transportationPublishing)throw Error("Candidate owned publication in progress");current();};
+        return{get steps(){return structuredClone(steps);},validate,commitWith:publish=>{
+          validate();if(typeof publish!=="function"||publish.constructor.name==="AsyncFunction")throw Error("Source special-owned publication must be synchronous");
+          transportationPublishing=true;this.menuPublication=true;try{const result:unknown=publish(current);
+            if(result&&typeof(result as {then?:unknown}).then==="function")throw Error("Source special-owned publication must be synchronous");
+            data=next;generation++;consumed=true;}finally{transportationPublishing=false;this.menuPublication=false;}}};
+      },
       prepareEquipment: command => {
         if (published) return this.prepareSourceEquipment(command);
         this.requireIdle();
@@ -2628,7 +2701,7 @@ export class GameState {
     this.data = next;
     this.revision++;
   }
-  openBattle(encounterId: number, rewardPolicy?: BattleRewardPolicy, playerPlan?: BattlePlayerPlan, forcedSavePolicy?:WebBattleForcedSave): BattleLease {
+  openBattle(encounterId: number, rewardPolicy?: BattleRewardPolicy, playerPlan?: BattlePlayerPlan, forcedSavePolicy?:WebBattleForcedSave, partyContext?:BattlePartyContext): BattleLease {
     this.requireIdle();
     if (this.battlePartyBlocker) throw new Error(this.battlePartyBlocker);
     integer(encounterId, 0x7fffffff, 1);
@@ -2636,6 +2709,8 @@ export class GameState {
       throw new Error("Source battle requires an explicit reward policy");
     const policy = Object.freeze(parseBattleRewardPolicy(rewardPolicy === undefined
       ? { kind: "battle-reward-policy-v1", ap: 0, magicPoints: 0 } : rewardPolicy));
+    const context=partyContext===undefined?null:parseBattlePartyContext(partyContext);
+    if(context&&(context.rootPartyId!==encounterId||canonical(currentBattlePartyReward(context,encounterId))!==canonical(policy)))throw new Error("Battle party context entry reward identity changed");
     const lease = Object.freeze({
       serial: this.data.completedBattles.length,
       encounterId,
@@ -2657,7 +2732,7 @@ export class GameState {
       players,
       items: structuredClone(this.data.items),
       qualification,forcedSavePolicy:forcedSavePolicy===undefined?null:parseWebBattleForcedSave(forcedSavePolicy),
-      rewardPolicy: policy,
+      rewardPolicy: policy,partyContext:context,contextBattle:null,
       playerBorrow,
     };
     this.jobLeaseEpoch++;
@@ -2755,6 +2830,25 @@ export class GameState {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     return this.active.playerBorrow === undefined ? undefined : structuredClone(this.active.playerBorrow);
   }
+  /** Publication binds one actual Battle attempt; preparation and cancellation cannot replace it. */
+  prepareBattlePartyContextBinding(lease:BattleLease,battle:BattleGame){
+    if(this.active?.lease!==lease)throw new Error("Stale battle party context lease");
+    if(!this.active.partyContext)return {validate:()=>{},commit:()=>{}};
+    const active=this.active,previous=active.contextBattle,context=canonical(active.partyContext);let used=false;
+    const validate=()=>{
+      if(used||this.active!==active||active.contextBattle!==previous||!(battle instanceof BattleGame)||
+        canonical(battle.partyContextContent)!==context||battle.partyContextExecution?.partyId!==lease.encounterId||battle.partyContextExecution.generation!==0)
+        throw new Error("Stale actual battle party context binding");
+    };
+    return {validate,commit:()=>{validate();active.contextBattle=battle;used=true;}};
+  }
+  private currentBattleRewardPolicy(lease:BattleLease,battle?:BattleGame):BattleRewardPolicy{
+    if(this.active?.lease!==lease)throw new Error("Stale battle lease");
+    const active=this.active;if(!active.partyContext)return {...active.rewardPolicy};
+    const owner=active.contextBattle,identity=owner?.partyContextExecution;
+    if(!owner||!identity||battle!==undefined&&owner!==battle||identity.rootPartyId!==lease.encounterId)throw new Error("Missing or stale actual battle party context owner");
+    return currentBattlePartyReward(active.partyContext,identity.partyId);
+  }
   battleRewardPolicy(lease: BattleLease): BattleRewardPolicy {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     return { ...this.active.rewardPolicy };
@@ -2771,6 +2865,7 @@ export class GameState {
   battleProgression(
     lease: BattleLease,
     fixtureExperience: BattleContent["experience"] = [],
+    currentBattle?:()=>BattleGame,
   ): ((player: Combatant, amount: number, observedAbilityIds: readonly number[], magicPoints?: number, participantIndex?: number) =>
     BattleStatProjection & { level: number; exp: number; magicLearningValue: number }) | undefined {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
@@ -2796,7 +2891,8 @@ export class GameState {
         ordinal = initialIndex;
       }
       integer(amount, this.content.limits.exp);
-      if (magicPoints !== this.active.rewardPolicy.magicPoints)
+      if(this.active.partyContext&&!currentBattle)throw new Error("Missing actual battle progression context");
+      if (magicPoints !== this.currentBattleRewardPolicy(lease,currentBattle?.()).magicPoints)
         throw new Error("Battle magic points disagree with leased reward policy");
       const magicLearningValue = projectMagicLearningValue(owned.magicLearningValue, magicPoints, player.hp > 0);
       if (owned.growth) {
@@ -2863,11 +2959,13 @@ export class GameState {
         return { ownedId, sourceId: owner.sourceId };
       });
     if (canonical(result.participants) !== canonical(expected)) throw new Error("Forced-return participant identity changed");
+    const contextOwner=this.active.contextBattle,contextBefore=canonical(contextOwner?.partyContextExecution??null);
+    if(this.active.partyContext)this.currentBattleRewardPolicy(lease);
     const gauReturn = this.sourceGauReturnSnapshot(lease, "forced"), next = gauReturn.next, revision = this.revision;
     this.applySourceBattleHandoffReturn(next, lease, handoffs);
     next.completedBattles.push({ ...lease, outcome: "forced" });
     this.validate(next);
-    const validate = () => { if (this.active?.lease !== lease || this.revision !== revision) throw new Error("Stale forced-return transaction"); gauReturn.validate(); };
+    const validate = () => { if (this.active?.lease !== lease || this.revision !== revision) throw new Error("Stale forced-return transaction"); gauReturn.validate();if(this.active.contextBattle!==contextOwner||canonical(contextOwner?.partyContextExecution??null)!==contextBefore)throw new Error("Battle party context changed before forced return"); };
     const commit = () => { validate(); this.data = next; this.active = null; this.revision++; };
     return Object.assign(commit, { validate, fieldState: () => { validate(); return {
       puppetRoster: this.projectPuppetRoster(next),
@@ -2921,9 +3019,11 @@ export class GameState {
     const gauReturn = this.sourceGauReturnSnapshot(lease, "saved");
     let next = gauReturn.next;
     const revision = this.revision;
+    const contextOwner=this.active.contextBattle,contextBefore=canonical(contextOwner?.partyContextExecution??null);
+    if(this.active.partyContext)this.currentBattleRewardPolicy(lease);
     if (victory) integer(victory.gil, 0x7fffffff);
     const magicPoints = victory && victory.magicPoints !== undefined ? victory.magicPoints : 0;
-    if (victory && (magicPoints !== this.active.rewardPolicy.magicPoints ||
+    if (victory && (magicPoints !== this.currentBattleRewardPolicy(lease).magicPoints ||
         (victory.magicPoints === undefined && this.content.characterInitializations)))
       throw new Error("Battle magic points disagree with leased reward policy");
     // Native save order is committed steals, used items, then the already
@@ -3077,6 +3177,7 @@ export class GameState {
       if (this.active?.lease !== lease || this.revision !== revision)
         throw new Error(`Stale ${victory ? "victory" : "escape"} transaction`);
       gauReturn.validate();
+      if(this.active.contextBattle!==contextOwner||canonical(contextOwner?.partyContextExecution??null)!==contextBefore)throw new Error("Battle party context changed before return");
     };
     const commit = () => {
       validate();

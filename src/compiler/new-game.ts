@@ -1,7 +1,7 @@
 import type { BattleRow } from "./battle.js";
 import { tableInteger as int } from "./table.js";
 import { compileOwnedCharacterInitialization } from "./owned-character.js";
-import { compileEquipmentCatalog } from "./equipment.js";
+import { compileEquipmentCatalog, type EquipmentMetadataAdditionAudit } from "./equipment.js";
 import { compileInitialRosterLifecycle } from "./roster.js";
 import { compileInitialPartyState } from "./party.js";
 import { compileTransportationCatalog } from "./transportation.js";
@@ -31,6 +31,7 @@ export function compileNewGame(
   name: (key: string) => string,
   ordinaryWeaponEffects: OrdinaryWeaponEffectsCatalog,
   equipmentStateKind: EquipmentCatalog["kind"] = "equipment-development-v1",
+  metadataAudit?: EquipmentMetadataAdditionAudit,
 ): {
   definition: NewGameDefinition;
   sources: BattleRow["source"][];
@@ -131,7 +132,7 @@ export function compileNewGame(
         { hasTwoSwordStyle: false, hasTwoHand: false, equipAnyJob: false },
       ]),
     ),
-    ordinaryWeaponEffects, equipmentStateKind,
+    ordinaryWeaponEffects, equipmentStateKind, metadataAudit,
   );
   sources.push(...equipment.sources);
   const transportationRows = all("transportation.csv");

@@ -56,3 +56,27 @@ export function projectMagicLearningValue(
   if (typeof eligible !== "boolean") throw new Error("Invalid magic learning reward eligibility");
   return eligible ? Math.min(MAX_MAGIC_LEARNING_VALUE, value + reward) : value;
 }
+
+const unsupportedRewardFlags: Readonly<Record<number, string>> = {
+  3: "NoResultNoSave",
+  9: "NoSaveItem",
+  10: "NoFanfareNoResult",
+  11: "NoExp",
+  12: "NoGil",
+  13: "OnlyExpGilbart",
+};
+
+/** Entry Start captures this flag list. Current child metadata never replaces it.
+ * Unknown result providers remain explicit even when reward numbers are zero. */
+export function assertBattleRewardFlags(flags:readonly number[]):void {
+  if (!Array.isArray(flags) || Reflect.ownKeys(flags).length !== flags.length + 1)
+    throw new Error("Invalid source battle reward flag list");
+  for (let index = 0; index < flags.length; index++) {
+    const property = Object.getOwnPropertyDescriptor(flags, index);
+    const flag: unknown = property && "value" in property ? property.value : undefined;
+    if (!property?.enumerable || typeof flag !== "number" || !Number.isInteger(flag) || flag < 1 || flag > 27)
+      throw new Error("Unknown or invalid source battle reward flag");
+    if (unsupportedRewardFlags[flag])
+      throw new Error(`Battle reward flag ${flag} (${unsupportedRewardFlags[flag]}) requires an unimplemented result provider`);
+  }
+}

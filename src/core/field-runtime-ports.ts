@@ -57,6 +57,7 @@ export const FIELD_RUNTIME_PORT_ROUTES = Object.freeze({
   deferLogicalEffectRestore: "local",
   storyRuntimeSeed: "local",
   storyTimerOrigin: "local",
+  storyTimerOrigins: "local",
   fieldEffectMap: "local",
   nativeActorPreparation: "local",
   npcActivityClock: "local",

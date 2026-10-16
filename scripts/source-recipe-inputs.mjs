@@ -1,3 +1,5 @@
+import {sourceBattleHandoffAdditionOptions,legacySourceBattleHandoffAudit} from './source-battle-handoff-addition.mjs';
+import {parseSourceOwnedCapabilityAdditions,createSourceOwnedCapabilityEvidenceReader,auditSourceOwnedCapabilityAdditions,ownedCapabilityCatalogAdditions,sourceOwnedCapabilityProjection} from './source-owned-capability-additions.mjs';
 import {parseFieldEffectTransformAssessment,parseFrameworkFieldEffectTransformAddition,comparableFrameworkFieldEffectTransformAddition} from './framework-field-effect-transform-evidence.mjs';
 import {parseFrameworkFieldEffectFlatAddition,comparableFrameworkFieldEffectFlatAddition} from './framework-field-effect-flat-evidence.mjs';
 import {parseFrameworkOrdinaryPresentationAddition,comparableFrameworkOrdinaryPresentationAddition} from './framework-ordinary-presentation-evidence.mjs';
@@ -453,11 +455,45 @@ async function auditCompiledMessageFeeAddition({before,after,ref,proofs,declarat
     originalPinnedCommonHash:sha(canonical(before.common)),sourceOwnedBytesUnchanged:true}};
 }
 
+/** Historical lowering and fee audits keep their own complete baselines.
+ * The only owned additions are the two explicitly registered source catalogs. */
+function ownedAdditionOptions({sourceOwnedCapabilityAdditions,sourceBattleHandoffAddition,sourceBattleHandoffEvidence,sourceBattleHandoffBaselines,root,compiledDir}){
+ const legacy=[sourceBattleHandoffAddition,sourceBattleHandoffEvidence,sourceBattleHandoffBaselines].some(value=>value!==undefined);
+ assert(!(sourceOwnedCapabilityAdditions!==undefined&&legacy),'Ambiguous owned capability catalog addition options');
+ const raw=sourceOwnedCapabilityAdditions??(legacy?sourceBattleHandoffAdditionOptions({declaration:sourceBattleHandoffAddition,evidence:sourceBattleHandoffEvidence,baselines:sourceBattleHandoffBaselines}):undefined),options=parseSourceOwnedCapabilityAdditions(raw);
+ if(options&&options.evidence===undefined)options.evidence=createSourceOwnedCapabilityEvidenceReader({root,compiledDir,catalogKeys:options.declaration.catalogKeys});
+ return {options,legacy};
+}
+async function auditCompiledBattleCatalog({before,after,ref,proofs,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines,
+  sourceOwnedCapabilityAdditions,legacyOwnedAddition=false,canonical,verifyContent,sourceCatalogProfile,root,compiledDir}) {
+ const options=sourceOwnedCapabilityAdditions,declaration=options?.declaration,added=ownedCapabilityCatalogAdditions(before,after,canonical);
+ let comparison=after,comparisonProofs=proofs,ownedAudit=null;
+ if(added.length){
+  assert(options?.baselines instanceof Map,'Owned capability addition requires same-input compiled baseline and declaration');
+  const raw=options.baselines.get(ref.url);dataFields(raw,['baseline','rebinding','omittedCatalogs'],'owned capability compiler baseline');
+  assert.equal(canonical(raw.omittedCatalogs),canonical(added),'Owned capability baseline omission set differs');
+  comparison=structuredClone(raw.baseline);await verifyContent(comparison);assert.equal(comparison.kind,'narshe-battle-catalog');for(const key of added)assert.equal(sourceOwnedCapabilityProjection(comparison.gameState,key),undefined,'Owned capability baseline includes addition: '+key);
+  comparisonProofs=parseBattleRebindings([raw.rebinding]);const baselineProof=comparisonProofs.get(ref.url),finalProof=proofs.get(ref.url);
+  assert(baselineProof&&finalProof&&declaration,'Owned capability baseline requires both rebindings and declaration');assert.equal(baselineProof.candidateHash,comparison.contentHash,'Owned capability baseline candidate hash mismatch');
+  for(const value of [baselineProof,finalProof])assert.equal(value.compilerDigest,declaration.compilerDigest,'Owned capability compiler mismatch');
+  assert.equal(finalProof.previousHash,before.contentHash);assert.equal(finalProof.candidateHash,after.contentHash);
+  for(const key of ['previousHash','sourceContentHash','fieldSourceSetHash'])assert.equal(baselineProof[key],finalProof[key],'Owned capability baseline rebinding mismatch: '+key);
+  assert.equal(finalProof.gameStateHash,sha(canonical(after.gameState)),'Owned capability final catalog hash mismatch');
+  ownedAudit=await auditSourceOwnedCapabilityAdditions({before:comparison,after,declaration,evidence:options.evidence,canonical,root,compiledDir});assert(ownedAudit,'Owned capability baseline did not prove exact additions');
+  ownedAudit.compilationBaseline={kind:'same-input-compiled-owned-capability-baseline-v1',policy:'omit-source-owned-capability-catalogs-for-addition-audit-v1',omittedCatalogs:added,url:ref.url,contentHash:comparison.contentHash,gameStateHash:sha(canonical(comparison.gameState)),compilerDigest:baselineProof.compilerDigest,originalPinnedHash:before.contentHash};
+ }else await auditSourceOwnedCapabilityAdditions({before,after,declaration,evidence:options?.evidence,canonical,root,compiledDir});
+ const feeAudit=await auditCompiledMessageFeeAddition({before,after:comparison,ref,proofs:comparisonProofs,declaration:sourceMessageFeeAddition,evidence:sourceMessageFeeEvidence,baselines:sourceMessageFeeBaselines,canonical,verifyContent,sourceCatalogProfile});
+ let report=ref.kind==='narshe-battle-catalog'?compiledBattleRebinding(before,comparison,ref,comparisonProofs,canonical,sourceCatalogProfile):null;
+ if(ownedAudit){ownedAudit.compilationBaseline.historicalRebinding=report;report={...(report??{}),...proofs.get(ref.url),profile:sourceCatalogProfile(after.developmentProfile),sourceIdentityBefore:identities(before,canonical,sourceCatalogProfile),sourceIdentityAfter:identities(after,canonical,sourceCatalogProfile),sourceOwnedCapabilityAdditions:ownedAudit};}
+ const handoffAudit=legacyOwnedAddition?legacySourceBattleHandoffAudit(ownedAudit):null;if(report&&handoffAudit)report.sourceBattleHandoffAddition=handoffAudit;
+ if(report&&feeAudit)report.sourceMessageFeeAddition=feeAudit;return {report,feeAudit,ownedAudit,handoffAudit};
+}
+
 /** The proof is supplied by the trusted same-candidate compiler, never by a
  * recipe or save. It binds an exact URL and old/new body hashes; this helper
  * grants no source gameplay readiness and performs no save migration. */
 export async function resolveCompiledBattleReference({reference,readCurrentJson,readCandidateJson,
-    battleRebindings,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines,root=repository,compiledDir='dist'}){
+    battleRebindings,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines,sourceOwnedCapabilityAdditions,sourceBattleHandoffAddition,sourceBattleHandoffEvidence,sourceBattleHandoffBaselines,root=repository,compiledDir='dist'}){
   dataFields(reference,['url','contentHash'],'compiled battle reference');
   assert.ok(typeof reference.url==='string'&&jsonURL.test(reference.url),'Invalid compiled battle reference URL');
   assert.ok(typeof reference.contentHash==='string'&&digest.test(reference.contentHash),'Invalid compiled battle reference hash');
@@ -474,9 +510,9 @@ export async function resolveCompiledBattleReference({reference,readCurrentJson,
   assert.ok(plain(after),'Missing content for '+ref.url);
   await verifyContent(after);
   validateDocument(before,ref);validateDocument(after,ref);
-  const feeAudit=await auditCompiledMessageFeeAddition({before,after,ref,proofs,declaration:sourceMessageFeeAddition,evidence:sourceMessageFeeEvidence??(sourceMessageFeeAddition?createSourceMessageFeeEvidenceReader({root,compiledDir}):undefined),baselines:sourceMessageFeeBaselines,canonical,verifyContent,sourceCatalogProfile});
-  const report=compiledBattleRebinding(before,after,ref,proofs,canonical,sourceCatalogProfile);
-  if(report&&feeAudit)report.sourceMessageFeeAddition=feeAudit;
+  const owned=ownedAdditionOptions({sourceOwnedCapabilityAdditions,sourceBattleHandoffAddition,sourceBattleHandoffEvidence,sourceBattleHandoffBaselines,root,compiledDir});
+  const {report}=await auditCompiledBattleCatalog({before,after,ref,proofs,sourceMessageFeeAddition,sourceMessageFeeEvidence:sourceMessageFeeEvidence??(sourceMessageFeeAddition?createSourceMessageFeeEvidenceReader({root,compiledDir}):undefined),sourceMessageFeeBaselines,
+    sourceOwnedCapabilityAdditions:owned.options,legacyOwnedAddition:owned.legacy,canonical,verifyContent,sourceCatalogProfile,root,compiledDir});
   return {reference:{url:ref.url,contentHash:after.contentHash},report};
 }
 
@@ -556,7 +592,7 @@ async function npcRouteAdditionDeclaration(raw,root,compiledDir){
  * and complete package validation at their publication boundary. */
 export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurrentJson,readCandidateJson,
     root=repository,compiledDir='dist',sourceWalkEvidence,battleRebindings,frameworkProfileUpgrade,sourceMapAnimationAddition,sourceMapAnimationEvidence,sourceNpcInitialPoseAddition,sourceNpcInitialPoseEvidence,sourceNpcRoutesAddition,sourceNpcRouteEvidence,
-    frameworkNpcAreaAddition,frameworkNpcAreaEvidence,sourceEventActivationAddition,sourceEventActivationEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,frameworkFieldEffectTransformAddition,frameworkFieldEffectTransformEvidence,frameworkOrdinaryPresentationAddition,frameworkOrdinaryPresentationEvidence,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines}){
+    frameworkNpcAreaAddition,frameworkNpcAreaEvidence,sourceEventActivationAddition,sourceEventActivationEvidence,frameworkNpcFlatAddition,frameworkNpcFlatEvidence,frameworkFieldEffectFlatAddition,frameworkFieldEffectFlatEvidence,frameworkFieldEffectTransformAddition,frameworkFieldEffectTransformEvidence,frameworkOrdinaryPresentationAddition,frameworkOrdinaryPresentationEvidence,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines,sourceOwnedCapabilityAdditions,sourceBattleHandoffAddition,sourceBattleHandoffEvidence,sourceBattleHandoffBaselines}){
   assert.ok(typeof recipePath==='string'&&recipePath.length>0,'Missing original recipe path');
   assert.equal(typeof readCurrentJson,'function');assert.equal(typeof readCandidateJson,'function');
   const recipe=recipeJSON(recipeBytes),refs=declaredReferences(recipe),proofs=parseBattleRebindings(battleRebindings);
@@ -564,6 +600,8 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
     recipeSha256:sha(recipeBytes),changes:[],dependencyRebindings:[],sourceIdentities:[],sourceEvidenceEnrichments:[],
     battleCapabilityRebindings:[],frameworkProfileUpgrades:[],sourceMapAnimationAdditions:[],sourceNpcRouteAdditions:[]};
   parseSourceMessageFeeAddition(sourceMessageFeeAddition);
+  const owned=ownedAdditionOptions({sourceOwnedCapabilityAdditions,sourceBattleHandoffAddition,sourceBattleHandoffEvidence,sourceBattleHandoffBaselines,root,compiledDir});
+  if(owned.options)report.sourceOwnedCapabilityAdditions=[];if(owned.legacy)report.sourceBattleHandoffAdditions=[];
   sourceMessageFeeEvidence??=sourceMessageFeeAddition?createSourceMessageFeeEvidenceReader({root,compiledDir}):undefined;
   if(sourceMessageFeeAddition)report.sourceMessageFeeAdditions=[];
   const frameworkUpgrade=await frameworkUpgradeDeclaration(frameworkProfileUpgrade,root,compiledDir);
@@ -792,10 +830,11 @@ export async function resolveSourceRecipeInputs({recipePath,recipeBytes,readCurr
     const comparison=await comparableWalkingEvidence(routed.before,routed.after,ref.role,ref.url);
     const oldIdentity=identities(comparison.before,canonical,sourceCatalogProfile),
       newIdentity=identities(comparison.after,canonical,sourceCatalogProfile);
-    const feeAudit=await auditCompiledMessageFeeAddition({before,after,ref,proofs,declaration:sourceMessageFeeAddition,evidence:sourceMessageFeeEvidence,baselines:sourceMessageFeeBaselines,canonical,verifyContent,sourceCatalogProfile});
+    const {feeAudit,ownedAudit,handoffAudit,report:battleRebinding}=await auditCompiledBattleCatalog({before,after,ref,proofs,sourceMessageFeeAddition,sourceMessageFeeEvidence,sourceMessageFeeBaselines,
+      sourceOwnedCapabilityAdditions:owned.options,legacyOwnedAddition:owned.legacy,canonical,verifyContent,sourceCatalogProfile,root,compiledDir});
     if(feeAudit)report.sourceMessageFeeAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,...feeAudit});
-    const battleRebinding=ref.kind==='narshe-battle-catalog'
-      ?compiledBattleRebinding(before,after,ref,proofs,canonical,sourceCatalogProfile):null;
+    if(ownedAudit)report.sourceOwnedCapabilityAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,...ownedAudit});
+    if(handoffAudit)report.sourceBattleHandoffAdditions.push({pointer:ref.pointer,role:ref.role,url:ref.url,...handoffAudit});
     if(battleRebinding)report.battleCapabilityRebindings.push({pointer:ref.pointer,role:ref.role,...battleRebinding});
     else assert.equal(canonical(oldIdentity),canonical(newIdentity),'Source identity/profile/media changed: '+ref.role);
     if(upgraded.upgrade)report.frameworkProfileUpgrades.push({...upgraded.upgrade,

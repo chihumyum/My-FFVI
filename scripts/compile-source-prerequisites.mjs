@@ -1,3 +1,4 @@
+import {ownedCapabilityCatalogAdditions,sourceOwnedCapabilityProjection,projectSourceOwnedCapabilityAdditions} from './source-owned-capability-additions.mjs';
 import {FIELD_EFFECT_TRANSFORMS,FIELD_EFFECT_TRANSFORM_REASON,verifyFieldEffectTransformLock} from "./framework-field-effect-transform-evidence.mjs";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -106,17 +107,17 @@ async function readLockedJson(inputs, root, path) {
 
 async function modules(compiledDir,{board=false}={}) {
   const load = name => import(pathToFileURL(resolve(compiledDir, "src", name + ".js")).href);
-  const [mapTransformsApi, content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost, npcArea, npcFlat, effectFlat, ordinary, skybox, boardTransforms] = await Promise.all([
+  const [mapTransformsApi, content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost, npcArea, npcFlat, effectFlat, ordinary, skybox, ownedCapabilities, boardTransforms] = await Promise.all([
     load("compiler/field-map-transforms"), load("compiler/content"), load("core/content-integrity"), load("compiler/world"), load("compiler/source-new-game"),
     load("compiler/framework-content"), load("core/source-catalog"), load("core/field-native-composition"),
     load("compiler/battle"), load("compiler/game-catalog"), load("compiler/opening-playable"), load("compiler/field-logical-effects"),
     load("compiler/corpus"), load("compiler/map-package"), load("compiler/field-background"),
     load("compiler/framework-periodic-presentation"), load("compiler/field-native-composition"),
     load("compiler/framework-npc-area"), load("compiler/framework-npc-flat-projection"), load("compiler/framework-field-effect-flat-projection"),
-    load("compiler/framework-ordinary-presentation"), load("compiler/field-skybox"), ...(board?[load("compiler/framework-field-effect-transforms")]:[]),
+    load("compiler/framework-ordinary-presentation"), load("compiler/field-skybox"), load("compiler/source-owned-capability-catalogs"), ...(board?[load("compiler/framework-field-effect-transforms")]:[]),
   ]);
   return { ...mapTransformsApi, ...content, ...integrity, ...world, ...newGame, ...framework, ...sourceCatalog, ...composition,
-    ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost, ...npcArea, ...npcFlat, ...effectFlat, ...ordinary, ...skybox, ...boardTransforms };
+    ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost, ...npcArea, ...npcFlat, ...effectFlat, ...ordinary, ...skybox, ...ownedCapabilities, ...boardTransforms };
 }
 
 /** A v5 tuple pins the full compiler-derived source transport catalog. This
@@ -373,6 +374,50 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
   return true;
 }
 
+/** Same-source Battle catalog stage only. No world compilation/publication.
+ * Baselines are independently compiled with one explicit omission policy;
+ * never created by removing fields from a candidate or changing old pins. */
+export async function compileSourceBattlePrerequisites({root=repository,compiledDir="dist",previousBattle,previousDevelopment,compilerDigest}={}) {
+  root=resolve(root);compiledDir=resolve(root,compiledDir);const api=await modules(compiledDir);
+  if(!HASH.test(compilerDigest))throw Error("Missing locked Battle compiler digest");
+  for(const value of [previousBattle,previousDevelopment])await api.verifyContent(value);
+  api.assertSourceGameCatalog(previousBattle);
+  const [source,opening]=await Promise.all([api.compileSharedBattleSource(root),api.compileOpeningBattle(root)]);
+  const [battle,development]=await Promise.all([api.compileSharedGameCatalog(root,source),api.compileOpeningPlayable(root,opening)]);
+  const battleRebindings=[],sourceMessageFeeBaselines=new Map(),sourceOwnedCapabilityBaselines=new Map();
+  const proof=(url,before,candidate)=>({kind:"compiled-battle-rebinding-v1",url,previousHash:before.contentHash,candidateHash:candidate.contentHash,compilerDigest,
+    sourceContentHash:candidate.common.sourceContentHash,fieldSourceSetHash:candidate.common.fieldSourceSetHash,gameStateHash:api.hash(candidate.gameState)});
+  const roots=new Map([
+    ["/game/source-catalog.json",{before:previousBattle,after:battle,compile:options=>api.compileSharedGameCatalog(root,source,options)}],
+    ["/game/opening-playable.json",{before:previousDevelopment,after:development,compile:options=>api.compileOpeningPlayable(root,opening,options)}]]),cache=new Map();
+  /** The ordinary catalog may have a different historical presence shape from
+   * its parent seed. Lazily compile that exact audited variant from captured
+   * raw inputs; a candidate object is never stripped into a baseline. */
+  const compileBattleAuditBaseline=async({url,omittedCatalogs,omitMessageFees=false})=>{
+    const entry=roots.get(url);if(!entry||typeof omitMessageFees!=="boolean")throw Error("Unknown owned capability baseline root/policy");
+    const audit=Array.isArray(omittedCatalogs)&&omittedCatalogs.length?api.parseSourceOwnedCapabilityAdditionAudit({kind:"omit-source-owned-capability-catalogs-for-addition-audit-v1",omit:omittedCatalogs}):undefined;
+    if(!audit&&(!Array.isArray(omittedCatalogs)||omittedCatalogs.length!==0))throw Error("Invalid owned capability baseline omission set");
+    const key=url+":"+api.canonical(audit?.omit??[])+":"+omitMessageFees;
+    if(!cache.has(key))cache.set(key,audit||omitMessageFees?entry.compile({... (audit?{ownedCapabilityAdditionAudit:audit}:{}),... (omitMessageFees?{messageFeeAdditionBaseline:"omit-source-message-fees-for-addition-audit-v1"}:{})}):entry.after);
+    let value;try{value=await cache.get(key);await api.verifyContent(value);}catch(error){cache.delete(key);throw error;}return structuredClone(value);
+  };
+  for(const [url,{before,after}]of roots){
+    await api.verifyContent(after);const omittedCatalogs=ownedCapabilityCatalogAdditions(before,after,api.canonical);
+    const baseline=await compileBattleAuditBaseline({url,omittedCatalogs});
+    if(before.common.sourceContentHash!==after.common.sourceContentHash||before.common.fieldSourceSetHash!==after.common.fieldSourceSetHash||api.canonical(before.gameState)!==api.canonical(baseline.gameState))throw Error("Battle capability rebuild changed source identity or owned initialization: "+url);
+    if(omittedCatalogs.length){
+      for(const key of omittedCatalogs)if(sourceOwnedCapabilityProjection(baseline.gameState,key)!==undefined)throw Error("Owned capability baseline includes the addition: "+key);
+      const projection=projectSourceOwnedCapabilityAdditions(after.gameState,omittedCatalogs),outside=value=>{const {contentHash:_,gameState:__,...body}=value;return body;};
+      if(api.canonical(projection)!==api.canonical(baseline.gameState)||api.canonical(outside(after))!==api.canonical(outside(baseline)))throw Error("Owned capability additions changed unrelated compiler body or actual initialization");
+      sourceOwnedCapabilityBaselines.set(url,{baseline,rebinding:proof(url,before,baseline),omittedCatalogs});
+    }
+    battleRebindings.push(proof(url,before,after));const noFee=await compileBattleAuditBaseline({url,omittedCatalogs,omitMessageFees:true});
+    if(noFee.common.sourceMessageFees!==undefined||api.canonical(before.gameState)!==api.canonical(noFee.gameState))throw Error("Source fee baseline changed initialization or includes the added field");
+    sourceMessageFeeBaselines.set(url,{baseline:noFee,rebinding:proof(url,before,noFee)});
+  }
+  api.assertSourceGameCatalog(battle);return {battle,development,battleRebindings,sourceMessageFeeBaselines,sourceOwnedCapabilityBaselines,compileBattleAuditBaseline};
+}
+
 /** Pure upstream DAG: current battle capabilities -> source world/new game -> explicit framework
  * derivation. It never writes packages, generated recipes, reports or archives. */
 export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,vehicleLifecycle,transportationParkingUpload,fieldLayerScrolling,mapTransforms } = {}) {
@@ -404,40 +449,8 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
   ]);
   await api.verifyContent(previousBattle); api.assertSourceGameCatalog(previousBattle);
   await api.verifyContent(previousDevelopment);
-  const [source, opening] = await Promise.all([api.compileSharedBattleSource(root), api.compileOpeningBattle(root)]);
-  const feeBaselineOptions = {messageFeeAdditionBaseline:"omit-source-message-fees-for-addition-audit-v1"};
-  const [battle, development, battleFeeBaseline, developmentFeeBaseline] = await Promise.all([
-    api.compileSharedGameCatalog(root, source), api.compileOpeningPlayable(root, opening),
-    api.compileSharedGameCatalog(root, source, feeBaselineOptions),
-    api.compileOpeningPlayable(root, opening, feeBaselineOptions),
-  ]);
-  await api.verifyContent(battle); api.assertSourceGameCatalog(battle);
-  await api.verifyContent(development);
-  const battleRebindings = [], sourceMessageFeeBaselines = new Map();
-  for (const [url, before, after] of [["/game/source-catalog.json", previousBattle, battle],
-    ["/game/opening-playable.json", previousDevelopment, development]]) {
-    if (before.common.sourceContentHash !== after.common.sourceContentHash ||
-        before.common.fieldSourceSetHash !== after.common.fieldSourceSetHash ||
-        api.canonical(before.gameState) !== api.canonical(after.gameState))
-      throw new Error("Battle capability rebuild changed source identity or owned initialization: " + url);
-    battleRebindings.push({ kind: "compiled-battle-rebinding-v1", url,
-      previousHash: before.contentHash, candidateHash: after.contentHash, compilerDigest: inputs.compilerDigest,
-      sourceContentHash: after.common.sourceContentHash, fieldSourceSetHash: after.common.fieldSourceSetHash,
-      gameStateHash: api.hash(after.gameState) });
-  }
-  for (const [url, before, baseline] of [
-    ["/game/source-catalog.json", previousBattle, battleFeeBaseline],
-    ["/game/opening-playable.json", previousDevelopment, developmentFeeBaseline],
-  ]) {
-    await api.verifyContent(baseline);
-    if (baseline.common.sourceMessageFees !== undefined || api.canonical(before.gameState) !== api.canonical(baseline.gameState))
-      throw new Error("Source fee baseline changed initialization or includes the added field");
-    sourceMessageFeeBaselines.set(url,{baseline,rebinding:{
-      kind:"compiled-battle-rebinding-v1",url,previousHash:before.contentHash,candidateHash:baseline.contentHash,
-      compilerDigest:inputs.compilerDigest,sourceContentHash:baseline.common.sourceContentHash,
-      fieldSourceSetHash:baseline.common.fieldSourceSetHash,gameStateHash:api.hash(baseline.gameState),
-    }});
-  }
+  const {battle,development,battleRebindings,sourceMessageFeeBaselines,sourceOwnedCapabilityBaselines,compileBattleAuditBaseline}=await compileSourceBattlePrerequisites({
+    root,compiledDir:inputs.compiledDir,previousBattle,previousDevelopment,compilerDigest:inputs.compilerDigest});
   if (field.parentSourceSetHash !== inputs.parentSourceSetHash || api.hash(field.sources) !== field.sourceSetHash ||
       battle.common.fieldSourceSetHash !== field.sourceSetHash)
     throw new Error("Source prerequisite battle/field source mismatch");
@@ -587,7 +600,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
       "Only the directly consumed original composition host files are byte-checked here. Other original sources remain bound by verified export manifests.",
       "The publication owner must revalidate this input lock and explicitly rebind dependent recipes before its single publication."],
   };
-  return { payloads, report, inputs, battleRebindings, frameworkOptions, sourceMessageFeeBaselines };
+  return { payloads, report, inputs, battleRebindings, frameworkOptions, sourceMessageFeeBaselines,sourceOwnedCapabilityBaselines,compileBattleAuditBaseline };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

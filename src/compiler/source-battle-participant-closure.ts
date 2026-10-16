@@ -1,3 +1,5 @@
+import {parseWebBattlePartyContext,parseBattlePartyContext,validateBattlePartyContextBinding,type WebBattlePartyContext} from "../core/battle-party-context.js";
+import {sourceBattlePartyDescriptor,validateBattlePartyDescriptorRow} from "./battle-party-context.js";
 import {parseWebBattleChildAdmission,parseBattleChildAdmission,type WebBattleChildAdmission} from '../core/battle-child-admission.js';
 import type { BattleSourceFormatImportResolver } from "./battle-source-format-import.js";
 import {gauSourceParties,parseWebBattleGauInstances,type WebBattleGauInstances} from "../core/battle-gau-instances.js";
@@ -115,8 +117,10 @@ export function compileSourceBattleParticipantClosure(reader:Reader,input:{polic
 /** Validate the producer's complete source-root proof before a consumer can
  * select its Web directory. Failed dependencies stay per-party hard gates. */
 export function validateSourceBattleParticipantProof(rawPolicy:unknown,rawClosure:unknown,input:{
-  childPartyAdmission?:WebBattleChildAdmission;gauInstancePolicy?:WebBattleGauInstances;encounters:Record<string,import('../core/battle-content.js').BattleEncounter>;diagnostics:readonly BattleEncounterDiagnostic[];entryScriptGroups:unknown;
+  partyContext?:WebBattlePartyContext;childPartyAdmission?:WebBattleChildAdmission;gauInstancePolicy?:WebBattleGauInstances;encounters:Record<string,import('../core/battle-content.js').BattleEncounter>;diagnostics:readonly BattleEncounterDiagnostic[];entryScriptGroups:unknown;
 }):void{
+  if(input.partyContext!==undefined)parseWebBattlePartyContext(input.partyContext);
+  for(const c of Object.values(input.encounters)){if(input.partyContext&&!c.partyContext)throw new Error("Missing complete battle party context proof");if(c.partyContext){if(c.partyContext.policy!==input.partyContext)throw new Error("Unbound battle party context policy");validateBattlePartyContextBinding(parseBattlePartyContext(c.partyContext),c.encounterId,c.rewardPolicy,c.childPartyAdmission,c.sourceFlags);}}
   if(input.childPartyAdmission!==undefined)parseWebBattleChildAdmission(input.childPartyAdmission);
   const policy=parseSourceBattleParticipantPolicy(rawPolicy);if(input.gauInstancePolicy!==undefined)parseWebBattleGauInstances(input.gauInstancePolicy);checkpointKeys(rawClosure,'kind,policy,bindings,sourceExecutions,ownedStateChanged,nativeLayoutParity,webDifference'+(input.gauInstancePolicy?',gauInstancePolicy':''));
   const closure=rawClosure as {kind:string;gauInstancePolicy?:WebBattleGauInstances;policy:SourceBattleParticipantPolicy;bindings:Record<string,unknown>[];sourceExecutions:number;ownedStateChanged:boolean;nativeLayoutParity:boolean;webDifference:string};
@@ -148,6 +152,7 @@ export function validateSourceBattleParticipantProof(rawPolicy:unknown,rawClosur
     const row=binding.sourceRow as BattleRow,derived=binding.derivedPolicy as ParticipantPolicy;
     if(!row||tableInteger(row.values.id)!==id||row.source.rowId!==String(id)||canonical(binding.source)!==canonical(row.source)||derived.partyId!==id||derived.rewardScope!==policy.rewardScope||canonical(derived.slots)!==canonical(sourceBattleParticipantSlots(row)))
       throw new Error('Changed source dynamic participant nine-slot/reward proof');
+    if(catalog?.partyContext)validateBattlePartyDescriptorRow(catalog.partyContext.entries[String(id)],row);
     const actualSites:Site[]=compileBattleEvent(original.raw,null,undefined,undefined,undefined,undefined,input.gauInstancePolicy).instructions.flatMap(({op},pc)=>op.kind==='add-enemy'||op.kind==='change-enemy-party'||input.gauInstancePolicy&&op.kind==='gau-replace'?[{pc,op,raw:(original.raw as {Mnemonics:unknown[]}).Mnemonics[pc]}]:[]);
     if(canonical(actualSites)!==canonical(binding.sites))throw new Error('Changed source dynamic participant sites');
     if(!Array.isArray(binding.children)||!Array.isArray(binding.childSourceRows)||!Array.isArray(binding.templates))throw new Error('Missing dynamic participant dependency proofs');
@@ -182,6 +187,7 @@ export function validateSourceBattleParticipantProof(rawPolicy:unknown,rawClosur
       childSlots[String(childId)]={slots:sourceBattleParticipantSlots(child.sourceRow)};
       if(canonical(child.descriptor.source)!==canonical(child.sourceRow.source)||canonical(childRows.get(childId))!==canonical(child.sourceRow))throw new Error('Changed source child row identity');
       if(catalog){
+        if(catalog.partyContext){const expected=sourceBattlePartyDescriptor({row:()=>child.sourceRow},child.descriptor);if(canonical(expected)!==canonical(catalog.partyContext.entries[String(childId)]))throw new Error("Changed complete current child descriptor proof");}
         const entry=admission?.entries[String(childId)],ready=catalog.participants?.enemyParties?.[String(childId)];
         if(admission){
           if(!entry||canonical(entry.source)!==canonical(child.sourceRow.source)||canonical(entry.slots)!==canonical(childSlots[String(childId)]!.slots)||

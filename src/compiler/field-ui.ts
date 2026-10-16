@@ -2,7 +2,7 @@ import { z } from "zod";
 import { record } from "./content.js";
 import { int32 } from "../core/script-integer.js";
 import { parseFieldUiCommand, type FieldUiOp } from "../core/field-ui.js";
-export const sourceFieldUiSelectors = ["UI非表示", "マップUI全て表示", "ミニマップ表示"] as const;
+export const sourceFieldUiSelectors = ["UI非表示", "マップUI全て表示", "ミニマップ表示", "タイマー表示"] as const;
 /** Exact facade operands; no title strings or parameter IDs are authored here. */
 export function compileFieldUiInstruction(raw: unknown, messages: Record<string, unknown>): FieldUiOp {
   const instruction = record(raw), operands = record(instruction.operands);
@@ -21,7 +21,7 @@ export function compileFieldUiInstruction(raw: unknown, messages: Record<string,
       location: { areaId: strings[0]!, locationId: strings[1]! }, area: text(strings[0]!), title: text(strings[1]!) }) };
   }
   if (instruction.mnemonic !== "SysCall" || strings.slice(1).some(value => value !== "")) throw new Error("Unsupported source Field UI selector operands");
-  const kind = ({ "UI非表示": "event", "マップUI全て表示": "all", "ミニマップ表示": "minimap" } as const)[strings[0] as typeof sourceFieldUiSelectors[number]];
+  const kind = ({ "UI非表示": "event", "マップUI全て表示": "all", "ミニマップ表示": "minimap", "タイマー表示": "timer-only" } as const)[strings[0] as typeof sourceFieldUiSelectors[number]];
   if (!kind) throw new Error("Unknown source Field UI selector");
   return { kind: "source-field-ui", command: { kind } };
 }

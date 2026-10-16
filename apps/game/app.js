@@ -546,7 +546,7 @@ function sync() {
     !flow.busy &&
     !flow.session.battle &&
     !game.busy &&
-    !!game.content.minimap && !(sourceUiLayout.source && sourceUiLayout.event && sourceUiLayout.view !== "all");
+    !!game.content.minimap && sourceUiLayout.view !== "timer" && !(sourceUiLayout.source && sourceUiLayout.event && sourceUiLayout.view !== "all");
   if (!canMap) mapOpen = false;
   $("map-button").disabled = !canMap;
   $("map-button").setAttribute("aria-expanded", String(mapOpen));

@@ -116,6 +116,7 @@ export type RosterLifecycleTransaction = {
   commitWith(publish: () => void): void;
 };
 export interface FieldRosterPort {
+  prepareSpecial?(command: import("./source-special-owned-members.js").SourceSpecialOwnedCommand): import("./source-special-owned-members.js").SourceSpecialOwnedTransaction;
   prepareEquipment?(command: import("./source-owned-equipment.js").SourceEquipmentCommand): import("./source-owned-equipment.js").SourceEquipmentTransaction;
   /** Requires the current trusted source catalog and the same owned-state phase. */
   prepareGroup?(command: import("./roster-groups.js").RosterGroupCommand): import("./roster-groups.js").RosterGroupTransaction;
@@ -293,6 +294,7 @@ export function prepareRosterLifecycle<T extends RosterMember>(
 }
 /** Native group calls use these exact primitives, not the full Join wrapper. */
 export type RosterNativeStep = RosterCommand
+  | { kind: "gau-join"; sourceId: number; firstEncounter: boolean }
   | { kind: "enable-release"; sourceId: number }
   | { kind: "correct-level"; sourceId: number; firstJoin: true }
   | { kind: "recover"; sourceId: number };
@@ -300,7 +302,10 @@ export function prepareRosterNativeStep<T extends RosterMember>(
   current: RosterLifecycleState<T>, command: RosterNativeStep,
   catalog: RosterLifecycleCatalog, providers: RosterLifecycleProviders<T>,
 ): RosterLifecyclePreview<T> {
-  if (command.kind === "enable-release" || command.kind === "recover") {
+  if (command.kind === "gau-join") {
+    checkpointKeys(command,"kind,sourceId,firstEncounter");positive(command.sourceId);
+    if(typeof command.firstEncounter!=="boolean")throw Error("Unknown Gau first-encounter branch");
+  } else if (command.kind === "enable-release" || command.kind === "recover") {
     checkpointKeys(command, "kind,sourceId"); positive(command.sourceId);
   } else if (command.kind === "correct-level") {
     checkpointKeys(command, "kind,sourceId,firstJoin"); positive(command.sourceId);
@@ -311,8 +316,8 @@ export function prepareRosterNativeStep<T extends RosterMember>(
     receipts: RosterReceipt[] = [];
   const equipment = lifecycleEquipmentCatalog(catalog.equipment);
   let member = state.roster.find((r) => r.sourceId === command.sourceId);
-  const existed = member !== undefined,
-    wasEnabled = member?.enabled === true;
+  const existed = member !== undefined;
+  let wasEnabled = member?.enabled === true;
   const firstJoin = !existed || member!.additionalLevel === 1;
   const replace = (next: T, allowGrowth = false, allowMagicRemoval = false) => {
     if (!member) throw new Error("Missing roster provider target");
@@ -398,6 +403,12 @@ export function prepareRosterNativeStep<T extends RosterMember>(
   }
   if (!member) throw new Error("Roster lifecycle references unowned character");
 
+  if(command.kind==="gau-join"){
+    // This entire native wrapper is one Web transaction. Intermediate enable
+    // has not yet rebuilt equipment registration and is never a save state.
+    setEnabled(true);wasEnabled=true;
+    if(command.firstEncounter){equipmentCounts(1);projectEquipment("refit");}
+  }
   if (command.kind === "enable-release") {
     setEnabled(true); releaseJob(true);
   } else if (command.kind === "correct-level") {
@@ -445,16 +456,17 @@ export function prepareRosterNativeStep<T extends RosterMember>(
     if (member.magicStoneId !== 0 && providers.removeMagicStone)
       replace(providers.removeMagicStone(structuredClone(member)), false, true);
     else member.magicStoneId = 0; // OwnedCharacterClient.RemoveMagicStone only clears the equipped ID.
-  } else if (command.kind === "join") {
+  } else if (command.kind === "join" || command.kind === "gau-join") {
+    const join = command.kind === "gau-join" ? {position:null,row:"front" as const,refitEquipment:false,recovery:true} : command;
     const slot = state.party.slots[state.party.selectedSlot];
     const position =
-      command.position ?? slot.findIndex((cell) => cell.id === null);
+      join.position ?? slot.findIndex((cell) => cell.id === null);
     setEnabled(true);
     releaseJob(true);
     if (position >= 0 && !slot.some((cell) => cell.id === member!.id))
       slot[position] = {
         id: member.id,
-        row: command.position === null ? "front" : command.row,
+        row: join.position === null ? "front" : join.row,
       };
     if (existed && firstJoin) {
       equipmentCounts(1);
@@ -471,12 +483,12 @@ export function prepareRosterNativeStep<T extends RosterMember>(
         );
         receipts.push({ kind: "level-correction", id: member.id, targetLevel });
       }
-      if (command.refitEquipment && !firstJoin) {
+      if (join.refitEquipment && !firstJoin) {
         equipmentCounts(1);
         projectEquipment("refit");
       }
     }
-    if (command.recovery) {
+    if (join.recovery) {
       if (!providers.recover)
         throw new Error("Unimplemented roster full recovery");
       replace(providers.recover(structuredClone(member)));
@@ -487,7 +499,7 @@ export function prepareRosterNativeStep<T extends RosterMember>(
   return {
     state,
     activeMembers: activePartyMembers(state.party),
-    refreshActors: "refreshActors" in command ? command.refreshActors : false,
+    refreshActors: command.kind === "gau-join" || ("refreshActors" in command ? command.refreshActors : false),
     receipts,
   };
 }

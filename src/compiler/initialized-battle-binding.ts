@@ -1,3 +1,4 @@
+import {parseWebBattlePartyContext,parseBattlePartyContext,validateBattlePartyContextBinding} from "../core/battle-party-context.js";
 import {parseWebBattleChildAdmission} from '../core/battle-child-admission.js';
 import {validateSourceBattleGauFactoryProof} from "./battle-gau-instances.js";
 import {parseWebBattleGauInstances,parseBattleGauInstanceContent} from "../core/battle-gau-instances.js";
@@ -63,10 +64,10 @@ export function validateInitializedBattleSharedCapabilities(base: BattleCatalog,
   const report = directoryReport === undefined ? {} : record(directoryReport),
     policy = report.policy === undefined ? {} : record(report.policy),
     framework = policy.framework === undefined ? {} : record(policy.framework);
-  const manualPolicy = policy.kind === "source-battle-directory-policy-v3" || ["source-battle-directory-policy-v4", "source-battle-directory-policy-v5", "source-battle-directory-policy-v6", "source-battle-directory-policy-v7", "source-battle-directory-policy-v8", "source-battle-directory-policy-v9"].includes(String(policy.kind));
+  const manualPolicy = policy.kind === "source-battle-directory-policy-v3" || ["source-battle-directory-policy-v4", "source-battle-directory-policy-v5", "source-battle-directory-policy-v6", "source-battle-directory-policy-v7", "source-battle-directory-policy-v8", "source-battle-directory-policy-v9", "source-battle-directory-policy-v10"].includes(String(policy.kind));
   if (manualPolicy) same(framework.manualControls, WEB_MANUAL_BATTLE_CONTROLS, "known Web manual controls policy");
   else require(!Object.hasOwn(framework, "manualControls"), "manual controls require the exact v3 or v4 directory declaration");
-  if (["source-battle-directory-policy-v4", "source-battle-directory-policy-v5", "source-battle-directory-policy-v6", "source-battle-directory-policy-v7", "source-battle-directory-policy-v8", "source-battle-directory-policy-v9"].includes(String(policy.kind)))
+  if (["source-battle-directory-policy-v4", "source-battle-directory-policy-v5", "source-battle-directory-policy-v6", "source-battle-directory-policy-v7", "source-battle-directory-policy-v8", "source-battle-directory-policy-v9", "source-battle-directory-policy-v10"].includes(String(policy.kind)))
     same(framework.branchExecution, WEB_BATTLE_BRANCH_EXECUTION, "versioned directory branch execution policy");
   else require(!Object.hasOwn(framework, "branchExecution"), "branch execution requires the exact v4 or v5 directory declaration");
   if (Object.hasOwn(nextCommon, "conditionControlPolicy")) {
@@ -90,32 +91,35 @@ export function validateInitializedBattleSharedCapabilities(base: BattleCatalog,
   }
   if (report.policy !== undefined) {
     const versions = ["source-battle-directory-policy-v1", "source-battle-directory-policy-v2",
-      "source-battle-directory-policy-v3", "source-battle-directory-policy-v4", "source-battle-directory-policy-v5", "source-battle-directory-policy-v6", "source-battle-directory-policy-v7", "source-battle-directory-policy-v8", "source-battle-directory-policy-v9"];
+      "source-battle-directory-policy-v3", "source-battle-directory-policy-v4", "source-battle-directory-policy-v5", "source-battle-directory-policy-v6", "source-battle-directory-policy-v7", "source-battle-directory-policy-v8", "source-battle-directory-policy-v9", "source-battle-directory-policy-v10"];
     require(versions.includes(String(policy.kind)), "unknown versioned directory policy");
     require(Object.keys(policy).sort().join(",") === "framework,kind", "unknown versioned directory policy fields");
     const allowed = ["handoff", "entry", ...(policy.kind === versions[0] ? [] : ["conditionControlPolicy"]),
-      ...(manualPolicy ? ["manualControls"] : []), ...([versions[3],versions[4],versions[5],versions[6],versions[7],versions[8]].includes(String(policy.kind)) ? ["branchExecution"] : []), ...([versions[4],versions[5],versions[6],versions[7],versions[8]].includes(String(policy.kind)) ? ["sourceParticipants"] : []),...([versions[5],versions[6],versions[7],versions[8]].includes(String(policy.kind))?["forcedSavePolicy"]:[]),...([versions[6],versions[7],versions[8]].includes(String(policy.kind))?["spawnConditionPolicy"]:[]),...([versions[7],versions[8]].includes(String(policy.kind))?["gauInstances"]:[]),...(policy.kind===versions[8]?["childPartyAdmission"]:[])];
+      ...(manualPolicy ? ["manualControls"] : []), ...([versions[3],versions[4],versions[5],versions[6],versions[7],versions[8],versions[9]].includes(String(policy.kind)) ? ["branchExecution"] : []), ...([versions[4],versions[5],versions[6],versions[7],versions[8],versions[9]].includes(String(policy.kind)) ? ["sourceParticipants"] : []),...([versions[5],versions[6],versions[7],versions[8],versions[9]].includes(String(policy.kind))?["forcedSavePolicy"]:[]),...([versions[6],versions[7],versions[8],versions[9]].includes(String(policy.kind))?["spawnConditionPolicy"]:[]),...([versions[7],versions[8],versions[9]].includes(String(policy.kind))?["gauInstances"]:[]),...([versions[8],versions[9]].includes(String(policy.kind))?["childPartyAdmission"]:[]),...(policy.kind===versions[9]?["partyContext"]:[])];
     require(Object.keys(framework).every(key => allowed.includes(key)), "unknown versioned directory framework fields");
-    if([versions[6],versions[7],versions[8]].includes(String(policy.kind)))parseWebEnemySpawnConditions(framework.spawnConditionPolicy);
-    if([versions[5],versions[6],versions[7],versions[8]].includes(String(policy.kind)))parseWebBattleForcedSave(framework.forcedSavePolicy);
-    if([versions[7],versions[8]].includes(String(policy.kind))){parseWebBattleGauInstances(framework.gauInstances);validateSourceBattleGauFactoryProof(report.sourceGauFactory,{appearance:catalog.common.battleAppearance,sprites:catalog.common.sprites,encounters:catalog.encounters});}else require(report.sourceGauFactory===undefined,"source Gau factory proof requires exact v8 opt-in");
-    if(policy.kind===versions[8])parseWebBattleChildAdmission(framework.childPartyAdmission);
+    if([versions[6],versions[7],versions[8],versions[9]].includes(String(policy.kind)))parseWebEnemySpawnConditions(framework.spawnConditionPolicy);
+    if([versions[5],versions[6],versions[7],versions[8],versions[9]].includes(String(policy.kind)))parseWebBattleForcedSave(framework.forcedSavePolicy);
+    if([versions[7],versions[8],versions[9]].includes(String(policy.kind))){parseWebBattleGauInstances(framework.gauInstances);validateSourceBattleGauFactoryProof(report.sourceGauFactory,{appearance:catalog.common.battleAppearance,sprites:catalog.common.sprites,encounters:catalog.encounters});}else require(report.sourceGauFactory===undefined,"source Gau factory proof requires exact v8 opt-in");
+    if([versions[8],versions[9]].includes(String(policy.kind)))parseWebBattleChildAdmission(framework.childPartyAdmission);
+    if(policy.kind===versions[9])parseWebBattlePartyContext(framework.partyContext);
     for(const encounter of Object.values(catalog.encounters)){
-      if(encounter.childPartyAdmission!==undefined){require(policy.kind===versions[8],"Child-party admission requires exact v9 directory");same(encounter.childPartyAdmission.policy,framework.childPartyAdmission,"declared child-party admission policy");}
-      if(encounter.gauInstances!==undefined)require([versions[7],versions[8]].includes(String(policy.kind))&&encounter.gauInstancePolicy!==undefined,"Gau factory facts require an authorized v8 encounter");
-      if(encounter.gauInstancePolicy!==undefined){parseBattleGauInstanceContent(encounter.gauInstances);require([versions[7],versions[8]].includes(String(policy.kind)),"Gau instance policy requires exact v8 directory declaration");same(encounter.gauInstancePolicy,framework.gauInstances,"declared Gau instance policy");}
+      if(encounter.partyContext!==undefined){require(policy.kind===versions[9],"Battle party context requires exact v10 directory");same(encounter.partyContext.policy,framework.partyContext,"declared battle party context policy");validateBattlePartyContextBinding(parseBattlePartyContext(encounter.partyContext),encounter.encounterId,encounter.rewardPolicy,encounter.childPartyAdmission,encounter.sourceFlags);}
+      if(policy.kind===versions[9])require(encounter.partyContext!==undefined,"Missing complete battle party context");
+      if(encounter.childPartyAdmission!==undefined){require([versions[8],versions[9]].includes(String(policy.kind)),"Child-party admission requires exact v9 directory");same(encounter.childPartyAdmission.policy,framework.childPartyAdmission,"declared child-party admission policy");}
+      if(encounter.gauInstances!==undefined)require([versions[7],versions[8],versions[9]].includes(String(policy.kind))&&encounter.gauInstancePolicy!==undefined,"Gau factory facts require an authorized v8 encounter");
+      if(encounter.gauInstancePolicy!==undefined){parseBattleGauInstanceContent(encounter.gauInstances);require([versions[7],versions[8],versions[9]].includes(String(policy.kind)),"Gau instance policy requires exact v8 directory declaration");same(encounter.gauInstancePolicy,framework.gauInstances,"declared Gau instance policy");}
       if(encounter.lifecycle?.mode==='script'&&encounter.lifecycle.program.instructions.some(({op})=>['gau-replace','gau-appearance','gau-join'].includes(op.kind)))require(encounter.gauInstancePolicy!==undefined,"missing bound Gau instance encounter policy");
-      if(encounter.spawnConditionPolicy!==undefined){require([versions[6],versions[7],versions[8]].includes(String(policy.kind)),"spawn condition policy requires exact v7 directory policy");same(encounter.spawnConditionPolicy,framework.spawnConditionPolicy,"declared spawn condition policy");}
-      if([versions[6],versions[7],versions[8]].includes(String(policy.kind))&&encounter.lifecycle?.mode==='script'&&encounter.lifecycle.program.instructions.some(({op})=>op.kind==='add-enemy'||op.kind==='change-enemy-party'||op.kind==='gau-replace'))require(encounter.spawnConditionPolicy!==undefined,"missing bound spawn condition encounter policy");
-      if(encounter.forcedSavePolicy!==undefined){require([versions[5],versions[6],versions[7],versions[8]].includes(String(policy.kind)),"forced save requires exact v6 or v7 directory policy");same(encounter.forcedSavePolicy,framework.forcedSavePolicy,"declared forced-save policy");}
+      if(encounter.spawnConditionPolicy!==undefined){require([versions[6],versions[7],versions[8],versions[9]].includes(String(policy.kind)),"spawn condition policy requires exact v7 directory policy");same(encounter.spawnConditionPolicy,framework.spawnConditionPolicy,"declared spawn condition policy");}
+      if([versions[6],versions[7],versions[8],versions[9]].includes(String(policy.kind))&&encounter.lifecycle?.mode==='script'&&encounter.lifecycle.program.instructions.some(({op})=>op.kind==='add-enemy'||op.kind==='change-enemy-party'||op.kind==='gau-replace'))require(encounter.spawnConditionPolicy!==undefined,"missing bound spawn condition encounter policy");
+      if(encounter.forcedSavePolicy!==undefined){require([versions[5],versions[6],versions[7],versions[8],versions[9]].includes(String(policy.kind)),"forced save requires exact v6 or v7 directory policy");same(encounter.forcedSavePolicy,framework.forcedSavePolicy,"declared forced-save policy");}
       if(encounter.lifecycle?.mode==='script'&&encounter.lifecycle.program.instructions.some(({op})=>op.kind==='force-save-return'))require(encounter.forcedSavePolicy!==undefined,"missing bound forced-save encounter policy");
     }
-    if([versions[4],versions[5],versions[6],versions[7],versions[8]].includes(String(policy.kind))){
+    if([versions[4],versions[5],versions[6],versions[7],versions[8],versions[9]].includes(String(policy.kind))){
       require(framework.sourceParticipants!==undefined&&report.sourceParticipantClosure!==undefined,"versioned directory dynamic participant proof missing");
       parseSourceBattleParticipantPolicy(framework.sourceParticipants);
       validateSourceBattleParticipantProof(framework.sourceParticipants,report.sourceParticipantClosure,{encounters:catalog.encounters,
-        ...([versions[7],versions[8]].includes(String(policy.kind))?{gauInstancePolicy:parseWebBattleGauInstances(framework.gauInstances)}:{}),
-        ...(policy.kind===versions[8]?{childPartyAdmission:parseWebBattleChildAdmission(framework.childPartyAdmission)}:{}),diagnostics:catalog.encounterDiagnostics??[],entryScriptGroups:record(report.entryDependencies).scripts});
+        ...([versions[7],versions[8],versions[9]].includes(String(policy.kind))?{gauInstancePolicy:parseWebBattleGauInstances(framework.gauInstances)}:{}),
+        ...([versions[8],versions[9]].includes(String(policy.kind))?{childPartyAdmission:parseWebBattleChildAdmission(framework.childPartyAdmission)}:{}),...(policy.kind===versions[9]?{partyContext:parseWebBattlePartyContext(framework.partyContext)}:{}),diagnostics:catalog.encounterDiagnostics??[],entryScriptGroups:record(report.entryDependencies).scripts});
     }else require(report.sourceParticipantClosure===undefined,"dynamic participants require the exact v5 directory declaration");
   }
 }

@@ -110,6 +110,7 @@ type FreshSession = { content: SourceNewGameContent | FrameworkNewGameContent; s
   map: WorldMapContent; fade?: FieldFadeState; presentation: SourcePresentationContext; restoring?: true };
 export type GameRestoreWorld = { catalog: WorldCatalog; map: WorldMapContent;
   timerOrigin?: FieldTimerOriginContent;
+  timerOrigins?: readonly FieldTimerOriginContent[];
   source?: { content: SourceNewGameContent; initialMap: WorldMapContent };
   initialized?: { content: FrameworkNewGameContent; initialMap: WorldMapContent } };
 export type PreparedGameEventSave = {
@@ -832,7 +833,7 @@ export class GameSession {
       throw new Error("Saved encounter sequence disagrees with settled battles");
     next.world.restore(s.world, world?.catalog, world?.map,
       s.origin.kind === "source-new-game" ? world!.source : s.origin.kind === "framework-new-game" ? world!.initialized : undefined,
-      world?.timerOrigin);
+      world?.timerOrigin, world?.timerOrigins);
     if (s.formatVersion !== 4) next.walkEncounters.restore(s.walkEncounters);
     else if (initial?.walkEncounters || next.field.content.walkEncounters)
       throw new Error("Legacy checkpoint has no walking encounter state");
@@ -993,8 +994,9 @@ export class GameSession {
   }
   private constructBattle(entry: BattleEntry): BattleGame {
     const content = structuredClone(entry.content);
-    return new BattleGame(content, entry.seed, this.state.battlePlayers(entry.lease), this.state.battleInventory(entry.lease),
-      this.state.battleProgression(entry.lease, content.experience), this.currentBattlePreferences,
+    let battle:BattleGame;
+    battle = new BattleGame(content, entry.seed, this.state.battlePlayers(entry.lease), this.state.battleInventory(entry.lease),
+      this.state.battleProgression(entry.lease, content.experience,()=>battle), this.currentBattlePreferences,
       structuredClone(entry.shared), this.state.battlePlayerBorrow(entry.lease),
       { ...(entry.sourceHandoffs ? {sourceHandoffs:structuredClone(entry.sourceHandoffs)} : {}),
         ...(this.#battleNumberRuntime?{periodicNumbers:this.#battleNumberRuntime}:{}), jobQualification:this.state.battleJobQualification,names: this.state.fieldMessageNames,
@@ -1014,6 +1016,7 @@ export class GameSession {
           prepareEffects: effects => entry.field.prepareBattleMessageEffects(effects),
         } satisfies BattleEventMessageHost } : {}),
       });
+    return battle;
   }
   prepareBattleStart(): PreparedSessionBattleStart | null {
     const field = this.field, request = field.stop;
@@ -1081,7 +1084,7 @@ export class GameSession {
         ?this.state.sourceBattleGauEntry(entryContext.state):null;
       if (this.field !== field || field.stop !== request || this.fieldBattleFingerprint(field) !== before)
         throw new StaleSessionBattleHandoff();
-      lease = this.state.openBattle(content.encounterId, content.rewardPolicy, content.playerParticipants, content.forcedSavePolicy);
+      lease = this.state.openBattle(content.encounterId, content.rewardPolicy, content.playerParticipants, content.forcedSavePolicy,content.partyContext);
       const ownedLease = lease;
       this.battleLease = ownedLease;
       const entry: BattleEntry = { field, request, lease: ownedLease, seed,
@@ -1094,10 +1097,10 @@ export class GameSession {
           this.fieldBattleFingerprint(field) === before && canonical(this.state.snapshot()) === ownedBefore,
         () => { this.state.battlePlayers(ownedLease); sourceEntry?.validate(); bossEntry?.validate(); },
         () => {
-          const battle = this.constructBattle(entry);
+          const battle = this.constructBattle(entry),contextBinding=this.state.prepareBattlePartyContextBinding(ownedLease,battle);
           return beginPublication => {
             const publish = () => {
-              beginPublication();
+              contextBinding.validate();beginPublication();contextBinding.commit();
               this.battle = battle; this.battleEntry = entry;
               this.encounterSerial++; this.encounterFailure = null;
             };
@@ -1159,8 +1162,8 @@ export class GameSession {
         battle.phase === "defeat" && this.battleLease === entry.lease && this.battleEntry === entry &&
         this.fieldBattleFingerprint(entry.field) === before && canonical(battle.combatants) === units,
       () => { this.state.battlePlayers(entry.lease); retirement.validate(); },
-      () => { const retried = this.constructBattle(entry); return beginPublication => {
-        retirement.validate(); beginPublication(); retirement.commit(); this.battle = retried;
+      () => { const retried = this.constructBattle(entry),contextBinding=this.state.prepareBattlePartyContextBinding(entry.lease,retried); return beginPublication => {
+        retirement.validate();contextBinding.validate(); beginPublication(); retirement.commit();contextBinding.commit(); this.battle = retried;
       }; }, () => {},
     ) as PreparedSessionBattleStart;
   }
@@ -1174,7 +1177,7 @@ export class GameSession {
     this.battleHandoffPreparing = true;
     try {
       const currentResult = () => outcome === "victory" ? battle.previewVictory() : outcome === "escaped" ? battle.previewEscape() : battle.previewForcedReturn();
-      const resultFingerprint = () => canonical({ result: currentResult(), shared: battle.eventSharedReturn, sourceHandoffs: battle.sourceBattleHandoffReturn ?? null, reservation: battle.fieldReservationReturn,
+      const resultFingerprint = () => canonical({ context: battle.partyContextExecution, result: currentResult(), shared: battle.eventSharedReturn, sourceHandoffs: battle.sourceBattleHandoffReturn ?? null, reservation: battle.fieldReservationReturn,
         effects: field.fieldEffectsSnapshot, message: field.sourceMessage.snapshot(), messageRevision: field.sourceMessage.mutationRevision,
         ...(outcome === "forced" ? { units: battle.combatants } : {}) });
       const before = resultFingerprint(), retirement = battle.prepareEventRetirement(), reservation = this.prepareReservationReturn(battle.fieldReservationReturn, field);

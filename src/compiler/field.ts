@@ -1,3 +1,4 @@
+import {sourceSpecialOwnedSelectors,compileSpecialOwnedEvent} from "./source-special-owned-members.js";
 import {sourceBattleHandoffSelectors,compileSourceBattleHandoffInstruction} from './source-battle-handoffs.js';
 import { compileFieldUiInstruction, sourceFieldUiSelectors } from "./field-ui.js";
 import { sourceOwnedEquipmentSelectors, compileSourceOwnedEquipmentInstruction } from "./source-owned-equipment.js";
@@ -53,7 +54,7 @@ import { compileSourcePresentationInstruction, sourcePresentationSelectors } fro
 import { compileAudioReadinessInstruction } from "./audio-readiness.js";
 import { compileFieldSoundInstruction, fieldSoundMnemonics } from "./field-sound.js";
 import { compileFieldBgmControlInstruction, fieldBgmControlMnemonics } from "./field-bgm-control.js";
-import { compileFieldTimerInstruction, fieldTimerMnemonics, fieldTimerSelectors } from "./field-timer.js";
+import { compileFieldTimerInstruction, compileFieldScenarioTimerInstruction, fieldScenarioTimerSelectors, fieldTimerMnemonics, fieldTimerSelectors } from "./field-timer.js";
 import { compileFieldScreenEffectInstruction, fieldScreenEffectMnemonics } from "./field-screen-effects.js";
 import { compileFieldShakeInstruction } from "./field-shake.js";
 import { compileFieldContentInvalidationInstruction } from "./field-content-invalidations.js";
@@ -207,6 +208,10 @@ export function decodeFieldOp(
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   const timerSelector = name === "SysCall" && record(m.operands).sValues;
+  if (Array.isArray(timerSelector) && Object.hasOwn(fieldScenarioTimerSelectors, String(timerSelector[0]))) {
+    try { return { ...site, ...compileFieldScenarioTimerInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if ((fieldTimerMnemonics as readonly string[]).includes(name) ||
       Array.isArray(timerSelector) && (fieldTimerSelectors as readonly unknown[]).includes(timerSelector[0])) {
     try { return { ...site, ...compileFieldTimerInstruction(raw) }; }
@@ -362,7 +367,7 @@ export function decodeFieldOp(
   ) {
     try {
       return { ...site, ...((rosterGroupSelectors as readonly string[]).includes(s[0]!)
-        ? compileRosterGroupEvent(s[0]!,tables) : compileRosterLifecycleEvent(s[0]!, tables)) };
+        ? compileRosterGroupEvent(s[0]!,tables) : (sourceSpecialOwnedSelectors as readonly string[]).includes(s[0]!) && !site.source.assetPath.includes("/Res/Battle/") ? compileSpecialOwnedEvent(s[0]!,tables) : compileRosterLifecycleEvent(s[0]!, tables)) };
     } catch (error) {
       return blocked(error instanceof Error ? error.message : String(error));
     }

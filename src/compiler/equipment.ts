@@ -31,13 +31,25 @@ type Reader = {
   unique(table: string, key: string, value: string): BattleRow;
 };
 
+export type EquipmentMetadataAdditionAudit = "omit-source-strongest-equipment-metadata-for-addition-audit-v1";
+export function compileStrongestEquipmentMetadata(values: Record<string,string>, kind: "weapon"|"armor") {
+  const flag=values.two_handed_flag;
+  if(values.sort_id===undefined||kind==='weapon'&&(values.category_type===undefined||!['0','1'].includes(flag!)))
+    throw Error('Missing strongest equipment source metadata');
+  return {sortId:int(values.sort_id),weaponCategory:kind==='weapon'?int(values.category_type):null,twoHanded:kind==='weapon'?flag==='1':false};
+}
+function validateMetadataAudit(value:EquipmentMetadataAdditionAudit|undefined):void {
+  if(value!==undefined&&value!=="omit-source-strongest-equipment-metadata-for-addition-audit-v1")throw Error('Unknown equipment metadata addition audit');
+}
 /** Source identities remain present when their wear/action providers are unknown. */
 export function compileEquipment(
   reader: Reader,
   contentId: number,
   name: string,
   effects: OrdinaryWeaponEffectsCatalog,
+  metadataAudit?: EquipmentMetadataAdditionAudit,
 ) {
+  validateMetadataAudit(metadataAudit);
   validateOrdinaryWeaponEffects(effects);
   const content = reader.row("content.csv", contentId);
   const kind =
@@ -139,6 +151,7 @@ export function compileEquipment(
     ordinaryWeapon: ordinary?.provider ?? null,
     ...(abilityCost ? { abilityCost } : {}),
     blockers,
+    ...(r.sort_id !== undefined && metadataAudit===undefined ? { strongest: compileStrongestEquipmentMetadata(r,kind) } : {}),
   };
   return { definition, sources };
 }
@@ -201,7 +214,9 @@ export function compileEquipmentCatalog(
   >,
   effects: OrdinaryWeaponEffectsCatalog,
   stateKind: EquipmentCatalog["kind"] = "equipment-development-v1",
+  metadataAudit?: EquipmentMetadataAdditionAudit,
 ) {
+  validateMetadataAudit(metadataAudit);
   if (stateKind !== "equipment-development-v1" && stateKind !== "source-equipment-state-v2")
     throw new Error("Unsupported compiled equipment state contract");
   validateOrdinaryWeaponEffects(effects);
@@ -215,7 +230,7 @@ export function compileEquipmentCatalog(
       reader,
       id,
       name(row.values.mes_id_name!),
-      effects,
+      effects, metadataAudit,
     );
     definitions[id] = compiled.definition;
     sources.push(...compiled.sources);

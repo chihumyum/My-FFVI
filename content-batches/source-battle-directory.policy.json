@@ -1,5 +1,5 @@
 {
-  "kind": "source-battle-directory-policy-v9",
+  "kind": "source-battle-directory-policy-v10",
   "framework": {
     "handoff": {
       "kind": "framework-battle-handoff-v1",
@@ -54,6 +54,7 @@
       "kind": "web-source-enemy-spawn-conditions-v1"
     },
     "gauInstances": "web-source-battle-gau-instances-v1",
-    "childPartyAdmission": "web-source-child-party-entry-v1"
+    "childPartyAdmission": "web-source-child-party-entry-v1",
+    "partyContext": "web-source-battle-party-context-v1"
   }
 }

@@ -321,6 +321,9 @@ export function analyzeContentDependencies(input: {
       }
       switch (op.kind) {
         case "blocked": diagnose("instruction-blocked", `${op.mnemonic}: ${op.reason}`, at); break;
+        case "field-scenario-timer":
+          if (op.command === "shadow-setup") referenceScript(from, map, "sc_secede_shadow", op);
+          break;
         case "field-timer":
           if (op.command.kind === "set") {
             const names = op.command.callbackScripts;

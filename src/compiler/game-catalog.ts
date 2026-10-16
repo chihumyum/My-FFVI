@@ -1,4 +1,4 @@
-import {compileSourceBattleHandoffCatalog} from './source-battle-handoffs.js';
+import {compileSourceOwnedCapabilityCatalogs,parseSourceOwnedCapabilityAdditionAudit,type SourceOwnedCapabilityAdditionAudit} from "./source-owned-capability-catalogs.js";
 import {compileRtsPartyCatalog}from'./field-rts-party.js';
 import { compileSourceRosterGroups } from "./roster-groups.js";
 import {compileCurrentJobCatalog} from "./current-job.js";
@@ -50,6 +50,8 @@ import type {
  * from a candidate. Normal content construction always includes the catalog. */
 export type GameCatalogCompileOptions = {
   messageFeeAdditionBaseline?: "omit-source-message-fees-for-addition-audit-v1";
+  sourceBattleHandoffAdditionBaseline?: "omit-source-battle-handoffs-for-addition-audit-v1";
+  ownedCapabilityAdditionAudit?:SourceOwnedCapabilityAdditionAudit;
 };
 
 /** Compiled capabilities are shared by independent entry composers. No
@@ -57,7 +59,7 @@ export type GameCatalogCompileOptions = {
 export type GameCatalogModules = {
   common: Omit<BattleCatalog["common"], "players" | "limitations" | "drops">;
   owned: Pick<GameStateContent, "shops" | "characterInitializations" | "characterGrowth" | "characterNaming" | "currentJobs" |
-    "partyActors" | "battleDefinitions" | "fieldConditions" | "fieldAbilities" | "magicStones" | "sourceRosterGroups" | "sourceRtsParty" | "sourceBattleHandoffs"> & {
+    "partyActors" | "battleDefinitions" | "fieldConditions" | "fieldAbilities" | "magicStones" | "sourceRosterGroups" | "sourceSpecialOwnedMembers" | "sourceRtsParty" | "sourceBattleHandoffs"> & {
     sourceNewGame: NewGameDefinition;
     equipmentSystem: NonNullable<GameStateContent["equipmentSystem"]>;
   };
@@ -101,10 +103,14 @@ function sourceEncounterAdmission(runtime: ReturnType<typeof compileBattleEncoun
  * original fingerprints; reading system messages does not execute a checkpoint. */
 export async function compileGameCatalogModules(root: string, source: SharedBattleSource,
   options: GameCatalogCompileOptions = {}): Promise<GameCatalogModules> {
-  if (Object.keys(options).some(key => key !== "messageFeeAdditionBaseline") ||
+  if (Object.keys(options).some(key => !["messageFeeAdditionBaseline", "sourceBattleHandoffAdditionBaseline", "ownedCapabilityAdditionAudit"].includes(key)) ||
+      options.sourceBattleHandoffAdditionBaseline !== undefined &&
+      options.sourceBattleHandoffAdditionBaseline !== "omit-source-battle-handoffs-for-addition-audit-v1" ||
       options.messageFeeAdditionBaseline !== undefined &&
       options.messageFeeAdditionBaseline !== "omit-source-message-fees-for-addition-audit-v1")
     throw new Error("Unknown game catalog addition audit option");
+  if(options.ownedCapabilityAdditionAudit!==undefined&&options.sourceBattleHandoffAdditionBaseline!==undefined)throw new Error("Ambiguous owned capability catalog audit options");
+  const ownedAudit=options.ownedCapabilityAdditionAudit===undefined?options.sourceBattleHandoffAdditionBaseline===undefined?undefined:{kind:"omit-source-owned-capability-catalogs-for-addition-audit-v1" as const,omit:["sourceBattleHandoffs" as const]}:parseSourceOwnedCapabilityAdditionAudit(options.ownedCapabilityAdditionAudit);
   const field = record(
     JSON.parse(
       snapshotFile(
@@ -377,6 +383,7 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
   }));
   const fieldConditions = compileFieldConditionCatalog(parameterReader, conditions,
     rows("transportation.csv").map((r) => int(r.id))).catalog;
+  const equipmentMetadataAudit=ownedAudit?.omit.includes("equipmentStrongestMetadata")?"omit-source-strongest-equipment-metadata-for-addition-audit-v1" as const:undefined;
   const equipment = compileEquipmentCatalog(
     parameterReader,
     rows("content.csv").filter((c) => ["2", "3"].includes(c.type_id!)).map((c) => int(c.id)),
@@ -384,13 +391,13 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
     Object.fromEntries(Object.values(source.ownedInitializations).map((t) => [
       t.initial.sourceId, { hasTwoSwordStyle: t.equipmentCharacter.hasTwoSwordStyle,
         hasTwoHand: t.equipmentCharacter.hasTwoHand, equipAnyJob: t.equipmentCharacter.equipAnyJob },
-    ])), source.ordinaryWeaponEffects.catalog, "source-equipment-state-v2",
+    ])), source.ordinaryWeaponEffects.catalog, "source-equipment-state-v2", equipmentMetadataAudit,
   ).catalog;
-  const newGame = compileNewGame(reader, tables, name, source.ordinaryWeaponEffects.catalog);
+  const newGame = compileNewGame(reader, tables, name, source.ordinaryWeaponEffects.catalog, undefined, equipmentMetadataAudit);
   const owned: GameCatalogModules["owned"] = {
     shops: shops.catalog, characterInitializations, characterGrowth,
     sourceRosterGroups: compileSourceRosterGroups(tables).catalog,
-    sourceBattleHandoffs: compileSourceBattleHandoffCatalog(tables, handoffSystem.sourceSetHash),
+    ...compileSourceOwnedCapabilityCatalogs(tables,handoffSystem.sourceSetHash,ownedAudit),
     characterNaming: compileSourceCharacterNameCatalog(handoffSystem.reader, handoffSystem.tables["character_status.csv"]!, name).catalog,
     sourceRtsParty: compileRtsPartyCatalog(handoffSystem.reader,handoffSystem.tables,(()=>{const rows=handoffSystem.assets.filter(a=>a.source.assetPath.endsWith("/serial_misc_assets.json"));if(rows.length!==1)throw Error("Missing or ambiguous RTS Misc provider");return rows[0]!.data;})()),
     partyActors: structuredClone(source.partyActors),

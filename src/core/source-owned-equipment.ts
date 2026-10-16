@@ -2,7 +2,8 @@ import { checkpointKeys } from './checkpoint-validation.js';
 import { validatePartyState, type PartyState } from './party.js';
 import type { FieldRosterPort } from './roster.js';
 
-export type SourceEquipmentCommand = { kind: 'remove-equipment-members'; scope: 'all' | 'reserve' };
+export type SourceEquipmentCommand = { kind: 'remove-equipment-members'; scope: 'all' | 'reserve' } |
+  { kind: 'strongest-non-accessories'; sourceId: number };
 export type SourceEquipmentEventOp = { kind: 'source-owned-equipment'; command: SourceEquipmentCommand };
 export type SourceEquipmentTransaction = {
   readonly targets: string[];
@@ -11,6 +12,12 @@ export type SourceEquipmentTransaction = {
   commitWith(publish: () => void): void;
 };
 export function validateSourceEquipmentCommand(command: SourceEquipmentCommand): void {
+  if (command.kind === 'strongest-non-accessories') {
+    checkpointKeys(command, 'kind,sourceId');
+    if (!Number.isInteger(command.sourceId) || command.sourceId < 1 || command.sourceId > 0x7fffffff)
+      throw Error('Invalid source strongest equipment status identity');
+    return;
+  }
   checkpointKeys(command, 'kind,scope');
   if (command.kind !== 'remove-equipment-members' || !['all', 'reserve'].includes(command.scope))
     throw Error('Unknown source owned equipment command');
@@ -23,6 +30,12 @@ export function sourceEquipmentTargets<T extends { id: string; sourceId: number;
 ): string[] {
   validateSourceEquipmentCommand(command);
   validatePartyState(party, roster);
+  if (command.kind === 'strongest-non-accessories') {
+    const target = roster.find(member => member.sourceId === command.sourceId);
+    if (!target) throw Error('Missing held source strongest equipment owner');
+    if (!target.enabled) throw Error('Unimplemented disabled strongest equipment ownership');
+    return [target.id];
+  }
   const current = new Set(party.slots[party.selectedSlot]!.flatMap(cell => cell.id === null ? [] : [cell.id]));
   return roster.filter(member => member.enabled && member.sourceId !== 14 &&
     (command.scope === 'all' || !current.has(member.id))).map(member => member.id);

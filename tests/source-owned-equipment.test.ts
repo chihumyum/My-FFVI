@@ -36,17 +36,18 @@ function execute(f: ReturnType<typeof setup>, scope: 'all' | 'reserve') {
   assert.equal(f.flow.session.field.stop, null);
   assert.equal(f.flow.session.field.menuReady, true);
 }
-test('source decodes the two removal selectors and retains strongest selection as a separate explicit gate', () => {
+test('source decodes removal and parameterized strongest selectors through the same equipment port', () => {
   for (const [selector, scope] of [['全員の装備を外す', 'all'], ['控えメンバーの装備を外す', 'reserve']]) {
-    const typed = compileSourceOwnedEquipmentInstruction(raw(selector!)); assert.equal(typed.command.scope, scope);
+    const typed = compileSourceOwnedEquipmentInstruction(raw(selector!)); assert.equal(typed.command.kind, "remove-equipment-members"); assert.equal((typed.command as Extract<SourceEquipmentCommand,{kind:"remove-equipment-members"}>).scope, scope);
     const op = decodeFieldOp(raw(selector!), { script: 'probe', index: 0, source }, {}, {});
     assert.equal(op.kind, 'source-owned-equipment');
     assert.deepEqual(fieldInstructionRequirements(op).map(r => r.capability), ['rosterEquipment']);
   }
-  for (const selector of ['最強装備：ティナ', '最強装備：エドガー']) {
-    assert.throws(() => compileSourceOwnedEquipmentInstruction(raw(selector)), /0x334c20/);
+  for (const [selector, sourceId] of [['最強装備：ティナ', 1], ['最強装備：エドガー', 5]] as const) {
+    assert.deepEqual(compileSourceOwnedEquipmentInstruction(raw(selector)), { kind: 'source-owned-equipment', command: { kind: 'strongest-non-accessories', sourceId } });
     const op = decodeFieldOp(raw(selector), { script: 'probe', index: 0, source }, {}, {});
-    assert.equal(op.kind, 'blocked'); assert.match((op as Extract<Op, { kind: 'blocked' }>).reason, /strongest non-accessory/);
+    assert.equal(op.kind, 'source-owned-equipment');
+    assert.deepEqual(fieldInstructionRequirements(op).map(r => r.capability), ['rosterEquipment']);
   }
   for (const change of [(r: ReturnType<typeof raw>) => r.operands.iValues[7] = 1, (r: ReturnType<typeof raw>) => r.operands.rValues[0] = 1, (r: ReturnType<typeof raw>) => r.operands.sValues[1] = 'extra']) {
     const value = raw('全員の装備を外す'); change(value); assert.throws(() => compileSourceOwnedEquipmentInstruction(value), /operand banks/);

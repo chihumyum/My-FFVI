@@ -14,15 +14,16 @@ export type FieldUiCommand =
   | { kind: "title"; location: SourceLocation; area: string; title: string }
   | { kind: "event" }
   | { kind: "all" }
-  | { kind: "minimap" };
+  | { kind: "minimap" }
+  | { kind: "timer-only" };
 export type FieldUiOp = { kind: "source-field-ui"; command: FieldUiCommand };
 export type FieldUiSnapshot = {
-  kind: "source-field-ui-state-v1";
+  kind: "source-field-ui-state-v1" | "source-field-ui-state-v2";
   policy: WebSourceFieldUi;
   sourceSetHash: string;
   /** No inferred Field state: only the two recovered explicit transitions. */
   mainGameState: 11 | 12 | null;
-  view: "all" | "navi" | null;
+  view: "all" | "navi" | "timer" | null;
   clockMs: number;
   title: { area: string; title: string; shownAt: number } | null;
   /** Integrator callbacks close the current singleton title, including a
@@ -48,7 +49,7 @@ export function parseFieldUiCommand(command: FieldUiCommand): FieldUiCommand {
         throw new Error("Unsupported source map title text/control");
   } else {
     checkpointKeys(command, "kind");
-    if (!["event", "all", "minimap"].includes(command.kind)) throw new Error("Unknown source Field UI command");
+    if (!["event", "all", "minimap", "timer-only"].includes(command.kind)) throw new Error("Unknown source Field UI command");
   }
   return structuredClone(command);
 }
@@ -63,8 +64,8 @@ export class FieldUiState {
   snapshot(): FieldUiSnapshot { return structuredClone(this.value); }
   static restore(raw: FieldUiSnapshot, sourceSetHash: string, stable = false): FieldUiState {
     checkpointKeys(raw, "kind,policy,sourceSetHash,mainGameState,view,clockMs,title,closeTimers");
-    if (raw.kind !== "source-field-ui-state-v1" || raw.policy !== WEB_SOURCE_FIELD_UI || raw.sourceSetHash !== sourceSetHash ||
-        ![null, 11, 12].includes(raw.mainGameState) || ![null, "all", "navi"].includes(raw.view))
+    if (!["source-field-ui-state-v1", "source-field-ui-state-v2"].includes(raw.kind) || raw.kind === "source-field-ui-state-v1" && raw.view === "timer" || raw.policy !== WEB_SOURCE_FIELD_UI || raw.sourceSetHash !== sourceSetHash ||
+        ![null, 11, 12].includes(raw.mainGameState) || ![null, "all", "navi", "timer"].includes(raw.view))
       throw new Error("Source Field UI checkpoint identity mismatch");
     checkpointInteger(raw.clockMs, 0, Number.MAX_SAFE_INTEGER);
     if (!Array.isArray(raw.closeTimers)) throw new Error("Invalid source map title callback queue");
@@ -88,6 +89,7 @@ export class FieldUiState {
       next.closeTimers.push(next.clockMs + 2000);
     } else if (command.kind === "event") next.mainGameState = 12;
     else if (command.kind === "all") next.view = "all";
+    else if (command.kind === "timer-only") { next.kind = "source-field-ui-state-v2"; next.view = "timer"; }
     else { next.mainGameState = 11; next.view = "navi"; }
     FieldUiState.restore(next, this.sourceSetHash); let consumed = false;
     const validate = () => { if (consumed || canonical(this.value) !== before) throw new Error("Stale source Field UI transaction"); };
