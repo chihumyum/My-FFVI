@@ -18,11 +18,13 @@ const sourceIds = { ティナ: 1, ロック: 2, カイエン: 3, シャドウ: 4
 // Executes the PR battle-event program separately from each monster's AI. The
 // source program owns scene branches, condition changes and forced returns.
 export class BattleEvents {
-  constructor(battle) {
+  constructor(battle, override = null) {
     this.battle = battle;
     const source = battle.data.scriptNames?.[battle.formation.script] ?? battle.data.scriptIds?.[battle.formation.script] ?? battle.formation.script;
     const programs = battle.data.eventPrograms ?? {};
-    const program = programs[source] ?? Object.values(programs).find(program => program.name === source || program.Name === source);
+    const requested = typeof override === 'string' ? override : source;
+    const program = (override && typeof override === 'object' ? override : null) ??
+      programs[requested] ?? Object.values(programs).find(program => program.name === requested || program.Name === requested);
     this.program = normalize(program ?? programs.sc_b_none ?? Object.values(programs).find(program => program.name === 'sc_b_none'));
     this.pc = this.program?.segments?.find(segment => (segment.Label ?? segment.label) === 'Main')?.EntryPoint ?? 0;
     this.locals = [...(this.program?.locals ?? [])]; this.stack = []; this.wait = 0;
@@ -115,7 +117,7 @@ export class BattleEvents {
 
   addPlayer(id) {
     const b = this.battle, existing = b.players.find(unit => unit.id === id);
-    if (existing) return existing;
+    if (existing) { existing.removed = false; existing.hidden = false; existing.escaped = false; return existing; }
     if (b.addPlayer) return b.addPlayer(id);
     const unit = b.character?.(id) ?? { ...b.data.characters?.[id], id };
     b.completeUnit(unit, b.data.characters?.[id] ?? {}, 'player', b.players.length);
@@ -185,6 +187,14 @@ export class BattleEvents {
     return outcome === 'victory' ? 0 : outcome === 'escape' ? 1 : 2;
   }
   autoCommand(unit) {
+    const b = this.battle, gau = b.enemies.find(enemy => [549, 550].includes(enemy.monsterId) && this.alive(enemy) && !enemy.hidden);
+    if (gau) {
+      // The AI accepts Item23, whose inventory Content ID is looked up from
+      // PR. Content26 is a different consumable and must not become food.
+      const food = b.itemsFor(b.players.indexOf(unit)).find(item => item.itemId === 23);
+      return food && this.mode(gau) === 0 ? { abilityId: food.id,
+        targetIndex: { side: 'enemy', index: b.enemies.indexOf(gau) } } : { abilityId: 2 };
+    }
     if (this.state.magicOnly) {
       const ability = this.battle.commandsFor(this.battle.players.indexOf(unit)).find(ability =>
         !ability.disabled && ability.kind === 'magic' && ability.power > 0);
@@ -225,7 +235,15 @@ export class BattleEvents {
       this.bank('PlaySystems').battle0055 = this.entryPlayers.map(unit => ({ id: unit.id, hp: unit.hp, mp: unit.mp, conditions: [...(unit.conditions ?? [])] })); return;
     }
     if (name.startsWith('バトル参戦：') || name.startsWith('バトル加入：')) {
-      const id = sourceIds[name.split('：')[1]]; if (id) this.addPlayer(id); return;
+      const id = sourceIds[name.split('：')[1]];
+      if (id) {
+        const unit = this.addPlayer(id);
+        if (id === 12 && unit) {
+          unit.enabled = true; unit.reserve = false; unit.veldtLeapt = false;
+          this.event('battle-roster', { id, joined: true });
+        }
+      }
+      return;
     }
     if (name === 'バルガスで離脱') {
       for (const unit of b.players) if (unit.id !== 6) { unit.hidden = true; unit.removed = true; unit.ready = false; }
@@ -347,25 +365,55 @@ export class BattleEvents {
       const units = name.startsWith('バトル') ? b.players.filter(unit => unit.id === 4) :
         b.players.filter(unit => unit.conditions?.some(id => [614, 628].includes(Number(b.data.conditions?.[id]?.condition_type))));
       for (const unit of units) { unit.removed = true; unit.hidden = true; unit.enabled = false; }
+      if (name === 'とびこむで離脱' && units.some(unit => unit.id === 12)) {
+        for (const unit of units) if (unit.id === 12) unit.veldtLeapt = true;
+        this.locals[0] = -1;
+        this.event('battle-roster', { id: 12, joined: false, leapt: true });
+      }
       if (!b.players.some(unit => this.alive(unit))) this.locals[0] = -1;
       return;
     }
     if (name === 'ガウバトルモード設定') {
       const veldt = Boolean(b.isVeldt ?? this.bank('PlaySystems').isVeldt), gau = b.character?.(12);
-      if (veldt && b.players.some(unit => unit.id === 12)) this.locals[2] = 1;
-      else if (veldt && gau?.enabled === false && b.players.length < 4 && b.random() < 0.7) {
+      state.gauFirst = this.program.name === 'sc_b_0239' && this.read('ScenarioFlag1', 126) === 0;
+      const present = b.players.some(unit => unit.id === 12 && !unit.removed);
+      const returning = gau?.veldtLeapt || this.program.name === 'sc_b_0738' && gau?.enabled !== true;
+      const survivors = b.players.filter(unit => this.alive(unit)).length;
+      if (veldt && present) this.locals[2] = 1;
+      else if (veldt && (state.gauFirst || returning) && b.players.length < 4 &&
+        (!state.gauFirst || survivors >= 2) && b.random() < 160 / 256) {
         this.locals[2] = 2; this.endEnabled = false;
       }
+      this.warning('Gau appearance uses the SNES random threshold160/256; a free party cell and, on first recruitment, two survivors are required. PR appearance odds are not exported.');
       return;
     }
     if (name === '敵パーティをガウに') {
-      const gau = Object.values(b.data.monsters ?? {}).find(unit => /^Gau$/i.test(unit.name ?? ''));
-      if (gau) { b.enemies.splice(0); this.addEnemy(gau.id, this.program.name === 'sc_b_0738' ? 5 : 3); }
+      const expectedMode = state.gauFirst ? 2 : 1;
+      const gau = Object.values(b.data.monsters ?? {}).find(unit => {
+        const ops = b.data.aiPrograms?.[unit.aiName]?.ops ?? [];
+        const feed = ops.find(([name, i]) => name === 'IsRecevieItem' && i[0] === 23);
+        return feed && ops.slice(feed[1][1], feed[1][1] + 5).some(([name, i]) => name === 'ModeSet' && i[0] === expectedMode);
+      });
+      if (gau) {
+        state.veldtDefeated = [...b.enemies];
+        for (const unit of b.enemies) unit.removed = true;
+        b.aiQueue = (b.aiQueue ?? []).filter(action => !action.actor.removed);
+        b.enemies.splice(0);
+        this.addEnemy(gau.id, this.program.name === 'sc_b_0738' ? 5 : 3);
+        this.event('gau-appeared', { monsterId: gau.id, first: state.gauFirst });
+      }
       else { this.endEnabled = true; this.warning('Gau return monster is absent; retaining the original encounter.'); }
       return;
     }
+    if (name === 'メンバー加入：ガウ') {
+      const gau = this.addPlayer(12);
+      if (gau) { gau.enabled = true; gau.reserve = false; gau.veldtLeapt = false; }
+      this.event('battle-roster', { id: 12, joined: true }); return;
+    }
     if (name === 'ガウ初回予約') {
-      this.bank('ScenarioVariable')[8] = 1; this.bank('PlaySystems').reservedScript = 'sc_e_0239'; return;
+      b.reservedScript = 'sc_e_0239';
+      this.bank('ScenarioVariable')[8] = 1; this.bank('PlaySystems').reservedScript = b.reservedScript;
+      this.event('battle-reservation', { name: b.reservedScript }); return;
     }
     if (name === '血塗られた盾') { return; }
     if (/^(参戦待ち表示|マッシュIdle00|シャドウ追いかける|空のテキストウィンドウ表示)$/.test(name) ||

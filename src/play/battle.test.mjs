@@ -56,3 +56,59 @@ test('battle items use fixed PR recovery, shared content stock and an ordinary a
   assert.equal(inventory[10], 0);
   assert.deepEqual(party[1].conditions, []);
 });
+
+test('Dried Meat uses its PR item/content IDs and targets the actual enemy receiving it', () => {
+  const inventory = { 24: 2, 26: 1 }, data = {
+    parties: { 1: { members: [{ monsterId: 549, slot: 2 }] } },
+    monsters: { 549: { id: 549, hp: 50000, maxHp: 50000 } },
+    contents: { 24: { type_id: 1, type_value: 23 }, 26: { type_id: 1, type_value: 25 } },
+    items: { 23: { id: 23, battle_function_group_id: 1, standard_value: 150, battle_renge_id: 7 },
+      25: { id: 25, battle_function_group_id: 19, standard_value: 100, battle_renge_id: 4 } },
+  };
+  const party = [{ id: 6, hp: 100, maxHp: 100 }];
+  const battle = new Battle({ data, party, encounterId: 1, inventory, random: () => .5 });
+  const received = [];
+  battle.enemies[0].aiState.wake = (kind, action) => received.push({ kind, action });
+  party[0].ready = true;
+  assert.equal(battle.itemsFor(0).find(item => item.itemId === 23).target, 'enemy');
+  assert.equal(battle.choose(0, 'item:24', { side: 'enemy', index: 0 }), true);
+  assert.equal(inventory[24], 1);
+  assert.equal(inventory[26], 1);
+  assert.equal(received.length, 1);
+  assert.equal(received[0].kind, 'reaction');
+  assert.equal(received[0].action.item.itemId, 23);
+  assert.equal(received[0].action.item.contentId, 24);
+  assert.equal(received[0].action.target, battle.enemies[0]);
+  party[0].ready = true;
+  assert.equal(battle.useItem(0, 24, { side: 'player', index: 0 }), true);
+  assert.equal(received.at(-1).kind, 'observer');
+  assert.equal(received.at(-1).action.target, party[0]);
+});
+
+test('ADD_VARIABLE_CALC advances the acting PR monster variable without a Fight fallback', () => {
+  const data = { parties: { 1: { members: [{ monsterId: 550 }] } },
+    monsters: { 550: { id: 550, hp: 50000, maxHp: 50000 } } };
+  const battle = new Battle({ data, party: [{ id: 6, hp: 100, maxHp: 100 }], encounterId: 1, random: () => .5 });
+  const gau = battle.enemies[0];
+  battle.perform(gau, gau, { id: 1199, functions: [{ id: 19, values: [0, 0, 0] }, { id: 23, values: [0, 0, 0] }],
+    process: 'ADD_VARIABLE_CALC', dataA: 0, dataB: 0, dataC: 1 });
+  assert.equal(gau.aiState.vars[0], 1);
+  assert.equal(gau.hp, 50000);
+  assert.equal(battle.players[0].hp, 100);
+  assert.equal(battle.warnings.has('Ability 1199 effect is not implemented; using Fight.'), false);
+  assert.equal(battle.supported({ process: 'ADD_VARIABLE_CALC', dataB: 1, dataC: 1 }), false);
+});
+
+test('a source Gau return clears the previous leap removal without fabricating a heal', () => {
+  const gau = { id: 12, enabled: false, veldtLeapt: true, removed: true, escaped: true, hp: 24, maxHp: 100 };
+  const battle = new Battle({ data: { parties: { 1: { members: [{ monsterId: 1 }] } },
+    monsters: { 1: { id: 1, hp: 100, maxHp: 100 } } }, party: [{ id: 6, hp: 100, maxHp: 100 }],
+  encounterId: 1, character: id => id === 12 ? gau : { id }, random: () => .5 });
+  battle.events.syscall('バトル加入：ガウ', [], []);
+  assert.equal(battle.players.at(-1), gau);
+  assert.equal(gau.removed, false);
+  assert.equal(gau.escaped, false);
+  assert.equal(gau.enabled, true);
+  assert.equal(gau.veldtLeapt, false);
+  assert.equal(gau.hp, 24);
+});

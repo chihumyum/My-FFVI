@@ -4,7 +4,9 @@ function project(
   game,
   mapId,
   name,
-  { initializer = false, direction = "up" } = {},
+  { initializer = false, direction = "up", depth = 0,
+    initialBanks = game.banks, previousArea = game.areaId, newEntry = false,
+    followContinuations = true } = {},
 ) {
   const data = game.data,
     map = data.navigation.maps[mapId];
@@ -26,10 +28,10 @@ function project(
     if (category === "ScriptLocalVariable") return locals;
     if (!(category in banks))
       banks[category] = {
-        ...((category === "MapLocalVariable" && mapId !== game.mapId) ||
-        (category === "AreaLocalVariable" && map.areaId !== game.areaId)
+        ...((category === "MapLocalVariable" && (newEntry || mapId !== game.mapId)) ||
+        (category === "AreaLocalVariable" && map.areaId !== previousArea)
           ? {}
-          : game.banks[category]),
+          : initialBanks[category]),
       };
     return banks[category];
   };
@@ -97,10 +99,29 @@ function project(
       case "ChangeMap":
         if (s[0]) scripts.add(s[0]);
         destinations.push({ mapId: i[0], entrance: i[1] });
+        // Temporary camera/staging maps return through their authored scene
+        // continuation. Include that source chain in the route graph; walking
+        // still enters the real first trigger and executes every transition.
+        if (followContinuations && s[0] && depth < 16 && data.navigation.maps[i[0]]) {
+          const next = project(game, i[0], s[0], { direction, depth: depth + 1,
+            initialBanks: { ...initialBanks, ...banks }, previousArea: map.areaId,
+            newEntry: true });
+          destinations.push(...next.destinations);
+          for (const name of next.scripts) scripts.add(name);
+        }
         return { groups, destinations, scripts };
       case "Encount":
       case "EncountBoss":
-        if (s[0]) scripts.add(s[0]);
+        if (s[0]) {
+          scripts.add(s[0]);
+          if (followContinuations && depth < 16) {
+            const next = project(game, mapId, s[0], { direction, depth: depth + 1,
+              initialBanks: { ...initialBanks, ...banks }, previousArea: map.areaId });
+            destinations.push(...next.destinations);
+            for (const name of next.scripts) scripts.add(name);
+          }
+          return { groups, destinations, scripts };
+        }
         break;
       case "ChangeScript": {
         scripts.add(s[0]);
@@ -149,11 +170,33 @@ function navigationState(game) {
             )
               one.destinations.push(dest);
           for (const target of extra.scripts) one.scripts.add(target);
+          for (const group of extra.groups) one.groups.add(group);
         }
       }
       projections.set(key, one);
     }
     return projections.get(key);
+  };
+  // Some ordinary inputs reveal the next input instead of calling its script:
+  // touch a tripwire, then talk to the NPC it reveals. Route to that real
+  // prerequisite, but only while its group is absent. Never activate it here.
+  const reachableScripts = (mapId, projected, activeGroups) => {
+    const result = new Set(projected.scripts),
+      pending = [...projected.groups],
+      seen = new Set(activeGroups);
+    seen.add("entity_default");
+    for (let head = 0; head < pending.length; head++) {
+      const group = pending[head];
+      if (seen.has(group)) continue;
+      seen.add(group);
+      for (const entry of game.data.navigation.maps[mapId].entries) {
+        if (entry.group !== group || !entry.script) continue;
+        const next = script(mapId, entry.script);
+        for (const name of next.scripts) result.add(name);
+        pending.push(...next.groups);
+      }
+    }
+    return result;
   };
   const entries = (mapId) => {
     if (!maps.has(mapId)) {
@@ -175,7 +218,7 @@ function navigationState(game) {
                 ? script(mapId, entry.script).destinations
                 : [],
             scripts: entry.script
-              ? script(mapId, entry.script).scripts
+              ? reachableScripts(mapId, script(mapId, entry.script), groups)
               : new Set(),
           })),
       );
@@ -186,8 +229,18 @@ function navigationState(game) {
     signature,
     entries,
     script,
+    reachableScripts,
     distances: new Map(),
   });
+}
+
+export function isMapExit(game, entry) {
+  if (!entry.script) return false;
+  if (game.data.navigation?.maps[game.mapId])
+    return project(game, game.mapId, entry.script, { followContinuations: false }).destinations.length > 0;
+  return game.data.programs?.[game.resolve(entry.script)]?.ops.some(
+    (op) => op[0] === "ChangeMap",
+  ) || false;
 }
 
 export function routeToStory(game, objective, pathTo) {
@@ -224,7 +277,9 @@ export function routeToStory(game, objective, pathTo) {
           const projected = project(game, game.mapId, entry.script, {
             direction,
           });
-          return requested.some((name) => projected.scripts.has(name));
+          return requested.some((name) =>
+            state.reachableScripts(game.mapId, projected, game.groups).has(name),
+          );
         },
       );
     }
@@ -303,7 +358,18 @@ export function routeToStory(game, objective, pathTo) {
           Math.abs(b.target.x - game.player.x) -
           Math.abs(b.target.y - game.player.y),
     );
-  for (const { target } of exits) {
+  for (const { target, entry, distance } of exits) {
+    if (entry?.script) {
+      target.allowedDirections = ["up", "right", "down", "left"].filter(
+        (direction) =>
+          project(game, game.mapId, entry.script, { direction }).destinations.some(
+            (dest) => distances.get(destinationKey(dest)) === distance,
+          ),
+      );
+      // Touch exits can use facing as part of their source branch too. Walk
+      // up to the selected side, then cross the trigger with that facing.
+      target.approach = target.allowedDirections.length < 4;
+    }
     const route = pathTo(game, target);
     if (route) return { status: "target", target, route };
   }

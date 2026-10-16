@@ -1,4 +1,7 @@
 import {executeInstruction} from './instructions.js';
+import {executePartyInput,autoPartyInput} from './party-input.js';
+import {walkEncounter} from './encounters.js';
+import {autoShopInput} from './event-systems.js';
 import {executeSyscall,updateSyscallSystems,configureSyscallTimer,finishSyscallTimer} from './syscalls.js';
 const dirs=['up','right','down','left'], delta=[[0,-1],[1,0],[0,1],[-1,0]];
 const presentation=new Set(['ColorFade','Shake','Flash','ScreenEffect','BackdropColor','Orient','Water','ChangeView','ChangeMapRenderArea','PlayBattleEffect','SyncBattleEffect','BattleAnim','BattleSyncAction','BattleCondition','SetVolume','PauseBGM','ReadyBGM','LoadSE','StopSE','SyncSE','SyncBGM','PitchEnvSe','PauseEnvSe','SetAnimOnlyJockey','ResetAnimOnlyJockey']);
@@ -9,7 +12,7 @@ export class PlayGame{
   if(!this.partySlots[0].length)this.partySlots[0]=[1,31,32];for(const id of this.partySlots[0])this.unit(id).magitek=true;
  }
  get party(){return this.partySlots[this.partyIndex].map(id=>this.unit(id));}
- get busy(){return !!(this.loading||this.battle||this.dialogue||this.tasks.some(t=>!t.done&&!t.background));}
+ get busy(){return !!(this.loading||this.battle||this.dialogue||this.partySelection||this.shop||this.tasks.some(t=>!t.done&&!t.background));}
  unit(id){if(!this.roster[id]){const src=this.battleData.characters?.[id]||{};this.roster[id]={id,name:src.name||({1:'蒂娜',2:'洛克',31:'魏吉',32:'比格斯'})[id]||`角色${id}`,maxHp:src.maxHp||src.hp||120,hp:src.maxHp||src.hp||120,maxMp:src.maxMp||src.mp||30,mp:src.maxMp||src.mp||30,level:src.level||3,strength:src.strength||25,magic:src.magic||25,defense:src.defense||20,magicDefense:src.magicDefense||20,speed:src.speed||30,...src};if(this.testBoost)Object.assign(this.roster[id],{level:99,hp:9999,maxHp:9999,mp:999,maxMp:999,strength:255,magic:255,attack:255,defense:250,magicDefense:250,speed:255,accuracy:255});}return this.roster[id];}
  warn(task,message){const name=this.data.programs[task?.program]?.name||'runtime',key=`${name}:${task?.pc-1}:${message}`;if(this.warned.has(key))return;this.warned.add(key);const value={script:name,index:task?task.pc-1:-1,message};this.warnings.push(value);console.warn('[play guess]',value);this.onEvent({kind:'warning',...value});}
  event(kind,value={}){this.onEvent({kind,time:this.time,mapId:this.mapId,...value});}
@@ -21,7 +24,7 @@ export class PlayGame{
  }
  async start(){await this.enter(this.data.entry.mapId,this.data.entry.entrance,this.data.entry.script);return this;}
  async enter(mapId,entrance=1,continuation=''){
-  this.loading=true;this.tasks=[];this.dialogue=null;
+  this.loading=true;this.tasks=[];this.dialogue=null;this.partySelection=null;this.shop=null;
   try{this.map=await this.loadMap(mapId);this.mapId=+mapId;if(this.areaId!==this.map.areaId){this.banks.AreaLocalVariable={};this.areaId=this.map.areaId;}this.visited.push(+mapId);this.groups=new Set(['entity_default']);this.actors=new Map();this.banks.MapLocalVariable={};
    const point=this.map.entities.find(e=>e.kind===0&&e.objectId===entrance)||this.map.entities.find(e=>e.kind===0)||{x:1,y:1,layer:0,direction:'down'};
    Object.assign(this.player,{x:point.x,y:point.y,layer:point.layer,direction:point.direction||'down',motion:null,visible:true});Object.assign(this.camera,{x:point.x,y:point.y,manual:false,motion:null});
@@ -52,9 +55,9 @@ export class PlayGame{
  compare(a,op,b){switch(op){case '＝':case '=':case '==':return a===b;case '≠':case '!=':return a!==b;case '＞':case '>':return a>b;case '＜':case '<':return a<b;case '≧':case '>=':return a>=b;case '≦':case '<=':return a<=b;case '＆':case '&':return !!(a&b);default:return a===b;}}
  calculate(a,op,b){switch(op){case '＋':case '+':return a+b;case '－':case '-':return a-b;case '×':case '*':return a*b;case '÷':case '/':return b?Math.trunc(a/b):0;case '%':return b?a%b:0;case '＆':case '&':return a&b;case '｜':case '|':return a|b;default:return b;}}
  text(key){return (this.data.messages[key]??key??'').replace(/\\n/g,'\n').replace(/\((TINA|LOCK|ROCK|EDGAR|MASH|CELES|MOG)\)/g,(_,n)=>this.unit({TINA:1,LOCK:2,ROCK:2,EDGAR:5,MASH:6,CELES:7,MOG:11}[n]).name).replace(/<C(\d+)>/g,(_,id)=>this.unit(+id).name).replace(/<P>/g,'\n').replace(/<[^>]*>/g,'');}
- confirm(choice=0){if(this.dialogue){const d=this.dialogue;this.dialogue=null;if(d.task){d.task.waitFor=null;d.task.locals[0]=choice;d.task.result=choice;(this.banks.MessageSelection??={})[0]=choice;}this.event('confirm',{key:d.key,choice});return true;}if(this.battle)return false;return this.interact();}
+ confirm(choice=0){if(this.dialogue){const d=this.dialogue;this.dialogue=null;if(d.task){d.task.waitFor=null;d.task.locals[0]=choice;d.task.result=choice;(this.banks.MessageSelection??={})[0]=choice;}this.event('confirm',{key:d.key,choice});return true;}if(this.busy)return false;return this.interact();}
  tick(dt=1/60,{auto=false}={}){
-  if(this.loading||this.over)return;this.time+=dt;updateSyscallSystems(this,dt);
+  if(this.loading||this.over)return;if(auto&&this.partySelection)autoPartyInput(this,this.storyObjective?.party);if(auto&&this.shop)autoShopInput(this,this.storyObjective?.buy);this.time+=dt;updateSyscallSystems(this,dt);
   for(const a of [this.player,this.camera,...this.actors.values()])if(a.motion){const m=a.motion;m.elapsed+=dt;const p=Math.min(1,m.elapsed/m.duration);a.x=m.x+(m.tx-m.x)*p;a.y=m.y+(m.ty-m.y)*p;if(p===1)a.motion=null;}
   if(this.battle){this.battle.tick(dt,auto);return;}
   if(auto&&this.dialogue){this.dialogue.elapsed+=dt;if(this.dialogue.elapsed>.15)this.confirm(this.autoChoice?.(this)??0);}else if(this.dialogue?.auto){this.dialogue.elapsed+=dt;if(this.dialogue.elapsed>this.dialogue.duration)this.confirm();}
@@ -100,7 +103,7 @@ export class PlayGame{
    case 'AssignMoveRoute':case 'Route':this.warn(t,`${name}: route scheduling deferred`);return;
    case 'Msg':{const key=s[0]||'',text=this.text(key);if(!text)return;if(this.dialogue){t.pc--;t.waitFor='message';return;}const timed=i[0]===3;this.dialogue={key,text,speaker:this.data.speakers[key]||'',task:timed?null:t,auto:timed,duration:r[0]>0?r[0]:2,elapsed:0};if(!timed)t.waitFor='message';this.event('dialogue',{key,text});return;}
    case 'MsgClose':this.dialogue=null;return;case 'MsgFinishWait':case 'MsgFinishWaitAll':if(this.dialogue)t.waitFor='message';return;
-   case 'Select':{const keys=s.filter(Boolean);this.dialogue={key:keys[0],text:keys.map(k=>this.text(k)).join('\n'),speaker:'',choices:keys.slice(1).length?keys.slice(1).map(k=>this.text(k)):['是','否'],task:t,elapsed:0};t.waitFor='message';return;}
+   case 'Select':{const keys=s.filter(Boolean);this.dialogue={key:keys[0],text:'请选择：',speaker:'',choices:keys.length?keys.map(k=>this.text(k)):['是','否'],task:t,elapsed:0};t.waitFor='message';return;}
    case 'ChangeMap':t.done=true;this.pending=this.enter(i[0],i[1],s[0]||'');return;
    case 'Encount':case 'EncountBoss':this.encounter(i[0],s[0],t);return;
    case 'OrganizePartySlot':this.partySlots[Math.max(0,i[0]-1)]=i.slice(1,5).filter(n=>n>0);return;
@@ -133,6 +136,7 @@ export class PlayGame{
  }
  motion(t,a,x,y,duration,animation){if(a===this.camera)a.manual=true;const dx=x-a.x,dy=y-a.y;if(dx||dy)a.direction=Math.abs(dx)>Math.abs(dy)?dx>0?'right':'left':dy>0?'down':'up';a.animation=animation||'Walk'+({up:'B',down:'',left:'L',right:'R'}[a.direction]);a.motion={x:a.x,y:a.y,tx:x,ty:y,duration:Math.max(.01,duration),elapsed:0};t.waitFor='motion';}
  syscall(t,name,i,r){
+  if(executePartyInput(this,t,name,this.storyObjective?.party))return;
   if(executeSyscall(this,t,name,i,r))return;
   if(/データ初期化|DataInitialize/.test(name))return;
   if(/戦闘結果取得/.test(name)){const result=this.battles.at(-1);t.locals[0]=result?.code??(result?.outcome==='victory'?0:result?.outcome==='escape'?1:2);return;}
@@ -143,7 +147,7 @@ export class PlayGame{
   if(/復活|回復|Recovery/.test(name)){for(const u of this.party){u.hp=u.maxHp;u.mp=u.maxMp;}return;}
   this.warn(t,`SysCall ${name}: skipped`);
  }
- encounter(id,continuation,t){if(!this.Battle){this.warn(t,`Battle ${id}: implementation pending`);return;}t.waitFor='battle';this.battle=new this.Battle({data:this.battleData,party:this.party,encounterId:id,random:this.random,inventory:this.inventory,banks:this.banks,character:id=>this.unit(id),event:(kind,payload)=>this.event(kind,payload),warn:msg=>this.warn(t,String(msg)),onEnd:result=>{this.battles.push({encounterId:id,...result});this.gil+=result.gil||0;for(const drop of result.drops||[])this.inventory[drop.id]=(this.inventory[drop.id]||0)+(drop.count||1);this.battle=null;t.waitFor=null;if(continuation){t.done=true;this.startScript(continuation);}this.event('battle-end',{encounterId:id,...result});}});this.event('battle',{encounterId:id});}
+ encounter(id,continuation,t,context={}){if(!this.Battle){this.warn(t,`Battle ${id}: implementation pending`);return;}t.waitFor='battle';this.battle=new this.Battle({data:this.battleData,party:this.party,encounterId:id,...context,random:this.random,inventory:this.inventory,banks:this.banks,character:id=>this.unit(id),eventCallbacks:Object.fromEntries(['メンバー加入：ガウ','バトル加入：ガウ'].map(name=>[name,()=>{executeSyscall(this,t,'メンバー加入：ガウ',[],[]);return false;}])),event:(kind,payload)=>this.event(kind,payload),warn:msg=>this.warn(t,String(msg)),onEnd:result=>{this.battles.push({encounterId:id,...result});this.gil+=result.gil||0;for(const drop of result.drops||[])this.inventory[drop.id]=(this.inventory[drop.id]||0)+(drop.count||1);this.battle=null;t.waitFor=null;if(context.randomEncounter&&result.outcome==='defeat'){this.over={reason:'队伍在战斗中倒下了。请读取存档重试。'};this.event('game-over',this.over);}if(continuation){t.done=true;this.startScript(continuation);}else if(this.banks.PlaySystems?.reservedScript){const reserved=this.banks.PlaySystems.reservedScript;delete this.banks.PlaySystems.reservedScript;t.done=true;this.startScript(reserved);}this.event('battle-end',{encounterId:id,...result});}});this.event('battle',{encounterId:id});}
  tickNpc(dt){
   if(!this.rts?.active)return;
   this.npcClock=(this.npcClock||0)+dt;if(this.npcClock<.65)return;this.npcClock=0;
@@ -157,7 +161,7 @@ export class PlayGame{
  useItem(contentId,memberId){if(this.busy)return false;const item=this.battleData.items?.[this.battleData.contents?.[contentId]?.type_value],unit=this.unit(memberId);if(!item||!this.inventory[contentId])return false;const group=item.menu_function_group_id;if(![1,2,3,4].includes(group)||(group===2?unit.hp>0:unit.hp<=0))return false;this.inventory[contentId]--;if(group===2){unit.hp=Math.max(1,Math.floor(unit.maxHp/8));unit.conditions=(unit.conditions||[]).filter(n=>n!==5);}else{if([1,4].includes(group))unit.hp=Math.min(unit.maxHp,unit.hp+item.standard_value);if([3,4].includes(group))unit.mp=Math.min(unit.maxMp,unit.mp+item.standard_value);}return true;}
  switchParty(){if(this.busy||!this.rts?.active)return false;executeSyscall(this,{locals:[],pc:0},'RTS：操作パーティ切替',[],[]);return true;}
  canMove(x,y,layer=this.player.layer){if(x<0||y<0||x>=this.map.width||y>=this.map.height)return false;const grid=this.map.collisions?.[layer]||this.map.collisions?.[0],v=grid?.[Math.floor(y)*this.map.width+Math.floor(x)];return v===undefined||v!==1;}
- move(direction){if(this.busy||!this.control||this.player.motion)return false;const n=dirs.indexOf(direction);if(n<0)return false;this.player.direction=direction;this.player.animation='Walk'+({up:'B',down:'',left:'L',right:'R'}[direction]);const d=delta[n],x=this.player.x+d[0],y=this.player.y+d[1];if(!this.canMove(x,y))return false;this.player.x=x;this.player.y=y;this.camera.manual=false;this.checkTriggers();return true;}
+ move(direction){if(this.busy||!this.control||this.player.motion)return false;const n=dirs.indexOf(direction);if(n<0)return false;this.player.direction=direction;this.player.animation='Walk'+({up:'B',down:'',left:'L',right:'R'}[direction]);const d=delta[n],x=this.player.x+d[0],y=this.player.y+d[1];if(!this.canMove(x,y))return false;this.player.x=x;this.player.y=y;this.camera.manual=false;this.checkTriggers();if(!this.busy)walkEncounter(this);return true;}
  checkTriggers(){if(this.busy)return;for(const e of this.entities){
   const actual=this.actors.get(String(e.id))||e;if(actual.visible===false)continue;if(actual.layer&&actual.layer!==this.player.layer)continue;
   const touchNpc=e.kind===6&&e.npc?.moveType===3&&this.rts?.active;
@@ -168,7 +172,23 @@ export class PlayGame{
   if(e.kind===4&&e.destinationLayer!==null){this.player.layer=e.destinationLayer;break;}
  }}
 
- interact(){const n=dirs.indexOf(this.player.direction),d=delta[n]||[0,1];for(const e of this.entities){const actual=this.actors.get(String(e.id))||e;if(actual.visible===false||actual.layer&&actual.layer!==this.player.layer)continue;if(Math.abs(actual.x-this.player.x-d[0])<.6&&Math.abs(actual.y-this.player.y-d[1])<.6){const name=e.script||e.npc?.interaction?.script||e.mapObject?.interaction?.script;if(name){this.startScript(name);return true;}if(e.destination&&e.kind!==3){this.pending=this.enter(e.destination.mapId,e.destination.entrance);return true;}}}return false;}
- snapshot(){return{completedStoryObjectives:this.completedStoryObjectives||[],testBoost:this.testBoost,mapId:this.mapId,player:{...this.player,motion:null},banks:this.banks,partySlots:this.partySlots,partyIndex:this.partyIndex,roster:this.roster,inventory:this.inventory,gil:this.gil,groups:[...this.groups],history:this.history,battles:this.battles};}
- async restore(saved){this.testBoost=!!saved.testBoost;await this.enter(saved.mapId,0);this.tasks=[];this.afterInit='';Object.assign(this,{completedStoryObjectives:saved.completedStoryObjectives||[],banks:saved.banks,partySlots:saved.partySlots,partyIndex:saved.partyIndex,roster:saved.roster,inventory:saved.inventory,gil:saved.gil,history:saved.history,battles:saved.battles});Object.assign(this.player,saved.player);this.groups=new Set(saved.groups);this.refreshActors();}
+ interactionDistance(target,x=this.player.x,y=this.player.y,layer=this.player.layer){
+  const dx=Math.abs(target.x-x),dy=Math.abs(target.y-y);
+  if(dx+dy===1)return 1;
+  if([5,6,8].includes(target.kind)&&dx+dy===2&&(!dx||!dy)&&!this.canMove((x+target.x)/2,(y+target.y)/2,layer))return 2;
+  return 0;
+ }
+ interact(){if(this.busy)return false;const n=dirs.indexOf(this.player.direction),d=delta[n]||[0,1];
+  for(const distance of [1,2])for(const e of this.entities){
+   const actual={...e,...this.actors.get(String(e.id))};if(actual.visible===false||actual.layer&&actual.layer!==this.player.layer)continue;
+   if(Math.abs(actual.x-this.player.x-d[0]*distance)>=.6||Math.abs(actual.y-this.player.y-d[1]*distance)>=.6)continue;
+   if(distance===2&&this.interactionDistance(actual)!==2)continue;
+   const name=e.script||e.npc?.interaction?.script||e.mapObject?.interaction?.script;
+   if(name){if(distance===2)this.warn(null,'Counter interaction treats one blocked cell between player and NPC as a talk-through counter; exact counter tile flags are not exported.');this.startScript(name);return true;}
+   if(e.destination&&e.kind!==3){this.pending=this.enter(e.destination.mapId,e.destination.entrance);return true;}
+  }return false;
+ }
+
+ snapshot(){return{walkEncounterState:this.walkEncounterState,finalBattleOrder:this.finalBattleOrder,completedStoryObjectives:this.completedStoryObjectives||[],testBoost:this.testBoost,mapId:this.mapId,player:{...this.player,motion:null},banks:this.banks,partySlots:this.partySlots,partyIndex:this.partyIndex,roster:this.roster,inventory:this.inventory,gil:this.gil,groups:[...this.groups],history:this.history,battles:this.battles};}
+ async restore(saved){this.testBoost=!!saved.testBoost;await this.enter(saved.mapId,0);this.tasks=[];this.afterInit='';Object.assign(this,{walkEncounterState:saved.walkEncounterState,finalBattleOrder:saved.finalBattleOrder,completedStoryObjectives:saved.completedStoryObjectives||[],banks:saved.banks,partySlots:saved.partySlots,partyIndex:saved.partyIndex,roster:saved.roster,inventory:saved.inventory,gil:saved.gil,history:saved.history,battles:saved.battles});Object.assign(this.player,saved.player);this.groups=new Set(saved.groups);this.refreshActors();}
 }

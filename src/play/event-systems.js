@@ -1,3 +1,4 @@
+import { isVeldt } from './encounters.js';
 const bank = (game, name) => game.banks[name] ??= {};
 const systems = game => bank(game, 'PlaySystems');
 const pose = actor => ({ x: actor.x, y: actor.y, layer: actor.layer, direction: actor.direction, vehicle: actor.vehicle });
@@ -72,7 +73,7 @@ function stock(game, groupId) {
   });
 }
 export function buyFromShop(game, contentId, count = 1) {
-  const product = systems(game).shop?.stock?.find(item => item.id === contentId);
+  const product = game.shop?.stock?.find(item => item.id === contentId);
   count = Math.max(1, Math.trunc(count));
   if (!product || game.gil < product.price * count) return false;
   game.gil -= product.price * count;
@@ -80,13 +81,39 @@ export function buyFromShop(game, contentId, count = 1) {
   return true;
 }
 
+export function closeShop(game) {
+  if (!game.shop) return false;
+  if (game.shop.task?.waitFor === 'shop') game.shop.task.waitFor = null;
+  game.shop = null;
+  systems(game).shop = null;
+  game.event('shop-close');
+  return true;
+}
+
+export function autoShopInput(game, purchase) {
+  if (!game.shop) return false;
+  if (purchase) {
+    const needed = Math.max(0, (purchase.count || 1) - (game.inventory[purchase.contentId] || 0));
+    if (needed && !buyFromShop(game, purchase.contentId, needed))
+      game.warn(game.shop.task, `Cannot buy content ${purchase.contentId}: unavailable stock or insufficient gil.`);
+  }
+  return closeShop(game);
+}
+
+export function shopScriptsForContent(game, contentId) {
+  const names = new Set(Object.entries(shopGroups).filter(([, id]) => stock(game, id).some(product => product.id === contentId)).map(([name]) => name));
+  return Object.values(game.data.programs).filter(program => program.ops.some(op =>
+    op[0] === 'SysCall' && names.has(op[3]?.[0]?.replace(/^ショップを開く:/, '')))).map(program => program.name);
+}
+
 export function executeEventSystem(game, task, name, i, r, { characterSelectors, names, warn }) {
   const state = systems(game), subject = name.split(/[：:]/).slice(1).join('：');
   if (name.startsWith('ショップを開く:')) {
     const groupId = shopGroups[subject];
-    state.shop = { groupId, stock: groupId ? stock(game, groupId) : [] };
+    game.shop = { groupId, stock: groupId ? stock(game, groupId) : [], task };
+    state.shop = { groupId, stock: game.shop.stock };
+    task.waitFor = 'shop';
     game.event('shop', state.shop);
-    warn('Shop stock and prices come from PR; the default interaction closes without buying.');
     return true;
   }
   if (name === 'リネームカード') { game.event('name', { id: game.party[0]?.id, name: game.party[0]?.name }); return true; }
@@ -228,8 +255,7 @@ export function executeEventSystem(game, task, name, i, r, { characterSelectors,
   if (name === 'UI非表示') { game.uiVisible = false; return true; }
   if (name === 'マップUI全て表示') { game.uiVisible = true; return true; }
   if (name === '獣ヶ原にいる') {
-    task.locals[0] = Number(Boolean(game.map.isVeldt || /獣ヶ原|Veldt/i.test(game.map.title ?? '')));
-    warn('Veldt detection uses the current map metadata; world subregion geometry is deferred.');
+    task.locals[0] = Number(isVeldt(game));
     return true;
   }
   if (name === 'ロック変装') {

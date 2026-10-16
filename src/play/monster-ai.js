@@ -423,8 +423,7 @@ export class MonsterAI {
           break;
         case "IsRecevieItem":
           this.branch(
-            this.received &&
-              (evt.item?.itemId === i[0] || evt.item?.contentId === i[0]),
+            this.hit && evt.item?.itemId === i[0],
             i[1],
           );
           break;

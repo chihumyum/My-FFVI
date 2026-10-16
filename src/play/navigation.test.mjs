@@ -153,3 +153,86 @@ test("cross-map navigation distinguishes two entrances of one disconnected map w
   assert.equal(result.target.id, "lower");
   assert.equal(JSON.stringify(game.banks), before);
 });
+
+test("navigation uses a real tripwire before an interaction group appears", () => {
+  const tripwire = { id: "wire", kind: 2, script: "wire", group: "entity_default" },
+    target = { id: "npc", kind: 6, script: "goal", group: "revealed" };
+  const data = {
+    byMap: {}, global: { init: 0, wire: 1, goal: 2 },
+    programs: [
+      { name: "init", ops: [["Exit"]] },
+      { name: "wire", ops: [["SetEntities", [], [], ["revealed"]], ["Exit"]] },
+      { name: "goal", ops: [["Exit"]] },
+    ],
+    navigation: { maps: { 1: {
+      id: 1, initializer: "init", entrances: {}, entries: [tripwire, target],
+    } } },
+  };
+  const game = new PlayGame({ data });
+  game.mapId = 1;
+  game.entities = [tripwire];
+  game.groups = new Set(["entity_default"]);
+  assert.equal(routeToStory(game, "goal", () => ["up"]).target.id, "wire");
+  assert.deepEqual([...game.groups], ["entity_default"]);
+  game.groups.add("revealed");
+  game.entities.push(target);
+  assert.equal(routeToStory(game, "goal", () => ["up"]).target.id, "npc");
+});
+
+test("approaching a directional exit cannot cross an adjacent exit that also displays dialogue", () => {
+  const game = new PlayGame({ data: {
+    global: { door: 0 }, byMap: {},
+    programs: [{ name: "door", ops: [["Msg"], ["ChangeMap", [2, 1]]] }],
+  } });
+  game.mapId = 1;
+  game.map = { width: 8, height: 8 };
+  game.player = { x: 2, y: 4, layer: 1 };
+  game.entities = [{ id: "other-exit", kind: 2, x: 4, y: 3, layer: 1, script: "door" }];
+  const target = { id: "exit", kind: 2, x: 4, y: 4, layer: 1, approach: true, allowedDirections: ["down"] };
+  assert.equal(pathTo(game, target), null);
+});
+
+test("navigation follows authored staging-map and battle continuations without executing them", () => {
+  const wire = { id: "start", kind: 2, script: "start", group: "entity_default", regions: [1] },
+    goal = { id: "goal", kind: 6, script: "goal", group: "entity_default", regions: [1] };
+  const data = {
+    global: { init: 0, start: 1, staged: 2, afterBattle: 3, goal: 4 }, byMap: {},
+    programs: [
+      { name: "init", ops: [["Exit"]] },
+      { name: "start", ops: [["Calc", [1, 4], [], ["AreaLocalVariable", "←", "imm"]],
+        ["ChangeMap", [2, 1], [], ["staged"]]] },
+      { name: "staged", ops: [["Branch", [1, 4, 2], [], ["AreaLocalVariable", "＝", "imm"]],
+        ["Exit"], ["Encount", [42], [], ["afterBattle"]]] },
+      { name: "afterBattle", ops: [["ChangeMap", [3, 1]]] },
+      { name: "goal", ops: [["Exit"]] },
+    ],
+    navigation: { maps: Object.fromEntries([1, 2, 3].map(id => [id, {
+      id, areaId: 1, initializer: "init", entrances: { 1: { regions: [1] } },
+      entries: id === 1 ? [wire] : id === 3 ? [goal] : [],
+    }])) },
+  };
+  const game = new PlayGame({ data });
+  game.mapId = 1; game.areaId = 1; game.entities = [wire];
+  game.groups = new Set(["entity_default"]);
+  const before = JSON.stringify(game.banks);
+  const input = routeToStory(game, "goal", () => ["up"]);
+  assert.equal(input.target.id, "start");
+  assert.equal(JSON.stringify(game.banks), before);
+  assert.equal(game.tasks.length, 0);
+});
+
+test("an NPC across one blocked counter can be reached and interacted with from the public side", () => {
+  const game = new PlayGame({ data: { programs: {}, byMap: {}, global: {} } }), chosen = [];
+  game.mapId = 1;
+  const grid = Array(36).fill(0);
+  grid[2 * 6 + 3] = 1;
+  game.map = { width: 6, height: 6, collisions: { 0: grid } };
+  game.player = { x: 3, y: 3, layer: 0, direction: "up" };
+  const npc = { id: "seller", kind: 6, x: 3, y: 1, layer: 0, script: "shop" };
+  game.entities = [npc]; game.groups = new Set();
+  game.startScript = name => chosen.push(name);
+  game.warn = () => {};
+  assert.deepEqual(pathTo(game, npc), []);
+  assert.equal(game.interact(), true);
+  assert.deepEqual(chosen, ["shop"]);
+});

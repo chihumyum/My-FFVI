@@ -166,6 +166,7 @@ export async function buildPlayBattle({
             : null,
         dataA: row.data_a,
         dataB: row.data_b,
+        dataC: row.data_c,
       };
     }),
   );
@@ -375,6 +376,19 @@ export async function buildPlayBattle({
     sprites,
     growth: rows("growth_curve"),
     expTable: rows("exp_table"),
+    encounters: {
+      maps: dictionary(rows("map").map((row) => ({ id: row.id,
+        set: row.monster_set_id, grid: row.encount_area_grid_id,
+        min: row.required_steps_min, max: row.required_steps_max,
+        subtract: row.subtract_steps }))),
+      sets: dictionary(rows("monster_set").map((row) => ({ id: row.id,
+        choices: Array.from({ length: 16 }, (_, n) => ({
+          id: row[`monster_set${n + 1}`], weight: row[`monster_set${n + 1}_rate`],
+        })) }))),
+      grids: byId("encount_area_grid"),
+      areas: Object.fromEntries(rows("encount_area").map((row) => [row.encount_area_grid_number,
+        Array.from({ length: 32 }, (_, n) => row[`foot${String(n + 1).padStart(2, "0")}_monster_set`])])),
+    },
     warnings: [
       "PR MonsterAI programs execute directly; uncertain selector and timing details warn with script and instruction index.",
       "Enemy actions, reactions, timers and final actions are selected by PR AI; unimplemented ability effects warn and use Fight.",

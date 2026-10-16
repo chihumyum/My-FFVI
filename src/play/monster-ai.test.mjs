@@ -171,7 +171,7 @@ test("a monster does not counter its own self-targeted Nothing action", () => {
   assert.equal(battle.aiQueue.length, 0);
 });
 
-test("using a battle item notifies PR item-sensitive AI", () => {
+test("item-sensitive AI receives its own item hit and does not observe an ally's healing item", () => {
   const { battle } = fixture(
     [
       op("SyncAI"),
@@ -193,6 +193,12 @@ test("using a battle item notifies PR item-sensitive AI", () => {
   battle.players[0].hp = 500;
   battle.players[0].ready = true;
   assert.equal(battle.useItem(0, 2, 0), true);
+  assert.equal(battle.enemies[0].aiState.mode, 0);
+  battle.notifyAction({ actor: battle.players[0], target: battle.enemies[0], hit: true,
+    item: { itemId: 2, contentId: 1 } });
+  assert.equal(battle.enemies[0].aiState.mode, 0);
+  battle.notifyAction({ actor: battle.players[0], target: battle.enemies[0], hit: true,
+    item: { itemId: 1, contentId: 2 } });
   assert.equal(battle.enemies[0].aiState.mode, 1);
 });
 

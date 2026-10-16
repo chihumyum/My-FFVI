@@ -109,12 +109,16 @@ export class Battle {
     character,
     event = () => {},
     eventCallbacks = {},
+    isVeldt = false,
+    context = {},
   }) {
     this.data = data;
     this.banks = banks;
     this.character = character || ((id) => ({ ...data.characters?.[id], id }));
     this.event = event;
     this.eventCallbacks = eventCallbacks;
+    this.context = context;
+    this.isVeldt = Boolean(isVeldt || context.isVeldt);
     this.aiQueue = [];
     this.ais = [];
     this.draining = false;
@@ -164,7 +168,11 @@ export class Battle {
     this.addLog(
       `遭遇：${this.enemies.map((unit) => unit.name).join("、") || "无敌人"}`,
     );
-    this.events = new BattleEvents(this);
+    const veldtEvent = this.isVeldt
+      ? (context.worldOfRuin ?? Number(banks.ScenarioFlag2?.[44] ?? 0) === 1)
+        ? "sc_b_0738" : "sc_b_0239"
+      : null;
+    this.events = new BattleEvents(this, context.eventProgram ?? veldtEvent);
     for (const enemy of this.enemies) this.setupAI(enemy);
     this.events.tick(0);
     this.drainAI();
@@ -233,6 +241,7 @@ export class Battle {
     if (old) {
       old.removed = false;
       old.hidden = false;
+      old.escaped = false;
       return old;
     }
     const unit = this.character(id);
@@ -242,6 +251,8 @@ export class Battle {
       "player",
       this.players.length,
     );
+    unit.removed = false;
+    unit.escaped = false;
     this.players.push(unit);
     return unit;
   }
@@ -299,9 +310,11 @@ export class Battle {
   }
   supported(ability) {
     if (!ability) return false;
+    if (ability.process === "ADD_VARIABLE_CALC" &&
+        ((ability.dataB ?? 0) !== 0 || ability.dataC === undefined)) return false;
     if (ability.functions && !ability.functions.length) return false;
     if (
-      !["None", "multiply", "SM_ERASER", "BATTLE_FORCE"].includes(
+      !["None", "multiply", "SM_ERASER", "BATTLE_FORCE", "ADD_VARIABLE_CALC"].includes(
         ability.process || "None",
       )
     )
@@ -311,6 +324,7 @@ export class Battle {
     ).every(
       (f) =>
         [0, 1, 2, 3, 11, 15, 16, 23, 38, 52].includes(f.id) ||
+        (f.id === 19 && ability.process === "ADD_VARIABLE_CALC") ||
         (f.id === 9 &&
           ((f.values?.[0] || 0) >= 60 ||
             [5, 12, 17, 26].includes(f.values?.[0]))),
@@ -469,6 +483,7 @@ export class Battle {
       7: "万能药",
       8: "全体万能药",
       9: "凤凰之尾",
+      23: "干肉",
     };
     return Object.entries(this.inventory).flatMap(([contentId, count]) => {
       const content = this.data.contents?.[contentId];
@@ -487,7 +502,11 @@ export class Battle {
           itemId: item.id,
           name: names[item.id] ?? `道具 ${item.id}`,
           kind: "item",
-          target: "ally",
+          // PR range7 permits either side. Food defaults to the hungry Gau
+          // when he is present; an explicit side can still select a player.
+          target: item.id === 23 && this.enemies.some(enemy =>
+            [549, 550].includes(enemy.monsterId) && this.targetable(enemy)) ? "enemy" : "ally",
+          targetSides: item.battle_renge_id === 7 ? ["player", "enemy"] : ["player"],
           mp: 0,
           count,
           revive: item.battle_function_group_id === 2,
@@ -514,14 +533,21 @@ export class Battle {
       actor.stopUntil > this.elapsed
     )
       return false;
-    const target = this.players[targetIndex];
-    if (!target || (command.revive ? target.hp > 0 : target.hp <= 0))
+    const requestedSide = typeof targetIndex === "object" && targetIndex !== null
+      ? targetIndex.side : command.target === "enemy" ? "enemy" : "player";
+    const side = requestedSide === 2 || requestedSide === "enemy" ? "enemy" : "player";
+    if (!command.targetSides.includes(side)) return false;
+    const pool = side === "enemy" ? this.enemies : this.players;
+    const index = typeof targetIndex === "object" && targetIndex !== null ? targetIndex.index : targetIndex;
+    const target = pool[index];
+    if (!target || target.removed || target.escaped || target.hidden ||
+      (command.revive ? target.hp > 0 : target.hp <= 0))
       return false;
     const item = this.data.items[command.itemId],
       group = item.battle_function_group_id;
     const targets = command.all
-      ? this.players.filter((unit) =>
-          command.revive ? unit.hp <= 0 : unit.hp > 0,
+      ? pool.filter((unit) =>
+          !unit.removed && !unit.escaped && !unit.hidden && (command.revive ? unit.hp <= 0 : unit.hp > 0),
         )
       : [target];
     this.inventory[contentId] -= 1;
@@ -747,6 +773,17 @@ export class Battle {
       damage =
         (ability.functions || []).some((f) => [1, 2, 3].includes(f.id)) ||
         !ability.functions;
+    if (ability.process === "ADD_VARIABLE_CALC") {
+      const variable = Math.max(0, ability.dataA ?? 0), vars = actor.aiState?.vars;
+      if (vars) {
+        const operand = ability.dataC;
+        if (operand === undefined) this.warning(`Ability ${ability.id} lacks PR dataC; variable update skipped.`);
+        else if ((ability.dataB ?? 0) === 0) vars[variable] = ((vars[variable] ?? 0) + operand) | 0;
+        else this.warning(`Ability ${ability.id} ADD_VARIABLE_CALC operation ${ability.dataB} is unknown; variable update skipped.`);
+        this.warning("ADD_VARIABLE_CALC operation0 adds PR dataC to the acting monster's variable dataA; other operations are deferred.");
+      }
+      damage = false;
+    }
     if (ability.process === "SM_ERASER") {
       target.hp = 0;
       target.ready = false;
@@ -882,8 +919,9 @@ export class Battle {
       drops: [],
     };
     if (outcome === "victory") {
-      for (const enemy of this.enemies) {
-        this.result.exp += enemy.exp ?? 0;
+      const rewardEnemies = [...(this.events?.state.veldtDefeated ?? []), ...this.enemies];
+      for (const enemy of rewardEnemies) {
+        if (!this.isVeldt) this.result.exp += enemy.exp ?? 0;
         this.result.gil += enemy.gil ?? 0;
         if (enemy.drops?.length && this.random() * 100 < (enemy.dropRate ?? 0))
           this.result.drops.push({

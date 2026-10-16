@@ -140,15 +140,15 @@ export const storyChapters = [
     // Gau must receive an actual Dried Meat item in an ordinary Veldt battle.
     // The battle event reserves 0239; its source continuation recruits him.
     objective('befriend-gau', '在莫布里兹买干肉，在兽原遇到嘎时喂给他', [], flag(126), {
-      action: 'random-encounter', navigation: 'veldt', buy: { contentId: 26, count: 1 },
-      battleUse: { contentId: 26, target: 'gau' }, after: ['sc_e_0239_b'] }),
+      action: 'random-encounter', navigation: 'veldt', buy: { contentId: 24, count: 1 },
+      battleUse: { contentId: 24, target: 'gau' }, after: ['sc_e_0239_b'] }),
     objective('crescent-mountain', '随嘎前往新月山寻找宝物', [242], flag(129)),
     // The 0243..0245 search spots are optional gags. The actual helmet spot
     // 0246 is enabled directly; routing to the gags repeatedly cannot finish it.
     objective('diving-helmet', '在新月山找出嘎藏的潜水盔', [246], flag(133), {
       after: ['sc_e_0246_1'], navigation: 'helmet-search', party: { include: [12] } }),
     objective('nikeah-ferry', '穿过蛇道到尼凯亚，乘船返回纳尔谢', [248], flag(135), {
-      choices: [{ script: scene(248), index: 0 }], after: ['sc_e_0248_2'] }),
+      choices: [{ script: scene(248), index: 1 }], after: ['sc_e_0248_2'] }),
   ] },
   { id: 'M4', title: '纳尔谢防卫战与佐佐寻人', complete: flag(155), objectives: [
     objective('narshe-reunion', '三路会合，听取纳尔谢防卫计划', [249], flag(136)),

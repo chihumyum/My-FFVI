@@ -1,13 +1,15 @@
+import { isMapExit } from './navigation.js';
 export function pathTo(game,target){
- const start=[Math.round(game.player.x),Math.round(game.player.y),game.player.layer],cacheKey=`${game.mapId}:${target.id}:${target.x},${target.y},${target.layer}:${target.allowedDirections||''}:${[...game.groups]}:${game.history.length}`;
+ const start=[Math.round(game.player.x),Math.round(game.player.y),game.player.layer],cacheKey=`${game.mapId}:${target.id}:${target.x},${target.y},${target.layer}:${target.allowedDirections||''}:${!!target.approach}:${[...game.groups]}:${game.history.length}`;
  const cache=game.walkCache;if(cache?.key===cacheKey){const n=cache.cells.findIndex(cell=>cell.join(',')===start.join(','));if(n>=0)return cache.route.slice(n);}
- const isWarp=e=>{if(e.kind!==2||!e.script)return false;const ops=game.data.programs[game.resolve(e.script)]?.ops||[];return ops.some(o=>o[0]==='ChangeMap')&&!ops.some(o=>['Msg','Encount','EncountBoss'].includes(o[0]));};
+ const isWarp=e=>e.kind===2&&isMapExit(game,e);
  const actualEntities=game.entities.map(e=>({...e,...game.actors?.get(String(e.id))})).filter(e=>e.visible!==false);
  const blocked=new Set(actualEntities.filter(e=>(e.kind===3||isWarp(e))&&e.id!==target.id).map(e=>`${e.x},${e.y},${e.layer}`)),changes=new Map(actualEntities.filter(e=>e.kind===4).map(e=>[`${e.x},${e.y},${e.layer}`,e.destinationLayer]));
- if([5,6,8].includes(target.kind))blocked.add(`${target.x},${target.y},${target.layer}`);
+ const approach=target.approach||[5,6,8].includes(target.kind);
+ if(approach)blocked.add(`${target.x},${target.y},${target.layer}`);
  const q=[start],seen=new Set([start.join(',')]),parent=new Map();let found;
  for(let n=0;n<q.length&&n<100000;n++){
-  const [x,y,layer]=q[n],direction=target.y>y?'down':target.y<y?'up':target.x>x?'right':'left';if((!target.layer||layer===target.layer)&&([5,6,8].includes(target.kind)?Math.abs(x-target.x)+Math.abs(y-target.y)===1&&(!target.allowedDirections||target.allowedDirections.includes(direction)):Math.abs(x-target.x)<.6&&Math.abs(y-target.y)<.6)){found=q[n];break;}
+  const [x,y,layer]=q[n],direction=target.y>y?'down':target.y<y?'up':target.x>x?'right':'left';if((!target.layer||layer===target.layer)&&(approach?(target.approach?Math.abs(x-target.x)+Math.abs(y-target.y)===1:game.interactionDistance(target,x,y,layer)>0)&&(!target.allowedDirections||target.allowedDirections.includes(direction)):Math.abs(x-target.x)<.6&&Math.abs(y-target.y)<.6)){found=q[n];break;}
   for(const[d,dx,dy]of[['up',0,-1],['right',1,0],['down',0,1],['left',-1,0]]){
    const nx=x+dx,ny=y+dy;if(!game.canMove(nx,ny,layer))continue;
    if(blocked.has(`${nx},${ny},${layer}`))continue;

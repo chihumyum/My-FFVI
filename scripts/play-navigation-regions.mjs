@@ -76,9 +76,18 @@ export function navigationRegions(map, entries, isWarp) {
       to = around({ ...e, layer: e.destinationLayer }, true);
     for (const a of from) for (const b of to) parents[root(a)] = root(b);
   }
-  const regions = (e, adjacent = false) => [
-    ...new Set(around(e, adjacent).map(root)),
-  ];
+  const regions = (e, adjacent = false) => {
+    const near = around(e, adjacent);
+    if ([5, 6, 8].includes(e.kind)) {
+      const grid = map.collisions?.[e.layer] || map.collisions?.[0];
+      for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]])
+        if (grid?.[key(e.x + dx, e.y + dy)] === 1) {
+          const far = labels.get(e.layer || 0)?.[key(e.x + 2 * dx, e.y + 2 * dy)];
+          if (far) near.push(far);
+        }
+    }
+    return [...new Set(near.map(root))];
+  };
   return {
     entrances: Object.fromEntries(
       map.entities

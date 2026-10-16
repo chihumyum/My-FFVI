@@ -1,5 +1,6 @@
 import { advanceM1, pathTo } from "./m1-route.js";
 import { routeToStory } from "./navigation.js";
+import { randomEncounterInput } from "./story-actions.js";
 import {
   nextStoryObjective,
   storyChapters,
@@ -25,7 +26,9 @@ export function followTarget(game, input) {
         : dy > 0
           ? "down"
           : "up";
-    game.confirm();
+    if (input.target.approach && ![5, 6, 8].includes(input.target.kind))
+      game.move(game.player.direction);
+    else game.confirm();
   }
   return { ...input, status: "interact" };
 }
@@ -59,7 +62,9 @@ export function advanceStory(game, { through = "all" } = {}) {
       objective: objective.id,
       chapter: objective.chapter,
     };
-  const input = findStoryTarget(game, objective);
+  const input = objective.action === "random-encounter"
+    ? randomEncounterInput(game, objective, pathTo)
+    : findStoryTarget(game, objective);
   return {
     ...followTarget(game, input),
     objective: objective.id,
