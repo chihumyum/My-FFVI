@@ -1,15 +1,19 @@
 export function pathTo(game,target){
- const start=[Math.round(game.player.x),Math.round(game.player.y),game.player.layer],q=[start],seen=new Set([start.join(',')]),parent=new Map();let found;
+ const start=[Math.round(game.player.x),Math.round(game.player.y),game.player.layer],cacheKey=`${game.mapId}:${target.id}:${target.x},${target.y},${target.layer}:${[...game.groups]}:${game.history.length}`;
+ const cache=game.walkCache;if(cache?.key===cacheKey){const n=cache.cells.findIndex(cell=>cell.join(',')===start.join(','));if(n>=0)return cache.route.slice(n);}
+ const isWarp=e=>{if(e.kind!==2||!e.script)return false;const ops=game.data.programs[game.resolve(e.script)]?.ops||[];return ops.some(o=>o[0]==='ChangeMap')&&!ops.some(o=>['Msg','Encount','EncountBoss'].includes(o[0]));};
+ const blocked=new Set(game.entities.filter(e=>(e.kind===3||isWarp(e))&&e.id!==target.id).map(e=>`${e.x},${e.y},${e.layer}`)),changes=new Map(game.entities.filter(e=>e.kind===4).map(e=>[`${e.x},${e.y},${e.layer}`,e.destinationLayer]));
+ const q=[start],seen=new Set([start.join(',')]),parent=new Map();let found;
  for(let n=0;n<q.length&&n<100000;n++){
   const [x,y,layer]=q[n];if((!target.layer||layer===target.layer)&&([5,6,8].includes(target.kind)?Math.abs(x-target.x)+Math.abs(y-target.y)<=1:Math.abs(x-target.x)<.6&&Math.abs(y-target.y)<.6)){found=q[n];break;}
   for(const[d,dx,dy]of[['up',0,-1],['right',1,0],['down',0,1],['left',-1,0]]){
    const nx=x+dx,ny=y+dy;if(!game.canMove(nx,ny,layer))continue;
-   if(game.entities.some(e=>e.kind===3&&e.layer===layer&&e.x===nx&&e.y===ny&&e.id!==target.id))continue;
-   const change=game.entities.find(e=>e.kind===4&&e.layer===layer&&e.x===nx&&e.y===ny),nl=change?.destinationLayer||layer,key=[nx,ny,nl].join(',');if(seen.has(key))continue;
+   if(blocked.has(`${nx},${ny},${layer}`))continue;
+   const nl=changes.get(`${nx},${ny},${layer}`)||layer,key=[nx,ny,nl].join(',');if(seen.has(key))continue;
    seen.add(key);parent.set(key,{from:q[n],dir:d});q.push([nx,ny,nl]);
   }
  }
- if(!found)return null;const route=[];while(found.join(',')!==start.join(',')){const p=parent.get(found.join(','));if(!p)return null;route.push(p.dir);found=p.from;}return route.reverse();
+ if(!found)return null;const route=[],cells=[found];while(found.join(',')!==start.join(',')){const p=parent.get(found.join(','));if(!p)return null;route.push(p.dir);found=p.from;cells.push(found);}route.reverse();cells.reverse();game.walkCache={key:cacheKey,route,cells};return route;
 }
 
 

@@ -17,4 +17,4 @@ Goal: port FF6 Pixel Remaster to the Web, playable from a normal new game to the
 - Don't run multiple parallel sub-agents in "integration waves". Two genuinely independent pieces (e.g. battle formulas and map instructions) may run in parallel and merge directly when done.
 
 ## Reporting
-Stop when a milestone is done and wait for the user to confirm. Report: how far it plays, new guessed implementations, known bugs, time spent. No percentages.
+Self-accept each milestone using the normal-new-game automated playthrough and browser checks, then continue toward the ending without waiting for user confirmation. Report: how far it plays, new guessed implementations, known bugs, time spent. No percentages. Use the separate boosted-party test mode for story testing; never mistake it for battle-balance acceptance.

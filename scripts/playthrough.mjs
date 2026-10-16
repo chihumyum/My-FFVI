@@ -1,14 +1,15 @@
-import{readFile,writeFile}from'node:fs/promises';import{PlayGame}from'../src/play/game.js';import{Battle}from'../src/play/battle.js';import{preparePlayMap}from'./build-play.mjs';import{advanceM1}from'../src/play/m1-route.js';
+import{readFile,writeFile}from'node:fs/promises';import{PlayGame}from'../src/play/game.js';import{Battle}from'../src/play/battle.js';import{preparePlayMap}from'./build-play.mjs';import{advanceStory}from'../src/play/story-route.js';import{buildNavigation}from'./build-play-navigation.mjs';
 const data=JSON.parse(await readFile('build/play/data.json')),battleData=JSON.parse(await readFile('build/play/battle.json'));let last='';const events=[];
+data.navigation=JSON.parse(await readFile(await buildNavigation()));const through=process.env.PLAY_THROUGH||'all';
 const game=new PlayGame({data,battleData,Battle,testBoost:process.env.PLAY_TEST_BOOST!=='0',random:()=>.35,loadMap:async id=>JSON.parse(await readFile(await preparePlayMap(id))),onEvent:e=>{if(['script','map','battle','battle-end'].includes(e.kind)){events.push(e);if(e.kind==='script'&&last!==e.script){console.log(`${Math.floor(e.time)}s map${e.mapId} ${e.script} ${e.scene}`);last=e.script;}}}});
 await game.start();let idle=0,stop='time-budget',targetKey='';
 for(let tick=0;tick<Number(process.env.TICKS||90000);tick++){
  game.tick(.1,{auto:true});if(game.loading)await game.pending;
- if(game.mapId===1&&!game.busy&&(!game.fade||game.time-game.fade.start>game.fade.duration)){stop='M1-world-map';break;}
- const input=advanceM1(game);
+ const input=advanceStory(game,{through});if(input.status==='done'){stop=through+'-complete';break;}
  if(input.target){const key=`${game.mapId}:${input.target.id}`;if(key!==targetKey){console.log('walk',game.mapId,input.target.script||input.target.destination,input.target.x,input.target.y);targetKey=key;}}
- if(['no-route','no-input','interact','game-over'].includes(input.status)){if(++idle>20){stop=input.status;break;}}else idle=0;
+ if(['no-route','no-input','interact','game-over','inactive-target','needs-input','plan-end','no-navigation'].includes(input.status)){if(++idle>20){stop=input.status;console.log('stopped input',JSON.stringify(input));break;}}else idle=0;
 
 }
-const result={mode:game.testBoost?'story-test':'normal',stop,furthest:game.furthest,mapId:game.mapId,player:game.player,lastInstruction:game.lastInstruction,time:game.time,history:game.history,battles:game.battles,partySlots:game.partySlots,party:game.party,warnings:game.warnings,tasks:game.tasks.map(t=>({script:data.programs[t.program].name,index:t.pc,waitFor:t.waitFor,wait:t.wait})),groups:[...game.groups],events};
+const battleDebug=game.battle?{phase:game.battle.phase,players:game.battle.players.map(u=>({id:u.id,hp:u.hp,hidden:u.hidden,removed:u.removed,atb:u.atb})),enemies:game.battle.enemies.map(u=>({id:u.id,hp:u.hp,hidden:u.hidden,removed:u.removed,atb:u.atb,pc:u.aiState?.pc,running:u.aiState?.running,pending:u.aiState?.pending.length,mode:u.aiState?.mode,vars:u.aiState?.vars})),events:{script:game.battle.events?.program?.name,pc:game.battle.events?.pc,locals:game.battle.events?.locals,done:game.battle.events?.done,endEnabled:game.battle.events?.endEnabled},queue:game.battle.aiQueue.length,log:game.battle.log.slice(-8)}:null;
+const result={battleDebug,mode:game.testBoost?'story-test':'normal',stop,furthest:game.furthest,mapId:game.mapId,player:game.player,lastInstruction:game.lastInstruction,time:game.time,history:game.history,battles:game.battles,partySlots:game.partySlots,party:game.party,banks:game.banks,warnings:game.warnings,tasks:game.tasks.map(t=>({script:data.programs[t.program].name,index:t.pc,waitFor:t.waitFor,wait:t.wait})),groups:[...game.groups],events};
 await writeFile('build/play/playthrough.json',JSON.stringify(result,null,2));console.log(JSON.stringify({mode:result.mode,stop,mapId:game.mapId,furthest:game.furthest,battles:game.battles.map(b=>[b.encounterId,b.outcome]),time:game.time,position:[game.player.x,game.player.y],tasks:result.tasks},null,2));

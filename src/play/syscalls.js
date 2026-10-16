@@ -1,3 +1,5 @@
+import { executeEventSystem, updateSyscallSystems, configureSyscallTimer, finishSyscallTimer } from './event-systems.js';
+export { updateSyscallSystems, configureSyscallTimer, finishSyscallTimer };
 // PR SysCall labels carry the selector; their eight numeric operands are normally zero.
 // These are source character IDs, including temporary characters, rather than party indices.
 export const characterSelectors = Object.freeze({
@@ -19,6 +21,8 @@ const deployments = {
 const suffix = name => name.split(/[：:]/).slice(1).join('：');
 const bank = (game, name) => (game.banks[name] ??= {});
 const pose = actor => ({ x: actor.x, y: actor.y, layer: actor.layer, direction: actor.direction });
+const activeRoster = game => Object.values(game.roster).filter(unit => unit.enabled === true ||
+  game.partySlots.some(slot => slot.includes(unit.id)));
 function warnOnce(game, task, message) {
   game.syscallWarnings ??= new Set();
   if (game.syscallWarnings.has(message)) return;
@@ -73,6 +77,24 @@ function remove(game, id, reserve) {
   for (let index = 0; index < game.partySlots.length; index++)
     game.partySlots[index] = game.partySlots[index].filter(member => member !== id);
 }
+function formParties(game, count, preferred = []) {
+  const available = [...new Set([...preferred, ...game.partySlots.flat(), ...activeRoster(game).filter(unit => unit.id < 15).map(unit => unit.id)])]
+    .filter(id => game.roster[id]?.enabled !== false && id > 0);
+  const slots = [[], [], []], used = new Set();
+  // Keep each existing leader when possible, then fill each active group to four.
+  for (let index = 0; index < count; index++) {
+    const leader = preferred[index] ?? game.partySlots[index]?.find(id => available.includes(id) && !used.has(id))
+      ?? available.find(id => !used.has(id));
+    if (leader) { slots[index].push(leader); used.add(leader); }
+  }
+  for (const id of available) if (!used.has(id)) {
+    const target = slots.slice(0, count).find(slot => slot.length < 4);
+    if (target) { target.push(id); used.add(id); }
+  }
+  game.partySlots = slots;
+  game.partyIndex = Math.min(game.partyIndex, count - 1);
+  for (const unit of activeRoster(game)) unit.reserve = !used.has(unit.id);
+}
 function selectParty(game, slot) {
   game.partyPositions ??= [];
   game.partyPositions[game.partyIndex] = { ...pose(game.player), mapId: game.mapId };
@@ -86,6 +108,7 @@ function selectParty(game, slot) {
 
 export function executeSyscall(game, task, name, i = [], r = []) {
   const subject = suffix(name), id = characterSelectors[subject];
+  if (executeEventSystem(game, task, name, i, r, { characterSelectors, names, warn: message => warnOnce(game, task, message) })) return true;
   if (/^(メンバー加入|メンバー離脱|控えに移動)[：:]/.test(name)) {
     const joining = name.startsWith('メンバー加入');
     if (subject === 'モーグリたち') {
@@ -107,6 +130,7 @@ export function executeSyscall(game, task, name, i = [], r = []) {
   }
   if (/^名前入力[：:]/.test(name) && id) {
     const unit = game.unit(id);
+    unit.enabled ??= game.partySlots.some(slot => slot.includes(id));
     // PR restores Terra's original job before the first naming screen.
     if (id === 1) { unit.jobId = 1; unit.magitek = false; }
     unit.name = /^角色\s*\d+$/.test(unit.name) || unit.name === '？？？？？？' ? names[id] ?? unit.name : unit.name;
@@ -132,19 +156,40 @@ export function executeSyscall(game, task, name, i = [], r = []) {
     const vehicle = vehicles[subject.replace(/\(.*$/, '')];
     if (!vehicle) return false;
     game.player.vehicle = vehicle;
+    const systems = bank(game, 'PlaySystems');
+    systems.vehicles ??= {};
+    systems.vehicles[vehicle] = { ...pose(game.player), mapId: game.mapId };
+    systems.currentVehicle = vehicle;
+    const parameters = game.data.systemTables?.transportation?.find(row => Number(row.id) === vehicle);
+    if (parameters?.bgm_id > 0) game.event('bgm', { id: Number(parameters.bgm_id) });
     if (vehicle === 6) for (const member of game.party) member.magitek = true;
     game.event('vehicle', { id: vehicle });
     return true;
   }
   if (/^乗り物から降りる/.test(name)) {
+    const systems = bank(game, 'PlaySystems');
+    if (game.player.vehicle) {
+      systems.vehicles ??= {};
+      systems.vehicles[game.player.vehicle] = { ...pose(game.player), mapId: game.mapId };
+    }
+    systems.currentVehicle = 1;
     if (game.player.vehicle === 6) for (const member of game.party) member.magitek = false;
     game.player.vehicle = null;
     game.event('vehicle', { id: 1 });
     return true;
   }
   if (name === '戦闘結果取得') {
-    const outcome = game.battles.at(-1)?.outcome;
-    task.locals[0] = outcome === 'defeat' ? 2 : outcome === 'escape' ? 1 : 0;
+    const result = game.battles.at(-1);
+    task.locals[0] = result?.code ?? (result?.outcome === 'defeat' ? 2 : result?.outcome === 'escape' ? 1 : 0);
+    return true;
+  }
+  if (name === 'バトルデータ復元：sc_b_0055') {
+    for (const saved of bank(game, 'PlaySystems').battle0055 ?? []) {
+      const unit = game.unit(saved.id);
+      unit.hp = saved.hp; unit.mp = saved.mp; unit.conditions = [...saved.conditions];
+      unit.removed = false; unit.hidden = false; unit.escaped = false; unit.untargetable = false;
+    }
+    delete bank(game, 'PlaySystems').battle0055;
     return true;
   }
   if (name === '戦闘不能キャラを全て蘇生' || name === '全滅してたら蘇生') {
@@ -177,12 +222,7 @@ export function executeSyscall(game, task, name, i = [], r = []) {
   }
   if (/^パーティ編成[：:]/.test(name)) {
     const count = /３|3|ラスト/.test(subject) ? 3 : /２|2/.test(subject) ? 2 : 1;
-    const enabled = Object.values(game.roster).filter(unit => unit.enabled !== false && unit.id < 15);
-    const used = new Set(game.partySlots.slice(0, count).flat());
-    for (const unit of enabled) if (!used.has(unit.id)) {
-      const target = game.partySlots.slice(0, count).find(slot => slot.length < 4);
-      if (target) { target.push(unit.id); used.add(unit.id); }
-    }
+    formParties(game, count, subject.includes('オペラ') ? [7] : []);
     bank(game, 'ScenarioVariable')[5] = count;
     task.locals[0] = 1;
     refreshLeader(game);
@@ -212,14 +252,66 @@ export function executeSyscall(game, task, name, i = [], r = []) {
   if (name === 'RTS：操作パーティ切替' || name === 'RTS：操作パーティ切替（後）') {
     const variables = bank(game, 'ScenarioVariable');
     const count = Math.max(1, Math.min(3, variables[5] || game.partySlots.filter(slot => slot.length).length));
-    const next = (game.partyIndex + 1) % count;
+    const systems = bank(game, 'PlaySystems');
+    const next = systems.pendingPartySwitch ?? (game.partyIndex + 1) % count;
+    const destination = variables[11 + next];
     variables[11 + game.partyIndex] = game.mapId;
+    if (name === 'RTS：操作パーティ切替' && destination && destination !== game.mapId && game.enter) {
+      game.partyPositions ??= [];
+      game.partyPositions[game.partyIndex] = { ...pose(game.player), mapId: game.mapId };
+      systems.pendingPartySwitch = next;
+      task.done = true;
+      game.pending = game.enter(destination, 1, 'sc_sht_corps_after');
+      return true;
+    }
     selectParty(game, next);
     variables[4] = next;
+    delete systems.pendingPartySwitch;
     return true;
   }
   if (name === 'RTS：マップスクリプト実行') {
     if (game.map?.initializer && game.startScript) game.startScript(game.map.initializer, { background: true, init: true });
+    return true;
+  }
+  if (name.startsWith('夢のダンジョン：')) {
+    if (subject === '分離') {
+      const original = [...game.partySlots[game.partyIndex]];
+      bank(game, 'PlaySystems').dreamParty = original;
+      const split = original.slice(0, 2);
+      game.partySlots[game.partyIndex] = original.slice(2);
+      game.partySlots[1] = split[0] ? [split[0]] : [];
+      game.partySlots[2] = split[1] ? [split[1]] : [];
+      if (!game.partySlots[game.partyIndex].length && split.length) {
+        game.partySlots[game.partyIndex] = [split.pop()]; game.partySlots[2] = [];
+      }
+    } else {
+      const source = subject.startsWith('１') ? 1 : 2;
+      for (const memberId of game.partySlots[source]) if (!game.partySlots[game.partyIndex].includes(memberId) && game.partySlots[game.partyIndex].length < 4)
+        game.partySlots[game.partyIndex].push(memberId);
+      game.partySlots[source] = [];
+    }
+    refreshLeader(game);
+    return true;
+  }
+  if (name.startsWith('パペット入れ替え：')) {
+    const systems = bank(game, 'PlaySystems');
+    if (subject === '解除') {
+      if (systems.puppetBackup) for (const [selector, saved] of systems.puppetBackup)
+        Object.assign(game.actor(selector), saved);
+      delete systems.puppetBackup;
+    } else {
+      systems.puppetBackup ??= [-1001, -1002, -1003, -1004].map(selector => {
+        const actor = game.actor(selector); return [selector, { asset: actor.asset, characterId: actor.characterId }];
+      });
+      const slot = subject.includes('３') ? 2 : subject.includes('２') ? 1 : game.partyIndex;
+      const members = game.partySlots[slot] ?? [];
+      members.forEach((memberId, index) => {
+        const actor = game.actor(-1001 - index);
+        actor.characterId = memberId;
+        actor.asset = game.data.fieldAssets?.[memberId]?.asset_name ?? actor.asset;
+      });
+      warnOnce(game, task, 'Puppet substitutions update source character appearances; advanced NPC bindings are deferred.');
+    }
     return true;
   }
   if (name === 'RTS：他パーティと会話') {

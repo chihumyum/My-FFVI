@@ -9,7 +9,7 @@ export async function preparePlayMap(id,{force=false}={}){
  const out=resolve(root,`build/play/maps/${id}.json`);
  if(!force){try{await access(out);return out;}catch{}}
  const src=await read(`build/world/maps/${id}.json`);
- const value=clean({id:Number(id),name:src.name,initializer:src.initializer,...src.map});value.id=Number(id);
+ const map=src.map||{width:64,height:64,tileSize:16,layers:[],tilesets:[],textures:{},collisions:{},entities:[],groups:{}};const value=clean({id:Number(id),name:src.name,areaId:src.areaId,initializer:src.initializer,...map});value.id=Number(id);
  await mkdir(resolve(root,'build/play/maps'),{recursive:true});await writeFile(out,JSON.stringify(value));return out;
 }
 export async function buildPlay(mapIds=[609,3]){
@@ -24,7 +24,8 @@ export async function buildPlay(mapIds=[609,3]){
  const speakers=text.story_cha_zhc.values;
  const characters=clean(media.characters||world.characters);
  for(const char of Object.values(characters))for(const sprite of Object.values(char.sprites||{}))if(sprite.file){sprite.file=sprite.file.startsWith('/')?sprite.file.replace('/world-media/','/source-media/'):'/source-media/'+sprite.file;}
- const data={entry:{mapId:609,entrance:1,script:'sc_e_0001'},programs,byMap,global,messages,speakers,characters,
+ const systemTables=Object.fromEntries(['product','content','function_group','character_status','job','learning','transportation','product_group'].map(name=>[name.replace(/_([a-z])/g,(_,c)=>c.toUpperCase()),tables[name+'.csv']||[]]));
+ const data={systemTables,entry:{mapId:609,entrance:1,script:'sc_e_0001'},programs,byMap,global,messages,speakers,characters,
   maps:Object.fromEntries(Object.entries(world.maps).map(([id,m])=>[id,{name:m.name}])),
   audio:clean({bgm:world.bgm,se:world.se,environment:world.environment}),
   init:tables['initialize_data.csv'],scriptIds:Object.fromEntries(tables['script.csv'].map(r=>[r.id,r.script_name])),

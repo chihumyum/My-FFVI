@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { executeInstruction } from './instructions.js';
+import { executeSyscall } from './syscalls.js';
 
 const game = () => ({
   player: { x: 14.5, y: 15.5, layer: 0, direction: 'down' }, camera: {},
@@ -38,4 +39,21 @@ test('member count and direction branches use the PR comparison and direction ta
   assert.equal(t.pc, 12);
   executeInstruction(g, t, 'BranchByPlayerDirection', [6, 8, 6, 3]);
   assert.equal(t.pc, 6);
+});
+
+test('field battle handoff preserves scripted return codes and restores Vargas party data', () => {
+  const g = game(), task = { locals: [] };
+  Object.assign(g.roster[1], { hp: 0, mp: 0, conditions: [5], removed: true, hidden: true });
+  g.banks = { PlaySystems: { battle0055: [{ id: 1, hp: 73, mp: 12, conditions: [] }] } };
+  g.battles = [{ outcome: 'victory', code: 4 }];
+  g.unit = id => g.roster[id];
+  executeSyscall(g, task, '戦闘結果取得');
+  assert.equal(task.locals[0], 4);
+  executeSyscall(g, task, 'バトルデータ復元：sc_b_0055');
+  assert.equal(g.roster[1].hp, 73);
+  assert.equal(g.roster[1].mp, 12);
+  assert.deepEqual(g.roster[1].conditions, []);
+  assert.equal(g.roster[1].removed, false);
+  assert.equal(g.roster[1].hidden, false);
+  assert.equal(g.banks.PlaySystems.battle0055, undefined);
 });

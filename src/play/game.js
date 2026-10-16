@@ -1,5 +1,5 @@
 import {executeInstruction} from './instructions.js';
-import {executeSyscall} from './syscalls.js';
+import {executeSyscall,updateSyscallSystems,configureSyscallTimer,finishSyscallTimer} from './syscalls.js';
 const dirs=['up','right','down','left'], delta=[[0,-1],[1,0],[0,1],[-1,0]];
 const presentation=new Set(['ColorFade','Shake','Flash','ScreenEffect','BackdropColor','Orient','Water','ChangeView','ChangeMapRenderArea','PlayBattleEffect','SyncBattleEffect','BattleAnim','BattleSyncAction','BattleCondition','SetVolume','PauseBGM','ReadyBGM','LoadSE','StopSE','SyncSE','SyncBGM','PitchEnvSe','PauseEnvSe','SetAnimOnlyJockey','ResetAnimOnlyJockey']);
 export class PlayGame{
@@ -22,7 +22,7 @@ export class PlayGame{
  async start(){await this.enter(this.data.entry.mapId,this.data.entry.entrance,this.data.entry.script);return this;}
  async enter(mapId,entrance=1,continuation=''){
   this.loading=true;this.tasks=[];this.dialogue=null;
-  try{this.map=await this.loadMap(mapId);this.mapId=+mapId;this.visited.push(+mapId);this.groups=new Set(['entity_default']);this.actors=new Map();this.banks.MapLocalVariable={};
+  try{this.map=await this.loadMap(mapId);this.mapId=+mapId;if(this.areaId!==this.map.areaId){this.banks.AreaLocalVariable={};this.areaId=this.map.areaId;}this.visited.push(+mapId);this.groups=new Set(['entity_default']);this.actors=new Map();this.banks.MapLocalVariable={};
    const point=this.map.entities.find(e=>e.kind===0&&e.objectId===entrance)||this.map.entities.find(e=>e.kind===0)||{x:1,y:1,layer:0,direction:'down'};
    Object.assign(this.player,{x:point.x,y:point.y,layer:point.layer,direction:point.direction||'down',motion:null,visible:true});Object.assign(this.camera,{x:point.x,y:point.y,manual:false,motion:null});
    this.triggered=new Set();this.refreshActors();const init=this.startScript(this.map.initializer,{init:true});this.afterInit=continuation;this.loading=false;if(!continuation)this.fade={from:1,to:0,start:this.time,duration:.25};this.event('map',{name:this.map.name,entrance});
@@ -52,7 +52,7 @@ export class PlayGame{
  text(key){return (this.data.messages[key]??key??'').replace(/\\n/g,'\n').replace(/\((TINA|LOCK|ROCK|EDGAR|MASH|CELES|MOG)\)/g,(_,n)=>this.unit({TINA:1,LOCK:2,ROCK:2,EDGAR:5,MASH:6,CELES:7,MOG:11}[n]).name).replace(/<C(\d+)>/g,(_,id)=>this.unit(+id).name).replace(/<P>/g,'\n').replace(/<[^>]*>/g,'');}
  confirm(choice=0){if(this.dialogue){const d=this.dialogue;this.dialogue=null;if(d.task){d.task.waitFor=null;d.task.locals[0]=choice;d.task.result=choice;(this.banks.MessageSelection??={})[0]=choice;}this.event('confirm',{key:d.key,choice});return true;}if(this.battle)return false;return this.interact();}
  tick(dt=1/60,{auto=false}={}){
-  if(this.loading||this.over)return;this.time+=dt;
+  if(this.loading||this.over)return;this.time+=dt;updateSyscallSystems(this,dt);
   for(const a of [this.player,this.camera,...this.actors.values()])if(a.motion){const m=a.motion;m.elapsed+=dt;const p=Math.min(1,m.elapsed/m.duration);a.x=m.x+(m.tx-m.x)*p;a.y=m.y+(m.ty-m.y)*p;if(p===1)a.motion=null;}
   if(this.battle){this.battle.tick(dt,auto);return;}
   if(auto&&this.dialogue){this.dialogue.elapsed+=dt;if(this.dialogue.elapsed>.15)this.confirm();}else if(this.dialogue?.auto){this.dialogue.elapsed+=dt;if(this.dialogue.elapsed>this.dialogue.duration)this.confirm();}
@@ -124,7 +124,7 @@ export class PlayGame{
    case 'TreasureBox':this.inventory[i[0]]=(this.inventory[i[0]]||0)+1;this.warn(t,'TreasureBox reward uses provisional item operand');return;
    case 'GoToTitle':this.event('title-screen');return;
    case 'OpenSaveWindow':this.event('save-menu');return;
-   case 'SetTimer':this.timer=this.time+(r[0]||i[0]);return;case 'FinishTimer':this.timer=null;return;
+   case 'SetTimer':configureSyscallTimer(this,t,i,r,s);return;case 'FinishTimer':finishSyscallTimer(this);return;
    default:if(presentation.has(name))return;this.warn(t,`${name}: provisional skip`);return;
   }
  }
@@ -132,7 +132,7 @@ export class PlayGame{
  syscall(t,name,i,r){
   if(executeSyscall(this,t,name,i,r))return;
   if(/データ初期化|DataInitialize/.test(name))return;
-  if(/戦闘結果取得/.test(name)){t.locals[0]=this.battles.at(-1)?.outcome==='victory'?0:1;return;}
+  if(/戦闘結果取得/.test(name)){const result=this.battles.at(-1);t.locals[0]=result?.code??(result?.outcome==='victory'?0:result?.outcome==='escape'?1:2);return;}
   if(/カメラ.*(追従|プレイヤー)|Camera.*(Reset|Follow)/i.test(name)){this.camera.manual=false;return;}
   if(/名前.*(入力|変更)|ネーム|NameChange/i.test(name)){this.event('name',{id:i[0]||this.party[0]?.id});return;}
   if(/パーティ|コープス|Corps|Party/i.test(name)){this.warn(t,`SysCall ${name}: provisional party selection`);t.locals[0]=1;return;}
@@ -140,7 +140,7 @@ export class PlayGame{
   if(/復活|回復|Recovery/.test(name)){for(const u of this.party){u.hp=u.maxHp;u.mp=u.maxMp;}return;}
   this.warn(t,`SysCall ${name}: skipped`);
  }
- encounter(id,continuation,t){if(!this.Battle){this.warn(t,`Battle ${id}: implementation pending`);return;}t.waitFor='battle';this.battle=new this.Battle({data:this.battleData,party:this.party,encounterId:id,random:this.random,inventory:this.inventory,warn:msg=>this.warn(t,String(msg)),onEnd:result=>{this.battles.push({encounterId:id,...result});this.gil+=result.gil||0;for(const drop of result.drops||[])this.inventory[drop.id]=(this.inventory[drop.id]||0)+(drop.count||1);this.battle=null;t.waitFor=null;if(continuation){t.done=true;this.startScript(continuation);}this.event('battle-end',{encounterId:id,...result});}});this.event('battle',{encounterId:id});}
+ encounter(id,continuation,t){if(!this.Battle){this.warn(t,`Battle ${id}: implementation pending`);return;}t.waitFor='battle';this.battle=new this.Battle({data:this.battleData,party:this.party,encounterId:id,random:this.random,inventory:this.inventory,banks:this.banks,character:id=>this.unit(id),event:(kind,payload)=>this.event(kind,payload),warn:msg=>this.warn(t,String(msg)),onEnd:result=>{this.battles.push({encounterId:id,...result});this.gil+=result.gil||0;for(const drop of result.drops||[])this.inventory[drop.id]=(this.inventory[drop.id]||0)+(drop.count||1);this.battle=null;t.waitFor=null;if(continuation){t.done=true;this.startScript(continuation);}this.event('battle-end',{encounterId:id,...result});}});this.event('battle',{encounterId:id});}
  tickNpc(dt){
   if(!this.rts?.active)return;
   this.npcClock=(this.npcClock||0)+dt;if(this.npcClock<.65)return;this.npcClock=0;
