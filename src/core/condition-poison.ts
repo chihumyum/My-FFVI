@@ -11,6 +11,9 @@ export type PoisonState = {
   conditionId: number;
   elapsedSeconds: number;
   thresholdSeconds: number;
+  /** Actual condition-function field; Start/Remove writers own changes.
+   * It is not recomputed from another condition's presence each update. */
+  isTimeStop: boolean;
 }[];
 export type PoisonTick = {
   conditionId: number;
@@ -78,7 +81,8 @@ function validateState(
       !clock ||
       typeof clock !== "object" ||
       Array.isArray(clock) ||
-      Object.keys(clock).length !== 3 ||
+      Object.keys(clock).length !== 4 ||
+      typeof clock.isTimeStop !== "boolean" ||
       !all.has(clock.conditionId) ||
       result.has(clock.conditionId) ||
       !Number.isFinite(clock.elapsedSeconds) ||
@@ -111,8 +115,20 @@ export function reconcilePoisonClocks(
     const clock = previous.get(conditionId);
     return clock
       ? { ...clock }
-      : { conditionId, elapsedSeconds: 0, thresholdSeconds };
+      : { conditionId, elapsedSeconds: 0, thresholdSeconds, isTimeStop: false };
   });
+}
+
+/** Stop.SetDamageStop 51f760 enumerates this unit's then-current function
+ * instances. Reconciliation of a new instance always precedes this write. */
+export function writePoisonTimeStop(
+  behaviors: readonly PoisonDefinition[], conditionIds: readonly number[],
+  state: Readonly<PoisonState>, stopped: boolean,
+): PoisonState {
+  const all = definitions(behaviors), active = activeIds(all, conditionIds), clocks = validateState(all, state);
+  if (typeof stopped !== "boolean" || clocks.size !== active.length || active.some(id => !clocks.has(id)))
+    throw new Error("Poison time-stop requires actual reconciled function instances");
+  return active.map(id => ({ ...clocks.get(id)!, isTimeStop: stopped }));
 }
 
 /** GeneratePoisonDamage 0x92c8d0 + GetRateValue 0x45b140. Affinity uses
@@ -184,7 +200,7 @@ export function advancePoisonClocks(
   let hp = input.hp;
   const state = active.map((conditionId) => {
     const current = clocks.get(conditionId)!;
-    if (input.isTimeStopped) return { ...current };
+    if (input.isTimeStopped || current.isTimeStop) return { ...current };
     const elapsedSeconds = Math.fround(
       current.elapsedSeconds + Math.fround(input.seconds),
     );
@@ -207,6 +223,7 @@ export function advancePoisonClocks(
       conditionId,
       elapsedSeconds: 0,
       thresholdSeconds: nextThreshold,
+      isTimeStop: current.isTimeStop,
     };
   });
   return { hp, state, ticks };

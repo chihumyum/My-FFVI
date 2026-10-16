@@ -1,3 +1,4 @@
+import {createBattleGauMediaHost} from "/runtime/core/battle-gau-instances.js";
 import {WEB_FLAT_WORLD_AUTO_MOVE} from '/runtime/core/field-world-auto-move.js';
 import { WEB_BATTLE_BRANCH_EXECUTION } from '/runtime/core/battle-branch-execution.js';
 import { WEB_SCRIPTED_BATTLE_ACTIONS } from "/runtime/core/scripted-battle-action.js";
@@ -103,6 +104,7 @@ let contents = new GameContentRepository(readGameJson, contentProfile);
 // Same declared Web policy as the source-route audit; no native default claim.
 const runtime = {
     battleEventConditions: "web-source-battle-condition-lists-v1",
+  battleGauInstances:createBattleGauMediaHost(sprite=>{const image=images.get(sprite.file);return image?{complete:image.complete,width:image.naturalWidth,height:image.naturalHeight}:null;}),
   battleBranchExecution:WEB_BATTLE_BRANCH_EXECUTION,
   scriptedBattleActions: WEB_SCRIPTED_BATTLE_ACTIONS,
   scriptRandom: WEB_SOURCE_SCRIPT_RANDOM,

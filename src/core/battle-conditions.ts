@@ -23,6 +23,7 @@ import {
 import {
   advancePoisonClocks,
   reconcilePoisonClocks,
+  writePoisonTimeStop,
   type PoisonAdvanceInput,
   type PoisonState,
 } from "./condition-poison.js";
@@ -118,7 +119,7 @@ export class BattleConditions {
     if (this.behaviors.size !== catalog.behaviors.length)
       throw new Error("Duplicate battle condition behavior");
     for (const b of this.behaviors.values()) {
-      if ("resistanceProvider" in b && !["levitate", "physical-protection", "magic-protection", "haste", "slow", "blind", "poison", "sleep", "confusion", "temptation", "doom"].includes(b.kind))
+      if ("resistanceProvider" in b && !["levitate", "physical-protection", "magic-protection", "haste", "slow", "blind", "poison", "sleep", "confusion", "temptation", "doom", "stop"].includes(b.kind))
         throw new Error("Unsupported condition resistance provider behavior");
       if (b.kind === "levitate") {
         validateLevitateBehavior(b);
@@ -128,7 +129,7 @@ export class BattleConditions {
       }
       if (b.kind === "haste" || b.kind === "slow") validateSpeedBehavior(b);
       if (b.kind === "blind") validateBlindBehavior(b);
-      if (b.kind === "sleep" || b.kind === "confusion" || b.kind === "temptation" || b.kind === "doom")
+      if (b.kind === "sleep" || b.kind === "confusion" || b.kind === "temptation" || b.kind === "doom" || b.kind === "stop")
         validateControlBehavior(b);
       if (b.resistanceProvider !== undefined) {
         const provider = b.resistanceProvider;
@@ -154,7 +155,7 @@ export class BattleConditions {
           : b.kind === "haste" || b.kind === "slow"
           ? b.untilType === 2 && this.definitions.get(b.id)?.overlapped === false &&
             this.definitions.get(b.id)?.type === (b.kind === "haste" ? hasteConditionType : slowConditionType)
-          : b.kind === "sleep" || b.kind === "confusion" || b.kind === "temptation" || b.kind === "doom"
+          : b.kind === "sleep" || b.kind === "confusion" || b.kind === "temptation" || b.kind === "doom" || b.kind === "stop"
           ? this.definitions.get(b.id)?.overlapped === false &&
             this.definitions.get(b.id)?.type === controlConditionTypes[b.kind]
           : b.untilType === 3 &&
@@ -322,7 +323,7 @@ export class BattleConditions {
     const result: ControlConditionBehavior[] = [];
     for (const id of ids) {
       const behavior = this.behaviors.get(id)!;
-      if (behavior.kind === "sleep" || behavior.kind === "confusion" || behavior.kind === "temptation" || behavior.kind === "doom") {
+      if (behavior.kind === "sleep" || behavior.kind === "confusion" || behavior.kind === "temptation" || behavior.kind === "doom" || behavior.kind === "stop") {
         if (result.some(current => current.id === id)) throw new Error("Duplicate active control condition");
         result.push(structuredClone(behavior));
       }
@@ -385,6 +386,11 @@ export class BattleConditions {
     if (new Set(result).size !== result.length)
       throw new Error("Duplicate active poison condition");
     return result;
+  }
+  writePoisonTimeStop(conditionIds: readonly number[], state: Readonly<PoisonState>, stopped: boolean): PoisonState {
+    this.validateActive(conditionIds);
+    return writePoisonTimeStop([...this.behaviors.values()].filter((b): b is Extract<BattleConditionCatalog["behaviors"][number], { kind: "poison" }> =>
+      b.kind === "poison"), conditionIds, state, stopped);
   }
   reconcilePoisonState(
     conditionIds: readonly number[],

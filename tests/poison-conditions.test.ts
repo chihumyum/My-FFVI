@@ -37,7 +37,7 @@ const catalog: BattleConditionCatalog = {
 };
 const conditions = () => new BattleConditions(catalog);
 const initial = (): PoisonState => [
-  { conditionId: 510, elapsedSeconds: 0, thresholdSeconds: 8 },
+  { conditionId: 510, elapsedSeconds: 0, thresholdSeconds: 8, isTimeStop: false },
 ];
 function update(patch: Partial<PoisonAdvanceInput> = {}) {
   return conditions().advancePoison({
@@ -63,7 +63,7 @@ test("poison starts at half-cycle and repeats fixed damage on full cycles", () =
   const first = update({ state: before.state, seconds: 1 });
   assert.equal(first.hp, 150);
   assert.deepEqual(first.state, [
-    { conditionId: 510, elapsedSeconds: 0, thresholdSeconds: 16 },
+    { conditionId: 510, elapsedSeconds: 0, thresholdSeconds: 16, isTimeStop: false },
   ]);
   const second = update({ state: first.state, hp: first.hp, seconds: 16 });
   assert.equal(second.hp, 140);
@@ -89,7 +89,7 @@ test("clock reconciliation preserves progress and cure followed by re-add starts
     () => assert.fail("Fixed poison must not draw RNG"),
   );
   assert.deepEqual(engine.reconcilePoisonState(added.currentIds, [], 2), [
-    { conditionId: 510, elapsedSeconds: 0, thresholdSeconds: 4 },
+    { conditionId: 510, elapsedSeconds: 0, thresholdSeconds: 4, isTimeStop: false },
   ]);
   assert.equal(
     engine.add(

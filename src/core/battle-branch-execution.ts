@@ -1,3 +1,4 @@
+import {WEB_BATTLE_GAU_INSTANCES,type WebBattleGauInstances} from "./battle-gau-instances.js";
 import { checkpointKeys, checkpointRecord } from './checkpoint-validation.js';
 import { int32 } from './script-integer.js';
 export const WEB_BATTLE_BRANCH_EXECUTION = 'web-source-battle-branch-execution-v1' as const;
@@ -31,10 +32,11 @@ export type BattleDeferredInstructionCategory='unimplemented-instruction'|'unimp
 /** Classification uses complete original encoding and implemented semantics.
  * Diagnostic wording is deliberately irrelevant. A valid opaque SysCall does
  * not grant its lifecycle: execution still throws its original blocked reason. */
-export function classifyDeferredBattleInstruction(raw:BattleSourceInstruction):BattleDeferredInstructionCategory|null {
+export function classifyDeferredBattleInstruction(raw:BattleSourceInstruction,gauPolicy?:WebBattleGauInstances):BattleDeferredInstructionCategory|null {
+ if(gauPolicy!==undefined&&gauPolicy!==WEB_BATTLE_GAU_INSTANCES)throw new Error('Unknown source Gau decoding policy');
  const {iValues:i,rValues:r,sValues:s}=raw.operands;
  if(raw.type!==1||i.length!==8||r.length!==8||s.length!==8)return null;
  if(!KNOWN_BATTLE_EVENT_MNEMONICS.has(raw.mnemonic))return 'unimplemented-instruction';
- if(raw.mnemonic==='SysCall'&&i.every(v=>v===0)&&r.every(v=>v===0)&&s[0]!==''&&s.slice(1).every(v=>v==='')&&!knownCalls.has(s[0]!))return 'unimplemented-selector';
+ if(raw.mnemonic==='SysCall'&&i.every(v=>v===0)&&r.every(v=>v===0)&&s[0]!==''&&s.slice(1).every(v=>v==='')&&!knownCalls.has(s[0]!)&&!(gauPolicy&&['敵パーティをガウに','ガウ登場アニメ','バトル加入：ガウ'].includes(s[0]!)))return 'unimplemented-selector';
  return null;
 }

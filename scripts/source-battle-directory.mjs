@@ -12,7 +12,7 @@ async function modules(root,compiledDir){
     'compiler/source-battle-requests','compiler/battle','compiler/game-catalog','compiler/system-source',
     'compiler/battle-source-format-import','compiler/battle-encounters','compiler/battle-encounter-runtime','compiler/battle-handoff','compiler/source-battle-participant-closure',
     'compiler/battle-batch-entry','compiler/content-batch-battle','compiler/integrity','compiler/content',
-    'core/battle-spawn-conditions','core/battle-forced-save','core/content-integrity','core/source-catalog','core/battle-rewards','core/battle-handoff-content',
+    'core/battle-gau-instances','core/battle-spawn-conditions','core/battle-forced-save','core/content-integrity','core/source-catalog','core/battle-rewards','core/battle-handoff-content',
   ].map(load)));
 }
 function fields(value,keys,label){
@@ -24,19 +24,20 @@ function fields(value,keys,label){
 }
 function parsePolicy(raw,api){
   fields(raw,'kind,framework','source battle directory policy');
-  assert.ok(['source-battle-directory-policy-v1','source-battle-directory-policy-v2','source-battle-directory-policy-v3','source-battle-directory-policy-v4','source-battle-directory-policy-v5','source-battle-directory-policy-v6','source-battle-directory-policy-v7'].includes(raw.kind),'Unknown source battle directory policy version');
-  fields(raw.framework,raw.kind==='source-battle-directory-policy-v7'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution,sourceParticipants,forcedSavePolicy,spawnConditionPolicy':raw.kind==='source-battle-directory-policy-v6'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution,sourceParticipants,forcedSavePolicy':raw.kind==='source-battle-directory-policy-v5'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution,sourceParticipants':raw.kind==='source-battle-directory-policy-v4'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution':raw.kind==='source-battle-directory-policy-v3'?'handoff,entry,conditionControlPolicy,manualControls':raw.kind==='source-battle-directory-policy-v2'?'handoff,entry,conditionControlPolicy':'handoff,entry','framework battle directory policy');
-  const current=['source-battle-directory-policy-v3','source-battle-directory-policy-v4','source-battle-directory-policy-v5','source-battle-directory-policy-v6','source-battle-directory-policy-v7'].includes(raw.kind),manualControls=current?raw.framework.manualControls:undefined;
-  const spawnConditionPolicy=raw.kind==='source-battle-directory-policy-v7'?api.parseWebEnemySpawnConditions(raw.framework.spawnConditionPolicy):undefined;
-  const forcedSavePolicy=['source-battle-directory-policy-v6','source-battle-directory-policy-v7'].includes(raw.kind)?api.parseWebBattleForcedSave(raw.framework.forcedSavePolicy):undefined;
-  const sourceParticipants=['source-battle-directory-policy-v5','source-battle-directory-policy-v6','source-battle-directory-policy-v7'].includes(raw.kind)?api.parseSourceBattleParticipantPolicy(raw.framework.sourceParticipants):undefined;
-  const branchExecution=['source-battle-directory-policy-v4','source-battle-directory-policy-v5','source-battle-directory-policy-v6','source-battle-directory-policy-v7'].includes(raw.kind)?raw.framework.branchExecution:undefined;
-  if(['source-battle-directory-policy-v4','source-battle-directory-policy-v5','source-battle-directory-policy-v6','source-battle-directory-policy-v7'].includes(raw.kind))assert.equal(branchExecution,'web-source-battle-branch-execution-v1','Missing or unknown source battle branch policy');
+  assert.ok(['source-battle-directory-policy-v1','source-battle-directory-policy-v2','source-battle-directory-policy-v3','source-battle-directory-policy-v4','source-battle-directory-policy-v5','source-battle-directory-policy-v6','source-battle-directory-policy-v7','source-battle-directory-policy-v8'].includes(raw.kind),'Unknown source battle directory policy version');
+  fields(raw.framework,raw.kind==='source-battle-directory-policy-v8'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution,sourceParticipants,forcedSavePolicy,spawnConditionPolicy,gauInstances':raw.kind==='source-battle-directory-policy-v7'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution,sourceParticipants,forcedSavePolicy,spawnConditionPolicy':raw.kind==='source-battle-directory-policy-v6'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution,sourceParticipants,forcedSavePolicy':raw.kind==='source-battle-directory-policy-v5'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution,sourceParticipants':raw.kind==='source-battle-directory-policy-v4'?'handoff,entry,conditionControlPolicy,manualControls,branchExecution':raw.kind==='source-battle-directory-policy-v3'?'handoff,entry,conditionControlPolicy,manualControls':raw.kind==='source-battle-directory-policy-v2'?'handoff,entry,conditionControlPolicy':'handoff,entry','framework battle directory policy');
+  const current=['source-battle-directory-policy-v3','source-battle-directory-policy-v4','source-battle-directory-policy-v5','source-battle-directory-policy-v6','source-battle-directory-policy-v7','source-battle-directory-policy-v8'].includes(raw.kind),manualControls=current?raw.framework.manualControls:undefined;
+  const gauInstances=raw.kind==='source-battle-directory-policy-v8'?api.parseWebBattleGauInstances(raw.framework.gauInstances):undefined;
+  const spawnConditionPolicy=['source-battle-directory-policy-v7','source-battle-directory-policy-v8'].includes(raw.kind)?api.parseWebEnemySpawnConditions(raw.framework.spawnConditionPolicy):undefined;
+  const forcedSavePolicy=['source-battle-directory-policy-v6','source-battle-directory-policy-v7','source-battle-directory-policy-v8'].includes(raw.kind)?api.parseWebBattleForcedSave(raw.framework.forcedSavePolicy):undefined;
+  const sourceParticipants=['source-battle-directory-policy-v5','source-battle-directory-policy-v6','source-battle-directory-policy-v7','source-battle-directory-policy-v8'].includes(raw.kind)?api.parseSourceBattleParticipantPolicy(raw.framework.sourceParticipants):undefined;
+  const branchExecution=['source-battle-directory-policy-v4','source-battle-directory-policy-v5','source-battle-directory-policy-v6','source-battle-directory-policy-v7','source-battle-directory-policy-v8'].includes(raw.kind)?raw.framework.branchExecution:undefined;
+  if(['source-battle-directory-policy-v4','source-battle-directory-policy-v5','source-battle-directory-policy-v6','source-battle-directory-policy-v7','source-battle-directory-policy-v8'].includes(raw.kind))assert.equal(branchExecution,'web-source-battle-branch-execution-v1','Missing or unknown source battle branch policy');
   if(current)assert.equal(manualControls,'web-manual-battle-controls-v1','Missing or unknown manual controls policy');
   const conditionControlPolicy=raw.kind!=='source-battle-directory-policy-v1'?parseConditionControlPolicy(raw.framework.conditionControlPolicy):undefined;
   return {kind:raw.kind,framework:{handoff:api.parseBattleHandoffPolicy(raw.framework.handoff),
     entry:raw.framework.entry===null?null:api.parseBattleBatchEntryPolicy(raw.framework.entry),
-    ...(conditionControlPolicy?{conditionControlPolicy}:{}),...(manualControls===undefined?{}:{manualControls}),...(branchExecution===undefined?{}:{branchExecution}),...(sourceParticipants?{sourceParticipants}:{}),...(forcedSavePolicy?{forcedSavePolicy}:{}),...(spawnConditionPolicy?{spawnConditionPolicy}:{})}};
+    ...(conditionControlPolicy?{conditionControlPolicy}:{}),...(manualControls===undefined?{}:{manualControls}),...(branchExecution===undefined?{}:{branchExecution}),...(sourceParticipants?{sourceParticipants}:{}),...(forcedSavePolicy?{forcedSavePolicy}:{}),...(spawnConditionPolicy?{spawnConditionPolicy}:{}),...(gauInstances?{gauInstances}:{})}};
 }
 function parseConditionControlPolicy(raw){
   fields(raw,'kind','Web condition control policy');
@@ -206,9 +207,12 @@ export async function compileSourceBattleDirectory({root=repository,compiledDir=
   assert.equal(api.canonical(oldCommon),api.canonical(newCommon),'Strict directory changed shared source capabilities');
   const sourceFormatImport=declared.framework.branchExecution ? api.createBattleSourceFormatImportResolver(corpus) : undefined;
   const participantClosure=declared.framework.sourceParticipants?api.compileSourceBattleParticipantClosure(reader,{policy:declared.framework.sourceParticipants,
-    encounters:descriptors.encounters,sources:descriptorSources,eventMessages:shared.runtimeInput.eventMessages,branchExecution:declared.framework.branchExecution,...(sourceFormatImport?{sourceFormatImport}:{})}):null;
+    encounters:descriptors.encounters,sources:descriptorSources,eventMessages:shared.runtimeInput.eventMessages,branchExecution:declared.framework.branchExecution,...(sourceFormatImport?{sourceFormatImport}:{}),...(declared.framework.gauInstances?{gauInstancePolicy:declared.framework.gauInstances}:{})}):null;
+  const gauSource=declared.framework.gauInstances?await api.compileSharedBattleSource(root,{gauInstances:declared.framework.gauInstances}):null;
   const runtime=api.compileBattleEncounterRuntime(shared.reader,{...runtimeInput,...(sourceFormatImport?{sourceFormatImport}:{}),
+    ...(gauSource?{gauInstanceContent:gauSource.gauInstances.catalog}:{}),
     ...(participantClosure?{reserveEnemies:participantClosure.reserveEnemies,enemyParties:participantClosure.enemyParties,sourceDiagnostics:[...runtimeInput.sourceDiagnostics,...participantClosure.diagnostics]}:{}),
+    ...(declared.framework.gauInstances?{gauInstancePolicy:declared.framework.gauInstances}:{}),
     ...(declared.framework.spawnConditionPolicy?{spawnConditionPolicy:declared.framework.spawnConditionPolicy}:{}),
     ...(declared.framework.forcedSavePolicy?{forcedSavePolicy:declared.framework.forcedSavePolicy}:{}),
     ...(declared.framework.branchExecution===undefined?{}:{branchExecution:declared.framework.branchExecution}),
@@ -232,7 +236,7 @@ export async function compileSourceBattleDirectory({root=repository,compiledDir=
   };
   const reportBody={kind:'source-battle-directory-build-v1',sourceSetHash:corpus.sourceSetHash,
     parentSourceSetHash:source.parentSourceSetHash,battleSourceSetHash:exported.sourceSetHash,policy:declared,
-    policyChanges:composed.policyChanges,...(participantClosure?{sourceParticipantClosure:participantClosure.report}:{}),baselineHash:base.contentHash,requestsHash:requests.contentHash,strictCatalogHash:strictCatalog.contentHash,frameworkCatalogHash:frameworkCatalog.contentHash,
+    ...(gauSource?{sourceGauFactory:structuredClone(gauSource.gauInstances)}:{}),policyChanges:composed.policyChanges,...(participantClosure?{sourceParticipantClosure:participantClosure.report}:{}),baselineHash:base.contentHash,requestsHash:requests.contentHash,strictCatalogHash:strictCatalog.contentHash,frameworkCatalogHash:frameworkCatalog.contentHash,
     requestedPartyIds,sourceDescriptors:{compiled:descriptors.encounters.length,blocked:descriptors.diagnostics.length,diagnostics:descriptors.diagnostics},
     strict:{...strictCatalog.encounterReport,analysis:analyze(strictCatalog)},framework:{...composed.runtime.report,analysis:analyze(frameworkCatalog)},
     entryDependencies:{scripts:groups('scriptId',encounter=>encounter.script).map(entry=>{

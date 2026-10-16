@@ -1,3 +1,4 @@
+import type { CatalogNameResolver } from "./source-catalog-name.js";
 import {parseWebEnemySpawnConditions,type WebEnemySpawnConditions} from '../core/battle-spawn-conditions.js';
 import { BattleConditions, type BattleConditionCatalog } from "../core/battle-conditions.js";
 import { battleAITargetBlocker } from "../core/battle-ai-targets.js";
@@ -33,7 +34,7 @@ export type EnemyBattleDefinitionInput = {
   abilities: Readonly<Record<string, AbilityDefinition>>;
   conditions: BattleConditionCatalog;
   sprites: Readonly<Record<string, { file: string; width: number; height: number }>>;
-  name(key: string): string;
+  name: CatalogNameResolver;
   parameters: { temporary: ParameterValues; limits: ParameterLimits };
   physical: { temporary: PhysicalParameters; limits: PhysicalLimits };
   formationPlan: BattleFormationPlan | null;
@@ -167,10 +168,14 @@ export function compileEnemyBattleDefinition(reader: Reader, input: EnemyBattleD
         }
       }
     }
+    const label = input.name.sourceCatalogName?.(row.mes_id_name!) ?? { name: input.name(row.mes_id_name!) };
+    if (label.nameSource) add("runtime-dependency", "enemy-name-owner",
+      "Source name template requires the current held-name owner at instance entry",
+      { dependency: { table: "monster.csv", id: enemy.monsterId, field: "mes_id_name" } });
     return { source, diagnostics, definition: {
       ...(Object.hasOwn(row, "monster_flag_group_id")
         ? { conditionTraits: compileSourceEnemyConditionTraits(reader, enemy.monsterId).metadata } : {}),
-      sourceId: enemy.monsterId, name: input.name(row.mes_id_name!), side: "enemy", row: "front",
+      sourceId: enemy.monsterId, ...label, side: "enemy", row: "front",
       level: int(row.lv), attackElements: [],
       elementResistances: compileElementResistances(reader, int(row.resistance_attribute)).resistances,
       physical, ...parameters, exp: int(row.exp), gil: int(row.gill), growthGroup: null,

@@ -1,5 +1,7 @@
+import type { CatalogNameResolver } from "./source-catalog-name.js";
 import type { BattleSourceFormatImportResolver } from "./battle-source-format-import.js";
 import { battleEventConditionDependencies } from "./battle-event-condition.js";
+import {parseWebBattleGauInstances,gauSourceParties,type WebBattleGauInstances} from "../core/battle-gau-instances.js";
 import {parseWebEnemySpawnConditions,type WebEnemySpawnConditions} from '../core/battle-spawn-conditions.js';
 import { parseBattleEventProgram } from '../core/battle-event.js';
 import { WEB_BATTLE_BRANCH_EXECUTION, validateBattleBranchExecutionPolicy, type WebBattleBranchExecution } from '../core/battle-branch-execution.js';
@@ -46,6 +48,8 @@ type Reader = {
 };
 import {parseWebBattleForcedSave,type WebBattleForcedSave} from '../core/battle-forced-save.js';
 export type BattleEncounterRuntimeInput = {
+  gauInstancePolicy?:WebBattleGauInstances;
+  gauInstanceContent?:import("../core/battle-gau-instances.js").BattleGauInstanceContent;
   forcedSavePolicy?:WebBattleForcedSave;
   spawnConditionPolicy?:WebEnemySpawnConditions;
   /** Source field/story requests do not enter the separate native AR catalogs.
@@ -63,7 +67,7 @@ export type BattleEncounterRuntimeInput = {
   /** Trusted Format snapshot resolver; absent keeps the old strict compiler. */
   sourceFormatImport?:BattleSourceFormatImportResolver;
   sprites: Readonly<Record<string, { file: string; width: number; height: number }>>;
-  name(key: string): string;
+  name: CatalogNameResolver;
   eventMessages?: BattleEventMessageInput;
   parameters: { temporary: ParameterValues; limits: ParameterLimits };
   physical: { temporary: PhysicalParameters; limits: PhysicalLimits };
@@ -108,6 +112,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     throw new Error("Unimplemented source battle flag execution context");
   if(input.manualControls!==undefined&&input.manualControls!==WEB_MANUAL_BATTLE_CONTROLS)throw new Error('Unknown manual battle control policy');
   validateBattleBranchExecutionPolicy(input.branchExecution);
+  if(input.gauInstancePolicy!==undefined)parseWebBattleGauInstances(input.gauInstancePolicy);
   if(input.spawnConditionPolicy!==undefined)parseWebEnemySpawnConditions(input.spawnConditionPolicy);
   if(input.forcedSavePolicy!==undefined)parseWebBattleForcedSave(input.forcedSavePolicy);
   const requested = [...input.requestedPartyIds];
@@ -208,7 +213,7 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         const omission = input.development.scripts.find((s) => s.id === m.scriptId && same(s.source, encounter.script!.source));
         const issues: { reason: string; pc?: number }[] = [];
         try {
-          const program = compileBattleEvent(encounter.script!.data, encounter.script!.source, input.eventMessages, reader,input.branchExecution,input.sourceFormatImport?.(encounter.script!));
+          const program = compileBattleEvent(encounter.script!.data, encounter.script!.source, input.eventMessages, reader,input.branchExecution,input.sourceFormatImport?.(encounter.script!),input.gauInstancePolicy);
           let structurallyValid=true;
           if(input.branchExecution)try{parseBattleEventProgram(program);}catch(error){structurallyValid=false;issues.push({reason:message(error)});}
           const deferred=structurallyValid&&!program.blockers.length&&input.branchExecution===WEB_BATTLE_BRANCH_EXECUTION&&program.kind==='battle-event-v2'?program.branchExecution!.deferred:[];
@@ -421,6 +426,11 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
         if(input.forcedSavePolicy===undefined)add('blocked','forced-save-policy','BattleForceExitOnSave requires explicit complete Web saved-return policy',{pc,dependency:{table:'script.csv',id:encounter.metadata.scriptId}});
         else{forcedSavePolicy=parseWebBattleForcedSave(input.forcedSavePolicy);add('development-omission','forced-save-policy','Explicit Web saved return uses actual entered resources, admitted equipment/rows, all-owned recovery and existing retained loot; native fixed-preemptive/field-condition differences remain declared',{pc});}
       }
+      if(lifecycle?.mode==='script')for(const[pc,{op}]of lifecycle.program.instructions.entries())if(['gau-replace','gau-appearance','gau-join'].includes(op.kind)){
+        if(!input.gauInstancePolicy)add('blocked','gau-instance-policy','Source Gau instance operation requires its explicit Web content policy',{pc});
+        else{add('runtime-dependency','gau-instance-owner','Actual source-selected child instance/AI/media ticket and already held owned/Corps join are execution-time requirements; equipment/Quick/saved merge gates remain',{pc});
+          if(op.kind==='gau-replace')for(const id of gauSourceParties)if(!enemyParties[String(id)])add('blocked','gau-child-party-reference','Missing complete native-selected Gau child party '+id,{pc,dependency:{table:'monster_party.csv',id}});}
+      }
       const dynamicEntries = lifecycle?.mode === "script" ? lifecycle.program.instructions.flatMap(({ op }, pc) =>
         op.kind === "add-enemy" || op.kind === "change-enemy-party" ? [{ op, pc }] : []) : [];
       if (lifecycle?.mode === "script") for (const [pc, { op }] of lifecycle.program.instructions.entries()) {
@@ -494,7 +504,8 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
     if (!blocked && formationPlan && rewardPolicy && lifecycle && participants) encounters[partyId] = { encounterId: partyId, enemies,
       background: encounter.background, formationPlan, rewardPolicy, lifecycle, participants,
       ...(controls?{controls}:{}),...(forcedSavePolicy?{forcedSavePolicy}:{}),
-      ...(input.spawnConditionPolicy&&lifecycle.mode==='script'&&lifecycle.program.instructions.some(({op})=>op.kind==='add-enemy'||op.kind==='change-enemy-party')?{spawnConditionPolicy:structuredClone(input.spawnConditionPolicy)}:{}),
+      ...(input.gauInstancePolicy&&lifecycle.mode==='script'&&lifecycle.program.instructions.some(({op})=>['gau-replace','gau-appearance','gau-join'].includes(op.kind))?{gauInstancePolicy:input.gauInstancePolicy,...(input.gauInstanceContent?{gauInstances:input.gauInstanceContent}:{})}:{}),
+      ...(input.spawnConditionPolicy&&lifecycle.mode==='script'&&lifecycle.program.instructions.some(({op})=>op.kind==='add-enemy'||op.kind==='change-enemy-party'||op.kind==='gau-replace')?{spawnConditionPolicy:structuredClone(input.spawnConditionPolicy)}:{}),
       ...(sourceFlags?{sourceFlags}:{}),
       ...(escapePolicy ? { escapePolicy } : {}), ...(handoff ? { handoff } : {}),
       formation: formationPlan.kind === "development" ? null : formationPlan.pattern === 3 ? "opposed" : "normal" };

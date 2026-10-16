@@ -511,7 +511,7 @@ export class BattleView {
       const p = this.position(actor, battle, layout);
       let x = p.x,
         y = p.y;
-      if (a?.actor === actor.id && !rowAction && !deferredEffect)
+      if (a?.actor === actor.id && !battle.isStopped(actor.id) && !rowAction && !deferredEffect)
         x -= Math.sin(Math.min(1, a.elapsed / 900) * Math.PI) * 9;
       if (actor.hp === 0 && actor.side === "enemy") continue;
       c.save();

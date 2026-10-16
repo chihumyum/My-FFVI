@@ -1,3 +1,5 @@
+import {parseWebBattleGauInstances,type WebBattleGauInstances} from "../core/battle-gau-instances.js";
+import {compileBattleGauInstances} from "./battle-gau-instances.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { ImportedProject } from "../contracts.js";
@@ -241,8 +243,10 @@ export function battleTableIndex(
 }
 
 /** Shared source definitions; no checkpoint state or development omissions. */
-export async function compileSharedBattleSource(root: string) {
-  const { result } = await compileSourceData(root, false);
+export async function compileSharedBattleSource(root: string, options:{gauInstances?:WebBattleGauInstances}={}) {
+  if(Object.keys(options).some(key=>key!=="gauInstances"))throw new Error("Unknown shared Gau source compilation option");
+  if(options.gauInstances!==undefined)parseWebBattleGauInstances(options.gauInstances);
+  const { result } = await compileSourceData(root, false,options.gauInstances);
   return { ...result, contentHash: hash(result) };
 }
 
@@ -261,7 +265,7 @@ export async function compileOpeningBattle(root: string) {
 
 /** Keep selection, source closure and diagnostics identical in both paths.
  * Only the compatibility path requests the separate checkpoint proof. */
-async function compileSourceData(root: string, includeCheckpoint: boolean) {
+async function compileSourceData(root: string, includeCheckpoint: boolean,gauPolicy?:WebBattleGauInstances) {
   const base = await readSnapshot(root + "/build/import");
   const extra = await readSnapshot(root + "/build/battle");
   const project = ImportedProject.parse(
@@ -681,8 +685,14 @@ async function compileSourceData(root: string, includeCheckpoint: boolean) {
   if (typeof appearanceMisc.source.objectId !== "string") throw new Error("Missing battle appearance source object identity");
   const battleAppearance = compileBattleAppearance({ row, matching, unique }, {
     tables, misc: { source: { ...appearanceMisc.source, objectId: appearanceMisc.source.objectId }, data: appearanceMisc.data }, sprites: battle.sprites,
-    sourceIds: Object.values(ownedInitializations).map((value) => value.initial.sourceId),
+    sourceIds:Object.values(ownedInitializations).map(value=>value.initial.sourceId),
   });
+  let gauInstances:(ReturnType<typeof compileBattleGauInstances>&{appearance:ReturnType<typeof compileBattleAppearance>})|undefined;
+  if(gauPolicy){
+    const factoryAppearance=compileBattleAppearance({row,matching,unique},{tables,misc:{source:{...appearanceMisc.source,objectId:appearanceMisc.source.objectId},data:appearanceMisc.data},sprites:battle.sprites,
+      sourceIds:[...new Set((appearanceMisc.data as {animation_enemy_params:{character_status_id:number}[]}).animation_enemy_params.map(value=>value.character_status_id))]});
+    gauInstances={...compileBattleGauInstances({row},{misc:appearanceMisc,actors:factoryAppearance.actors,blockers:factoryAppearance.blockers}),appearance:factoryAppearance};
+  }
   const result = {
     formatVersion: 1 as const,
     kind: "battle-source-data" as const,
@@ -708,6 +718,7 @@ async function compileSourceData(root: string, includeCheckpoint: boolean) {
     transportations,
     entryProviders,
     battleAppearance,
+    ...(gauInstances?{gauInstances}:{}),
     shopBlockers: shops.blockers,
     magitekAbilityIds: magitek.map((a) => tableInteger(a.values.id)),
     battleAbilityIds: [...abilityIds].sort((a, b) => a - b),

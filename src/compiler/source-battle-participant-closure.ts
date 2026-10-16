@@ -1,4 +1,5 @@
 import type { BattleSourceFormatImportResolver } from "./battle-source-format-import.js";
+import {gauSourceParties,parseWebBattleGauInstances,type WebBattleGauInstances} from "../core/battle-gau-instances.js";
 import type {BattleRow} from './battle.js';
 import {tableInteger} from './table.js';
 import {compileBattleEvent} from './battle-event.js';
@@ -24,7 +25,8 @@ type Reader={row(table:string,id:string|number):BattleRow;group(table:string,key
 type Sources=Omit<BattleEncounterSourceInput,'partyIds'>;
 type EnemySource=NonNullable<BattleEncounterRuntimeInput['reserveEnemies']>[number]['enemy'];
 type ParticipantPolicy=NonNullable<BattleEncounterRuntimeInput['development']['participants']>[number];
-type Site={pc:number;raw:unknown;op:{kind:'add-enemy';monsterId:number;uniqueId:number}|{kind:'change-enemy-party';partyId:number;hidden:boolean}};
+type Site={pc:number;raw:unknown;op:{kind:'add-enemy';monsterId:number;uniqueId:number}|{kind:'change-enemy-party';partyId:number;hidden:boolean}|{kind:'gau-replace'}};
+const siteChildren=(site:Site)=>site.op.kind==='gau-replace'?[...gauSourceParties]:site.op.kind==='change-enemy-party'?[site.op.partyId]:[];
 const reason=(e:unknown)=>e instanceof Error?e.message:String(e);
 const positive=(n:number)=>Number.isInteger(n)&&n>0&&n<=0x7fffffff;
 function read(reader:Reader,table:string,id:number):BattleRow{
@@ -61,14 +63,15 @@ function sourceEnemy(reader:Reader,sources:Sources,id:number){
   return {enemy,monster,asset,aiRow};
 }
 export function compileSourceBattleParticipantClosure(reader:Reader,input:{policy:SourceBattleParticipantPolicy;encounters:readonly SourceBattleEncounter[];
-  sources:Sources;eventMessages?:BattleEventMessageInput;branchExecution?:WebBattleBranchExecution;sourceFormatImport?:BattleSourceFormatImportResolver}){
+  sources:Sources;eventMessages?:BattleEventMessageInput;branchExecution?:WebBattleBranchExecution;sourceFormatImport?:BattleSourceFormatImportResolver;gauInstancePolicy?:WebBattleGauInstances}){
+  if(input.gauInstancePolicy!==undefined)parseWebBattleGauInstances(input.gauInstancePolicy);
   const policy=parseSourceBattleParticipantPolicy(input.policy),reserveEnemies:NonNullable<BattleEncounterRuntimeInput['reserveEnemies']>[number][]=[],
     enemyParties:NonNullable<BattleEncounterRuntimeInput['enemyParties']>[number][]=[],participants:ParticipantPolicy[]=[],diagnostics:BattleEncounterDiagnostic[]=[],bindings:Record<string,unknown>[]=[];
   const cache=new Map<number,ReturnType<typeof sourceEnemy>>();
   for(const root of input.encounters){
     if(!root.script)continue;
-    const program=compileBattleEvent(root.script.data,root.script.source,input.eventMessages,reader,input.branchExecution,input.sourceFormatImport?.(root.script)),sites:Site[]=[];
-    for(const[pc,{op}]of program.instructions.entries())if(op.kind==='add-enemy'||op.kind==='change-enemy-party')
+    const program=compileBattleEvent(root.script.data,root.script.source,input.eventMessages,reader,input.branchExecution,input.sourceFormatImport?.(root.script),input.gauInstancePolicy),sites:Site[]=[];
+    for(const[pc,{op}]of program.instructions.entries())if(op.kind==='add-enemy'||op.kind==='change-enemy-party'||input.gauInstancePolicy&&op.kind==='gau-replace')
       sites.push({pc,op,raw:structuredClone((root.script.data as {Mnemonics:unknown[]}).Mnemonics[pc])});
     if(!sites.length)continue;
     const start=diagnostics.length,binding:Record<string,unknown>={partyId:root.partyId,source:root.source,programSource:root.script.source,
@@ -87,13 +90,13 @@ export function compileSourceBattleParticipantClosure(reader:Reader,input:{polic
         if(!initial.length)reserveEnemies.push({partyId:root.partyId,enemy:structuredClone(compiled.enemy)});
       }catch(e){block(e,site.pc,{table:'monster.csv',id});}
     }
-    const childIds=[...new Set(sites.flatMap(s=>s.op.kind==='change-enemy-party'?[s.op.partyId]:[]))];
+    const childIds=[...new Set(sites.flatMap(siteChildren))];
     if(childIds.length){
       for(const id of childIds)try{(binding.childSourceRows as BattleRow[]).push(read(reader,'monster_party.csv',id));}
-      catch(e){block(e,sites.find(s=>s.op.kind==='change-enemy-party'&&s.op.partyId===id)?.pc,{table:'monster_party.csv',id});}
+      catch(e){block(e,sites.find(s=>siteChildren(s).includes(id))?.pc,{table:'monster_party.csv',id});}
       const children=compileBattleEncounterSources(reader,{...input.sources,partyIds:childIds});
       for(const diagnostic of children.diagnostics)block('Source child '+diagnostic.partyId+': '+diagnostic.reason,
-        sites.find(s=>s.op.kind==='change-enemy-party'&&s.op.partyId===diagnostic.partyId)?.pc,diagnostic.dependency);
+        sites.find(s=>siteChildren(s).includes(diagnostic.partyId))?.pc,diagnostic.dependency);
       authored.enemyParties={};
       for(const child of children.encounters)try{
         const row=read(reader,'monster_party.csv',child.partyId),slots=sourceBattleParticipantSlots(row);
@@ -103,7 +106,7 @@ export function compileSourceBattleParticipantClosure(reader:Reader,input:{polic
     }
     participants.push(authored);binding.derivedPolicy=structuredClone(authored);binding.dataStatus=diagnostics.length===start?'source-data-bound-not-runtime-admitted':'blocked';
   }
-  return {reserveEnemies,enemyParties,participants,diagnostics,report:{kind:'source-battle-participant-closure-v1' as const,policy,
+  return {reserveEnemies,enemyParties,participants,diagnostics,report:{kind:input.gauInstancePolicy?'source-battle-participant-closure-v2':'source-battle-participant-closure-v1',policy,...(input.gauInstancePolicy?{gauInstancePolicy:input.gauInstancePolicy}:{}),
     bindings,sourceExecutions:0,ownedStateChanged:false,nativeLayoutParity:false,
     webDifference:'Declared nine source X/Y/group slots and all-entered reward history; existing Web atomic entry/retirement, no native GetPosUniqueAdjust or Unity asynchronous timing equivalence'}};
 }
@@ -111,18 +114,18 @@ export function compileSourceBattleParticipantClosure(reader:Reader,input:{polic
 /** Validate the producer's complete source-root proof before a consumer can
  * select its Web directory. Failed dependencies stay per-party hard gates. */
 export function validateSourceBattleParticipantProof(rawPolicy:unknown,rawClosure:unknown,input:{
-  encounters:Record<string,import('../core/battle-content.js').BattleEncounter>;diagnostics:readonly BattleEncounterDiagnostic[];entryScriptGroups:unknown;
+  gauInstancePolicy?:WebBattleGauInstances;encounters:Record<string,import('../core/battle-content.js').BattleEncounter>;diagnostics:readonly BattleEncounterDiagnostic[];entryScriptGroups:unknown;
 }):void{
-  const policy=parseSourceBattleParticipantPolicy(rawPolicy);checkpointKeys(rawClosure,'kind,policy,bindings,sourceExecutions,ownedStateChanged,nativeLayoutParity,webDifference');
-  const closure=rawClosure as {kind:string;policy:SourceBattleParticipantPolicy;bindings:Record<string,unknown>[];sourceExecutions:number;ownedStateChanged:boolean;nativeLayoutParity:boolean;webDifference:string};
-  if(closure.kind!=='source-battle-participant-closure-v1'||canonical(closure.policy)!==canonical(policy)||closure.sourceExecutions!==0||
+  const policy=parseSourceBattleParticipantPolicy(rawPolicy);if(input.gauInstancePolicy!==undefined)parseWebBattleGauInstances(input.gauInstancePolicy);checkpointKeys(rawClosure,'kind,policy,bindings,sourceExecutions,ownedStateChanged,nativeLayoutParity,webDifference'+(input.gauInstancePolicy?',gauInstancePolicy':''));
+  const closure=rawClosure as {kind:string;gauInstancePolicy?:WebBattleGauInstances;policy:SourceBattleParticipantPolicy;bindings:Record<string,unknown>[];sourceExecutions:number;ownedStateChanged:boolean;nativeLayoutParity:boolean;webDifference:string};
+  if(closure.kind!==(input.gauInstancePolicy?'source-battle-participant-closure-v2':'source-battle-participant-closure-v1')||closure.gauInstancePolicy!==input.gauInstancePolicy||canonical(closure.policy)!==canonical(policy)||closure.sourceExecutions!==0||
       closure.ownedStateChanged!==false||closure.nativeLayoutParity!==false||typeof closure.webDifference!=='string'||!closure.webDifference||!Array.isArray(closure.bindings)||!Array.isArray(input.entryScriptGroups))
     throw new Error('Invalid source dynamic participant proof');
   const expected=new Map<number,{raw:unknown;source:unknown}>();
   for(const value of input.entryScriptGroups){
     const group=value as {source?:{data:unknown;source:unknown};partyIds:number[]};if(!group.source)continue;
-    const p=compileBattleEvent(group.source.data,null);
-    if(!p.instructions.some(row=>row.op.kind==='add-enemy'||row.op.kind==='change-enemy-party'))continue;
+    const p=compileBattleEvent(group.source.data,null,undefined,undefined,undefined,undefined,input.gauInstancePolicy);
+    if(!p.instructions.some(row=>row.op.kind==='add-enemy'||row.op.kind==='change-enemy-party'||input.gauInstancePolicy&&row.op.kind==='gau-replace'))continue;
     if(!Array.isArray(group.partyIds))throw new Error('Missing dynamic source root party bindings');
     for(const id of group.partyIds){if(!positive(id)||expected.has(id))throw new Error('Ambiguous dynamic source root binding');expected.set(id,{raw:group.source.data,source:group.source.source});}
   }
@@ -140,7 +143,7 @@ export function validateSourceBattleParticipantProof(rawPolicy:unknown,rawClosur
     const row=binding.sourceRow as BattleRow,derived=binding.derivedPolicy as ParticipantPolicy;
     if(!row||tableInteger(row.values.id)!==id||row.source.rowId!==String(id)||canonical(binding.source)!==canonical(row.source)||derived.partyId!==id||derived.rewardScope!==policy.rewardScope||canonical(derived.slots)!==canonical(sourceBattleParticipantSlots(row)))
       throw new Error('Changed source dynamic participant nine-slot/reward proof');
-    const actualSites=compileBattleEvent(original.raw,null).instructions.flatMap(({op},pc)=>op.kind==='add-enemy'||op.kind==='change-enemy-party'?[{pc,op,raw:(original.raw as {Mnemonics:unknown[]}).Mnemonics[pc]}]:[]);
+    const actualSites:Site[]=compileBattleEvent(original.raw,null,undefined,undefined,undefined,undefined,input.gauInstancePolicy).instructions.flatMap(({op},pc)=>op.kind==='add-enemy'||op.kind==='change-enemy-party'||input.gauInstancePolicy&&op.kind==='gau-replace'?[{pc,op,raw:(original.raw as {Mnemonics:unknown[]}).Mnemonics[pc]}]:[]);
     if(canonical(actualSites)!==canonical(binding.sites))throw new Error('Changed source dynamic participant sites');
     if(!Array.isArray(binding.children)||!Array.isArray(binding.childSourceRows)||!Array.isArray(binding.templates))throw new Error('Missing dynamic participant dependency proofs');
     if(!['source-data-bound-not-runtime-admitted','blocked'].includes(String(binding.dataStatus)))throw new Error('Unknown dynamic source data status');
@@ -162,21 +165,21 @@ export function validateSourceBattleParticipantProof(rawPolicy:unknown,rawClosur
     const childRows=new Map<number,BattleRow>();
     for(const sourceRow of binding.childSourceRows as BattleRow[]){
       const childId=tableInteger(sourceRow.values.id);
-      if(!positive(childId)||sourceRow.source.rowId!==String(childId)||childRows.has(childId)||!actualSites.some(s=>s.op.kind==='change-enemy-party'&&s.op.partyId===childId))throw new Error('Changed complete source child row proof');
+      if(!positive(childId)||sourceRow.source.rowId!==String(childId)||childRows.has(childId)||!actualSites.some(s=>siteChildren(s).includes(childId)))throw new Error('Changed complete source child row proof');
       childRows.set(childId,sourceRow);
     }
-    for(const site of actualSites)if(site.op.kind==='change-enemy-party'&&!childRows.has(site.op.partyId)&&!blockedDependency('monster_party.csv',site.op.partyId))throw new Error('Incomplete complete source child row proof');
+    for(const site of actualSites)for(const id of siteChildren(site))if(!childRows.has(id)&&!blockedDependency('monster_party.csv',id))throw new Error('Incomplete complete source child row proof');
     const childSlots:Record<string,{slots:Record<string,BattleParticipantSlot>}>={};
     for(const child of binding.children as {sourceRow:BattleRow;descriptor:SourceBattleEncounter}[]){
       const childId=child.descriptor.partyId;
       if(!positive(childId)||child.sourceRow.source.rowId!==String(childId)||tableInteger(child.sourceRow.values.id)!==childId||childSlots[String(childId)]||
-          !actualSites.some(s=>s.op.kind==='change-enemy-party'&&s.op.partyId===childId))throw new Error('Changed source child party proof');
+          !actualSites.some(s=>siteChildren(s).includes(childId)))throw new Error('Changed source child party proof');
       childSlots[String(childId)]={slots:sourceBattleParticipantSlots(child.sourceRow)};
       if(canonical(child.descriptor.source)!==canonical(child.sourceRow.source)||canonical(childRows.get(childId))!==canonical(child.sourceRow))throw new Error('Changed source child row identity');
       if(catalog&&canonical(catalog.participants?.enemyParties?.[String(childId)]?.slots)!==canonical(childSlots[String(childId)]!.slots))throw new Error('Selected dynamic child layout differs from its source proof');
     }
-    for(const site of actualSites)if(site.op.kind==='change-enemy-party'&&!childSlots[String(site.op.partyId)]&&
-        !(blockedDependency('monster_party.csv',site.op.partyId)||!catalog&&binding.dataStatus==='blocked'&&input.diagnostics.some(d=>d.partyId===id&&d.code==='participant-source-reference'&&d.kind==='blocked'&&d.pc===site.pc)))
+    for(const site of actualSites)for(const id of siteChildren(site))if(!childSlots[String(id)]&&
+        !(blockedDependency('monster_party.csv',id)||!catalog&&binding.dataStatus==='blocked'&&input.diagnostics.some(d=>d.partyId===binding.partyId&&d.code==='participant-source-reference'&&d.kind==='blocked'&&d.pc===site.pc)))
       throw new Error('Incomplete dynamic child party proof');
     if(canonical(derived.enemyParties??{})!==canonical(childSlots))throw new Error('Changed source child slot declaration');
     if(catalog&&(!catalog.participants||catalog.participants.rewardScope!==policy.rewardScope||canonical(catalog.participants.slots)!==canonical(derived.slots)))

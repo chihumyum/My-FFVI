@@ -123,6 +123,10 @@ export function analyzeBatchEncounters(catalog: BattleCatalog, encounterIds: num
             throw new Error("Battle lifecycle condition rules do not cover the current condition catalog");
           limitations.push("Compiled battle-event instructions require live lifecycle/AI/action/outcome execution evidence.");
           for (const [pc, { op }] of lifecycle.program.instructions.entries()) {
+            if(['gau-replace','gau-appearance','gau-join'].includes(op.kind)){
+              if(!encounter.gauInstancePolicy||!encounter.gauInstances)block('gau-instance-policy','Battle event PC '+pc+' lacks an explicit source Gau instance content declaration');
+              conditional('gau-instance-owner','Battle event PC '+pc+' requires actual child factory/media/AI and held owned join transaction; typed operations grant no provider');continue;
+            }
             if(op.kind==='reserve-gau-first'||op.kind==='shadow-battle-departure'||op.kind==='gau-leap'){
               conditional('battle-owned-field-continuation', 'Battle event PC '+pc+' requires actual held/condition branch and source-bound single field reservation/return transaction; visited unsupported owned phases remain hard');
               continue;

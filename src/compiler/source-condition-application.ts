@@ -102,6 +102,7 @@ const lifecycle = {
   12: { kind: "confusion", system: 1, until: 8, cover: 1 },
   630: { kind: "temptation", system: 4, until: 17, cover: 0 },
   404: { kind: "doom", system: 3, until: 2, cover: 0 },
+  17: { kind: "stop", system: 3, until: 7, cover: 1 },
 } as const;
 function descriptor(row: Pick<BattleRow, "values">): (typeof lifecycle)[keyof typeof lifecycle] | null {
   const type = int(row.values.condition_type);
@@ -118,9 +119,10 @@ export function hasSourceControlConditionLifecycle(row: Pick<BattleRow, "values"
     (expected.kind === "temptation" ? int(v.until_value) === 0 : int(v.until_value) > 0) &&
     int(v.condition_group_id) >= 0 && int(v.erase_condition_group_id) >= 0 &&
     int(v.battle_effect_asset_id) >= 0 && int(v.icon_id) >= 0 &&
+    int(v.battle_effect_shadow_cloning) === (expected.kind === "stop" ? 1 : 0) &&
     ["overlapped_type", "invalid_type", "target_type", "parameter_group_id", "attribute_group_id",
       "species_group_id", "rate_type1", "rate_type2", "rate_value1", "rate_value2", "recovery_invalid",
-      "attack_target", "game_over_target", "damage_number", "field_se_asset_id", "battle_effect_shadow_cloning",
+      "attack_target", "game_over_target", "damage_number", "field_se_asset_id",
     ].every(key => int(v[key]) === 0);
 }
 
@@ -138,6 +140,7 @@ export function compileSourceControlCondition(
     ? { ...common, kind: d.kind, untilType: 2, pauseConditionTypes: [...sourceDoomPauseConditionTypes] }
     : d.kind === "sleep" ? { ...common, kind: d.kind, untilType: 9 }
     : d.kind === "confusion" ? { ...common, kind: d.kind, untilType: 8 }
+    : d.kind === "stop" ? { ...common, kind: d.kind, untilType: 7 }
     : { ...common, kind: d.kind, untilType: 17 };
   validateControlBehavior(behavior);
   const result = compileConditionResistanceProvider(reader, row, behavior, definitions);

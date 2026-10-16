@@ -23,6 +23,7 @@ import {parseBattleSavedForcedReturnResult,parseWebBattleForcedSave,type BattleS
 import { parseBattleForcedReturnResult, type BattleForcedReturnResult } from "./battle-forced-return.js";
 import { projectShopTrade, shopBuyOptions, shopSellOptions, validateShopCatalog,
   type ShopCatalog, type ShopInventoryRead, type ShopTradeRequest } from "./shop.js";
+import { WEB_BATTLE_GAU_INSTANCES, type BattleGauOwnedHost } from "./battle-gau-instances.js";
 import {
   prepareRosterLifecycle,
   validateRosterLifecycle,
@@ -276,6 +277,7 @@ export class GameState {
     forcedSavePolicy:WebBattleForcedSave|null;
     rewardPolicy: Readonly<BattleRewardPolicy>;
     playerBorrow: BattlePlayerBorrow | undefined;
+    gauOwned?: { data: GameStateSnapshot; revision: number; retired: boolean; reservation: object | null };
   } | null = null;
   private revision = 0;
   private transportationPublication = false;
@@ -2185,6 +2187,90 @@ export class GameState {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     return structuredClone(this.active.players);
   }
+  /** The live owned writer remains this GameState. Candidate data is private
+   * to the actual battle lease; Field ports retain requireIdle and cannot see
+   * or publish it. Merely preparing a replacement Battle does not install it. */
+  battleGauOwnedHost(lease: BattleLease): BattleGauOwnedHost {
+    if (this.active?.lease !== lease) throw new Error("Stale source Gau owned lease");
+    type Attempt = NonNullable<NonNullable<typeof this.active>["gauOwned"]>;
+    let attempt: Attempt | undefined, retired = false;
+    const requireAttempt = () => {
+      if (retired || this.active?.lease !== lease) throw new Error("Retired source Gau owned attempt");
+      if (!attempt) {
+        if (this.active.gauOwned && !this.active.gauOwned.retired)
+          throw new Error("Another battle owns the source Gau candidate");
+        // An explicit retry starts from the unchanged persistent entry after
+        // its old Battle has retired. No published owned state is rolled back.
+        attempt = { data: this.snapshot(), revision: 0, retired: false, reservation: null };
+        this.active.gauOwned = attempt;
+      }
+      if (this.active.gauOwned !== attempt || attempt.retired)
+        throw new Error("Stale source Gau owned attempt");
+      return attempt;
+    };
+    return {
+      policy: WEB_BATTLE_GAU_INSTANCES,
+      retire: () => { retired = true; if (attempt) attempt.retired = true; },
+      prepareFrame: () => {
+        const owner = requireAttempt();
+        if (owner.reservation) throw new Error("Source Gau owned candidate is reserved by a battle frame");
+        const token = {}, revision = owner.revision;
+        let data = owner.data, changed = false, closed = false, generation = 0;
+        owner.reservation = token;
+        const validate = () => {
+          if (closed || requireAttempt() !== owner || owner.revision !== revision || owner.reservation !== token)
+            throw new Error("Stale source Gau owned frame");
+        };
+        return {
+          validate,
+          join: ({ sourceId, firstEncounter }) => {
+            validate(); integer(sourceId, 0x7fffffff, 1);
+            if (typeof firstEncounter !== "boolean") throw new Error("Unknown source Gau first-join branch");
+            const matches = data.roster.filter(member => member.sourceId === sourceId);
+            if (matches.length !== 1) throw new Error("Source Gau join requires its actual already held owned character");
+            if (firstEncounter)
+              throw new Error("Source Gau first join requires the separate AddEquippedItem/RefitEquip phase before common JoinCharacter");
+            const before = structuredClone(data), member = before.roster.find(member => member.id === matches[0]!.id)!;
+            // The wrapper performs SetEnableCorps(true) BEFORE JoinCharacter;
+            // do not apply the common disabled-member level correction first.
+            member.enabled = true;
+            const projected = this.projectRosterEvent(before, { kind: "join", sourceId,
+              position: null, row: "front", refreshActors: true, recovery: true, refitEquipment: false });
+            data = projected.next; changed = true; generation++;
+            return { ownedId: member.id, sourceId: member.sourceId };
+          },
+          prepareCommit: () => {
+            validate(); const prepared = data, preparedGeneration = generation;
+            const finalValidate = () => { validate(); if (generation !== preparedGeneration)
+              throw new Error("Source Gau owned frame changed after preparation"); };
+            return { validate: finalValidate, commit: () => {
+              finalValidate(); if (changed) { owner.data = prepared; owner.revision++; }
+              closed = true; owner.reservation = null;
+            } };
+          },
+          discard: () => {
+            if (closed) throw new Error("Source Gau owned frame already closed");
+            // Retired/stale attempts may release only their own token. They
+            // cannot touch the current attempt or publish a prepared change.
+            if (owner.reservation === token) owner.reservation = null;
+            closed = true;
+          },
+        };
+      },
+    };
+  }
+  private sourceGauReturnSnapshot(lease: BattleLease, outcome: "forced" | "saved") {
+    if (this.active?.lease !== lease) throw new Error("Stale source Gau return lease");
+    const owner = this.active.gauOwned, revision = owner?.revision, retired=owner?.retired;
+    if (owner?.reservation) throw new Error("Cannot prepare return inside a source Gau owned frame");
+    if (outcome !== "forced" && owner && !owner.retired && owner.revision > 0)
+      throw new Error("Source Gau owned join requires the separate saved-result/owned lifecycle merge order");
+    const next = structuredClone(owner && !owner.retired && owner.revision > 0 ? owner.data : this.data);
+    return { next, validate: () => {
+      if (this.active?.lease !== lease || this.active.gauOwned !== owner || owner?.revision !== revision || owner?.retired!==retired || owner?.reservation)
+        throw new Error("Source Gau owned candidate changed after return preparation");
+    } };
+  }
   battlePlayerBorrow(lease: BattleLease): BattlePlayerBorrow | undefined {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     return this.active.playerBorrow === undefined ? undefined : structuredClone(this.active.playerBorrow);
@@ -2297,10 +2383,10 @@ export class GameState {
         return { ownedId, sourceId: owner.sourceId };
       });
     if (canonical(result.participants) !== canonical(expected)) throw new Error("Forced-return participant identity changed");
-    const next = this.snapshot(), revision = this.revision;
+    const gauReturn = this.sourceGauReturnSnapshot(lease, "forced"), next = gauReturn.next, revision = this.revision;
     next.completedBattles.push({ ...lease, outcome: "forced" });
     this.validate(next);
-    const validate = () => { if (this.active?.lease !== lease || this.revision !== revision) throw new Error("Stale forced-return transaction"); };
+    const validate = () => { if (this.active?.lease !== lease || this.revision !== revision) throw new Error("Stale forced-return transaction"); gauReturn.validate(); };
     const commit = () => { validate(); this.data = next; this.active = null; this.revision++; };
     return Object.assign(commit, { validate, fieldState: () => { validate(); return {
       puppetRoster: this.projectPuppetRoster(next),
@@ -2350,7 +2436,8 @@ export class GameState {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     const result = exit.result, victory = exit.outcome === "victory" ? exit.result : null,saved=exit.outcome==='forced-save'?exit.result:null;
     const borrowed = this.validateBorrowedReturn(result, victory);
-    let next = this.snapshot();
+    const gauReturn = this.sourceGauReturnSnapshot(lease, "saved");
+    let next = gauReturn.next;
     const revision = this.revision;
     if (victory) integer(victory.gil, 0x7fffffff);
     const magicPoints = victory && victory.magicPoints !== undefined ? victory.magicPoints : 0;
@@ -2506,6 +2593,7 @@ export class GameState {
     const validate = () => {
       if (this.active?.lease !== lease || this.revision !== revision)
         throw new Error(`Stale ${victory ? "victory" : "escape"} transaction`);
+      gauReturn.validate();
     };
     const commit = () => {
       validate();

@@ -1,0 +1,42 @@
+# Ordinary Stop condition lifecycle
+
+This common family extends the existing BattleGame condition/control owner. It recognizes the complete source master type17/system3/Until7 shape, not row identities or script positions. The full 1530 ability catalog remains visible: baseline 558 bounded plans plus ten ordinary single-slot Stop carriers, with both excluded mixed/special Stop carriers and all other unknown lifecycle gates retained. Those ten have 33 source AI references in 21 complete bodies, 51 requested source parties and 45 walking encounter maps. These are dependency counts, not 51 playable-battle or 45 reachable-map claims. All 474 AI rows (423 bodies, 51 missing), 53 complete battle bodies/2312 operations and 490 requested parties are retained.
+
+`source-condition-application` binds the complete master, all source function slots and operands, effects/sounds, original provider group and erase/conflict order. The ordinary condition carrier binds costs, targeting, flags, Chanting and reaction rules. The native condition effect and shadow-cloning flag remain recorded even under the explicit existing deferred Web presentation. Referenced missing masters/media, unknown equipment/Runic/reflection, cover, special phases and noncommuting initial activation remain hard. A known provider reference is not an active unknown condition.
+
+## Recovery and independent instance fields
+
+Stop uses the existing `controlStates` recovery bank. Generic recovery draws once per actual progress update, honors the existing normal-attack-added exclusion, accumulates signed float32 time and expires only at `elapsed > UntilValue`. A non-progress physical-hit callback does not compare the saved elapsed field. Native Stop.Update is a return leaf; recovery comes from the common controller.
+
+The complete cached `GetConditionDurationTime` and original PE specify `float32(delta * ATBSpeed)`, multiplied by the float32 sum of +0.1 for each Haste/type15 and -0.1 for each Slow/type16. An exactly zero sum is replaced with1. The signed Slow-only result is intentionally retained rather than corrected or replaced by chanting's 2/.5 multiplier. Doom independently pauses on its already verified type17 predicate. Slow's own elapsed field and other condition clocks are not globally paused.
+
+Poison retains an explicit battle-local `isTimeStop` field. Stop.Start writes true only to the same actual unit's then-existing Poison instances; Stop.Remove writes false to the then-current instances. New or removed/re-added Poison starts false, even if an old instance with the same row was paused. Suspended threshold/progress are retained. The field is not inferred every tick from Stop presence and is never stored in a stable field checkpoint. Slip, Regeneration and StopAndDamage/type627 are evidenced adjacent providers that remain unimplemented; no OR rule or active behavior is invented for them.
+
+## Action ownership and the explicit Web scheduler
+
+The native unit counter increments on Stop.Start and decrements with clamp0 on Stop.Remove. The closed Web function projection keeps Sleep and Stop as independent action restrictions: removing one cannot release the other. Readiness, manual/item use, normal AI, automatic control and queue admission all use that common projection. The same unit's current appearance does not receive the ordinary action-motion pulse while Stop is active; status text uses the admitted condition name. Exact native animator/effect particles are deferred, not claimed equivalent.
+
+**Start itself does not reset a bare partial or full ATB gauge.** Its native `RemoveActReady` checks actual chanting/ordinary-stack readiness before removing pending work and resetting the gauge. The Web binding follows that boundary only for the affected actor's existing normal/loop queue entries and their actual execution tickets. Matching pending interrupts can be removed at that ready cancellation boundary; another actor's work and the currently published action are preserved. A lone interrupt does not establish ordinary readiness, so it is retained. Stop.Remove resets this actor's ATB to0. Removing a queued action pays no fee; already published results/costs are not refunded or replayed.
+
+`web-source-control-actions-v1` is the explicit Web scheduler policy already required for active control functions. Its Stop composition makes this rule explicit: eligible interrupts retain priority; if every pending interrupt is already ready but its admitted current Sleep/Stop owner is suspended, another actor's eligible ordinary action may execute. The suspended interrupt and its original ticket remain queued until recovery. This prevents that actor from blocking another actor's recovery spell. It is a **Web scheduling rule**, not evidence that the native executor skips every blocked interrupt. Without this policy, with unknown owners, event-action authority, or unresolved charge/phase context, the old strict priority boundary remains. No arbitrary unknown reaction is filtered or discarded. Multiple loop entries remain the existing Web representation of a queued action group, not a claim of native stack layout parity.
+
+## Atomicity, return and storage
+
+The existing action/frame transaction stages state, resource cost, hit/resistance RNG, clock writes, ATB, pending/fixed-player tickets, reactions, shared writes, Msg and effect publication. A failed frame restores all those owners; a later failure cannot undo an already published Stop action. All external resource lease commits finish before a common resource/presentation/Msg/fade/actual Gau-owned candidate validation boundary and the actual Field mask/Msg/fade deterministic writes. Cleanup runs after Battle owners are restored on failure, or outside rollback after success; throwing frame/resource discards are diagnosed and cannot replace the original error or stop remaining cleanup. This is the actual pure Field-mask host contract, not rollback of arbitrary custom host side effects. No second RNG, condition list, queue, or persistent state owner is introduced.
+
+Victory, escape and forced-save return remove Until7 before owned settlement. Ordinary forced return restores the existing frozen entry. Failed media return/retry retains its exact owner; successful retirement prevents an old battle or completion from modifying the next one. Active battle checkpoints remain rejected. Field compilation excludes Stop, and stable owned-state validation rejects injected Stop independently of a save hash. Old checkpoint shapes are unchanged.
+
+## Reproduction and evidence limits
+
+Compile into a private output directory, then run `condition-stop`, `battle-stop-lifecycle`, `stop-condition-session` and the full existing core/App checks. The source audit is:
+
+```sh
+node scripts/check-source-stop-conditions.mjs --input-root /absolute/source-input-root --compiled-dir /absolute/current-dist --baseline-compiled-dir /absolute/frozen-002c-dist --report build/reports/source-stop-conditions.json
+.venv/bin/python scripts/check-stop-condition-native.py --root /absolute/source-input-root --evidence build/wip/source-ability-condition-lifecycle-family --output build/reports/stop-condition-native.json
+```
+
+The source audit retains every original function/body/dependency, compares all 1530 plans and runs ten common forced-action parameter envelopes with the original complete ability programs. Those controlled envelopes are separate from whole original AI/script execution and story reachability. Static native verification binds three fresh complete methods/880 PE bytes plus complete cached consumers and raw shared-alias ranges. C text and original bytes are research evidence; the original executable was not run. This lane launches no 649 producer or public publication and does not certify the full campaign.
+
+## Combined direct-list and dynamic-instance writers
+
+The direct BattleCondition list writer uses the same Stop transition and actual ready-ticket preparation as ability actions, without borrowing their accuracy/resistance path. Removing and re-adding Poison constructs a new unpaused instance while Stop is still active. Gau/party retirement removes old instance condition maps; each new actual actor starts fresh clocks from its own admitted initial conditions. The same-frame snapshot restores old actor identities, clocks and Gau state before safe cleanup on failure. Owned candidate validation joins the final shared guard after every external resource callback and before deterministic publication.

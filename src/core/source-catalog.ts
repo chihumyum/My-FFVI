@@ -1,3 +1,4 @@
+import {parseBattleGauInstanceContent} from "./battle-gau-instances.js";
 import type { BattleCatalog } from "./battle-content.js";
 import { canonical } from "./canonical.js";
 import type { DevelopmentProfile } from "./development-profile.js";
@@ -102,9 +103,11 @@ export function assertSourceGameCatalog(catalog: BattleCatalog, profile: SourceC
       throw new Error("Source game catalog initial player seed differs from the source initializer");
   }
   // These are encounter declarations in every profile, never shared defaults.
-  for (const key of ["escapePolicy", "lifecycle", "rewardPolicy", "participants", "playerParticipants", "formationPlan", "controls", "sourceFlags", "forcedSavePolicy", "spawnConditionPolicy"])
+  for (const key of ["escapePolicy", "lifecycle", "rewardPolicy", "participants", "playerParticipants", "formationPlan", "controls", "sourceFlags", "forcedSavePolicy", "spawnConditionPolicy", "gauInstancePolicy", "gauInstances"])
     if (Object.hasOwn(catalog.common, key)) throw new Error("Source new game cannot use misplaced " + key + " policy");
+  for(const encounter of Object.values(catalog.encounters))if(encounter.gauInstances!==undefined)parseBattleGauInstanceContent(encounter.gauInstances);
   if (profile === "framework") return;
+  if(Object.values(catalog.encounters).some(encounter=>Object.hasOwn(encounter,"gauInstancePolicy")))throw new Error("A strict source baseline cannot use a Web Gau instance policy");
   if (Object.hasOwn(catalog.common, "conditionControlPolicy"))
     throw new Error("A strict source baseline cannot use a Web condition control policy");
   const encounters = Object.values(catalog.encounters);

@@ -52,9 +52,9 @@ ATB 的提供器整数从 100 开始相加，再交给已有 `atbIncrement` 应�
 
 ## 能力覆盖与边界
 
-从原始 function9 引用独立枚举得到 29 个 Haste / Slow 候选。本批 24 个有有界执行 plan：普通 type 1 法术及 type 3 敌方能力，Haste 为 system 2，Slow 为 system 5。显示目录和 owned 资格仍是独立条件，不把 plan 数量称为玩家已会的技能数。
+从原始 function9 引用独立枚举得到 29 个 Haste / Slow 候选。当前 26 个有有界执行 plan（190 / 311 已由普通状态 carrier 合同准入，Stop 本批没有改变其 plan）：普通 type 1 法术及 type 3 敌方能力，Haste 为 system 2，Slow 为 system 5。显示目录和 owned 资格仍是独立条件，不把 plan 数量称为玩家已会的技能数。
 
-5 个仍阻塞：190、311、313、721、729，涉及 type 637 / 13 / 35、range 16 或额外函数/特例。Stop、Quick、装备附加状态和 row 95 均未准入。没有将其他计时提供器默认为普通加速或减速。
+3 个仍阻塞：313、721、729，涉及 type 13 / 35、range 16 或额外函数/特例。本加减速族不授予 Stop、Quick 或装备附加状态。Stop 的独立生命周期参见 [普通 Stop](condition-stop.md)；row 95 仍遵循其单独的提供器合同。没有将其他计时提供器默认为普通加速或减速。
 
 普通 Haste 的来源 flag 1 跳过命中闪避计算，但不跳过状态抗性与重复检查。Slow 按实际准确率走已有命中随机分支。来源 flag 3 继续表示 Runic 目标提供器；当前活动 Runic 保持阻塞。反射资格、MP 一次扣费、选择目标、蓄力与行动取消仍走通用宿主。非零等级费用、额外函数组合及未知内容标志继续整项阻塞。
 
@@ -82,6 +82,6 @@ node scripts/check-condition-speed.mjs --dist build/v25-speed-dist --source-only
 node scripts/check-condition-speed.mjs --dist build/v25-speed-dist
 ```
 
-纯模块和编译测试 13 项，BattleGame 集成 5 项，覆盖替换/重复、抗性与命中、死亡/战后清理、缓存周期、float32、暂停/WAIT、演出、输入副本及失败帧回滚。来源检查含 20 个生命周期、150 个独立 Python float32 时钟和 120 个能力投影断言；正式产物模式另核验 29 个能力定义、两个状态和 ATB 来源常量，并用实际 GameState lease 运行五组受控战斗局部状态。受控状态/初始 ATB 会在报告中标明，不改初始拥有技能或用户存档。
+纯模块和编译测试 13 项，BattleGame 集成 5 项，覆盖替换/重复、抗性与命中、死亡/战后清理、缓存周期、float32、暂停/WAIT、演出、输入副本及失败帧回滚。来源检查含 20 个生命周期、150 个独立 Python float32 时钟和 130 个能力投影断言；正式产物模式另核验 29 个能力定义、两个状态和 ATB 来源常量，并用实际 GameState lease 运行五组受控战斗局部状态。受控状态/初始 ATB 会在报告中标明，不改初始拥有技能或用户存档。
 
 报告分别位于 `build/reports/condition-speed-native-check.json`、`condition-speed-source-check.json`、`condition-speed-check.json`。源码、来源校验和受控 Web 宿主测试不替代原版动态一致性验收。

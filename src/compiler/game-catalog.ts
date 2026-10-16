@@ -1,3 +1,4 @@
+import { createSourceCatalogNameResolver } from "./source-catalog-name.js";
 import { compileSourceMessageFees } from "./source-message-fees.js";
 import { bindBattleEventMessageInput } from "./battle-event-message-bindings.js";
 import { compilePhysicalLimits } from "./physical-parameters.js";
@@ -9,7 +10,6 @@ import type { ParameterValues } from "../core/parameters.js";
 import { compileBattleAbilityContent } from "./battle-ability-content.js";
 import { compileFieldAbilityCatalog } from "./field-abilities.js";
 import { loadCorpus } from "./corpus.js";
-import { bindSystemMessages } from "./system-messages.js";
 import { compileBattleConditionCatalog } from "./conditions.js";
 import { compileBattleCommand } from "./commands.js";
 import { compileBattleAbilityCatalog } from "./battle-abilities.js";
@@ -110,13 +110,23 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
   );
   if (field.parentSourceSetHash !== source.parentSourceSetHash)
     throw new Error("Mismatched field/battle sources");
-  const messages = record(record(field.messages).system_zhc);
-  const name = (key: string) => {
-    const value = messages[key];
-    if (typeof value !== "string")
-      throw new Error("Missing battle name: " + key);
-    return value;
-  };
+  const corpus = await loadCorpus(root);
+  if (corpus.manifest.parentSourceSetHash !== source.parentSourceSetHash)
+    throw new Error("Mismatched catalog message sources");
+  const handoffSystem = await loadSystemSource(root, source.parentSourceSetHash);
+  const battleSnapshot = record(JSON.parse(snapshotFile(await readSnapshot(root + "/build/battle"), "battle.json").toString()));
+  if (battleSnapshot.parentSourceSetHash !== source.parentSourceSetHash ||
+      hash(battleSnapshot.sources) !== battleSnapshot.sourceSetHash || !Array.isArray(battleSnapshot.sources))
+    throw new Error("Condition complete-reader source mismatch");
+  const conditionReads = trackSourceConditionReads(handoffSystem.reader, {
+    sourceSetHash: handoffSystem.sourceSetHash, parentSourceSetHash: source.parentSourceSetHash,
+    battleSourceSetHash: String(battleSnapshot.sourceSetHash),
+    physicalSources: battleSnapshot.sources as SourceConditionPhysicalFile[],
+  });
+  const conditionReader = conditionReads.reader;
+  const eventMessages = bindBattleEventMessageInput(field, corpus,
+    corpus.tables["character_default_name.csv"]!.map(row => conditionReader.row("character_default_name.csv", row.id!)));
+  const name = createSourceCatalogNameResolver(eventMessages);
   const row = (table: string, id: string | number) => {
     const value = source.tables[table]?.[String(id)];
     if (!value) throw new Error(`Missing playable dependency ${table}:${id}`);
@@ -157,17 +167,6 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
   // dependencies explicitly use the same-source complete verified reader, and
   // every actual row is retained separately for audit (including later runtime
   // encounter compilation). This does not refresh SharedBattleSource identity.
-  const handoffSystem = await loadSystemSource(root, source.parentSourceSetHash);
-  const battleSnapshot = record(JSON.parse(snapshotFile(await readSnapshot(root + "/build/battle"), "battle.json").toString()));
-  if (battleSnapshot.parentSourceSetHash !== source.parentSourceSetHash ||
-      hash(battleSnapshot.sources) !== battleSnapshot.sourceSetHash || !Array.isArray(battleSnapshot.sources))
-    throw new Error("Condition complete-reader source mismatch");
-  const conditionReads = trackSourceConditionReads(handoffSystem.reader, {
-    sourceSetHash: handoffSystem.sourceSetHash, parentSourceSetHash: source.parentSourceSetHash,
-    battleSourceSetHash: String(battleSnapshot.sourceSetHash),
-    physicalSources: battleSnapshot.sources as SourceConditionPhysicalFile[],
-  });
-  const conditionReader = conditionReads.reader;
   const conditions = compileBattleConditionCatalog(
     conditionReader,
     rows("condition.csv").map((r) => int(r.id)),
@@ -233,22 +232,8 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
     evasion: 0,
     magicEvasion: 0,
   };
-  const corpus = await loadCorpus(root);
-  if (corpus.manifest.parentSourceSetHash !== source.parentSourceSetHash)
-    throw new Error("Mismatched ability message sources");
-  if (!Array.isArray(corpus.manifest.sources)) throw new Error("Missing ability message sources");
-  const messageSources = corpus.manifest.sources.map((raw: unknown) => {
-    const sourceFile = record(raw);
-    if (typeof sourceFile.file !== "string" || typeof sourceFile.sha256 !== "string")
-      throw new Error("Invalid ability message source identity");
-    return { file: sourceFile.file, sha256: sourceFile.sha256 };
-  });
-  const systemMessages = bindSystemMessages(field, source.parentSourceSetHash, messageSources).messages;
-  const storyMessages = record(corpus.messages.story_mes_zhc);
   const resolveAbilityName = (key: string) => {
-      const found = [systemMessages[key], storyMessages[key]].filter((value): value is string => typeof value === "string");
-      const uniqueValues = [...new Set(found)];
-      return uniqueValues.length === 1 ? uniqueValues[0]! : null;
+    try { return name.literalBody(key); } catch { return null; }
   };
   const abilityContent = compileBattleAbilityContent(conditionReader, handoffSystem.tables, resolveAbilityName);
   // Definitions describe executable capabilities, never acquisition. Commands
@@ -307,8 +292,7 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
     sourceDiagnostics: source.encounterDiagnostics, abilities, conditions, sprites: source.sprites, name,
     parameters: { temporary: noTemporary, limits: parameterLimits },
     physical: { temporary: noPhysicalTemporary, limits: physicalLimits },
-    eventMessages: bindBattleEventMessageInput(field, corpus,
-      corpus.tables["character_default_name.csv"]!.map(row => conditionReader.row("character_default_name.csv", row.id!))),
+    eventMessages,
   };
   const growth: BattleContent["growth"] = {};
   for (const r of rows("growth_curve.csv")) {

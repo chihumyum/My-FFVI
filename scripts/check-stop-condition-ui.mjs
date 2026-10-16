@@ -1,0 +1,13 @@
+// Actual BattleView/BattleGame, controlled DOM/Canvas only. No browser/native pixel claim.
+import assert from 'node:assert/strict';import {mkdir,writeFile}from'node:fs/promises';import{resolve}from'node:path';import{pathToFileURL}from'node:url';
+import{BattleView}from'../apps/game/battle-view.js';import{runtimeDigest}from'./runtime-digest.mjs';
+const root=resolve(import.meta.dirname,'..'),args=process.argv.slice(2);assert(args.length===0||args.length===2&&args[0]==='--compiled-dir');const compiled=resolve(root,args[1]??'dist'),load=p=>import(pathToFileURL(resolve(compiled,p+'.js'))),runtime=await runtimeDigest(root,compiled),
+ [{BattleGame},{stopConditionContent},{projectDevelopmentBattleLayout}]=await Promise.all(['src/core/battle','tests/fixtures/stop-condition','src/core/battle-layout'].map(load)),cases=[];
+for(const removal of[false,true]){const {content}=stopConditionContent();content.sprites.synthetic={file:'synthetic.png',width:16,height:16};const nodes=new Map();globalThis.document={getElementById:id=>{if(!nodes.has(id))nodes.set(id,{onclick:null,replaceChildren(){}});return nodes.get(id);}};
+ const calls={text:[],strokes:0,images:[]},ctx=new Proxy({fillText:text=>calls.text.push(text),strokeText(){},stroke(){calls.strokes++;},drawImage:(...a)=>calls.images.push(a)},{get:(t,k)=>t[k]??(()=>{})}),b=new BattleGame(content,314),view=new BattleView({getContext:()=>ctx},content,new Map([['synthetic.png',{}]]),()=>{},()=>{},undefined,projectDevelopmentBattleLayout);
+ assert(b.command('b',901,'a'));for(let i=0;i<2000&&!b.action?.resolved;i++)b.advance(10);assert(b.isStopped('a'));assert(!b.ready.some(p=>p.id==='a'));assert(!b.command('a',10,'e1'));assert(!b.canUse('a',10));
+ if(removal){for(let i=0;i<2000&&b.action;i++)b.advance(10);b.players[1].atb=100;assert(b.command('b',902,'a'));for(let i=0;i<2000&&!b.action?.resolved;i++)b.advance(10);assert(!b.isStopped('a'));}
+ view.draw(b);assert.equal(calls.strokes,0,'No fabricated native beam');assert(calls.text.includes(removal?'状态解除':b.conditions.name(1907)));assert(calls.images.length>0);assert.equal(b.players[1].mp,removal?196:198);
+ cases.push({removal,actualBattleView:true,actualBattleGame:true,sourceOperandFixture:true,result:b.action.results,stopped:b.isStopped('a'),browserRasterVerified:false});
+}
+assert.equal(await runtimeDigest(root,compiled),runtime);const path=resolve(root,'build/reports/stop-condition-ui.json');await mkdir(resolve(path,'..'),{recursive:true});await writeFile(path,JSON.stringify({kind:'actual-stop-condition-view-v1',result:'passed',runtimeSha256:runtime,cases,sourceCampaignComplete:false,nativeDynamicParity:false},null,2)+'\n');console.log(JSON.stringify({result:'passed',cases:cases.length,runtimeSha256:runtime,report:path}));

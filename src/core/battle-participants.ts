@@ -1,3 +1,4 @@
+import { parseSourceCatalogName } from "./source-catalog-name.js";
 import type { CombatantDefinition } from "./battle-content.js";
 import { parameterNames } from "./parameters.js";
 import { validateElements, validateElementResistances } from "./elements.js";
@@ -65,12 +66,13 @@ function definition(raw: unknown, sourceId: number): EnemyBattleDefinition {
   const required = [...parameterNames, "sourceId", "name", "side", "row", "level", "physical",
     "attackElements", "elementResistances", "exp", "gil", "growthGroup", "abilities", "commands",
     "conditionIds", "conditionResistances", "ai", "sprites"];
-  const optional = ["ownedAbilities", "magicLearningValue", "appearance", "battleRequirements", "conditionTraits"];
+  const optional = ["ownedAbilities", "magicLearningValue", "appearance", "battleRequirements", "conditionTraits", "nameSource"];
   checkpointKeys(raw, [...required, ...optional.filter(key => Object.hasOwn(value, key))].join(","));
   if (value.sourceId !== sourceId || value.side !== "enemy" || !["front", "back"].includes(value.row))
     throw new Error("Battle participant master identity mismatch");
   if (value.row !== "front") throw new Error("Unresolved enemy battle row");
   text(value.name);
+  if (Object.hasOwn(value, "nameSource")) parseSourceCatalogName(value.nameSource, value.name);
   integer(value.level, 1);
   for (const key of parameterNames) integer(value[key]);
   if (value.hp <= 0 || value.mp < 0) throw new Error("Invalid initial battle participant resources");
@@ -117,7 +119,7 @@ function definition(raw: unknown, sourceId: number): EnemyBattleDefinition {
   }
   // Ordinary enemy templates have no owned-player or transformation provider.
   // Adding one needs a reviewed version instead of copying a GameState owner.
-  if (optional.filter(key => key !== "conditionTraits").some(key => Object.hasOwn(value, key)))
+  if (optional.filter(key => key !== "conditionTraits" && key !== "nameSource").some(key => Object.hasOwn(value, key)))
     throw new Error("Unsupported battle participant template provider");
   return structuredClone(value);
 }

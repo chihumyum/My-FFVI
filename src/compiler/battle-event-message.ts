@@ -1,46 +1,16 @@
 import { z } from "zod";
 import { int32 } from "../core/script-integer.js";
-import { hash, record } from "./content.js";
+import { record } from "./content.js";
+import { createSourceMessageDictionary, type SourceMessageDictionaryInput } from "./source-message-dictionary.js";
 import { compileSourceMessageSequenceDocument } from "./source-message-sequence.js";
 import { sourceMessageSequenceTextRuns } from "../core/source-message-sequence.js";
 import { compileFieldMessageTemplate } from "./message-template.js";
-import { BATTLE_MESSAGE_DICTIONARIES, parseBattleEventMessageBinding, type BattleEventMessageBinding, type BattleEventMessageOp } from "../core/battle-event-message.js";
-export type BattleEventMessageInput = { messages: Record<string, unknown>; characterNames?: unknown;
-  binding?: BattleEventMessageBinding };
-/** Prepare once per complete program. The immutable copied dictionaries make
- * per-instruction lookups independent of later input mutation, while every v2
- * table and full name table is checked against its complete content binding. */
+import { type BattleEventMessageOp } from "../core/battle-event-message.js";
+export type BattleEventMessageInput = SourceMessageDictionaryInput;
+/** Prepare the shared dictionary once per complete source program. */
 export function createBattleEventMessageCompiler(input: BattleEventMessageInput) {
-  const binding = input.binding ? parseBattleEventMessageBinding(input.binding) : null,
-    messages = structuredClone(input.messages), characterNames = structuredClone(input.characterNames);
-  let lookup: (key: string) => {text:string; speaker:string};
-  if (binding?.kind === "battle-event-message-binding-v2") {
-    for (const row of binding.sources) {
-      const table = BATTLE_MESSAGE_DICTIONARIES[row.role], values = row.role === "character-names" ? characterNames : record(messages[table]);
-      if (hash(values) !== row.contentHash || (Array.isArray(values) ? values.length : Object.keys(record(values)).length) !== row.rowCount)
-        throw new Error("Battle message dictionary content/source mismatch: " + table);
-      if (row.role !== "character-names" && Object.entries(record(values)).some(([key,value]) => !key || typeof value !== "string"))
-        throw new Error("Invalid battle message dictionary: " + table);
-    }
-    const bodies = new Map<string,string>(), speakers = record(messages.story_cha_zhc);
-    for (const table of ["story_mes_zhc", "system_zhc", "etc_text_zhc"])
-      for (const [key,text] of Object.entries(record(messages[table]))) {
-        if (bodies.has(key)) throw new Error("Duplicate battle message body key across dictionaries: " + key);
-        bodies.set(key,text as string);
-      }
-    lookup = key => {
-      if (!key || !bodies.has(key)) throw new Error("Missing source battle message body: " + key);
-      // Both complete native speaker getters warn and return String.Empty when
-      // absent. Only this source-bound v2 dictionary contract grants that path.
-      return {text:bodies.get(key)!, speaker:Object.hasOwn(speakers,key) ? speakers[key] as string : ""};
-    };
-  } else lookup = key => {
-    const text = record(messages.story_mes_zhc ?? {})[key], speaker = record(messages.story_cha_zhc ?? {})[key];
-    if (!key || typeof text !== "string" || typeof speaker !== "string")
-      throw new Error("Missing source battle message body/speaker (v1 requires explicit story rows)");
-    return {text,speaker};
-  };
-  return (raw:unknown,nextMnemonic:string|null) => compileMessage(raw,lookup,characterNames,nextMnemonic);
+  const dictionary = createSourceMessageDictionary(input);
+  return (raw:unknown,nextMnemonic:string|null) => compileMessage(raw,dictionary.message,dictionary.characterNames,nextMnemonic);
 }
 export function compileBattleEventMessage(raw:unknown,input:BattleEventMessageInput,nextMnemonic:string|null):BattleEventMessageOp {
   return createBattleEventMessageCompiler(input)(raw,nextMnemonic);

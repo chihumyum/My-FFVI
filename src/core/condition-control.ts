@@ -11,16 +11,17 @@ export type DoomBehavior = ControlConditionBase & {
   /** Complete original DoomConditionFunction static predicate array. */
   pauseConditionTypes: readonly number[];
 };
-export type ControlConditionBehavior = SleepBehavior | ConfusionBehavior | TemptationBehavior | DoomBehavior;
+export type StopBehavior = ControlConditionBase & { kind: "stop"; untilType: 7 };
+export type ControlConditionBehavior = SleepBehavior | ConfusionBehavior | TemptationBehavior | DoomBehavior | StopBehavior;
 
-export const controlConditionTypes = { sleep: 7, confusion: 12, temptation: 630, doom: 404 } as const;
+export const controlConditionTypes = { sleep: 7, confusion: 12, temptation: 630, doom: 404, stop: 17 } as const;
 
 export function validateControlBehavior(behavior: ControlConditionBehavior): void {
   if (!behavior || !Number.isInteger(behavior.id) || behavior.id < 1 || behavior.id > 0x7fffffff ||
       typeof behavior.name !== "string" || !Number.isInteger(behavior.untilValue) ||
       behavior.untilValue < 0 || behavior.untilValue > 0x7fffffff)
     throw new Error("Invalid action-control condition definition");
-  const until = { sleep: 9, confusion: 8, temptation: 17, doom: 2 } as const;
+  const until = { sleep: 9, confusion: 8, temptation: 17, doom: 2, stop: 7 } as const;
   if (!Object.hasOwn(until, behavior.kind) || behavior.untilType !== until[behavior.kind] ||
       (behavior.kind === "temptation" ? behavior.untilValue !== 0 : behavior.untilValue < 1))
     throw new Error("Unsupported action-control condition lifecycle");
@@ -52,12 +53,34 @@ function integer(value: number, min: number, label: string): void {
 function seconds(value: number, label: string): void {
   if (!Number.isFinite(value) || value < 0 || Math.fround(value) !== value) throw new Error("Invalid " + label);
 }
+function recoverySeconds(behavior: ControlConditionBehavior, value: number, label: string): void {
+  if (behavior.kind !== "stop") return seconds(value, label);
+  // FF6 GetConditionDurationTime's signed Slow coefficient is intentional.
+  if (!Number.isFinite(value) || Math.fround(value) !== value) throw new Error("Invalid " + label);
+}
+/** GetConditionDurationTime 764830 + GetTime 767900 / cctor76de60.
+ * This is neither the ATB speed percentage nor chanting's 2/.5 product. */
+export function stopConditionRecoveryDuration(conditionTypes: readonly number[], deltaSeconds: number, atbSpeed: number): number {
+  seconds(deltaSeconds, "Stop recovery delta");
+  if (!Number.isFinite(atbSpeed) || atbSpeed <= 0 || Math.fround(atbSpeed) !== atbSpeed)
+    throw new Error("Invalid Stop recovery battle speed");
+  let haste = 0, slow = 0;
+  for (const type of conditionTypes) {
+    integer(type, 0, "Stop duration condition type");
+    if (type === 15) haste = Math.fround(haste + Math.fround(.1));
+    if (type === 16) slow = Math.fround(slow + Math.fround(-.1));
+  }
+  const coefficient = Math.fround(haste + slow);
+  const duration = Math.fround(Math.fround(deltaSeconds * atbSpeed) * (coefficient === 0 ? 1 : coefficient));
+  if (!Number.isFinite(duration)) throw new Error("Unsupported Stop recovery duration overflow");
+  return duration;
+}
 export function validateControlRecoveryState(behavior: ControlConditionBehavior, state: Readonly<ControlRecoveryState>): void {
   validateControlBehavior(behavior);
   if (!state || state.conditionId !== behavior.id ||
       !(state.targetedUnitId === null || typeof state.targetedUnitId === "string" && state.targetedUnitId.length > 0))
     throw new Error("Action-control recovery identity mismatch");
-  integer(state.physicalHits, 0, "condition physical hit count"); seconds(state.elapsedSeconds, "condition recovery elapsed");
+  integer(state.physicalHits, 0, "condition physical hit count"); recoverySeconds(behavior, state.elapsedSeconds, "condition recovery elapsed");
   if (behavior.kind === "temptation" && state.targetedUnitId === null)
     throw new Error("Temptation requires its captured LastTargetedUnit identity");
 }
@@ -66,7 +89,7 @@ export function createControlRecoveryState(behavior: ControlConditionBehavior, t
   validateControlRecoveryState(behavior, state); return state;
 }
 
-/** UpdateCondtitonRecovery 0x45c5b0, only the independently bound Until8/9/17
+/** UpdateCondtitonRecovery 0x45c5b0, only the independently bound Until7/8/9/17
  * branches. The caller supplies the actual FF6 duration delta and counted hit
  * events; this function does not infer them from HP, frame time or a name. */
 export function projectControlRecovery(behavior: ControlConditionBehavior, state: Readonly<ControlRecoveryState>, input: {
@@ -84,7 +107,7 @@ export function projectControlRecovery(behavior: ControlConditionBehavior, state
   if (!input || typeof input.progress !== "boolean" || typeof input.normalAttackAdded !== "boolean" ||
       !(input.targetedUnitGameOver === null || typeof input.targetedUnitGameOver === "boolean") ||
       typeof randomInt !== "function") throw new Error("Invalid condition recovery context");
-  seconds(input.durationSeconds, "condition recovery duration");
+  recoverySeconds(behavior, input.durationSeconds, "condition recovery duration");
   const next = { ...state }, naturalRemovals: ("physical-hit" | "elapsed-time" | "targeted-unit-game-over")[] = [];
   if (input.normalAttackAdded) return { state: next, naturalRemovals };
   if (input.progress) {
@@ -93,8 +116,10 @@ export function projectControlRecovery(behavior: ControlConditionBehavior, state
     const draw = randomInt(0, 100); integer(draw, 0, "condition recovery draw");
     if (draw > 100) throw new Error("Condition recovery draw out of range");
     next.elapsedSeconds = Math.fround(state.elapsedSeconds + input.durationSeconds);
-    seconds(next.elapsedSeconds, "condition recovery elapsed");
+    recoverySeconds(behavior, next.elapsedSeconds, "condition recovery elapsed");
   }
+  if (behavior.untilType === 7 && input.progress && next.elapsedSeconds > behavior.untilValue)
+    naturalRemovals.push("elapsed-time");
   if (behavior.untilType === 8 && next.physicalHits >= behavior.untilValue) naturalRemovals.push("physical-hit");
   if (behavior.untilType === 9) {
     if (next.physicalHits > 0) naturalRemovals.push("physical-hit");

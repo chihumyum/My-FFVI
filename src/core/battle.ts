@@ -1,3 +1,7 @@
+import { WEB_BATTLE_GAU_INSTANCES, parseBattleGauInstanceContent, gauAppearancePoses, gauAppearanceTimes, gauAppearanceDuration,
+  type BattleGauInstanceContent, type BattleGauInstanceHost, type BattleGauOwnedFrame, type BattleGauMediaRequest } from "./battle-gau-instances.js";
+import { prepareSourceCatalogName } from "./source-catalog-name.js";
+import type { FieldMessageNamesPort } from "./owned-message-names.js";
 import { parseBattleGlobalFadeOp, validateBattleGlobalFadeHost, type BattleGlobalFadeHost } from "./battle-global-fade.js";
 import { fieldFadeOverlay } from "./field-fade.js";
 import { parseFieldReservation, type BattleFieldReservation, type BattleFieldReservationHost } from "./field-reserved-script.js";
@@ -69,7 +73,7 @@ import { projectActionTargets, type ActionUserConditionResult } from "./action-u
 import { projectPhysicalRows, validateBattleRow, validateBattleRowCatalog, type PhysicalRowContext } from "./battle-row.js";
 import type { SlowState } from "./condition-speed.js";
 import { createControlRecoveryState, createDoomClock, validateControlRecoveryState, validateDoomClock,
-  projectControlRecovery, projectDoomClock, type ControlRecoveryState, type DoomClockState,
+  projectControlRecovery, projectDoomClock, stopConditionRecoveryDuration, type ControlRecoveryState, type DoomClockState,
   type ControlConditionBehavior } from "./condition-control.js";
 import {
   validateItemStacks,
@@ -234,7 +238,7 @@ export class BattleGame {
       unvisitedDependencies:p.branchExecution!.deferred.filter(site=>!this.#branchVisited.has(site.pc)).map(site=>({...site,raw:structuredClone(p.branchExecution!.sourceProgram.Mnemonics[site.pc])})),
       lastFailure:structuredClone(this.#branchLastFailure)};
   }
-  private get deferredEventStart(){return this.#hasGlobalFade||!!this.#messageHost||!!this.#effectHost||this.lifecycle.kind==="battle-lifecycle-v2"||this.lifecycle.mode==="script"&&this.lifecycle.program.instructions.some(row=>row.op.kind==="condition-list");}
+  private get deferredEventStart(){return !!(this.content.gauInstancePolicy&&this.#gauHost)||this.#hasGlobalFade||!!this.#messageHost||!!this.#effectHost||this.lifecycle.kind==="battle-lifecycle-v2"||this.lifecycle.mode==="script"&&this.lifecycle.program.instructions.some(row=>row.op.kind==="condition-list");}
   readonly #fadeHost:BattleGlobalFadeHost|null;
   #hasGlobalFade=false;
   #fadeRevision=0;
@@ -254,6 +258,11 @@ export class BattleGame {
   #effectPendingDiscards:BattleEffectResourceLease[]=[];
   #effectJournal:{action:'request'|'play'|'complete'|'retire';ticket:number;pc:number;time:number}[]=[];
   #effectCleanupFailures:{reason:'complete'|'rollback'|'retire';time:number}[]=[];
+  #frameCleanupFailures:{owner:'message'|'fade'|'owned';time:number}[]=[];
+  get frameCleanupFailures(){return structuredClone(this.#frameCleanupFailures);}
+  private discardBattleFrame(owner:'message'|'fade'|'owned',frame:{discard():void}|null|undefined):void {
+    try{frame?.discard();}catch{this.#frameCleanupFailures.push({owner,time:this.time});}
+  }
   get effectPresentation():readonly BattleEffectProjection[]{return this.#effects.map(e=>structuredClone(e.projection));}
   get effectExecution(){return structuredClone(this.#effectJournal);}
   /** Resource cleanup is outside logical publication. Failure cannot restore an
@@ -307,7 +316,11 @@ export class BattleGame {
     // fail between that publication and these owned effect-state assignments.
     return {validate,commit:()=>{used=true;this.#effectRetired=true;this.#effects=[];this.#effectJournal.push({action:'retire',ticket:0,pc:-1,time:this.time});this.discardBattleEffectResources(resources,'retire');}};
   }
-  prepareEventRetirement(){const message=this.prepareMessageRetirement(),effect=this.prepareEffectRetirement();return {validate(){message.validate();effect.validate();},commit(){message.validate();effect.validate();message.commit();effect.commit();}};}
+  prepareEventRetirement(){const message=this.prepareMessageRetirement(),effect=this.prepareEffectRetirement(),
+    task=this.#gauTask,resource=task?.resource;let used=false;
+    const validate=()=>{if(used||this.#gauTask!==task)throw new Error("Stale source Gau retirement");message.validate();effect.validate();resource?.validate();};
+    return {validate,commit:()=>{validate();message.commit();effect.commit();used=true;this.#gauHost?.owned.retire();this.#gauTask=null;
+      this.#gauJournal.push({action:"retire",pc:-1,time:this.time,actorId:null,value:null});if(resource)this.discardBattleEffectResources([resource],"retire");}};}
   readonly #messageHost: BattleEventMessageHost | null;
   #messageFrame: ReturnType<SourceMessageState["prepareFrame"]> | null = null;
   #messagePresentation: { ticket: number; value: BattleEventMessagePresentation } | null = null;
@@ -368,6 +381,12 @@ export class BattleGame {
       this.#messageJournal.push({ action: "retire", pc: null, ticket: held?.ticket ?? null, time: this.time }); committed = true; } };
   }
   private readonly eventShared: BattleEventSharedState | null;
+  readonly #gauHost: BattleGauInstanceHost | null;
+  readonly #gauContent: BattleGauInstanceContent | null;
+  #gauFrame: BattleGauOwnedFrame | null = null;
+  #gauTask: {kind:"replace"|"appearance";pc:number;phase:"loading"|"playing"|"complete";
+    resource:BattleEffectResourceLease|null;partyId:number|null;actor:Combatant|null;startTime:number;poseIndex:number} | null = null;
+  #gauJournal: {action:"request"|"replace"|"pose"|"complete"|"join"|"retire";pc:number;time:number;actorId:string|null;value:number|string|null}[]=[];
   private readonly gauEntry:BattleGauEntry|null;
   private gauEnemyIds:number[]|null=null;
   private fieldReservation: BattleFieldReservation | null = null;
@@ -438,14 +457,20 @@ export class BattleGame {
     initialPreferences?: BattlePreferences,
     eventShared?: BattleEventSharedSnapshot,
     playerBorrow?: BattlePlayerBorrow,
-    private readonly eventHosts?: { conditions?: WebBattleEventConditions; scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; fade?:BattleGlobalFadeHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; fieldContinuation?:BattleFieldReservationHost; branchExecution?:WebBattleBranchExecution },
+    private readonly eventHosts?: { names?: FieldMessageNamesPort; gauInstances?:BattleGauInstanceHost; conditions?: WebBattleEventConditions; scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; fade?:BattleGlobalFadeHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; fieldContinuation?:BattleFieldReservationHost; branchExecution?:WebBattleBranchExecution },
   ) {
     if (eventHosts !== undefined && (!eventHosts || typeof eventHosts !== "object" || Array.isArray(eventHosts) ||
-        Object.keys(eventHosts).some(key => key !== "conditions" && key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau" && key !== "fade" && key !== "fieldContinuation")))
+        Object.keys(eventHosts).some(key => key !== "names" && key !== "gauInstances" && key !== "conditions" && key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau" && key !== "fade" && key !== "fieldContinuation")))
       throw new Error("Unknown battle event host options");
     validateBattleBranchExecutionPolicy(eventHosts?.branchExecution);this.#branchPolicy=eventHosts?.branchExecution;
     validateBattleGlobalFadeHost(eventHosts?.fade);this.#fadeHost=eventHosts?.fade?Object.freeze({...eventHosts.fade}):null;
     this.#fadeRevision=this.#fadeHost?.owner.mutationRevision??0;
+    this.#gauContent=content.gauInstances===undefined?null:parseBattleGauInstanceContent(content.gauInstances);
+    const gauHost=eventHosts?.gauInstances;
+    if(gauHost&&(gauHost.policy!==WEB_BATTLE_GAU_INSTANCES||typeof gauHost.prepare!=="function"||
+      gauHost.owned?.policy!==WEB_BATTLE_GAU_INSTANCES||typeof gauHost.owned.prepareFrame!=="function"||typeof gauHost.owned.retire!=="function"))
+      throw new Error("Unknown source Gau actual instance/media/owned host");
+    this.#gauHost=gauHost?Object.freeze({...gauHost}):null;
     const messageHost = eventHosts?.messages;
     if(eventHosts?.effects!==undefined&&(eventHosts.effects.policy!==WEB_BATTLE_EVENT_EFFECTS||typeof eventHosts.effects.prepare!=="function"))throw new Error("Unknown battle effect presentation host");
     if (
@@ -471,6 +496,10 @@ export class BattleGame {
     validateScriptedBattleActionPolicy(eventHosts?.scriptedActions);
     validateBattleEventControls(eventHosts?.controls);
     this.lifecycle = parseBattleLifecycle(content.lifecycle ?? { kind: "battle-lifecycle-v1", mode: "none" });
+    if(content.gauInstancePolicy!==undefined&&content.gauInstancePolicy!==WEB_BATTLE_GAU_INSTANCES)throw new Error("Unknown source Gau instance content policy");
+    if(this.lifecycle.mode==="script"&&this.lifecycle.program.instructions.some(({op})=>["gau-replace","gau-appearance","gau-join"].includes(op.kind))&&
+      (!this.#gauHost||!this.#gauContent||content.gauInstancePolicy!==WEB_BATTLE_GAU_INSTANCES))
+      throw new Error("Source Gau instances require explicit content and actual media/owned host");
     this.spawnConditionPolicy=content.spawnConditionPolicy===undefined?null:parseWebEnemySpawnConditions(content.spawnConditionPolicy);
     this.forcedSavePolicy=content.forcedSavePolicy===undefined?null:parseWebBattleForcedSave(content.forcedSavePolicy);
     if(eventHosts?.fieldContinuation){
@@ -572,6 +601,9 @@ export class BattleGame {
       throw new Error("Invalid battle qualification mode");
     const templateBlocker = battleDefinitionBlocker(players ?? content.players, content.qualificationContext, content.conditions);
     if (templateBlocker) throw new Error(templateBlocker);
+    if ((players ?? content.players).some(player => player.nameSource !== undefined))
+      throw new Error("Owned player names cannot be replaced by catalog templates");
+    const entryNames = content.enemies.map(enemy => prepareSourceCatalogName(enemy.name, enemy.nameSource, eventHosts?.names));
     this.combatants = [
       ...(players
         ? structuredClone(players)
@@ -583,8 +615,8 @@ export class BattleGame {
             queued: false,
             behavior: null,
           }))),
-      ...content.enemies.map((p) => ({
-        ...structuredClone(p),
+      ...content.enemies.map((p, index) => ({
+        ...structuredClone(p), name: entryNames[index]!.name,
         maxHp: p.hp,
         maxMp: p.mp,
         atb: 0,
@@ -685,10 +717,17 @@ export class BattleGame {
       for (const player of this.players) this.playerResources.set(player.id, structuredClone(player));
       for (const owner of firstEnteredOwnerIds(this.playerState!)) this.playerObservations.set(owner, []);
     }
+    for (const view of entryNames) this.observeMessageProvider(() => view.validate());
     this.log("敌人出现了。");
     // Message-bearing roots start on the first admitted battle tick. Preparing
     // a media handoff or retry never publishes a global window in a constructor.
-    if (!this.deferredEventStart) this.advanceEvent();
+    if (!this.deferredEventStart) {
+      this.advanceEvent();
+      // Legacy roots can create an instance inside the unpublished constructor.
+      // They must validate the same live-name read before the entry is exposed.
+      for (const validate of this.#messageFrameValidations) validate();
+      this.#messageFrameValidations = [];
+    }
   }
   get players() {
     return this.combatants.filter((c) => c.side === "player");
@@ -721,7 +760,7 @@ export class BattleGame {
   get ready() {
     if (this.deferredEventStart && !this.#messageRootStarted || this.escapeRequested || !this.eventControls.interactive || !this.eventUI.visible) return [];
     return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued &&
-      !this.hasSleep(c) && !this.hasAutomaticControl(c));
+      !this.actionSuspended(c) && !this.hasAutomaticControl(c));
   }
   get escapePending(): boolean { return this.escapeRequested; }
   get canRequestEscape(): boolean {
@@ -740,14 +779,17 @@ export class BattleGame {
     return this.content.qualificationContext?.mode === "source";
   }
   private appearanceCandidate(unit: Combatant): BattleAppearanceState | undefined {
-    const actor = unit.appearance, catalog = this.content.battleAppearance;
+    const binding=unit.side==="enemy"?(this.content.gauInstancePolicy?this.#gauContent:undefined)?.playerPrefabs.find(row=>row.monsterId===unit.sourceId):undefined;
+    if(binding&&!this.#gauHost)throw new Error("Enemy player prefab requires its explicit actual factory host");
+    if(binding&&!binding.actor)throw new Error("Source enemy player prefab media gate: "+binding.gate);
+    const actor = binding?.actor??unit.appearance, catalog = this.content.battleAppearance;
     const hasMagitek = this.conditions.types(unit.conditionIds).includes(607);
     if (!actor || !catalog) {
       if (hasMagitek || actor || unit.appearanceState)
         throw new Error("Missing source battle appearance provider");
       return undefined;
     }
-    if (actor.sourceId !== unit.sourceId) throw new Error("Battle appearance actor identity mismatch");
+    if (binding?binding.characterStatusId!==actor.sourceId:actor.sourceId !== unit.sourceId) throw new Error("Battle appearance actor identity mismatch");
     const state = reconcileBattleAppearance(catalog, actor,
       unit.appearanceState ?? createBattleAppearanceState(actor), unit.conditionIds);
     if (!unit.appearanceState || Boolean(state.magitek) !== Boolean(unit.appearanceState.magitek)) {
@@ -780,7 +822,10 @@ export class BattleGame {
     if (!unit) throw new Error("Unknown battle appearance actor");
     const state = this.appearanceCandidate(unit);
     if (!state) return null;
-    const candidate = projectBattleAppearanceFrame(this.content.battleAppearance!, unit.appearance!, state, frame, this.content.sprites);
+    const actor=unit.side==="enemy"?(this.content.gauInstancePolicy?this.#gauContent:undefined)?.playerPrefabs.find(row=>row.monsterId===unit.sourceId)?.actor??unit.appearance:unit.appearance;
+    const cue=this.#gauTask?.kind==="appearance"&&this.#gauTask.actor===unit&&this.#gauTask.phase!=="loading"?this.#gauTask.poseIndex:null;
+    const selected=cue===null?frame:{key:gauAppearancePoses[cue]!,bodyFrame:0,armorFrame:0};
+    const candidate = projectBattleAppearanceFrame(this.content.battleAppearance!, actor!, state, selected, this.content.sprites);
     unit.appearanceState = candidate.state;
     return candidate.projection;
   }
@@ -976,7 +1021,7 @@ export class BattleGame {
     if (
       !actor ||
       actor.hp <= 0 ||
-      this.hasSleep(actor) ||
+      this.actionSuspended(actor) ||
       !item ||
       item.important ||
       !item.uses.battle.plan ||
@@ -1082,7 +1127,7 @@ export class BattleGame {
     if(action.kind==="event")return this.canUseScriptedAction(action);
     if (action.control) {
       const actor = this.combatants.find(unit => unit.id === action.actor);
-      if (!actor || this.hasSleep(actor) || !this.controlPolicy || action.control.policy !== this.controlPolicy.kind ||
+      if (!actor || this.actionSuspended(actor) || !this.controlPolicy || action.control.policy !== this.controlPolicy.kind ||
           !this.conditions.controlBehaviors(actor.conditionIds).some(behavior =>
             behavior.id === action.control!.conditionId && behavior.kind === action.control!.kind)) return false;
       if (actor.side === "player") {
@@ -1178,7 +1223,7 @@ export class BattleGame {
       !ability?.plan ||
       !this.qualifiedAbility(actor, abilityId) ||
       actor.hp <= 0 ||
-      this.hasSleep(actor) ||
+      this.actionSuspended(actor) ||
       this.enemyExits.has(actor.id) ||
       ability.plan.effects.some(effect =>
         (effect.kind === "random-ability" || effect.kind === "forced-escape") && actor.side !== "enemy") ||
@@ -1448,12 +1493,71 @@ export class BattleGame {
     this.eventControls.enemyNoAct = true;
     this.log(`${unit.name} 加入战斗。`);
   }
+  get gauInstanceExecution(){return {task:this.#gauTask?{kind:this.#gauTask.kind,pc:this.#gauTask.pc,phase:this.#gauTask.phase,
+    partyId:this.#gauTask.partyId,actorId:this.#gauTask.actor?.id??null,startTime:this.#gauTask.startTime,poseIndex:this.#gauTask.poseIndex}:null,
+    journal:structuredClone(this.#gauJournal)};}
+  private gauMedia(keys:Iterable<string>,operation:"replace"|"appearance"):BattleGauMediaRequest{
+    const sprites=[...new Set(keys)].map(id=>{const sprite=this.content.sprites[id];if(!sprite)throw new Error("Missing source Gau media: "+id);return {id,file:sprite.file,width:sprite.width,height:sprite.height};});
+    if(!sprites.length)throw new Error("Missing source Gau player factory media");
+    return {kind:"source-gau-instance-media-v1",operation,sprites};
+  }
+  private startGauTask(kind:"replace"|"appearance",pc:number){
+    if(!this.#gauHost||!this.#gauContent||this.#effectRetired||this.#gauTask&&this.#gauTask.phase!=="complete")throw new Error("Missing or busy actual source Gau instance host");
+    let partyId:number|null=null,actor:Combatant|null=null;const keys:string[]=[];
+    if(kind==="replace"){
+      if(!this.eventShared)throw new Error("Gau replacement requires shared source ScenarioVariable[8]");
+      partyId=this.eventShared.read({category:"ScenarioVariable",index:8})===0?this.#gauContent.firstPartyId:this.#gauContent.returnPartyId;
+      const party=this.participantContent?.enemyParties?.[partyId];if(!party)throw new Error("Missing complete source-selected Gau child party");
+      if(this.players.some(player=>this.conditions.types(player.conditionIds).includes(506)))throw new Error("Gau replacement requires the active Quick condition exit lifecycle");
+      for(const member of party.members){const binding=this.#gauContent.playerPrefabs.find(row=>row.monsterId===member.sourceId);
+        if(!binding)throw new Error("Source-selected Gau child requires its actual enemy-player factory row");if(!binding.actor)throw new Error("Source Gau factory media gate: "+binding.gate);keys.push(...Object.values(binding.actor.bodySprites));}
+    }else{
+      actor=this.enemies[0]??null;if(!actor)throw new Error("Gau appearance requires the actual first enemy instance");
+      const binding=this.#gauContent.playerPrefabs.find(row=>row.monsterId===actor!.sourceId);
+      if(!binding?.actor||!this.content.battleAppearance)throw new Error("Gau appearance requires an actual source player-entity enemy, not an owned guess");
+      const state=this.appearanceCandidate(actor)!;
+      for(const key of gauAppearancePoses){const alias=this.content.battleAppearance.aliases[key];
+        if(!alias?.body.length)throw new Error("Missing source Gau appearance pose: "+key);
+        for(let bodyFrame=0;bodyFrame<alias.body.length;bodyFrame++){
+          const projected=projectBattleAppearanceFrame(this.content.battleAppearance,binding.actor,state,{key,bodyFrame,armorFrame:0},this.content.sprites);
+          keys.push(projected.projection.body.sprite);}
+      }
+    }
+    const request=this.gauMedia(keys,kind),resource=this.observeMessageProvider(()=>this.#gauHost!.prepare(request));
+    if(!resource||["status","validate","commit","discard"].some(key=>typeof resource[key as keyof BattleEffectResourceLease]!=="function"))throw new Error("Invalid source Gau resource lease");
+    this.#effectPendingCommits.push(resource);this.observeMessageProvider(()=>resource.validate());
+    this.#gauTask={kind,pc,phase:"loading",resource,partyId,actor,startTime:this.time,poseIndex:0};
+    this.#gauJournal.push({action:"request",pc,time:this.time,actorId:actor?.id??null,value:partyId});
+  }
+  private advanceGauTask(){
+    const task=this.#gauTask;if(!task||task.phase==="complete")return;
+    if(this.#effectRetired||task.actor&&!this.combatants.includes(task.actor))throw new Error("Retired source Gau instance completion");
+    const resource=task.resource!;this.observeMessageProvider(()=>resource.validate());
+    const status=this.observeMessageProvider(()=>resource.status());
+    if(status==="failed")throw new Error("Source Gau media failed");if(status==="loading")return;
+    if(status!=="ready")throw new Error("Unknown source Gau media readiness");
+    if(task.kind==="replace"){
+      this.changeEnemyParty(task.partyId!,false);this.reconcileAppearances();task.phase="complete";
+      this.#gauJournal.push({action:"replace",pc:task.pc,time:this.time,actorId:this.enemies[0]?.id??null,value:task.partyId});
+    }else{
+      if(task.phase==="loading"){task.phase="playing";task.startTime=this.time;task.poseIndex=0;
+        this.#gauJournal.push({action:"pose",pc:task.pc,time:this.time,actorId:task.actor!.id,value:gauAppearancePoses[0]});}
+      const elapsed=Math.fround((this.time-task.startTime)/1000);
+      for(let index=task.poseIndex+1;index<gauAppearanceTimes.length;index++)if(elapsed>=gauAppearanceTimes[index]!){task.poseIndex=index;
+        this.#gauJournal.push({action:"pose",pc:task.pc,time:this.time,actorId:task.actor!.id,value:gauAppearancePoses[index]!});}
+      if(elapsed<gauAppearanceDuration)return;task.phase="complete";
+    }
+    this.#gauJournal.push({action:"complete",pc:task.pc,time:this.time,actorId:task.actor?.id??null,value:task.partyId});
+    this.#effectPendingDiscards.push(resource);task.resource=null;
+  }
   private prepareEnemy(definition: EnemyBattleDefinition, placement: BattleParticipantSlot, id: string): Combatant {
     if (this.combatants.some(unit => unit.id === id)) throw new Error("Duplicate battle identity");
     if(this.usesSourceQualification&&definition.conditionIds.length&&!this.spawnConditionPolicy)
       throw new Error('Source late enemy conditions require the explicit Web spawn initialization policy');
     if(this.spawnConditionPolicy){this.conditions.validateOwner(definition.conditionIds,'enemy');if(definition.conditionIds.length>1)this.conditions.validateInitialComposition(definition.conditionIds);}
-    const unit: Combatant = { ...structuredClone(definition), id,
+    const name = this.observeMessageProvider(() => prepareSourceCatalogName(definition.name, definition.nameSource, this.eventHosts?.names));
+    this.#messageFrameValidations.push(() => this.observeMessageProvider(() => name.validate()));
+    const unit: Combatant = { ...structuredClone(definition), name: name.name, id,
       placement: structuredClone(placement), maxHp: definition.hp, maxMp: definition.mp,
       atb: 0, queued: false, behavior: initialEnemyBehavior() };
     this.validateConditionState([unit]);
@@ -1491,6 +1595,8 @@ export class BattleGame {
     for(const unit of this.combatants)if(removed.has(unit.id)&&unit.side==='player')this.#fixedPlayerActions.delete(unit.sourceId);
     for (const removedId of removed) {
       this.aiStates.delete(removedId);
+      // Function clocks belong to this retired instance, including Stop's
+      // Poison write. A new Gau/party actor initializes from [] below.
       this.poisonStates.delete(removedId);
       this.slowStates.delete(removedId);
       this.controlStates.delete(removedId); this.controlTargetUnits.delete(removedId);
@@ -1582,6 +1688,7 @@ export class BattleGame {
         ...(this.eventState.wait?.kind === "message" ? {
           messageStatus: this.#messageFrame!.state.sequenceStatus(this.eventState.wait.cursor.ticket),
         } : {}),
+        gauTaskCompleted:this.#gauTask?.phase==="complete"&&this.#gauTask.pc===this.eventState.pc,
         battleEffectsFinished:this.battleEffectsFinished,
         ...(this.#fadeFrame?.state.known?{globalFadeStatus:{in:this.#fadeFrame.state.poll('in')==='next',out:this.#fadeFrame.state.poll('out')==='next'}}:{}),
         enemyModes:this.participantState.entries.filter(entry=>!entry.removed).map(entry=>{
@@ -1621,6 +1728,15 @@ export class BattleGame {
             }
             case "condition-list": {
               const { pc, ...operation } = request; this.applyEventCondition(operation, pc); break;
+            }
+            case "gau-replace": this.startGauTask("replace",request.pc); break;
+            case "gau-appearance": this.startGauTask("appearance",request.pc); break;
+            case "gau-join": {
+              if(!this.#gauHost||!this.#gauContent||!this.eventShared)throw new Error("Missing actual source Gau owned join frame");
+              this.#gauFrame??=this.#gauHost.owned.prepareFrame();
+              const owner=this.#gauFrame.join({sourceId:this.#gauContent.joinedSourceId,
+                firstEncounter:this.eventShared.read({category:"ScenarioVariable",index:8})===0});
+              this.#gauJournal.push({action:"join",pc:request.pc,time:this.time,actorId:owner.ownedId,value:owner.sourceId});break;
             }
             case 'cursed-shield-check': {
               if(!this.eventShared)throw new Error('CursedShield requires the shared source scenario-variable owner');
@@ -1780,15 +1896,26 @@ export class BattleGame {
         this.conditions.isUnableFight(unit.conditionIds)) : { hp: unit.hp, conditionIds: [...unit.conditionIds] };
       if (life.hp !== unit.hp) life.conditionIds = this.conditions.updateDying(life.hp, unit.maxHp, life.conditionIds);
       const control = this.prepareControlState(unit, life.conditionIds, this.controlStates.get(unit.id)!,
-        this.controlTargetUnits.get(unit.id)!, null);
-      const poison = this.conditions.reconcilePoisonState(life.conditionIds, this.poisonStates.get(unit.id)!, this.atbSpeed);
-      const slow = this.conditions.reconcileSlowState(life.conditionIds, this.slowStates.get(unit.id)!);
-      return { unit, change, life, control, poison, slow, before: [...unit.conditionIds] };
+        this.controlTargetUnits.get(unit.id)!, null, change.removed);
+      const stop=this.prepareStopTransition(unit,life.conditionIds,this.conditions.reconcilePoisonState(life.conditionIds,
+        this.poisonStates.get(unit.id)!.filter(clock=>!change.removed.includes(clock.conditionId)),this.atbSpeed),change.removed);
+      const slow = this.conditions.reconcileSlowState(life.conditionIds, this.slowStates.get(unit.id)!.filter(clock=>!change.removed.includes(clock.conditionId)));
+      return { unit, change, life, control, poison:stop.state, stop, slow, before: [...unit.conditionIds] };
     });
-    // Every target/provider is prepared before publishing the first live list.
+    // Every target/provider and same-actor ready ticket is prepared before
+    // publishing the first live list. Direct script writes use the same native
+    // Stop Start/Remove boundary as the complete ability action carrier.
+    const {owners:stopReady,actions:stopCancelled}=this.prepareStopReadyCancellation(
+      planned.filter(next=>next.stop.started).map(next=>next.unit.id));
+    this.queue=this.queue.filter(action=>!stopReady.has(action.actor));
+    this.reactions=this.reactions.filter(action=>!stopReady.has(action.actor));
+    for(const action of stopCancelled){const unit=this.combatants.find(unit=>unit.id===action.actor)!;
+      if(unit.side==="player"&&this.#fixedPlayerActions.get(unit.sourceId)===action.executionTicket)this.#fixedPlayerActions.delete(unit.sourceId);}
     for (const next of planned) {
       const lifeChanged = (next.unit.hp === 0) !== (next.life.hp === 0);
       Object.assign(next.unit, next.life);
+      if(stopReady.has(next.unit.id)){next.unit.atb=0;next.unit.queued=false;}
+      if(next.stop.removed)next.unit.atb=0;
       this.poisonStates.set(next.unit.id, next.poison); this.slowStates.set(next.unit.id, next.slow);
       this.controlStates.set(next.unit.id, next.control.state); this.controlTargetUnits.set(next.unit.id, next.control.targets);
       this.observeDropLife(next.unit);
@@ -1870,7 +1997,7 @@ export class BattleGame {
     const ability=this.content.abilities[action.source.id],cost=this.abilityCost(actor.id,action.source.id);
     if(!ability?.plan||!cost)throw new Error("Scripted battle definition/cost changed");
     this.validateScriptedAbility(actor,ability);
-    return actor.hp>0&&!this.hasSleep(actor)&&!this.enemyExits.has(actor.id)&&
+    return actor.hp>0&&!this.actionSuspended(actor)&&!this.enemyExits.has(actor.id)&&
       (actor.side!=="player"||actor.mp>=cost.mp)&&conditionsAllowAction(actor.conditionIds,ability.program.forbiddenConditionIds,[]);
   }
   private scriptedTargetChoices(action:BattleAction):TargetChoice[] {
@@ -1954,8 +2081,38 @@ export class BattleGame {
     }
     return { state, targets };
   }
-  private hasSleep(unit: Pick<Combatant, "conditionIds">): boolean {
-    return this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.kind === "sleep");
+  private actionSuspended(unit: Pick<Combatant, "conditionIds">): boolean {
+    // The closed live function contributions stay independent. Stop.Remove
+    // cannot release another active Sleep (native actNotPossibleCounter).
+    return this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.kind === "sleep" || behavior.kind === "stop");
+  }
+  /** Current presentation/interaction projection, never an external setter. */
+  isStopped(actorId: string): boolean {
+    const unit = this.combatants.find(current => current.id === actorId);
+    if (!unit) throw new Error("Missing current Stop presentation unit");
+    return this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.kind === "stop");
+  }
+  private prepareStopTransition(unit: Combatant, conditionIds: readonly number[], poison: Readonly<PoisonState>,
+    removedIds: readonly number[] = []) {
+    const before = this.conditions.controlBehaviors(unit.conditionIds).filter(b => b.kind === "stop"),
+      after = this.conditions.controlBehaviors(conditionIds).filter(b => b.kind === "stop");
+    if (before.length > 1 || after.length > 1) throw new Error("Unresolved overlapping Stop function writers");
+    const removed = before.some(b => !after.some(next => next.id === b.id) || removedIds.includes(b.id)),
+      started = after.some(b => !before.some(old => old.id === b.id) || removedIds.includes(b.id));
+    let state = poison.map(clock => ({ ...clock }));
+    // Each native Remove/Start writes then-current actual instances. A newly
+    // constructed Poison is not suspended simply because Stop is still present.
+    if (removed) state = this.conditions.writePoisonTimeStop(conditionIds, state, false);
+    if (started) state = this.conditions.writePoisonTimeStop(conditionIds, state, true);
+    return { state, removed, started };
+  }
+  private prepareStopReadyCancellation(startedIds: readonly string[]) {
+    const owners=new Set(startedIds.filter(id=>this.queue.some(pending=>pending.actor===id&&["normal","loop"].includes(pending.kind)))),
+      actions=[...this.queue,...this.reactions].filter(pending=>owners.has(pending.actor));
+    for(const action of actions)if(!Number.isInteger(action.executionTicket)||action.executionTicket!<1||
+      action.executionTicket!>=this.#nextActionTicket||!this.combatants.some(unit=>unit.id===action.actor))
+      throw new Error("Stop ready cancellation requires actual action owner and execution ticket");
+    return {owners,actions};
   }
   private hasAutomaticControl(unit: Pick<Combatant, "conditionIds">): boolean {
     return this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.kind === "confusion" || behavior.kind === "temptation");
@@ -2068,7 +2225,8 @@ export class BattleGame {
       if (behavior.kind === "temptation" && (!target || !this.combatants.includes(target)))
         throw new Error("Retired or missing targeted condition unit");
       const recovery = projectControlRecovery(behavior, clock.recovery, {
-        progress: true, durationSeconds: duration,
+        progress: true, durationSeconds: behavior.kind === "stop"
+          ? stopConditionRecoveryDuration(this.conditions.types(initialIds), Math.fround(seconds), Math.fround(this.atbSpeed)) : duration,
         // Ordinary source entry constructs an empty list; unsupported weapon
         // condition/function providers never enter this runtime domain.
         normalAttackAdded: false,
@@ -2471,7 +2629,7 @@ export class BattleGame {
     this.#messageBusy=true;
     try {fade=this.#fadeHost?.owner.prepareFrame()??null;fade?.state.advance(.01);frame?.state.advance(.01);
       const f=fade?.prepareCommit(),m=frame?.prepareCommit();f?.validate();m?.validate();m?.commit();f?.commit();this.#fadeRevision=this.#fadeHost?.owner.mutationRevision??0;
-    }catch(error){frame?.discard();fade?.discard();throw error;}finally{this.#messageBusy=false;}
+    }catch(error){this.discardBattleFrame('message',frame);this.discardBattleFrame('fade',fade);throw error;}finally{this.#messageBusy=false;}
   }
   private tick() {
     if (this.#messageBusy) throw new Error("Reentrant battle message frame");
@@ -2504,6 +2662,7 @@ export class BattleGame {
       queue: structuredClone(this.queue),
       reactions: structuredClone(this.reactions),
       ai: structuredClone(this.aiStates),
+      gauTask:this.#gauTask?{...this.#gauTask}:null,gauJournal:structuredClone(this.#gauJournal),
       fadeJournal:structuredClone(this.#fadeJournal),
       eventState: structuredClone(this.eventState),branchVisited:new Set(this.#branchVisited),
       fieldReservation:structuredClone(this.fieldReservation),gauEnemyIds:structuredClone(this.gauEnemyIds),gauModeJournal:structuredClone(this.gauModeJournal),
@@ -2544,6 +2703,7 @@ export class BattleGame {
       this.reconcileAppearances();
       this.step();
       this.reconcileAppearances();
+      const ownedWrite=this.#gauFrame?.prepareCommit();ownedWrite?.validate();
       const fadeWrite=this.#fadeFrame?.prepareCommit();fadeWrite?.validate();
       const messageWrite = frame?.prepareCommit(), effects = this.#messageFrameEffects === null ? null :
         this.observeMessageProvider(() => this.#messageHost!.prepareEffects(this.#messageFrameEffects!));
@@ -2553,14 +2713,25 @@ export class BattleGame {
       if (effects) this.observeMessageProvider(effects.validate);
       messageWrite?.validate();
       for(const e of this.#effects)this.observeMessageProvider(()=>e.resource.validate());
-      for(const resource of this.#effectPendingCommits)resource.commit();
-      effects?.commit(); messageWrite?.commit();fadeWrite?.commit();this.#fadeRevision=this.#fadeHost?.owner.mutationRevision??0;
+      if(this.#gauTask?.resource)this.observeMessageProvider(()=>this.#gauTask!.resource!.validate());
+      ownedWrite?.validate();
+      for(const resource of this.#effectPendingCommits)this.observeMessageProvider(()=>resource.commit());
+      // All external resource callbacks have returned. Validate every current
+      // dependency before any deterministic Field-mask/Msg/Fade/owned write.
+      for(const validate of this.#messageFrameValidations)validate();
+      for(const e of this.#effects)this.observeMessageProvider(()=>e.resource.validate());
+      if(this.#gauTask?.resource)this.observeMessageProvider(()=>this.#gauTask!.resource!.validate());
+      if(effects)this.observeMessageProvider(effects.validate);
+      // The presentation already describes the staged window; use the actual
+      // prepared owner's revision/reservation rather than comparing old pixels.
+      this.validateFadeOwnership();messageWrite?.validate();fadeWrite?.validate();ownedWrite?.validate();
+      effects?.commit();messageWrite?.commit();fadeWrite?.commit();ownedWrite?.commit();this.#fadeRevision=this.#fadeHost?.owner.mutationRevision??0;
       for(const pc of this.#branchFrameVisited)this.#branchVisited.add(pc);
       // Publication ends here. Cleanup must never enter the rollback handler
       // after the shared source-message frame has committed.
       completedResources.push(...this.#effectPendingDiscards);
     } catch (error) {
-      frame?.discard();this.#fadeFrame?.discard();this.#fadeJournal=before.fadeJournal;
+      this.#gauTask=before.gauTask;this.#gauJournal=before.gauJournal;this.#fadeJournal=before.fadeJournal;
       this.#effects=before.effectState;this.#effectNextTicket=before.effectNextTicket;this.#effectJournal=before.effectJournal;
       this.#messagePresentation = before.messagePresentation; this.#messageRootStarted = before.messageRootStarted; this.#messageJournal = before.messageJournal;
       this.#conditionJournal = before.conditionJournal;
@@ -2613,10 +2784,11 @@ export class BattleGame {
       // A lease may have published before another host failed. Revoke every
       // candidate after restoring owners; a throwing discard cannot interrupt
       // rollback or replace the original publication error.
+      this.discardBattleFrame('message',frame);this.discardBattleFrame('fade',this.#fadeFrame);this.discardBattleFrame('owned',this.#gauFrame);
       this.discardBattleEffectResources(this.#effectPendingCommits,'rollback');
       throw error;
     } finally {
-      this.#fadeFrame=null;this.#messageFrame = null; this.#messageFrameValidations = []; this.#messageFrameEffects = null;this.#effectPendingCommits=[];this.#effectPendingDiscards=[];this.#branchFrameVisited=[];
+      this.#gauFrame=null;this.#fadeFrame=null;this.#messageFrame = null; this.#messageFrameValidations = []; this.#messageFrameEffects = null;this.#effectPendingCommits=[];this.#effectPendingDiscards=[];this.#branchFrameVisited=[];
       // Retain the reentrancy guard during external cleanup, but keep cleanup
       // outside the catch that can restore this already published frame.
       this.discardBattleEffectResources(completedResources,'complete');
@@ -2628,6 +2800,9 @@ export class BattleGame {
     if (!gate.simulation) return;
     this.time += 10;
     this.advanceBattleEffects();
+    if(this.#gauTask&&this.#gauTask.phase!=="complete"){
+      this.advanceGauTask();this.checkOutcome();return;
+    }
     if ((this.forceReturnRequested||this.forceSaveRequested) && this.eventControls.endEnabled) { this.checkOutcome(); return; }
     if (this.escapeRequested && !this.action) {
       // Existing lethal results outrank retreat; a request cannot avoid defeat
@@ -2658,7 +2833,7 @@ export class BattleGame {
           this.atbSpeed,
         );
       for (const c of this.combatants) {
-        if (c.hp <= 0 || c.queued || this.enemyExits.has(c.id) || this.hasSleep(c)) continue;
+        if (c.hp <= 0 || c.queued || this.enemyExits.has(c.id) || this.actionSuspended(c)) continue;
         if (c.atb < 100)
           c.atb = Math.fround(
             c.atb +
@@ -2673,7 +2848,7 @@ export class BattleGame {
           );
         if (!this.escapeRequested && c.side === "player" && c.atb >= 100 && this.hasAutomaticControl(c))
           this.decideControlledPlayer(c);
-        if (!this.hasSleep(c) && !this.escapeRequested && !this.eventControls.enemyNoAct && c.side === "enemy" && c.atb >= 100 &&
+        if (!this.actionSuspended(c) && !this.escapeRequested && !this.eventControls.enemyNoAct && c.side === "enemy" && c.atb >= 100 &&
             this.aiStates.get(c.id)?.status === "waiting") {
           if (!this.players.some((p) => p.hp > 0)) break;
           this.decideEnemyAction(c);
@@ -2688,12 +2863,20 @@ export class BattleGame {
           this.eventControls.endEnabled) this.finishEscape();
       return;
     }
-    const queue = this.reactions.length ? this.reactions : this.queue;
+    const eligible = (a: BattleAction) => a.charge <= 0 &&
+      (a.kind === "event" || !this.actionSuspended(this.combatants.find(unit => unit.id === a.actor)!));
+    const reactionIndex = this.reactions.findIndex(eligible);
+    // Explicit web-source-control-actions-v1 scheduler rule, not inferred
+    // native priority parity: only already-ready interrupts whose known live
+    // function owner is suspended may yield to another ordinary actor. Unknown
+    // owners/charges and legacy content retain the strict interrupt boundary.
+    const suspendedInterrupts = this.controlPolicy !== null && this.reactions.length > 0 &&
+      this.reactions.every(a => a.kind !== "event" && a.charge <= 0 &&
+        this.actionSuspended(this.combatants.find(unit => unit.id === a.actor)!));
+    const queue = this.reactions.length && !suspendedInterrupts ? this.reactions : this.queue;
     // SetBattleUpdateEnabled does not cancel staged or interrupt actions. Its
     // executor gate only prevents a new ordinary action from starting.
-    const index = queue === this.queue && !this.eventControls.updateEnabled
-      ? -1 : queue.findIndex((a) => a.charge <= 0 &&
-          (a.kind==="event" || !this.hasSleep(this.combatants.find(unit => unit.id === a.actor)!)));
+    const index = queue === this.reactions ? reactionIndex : !this.eventControls.updateEnabled ? -1 : queue.findIndex(eligible);
     if (index >= 0) {
       const action = queue.splice(index, 1)[0]!,
         actor = this.combatants.find((c) => c.id === action.actor)!;
@@ -2749,7 +2932,8 @@ export class BattleGame {
         elementResistances: actor.elementResistances,
         seconds,
         atbSpeed: this.atbSpeed,
-        // Time-stop types remain outside the active condition capability set.
+        // Per-instance Stop writes are retained on the actual Poison clocks.
+        // The old explicit caller input is not inferred from condition types.
         isTimeStopped: false,
       });
       let life = result.ticks.length
@@ -2769,22 +2953,25 @@ export class BattleGame {
           this.conditions.updateDying(control.hp, actor.maxHp, control.conditionIds),
           this.conditions.isUnableFight(life.conditionIds));
       const finalControl = this.prepareControlState(actor, life.conditionIds, control.control.state, control.control.targets, null);
-      const state = this.conditions.reconcilePoisonState(
+      const stop = this.prepareStopTransition(actor, life.conditionIds, this.conditions.reconcilePoisonState(
         life.conditionIds,
         result.state,
         this.atbSpeed,
-      );
+      ), control.removedIds);
+      const state = stop.state;
       const slow = this.conditions.reconcileSlowState(life.conditionIds,
         this.conditions.advanceSlow(actor.conditionIds, this.slowStates.get(actor.id)!, seconds));
-      return { actor, life, state, slow, control: finalControl, removedIds: control.removedIds, ticks: result.ticks };
+      return { actor, life, state, slow, control: finalControl, stopRemoved: stop.removed,
+        removedIds: control.removedIds, ticks: result.ticks };
     });
-    for (const { actor, life, state, slow, control, removedIds, ticks } of staged) {
+    for (const { actor, life, state, slow, control, stopRemoved, removedIds, ticks } of staged) {
       const died = actor.hp > 0 && life.hp === 0;
       Object.assign(actor, life);
       this.observeDropLife(actor);
       this.poisonStates.set(actor.id, state);
       this.slowStates.set(actor.id, slow);
       this.controlStates.set(actor.id, control.state); this.controlTargetUnits.set(actor.id, control.targets);
+      if (stopRemoved) actor.atb = 0;
       if (removedIds.some(id => this.content.conditions.behaviors.find(behavior => behavior.id === id)?.kind === "sleep"))
         for (const action of this.queue) if (action.actor === actor.id) action.charge = 0;
       if (died) {
@@ -2853,7 +3040,7 @@ export class BattleGame {
     for (const result of results) {
       const actor = units.find((c) => c.id === result.target)!;
       if (actor.side !== "enemy") continue;
-      if (this.enemyExits.has(actor.id) || this.conditions.isEscaped(actor.conditionIds) || this.hasSleep(actor)) continue;
+      if (this.enemyExits.has(actor.id) || this.conditions.isEscaped(actor.conditionIds) || this.actionSuspended(actor)) continue;
       if (this.aiStates.get(actor.id)?.status !== "waiting") continue;
       if (action.source.kind === "item")
         throw new Error("Unimplemented enemy item reaction");
@@ -3118,13 +3305,11 @@ export class BattleGame {
         const previous = this.poisonStates
           .get(id)!
           .filter((clock) => !removed.includes(clock.conditionId));
+        const stop = this.prepareStopTransition(this.combatants.find(current => current.id === id)!, unit.conditionIds,
+          this.conditions.reconcilePoisonState(unit.conditionIds, previous, this.atbSpeed), removed);
         return {
           id,
-          state: this.conditions.reconcilePoisonState(
-            unit.conditionIds,
-            previous,
-            this.atbSpeed,
-          ),
+          state: stop.state, stopStarted: stop.started, stopRemoved: stop.removed,
           slow: this.conditions.reconcileSlowState(unit.conditionIds,
             this.slowStates.get(id)!.filter((clock) => !removed.includes(clock.conditionId))),
           control,
@@ -3142,10 +3327,15 @@ export class BattleGame {
                 this.action?.actor === entry.target.id && ["normal", "loop"].includes(this.action.kind))) sleepResets.add(entry.target.id);
         }
       }
+      // Stop.Start calls RemoveActReady only when this same unit has actual
+      // ordinary chanting/normal-stack work. A bare partial/full gauge or a
+      // lone interrupt is not proof of readiness and is not cleared here.
+      const {owners:stopReady,actions:stopCancelled}=this.prepareStopReadyCancellation(
+        poison.filter(next=>next.stopStarted).map(next=>next.id));
       const keepsControl = (pending: BattleAction) => !pending.control || projected.some(unit => unit.id === pending.actor &&
         this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.id === pending.control!.conditionId && behavior.kind === pending.control!.kind));
-      const nextQueue = this.queue.filter(pending => !controlStarts.has(pending.actor) && keepsControl(pending));
-      const nextReactions = this.reactions.filter(pending => !controlStarts.has(pending.actor) && keepsControl(pending));
+      const nextQueue = this.queue.filter(pending => !controlStarts.has(pending.actor) && !stopReady.has(pending.actor) && keepsControl(pending));
+      const nextReactions = this.reactions.filter(pending => !controlStarts.has(pending.actor) && !stopReady.has(pending.actor) && keepsControl(pending));
       const cancelledControlOwners = new Set(this.queue.filter(pending => pending.control && !nextQueue.includes(pending))
         .map(pending => pending.actor));
       // One transaction includes effects, enemy parameters, AI PCs, both queues,
@@ -3176,10 +3366,15 @@ export class BattleGame {
       actor.mp -= payment;
       if(projection.userResourceState)Object.assign(actor,projection.userResourceState);
       this.queue = nextQueue; this.reactions = nextReactions;
+      for (const pending of stopCancelled) {
+        const owner = this.combatants.find(unit => unit.id === pending.actor)!;
+        if (owner.side === "player" && this.#fixedPlayerActions.get(owner.sourceId) === pending.executionTicket)
+          this.#fixedPlayerActions.delete(owner.sourceId);
+      }
       for (const unit of this.combatants) {
-        if (controlStarts.has(unit.id) || cancelledControlOwners.has(unit.id) &&
+        if (controlStarts.has(unit.id) || stopReady.has(unit.id) || cancelledControlOwners.has(unit.id) &&
             !nextQueue.some(pending => pending.actor === unit.id) && this.action?.actor !== unit.id) unit.queued = false;
-        if (sleepResets.has(unit.id)) unit.atb = 0;
+        if (sleepResets.has(unit.id) || stopReady.has(unit.id) || poison.some(next => next.id === unit.id && next.stopRemoved)) unit.atb = 0;
       }
       if (projection.userResults.length) actor.conditionIds = [...projection.userConditionIds];
       for (const next of poison) {

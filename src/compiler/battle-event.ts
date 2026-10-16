@@ -1,3 +1,4 @@
+import {parseWebBattleGauInstances,type WebBattleGauInstances} from "../core/battle-gau-instances.js";
 import { compileFieldFadeInstruction } from "./field-fade.js";
 import { decodeSourceSystemFlags, type SourceFormatFlagImportBinding } from "./source-system-flags.js";
 import { parseSourceBattleFormatImport, type SourceBattleFormatImport } from "../core/source-format-import.js";
@@ -38,8 +39,8 @@ const instruction = z.object({
 /** Battle-event compilation is distinct from monster AI. Preserve every source
  * PC; unknown hosts, operands and branches remain explicit blocked operations.
  * This compiler does not certify a native scheduler or grant owned effects. */
-export function compileBattleEvent(raw: unknown, source: BattleAISource | null, messages?: BattleEventMessageInput, effects?:BattleEffectReader,branchExecution?:WebBattleBranchExecution,sourceFormatBinding?:SourceFormatFlagImportBinding): BattleEventProgram {
-  validateBattleBranchExecutionPolicy(branchExecution);
+export function compileBattleEvent(raw: unknown, source: BattleAISource | null, messages?: BattleEventMessageInput, effects?:BattleEffectReader,branchExecution?:WebBattleBranchExecution,sourceFormatBinding?:SourceFormatFlagImportBinding,gauInstancePolicy?:WebBattleGauInstances): BattleEventProgram {
+  validateBattleBranchExecutionPolicy(branchExecution);if(gauInstancePolicy!==undefined)parseWebBattleGauInstances(gauInstancePolicy);
   const data = script.parse(raw), blockers: string[] = [];
   let sourceFormatImport: SourceBattleFormatImport | undefined;
   if (sourceFormatBinding !== undefined) {
@@ -164,11 +165,16 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
       if(s[0]==='ガウ初回予約')op={kind:'reserve-gau-first'};
       if(s[0]==='とびこむで離脱')op={kind:'gau-leap'};
       if(s[0]==='ガウバトルモード設定')op=local(2)?{kind:'set-gau-mode'}:blocked('SetGauMode requires ScriptLocalVariable[2]');
+      if(gauInstancePolicy&&s[0]==='敵パーティをガウに')op={kind:'gau-replace'};
+      if(gauInstancePolicy&&s[0]==='ガウ登場アニメ')op={kind:'gau-appearance'};
+      if(gauInstancePolicy&&s[0]==='バトル加入：ガウ')op={kind:'gau-join'};
       const gauGates:Record<string,string>={
+        ...(!gauInstancePolicy?{
         '敵パーティをガウに':'Gau enemy replacement requires source flag-selected party, native asset-load/condition/AI/entity lifecycle and exact source party dependencies',
         'バトル加入：ガウ':'Gau battle join requires the complete owned enable/equipment/level/recovery/Corps borrow and publication',
-        'メンバー加入：ガウ':'Gau member join requires the complete source JoinCharacter owned enable/equipment/level/recovery/Corps lifecycle',
         'ガウ登場アニメ':'Gau appearance requires native enemy-instance animation/movement and completion callbacks',
+        }:{}),
+        'メンバー加入：ガウ':'Gau member join requires the complete source JoinCharacter owned enable/equipment/level/recovery/Corps lifecycle',
       };
       if(s[0]!==undefined&&gauGates[s[0]])op=blocked(gauGates[s[0]]!);
       if (s[0] === "HideBattleUI" || s[0] === "ShowBattleUI")
@@ -209,9 +215,10 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
     ? parseBattleEventMessageBinding(messages.binding) : undefined;
   const branch=branchExecution===WEB_BATTLE_BRANCH_EXECUTION?{
     policy:branchExecution,...(sourceFormatImport ? { sourceFormatImport } : {}),sourceProgram:{...structuredClone(data),Mnemonics:data.Mnemonics.map(parseBattleSourceInstruction)},
-    deferred:instructions.flatMap(({op},pc)=>{const category=classifyDeferredBattleInstruction(parseBattleSourceInstruction(data.Mnemonics[pc]));return op.kind==='blocked'&&category?[{pc,category,reason:op.reason}]:[];}),
+    deferred:instructions.flatMap(({op},pc)=>{const category=classifyDeferredBattleInstruction(parseBattleSourceInstruction(data.Mnemonics[pc]),gauInstancePolicy);return op.kind==='blocked'&&category?[{pc,category,reason:op.reason}]:[];}),
   }:undefined;
   return structuredClone({ kind: branch ? "battle-event-v2" : "battle-event-v1", source, entry, end,
     localNames: data.ScriptLocal, initialLocals, instructions, blockers,
+    ...(gauInstancePolicy&&instructions.some(({op})=>["gau-replace","gau-appearance","gau-join"].includes(op.kind))?{gauInstancePolicy}:{}),
     ...(messageBinding ? { messageBinding } : {}),...(branch?{branchExecution:branch}:{}) });
 }

@@ -118,16 +118,16 @@ test("existing numeric behavior and clocks consume types while retaining each ac
   assert.equal(physicalAccuracyWithBlind(101, engine.types([189]), false),
     physicalAccuracyWithBlind(101, engine.types([109]), false));
   const currentIds = [188, 195], clocks = engine.reconcilePoisonState(currentIds, [], 1);
-  assert.deepEqual(clocks, [{ conditionId: 188, elapsedSeconds: 0, thresholdSeconds: 4 }]);
+  assert.deepEqual(clocks, [{ conditionId: 188, elapsedSeconds: 0, thresholdSeconds: 4, isTimeStop: false }]);
   const input = { conditionIds: currentIds, state: clocks, hp: 160, maxHp: 160, elementResistances: {},
     seconds: 4, atbSpeed: 1, isTimeStopped: false };
   const changed = engine.advancePoison(input);
   assert.equal(changed.hp, 150);
   assert.deepEqual(changed.ticks, [{ conditionId: 188, amount: 10, recovery: false, hpBefore: 160, hpAfter: 150 }]);
-  assert.deepEqual(changed.state, [{ conditionId: 188, elapsedSeconds: 0, thresholdSeconds: 8 }]);
+  assert.deepEqual(changed.state, [{ conditionId: 188, elapsedSeconds: 0, thresholdSeconds: 8, isTimeStop: false }]);
   assert.deepEqual(engine.reconcilePoisonState([195], changed.state, 1), []);
   assert.deepEqual(currentIds, [188, 195]);
-  assert.deepEqual(clocks, [{ conditionId: 188, elapsedSeconds: 0, thresholdSeconds: 4 }]);
+  assert.deepEqual(clocks, [{ conditionId: 188, elapsedSeconds: 0, thresholdSeconds: 4, isTimeStop: false }]);
 });
 
 test("death and battle-end lifecycle do not replace special states by ordinary condition IDs", () => {

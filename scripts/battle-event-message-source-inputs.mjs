@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
-export async function loadBattleEventMessageSourceInputs(root,compiledDir,{branchExecution,sourceFormatImport:importSourceFormat=false}={}){
+export async function loadBattleEventMessageSourceInputs(root,compiledDir,{branchExecution,sourceFormatImport:importSourceFormat=false,gauInstancePolicy}={}){
  const load=name=>import(pathToFileURL(resolve(compiledDir,'src',name+'.js')).href),api=Object.assign({},...await Promise.all([
   'compiler/battle-source-format-import','compiler/content','compiler/integrity','compiler/system-source','compiler/corpus','compiler/battle-event','compiler/battle-event-message-bindings',
   'compiler/battle-encounters','core/battle-event','core/battle-event-message','core/source-message-sequence'].map(load)));
@@ -29,7 +29,7 @@ export async function loadBattleEventMessageSourceInputs(root,compiledDir,{branc
  assert.equal(typeof importSourceFormat,'boolean','Unknown source Format import selection');
  assert.ok(!importSourceFormat||branchExecution,'Source Format import requires explicit source battle branch compilation');
  const sourceFormatImport=importSourceFormat ? api.createBattleSourceFormatImportResolver(snapshot) : undefined;
- const compiled=programs.map(p=>{const bound=typedSource(p),program=api.compileBattleEvent(p.data,bound,input,snapshot.reader,branchExecution,bound?sourceFormatImport?.({data:p.data,source:bound}):undefined),messageSites=[];
+ const compiled=programs.map(p=>{const bound=typedSource(p),program=api.compileBattleEvent(p.data,bound,input,snapshot.reader,branchExecution,bound?sourceFormatImport?.({data:p.data,source:bound}):undefined,gauInstancePolicy),messageSites=[];
   assert.equal(program.instructions.length,p.data.Mnemonics.length);
   for(const[index,raw]of p.data.Mnemonics.entries())if(['Msg','MsgClose'].includes(raw.mnemonic)){
    const value={program:p.id,source:p.source,rawHash:api.hash(p.data),index,raw,nextMnemonic:p.data.Mnemonics[index+1]?.mnemonic??null,

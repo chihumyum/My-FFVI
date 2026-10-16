@@ -1,3 +1,4 @@
+import {parseWebBattleGauInstances,type WebBattleGauInstances,type BattleGauInstanceContent} from "./battle-gau-instances.js";
 import {parseWebEnemySpawnConditions,type WebEnemySpawnConditions} from './battle-spawn-conditions.js';
 import {parseWebBattleForcedSave,type WebBattleForcedSave} from './battle-forced-save.js';
 import type { SourceMessageFeeCatalog } from "./source-message-fees.js";
@@ -73,6 +74,7 @@ export type BattleContent = {
   handoff?: BattleHandoffContent;
   forcedSavePolicy?:WebBattleForcedSave;
   spawnConditionPolicy?:WebEnemySpawnConditions;
+  gauInstancePolicy?:WebBattleGauInstances;
   /** Reusable enemy content is separate from the current battle unit owner. */
   participants?: BattleParticipantContent;
   playerParticipants?: BattlePlayerPlan;
@@ -100,6 +102,8 @@ export type BattleContent = {
   /** content.type_id=4, with explicit null when the source has no content row. */
   abilityContentIds?: Record<string, number | null>;
   battleAppearance?: BattleAppearanceCatalog;
+  /** Source factory facts plus explicit independent Web instance declaration. */
+  gauInstances?: BattleGauInstanceContent;
   battleRows?: BattleRowCatalog;
   /** Source condition predicates; current unit state remains owned by BattleGame. */
   battleEvents?: BattleEventRules;
@@ -113,6 +117,8 @@ export type BattleContent = {
   limitations: string[];
 };
 export type CombatantDefinition = ParameterValues & {
+  /** Immutable raw label/template; only a live owned-name consumer resolves it. */
+  nameSource?: import("./source-catalog-name.js").SourceCatalogName;
   id: string;
   sourceId: number;
   name: string;
@@ -188,6 +194,8 @@ export type BattleEncounter = Pick<
   handoff?: BattleHandoffContent;
   forcedSavePolicy?:WebBattleForcedSave;
   spawnConditionPolicy?:WebEnemySpawnConditions;
+  gauInstancePolicy?:WebBattleGauInstances;
+  gauInstances?:BattleGauInstanceContent;
   participants?: BattleParticipantContent;
   playerParticipants?: BattlePlayerPlan;
 };
@@ -268,6 +276,8 @@ export function encounterContent(
   if (Object.hasOwn(catalog.common, "participants")) throw new Error("Battle participants must belong to an encounter");
   if (Object.hasOwn(catalog.common, "playerParticipants")) throw new Error("Battle player participants must belong to an encounter");
   if(Object.hasOwn(catalog.common,'controls'))throw new Error('Battle controls must belong to an encounter');
+  if(Object.hasOwn(catalog.common,'gauInstances'))throw new Error('Gau factory facts must belong to an encounter');
+  if(Object.hasOwn(catalog.common,'gauInstancePolicy'))throw new Error('Gau instance policy must belong to an encounter');
   if(Object.hasOwn(catalog.common,'spawnConditionPolicy'))throw new Error('Spawn condition policy must belong to an encounter');
   if(Object.hasOwn(catalog.common,'forcedSavePolicy'))throw new Error('Forced save policy must belong to an encounter');
   if(Object.hasOwn(catalog.common,'sourceFlags'))throw new Error('Battle source flags must belong to an encounter');
@@ -275,7 +285,7 @@ export function encounterContent(
   if (!encounter) return null;
   if (encounter.encounterId !== id) throw new Error("Inconsistent battle encounter identity");
   const options = encounterFormationOptions(encounter);
-  const { formationPlan, escapePolicy, rewardPolicy, lifecycle, handoff, participants, playerParticipants, controls, sourceFlags, forcedSavePolicy, spawnConditionPolicy, ...definition } = encounter;
+  const { formationPlan, escapePolicy, rewardPolicy, lifecycle, handoff, participants, playerParticipants, controls, sourceFlags, forcedSavePolicy, spawnConditionPolicy, gauInstancePolicy, ...definition } = encounter;
   const manualControls=controls===undefined?{}:{controls:parseSourceBattleControls(controls)};
   const flagPlan=sourceFlags===undefined?undefined:parseSourceBattleFlags(sourceFlags);
   if(flagPlan){
@@ -293,7 +303,7 @@ export function encounterContent(
   if (catalog.gameState.characterInitializations && parsedLifecycle?.mode === "script" && parsedLifecycle.program.source === null)
     throw new Error("Source encounter battle lifecycle lacks source identity");
   const event = parsedLifecycle === undefined ? {} : { lifecycle: parsedLifecycle };
-  const saveContent={...(forcedSavePolicy===undefined?{}:{forcedSavePolicy:parseWebBattleForcedSave(forcedSavePolicy)}),...(spawnConditionPolicy===undefined?{}:{spawnConditionPolicy:parseWebEnemySpawnConditions(spawnConditionPolicy)})};
+  const saveContent={...(gauInstancePolicy===undefined?{}:{gauInstancePolicy:parseWebBattleGauInstances(gauInstancePolicy)}),...(forcedSavePolicy===undefined?{}:{forcedSavePolicy:parseWebBattleForcedSave(forcedSavePolicy)}),...(spawnConditionPolicy===undefined?{}:{spawnConditionPolicy:parseWebEnemySpawnConditions(spawnConditionPolicy)})};
   const handoffContent = handoff === undefined ? {} : { handoff: parseBattleHandoffContent(handoff, id) };
   const units = participants === undefined ? {} : { participants: parseBattleParticipantContent(participants, encounter.enemies) };
   const playerPlan = playerParticipants === undefined ? {} : { playerParticipants: parseBattlePlayerPlan(playerParticipants) };

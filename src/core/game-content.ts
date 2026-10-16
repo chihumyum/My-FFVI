@@ -496,7 +496,8 @@ export function battleUnitMediaUrls(content: Pick<BattleContent, "sprites" | "ba
  * borrowed players. Unused shared templates create no dependency. */
 export function battleMediaUrls(content: BattleContent,
   players: readonly Pick<CombatantDefinition, "sprites" | "appearance">[] = content.players): string[] {
-  return battleSpriteFiles(content.sprites, [content.background, ...battleUnitMediaKeys(content,
+  return battleSpriteFiles(content.sprites, [content.background,
+    ...(content.gauInstancePolicy?content.gauInstances?.playerPrefabs.filter(row=>[...content.enemies,...Object.values(content.participants?.enemyDefinitions??{})].some(unit=>unit.sourceId===row.monsterId)).flatMap(row=>{if(!row.actor)throw new Error("Source enemy player prefab media gate: "+row.gate);return Object.values(row.actor.bodySprites);})??[]:[]), ...battleUnitMediaKeys(content,
     [...players, ...content.enemies, ...Object.values(content.participants?.enemyDefinitions ?? {})])]);
 }
 

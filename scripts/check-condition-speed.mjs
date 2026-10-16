@@ -64,7 +64,9 @@ const active = [...compiled.filter(Boolean), { ...compiled[0], id: Number(source
 assert.deepEqual(catalog.behaviors.filter((b) => ['haste', 'slow'].includes(b.kind)), active);
 conditions.validateActive([95]);
 for (const row of providerRows) assert.ok(sources.some((r) => r.source.assetPath.endsWith('/condition_group.csv') && r.values.id === row.id));
-for (const id of stopIds) assert.throws(() => conditions.validateActive([id]), /Unimplemented active/);
+// Stop now has its separate, complete condition-stop lifecycle. This speed
+// inspector still grants no Stop owner or field persistence.
+for (const id of stopIds) { conditions.validateActive([id]); assert.equal(catalog.behaviors.find(b => b.id === id)?.kind, 'stop'); }
 const field = new FieldConditions(compileFieldConditionCatalog(reader, catalog, [6]).catalog);
 for (const id of [21, 25, 95, ...stopIds]) assert.throws(() => field.validateActive([id]), /Unimplemented active field/);
 
@@ -156,8 +158,8 @@ const candidates = corpus.tables['ability.csv'].filter((r) => groupIds.has(r.bat
 assert.deepEqual(candidates.map((r) => Number(r.id)), [65, 71, 79, 80, 190, 311, 313, 446, 532, 536, 540, 581, 593, 645, 658, 661, 662, 663, 721, 729, 1156, 1157, 1239, 1256, 1315, 1352, 1403, 1433, 1440]);
 const definitions = candidates.map((row) => compileDevelopmentAbility(reader, Number(row.id), 'source-' + row.id));
 const admitted = definitions.filter((d) => d.plan), blocked = definitions.filter((d) => !d.plan);
-assert.deepEqual(blocked.map((d) => d.id), [190, 311, 313, 721, 729]);
-assert.equal(admitted.length, 24);
+assert.deepEqual(blocked.map((d) => d.id), [313, 721, 729]);
+assert.equal(admitted.length, 26);
 const participant = { id: 'controlled-caster', side: 'player', level: 10, attack: 0, magic: 20,
   attackElements: [], defense: 64, magicDefense: 64, evasion: 0, magicEvasion: 0,
   hp: 1000, maxHp: 1000, mp: 200, maxMp: 200, conditionIds: [53], conditionResistances: {}, elementResistances: {} };
@@ -230,6 +232,6 @@ if (!sourceOnly) {
   report.contentHash = published.contentHash; report.sourceContentHash = source.contentHash;
 }
 await writeFile(outputPath, JSON.stringify(report, null, 2) + '\n');
-console.log(JSON.stringify({ sourceOnly, conditions: active.length, ordinaryApplicationConditions: 2, blockedConditions: stopIds.length, admittedAbilities: admitted.length,
+console.log(JSON.stringify({ sourceOnly, conditions: active.length, ordinaryApplicationConditions: 2, blockedConditions: 0, separateStopConditions: stopIds.length, admittedAbilities: admitted.length,
   blockedAbilities: blocked.length, lifecycleProbes, clockProbes, abilityProbes, publishedProbes: report.publishedProbes,
   hostProbes: report.hostProbes.length, reportSha256: hash(report), originalGameExecuted: false }, null, 2));
