@@ -154,14 +154,14 @@ test("enemy dependency compilation retains every received-command child and its 
   assert.deepEqual({ ...input, name: null }, before);
 });
 
-test("automatic counter targets use the shared range contract while old explicit-attacker counters stay bounded", () => {
+test("both counter families admit exact self range while ordinary other ranges stay bounded", () => {
   for (const mnemonic of ["CounterActReceiveCommand", "CounterAct"]) {
     const { f, input } = definitionFixture(mnemonic, [13]), ability = input.abilities[13]!;
     ability.program.range = 5; ability.plan!.targeting = compileTargetRule(5, 1)!;
     const result = compileEnemyBattleDefinition(f.reader(), input);
     assert.deepEqual(result.definition?.abilities, [13]);
     const targetIssues = result.diagnostics.filter(diagnostic => diagnostic.code === "automatic-target");
-    assert.equal(targetIssues.length, mnemonic === "CounterAct" ? 1 : 0);
+    assert.equal(targetIssues.length, 0);
     if (targetIssues[0]) assert.deepEqual([targetIssues[0].pc, targetIssues[0].dependency?.id], [3, 13]);
   }
 });

@@ -22,7 +22,7 @@ type Instruction<T=Op> = T extends Site ? Omit<T,keyof Site> : never;
 const host={visible:true,mediaReady:true,overlayOpen:false},counter={category:'MapLocalVariable' as const,index:7};
 const physical={file:'authored-animation.bundle',assetPath:'Authored/CustomAnimation',objectId:'-9007199254740995',serializedFile:'authored-cab',sha256:'a'.repeat(64)};
 function definition(name:string,x:number):SourceCustomAnimation{return {name,frames:[{sprite_name:'body',offsetx:x,offsety:0,alpha:1,rgb:{r:1,g:1,b:1,a:1},flip:false}],play_mode:0,play_speed:.03,is_reverse:false,next_anim_name:''};}
-async function fixture(options:{target?:boolean;battle?:boolean;bad?:boolean;wrongPhysical?:boolean}={}) {
+async function fixture(options:{target?:boolean;battle?:boolean;bad?:boolean;wrongPhysical?:boolean;lerp?:boolean}={}) {
  const f=options.battle?sourceEncounterSessionFixture():await fieldMoveToSessionFixture(),map=structuredClone(f.map),world=structuredClone(f.world);
  const sources=[{file:'GameAssembly.dll',sha256:SOURCE_FORMAT_FLAG_IMPORT.nativeSha256},{file:physical.file,sha256:physical.sha256}],sourceSetHash=hash(sources),parentSourceSetHash='d'.repeat(64);
  map.sourceSetHash=sourceSetHash;map.parentSourceSetHash=parentSourceSetHash;world.sourceSetHash=sourceSetHash;world.parentSourceSetHash=parentSourceSetHash;
@@ -37,6 +37,7 @@ async function fixture(options:{target?:boolean;battle?:boolean;bad?:boolean;wro
   fail:[{kind:'animation-cue',animation:'Bad',frame:0},{kind:'calc',left:counter,operator:'＋',right:{kind:'immediate',value:1}},{kind:'exit'}],
  };
  if(options.battle)programs.fight=[{kind:'animation-cue',animation:'Pose',frame:0},{kind:'encounter',party:Number(Object.keys(f.battle.encounters)[0]),continuation:'after-custom-battle'},{kind:'exit'}];
+ if(options.lerp)programs.a![0]={kind:'field-script-motion',command:{kind:'lerp',x:7,y:5,layer:0,duration:.05,arcHeight:0,animation:'Pose'}};
  const assets=Object.entries(programs).map(([name],index)=>({id:name,kind:'script' as const,source:{...physical,assetPath:physical.assetPath+'/'+name+'.json',objectId:String(BigInt(physical.objectId)-BigInt(index))},data:{SystemFlag:{},Animations:[definition('Pose',name==='b'?20:10),definition('Other',30),{...definition('Bad',40),play_mode:2}]}}));
  if(options.bad)assets.find(a=>a.id==='a')!.data.Animations[0]!.frames[0]!.sprite_name='missing';
  const compiled=compileSourceScriptAnimations({sourceSetHash,manifest:{parentSourceSetHash,sources},assets});assert.equal(compiled.rejected.length,0);world.sourceScriptAnimations=compiled.catalog;
@@ -122,4 +123,17 @@ test('save data cannot supply definitions, changed catalog, unknown current refs
  const f=await fixture();event(f,'a');const saved=f.game.prepareEventSave(f.game.eventSaveRequest!).checkpoint;assert.equal(saved.world.field.kind,'event-field-v8');if(saved.world.field.kind!=='event-field-v8')throw Error('version');
  for(const change of [(s:typeof saved)=>{(s.world.field as typeof saved.world.field).scriptAnimations.catalogHash='f'.repeat(64);},(s:typeof saved)=>{(s.world.field as typeof saved.world.field).scriptAnimations.currentAsset='f'.repeat(64);},(s:typeof saved)=>{(s.world.field as unknown as {scriptAnimations:{definitions:unknown}}).scriptAnimations.definitions=[definition('Injected',999)];},(s:typeof saved)=>{s.world.field.kind='event-field-v7' as typeof saved.world.field.kind;}]){const bad=structuredClone(saved);change(bad);assert.throws(()=>f.restore(bad));}
  assert.deepEqual(f.game.prepareEventSave(f.game.eventSaveRequest!).checkpoint,saved);
+});
+
+test('source Lerp uses the same actual custom component resolver and cannot publish missing custom media',async()=>{
+ const f=await fixture({lerp:true}),original=actor(f),entity=original.native!.entity;
+ event(f,'a');assert.equal(actor(f),original);assert.equal(original.native!.entity,entity);
+ assert.equal(original.x,7);assert.equal(original.y,5);assert.equal(original.animation!.frame().x,10);
+ assert(original.animation!.hasSourceCustomAnimations);assert(original.animation!.playing,'Lerp does not stop its explicit loop animation at the endpoint');
+ const saved=f.game.prepareEventSave(f.game.eventSaveRequest!).checkpoint,r=f.restore(saved);
+ assert.equal(r.field.actors[original.id]!.animation!.frame().x,10);acknowledge(f);r.advance(10);
+ assert.deepEqual(r.checkpoint(),f.game.checkpoint());
+ const bad=await fixture({lerp:true,bad:true}),a=actor(bad),before={position:{...a.native!.entity.position},playback:a.animation!.snapshot()};
+ bad.game.field.startEvent('a');bad.flow.advance(10,host);assert.match(bad.game.field.stop?.message??'',/Missing actual actor sprite/);
+ assert.deepEqual(a.native!.entity.position,before.position);assert.deepEqual(a.animation!.snapshot(),before.playback);
 });

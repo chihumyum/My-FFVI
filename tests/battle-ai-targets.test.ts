@@ -4,6 +4,7 @@ import { compileTargetRule } from "../src/compiler/battle-targets.js";
 import {
   battleAITargetBlocker,
   planBattleAITarget,
+  sourceCounterTargeting,
   type BattleAITargetInput,
   type BattleAITargetUnit,
 } from "../src/core/battle-ai-targets.js";
@@ -32,10 +33,10 @@ function finalChoice(input: BattleAITargetInput, raw: TargetChoice, units = inpu
     battleTargetChoices(targeting, input.actor, units, input.formation), units, noDraw);
 }
 
-test("shared admission distinguishes normal raw scopes from the bounded explicit counter lane", () => {
+test("shared admission distinguishes normal raw scopes from the bounded received-actor and self counter lanes", () => {
   for (const range of [1, 2, 3, 4, 5, 6, 7, 8, 9, 14, 20, 21]) {
     assert.equal(battleAITargetBlocker(range, rule(range), "normal"), null, String(range));
-    assert.equal(battleAITargetBlocker(range, rule(range), "counter") === null, range === 3 || range === 7);
+    assert.equal(battleAITargetBlocker(range, rule(range), "counter") === null, range === 3 || range === 5 || range === 7);
   }
   assert.match(battleAITargetBlocker(13, rule(3), "normal")!, /target range 13/);
   assert.match(battleAITargetBlocker(0, rule(3), "normal")!, /Invalid/);
@@ -244,4 +245,17 @@ test("returned raw target identities are detached from the roster and all prior 
   first.targetIds.push("unowned"); first.selection = { kind: "single", id: "unowned" };
   assert.deepEqual(input, before);
   assert.deepEqual(planBattleAITarget(input, noDraw), { selection: { kind: "all" }, targetIds: before.units.map(unit => unit.id) });
+});
+
+
+test("source CounterAct dispatch uses selected self range without widening received-command or nonself scopes", () => {
+  for (const range of [1, 2, 3, 4, 5, 6, 7, 8, 9, 14, 20, 21]) {
+    assert.equal(sourceCounterTargeting(range, "received-actor"), range === 5 ? "automatic" : "received-actor");
+    assert.equal(sourceCounterTargeting(range, "automatic"), "automatic");
+  }
+  for (const range of [0, -1, 3.5, NaN, Infinity, 0x80000000])
+    assert.throws(() => sourceCounterTargeting(range, "received-actor"), /Invalid/);
+  assert.throws(() => sourceCounterTargeting(5, "unknown" as "automatic"), /Invalid/);
+  assert.match(battleAITargetBlocker(2, rule(2), "counter")!, /counter/);
+  assert.match(battleAITargetBlocker(5, rule(3), "counter")!, /mismatch/);
 });

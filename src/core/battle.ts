@@ -61,7 +61,7 @@ import {
   type BattleAITurn,
   type BattleAICounterTargeting,
 } from "./battle-ai.js";
-import { battleAITargetBlocker, planBattleAITarget } from "./battle-ai-targets.js";
+import { battleAITargetBlocker, planBattleAITarget, sourceCounterTargeting } from "./battle-ai-targets.js";
 import { battleReaction, validateReactionRules } from "./battle-reactions.js";
 import { proposeForcedEscape, proposeRandomAbilityDispatch,
   type RandomAbilityDispatchPlan } from "./battle-derived-actions.js";
@@ -2184,9 +2184,16 @@ export class BattleGame {
             act.pc,
             `unimplemented ability ${id}: ${ability?.blockers.join("; ") ?? "missing definition"}`,
           );
-        const targeting = act.kind === "counter-act" ? act.targeting ?? "received-actor" : null;
-        if (targeting !== null && targeting !== "received-actor" && targeting !== "automatic")
+        const requestedTargeting = act.kind === "counter-act" ? act.targeting ?? "received-actor" : null;
+        if (requestedTargeting !== null && requestedTargeting !== "received-actor" && requestedTargeting !== "automatic")
           fail(act.pc, "invalid counter target provider");
+        const targeting = requestedTargeting === null ? null : sourceCounterTargeting(ability!.program.range, requestedTargeting);
+        // SetActData checks IsConfusion before null-target self dispatch. The
+        // ordinary Web control owner has no interrupt completion contract yet;
+        // a new self lane must not silently ignore that actual active owner.
+        if (act.kind === "counter-act" && requestedTargeting === "received-actor" &&
+            ability!.program.range === 5 && this.hasAutomaticControl(actor))
+          fail(act.pc, "Source self-counter target under active action control is unresolved");
         const targetBlocker = battleAITargetBlocker(ability!.program.range,
           ability!.plan!.targeting, targeting === "received-actor" ? "counter" : "normal", undefined, this.controlTargetPolicy(ability!));
         if (targetBlocker)
@@ -2874,9 +2881,10 @@ export class BattleGame {
           float: (min, max) =>
             Math.fround(min + this.randomUnit() * (max - min)),
         })) {
-          const targeting = act.kind === "counter-act" ? act.targeting ?? "received-actor" : null;
-          if (targeting === null) throw new Error("Reaction emitted a noninterrupt action");
+          const requestedTargeting = act.kind === "counter-act" ? act.targeting ?? "received-actor" : null;
+          if (requestedTargeting === null) throw new Error("Reaction emitted a noninterrupt action");
           const ability = this.content.abilities[id]!;
+          const targeting = sourceCounterTargeting(ability.program.range, requestedTargeting);
           const active = units.filter(unit => !this.enemyExits.has(unit.id) &&
             !this.conditions.isEscaped(unit.conditionIds));
           const choice = targeting === "automatic"

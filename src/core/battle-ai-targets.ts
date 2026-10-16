@@ -90,7 +90,7 @@ export function battleAITargetBlocker(
   const shape = range === 16 && controlPolicy !== undefined
     ? { relation: "enemy", modes: ["side"], normalFormationOnly: true } as const
     : rangeShapes[range];
-  if (!shape || kind === "counter" && range !== 3 && range !== 7)
+  if (!shape || kind === "counter" && range !== 3 && range !== 5 && range !== 7)
     return `Unimplemented ${kind === "counter" ? "counter" : "automatic"} target range ${range}`;
   if (fields.relation!.value !== shape.relation || modes.length !== shape.modes.length ||
       shape.modes.some(mode => !modes.includes(mode)) ||
@@ -101,6 +101,17 @@ export function battleAITargetBlocker(
   if (shape.normalFormationOnly && formation === "opposed")
     return "Unimplemented automatic target formation";
   return null;
+}
+
+/** CounterAct81fd50 passes null for source IsSelf(range5), then the
+ * existing SetActData owner delegates to ordinary target selection. All other
+ * ordinary counters keep their received-instance target; an explicitly
+ * automatic CounterActReceiveCommand must not be narrowed by this dispatch. */
+export function sourceCounterTargeting(range: number, targeting: "received-actor" | "automatic"): "received-actor" | "automatic" {
+  if (!Number.isInteger(range) || range <= 0 || range > 0x7fffffff ||
+      targeting !== "received-actor" && targeting !== "automatic")
+    throw new Error("Invalid source counter target dispatch");
+  return range === 5 ? "automatic" : targeting;
 }
 
 function unitFields(value: unknown): BattleAITargetUnit {

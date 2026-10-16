@@ -107,7 +107,8 @@ export type BattleAIAct = {
 } & (
   | { kind: "act"; abilities: number[]; weights: number[] }
   | { kind: "counter-act"; abilities: number[]; weights: number[];
-      /** Undefined preserves the existing explicit-attacker CounterAct lane.
+      /** Undefined preserves source CounterAct selected-ability dispatch: self
+       * range5 uses automatic self; bounded nonself uses the received actor.
        * Source CounterActReceiveCommand always declares automatic targeting. */
       targeting?: BattleAICounterTargeting }
   | { kind: "loop-act"; abilities: number[]; counts: number[] }

@@ -182,7 +182,8 @@ export type FieldScriptLerpProgress = {
 };
 export function projectFieldScriptLerp(snapshot: FieldPuppetHostSnapshot, providers: FieldPuppetHostProviders,
   actorId: string, command: FieldScriptLerp, map: FieldCameraMapRange,
-  progress: FieldScriptLerpProgress | null, timeSeconds: number): {
+  progress: FieldScriptLerpProgress | null, timeSeconds: number,
+  prepareAnimation?: (actorId: string, animation: ActorAnimation, key: string) => void): {
     snapshot: FieldPuppetHostSnapshot; progress: FieldScriptLerpProgress; flow: "next" | "wait";
   } {
   checkpointKeys(command, "kind,x,y,layer,duration,arcHeight,animation");
@@ -204,6 +205,7 @@ export function projectFieldScriptLerp(snapshot: FieldPuppetHostSnapshot, provid
       startLayer, targetLayer, movingLayer: Math.max(startLayer, targetLayer) };
     if (command.animation !== "") {
       if (!actor.animation) throw new Error("Source Lerp animation media is unavailable");
+      prepareAnimation?.(actor.id, actor.animation, command.animation);
       if (command.duration === 0) actor.animation.cue(command.animation, -1);
       else actor.animation.playEntity(command.animation, true);
       actor.animation.frame();

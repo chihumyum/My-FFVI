@@ -113,7 +113,7 @@ test("ordinary and repeated AI actions admit the shared source range matrix with
   }
 });
 
-test("a future CounterAct retains its own target dependency even when ordinary rows admit the same plan", () => {
+test("a future CounterAct retains unsupported target dependencies while exact source self dispatch admits", () => {
   for (const range of [1, 2, 4, 5, 6, 8, 9, 14, 20, 21]) {
     const f = automaticRangeFixture(range);
     f.input.encounters[1]!.enemies[0]!.ai.data = aiSource([
@@ -123,9 +123,13 @@ test("a future CounterAct retains its own target dependency even when ordinary r
     ]);
     const result = compileBattleEncounterRuntime(f.reader(), f.input);
     assert.equal(result.report.compiledDefinitions, 2, "range " + range);
-    assert.equal(result.report.withRuntimeDependencies, 1, "range " + range);
+    assert.equal(result.report.withRuntimeDependencies, range === 5 ? 0 : 1, "range " + range);
     const dependencies = result.diagnostics.filter(d => d.code === "automatic-target");
-    assert.equal(dependencies.length, 1, "The ordinary action does not inherit the counter restriction");
+    assert.equal(dependencies.length, range === 5 ? 0 : 1, "Self is dispatched by its source branch; other counter scopes stay bounded");
+    if (range === 5) {
+      assert.equal(result.encounters[9202]!.enemies[0]!.ai!.instructions[8]!.op.kind, "counter-act");
+      continue;
+    }
     const diagnostic = dependencies[0]!;
     assert.deepEqual([diagnostic.partyId, diagnostic.enemySlot, diagnostic.pc, diagnostic.kind, diagnostic.dependency],
       [9202, 5, 8, "runtime-dependency", { table: "ability.csv", id: 13 }]);

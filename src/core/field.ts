@@ -3176,8 +3176,9 @@ export class FieldGame {
     if (op.command.kind !== "lerp" || !actor.native || !this.nativeActorProviders || !this.camera ||
         this.content.cameraHost?.callbacks !== "fresh-normal-field-v1")
       throw new Error("Source actor Lerp requires the bound native actor and map providers");
-    if (this.content.cameraHost.loop.horizontal || this.content.cameraHost.loop.vertical)
-      throw new Error("Source actor Lerp loop-map provider is unavailable");
+    // Source IMapAccessor range conversion and Cell->World are independent of
+    // loop axes. Lerp writes an absolute Transform; it is not a shortest route
+    // or a canonical-cell movement. The existing bound map/actor fence applies.
     const command = structuredClone(op.command), map = this.content.cameraHost.mapRange;
     let result: ReturnType<typeof projectFieldScriptLerp> | null = null;
     const publish = prepareNativeFieldActorProjection({
@@ -3185,7 +3186,12 @@ export class FieldGame {
       readCamera: () => { const state = this.camera!.snapshot();
         return { id: this.cameraActorId, position: state.dummy.position, layer: state.dummy.layer }; },
     }, (snapshot, providers) => {
-      result = projectFieldScriptLerp(snapshot, providers, actor.id, command, map, progress, this.time / 1000);
+      result = projectFieldScriptLerp(snapshot, providers, actor.id, command, map, progress, this.time / 1000,
+        (id, animation, key) => {
+          if (id !== actor.id || this.actors[id] !== actor)
+            throw new Error("Source Lerp animation lost its actual actor owner");
+          this.prepareActorCustomAnimation(actor, animation, key);
+        });
       return result.snapshot;
     });
     // The projection runs during prepare and validation, before any publication.
