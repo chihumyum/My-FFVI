@@ -3,7 +3,7 @@ import type { FieldChoiceAnswer } from "./field-choice.js";
 import type { FieldDirectionInputResult } from "./field.js";
 import { GameSession } from "./game-session.js";
 
-export type GameFlowPhase = "title" | "loading" | "paused" | "exploration" | "event" | "dialogue" | "choice" | "shop" | "party-selection" |
+export type GameFlowPhase = "title" | "loading" | "paused" | "exploration" | "event" | "dialogue" | "choice" | "shop" | "party-selection" | "character-name" |
   "battle-entry" | "battle-return" | "battle" | "victory" | "defeat" | "escaped" | "forced" | "transition" | "blocked";
 export type GameFlowOperation = "new-game" | "load" | "save" | "map" | "battle-entry" | "battle-return";
 export type GameFlowHostState = { visible: boolean; mediaReady: boolean; overlayOpen: boolean };
@@ -75,6 +75,7 @@ export class GameFlow {
     if (field.stop?.kind === "encounter") return "event";
     if (field.choice) return "choice";
     if (field.dialogue || field.sourceMessage.projection?.acceptsInput) return "dialogue";
+    if (field.currentCharacterNaming) return "character-name";
     if (field.currentSourcePartySelection) return "party-selection";
     if (field.currentShop) return "shop";
     return field.busy ? "event" : "exploration";

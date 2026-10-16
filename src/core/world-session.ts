@@ -1,3 +1,5 @@
+import {WEB_RTS_PARTY_SWITCH,rtsNextSlot,validateRtsParking,type RtsWorldParking,type RtsParkingPose}from'./field-rts-party.js';
+import {IMMUTABLE_OWNED_FIELD_SOURCE,validateFieldSourceSnapshot,immutableFieldSourceCopy} from './field-source-snapshot.js';
 import { WEB_FLAT_RETAINED_FIELD_VIEW_CHANGE, fieldViewBinding } from './field-view-change.js';
 import { flatNpcGroupBlockers } from "./field-npc-flat-projection.js";
 import { validateRetainedWorldTransportationPolicy, type RetainedWorldTransportationEntry } from "./world-transportation-entry.js";
@@ -53,7 +55,7 @@ type Traveler = Pick<FieldContent["entry"]["player"], "asset" | "mount"> & {
   transportationId: number | null;
 };
 export type WorldCheckpoint = {
-  kind: "idle-world-v10" | "event-world-v1" | "idle-world-v11" | "event-world-v2";
+  kind: "idle-world-v10" | "event-world-v1" | "idle-world-v11" | "event-world-v2" | "idle-world-v12" | "event-world-v3";
   initialHash: string;
   location: {
     catalogHash: string;
@@ -65,6 +67,7 @@ export type WorldCheckpoint = {
   } | null;
   field: FieldCheckpoint;
   logicalEffects?: LogicalFieldEffectsCheckpoint;
+  rts?:RtsWorldParking;
 };
 
 /** Trusted metadata proves world applicability; presentation never changes the source request. */
@@ -258,6 +261,8 @@ export type PreparedMap = {
 };
 type Ownership = {
   from: FieldGame;
+  rtsBefore:string;
+  rtsAfter:RtsWorldParking|null;
   stop: MapTransitionStop;
   request: string;
   state: string;
@@ -295,7 +300,8 @@ type MapCommit = { value: PreparedMap; cancelled: boolean; started: boolean };
 /** Owns field lifetime. Hosts fetch and verify packages/images before committing a prepared map. */
 export class WorldSession {
   private current: FieldGame;
-  private location: WorldCheckpoint["location"] = null;
+  private location: WorldCheckpoint['location'] = null;
+  private rtsParking:RtsWorldParking|null=null;
   private prepared = new Map<PreparedMap, Ownership>();
   private commitInProgress: MapCommit | null = null;
   private catalogHash: string | null = null;
@@ -320,6 +326,8 @@ export class WorldSession {
     restoringNative = false,
     sourceOrigin?: SourceWorldOrigin,
   ) {
+    validateFieldSourceSnapshot(owned?.current.sourceSnapshot);
+    if(owned?.current.sourceSnapshot===IMMUTABLE_OWNED_FIELD_SOURCE){initial=immutableFieldSourceCopy(initial);this.initial=initial;}
     this.sourceOrigin = sourceOrigin === undefined ? null : structuredClone(sourceOrigin);
     if (this.sourceOrigin) {
       checkpointKeys(this.sourceOrigin, Object.hasOwn(this.sourceOrigin, "developmentProfile")
@@ -345,7 +353,7 @@ export class WorldSession {
     if (effectHost?.beginCandidate && typeof effectHost.observe !== "function")
       throw new Error("Field effect playback observation host is unavailable");
     this.effectOwner = typeof effectHost?.beginCandidate === "function"
-      ? new FieldEffects(initial.fieldEffects ?? { media: {} }, effectHost) : null;
+      ? new FieldEffects(initial.fieldEffects ?? { media: {} }, effectHost,owned?.current.sourceSnapshot) : null;
     const deferredRestore = restoringNative && logicalEffects;
     const candidate = hasEffects && !deferredRestore ? this.effectOwner?.fork() : undefined;
     this.effectMap = this.effectOwner ? new FieldEffectMap("0", candidate ?? this.effectOwner,
@@ -375,19 +383,19 @@ export class WorldSession {
   checkpoint(): WorldCheckpoint {
     const logicalEffects = this.logicalEffectsCheckpoint();
     return {
-      kind: logicalEffects ? "idle-world-v11" : "idle-world-v10",
+      kind:this.rtsParking?"idle-world-v12":logicalEffects ? "idle-world-v11" : "idle-world-v10",
       initialHash: this.initial.contentHash,
       location: structuredClone(this.location),
       field: this.current.checkpoint(),
-      ...(logicalEffects ? { logicalEffects } : {}),
+      ...(logicalEffects ? { logicalEffects } : {}),...(this.rtsParking?{rts:structuredClone(this.rtsParking)}:{}),
     };
   }
   eventCheckpoint(request: GameEventSaveRequest): WorldCheckpoint {
     if (this.commitInProgress) throw new Error("Cannot save during map publication");
     const logicalEffects = this.logicalEffectsCheckpoint();
-    return { kind: logicalEffects ? "event-world-v2" : "event-world-v1", initialHash: this.initial.contentHash,
+    return { kind:this.rtsParking?"event-world-v3":logicalEffects ? "event-world-v2" : "event-world-v1", initialHash: this.initial.contentHash,
       location: structuredClone(this.location), field: this.current.eventCheckpoint(request),
-      ...(logicalEffects ? { logicalEffects } : {}) };
+      ...(logicalEffects ? { logicalEffects } : {}),...(this.rtsParking?{rts:structuredClone(this.rtsParking)}:{}) };
   }
   private logicalEffectsCheckpoint(): LogicalFieldEffectsCheckpoint | null {
     if (this.effectOwner?.logicalPolicy !== WEB_LOGICAL_FIELD_EFFECTS) return null;
@@ -410,14 +418,15 @@ export class WorldSession {
         throw new Error("Source world catalog changed during the session");
       assertSourceEntryProfiles(this.sourceOrigin, catalog, native?.initialMap ?? this.sourceOrigin, target);
     }
-    const logical = snapshot.kind === "idle-world-v11" || snapshot.kind === "event-world-v2";
-    checkpointKeys(snapshot, "kind,initialHash,location,field" + (logical ? ",logicalEffects" : ""));
+    const rts=snapshot.kind==="idle-world-v12"||snapshot.kind==="event-world-v3";
+    const logical = snapshot.kind === "idle-world-v11" || snapshot.kind === "event-world-v2" || rts&&Object.hasOwn(snapshot,"logicalEffects");
+    checkpointKeys(snapshot, "kind,initialHash,location,field" + (logical ? ",logicalEffects" : "")+(rts?",rts":""));
     if (
-      !["idle-world-v10", "event-world-v1", "idle-world-v11", "event-world-v2"].includes(snapshot.kind) ||
+      !["idle-world-v10", "event-world-v1", "idle-world-v11", "event-world-v2", "idle-world-v12", "event-world-v3"].includes(snapshot.kind) ||
       snapshot.initialHash !== this.initial.contentHash
     )
       throw new Error("World checkpoint source/version mismatch");
-    if ((snapshot.kind === "event-world-v1" || snapshot.kind === "event-world-v2") !==
+    if ((snapshot.kind === "event-world-v1" || snapshot.kind === "event-world-v2" ||snapshot.kind==="event-world-v3") !==
         (snapshot.field.kind === "event-field-v1" || snapshot.field.kind === "event-field-v2" ||
           snapshot.field.kind === "event-field-v3" || snapshot.field.kind === "event-field-v4" || snapshot.field.kind === "event-field-v5" || snapshot.field.kind === "event-field-v6" || snapshot.field.kind === "event-field-v7" || snapshot.field.kind === "event-field-v8"))
       throw new Error("World and field continuation formats disagree");
@@ -517,7 +526,7 @@ export class WorldSession {
       if (saved.kind !== "web-logical-field-effects-checkpoint-v1" || saved.catalogHash !== catalog.webPolicy.catalogHash ||
           !/^(0|[1-9]\d*)$/.test(saved.scope)) throw new Error("Logical effect checkpoint source changed");
       checkpointInteger(Number(saved.scope), 0, 0x7fffffff); checkpointInteger(saved.nextScope, Number(saved.scope) + 1, 0x7fffffff);
-      restoredOwner = FieldEffects.restoreLogical(catalog, host, saved.state);
+      restoredOwner = FieldEffects.restoreLogical(catalog, host, saved.state,this.owned?.current.sourceSnapshot);
       effectScope = saved.scope; nextScope = saved.nextScope;
     } else if (this.effectMap?.hasHistory) throw new Error("Field effect manager history cannot be restored without its particle/RNG codec");
     const passiveEffects = bindPassiveEffects(content);
@@ -535,13 +544,15 @@ export class WorldSession {
     );
     if (logical && restoredOwner!.snapshot().boards.length !== (next.fieldEffectsSnapshot?.boards.length ?? 0))
       throw new Error("Logical effect checkpoint contains boards from an unbound map lease");
+    if(rts){if(this.owned?.current.rtsPartySwitch!==WEB_RTS_PARTY_SWITCH||!this.owned.current.rtsParty||!snapshot.rts)throw Error('Saved RTS parking cannot grant a provider');
+      validateRtsParking(snapshot.rts,this.owned.current.rtsParty.read().catalog,next.content.map.identity!.mapId);}
     for (const pending of this.prepared.keys()) this.discard(pending);
     if (this.effectMap) this.effectMap.retire(this.effectMap.snapshot());
     this.effectMap = effectMap;
     this.effectOwner = restoredOwner;
     this.nextEffectScope = nextScope;
-    this.current.retirePuppetReplacements();this.current.retireMobControls();this.current.retireSkyboxPresentation();this.current.retireWorldAutoTasks();
-    this.current = next;
+    this.current.retireCharacterNaming();this.current.retirePuppetReplacements();this.current.retireMobControls();this.current.retireSkyboxPresentation();this.current.retireWorldAutoTasks();this.current.retireVehicleLifecycle();
+    this.current = next;this.rtsParking=rts?structuredClone(snapshot.rts!):null;
     this.location = structuredClone(loc);
     this.catalogHash = loc?.catalogHash ?? this.sourceOrigin?.catalogHash ?? null;
     this.transitions.length = 0;
@@ -559,6 +570,7 @@ export class WorldSession {
     // Native delayed callbacks capture the old entity instance. Until the
     // original cross-map lifetime is proved, never rebind them to a new map
     // or serialize an incomplete actor fade into the destination candidate.
+    if(from.rtsPartyBusy)throw Error("RTS group transition/encounter must complete before map publication");
     if (from.actorVisibilityBusy)
       throw new Error("Pending source visibility needs a cross-map actor lifetime provider");
     if (this.sourceOrigin) {
@@ -598,6 +610,17 @@ export class WorldSession {
     const nativeState = this.owned?.nativeState?.();
     if (from.player.native && (!nativeActors || !nativeRuntime || !nativeState))
       throw new Error("Native actor map handoff requires its actor and source state owners");
+    const rtsBefore=canonical(this.rtsParking),rtsBound=from.rtsPolicy===WEB_RTS_PARTY_SWITCH,
+      rtsCatalog=rtsBound?this.owned?.current.rtsParty?.read().catalog:undefined,
+      parked=rtsBound?structuredClone(this.rtsParking??{kind:'source-rts-world-v1' as const,policy:WEB_RTS_PARTY_SWITCH,parked:[]}):null,
+      departure=rtsBound?from.rtsDeparturePoses:[],arrival=parked?.parked.find(r=>r.mapId===stop.request.mapId)?.poses??[];
+    if(rtsBound&&stop.site&&'kind'in stop.site&&stop.site.kind==='rts-party'){
+      const nextSlot=rtsNextSlot(from.eventState.read({category:'ScenarioVariable',index:4}),from.eventState.read({category:'ScenarioVariable',index:5}));
+      if(!arrival.some(p=>p.slot===nextSlot))throw Error('RTS destination bank has no recorded actual pose for that map');
+    }
+    if(parked){parked.parked=parked.parked.filter(r=>r.mapId!==from.content.map.identity!.mapId&&r.mapId!==stop.request.mapId);
+      if(from.content.map.identity!.mapId!==stop.request.mapId&&departure.length)parked.parked.push({mapId:from.content.map.identity!.mapId,poses:departure});
+      if(!rtsCatalog)throw Error('RTS map parking has no trusted catalog');validateRtsParking(parked,rtsCatalog,stop.request.mapId);}
     const request = stop.request,
       identity = from.content.map.identity;
     if (!identity) throw new Error("Unknown previous map/area identity");
@@ -698,7 +721,7 @@ export class WorldSession {
         ...(viewPlan ? { viewPlan } : {}),
         playerVisible: from.isEntityVisible(from.player.id), party: appearance.current(),
         transportation: transportation.identity(transport.currentId),
-        canPartySwitching: readMapPartySwitching(read),
+        canPartySwitching: readMapPartySwitching(read),...(rtsBound?{rtsPartyPlacement:WEB_RTS_PARTY_SWITCH}:{}),
       });
       this.requireActorPresentation(plan);
       actorEntry = { plan, assets: Object.values(appearance.catalog.assets).map((a) => a.asset) };
@@ -732,11 +755,14 @@ export class WorldSession {
           ...(effectMap ? { fieldEffectMap: effectMap } : {}),
           ...(sourcePresentation ? { sourcePresentation } : {}),
           ...(content.playerFactory ? { playerVisibility: content.playerFactory.capability } : {}),
+          ...(this.owned?.current.vehicleLifecycle?{vehicleLifecycle:this.owned.current.vehicleLifecycle}:{}),
           ...(this.owned?.current.transportationTimestamp ? { transportationTimestamp: this.owned.current.transportationTimestamp } : {}),
           ...(this.owned?.current.soundPresentation ? { soundPresentation: this.owned.current.soundPresentation } : {}),
           ...(puppetRoutePolicy ? { puppetRoutes: puppetRoutePolicy } : {}),
           ...(this.owned?.current.assignedNpcRoutes ? { assignedNpcRoutes: this.owned.current.assignedNpcRoutes } : {}),
           ...(this.owned?.current.contentInvalidations ? { contentInvalidations: this.owned.current.contentInvalidations } : {}),
+          ...(this.owned?.current.sourceCharacterNaming?{sourceCharacterNaming:this.owned.current.sourceCharacterNaming}:{}),
+          ...(this.owned?.current.rtsPartySwitch?{rtsPartySwitch:this.owned.current.rtsPartySwitch}:{}),
           ...(this.owned?.current.sourcePartySelection?{sourcePartySelection:this.owned.current.sourcePartySelection}:{}),
           ...(this.owned?.current.sourceBossEntry?{sourceBossEntry:this.owned.current.sourceBossEntry}:{}),
           ...(this.owned?.current.sourceBattleResult?{sourceBattleResult:this.owned.current.sourceBattleResult}:{}),
@@ -744,6 +770,7 @@ export class WorldSession {
           ...(this.owned?.current.sourceMessageSequence ? { sourceMessageSequence: this.owned.current.sourceMessageSequence } : {}),
           ...(this.owned?.current.conditionLeaderActivity ? { conditionLeaderActivity: this.owned.current.conditionLeaderActivity } : {}),
           ...(this.owned?.current.fieldEffectTransforms?{fieldEffectTransforms:this.owned.current.fieldEffectTransforms}:{}),
+          ...(this.owned?.current.sourceSnapshot?{sourceSnapshot:this.owned.current.sourceSnapshot}:{}),
           ...(this.owned?.current.skyboxPresentation?{skyboxPresentation:this.owned.current.skyboxPresentation}:{}),
           ...(this.owned?.current.screenPresentation?{screenPresentation:this.owned.current.screenPresentation}:{}),
           ...(this.owned?.current.mobColorFilter ? {mobColorFilter:this.owned.current.mobColorFilter} : {}),
@@ -786,6 +813,7 @@ export class WorldSession {
         field.installNativeActors(candidate, nativeRuntime.catalog, providers, nativeRuntime.controlContext,
           catalog.nativeAnimationKeys, nativeRuntime.mapLifecycle);
       }
+      if(rtsBound)field.initializeRtsParking(arrival);
       field.inheritMobControls(from);
       field.inheritPuppetReplacements(from);
       field.initializeMapCamera();
@@ -797,7 +825,7 @@ export class WorldSession {
       const ownedIsCurrent = owned?.sealPublication();
       const prepared = Object.freeze({ field, request: stop });
       this.prepared.set(prepared, {
-        from,
+        from,rtsBefore,rtsAfter:parked,
         stop,
         request: canonical(stop.request),
         state: canonical(snapshot),
@@ -834,7 +862,7 @@ export class WorldSession {
           map: effectMap!, fieldState: this.effectFieldState(field) } } : {}),
       });
       return prepared;
-    } catch (error) { destinationField?.retirePuppetReplacements();destinationField?.retireMobControls();destinationField?.retireSkyboxPresentation();destinationField?.retireWorldAutoTasks();effectCandidate?.discard(); throw error; }
+    } catch (error) { destinationField?.retireCharacterNaming();destinationField?.retirePuppetReplacements();destinationField?.retireMobControls();destinationField?.retireSkyboxPresentation();destinationField?.retireWorldAutoTasks();destinationField?.retireVehicleLifecycle();effectCandidate?.discard(); throw error; }
   }
   commit(value: PreparedMap): boolean {
     if (this.commitInProgress) return false;
@@ -848,7 +876,7 @@ export class WorldSession {
     this.commitInProgress = active;
     try { return this.commitPrepared(value, ownership, active); }
     catch (error) { if (!active.started) ownership.effects?.candidate.discard(); throw error; }
-    finally { if(this.current!==value.field){value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();}this.commitInProgress = null; }
+    finally { if(this.current!==value.field){value.field.retireCharacterNaming();value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();value.field.retireVehicleLifecycle();}this.commitInProgress = null; }
   }
   private commitPrepared(value: PreparedMap, ownership: Ownership, active: MapCommit): boolean {
     if (!this.isCurrent(ownership, value) || active.cancelled) {
@@ -892,6 +920,7 @@ export class WorldSession {
       active.started = true;
       if (ownership.owned && !ownership.owned.commit()) return false;
     }
+    this.rtsParking=ownership.rtsAfter;
     ownership.publishPresentation();
     this.transitions.push({
       from: this.current.content.map.identity!.mapId,
@@ -902,7 +931,7 @@ export class WorldSession {
       request: structuredClone(value.request.request),
       site: value.request.site,
     });
-    ownership.from.retirePuppetReplacements();ownership.from.retireMobControls();ownership.from.retireSkyboxPresentation();ownership.from.retireWorldAutoTasks();
+    ownership.from.retireCharacterNaming();ownership.from.retirePuppetReplacements();ownership.from.retireMobControls();ownership.from.retireSkyboxPresentation();ownership.from.retireWorldAutoTasks();ownership.from.retireVehicleLifecycle();
     this.current = value.field;
     value.field.publishWorldAutoTasks();
     this.catalogHash = ownership.catalogHash;
@@ -927,11 +956,11 @@ export class WorldSession {
     }
     const ownership = this.prepared.get(value);
     this.prepared.delete(value);
-    if(ownership){value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();}
+    if(ownership){value.field.retireCharacterNaming();value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();value.field.retireVehicleLifecycle();}
     ownership?.effects?.candidate.discard();
   }
   private isCurrent(ownership: Ownership, value: PreparedMap): boolean {
-    const current = ownership.from === this.current && ownership.stop === this.current.stop && value.request === ownership.stop &&
+    const current = ownership.rtsBefore===canonical(this.rtsParking)&&ownership.from === this.current && ownership.stop === this.current.stop && value.request === ownership.stop &&
       ownership.request === canonical(this.current.stop.request) &&
       ownership.state === canonical(this.current.eventState.snapshot()) &&
       ownership.stateOwner === this.current.eventState && ownership.stateRevision === this.current.eventState.mutationRevision &&

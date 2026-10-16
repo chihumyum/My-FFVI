@@ -2,6 +2,9 @@
  * Logical transportation identity and a particular actor's riding state are
  * separate owners. Entity selectors are resolved by the existing field port. */
 export type FieldTransportationCommand =
+  | { kind: "lose"; transportationId: number }
+  | { kind: "set-position"; transportationId: number }
+  | { kind: "active"; transportationId?: never; active: boolean }
   | {
       kind: "place";
       transportationId: number;

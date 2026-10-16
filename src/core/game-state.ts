@@ -1,5 +1,10 @@
+import type {PartySlotIndex}from'./party.js';
+import {validateRtsCatalog,type SourceRtsPartyCatalog,type FieldRtsPartyPort,type RtsOwnedTransaction,type RtsOwnedView}from'./field-rts-party.js';
 import { rosterGroupSteps, validateRosterGroupCommand, validateSourceRosterGroupCatalog, type SourceRosterGroupCatalog, type RosterGroupCommand, type RosterGroupTransaction, type RosterGroupAppearanceStep } from "./roster-groups.js";
 import { projectNativePartyCell } from "./party.js";
+import type {BattleCurrentJobHost,BattleAbilityCatalog} from "./battle-abilities.js";
+import {validateCurrentJobCatalog,currentJobContext,projectCurrentJob,type CurrentJobCatalog,type JobCommand} from "./current-job.js";
+import { parseCharacterNameCatalog, parseCharacterNamingCommand, characterNameConfirmation, type CharacterNameCatalog, type FieldCharacterNamingPort, type SourceCharacterNamingCommand, type PreparedCharacterNaming, type CharacterNamingLease } from "./source-character-naming.js";
 import { previewSourcePartySelection, type FieldSourcePartySelectionPort, type SourcePartySelectionModel, type SourcePartySelectionOutcome } from './source-party-selection.js';
 import { parseBattleGauEntry, type BattleGauEntry } from './battle-gau.js';
 import type { BattleFieldState } from './field-battle-entry.js';
@@ -27,7 +32,7 @@ import { projectShopTrade, shopBuyOptions, shopSellOptions, validateShopCatalog,
   type ShopCatalog, type ShopInventoryRead, type ShopTradeRequest } from "./shop.js";
 import { WEB_BATTLE_GAU_INSTANCES, type BattleGauOwnedHost } from "./battle-gau-instances.js";
 import {
-  prepareRosterNativeStep,
+  prepareRosterNativeStep, rosterJoinLevel,
   type RosterNativeStep,
   validateRosterLifecycle,
   type RosterMember,
@@ -143,6 +148,11 @@ export type GameStateContent = {
   characterGrowth?: Record<string, CharacterGrowthPlan>;
   /** Trusted source capability, never part of a saved owned-state grant. */
   sourceRosterGroups?: SourceRosterGroupCatalog;
+  /** Source-proven equivalent current contexts; never supplied by saves. */
+  currentJobs?: CurrentJobCatalog;
+  /** Immutable source defaults; current names always belong to this roster. */
+  characterNaming?: CharacterNameCatalog;
+  sourceRtsParty?:SourceRtsPartyCatalog;
   partyActors?: PartyActorCatalog;
   shops?: ShopCatalog;
   /** Field execution is independent of an ability's battle plan and creates no
@@ -268,6 +278,8 @@ function keys(value: object, expected: string) {
 }
 
 /** Owns durable character/item values. Battles borrow a projection, never the roster itself. */
+type CharacterNamingStateContext = {read():GameStateSnapshot;capture():()=>void;
+ commit(next:GameStateSnapshot,validate:()=>void,publish:()=>void):void};
 export class GameState {
   private readonly content: GameStateContent;
   private readonly definitions: Map<string, CombatantDefinition>;
@@ -285,6 +297,7 @@ export class GameState {
     gauOwned?: { data: GameStateSnapshot; revision: number; retired: boolean; reservation: object | null };
   } | null = null;
   private revision = 0;
+  private jobLeaseEpoch = 0;
   private transportationPublication = false;
   private menuPublication = false;
   private readonly conditions: BattleConditions;
@@ -311,6 +324,7 @@ export class GameState {
   readonly fieldRecovery: FieldRecoveryPort = {
     prepare: (command) => this.prepareFieldRecovery(command),
   };
+  readonly fieldRtsParty:FieldRtsPartyPort={available:()=>this.content.sourceRtsParty!==undefined,read:()=>({catalog:this.rtsCatalog(),view:this.rtsView(this.data)}),prepare:slot=>this.prepareRtsSelection(slot)};
   /** Whole-roster source identities and the selected four Corps cells. */
   readonly fieldPuppetRoster: FieldPuppetRosterPort = {
     current: () => this.projectPuppetRoster(this.data),
@@ -360,6 +374,13 @@ export class GameState {
       : null;
     this.content = structuredClone(content);
     if(this.content.sourceRosterGroups)validateSourceRosterGroupCatalog(this.content.sourceRosterGroups);
+    if(this.content.sourceRtsParty)validateRtsCatalog(this.content.sourceRtsParty);
+    if(this.content.currentJobs){
+      const system=this.content.equipmentSystem;
+      if(!system)throw Error('Current job catalog lacks equipment owner');
+      validateCurrentJobCatalog(this.content.currentJobs,{templates:this.content.characterInitializations??{},growth:this.content.characterGrowth??{},
+        equipment:system.catalog,parameters:system.contexts,...(this.content.partyActors?{partyActors:this.content.partyActors}:{})});
+    }
     if (content.fieldAbilities) validateFieldAbilityCatalog(this.content.fieldAbilities!, this.conditions);
     if (content.magicStones) validateMagicStoneCatalog(this.content.magicStones!);
     if (content.shops) {
@@ -584,7 +605,7 @@ export class GameState {
     if (this.content.equipmentSystem)
       validateRosterLifecycle(
         this.rosterState(data),
-        this.rosterCatalog(),
+        this.rosterCatalog(data),
         () => {}, // Complete member fields were checked above; this validates ownership and slots.
       );
     else if (data.equipmentStock.length)
@@ -640,7 +661,7 @@ export class GameState {
         b.serial === receipt.battleSerial && b.outcome === "victory"))
         throw new Error("Unbound observed learning battle receipt");
       identities.add(key);
-      const catalog = this.content.characterGrowth?.[member.id]?.observedLearning;
+      const catalog = this.currentGrowth(member)?.observedLearning;
       if (!catalog || !member.abilities?.owned.some((a) => a.abilityId === catalog.recipientAbilityId))
         throw new Error("Unbound observed learning recipient");
       for (const observed of receipt.observedAbilityIds) {
@@ -672,7 +693,7 @@ export class GameState {
       throw new Error("Unknown roster identity");
     if (typeof p.enabled !== "boolean")
       throw new Error("Invalid roster availability");
-    const growthPlan = this.content.characterGrowth?.[p.id];
+    const growthPlan = this.currentGrowth(p);
     if (template) {
       if (!p.abilities) throw new Error("Missing owned abilities");
       const passives = this.equipmentAbilities(p);
@@ -690,7 +711,7 @@ export class GameState {
     const lifecycle = this.content.rosterLifecycle.initial[p.id];
     if (
       (lifecycle ? p.ownedId !== lifecycle.ownedId : p.ownedId <= this.initialIds.length) ||
-      p.jobId !== (template?.initial.jobId ?? lifecycle?.jobId)
+      (!template && p.jobId !== lifecycle?.jobId)
     )
       throw new Error("Unimplemented roster identity/job change");
     integer(p.ownedId, rosterSize, 1);
@@ -736,7 +757,7 @@ export class GameState {
       throw new Error("Unimplemented equipment change");
     if (this.content.equipmentSystem) {
       if (
-        this.content.equipmentSystem.catalog.characters[p.sourceId]?.jobId !==
+        this.currentEquipment([p]).characters[p.sourceId]?.jobId !==
         p.jobId
       )
         throw new Error("Equipment job disagrees with owned job");
@@ -755,12 +776,60 @@ export class GameState {
       releasedJobIds: data.releasedJobIds,
     };
   }
-  private rosterCatalog() {
-    const system = this.content.equipmentSystem;
-    if (!system)
-      throw new Error("Roster lifecycle equipment system is unavailable");
+  private currentContext(member:Pick<OwnedCharacter,'id'|'sourceId'|'jobId'>) {
+    const template=this.content.characterInitializations?.[member.id];
+    if(!template){const initial=this.content.rosterLifecycle.initial[member.id];
+      if(initial?.jobId!==member.jobId)throw Error('Unresolved source current job context');return null;}
+    return currentJobContext(this.content.currentJobs,member.sourceId,template.initial.jobId,member.jobId);
+  }
+  private currentGrowth(member:Pick<OwnedCharacter,'id'|'sourceId'|'jobId'>) {
+    return this.currentContext(member)?.growth ?? this.content.characterGrowth?.[member.id];
+  }
+  private currentEquipment(roster:readonly Pick<OwnedCharacter,'id'|'sourceId'|'jobId'>[]):EquipmentCatalog {
+    const base=this.content.equipmentSystem?.catalog;if(!base)throw Error('Equipment system is unavailable');
+    const overrides=roster.flatMap(member=>{const context=this.currentContext(member);return context?[[member.sourceId,context.equipment] as const]:[];});
+    return overrides.length?{...base,characters:{...base.characters,...Object.fromEntries(overrides)}}:base;
+  }
+  get battleJobQualification():BattleCurrentJobHost {
+    const contexts=this.content.currentJobs?.contexts??[],hash=this.catalogHash;
+    return Object.freeze({catalogHash:hash,
+      validateCatalog:(catalog:BattleAbilityCatalog,catalogHash?:string)=>{
+        if(catalogHash!==undefined&&catalogHash!==hash)throw Error('Current-job qualification belongs to another source catalog');
+        const seen=new Set<number>();
+        for(const character of catalog.characters){
+          if(seen.has(character.sourceId))throw Error('Duplicate source current-job battle character');seen.add(character.sourceId);
+          const expected=contexts.filter(c=>c.sourceId===character.sourceId&&c.initialJobId===character.jobId).map(c=>c.jobId);
+          if(character.equivalentJobIds!==undefined&&!expected.length||canonical(character.equivalentJobIds??[])!==canonical(expected))
+            throw Error('Battle current-job metadata disagrees with trusted owned contexts');
+        }
+        for(const c of contexts)if(!catalog.characters.some(row=>row.sourceId===c.sourceId&&row.jobId===c.initialJobId))
+          throw Error('Missing trusted current-job battle source binding');
+      },admits:(sourceId:number,initialJobId:number,jobId:number)=>contexts.some(c=>c.sourceId===sourceId&&c.initialJobId===initialJobId&&c.jobId===jobId)});
+  }
+  characterGrowthPlan(id:string) {
+    const member=this.data.roster.find(m=>m.id===id);if(!member)throw Error('Unheld current growth owner');
+    const plan=this.currentGrowth(member);return plan?structuredClone(plan):null;
+  }
+  get currentEquipmentCatalog(){return this.content.equipmentSystem?structuredClone(this.currentEquipment(this.data.roster)):null;}
+  private rosterCatalog(data:GameStateSnapshot=this.data) {
     const { initial: _, ...metadata } = this.content.rosterLifecycle;
-    return { ...metadata, equipment: system.catalog };
+    return { ...metadata, equipment: this.currentEquipment(data.roster) };
+  }
+  private projectJobCommand(data:GameStateSnapshot,command:JobCommand) {
+    const next=structuredClone(data);
+    projectCurrentJob(next,this.content.rosterLifecycle.jobIds,command,(member,jobId)=>{
+      this.currentContext({...member,jobId});
+    });
+    this.validate(next);return next;
+  }
+  /** Shared actual-owned job command; source wrappers select phases. This is
+   * not a player menu, a grant-all context, or a replacement roster owner. */
+  prepareJobCommand(command:JobCommand) {
+    this.requireIdle();const revision=this.revision,epoch=this.jobLeaseEpoch,next=this.projectJobCommand(this.data,command),
+      binding=canonical(this.content.currentJobs??null);let consumed=false;
+    const validate=()=>{this.requireIdle();if(consumed||this.revision!==revision||this.jobLeaseEpoch!==epoch||canonical(this.content.currentJobs??null)!==binding)throw Error('Stale source job transaction');};
+    const commitWith=(publish:()=>void)=>{this.commitMenuPresentation(next,validate,publish);consumed=true;};
+    return{changed:canonical(next)!==canonical(this.data),validate,commit:()=>commitWith(()=>{}),commitWith};
   }
   get gil() {
     return this.data.gil;
@@ -1122,13 +1191,74 @@ export class GameState {
       commitWith,
     };
   }
+  private characterNamingLiveContext():CharacterNamingStateContext {
+    return {read:()=>this.data,capture:()=>{this.requireIdle();const revision=this.revision;
+      return ()=>{if(this.inBattle||this.revision!==revision)throw Error('Stale source character naming owned revision');};},
+      commit:(next,validate,publish)=>this.commitMenuPresentation(next,validate,publish)};
+  }
+  readonly fieldCharacterNaming:FieldCharacterNamingPort = {prepareOpen:command=>
+    this.prepareCharacterNamingOpen(this.characterNamingLiveContext(),command)};
+  private prepareCharacterNamingOpen(context:CharacterNamingStateContext,raw:SourceCharacterNamingCommand):PreparedCharacterNaming {
+    this.requireIdle();const command=parseCharacterNamingCommand(raw),catalog=parseCharacterNameCatalog(this.content.characterNaming),
+      definition=catalog.entries.find(r=>r.sourceId===command.sourceId);
+    if(!definition)throw Error('Missing bound source default name');
+    let expected=context.capture(),opened=false,finished=false,openingConsumed=false,committing=false;const jobEpoch=this.jobLeaseEpoch;
+    const content=()=>canonical({names:this.content.characterNaming,templates:this.content.characterInitializations,equipment:this.content.equipmentSystem,growth:this.content.characterGrowth,currentJobs:this.content.currentJobs??null,roster:this.content.rosterLifecycle}),binding=content();
+    const requireCurrent=()=>{if(!committing)this.requireIdle();if(this.jobLeaseEpoch!==jobEpoch)throw Error('Stale source naming battle epoch');if(content()!==binding)throw Error('Changed source character naming content binding');};
+    const current=context.read(),existing=current.roster.find(m=>m.sourceId===command.sourceId);
+    let next=existing?structuredClone(current):this.projectRosterEvent(current,{kind:'unlock',sourceId:command.sourceId,refreshActors:false}).next;
+    if(command.prelude==='original-job'){
+      if(!existing?.enabled)throw Error('Name prelude requires its actual enabled owned character');
+      if(existing.jobId!==1){
+        // Native ABI phases, applied through the same generic actual-owned job owner.
+        next=this.projectJobCommand(next,{kind:'release',jobId:1});
+        next=this.projectJobCommand(next,{kind:'switch',ownedId:existing.ownedId,jobId:1});
+        next=this.projectJobCommand(next,{kind:'unrelease',jobId:19});
+        const target=next.roster.find(m=>m.ownedId===existing.ownedId)!;
+        target.name=definition.defaultName;const tag=this.content.characterInitializations?.[target.id]?.nameTag;
+        if(tag)next.characterNames[tag]=target.name;
+      }
+    }
+    const member=next.roster.find(m=>m.sourceId===command.sourceId)!;
+    if(!existing){
+      member.enabled=false;
+      const equipment=this.content.equipmentSystem?.catalog;if(!equipment)throw Error('Name acquisition requires actual source equipment owner');
+      // Native Opening has already granted all initial slots, then removes each
+      // nonempty current slot. Saturation/order must not be netted away.
+      for(const id of member.equipment){const item=equipment.definitions[id];if(!item)throw Error('Unknown name acquisition equipment');if(item.empty)continue;
+        const stack=next.equipmentStock.find(s=>s.id===id);if(!stack)throw Error('Missing name acquisition equipment count');stack.count=Math.max(0,stack.count-1);}
+    }
+    this.validate(next);
+    const model=Object.freeze({sourceId:member.sourceId,ownedId:member.ownedId,id:member.id,currentName:member.name,
+      defaultName:definition.defaultName,wasNew:!existing});
+    const validate=()=>{requireCurrent();if(!opened||finished)throw Error('Inactive source character naming lease');expected();
+      const actual=context.read().roster.find(m=>m.id===model.id);
+      if(!actual||actual.sourceId!==model.sourceId||actual.ownedId!==model.ownedId)throw Error('Retired source character naming identity');};
+    const transaction=(candidate:GameStateSnapshot,complete=false)=>{this.validate(candidate);const captured=expected;let used=false;
+      const check=()=>{validate();if(used||expected!==captured)throw Error('Stale source character naming transaction');};
+      return{validate:check,commitWith:(publish:()=>void)=>{check();committing=true;try{context.commit(candidate,check,publish);used=true;expected=context.capture();if(complete)finished=true;}finally{committing=false;}}};};
+    const lease:CharacterNamingLease={model,validate,prepareName:value=>{
+      this.requireIdle();validate();const name=characterNameConfirmation(value,model.defaultName),candidate=structuredClone(context.read()),target=candidate.roster.find(m=>m.id===model.id)!;
+      target.name=name;const template=this.content.characterInitializations?.[target.id];
+      if(template?.nameTag)candidate.characterNames[template.nameTag]=name;
+      return transaction(candidate);
+    },prepareCompletion:firstJoin=>{
+      this.requireIdle();validate();if(typeof firstJoin!=='boolean'||firstJoin&&command.completion!=='first-join-level')throw Error('Unknown naming completion phase');
+      const candidate=structuredClone(context.read()),target=candidate.roster.find(m=>m.id===model.id)!;
+      if(firstJoin){const level=rosterJoinLevel(this.rosterState(candidate),target,true,this.rosterCatalog(candidate));
+        if(level>target.additionalLevel)candidate.roster[candidate.roster.indexOf(target)]=this.projectGrowth(target,{kind:'correct-level',targetLevel:level});}
+      return transaction(candidate,true);
+    }};
+    const checkOpen=()=>{requireCurrent();if(openingConsumed||opened)throw Error('Repeated source naming Opening');expected();};
+    return{lease,validate:checkOpen,commitWith:publish=>{checkOpen();committing=true;try{context.commit(next,checkOpen,publish);openingConsumed=true;opened=true;expected=context.capture();}finally{committing=false;}}};
+  }
   private projectRosterEvent(data: GameStateSnapshot, command: RosterNativeStep) {
     const next = structuredClone(data);
     let candidateRosterSize = next.roster.length;
     const preview = prepareRosterNativeStep(
       this.rosterState(next),
       command,
-      this.rosterCatalog(),
+      this.rosterCatalog(next),
       {
         validateMember: (member) =>
           this.validateOwnedMember(member, candidateRosterSize),
@@ -1194,6 +1324,22 @@ export class GameState {
       ...projection,
       commit: () => commitWith(() => {}), commitWith,
     };
+  }
+  private rtsCatalog():SourceRtsPartyCatalog {
+    const c=this.content.sourceRtsParty;if(!c)throw Error("Source RTS party catalog is unavailable");
+    validateRtsCatalog(c);return structuredClone(c);
+  }
+  private rtsView(data:GameStateSnapshot):RtsOwnedView {
+    return{selectedSlot:data.party.selectedSlot,appearance:this.projectPartyAppearance(data),puppetRoster:this.projectPuppetRoster(data)};
+  }
+  private prepareRtsSelection(slot:PartySlotIndex):RtsOwnedTransaction {
+    this.requireIdle();const source=this.content.sourceRtsParty,catalog=this.rtsCatalog(),identity=canonical(catalog),revision=this.revision;
+    const before=this.rtsView(this.data),{next}=this.projectPartyEvent(this.data,{kind:"select-slot",slot,refreshActors:true}),after=this.rtsView(next);let consumed=false;
+    const current=()=>{if(consumed||this.active||this.revision!==revision||this.content.sourceRtsParty!==source||canonical(this.rtsCatalog())!==identity)
+      throw Error("Stale source RTS owned selection");};
+    const validate=()=>{this.requireIdle();current();};
+    return{get catalog(){return structuredClone(catalog);},get before(){return structuredClone(before);},get after(){return structuredClone(after);},validate,
+      commitWith:publish=>{this.commitMenuPresentation(next,validate,()=>publish(current));consumed=true;}};
   }
   private projectRosterGroup(data: GameStateSnapshot, command: RosterGroupCommand) {
     validateRosterGroupCommand(command);
@@ -1315,6 +1461,7 @@ export class GameState {
       inventory: FieldInventoryPort;
       treasure: FieldTreasurePort;
       party: FieldPartyPort;
+      rtsParty:FieldRtsPartyPort;
       sourcePartySelectionPort: FieldSourcePartySelectionPort;
       roster: FieldRosterPort;
       ownedConditions: FieldOwnedConditionPort;
@@ -1322,6 +1469,7 @@ export class GameState {
       scriptRandom?: FieldScriptRandomPort;
       puppetRoster: FieldPuppetRosterPort;
       messageNames: FieldMessageNamesPort;
+      characterNamingPort: FieldCharacterNamingPort;
       transportation?: FieldTransportationPort;
       shop: { validate(groupId: number): void };
       fieldSteps?: FieldConditionPort;
@@ -1366,6 +1514,20 @@ export class GameState {
         } finally { transportationPublishing = false; }
       } };
     } };
+    const characterNamingContext:CharacterNamingStateContext={read:()=>published?this.data:data,
+      capture:()=>{
+        if(published)return this.characterNamingLiveContext().capture();
+        this.requireIdle();const owner=data,version=generation;
+        return()=>{if(this.inBattle||generation!==version||data!==owner||
+          (published?(this.data!==owner||this.revision!==publicationRevision):this.revision!==revision))
+          throw Error('Stale candidate source character naming generation');};
+      },commit:(next,validate,publish)=>{
+        if(transportationPublishing)throw Error('Candidate source naming publication is in progress');
+        if(published){this.commitMenuPresentation(next,validate,publish);return;}
+        validate();if(typeof publish!=='function'||publish.constructor.name==='AsyncFunction')throw Error('Candidate naming publication must be synchronous');
+        transportationPublishing=true;try{const result:unknown=publish();if(result&&typeof(result as {then?:unknown}).then==='function')
+          throw Error('Candidate naming publication must be synchronous');data=next;generation++;}finally{transportationPublishing=false;}
+      }};
     const inventory: FieldInventoryPort = {
       prepare: (command) => {
         if (published) return this.prepareInventoryEvent(command);
@@ -1447,6 +1609,20 @@ export class GameState {
         }};
       },
     };
+    const rtsParty:FieldRtsPartyPort={
+      available:()=>this.content.sourceRtsParty!==undefined,read:()=>published?this.fieldRtsParty.read():{catalog:this.rtsCatalog(),view:this.rtsView(data)},
+      prepare:slot=>{
+        if(published)return this.prepareRtsSelection(slot);this.requireIdle();
+        const source=this.content.sourceRtsParty,catalog=this.rtsCatalog(),identity=canonical(catalog),owner=data,version=generation;
+        const before=this.rtsView(data),{next}=this.projectPartyEvent(data,{kind:"select-slot",slot,refreshActors:true}),after=this.rtsView(next);let consumed=false;
+        const current=()=>{if(consumed||published||data!==owner||generation!==version||this.active||this.revision!==revision||this.content.sourceRtsParty!==source||canonical(this.rtsCatalog())!==identity)
+          throw Error("Stale candidate source RTS owned selection");};
+        const validate=()=>{this.requireIdle();if(transportationPublishing)throw Error("Candidate owned publication in progress");current();};
+        return{get catalog(){return structuredClone(catalog);},get before(){return structuredClone(before);},get after(){return structuredClone(after);},validate,
+          commitWith:publish=>{validate();if(typeof publish!=="function"||publish.constructor.name==="AsyncFunction")throw Error("RTS publication must be synchronous");
+            transportationPublishing=true;this.menuPublication=true;try{const result:unknown=publish(current);if(result&&typeof(result as{then?:unknown}).then==="function")throw Error("RTS publication must be synchronous");
+              data=next;generation++;consumed=true;}finally{transportationPublishing=false;this.menuPublication=false;}}};
+      }};
     const roster: FieldRosterPort = {
       prepareGroup: (command) => {
         if (published) return this.prepareRosterGroup(command);
@@ -1608,13 +1784,14 @@ export class GameState {
         sourcePartySelectionPort,
         inventory,
         treasure,
-        party,
+        party, rtsParty,
         roster,
         ownedConditions,
         recovery,
         ...(options.scriptRandom === WEB_SOURCE_SCRIPT_RANDOM ? { scriptRandom } : {}),
         puppetRoster: { current: () => this.projectPuppetRoster(published ? this.data : data),
           replacement: () => this.projectPuppetReplacementRoster(published ? this.data : data) },
+        characterNamingPort: {prepareOpen:command=>this.prepareCharacterNamingOpen(characterNamingContext,command)},
         messageNames: { prepare: (refs) => {
           if (published) return this.fieldMessageNames.prepare(refs);
           const version = generation, current = data;
@@ -1825,10 +2002,10 @@ export class GameState {
     });
     const system = this.content.equipmentSystem;
     const qualification: BattleEntryInventory | null = system ? {
-      equipmentCatalog: structuredClone(system.catalog),
+      equipmentCatalog: structuredClone(this.currentEquipment(this.data.roster)),
       // Enabled nonparticipants already occupy inventory copies. Add each
       // admitted disabled owner once so later eligibility cannot reuse gear.
-      equipmentStock: equipmentAvailability(system.catalog,
+      equipmentStock: equipmentAvailability(this.currentEquipment(this.data.roster),
         this.data.roster.filter(member => member.enabled || owners.has(member.id)), this.data.equipmentStock)
         .map(({ id, count, equipped }) => ({ id, count, equipped })),
       members: [...owners.values()].map(member => ({ id: member.id, sourceId: member.sourceId,
@@ -1837,7 +2014,7 @@ export class GameState {
     return parseBattlePlayerBorrow({ kind: "battle-player-borrow-v1", plan, initial, candidates, groups, qualification });
   }
   private projectOwnedParameters(
-    p: Pick<OwnedCharacter, "id" | "sourceId" | "level" | "equipment" | "growth">,
+    p: Pick<OwnedCharacter, "id" | "sourceId" | "jobId" | "level" | "equipment" | "growth">,
   ): BattleStatProjection {
     const system = this.content.equipmentSystem;
     if (!system) throw new Error("Equipment system is unavailable");
@@ -1866,12 +2043,12 @@ export class GameState {
       context.parameters.additional.mp += matches[0]!.mp;
     }
     const projected = projectEquipmentParameters(
-      system.catalog,
+      this.currentEquipment([p]),
       p.equipment,
       context,
       system.limits,
     );
-    const arm = equipmentAttackArm(system.catalog, p.sourceId, p.equipment);
+    const arm = equipmentAttackArm(this.currentEquipment([p]), p.sourceId, p.equipment);
     const { hp, mp, ...parameters } = projected.parameters;
     return {
       ...parameters,
@@ -1883,7 +2060,7 @@ export class GameState {
     };
   }
   private projectGrowth(member: OwnedCharacter, request: CharacterGrowthRequest): OwnedCharacter {
-    const plan = this.content.characterGrowth?.[member.id];
+    const plan = this.currentGrowth(member);
     if (!plan || !member.growth || !member.abilities)
       throw new Error("Unimplemented source character growth: " + member.id);
     const result = growCharacter(plan, { ...member, abilities: member.abilities }, member.growth,
@@ -1896,7 +2073,7 @@ export class GameState {
   }
   private projectObservedLearning(member: OwnedCharacter, observedAbilityIds: readonly number[], lease: BattleLease,
     participantIndex: number): OwnedCharacter {
-    const plan = this.content.characterGrowth?.[member.id];
+    const plan = this.currentGrowth(member);
     if (!plan || !member.growth || !member.abilities) throw new Error("Missing source observation recipient");
     const result = learnObservedCharacter(plan, { ...member, abilities: member.abilities }, member.growth,
       observedAbilityIds, { battleSerial: lease.serial, participantIndex }, this.equipmentAbilities(member));
@@ -1923,7 +2100,7 @@ export class GameState {
       return { ...this.menuParticipant(member), sourceId: member.sourceId, enabled: member.enabled,
         abilities: structuredClone(member.abilities) };
     });
-    return { roster, costOwner: { side: "player", catalog: system.catalog, loadout: actor } };
+    return { roster, costOwner: { side: "player", catalog: this.currentEquipment(this.data.roster), loadout: actor } };
   }
   private magicStoneRoster(data: GameStateSnapshot) {
     return data.roster.flatMap(member => {
@@ -1936,7 +2113,7 @@ export class GameState {
   }
   private projectMagicStoneRemoval(member: OwnedCharacter): OwnedCharacter {
     if (member.magicStoneId === 0) return structuredClone(member);
-    const plan = this.content.characterGrowth?.[member.id];
+    const plan = this.currentGrowth(member);
     if (!plan?.magicStones || !member.abilities || !member.growth)
       throw new Error("Missing magic stone removal history provider");
     const result = projectCharacterInventoryMagicStoneRemoval(plan, { ...member, abilities: member.abilities },
@@ -1949,7 +2126,7 @@ export class GameState {
   magicStoneMenu(playerId: string) {
     const catalog = this.content.magicStones, member = this.data.roster.find(candidate => candidate.id === playerId);
     const available = !this.active && catalog !== undefined && this.data.nativeState !== null;
-    const plan = this.content.characterGrowth?.[playerId];
+    const plan = member ? this.currentGrowth(member) : undefined;
     const canEquip = available && !!member?.enabled && !!member.abilities && !!member.growth &&
       plan?.magicStones !== undefined && !catalog!.rules.excludedSourceIds.includes(member.sourceId as 13 | 14);
     return { available, playerId: member?.id ?? null, currentContentId: member?.magicStoneId ?? null,
@@ -1979,7 +2156,7 @@ export class GameState {
     if (!projection.changedIds.length) return null;
     const next = this.snapshot(), revision = this.revision;
     for (const id of projection.changedIds) {
-      const old = this.data.roster.find(member => member.id === id)!, plan = this.content.characterGrowth?.[id];
+      const old = this.data.roster.find(member => member.id === id)!, plan = this.currentGrowth(old);
       if (!plan?.magicStones || canonical(plan.magicStones) !== canonical(catalog) || !old.abilities || !old.growth)
         throw new Error("Missing source magic stone growth contract");
       const target = projection.roster.find(member => member.id === id)!;
@@ -2061,7 +2238,7 @@ export class GameState {
       : [];
   }
   private equipmentAbilities(member: OwnedCharacter) {
-    const catalog = this.content.equipmentSystem?.catalog;
+    const catalog = this.content.equipmentSystem ? this.currentEquipment([member]) : null;
     if (!catalog) return [];
     const providers = equipmentAbilityCostProviders(catalog, member);
     if (!member.abilities) {
@@ -2076,7 +2253,7 @@ export class GameState {
     const system = this.content.equipmentSystem;
     if (!system) throw new Error("Equipment system is unavailable");
     const prepared = previewEquipmentChange(
-      system.catalog,
+      this.currentEquipment(this.data.roster),
       this.data.roster.filter((p) => p.enabled),
       this.data.equipmentStock,
       playerId,
@@ -2106,7 +2283,7 @@ export class GameState {
     if (!p?.enabled || !Number.isInteger(slot) || slot < 1 || slot > 6)
       return [];
     let empty: number | null;
-    try { empty = selectEmptyEquipment(system.catalog, this.data.equipmentStock, p.sourceId, slot); }
+    try { empty = selectEmptyEquipment(this.currentEquipment(this.data.roster), this.data.equipmentStock, p.sourceId, slot); }
     catch { return []; }
     const candidates = new Set([
       ...(empty === null ? [] : [empty]),
@@ -2237,8 +2414,8 @@ export class GameState {
     const players = this.partyPlayers();
     const equipment = this.content.equipmentSystem;
     const qualification: BattleEntryInventory | null = equipment ? {
-      equipmentCatalog: structuredClone(equipment.catalog),
-      equipmentStock: equipmentAvailability(equipment.catalog, this.data.roster.filter((p) => p.enabled),
+      equipmentCatalog: structuredClone(this.currentEquipment(this.data.roster)),
+      equipmentStock: equipmentAvailability(this.currentEquipment(this.data.roster), this.data.roster.filter((p) => p.enabled),
         this.data.equipmentStock).map(({ id, count, equipped }) => ({ id, count, equipped })),
       members: players.map((player) => {
         const owner = this.data.roster.find((member) => member.id === player.id)!;
@@ -2254,6 +2431,7 @@ export class GameState {
       rewardPolicy: policy,
       playerBorrow,
     };
+    this.jobLeaseEpoch++;
     return lease;
   }
   battlePlayers(lease: BattleLease): Combatant[] {

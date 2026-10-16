@@ -24,7 +24,7 @@ const { CheckpointStorage } = await load("src/core/saved-game.js");
 const { contentDigest } = await load("src/core/content-integrity.js");
 const app = await readFile(resolve(root, "apps/game/app.js"), "utf8");
 const html = await readFile(resolve(root, "apps/game/index.html"), "utf8");
-const uiNames = ["audio", "story-overlay", "source-message-view", "magic-stones-view", "party-view", "source-party-selection-view", "shop-view", "choice-view", "inventory-view", "equipment-view"];
+const uiNames = ["audio", "story-overlay", "source-message-view", "magic-stones-view", "party-view", "source-party-selection-view", "source-character-name-view", "shop-view", "choice-view", "inventory-view", "equipment-view"];
 const ui = Object.fromEntries(await Promise.all(uiNames.map(async name =>
   [name, await readFile(resolve(root, "apps/game", name + ".js"), "utf8")])));
 const reportPath = resolve(root, "build/reports/initialized-systems-ui-check.json");
@@ -224,7 +224,7 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
     },
   });
   const exports = { audio: ["AudioOutput", "audioProjection"], "story-overlay": ["drawStoryTimer"], "source-message-view": ["fieldMessageView", "syncFieldMessageView"], "magic-stones-view": ["MagicStoneView"],
-    "party-view": ["PartyView"], "source-party-selection-view":["SourcePartySelectionView"], "shop-view": ["ShopView"], "choice-view": ["ChoiceView"],
+    "party-view": ["PartyView"], "source-party-selection-view":["SourcePartySelectionView"], "source-character-name-view":["SourceCharacterNameView"], "shop-view": ["ShopView"], "choice-view": ["ChoiceView"],
     "inventory-view": ["InventoryView"], "equipment-view": ["EquipmentView"] };
   for (const name of uiNames) {
     const body = stripImports(ui[name], name + ".js").body.replace(/\bexport (?=class |function |const )/g, "");
@@ -338,6 +338,23 @@ async function packages(packageId = "controlled-initialized-ui", sourceEncounter
     "ui-practice": site("ui-practice", [{ kind: "encounter", party: entry.encounterId, continuation: "ui-return" }]),
     "ui-return": site("ui-return", [{ kind: "exit" }]),
   };
+  if(['controlled-source-character-naming','controlled-source-current-job'].includes(packageId)) {
+    owned.characterNaming={kind:'source-character-name-catalog-v1',entries:[{sourceId:3,defaultName:'Authored second owner'}]};
+    scripts['ui-acquire']=site('ui-acquire',[{kind:'source-character-naming',command:{kind:'source-character-naming',sourceId:3,prelude:'none',completion:'none'}},{kind:'wait',seconds:.03},{kind:'exit'}]);
+  }
+  if(packageId==='controlled-source-current-job') {
+    const template=Object.values(owned.characterInitializations).find(t=>t.initial.sourceId===3),id=Object.keys(owned.characterInitializations).find(id=>owned.characterInitializations[id]===template);
+    owned.rosterLifecycle.jobIds.push(21);
+    for(const t of Object.values(owned.characterInitializations))t.jobIds.push(21);
+    for(const {template:t}of owned.sourceNewGame.characters)t.jobIds.push(21);
+    for(const item of Object.values(owned.equipmentSystem.catalog.definitions))if(item.jobIds.includes(template.initial.jobId))item.jobIds.push(21);
+    owned.sourceNewGame.equipment=structuredClone(owned.equipmentSystem.catalog);
+    const growth=structuredClone(owned.characterGrowth[id]);growth.jobId=21;
+    owned.currentJobs={kind:'source-equivalent-current-jobs-v1',contexts:[{sourceId:3,initialJobId:template.initial.jobId,jobId:21,nameKey:template.nameKey,nameTag:template.nameTag,growth,
+      parameters:structuredClone(template.parameterContext),equipment:{...structuredClone(template.equipmentCharacter),jobId:21}}]};
+    owned.partyActors.characterAssets.push({id:9900,sourceId:3,jobId:21,fieldAssetId:owned.partyActors.characterAssets.find(r=>r.sourceId===3&&r.jobId===template.initial.jobId).fieldAssetId});
+    f.battle.common.battleAbilities.characters.find(c=>c.sourceId===3).equivalentJobIds=[21];
+  }
   if(packageId==='controlled-source-party-selection') {
     scripts['ui-acquire']=site('ui-acquire',[{kind:'source-party-selection',command:{kind:'source-party-selection',mode:'two'}},{kind:'wait',seconds:.03},{kind:'exit'}]);
   }
@@ -1425,6 +1442,33 @@ try {
     assert.notEqual(restored,owner);assert.deepEqual(restored.checkpoint(),saved);await resume(h);for(let i=0;i<8;i++)await h.frame();assert.deepEqual(restored.state.snapshot(),settled);
     report.battleEffectLifecycle={policy:h.api.runtime.battleEventEffects,actualApp:true,actualBattleGame:true,globalJoin:true,onceRequest:true,actualStorage:true,onceSettlement:true,webPulseMilliseconds:300,sourceStoryReachability:false,nativeDynamicParity:false};
   });
+  await check('source naming uses actual App text input/No/Yes and commands, then Storage without default completion',async()=>{
+    const pack=await packages('controlled-source-character-naming'),h=await host(pack),owner=await start(h),before=owner.state.snapshot();
+    await move(h,'right');await h.frame();assert.equal(h.api.read().flow.phase,'character-name');
+    const panel=h.$('source-character-name');assert.equal(panel.hidden,false);assert.deepEqual(owner.state.snapshot(),before);
+    let input=walk(panel).find(n=>n.tagName==='INPUT');assert(input);input.value='实际输入名字';input.oninput();
+    h.api.pause(true);h.api.pause(false);input=walk(panel).find(n=>n.tagName==='INPUT');assert.equal(input.value,'实际输入名字');
+    walk(panel).find(n=>n.tagName==='FORM').onsubmit({preventDefault(){}});assert.deepEqual(owner.state.snapshot(),before);
+    await h.click(button(h,'source-character-name','返回修改'));input=walk(panel).find(n=>n.tagName==='INPUT');assert.equal(input.value,'实际输入名字');
+    input.value='命名完成';walk(panel).find(n=>n.tagName==='FORM').onsubmit({preventDefault(){}});
+    const yes=button(h,'source-character-name','使用这个名字'),old=yes.onclick;await h.click(yes);
+    for(let i=0;i<30&&!owner.checkpointReady;i++)await h.frame(20);assert(owner.checkpointReady,owner.field.stop?.message);
+    assert.equal(owner.state.snapshot().roster.find(m=>m.sourceId===3).name,'命名完成');assert.deepEqual(owner.state.snapshot().party,before.party);
+    await pauseMenu(h);const saved=owner.checkpoint();await h.click(h.$('save-game'));await h.click(h.$('load-game'));const restored=h.bound();assert.deepEqual(restored.checkpoint(),saved);
+    old();assert.deepEqual(restored.checkpoint(),saved);assert.equal(owner.state.snapshot().roster.find(m=>m.sourceId===3).name,'命名完成');
+    report.characterNaming={actualApp:true,actualCommands:true,textInput:true,negativeConfirmation:true,actualStorage:true,userInput:'命名完成',sourceBodiesExecuted:0,nativeDynamicParity:false};
+  });
+  await check('current-job owner continues through actual App naming input and Storage with no parallel job state',async()=>{
+    const pack=await packages('controlled-source-current-job'),h=await host(pack),owner=await start(h),member=owner.state.snapshot().roster.find(m=>m.sourceId===3),actor=owner.field.player;
+    owner.state.prepareJobCommand({kind:'release',jobId:21}).commit();owner.state.prepareJobCommand({kind:'switch',ownedId:member.ownedId,jobId:21}).commit();
+    await move(h,'right');await h.frame();assert.equal(h.api.read().flow.phase,'character-name');
+    const panel=h.$('source-character-name'),input=walk(panel).find(n=>n.tagName==='INPUT');input.value='职业名字';input.oninput();walk(panel).find(n=>n.tagName==='FORM').onsubmit({preventDefault(){}});
+    await h.click(button(h,'source-character-name','使用这个名字'));for(let i=0;i<30&&!owner.checkpointReady;i++)await h.frame(20);assert(owner.checkpointReady,owner.field.stop?.message);
+    const current=owner.state.snapshot().roster.find(m=>m.sourceId===3);assert.equal(current.jobId,21);assert.equal(current.name,'职业名字');assert.equal(owner.field.player,actor);
+    assert.equal(owner.characterMenu(current.id).name,current.name);await pauseMenu(h);const saved=owner.checkpoint();await h.click(h.$('save-game'));await h.click(h.$('load-game'));assert.deepEqual(h.bound().checkpoint(),saved);
+    assert.equal(h.bound().state.snapshot().roster.find(m=>m.sourceId===3).jobId,21);
+    report.currentJob={actualApp:true,actualCommands:true,sharedOwnedJob:true,currentGrowthMenu:true,actualStorage:true,sourceBodiesExecuted:0,nativeDynamicParity:false};
+  });
   await check("source party selection uses actual app candidate editing, captured commands and the same native/owned Storage owner",async()=>{
     const pack=await packages('controlled-source-party-selection'),h=await host(pack),owner=await start(h),field=owner.field;
     const before=owner.state.snapshot(),actor=field.player,entity=actor.native.entity;
@@ -1471,7 +1515,7 @@ try {
     const before=owner.state.snapshot(),commands=h.api.read().commands;
     h.api.read().images.clear();h.failedImages.add(`sha256:${pack.pngHash}`);await move(h,"right");
     for(let i=0;i<30&&h.$("retry-map").hidden;i++)await h.frame();
-    assert.equal(h.$("retry-map").hidden,false);assert.equal(owner.field,first);const decoded=h.calls.nativeAtDecode.filter(row=>row.field===first).at(-1);assert.ok(decoded);assert.deepEqual(first.cameraSnapshot,decoded.camera);assert.deepEqual(owner.state.snapshot(),before);
+    assert.equal(h.$("retry-map").hidden,false,JSON.stringify({stop:first.stop,phase:h.api.read().flow.phase,mapRequest:owner.world.pending?.request,collision:first.collisionState,world:first.sourceCurrentWorldMap,player:{x:first.player.x,y:first.player.y,layer:first.player.layer},sameField:owner.field===first,failed:h.api.read().failed}));assert.equal(owner.field,first);const decoded=h.calls.nativeAtDecode.filter(row=>row.field===first).at(-1);assert.ok(decoded);assert.deepEqual(first.cameraSnapshot,decoded.camera);assert.deepEqual(owner.state.snapshot(),before);
     h.failedImages.clear();const media=deferred(),imageCount=h.calls.imageBytes.length;h.heldImages.set(`sha256:${pack.pngHash}`,media);
     await h.click(h.$("retry-map"));await until(()=>h.calls.imageBytes.length>imageCount,"View map retry never prepared real media");
     const waiting=first.cameraSnapshot,waitingTime=first.time;for(let i=0;i<8;i++)await h.frame();

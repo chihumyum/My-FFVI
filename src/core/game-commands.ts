@@ -26,6 +26,10 @@ export class GameCommands {
   get battleReady(): boolean {
     return this.current && this.flow.inputReady && this.owner.battle?.phase === "active" && this.owner.battle.uiControls.visible;
   }
+  get characterNamingReady():boolean {return this.current&&this.flow.inputReady&&!this.owner.battle&&!this.owner.state.inBattle&&this.owner.currentCharacterNaming!==null;}
+  characterNaming(){return this.characterNamingReady?this.owner.currentCharacterNaming:null;}
+  submitCharacterName(token:object,value:string):boolean {return this.characterNamingReady?this.owner.submitCharacterName(token,value,()=>this.characterNamingReady):false;}
+  confirmCharacterName(token:object,accepted:boolean):boolean {return this.characterNamingReady?this.owner.confirmCharacterName(token,accepted,()=>this.characterNamingReady):false;}
   get sourcePartySelectionReady():boolean {
     return this.current&&this.flow.inputReady&&!this.owner.battle&&!this.owner.state.inBattle&&this.owner.currentSourcePartySelection!==null;
   }

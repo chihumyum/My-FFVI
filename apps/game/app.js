@@ -1,3 +1,6 @@
+import {WEB_SOURCE_CHARACTER_NAMING} from '/runtime/core/source-character-naming.js';
+import {SourceCharacterNameView} from './source-character-name-view.js';
+import {WEB_RTS_PARTY_SWITCH}from'/runtime/core/field-rts-party.js';
 import {WEB_BATTLE_CHILD_ADMISSION} from "/runtime/core/battle-child-admission.js";
 import {createBattleGauMediaHost} from "/runtime/core/battle-gau-instances.js";
 import {WEB_FLAT_WORLD_AUTO_MOVE} from '/runtime/core/field-world-auto-move.js';
@@ -62,6 +65,7 @@ let flow,
   equipmentView,
   partyView,
   sourcePartySelectionView,
+  sourceCharacterNameView,
   choiceView,
   shopView,
   mapOpen = false,
@@ -115,15 +119,19 @@ const runtime = {
   retainedWorldTransportation: "web-retained-walking-magitek-world-entry-v1",
   assignedNpcRoutes: "web-assigned-npc-route-grid-v1",
   birdViewActors:"web-flat-bird-view-actors-v1",
+  vehicleLifecycle:"web-source-vehicle-lifecycle-v1",
   mobColorFilter:"web-flat-mob-color-filter-v1",
   screenPresentation:"web-field-screen-presentation-2d-v1",
     skyboxPresentation:'web-flat-skybox-panorama-v1',
   fieldEffectTransforms:'web-source-logical-board-transforms-v1',
+  sourceSnapshot:'immutable-owned-field-source-v1',
   viewChange:"web-flat-field-view-change-v2",
   worldAutoTasks:WEB_FLAT_WORLD_AUTO_TASKS,worldAutoMove:WEB_FLAT_WORLD_AUTO_MOVE,
   battleEventEffects:"web-source-battle-effects-pulse-v1",
   battleGlobalFade:"web-source-battle-global-fade-v1",
   sourcePartySelection:WEB_SOURCE_PARTY_SELECTION,
+  sourceCharacterNaming:WEB_SOURCE_CHARACTER_NAMING,
+  rtsPartySwitch:WEB_RTS_PARTY_SWITCH,
   sourceBossEntry:WEB_SOURCE_BOSS_ENTRY,sourceBattleResult:WEB_COMMITTED_BATTLE_RESULT,
   puppetRoutes: "web-source-puppet-route-grid-v1",
   battleEventMessages: WEB_BATTLE_EVENT_MESSAGE_POLICY,
@@ -283,6 +291,7 @@ function bindSession(candidate, views) {
     equipmentView.render(flow.session);
     syncSaveControls();
   }, commandOptions);
+  sourceCharacterNameView = new SourceCharacterNameView($("source-character-name"), () => {held.clear();sync();}, commandOptions);
   sourcePartySelectionView = new SourcePartySelectionView($("source-party-selection"), () => {held.clear();sync();}, commandOptions);
   shopView = new ShopView($("shop-menu"), () => {
     held.clear();
@@ -504,6 +513,7 @@ function sync() {
   }
   const mapFailure = mapLoadFailure?.session === flow.session && mapLoadFailure.request === game.stop
     ? mapLoadFailure : null;
+  sourceCharacterNameView?.render(flow.session, failed || document.hidden || mapOpen || flow.paused || flow.busy);
   sourcePartySelectionView?.render(flow.session, failed || document.hidden || mapOpen || flow.paused || flow.busy);
   choiceView?.render(flow, { disabled: failed || document.hidden || mapOpen });
   if (game.choicePending) held.clear();
@@ -571,6 +581,8 @@ function sync() {
       ? game.stop.kind === "map-transition"
         ? mapFailure ? "地图载入失败，进度已保留。" : "地图载入中…"
         : "当前片段已停止，可重新开始。"
+      : game.currentCharacterNaming
+        ? "输入名字，再确认或返回修改"
       : game.currentSourcePartySelection
         ? "选择剧情编队成员后确认或取消"
       : game.currentShop
@@ -591,6 +603,7 @@ function confirm() {
   sync();
 }
 window.addEventListener("keydown", (e) => {
+  if (["INPUT","TEXTAREA","SELECT"].includes(e.target?.tagName) && e.code !== "Escape") return;
   if (e.code === "KeyM" && flow?.started) {
     e.preventDefault();
     if (!e.repeat) setMap(!mapOpen);

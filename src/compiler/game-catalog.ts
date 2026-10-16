@@ -1,4 +1,7 @@
+import {compileRtsPartyCatalog}from'./field-rts-party.js';
 import { compileSourceRosterGroups } from "./roster-groups.js";
+import {compileCurrentJobCatalog} from "./current-job.js";
+import { compileSourceCharacterNameCatalog } from "./source-character-naming.js";
 import { createSourceCatalogNameResolver } from "./source-catalog-name.js";
 import { compileSourceMessageFees } from "./source-message-fees.js";
 import { bindBattleEventMessageInput } from "./battle-event-message-bindings.js";
@@ -52,8 +55,8 @@ export type GameCatalogCompileOptions = {
  * checkpoint state or development omission is part of this module boundary. */
 export type GameCatalogModules = {
   common: Omit<BattleCatalog["common"], "players" | "limitations" | "drops">;
-  owned: Pick<GameStateContent, "shops" | "characterInitializations" | "characterGrowth" |
-    "partyActors" | "battleDefinitions" | "fieldConditions" | "fieldAbilities" | "magicStones" | "sourceRosterGroups"> & {
+  owned: Pick<GameStateContent, "shops" | "characterInitializations" | "characterGrowth" | "characterNaming" | "currentJobs" |
+    "partyActors" | "battleDefinitions" | "fieldConditions" | "fieldAbilities" | "magicStones" | "sourceRosterGroups" | "sourceRtsParty"> & {
     sourceNewGame: NewGameDefinition;
     equipmentSystem: NonNullable<GameStateContent["equipmentSystem"]>;
   };
@@ -386,6 +389,8 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
   const owned: GameCatalogModules["owned"] = {
     shops: shops.catalog, characterInitializations, characterGrowth,
     sourceRosterGroups: compileSourceRosterGroups(tables).catalog,
+    characterNaming: compileSourceCharacterNameCatalog(handoffSystem.reader, handoffSystem.tables["character_status.csv"]!, name).catalog,
+    sourceRtsParty: compileRtsPartyCatalog(handoffSystem.reader,handoffSystem.tables,(()=>{const rows=handoffSystem.assets.filter(a=>a.source.assetPath.endsWith("/serial_misc_assets.json"));if(rows.length!==1)throw Error("Missing or ambiguous RTS Misc provider");return rows[0]!.data;})()),
     partyActors: structuredClone(source.partyActors),
     battleDefinitions: structuredClone(ordinary.definitions), fieldConditions, fieldAbilities, magicStones,
     sourceNewGame: newGame.definition,
@@ -397,6 +402,11 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
       limits: { parameters: parameterLimits, physical: physicalLimits }, growth,
     },
   };
+  owned.currentJobs = compileCurrentJobCatalog(handoffSystem.reader, handoffSystem.tables, owned).catalog;
+  for(const character of common.battleAbilities!.characters){
+    const contexts=owned.currentJobs.contexts.filter(c=>c.sourceId===character.sourceId&&c.initialJobId===character.jobId);
+    if(contexts.length)character.equivalentJobIds=contexts.map(c=>c.jobId);
+  }
   return { common, owned, ordinaryDefinitions: ordinary.definitions, tables: source.tables,
     reader: runtimeReader, runtimeInput, name, readConditionSourceBindings: conditionReads.snapshot };
 }

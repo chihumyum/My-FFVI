@@ -4,7 +4,7 @@ import { int32 } from "../core/script-integer.js";
 import { record } from "./content.js";
 
 export type { FieldTransportationCommand, FieldTransportationOp } from "../core/field-transportation-command.js";
-export const fieldTransportationMnemonics = ["SetVehicle", "RideVehicleNPC"] as const;
+export const fieldTransportationMnemonics = ["SetVehicle", "RideVehicleNPC", "LoseVehicle", "OnTheVehicle", "SwitchVehicleActive"] as const;
 
 /** Exact Current.cctor string -> delegate bindings. These preserve the native
  * collision/background/view arguments, rather than guessing from the labels. */
@@ -46,9 +46,17 @@ export function compileFieldTransportationInstruction(raw: unknown): FieldTransp
   } else {
     if (strings.some(value => value !== ""))
       throw new Error("Unsupported transportation string operands");
+    if (mnemonic === "SwitchVehicleActive") {
+      if (ints.slice(1).some(value => value !== 0)) throw new Error("Unsupported transportation active reserved operands");
+      // Source wrapper passes i0==0, rather than a bool/enum cast.
+      return { kind: "field-transportation", command: { kind: "active", active: ints[0] === 0 } };
+    }
     const transportationId = ints[0]!;
     if (transportationId <= 0) throw new Error("Transportation instruction requires a positive source identity");
-    if (mnemonic === "RideVehicleNPC") {
+    if (mnemonic === "LoseVehicle" || mnemonic === "OnTheVehicle") {
+      if (ints.slice(1).some(value => value !== 0)) throw new Error("Unsupported transportation lifecycle reserved operands");
+      command = { kind: mnemonic === "LoseVehicle" ? "lose" : "set-position", transportationId };
+    } else if (mnemonic === "RideVehicleNPC") {
       if (ints.slice(2).some(value => value !== 0))
         throw new Error("Unsupported NPC transportation reserved operands");
       command = { kind: "ride-npc", transportationId, actorSelector: ints[1]! };

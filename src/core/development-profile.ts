@@ -19,6 +19,7 @@ export type DevelopmentProfile = {
    * parking and riding assets remain authoritative; native control, encounter,
    * audio and boarding presentation providers are not inferred from them. */
   transportation?: "walking-magitek-framework-v1";
+  vehicleLifecycle?: import("./field-vehicle-lifecycle.js").WebSourceVehicleLifecycle;
   /** Source world geometry and gameplay with explicitly flat Web presentation. */
   worldMap?: "framework-world-map-flat-v1";
   /** Ordinary source maps with explicit static RGBA character/layer display.

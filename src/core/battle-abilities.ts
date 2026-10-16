@@ -4,7 +4,7 @@ import { validateOwnedCharacterAbilities, type OwnedCharacterAbilities, type Own
  * condition IDs are not condition types and are not field transport IDs. */
 export type BattleAbilityCatalog = {
   kind: "battle-abilities-v1";
-  characters: { sourceId: number; jobId: number; blockers: string[] }[];
+  characters: { sourceId: number; jobId: number; blockers: string[]; equivalentJobIds?:number[] }[];
   commands: {
     id: number;
     nameKey: string;
@@ -23,6 +23,12 @@ export type BattleAbilityCatalog = {
   abilities: { id: number; typeId: number; groupId: number; range: number }[];
   conditions: { id: number; type: number }[];
 };
+
+/** Supplied by the actual persistent owner after validating its trusted source
+ * context catalog. An array in a battle asset is never sufficient authority. */
+export type BattleCurrentJobHost={readonly catalogHash:string;
+  validateCatalog(catalog:BattleAbilityCatalog,catalogHash?:string):void;
+  admits(sourceId:number,initialJobId:number,currentJobId:number):boolean};
 
 export type BattleAbilityMember = {
   sourceId: number;
@@ -94,8 +100,9 @@ export function projectBattleAbilities(
   member: BattleAbilityMember,
   context: BattleAbilityContext,
   equipmentAbilities: readonly OwnedAbility[] = [],
+  currentJobs?:BattleCurrentJobHost,
 ): BattleAbilityProjection {
-  return projectBattleAbilityContext(catalog, member, context, equipmentAbilities, false);
+  return projectBattleAbilityContext(catalog, member, context, equipmentAbilities, false,currentJobs);
 }
 
 /** FF6ActSelectConfusion asks CommandUtility.IsAvailable directly over the
@@ -106,12 +113,13 @@ export function projectBattleCommandAvailability(
   member: BattleAbilityMember,
   context: BattleAbilityContext,
   equipmentAbilities: readonly OwnedAbility[] = [],
+  currentJobs?:BattleCurrentJobHost,
 ): BattleAbilityProjection {
-  return projectBattleAbilityContext(catalog, member, context, equipmentAbilities, true);
+  return projectBattleAbilityContext(catalog, member, context, equipmentAbilities, true,currentJobs);
 }
 
 function projectBattleAbilityContext(catalog: BattleAbilityCatalog, member: BattleAbilityMember,
-  context: BattleAbilityContext, equipmentAbilities: readonly OwnedAbility[], availabilityOnly: boolean): BattleAbilityProjection {
+  context: BattleAbilityContext, equipmentAbilities: readonly OwnedAbility[], availabilityOnly: boolean,currentJobs?:BattleCurrentJobHost): BattleAbilityProjection {
   if (catalog.kind !== "battle-abilities-v1" || ![0, 1].includes(context.battleType))
     throw new Error("Invalid battle ability projection context");
   validateOwnedCharacterAbilities(member.abilities, equipmentAbilities);
@@ -122,7 +130,14 @@ function projectBattleAbilityContext(catalog: BattleAbilityCatalog, member: Batt
   const abilities = uniqueIndex(catalog.abilities, (r) => r.id, "ability catalog");
   const conditions = uniqueIndex(catalog.conditions, (r) => r.id, "condition catalog");
   const character = characters.get(member.sourceId);
-  if (!character || character.jobId !== member.jobId) throw new Error("Unknown battle ability character/job origin");
+  for(const c of characters.values())if(c.equivalentJobIds!==undefined&&(!Array.isArray(c.equivalentJobIds)||
+    new Set(c.equivalentJobIds).size!==c.equivalentJobIds.length||c.equivalentJobIds.some(id=>!Number.isSafeInteger(id)||id<1||id===c.jobId)))
+    throw Error('Invalid trusted equivalent battle job contexts');
+  if(catalog.characters.some(c=>c.equivalentJobIds!==undefined)&&!currentJobs)throw Error('Missing actual owned current-job qualification');
+  currentJobs?.validateCatalog(catalog);
+  if (!character || character.jobId !== member.jobId &&
+    !(character.equivalentJobIds?.includes(member.jobId)&&currentJobs?.admits(member.sourceId,character.jobId,member.jobId)))
+    throw new Error("Unknown battle ability character/job origin");
   if (context.magicLearningValue !== null && (!Number.isInteger(context.magicLearningValue) || context.magicLearningValue < 0))
     throw new Error("Invalid battle magic-learning value");
   if (context.invalidContentIds !== null && (new Set(context.invalidContentIds).size !== context.invalidContentIds.length ||

@@ -20,6 +20,7 @@ export function compileCharacterGrowth(
   template: OwnedCharacterInitializationTemplate,
   observedLearning?: ObservedLearningCatalog,
   magicStones?: MagicStoneCatalog,
+  currentJob?: {sourceId:number;initialJobId:number;jobId:number},
 ): { plan: CharacterGrowthPlan; sources: BattleRow["source"][] } {
   const sources: BattleRow["source"][] = [];
   const row = (table: string, id: string | number) => {
@@ -37,9 +38,11 @@ export function compileCharacterGrowth(
     return int(found.values.value1);
   };
   const sourceId = template.initial.sourceId;
-  const jobId = template.initial.jobId;
+  const jobId = currentJob?.jobId ?? template.initial.jobId;
+  if(currentJob && (currentJob.sourceId!==sourceId || currentJob.initialJobId!==template.initial.jobId || !Number.isSafeInteger(jobId) || jobId<1))
+    throw new Error("Invalid explicit source growth job context");
   const character = row("character_status.csv", sourceId);
-  if (int(character.job_id) !== jobId || template.initial.magicStoneId !== 0)
+  if (int(character.job_id) !== (currentJob?.initialJobId ?? jobId) || template.initial.magicStoneId !== 0)
     throw new Error("Unresolved character growth job or magic stone origin");
   const curves = all("intermediate_growth_curve.csv")
     .filter((r) => int(r.character_id) === sourceId && int(r.job_id) === jobId);
@@ -146,6 +149,6 @@ export function compileCharacterGrowth(
     hasBattleBackgroundLearning: learningRows.some((r) => int(r.type_id) === 3 && int(r.job_id) === jobId),
     observedLearningAbilityIds: all("ability.csv").filter((r) => int(r.type_id) === 504).map((r) => int(r.id)),
   };
-  validateCharacterGrowth(plan, template.initial, initialCharacterGrowth(plan));
+  validateCharacterGrowth(plan, {...template.initial,jobId}, initialCharacterGrowth(plan));
   return { plan, sources: [...new Map(sources.map((s) => [JSON.stringify(s), s])).values()] };
 }

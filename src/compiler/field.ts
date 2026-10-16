@@ -1,4 +1,6 @@
+import {sourceRtsPartySelectors,compileRtsPartyInstruction}from'./field-rts-party.js';
 import { rosterGroupSelectors, compileRosterGroupEvent } from "./roster-groups.js";
+import {compileSourceCharacterNamingInstruction,sourceCharacterNamingSelectors} from './source-character-naming.js';
 import {compileFieldSkyboxScroll,sourceSkyboxScrollSelectors}from"./field-skybox-scroll.js";
 import { compileFieldPuppetReplacementInstruction,sourcePuppetReplacementSelectors } from './field-puppet-replacement.js';
 import {compileFieldScreenPresentation,screenPresentationMnemonics,screenPresentationSelectors} from "./field-screen-presentation.js";
@@ -242,6 +244,7 @@ export function decodeFieldOp(
     r = list(o.rValues).map(Number), s = list(o.sValues).map(string);
   if(name==='SysCall'&&(sourceSkyboxScrollSelectors as readonly string[]).includes(s[0]??'')){try{return {...site,...compileFieldSkyboxScroll(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if(name==='SysCall'&&(screenPresentationSelectors as readonly string[]).includes(s[0]??'')){try{return {...site,...compileFieldScreenPresentation(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
+  if(name==='SysCall'&&Object.hasOwn(sourceCharacterNamingSelectors,s[0]??'')){try{return {...site,...compileSourceCharacterNamingInstruction(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if(name==='SysCall' && (sourcePartySelectionSelectors as readonly unknown[]).includes(s[0])) {
     try {return {...site,...compileSourcePartySelectionInstruction(raw)};}
     catch(error){return blocked(error instanceof Error?error.message:String(error));}
@@ -251,6 +254,7 @@ export function decodeFieldOp(
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if(name==='SysCall'&&s[0]==='戦闘結果取得'){try{return {...site,...compileSourceBattleResultInstruction(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
+  if(name==='SysCall'&&Object.hasOwn(sourceRtsPartySelectors,s[0]!)){try{return {...site,...compileRtsPartyInstruction(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if(name==='SysCall'&&sourcePuppetReplacementSelectors.includes(s[0]!)){
     try{return {...site,...compileFieldPuppetReplacementInstruction(raw)};}
     catch(error){return blocked(error instanceof Error?error.message:String(error));}

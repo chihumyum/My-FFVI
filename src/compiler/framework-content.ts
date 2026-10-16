@@ -1,3 +1,5 @@
+import {fieldVehicleActionAdmitted} from "../core/field-vehicle-action.js";
+import{WEB_SOURCE_VEHICLE_LIFECYCLE,type WebSourceVehicleLifecycle}from "../core/field-vehicle-lifecycle.js";
 import {deriveFrameworkFieldEffectTransformContent,type FrameworkFieldEffectTransformAssessment} from './framework-field-effect-transforms.js';
 import {WEB_FIELD_EFFECT_TRANSFORMS,type WebFieldEffectTransforms} from '../core/field-effect-transforms.js';
 import{verifyCompiledSkyboxCatalog}from"./field-skybox.js";import{fieldSkyboxDefinition,type FieldSkyboxCatalog,type WebFlatSkybox}from"../core/field-skybox.js";
@@ -27,6 +29,7 @@ export type LogicalFieldEffectsDeclaration = {
   mapIds: readonly number[]; reason: string;
 };
 export type FrameworkContentOptions = {
+  vehicleLifecycle?:WebSourceVehicleLifecycle;
   skyboxPresentation?:WebFlatSkybox;skyboxCatalog?:FieldSkyboxCatalog;
   screenPresentation?:import("../core/field-screen-presentation.js").WebFieldScreenPresentation;
   worldAutoMove?: typeof WEB_FLAT_WORLD_AUTO_MOVE;
@@ -204,8 +207,9 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (!initial || strictEntry.mapContentHash !== initial.contentHash)
     throw new Error("Framework strict entry/map binding mismatch");
 
-  if (Object.keys(options).some(key => key !== 'fieldEffectTransforms' && key !== 'fieldEffectTransformCatalog' && key !== 'skyboxPresentation' && key !== 'skyboxCatalog' && key !== 'screenPresentation' && key !== 'mobColorFilter' && key !== 'worldAutoMove' && key !== 'birdViewActors' && key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
+  if (Object.keys(options).some(key => key !== 'vehicleLifecycle' && key !== 'fieldEffectTransforms' && key !== 'fieldEffectTransformCatalog' && key !== 'skyboxPresentation' && key !== 'skyboxCatalog' && key !== 'screenPresentation' && key !== 'mobColorFilter' && key !== 'worldAutoMove' && key !== 'birdViewActors' && key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
     throw new Error("Unknown framework derivation option");
+  if(options.vehicleLifecycle!==undefined&&options.vehicleLifecycle!==WEB_SOURCE_VEHICLE_LIFECYCLE)throw Error("Unknown framework source vehicle lifecycle policy");
   if((options.fieldEffectTransforms===undefined)!==(options.fieldEffectTransformCatalog===undefined)||options.fieldEffectTransforms!==undefined&&options.fieldEffectTransforms!==WEB_FIELD_EFFECT_TRANSFORMS)throw Error('Board transforms require exact policy and complete compiled assessment');
   if(options.worldAutoMove!==undefined&&(options.worldAutoMove!==WEB_FLAT_WORLD_AUTO_MOVE||options.worldAutoTasks!==WEB_FLAT_WORLD_AUTO_TASKS))throw Error('World auto movement requires its declared flat task host');
   if(options.worldAutoTasks!==undefined&&options.worldAutoTasks!==WEB_FLAT_WORLD_AUTO_TASKS)throw new Error('Unknown framework world auto-task policy');
@@ -239,7 +243,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
     validateLogicalEffectCatalog(logical.catalog);
   }
   const derivedProfile = (sourceContentHash: string, local: DevelopmentOmission[]): DevelopmentProfile => ({
-    ...profile(sourceContentHash, local), ...(options.skyboxPresentation?{skyboxPresentation:options.skyboxPresentation}:{}), ...(screenPresentation?{screenPresentation}:{}), ...(mobColorFilter ? {mobColorFilter} : {}), ...(birdViewActors ? { birdViewActors } : {}), ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
+    ...profile(sourceContentHash, local), ...(options.vehicleLifecycle?{vehicleLifecycle:options.vehicleLifecycle}:{}), ...(options.skyboxPresentation?{skyboxPresentation:options.skyboxPresentation}:{}), ...(screenPresentation?{screenPresentation}:{}), ...(mobColorFilter ? {mobColorFilter} : {}), ...(birdViewActors ? { birdViewActors } : {}), ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
     ...(options.worldAutoMove?{worldAutoMove:options.worldAutoMove}:{}),
     ...(options.worldAutoTasks?{worldAutoTasks:options.worldAutoTasks}:{}),
   });
@@ -285,7 +289,10 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
         entity.mapAnimation && !entity.mapAnimationBlockers?.length && canonical(entity.source) === canonical(issue.source)));
     if (map.map) for (const group of Object.values(map.map.groups ?? {}))
       group.blockers = group.blockers.filter(issue => !mapAnimationAdmitted(issue));
-    map.blockers = map.blockers.filter((issue) => !omittedBlocker(issue) && !mapAnimationAdmitted(issue));
+    const vehicleActionAdmitted=(issue:ContentIssue)=>options.vehicleLifecycle===WEB_SOURCE_VEHICLE_LIFECYCLE&&issue.reason==='Unsupported entity kind 21'&&
+      Object.values(map.map?.groups??{}).some(group=>group.entities.some(entity=>sameSource(entity.source,issue.source)&&fieldVehicleActionAdmitted(entity)));
+    if(map.map)for(const group of Object.values(map.map.groups??{}))group.blockers=group.blockers.filter(issue=>!vehicleActionAdmitted(issue));
+    map.blockers = map.blockers.filter((issue) => !omittedBlocker(issue) && !mapAnimationAdmitted(issue) && !vehicleActionAdmitted(issue));
     map.developmentOmissions = local.map(({ kind, group, entityId, source, reason }) =>
       ({ kind, group, entityId, source: structuredClone(source), reason }));
     map.limitations.push(LIMITATION);

@@ -77,6 +77,9 @@ export type FieldNativeCheckpointContext = {
   sourceScriptAnimations?: SourceScriptAnimationCatalog;
   animationKeys?: FieldNativeAnimationKeys;
   npcs: readonly FieldNativeNpcDefinition[];
+  /** Rebuilt from actual source transportation rows/owned parking/flags by the
+   * dual authorized Field. Saves never supply a vehicle identity or asset. */
+  vehicles?:readonly (import("./field-vehicle-lifecycle.js").FieldVehicleInstance & {position:{x:number;y:number;z:number};layer:number})[];
   animated?: readonly FieldMapAnimationDefinition[];
   animatedPolicy?: typeof WEB_FIELD_MAP_ANIMATION;
   providers: FieldPuppetHostProviders;
@@ -245,6 +248,12 @@ function expectedActors(context: FieldNativeCheckpointContext): BoundActor[] {
       throw new Error("Native checkpoint resident instance identity changed");
     persistent({ id: binding.actor, fieldAssetId: resident.fieldAssetId, riderFieldAssetId: null, riding: false });
   }
+  for(const vehicle of context.vehicles??[]){
+    if(vehicle.actorId!==`web:source-transportation:${vehicle.id}`||vehicle.record.id!==vehicle.id)throw Error("Source vehicle checkpoint identity changed");
+    const d=catalog.transportations.filter(d=>d.id===vehicle.id);const asset=catalog.assets[vehicle.assetId];
+    if(d.length!==1||d[0]!.typeId!==vehicle.type||d[0]!.fieldAssetId!==vehicle.assetId||!asset)throw Error("Source vehicle checkpoint asset changed");
+    add(vehicle.actorId,{fieldAssetId:vehicle.assetId,charaZOffset:0,sourceTransportationId:vehicle.id},asset.asset,context.factory.npcPrefab);
+  }
   for (const npc of context.npcs) {
     fieldNativeNpcSelectorBinding(npc);
     add(npc.entityId, { fieldAssetId: null, charaZOffset: 0,
@@ -327,6 +336,7 @@ function restoreActor(row: FieldNativeActorCheckpoint | FieldNativeActorMotionCh
     bodyOpaque: row.bodyOpaque, shadowVisible: row.shadowVisible, moving: false, riding: expected.riding, riderAssetId: expected.riderAssetId,
     childEntityObject: expected.childEntityObject, rideOnEntity: expected.rideOnEntity,
     viewBinding: material(row, context, expected), transparentTextures: { ...row.transparentTextures } };
+  if(expected.metadata.sourceTransportationId!==undefined){const vehicle=context.vehicles!.find(v=>v.id===expected.metadata.sourceTransportationId)!;if(canonical(row.position)!==canonical(vehicle.position)||row.layer!==vehicle.layer)throw Error("Source vehicle saved pose differs from actual owned parking");}
   const actor = createNativeFieldActorProjection({ ...structuredClone(expected.metadata), entity }, context.mapRange, context.partyCatalog,
     context.transportationPresentation);
   actor.steps = row.steps;

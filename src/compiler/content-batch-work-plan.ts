@@ -154,6 +154,8 @@ const diagnosticOwners: Readonly<Record<string, ContentBatchSystem>> = {
   BATCH_ENTRY_UNSCANNED: "content-batch-interface",
 };
 const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
+  sourceCharacterNaming:"owned-menus-economy-and-growth",
+  rtsParty:"owned-menus-economy-and-growth",
   skyboxPresentation:"map-event-and-travel",
   screenPresentation:"map-event-and-travel",
   mobColorFilter: "map-event-and-travel",
@@ -168,6 +170,7 @@ const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
   roster: "owned-menus-economy-and-growth",
   treasure: "owned-menus-economy-and-growth",
   transportation: "map-event-and-travel",
+  vehicleLifecycle:"map-event-and-travel",
   puppetRoster: "owned-menus-economy-and-growth",
   sourceLeader: "map-event-and-travel",
   scriptShop: "owned-menus-economy-and-growth",

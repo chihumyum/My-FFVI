@@ -7,7 +7,7 @@ import { BATTLE_RESERVED_SCRIPTS, type SourceReservedScriptBinding } from '../co
 export function compileReservedScriptBindings(aliases: Record<string, string | null>,
   assets: ReadonlyMap<string, CorpusAsset>, sourceSetHash: string, parentSourceSetHash: string): Record<string, SourceReservedScriptBinding> {
   const bindings: Record<string, SourceReservedScriptBinding> = {};
-  for (const name of Object.values(BATTLE_RESERVED_SCRIPTS)) {
+  for (const name of [...Object.values(BATTLE_RESERVED_SCRIPTS),'sc_sht_corps_after']) {
     const id = aliases[name], asset = id ? assets.get(id) : undefined;
     if (!asset) continue; // Absence remains an explicit runtime dependency.
     if (asset.kind !== 'script' || record(asset.data).Name !== name || !asset.source.objectId)

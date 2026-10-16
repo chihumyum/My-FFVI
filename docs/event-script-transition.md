@@ -37,7 +37,7 @@ compileEventScriptTransitionMetadata(rawScript): {
 - 目标结束后，来源恢复调用者程序和局部变量/标签，在下一个逻辑时钟继续调用者。`SetScriptLocal` 不写 `MessageSelection`/`ItemSelection`，所以保留目标最终的选择结果。
 - `Core.Exit` 和 `Core.Entry` 不清目标残留 Call 栈。当前 Web 对带非空目标 Call 栈的返回明确阻塞，既不恢复已清除的旧栈，也不静默丢弃新栈。
 
-原入口的 `SystemFlags`、结束回调和玩家/puppet 生命周期保持原上下文。来源 `SetScriptName` 仍会重新计算 `name.ToLower().IndexOf("sc_map_") == 0`；该标志再与当前世界地图谓词相与。现有原生演员端口只给出相与结果，不能从 false 反推地图类型。因此原生宿主跨这两类名称的切换仍明确阻塞，普通受控几何宿主不假装提供该原生条件。
+原入口的 `SystemFlags`、结束回调和玩家/puppet 生命周期保持原上下文。来源 `SetScriptName` 仍会重新计算 `name.ToLower().IndexOf("sc_map_") == 0`；该标志再与当前世界地图谓词相与。原生演员 owner 现从当前地图已准入的 `entry.viewPlan` 独立读取世界地图谓词，再与实际 Main 当前脚本名相与。切换、hook 返回及恢复共用这个查询；当前地图输入发生变化会使原绑定失效。只给出旧相与结果的自定义宿主仍不能从 false 反推地图类型，因此它跨这两类名称的切换继续明确阻塞。详见 [脚本与世界地图上下文](source-script-world-context.md)。
 
 Web 调度继续使用当前统一逻辑时钟；本批未宣称来源全局 clock/frame 数值、恢复后的精确耗时或原版帧一致。已经开始的媒体/演员动作保持各自现有所有权，未完成的 choice、宝箱或其他任务窗口不会被切换悄悄遗弃。普通主任务之外的调用和活动返回记录的存档仍在明确边界内；稳定事件结束后可以使用已有检查点。
 

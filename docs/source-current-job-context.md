@@ -1,0 +1,15 @@
+# 来源当前职业上下文
+
+本批按完整22行Job、33个角色/职业成长绑定、34个角色模板提名。它恢复通用的当前职业所有者，当前准入边界是完整来源等价的上下文；不表示所有职业变化均可执行。原初始职业、27个可用模板与7个模板门槛保持。原始CharacterStatus、新游戏初始化与学习表均不重写。
+
+`compileCurrentJobCatalog` 读取真实目标曲线并单独编译目标成长计划；比较Job除id外所有字段、曲线组、自然和背景学习的原顺序、全部装备job_group权限、姓名绑定及完整派生参数/经验/学习/装备/演员资源。初始学习行id和目标行id保持各自来源，只有比较历史的语义投影剥离行id。现存成长收据记录的是能力id、级别和实际增量，因而仅在完整等价时可继续验证，不重放职业日志来授予能力。非等价、来源模板/媒体缺失的组合继续具体阻断。
+
+GameState唯一持有实际ownedId、当前jobId、每人ownedJobs和全局releasedJobIds。共同release验证Job后补全所有已持有者（包括disabled）的个人职业记录，不覆盖已有熟练度；unrelease只移除全局项。switch先验证Job，未发布职业按原生返回，再以实际ownedId选中角色并要求可信上下文。FF6的参数provider没有覆盖ChangeParameter，NameReplace没有具体覆盖；两者的继承空体/虚槽由完整PE、全aliases、类型metadata和已有完整SwitchJob调用证据联合约束，不能从“缺provider”推断成功。切换不初始化装备、回复HPMP、重发能力或改编队。
+
+当前成长、菜单、未来装备选择、战斗能力资格与借用库存读取实际当前职业。原`source-equipment-state-v2`允许保留现有物理装备的语义不变。战斗票据锁定期间禁止字段职业命令，返场按同一实际持有者结算。
+
+命名ABI的原职业前置阶段仍依次执行AddRelease、Switch(actualownedId)、RemoveRelease、UpdateName，然后进入既有命名输入。初始与目标相等时跳过整个前置阶段，不覆盖自定姓名。前置效果在原Opening事务发布；后续No/失败不会抹除已提交效果。切图准备使用原GameState候选、generation和发布锁。存档只保存实际状态，所有职业上下文来自可信内容，不读取存档内定义、不由存档授予能力；旧内容无新catalog仍保持初始职业门槛。
+
+`scripts/check-source-current-jobs.mjs`逐项重绑3304程序/186003操作，保留18命名调用的17完整正文4020操作与完整地图闭包，核对53战斗正文2312操作、430AI/10093和1530能力不变；原490与walking union492分别用同输入比较完整目录与诊断。来源参数探针、完整正文执行、实际Session/App、原版行为是不同验收lane。本工具不生产649地图、不授walking准入、不声称迁移完成。
+
+战斗目录里的`equivalentJobIds`仅是能力声明，不单独授信。实际GameState提供只读`battleJobQualification`，消费端逐来源核对精确完整集合；未知、额外、重复、错误初始职业或缺失的声明均拒绝。BattleGame同时核对实际owned catalog hash与该战斗目录hash，Session菜单和战斗命令查询共用相同host。无GameState上下文的旧目录、仅在存档或战斗字段附加数组均不能放宽资格。

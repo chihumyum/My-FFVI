@@ -2,9 +2,9 @@ import { fieldMessageNameReferences, fieldMessageUsesFee } from "./field-message
 import type { FieldContent, Op, Site } from "../field/types.js";
 
 export const fieldProviders = Object.freeze([
-  "skyboxPresentation", "screenPresentation", "mobColorFilter", "birdViewActors", "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "puppetRoster",
+  "skyboxPresentation", "screenPresentation", "mobColorFilter", "birdViewActors", "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "treasure", "transportation", "vehicleLifecycle", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
-  "sourcePartySelection", "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "viewChange", "worldAutoTasks", "worldAutoMove", "sourceAutoSaveSync",
+  "sourceCharacterNaming", "rtsParty", "sourcePartySelection", "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "viewChange", "worldAutoTasks", "worldAutoMove", "sourceAutoSaveSync",
 ] as const);
 export type FieldProvider = typeof fieldProviders[number];
 export type FieldProviderStatus = "available" | "missing" | "unknown";
@@ -53,7 +53,7 @@ const codes: Record<FieldCapability, string> = {
   messageNames: "FIELD_MESSAGE_NAMES_PROVIDER", sourceMessageSequence: "FIELD_SOURCE_MESSAGE_SEQUENCE_PROVIDER",
   ownedConditions: "FIELD_OWNED_CONDITIONS_PROVIDER", party: "FIELD_PARTY_PROVIDER",
   roster: "FIELD_ROSTER_PROVIDER", treasure: "FIELD_TREASURE_PROVIDER",
-  transportation: "FIELD_TRANSPORTATION_PROVIDER", puppetRoster: "FIELD_PUPPET_ROSTER_PROVIDER",
+  vehicleLifecycle:"FIELD_VEHICLE_LIFECYCLE_PROVIDER", transportation: "FIELD_TRANSPORTATION_PROVIDER", puppetRoster: "FIELD_PUPPET_ROSTER_PROVIDER",
   partyActors: "FIELD_PARTY_ACTORS_PROVIDER", audioReadiness: "FIELD_AUDIO_READINESS_PROVIDER",
   soundPresentation: "FIELD_SOUND_PRESENTATION_PROVIDER", actorControl: "FIELD_ACTOR_CONTROL_PROVIDER", actorMotion: "FIELD_ACTOR_MOTION_PROVIDER",
   cameraMotion: "FIELD_CAMERA_MOTION_PROVIDER", effectMotion: "FIELD_EFFECT_MOTION_PROVIDER",
@@ -67,6 +67,8 @@ const codes: Record<FieldCapability, string> = {
   contentInvalidations: "FIELD_CONTENT_INVALIDATIONS_PROVIDER",
   sourceAutoSaveSync: "FIELD_SOURCE_AUTO_SAVE_SYNC_PROVIDER",
   sourceEncounter: "FIELD_SOURCE_ENCOUNTER_PROVIDER",
+  sourceCharacterNaming:'FIELD_SOURCE_CHARACTER_NAMING_PROVIDER',
+  rtsParty:'FIELD_RTS_PARTY_PROVIDER',
   sourcePartySelection:'FIELD_SOURCE_PARTY_SELECTION_PROVIDER',
   sourceBossEntry: 'FIELD_SOURCE_BOSS_ENTRY_PROVIDER', sourceBattleResult:'FIELD_SOURCE_BATTLE_RESULT_PROVIDER',
   assignedNpcRoutes: "FIELD_ASSIGNED_NPC_ROUTE_PROVIDER",
@@ -195,6 +197,10 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       add("party", "Field party state is unavailable");
       if (booleanField(commandOf(op), "refreshActors")) refresh(false);
       break;
+    case "rts-party": {
+      add("rtsParty","Source RTS permanent Corps/actor transaction host is unavailable");
+      break;
+    }
     case "roster-group": {
       add("roster", "Source grouped roster state is unavailable");
       refresh(false);
@@ -213,6 +219,7 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     }
     case "treasure-box": add("treasure", "Field treasure state is unavailable"); break;
     case "field-transportation":
+      if(op.command?.kind==="lose"||op.command?.kind==="active"||op.command?.kind==="set-position")add("vehicleLifecycle","Source vehicle lifecycle requires explicit actual Web actor and owned owners");
       add("transportation", "Transportation requires the shared owned, native actor and camera providers");
       add("partyActors", "Transportation requires the shared owned, native actor and camera providers");
       break;
@@ -272,6 +279,7 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       break;
     case "field-puppet-route": add("puppetRoutes", "Puppet Route requires its bound actor and explicit Web pathfinding policy"); break;
     case "assign-npc-route": add("assignedNpcRoutes", "Assigned NPC route requires an explicit source-bound Web controller"); break;
+    case 'source-character-naming':add('sourceCharacterNaming','Source character naming requires an actual staged owned/name owner and an explicit Web input policy');break;
     case 'source-party-selection': add('sourcePartySelection','Source party selection requires its explicit Web UI policy and the existing owned/actor publication owners');break;
     case 'source-battle-result': add('sourceBattleResult','Source result requires an actual committed terminal fact and existing ScriptLocal frame');break;
     case 'source-boss-encounter': add('sourceBossEntry','Boss entry requires its explicit handoff policy; focus parameters do not place actors');add('battleHandoff','Battle preparation/return belongs to the current Session','deferred');break;

@@ -32,27 +32,43 @@ export function validateFieldEffectTransformPolicy(catalog:FieldEffectCatalog):v
  if(p.kind!==WEB_FIELD_EFFECT_TRANSFORMS||p.nativeParity!==false||!text(p.reason)||!catalog.webPolicy||p.sourceSetHash!==catalog.webPolicy.sourceSetHash||p.parentSourceSetHash!==catalog.webPolicy.parentSourceSetHash||
   !hash(p.sourceMapSetHash)||p.logicalCatalogHash!==catalog.webPolicy.catalogHash||!Array.isArray(p.mapSources)||!Array.isArray(p.bindings)||!Array.isArray(p.objects)||
   p.mapSources.some(m=>!Number.isInteger(m.mapId)||m.mapId<0||!hash(m.sourceMapHash))||new Set(p.mapSources.map(m=>m.mapId)).size!==p.mapSources.length)throw Error('Unbound complete board transform catalog');
- for(const row of p.mapSources)checkpointKeys(row,'mapId,sourceMapHash');
- const keys=new Set<string>();for(const b of p.bindings){validateFieldEffectTransformBinding(b);const key=canonical(b.ref);
-  if(keys.has(key)||!p.mapSources.some(m=>m.mapId===b.ref.mapId&&m.sourceMapHash===b.ref.sourceMapHash)||!validateLogicalEffectMedia(catalog,b.entity.effect!.assetGroup)||
-   !p.objects.some(o=>o.mapId===b.ref.mapId&&o.sourceMapHash===b.ref.sourceMapHash&&o.group===b.ref.group&&canonical(o.source)===canonical(b.entity.source)&&canonical(o.rawObject)===canonical(b.rawObject)&&o.reasons.length===0))throw Error('Board transform raw family/proof membership changed');
+ // Index only this full validation call. No mutable caller/catalog is trusted
+ // across calls, and every original row still receives the same validation.
+ const maps=new Map<number,string>();for(const row of p.mapSources){checkpointKeys(row,'mapId,sourceMapHash');maps.set(row.mapId,row.sourceMapHash);}
+ const objectKeys=p.objects.map(o=>canonical([o.mapId,o.group,o.source])),sourceObjects=new Map<string,FieldEffectFlatObject[]>();
+ for(const[oIndex,o]of p.objects.entries()){const key=objectKeys[oIndex]!;const bucket=sourceObjects.get(key);if(bucket)bucket.push(o);else sourceObjects.set(key,[o]);}
+ const keys=new Set<string>(),boundSources=new Set<string>();for(const b of p.bindings){validateFieldEffectTransformBinding(b);const key=canonical(b.ref),sourceKey=canonical([b.ref.mapId,b.ref.group,b.entity.source]);
+  if(keys.has(key)||maps.get(b.ref.mapId)!==b.ref.sourceMapHash||!validateLogicalEffectMedia(catalog,b.entity.effect!.assetGroup)||
+   !sourceObjects.get(sourceKey)?.some(o=>o.sourceMapHash===b.ref.sourceMapHash&&canonical(o.rawObject)===canonical(b.rawObject)&&o.reasons.length===0))throw Error('Board transform raw family/proof membership changed');
   // A new mutable transform never replaces or loosens legacy flat-v1's
   // immutable source/entity/raw/factory binding for a Birdview board.
-  if(b.entity.effect!.birdviewPuppet&&!matchFieldEffectFlatProjection(catalog,b.entity.effect!,{...b.ref,kind:'source-field-effect-flat-ref-v1'},b.ref.entityId,b.factory.position))throw Error('Board transform lacks its exact original Birdview flat binding');keys.add(key);
+  if(b.entity.effect!.birdviewPuppet&&!matchFieldEffectFlatProjection(catalog,b.entity.effect!,{...b.ref,kind:'source-field-effect-flat-ref-v1'},b.ref.entityId,b.factory.position))throw Error('Board transform lacks its exact original Birdview flat binding');keys.add(key);boundSources.add(sourceKey);
  }
- const objects=new Set<string>();for(const o of p.objects){checkpointKeys(o,'mapId,sourceMapHash,group,source,rawObject,reasons');const key=canonical([o.mapId,o.group,o.source]);
+ const objects=new Set<string>();for(const[index,o]of p.objects.entries()){checkpointKeys(o,'mapId,sourceMapHash,group,source,rawObject,reasons');const key=objectKeys[index]!;
   const rawType=Array.isArray(o.rawObject.properties)?o.rawObject.properties.filter((p:unknown)=>p&&typeof p==='object'&&!Array.isArray(p)&&(p as {name?:unknown}).name==='object_type'):[];
-  if(rawType.length!==1||rawType[0].value!==11||objects.has(key)||!p.mapSources.some(m=>m.mapId===o.mapId&&m.sourceMapHash===o.sourceMapHash)||!Array.isArray(o.reasons)||o.reasons.some(r=>!text(r))||
-   !o.reasons.length&&!p.bindings.some(b=>b.ref.mapId===o.mapId&&b.ref.group===o.group&&canonical(b.entity.source)===canonical(o.source)))throw Error('Incomplete board transform full raw family');objects.add(key);
+  if(rawType.length!==1||rawType[0].value!==11||objects.has(key)||(!maps.has(o.mapId)||maps.get(o.mapId)!==o.sourceMapHash)||!Array.isArray(o.reasons)||o.reasons.some(r=>!text(r))||
+   !o.reasons.length&&!boundSources.has(key))throw Error('Incomplete board transform full raw family');objects.add(key);
  }
 }
-export function fieldEffectTransformBinding(catalog:FieldEffectCatalog,definition:FieldEffectBoardDefinition,ref:FieldEffectTransformRef|undefined,boardId?:string):FieldEffectTransformBinding|null{
- if(ref===undefined)return null;validateFieldEffectTransformRef(ref);validateFieldEffectTransformPolicy(catalog);const p=catalog.boardTransforms;
+function matchedFieldEffectTransformBinding(catalog:FieldEffectCatalog,definition:FieldEffectBoardDefinition,ref:FieldEffectTransformRef|undefined,boardId?:string):FieldEffectTransformBinding|null{
+ if(ref===undefined)return null;validateFieldEffectTransformRef(ref);const p=catalog.boardTransforms;
  const matches=p?.bindings.filter(b=>canonical(b.ref)===canonical(ref)&&canonical(b.entity.effect)===canonical(definition));if(matches?.length!==1)throw Error('Board transform exact definition/source reference changed');
  if(boardId!==undefined){let local=boardId;if(boardId.startsWith('[')){let tuple:unknown;try{tuple=JSON.parse(boardId);}catch{throw Error('Malformed board transform instance identity');}
   if(!Array.isArray(tuple)||tuple.length!==3||tuple[0]!=='field-effect-board-v1'||!text(tuple[1])||typeof tuple[2]!=='string')throw Error('Malformed board transform instance identity');local=tuple[2];}
   if(local!==ref.entityId)throw Error('Board transform instance/source entity mismatch');}
  return matches[0]!;
+}
+/** Standalone callers retain a complete validation on every call. */
+export function fieldEffectTransformBinding(catalog:FieldEffectCatalog,definition:FieldEffectBoardDefinition,ref:FieldEffectTransformRef|undefined,boardId?:string):FieldEffectTransformBinding|null{
+ if(ref===undefined)return null;validateFieldEffectTransformRef(ref);validateFieldEffectTransformPolicy(catalog);return matchedFieldEffectTransformBinding(catalog,definition,ref,boardId);
+}
+/** One synchronous entry validates the entire policy, actual map/entity and
+ * exact instance/ref/definition. It offers no skip flag, reusable permission or
+ * cache across calls. Call again after every opaque host/lease boundary. */
+export function fieldEffectTransformContextBinding(content:Parameters<typeof fieldEffectTransformsBinding>[0],runtime:WebFieldEffectTransforms|undefined,
+ definition:FieldEffectBoardDefinition,ref:FieldEffectTransformRef|undefined,boardId?:string):FieldEffectTransformBinding|null{
+ if(!fieldEffectTransformsBinding(content,runtime))return null;
+ return matchedFieldEffectTransformBinding(content.fieldEffects!,definition,ref,boardId);
 }
 export function validateFieldEffectCurrentTransform(binding:FieldEffectTransformBinding,position:FieldEffectPoint,stable=false):void{
  checkpointKeys(position,'x,y,z');if(!Object.values(position).every(v=>Number.isFinite(v)&&Math.fround(v)===v)||position.z!==binding.factory.position.z&&(!stable&&position.z!==binding.factory.position.z-5||stable))throw Error('Invalid board current transform or unfinished transient Z');

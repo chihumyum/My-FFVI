@@ -1,3 +1,6 @@
+import {OwnedFieldEffectSource} from './field-effect-source-admission.js';
+import {IMMUTABLE_OWNED_FIELD_SOURCE,validateFieldSourceSnapshot,type ImmutableOwnedFieldSource} from './field-source-snapshot.js';
+import {FieldEffectCatalogBinding} from "./field-effect-catalog-binding.js";
 import {canonical} from './canonical.js';
 import {WEB_FIELD_EFFECT_TRANSFORMS,fieldEffectTransformBinding,validateFieldEffectCurrentTransform,type FieldEffectTransformRef,type WebFieldEffectTransforms} from './field-effect-transforms.js';
 import {initialFieldEffectBoardLifetimes,projectFieldEffectBoardLifetimes,type FieldEffectBoardLifetime} from './field-effect-board-lifetime.js';
@@ -250,6 +253,9 @@ export function fieldEffectAnimationLoopLimit(mode: number | null): number {
   return mode === 0 ? 1 : 0;
 }
 export function validateFieldEffectState(state: FieldEffectState, catalog: FieldEffectCatalog): void {
+  validateEffectState(state,catalog);
+}
+function validateEffectState(state:FieldEffectState,catalog:FieldEffectCatalog,source?:OwnedFieldEffectSource):void {
   if (!state || state.kind !== "field-effects-v1" || !Array.isArray(state.players) || !Array.isArray(state.boards))
     throw new Error("Invalid field effect state");
   integer(state.instanceCount, 0); finite(state.nextParticlePositionY);
@@ -266,7 +272,7 @@ export function validateFieldEffectState(state: FieldEffectState, catalog: Field
   for (const board of state.boards) {
     identity(board.id); point(board.position); validateFieldEffectBoard(board.definition);
     if (board.transformRef!==undefined||board.flatProjection !== undefined || board.definition.birdviewPuppet && catalog.webPolicy?.boardProjection) {
-      if (fieldEffectRuntimeBoardBlockers(board.definition,catalog,board.flatProjection,board.id,board.position,board.transformRef).length)
+      if ((source?source.blockers(board.definition,board.flatProjection,board.id,board.position,board.transformRef):fieldEffectRuntimeBoardBlockers(board.definition,catalog,board.flatProjection,board.id,board.position,board.transformRef)).length)
         throw new Error("Unbound flat effect board state");
     }
     const player = state.players.find((p) => p.cameraId === board.cameraId);
@@ -287,7 +293,11 @@ export function validateFieldEffectState(state: FieldEffectState, catalog: Field
 
 export function projectFieldEffects(state: FieldEffectState, catalog: FieldEffectCatalog,
   operations: readonly FieldEffectOperation[]): FieldEffectPlan {
-  validateFieldEffectState(state, catalog);
+  return projectEffectOperations(state,catalog,operations);
+}
+function projectEffectOperations(state:FieldEffectState,catalog:FieldEffectCatalog,operations:readonly FieldEffectOperation[],source?:OwnedFieldEffectSource):FieldEffectPlan {
+  validateEffectState(state, catalog,source);
+  const transform=(definition:FieldEffectBoardDefinition,ref:FieldEffectTransformRef|undefined,id?:string)=>source?source.transform(definition,ref,id):fieldEffectTransformBinding(catalog,definition,ref,id);
   const next = structuredClone(state), events: FieldEffectEvent[] = [];
   const board = (id: string) => { const b = next.boards.find((b) => b.id === id); if (!b) throw new Error("Unknown effect board: " + id); return b; };
   const player = (id: number) => { const p = next.players.find((p) => p.cameraId === id); if (!p) throw new Error("Released or unknown effect player: " + id); return p; };
@@ -304,9 +314,9 @@ export function projectFieldEffects(state: FieldEffectState, catalog: FieldEffec
       case "create": {
         identity(op.id); point(op.position);
         if (next.boards.some((b) => b.id === op.id)) throw new Error("Duplicate effect board: " + op.id);
-        const d = op.definition, blocked = fieldEffectRuntimeBoardBlockers(d,catalog,op.flatProjection,op.id,op.position,op.transformRef);
+        const d = op.definition, blocked = source?source.blockers(d,op.flatProjection,op.id,op.position,op.transformRef):fieldEffectRuntimeBoardBlockers(d,catalog,op.flatProjection,op.id,op.position,op.transformRef);
         if (blocked.length) throw new Error(blocked.join("; "));
-        const binding=fieldEffectTransformBinding(catalog,d,op.transformRef,op.id);
+        const binding=transform(d,op.transformRef,op.id);
         if(binding&&canonical(binding.factory.position)!==canonical(op.position))throw Error("Fresh board must retain immutable source factory placement");
         const m = media(catalog, d.assetGroup), sharedId = d.playOnAwake ? next.shared[d.assetGroup] : undefined;
         let p: FieldEffectPlayerState;
@@ -328,7 +338,7 @@ export function projectFieldEffects(state: FieldEffectState, catalog: FieldEffec
         events.push({ kind: "clear-render-texture", cameraId: p.cameraId }); break;
       }
       case "transform": {
-        checkpointKeys(op,"kind,id,position,source");const b=board(op.id),binding=fieldEffectTransformBinding(catalog,b.definition,op.source,op.id);
+        checkpointKeys(op,"kind,id,position,source");const b=board(op.id),binding=transform(b.definition,op.source,op.id);
         if(!binding||canonical(b.transformRef)!==canonical(op.source))throw Error("Board transform has no current source binding");
         validateFieldEffectCurrentTransform(binding,op.position);b.position=structuredClone(op.position);break;
       }
@@ -401,7 +411,7 @@ export function projectFieldEffects(state: FieldEffectState, catalog: FieldEffec
       default: throw new Error("Unknown field effect operation");
     }
   }
-  validateFieldEffectState(next, catalog);
+  validateEffectState(next, catalog,source);
   return { before: structuredClone(state), after: next, events };
 }
 
@@ -412,16 +422,21 @@ export class FieldEffects {
   #boardLifetimes=new Map<string,FieldEffectBoardLifetime>();
   #revision = 0;
   #catalog: FieldEffectCatalog;
+  #catalogBinding: FieldEffectCatalogBinding;
+  #sourceAdmission: OwnedFieldEffectSource|undefined;
+  readonly #sourceSnapshot:ImmutableOwnedFieldSource|undefined;
   #publishing = false;
   #publicationFailed = false;
   readonly #provider: FieldEffectProvider | undefined;
-  constructor(catalog: FieldEffectCatalog, provider?: FieldEffectProvider) {
+  constructor(catalog: FieldEffectCatalog, provider?: FieldEffectProvider, sourceSnapshot?:ImmutableOwnedFieldSource) {
+    validateFieldSourceSnapshot(sourceSnapshot);this.#sourceSnapshot=sourceSnapshot;
     validateLogicalEffectCatalog(catalog);
     if(provider?.boardTransforms!==undefined&&provider.boardTransforms!==WEB_FIELD_EFFECT_TRANSFORMS||catalog.boardTransforms&&provider?.boardTransforms!==WEB_FIELD_EFFECT_TRANSFORMS)throw Error("Movable logical boards require an explicit matching runtime host");
     if (catalog.webPolicy && provider?.policy !== WEB_LOGICAL_FIELD_EFFECTS ||
         provider?.policy === WEB_LOGICAL_FIELD_EFFECTS && !catalog.webPolicy && Object.keys(catalog.media).length > 0)
       throw new Error("Logical field effects require the explicit matching Web host and catalog");
-    this.#catalog = structuredClone(catalog); this.#provider = provider;
+    this.#sourceAdmission=sourceSnapshot===IMMUTABLE_OWNED_FIELD_SOURCE?new OwnedFieldEffectSource(catalog):undefined;
+    this.#catalog = this.#sourceAdmission?.catalog??structuredClone(catalog); this.#catalogBinding = new FieldEffectCatalogBinding(this.#catalog); this.#provider = provider;
   }
   boardLifetime(id:string):FieldEffectBoardLifetime {
     if(this.#publicationFailed)throw Error("Failed field effect board owner");const lifetime=this.#boardLifetimes.get(id);
@@ -429,11 +444,18 @@ export class FieldEffects {
   }
   snapshot(): FieldEffectState { return structuredClone(this.#state); }
   catalogSnapshot(): FieldEffectCatalog { return structuredClone(this.#catalog); }
+  assertCatalog(catalog: FieldEffectCatalog): void { this.#catalogBinding.assertCatalog(catalog); }
+  assertAdmittedCatalog(source:OwnedFieldEffectSource):void {
+    if(this.#sourceAdmission)this.#sourceAdmission.assertIdentity(source);else source.assertCatalogBinding(this.#catalogBinding);
+  }
+  assertBoardTransformCatalog(catalog: FieldEffectCatalog): void {
+    this.#catalogBinding.assertBoardTransforms(catalog, "Board transform catalog differs from its actual manager");
+  }
   get logicalPolicy(): typeof WEB_LOGICAL_FIELD_EFFECTS | null {
     return this.#catalog.webPolicy && this.#provider?.policy === WEB_LOGICAL_FIELD_EFFECTS ? WEB_LOGICAL_FIELD_EFFECTS : null;
   }
-  static restoreLogical(catalog: FieldEffectCatalog, provider: FieldEffectProvider, state: FieldEffectState): FieldEffects {
-    const owner = new FieldEffects(catalog, provider);
+  static restoreLogical(catalog: FieldEffectCatalog, provider: FieldEffectProvider, state: FieldEffectState,sourceSnapshot?:ImmutableOwnedFieldSource): FieldEffects {
+    const owner = new FieldEffects(catalog, provider,sourceSnapshot);
     if (owner.logicalPolicy !== WEB_LOGICAL_FIELD_EFFECTS) throw new Error("Logical effect checkpoint requires its explicit Web host");
     checkpointKeys(state, "kind,instanceCount,nextParticlePositionY,players,boards,shared,registeredCameraIds");
     validateFieldEffectState(state, owner.#catalog);
@@ -467,7 +489,14 @@ export class FieldEffects {
   #publish(revision: number, state: FieldEffectState, catalog: FieldEffectCatalog,
     lifetimes:ReadonlyMap<string,FieldEffectBoardLifetime>,commit: () => void, commitOwned: () => boolean = () => true): boolean {
     // Finish every fallible copy before entering the host's no-fail publication.
-    const next = structuredClone(state), nextCatalog = structuredClone(catalog),nextLifetimes=new Map(lifetimes);
+    // prepare()/tick pass this manager's unexposed private clone. Snapshot and
+    // host/candidate interfaces only receive detached clones; reusing this exact
+    // identity preserves ownership without copying the full source directory at
+    // every 10ms tick. A genuinely new candidate catalog is copied before any
+    // owned commit, exactly as before.
+    const nextSource=catalog===this.#catalog?this.#sourceAdmission:this.#sourceSnapshot===IMMUTABLE_OWNED_FIELD_SOURCE?new OwnedFieldEffectSource(catalog):undefined;
+    const next = structuredClone(state), nextCatalog = catalog===this.#catalog?this.#catalog:nextSource?.catalog??structuredClone(catalog),nextLifetimes=new Map(lifetimes);
+    const nextCatalogBinding = nextCatalog===this.#catalog?this.#catalogBinding:new FieldEffectCatalogBinding(nextCatalog);
     if(next.boards.length!==nextLifetimes.size||next.boards.some(board=>!nextLifetimes.has(board.id)))throw Error("Field effect board lifetime closure changed");
     this.#validateRevision(revision);
     this.#publishing = true;
@@ -480,14 +509,14 @@ export class FieldEffects {
         // published externally. Do not replay that commit or reuse the manager.
         this.#publicationFailed = true; throw error;
       }
-      this.#state = next; this.#catalog = nextCatalog;this.#boardLifetimes=nextLifetimes; this.#revision++;
+      this.#state = next; this.#catalog = nextCatalog;this.#catalogBinding=nextCatalogBinding;this.#sourceAdmission=nextSource;this.#boardLifetimes=nextLifetimes; this.#revision++;
       return true;
     } finally { this.#publishing = false; }
   }
   prepare(operations: readonly FieldEffectOperation[]): FieldEffectPrepared {
     const revision = this.#revision;
     this.#validateRevision(revision);
-    const plan = projectFieldEffects(this.#state, this.#catalog, operations),lifetimes=projectFieldEffectBoardLifetimes(this.#boardLifetimes,operations);
+    const plan = projectEffectOperations(this.#state, this.#catalog, operations,this.#sourceAdmission),lifetimes=projectFieldEffectBoardLifetimes(this.#boardLifetimes,operations);
     if (!this.#provider) throw new Error("Field effect renderer/particle host is unavailable");
     const publication = this.#provider.prepare(structuredClone(plan));
     this.#validateRevision(revision);
@@ -520,7 +549,7 @@ export class FieldEffects {
   fork(targetCatalog?: FieldEffectCatalog, limits?: FieldEffectCandidateLimits): FieldEffectCandidate {
     const revision = this.#revision;
     this.#validateRevision(revision);
-    const catalog = mergeFieldEffectCatalog(this.#catalog, targetCatalog);
+    const catalog = mergeFieldEffectCatalog(this.#catalog, targetCatalog),source=this.#sourceSnapshot===IMMUTABLE_OWNED_FIELD_SOURCE?new OwnedFieldEffectSource(catalog):undefined;
     const provider = this.#provider;
     if (typeof provider?.beginCandidate !== "function") throw new Error("Field effect candidate host is unavailable");
     const origin = { state: this.snapshot(), catalog: structuredClone(catalog) };
@@ -530,7 +559,8 @@ export class FieldEffects {
       return new FieldEffectCandidate(origin, host, {
         validate: () => this.#validateRevision(revision),
         lifetimes:()=>new Map(this.#boardLifetimes),
-        project: projectFieldEffects,
+        ...(source?{source}:{}),
+        project: (state,catalog,operations)=>projectEffectOperations(state,source?.catalog??catalog,operations,source),
         publish: (state, candidateCatalog,lifetimes, commit, commitOwned) => this.#publish(revision, state, candidateCatalog,lifetimes, commit, commitOwned),
       }, limits);
     } catch (error) { host.discard?.(); throw error; }

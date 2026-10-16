@@ -41,6 +41,7 @@ export type MapPartyEntryInput = {
   transportation: TransportationIdentity;
   /** FF6 SpcialFlag.CanPartySwitching; null is unknown, not false. */
   canPartySwitching: boolean | null;
+  rtsPartyPlacement?:'web-source-rts-party-switch-v1';
 };
 
 export type MapPartyEntryPlan = {
@@ -113,7 +114,8 @@ export function prepareMapPartyEntry(catalog: PartyActorCatalog, input: MapParty
     throw new Error("Map party entry view/loop presentation is not implemented");
   if (typeof input.playerVisible !== "boolean") throw new Error("Unknown map-entry player visibility");
   if (input.canPartySwitching === null || typeof input.canPartySwitching !== "boolean") throw new Error("Unknown map-entry party switching flag");
-  if (input.canPartySwitching) throw new Error("Map party placement and switching entry is not implemented");
+  if(input.rtsPartyPlacement!==undefined&&input.rtsPartyPlacement!=='web-source-rts-party-switch-v1')throw Error('Unknown RTS placement policy');
+  if (input.canPartySwitching&&!input.rtsPartyPlacement) throw new Error("Map party placement and switching entry is not implemented");
   const entries = def.pointIns.filter((point) => point.id === input.entrance);
   if (entries.length !== 1) throw new Error("Missing or ambiguous map party PointIn");
   const entry = entries[0]!;

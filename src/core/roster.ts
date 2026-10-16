@@ -1,3 +1,4 @@
+import {setReleasedJob} from "./current-job.js";
 import { checkpointKeys } from "./checkpoint-validation.js";
 import {
   validateEquipmentLoadout,
@@ -367,15 +368,7 @@ export function prepareRosterNativeStep<T extends RosterMember>(
   };
   const releaseJob = (released: boolean) => {
     const jobId = member!.jobId;
-    if (released) {
-      if (!state.releasedJobIds.includes(jobId))
-        state.releasedJobIds.push(jobId);
-      // AddReleaseJob invokes ReleaseJob on all owned, even for an existing release.
-      for (const owner of state.roster)
-        if (!owner.ownedJobs.some((job) => job.id === jobId))
-          owner.ownedJobs.push({ id: jobId, level: 1, proficiency: 0 });
-    } else
-      state.releasedJobIds = state.releasedJobIds.filter((id) => id !== jobId);
+    setReleasedJob(state,catalog.jobIds,jobId,released);
     receipts.push({ kind: "released-job", jobId, released });
   };
 

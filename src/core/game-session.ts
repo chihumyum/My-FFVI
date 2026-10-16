@@ -1,7 +1,9 @@
+import {WEB_SOURCE_CHARACTER_NAMING} from './source-character-naming.js';
+import {WEB_RTS_PARTY_SWITCH,validateRtsPolicy,type WebRtsPartySwitch}from'./field-rts-party.js';
 import {parseWebBattleChildAdmission,type WebBattleChildAdmission} from './battle-child-admission.js';
 import {WEB_BATTLE_GAU_INSTANCES,type BattleGauMediaHost} from "./battle-gau-instances.js";
 import { WEB_BATTLE_GLOBAL_FADE } from "./battle-global-fade.js";
-import { BATTLE_RESERVED_SCRIPTS, parseFieldReservation, reservationFingerprint, reservationSourceFingerprint, type FieldReservationSnapshot, type BattleFieldReservation, type BattleFieldReservationHost, type FieldReservedScriptPort } from "./field-reserved-script.js";
+import { BATTLE_RESERVED_SCRIPTS, parseFieldReservation,parseRtsFieldReservation, reservationFingerprint, reservationSourceFingerprint, type FieldReservationSnapshot, type BattleFieldReservation, type BattleFieldReservationHost, type FieldReservedScriptPort } from "./field-reserved-script.js";
 import { validateBattleEventConditions, type WebBattleEventConditions } from "./battle-event-condition.js";
 import { validateBattleBranchExecutionPolicy, type WebBattleBranchExecution } from './battle-branch-execution.js';
 import { WEB_BATTLE_EVENT_EFFECTS, createWebBattleEventEffectHost, type BattleEventEffectHost } from './battle-event-effect.js';
@@ -82,10 +84,10 @@ type GameCheckpointBase = {
 /** Version 4 is read-only compatibility for content without walk encounters. */
 export type GameCheckpoint = GameCheckpointBase & (
   { formatVersion: 4 } | { formatVersion: 5 | 6; walkEncounters: WalkEncounterSnapshot } |
-  { formatVersion: 7 | 8; walkEncounters: WalkEncounterSnapshot; fieldReservation: FieldReservationSnapshot }
+  { formatVersion: 7 | 8 | 9 | 10; walkEncounters: WalkEncounterSnapshot; fieldReservation: FieldReservationSnapshot }
 );
 /** External observations are rebound by the host on load, never trusted from saves. */
-export type GameSessionRuntime = { battleChildPartyAdmission?:WebBattleChildAdmission; battleGauInstances?:BattleGauMediaHost; fieldEffectTransforms?:import("./field-effect-transforms.js").WebFieldEffectTransforms; skyboxPresentation?: import("./field-skybox.js").WebFlatSkybox; battleEventConditions?: WebBattleEventConditions; screenPresentation?: import("./field-screen-presentation.js").WebFieldScreenPresentation; battleGlobalFade?:typeof WEB_BATTLE_GLOBAL_FADE; mobColorFilter?: import("./field-mob-controls.js").WebFlatMobColorFilter; birdViewActors?: import("./field-bird-view-actors.js").WebFlatBirdViewActors; worldAutoMove?:import("./field-world-auto-move.js").WebFlatWorldAutoMove; worldAutoTasks?:import("./field-world-auto-tasks.js").WebFlatWorldAutoTasks; battleBranchExecution?:WebBattleBranchExecution; battleEventEffects?:BattleEventEffectHost|typeof WEB_BATTLE_EVENT_EFFECTS; battleEventControls?: WebBattleEventControls; viewChange?: import("./field-view-change.js").WebFlatFieldViewChange; battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY; sourcePartySelection?: WebSourcePartySelection; scriptedBattleActions?: WebScriptedBattleActions; puppetRoutes?: import("./field-puppet-route.js").WebPuppetRoutePolicy; sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
+export type GameSessionRuntime = { sourceSnapshot?:import("./field-source-snapshot.js").ImmutableOwnedFieldSource; rtsPartySwitch?:WebRtsPartySwitch; sourceCharacterNaming?:typeof WEB_SOURCE_CHARACTER_NAMING; vehicleLifecycle?:import("./field-vehicle-lifecycle.js").WebSourceVehicleLifecycle; battleChildPartyAdmission?:WebBattleChildAdmission; battleGauInstances?:BattleGauMediaHost; fieldEffectTransforms?:import("./field-effect-transforms.js").WebFieldEffectTransforms; skyboxPresentation?: import("./field-skybox.js").WebFlatSkybox; battleEventConditions?: WebBattleEventConditions; screenPresentation?: import("./field-screen-presentation.js").WebFieldScreenPresentation; battleGlobalFade?:typeof WEB_BATTLE_GLOBAL_FADE; mobColorFilter?: import("./field-mob-controls.js").WebFlatMobColorFilter; birdViewActors?: import("./field-bird-view-actors.js").WebFlatBirdViewActors; worldAutoMove?:import("./field-world-auto-move.js").WebFlatWorldAutoMove; worldAutoTasks?:import("./field-world-auto-tasks.js").WebFlatWorldAutoTasks; battleBranchExecution?:WebBattleBranchExecution; battleEventEffects?:BattleEventEffectHost|typeof WEB_BATTLE_EVENT_EFFECTS; battleEventControls?: WebBattleEventControls; viewChange?: import("./field-view-change.js").WebFlatFieldViewChange; battleEventMessages?: typeof WEB_BATTLE_EVENT_MESSAGE_POLICY; sourcePartySelection?: WebSourcePartySelection; scriptedBattleActions?: WebScriptedBattleActions; puppetRoutes?: import("./field-puppet-route.js").WebPuppetRoutePolicy; sourceBossEntry?:WebSourceBossEntry; sourceBattleResult?:WebCommittedBattleResult; scriptRandom?: WebSourceScriptRandom; retainedWorldTransportation?: import("./world-transportation-entry.js").WebRetainedWorldTransportation; assignedNpcRoutes?: import('./field-assigned-route.js').WebAssignedRoutePolicy; sourceEncounterPolicy?: WebSourceEncounterPolicy; audioReadiness?: AudioReadinessPort; fieldEffects?: FieldEffectRuntimeHost;
   soundPresentation?: FieldSoundPresentation;
   sourceMessageSequence?: NonNullable<FieldGameOptions["sourceMessageSequence"]>;
   conditionLeaderActivity?: NonNullable<FieldGameOptions["conditionLeaderActivity"]>;
@@ -174,6 +176,17 @@ export class GameSession {
   get reservedFieldScript(): FieldReservationSnapshot | null { return structuredClone(this.fieldReservation); }
   private readonly fieldReservationPort: FieldReservedScriptPort = {
     read: () => this.reservedFieldScript,
+    prepareRts:content=>{
+      const field=this.field,before=canonical(this.fieldReservation),catalog=this.state.fieldRtsParty.read().catalog;
+      if(field.content!==content||field.rtsPolicy!==WEB_RTS_PARTY_SWITCH||this.battle||this.state.inBattle)
+        throw Error('RTS reservation requires the current explicitly bound Field');
+      const pin=reservationFingerprint(content,catalog.afterScript);let consumed=false;
+      const validate=()=>{if(consumed||this.field!==field||this.battle||this.state.inBattle||
+        canonical(this.fieldReservation)!==before||reservationFingerprint(content,catalog.afterScript)!==pin||
+        canonical(this.state.fieldRtsParty.read().catalog)!==canonical(catalog))throw Error('Stale RTS reservation owner');};
+      return{validate,commit:()=>{validate();consumed=true;this.fieldReservation={kind:'source-rts-field-reservation-v1',
+        parentSourceSetHash:content.parentSourceSetHash,script:catalog.afterScript};}};
+    },
     prepareConsume: content => {
       const queued = this.reservedFieldScript;
       if (!queued) return null;
@@ -182,6 +195,7 @@ export class GameSession {
         throw new Error('Reserved script requires the current unleased field owner');
       if (queued.parentSourceSetHash !== content.parentSourceSetHash)
         throw new Error('Reserved script belongs to another source domain');
+      if(queued.kind==='source-rts-field-reservation-v1'&&field.rtsPolicy!==WEB_RTS_PARTY_SWITCH)throw Error('Saved RTS reservation cannot grant a runtime policy');
       const before = canonical(queued), pin = reservationFingerprint(content, queued.script);
       let consumed = false;
       const validate = () => {
@@ -195,7 +209,8 @@ export class GameSession {
   private captureBattleReservationHost(field: FieldGame): BattleFieldReservationHost {
     const targets = Object.fromEntries(Object.values(BATTLE_RESERVED_SCRIPTS).map(name => [name,
       reservationSourceFingerprint(field.content,name)]));
-    return { entry: this.reservedFieldScript, require: role => {
+    const entry=this.reservedFieldScript;if(entry?.kind==='source-rts-field-reservation-v1')throw Error('Battle cannot borrow an outstanding RTS reservation');
+    return { entry, require: role => {
       const name = BATTLE_RESERVED_SCRIPTS[role];
       if (!name || this.field !== field || reservationFingerprint(field.content, name) !== targets[name])
         throw new Error('Battle reserved script current source binding changed: ' + name);
@@ -322,6 +337,8 @@ export class GameSession {
       throw new Error('Unknown assigned NPC route policy');
     if (runtime.sourceEncounterPolicy !== undefined && runtime.sourceEncounterPolicy !== WEB_SOURCE_ENCOUNTER_POLICY)
       throw new Error("Unknown source encounter runtime policy");
+    if(runtime.sourceCharacterNaming!==undefined&&runtime.sourceCharacterNaming!==WEB_SOURCE_CHARACTER_NAMING)throw Error("Unknown source character naming runtime");
+    validateRtsPolicy(runtime.rtsPartySwitch);
     if(runtime.sourcePartySelection!==undefined&&runtime.sourcePartySelection!==WEB_SOURCE_PARTY_SELECTION)throw new Error('Unknown source party selection policy');
     if(runtime.sourceBossEntry!==undefined&&runtime.sourceBossEntry!==WEB_SOURCE_BOSS_ENTRY)throw new Error('Unknown source Boss policy');
     if(runtime.sourceBattleResult!==undefined&&runtime.sourceBattleResult!==WEB_COMMITTED_BATTLE_RESULT)throw new Error('Unknown committed result policy');
@@ -378,7 +395,9 @@ export class GameSession {
         treasure: this.state.fieldTreasure,
         party: this.state.fieldParty,
         sourcePartySelectionPort: this.state.fieldSourcePartySelection,
+        characterNamingPort:this.state.fieldCharacterNaming,
         roster: this.state.fieldRoster,
+        rtsParty:this.state.fieldRtsParty,
         ownedConditions: this.state.fieldOwnedConditions,
         recovery: this.state.fieldRecovery,
         ...(scriptRandomPolicy === WEB_SOURCE_SCRIPT_RANDOM ? { scriptRandom: this.state.fieldScriptRandom } : {}),
@@ -473,18 +492,20 @@ export class GameSession {
       if (context?.mode === "source") {
         if (!common.battleAbilities || !player.ownedAbilities)
           throw new Error("Source party member lacks owned battle command bindings");
-        const passives = system ? equipmentOwnedAbilities(system.catalog, member) : [];
-        const inventory = system && common.battleEntry ? projectBattleItemMenu(common.battleEntry, {
+        const equipment=this.state.currentEquipmentCatalog;
+        const passives = equipment ? equipmentOwnedAbilities(equipment, member) : [];
+        const inventory = equipment && common.battleEntry ? projectBattleItemMenu(common.battleEntry, {
           sourceId: member.sourceId, equipment: member.equipment,
           inventory: [...owned.items.map(item => ({ ...item, equipped: 0 })),
-            ...equipmentAvailability(system.catalog, owned.roster.filter(member => member.enabled), owned.equipmentStock)],
-        }, system.catalog) : null;
+            ...equipmentAvailability(equipment, owned.roster.filter(member => member.enabled), owned.equipmentStock)],
+        }, equipment) : null;
+        const jobs=this.state.battleJobQualification;jobs.validateCatalog(common.battleAbilities,this.battleCatalog.contentHash);
         const qualification = projectBattleAbilities(common.battleAbilities, player.ownedAbilities, {
           conditionIds: context.conditionContext === "current" ? player.conditionIds : null,
           battleType: context.battleType, magicLearningValue: player.magicLearningValue ?? context.magicLearningValue,
           invalidContentIds: context.invalidContentIds, itemMenuAvailable: inventory?.available ?? null,
           partySize: players.length,
-        }, passives);
+        }, passives,jobs);
         // A known temporary source exclusion is different from an unresolved
         // provider. Unknown optional skills remain visible in the existing menu.
         supported = qualification.entries.some(entry => entry.released !== null && entry.available !== null &&
@@ -505,12 +526,21 @@ export class GameSession {
     if (!member) throw new Error("Character menu references an unowned member");
     const content = this.battleCatalog.gameState;
     return { ...projectCharacterMenu(member, {
-      growth: content.characterGrowth?.[id] ?? null,
+      growth: this.state.characterGrowthPlan(id),
       developmentExperience: this.battleCatalog.common.experience,
       abilities: this.battleCatalog.common.abilities,
       commands: this.battleCatalog.common.commands,
-      equipmentAbilities: content.equipmentSystem ? equipmentOwnedAbilities(content.equipmentSystem.catalog, member) : [],
+      equipmentAbilities: this.state.currentEquipmentCatalog ? equipmentOwnedAbilities(this.state.currentEquipmentCatalog, member) : [],
     }), magicLearningValue: content.characterInitializations?.[id] ? member.magicLearningValue : null };
+  }
+  get currentCharacterNaming(){return this.fieldOwnerReady?this.field.currentCharacterNaming:null;}
+  submitCharacterName(token:object,value:string,stillAdmitted:()=>boolean=()=>true):boolean {
+    const field=this.field,admitted=()=>this.field===field&&this.fieldOwnerReady&&stillAdmitted();
+    return admitted()?field.submitCharacterName(token,value,admitted):false;
+  }
+  confirmCharacterName(token:object,accepted:boolean,stillAdmitted:()=>boolean=()=>true):boolean {
+    const field=this.field,admitted=()=>this.field===field&&this.fieldOwnerReady&&stillAdmitted();
+    return admitted()?field.confirmCharacterName(token,accepted,admitted):false;
   }
   get currentSourcePartySelection(){return this.fieldOwnerReady?this.field.currentSourcePartySelection:null;}
   completeSourcePartySelection(token:object,outcome:SourcePartySelectionOutcome,stillAdmitted:()=>boolean=()=>true):boolean {
@@ -641,7 +671,7 @@ export class GameSession {
     };
     if (this.fieldReservation) {
       reservationFingerprint(this.field.content, this.fieldReservation.script);
-      return { ...value, formatVersion: this.initializedEntry ? 8 : 7, fieldReservation: this.reservedFieldScript! };
+      return { ...value, formatVersion: this.fieldReservation.kind==='source-rts-field-reservation-v1'?(this.initializedEntry?10:9):(this.initializedEntry ? 8 : 7), fieldReservation: this.reservedFieldScript! };
     }
     return value;
   }
@@ -687,14 +717,14 @@ export class GameSession {
     runtime: GameSessionRuntime = {},
   ): GameSession {
     const s = structuredClone(raw);
-    if (s.formatVersion !== 4 && s.formatVersion !== 5 && s.formatVersion !== 6 && s.formatVersion !== 7 && s.formatVersion !== 8) throw new Error("Game checkpoint source/version mismatch");
+    if (s.formatVersion !== 4 && s.formatVersion !== 5 && s.formatVersion !== 6 && s.formatVersion !== 7 && s.formatVersion !== 8 && s.formatVersion !== 9 && s.formatVersion !== 10) throw new Error("Game checkpoint source/version mismatch");
     checkpointKeys(
       s,
       "formatVersion,kind,sourceSetHash,battleCatalogHash,origin,seed,encounterSerial,remainder,battlePreferences,owned,world" +
-        (s.formatVersion === 4 ? "" : ",walkEncounters") + (s.formatVersion === 7 || s.formatVersion === 8 ? ",fieldReservation" : ""),
+        (s.formatVersion === 4 ? "" : ",walkEncounters") + (s.formatVersion === 7 || s.formatVersion === 8 || s.formatVersion === 9 || s.formatVersion === 10 ? ",fieldReservation" : ""),
     );
     if (
-      (s.formatVersion !== 4 && s.formatVersion !== 5 && s.formatVersion !== 6 && s.formatVersion !== 7 && s.formatVersion !== 8) ||
+      (s.formatVersion !== 4 && s.formatVersion !== 5 && s.formatVersion !== 6 && s.formatVersion !== 7 && s.formatVersion !== 8 && s.formatVersion !== 9 && s.formatVersion !== 10) ||
       s.kind !== "game-checkpoint" ||
       s.battleCatalogHash !== battle.contentHash
     )
@@ -703,7 +733,7 @@ export class GameSession {
     checkpointInteger(s.encounterSerial);
     checkpointNumber(s.remainder, 0, 10);
     if (s.remainder >= 10) throw new Error("Invalid session remainder");
-    if ((s.formatVersion === 6 || s.formatVersion === 8) !== (s.origin?.kind === "framework-new-game"))
+    if ((s.formatVersion === 6 || s.formatVersion === 8 || s.formatVersion === 10) !== (s.origin?.kind === "framework-new-game"))
       throw new Error("Checkpoint initialization version/origin mismatch");
     let next: GameSession;
     if (s.origin?.kind === "framework-new-game") {
@@ -777,8 +807,10 @@ export class GameSession {
       next.walkEncounters.assertPolicy(walkMapId, next.field.content.walkEncounters ?? null);
     else if (next.field.content.walkEncounters || s.formatVersion !== 4 && s.walkEncounters.maps.length)
       throw new Error("Saved walking encounters require a bound current map identity");
-    if (s.formatVersion === 7 || s.formatVersion === 8) {
-      const queued = parseFieldReservation(s.fieldReservation);
+    if (s.formatVersion === 7 || s.formatVersion === 8 || s.formatVersion === 9 || s.formatVersion === 10) {
+      const queued = s.formatVersion===9||s.formatVersion===10?parseRtsFieldReservation(s.fieldReservation):parseFieldReservation(s.fieldReservation);
+      if((s.formatVersion===9||s.formatVersion===10)!==(queued.kind==='source-rts-field-reservation-v1'))throw Error('RTS reservation checkpoint version mismatch');
+      if(queued.kind==='source-rts-field-reservation-v1'&&next.field.rtsPolicy!==WEB_RTS_PARTY_SWITCH)throw Error('Saved RTS reservation cannot grant its runtime/content owner');
       if (queued.parentSourceSetHash !== next.field.content.parentSourceSetHash)
         throw new Error('Saved field reservation source domain changed');
       reservationFingerprint(next.field.content, queued.script);
@@ -929,7 +961,7 @@ export class GameSession {
     return new BattleGame(content, entry.seed, this.state.battlePlayers(entry.lease), this.state.battleInventory(entry.lease),
       this.state.battleProgression(entry.lease, content.experience), this.currentBattlePreferences,
       structuredClone(entry.shared), this.state.battlePlayerBorrow(entry.lease),
-      { names: this.state.fieldMessageNames,
+      { jobQualification:this.state.battleJobQualification,names: this.state.fieldMessageNames,
         ...(this.battleBranchExecution===undefined?{}:{branchExecution:this.battleBranchExecution}),
         ...(entry.gau?{gau:entry.gau}:{}),
         ...(this.#battleChildAdmission?{childPartyAdmission:this.#battleChildAdmission}:{}),

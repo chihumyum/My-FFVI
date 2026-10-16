@@ -1,3 +1,4 @@
+import type {BattleCurrentJobHost} from "./battle-abilities.js";
 import { BattleEnemyMpParameters } from "./source-enemy-mp-parameter.js";
 import { BattleFinalAttackTickets, sourceFinalReady, FINAL_ATTACK_EXCLUDED_TYPES } from "./battle-final-attack.js";
 import {parseBattleChildAdmission,parseWebBattleChildAdmission,prepareBattleChildParty,type BattleChildAdmission,type WebBattleChildAdmission} from './battle-child-admission.js';
@@ -466,15 +467,23 @@ export class BattleGame {
     initialPreferences?: BattlePreferences,
     eventShared?: BattleEventSharedSnapshot,
     playerBorrow?: BattlePlayerBorrow,
-    private readonly eventHosts?: { names?: FieldMessageNamesPort; childPartyAdmission?:WebBattleChildAdmission; gauInstances?:BattleGauInstanceHost; conditions?: WebBattleEventConditions; scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; fade?:BattleGlobalFadeHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; fieldContinuation?:BattleFieldReservationHost; branchExecution?:WebBattleBranchExecution },
+    private readonly eventHosts?: { jobQualification?:BattleCurrentJobHost; names?: FieldMessageNamesPort; childPartyAdmission?:WebBattleChildAdmission; gauInstances?:BattleGauInstanceHost; conditions?: WebBattleEventConditions; scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; fade?:BattleGlobalFadeHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; fieldContinuation?:BattleFieldReservationHost; branchExecution?:WebBattleBranchExecution },
   ) {
     if (eventHosts !== undefined && (!eventHosts || typeof eventHosts !== "object" || Array.isArray(eventHosts) ||
-        Object.keys(eventHosts).some(key => key !== "names" && key !== "childPartyAdmission" && key !== "gauInstances" && key !== "conditions" && key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau" && key !== "fade" && key !== "fieldContinuation")))
+        Object.keys(eventHosts).some(key => key !== "jobQualification" && key !== "names" && key !== "childPartyAdmission" && key !== "gauInstances" && key !== "conditions" && key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau" && key !== "fade" && key !== "fieldContinuation")))
       throw new Error("Unknown battle event host options");
+    if(eventHosts?.jobQualification&&(typeof eventHosts.jobQualification.catalogHash!=='string'||
+      typeof eventHosts.jobQualification.validateCatalog!=='function'||typeof eventHosts.jobQualification.admits!=='function'))
+      throw Error('Unknown actual owned current-job qualification');
     validateBattleBranchExecutionPolicy(eventHosts?.branchExecution);this.#branchPolicy=eventHosts?.branchExecution;
     validateBattleGlobalFadeHost(eventHosts?.fade);this.#fadeHost=eventHosts?.fade?Object.freeze({...eventHosts.fade}):null;
     this.#fadeRevision=this.#fadeHost?.owner.mutationRevision??0;
     if(eventHosts?.childPartyAdmission!==undefined)parseWebBattleChildAdmission(eventHosts.childPartyAdmission);
+    if(content.battleAbilities){
+      if(content.battleAbilities.characters.some(c=>c.equivalentJobIds!==undefined)&&!eventHosts?.jobQualification)
+        throw Error('Missing actual owned current-job qualification');
+      eventHosts?.jobQualification?.validateCatalog(content.battleAbilities,content.contentHash);
+    }
     this.#childAdmission=content.childPartyAdmission===undefined?undefined:parseBattleChildAdmission(content.childPartyAdmission);
     if(this.#childAdmission&&(this.#childAdmission.rootPartyId!==content.encounterId||eventHosts?.childPartyAdmission!==this.#childAdmission.policy))throw new Error("Source child-party admission requires matching content and actual runtime policy");
     this.#gauContent=content.gauInstances===undefined?null:parseBattleGauInstanceContent(content.gauInstances);
@@ -914,7 +923,7 @@ export class BattleGame {
       invalidContentIds: context.invalidContentIds,
       itemMenuAvailable: this.usesSourceQualification ? this.itemQualificationFor(actor, inventory).available : context.itemMenuAvailable,
       partySize,
-    }, equipmentAbilities);
+    }, equipmentAbilities,this.eventHosts?.jobQualification);
   }
   /** The UI receives source menu entries, including unresolved commands. Effect
    * support is separate from qualification and cannot grant an owned ability. */

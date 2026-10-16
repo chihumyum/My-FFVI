@@ -1,10 +1,11 @@
+import type {OwnedFieldEffectSource} from './field-effect-source-admission.js';
 import type {FieldEffectBoardLifetime} from './field-effect-board-lifetime.js';
 import { fieldEffectBoardId, type FieldEffectCandidate, type FieldEffectOperation,
   type FieldEffectPrepared, type FieldEffectState, type FieldEffectCatalog, type FieldEffects } from "./field-effects.js";
 import { canonical } from "./canonical.js";
 import { WEB_LOGICAL_FIELD_EFFECTS } from "./field-logical-effects.js";
 
-type EffectAccess = Pick<FieldEffects, "snapshot" | "catalogSnapshot" | "prepare" | "prepareTick" | "boardLifetime">;
+type EffectAccess = Pick<FieldEffects, "snapshot" | "catalogSnapshot" | "assertCatalog" | "assertAdmittedCatalog" | "prepare" | "prepareTick" | "boardLifetime">;
 
 /** A map leases boards from the world's manager. It never resets that manager,
  * owns a second player pool, or turns a logical snapshot into a particle save. */
@@ -51,13 +52,9 @@ export class FieldEffectMap {
   get hasHistory(): boolean { return this.snapshot().instanceCount !== 0; }
   get active(): boolean { return this.#retired === null; }
   assertCatalog(catalog: FieldEffectCatalog): void {
-    const bound = this.#access.catalogSnapshot();
-    if(canonical(catalog.boardTransforms??null)!==canonical(bound.boardTransforms??null))throw Error("Unbound current map board transform catalog");
-    for (const [group, definition] of Object.entries(catalog.media)) {
-      if (!bound.media[group] || canonical(definition) !== canonical(bound.media[group]))
-        throw new Error("Unbound map effect media " + group);
-    }
+    this.#access.assertCatalog(catalog);
   }
+  assertAdmittedCatalog(source:OwnedFieldEffectSource):void {this.#access.assertAdmittedCatalog(source);}
   prepare(operations: readonly FieldEffectOperation[]): FieldEffectPrepared {
     this.#active();
     const mapped = operations.map((operation): FieldEffectOperation => {

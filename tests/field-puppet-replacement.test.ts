@@ -20,7 +20,7 @@ test('all nine generic source spellings decode with their reserved operands; thr
    const bad=structuredClone(raw);mutate(bad);assert.equal(decodeFieldOp(bad,site,{}).kind,'blocked');
   }
  }
- const rts=replacementRaw('解除');rts.operands.sValues[0]='RTS：エンカウント前パーティ復元';assert.equal(decodeFieldOp(rts,site,{}).kind,'blocked');
+ const rts=replacementRaw('解除');rts.operands.sValues[0]='RTS：エンカウント前パーティ復元';assert.equal(decodeFieldOp(rts,site,{}).kind,'rts-party');const requirements=fieldInstructionRequirements(decodeFieldOp(rts,site,{}));assert.notEqual(assessFieldRequirements(requirements,{providers:{},actorKind:'unknown'}).status,'ready');
 });
 test('raw Corps order, holes, first nonzero source owner and previous callback preservation do not use party appearance ordering',()=>{
  const before=structuredClone(readRoster),all=projectPuppetReplacement({kind:'slot',slot:1,selection:'all'},null,readRoster);

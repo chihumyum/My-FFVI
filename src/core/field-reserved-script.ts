@@ -16,21 +16,27 @@ export type SourceReservedScriptBinding = {
   kind: 'source-reserved-field-script-v1'; name: string; rawHash: string;
   sourceSetHash: string; parentSourceSetHash: string; source: Evidence & {objectId:string;serializedFile:string;sha256:string};
 };
-export type FieldReservationSnapshot = {
+export type BattleFieldReservationSnapshot = {
   kind: 'source-field-reservation-v1'; parentSourceSetHash: string;
   script: string;
 };
+export type RtsFieldReservationSnapshot={kind:'source-rts-field-reservation-v1';parentSourceSetHash:string;script:'sc_sht_corps_after'};
+export type FieldReservationSnapshot=BattleFieldReservationSnapshot|RtsFieldReservationSnapshot;
 export type BattleFieldReservation = {
-  kind: 'battle-field-reservation-v1'; entry: FieldReservationSnapshot | null;
-  candidate: FieldReservationSnapshot | null;
+  kind: 'battle-field-reservation-v1'; entry: BattleFieldReservationSnapshot | null;
+  candidate: BattleFieldReservationSnapshot | null;
 };
-export function parseFieldReservation(raw: unknown): FieldReservationSnapshot {
+export function parseFieldReservation(raw: unknown): BattleFieldReservationSnapshot {
   checkpointKeys(raw, 'kind,parentSourceSetHash,script');
-  const v = raw as FieldReservationSnapshot;
+  const v = raw as BattleFieldReservationSnapshot;
   if (v.kind !== 'source-field-reservation-v1' || !/^[a-f0-9]{64}$/.test(v.parentSourceSetHash) ||
       !Object.values(BATTLE_RESERVED_SCRIPTS).includes(v.script as 'sc_e_0239'))
     throw new Error('Invalid source field reservation');
   return structuredClone(v);
+}
+export function parseRtsFieldReservation(raw:unknown):RtsFieldReservationSnapshot {
+ checkpointKeys(raw,'kind,parentSourceSetHash,script');const v=raw as RtsFieldReservationSnapshot;
+ if(v.kind!=='source-rts-field-reservation-v1'||v.script!=='sc_sht_corps_after'||!/^[a-f0-9]{64}$/.test(v.parentSourceSetHash))throw Error('Invalid source RTS field reservation');return structuredClone(v);
 }
 export function reservedScriptBinding(content: FieldContent, name: string): SourceReservedScriptBinding {
   const binding = content.reservedScriptBindings?.[name], program = content.scripts[name];
@@ -77,9 +83,10 @@ export function reservationFingerprint(content: FieldContent, name: string): str
  * A prepared/retired map can neither consume it nor allocate a second slot. */
 export interface FieldReservedScriptPort {
   read(): FieldReservationSnapshot | null;
+  prepareRts?(content:FieldContent):{validate():void;commit():void};
   prepareConsume(content: FieldContent): { script: string; validate(): void; commit(): void } | null;
 }
 export type BattleFieldReservationHost = {
-  entry: FieldReservationSnapshot | null;
-  require(role: BattleReservedScript): FieldReservationSnapshot;
+  entry: BattleFieldReservationSnapshot | null;
+  require(role: BattleReservedScript): BattleFieldReservationSnapshot;
 };

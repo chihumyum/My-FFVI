@@ -359,7 +359,8 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
 
 /** Pure upstream DAG: current battle capabilities -> source world/new game -> explicit framework
  * derivation. It never writes packages, generated recipes, reports or archives. */
-export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms } = {}) {
+export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,vehicleLifecycle } = {}) {
+  if(vehicleLifecycle!==undefined&&vehicleLifecycle!=="web-source-vehicle-lifecycle-v1")throw Error("Unknown source vehicle lifecycle policy");
   if(fieldEffectTransforms!==undefined&&fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS)throw Error("Unknown board transform policy");
   if(fieldEffectTransforms!==undefined&&(!logicalFieldEffects||!fieldEffectFlat||skyboxPresentation!=="web-flat-skybox-panorama-v1"))throw Error("Board transform v11 requires logical, legacy flat and Skybox input cohort");
   if(skyboxPresentation!==undefined&&skyboxPresentation!=="web-flat-skybox-panorama-v1")throw Error("Unknown Skybox presentation policy");
@@ -528,6 +529,7 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
     Object.assign(inputs,{kind:"source-prerequisite-input-lock-v4",fieldEffectTransforms,fieldEffectTransformCatalog:structuredClone(assessment),fieldEffectFlatAssessment:structuredClone(frameworkOptions.fieldEffectFlat),fieldEffectCatalogHash:api.hash(catalog)});
     effectTransformReport={policy:fieldEffectTransforms,assessmentHash:assessment.contentHash,flatAssessmentHash:frameworkOptions.fieldEffectFlat.contentHash,catalogHash:inputs.fieldEffectCatalogHash,logicalCatalogHash:base.webPolicy.catalogHash,sourceMapSetHash:assessment.projection.sourceMapSetHash,maps:assessment.projection.mapSources.length,declared:assessment.projection.objects.length,derived:assessment.projection.bindings.length,unready:assessment.projection.objects.length-assessment.projection.bindings.length,pureCompilations:1,nativeParity:false};
   }
+  if(vehicleLifecycle!==undefined)frameworkOptions.vehicleLifecycle=vehicleLifecycle;
   if (birdViewActors !== undefined) frameworkOptions.birdViewActors = birdViewActors;
   if (mobColorFilter !== undefined) frameworkOptions.mobColorFilter = mobColorFilter;
   if(screenPresentation!==undefined){if(screenPresentation!=="web-field-screen-presentation-2d-v1")throw Error("Unknown screen presentation policy");frameworkOptions.screenPresentation=screenPresentation;}

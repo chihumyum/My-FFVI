@@ -259,6 +259,21 @@ export class EventState {
     else a.bank[a.index] = a.flag ? Number(value !== 0) : value;
     this.#mutation++;
   }
+  /** A joint owned/actor operation resolves every address and value before
+   * publication. Commit retains the actual script-bank references; replacing
+   * EventState would invalidate suspended HookedProcess local frames. */
+  prepareWrites(writes: readonly {ref:VariableRef;value:number}[]):{validate():void;commit():void} {
+    const owner=this.data,revision=this.#mutation;
+    const cells=writes.map(({ref,value})=>{int32(value);const address=this.address(ref);
+      return{address,value:'selection'in address?value:address.flag?Number(value!==0):value};});
+    let validated=false,consumed=false;
+    const current=()=>{if(consumed||this.data!==owner||this.#mutation!==revision)
+      throw Error('Stale event-variable publication');};
+    return{validate:()=>{validated=false;current();validated=true;},commit:()=>{
+      if(!validated)throw Error('Event-variable publication requires validation');current();consumed=true;
+      for(const{address,value}of cells){if('selection'in address)this.data[address.selection]=value;else address.bank[address.index]=value;this.#mutation++;}
+    }};
+  }
   beginScript(locals: ScriptLocals | null): void {
     // Integrator.Execute skips CreateScriptLocal when the source omits ScriptLocal.
     if (locals === null) return;

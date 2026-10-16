@@ -64,7 +64,7 @@ for (const [selector, transportationId, isBackground, viewType] of selectors)
 
 test("unknown selectors, wrong instruction domains and malformed arrays stay blocked", () => {
   assert.deepEqual(fieldTransportationSelectors, selectors.map(row => row[0]));
-  for (const value of [null, {}, raw("LoseVehicle", [3]), raw("OnTheVehicle"),
+  for (const value of [null, {}, raw("LoseVehicle", [0]), raw("OnTheVehicle"),
     raw("SysCall", [], "乗り物に乗る：未知"), raw("SysCall", [], "toString"),
     { ...raw("SetVehicle", [3, 1]), mnemonic: ["SetVehicle"] },
     { ...raw("SetVehicle", [3, 1]), type: 2 }])
@@ -112,6 +112,23 @@ test("decoding is pure and does not share mutable placement or selector definiti
   if (second.command.kind !== "place") throw new Error("Expected placement");
   assert.equal(second.command.position.x, 8);
   const change = compileFieldTransportationInstruction(raw("SysCall", [], selectors[0][0]));
+  if (change.command.kind !== "change") throw new Error("Expected change");
   change.command.transportationId = 50;
   assert.equal(compileFieldTransportationInstruction(raw("SysCall", [], selectors[0][0])).command.transportationId, 2);
+});
+
+
+test("whole source vehicle lifecycle wrappers preserve commands, positive identities and native active inversion", () => {
+  for (const id of [2,3,4,5,6,7,8,999]) {
+    assert.deepEqual(compileFieldTransportationInstruction(raw("LoseVehicle", [id])).command, {kind:"lose", transportationId:id});
+    assert.deepEqual(compileFieldTransportationInstruction(raw("OnTheVehicle", [id])).command, {kind:"set-position", transportationId:id});
+  }
+  for(const i0 of [0,1,-1,2,0x7fffffff,-0x80000000])
+    assert.deepEqual(compileFieldTransportationInstruction(raw("SwitchVehicleActive", [i0])).command, {kind:"active",active:i0===0});
+  for(const mnemonic of ["LoseVehicle","OnTheVehicle","SwitchVehicleActive"]) {
+    for(let index=1;index<8;index++) {const input=raw(mnemonic,[4]);input.operands.iValues[index]=1;assert.throws(()=>compileFieldTransportationInstruction(input),/reserved/);}
+    for(const family of ["rValues","sValues"] as const) for(let i=0;i<8;i++){
+      const input=raw(mnemonic,[4]);if(family==="rValues")input.operands.rValues[i]=1;else input.operands.sValues[i]="unexpected";assert.throws(()=>compileFieldTransportationInstruction(input));
+    }
+  }
 });

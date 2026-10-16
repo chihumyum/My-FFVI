@@ -328,7 +328,7 @@ for (const declaration of [...appModule.imports, ...audioModule.imports]) {
   for (const binding of declaration.importClause.namedBindings.elements)
     coreBindings[binding.name.text] = loaded[(binding.propertyName ?? binding.name).text];
 }
-const viewNames = new Set(["InventoryView", "EquipmentView", "PartyView", "SourcePartySelectionView", "ChoiceView", "ShopView", "Renderer", "BattleView"]);
+const viewNames = new Set(["InventoryView", "EquipmentView", "PartyView", "SourcePartySelectionView", "SourceCharacterNameView", "ChoiceView", "ShopView", "Renderer", "BattleView"]);
 const overlayBindings = { drawStoryTimer: (await import("../apps/game/story-overlay.js")).drawStoryTimer,
   syncFieldMessageView: (await import("../apps/game/source-message-view.js")).syncFieldMessageView };
 for (const declaration of appModule.imports) {
@@ -523,7 +523,7 @@ async function host(pack, { slots = new Map(), failBinding = false, search = "?p
     assert.equal(state.battleView.common, owner.battleCatalog.common,
       "BattleView must consume the newly published session catalog");
     assert.equal(state.inventoryView.args[1], owner.battleCatalog.gameState.items);
-    for (const name of ["InventoryView", "EquipmentView", "PartyView", "SourcePartySelectionView", "ShopView", "BattleView"]) {
+    for (const name of ["InventoryView", "EquipmentView", "PartyView", "SourcePartySelectionView", "SourceCharacterNameView", "ShopView", "BattleView"]) {
       const view = calls.views.filter(view => view.name === name).at(-1);
       assert.equal(view.args.at(-1).owner, owner, name + " must bind the exact published owner");
       assert.equal(view.args.at(-1).commands, state.commands, name + " must share the same command channel");

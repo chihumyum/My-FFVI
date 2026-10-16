@@ -20,6 +20,8 @@ import type { Character, Direction, Evidence, Point } from "../field/types.js";
 export type NativeFieldActorData = {
   entity: FieldPuppetHostActor;
   fieldAssetId: number | null;
+  /** Explicit Web body identity, distinct from native resident script aliases. */
+  sourceTransportationId?: number;
   charaZOffset: number;
   /** Mapobject rows are a different identity domain from field-character assets. */
   mapObjectAsset?: { id: number; asset: string; source: Evidence };
@@ -96,6 +98,7 @@ function cloneEntity(entity: FieldPuppetHostActor): FieldPuppetHostActor {
     transparentTextures: { ...entity.transparentTextures } };
 }
 function validateMetadata(data: NativeFieldActorData): void {
+  if(data.sourceTransportationId!==undefined){checkpointInteger(data.sourceTransportationId,1,0x7fffffff);if(data.entity.id!==`web:source-transportation:${data.sourceTransportationId}`||data.fieldAssetId===null||data.scope!==undefined||data.mapObjectAsset!==undefined)throw Error("Unbound source transportation body identity");}
   if (data.mapObjectAsset !== undefined) {
     if (data.fieldAssetId !== null || !data.scope || !["map-npc", "map-animated"].includes(data.scope.kind) ||
         !data.scope.group || data.scope.entityId !== data.entity.id ||
@@ -163,6 +166,7 @@ export function createNativeFieldActorProjection(
     if (input.entity.moving) throw new Error("Already moving native actor cannot be installed");
     const entity = cloneEntity(input.entity), data: NativeFieldActorData = {
       entity, fieldAssetId: input.fieldAssetId, charaZOffset: finite(input.charaZOffset),
+      ...(input.sourceTransportationId!==undefined?{sourceTransportationId:input.sourceTransportationId}:{}),
       ...(input.mapAnimation !== undefined ? { mapAnimation: structuredClone(input.mapAnimation) } : {}),
       ...(input.mapObjectAsset !== undefined ? { mapObjectAsset: structuredClone(input.mapObjectAsset) } : {}),
       ...(input.updateAttribute !== undefined ? { updateAttribute: input.updateAttribute } : {}),

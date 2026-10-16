@@ -1,3 +1,5 @@
+import type {OwnedFieldEffectSource} from './field-effect-source-admission.js';
+import {FieldEffectCatalogBinding} from "./field-effect-catalog-binding.js";
 import {projectFieldEffectBoardLifetimes,type FieldEffectBoardLifetime} from './field-effect-board-lifetime.js';
 import type { FieldEffectCatalog, FieldEffectObservation, FieldEffectOperation, FieldEffectPlan,
   FieldEffectPrepared, FieldEffectPublication, FieldEffectState } from "./field-effects.js";
@@ -28,6 +30,7 @@ export type FieldEffectCandidateHost = {
 export type FieldEffectCandidateLimits = { maxPreparations?: number; maxOperations?: number };
 export type FieldEffectCandidatePrepared = FieldEffectPrepared;
 type CandidateOwner = {
+  source?:OwnedFieldEffectSource;
   validate(): void;
   lifetimes():ReadonlyMap<string,FieldEffectBoardLifetime>;
   project(state: FieldEffectState, catalog: FieldEffectCatalog, operations: readonly FieldEffectOperation[]): FieldEffectPlan;
@@ -40,6 +43,7 @@ export class FieldEffectCandidate {
   #state: FieldEffectState;
   #boardLifetimes:Map<string,FieldEffectBoardLifetime>;
   readonly #catalog: FieldEffectCatalog;
+  readonly #catalogBinding: FieldEffectCatalogBinding;
   readonly #host: FieldEffectCandidateHost;
   readonly #owner: CandidateOwner;
   readonly #maxPreparations: number;
@@ -64,6 +68,7 @@ export class FieldEffectCandidate {
     this.#maxPreparations = limit(limits.maxPreparations, 1024);
     this.#maxOperations = limit(limits.maxOperations, 4096);
     this.#state = structuredClone(origin.state); this.#catalog = structuredClone(origin.catalog);
+    this.#catalogBinding = new FieldEffectCatalogBinding(this.#catalog);
     this.#host = host; this.#owner = owner;this.#boardLifetimes=new Map(owner.lifetimes());
     this.#validateOrigin();
   }
@@ -73,6 +78,10 @@ export class FieldEffectCandidate {
   }
   snapshot(): FieldEffectState { return structuredClone(this.#state); }
   catalogSnapshot(): FieldEffectCatalog { return structuredClone(this.#catalog); }
+  assertCatalog(catalog: FieldEffectCatalog): void { this.#catalogBinding.assertCatalog(catalog); }
+  assertAdmittedCatalog(source:OwnedFieldEffectSource):void {
+    if(this.#owner.source)this.#owner.source.assertIdentity(source);else source.assertCatalogBinding(this.#catalogBinding);
+  }
   #callHost<T>(callback: () => T): T {
     if (this.#callingHost) throw new Error("Reentrant field effect candidate host");
     this.#callingHost = true;

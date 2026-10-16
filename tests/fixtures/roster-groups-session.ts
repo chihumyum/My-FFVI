@@ -1,3 +1,4 @@
+import {WEB_RTS_PARTY_SWITCH,type SourceRtsPartyCatalog}from'../../src/core/field-rts-party.js';
 import assert from 'node:assert/strict';
 import { magicStonesSessionFixture } from './magic-stones-session.js';
 import { sealBatchContent } from './content-batch.js';
@@ -18,8 +19,8 @@ export const rosterGroupHost={visible:true,mediaReady:true,overlayOpen:false};
 /** Controlled source-parameter catalog and real factory/session. Only the first
  * authored owner is initialized; every Moogle must come from the group command.
  * Media and formulas are synthetic, never a claim of original plot execution. */
-export function rosterGroupsSessionFixture(options:{missingMedia?:boolean;targetInitializer?:boolean;catalog?:boolean}={}) {
-  const f=magicStonesSessionFixture(),owner=f.battle.gameState,[first,modelId]=f.playerIds;
+export function rosterGroupsSessionFixture(options:{missingMedia?:boolean;targetInitializer?:boolean;catalog?:boolean;rts?:boolean}={}) {
+  const f=magicStonesSessionFixture();if(options.rts){f.map.parentSourceSetHash='e'.repeat(64);f.world.parentSourceSetHash=f.map.parentSourceSetHash;f.content.parentSourceSetHash=f.map.parentSourceSetHash;}const owner=f.battle.gameState,[first,modelId]=f.playerIds;
   delete f.map.walkEncounters;
   owner.rosterLifecycle.firstJoinLevelAdjustments={2:0,3:0};
   const ids=sourceRosterGroupCatalog().group.sourceIds,initial=owner.sourceNewGame!,model=structuredClone(owner.characterInitializations![modelId]!);
@@ -41,6 +42,7 @@ export function rosterGroupsSessionFixture(options:{missingMedia?:boolean;target
     owner.characterGrowth![id]=growth;owner.rosterLifecycle.firstJoinLevelAdjustments![sourceId]=0;
     owner.equipmentSystem!.catalog.characters[sourceId]=structuredClone(template.equipmentCharacter);
     owner.equipmentSystem!.contexts[id]=structuredClone(template.parameterContext);
+    if(options.rts){const asset=Object.values(owner.partyActors!.assets).find(a=>a.id===3)!;owner.partyActors!.assets[9500+sourceId]={...structuredClone(asset),id:9500+sourceId,characterId:sourceId};}
     owner.partyActors!.characterAssets.push({id:9500+sourceId,sourceId,jobId:template.initial.jobId,fieldAssetId:3});
     owner.battleDefinitions.push({...structuredClone(baseDefinition),id,sourceId,name:template.initial.name});
     f.battle.common.battleAbilities!.characters.push({sourceId,jobId:template.initial.jobId,blockers:[]});
@@ -63,28 +65,49 @@ export function rosterGroupsSessionFixture(options:{missingMedia?:boolean;target
     ...originalBanks.flatMap(args=>[compilePartyEvent('OrganizePartySlot',args,tables),recover('RecoveryMP'),recover('RecoveryHP')]),{kind:'exit'}]);
   for(let i=0;i<3;i++)add('group-select-'+i,[compilePartyEvent('ChangePartySlot',[i+1,1,0,0,0,0,0,0],tables),{kind:'exit'}]);
   f.world.transportation=structuredClone(f.battle.gameState.sourceNewGame!.transportation);
+  if(options.rts){
+    f.map.partyEntry!.pointIns.push({...structuredClone(f.map.partyEntry!.pointIns[0]!),id:1});
+    const point={...structuredClone(f.map.map!.groups!.entity_default!.entities.find(e=>e.kind===0)!),id:'authored-rts-point1',objectId:1};f.map.map!.groups!.entity_default!.entities.push(point);if(f.map.map!.entities!==f.map.map!.groups!.entity_default!.entities)f.map.map!.entities.push(structuredClone(point));
+    f.map.entryView={mapId:f.map.mapId,isWorld:false,loopType:0,sources:{map:f.source,area:f.source}};
+    owner.sourceRtsParty={kind:'source-rts-party-v1',policy:WEB_RTS_PARTY_SWITCH,nativeSha256:'1a7e12c90c6a734e17dda507dd6ab7555090dff6a1e96f3473a90c29916ca6dc',
+      miscHash:'b'.repeat(64),stayMapIndices:[11,12,13],memberLimit:4,afterScript:'sc_sht_corps_after',talk:{scriptId:1,script:'authored-rts-talk',source:f.source},
+      maps:[{id:f.map.mapId,mapName:'Map_RtsHome',source:f.source},{id:f.map.mapId+1,mapName:'Map_RtsAway',source:f.source}]};
+    const write=(index:number,value:number):Instruction<Op>=>({kind:'event-control',operation:'set',target:{category:'ScenarioVariable',index},value:{kind:'constant',value}} as never);
+    const rts=(command:'shift-encounter'|'restore-encounter'|'switch'|'switch-after-map'|'map-script'|'talk'):Instruction<Op>=>({kind:'rts-party',command});
+    const pos=(x:number,y:number):Instruction<Op>=>decodeFieldOp({type:2,mnemonic:'SetPos',operands:{iValues:[x,y,1,0,0,0,0,0],rValues:Array(8).fill(0),sValues:Array(8).fill('')}},{script:'rts-place',index:0,source:f.source},{},tables);
+    add('rts-place',[...[-1030,-1031,-1032].map((id,slot)=>({kind:'puppet' as const,slot,actor:String(id),target:6+slot*4})),{kind:'exec-puppets',asynchronous:false},{kind:'blank'},{kind:'exit'},...[0,1,2].flatMap(i=>[pos(3+i,4),{kind:'look' as const,direction:'down' as const},{kind:'actor-visibility' as const,visible:true},{kind:'exit' as const}])]);
+    add('rts-shift',[rts('shift-encounter'),{kind:'exit'}]);add('rts-restore',[rts('restore-encounter'),{kind:'exit'}]);
+    add('rts-switch',[{kind:'blank'},rts('switch'),{kind:'exit'}]);add('rts-after',[rts('switch-after-map'),{kind:'exit'}]);
+    add('authored-rts-talk',[rts('talk'),{kind:'exit'}]);f.map.scriptLocals!['authored-rts-talk']={labels:['target'],values:[0]};
+    add('sc_map_rtshome',[{kind:'blank'},{kind:'exit'}]);add('sc_map_rtsaway',[{kind:'blank'},{kind:'exit'}]);
+    add('sc_sht_corps_after',[rts('switch-after-map'),rts('map-script'),{kind:'exit'}]);
+    for(const op of f.map.scripts['sc_sht_corps_after']!)op.source={...f.source,objectId:'1'};
+    const name='sc_sht_corps_after';(f.map.reservedScriptBindings??={})[name]={kind:'source-reserved-field-script-v1',name,rawHash:'d'.repeat(64),sourceSetHash:f.map.sourceSetHash,parentSourceSetHash:f.map.parentSourceSetHash,source:{...f.source,objectId:'1',serializedFile:'authored-rts',sha256:'a'.repeat(64)}};
+    f.map.scriptPuppetContexts![name]!.scriptHash='d'.repeat(64);f.map.scriptLocals![name]={labels:[],values:[]};for(const id of Object.keys(f.map.scripts))(f.map.scriptTransitionMetadata??={})[id]={customAnimations:'none'};f.map.scriptSystemFlags![name]={keepBadStatusVisual:false};
+  }
   const target=structuredClone(f.map),targetId=f.map.mapId+1,targetUrl='/authored/roster-group-target.json';
-  target.mapId=targetId;target.map!.identity!.mapId=targetId;target.map!.entryContext!.mapId=targetId;target.partyEntry!.mapId=targetId;
+  target.mapId=targetId;target.map!.identity!.mapId=targetId;target.map!.entryContext!.mapId=targetId;target.partyEntry!.mapId=targetId;if(target.entryView)target.entryView.mapId=targetId;
   target.initializer=options.targetInitializer?'group-source-sequence':'group-arrived';
   target.scripts['group-arrived']=ops('group-arrived',[{kind:'exit'}]);target.scriptPuppetContexts!['group-arrived']={...context};target.scriptLocals!['group-arrived']=null;
   add('group-change-map',[{kind:'change-map',request:{mapId:targetId,entrance:target.partyEntry!.pointIns[0]!.id,continuation:null,birdview:false,skipFade:true,skipBgm:true,origin:'script'}}]);
   if(options.missingMedia)delete f.world.characters.charlie!.animations.Default;
+  if(options.rts){target.scripts['rts-home'] = ops('rts-home',[{kind:'change-map',request:{mapId:f.map.mapId,entrance:f.map.partyEntry!.pointIns[0]!.id,continuation:null,birdview:false,skipFade:true,skipBgm:true,origin:'script'}}]);target.scriptPuppetContexts!['rts-home']={...context};target.scriptLocals!['rts-home']=null;target.scriptSystemFlags!['rts-home']={keepBadStatusVisual:false};}
   const destination=sealBatchContent(target);
   f.world.maps[targetId]={...f.world.maps[f.map.mapId]!,contentHash:destination.contentHash,url:targetUrl,name:'Authored group destination'};
   const battle=sealBatchContent(f.battle),map=sealBatchContent(f.map);
-  f.world.maps[map.mapId]!.contentHash=map.contentHash;const world=sealBatchContent(f.world);
+  f.world.maps[map.mapId]!.contentHash=map.contentHash;if(options.rts)f.world.maps[map.mapId]!.url='/authored/rts-home.json';const world=sealBatchContent(f.world);
   f.content.battleCatalogHash=battle.contentHash;f.content.worldCatalogHash=world.contentHash;f.content.mapContentHash=map.contentHash;const content=sealBatchContent(f.content);
   const make=()=>{
     const entry=new NewGameFieldEntry(content.entry,f.presentation),start=entry.prepareStart(f.fade,{active:true,callbacks:'absent'});start.commit();let fade=start.fade;fade.advance(.5);
     for(let i=0;i<3;i++){const next=entry.prepareResume(fade,true)!;next.commit();fade=next.fade;}
-    const game=GameSession.prepareNewGame(content,world,map,battle,fade,f.presentation),launch=entry.prepareLaunch(fade,game.newGamePreparation(true));game.launchNewGame(launch.launch);launch.commit();
+    const game=GameSession.prepareNewGame(content,world,map,battle,fade,f.presentation,options.rts?{rtsPartySwitch:WEB_RTS_PARTY_SWITCH}:{}),launch=entry.prepareLaunch(fade,game.newGamePreparation(true));game.launchNewGame(launch.launch);launch.commit();
     const flow=new GameFlow(game);flow.start();flow.observeHost(rosterGroupHost);for(let i=0;i<100&&!game.checkpointReady;i++)flow.advance(10,rosterGroupHost);
     assert(game.checkpointReady,game.field.stop?.message);assert.equal(game.state.snapshot().roster.length,1);return{game,flow};
   };
   const run=(h:ReturnType<typeof make>,name:string)=>{assert(h.game.field.startEvent(name));for(let i=0;i<10&&!h.game.field.stop;i++)h.flow.advance(10,rosterGroupHost);};
-  const restore=(checkpoint:GameCheckpoint)=>GameSession.restore(checkpoint,undefined,battle,{catalog:world,map,source:{content,initialMap:map}});
+  const restore=(checkpoint:GameCheckpoint)=>GameSession.restore(checkpoint,undefined,battle,{catalog:world,map,source:{content,initialMap:map}},options.rts?{rtsPartySwitch:WEB_RTS_PARTY_SWITCH}:{});
   const repository=new GameContentRepository(async url=>{
-    if(url===targetUrl)return structuredClone(destination);if(url==='/framework/world/catalog.json')return structuredClone(world);throw new Error('Unknown group fixture input '+url);
+    if(url==='/authored/rts-home.json')return structuredClone(map);if(url===targetUrl)return structuredClone(destination);if(url==='/framework/world/catalog.json')return structuredClone(world);throw new Error('Unknown group fixture input '+url);
   },'framework');
   return{...f,battle,map,world,content,destination,repository,first,ids,tables,make,run,restore};
 }

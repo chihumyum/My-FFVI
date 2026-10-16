@@ -20,6 +20,7 @@ const [{ fieldActorFactoryFixture }, { createFieldActorFactoryCandidate }, { cre
   load("src/compiler/field-native-composition.js"), load("src/core/field-camera.js"), load("src/core/field-native-composition.js"),
   load("src/compiler/field-actor-view.js"), load("src/core/field-actor-view.js")]);
 const { ActorAnimation } = await load("src/core/actor-animation.js");
+const {vehicleLifecycleSessionFixture}=await load("tests/fixtures/vehicle-lifecycle-session.js");
 class Canvas {
   constructor(width = 0, height = 0) { this.width = width; this.height = height; this.draws = []; this.fills = 0; this.puts = 0;
     this.ownerDocument = { createElement: () => new Canvas() }; }
@@ -146,6 +147,17 @@ run("a hidden unplaced native resident keeps zero direction and is not fabricate
   const t = fixture(), hidden = Object.values(t.actors).find((a) => a.direction === null);
   assert.ok(hidden); const before = hidden.animation?.snapshot() ?? null;
   t.renderer.draw(t.game); assert.equal(hidden.direction, null); assert.deepEqual(hidden.animation?.snapshot() ?? null, before);
+});
+run("source-initialized Session vehicle is drawn by the one actual native renderer and hide/lose remove its actual pixels", () => {
+ const source=vehicleLifecycleSessionFixture(),t=fixture();source.run('park');const field=source.game.field,body=field.actors[source.actorId];
+ // The display fixture supplies a controlled offscreen allocation and pixel
+ // decoder. The game, native body/factory, source VM and visibility are real.
+ const game={...t.game,actors:field.actors,player:field.player,time:field.time,isEntityVisible:id=>field.isEntityVisible(id)};
+ for(const actor of Object.values(field.actors))if(actor!==body)actor.native.entity.visible=false;
+ t.renderer.draw(game);const drawn=t.canvas.getContext().data.slice();assert(drawn.some((v,i)=>i%4===0&&v===255));
+ source.run('hide');for(const actor of Object.values(field.actors))if(actor!==body)actor.native.entity.visible=false;t.renderer.draw(game);const hidden=t.canvas.getContext().data.slice();assert.notDeepEqual(hidden,drawn);assert.equal(body.native.entity.visible,false);
+ source.run('show');for(const actor of Object.values(field.actors))if(actor!==body)actor.native.entity.visible=false;t.renderer.draw(game);assert.deepEqual(t.canvas.getContext().data,drawn);
+ source.run('lose');for(const actor of Object.values(field.actors))actor.native.entity.visible=false;t.renderer.draw(game);assert.equal(field.actors[source.actorId],undefined);assert.deepEqual(t.canvas.getContext().data,hidden);
 });
 function addTargetTile(t, rgba, name = "UpperLayer") {
   const data = new Uint8ClampedArray(16 * 16 * 4);

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {compileFieldVehicleAction} from "./field-vehicle-action.js";
 import { record } from "./content.js";
 import { tableId } from "./table-id.js";
 import { MINIMAP_ICON_TYPES } from "../core/minimap.js";
@@ -262,7 +263,7 @@ export function compileEntityGroup(
         const eventActivation = legacyEventActivation ? null : compileFieldEventActivation(name, p, script, source);
         const nativeNpc = compileFieldNativeNpc({ group: name, object: o,
           entity: { id, kind, layer: layerId, source }, properties: p, tables });
-        entities.push({
+        const entity:FieldEntity={
           id,
           ...(eventActivation ? { eventActivation } : {}),
           ...(moveArea ? { moveArea } : {}),
@@ -341,7 +342,9 @@ export function compileEntityGroup(
           collision: kind === 19 ? integer(p.collision_type) : null,
           destinationLayer: kind === 4 ? integer(p.layer) : null,
           source,
-        });
+        };
+        if(kind===21){try{entity.vehicleAction=compileFieldVehicleAction(entity,o,p,tables);}catch(error){entity.vehicleActionBlockers=[error instanceof Error?error.message:String(error)];}}
+        entities.push(entity);
       } catch (error) {
         blockers.push({
           reason: error instanceof Error ? error.message : String(error),

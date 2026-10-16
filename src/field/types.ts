@@ -1,3 +1,4 @@
+import type {RtsPartyOp}from'../core/field-rts-party.js';
 import type { SourceGilTagOp } from "../core/source-message-fees.js";
 import type { FieldScriptRandomOp } from "../core/field-script-random.js";
 /** Browser-safe field content: no Unity readers or renderer dependencies in the runtime. */
@@ -140,6 +141,8 @@ export type FieldEntity = Point & {
   npc?: NpcProperties;
   nativeNpc?: FieldNativeNpcDefinition;
   nativeNpcBlockers?: string[];
+  vehicleAction?: import("../core/field-vehicle-action.js").FieldVehicleAction;
+  vehicleActionBlockers?: string[];
   effect?: FieldEffectBoardDefinition;
   /** Immutable source region consumed by autonomous NPC controllers. */
   moveArea?: FieldMoveAreaDefinition;
@@ -224,6 +227,7 @@ export type Op = Site &
     | import("../core/field-world-auto-tasks.js").FieldWorldAutoOp
     | import("../core/field-world-auto-move.js").FieldWorldAutoMoveOp
     | import("../core/source-party-selection.js").SourcePartySelectionOp
+    | import("../core/source-character-naming.js").SourceCharacterNamingOp
     | { kind: "nop" | "exit" | "return" | "join" | "hide" }
     /** Authored Web barrier or source AutoSave under its explicit content policy. */
     | FieldEventSaveOp
@@ -232,7 +236,8 @@ export type Op = Site &
     | TreasureBoxRequest
     | PartyEventOp
     | RosterLifecycleEventOp
-    | RosterGroupEventOp
+    | RtsPartyOp
+  | RosterGroupEventOp
     | FieldTransportationOp
     | OwnedConditionEventOp
     | SourceGilTagOp
