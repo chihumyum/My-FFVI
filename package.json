@@ -49,7 +49,7 @@
     "doors:check": "npm run build && node scripts/check-open-trigger.mjs",
     "knowledge": "node dist/src/cli.js knowledge",
     "accept": "node dist/src/cli.js accept",
-    "dev": "node scripts/serve.mjs",
+    "dev": "node scripts/serve-play.mjs",
     "game:build": "npm run build && node dist/src/cli.js field",
     "game:check": "npm run game:build && node scripts/check-field.mjs",
     "battle:build": "npm run build && node dist/src/cli.js battle",
@@ -209,7 +209,10 @@
     "source-encounters:check": "npm run build && .venv/bin/python tools/native/check_source_encounter.py --root . --output build/reports/source-encounter-native && node --max-old-space-size=8192 scripts/compile-source-encounter-candidates.mjs --output build/reports/source-encounter-candidates && node --max-old-space-size=8192 scripts/check-source-encounter-programs.mjs --candidate-dir build/reports/source-encounter-candidates --report build/reports/source-encounter-programs-check.json",
     "logical-field-effects:check": "npm run build && node --max-old-space-size=8192 scripts/check-logical-field-effects-lifecycle.mjs",
     "periodic-maps:check": "npm run build && node --max-old-space-size=8192 scripts/check-source-periodic-maps.mjs",
-    "source-condition-effects:check": "npm run build && .venv/bin/python scripts/inspect-source-condition-native.py && node --max-old-space-size=8192 scripts/compile-source-condition-candidates.mjs && node --max-old-space-size=8192 scripts/check-source-condition-programs.mjs"
+    "source-condition-effects:check": "npm run build && .venv/bin/python scripts/inspect-source-condition-native.py && node --max-old-space-size=8192 scripts/compile-source-condition-candidates.mjs && node --max-old-space-size=8192 scripts/check-source-condition-programs.mjs",
+    "dev:legacy": "node scripts/serve.mjs",
+    "play:build": "node scripts/build-play.mjs && node scripts/build-play-battle.mjs",
+    "play:through": "node scripts/playthrough.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"
