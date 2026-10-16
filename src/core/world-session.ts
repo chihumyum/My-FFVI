@@ -551,7 +551,7 @@ export class WorldSession {
     this.effectMap = effectMap;
     this.effectOwner = restoredOwner;
     this.nextEffectScope = nextScope;
-    this.current.retireCharacterNaming();this.current.retirePuppetReplacements();this.current.retireMobControls();this.current.retireSkyboxPresentation();this.current.retireWorldAutoTasks();this.current.retireVehicleLifecycle();
+    this.current.retireCharacterNaming();this.current.retirePuppetReplacements();this.current.retireMobControls();this.current.retireSkyboxPresentation();this.current.retireWorldAutoTasks();this.current.retireVehicleLifecycle();this.current.retireSourceNonEncounterAreas();
     this.current = next;this.rtsParking=rts?structuredClone(snapshot.rts!):null;
     this.location = structuredClone(loc);
     this.catalogHash = loc?.catalogHash ?? this.sourceOrigin?.catalogHash ?? null;
@@ -769,9 +769,11 @@ export class WorldSession {
           ...(this.owned?.current.sourceBattleResult?{sourceBattleResult:this.owned.current.sourceBattleResult}:{}),
           ...(this.owned?.current.sourceEncounter ? { sourceEncounter: this.owned.current.sourceEncounter } : {}),
           ...(this.owned?.current.sourceMessageSequence ? { sourceMessageSequence: this.owned.current.sourceMessageSequence } : {}),
+          ...(this.owned?.current.sourceMessageReady ? { sourceMessageReady: this.owned.current.sourceMessageReady } : {}),
           ...(this.owned?.current.conditionLeaderActivity ? { conditionLeaderActivity: this.owned.current.conditionLeaderActivity } : {}),
           ...(this.owned?.current.fieldEffectTransforms?{fieldEffectTransforms:this.owned.current.fieldEffectTransforms}:{}),
           ...(this.owned?.current.sourceSnapshot?{sourceSnapshot:this.owned.current.sourceSnapshot}:{}),
+          ...(this.owned?.current.sourceNonEncounterAreas?{sourceNonEncounterAreas:this.owned.current.sourceNonEncounterAreas}:{}),
           ...(this.owned?.current.skyboxPresentation?{skyboxPresentation:this.owned.current.skyboxPresentation}:{}),
           ...(this.owned?.current.screenPresentation?{screenPresentation:this.owned.current.screenPresentation}:{}),
           ...(this.owned?.current.mobColorFilter ? {mobColorFilter:this.owned.current.mobColorFilter} : {}),
@@ -863,7 +865,7 @@ export class WorldSession {
           map: effectMap!, fieldState: this.effectFieldState(field) } } : {}),
       });
       return prepared;
-    } catch (error) { destinationField?.retireCharacterNaming();destinationField?.retirePuppetReplacements();destinationField?.retireMobControls();destinationField?.retireSkyboxPresentation();destinationField?.retireWorldAutoTasks();destinationField?.retireVehicleLifecycle();effectCandidate?.discard(); throw error; }
+    } catch (error) { destinationField?.retireCharacterNaming();destinationField?.retirePuppetReplacements();destinationField?.retireMobControls();destinationField?.retireSkyboxPresentation();destinationField?.retireWorldAutoTasks();destinationField?.retireVehicleLifecycle();destinationField?.retireSourceNonEncounterAreas();effectCandidate?.discard(); throw error; }
   }
   commit(value: PreparedMap): boolean {
     if (this.commitInProgress) return false;
@@ -877,7 +879,7 @@ export class WorldSession {
     this.commitInProgress = active;
     try { return this.commitPrepared(value, ownership, active); }
     catch (error) { if (!active.started) ownership.effects?.candidate.discard(); throw error; }
-    finally { if(this.current!==value.field){value.field.retireCharacterNaming();value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();value.field.retireVehicleLifecycle();}this.commitInProgress = null; }
+    finally { if(this.current!==value.field){value.field.retireCharacterNaming();value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();value.field.retireVehicleLifecycle();value.field.retireSourceNonEncounterAreas();}this.commitInProgress = null; }
   }
   private commitPrepared(value: PreparedMap, ownership: Ownership, active: MapCommit): boolean {
     if (!this.isCurrent(ownership, value) || active.cancelled) {
@@ -932,7 +934,7 @@ export class WorldSession {
       request: structuredClone(value.request.request),
       site: value.request.site,
     });
-    ownership.from.retireCharacterNaming();ownership.from.retirePuppetReplacements();ownership.from.retireMobControls();ownership.from.retireSkyboxPresentation();ownership.from.retireWorldAutoTasks();ownership.from.retireVehicleLifecycle();
+    ownership.from.retireCharacterNaming();ownership.from.retirePuppetReplacements();ownership.from.retireMobControls();ownership.from.retireSkyboxPresentation();ownership.from.retireWorldAutoTasks();ownership.from.retireVehicleLifecycle();ownership.from.retireSourceNonEncounterAreas();
     this.current = value.field;
     value.field.publishWorldAutoTasks();
     this.catalogHash = ownership.catalogHash;
@@ -957,7 +959,7 @@ export class WorldSession {
     }
     const ownership = this.prepared.get(value);
     this.prepared.delete(value);
-    if(ownership){value.field.retireCharacterNaming();value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();value.field.retireVehicleLifecycle();}
+    if(ownership){value.field.retireCharacterNaming();value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();value.field.retireVehicleLifecycle();value.field.retireSourceNonEncounterAreas();}
     ownership?.effects?.candidate.discard();
   }
   private isCurrent(ownership: Ownership, value: PreparedMap): boolean {
@@ -1015,6 +1017,7 @@ export class WorldSession {
   private actorState(field: FieldGame): string {
     const p = field.player;
     return canonical({ prior: field.partyActorCheckpoint,
+      nonEncounterAreas:field.sourceNonEncounterAreaProperties,
       mobControls:field.mobControlsSnapshot,native: field.nativeActorStateFingerprint,
       ...(field.sourceEventActivation ? { eventActivation: field.sourceEventActivation } : {}),
       nativeRuntime: field.nativeActorRuntime, cameraOffset: field.cameraOffset,

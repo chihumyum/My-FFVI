@@ -1,3 +1,7 @@
+import { advanceSlipClock, slipDamage, writeSlipTimeStop, type SlipState } from "./condition-slip.js";
+import { validatePeriodicNumberHost, WEB_PERIODIC_NUMBER_MILLISECONDS, type BattlePeriodicNumberHost,
+  type BattlePeriodicNumberLease, type BattlePeriodicNumberProjection, type BattlePeriodicNumberRequest } from "./battle-periodic-number.js";
+let nextPeriodicNumberEpoch = 1;
 import type {BattleCurrentJobHost} from "./battle-abilities.js";
 import { BattleEnemyMpParameters } from "./source-enemy-mp-parameter.js";
 import { BattleFinalAttackTickets, sourceFinalReady, FINAL_ATTACK_EXCLUDED_TYPES } from "./battle-final-attack.js";
@@ -115,7 +119,7 @@ import { WEB_BATTLE_EVENT_MESSAGE_POLICY, prepareBattleEventMessagePresentation,
 import { createSourceMessageTaskCursor } from "./source-message-sequence.js";
 import type { SourceMessageEffect, SourceMessageState } from "./source-message.js";
 import { parseBattleLifecycle, type BattleLifecycle } from "./battle-lifecycle.js";
-import { battleEventUnitEnded } from "./battle-event-context.js";
+import { battleEventUnitGameOver, battleEventUnitEnded } from "./battle-event-context.js";
 import { BattleEventSharedState, type BattleEventSharedSnapshot } from "./battle-event-shared.js";
 import { parseBattleGauEntry, planBattleGauMode, type BattleGauEntry } from './battle-gau.js';
 import { parseBattleParticipantContent, type BattleParticipantContent, type BattleParticipantSlot,
@@ -223,6 +227,75 @@ export class BattleGame {
   private reactions: BattleAction[] = [];
   private aiStates = new Map<string, BattleAIState>();
   private poisonStates = new Map<string, PoisonState>();
+  private slipStates = new Map<string, SlipState>();
+  readonly #numberEpoch = nextPeriodicNumberEpoch++;
+  // Presentation reservations are never reused, even when their gameplay
+  // frame rolls back: an external late draw still holds the failed request.
+  #numberNextTicket = 1;
+  #numberRetired = false;
+  readonly #numberHost: BattlePeriodicNumberHost | undefined;
+  #numbers: { unit: Combatant; projection: BattlePeriodicNumberProjection; resource: BattlePeriodicNumberLease }[] = [];
+  #numberCommits: BattlePeriodicNumberLease[] = [];
+  #numberDiscards: BattlePeriodicNumberLease[] = [];
+  #parameterOrigins = new Map<Combatant, { kind: "player" | "enemy"; id: string; sourceId: number; side: "player" | "enemy" }>();
+  private bindParameterOrigin(unit: Combatant, kind: "player" | "enemy") {
+    if (this.#parameterOrigins.has(unit)) throw Error("Repeated actual battle parameter construction");
+    this.#parameterOrigins.set(unit, Object.freeze({ kind, id: unit.id, sourceId: unit.sourceId, side: unit.side }));
+  }
+  private periodicParameter(unit: Combatant): number {
+    const origin = this.#parameterOrigins.get(unit);
+    if (!origin || origin.id !== unit.id || origin.sourceId !== unit.sourceId || origin.side !== unit.side)
+      throw Error("Missing/stale actual type407 parameter class instance");
+    return origin.kind === "player" ? unit.vitality : unit.level;
+  }
+  get periodicNumbers(): readonly BattlePeriodicNumberProjection[] { return this.#numbers.map(n => structuredClone(n.projection)); }
+  slipClockState(unitId: string): SlipState {
+    if (!this.activeCombatants.some(unit => unit.id === unitId)) throw Error("Missing current type407 unit");
+    return structuredClone(this.slipStates.get(unitId) ?? []);
+  }
+  /** Called only after the real BattleView has drawn this exact projection.
+   * Controlled consumers use a separate explicitly labelled host, never this API. */
+  acknowledgePeriodicNumberDraw(request: Readonly<BattlePeriodicNumberRequest>): void {
+    if (this.#messageBusy || this.#numberRetired) throw Error("Retired/reentrant periodic number draw");
+    const n = this.#numbers.find(n => n.projection.ticket === request.ticket);
+    if (!n || !this.activeCombatants.includes(n.unit) || canonical(request) !== canonical({
+      ticket: n.projection.ticket, epoch: n.projection.epoch, unitId: n.projection.unitId,
+      conditionId: n.projection.conditionId, amount: n.projection.amount })) throw Error("Stale periodic number draw identity");
+    this.observeMessageProvider(() => n.resource.acknowledge("drawn"));
+  }
+  private requireSlipHost(ids: readonly number[]): void {
+    if (this.conditions.slipIds(ids).length && (!this.#numberHost || this.#numberRetired))
+      throw Error("Type407 requires an actual explicit periodic number consumer");
+  }
+  private preparePeriodicNumber(unit: Combatant, conditionId: number, amount: number): void {
+    this.requireSlipHost([conditionId]); this.periodicParameter(unit);
+    const request = Object.freeze({ ticket: this.#numberNextTicket++, epoch: this.#numberEpoch, unitId: unit.id, conditionId, amount });
+    const resource = this.observeMessageProvider(() => this.#numberHost!.prepare(request));
+    if (!resource || ["validate", "commit", "discard", "consumption", "acknowledge"].some(k => typeof resource[k as keyof BattlePeriodicNumberLease] !== "function"))
+      throw Error("Invalid periodic number lease");
+    this.#numberCommits.push(resource); this.observeMessageProvider(() => resource.validate());
+    this.#numbers.push({ unit, resource, projection: { ...request, elapsed: 0, duration: WEB_PERIODIC_NUMBER_MILLISECONDS, consumption: null } });
+  }
+  private advancePeriodicNumbers(): void {
+    for (const n of [...this.#numbers]) {
+      if (!this.activeCombatants.includes(n.unit) || n.unit.id !== n.projection.unitId) throw Error("Retired periodic number instance");
+      this.periodicParameter(n.unit); this.observeMessageProvider(() => n.resource.validate());
+      const evidence = this.observeMessageProvider(() => n.resource.consumption());
+      if (evidence !== null && evidence !== "drawn" && evidence !== "controlled-request-consumed") throw Error("Unknown number consumption evidence");
+      if (evidence === null) continue;
+      if (n.projection.consumption === null) n.projection.consumption = evidence;
+      else if (n.projection.consumption !== evidence) throw Error("Changed periodic number evidence");
+      n.projection.elapsed += 10;
+      if (n.projection.elapsed >= n.projection.duration) {
+        this.#numbers = this.#numbers.filter(current => current !== n); this.#numberDiscards.push(n.resource);
+      }
+    }
+  }
+  private retirePeriodicNumbers(units?: readonly Combatant[]): void {
+    const retired = units === undefined ? [...this.#numbers] : this.#numbers.filter(n => units.includes(n.unit));
+    this.#numbers = this.#numbers.filter(n => !retired.includes(n));
+    this.#numberDiscards.push(...retired.map(n => n.resource));
+  }
   private slowStates = new Map<string, SlowState>();
   /** Function-local clocks/captured targeting, not a second condition list.
    * Exact unit references prevent a retired target's ID being rebound. */
@@ -277,6 +350,9 @@ export class BattleGame {
   /** Resource cleanup is outside logical publication. Failure cannot restore an
    * already published window or stop the remaining resources from retiring. */
   get effectCleanupFailures(){return structuredClone(this.#effectCleanupFailures);}
+  private discardPeriodicResources(resources: readonly BattlePeriodicNumberLease[]): void {
+    for (const resource of resources) try { resource.discard(); } catch { this.#effectCleanupFailures.push({ reason: "retire", time: this.time }); }
+  }
   private discardBattleEffectResources(resources:readonly BattleEffectResourceLease[],reason:'complete'|'rollback'|'retire'):void {
     for(const resource of resources)try{resource.discard();}
     catch{this.#effectCleanupFailures.push({reason,time:this.time});}
@@ -327,8 +403,11 @@ export class BattleGame {
   }
   prepareEventRetirement(){const message=this.prepareMessageRetirement(),effect=this.prepareEffectRetirement(),
     task=this.#gauTask,resource=task?.resource;let used=false;
-    const validate=()=>{if(used||this.#gauTask!==task)throw new Error("Stale source Gau retirement");message.validate();effect.validate();resource?.validate();};
-    return {validate,commit:()=>{validate();message.commit();effect.commit();used=true;this.#finalTickets.retire();this.#mpParameters.retireAll();this.#gauHost?.owned.retire();this.#gauTask=null;
+    const numberState = this.periodicNumbers, numberResources = this.#numbers.map(n => n.resource);
+    const validate=()=>{if(used||this.#gauTask!==task || canonical(this.periodicNumbers)!==canonical(numberState))throw new Error("Stale source Gau/number retirement");
+      message.validate();effect.validate();resource?.validate();for (const number of numberResources)this.observeMessageProvider(() => number.validate());};
+    return {validate,commit:()=>{validate();message.commit();effect.commit();used=true;this.#finalTickets.retire();this.#mpParameters.retireAll();this.#numberRetired=true;
+      this.discardPeriodicResources(this.#numbers.map(n => n.resource));this.#numbers=[];this.slipStates.clear();this.#parameterOrigins.clear();this.#gauHost?.owned.retire();this.#gauTask=null;
       this.#gauJournal.push({action:"retire",pc:-1,time:this.time,actorId:null,value:null});if(resource)this.discardBattleEffectResources([resource],"retire");}};}
   readonly #messageHost: BattleEventMessageHost | null;
   #messageFrame: ReturnType<SourceMessageState["prepareFrame"]> | null = null;
@@ -351,6 +430,7 @@ export class BattleGame {
       event: this.eventState, controls: this.eventControls, queue: this.queue, reactions: this.reactions,
       action: this.action, stock: this.stock, reward: this.reward, random: this.randomState,
       preferences: this.currentPreferences, clock: this.clockInput, remainder: this.remainder, events: this.events,
+      periodic:this.periodicNumbers,slip:[...this.slipStates],
       effect:this.effectPresentation,effectJournal:this.#effectJournal,nextEffect:this.#effectNextTicket });
     const before = fingerprint(), result = read();
     if (fingerprint() !== before) throw new Error("Battle message observer mutated a gameplay owner");
@@ -467,14 +547,15 @@ export class BattleGame {
     initialPreferences?: BattlePreferences,
     eventShared?: BattleEventSharedSnapshot,
     playerBorrow?: BattlePlayerBorrow,
-    private readonly eventHosts?: { jobQualification?:BattleCurrentJobHost; names?: FieldMessageNamesPort; childPartyAdmission?:WebBattleChildAdmission; gauInstances?:BattleGauInstanceHost; conditions?: WebBattleEventConditions; scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; fade?:BattleGlobalFadeHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; fieldContinuation?:BattleFieldReservationHost; branchExecution?:WebBattleBranchExecution },
+    private readonly eventHosts?: { periodicNumbers?:BattlePeriodicNumberHost; jobQualification?:BattleCurrentJobHost; names?: FieldMessageNamesPort; childPartyAdmission?:WebBattleChildAdmission; gauInstances?:BattleGauInstanceHost; conditions?: WebBattleEventConditions; scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; fade?:BattleGlobalFadeHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; fieldContinuation?:BattleFieldReservationHost; branchExecution?:WebBattleBranchExecution },
   ) {
     if (eventHosts !== undefined && (!eventHosts || typeof eventHosts !== "object" || Array.isArray(eventHosts) ||
-        Object.keys(eventHosts).some(key => key !== "jobQualification" && key !== "names" && key !== "childPartyAdmission" && key !== "gauInstances" && key !== "conditions" && key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau" && key !== "fade" && key !== "fieldContinuation")))
+        Object.keys(eventHosts).some(key => key !== "periodicNumbers" && key !== "jobQualification" && key !== "names" && key !== "childPartyAdmission" && key !== "gauInstances" && key !== "conditions" && key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau" && key !== "fade" && key !== "fieldContinuation")))
       throw new Error("Unknown battle event host options");
     if(eventHosts?.jobQualification&&(typeof eventHosts.jobQualification.catalogHash!=='string'||
       typeof eventHosts.jobQualification.validateCatalog!=='function'||typeof eventHosts.jobQualification.admits!=='function'))
       throw Error('Unknown actual owned current-job qualification');
+    validatePeriodicNumberHost(eventHosts?.periodicNumbers); this.#numberHost = eventHosts?.periodicNumbers;
     validateBattleBranchExecutionPolicy(eventHosts?.branchExecution);this.#branchPolicy=eventHosts?.branchExecution;
     validateBattleGlobalFadeHost(eventHosts?.fade);this.#fadeHost=eventHosts?.fade?Object.freeze({...eventHosts.fade}):null;
     this.#fadeRevision=this.#fadeHost?.owner.mutationRevision??0;
@@ -645,6 +726,8 @@ export class BattleGame {
         behavior: initialEnemyBehavior(),
       })),
     ];
+    this.combatants.forEach((unit, index) => this.bindParameterOrigin(unit,
+      index < (players ?? content.players).length ? "player" : "enemy"));
     if (this.playerBorrow) {
       this.playerState = createBattlePlayerState(this.playerBorrow.initial);
       const entered = this.playerState.entries;
@@ -708,7 +791,7 @@ export class BattleGame {
     for (const c of this.combatants) {
       if (this.conditions.isEscaped(c.conditionIds))
         throw new Error("Source initial Escape component lifecycle is not admitted");
-      this.#mpParameters.bind(c);
+      this.#mpParameters.bind(c); this.requireSlipHost(c.conditionIds);
       validateElements(c.attackElements);
       validateElementResistances(c.elementResistances);
     }
@@ -728,6 +811,7 @@ export class BattleGame {
           this.atbSpeed,
         ),
       );
+      this.slipStates.set(c.id, this.conditions.reconcileSlipState(c.conditionIds, []));
       this.slowStates.set(c.id, this.conditions.reconcileSlowState(c.conditionIds, []));
       const control = this.prepareControlState(c, c.conditionIds, [], new Map(), null);
       this.controlStates.set(c.id, control.state);
@@ -1507,6 +1591,7 @@ export class BattleGame {
       if (!held || held.sourceId !== entry.sourceId) throw new Error("Missing admitted owned player borrow");
       const unit: Combatant = { ...structuredClone(held), id: entry.instanceId, row: entry.row,
         atb: 0, queued: false, behavior: null };
+      this.bindParameterOrigin(unit, "player"); this.requireSlipHost(unit.conditionIds);
       Object.assign(unit, this.conditions.settleLife(unit.hp, unit.conditionIds, false));
       return unit;
     });
@@ -1524,6 +1609,7 @@ export class BattleGame {
     };
     const entries = units.map(unit => ({
       gear: this.validateBorrowedPlayer(unit, qualification, players.length),
+      slip: this.conditions.reconcileSlipState(unit.conditionIds, []),
       poison: this.conditions.reconcilePoisonState(unit.conditionIds, [], this.atbSpeed),
       slow: this.conditions.reconcileSlowState(unit.conditionIds, []),
       control: this.prepareControlState(unit, unit.conditionIds, [], new Map(), null),
@@ -1543,7 +1629,8 @@ export class BattleGame {
     this.inventoryQualification = next.qualification;
     for (const [index, unit] of next.units.entries()) {
       const entry = next.entries[index]!;
-      this.poisonStates.set(unit.id, entry.poison); this.slowStates.set(unit.id, entry.slow);
+      this.slipStates.set(unit.id, entry.slip);
+    this.poisonStates.set(unit.id, entry.poison); this.slowStates.set(unit.id, entry.slow);
       this.controlStates.set(unit.id, entry.control.state); this.controlTargetUnits.set(unit.id, entry.control.targets);
       this.equipmentAbilities.set(unit.id, entry.gear.passives);
       if (entry.gear.cost) this.costOwners.set(unit.id, entry.gear.cost);
@@ -1652,6 +1739,7 @@ export class BattleGame {
       placement: structuredClone(placement), maxHp: definition.hp, maxMp: definition.mp,
       atb: 0, queued: false, behavior: initialEnemyBehavior() };
     this.validateConditionState([unit]);
+    this.bindParameterOrigin(unit, "enemy"); this.requireSlipHost(unit.conditionIds);
     this.#mpParameters.bind(unit);
     validateElements(unit.attackElements);
     validateElementResistances(unit.elementResistances);
@@ -1673,12 +1761,14 @@ export class BattleGame {
       slow = this.conditions.reconcileSlowState(unit.conditionIds, []),
       control = this.prepareControlState(unit, unit.conditionIds, [], new Map(), null);
     unit.atb = unit.hp === 0 ? 0 : this.randomInt(this.content.initialAtb.enemy[0], this.content.initialAtb.enemy[1]);
-    return { ai: started.state, poison, slow, control };
+    return { ai: started.state, poison, slow, control, slip: this.conditions.reconcileSlipState(unit.conditionIds, []) };
   }
   /** Both single-slot and complete-party transitions invalidate old instances
    * through one shared queue/timer boundary. Death/drop registrations survive. */
   private retireActors(ids: readonly string[]): void {
     const removed = new Set(ids);
+    const retiredUnits = this.combatants.filter(unit => removed.has(unit.id));
+    this.retirePeriodicNumbers(retiredUnits); retiredUnits.forEach(unit => this.#parameterOrigins.delete(unit));
     for (const unit of this.combatants) if (removed.has(unit.id)) { this.#finalTickets.cancelReferences(unit); this.#mpParameters.retire(unit); }
     this.queue = this.queue.filter(action => !removed.has(action.actor));
     this.reactions = this.reactions.filter(action => !removed.has(action.actor));
@@ -1690,7 +1780,7 @@ export class BattleGame {
       this.aiStates.delete(removedId);
       // Function clocks belong to this retired instance, including Stop's
       // Poison write. A new Gau/party actor initializes from [] below.
-      this.poisonStates.delete(removedId);
+      this.poisonStates.delete(removedId); this.slipStates.delete(removedId);
       this.slowStates.delete(removedId);
       this.controlStates.delete(removedId); this.controlTargetUnits.delete(removedId);
       this.dropDead.delete(removedId);
@@ -1699,6 +1789,7 @@ export class BattleGame {
   }
   private publishEnemyEntry(unit: Combatant, entry: ReturnType<BattleGame["prepareEnemyEntry"]>): void {
     this.aiStates.set(unit.id, entry.ai);
+    this.slipStates.set(unit.id, entry.slip);
     this.poisonStates.set(unit.id, entry.poison);
     this.slowStates.set(unit.id, entry.slow);
     this.controlStates.set(unit.id, entry.control.state); this.controlTargetUnits.set(unit.id, entry.control.targets);
@@ -1730,6 +1821,7 @@ export class BattleGame {
     this.retireActors(planned.removedIds);
     players.forEach((player, index) => {
       player.conditionIds = playerCandidates[index]!.conditionIds;
+      this.slipStates.set(player.id, this.conditions.reconcileSlipState(player.conditionIds, this.slipStates.get(player.id)!));
       this.poisonStates.set(player.id, playerTimers[index]!.poison);
       this.slowStates.set(player.id, playerTimers[index]!.slow);
     });
@@ -2009,6 +2101,7 @@ export class BattleGame {
       Object.assign(next.unit, next.life);
       if(stopReady.has(next.unit.id)){next.unit.atb=0;next.unit.queued=false;}
       if(next.stop.removed)next.unit.atb=0;
+      this.slipStates.set(next.unit.id, next.stop.slip);
       this.poisonStates.set(next.unit.id, next.poison); this.slowStates.set(next.unit.id, next.slow);
       this.controlStates.set(next.unit.id, next.control.state); this.controlTargetUnits.set(next.unit.id, next.control.targets);
       this.observeDropLife(next.unit);
@@ -2187,18 +2280,23 @@ export class BattleGame {
     return this.conditions.controlBehaviors(unit.conditionIds).some(behavior => behavior.kind === "stop");
   }
   private prepareStopTransition(unit: Combatant, conditionIds: readonly number[], poison: Readonly<PoisonState>,
-    removedIds: readonly number[] = []) {
+    removedIds: readonly number[] = [], nextSlip?: Readonly<SlipState>) {
     const before = this.conditions.controlBehaviors(unit.conditionIds).filter(b => b.kind === "stop"),
       after = this.conditions.controlBehaviors(conditionIds).filter(b => b.kind === "stop");
     if (before.length > 1 || after.length > 1) throw new Error("Unresolved overlapping Stop function writers");
     const removed = before.some(b => !after.some(next => next.id === b.id) || removedIds.includes(b.id)),
       started = after.some(b => !before.some(old => old.id === b.id) || removedIds.includes(b.id));
+    this.requireSlipHost(conditionIds);
+    let slip = this.conditions.reconcileSlipState(conditionIds,
+      (nextSlip ?? this.slipStates.get(unit.id) ?? []).filter(c => !removedIds.includes(c.conditionId)));
     let state = poison.map(clock => ({ ...clock }));
     // Each native Remove/Start writes then-current actual instances. A newly
     // constructed Poison is not suspended simply because Stop is still present.
     if (removed) state = this.conditions.writePoisonTimeStop(conditionIds, state, false);
     if (started) state = this.conditions.writePoisonTimeStop(conditionIds, state, true);
-    return { state, removed, started };
+    if (removed) slip = writeSlipTimeStop(slip, false);
+    if (started) slip = writeSlipTimeStop(slip, true);
+    return { state, slip, removed, started };
   }
   private prepareStopReadyCancellation(startedIds: readonly string[]) {
     const owners=new Set(startedIds.filter(id=>this.queue.some(pending=>pending.actor===id&&["normal","loop"].includes(pending.kind)))),
@@ -2735,6 +2833,8 @@ export class BattleGame {
     // One failed simulation step consumes neither logical time nor randomness.
     // Definitions/media/AI programs stay shared; only mutable runtime values are copied.
     const before = {
+      slip: structuredClone(this.slipStates), origins: new Map(this.#parameterOrigins),
+      numbers: this.#numbers.map(n => ({ ...n, projection: structuredClone(n.projection) })), 
       finalTickets: this.#finalTickets.snapshot(),
       mpParameters: this.#mpParameters.snapshot(),
       conditionJournal: structuredClone(this.#conditionJournal),
@@ -2796,8 +2896,9 @@ export class BattleGame {
     const frame = this.#messageHost?.owner.prepareFrame() ?? null;
     this.#messageBusy = true;
     this.#messageFrame = frame; this.#messageFrameValidations = []; this.#messageFrameEffects = null;
+    this.#numberCommits=[]; this.#numberDiscards=[];
     this.#effectPendingCommits=[];this.#effectPendingDiscards=[];this.#branchFrameVisited=[];
-    const completedResources:BattleEffectResourceLease[]=[];
+    const completedResources:BattleEffectResourceLease[]=[]; const numberCompleted:BattlePeriodicNumberLease[]=[];
     try {
       this.#fadeFrame=this.#fadeHost?.owner.prepareFrame()??null;
       this.#fadeFrame?.state.advance(.01);frame?.state.advance(.01);
@@ -2816,6 +2917,8 @@ export class BattleGame {
       for(const e of this.#effects)this.observeMessageProvider(()=>e.resource.validate());
       if(this.#gauTask?.resource)this.observeMessageProvider(()=>this.#gauTask!.resource!.validate());
       ownedWrite?.validate();
+      for(const n of this.#numbers)this.observeMessageProvider(() => n.resource.validate());
+      for(const resource of this.#numberCommits)this.observeMessageProvider(() => resource.commit());
       for(const resource of this.#effectPendingCommits)this.observeMessageProvider(()=>resource.commit());
       // All external resource callbacks have returned. Validate every current
       // dependency before any deterministic Field-mask/Msg/Fade/owned write.
@@ -2825,12 +2928,13 @@ export class BattleGame {
       if(effects)this.observeMessageProvider(effects.validate);
       // The presentation already describes the staged window; use the actual
       // prepared owner's revision/reservation rather than comparing old pixels.
+      for(const n of this.#numbers)this.observeMessageProvider(() => n.resource.validate());
       this.validateFadeOwnership();messageWrite?.validate();fadeWrite?.validate();ownedWrite?.validate();
       effects?.commit();messageWrite?.commit();fadeWrite?.commit();ownedWrite?.commit();this.#fadeRevision=this.#fadeHost?.owner.mutationRevision??0;
       for(const pc of this.#branchFrameVisited)this.#branchVisited.add(pc);
       // Publication ends here. Cleanup must never enter the rollback handler
       // after the shared source-message frame has committed.
-      completedResources.push(...this.#effectPendingDiscards);
+      completedResources.push(...this.#effectPendingDiscards); numberCompleted.push(...this.#numberDiscards);
     } catch (error) {
       this.#gauTask=before.gauTask;this.#gauJournal=before.gauJournal;this.#fadeJournal=before.fadeJournal;
       this.#effects=before.effectState;this.#effectNextTicket=before.effectNextTicket;this.#effectJournal=before.effectJournal;
@@ -2868,6 +2972,7 @@ export class BattleGame {
       this.eventUI = before.eventUI;
       this.currentPlayerControlMode = before.playerControlMode;
       if (this.eventShared && before.eventShared) this.eventShared.restore(before.eventShared);
+      this.slipStates = before.slip; this.#parameterOrigins = before.origins; this.#numbers = before.numbers;
       this.poisonStates = before.poison;
       this.slowStates = before.slow;
       this.controlStates = before.control;
@@ -2888,12 +2993,14 @@ export class BattleGame {
       // candidate after restoring owners; a throwing discard cannot interrupt
       // rollback or replace the original publication error.
       this.discardBattleFrame('message',frame);this.discardBattleFrame('fade',this.#fadeFrame);this.discardBattleFrame('owned',this.#gauFrame);
+      this.discardPeriodicResources(this.#numberCommits);
       this.discardBattleEffectResources(this.#effectPendingCommits,'rollback');
       throw error;
     } finally {
       this.#gauFrame=null;this.#fadeFrame=null;this.#messageFrame = null; this.#messageFrameValidations = []; this.#messageFrameEffects = null;this.#effectPendingCommits=[];this.#effectPendingDiscards=[];this.#branchFrameVisited=[];
       // Retain the reentrancy guard during external cleanup, but keep cleanup
       // outside the catch that can restore this already published frame.
+      this.discardPeriodicResources(numberCompleted); this.#numberCommits=[]; this.#numberDiscards=[];
       this.discardBattleEffectResources(completedResources,'complete');
       this.#messageBusy = false;
     }
@@ -2902,7 +3009,7 @@ export class BattleGame {
     const gate = this.clockGate();
     if (!gate.simulation) return;
     this.time += 10;
-    this.advanceBattleEffects();
+    this.advanceBattleEffects(); this.advancePeriodicNumbers();
     if(this.#gauTask&&this.#gauTask.phase!=="complete"){
       this.advanceGauTask();this.checkOutcome();return;
     }
@@ -2962,7 +3069,7 @@ export class BattleGame {
       // BattleMainUpdate 0x1588930 performs end judgment after Progress.Update,
       // including the frame on which execution finishes.
       this.checkOutcome();
-      if (this.escapeRequested && this.clockGate().progress && this.phase === "active" && !this.action &&
+      if (this.escapeRequested && this.clockGate().progress && this.phase === "active" && !this.action && !this.#numbers.length &&
           this.eventControls.endEnabled) this.finishEscape();
       return;
     }
@@ -3054,6 +3161,28 @@ export class BattleGame {
             this.conditions.isUnableFight(actor.conditionIds),
           )
         : { hp: actor.hp, conditionIds: [...actor.conditionIds] };
+      const slipTicks: { conditionId: number; amount: number }[] = [];
+      let slip = this.conditions.reconcileSlipState(life.conditionIds, this.slipStates.get(actor.id)!);
+      if (slip.length) {
+        this.requireSlipHost(life.conditionIds);
+        if (!this.content.battleEvents) throw Error("Type407 needs actual source game-over metadata");
+        const next: SlipState = [];
+        for (const clock of slip) {
+          const update = advanceSlipClock(clock, seconds, this.atbSpeed,
+            battleEventUnitGameOver(this.content.battleEvents, life.conditionIds),
+            this.#numbers.some(number => number.unit === actor));
+          next.push(update.clock);
+          if (update.tick) {
+            const amount = slipDamage(this.periodicParameter(actor), actor.maxHp, (min, max) => this.randomInt(min, max));
+            this.preparePeriodicNumber(actor, clock.conditionId, amount);
+            const hp = Math.max(0, life.hp - amount);
+            life = this.settleBattleLife(actor, hp, this.conditions.updateDying(hp, actor.maxHp, life.conditionIds),
+              this.conditions.isUnableFight(life.conditionIds));
+            slipTicks.push({ conditionId: clock.conditionId, amount });
+          }
+        }
+        slip = this.conditions.reconcileSlipState(life.conditionIds, next);
+      }
       const control = this.prepareControlAdvance(actor, life.conditionIds, life.hp, seconds);
       if (control.hp !== life.hp || canonical(control.conditionIds) !== canonical(life.conditionIds))
         life = this.settleBattleLife(actor, control.hp,
@@ -3064,18 +3193,18 @@ export class BattleGame {
         life.conditionIds,
         result.state,
         this.atbSpeed,
-      ), control.removedIds);
+      ), control.removedIds, slip);
       const state = stop.state;
       const slow = this.conditions.reconcileSlowState(life.conditionIds,
         this.conditions.advanceSlow(actor.conditionIds, this.slowStates.get(actor.id)!, seconds));
-      return { actor, life, state, slow, control: finalControl, stopRemoved: stop.removed,
+      return { actor, life, state, slip: stop.slip, slipTicks, slow, control: finalControl, stopRemoved: stop.removed,
         removedIds: control.removedIds, ticks: result.ticks };
     });
-    for (const { actor, life, state, slow, control, stopRemoved, removedIds, ticks } of staged) {
+    for (const { actor, life, state, slip, slipTicks, slow, control, stopRemoved, removedIds, ticks } of staged) {
       const died = actor.hp > 0 && life.hp === 0;
       Object.assign(actor, life);
       this.observeDropLife(actor);
-      this.poisonStates.set(actor.id, state);
+      this.poisonStates.set(actor.id, state); this.slipStates.set(actor.id, slip);
       this.slowStates.set(actor.id, slow);
       this.controlStates.set(actor.id, control.state); this.controlTargetUnits.set(actor.id, control.targets);
       if (stopRemoved) actor.atb = 0;
@@ -3095,6 +3224,7 @@ export class BattleGame {
             ? `${actor.name} 因中毒属性吸收恢复 ${tick.amount} HP。`
             : `${actor.name} 因中毒受到 ${tick.amount} 点伤害。`,
         );
+      for (const tick of slipTicks) this.log(`${actor.name} 因${this.conditions.name(tick.conditionId)}受到 ${tick.amount} 点伤害。`);
       if (died) this.log(`${actor.name} 倒下了。`);
     }
   }
@@ -3492,7 +3622,7 @@ export class BattleGame {
           this.conditions.reconcilePoisonState(unit.conditionIds, previous, this.atbSpeed), removed);
         return {
           id,
-          state: stop.state, stopStarted: stop.started, stopRemoved: stop.removed,
+          state: stop.state, slip: stop.slip, stopStarted: stop.started, stopRemoved: stop.removed,
           slow: this.conditions.reconcileSlowState(unit.conditionIds,
             this.slowStates.get(id)!.filter((clock) => !removed.includes(clock.conditionId))),
           control,
@@ -3565,6 +3695,7 @@ export class BattleGame {
       }
       if (projection.userResults.length) actor.conditionIds = [...actorProjection.conditionIds];
       for (const next of poison) {
+        this.slipStates.set(next.id, next.slip);
         this.poisonStates.set(next.id, next.state);
         this.slowStates.set(next.id, next.slow);
         this.controlStates.set(next.id, next.control.state); this.controlTargetUnits.set(next.id, next.control.targets);
@@ -3649,7 +3780,7 @@ export class BattleGame {
       this.log(this.forcedSaveTerminal?'战斗结束，保存当前状态并返回。':"战斗结束，返回进入战斗前的状态。"); return;
     }
     this.pruneFinalTickets();
-    if (this.action || this.reactions[0]?.kind === "derived") return;
+    if (this.action || this.#numbers.length || this.reactions[0]?.kind === "derived") return;
     for (const c of this.combatants) {
       const life = this.settleBattleLife(c, c.hp, c.conditionIds, false);
       if (canonical(life.conditionIds) !== canonical(c.conditionIds)) {
@@ -3657,6 +3788,7 @@ export class BattleGame {
         const control = this.prepareControlState(c, life.conditionIds, this.controlStates.get(c.id)!, this.controlTargetUnits.get(c.id)!, null, removed);
         const stop = this.prepareStopTransition(c, life.conditionIds,
           this.conditions.reconcilePoisonState(life.conditionIds, this.poisonStates.get(c.id)!, this.atbSpeed), removed);
+        this.slipStates.set(c.id, stop.slip);
         this.poisonStates.set(c.id, stop.state);
         this.slowStates.set(c.id, this.conditions.reconcileSlowState(life.conditionIds, this.slowStates.get(c.id)!));
         this.controlStates.set(c.id, control.state); this.controlTargetUnits.set(c.id, control.targets);
@@ -3742,6 +3874,7 @@ export class BattleGame {
     }
     this.phase = "victory";
     this.escapeRequested = false;
+    this.slipStates.clear(); this.retirePeriodicNumbers();
     this.poisonStates.clear();
     this.slowStates.clear();
     this.controlStates.clear(); this.controlTargetUnits.clear();
@@ -3775,13 +3908,14 @@ export class BattleGame {
       c.conditionIds = this.conditions.battleEnd(c.conditionIds);
     if (this.playerBorrow) for (const player of this.playerResources.values())
       player.conditionIds = this.conditions.battleEnd(player.conditionIds);
+    this.slipStates.clear(); this.retirePeriodicNumbers();
     this.poisonStates.clear();
     this.slowStates.clear();
     this.controlStates.clear(); this.controlTargetUnits.clear();
   }
   private finishEscape(): void {
     if (!this.escapeRule || !this.escapeRequested || this.phase !== "active" || this.action ||
-        !this.eventControls.endEnabled)
+        !this.eventControls.endEnabled || this.#numbers.length)
       throw new Error("Battle escape is not at a safe action boundary");
     this.clearBattleConditions();
     this.phase = "escaped";

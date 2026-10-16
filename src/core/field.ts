@@ -1,4 +1,5 @@
 import { fieldTransportationParkingBinding, transportationStoredPosition, transportationDirectionMask, type WebSourceTransportParkingUpload, type TransportationParkingObservation } from "./transportation-parking-upload.js";
+import { prepareSourceNonEncounterAreas, sourceStandingInNonEncounterArea, type SourceNonEncounterArea, type SourceNonEncounterAreas } from "./field-non-encounter-areas.js";
 import {prepareRtsNativeActors}from'./field-rts-actors.js';
 import {WEB_RTS_PARTY_SWITCH,validateRtsPolicy,type WebRtsPartySwitch,type FieldRtsPartyPort,rtsLinearRatio,rtsNextSlot,rtsMapScript,type RtsPartyOp,type RtsParkingPose,validateRtsPoses}from'./field-rts-party.js';
 import { validateRosterGroupCommand, type RosterGroupEventOp, type RosterGroupAppearanceStep } from "./roster-groups.js";
@@ -89,6 +90,7 @@ import { projectFieldTransportActors, projectFieldPuppetTransportationEffects,
   type FieldTransportActorOperation } from "./field-transport-actors.js";
 import { requireFieldTransportPose } from "./field-transport-pose.js";
 import { partyActorCameraOffset } from "./party-actors.js";
+import { prepareWebFieldMessageWindowReady, type WebFieldMessageWindowReady } from "./field-empty-message.js";
 import { SourceMessageState, sourceMessageUpdateMask, type SourceMessageEffect } from "./source-message.js";
 import { sourceMessageSequenceTextRuns, createSourceMessageTaskCursor, pollSourceMessageTask,
   type SourceMessageSequenceContext, type SourceMessageTaskCursor } from "./source-message-sequence.js";
@@ -432,6 +434,7 @@ export type FieldGameOptions = {
   sourceBattleResult?: FieldBattleResultPort;
   /** Internal unpublished restore shell; it must never allocate/replay FX. */
   deferLogicalEffectRestore?: true;
+  sourceNonEncounterAreas?: SourceNonEncounterAreas;
   skyboxPresentation?: WebFlatSkybox;
   screenPresentation?: WebFieldScreenPresentation;
   storyRuntimeSeed?: FieldStoryRuntimeSnapshot;
@@ -457,6 +460,7 @@ export type FieldGameOptions = {
    * autonomous actors even when a stale caller retains the Field instance. */
   npcActivityClock?: () => boolean;
   sourceMessageEffects?: { prepare(effects: readonly SourceMessageEffect[]): () => void };
+  sourceMessageReady?: WebFieldMessageWindowReady;
   messageFees?: SourceMessageFeeCatalog;
   messageFeeSeed?: SourceMessageFeeSnapshot;
   reservedScripts?: FieldReservedScriptPort;
@@ -1337,6 +1341,26 @@ export class FieldGame {
   private readonly relayBindings: ReturnType<typeof bindFieldRelays>;
   private readonly defaultProperties: readonly FieldEntity[];
   private currentProperties: readonly FieldEntity[];
+  private nonEncounterAreas: readonly SourceNonEncounterArea[] = [];
+  private nonEncounterAreasRetired = false;
+  /** Detached actual property membership; never a save-granted actor registry. */
+  get sourceNonEncounterAreaProperties(): readonly SourceNonEncounterArea[] {
+    this.validateNonEncounterAreaOwner();
+    return structuredClone(this.nonEncounterAreas);
+  }
+  private validateNonEncounterAreaOwner(): void {
+    if (this.nonEncounterAreasRetired && this.content.map.sourceNonEncounterAreas)
+      throw new Error("Retired source non-encounter area owner");
+    this.assertSourceSnapshot();
+    prepareSourceNonEncounterAreas(this.content, this.options.sourceNonEncounterAreas, [], this.nonEncounterAreas);
+  }
+  sourceStandingInNonEncounterArea(cell: Point): boolean {
+    this.validateNonEncounterAreaOwner();
+    const map = this.content.cameraHost?.mapRange ?? this.collisionRange;
+    return sourceStandingInNonEncounterArea(this.nonEncounterAreas, map,
+      {x:Math.fround(cell.x-map.x),y:Math.fround(cell.y-map.y)});
+  }
+  retireSourceNonEncounterAreas(): void { this.nonEncounterAreasRetired = true; }
   get entities(): readonly FieldEntity[] {
     return this.entityList;
   }
@@ -1704,6 +1728,7 @@ export class FieldGame {
       groups && latest
         ? [...this.defaultProperties, ...groups[latest]!.entities]
         : this.defaultProperties;
+    this.nonEncounterAreas = prepareSourceNonEncounterAreas(content, options.sourceNonEncounterAreas, this.currentProperties, []);
     if (this.entityList.some((e) => e.kind === 18))
       requireMinimapMedia(this.entityList, content.minimap);
     this.collisionRange = fieldCollisionRange(
@@ -2008,6 +2033,8 @@ export class FieldGame {
     const effectSetup = restoring && this.options.fieldEffectMap?.restoreSeed ? undefined : this.effects?.prepare([{ kind: "setup", registeredBoards:
       this.defaultProperties.filter((entity) => entity.kind === 11 && !this.passiveEffects.has(entity.id)).map((entity) => entity.id), groupUpdate: true }]);
     const properties = [...this.defaultProperties, ...group.entities];
+    this.validateNonEncounterAreaOwner();
+    const nonEncounterAreas = prepareSourceNonEncounterAreas(this.content, this.options.sourceNonEncounterAreas, properties, this.nonEncounterAreas);
     const publish = () => {
       // register validates a private cells/regions draft before its two pointer
       // swaps. No FX host validation may run after those bindings become live.
@@ -2018,6 +2045,7 @@ export class FieldGame {
       for (const [id, activity] of activities) this.npcActivities.set(id, activity);
       this.activeGroups.add(name);
       this.currentProperties = properties;
+      this.nonEncounterAreas = nonEncounterAreas;
       return true;
     };
     if (effectSetup) effectSetup.commitWith(publish);
@@ -2480,7 +2508,7 @@ export class FieldGame {
       nextNpcEvent: this.nextNpcEvent, stop: this.stop, tasks, eventRootScript: this.eventRootScript,
       scriptHook: this.scriptHook && { ...this.scriptHook, locals: this.eventState.exportScriptLocalFrame(this.scriptHook.locals) },
       eventActivation: this.eventActivation, puppetLifecycle: this.puppetLifecycle,
-      currentProperties: this.currentProperties, entities: this.entityList,
+      currentProperties: this.currentProperties, entities: this.entityList, nonEncounterAreas:this.nonEncounterAreas,
       activeGroups: [...this.activeGroups], hiddenEntities: [...this.hiddenEntities], openedTreasures: [...this.openedTreasures],
       mobControls: this.mobControlsSnapshot, events: this.eventState.snapshot(), contentInvalidations: this.contentInvalidationsSnapshot,
       native: this.nativeActorStateFingerprint,
@@ -2543,6 +2571,7 @@ export class FieldGame {
       ...(this.transportationPresentation ? { transportationPresentation: this.transportationPresentation } : {}) };
   }
   private nativeCheckpoint(continuation = false): FieldCheckpoint["native"] {
+    if (this.nonEncounterAreas.length) this.validateNonEncounterAreaOwner();
     if (this.#vehicleLifecycle.busy||this.#vehicleLifecycle.retired) throw Error("Source vehicle transition or retired owner cannot be checkpointed");
     if (this.actorVisibilityBusy) throw new Error("Active source visibility timer/fade cannot be checkpointed");
     if (!this.nativeActorBindings){if(this.skyboxOwner&&!this.skyboxOwner.readiness)throw Error("Skybox stable checkpoint requires actual native map child owner");return null;}
@@ -2575,6 +2604,8 @@ export class FieldGame {
     return this.captureCheckpoint();
   }
   private captureCheckpoint(execution?: FieldEventCheckpoint): FieldCheckpoint {
+    if (this.sourceMessage.emptyStopJournal.length && !this.nativeActorBindings && this.entityUpdateMask !== 3)
+      throw new Error("Empty-message Stop requires native update-mask checkpoint for non-default entity group");
     const npcActivities = this.content.frameworkNpcActivity
       ? captureFieldNpcActivities(this.npcCheckpointRecords()) : undefined;
     const snapshot: FieldCheckpointState = {
@@ -2909,10 +2940,14 @@ export class FieldGame {
       if (ids.has(entity.id)) throw new Error("Saved native entity identity collision");
       ids.add(entity.id);
     }
+    const properties = [...this.defaultProperties, ...group.entities];
+    this.validateNonEncounterAreaOwner();
+    const nonEncounterAreas = prepareSourceNonEncounterAreas(this.content, this.options.sourceNonEncounterAreas, properties, this.nonEncounterAreas);
     this.tileAnimations.register(group.entities);
     this.entityList.push(...group.entities);
     this.activeGroups.add(name);
-    this.currentProperties = [...this.defaultProperties, ...group.entities];
+    this.currentProperties = properties;
+    this.nonEncounterAreas = nonEncounterAreas;
   }
   private restoreNativeOwner(saved: NonNullable<FieldCheckpoint["native"]>, source: FieldNativeRestoreDependencies,
     restoredActivities?: RestoredFieldNpcActivities,assignedMotions?:FieldNativeCheckpointContext["assignedMotions"]): void {
@@ -3270,7 +3305,7 @@ export class FieldGame {
       step = this.preparePlayerStep();
       movementAnimation = p.animation?.clone() ?? null;
       movementAnimation?.move(direction, 0.24);
-      encounter = this.prepareWalkEncounterStep();
+      encounter = this.prepareWalkEncounterStep(to);
     } catch (error) {
       this.block(error instanceof Error ? error.message : String(error));
       return { kind: "rejected" };
@@ -3292,6 +3327,7 @@ export class FieldGame {
     return this.options.movementBlocker?.(this.transportationId, true) ?? null;
   }
   private preparePlayerStep() {
+    this.validateNonEncounterAreaOwner();
     // Native SetupCharacterData captures the moving corps at move start.
     // The owner rejects changes to that snapshot before completion; it must
     // never silently recalculate against a different party at the destination.
@@ -3299,13 +3335,17 @@ export class FieldGame {
       ? this.options.fieldSteps.prepareStep(this.transportationId)
       : null;
   }
-  private prepareWalkEncounterStep(): WalkEncounterPrepared | null {
+  private prepareWalkEncounterStep(destination: Point): WalkEncounterPrepared | null {
     if (!this.content.walkEncounters || !this.menuReady || this.scriptHook ||
         this.hasUnfinishedNativeEncounterActivity()) return null;
     const policy = parseFrameworkWalkEncounterPolicy(this.content.walkEncounters);
     if (this.transportationId === null)
       throw new Error("Walking encounters require a known transportation identity");
     if (!policy.transportationIds.includes(this.transportationId)) return null;
+    // This scheduler is explicitly authored Web behavior. A source exclusion
+    // removes eligibility; it does not consume its countdown/RNG or suppress
+    // successful movement, owned condition steps or a scripted Encount.
+    if (this.sourceStandingInNonEncounterArea(destination)) return null;
     const mapId = this.content.map.identity?.mapId;
     if (mapId === undefined || !this.options.walkEncounters)
       throw new Error("Walking encounters require a bound map and scheduler owner");
@@ -4544,6 +4584,9 @@ export class FieldGame {
   }
   get entrySynchronized(): boolean | null { return this.synchronizedEntry; }
   get battleEntryContext(): ReturnType<typeof projectFieldEntryContext> {
+    // Actual source area owner is validated even in the uniform-zero subset;
+    // absent FootInfo and its default tuple both project to qualification0.
+    this.validateNonEncounterAreaOwner();
     return projectFieldEntryContext(this.content.map.entryContext, {
       ...(this.content.map.worldTerrain ? { terrain: this.content.map.worldTerrain,
         sourceSetHash: this.content.sourceSetHash, parentSourceSetHash: this.content.parentSourceSetHash } : {}),
@@ -4821,6 +4864,7 @@ export class FieldGame {
         entryContext: this.content.map.entryContext ?? null, terrain: this.content.map.worldTerrain ?? null } });
     const before = fingerprint();
     const validateOwner = () => {
+      this.validateNonEncounterAreaOwner();
       if (this.options.sourceEncounter !== port || this.camera !== camera || this.nativeActorBindings !== bindings ||
           this.nativeRuntime !== runtime || this.player !== player || player.native !== native || native.entity !== entity ||
           this.tasks !== tasks || !tasks.includes(task) || this.content.scripts[task.script] !== program ||
@@ -6122,7 +6166,7 @@ export class FieldGame {
         if (this.sourceMessage.active && (op.kind === "encounter" || op.kind === "source-encounter" || op.kind==='source-boss-encounter')) {
           this.block("Source message must close before battle handoff", op); return;
         }
-        if (this.pendingChoice && ["message", "source-message", "choice", "change-map", "encounter", "source-encounter", 'source-boss-encounter', "treasure-box"].includes(op.kind)) {
+        if (this.pendingChoice && ["message", "source-message", "field-empty-message-stop", "choice", "change-map", "encounter", "source-encounter", 'source-boss-encounter', "treasure-box"].includes(op.kind)) {
           this.block("Concurrent field interaction conflicts with an unfinished choice task", op);
           return;
         }
@@ -6995,6 +7039,39 @@ export class FieldGame {
               t.generalRegisters = projectFieldCoreSlots(t.generalRegisters, { i: { 7: 0 } });
               return;
             } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+          case "field-empty-message-stop": {
+            let frame: ReturnType<SourceMessageState["prepareFrame"]> | null = null, closed = false, ownsGuard = false;
+            try {
+              if (this.coreRegisterPublishing) throw new Error("Core publication is in progress");
+              this.coreRegisterPublishing = true; ownsGuard = true;
+              const owner = this.sourceMessage, authority = this.options.sourceMessageReady, fieldIsCurrent = this.captureMapPublication();
+              frame = owner.prepareFrame();
+              const ready = prepareWebFieldMessageWindowReady(authority, owner);
+              const validateField = () => { if (this.options.sourceMessageReady !== authority || !fieldIsCurrent())
+                throw new Error("Message readiness host changed its current Field source/window"); };
+              validateField();
+              if (!ready.ready) { ready.validate(); validateField(); frame.discard(); closed = true; t.pc--; return; }
+              if (this.shopTask || this.pendingChoice || this.treasureSceneState === "message")
+                throw new Error("Empty source Msg conflicts with a special window owner");
+              const { script, index, source, ...command } = op;
+              if (command.binding.sourceSetHash !== this.content.sourceSetHash || command.binding.parentSourceSetHash !== this.content.parentSourceSetHash)
+                throw new Error("Empty source Msg dictionary differs from current Field source");
+              const oldDialogue = this.dialogue, retained = this.retainedMessage, oldTask = this.sourceMessageTask,
+                next = frame.state.prepareEmptyStop(command), program = this.content.scripts[t.script];
+              if (this.tasks.some(task => task.sourceMessageWait !== null))
+                throw new Error("Empty source Msg cannot retire an active synchronous message wrapper/timer");
+              next.commit();
+              const publication = frame.prepareCommit();
+              ready.validate(); publication.validate(); validateField();
+              if (this.sourceMessage !== owner || this.dialogue !== oldDialogue || this.retainedMessage !== retained ||
+                  this.sourceMessageTask !== oldTask || this.content.scripts[t.script] !== program || program?.[t.pc - 1] !== op)
+                throw new Error("Stale empty source Msg Field/window owner");
+              publication.commit(); closed = true;
+              this.dialogue = null; this.retainedMessage = null; this.sourceMessageTask = null;
+            } catch (error) { this.block(error instanceof Error ? error.message : String(error), op); return; }
+            finally { try { if (frame && !closed) frame.discard(); } finally { if (ownsGuard) this.coreRegisterPublishing = false; } }
+            break;
+          }
           case "source-message":
             try {
               const retained = this.retainedMessage,

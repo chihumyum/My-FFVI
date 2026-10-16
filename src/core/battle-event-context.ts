@@ -37,6 +37,18 @@ export function validateBattleEventRules(rules: BattleEventRules) {
   }
 }
 
+/** Shared IsGameOverByUnit 4d2d00 provider. It deliberately does not read HP,
+ * sprite side, removed flags or the separate Escape/targeting predicates. */
+export function battleEventUnitGameOver(rules: BattleEventRules, conditionIds: readonly number[]): boolean {
+  validateBattleEventRules(rules);
+  const active = conditionIds.map(id => {
+    int32(id); const row = rules.conditions.find(c => c.id === id);
+    if (!row) throw Error("Missing game-over condition metadata: " + id); return row;
+  });
+  if (active.some(c => c.type === 602)) throw Error("Unimplemented battle event type 602 game-over exception");
+  return active.some(c => c.gameOverTarget === 1);
+}
+
 /** ConditionUtility.IsBattleEndByUnit: the game-over predicate OR type 3.
  * AI-core lifetime uses this rule plus the global executor queues; HP alone
  * cannot answer it. This does not admit new active condition controllers. */

@@ -1,4 +1,22 @@
 const fieldOwners = new WeakMap();
+/** Explicit mounted-current-Web-window authority. Readiness is independent of
+ * audio and cannot be reconstructed from a checkpoint or an empty core owner. */
+export function createFieldMessageWindowReadiness(createAuthority, elements, currentField) {
+  if (typeof createAuthority !== 'function' || typeof currentField !== 'function')
+    throw new Error('Field message readiness requires an actual controller host');
+  const names = ['dialogue', 'speaker', 'message', 'next'], nodes = names.map(name => elements[name]), surface = {};
+  if (nodes.some(node => !node || typeof node.id !== 'string' || !node.id || !node.ownerDocument || !node.isConnected) ||
+      new Set(nodes).size !== names.length || nodes.some(node => node.ownerDocument !== nodes[0].ownerDocument ||
+        node.ownerDocument.getElementById(node.id) !== node))
+    throw new Error('Field message window nodes have not completed initialization');
+  const ids = nodes.map(node => node.id), document = nodes[0].ownerDocument;
+  return createAuthority(() => {
+    const field = currentField(), initialized = nodes.every((node, index) => node.id === ids[index] && node.isConnected &&
+      node.ownerDocument === document && document.getElementById(node.id) === node);
+    return { kind: 'web-field-message-window-surface-v1', surface, initialized,
+      owner: field?.sourceMessage ?? null, generation: field ?? null };
+  });
+}
 /** One detached projection of the existing message owner. Long explicit source
  * pages wrap and scroll in the existing dialogue panel; no visual page is
  * injected into the interpreter and no source text is clipped or shortened. */

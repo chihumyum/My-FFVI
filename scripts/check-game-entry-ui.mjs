@@ -330,7 +330,8 @@ for (const declaration of [...appModule.imports, ...audioModule.imports]) {
 }
 const viewNames = new Set(["InventoryView", "EquipmentView", "PartyView", "SourcePartySelectionView", "SourceCharacterNameView", "ChoiceView", "ShopView", "Renderer", "BattleView"]);
 const overlayBindings = { drawStoryTimer: (await import("../apps/game/story-overlay.js")).drawStoryTimer,
-  syncFieldMessageView: (await import("../apps/game/source-message-view.js")).syncFieldMessageView };
+  syncFieldMessageView: (await import("../apps/game/source-message-view.js")).syncFieldMessageView,
+  createFieldMessageWindowReadiness: (await import("../apps/game/source-message-view.js")).createFieldMessageWindowReadiness };
 for (const declaration of appModule.imports) {
   const path = declaration.moduleSpecifier.text;
   if (path.startsWith("/runtime/core/") || path === "./audio.js") continue;
@@ -340,10 +341,8 @@ for (const declaration of appModule.imports) {
     continue;
   }
   if (path === "./source-message-view.js") {
-    assert.equal(declaration.importClause.namedBindings.elements.length, 1);
-    const binding = declaration.importClause.namedBindings.elements[0];
-    assert.equal(binding.name.text, "syncFieldMessageView");
-    assert.equal(typeof overlayBindings.syncFieldMessageView, "function", "Use the actual production message helper");
+    for (const binding of declaration.importClause.namedBindings.elements)
+      assert.equal(typeof overlayBindings[binding.name.text], "function", "Use the actual production message helper");
     continue;
   }
   for (const binding of declaration.importClause.namedBindings.elements)
@@ -390,7 +389,7 @@ async function host(pack, { slots = new Map(), failBinding = false, search = "?p
     getElementById(id) { assert.ok(nodes.has(id), "Unknown DOM identity: " + id); return nodes.get(id); },
     createElement(tag) { return node(tag); } };
   function node(tag, id = "", attributes = "") {
-    return { tagName: tag.toUpperCase(), id, hidden: /\bhidden\b/.test(attributes),
+    return { tagName: tag.toUpperCase(), id, ownerDocument: document, isConnected: !!id, hidden: /\bhidden\b/.test(attributes),
       disabled: /\bdisabled\b/.test(attributes), children: [], textContent: "", value: "", dataset: {}, style: {},
       classList: { add() {}, remove() {}, toggle() {} },
       addEventListener() {}, setAttribute(name, value) { this[name] = value; },
@@ -655,6 +654,27 @@ try {
     h.$("next").onclick(); await h.frame();
     assert.equal(field.sourceMessage.active, false); assert.equal(h.$("dialogue").hidden, true);
     assert.equal(field.eventState.read({ category: "ScenarioFlag1", index: 3 }), 1);
+  });
+  await check("actual App Ready follows the connected current four-node window before empty Msg Stop", async () => {
+    const [{compileFieldEmptyMessage,createFieldEmptyMessageLookup},{battleMessageDictionariesInput}]=await Promise.all([
+      import(pathToFileURL(resolve(compiled,'src/compiler/field-empty-message.js'))),
+      import(pathToFileURL(resolve(compiled,'tests/fixtures/battle-message-dictionaries.js')))]);
+    const fixture=checkpointFixture(),raw={type:1,mnemonic:'Msg',operands:{iValues:Array(8).fill(0),rValues:Array(8).fill(0),sValues:['',...Array(7).fill('')]}},
+      stop=compileFieldEmptyMessage(raw,createFieldEmptyMessageLookup(battleMessageDictionariesInput())),source={file:'authored',assetPath:'controlled-app-empty-stop'};
+    fixture.field.sourceSetHash=stop.binding.sourceSetHash;fixture.field.parentSourceSetHash=stop.binding.parentSourceSetHash;
+    fixture.battle.common.fieldSourceSetHash=stop.binding.sourceSetHash;
+    fixture.field.scripts.read=[{kind:'source-message',command:{kind:'sequence',key:'CONTROLLED_EXISTING',speaker:'',layout:{window:'frame',anchor:'bottom'},
+      seconds:-1,bypassSpeed:false,after:'message',document:{kind:'source-message-sequence-v1',alignment:'left',tokens:[{kind:'text',text:'Old window'}]}}},stop,
+      {kind:'exit'}].map((op,index)=>({...op,script:'read',index,source}));
+    const initial=await seal(fixture.field),battle=await seal(fixture.battle),h=await host({initial,battle,files:new Map([['/game/content.json',initial],['/game/battle.json',battle]])});
+    await h.ready();await h.api.reset();const field=h.api.read().game;
+    h.$('message').isConnected=false;assert(field.startEvent('read'));const ticket=field.sourceMessage.projection.windowTicket;
+    for(let n=0;n<50;n++)await h.frame(10);assert.equal(field.sourceMessage.projection.windowTicket,ticket);assert.equal(field.sourceMessage.emptyStopJournal.length,0);assert.equal(field.updateAttributeMask,9);
+    assert.equal(h.$('dialogue').hidden,false);assert.equal(h.$('message').textContent,'Old window');
+    h.$('message').isConnected=true;await h.frame(10);
+    assert.equal(field.sourceMessage.active,false);assert.equal(field.sourceMessage.emptyStopJournal.length,1);assert.equal(field.updateAttributeMask,9);
+    assert.equal(h.$('dialogue').hidden,true);assert.equal(field.stop,null);
+    assert.throws(()=>h.api.read().flow.currentSession.checkpoint(),/native update-mask checkpoint/);
   });
   await check("actual app consumes source-bound fees from its catalog and snapshots each complete message window", async () => {
     const fixture = checkpointFixture(), parent = "a".repeat(64), source = { file: "synthetic", assetPath: "app-fee" };

@@ -655,6 +655,21 @@ export class BattleView {
         const y=to.y-66-(a.elapsed-400)/35;c.strokeText(text,to.x,y);c.fillText(text,to.x,y);
       }
     }
+    // Periodic results use their actual instance layout even after lethal HP
+    // publication. Drawing confirms this exact resource, never another HP write.
+    for (const number of battle.periodicNumbers ?? []) {
+      const unit = battle.combatants.find(unit => unit.id === number.unitId);
+      if (!unit) throw new Error("Missing actual periodic-number target");
+      const position = this.position(unit, battle, layout);
+      c.save(); c.font = 'bold 15px monospace'; c.textAlign = 'center'; c.lineWidth = 3;
+      c.strokeStyle = '#101426'; c.fillStyle = 'white';
+      const y = position.y - 48 - number.elapsed / 35;
+      c.strokeText(String(number.amount), position.x, y); c.fillText(String(number.amount), position.x, y); c.restore();
+      if (number.consumption === null) {
+        const { elapsed, duration, consumption, ...request } = number;
+        battle.acknowledgePeriodicNumberDraw(request);
+      }
+    }
     // The Session's one shared FadeManager projection; drawing cannot advance
     // its clock or acknowledge a script completion.
     const fade = battle.globalFadeOverlay;

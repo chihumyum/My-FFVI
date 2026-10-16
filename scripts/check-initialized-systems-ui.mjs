@@ -97,6 +97,10 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
       this.text = ""; this.hidden = /\bhidden\b/.test(attributes); this.disabled = /\bdisabled\b/.test(attributes);
       this.classList = { add() {}, remove() {}, toggle() {} };
     }
+    // Static HTML IDs are mounted in this controlled document; dynamic nodes
+    // inherit attachment from their actual parent rather than a Ready stub.
+    get ownerDocument() { return document; }
+    get isConnected() { return nodes.get(this.id) === this || this.parentElement?.isConnected === true; }
     get childNodes() { return this.children; }
     set textContent(value) { this.replaceChildren(); this.text = String(value); }
     get textContent() { return this.text + this.children.map(child => child.textContent).join(""); }
@@ -223,7 +227,7 @@ async function host(pack, { slots = new Map(), search = "?package=" + pack.packa
       return { ok: true, json: async () => structuredClone(pack.files.get(url)) };
     },
   });
-  const exports = { audio: ["AudioOutput", "audioProjection"], "story-overlay": ["drawStoryTimer"], "source-message-view": ["fieldMessageView", "syncFieldMessageView"], "magic-stones-view": ["MagicStoneView"],
+  const exports = { audio: ["AudioOutput", "audioProjection"], "story-overlay": ["drawStoryTimer"], "source-message-view": ["fieldMessageView", "syncFieldMessageView", "createFieldMessageWindowReadiness"], "magic-stones-view": ["MagicStoneView"],
     "party-view": ["PartyView"], "source-party-selection-view":["SourcePartySelectionView"], "source-character-name-view":["SourceCharacterNameView"], "shop-view": ["ShopView"], "choice-view": ["ChoiceView"],
     "inventory-view": ["InventoryView"], "equipment-view": ["EquipmentView"] };
   for (const name of uiNames) {

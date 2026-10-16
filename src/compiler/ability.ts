@@ -1,3 +1,4 @@
+import { hasSlipBehavior } from "./condition-slip.js";
 import {isSourceEnemyMagicProgram} from '../core/enemy-magic-carrier.js';
 import {compileResourceAbsorption} from './resource-absorption.js';
 import {compileOrdinaryConditionAction} from './ordinary-condition-action.js';
@@ -241,6 +242,7 @@ export function compileDevelopmentAbility(
       v3 === 0 &&
       (hasSilenceBehavior(reader.row("condition.csv", v1)) ||
         hasPoisonBehavior(reader.row("condition.csv", v1)) ||
+        hasSlipBehavior(reader.row("condition.csv", v1)) ||
         hasProtectionBehavior(reader.row("condition.csv", v1)) ||
         hasSpeedBehavior(reader.row("condition.csv", v1)) ||
         hasBlindBehavior(reader.row("condition.csv", v1)))
@@ -405,6 +407,11 @@ export function compileDevelopmentAbility(
       for(const row of compiled.sources)if(!sources.some(existing=>existing.source.assetPath===row.source.assetPath&&existing.source.rowId===row.source.rowId))sources.push(row);
     }catch(error){ordinaryConditionDependencyError='Ordinary condition carrier dependency: '+(error instanceof Error?error.message:String(error));if(newSingleRecovery)blockers.push(ordinaryConditionDependencyError);}
   }
+  if (effects.some(effect => effect.kind === "add-condition" && hasSlipBehavior(reader.row("condition.csv", effect.conditionId))) &&
+      program.rules.accuracy_rate! > 100 && !program.contentFlags.includes(1))
+    blockers.push("Type407 nonordinary accuracy provider remains unclosed");
+  if (effects.some(effect => effect.kind === "add-condition" && hasSlipBehavior(reader.row("condition.csv", effect.conditionId))) && !ordinaryConditionSupport)
+    blockers.push("Type407 requires the complete ordinary sole Function9 carrier: " + (ordinaryConditionDependencyError ?? "mixed function/phase"));
   if (controlOnly && !controlSupport && !ordinaryConditionSupport) blockers.push(`unresolved control-condition ability type/system ${r.type_id}/${r.system_id}`);
   if (speedOnly && !speedSupport && !ordinaryConditionSupport)
     blockers.push(`unresolved speed ability type/system ${r.type_id}/${r.system_id}`);

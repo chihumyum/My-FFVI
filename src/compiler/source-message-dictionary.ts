@@ -28,7 +28,10 @@ export function createSourceMessageDictionary(input: SourceMessageDictionaryInpu
     if (!key || !found) throw new Error("Missing source battle message body: " + key);
     return { ...found };
   };
-  return { binding, characterNames, body, message(key: string) {
+  return { binding, characterNames, body, hasBody(key: string) {
+    if (binding?.kind !== "battle-event-message-binding-v2") throw new Error("Field absence requires the complete source message dictionary binding");
+    return bodies.has(key);
+  }, message(key: string) {
     if (binding?.kind === "battle-event-message-binding-v2") {
       const { text } = body(key), speakers = record(messages.story_cha_zhc);
       return { text, speaker: Object.hasOwn(speakers, key) ? speakers[key] as string : "" };

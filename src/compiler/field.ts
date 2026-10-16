@@ -23,6 +23,7 @@ import { hash, record } from "./content.js";
 import { ImportedProject } from "../contracts.js";
 import { compileEntityGroup } from "./entity-group.js";
 import { compileManualMessageInstruction } from "./message.js";
+import { compileFieldEmptyMessage } from "./field-empty-message.js";
 import { compileSourceMessageInstruction } from "./source-message.js";
 import { compileSourceMessageSequenceInstruction } from "./source-message-sequence.js";
 import { compileFieldChoiceInstruction, type FieldChoiceCompileContext } from "./field-choice.js";
@@ -270,6 +271,10 @@ export function decodeFieldOp(
   if (fieldTransportationMnemonics.some((mnemonic) => mnemonic === name) ||
       name === "SysCall" && fieldTransportationSelectors.includes(s[0]!)) {
     try { return { ...site, ...compileFieldTransportationInstruction(raw) }; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
+  if (name === "Msg" && context?.emptyMessages) {
+    try { const empty = compileFieldEmptyMessage(raw, context.emptyMessages); if (empty) return { ...site, ...empty }; }
     catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
   }
   if (name === "MsgFinishWait") {
@@ -897,6 +902,8 @@ export async function compileField(root: string): Promise<FieldContent> {
         areaId: tableId(mapRows[0]!.area_id),
       },
       entryContext: compileFieldEntryContext(systemSource.assets, systemSource.tables, tableId(mapRows[0]!.id)),
+      ...(Object.values(groups).some(group => group.entities.some(entity => entity.kind === 23))
+        ? { sourceNonEncounterAreas: { kind: "source-non-encounter-areas-v1" as const } } : {}),
       width: integer(rawMap.width),
       height: integer(rawMap.height),
       tileSize: integer(rawMap.tilewidth),

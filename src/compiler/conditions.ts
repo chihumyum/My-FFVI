@@ -1,3 +1,4 @@
+import { hasSlipBehavior } from "./condition-slip.js";
 import { tableInteger as int } from "./table.js";
 import type { BattleRow } from "./battle.js";
 import type { BattleConditionCatalog } from "../core/battle-conditions.js";
@@ -240,6 +241,7 @@ export function compileBattleConditionCatalog(
           presentationSources.push(...control.sources);
           return [control.behavior];
         }
+        if (hasSlipBehavior(row)) return [{ id: d.id, kind: "slip", untilType: 2, name: name(row.values.mes_id_name!) }];
         return hasEscapeBehavior(row)
           ? [{ id: d.id, kind: "escape", untilType: 2,
               name: row.values.mes_id_name === "None" ? "" : name(row.values.mes_id_name!) }]

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 import test from "node:test";
 import ts from "typescript";
@@ -12,6 +13,7 @@ import type { GameContentRefs } from "../src/core/game-content-refs.js";
 // This checks title presentation and entry admission, not rendering or story.
 const app = await readFile(resolve("apps/game/app.js"), "utf8");
 const html = await readFile(resolve("apps/game/index.html"), "utf8");
+const { createFieldMessageWindowReadiness } = await import(pathToFileURL(resolve("apps/game/source-message-view.js")).href);
 const syntax = ts.createSourceFile("app.js", app, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
 const imports = syntax.statements.filter(ts.isImportDeclaration);
 const core: Record<string, unknown> = {};
@@ -64,14 +66,19 @@ async function title(search: string, references?: GameContentRefs) {
   for (const match of html.matchAll(/<([a-z][\w-]*)\b([^>]*\bid="([^"]+)"[^>]*)>/gi))
     nodes.set(match[3]!, new Element(match[2]!));
   const node = (id: string): Element => { const result = nodes.get(id); assert.ok(result, id); return result; };
+  const document = { hidden: false, getElementById: node, addEventListener() {} };
+  // These exact nodes were parsed from the actual HTML and mounted in this
+  // controlled document. The real readiness factory still queries its current
+  // Field owner; no title fixture supplies a ready result or a fake authority.
+  for (const [id, element] of nodes) Object.assign(element, { id, ownerDocument: document, isConnected: true });
   const reads: string[] = [], writes: string[] = [], slotsRead: string[] = [];
   class PassiveView { reset() {} }
   class Audio {
     reset() {} async unlock() {} initialize() {}
     async prepare() { throw new Error("No title fixture declares playable media"); }
   }
-  const context = vm.createContext({ ...core, structuredClone, URLSearchParams, console,
-    location: { search }, document: { hidden: false, getElementById: node, addEventListener() {} },
+  const context = vm.createContext({ ...core, createFieldMessageWindowReadiness, structuredClone, URLSearchParams, console,
+    location: { search }, document,
     window: { addEventListener() {} }, performance: { now: () => 0 }, requestAnimationFrame() {},
     localStorage: { getItem(key: string) { slotsRead.push(key); return null; },
       setItem(key: string) { writes.push(key); throw new Error("Title must not save state"); } },

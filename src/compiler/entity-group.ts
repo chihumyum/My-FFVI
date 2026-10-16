@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {compileSourceNonEncounterArea} from "./field-non-encounter-areas.js";
 import {compileFieldVehicleAction} from "./field-vehicle-action.js";
 import { record } from "./content.js";
 import { tableId } from "./table-id.js";
@@ -99,7 +100,7 @@ export function compileEntityGroup(
           p = entityProperties(o.properties),
           kind = integer(p.object_type);
         const issue = (reason: string) => blockers.push({ reason, source });
-        if (![0, 1, 2, 3, 4, 5, 6, 7, 8, ...(legacyAnimation ? [] : [10]), 11, 13, 17, 18, 19, 27].includes(kind))
+        if (![0, 1, 2, 3, 4, 5, 6, 7, 8, ...(legacyAnimation ? [] : [10]), 11, 13, 17, 18, 19, 23, 27].includes(kind))
           issue(`Unsupported entity kind ${kind}`);
         // Kind 11 has a distinct shared-particle/board owner. Recovering the
         // board does not admit its Unity particle and material providers.
@@ -114,7 +115,7 @@ export function compileEntityGroup(
           )
         )
           issue("Unsupported minimap icon type");
-        if ((o.visible === false && kind !== 27) || Number(o.rotation ?? 0))
+        if ((o.visible === false && kind !== 27 && kind !== 23) || Number(o.rotation ?? 0))
           issue("Unsupported entity transform");
         if (kind === 27 && (name !== "entity_default" || o.gid))
           issue("Unsupported map range placement");
@@ -250,6 +251,11 @@ export function compileEntityGroup(
           height = finite(o.height) / tileSize;
         if (width <= 0 || height <= 0) issue("Unsupported entity bounds");
         const id = entityId ? String(entityId) : `${name}:${li}:${oi}`;
+        let nonEncounterArea: FieldEntity["nonEncounterArea"];
+        if (kind === 23) {
+          try { nonEncounterArea = compileSourceNonEncounterArea({group:name,object:o,properties:p,source}); }
+          catch (error) { issue(error instanceof Error ? error.message : String(error)); }
+        }
         const moveArea = kind === 13 ? compileFieldMoveArea({ group: name, entityId: id, layer: layerId,
           object: o, properties: p, source }) : undefined;
         let relay: FieldEntity["relay"];
@@ -267,6 +273,7 @@ export function compileEntityGroup(
           id,
           ...(eventActivation ? { eventActivation } : {}),
           ...(moveArea ? { moveArea } : {}),
+          ...(nonEncounterArea ? { nonEncounterArea } : {}),
           ...(relay ? { relay } : {}),
           ...(mapAnimation.definition ? { mapAnimation: mapAnimation.definition } : {}),
           ...(mapAnimation.blockers.length ? { mapAnimationBlockers: mapAnimation.blockers } : {}),

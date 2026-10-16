@@ -23,7 +23,7 @@ export function compileFieldConditionCatalog(
   // application/appearance is not admitted; a checkpoint cannot inject them
   // as passive statuses and carry them into another encounter.
   const behaviors = battle.behaviors.filter((behavior) =>
-    !["levitate", "escape", "defend", "physical-protection", "magic-protection", "haste", "slow", "sleep", "confusion", "temptation", "doom", "stop"].includes(behavior.kind)).flatMap(
+    !["slip", "levitate", "escape", "defend", "physical-protection", "magic-protection", "haste", "slow", "sleep", "confusion", "temptation", "doom", "stop"].includes(behavior.kind)).flatMap(
     (behavior): FieldConditionCatalog["behaviors"] => {
       const row = reader.row("condition.csv", behavior.id);
       sources.push(row);

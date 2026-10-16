@@ -1,0 +1,27 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {GameSession} from '../src/core/game-session.js';import {GameFlow} from '../src/core/game-flow.js';
+import {GameBattleHandoff} from '../src/core/game-battle-handoff.js';import {CheckpointStorage} from '../src/core/saved-game.js';
+import {WEB_SCRIPTED_BATTLE_ACTIONS} from '../src/core/scripted-battle-action.js';import {compileScriptedBattleAction} from '../src/compiler/battle-scripted-action.js';
+import {createControlledBattlePeriodicNumberHost,type BattlePeriodicNumberRequest} from '../src/core/battle-periodic-number.js';
+import {checkpointFixture} from './fixtures/checkpoint-game.js';import {slipSource} from './fixtures/slip-condition.js';
+const ready={visible:true,mediaReady:true,overlayOpen:false};
+const action=(id:number,actorSide=1,actor=1000,targetSide=2,target=1)=>compileScriptedBattleAction({type:1,mnemonic:'BattleAction',operands:{iValues:[actorSide,actor,id,targetSide,target,0,0,0],rValues:Array(8).fill(0),sValues:Array(8).fill('')}});
+test('actual Session source Fn9→real400ms requests→cure→failed return retry→Storage→next battle, with no held state before publication',async()=>{
+ const f=checkpointFixture(),apply=slipSource(),cure=slipSource(11),cc=apply.compile().catalog,requests:Readonly<BattlePeriodicNumberRequest>[]=[];
+ cure.ability.id='902';cure.tables['content.csv']![0]!.type_value='902';f.battle.common.abilities[901]=apply.compileAbility().abilities[901]!;f.battle.common.abilities[902]=cure.compileAbility().abilities[902]!;
+ f.battle.common.conditions.rules.definitions.push(...cc.rules.definitions.filter(d=>d.id===apply.conditionId));f.battle.common.conditions.behaviors.push(...cc.behaviors.filter(d=>d.id===apply.conditionId));
+ f.battle.common.conditions.rules.eraseRules.push(...cc.rules.eraseRules.filter(r=>r.groupId===6).map((r,i)=>({...r,id:9900+i})));
+ f.battle.common.battleEvents={conditions:f.battle.common.conditions.rules.definitions.map(({id,type})=>({id,type,attackTarget:type===5?1:0,gameOverTarget:type===5?1:0}))};
+ const ops=[action(901,2,1,1,1000),{kind:'wait'as const,seconds:4},action(902,1,1001,1,1000),action(10,1,1000,2,0),{kind:'exit'as const}];
+ f.battle.encounters[1000]!.lifecycle={kind:'battle-lifecycle-v1',mode:'script',scriptId:1,program:{kind:'battle-event-v1',source:null,entry:0,end:ops.length,localNames:[],initialLocals:[],instructions:ops.map(op=>({mnemonic:op.kind,op})),blockers:[]}};
+ const runtime={battleHandoff:'prepared'as const,scriptedBattleActions:WEB_SCRIPTED_BATTLE_ACTIONS,battlePeriodicNumbers:createControlledBattlePeriodicNumberHost(r=>requests.push(r))};
+ const game=new GameSession(f.field,f.battle,123,runtime),flow=new GameFlow(game);flow.start();flow.advance(0,ready);const owner=game.state,owned=owner.snapshot();assert(game.field.startEvent('fight'));
+ let fail=true;const handoff=new GameBattleHandoff(flow,{prepareStart:async()=>{if(fail)throw Error('authored media fail');return{kind:'start'};},prepareReturn:async()=>{if(fail)throw Error('authored return fail');return{kind:'return'};},discard(){}});
+ assert.equal((await handoff.start()).status,'failed');assert.deepEqual(owner.snapshot(),owned);fail=false;assert.equal((await handoff.start()).status,'committed');const old=game.battle!,player=old.players[0]!;
+ for(let i=0;i<10000&&!requests.length;i++)flow.advance(10,ready);assert(requests.length);assert.equal(requests[0]!.unitId,player.id);assert.equal(requests[0]!.conditionId,apply.conditionId);assert(player.hp<player.maxHp);assert.deepEqual(owner.snapshot(),owned);assert.throws(()=>game.checkpoint());
+ for(let i=0;i<10000&&old.phase==='active';i++)flow.advance(10,ready);assert.equal(old.phase,'victory');assert.equal(old.periodicNumbers.length,0);assert(!player.conditionIds.includes(apply.conditionId));
+ const settled=structuredClone(old.combatants);fail=true;assert.equal((await handoff.return()).status,'failed');assert.equal(game.battle,old);assert.deepEqual(old.combatants,settled);fail=false;assert.equal((await handoff.return()).status,'committed');flow.advance(10,ready);assert.equal(game.state,owner);assert.equal(owner.snapshot().completedBattles.length,1);
+ const stable=game.checkpoint(),data=new Map<string,string>(),storage=new CheckpointStorage({getItem:k=>data.get(k)??null,setItem:(k,v)=>{data.set(k,v);}},'framework','type407');assert(!JSON.stringify(stable).includes('periodic-numbers'));await storage.save(stable,1);const saved=(await storage.load())!;
+ const restored=GameSession.restore(saved.checkpoint,f.field,f.battle,undefined,runtime),next=new GameFlow(restored);next.start();next.advance(0,ready);assert.deepEqual(restored.checkpoint(),stable);assert.throws(()=>old.advance(10),/Retired/);
+ assert(restored.field.startEvent('fight'));next.advance(10,ready);assert(restored.prepareBattleStart()!.commit());assert.notEqual(restored.battle,old);assert.deepEqual(restored.battle!.periodicNumbers,[]);assert.deepEqual(restored.battle!.slipClockState(restored.battle!.players[0]!.id),[]);
+});

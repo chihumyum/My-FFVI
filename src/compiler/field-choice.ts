@@ -11,6 +11,8 @@ export type FieldChoiceCompileContext = {
   /** Immediate source instruction, before capability decoding. A blocked Msg
    * still retains the preceding window; an omitted context cannot prove that. */
   nextMnemonic: string | null;
+  /** Only actual Field compilation supplies the complete bound dictionary. */
+  emptyMessages?: import("./field-empty-message.js").FieldEmptyMessageLookup;
 };
 
 const sourceAnchors: readonly FieldChoiceAnchor[] = [

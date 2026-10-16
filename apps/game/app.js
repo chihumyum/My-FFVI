@@ -1,3 +1,4 @@
+import { WEB_BATTLE_PERIODIC_NUMBERS } from '/runtime/core/battle-periodic-number.js';
 import {WEB_SOURCE_CHARACTER_NAMING} from '/runtime/core/source-character-naming.js';
 import {SourceCharacterNameView} from './source-character-name-view.js';
 import {WEB_RTS_PARTY_SWITCH}from'/runtime/core/field-rts-party.js';
@@ -12,7 +13,8 @@ import { SourcePartySelectionView } from './source-party-selection-view.js';
 import { WEB_BATTLE_EVENT_MESSAGE_POLICY } from "/runtime/core/battle-event-message.js";
 import { WEB_BATTLE_EVENT_CONTROLS } from "/runtime/core/battle-controls.js";
 import { WEB_SOURCE_SCRIPT_RANDOM } from "/runtime/core/field-script-random.js";
-import { syncFieldMessageView } from "./source-message-view.js";
+import { syncFieldMessageView, createFieldMessageWindowReadiness } from "./source-message-view.js";
+import { createWebFieldMessageWindowReady } from "/runtime/core/field-empty-message.js";
 import { createWebFieldMessageSequencePort } from "/runtime/core/source-message-sequence.js";
 import { createWebFieldCameraShakePolicy } from "/runtime/core/field-camera-shake.js";
 import { createWebFlatConditionLeaderActivityPort } from "/runtime/core/field-condition-activity.js";
@@ -108,6 +110,9 @@ const readGameJson = async (url) => {
 let contents = new GameContentRepository(readGameJson, contentProfile);
 // Same declared Web policy as the source-route audit; no native default claim.
 const runtime = {
+  sourceMessageReady: createFieldMessageWindowReadiness(createWebFieldMessageWindowReady,
+    { dialogue: $('dialogue'), speaker: $('speaker'), message: $('message'), next: $('next') },
+    () => flow?.currentSession?.field ?? null),
   battleChildPartyAdmission:WEB_BATTLE_CHILD_ADMISSION,
     battleEventConditions: "web-source-battle-condition-lists-v1",
   battleGauInstances:createBattleGauMediaHost(sprite=>{const image=images.get(sprite.file);return image?{complete:image.complete,width:image.naturalWidth,height:image.naturalHeight}:null;}),
@@ -126,8 +131,10 @@ const runtime = {
     skyboxPresentation:'web-flat-skybox-panorama-v1',
   fieldEffectTransforms:'web-source-logical-board-transforms-v1',
   sourceSnapshot:'immutable-owned-field-source-v1',
+  sourceNonEncounterAreas:'source-non-encounter-areas-v1',
   viewChange:"web-flat-field-view-change-v2",
   worldAutoTasks:WEB_FLAT_WORLD_AUTO_TASKS,worldAutoMove:WEB_FLAT_WORLD_AUTO_MOVE,
+  battlePeriodicNumbers:WEB_BATTLE_PERIODIC_NUMBERS,
   battleEventEffects:"web-source-battle-effects-pulse-v1",
   battleGlobalFade:"web-source-battle-global-fade-v1",
   sourcePartySelection:WEB_SOURCE_PARTY_SELECTION,

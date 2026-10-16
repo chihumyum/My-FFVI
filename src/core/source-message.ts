@@ -1,4 +1,5 @@
 import { bindSourceMessageFee, restoreSourceMessageFee, parseSourceMessageFeeCatalog, type SourceGilTagOp, type SourceMessageFeeCatalog, type SourceMessageFeeSnapshot } from "./source-message-fees.js";
+import { validateFieldEmptyMessage, type FieldEmptyMessageOp } from "./field-empty-message.js";
 import { checkpointKeys } from "./checkpoint-validation.js";
 import { createSourceMessageSequence, advanceSourceMessageSequence, confirmSourceMessageSequence,
   executeSourceMessagePageInput, sourceMessageSequenceStatus, type SourceMessageSequenceCommand,
@@ -126,7 +127,7 @@ export class SourceMessageState {
       prepareCommit: () => {
         validate();
         const candidateRevision = state.revision, value = structuredClone(state.value),
-          fee = structuredClone(state.fee), ticket = state.windowTicket;
+          fee = structuredClone(state.fee), ticket = state.windowTicket, emptyStops = structuredClone(state.emptyStops);
         if (!Number.isSafeInteger(ticket) || ticket < entryTicket)
           throw new Error("Source message frame cannot restore an earlier window ticket");
         const finalValidate = () => {
@@ -136,10 +137,25 @@ export class SourceMessageState {
         };
         return { validate: finalValidate, commit: () => {
           finalValidate();
-          this.value = value; this.fee = fee; this.windowTicket = ticket;
+          this.value = value; this.fee = fee; this.windowTicket = ticket; this.emptyStops = emptyStops;
           this.revision++; closed = true; this.frameReservation = null;
         } };
       } };
+  }
+  private emptyStops: { key: string; reason: FieldEmptyMessageOp["reason"]; ticket: number; retiredTicket: number; warning: "missing-static-source-message" | null }[] = [];
+  get emptyStopJournal() { return structuredClone(this.emptyStops); }
+  /** Dedicated native empty-lookup branch: no message update-group effect. */
+  prepareEmptyStop(op: FieldEmptyMessageOp) {
+    this.requireWritable(); validateFieldEmptyMessage(op);
+    const revision = this.revision, ticket = this.windowTicket + 1, retiredTicket = this.windowTicket;
+    if (!Number.isSafeInteger(ticket)) throw new Error("Source empty-message window ticket overflows");
+    const journal = [...structuredClone(this.emptyStops), { key: op.key, reason: op.reason, ticket, retiredTicket,
+      warning: op.reason === "missing-static-row" ? "missing-static-source-message" as const : null }];
+    let committed = false;
+    const validate = () => { this.requireWritable(); if (committed || this.revision !== revision) throw new Error("Stale source empty-message Stop transaction"); };
+    return { ticket, retiredTicket, effects: [] as SourceMessageEffect[], validate, commit: () => {
+      validate(); this.value = null; this.windowTicket = ticket; this.emptyStops = journal; this.revision++; committed = true;
+    } };
   }
   private value: Message | SourceMessageSequenceValue | null = null;
   private revision = 0;
@@ -223,7 +239,7 @@ export class SourceMessageState {
       : { kind: "source-message-v1", message: structuredClone(this.value) };
   }
   fork(): SourceMessageState {
-    const copy = new SourceMessageState(this.feeCatalog, this.fee ?? undefined); copy.value = structuredClone(this.value); copy.windowTicket = this.windowTicket; return copy;
+    const copy = new SourceMessageState(this.feeCatalog, this.fee ?? undefined); copy.value = structuredClone(this.value); copy.windowTicket = this.windowTicket; copy.emptyStops = structuredClone(this.emptyStops); return copy;
   }
   /** Retained finished text is still an open window. No live message coroutine
    * or retained global window is admitted to the stable field save format. */

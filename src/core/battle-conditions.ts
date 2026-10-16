@@ -1,3 +1,4 @@
+import { reconcileSlipClocks, type SlipState, type SlipBehavior } from "./condition-slip.js";
 import { ConditionRules, type ConditionCatalog } from "./conditions.js";
 import { validateLevitateBehavior, type LevitateBehavior } from "./condition-levitate.js";
 import { mergeElementResistances, validateElementResistances, type ElementResistances } from "./elements.js";
@@ -50,6 +51,7 @@ export type BattleConditionCatalog = {
     /** Escape owns action/target eligibility, never HP or death registration.
      * The host publishes its enemy-only lifecycle after the complete action. */
     | { id: number; kind: "escape"; name: string; untilType: 2 }
+    | SlipBehavior
     | LevitateBehavior
     | ProtectionBehavior
     | SpeedBehavior
@@ -144,6 +146,8 @@ export class BattleConditions {
         !(b.kind === "defend"
           ? b.untilType === 1 && this.definitions.get(b.id)?.type === 1 &&
             this.definitions.get(b.id)?.overlapped === false
+          : b.kind === "slip"
+          ? b.untilType === 2 && this.definitions.get(b.id)?.type === 407 && this.definitions.get(b.id)?.overlapped === false
           : b.kind === "silence"
           ? b.untilType === 2 && this.definitions.get(b.id)?.type === 6
           : b.kind === "escape"
@@ -300,6 +304,7 @@ export class BattleConditions {
     if (!Number.isInteger(hp) || hp < 0 || hp > 0x7fffffff)
       throw new Error("Invalid life HP");
     this.validateOwner(ids, "player");
+    if (this.slipIds(ids).length) throw new Error("Battle-local type407 cannot persist in stable owned state");
     if (this.controlBehaviors(ids).length)
       throw new Error("Battle action-control conditions cannot persist in stable owned state");
     const deaths = ids.filter((id) => this.behaviors.get(id)!.kind === "unable-fight");
@@ -377,6 +382,15 @@ export class BattleConditions {
     const result = ids.filter((id) => this.behaviors.get(id)!.kind === "magitek");
     if (result.length > 1) throw new Error("Multiple active Magitek conditions");
     return result;
+  }
+  slipIds(ids: readonly number[]): number[] {
+    this.validateActive(ids);
+    const result = ids.filter(id => this.behaviors.get(id)!.kind === "slip");
+    if (new Set(result).size !== result.length) throw Error("Duplicate active type407 function");
+    return result;
+  }
+  reconcileSlipState(ids: readonly number[], previous: Readonly<SlipState>): SlipState {
+    return reconcileSlipClocks(this.slipIds(ids), previous);
   }
   poisonIds(ids: readonly number[]): number[] {
     this.validateActive(ids);

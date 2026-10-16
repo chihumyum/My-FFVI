@@ -38,6 +38,7 @@ import type { FieldPuppetRouteOp } from "../core/field-puppet-route.js";
 import type { FieldMoveAreaDefinition } from "../core/field-move-area.js";
 import type { FieldCameraHostDefinition } from "../core/field-camera-host.js";
 import type { FieldBackgroundLayer } from "../core/field-background.js";
+import type { FieldEmptyMessageOp } from "../core/field-empty-message.js";
 import type { SourceMessageOp } from "../core/source-message.js";
 import type { FieldChoiceOp } from "../core/field-choice.js";
 import type { EventContextBranchOp } from "../core/event-context-branch.js";
@@ -131,6 +132,7 @@ export type FieldRelayDefinition = {
   source: Evidence & { objectId: string; pointer: string; serializedFile: string; sha256: string };
 };
 export type FieldEntity = Point & {
+  nonEncounterArea?: import("../core/field-non-encounter-areas.js").SourceNonEncounterArea;
   eventActivation?: import("../core/field-event-activation.js").FieldEventActivationDefinition;
   mapAnimation?: import("../core/field-map-animation.js").FieldMapAnimationDefinition;
   mapAnimationBlockers?: string[];
@@ -259,6 +261,7 @@ export type Op = Site &
     | FieldScriptMotionOp
     | FieldPuppetRouteOp
     | SourceMessageOp
+    | FieldEmptyMessageOp
     | FieldChoiceOp
     | FieldScriptShopOp
     | EventContextBranchOp
@@ -363,6 +366,7 @@ export type FieldContent = {
     id: string;
     identity?: { mapId: number; areaId: number };
     entryContext?: FieldEntryContextDefinition;
+    sourceNonEncounterAreas?: import("../core/field-non-encounter-areas.js").SourceNonEncounterAreaDeclaration;
     width: number;
     height: number;
     tileSize: number;

@@ -32,6 +32,7 @@ import { loadMinimapMedia } from "./map-ui.js";
 import { loadAudioMedia } from "./audio.js";
 import { compileMapPartyEntry } from "./map-party-entry.js";
 import { compileTransportationCatalog } from "./transportation.js";
+import { loadFieldEmptyMessageLookup } from "./field-empty-message.js";
 import { loadSystemSource } from "./system-source.js";
 import { loadSystemMessages } from "./system-messages.js";
 import { compileTreasureInventoryLimits } from "./treasure-inventory.js";
@@ -196,6 +197,7 @@ export async function compileWorld(root: string) {
   const systemMessages = await loadSystemMessages(root, text(corpus.manifest.parentSourceSetHash),
     array(corpus.manifest.sources).map(record).map((s) => ({ file: text(s.file), sha256: text(s.sha256) })));
   const messages = { ...corpus.messages, system_zhc: systemMessages.messages };
+  const emptyMessages = await loadFieldEmptyMessageLookup(root, systemSource);
   if (systemSource.sourceSetHash !== corpus.sourceSetHash)
     throw new Error("Map entry system source mismatch");
   const transportation = compileTransportationCatalog(systemSource.reader,
@@ -390,6 +392,8 @@ export async function compileWorld(root: string) {
         id: binding.name,
         identity: { mapId: Number(binding.id), areaId: Number(binding.areaId) },
         entryContext: compileFieldEntryContext(corpus.assets, corpus.tables, Number(binding.id), worldTerrain),
+        ...(Object.values(groups).some(group => group.entities.some(entity => entity.kind === 23))
+          ? { sourceNonEncounterAreas: { kind: "source-non-encounter-areas-v1" as const } } : {}),
         entities: groups.entity_default?.entities ?? [],
         groups,
         initialGroups: ["entity_default"],
@@ -468,7 +472,7 @@ export async function compileWorld(root: string) {
           };
           try {
             return decodeFieldOp(raw, site, messages, corpus.tables, {
-              nextMnemonic: index + 1 < mnemonics.length ? String(record(mnemonics[index + 1]).mnemonic) : null,
+              nextMnemonic: index + 1 < mnemonics.length ? String(record(mnemonics[index + 1]).mnemonic) : null, emptyMessages,
             });
           } catch (error) {
             return {

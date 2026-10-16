@@ -84,6 +84,17 @@ function roundCell(value: number): number {
   const result = fraction === 0.5 ? (floor % 2 === 0 ? floor : floor + 1) : Math.round(value);
   return result === 0 && value < 0 ? -0 : result;
 }
+/** Shared native PropertyAreaObject conversion. No MoveArea/Actor/controller
+ * identity is granted by this pure coordinate projection. */
+export function sourcePropertyAreaCellRect(raw: {x:number;y:number;width:number;height:number}, mapRange: FieldCameraMapRange): FieldMoveAreaRect {
+  checkpointKeys(mapRange, "x,y,width,height");
+  int32(mapRange.x); int32(mapRange.y);
+  checkpointInteger(mapRange.width, 1, 0x7ffffff); checkpointInteger(mapRange.height, 1, 0x7ffffff);
+  int32(raw.x); int32(raw.y); checkpointInteger(raw.width, 1, 0x7fffffff); checkpointInteger(raw.height, 1, 0x7fffffff);
+  const x = f(int32(raw.x - int32(mapRange.x * 16))), y = f(int32(raw.y - int32(mapRange.y * 16)));
+  return { x:roundCell(f(x*0.0625)), y:roundCell(f(y*0.0625)),
+    width:roundCell(f(f(raw.width)*0.0625)), height:roundCell(f(f(raw.height)*0.0625)) };
+}
 export function projectFieldMoveArea(definition: FieldMoveAreaDefinition, mapRange: FieldCameraMapRange): FieldMoveArea {
   validateFieldMoveArea(definition);
   checkpointKeys(mapRange, "x,y,width,height");
@@ -99,8 +110,7 @@ export function projectFieldMoveArea(definition: FieldMoveAreaDefinition, mapRan
   const py = f(f(f(int32(mapRange.height * 8)) - y) + Math.trunc(raw.height / 2));
   return {
     definition: structuredClone(definition),
-    cellArea: { x: roundCell(f(x * 0.0625)), y: roundCell(f(y * 0.0625)),
-      width: roundCell(f(width * 0.0625)), height: roundCell(f(height * 0.0625)) },
+    cellArea: sourcePropertyAreaCellRect(raw, mapRange),
     moveArea: { x: f(px - f(width * 0.5)), y: f(py - f(height * 0.5)), width, height },
   };
 }
