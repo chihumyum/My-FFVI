@@ -1,3 +1,4 @@
+import type {SourceBattleHandoffEntry} from './source-battle-handoffs.js';
 import { forwardFieldRuntimePorts, type SharedFieldRuntimePorts } from "./field-runtime-ports.js";
 import { validateSourceNonEncounterAreasRuntime } from "./field-non-encounter-areas.js";
 import { WEB_BATTLE_PERIODIC_NUMBERS, createWebBattlePeriodicNumberHost, validatePeriodicNumberHost, type BattlePeriodicNumberHost } from './battle-periodic-number.js';
@@ -141,7 +142,7 @@ export type PreparedSessionBattleReturn = Omit<PreparedSessionBattleStart, "kind
   readonly outcome: "victory" | "escaped" | "forced";
 };
 type BattleEntry = { field: FieldGame; request: SessionBattleRequest; lease: BattleLease;
-  content: BattleContent; seed: number; shared: BattleEventSharedSnapshot; gau:BattleGauEntry|null; reservationHost:BattleFieldReservationHost };
+  content: BattleContent; seed: number; shared: BattleEventSharedSnapshot; sourceHandoffs?:SourceBattleHandoffEntry; gau:BattleGauEntry|null; reservationHost:BattleFieldReservationHost };
 type PendingBattleHandoff = { status: "prepared" | "publishing" | "consumed" | "discarded"; discard(): void };
 class StaleSessionBattleHandoff extends Error {
   constructor() { super("Stale session battle handoff"); }
@@ -432,6 +433,7 @@ export class GameSession {
         rtsParty:this.state.fieldRtsParty,
         ownedConditions: this.state.fieldOwnedConditions,
         recovery: this.state.fieldRecovery,
+        sourceBattleHandoffs: this.state.fieldSourceBattleHandoffs,
         ...(scriptRandomPolicy === WEB_SOURCE_SCRIPT_RANDOM ? { scriptRandom: this.state.fieldScriptRandom } : {}),
         ...(this.state.fieldTransportation ? { transportation: this.state.fieldTransportation } : {}),
         shop: this.state.fieldShop,
@@ -909,7 +911,7 @@ export class GameSession {
   private fieldBattleFingerprint(field: FieldGame): string {
     return canonical({ request: field.stop, contentInvalidations: field.contentInvalidationsSnapshot, events: field.eventState.snapshot(), entry: field.battleEntryContext.state,
       time: field.time, fade: field.fader.snapshot(), effects: field.fieldEffectsSnapshot,
-      fieldLayers: field.fieldLayerSnapshot, sourceUi: field.sourceFieldUiSnapshot, message: field.sourceMessage.snapshot(), messageRevision: field.sourceMessage.mutationRevision });
+      mapTransforms:field.mapTransformSnapshot, fieldLayers: field.fieldLayerSnapshot, sourceUi: field.sourceFieldUiSnapshot, message: field.sourceMessage.snapshot(), messageRevision: field.sourceMessage.mutationRevision });
   }
   private rememberEncounterFailure(field: FieldGame, request: SessionBattleRequest, error: unknown): void {
     if (this.field === field && field.stop === request && !this.battle)
@@ -994,7 +996,8 @@ export class GameSession {
     return new BattleGame(content, entry.seed, this.state.battlePlayers(entry.lease), this.state.battleInventory(entry.lease),
       this.state.battleProgression(entry.lease, content.experience), this.currentBattlePreferences,
       structuredClone(entry.shared), this.state.battlePlayerBorrow(entry.lease),
-      { ...(this.#battleNumberRuntime?{periodicNumbers:this.#battleNumberRuntime}:{}), jobQualification:this.state.battleJobQualification,names: this.state.fieldMessageNames,
+      { ...(entry.sourceHandoffs ? {sourceHandoffs:structuredClone(entry.sourceHandoffs)} : {}),
+        ...(this.#battleNumberRuntime?{periodicNumbers:this.#battleNumberRuntime}:{}), jobQualification:this.state.battleJobQualification,names: this.state.fieldMessageNames,
         ...(this.battleBranchExecution===undefined?{}:{branchExecution:this.battleBranchExecution}),
         ...(entry.gau?{gau:entry.gau}:{}),
         ...(this.#battleChildAdmission?{childPartyAdmission:this.#battleChildAdmission}:{}),
@@ -1082,7 +1085,8 @@ export class GameSession {
       const ownedLease = lease;
       this.battleLease = ownedLease;
       const entry: BattleEntry = { field, request, lease: ownedLease, seed,
-        content: structuredClone(content), shared: battleEventSharedSnapshot(field.eventState),gau, reservationHost: this.captureBattleReservationHost(field) };
+        content: structuredClone(content), shared: battleEventSharedSnapshot(field.eventState),
+        ...(this.state.fieldSourceBattleHandoffs.available()?{sourceHandoffs:this.state.sourceBattleHandoffEntry(ownedLease)}:{}),gau, reservationHost: this.captureBattleReservationHost(field) };
       const ownedBefore = canonical(this.state.snapshot());
       this.encounterFailure = null;
       return this.createBattleHandoff("start", entry,
@@ -1170,13 +1174,13 @@ export class GameSession {
     this.battleHandoffPreparing = true;
     try {
       const currentResult = () => outcome === "victory" ? battle.previewVictory() : outcome === "escaped" ? battle.previewEscape() : battle.previewForcedReturn();
-      const resultFingerprint = () => canonical({ result: currentResult(), shared: battle.eventSharedReturn, reservation: battle.fieldReservationReturn,
+      const resultFingerprint = () => canonical({ result: currentResult(), shared: battle.eventSharedReturn, sourceHandoffs: battle.sourceBattleHandoffReturn ?? null, reservation: battle.fieldReservationReturn,
         effects: field.fieldEffectsSnapshot, message: field.sourceMessage.snapshot(), messageRevision: field.sourceMessage.mutationRevision,
         ...(outcome === "forced" ? { units: battle.combatants } : {}) });
       const before = resultFingerprint(), retirement = battle.prepareEventRetirement(), reservation = this.prepareReservationReturn(battle.fieldReservationReturn, field);
-      const owned = outcome === "victory" ? this.state.prepareVictory(entry.lease, battle.previewVictory()!) :
-        outcome === "escaped" ? this.state.prepareEscape(entry.lease, battle.previewEscape()!) :
-        this.state.prepareForcedReturn(entry.lease, battle.previewForcedReturn()!);
+      const owned = outcome === "victory" ? this.state.prepareVictory(entry.lease, battle.previewVictory()!, battle.sourceBattleHandoffReturn) :
+        outcome === "escaped" ? this.state.prepareEscape(entry.lease, battle.previewEscape()!, battle.sourceBattleHandoffReturn) :
+        this.state.prepareForcedReturn(entry.lease, battle.previewForcedReturn()!, battle.sourceBattleHandoffReturn);
       const resume = field.prepareEncounterReturn(entry.content.encounterId, owned.fieldState, battle.eventSharedReturn);
       return this.createBattleHandoff("return", entry,
         () => this.field === field && field.stop === request && request === entry.request && field === entry.field &&

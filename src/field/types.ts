@@ -1,6 +1,9 @@
+import type {SourceBattleHandoffOp} from '../core/source-battle-handoffs.js';
 import type { FieldUiOp } from "../core/field-ui.js";
+import type { FieldMapTransformOp, FieldWaterCatalog } from "../core/field-map-transforms.js";
 import type { FieldLayerOp, FieldSceneryCatalog } from "../core/field-layer-scrolling.js";
 import type {RtsPartyOp}from'../core/field-rts-party.js';
+import type {MultiCorpsOp}from'../core/field-multi-corps.js';
 import type { SourceGilTagOp } from "../core/source-message-fees.js";
 import type { FieldScriptRandomOp } from "../core/field-script-random.js";
 /** Browser-safe field content: no Unity readers or renderer dependencies in the runtime. */
@@ -242,12 +245,14 @@ export type Op = Site &
     | import("../core/source-owned-equipment.js").SourceEquipmentEventOp
     | RosterLifecycleEventOp
     | RtsPartyOp
+    | MultiCorpsOp
   | RosterGroupEventOp
     | FieldTransportationOp
     | OwnedConditionEventOp
     | SourceGilTagOp
   | FieldScriptRandomOp
     | FieldRecoveryEventOp
+    | SourceBattleHandoffOp
     | FieldUiOp
     | SourcePresentationOp
     | AudioReadinessOp
@@ -296,7 +301,8 @@ export type Op = Site &
     | { kind: "call"; target: number }
     | { kind: "wait"; seconds: number }
     | { kind: "field-skybox-scroll"; command: import("../core/field-skybox.js").FieldSkyboxScrollCommand }
-    | FieldLayerOp
+    | FieldMapTransformOp
+  | FieldLayerOp
     | { kind: "standalone-wait" }
     | { kind: "blank" }
     | { kind: "puppet"; slot: number; actor: string; target: number }
@@ -348,6 +354,8 @@ export type Tileset = {
   tiles?: { id: number; animation?: { tileid: number; duration: number }[] }[];
 };
 export type FieldContent = {
+  /** Existing source MapSetup definition, also used by party deployment. */
+  partyEntry?: import('../core/map-party-entry.js').MapPartyEntryDefinition;
   frameworkPassiveEffects?: import("../core/field-passive-effects-host.js").FieldPassiveEffectsHost;
   frameworkRelayInteraction?: import("../core/field-relay-policy.js").FieldRelayInteractionHost;
   frameworkNpcFlat?: import("../core/field-npc-flat-projection.js").FieldNpcFlatHost;
@@ -379,6 +387,7 @@ export type FieldContent = {
     backgrounds?: FieldBackgroundLayer[];
     /** Source image providers for the separately opted-in flat Web owner. */
     scenery?: FieldSceneryCatalog;
+    water?: FieldWaterCatalog;
     tilesets: Tileset[];
     textures: Record<string, string>;
     collisions: Record<string, number[]>;

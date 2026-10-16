@@ -6,7 +6,7 @@ import { activePartyMembers, emptyPartyState, validatePartyState, type PartyAppe
 /** Explicit Web UI arbitration; this is not the original coroutine's open-time write. */
 export const WEB_SOURCE_PARTY_SELECTION = 'web-source-party-selection-atomic-v1' as const;
 export type WebSourcePartySelection = typeof WEB_SOURCE_PARTY_SELECTION;
-export type SourcePartySelectionCommand = { kind: 'source-party-selection'; mode: 'one'|'two'|'three'|'opera' };
+export type SourcePartySelectionCommand = { kind: 'source-party-selection'; mode: 'one'|'two'|'three'|'opera'|'final' };
 export type SourcePartySelectionOp = { kind: 'source-party-selection'; command: SourcePartySelectionCommand };
 export type SourcePartySelectionRead = { party: PartyState; roster: PartyRosterEntry[] };
 export type SourcePartySelectionModel = {
@@ -27,7 +27,7 @@ const models = new WeakMap<object,string>();
 export function parseSourcePartySelectionCommand(raw: unknown): SourcePartySelectionCommand {
   checkpointKeys(raw, 'kind,mode');
   const c = raw as SourcePartySelectionCommand;
-  if(c.kind !== 'source-party-selection' || !['one','two','three','opera'].includes(c.mode))
+  if(c.kind !== 'source-party-selection' || !['one','two','three','opera','final'].includes(c.mode))
     throw new Error('Unknown source party selection mode');
   return {kind:c.kind,mode:c.mode};
 }
@@ -36,10 +36,12 @@ export function projectSourcePartySelection(command: SourcePartySelectionCommand
   readFlag: (index:number)=>number): SourcePartySelectionModel {
   command=parseSourcePartySelectionCommand(command);
   checkpointKeys(current,'party,roster'); validatePartyState(current.party,current.roster);
-  const expected=structuredClone(current), members=expected.roster.filter(m=>m.enabled).sort((a,b)=>a.sourceId-b.sourceId);
+  const expected=structuredClone(current), inCorps=new Set(expected.party.slots.flatMap(slot=>slot.flatMap(cell=>cell.id===null?[]:[cell.id]))),
+    members=expected.roster.filter(m=>m.enabled&&(command.mode!=='final'||inCorps.has(m.id))).sort((a,b)=>a.sourceId-b.sourceId);
   if(!members.length) throw new Error('Source party selection has no enabled owned characters');
   let forced: string[];
-  if(command.mode==='opera') {
+  if(command.mode==='final') forced=[];
+  else if(command.mode==='opera') {
     forced=[7,2].map(sourceId=>{
       const m=members.find(m=>m.sourceId===sourceId);
       if(!m) throw new Error('Missing enabled source opera member '+sourceId);
@@ -59,8 +61,8 @@ export function projectSourcePartySelection(command: SourcePartySelectionCommand
       throw new Error('Missing enabled source default member '+id);
     forced=expected.roster.filter(m=>m.enabled&&ids.includes(m.sourceId)).map(m=>m.id);
   }
-  const slotCount:1|2|3=command.mode==='two'?2:command.mode==='three'?3:1;
-  if(members.length<slotCount) throw new Error('Not enough enabled members for every requested party');
+  const slotCount:1|2|3=command.mode==='two'?2:command.mode==='three'||command.mode==='final'?3:1;
+  if(members.length<(command.mode==='final'?1:slotCount)) throw new Error('Not enough enabled members for every requested party');
   const initial=emptyPartyState(); forced.forEach((id,index)=>{initial.slots[0][index]!.id=id;});
   const model={command,expected,slotCount,members:structuredClone(members),forced,initial};
   models.set(model,canonical(model));
@@ -77,9 +79,9 @@ export function previewSourcePartySelection(model: SourcePartySelectionModel, cu
   if(outcome.kind!=='confirm') throw new Error('Unknown source party selection outcome');
   const state: PartyState={selectedSlot:0,slots:structuredClone(outcome.slots)};
   validatePartyState(state,current.roster);
-  const enabled=new Set(current.roster.filter(m=>m.enabled).map(m=>m.id)), seen=new Set<string>();
+  const enabled=new Set(model.members.map(m=>m.id)), seen=new Set<string>();
   state.slots.forEach((slot,group)=>{
-    if(group<model.slotCount&&!slot.some(c=>c.id!==null)) throw new Error('Each requested party needs a member');
+    if(group<(model.command.mode==='final'?1:model.slotCount)&&!slot.some(c=>c.id!==null)) throw new Error('Each requested party needs a member');
     for(const cell of slot) {
       if(cell.row!=='front') throw new Error('Source party selection writes front rows');
       if(cell.id===null) continue;

@@ -154,11 +154,12 @@ export function compileBattleEvent(raw: unknown, source: BattleAISource | null, 
     if (m.mnemonic === "BattleAddFellow" && form([0]) && i[0]! > 0)
       op = { kind: "add-player", sourceId: i[0]! };
     if (m.mnemonic === "SysCall" && form([], [], [0]) && s[0] === "LB:プレイヤーパーティ変更")
-      op = blocked("ChangePlayerParty requires the native waiting-owned-character queue and dead-player replacement provider");
+      op = local(2) ? {kind:"source-final-player-switch"} : blocked("Source final player switch requires ScriptLocalVariable[2]");
     if (m.mnemonic === "SysCall" && form([], [], [0]) && s[0] === "プレイヤーの状況で戦闘終了")
       op = local(0) ? { kind: "players-ended" }
         : blocked("Player battle-end query requires ScriptLocalVariable[0]");
     if (m.mnemonic === "SysCall" && form([], [], [0])) {
+      if(s[0]==='バトルデータ保存：sc_b_0055')op={kind:'capture-source-0055'};
       if(s[0]==='血塗られた盾')op={kind:'cursed-shield-check'};
       if(s[0]==='シャドウ離脱抽選')op=local(3)?{kind:'shadow-secede-lot'}:blocked('Shadow lottery requires ScriptLocalVariable[3]');
       if(s[0]==='バトルでシャドウ離脱')op={kind:'shadow-battle-departure'};

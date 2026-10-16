@@ -96,14 +96,18 @@ test('unfinished normal cancellation discards candidate behavior and creates no 
   enemy.hp=0;b.advance(10);assert.equal(enemy.behavior!.variables[1],0);assert.equal(enemy.queued,false);
   assert.equal(b.enemyAIState(enemy.id)!.continuation,undefined);assert.equal(b.pendingActions.length,0);
 });
-test('reaction and Final Blank remain explicit prepared-parent gates and roll back damage, fees, tickets and RNG',()=>{
+test('reaction and Final Blank keep one private parent calculation and publish damage, fees, tickets and RNG only at Sync',()=>{
   for(const final of [false,true]){
     const c=content();c.enemies[0]!.hp=final?1:5000;c.abilities[10]!.cost=2;
     c.enemies[0]!.ai=syntheticAI([['Nop'],['SyncAI'],['StartTable',[0]],['Act',[13]],['EndTable'],
       [final?'FinalAttackAct':'CounterAct',[13]],['Blank'],['JumpBattleAI',[0]]]);
     const b=new BattleGame(c,97);assert(b.command('a',10,'e1'));b.advance(400);
-    const before=snapshot(b);assert.throws(()=>b.advance(10),/Blank reaction\/Final requires a prepared parent-action/);
-    assert.deepEqual(snapshot(b),before);assert.equal(b.enemies[0]!.hp,final?1:5000);assert.equal(b.players[0]!.mp,8);
+    const random=Reflect.get(b,'randomState'),hp=b.enemies[0]!.hp,mp=b.players[0]!.mp;b.advance(10);
+    assert(b.pendingReactionExecution);assert.equal(b.action!.resolved,false);assert.equal(b.enemies[0]!.hp,hp);assert.equal(b.players[0]!.mp,mp);
+    assert.equal(Reflect.get(b,'randomState'),random);assert.equal(b.pendingActions.length,0);assert.equal(b.finalAttackExecution.length,0);
+    b.advance(10);assert.equal(b.pendingReactionExecution,null);assert.equal(b.action!.resolved,true);
+    assert.equal(b.players[0]!.mp,mp-2);assert.equal(b.pendingActions.length,1);assert.equal(b.pendingActions[0]!.kind,final?'final':'counter');
+    assert.equal(b.finalAttackExecution.length,final?1:0);const after=snapshot(b);b.advance(0);assert.deepEqual(snapshot(b),after);
   }
 });
 test('late enemy entry gets its own initial candidate and retirement cannot resume an old instance',()=>{
@@ -125,15 +129,19 @@ test('retirement and stale program identity cannot publish a pending candidate t
   assert.equal(enemy.behavior!.variables[1],0);
 });
 
-test('incoming actions cannot silently lose reaction or pre-type5 Final while another wake is pending',()=>{
+test('incoming received/Final flags join the original unfinished normal PC without a new wake or lost normal candidate',()=>{
   for(const final of [false,true]){
     const c=content();c.enemies[0]!.hp=final?1:5000;c.abilities[10]!.cost=2;
     c.enemies[0]!.ai=syntheticAI([['Nop'],['SyncAI'],['StartTable',[0]],['Act',[13]],
-      ['Blank'],['JumpBattleAI',[3]],['FinalAttackAct',[13]],['EndTable'],['JumpBattleAI',[0]]]);
-    const b=new BattleGame(c,107);b.enemies[0]!.atb=100;assert(b.command('a',10,'e1'));b.advance(400);
-    assert.equal(b.enemyAIState('e1')!.status,'running');const before=snapshot(b);
-    assert.throws(()=>b.advance(10),final?/pending wake received Final readiness/:/pending wake received an action/);
-    assert.deepEqual(snapshot(b),before);assert.equal(b.enemies[0]!.hp,final?1:5000);assert.equal(b.players[0]!.mp,8);
+      ['Blank'],['Blank'],['EndTable'],['FinalAttackAct',[13]],['CounterAct',[13]],['JumpBattleAI',[0]]]);
+    const b=new BattleGame(c,107);assert(b.command('a',10,'e1'));b.advance(390);b.enemies[0]!.atb=100;b.advance(10);
+    assert.equal(b.enemyAIState('e1')!.status,'running');const before=b.enemyAIState('e1')!;
+    b.advance(10);assert(b.pendingReactionExecution);assert.equal(b.pendingReactionExecution.receivers[0]!.normalWake,true);
+    assert.equal(b.enemies[0]!.hp,final?1:5000);assert.deepEqual(b.enemyAIState('e1'),before);
+    b.advance(10);assert.equal(b.pendingReactionExecution,null);assert.equal(b.action!.resolved,true);assert.equal(b.players[0]!.mp,6);
+    assert.equal(b.enemyAIState('e1')!.status,'waiting');assert.equal(b.enemyAIState('e1')!.receivedAbility,null);
+    assert.equal(b.pendingActions.filter(a=>a.kind==='normal'&&a.actor==='e1').length,final?0:1);
+    assert.equal(b.pendingActions.filter(a=>a.kind===(final?'final':'counter')).length,1);
   }
 });
 test('an actual hit requiring neither reaction nor Final may publish while the original wake remains pending',()=>{

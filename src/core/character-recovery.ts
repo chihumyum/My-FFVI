@@ -29,6 +29,14 @@ export function recoverJoinedCharacter<T extends RecoverableJoinedCharacter>(
   candidate.conditionIds = conditions.updateDying(candidate.hp, candidate.maxHp, candidate.conditionIds);
   candidate.conditionIds = conditions.updateDying(candidate.hp, candidate.maxHp, candidate.conditionIds);
   candidate.mp = member.maxMp;
+  return removeNullCoreConditions(candidate, conditions);
+}
+
+/** Character.RemoveCondition(type0, mc=null): no Current hook/i0 writes.
+ * Reused at the caller's actual order boundary; this does not recover HP/MP. */
+export function removeNullCoreConditions<T extends RecoverableJoinedCharacter>(member: T, conditions: BattleConditions): T {
+  conditions.validateActive(member.conditionIds);
+  const candidate = structuredClone(member);
   const removalSnapshot = [...candidate.conditionIds];
   for (const id of removalSnapshot) {
     // duplicationRmove=true compares Condition.Id, not its type.

@@ -11,6 +11,8 @@ type Route = "shared" | "entry" | "stable" | "local";
  * `entry` hosts are rebuilt by World for a destination; `stable` ports already
  * belong to the session; `local` ports/seeds belong to its actual draft/map. */
 export const FIELD_RUNTIME_PORT_ROUTES = Object.freeze({
+  mapTransforms: "shared",
+  mapTransformsSeed: "local",
   fieldLayerScrolling: "shared",
   fieldLayerScrollingSeed: "local",
   sourceFieldUi: "shared",
@@ -67,6 +69,7 @@ export const FIELD_RUNTIME_PORT_ROUTES = Object.freeze({
   shop: "local",
   ownedConditions: "local",
   recovery: "local",
+  sourceBattleHandoffs: "local",
   scriptRandom: "local",
   inventory: "local",
   messageNames: "local",

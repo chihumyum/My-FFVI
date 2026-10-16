@@ -1,12 +1,14 @@
 import { parseFieldUiCommand } from "./field-ui.js";
+import { parseFieldMapTransform } from "./field-map-transforms.js";
 import { parseFieldLayerCommand } from "./field-layer-scrolling.js";
 import {validateFieldHpChangeCommand} from './field-hp-changes.js';
 import { fieldMessageNameReferences, fieldMessageUsesFee } from "./field-message-template.js";
 import type { FieldContent, Op, Site } from "../field/types.js";
 
 export const fieldProviders = Object.freeze([
+  "mapTransforms",
   "fieldLayerScrolling",
-  "sourceFieldUi", "sourceLocation", "skyboxPresentation", "screenPresentation", "mobColorFilter", "birdViewActors", "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "ownedConditions", "party", "roster", "rosterEquipment", "treasure", "transportation", "vehicleLifecycle", "puppetRoster",
+  "sourceFieldUi", "sourceLocation", "skyboxPresentation", "screenPresentation", "mobColorFilter", "birdViewActors", "puppetRoutes", "messageValues", "scriptRandom", "inventory", "messageNames", "recovery", "sourceBattleHandoffs", "ownedConditions", "party", "roster", "rosterEquipment", "treasure", "transportation", "vehicleLifecycle", "puppetRoster",
   "partyActors", "audioReadiness", "soundPresentation", "actorControl", "actorMotion", "cameraMotion", "effectMotion",
   "sourceCharacterNaming", "rtsParty", "sourcePartySelection", "sourceMessageSequence", "eventSaveCompletion", "battleHandoff", "sourceEncounter", "sourceBossEntry", "sourceBattleResult", "assignedNpcRoutes", "sourceLeader", "scriptShop", "contentInvalidations", "storyTimer", "screenEffects", "cameraShake", "viewChange", "worldAutoTasks", "worldAutoMove", "sourceAutoSaveSync",
 ] as const);
@@ -46,6 +48,7 @@ export type FieldContentRequirements = {
 };
 
 const codes: Record<FieldCapability, string> = {
+  mapTransforms: "FIELD_MAP_TRANSFORMS_PROVIDER",
   fieldLayerScrolling: "FIELD_LAYER_SCROLLING_PROVIDER",
   sourceFieldUi: "FIELD_SOURCE_FIELD_UI_PROVIDER",
   sourceLocation: "FIELD_SOURCE_LOCATION_PROVIDER",
@@ -56,6 +59,7 @@ const codes: Record<FieldCapability, string> = {
   puppetRoutes: "FIELD_PUPPET_ROUTE_PROVIDER",
   messageValues: "FIELD_MESSAGE_VALUES_PROVIDER",
   scriptRandom: "FIELD_SCRIPT_RANDOM_PROVIDER",
+  sourceBattleHandoffs: "FIELD_SOURCE_BATTLE_HANDOFFS_PROVIDER",
   inventory: "FIELD_INVENTORY_PROVIDER", recovery: "FIELD_RECOVERY_PROVIDER",
   messageNames: "FIELD_MESSAGE_NAMES_PROVIDER", sourceMessageSequence: "FIELD_SOURCE_MESSAGE_SEQUENCE_PROVIDER",
   ownedConditions: "FIELD_OWNED_CONDITIONS_PROVIDER", party: "FIELD_PARTY_PROVIDER",
@@ -165,6 +169,10 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     if (conditionVisual) add("conditionVisual", "Unknown or unsupported owned condition-visual context", "refresh");
   };
   switch (op.kind) {
+    case "field-map-transform":
+      parseFieldMapTransform(op.command);add("mapTransforms","Source transform commands require the explicit current-map Web projection and real source water/actor consumers");
+      if(op.command.kind==="orient")add("actorControl","Orient requires the actual Puppet entity and target identity/transform owner");
+      break;
     case "field-layer-scrolling":
       parseFieldLayerCommand(op.command);
       add("fieldLayerScrolling", "Source layer and scenery commands require the current source-bound map and explicit flat Web owner");
@@ -211,6 +219,7 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       if (command.kind === "recover-hp" && booleanField(command, "allowUnableFight")) refresh(true);
       break;
     }
+    case "source-battle-handoff": add("sourceBattleHandoffs", "Actual source battle handoff owned facts/provider is unavailable"); refresh(true); break;
     case "owned-condition": add("ownedConditions", "Field owned condition state is unavailable"); refresh(true); break;
     case "party":
       add("party", "Field party state is unavailable");
@@ -220,6 +229,10 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
       add("rtsParty","Source RTS permanent Corps/actor transaction host is unavailable");
       break;
     }
+    case 'multi-corps':
+      add('rtsParty','Source multi-Corps permanent owned/native instance transaction host is unavailable');
+      if(op.command==='dream-separate')refresh(false);
+      break;
     case "roster-group": {
       add("roster", "Source grouped roster state is unavailable");
       refresh(false);
@@ -300,7 +313,10 @@ export function fieldInstructionRequirements(op: Op): FieldRequirement[] {
     case "field-puppet-route": add("puppetRoutes", "Puppet Route requires its bound actor and explicit Web pathfinding policy"); break;
     case "assign-npc-route": add("assignedNpcRoutes", "Assigned NPC route requires an explicit source-bound Web controller"); break;
     case 'source-character-naming':add('sourceCharacterNaming','Source character naming requires an actual staged owned/name owner and an explicit Web input policy');break;
-    case 'source-party-selection': add('sourcePartySelection','Source party selection requires its explicit Web UI policy and the existing owned/actor publication owners');break;
+    case 'source-party-selection':
+      add('sourcePartySelection','Source party selection requires its explicit Web UI policy and the existing owned/actor publication owners');
+      if(commandOf(op).mode==='final') add('sourceBattleHandoffs','Source final menu requires the existing Current waiting-owned handoff owner');
+      break;
     case 'source-battle-result': add('sourceBattleResult','Source result requires an actual committed terminal fact and existing ScriptLocal frame');break;
     case 'source-boss-encounter': add('sourceBossEntry','Boss entry requires its explicit handoff policy; focus parameters do not place actors');add('battleHandoff','Battle preparation/return belongs to the current Session','deferred');break;
     case "source-encounter":

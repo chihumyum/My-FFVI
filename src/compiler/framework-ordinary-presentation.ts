@@ -40,6 +40,7 @@ export function compileFrameworkOrdinaryPresentation(input: {
   tilemap: FrameworkFieldPresentationInput["tilemap"];
   mapPackage: FrameworkFieldPresentationInput["mapPackage"];
   renderHost: FrameworkFieldPresentationInput["renderHost"];
+  water?:FrameworkFieldPresentationInput["water"];
 }): FrameworkFieldPresentation {
   const { map } = input; verify(map);
   const party = map.partyEntry, camera = map.cameraHost, geometry = map.map;
@@ -51,7 +52,7 @@ export function compileFrameworkOrdinaryPresentation(input: {
       canonical(camera.mapRange) !== canonical(party.mapRange))
     throw new Error("Ordinary source map geometry, Foot range or camera is unavailable or mismatched");
   const presentation = compileFrameworkFieldPresentation({ policy: FRAMEWORK_ORDINARY_PRESENTATION,
-    sources: input.sources, tilemap: input.tilemap, mapPackage: input.mapPackage, renderHost: input.renderHost,
+    ...(input.water?{water:input.water}:{}),sources: input.sources, tilemap: input.tilemap, mapPackage: input.mapPackage, renderHost: input.renderHost,
     mapSize: { width: geometry.width, height: geometry.height }, mapRange: party.mapRange });
   const candidate = structuredClone(map);
   candidate.developmentProfile = { kind: "framework-development-v1", policy: "omit-anonymous-environment-particles-v1",
@@ -65,7 +66,7 @@ export function compileFrameworkOrdinaryPresentation(input: {
  * ordinary family, including all failed assessments. No inferred map list or
  * successful recipe subset is an input. */
 export function assessFrameworkOrdinaryWorld(corpus: CorpusInput, world: WorldCatalog,
-  maps: readonly WorldMapContent[], renderHost: FrameworkFieldPresentationInput["renderHost"], reason: string): FrameworkOrdinaryAssessment[] {
+  maps: readonly WorldMapContent[], renderHost: FrameworkFieldPresentationInput["renderHost"], reason: string,waterCatalog?:import("./field-map-transforms.js").FieldWaterWorldCatalog): FrameworkOrdinaryAssessment[] {
   verify(world);
   if (world.developmentProfile || typeof reason !== "string" || !reason.trim() ||
       world.sourceSetHash !== corpus.sourceSetHash || hash(corpus.manifest.sources)!==corpus.sourceSetHash ||
@@ -92,7 +93,7 @@ export function assessFrameworkOrdinaryWorld(corpus: CorpusInput, world: WorldCa
       const tilemap = assets.get(matches[0]!.tilemap ?? ""), mapPackage = assets.get(matches[0]!.packageId ?? "");
       if (!tilemap || !mapPackage || typeof tilemap.source.objectId!=="string" || typeof mapPackage.source.objectId!=="string")
         throw new Error("Ordinary source tilemap/package asset unavailable");
-      presentation = compileFrameworkOrdinaryPresentation({map,sources,
+      presentation = compileFrameworkOrdinaryPresentation({map,sources,...(waterCatalog?.maps[String(map.mapId)]?.layers.length?{water:waterCatalog.maps[String(map.mapId)]}:{}),
         tilemap:{data:tilemap.data,source:{...tilemap.source,objectId:tilemap.source.objectId}},
         mapPackage:{data:mapPackage.data,source:{...mapPackage.source,objectId:mapPackage.source.objectId}},renderHost});
     } catch (error) { blockers.push(String(error instanceof Error ? error.message : error)); }

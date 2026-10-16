@@ -9,6 +9,25 @@ const sourceKeys=['file','assetPath','objectId','serializedFile','sha256'];
 const sourceOf=source=>Object.fromEntries(sourceKeys.map(key=>[key,source[key]]));
 const familyKey=raw=>raw.mnemonic==='SysCall'?'SysCall:'+(raw.operands?.sValues?.[0]||'<unresolved-selector>'):String(raw.mnemonic);
 
+// The scenario corpus intentionally omits system_zhc. Use the same separately
+// verified message object as compileWorld, without modifying the corpus digest.
+export function sourceMigrationFieldContext(sourceInputs,systemMessages,api=sourceInputs.api){
+  const {snapshot,sourceDigest,inventory}=sourceInputs,{hash,canonical}=api;
+  assert(/^[a-f0-9]{64}$/.test(inventory?.parentSourceSetHash),'Missing Field message parent identity');
+  assert(systemMessages?.source&&systemMessages.messages,'Complete Field system message context is required');
+  const {source,messages}=systemMessages;
+  assert(typeof source.assetPath==='string'&&source.assetPath.endsWith('/system_zhc.txt')&&
+    typeof source.objectId==='string'&&/^-?\d+$/.test(source.objectId)&&/^[a-f0-9]{64}$/.test(source.sourceSetHash),'Invalid system message object identity');
+  const files=snapshot.manifest.sources.filter(f=>f.file===source.file||f.file.endsWith('/'+source.file));
+  assert.equal(files.length,1,'Missing or ambiguous original system message source');
+  assert.equal(files[0].sha256,source.sha256,'Foreign system message source');
+  assert(Object.keys(messages).length>0&&Object.values(messages).every(value=>typeof value==='string'),'Incomplete system message table');
+  if(Object.hasOwn(snapshot.messages,'system_zhc'))assert.equal(canonical(snapshot.messages.system_zhc),canonical(messages),'Conflicting corpus system message table');
+  return{kind:'source-migration-field-context-v1',parentSourceSetHash:inventory.parentSourceSetHash,
+    sourceSetHash:snapshot.sourceSetHash,sourceDigest,systemMessageSource:structuredClone(source),systemMessageHash:hash(messages),
+    messages:{...structuredClone(snapshot.messages),system_zhc:structuredClone(messages)}};
+}
+
 export function sourceCommonCapabilityAssignments(registry,{sourceSetHash,sourceDigest}){
   assert.equal(registry.kind,'source-common-capability-registry-v1');
   assert.equal(registry.sourceSetHash,sourceSetHash);assert.equal(registry.sourceDigest,sourceDigest);
@@ -23,8 +42,11 @@ export function sourceCommonCapabilityAssignments(registry,{sourceSetHash,source
 }
 
 export function normalizeSourceMigrationInput({sourceInputs,api,registry,runtimeSha256,
-  worldAnalysis=null,abilityContent=null,battleDirectoryReport=null,battleAudit=null,parallelism=3}){
+  fieldContext,worldAnalysis=null,abilityContent=null,battleDirectoryReport=null,battleAudit=null,parallelism=3}){
   const {scripts,analysis,snapshot,sourceDigest}=sourceInputs,{hash,canonical}=api;
+  assert(fieldContext?.kind==='source-migration-field-context-v1','Complete Field decode context is required');
+  const expectedContext=sourceMigrationFieldContext(sourceInputs,{source:fieldContext.systemMessageSource,messages:fieldContext.messages?.system_zhc},api);
+  assert.equal(canonical(fieldContext),canonical(expectedContext),'Field decode context binding changed');
   const assignments=sourceCommonCapabilityAssignments(registry,{sourceSetHash:snapshot.sourceSetHash,sourceDigest});
   const reports=new Map(analysis.scripts.map(row=>[row.id,row])),battle=new Map(sourceInputs.programs.map(row=>[row.id,row]));
   assert.equal(new Set(scripts.map(p=>p.id)).size,scripts.length);
@@ -54,6 +76,8 @@ export function normalizeSourceMigrationInput({sourceInputs,api,registry,runtime
   function dependencyGap(scopeId,record,{code,reason,owner='unclassified',programIds=[],mapIds=[]}){
     return gap({code,reason,owner},{kind:'dependency',scopeId,mapIds:numbers(mapIds),record:structuredClone(record)},programIds);
   }
+  const {messages:fieldMessages,...fieldMessageBinding}=fieldContext;
+  observation('field-decode-context',[],[],fieldMessageBinding);
   const emptyMessages=api.createFieldEmptyMessageLookup(sourceInputs.input);
   for(const p of programs){
     const original=rawPrograms.get(p.id),ops=original.data.Mnemonics;
@@ -65,7 +89,7 @@ export function normalizeSourceMigrationInput({sourceInputs,api,registry,runtime
       try{api.decodeScriptLocals(original.data);}catch(error){dependencyGap('program-locals:'+p.id,{source:p.source,rawHash:p.rawHash,reason:error.message},
         {code:'field-script-local-contract',reason:'Unclosed original Field local-bank encoding',owner:'map-event-and-travel',programIds:[p.id],mapIds:p.mapIds});}
       for(const[index,raw]of ops.entries()){
-        let decoded;try{decoded=api.decodeFieldOp(raw,{script:p.id,index,source:{...p.source,pointer:'/Mnemonics/'+index}},snapshot.messages,snapshot.tables,{nextMnemonic:ops[index+1]?.mnemonic??null,emptyMessages});}
+        let decoded;try{decoded=api.decodeFieldOp(raw,{script:p.id,index,source:{...p.source,pointer:'/Mnemonics/'+index}},fieldMessages,snapshot.tables,{nextMnemonic:ops[index+1]?.mnemonic??null,emptyMessages});}
         catch(error){decoded={kind:'blocked',reason:error.message};}
         if(decoded.kind==='blocked')instructionGap(p,index,raw,decoded.reason,'field');
       }

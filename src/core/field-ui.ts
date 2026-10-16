@@ -68,13 +68,15 @@ export class FieldUiState {
       throw new Error("Source Field UI checkpoint identity mismatch");
     checkpointInteger(raw.clockMs, 0, Number.MAX_SAFE_INTEGER);
     if (!Array.isArray(raw.closeTimers)) throw new Error("Invalid source map title callback queue");
-    for (const at of raw.closeTimers) checkpointInteger(at, raw.clockMs + 1, Number.MAX_SAFE_INTEGER);
+    for (const at of raw.closeTimers) checkpointInteger(at, raw.clockMs + 1, Math.min(raw.clockMs + 2000, Number.MAX_SAFE_INTEGER));
     if (raw.closeTimers.some((at, index) => index > 0 && at < raw.closeTimers[index - 1]!))
       throw new Error("Source map title callbacks reordered");
     if (raw.title !== null) {
       checkpointKeys(raw.title, "area,title,shownAt");
       parseFieldUiCommand({ kind: "title", location: { areaId: "", locationId: "" }, area: raw.title.area, title: raw.title.title });
       checkpointInteger(raw.title.shownAt, Math.max(0, raw.clockMs - 1999), raw.clockMs);
+      if (raw.closeTimers.at(-1) !== raw.title.shownAt + 2000)
+        throw new Error("Source map title is missing its original close callback");
     }
     if (stable && (raw.title !== null || raw.closeTimers.length)) throw new Error("Active map title cannot be checkpointed");
     const next = new FieldUiState(sourceSetHash); next.value = structuredClone(raw); return next;

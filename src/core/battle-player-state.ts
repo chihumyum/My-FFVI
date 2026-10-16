@@ -210,3 +210,28 @@ export function projectPlayerGroup(raw: BattlePlayerState, requested: readonly B
 export function firstEnteredOwnerIds(raw: BattlePlayerState): string[] {
   return [...new Set(parseBattlePlayerState(raw).entries.map(entry => entry.ownedId))];
 }
+
+/** Partial native final-wave retirement keeps surviving actual instances,
+ * their saved cells/rows, and all prior participant history. */
+export function projectPlayerRetirement(raw: BattlePlayerState, instanceIds: readonly string[]): BattlePlayerProjection {
+  const state = parseBattlePlayerState(raw);
+  if (new Set(instanceIds).size !== instanceIds.length) throw Error('Repeated retiring player instance');
+  for (const id of instanceIds) {
+    const entry = state.entries.find(entry => entry.instanceId === id && !entry.removed);
+    if (!entry || state.slots[entry.slot]!.instanceId !== id) throw Error('Stale final-wave player instance');
+    entry.removed = true; state.slots[entry.slot]!.instanceId = null;
+  }
+  return { state: parseBattlePlayerState(state), removedIds: [...instanceIds], joins: [] };
+}
+/** A pending native Corps slot is explicit. Do not accidentally fill another
+ * earlier empty slot, move a survivor, or retire a whole player group. */
+export function projectPlayerJoinAt(raw: BattlePlayerState, request: BattlePlayerOwner, slot: number): BattlePlayerProjection {
+  const state = parseBattlePlayerState(raw), candidate = owner(request); integer(slot, 0, 3);
+  admitOwners(state, [candidate]);
+  if (state.slots[slot]!.instanceId !== null || state.entries.some(entry => !entry.removed && entry.ownedId === candidate.ownedId))
+    throw Error('Stale final-wave target slot or already active owner');
+  const instanceId = reserveInstances(state, 1)[0]!, row = state.slots[slot]!.row;
+  const join = { instanceId, ...candidate, slot, row };
+  state.entries.push({ ...join, removed: false }); state.nextGeneration++; state.slots[slot] = { instanceId, row };
+  return { state: parseBattlePlayerState(state), removedIds: [], joins: [join] };
+}

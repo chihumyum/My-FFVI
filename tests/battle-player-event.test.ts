@@ -76,7 +76,7 @@ test("the native no-argument player-party selector cannot become an explicitly c
   for (const group of [0, 1, 2]) {
     const compiled = compileBattleEvent(raw([["SysCall", [group], [], ["LB:プレイヤーパーティ変更"]], ["Exit"]]), source);
     assert.equal(compiled.instructions[0]!.op.kind, "blocked");
-    if (group === 0) assert.match((compiled.instructions[0]!.op as { reason: string }).reason, /waiting-owned-character queue/);
+    if (group === 0) assert.match((compiled.instructions[0]!.op as { reason: string }).reason, /ScriptLocalVariable\[2\]/);
     assert.throws(() => assertBattleEventExecutable(compiled));
   }
   for (const selector of ["ChangePlayerParty", "LB:プレイヤーパーティ変更1", "change-player-group"]) {

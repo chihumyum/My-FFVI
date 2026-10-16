@@ -202,6 +202,7 @@ export function worldFieldContent(
       ...(actorEntry ? { partyActorCamera: actorEntry.plan.checkpoint.context.camera } : {}),
     },
     scripts: target.scripts,
+    ...(target.partyEntry ? {partyEntry:target.partyEntry} : {}),
     ...(target.reservedScriptBindings ? { reservedScriptBindings: target.reservedScriptBindings } : {}),
     ...(target.walkEncounters ? { walkEncounters: structuredClone(target.walkEncounters) } : {}),
     ...(target.developmentProfile ? { developmentProfile: structuredClone(target.developmentProfile) } : {}),
@@ -276,6 +277,7 @@ type Ownership = {
   presentation: string;
   sourceUi: string;
   fieldLayers: string; candidateFieldLayers: string;
+  mapTransforms:string; candidateMapTransforms:string;
   candidateSourceUi: string;
   fade: string;
   camera: string;
@@ -432,7 +434,7 @@ export class WorldSession {
       throw new Error("World checkpoint source/version mismatch");
     if ((snapshot.kind === "event-world-v1" || snapshot.kind === "event-world-v2" ||snapshot.kind==="event-world-v3") !==
         (snapshot.field.kind === "event-field-v1" || snapshot.field.kind === "event-field-v2" ||
-          snapshot.field.kind === "event-field-v3" || snapshot.field.kind === "event-field-v4" || snapshot.field.kind === "event-field-v5" || snapshot.field.kind === "event-field-v6" || snapshot.field.kind === "event-field-v7" || snapshot.field.kind === "event-field-v8" || snapshot.field.kind === "event-field-v9" || snapshot.field.kind === "event-field-v10"))
+          snapshot.field.kind === "event-field-v3" || snapshot.field.kind === "event-field-v4" || snapshot.field.kind === "event-field-v5" || snapshot.field.kind === "event-field-v6" || snapshot.field.kind === "event-field-v7" || snapshot.field.kind === "event-field-v8" || snapshot.field.kind === "event-field-v9" || snapshot.field.kind === "event-field-v11" || snapshot.field.kind === "event-field-v10"))
       throw new Error("World and field continuation formats disagree");
     let content = this.initial;
     const loc = snapshot.location;
@@ -555,7 +557,7 @@ export class WorldSession {
     this.effectMap = effectMap;
     this.effectOwner = restoredOwner;
     this.nextEffectScope = nextScope;
-    this.current.retireCharacterNaming();this.current.retirePuppetReplacements();this.current.retireMobControls();this.current.retireSkyboxPresentation();this.current.retireWorldAutoTasks();this.current.retireVehicleLifecycle();this.current.retireSourceNonEncounterAreas();this.current.retireSourceFieldUi();this.current.retireFieldLayerScrolling();
+    this.current.retireCharacterNaming();this.current.retirePuppetReplacements();this.current.retireMobControls();this.current.retireSkyboxPresentation();this.current.retireWorldAutoTasks();this.current.retireVehicleLifecycle();this.current.retireSourceNonEncounterAreas();this.current.retireSourceFieldUi();this.current.retireFieldLayerScrolling();this.current.retireMapTransforms();
     this.current = next;this.rtsParking=rts?structuredClone(snapshot.rts!):null;
     this.location = structuredClone(loc);
     this.catalogHash = loc?.catalogHash ?? this.sourceOrigin?.catalogHash ?? null;
@@ -606,6 +608,7 @@ export class WorldSession {
     const story = from.storyRuntimeSnapshot, storyOrigin = structuredClone(from.storyTimerOrigin);
     const sourceUi = from.sourceFieldUiSnapshot;
     const fieldLayers = from.fieldLayerSnapshot;
+    const mapTransforms = from.mapTransformSnapshot;
     const fromStory = canonical(story), fromStoryOrigin = canonical(storyOrigin ?? null);
     const effectBlocker = from.effectMapHandoffBlocker;
     if (effectBlocker) throw new Error(effectBlocker);
@@ -816,7 +819,7 @@ export class WorldSession {
         se: canonical(se),
         actors: fromActors,
         presentation: canonical(presentation),
-        sourceUi: canonical(sourceUi), candidateSourceUi: canonical(field.sourceFieldUiSnapshot), fieldLayers: canonical(fieldLayers), candidateFieldLayers: canonical(field.fieldLayerSnapshot),
+        sourceUi: canonical(sourceUi), candidateSourceUi: canonical(field.sourceFieldUiSnapshot), mapTransforms:canonical(mapTransforms),candidateMapTransforms:canonical(field.mapTransformSnapshot),fieldLayers: canonical(fieldLayers), candidateFieldLayers: canonical(field.fieldLayerSnapshot),
         fade: fromFade,
         camera: fromCamera,
         worldAutoTasks:canonical(from.worldAutoTaskSnapshot),
@@ -844,7 +847,7 @@ export class WorldSession {
           map: effectMap!, fieldState: this.effectFieldState(field) } } : {}),
       });
       return prepared;
-    } catch (error) { destinationField?.retireCharacterNaming();destinationField?.retirePuppetReplacements();destinationField?.retireMobControls();destinationField?.retireSkyboxPresentation();destinationField?.retireWorldAutoTasks();destinationField?.retireVehicleLifecycle();destinationField?.retireSourceNonEncounterAreas();destinationField?.retireSourceFieldUi();destinationField?.retireFieldLayerScrolling();effectCandidate?.discard(); throw error; }
+    } catch (error) { destinationField?.retireCharacterNaming();destinationField?.retirePuppetReplacements();destinationField?.retireMobControls();destinationField?.retireSkyboxPresentation();destinationField?.retireWorldAutoTasks();destinationField?.retireVehicleLifecycle();destinationField?.retireSourceNonEncounterAreas();destinationField?.retireSourceFieldUi();destinationField?.retireFieldLayerScrolling();destinationField?.retireMapTransforms();effectCandidate?.discard(); throw error; }
   }
   commit(value: PreparedMap): boolean {
     if (this.commitInProgress) return false;
@@ -858,7 +861,7 @@ export class WorldSession {
     this.commitInProgress = active;
     try { return this.commitPrepared(value, ownership, active); }
     catch (error) { if (!active.started) ownership.effects?.candidate.discard(); throw error; }
-    finally { if(this.current!==value.field){value.field.retireCharacterNaming();value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();value.field.retireVehicleLifecycle();value.field.retireSourceNonEncounterAreas();value.field.retireSourceFieldUi();value.field.retireFieldLayerScrolling();}this.commitInProgress = null; }
+    finally { if(this.current!==value.field){value.field.retireCharacterNaming();value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();value.field.retireVehicleLifecycle();value.field.retireSourceNonEncounterAreas();value.field.retireSourceFieldUi();value.field.retireFieldLayerScrolling();value.field.retireMapTransforms();}this.commitInProgress = null; }
   }
   private commitPrepared(value: PreparedMap, ownership: Ownership, active: MapCommit): boolean {
     if (!this.isCurrent(ownership, value) || active.cancelled) {
@@ -913,7 +916,7 @@ export class WorldSession {
       request: structuredClone(value.request.request),
       site: value.request.site,
     });
-    ownership.from.retireCharacterNaming();ownership.from.retirePuppetReplacements();ownership.from.retireMobControls();ownership.from.retireSkyboxPresentation();ownership.from.retireWorldAutoTasks();ownership.from.retireVehicleLifecycle();ownership.from.retireSourceNonEncounterAreas();ownership.from.retireSourceFieldUi();ownership.from.retireFieldLayerScrolling();
+    ownership.from.retireCharacterNaming();ownership.from.retirePuppetReplacements();ownership.from.retireMobControls();ownership.from.retireSkyboxPresentation();ownership.from.retireWorldAutoTasks();ownership.from.retireVehicleLifecycle();ownership.from.retireSourceNonEncounterAreas();ownership.from.retireSourceFieldUi();ownership.from.retireFieldLayerScrolling();ownership.from.retireMapTransforms();
     this.current = value.field;
     value.field.publishWorldAutoTasks();
     this.catalogHash = ownership.catalogHash;
@@ -938,7 +941,7 @@ export class WorldSession {
     }
     const ownership = this.prepared.get(value);
     this.prepared.delete(value);
-    if(ownership){value.field.retireCharacterNaming();value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();value.field.retireVehicleLifecycle();value.field.retireSourceNonEncounterAreas();value.field.retireSourceFieldUi();value.field.retireFieldLayerScrolling();}
+    if(ownership){value.field.retireCharacterNaming();value.field.retirePuppetReplacements();value.field.retireMobControls();value.field.retireSkyboxPresentation();value.field.retireWorldAutoTasks();value.field.retireVehicleLifecycle();value.field.retireSourceNonEncounterAreas();value.field.retireSourceFieldUi();value.field.retireFieldLayerScrolling();value.field.retireMapTransforms();}
     ownership?.effects?.candidate.discard();
   }
   private isCurrent(ownership: Ownership, value: PreparedMap): boolean {
@@ -951,7 +954,7 @@ export class WorldSession {
       ownership.se === canonical(this.current.se.snapshot()) &&
       ownership.actors === this.actorState(this.current) &&
       ownership.presentation === canonical(this.current.sourcePresentationContext) &&
-      ownership.fieldLayers === canonical(this.current.fieldLayerSnapshot) && ownership.candidateFieldLayers === canonical(value.field.fieldLayerSnapshot) && ownership.sourceUi === canonical(this.current.sourceFieldUiSnapshot) && ownership.candidateSourceUi === canonical(value.field.sourceFieldUiSnapshot) &&
+      ownership.mapTransforms === canonical(this.current.mapTransformSnapshot) && ownership.candidateMapTransforms === canonical(value.field.mapTransformSnapshot) && ownership.fieldLayers === canonical(this.current.fieldLayerSnapshot) && ownership.candidateFieldLayers === canonical(value.field.fieldLayerSnapshot) && ownership.sourceUi === canonical(this.current.sourceFieldUiSnapshot) && ownership.candidateSourceUi === canonical(value.field.sourceFieldUiSnapshot) &&
       ownership.fade === canonical(this.current.fader.snapshot()) &&
       ownership.camera === canonical(this.current.cameraSnapshot) &&
       ownership.worldAutoTasks === canonical(this.current.worldAutoTaskSnapshot) &&

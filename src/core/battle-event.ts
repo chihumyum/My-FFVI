@@ -27,7 +27,7 @@ export type BattleEventOp =
   | BattleEventMessageOp
   | { kind: "ui-visibility"; visible: boolean }
   | { kind: "stop-auto" | "force-return" | "force-save-return" | "remove-all-actions" }
-  | { kind: "cursed-shield-check" | "shadow-secede-lot" }
+  | { kind: "cursed-shield-check" | "shadow-secede-lot" | "capture-source-0055" }
   | { kind:"gau-replace" } | { kind:"gau-appearance" } | { kind:"gau-join" }
   | { kind: "set-gau-mode" | "reserve-gau-first" | "shadow-battle-departure" | "gau-leap" }
   | { kind: "get-enemy-mode"; uniqueId:number; expected:number }
@@ -42,6 +42,7 @@ export type BattleEventOp =
   | { kind: "add-enemy"; monsterId: number; uniqueId: number }
   | { kind: "add-player"; sourceId: number }
   /** Explicit Web selection. Native ChangePlayerParty has no group operand. */
+  | { kind: "source-final-player-switch" }
   | { kind: "change-player-group"; group: 0 | 1 | 2 }
   | { kind: "change-enemy-party"; partyId: number; hidden: boolean }
   | { kind: "end-enabled" | "pause" | "interactive" | "enemy-no-act"; enabled: boolean }
@@ -66,7 +67,7 @@ export type BattleEventProgram = {
 export type BattleEventWait =
   | { kind: "message-prepare"; clock: number }
   | { kind: "message"; clock: number; cursor: SourceMessageTaskCursor }
-  | { kind: "blank" | "start" | "action" | "script-action" | "enemy-party-entry" | "player-group-entry" | "battle-effect" | "global-fade" | "gau-replace" | "gau-appearance"; clock: number }
+  | { kind: "blank" | "start" | "action" | "script-action" | "enemy-party-entry" | "player-group-entry" | "source-final-player-entry" | "battle-effect" | "global-fade" | "gau-replace" | "gau-appearance"; clock: number }
   | { kind: "time"; clock: number; entryTimeSeconds: number }
   | { kind: "enemy-entry" | "player-entry"; clock: number; previousNoAct: boolean };
 export type BattleEventState = {
@@ -98,6 +99,7 @@ export type BattleEventContext = {
   /** Native AddFellow waits on IsEndAct, separately from AddEnemy loading. */
   playerEntry?: { noAct: boolean; completed: boolean };
   playerGroupEntry?: { completed: boolean };
+  sourceFinalPlayerEntry?: { completed: boolean };
   messageStatus?: SourceMessageSequenceStatus;
   battleEffectsFinished?:boolean;
   globalFadeStatus?: {in:boolean;out:boolean};
@@ -111,7 +113,7 @@ export type BattleEventRequest =
   | {kind:"global-fade-complete";pc:number}
   | { kind: "ui-visibility"; pc: number; visible: boolean }
   | { kind: "stop-auto" | "force-return" | "force-save-return" | "remove-all-actions"; pc: number }
-  | { kind: "cursed-shield-check" | "shadow-secede-lot"; pc:number }
+  | { kind: "cursed-shield-check" | "shadow-secede-lot" | "capture-source-0055"; pc:number }
   | { kind: "gau-replace" | "gau-appearance" | "gau-join"; pc:number }
   | { kind: "set-gau-mode" | "reserve-gau-first" | "shadow-battle-departure" | "gau-leap"; pc:number }
   | (Extract<BattleEventEffectOp,{kind:"play-battle-effect"}> & {pc:number})
@@ -122,6 +124,7 @@ export type BattleEventRequest =
   | { kind: "write-variable"; pc: number; ref: VariableRef; value: number }
   | { kind: "add-enemy"; pc: number; monsterId: number; uniqueId: number }
   | { kind: "add-player"; pc: number; sourceId: number }
+  | { kind: "source-final-player-switch"; pc: number; phase: number | null }
   | { kind: "change-player-group"; pc: number; group: 0 | 1 | 2 }
   | { kind: "change-enemy-party"; pc: number; partyId: number; hidden: boolean }
   | { kind: "end-enabled" | "pause" | "interactive" | "enemy-no-act"; pc: number; enabled: boolean };
@@ -235,7 +238,8 @@ function parseOp(raw: unknown): BattleEventOp {
       checkpointKeys(value, "kind,visible");
       return { kind, visible: boolean(value.visible) };
     case "stop-auto": case "force-return": case "force-save-return": case "remove-all-actions":
-    case "cursed-shield-check": case "shadow-secede-lot":
+    case "source-final-player-switch":
+    case "cursed-shield-check": case "shadow-secede-lot": case "capture-source-0055":
     case "gau-replace": case "gau-appearance": case "gau-join":
     case "set-gau-mode": case "reserve-gau-first": case "shadow-battle-departure": case "gau-leap":
       checkpointKeys(value, "kind");
@@ -450,7 +454,7 @@ function parseWait(raw: unknown): BattleEventWait | null {
   if (kind === "message") {
     checkpointKeys(value, "kind,clock,cursor"); return { kind, clock: clockNumber(value.clock), cursor: parseMessageCursor(value.cursor) };
   }
-  if (kind === "blank" || kind === "start" || kind === "action" || kind === "script-action" || kind === "enemy-party-entry" || kind === "player-group-entry" || kind === "battle-effect" || kind === "global-fade" || kind === "gau-replace" || kind === "gau-appearance") {
+  if (kind === "blank" || kind === "start" || kind === "action" || kind === "script-action" || kind === "enemy-party-entry" || kind === "player-group-entry" || kind === "source-final-player-entry" || kind === "battle-effect" || kind === "global-fade" || kind === "gau-replace" || kind === "gau-appearance") {
     checkpointKeys(value, "kind,clock");
     return { kind, clock: clockNumber(value.clock) };
   }
@@ -489,6 +493,7 @@ function parseContext(raw: unknown): BattleEventContext {
     (Object.hasOwn(fields, "enemyPartyEntry") ? ",enemyPartyEntry" : "") +
     (Object.hasOwn(fields, "playerEntry") ? ",playerEntry" : "") +
     (Object.hasOwn(fields, "playerGroupEntry") ? ",playerGroupEntry" : "") +
+    (Object.hasOwn(fields, "sourceFinalPlayerEntry") ? ",sourceFinalPlayerEntry" : "") +
     (Object.hasOwn(fields, "messageStatus") ? ",messageStatus" : "") +
     (Object.hasOwn(fields,"battleEffectsFinished") ? ",battleEffectsFinished" : "") +
     (Object.hasOwn(fields,"globalFadeStatus") ? ",globalFadeStatus" : "") +
@@ -537,6 +542,9 @@ function parseContext(raw: unknown): BattleEventContext {
     ...(enemyPartyEntry ? { enemyPartyEntry } : {}),
     ...(playerEntry ? { playerEntry } : {}),
     ...(playerGroupEntry ? { playerGroupEntry } : {}),
+    ...(Object.hasOwn(value, 'sourceFinalPlayerEntry') ? {sourceFinalPlayerEntry:(()=>{
+      const entry=record(value.sourceFinalPlayerEntry,'completed');return {completed:boolean(entry.completed)};
+    })()} : {}),
     ...(messageStatus ? { messageStatus } : {}),
     ...(enemyModes ? {enemyModes} : {}),
     ...(Object.hasOwn(value,"gauTaskCompleted")?{gauTaskCompleted:boolean(value.gauTaskCompleted)}:{}),
@@ -588,7 +596,7 @@ export function advanceBattleEvent(
   if (state.wait) {
     const expected = { blank: "blank", start: "wait-start", action: "sync-action", "script-action":"script-action", time: "wait",
       "enemy-entry": "add-enemy", "enemy-party-entry": "change-enemy-party",
-      "player-entry": "add-player", "player-group-entry": "change-player-group",
+      "player-entry": "add-player", "player-group-entry": "change-player-group", "source-final-player-entry":"source-final-player-switch",
       "message-prepare": "message", "message": "message", "battle-effect":"sync-battle-effect", "global-fade":"global-fade", "gau-replace":"gau-replace", "gau-appearance":"gau-appearance" }[state.wait.kind];
     if (state.wait.kind === "battle-effect" ? !["play-battle-effect","sync-battle-effect"].includes(program.instructions[state.pc]?.op.kind??"") : program.instructions[state.pc]?.op.kind !== expected) fail("wait does not match its instruction");
     if (state.wait.clock === context.clock) return { state, requests: [], visited: [] };
@@ -767,6 +775,7 @@ export function advanceBattleEvent(
           requests.push({kind:op.kind,pc});return result();}
         if(!context.gauTaskCompleted){state.wait.clock=context.clock;return result();}
         next();break;
+      case "capture-source-0055":
       case "gau-join":
         next();requests.push({kind:op.kind,pc});return result();
       case 'reserve-gau-first': case 'shadow-battle-departure': case 'gau-leap':
@@ -817,6 +826,21 @@ export function advanceBattleEvent(
         const previousNoAct = state.wait.previousNoAct;
         next();
         requests.push({ kind: "enemy-no-act", pc, enabled: previousNoAct });
+        return result();
+      }
+      case 'source-final-player-switch': {
+        local(2);
+        if (!context.sourceFinalPlayerEntry) return fail('Missing actual source final waiting-owned participant host', pc);
+        if (state.wait?.kind !== 'source-final-player-entry') {
+          const phase = state.locals[2] === 0 ? 1 : state.locals[2]!;
+          if (![1,2,3].includes(phase)) return fail('Unadmitted source final player phase', pc);
+          state.locals[2] = phase + 1; state.status = 'waiting';
+          state.wait = { kind:'source-final-player-entry', clock:context.clock };
+          requests.push({kind:'source-final-player-switch',pc,phase}); return result();
+        }
+        if (context.sourceFinalPlayerEntry.completed) { next(); break; }
+        state.wait.clock=context.clock;
+        if (!context.actionStaging) requests.push({kind:'source-final-player-switch',pc,phase:null});
         return result();
       }
       case "add-player": {

@@ -1,5 +1,7 @@
 # Battle AI 的 Internal 时钟
 
+后续共用父行动事务已接入 Reaction / Final 的实际续行，详见 [父行动续行](ai-reaction-continuation.md)。下文保留最初 initial / normal 批次的历史边界。
+
 本批以完整来源 AI 的共用指令缺口提名：`Blank` 46 处 / 44 程序，带旧操作数的 `Nop` 5 处 / 2 程序。完整 430 AI / 10,093 指令、53 Battle / 2,312 指令，以及 3,304 原始脚本 / 186,003 指令均留在差分验收中。所有 46 处 Blank 只取得解码支持，实际程序准入仍取决于所达阶段和其余依赖；不能把它们计为完整可玩 AI 或剧情。
 
 `BattleAICore.Execute 0x81b120..0x81b360` 先查询与 Main / Puppet 相同的 Internal 字典，以当前 Mnemonic 调用同一个 delegate；未命中才查询 BattleAI 字典。现有完整缓存与 PE、符号、header 三个摘要重新验证，没有运行或重新导出原生游戏。Internal 的 `Nop 0x269250` 不读 type / operands，直接返回 Next；`Blank 0x2ba5c0` 在 `IsFirstClock 0x82da70` 为真时返回 Blank，之后返回 Next。编译只开放实际提名中有证据的 type 1，旧操作数不参与验证；其他类型和未知名字继续阻塞。Field 同名指令复用一个纯解码函数，原来的类型范围和错误信息保留。

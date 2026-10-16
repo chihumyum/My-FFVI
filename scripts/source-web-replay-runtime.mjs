@@ -60,6 +60,7 @@ export function sourceWebReplayRuntimePorts(options = {}) {
     sourceSnapshot:'immutable-owned-field-source-v1',
     sourceFieldUi:'web-source-field-ui-v1',
     sourceNonEncounterAreas:'source-non-encounter-areas-v1',
+    mapTransforms:'web-flat-field-map-transforms-v1',
     fieldLayerScrolling:'web-field-layer-scrolling-v1',
     skyboxPresentation:'web-flat-skybox-panorama-v1',
     viewChange: 'web-flat-field-view-change-v2',

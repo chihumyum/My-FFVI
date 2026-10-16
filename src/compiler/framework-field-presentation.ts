@@ -1,3 +1,4 @@
+import {validateFieldWaterCatalog,type FieldWaterCatalog}from "../core/field-map-transforms.js";
 import { posix } from "node:path";
 import { hash, record } from "./content.js";
 import { validateCollisionRange, type CollisionRange } from "../core/collision.js";
@@ -15,6 +16,7 @@ export type FrameworkFieldPresentation = {
 };
 export type FrameworkFieldPresentationInput = {
   policy: "framework-ordinary-field-flat-v1";
+  water?:FieldWaterCatalog;
   sources: readonly { file: string; sha256: string }[];
   tilemap: Asset;
   mapPackage: Asset;
@@ -69,7 +71,7 @@ export function compileFrameworkFieldPresentation(input: FrameworkFieldPresentat
       posix.join(root, item.tilemap + ".json") === tilemap.source.assetPath).length !== 1 ||
       ![mapSize.width, mapSize.height].every(value => Number.isSafeInteger(value) && value > 0 && value <= 0x7fffffff / 16) ||
       map.width !== mapSize.width || map.height !== mapSize.height || map.tilewidth !== 16 || map.tileheight !== 16 ||
-      map.orientation !== "orthogonal" || map.infinite === true || Object.keys(properties(map.properties)).length)
+      map.orientation !== "orthogonal" || map.infinite === true || Object.keys(properties(map.properties)).length&&!input.water)
     throw new Error("Unbound ordinary field tile geometry");
   validateCollisionRange(mapSize.width, mapSize.height, input.mapRange);
   const textureNames = new Set<string>();
@@ -80,7 +82,11 @@ export function compileFrameworkFieldPresentation(input: FrameworkFieldPresentat
     if (/_pal_anim(?:$|\.)/i.test(texture.name) || /_pal_anim(?:$|\.)/i.test(texture.asset))
       throw new Error("Ordinary field palette presentation is unresolved");
   }
-  const groups = list(map.layers).map(record);
+  if(input.water){validateFieldWaterCatalog(input.water);if(input.water.unresolved.length||input.water.rawHash!==hash(map)||hash(input.water.source)!==hash(tilemap.source))throw Error("Unbound flat WaterGroup provider");
+    const root=properties(map.properties);if(Object.keys(root).some(key=>!Object.hasOwn(input.water!.properties,key)))throw Error("Unknown root water material declaration");}
+  const rawGroups=list(map.layers).map(record);
+  if(input.water){for(const group of rawGroups)if(group.name!=="TileGroup"&&group.name!=="WaterGroup")throw Error("Independent background/material presentation is unresolved");}
+  const groups = input.water?rawGroups.filter(group=>group.name==="TileGroup"):rawGroups;
   if (groups.length !== 1 || groups[0]!.type !== "group" || groups[0]!.name !== "TileGroup" || !stationary(groups[0]!))
     throw new Error("Unsupported ordinary field group or background");
   const group = groups[0]!, groupProperties = properties(group.properties);

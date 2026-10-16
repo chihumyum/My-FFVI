@@ -7,7 +7,7 @@ import {resolve,relative,isAbsolute} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash,randomUUID} from 'node:crypto';
 import {runtimeDigest} from './runtime-digest.mjs';
-import {normalizeSourceMigrationInput} from './source-migration-input.mjs';
+import {normalizeSourceMigrationInput,sourceMigrationFieldContext} from './source-migration-input.mjs';
 
 const repository=resolve(import.meta.dirname,'..'),sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const load=(dist,name)=>import(pathToFileURL(resolve(dist,'src',name+'.js')).href);
@@ -52,6 +52,9 @@ export async function planSourceMigration(options){
   const policy=JSON.parse(await readFile(resolve(sourceRoot,'content-batches/source-battle-directory.policy.json'))),
     framework=(await readSourceBattleDirectoryPolicy({root:sourceRoot,compiledDir:sourceCompiled,policy})).framework;
   const sourceInputs=await loadBattleEventMessageSourceInputs(sourceRoot,sourceCompiled,{branchExecution:framework.branchExecution,sourceFormatImport:true,gauInstancePolicy:framework.gauInstances});
+  const {loadSystemMessages}=await load(sourceCompiled,'compiler/system-messages'),
+    systemMessages=await loadSystemMessages(sourceRoot,sourceInputs.inventory.parentSourceSetHash,sourceInputs.snapshot.manifest.sources),
+    fieldContext=sourceMigrationFieldContext(sourceInputs,systemMessages);
   const api=Object.assign({},sourceInputs.api,...await Promise.all(['compiler/field','compiler/field-empty-message','compiler/battle-ai','compiler/battle-ability-content','compiler/source-catalog-name','compiler/content-dependencies'].map(name=>load(sourceCompiled,name))),
     {contentBatchDiagnosticSystem:owners.contentBatchDiagnosticSystem});
   const catalog=await candidate.read('/framework/world/catalog.json');assert.equal(catalog.sourceSetHash,sourceInputs.snapshot.sourceSetHash);
@@ -79,7 +82,7 @@ export async function planSourceMigration(options){
   const battleAudit={runtimeSha256:sourceRuntime,sourceDigest:sourceInputs.sourceDigest,lanes:fullAudit.observations.map(row=>({label:row.label,
     requestedPartyIds:row.current.input.requestedPartyIds,definitionIds:Object.keys(row.current.result.encounters).map(Number),diagnostics:row.current.result.diagnostics}))};
   assert.deepEqual(battleAudit.lanes.map(lane=>lane.label).sort(),['original490','walkingUnion492']);fullAudit=null;
-  const input=normalizeSourceMigrationInput({sourceInputs,api,registry:JSON.parse(registryBytes),runtimeSha256:sourceRuntime,worldAnalysis,abilityContent,battleDirectoryReport,battleAudit,parallelism:options.parallelism});
+  const input=normalizeSourceMigrationInput({sourceInputs,api,registry:JSON.parse(registryBytes),runtimeSha256:sourceRuntime,fieldContext,worldAnalysis,abilityContent,battleDirectoryReport,battleAudit,parallelism:options.parallelism});
   assert.equal(input.programs.length,sourceInputs.scripts.length);assert.equal(input.programs.reduce((n,p)=>n+p.instructionCount,0),sourceInputs.inventory.counts.allInstructions);
   const workset=planner.compileSourceMigrationWorkSet(input);
   await candidate.validate();
@@ -89,6 +92,7 @@ export async function planSourceMigration(options){
   const report={kind:'all-source-common-migration-plan-v1',result:'planned-not-executed',sourceRuntimeSha256:sourceRuntime,plannerRuntimeSha256:plannerRuntime,
     sourceSetHash:input.sourceSetHash,sourceDigest:input.sourceDigest,candidateReportSha256:sha(candidate.reportBytes),inputLockSha256:sha(await readFile(resolve(candidateDir,'inputs.json'))),
     registrySha256:sha(registryBytes),plannerSha256:sha(selfBytes),normalizerSha256:sha(normalizerBytes),battleAuditReportSha256:sha(auditBytes),battleAuditFullSha256:auditReport.artifact.sha256,
+    fieldDecodeContext:input.observations.find(row=>row.scopeId==='field-decode-context').record,
     maps:maps.length,counts:workset.counts,planningMethod:workset.planningMethod,
     hypotheticalKnownMapPreparations:workset.batches.filter(b=>b.scope==='complete-map'&&b.plannedPreparationWave!==null).length,
     hypotheticalStrictMapClosures:workset.batches.filter(b=>b.scope==='complete-map'&&b.plannedClosureWave!==null).length,

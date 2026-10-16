@@ -1,7 +1,12 @@
+import { validateSourceBattleHandoffCatalog, validateSourceBattleHandoffState, projectSourceColosseumRecovery,
+  projectSourceRestore0055, projectSourceHandoffReturn, sourceFinalWaiting, type SourceBattleHandoffCatalog,
+  type SourceBattleHandoffState, type SourceBattleHandoffReturn, type FieldSourceBattleHandoffPort,
+  type SourceBattleHandoffOp } from './source-battle-handoffs.js';
 import { parseSourceLocation, type SourceLocation, type FieldLocationPort } from "./field-ui.js";
 import { sourceEquipmentTargets, type SourceEquipmentCommand, type SourceEquipmentTransaction } from "./source-owned-equipment.js";
 import { projectTransportationParkingUpload, type TransportationParkingObservation } from "./transportation-parking-upload.js";
 import type {PartySlotIndex}from'./party.js';
+import {projectMultiCorpsParty,type MultiCorpsCommand}from'./field-multi-corps.js';
 import {validateRtsCatalog,type SourceRtsPartyCatalog,type FieldRtsPartyPort,type RtsOwnedTransaction,type RtsOwnedView}from'./field-rts-party.js';
 import { rosterGroupSteps, validateRosterGroupCommand, validateSourceRosterGroupCatalog, type SourceRosterGroupCatalog, type RosterGroupCommand, type RosterGroupTransaction, type RosterGroupAppearanceStep } from "./roster-groups.js";
 import { projectNativePartyCell } from "./party.js";
@@ -156,6 +161,7 @@ export type GameStateContent = {
   /** Immutable source defaults; current names always belong to this roster. */
   characterNaming?: CharacterNameCatalog;
   sourceRtsParty?:SourceRtsPartyCatalog;
+  sourceBattleHandoffs?: SourceBattleHandoffCatalog;
   partyActors?: PartyActorCatalog;
   shops?: ShopCatalog;
   /** Field execution is independent of an ability's battle plan and creates no
@@ -208,7 +214,9 @@ export type OwnedCharacter = RosterMember & {
   growth: CharacterGrowthProgress | null;
 };
 export type GameStateSnapshot = {
-  formatVersion: 12 | 13 | 14 | 15 | 16;
+  formatVersion: 12 | 13 | 14 | 15 | 16 | 17;
+  /** Actual source captures/menu handoffs only; absence preserves historical saves. */
+  sourceBattleHandoffs?: SourceBattleHandoffState;
   /** Last explicit source ShowMapTitle write. Absence is unknown, not an empty initializer. */
   sourceLocation?: SourceLocation;
   kind: "owned-game-state";
@@ -334,7 +342,11 @@ export class GameState {
   readonly fieldRecovery: FieldRecoveryPort = {
     prepare: (command) => this.prepareFieldRecovery(command),
   };
-  readonly fieldRtsParty:FieldRtsPartyPort={available:()=>this.content.sourceRtsParty!==undefined,read:()=>({catalog:this.rtsCatalog(),view:this.rtsView(this.data)}),prepare:slot=>this.prepareRtsSelection(slot)};
+  readonly fieldSourceBattleHandoffs: FieldSourceBattleHandoffPort = {
+    available: () => this.content.sourceBattleHandoffs !== undefined,
+    prepare: (command, battleOwnedId) => this.prepareSourceBattleHandoff(command, battleOwnedId),
+  };
+  readonly fieldRtsParty:FieldRtsPartyPort={available:()=>this.content.sourceRtsParty!==undefined,read:()=>({catalog:this.rtsCatalog(),view:this.rtsView(this.data)}),prepare:slot=>this.prepareRtsSelection(slot),prepareCorps:command=>this.prepareRtsSelection(this.data.party.selectedSlot,command)};
   /** Whole-roster source identities and the selected four Corps cells. */
   readonly fieldPuppetRoster: FieldPuppetRosterPort = {
     current: () => this.projectPuppetRoster(this.data),
@@ -557,11 +569,12 @@ export class GameState {
     return plan;
   }
   private validate(data: GameStateSnapshot) {
-    keys(data, ownedSnapshotFields + (this.content.fieldAbilities ? ",fieldRandom" : "") + (Object.hasOwn(data, "sourceLocation") ? ",sourceLocation" : ""));
+    keys(data, ownedSnapshotFields + (this.content.fieldAbilities ? ",fieldRandom" : "") + (Object.hasOwn(data, "sourceLocation") ? ",sourceLocation" : "") +
+      (Object.hasOwn(data, "sourceBattleHandoffs") ? ",sourceBattleHandoffs" : ""));
     if (Object.hasOwn(data, "sourceLocation")) parseSourceLocation(data.sourceLocation!);
     if (
       data.kind !== "owned-game-state" ||
-      data.formatVersion !== (data.sourceLocation ? 16 : Array.isArray(data.completedBattles)&&data.completedBattles.some(b=>b.outcome==='forced-save')?15:this.content.magicStones ? 14 : this.content.fieldAbilities ? 13 : 12) ||
+      data.formatVersion !== (data.sourceBattleHandoffs ? 17 : data.sourceLocation ? 16 : Array.isArray(data.completedBattles)&&data.completedBattles.some(b=>b.outcome==='forced-save')?15:this.content.magicStones ? 14 : this.content.fieldAbilities ? 13 : 12) ||
       data.catalogHash !== this.catalogHash
     )
       throw new Error("Owned-state source/version mismatch");
@@ -582,6 +595,14 @@ export class GameState {
         this.content.magicStones ? Object.values(this.content.magicStones.stones).map(stone => stone.contentId) : undefined);
     } else if (data.initialization !== "development-checkpoint" || data.nativeState !== null) {
       throw new Error("Owned-state initialization identity mismatch");
+    }
+    if (this.content.sourceBattleHandoffs) this.sourceBattleHandoffCatalog();
+    if (Object.hasOwn(data, 'sourceBattleHandoffs')) {
+      if (!this.content.sourceBattleHandoffs || !data.sourceBattleHandoffs) throw Error('Missing trusted source battle handoff catalog');
+      validateSourceBattleHandoffState(data.sourceBattleHandoffs, this.content.sourceBattleHandoffs, data.roster);
+      const capture = data.sourceBattleHandoffs.takeOver0055?.capture;
+      if (capture && !data.completedBattles.some(receipt => receipt.serial === capture.battleSerial && receipt.encounterId === capture.encounterId))
+        throw Error('Source0055 history lacks its actual completed Battle handoff receipt');
     }
     const limits = this.content.limits;
     integer(data.gil, limits.gil);
@@ -652,7 +673,7 @@ export class GameState {
       if (b.serial !== index)
         throw new Error("Invalid battle receipt sequence");
       integer(b.encounterId, 0x7fffffff, 1);
-      if (b.outcome !== "victory" && b.outcome !== "escaped" && b.outcome !== "forced" && (b.outcome!=="forced-save"||![15,16].includes(data.formatVersion)))
+      if (b.outcome !== "victory" && b.outcome !== "escaped" && b.outcome !== "forced" && (b.outcome!=="forced-save"||![15,16,17].includes(data.formatVersion)))
         throw new Error("Invalid battle receipt outcome");
     }
   }
@@ -1169,15 +1190,20 @@ export class GameState {
   }
   readonly fieldSourcePartySelection: FieldSourcePartySelectionPort = {
     read:()=>this.sourceSelectionRead(this.data),
-    capture:()=>{this.requireIdle();const revision=this.revision,current=this.sourceSelectionRead(this.data);
-      return {current,validate:()=>{if(this.inBattle||this.revision!==revision) throw new Error('Stale source party selection ownership');}};},
+    capture:()=>{this.requireIdle();const revision=this.revision,current=this.sourceSelectionRead(this.data),
+      catalog=this.content.sourceBattleHandoffs,identity=canonical(catalog??null);
+      return {current,validate:()=>{if(this.inBattle||this.revision!==revision||this.content.sourceBattleHandoffs!==catalog||canonical(catalog??null)!==identity) throw new Error('Stale source party selection ownership');}};},
     prepare:(model,outcome)=>this.prepareSourcePartySelection(model,outcome),
   };
   prepareSourcePartySelection(model:SourcePartySelectionModel,outcome:SourcePartySelectionOutcome) {
     this.requireIdle(); const next=this.snapshot(),revision=this.revision;
-    next.party=previewSourcePartySelection(model,this.sourceSelectionRead(next),outcome); this.validate(next);
+    next.party=previewSourcePartySelection(model,this.sourceSelectionRead(next),outcome);
+    if(model.command.mode==='final') { next.sourceBattleHandoffs={...next.sourceBattleHandoffs,
+      finalWaiting:sourceFinalWaiting(next.party,next.roster,this.sourceBattleHandoffCatalog())}; next.formatVersion=17; }
+    this.validate(next);
+    const handoffCatalog=this.content.sourceBattleHandoffs,handoffIdentity=canonical(handoffCatalog??null);
     let consumed=false;
-    const validate=()=>{this.requireIdle();if(consumed||this.revision!==revision) throw new Error('Stale source party selection transaction');};
+    const validate=()=>{this.requireIdle();if(consumed||this.revision!==revision||this.content.sourceBattleHandoffs!==handoffCatalog||canonical(handoffCatalog??null)!==handoffIdentity) throw new Error('Stale source party selection transaction');};
     return {appearance:this.projectPartyAppearance(next),confirmed:outcome.kind==='confirm',validate,
       commitWith:(publish:()=>void)=>{this.commitMenuPresentation(next,validate,publish);consumed=true;}};
   }
@@ -1357,14 +1383,17 @@ export class GameState {
   private rtsView(data:GameStateSnapshot):RtsOwnedView {
     return{selectedSlot:data.party.selectedSlot,appearance:this.projectPartyAppearance(data),puppetRoster:this.projectPuppetRoster(data)};
   }
-  private prepareRtsSelection(slot:PartySlotIndex):RtsOwnedTransaction {
+  private prepareRtsSelection(slot:PartySlotIndex,command?:MultiCorpsCommand):RtsOwnedTransaction {
     this.requireIdle();const source=this.content.sourceRtsParty,catalog=this.rtsCatalog(),identity=canonical(catalog),revision=this.revision;
-    const before=this.rtsView(this.data),{next}=this.projectPartyEvent(this.data,{kind:"select-slot",slot,refreshActors:true}),after=this.rtsView(next);let consumed=false;
+    const before=this.rtsView(this.data),next=command===undefined?this.projectPartyEvent(this.data,{kind:"select-slot",slot,refreshActors:true}).next:this.projectMultiCorps(this.data,command),after=this.rtsView(next);let consumed=false;
     const current=()=>{if(consumed||this.active||this.revision!==revision||this.content.sourceRtsParty!==source||canonical(this.rtsCatalog())!==identity)
       throw Error("Stale source RTS owned selection");};
     const validate=()=>{this.requireIdle();current();};
     return{get catalog(){return structuredClone(catalog);},get before(){return structuredClone(before);},get after(){return structuredClone(after);},validate,
       commitWith:publish=>{this.commitMenuPresentation(next,validate,()=>publish(current));consumed=true;}};
+  }
+  private projectMultiCorps(data:GameStateSnapshot,command:MultiCorpsCommand):GameStateSnapshot {
+    const next=structuredClone(data);next.party=projectMultiCorpsParty(next.party,next.roster,command);this.validate(next);return next;
   }
   private projectRosterGroup(data: GameStateSnapshot, command: RosterGroupCommand) {
     validateRosterGroupCommand(command);
@@ -1483,6 +1512,51 @@ export class GameState {
     };
     return { ...projection, commit: () => commitWith(() => {}), commitWith };
   }
+  private sourceBattleHandoffCatalog(): SourceBattleHandoffCatalog {
+    const catalog = this.content.sourceBattleHandoffs;
+    if (!catalog) throw Error('Source battle handoff catalog is unavailable');
+    validateSourceBattleHandoffCatalog(catalog);
+    if (catalog.conditions.length !== this.ownedConditionDefinitions.length || catalog.conditions.some(row =>
+      this.ownedConditionDefinitions.filter(definition => definition.id === row.id && definition.type === row.type).length !== 1))
+      throw Error('Source handoff master must bind the complete existing owned condition identities and Types');
+    return catalog;
+  }
+  sourceBattleHandoffEntry(lease: BattleLease) {
+    if (this.active?.lease !== lease) throw Error('Stale source battle handoff lease');
+    return { catalogHash: this.catalogHash, battleSerial: lease.serial, encounterId: lease.encounterId, catalog: structuredClone(this.sourceBattleHandoffCatalog()),
+      roster: this.data.roster.map(({ id, sourceId, ownedId, enabled }) => ({ id, sourceId, ownedId, enabled })),
+      ...(this.data.sourceBattleHandoffs?.finalWaiting ? { finalWaiting: structuredClone(this.data.sourceBattleHandoffs.finalWaiting) } : {}) };
+  }
+  private projectSourceBattleHandoff(data: GameStateSnapshot, command: SourceBattleHandoffOp['command'], battleOwnedId?: number) {
+    const catalog = this.sourceBattleHandoffCatalog(), next = structuredClone(data);
+    const preview = command === 'colosseum-recovery'
+      ? projectSourceColosseumRecovery(next.roster, next.party, battleOwnedId!, this.conditions)
+      : command === 'restore-0055' ? projectSourceRestore0055(next.roster, next.sourceBattleHandoffs?.takeOver0055, catalog, this.conditions)
+      : (() => { throw Error('Unknown source battle handoff command'); })();
+    next.roster = preview.roster; this.validate(next);
+    return { next, targets: preview.targets, steps: preview.steps.map(step => {
+      const intermediate = { ...next, roster: step.roster }; this.validate(intermediate);
+      return { targetId: step.targetId, appearance: this.projectPartyAppearance(intermediate),
+        ...(this.content.partyActors ? { puppetRoster: this.projectPuppetRoster(intermediate) } : {}),
+        setDummy: false as const, affectLeader: true as const };
+    }) };
+  }
+  private prepareSourceBattleHandoff(command: SourceBattleHandoffOp['command'], battleOwnedId?: number): FieldRecoveryTransaction {
+    this.requireIdle(); const { next, ...projection } = this.projectSourceBattleHandoff(this.data, command, battleOwnedId),
+      revision = this.revision, catalog = this.content.sourceBattleHandoffs, identity = canonical(catalog);
+    let consumed = false;
+    const validate = () => { this.requireIdle(); if (consumed || this.revision !== revision ||
+      this.content.sourceBattleHandoffs !== catalog || canonical(catalog) !== identity) throw Error('Stale source battle handoff transaction'); };
+    const commitWith = (publish: () => void) => { this.commitMenuPresentation(next, validate, publish); consumed = true; };
+    return { ...projection, commit: () => commitWith(() => {}), commitWith };
+  }
+  private applySourceBattleHandoffReturn(next: GameStateSnapshot, lease: BattleLease, handoffs?: SourceBattleHandoffReturn) {
+    if (!handoffs) return;
+    if (handoffs.takeOver0055 && (handoffs.takeOver0055.capture.battleSerial !== lease.serial ||
+        handoffs.takeOver0055.capture.encounterId !== lease.encounterId)) throw Error('Source capture is outside its actual returning Battle lease');
+    next.sourceBattleHandoffs = projectSourceHandoffReturn(next.sourceBattleHandoffs, handoffs, this.sourceBattleHandoffCatalog(), next.roster)!;
+    next.formatVersion = 17;
+  }
   private projectFieldRecoveryState(data: GameStateSnapshot, command: FieldResourceCommand) {
     const next = structuredClone(data);
     const preview = projectFieldRecovery(next.roster, next.party, command, this.conditions);
@@ -1537,6 +1611,7 @@ export class GameState {
       roster: FieldRosterPort;
       ownedConditions: FieldOwnedConditionPort;
       recovery: FieldRecoveryPort;
+      sourceBattleHandoffs: FieldSourceBattleHandoffPort;
       scriptRandom?: FieldScriptRandomPort;
       puppetRoster: FieldPuppetRosterPort;
       messageNames: FieldMessageNamesPort;
@@ -1676,18 +1751,21 @@ export class GameState {
       read:()=>this.sourceSelectionRead(published?this.data:data),
       capture:()=>{
         if(published)return this.fieldSourcePartySelection.capture();
-        const version=generation,owner=data,current=this.sourceSelectionRead(data);
+        const version=generation,owner=data,current=this.sourceSelectionRead(data),catalog=this.content.sourceBattleHandoffs,identity=canonical(catalog??null);
         // The same map port survives its one publication. Bind that exact
         // draft identity/revision rather than granting a newly selected bank.
-        return {current,validate:()=>{if(this.inBattle||generation!==version||data!==owner||
+        return {current,validate:()=>{if(this.inBattle||generation!==version||data!==owner||this.content.sourceBattleHandoffs!==catalog||canonical(catalog??null)!==identity||
           (published?(this.data!==owner||this.revision!==publicationRevision):this.revision!==revision))
           throw new Error('Stale candidate source party selection owner');}};
       },
       prepare:(model,outcome)=>{
         if(published)return this.prepareSourcePartySelection(model,outcome);
         const next=structuredClone(data),version=generation;
-        next.party=previewSourcePartySelection(model,this.sourceSelectionRead(data),outcome);this.validate(next);let consumed=false;
-        const validate=()=>{this.requireIdle();if(consumed||published||transportationPublishing||generation!==version||this.revision!==revision)
+        next.party=previewSourcePartySelection(model,this.sourceSelectionRead(data),outcome);
+        if(model.command.mode==='final') { next.sourceBattleHandoffs={...next.sourceBattleHandoffs,
+          finalWaiting:sourceFinalWaiting(next.party,next.roster,this.sourceBattleHandoffCatalog())}; next.formatVersion=17; }
+        this.validate(next);const handoffCatalog=this.content.sourceBattleHandoffs,handoffIdentity=canonical(handoffCatalog??null);let consumed=false;
+        const validate=()=>{this.requireIdle();if(consumed||published||transportationPublishing||generation!==version||this.revision!==revision||this.content.sourceBattleHandoffs!==handoffCatalog||canonical(handoffCatalog??null)!==handoffIdentity)
           throw new Error('Stale candidate source party selection transaction');};
         return {appearance:this.projectPartyAppearance(next),confirmed:outcome.kind==='confirm',validate,commitWith:(publish)=>{
           validate();if(typeof publish!=='function'||publish.constructor.name==='AsyncFunction')throw new Error('Source party publication must be synchronous');
@@ -1698,10 +1776,12 @@ export class GameState {
     };
     const rtsParty:FieldRtsPartyPort={
       available:()=>this.content.sourceRtsParty!==undefined,read:()=>published?this.fieldRtsParty.read():{catalog:this.rtsCatalog(),view:this.rtsView(data)},
-      prepare:slot=>{
-        if(published)return this.prepareRtsSelection(slot);this.requireIdle();
+      prepareCorps:command=>prepareRtsDraft(data.party.selectedSlot,command),
+      prepare:slot=>prepareRtsDraft(slot)};
+    const prepareRtsDraft=(slot:PartySlotIndex,command?:MultiCorpsCommand):RtsOwnedTransaction=>{
+        if(published)return this.prepareRtsSelection(slot,command);this.requireIdle();
         const source=this.content.sourceRtsParty,catalog=this.rtsCatalog(),identity=canonical(catalog),owner=data,version=generation;
-        const before=this.rtsView(data),{next}=this.projectPartyEvent(data,{kind:"select-slot",slot,refreshActors:true}),after=this.rtsView(next);let consumed=false;
+        const before=this.rtsView(data),next=command===undefined?this.projectPartyEvent(data,{kind:"select-slot",slot,refreshActors:true}).next:this.projectMultiCorps(data,command),after=this.rtsView(next);let consumed=false;
         const current=()=>{if(consumed||published||data!==owner||generation!==version||this.active||this.revision!==revision||this.content.sourceRtsParty!==source||canonical(this.rtsCatalog())!==identity)
           throw Error("Stale candidate source RTS owned selection");};
         const validate=()=>{this.requireIdle();if(transportationPublishing)throw Error("Candidate owned publication in progress");current();};
@@ -1709,7 +1789,7 @@ export class GameState {
           commitWith:publish=>{validate();if(typeof publish!=="function"||publish.constructor.name==="AsyncFunction")throw Error("RTS publication must be synchronous");
             transportationPublishing=true;this.menuPublication=true;try{const result:unknown=publish(current);if(result&&typeof(result as{then?:unknown}).then==="function")throw Error("RTS publication must be synchronous");
               data=next;generation++;consumed=true;}finally{transportationPublishing=false;this.menuPublication=false;}}};
-      }};
+      };
     const roster: FieldRosterPort = {
       prepareEquipment: command => {
         if (published) return this.prepareSourceEquipment(command);
@@ -1856,6 +1936,27 @@ export class GameState {
         return { ...projection, commit: () => commitWith(() => {}), commitWith };
       },
     };
+    const sourceBattleHandoffs: FieldSourceBattleHandoffPort = {
+      available: () => this.content.sourceBattleHandoffs !== undefined,
+      prepare: (command, battleOwnedId) => {
+        if (published) return this.prepareSourceBattleHandoff(command, battleOwnedId);
+        this.requireIdle(); if (this.revision !== revision) throw Error('Stale candidate source handoff owner');
+        const { next, ...projection } = this.projectSourceBattleHandoff(data, command, battleOwnedId),
+          owner = data, version = generation, catalog = this.content.sourceBattleHandoffs, identity = canonical(catalog);
+        let consumed = false;
+        const validate = () => { this.requireIdle(); if (consumed || transportationPublishing || published || data !== owner ||
+          generation !== version || this.revision !== revision || this.content.sourceBattleHandoffs !== catalog || canonical(catalog) !== identity)
+          throw Error('Stale candidate source handoff transaction'); };
+        const commitWith = (publish: () => void) => { validate();
+          if (typeof publish !== 'function' || publish.constructor.name === 'AsyncFunction') throw Error('Source handoff publication must be synchronous');
+          transportationPublishing = true; try { const result: unknown = publish();
+            if (result && typeof (result as { then?: unknown }).then === 'function') throw Error('Source handoff publication must be synchronous');
+            data = next; generation++; consumed = true;
+          } finally { transportationPublishing = false; }
+        };
+        return { ...projection, commit: () => commitWith(() => {}), commitWith };
+      },
+    };
     const transportation: FieldTransportationPort | undefined = data.nativeState && this.content.sourceNewGame ? {
       catalog: structuredClone(this.content.sourceNewGame.transportation),
       read: () => this.readTransportations(published ? this.data : data),
@@ -1904,7 +2005,7 @@ export class GameState {
         party, rtsParty,
         roster,
         ownedConditions,
-        recovery,
+        recovery, sourceBattleHandoffs,
         ...(options.scriptRandom === WEB_SOURCE_SCRIPT_RANDOM ? { scriptRandom } : {}),
         puppetRoster: { current: () => this.projectPuppetRoster(published ? this.data : data),
           replacement: () => this.projectPuppetReplacementRoster(published ? this.data : data) },
@@ -1951,7 +2052,7 @@ export class GameState {
     return activePartyMembers(this.data.party);
   }
   private projectSourceLocation(data: GameStateSnapshot, value: SourceLocation): GameStateSnapshot {
-    const next = structuredClone(data); next.sourceLocation = parseSourceLocation(value); next.formatVersion = 16;
+    const next = structuredClone(data); next.sourceLocation = parseSourceLocation(value); next.formatVersion = next.sourceBattleHandoffs ? 17 : 16;
     this.validate(next); return next;
   }
   private prepareSourceLocation(value: SourceLocation): ReturnType<FieldLocationPort["prepare"]> {
@@ -2728,19 +2829,19 @@ export class GameState {
   }
   prepareVictory(
     lease: BattleLease,
-    result: BattleVictoryResult,
+    result: BattleVictoryResult, handoffs?: SourceBattleHandoffReturn,
   ): PreparedBattleReturn {
-    return this.prepareBattleReturn(lease, { outcome: "victory", result });
+    return this.prepareBattleReturn(lease, { outcome: "victory", result }, handoffs);
   }
   /** Development escape settlement is not a zero-experience victory. Source
    * result learning, loot, currency and growth are deliberately not invoked. */
-  prepareEscape(lease: BattleLease, result: BattleEscapeResult): PreparedBattleReturn {
+  prepareEscape(lease: BattleLease, result: BattleEscapeResult, handoffs?: SourceBattleHandoffReturn): PreparedBattleReturn {
     keys(result, "players,consumedItems" + (Object.hasOwn(result, "playerParticipants") ? ",playerParticipants" : ""));
-    return this.prepareBattleReturn(lease, { outcome: "escaped", result });
+    return this.prepareBattleReturn(lease, { outcome: "escaped", result }, handoffs);
   }
   /** Forced=4 releases borrowed battle resources without SaveParameter. It
    * records neither victory nor escape and never publishes resource changes. */
-  prepareForcedReturn(lease: BattleLease, input: BattleForcedReturnResult|BattleSavedForcedReturnResult): PreparedBattleReturn {
+  prepareForcedReturn(lease: BattleLease, input: BattleForcedReturnResult|BattleSavedForcedReturnResult, handoffs?: SourceBattleHandoffReturn): PreparedBattleReturn {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     if(input.kind==='battle-save-return-v1'){
       const result=parseBattleSavedForcedReturnResult(input);
@@ -2752,7 +2853,7 @@ export class GameState {
         if(!member)throw new Error('Missing entered saved equipment owner');return member;
       })};
       if(canonical(result.equipment)!==canonical(equipment))throw new Error('Saved forced return equipment differs from its admitted actual six-slot/stock owner; no equipment mutation writer is admitted');
-      return this.prepareBattleReturn(lease,{outcome:'forced-save',result});
+      return this.prepareBattleReturn(lease,{outcome:'forced-save',result}, handoffs);
     }
     const result = parseBattleForcedReturnResult(input), borrowed = this.validateBorrowedReturn(result, null),
       ids = borrowed ? firstEnteredOwnerIds(borrowed.state) : this.active.players.map(player => player.id),
@@ -2763,6 +2864,7 @@ export class GameState {
       });
     if (canonical(result.participants) !== canonical(expected)) throw new Error("Forced-return participant identity changed");
     const gauReturn = this.sourceGauReturnSnapshot(lease, "forced"), next = gauReturn.next, revision = this.revision;
+    this.applySourceBattleHandoffReturn(next, lease, handoffs);
     next.completedBattles.push({ ...lease, outcome: "forced" });
     this.validate(next);
     const validate = () => { if (this.active?.lease !== lease || this.revision !== revision) throw new Error("Stale forced-return transaction"); gauReturn.validate(); };
@@ -2811,6 +2913,7 @@ export class GameState {
   private prepareBattleReturn(
     lease: BattleLease,
     exit: { outcome: "victory"; result: BattleVictoryResult } | { outcome: "escaped"; result: BattleEscapeResult } | {outcome:"forced-save";result:BattleSavedForcedReturnResult},
+    handoffs?: SourceBattleHandoffReturn,
   ): PreparedBattleReturn {
     if (this.active?.lease !== lease) throw new Error("Stale battle lease");
     const result = exit.result, victory = exit.outcome === "victory" ? exit.result : null,saved=exit.outcome==='forced-save'?exit.result:null;
@@ -2964,8 +3067,9 @@ export class GameState {
     }
     if(saved){
       for(const owner of next.roster)owner.conditionIds=this.conditions.battleEnd(owner.conditionIds);
-      next.formatVersion=next.sourceLocation ? 16 : 15;
+      next.formatVersion=next.sourceBattleHandoffs ? 17 : next.sourceLocation ? 16 : 15;
     }
+    this.applySourceBattleHandoffReturn(next, lease, handoffs);
     next.completedBattles.push({ ...lease, outcome: exit.outcome });
     if (victory && next.nativeState) next.nativeState.ownedMagic = this.observedMagic(next);
     this.validate(next);

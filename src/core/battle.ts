@@ -1,3 +1,4 @@
+import {captureSourceTakeOver0055,parseSourceBattleHandoffEntry, type SourceBattleHandoffEntry,type SourceBattleHandoffReturn} from './source-battle-handoffs.js';
 import { advanceSlipClock, slipDamage, writeSlipTimeStop, type SlipState } from "./condition-slip.js";
 import { validatePeriodicNumberHost, WEB_PERIODIC_NUMBER_MILLISECONDS, type BattlePeriodicNumberHost,
   type BattlePeriodicNumberLease, type BattlePeriodicNumberProjection, type BattlePeriodicNumberRequest } from "./battle-periodic-number.js";
@@ -72,7 +73,7 @@ import {
   planBattleAITurn,
   planBattleAIReaction,
   startBattleAI,
-  resumeBattleAI,
+  resumeBattleAI, receiveBattleAIAtClock,
   type BattleAIProgram,
   type BattleAIState,
   type BattleAITurn,
@@ -135,7 +136,7 @@ import { sourceControlCommandIds, planWebControlAction, planWebControlTarget, we
   type ControlActionMetadata, type ControlActionCandidate } from "./condition-control-actions.js";
 import { parseBattlePlayerBorrow, parseBattlePlayerPlan, type BattlePlayerBorrow,
   type BattlePlayerReturn } from "./battle-player-participants.js";
-import { createBattlePlayerState, parseBattlePlayerState, projectPlayerJoin, projectPlayerGroup,
+import { createBattlePlayerState, parseBattlePlayerState, projectPlayerJoin, projectPlayerGroup, projectPlayerRetirement, projectPlayerJoinAt,
   firstEnteredOwnerIds, type BattlePlayerState, type BattlePlayerProjection } from "./battle-player-state.js";
 
 export type Combatant = CombatantDefinition & {
@@ -234,6 +235,22 @@ export class BattleGame {
    * only resumption owner. No action, behavior prefix or RNG is published here. */
   private aiClockOwners = new Map<string, { actor: Combatant; program: BattleAIProgram;
     before: BattleAIState | null; behavior: string }>();
+  /** Prepared results/received clocks remain private to the actual executor.
+   * Waiting holds the mutable action/condition/progress baseline; presentation
+   * keeps its existing independent host frame. This is an explicit Web order. */
+  private reactionResolution: {
+    ticket: number; actor: Combatant; owners: Combatant[]; programs: (BattleAIProgram | null)[];
+    baseline: string; abilityPin: string; random: number;
+    candidate: NonNullable<ReturnType<BattleGame["prepareActionResolution"]>>;
+    turns: Map<string, BattleAITurn>;
+  } | null = null;
+  get pendingReactionExecution() { const held = this.reactionResolution; return held ? {
+    parentAction: held.ticket, actor: held.actor.id,
+    receivers: [...held.turns].map(([id, turn]) => ({ id, pc: turn.state.pc,
+      pending: !!turn.state.continuation, receivedAbility: structuredClone(turn.state.receivedAbility),
+      finalReady: typeof turn.state.continuation?.wake === "object" && turn.state.continuation.wake.finalReady === true,
+      normalWake: turn.normalWake === true })),
+  } : null; }
   private poisonStates = new Map<string, PoisonState>();
   private slipStates = new Map<string, SlipState>();
   readonly #numberEpoch = nextPeriodicNumberEpoch++;
@@ -416,7 +433,7 @@ export class BattleGame {
     const numberState = this.periodicNumbers, numberResources = this.#numbers.map(n => n.resource);
     const validate=()=>{if(used||this.#gauTask!==task || canonical(this.periodicNumbers)!==canonical(numberState))throw new Error("Stale source Gau/number retirement");
       message.validate();effect.validate();resource?.validate();for (const number of numberResources)this.observeMessageProvider(() => number.validate());};
-    return {validate,commit:()=>{validate();message.commit();effect.commit();used=true;this.retireAIClocks();this.#finalTickets.retire();this.#mpParameters.retireAll();this.#numberRetired=true;
+    return {validate,commit:()=>{validate();message.commit();effect.commit();used=true;this.retireAIClocks();this.#finalTickets.retire();this.#mpParameters.retireAll();this.#numberRetired=true;this.sourceFinalPlayerTask=null;
       this.discardPeriodicResources(this.#numbers.map(n => n.resource));this.#numbers=[];this.slipStates.clear();this.#parameterOrigins.clear();this.#gauHost?.owned.retire();this.#gauTask=null;
       this.#gauJournal.push({action:"retire",pc:-1,time:this.time,actorId:null,value:null});if(resource)this.discardBattleEffectResources([resource],"retire");}};}
   readonly #messageHost: BattleEventMessageHost | null;
@@ -489,6 +506,9 @@ export class BattleGame {
   #gauJournal: {action:"request"|"replace"|"pose"|"complete"|"join"|"retire";pc:number;time:number;actorId:string|null;value:number|string|null}[]=[];
   private readonly gauEntry:BattleGauEntry|null;
   private gauEnemyIds:number[]|null=null;
+  private sourceHandoffEntry: SourceBattleHandoffEntry | null = null;
+  private sourceHandoffReturn: SourceBattleHandoffReturn | undefined;
+  private sourceFinalPlayerTask: { pc:number; pending:{id:string;sourceId:number;ownedId:number;slot:number}[]; completed:boolean } | null = null;
   private fieldReservation: BattleFieldReservation | null = null;
   private gauModeJournal:{pc:number;modeWrite:1|2|null;atMilliseconds:number}[]=[];
   private readonly participantContent: BattleParticipantContent | null;
@@ -557,10 +577,10 @@ export class BattleGame {
     initialPreferences?: BattlePreferences,
     eventShared?: BattleEventSharedSnapshot,
     playerBorrow?: BattlePlayerBorrow,
-    private readonly eventHosts?: { periodicNumbers?:BattlePeriodicNumberHost; jobQualification?:BattleCurrentJobHost; names?: FieldMessageNamesPort; childPartyAdmission?:WebBattleChildAdmission; gauInstances?:BattleGauInstanceHost; conditions?: WebBattleEventConditions; scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; fade?:BattleGlobalFadeHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; fieldContinuation?:BattleFieldReservationHost; branchExecution?:WebBattleBranchExecution },
+    private readonly eventHosts?: { sourceHandoffs?:SourceBattleHandoffEntry; periodicNumbers?:BattlePeriodicNumberHost; jobQualification?:BattleCurrentJobHost; names?: FieldMessageNamesPort; childPartyAdmission?:WebBattleChildAdmission; gauInstances?:BattleGauInstanceHost; conditions?: WebBattleEventConditions; scriptedActions?: WebScriptedBattleActions; messages?: BattleEventMessageHost; effects?:BattleEventEffectHost; fade?:BattleGlobalFadeHost; controls?:WebBattleEventControls; gau?:BattleGauEntry; fieldContinuation?:BattleFieldReservationHost; branchExecution?:WebBattleBranchExecution },
   ) {
     if (eventHosts !== undefined && (!eventHosts || typeof eventHosts !== "object" || Array.isArray(eventHosts) ||
-        Object.keys(eventHosts).some(key => key !== "periodicNumbers" && key !== "jobQualification" && key !== "names" && key !== "childPartyAdmission" && key !== "gauInstances" && key !== "conditions" && key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau" && key !== "fade" && key !== "fieldContinuation")))
+        Object.keys(eventHosts).some(key => key !== "sourceHandoffs" && key !== "periodicNumbers" && key !== "jobQualification" && key !== "names" && key !== "childPartyAdmission" && key !== "gauInstances" && key !== "conditions" && key !== "messages" && key !== "scriptedActions" && key !== "effects" && key !== "controls" && key !== "branchExecution" && key !== "gau" && key !== "fade" && key !== "fieldContinuation")))
       throw new Error("Unknown battle event host options");
     if(eventHosts?.jobQualification&&(typeof eventHosts.jobQualification.catalogHash!=='string'||
       typeof eventHosts.jobQualification.validateCatalog!=='function'||typeof eventHosts.jobQualification.admits!=='function'))
@@ -617,6 +637,14 @@ export class BattleGame {
     if(eventHosts?.fieldContinuation){
       if(typeof eventHosts.fieldContinuation.require!=='function')throw new Error('Missing source field reservation host');
       this.fieldReservation={kind:'battle-field-reservation-v1',entry:eventHosts.fieldContinuation.entry===null?null:parseFieldReservation(eventHosts.fieldContinuation.entry),candidate:eventHosts.fieldContinuation.entry===null?null:parseFieldReservation(eventHosts.fieldContinuation.entry)};
+    }
+    if (eventHosts?.sourceHandoffs) {
+      const entry = parseSourceBattleHandoffEntry(eventHosts.sourceHandoffs), definitions = content.conditions.rules.definitions;
+      if (entry.catalogHash !== content.contentHash || entry.encounterId !== content.encounterId) throw Error('Source handoff entry belongs to another actual catalog or encounter');
+      if (entry.catalog.conditions.length !== definitions.length || entry.catalog.conditions.some(row =>
+        definitions.filter(definition => definition.id === row.id && definition.type === row.type).length !== 1))
+        throw Error('Source handoff condition master differs from this actual Battle');
+      this.sourceHandoffEntry = entry;
     }
     this.gauEntry=eventHosts?.gau===undefined?null:parseBattleGauEntry(eventHosts.gau);
     if(this.gauEntry&&this.gauEntry.catalogHash!==content.contentHash)throw new Error('Gau entry belongs to another battle catalog');
@@ -684,6 +712,8 @@ export class BattleGame {
       if (op.kind === "add-player" && (!this.playerBorrow?.plan.sourceIds.includes(op.sourceId) ||
           !this.playerBorrow.candidates.some(player => player.sourceId === op.sourceId)))
         throw new BattleEventError(this.lifecycle.program.source, pc, "Missing admitted owned player borrow");
+      if (op.kind === 'source-final-player-switch' && (!this.sourceHandoffEntry?.finalWaiting || !this.playerBorrow))
+        throw new BattleEventError(this.lifecycle.program.source, pc, 'Source final player switch requires its actual menu-produced waiting identities and existing complete owned borrow');
       if (op.kind === "change-player-group" && !this.playerBorrow?.groups[op.group])
         throw new BattleEventError(this.lifecycle.program.source, pc, "Missing admitted Web player group");
     }
@@ -874,7 +904,7 @@ export class BattleGame {
     }
   }
   get ready() {
-    if (this.deferredEventStart && !this.#messageRootStarted || this.escapeRequested || !this.eventControls.interactive || !this.eventUI.visible) return [];
+    if (this.reactionResolution || this.deferredEventStart && !this.#messageRootStarted || this.escapeRequested || !this.eventControls.interactive || !this.eventUI.visible) return [];
     return this.players.filter((c) => c.hp > 0 && c.atb >= 100 && !c.queued &&
       !this.actionSuspended(c) && !this.hasAutomaticControl(c));
   }
@@ -1505,6 +1535,7 @@ export class BattleGame {
     return { state: structuredClone(this.eventState), controls: { ...this.eventControls } };
   }
   get eventSharedEntry(): BattleEventSharedSnapshot | undefined { return this.eventShared?.entry; }
+  get sourceBattleHandoffReturn(): SourceBattleHandoffReturn | undefined { return structuredClone(this.sourceHandoffReturn); }
   get fieldReservationReturn(): BattleFieldReservation | null { return structuredClone(this.fieldReservation); }
   get gauLifecycle(){return {entry:this.gauEntry&&structuredClone(this.gauEntry),encounteredEnemyIds:structuredClone(this.gauEnemyIds),journal:structuredClone(this.gauModeJournal)};}
   get eventSharedReturn() { return this.eventShared?.prepareReturn() ?? null; }
@@ -1659,6 +1690,50 @@ export class BattleGame {
     this.publishPlayerTransition(this.preparePlayerTransition(planned));
     this.eventControls.enemyNoAct = true;
     this.log(`${held.name} 加入战斗。`);
+  }
+  /** Consume only menu-produced numeric held IDs. This uses the admitted
+   * synchronous Web player-entry resources, the existing event clock and the
+   * same retirement/RNG/frame rollback as ordinary participant transitions. */
+  private sourceFinalPlayerSwitch(pc: number, phase: number | null): void {
+    if (this.#effectRetired || !this.playerState || !this.playerBorrow || !this.sourceHandoffEntry?.finalWaiting)
+      throw Error('Missing or retired actual final-wave participant owner');
+    if (phase !== null) {
+      if (this.sourceFinalPlayerTask && !this.sourceFinalPlayerTask.completed) throw Error('An earlier final-wave entry is still active');
+      const entry = this.sourceHandoffEntry.finalWaiting,
+        waiting = structuredClone(this.sourceHandoffReturn?.finalWaiting?.remaining ?? entry),
+        state = this.playerExecution!, retire: string[] = [], pending: {id:string;sourceId:number;ownedId:number;slot:number}[] = [];
+      for (const [slot, cell] of state.slots.entries()) {
+        const unit = cell.instanceId === null ? null : this.players.find(unit => unit.id === cell.instanceId);
+        if (cell.instanceId !== null && !unit) throw Error('Missing actual final-wave Corps player instance');
+        const replace = !unit || this.conditions.types(unit.conditionIds).some(type => [5,11,34,628].includes(type));
+        if (!replace) continue;
+        if (unit) retire.push(unit.id);
+        const ownedId = waiting.ownedIds.shift();
+        if (ownedId === undefined) continue;
+        const owner = this.sourceHandoffEntry.roster.find(owner => owner.ownedId === ownedId && owner.enabled);
+        if (!owner || !this.playerBorrow.candidates.some(candidate => candidate.id === owner.id && candidate.sourceId === owner.sourceId))
+          throw Error('Final waiting owned identity lacks an enabled actual borrowed candidate');
+        pending.push({...owner,slot});
+      }
+      // Native MainCore has i0/i1/i2. Four pending replacements are outside
+      // the admitted source invariant; never silently lose the fourth owner.
+      if (pending.length > 3) throw Error('Source final player switch exceeds the proven three pending Core registers');
+      if (phase === 3) waiting.ownedIds = [];
+      const prepared = this.preparePlayerTransition(projectPlayerRetirement(state, retire));
+      this.publishPlayerTransition(prepared);
+      this.sourceHandoffReturn = {...this.sourceHandoffReturn, finalWaiting:{entry:structuredClone(entry),remaining:waiting}};
+      this.sourceFinalPlayerTask = {pc,pending,completed:pending.length===0};
+    }
+    const task = this.sourceFinalPlayerTask;
+    if (!task || task.pc !== pc) throw Error('Stale source final-wave continuation');
+    if (task.completed) return;
+    const owner = task.pending[0];
+    if (!owner) { task.completed = true; return; }
+    const planned = projectPlayerJoinAt(this.playerExecution!, {ownedId:owner.id,sourceId:owner.sourceId}, owner.slot);
+    const prepared = this.preparePlayerTransition(planned);
+    if (task.pending.length > 1 && this.eventControls.endEnabled && !prepared.players.some(player => player.hp > 0))
+      throw Error('Source final pending entry without a living player requires proven native defeat/entry ordering or the source end-disabled path');
+    this.publishPlayerTransition(prepared); task.pending.shift();
   }
   private changePlayerGroup(group: 0 | 1 | 2): void {
     const members = this.playerBorrow?.groups[group];
@@ -1901,6 +1976,8 @@ export class BattleGame {
         // ports remain distinct; native asynchronous completion is unverified.
         playerEntry: { noAct: this.eventControls.enemyNoAct, completed: true },
         playerGroupEntry: { completed: true },
+        ...(this.sourceHandoffEntry?.finalWaiting && this.playerBorrow ? {sourceFinalPlayerEntry:{
+          completed:this.sourceFinalPlayerTask?.pc===this.eventState.pc&&this.sourceFinalPlayerTask.completed}} : {}),
         ...(this.eventShared ? { variables: { read: (ref) => this.eventShared!.read(ref) } } : {}),
         ...(program.instructions.some(({ op }) => op.kind === "players-ended") ? {
           playersEnded: this.eventPlayersEnded(),
@@ -1923,6 +2000,19 @@ export class BattleGame {
             }
             case "condition-list": {
               const { pc, ...operation } = request; this.applyEventCondition(operation, pc); break;
+            }
+            case 'capture-source-0055': {
+              const entry = this.sourceHandoffEntry;
+              if (!entry || !program.source) throw Error('Source0055 capture requires its actual held identities and bound source program');
+              const actual = this.players.map(player => {
+                const id = this.playerOwnedId(player.id), owner = entry.roster.find(member => member.id === id && member.sourceId === player.sourceId);
+                if (!owner) throw Error('Source0055 actual player lost its numeric held identity');
+                return { ...owner, hp: player.hp, mp: player.mp, conditionIds: [...player.conditionIds] };
+              });
+              const takeOver0055 = captureSourceTakeOver0055(entry.catalog, entry.roster, actual, { battleSerial: entry.battleSerial,
+                encounterId: entry.encounterId, programHash: program.source.sha256, pc: request.pc });
+              this.sourceHandoffReturn = { ...this.sourceHandoffReturn, takeOver0055 };
+              break;
             }
             case "gau-replace": this.startGauTask("replace",request.pc); break;
             case "gau-appearance": this.startGauTask("appearance",request.pc); break;
@@ -2057,6 +2147,17 @@ export class BattleGame {
             case "change-enemy-party": this.changeEnemyParty(request.partyId, request.hidden); break;
             case "add-player": this.addPlayer(request.sourceId); break;
             case "change-player-group": this.changePlayerGroup(request.group); break;
+            case "source-final-player-switch": {
+              this.sourceFinalPlayerSwitch(request.pc, request.phase);
+              if (this.sourceFinalPlayerTask?.pc === request.pc && this.sourceFinalPlayerTask.completed) {
+                if (nextEventState.pc !== request.pc || nextEventState.wait?.kind !== 'source-final-player-entry')
+                  throw Error('Stale source final-wave completion');
+                // Native returns Next on this clock when all three pending
+                // registers are clear, including an initially empty list.
+                nextEventState = {...nextEventState, pc:request.pc+1, status:'running', wait:null};
+              }
+              break;
+            }
             case "write-variable":
               if (!this.eventShared) throw new Error("Missing shared battle event state");
               this.eventShared.write(request.ref, request.value);
@@ -2512,16 +2613,18 @@ export class BattleGame {
       throw new BattleAIError(program.source, pc, reason);
     };
     const pending = turn.state.continuation;
-    if (pending && turn.trigger === "reaction")
-      fail(turn.state.pc, "Internal.Blank reaction/Final requires a prepared parent-action continuation transaction");
     if (turn.state.status !== "waiting" && !(pending && turn.state.status === "running"))
       fail(
         turn.state.pc,
         `${turn.trigger} action path does not return to SyncAI`,
       );
+    const normalRows = turn.acts.filter(act => act.selected && (act.kind === "act" || act.kind === "loop-act")).length;
+    const live = turn.normalWake ? this.combatants.find(unit => unit.id === actor.id) : null;
+    const deadNormal = turn.normalWake && (actor.hp <= 0 || this.conditions.isUnableFight(actor.conditionIds) ||
+      actor.mp === 0 && live && this.#mpParameters.query(live) === true || this.conditions.isEscaped(actor.conditionIds));
     if (
-      turn.trigger === "normal" &&
-      (pending ? turn.acts.filter((a) => a.selected).length > 1 : turn.acts.filter((a) => a.selected).length !== 1)
+      (turn.trigger === "normal" || turn.normalWake) &&
+      (pending || deadNormal ? normalRows > 1 : normalRows !== 1)
     )
       fail(
         turn.state.pc,
@@ -2529,7 +2632,7 @@ export class BattleGame {
       );
     if (
       turn.trigger === "reaction" &&
-      turn.acts.some((a) => a.kind !== "counter-act" && a.kind !== "final-act")
+      turn.acts.some((a) => a.kind !== "counter-act" && a.kind !== "final-act" && !turn.normalWake)
     )
       fail(turn.state.pc, "reaction path emitted a normal action");
     if (turn.acts.length > 1000)
@@ -2602,7 +2705,7 @@ export class BattleGame {
       const state = this.aiStates.get(id);
       if (state) { delete state.continuation; state.status = "exited"; }
     }
-    this.aiClockOwners.clear();
+    this.aiClockOwners.clear(); this.reactionResolution = null;
   }
   private advanceAIClocks() {
     for (const [id, owner] of this.aiClockOwners) {
@@ -2641,11 +2744,10 @@ export class BattleGame {
     if (turn.state.continuation) { this.bindAIClock(actor, turn.state, state); return; }
     this.publishEnemyTurn(actor, turn);
   }
-  private publishEnemyTurn(actor: Combatant, turn: BattleAITurn) {
-    const previousRandom = this.randomState;
-    try {
+  private prepareEnemyTurn(actor: Combatant, turn: BattleAITurn, units: readonly Combatant[] = this.combatants) {
+    const active = units.filter(unit => !this.enemyExits.has(unit.id) && !this.conditions.isEscaped(unit.conditionIds));
       const decisions: BattleAction[] = [];
-      for (const act of turn.acts) {
+      for (const act of turn.acts.filter(act => act.kind === "act" || act.kind === "loop-act")) {
         const ids = selectBattleAIAbilities(act, {
           integer: (min, max) => this.randomInt(min, max),
           float: (min, max) =>
@@ -2659,8 +2761,8 @@ export class BattleGame {
           // single only when the raw player list contains one instance.
           const control = this.actionControl(actor);
           const choice = control ? planWebControlTarget({ id, range: ability.program.range, rule: ability.plan!.targeting },
-            actor, this.activeCombatants, this.content.formation, (min, max) => this.randomInt(min, max)) : planBattleAITarget({ actor, units: this.activeCombatants,
-            eligiblePlayers: this.players.filter(player => player.hp > 0),
+            actor, active, this.content.formation, (min, max) => this.randomInt(min, max)) : planBattleAITarget({ actor, units: active,
+            eligiblePlayers: active.filter(player => player.side === "player" && player.hp > 0),
             range: ability.program.range, rule: ability.plan!.targeting,
             formation: this.content.formation,
             ...(this.controlTargetPolicy(ability) ? { controlPolicy: this.controlPolicy! } : {}),
@@ -2694,15 +2796,16 @@ export class BattleGame {
         const ability = this.content.abilities[action.source.id]!;
         return { id: ability.id, type: ability.program.rules.type_id! };
       }));
-      this.registerActions(decisions);this.queue.push(...decisions);
-      actor.conditionIds = conditionIds;
-      actor.queued = true;
-      this.aiStates.set(actor.id, turn.state);
-      actor.behavior = turn.behavior;
-    } catch (error) {
-      this.randomState = previousRandom;
-      throw error;
-    }
+      return { decisions, conditionIds };
+  }
+  private publishEnemyTurn(actor: Combatant, turn: BattleAITurn) {
+    const previousRandom = this.randomState;
+    try {
+      const { decisions, conditionIds } = this.prepareEnemyTurn(actor, turn);
+      this.registerActions(decisions); this.queue.push(...decisions);
+      actor.conditionIds = conditionIds; actor.queued = true;
+      this.aiStates.set(actor.id, turn.state); actor.behavior = turn.behavior;
+    } catch (error) { this.randomState = previousRandom; throw error; }
   }
   private log(text: string) {
     this.events.push({ time: this.time, text });
@@ -2836,6 +2939,7 @@ export class BattleGame {
   private releaseStagedAction(reason:'completed'|'cancelled'|'actor-retired'):void {
     const action=this.action;if(!action)return;
     this.action=null;
+    if(this.reactionResolution?.ticket===action.executionTicket)this.reactionResolution=null;
     if (action.kind === "final") this.#finalTickets.complete(action.executionTicket);
     // Cancellation is not normal completion: native clears staging before its
     // state transition, so no staged actor reaches the ordinary ATB delegate.
@@ -2934,10 +3038,11 @@ export class BattleGame {
       nextActionTicket:this.#nextActionTicket,fixedPlayerActions:new Map(this.#fixedPlayerActions),actionCancellations:structuredClone(this.#actionCancellations),
       queue: structuredClone(this.queue),
       reactions: structuredClone(this.reactions),
-      ai: structuredClone(this.aiStates), aiClockOwners: new Map(this.aiClockOwners),
+      ai: structuredClone(this.aiStates), aiClockOwners: new Map(this.aiClockOwners), reactionResolution: this.reactionResolution,
       gauTask:this.#gauTask?{...this.#gauTask}:null,gauJournal:structuredClone(this.#gauJournal),
       fadeJournal:structuredClone(this.#fadeJournal),
       eventState: structuredClone(this.eventState),branchVisited:new Set(this.#branchVisited),
+      sourceHandoffReturn:structuredClone(this.sourceHandoffReturn), sourceFinalPlayerTask:structuredClone(this.sourceFinalPlayerTask),
       fieldReservation:structuredClone(this.fieldReservation),gauEnemyIds:structuredClone(this.gauEnemyIds),gauModeJournal:structuredClone(this.gauModeJournal),
       effectState:this.#effects.map(e=>({...e,projection:structuredClone(e.projection),targets:[...e.targets]})),effectNextTicket:this.#effectNextTicket,effectJournal:structuredClone(this.#effectJournal),
       messagePresentation: this.#messagePresentation, messageRootStarted: this.#messageRootStarted, messageJournal: structuredClone(this.#messageJournal),
@@ -3034,11 +3139,12 @@ export class BattleGame {
       this.#mpParameters.restore(before.mpParameters);
       this.enemyExits = before.enemyExits;
       this.rewardRegisteredInstances = before.rewardRegisteredInstances;
-      this.aiStates = before.ai; this.aiClockOwners = before.aiClockOwners;
+      this.aiStates = before.ai; this.aiClockOwners = before.aiClockOwners; this.reactionResolution = before.reactionResolution;
       this.eventState = before.eventState;this.#branchVisited=before.branchVisited;
       if(this.lifecycle.kind==='battle-lifecycle-v2'&&error instanceof BattleEventError)this.#branchLastFailure={
         pc:error.pc,reason:error.reason,raw:structuredClone(this.lifecycle.program.branchExecution!.sourceProgram.Mnemonics[error.pc]),
         attemptedTime:before.time+10,attemptedVisited:[...this.#branchFrameVisited,...error.attemptedVisited]};
+      this.sourceHandoffReturn=before.sourceHandoffReturn;this.sourceFinalPlayerTask=before.sourceFinalPlayerTask;
       this.fieldReservation=before.fieldReservation;this.gauEnemyIds=before.gauEnemyIds;this.gauModeJournal=before.gauModeJournal;
       this.eventControls = before.eventControls;
       this.eventUI = before.eventUI;
@@ -3081,6 +3187,12 @@ export class BattleGame {
     const gate = this.clockGate();
     if (!gate.simulation) return;
     this.time += 10;
+    if (this.reactionResolution) {
+      if (!this.action) throw new Error("Prepared received AI lost its parent action");
+      this.resolve(this.action);
+      if (!this.reactionResolution) this.checkOutcome();
+      return;
+    }
     this.advanceBattleEffects(); this.advancePeriodicNumbers();
     if(this.#gauTask&&this.#gauTask.phase!=="complete"){
       this.advanceGauTask();this.checkOutcome();return;
@@ -3102,6 +3214,7 @@ export class BattleGame {
       this.action.elapsed += 10;
       if (!this.action.resolved && this.action.elapsed >= 400)
         this.resolve(this.action);
+      if (this.reactionResolution) return;
       if (this.action.elapsed >= 900) {
         this.releaseStagedAction('completed');
       }
@@ -3353,10 +3466,13 @@ export class BattleGame {
     units: readonly Combatant[],
     results: readonly { target: string; effects: AbilityEffectResult[] }[],
     parentPayment: number,
+    heldTurns: ReadonlyMap<string, BattleAITurn> = new Map(),
   ) {
     const ability = this.actionDefinition(action);
     const updates: { actor: string; turn: BattleAITurn }[] = [];
+    const turns = new Map<string, BattleAITurn>();
     const decisions: BattleAction[] = [];
+    const normals: { unit: Combatant; actions: BattleAction[]; conditionIds: number[] }[] = [];
     const finals: { unit: Combatant; ticket: ReturnType<BattleFinalAttackTickets<Combatant>["prepare"]>; actions: BattleAction[] }[] = [];
     for (const result of results) {
       const actor = units.find((c) => c.id === result.target)!;
@@ -3384,20 +3500,28 @@ export class BattleGame {
         effects: result.effects,
       });
       if (!reaction && !finalReady || this.actionSuspended(actor) && !finalReady) continue;
-      if (aiState?.continuation)
-        throw new BattleAIError(actor.ai!.source, aiState.pc,
-          "Internal.Blank pending wake received an action; prepared parent-action continuation transaction is required");
       const receivedTypeId = this.content.abilities[action.source.id]!.program.rules.type_id;
-      const turn = planBattleAIReaction(
-        actor.ai!,
-        this.aiStates.get(actor.id)!,
-        this.aiContext(actor, units),
-        { ...(reaction ?? { counterReady: false, receivedAbilityId: action.source.id, receivedSystemId: ability.program.rules.system_id! }),
-          ...(finalReady ? { finalReady: true, counterReady: false, ...(actor.hp > 0 && actor.mp === 0 ? { finalMpDeath: true } : {}) } : {}), ...(receivedTypeId === undefined ? {} : { receivedAbilityTypeId: receivedTypeId }) },
-      );
+      const readiness = { ...(reaction ?? { counterReady: false, receivedAbilityId: action.source.id, receivedSystemId: ability.program.rules.system_id! }),
+        ...(finalReady ? { finalReady: true, counterReady: false, ...(actor.hp > 0 && actor.mp === 0 ? { finalMpDeath: true } : {}) } : {}),
+        ...(receivedTypeId === undefined ? {} : { receivedAbilityTypeId: receivedTypeId }) };
+      const held = heldTurns.get(actor.id), context = this.aiContext(actor, units);
+      const turn = held ? held.state.continuation ? resumeBattleAI(actor.ai!, held.state, context) : held
+        : aiState?.continuation ? receiveBattleAIAtClock(actor.ai!, aiState, context, readiness)
+        : planBattleAIReaction(actor.ai!, aiState!, context, readiness);
       this.admitAITurn(actor, turn);
+      turns.set(actor.id, turn); updates.push({ actor: actor.id, turn });
+    }
+    if ([...turns.values()].some(turn => turn.state.continuation))
+      return { updates, decisions, finals, normals, turns, pending: true };
+    for (const update of updates) {
+      const actor = units.find(unit => unit.id === update.actor)!, live = this.combatants.find(unit => unit.id === actor.id)!, turn = update.turn;
+      if (turn.normalWake && actor.hp > 0 && !(actor.mp === 0 && this.#mpParameters.query(live) === true) &&
+          !this.actionSuspended(actor) && !this.hasAutomaticControl(actor) && !this.conditions.isEscaped(actor.conditionIds)) {
+        const normal = this.prepareEnemyTurn(actor, turn, units);
+        normals.push({ unit: live, actions: normal.decisions, conditionIds: normal.conditionIds });
+      }
       const finalActions: BattleAction[] = [];
-      for (const act of turn.acts) {
+      for (const act of turn.acts.filter(act => act.kind === "counter-act" || act.kind === "final-act")) {
         for (const id of selectBattleAIAbilities(act, {
           integer: (min, max) => this.randomInt(min, max),
           float: (min, max) =>
@@ -3448,9 +3572,8 @@ export class BattleGame {
         }
       }
       if (finalActions.length) finals.push({ unit: live, ticket: this.#finalTickets.prepare(live, action.executionTicket!), actions: finalActions });
-      updates.push({ actor: actor.id, turn });
     }
-    return { updates, decisions, finals };
+    return { updates, decisions, finals, normals, turns, pending: false };
   }
   /** Parent calculations and child queue proposals stay private until every
    * target, receiver, condition and dependency of the action has admitted. */
@@ -3562,31 +3685,8 @@ export class BattleGame {
     return{kind:'source-function9-death-override-v1',actorId:actor.id,abilityId:ability.id,conditionId:effect.conditionId,
       targetIds:[...targetIds],normalBranch};
   }
-  private resolve(action: BattleAction) {
-    // Stale presentation/executor completions cannot revive a cancelled action
-    // or a retired battle. No RNG, cost, lookup or effect precedes this fence.
-    if(this.phase!=='active'||this.#messageRetired||this.#effectRetired||this.action!==action)return;
-    const actor = this.combatants.find((c) => c.id === action.actor)!;
-    const ability = this.actionDefinition(action);
-    if (action.resolved) return;
-    if(action.source.kind==='ability'){const carrier=enemyMagicActorBlocker(this.content.abilities[action.source.id]!,actor.side);if(carrier)throw new Error(carrier); }
-    if(action.source.kind==='ability')validateOrdinaryConditionAction(this.content.abilities[action.source.id]!);
-    if (!ability.plan) throw new Error("Unimplemented ability cannot execute");
-    if (ability.plan.effects.some(effect => effect.kind === "non-damaging")) {
-      if (!("nonDamagingPresentation" in ability) || !ability.nonDamagingPresentation || ability.presentation !== "source-effect-deferred")
-        throw new Error("Missing source non-damaging presentation policy");
-      validateNonDamagingPresentation(ability.nonDamagingPresentation);
-    }
-    if (!this.canUseAction(action)) {
-      action.resolved = true;
-      return;
-    }
-    const cost = action.source.kind === "item" ? 0 : this.abilityCost(actor.id, action.source.id)!.mp;
-    // IsUsableAbility checks MP for players only. UseMp still charges enemies,
-    // clamping the resulting resource at zero instead of cancelling their act.
-    const payment = Math.min(actor.mp, cost);
-    const randomBefore = this.randomState;
-    try {
+  private prepareActionResolution(action: BattleAction, actor: Combatant, ability: ReturnType<BattleGame["actionDefinition"]>, payment: number) {
+      if (!ability.plan) throw new Error("Unimplemented ability cannot prepare");
       const choice = resolveBattleTargets(
         action.selection,
         this.actionTargetChoices(action),
@@ -3595,9 +3695,7 @@ export class BattleGame {
       );
       if (!choice) {
         if (action.kind === "final") throw new Error("Unresolved Final empty/default target phase");
-        action.targetIds = [];
-        action.resolved = true;
-        return;
+        return null;
       }
       if (payment > 0 && this.#mpParameters.query(actor) === true &&
           ability.plan.effects.some(effect => "resource" in effect && effect.resource === "mp" &&
@@ -3693,17 +3791,78 @@ export class BattleGame {
             hp: unit.hp, mpUnableFight: unit.mp + (live === actor ? payment : 0) === 0 && this.#mpParameters.query(live) === true, conditionTypes: this.conditions.types(unit.conditionIds),
             incomingInterrupt: action.kind === "counter" || action.kind === "final",
             primarySlot: ability.program.functions[0]?.slot ?? -1, effects: entry.effects });
-        if (finalEligible && this.aiStates.get(unit.id)?.continuation)
-          throw new BattleAIError(unit.ai!.source, this.aiStates.get(unit.id)!.pc,
-            "Internal.Blank pending wake received Final readiness; prepared parent-action continuation transaction is required");
-        const candidate = finalEligible && this.aiStates.get(unit.id)?.status === "waiting";
+        const candidate = finalEligible;
         const life = this.settleBattleLife(live, unit.hp, unit.conditionIds,
           this.conditions.isUnableFight(live.conditionIds), candidate, unit.mp);
         Object.assign(unit, life);
         if (entry) Object.assign(entry.state, life);
         if (live === actor && projection.userResourceState) Object.assign(projection.userResourceState, life);
       }
-      const reactions = this.planReactions(action, projected, results, payment);
+      return { choice, projection, staged, projected, results, derived };
+  }
+  private reactionResolutionBaseline(): string {
+    return canonical({ units: this.combatants.map(unit => ({ ...unit, ai: null })),
+      ai: [...this.aiStates], queue: this.queue, reactions: this.reactions, random: this.randomState,
+      stock: this.stock, finalTickets: this.#finalTickets.projection, enemyExits: [...this.enemyExits],
+      action: this.action && { ...this.action, elapsed: 0 } });
+  }
+  private validateReactionResolution(held: NonNullable<BattleGame["reactionResolution"]>, action: BattleAction, ability: ReturnType<BattleGame["actionDefinition"]>) {
+    if (held.ticket !== action.executionTicket || held.actor !== this.combatants.find(unit => unit.id === action.actor) ||
+        held.owners.length !== this.combatants.length || held.owners.some((unit, index) => unit !== this.combatants[index] || unit.ai !== held.programs[index]) ||
+        held.baseline !== this.reactionResolutionBaseline() || held.abilityPin !== canonical(ability))
+      throw new Error("Stale prepared parent-action/received AI owner");
+  }
+  private resolve(action: BattleAction) {
+    // Stale presentation/executor completions cannot revive a cancelled action
+    // or a retired battle. No RNG, cost, lookup or effect precedes this fence.
+    if(this.phase!=='active'||this.#messageRetired||this.#effectRetired||this.action!==action)return;
+    const actor = this.combatants.find((c) => c.id === action.actor)!;
+    const ability = this.actionDefinition(action);
+    const held = this.reactionResolution;
+    if (held) this.validateReactionResolution(held, action, ability);
+    if (action.resolved) return;
+    if(action.source.kind==='ability'){const carrier=enemyMagicActorBlocker(this.content.abilities[action.source.id]!,actor.side);if(carrier)throw new Error(carrier); }
+    if(action.source.kind==='ability')validateOrdinaryConditionAction(this.content.abilities[action.source.id]!);
+    if (!ability.plan) throw new Error("Unimplemented ability cannot execute");
+    if (ability.plan.effects.some(effect => effect.kind === "non-damaging")) {
+      if (!("nonDamagingPresentation" in ability) || !ability.nonDamagingPresentation || ability.presentation !== "source-effect-deferred")
+        throw new Error("Missing source non-damaging presentation policy");
+      validateNonDamagingPresentation(ability.nonDamagingPresentation);
+    }
+    if (!this.canUseAction(action)) {
+      if (held) throw new Error("Prepared parent-action qualification changed");
+      action.resolved = true;
+      return;
+    }
+    const cost = action.source.kind === "item" ? 0 : this.abilityCost(actor.id, action.source.id)!.mp;
+    // IsUsableAbility checks MP for players only. UseMp still charges enemies,
+    // clamping the resulting resource at zero instead of cancelling their act.
+    const payment = Math.min(actor.mp, cost);
+    const randomBefore = this.randomState;
+    try {
+      const candidate = held ? structuredClone(held.candidate) : this.prepareActionResolution(action, actor, ability, payment);
+      if (!candidate) { action.targetIds = []; action.resolved = true; return; }
+      if (held) {
+        this.randomState = held.random;
+        for (const entry of candidate.staged) entry.target = held.owners.find(unit => unit.id === entry.target.id)!;
+        for (const unit of candidate.projected) unit.ai = held.programs[held.owners.findIndex(owner => owner.id === unit.id)]!;
+      }
+      const {choice, projection, staged, projected, results, derived} = candidate;
+      const reactions = this.planReactions(action, projected, results, payment, held?.turns);
+      if (reactions.pending) {
+        const random = this.randomState; this.randomState = randomBefore;
+        const baseline = held?.baseline ?? this.reactionResolutionBaseline();
+        this.reactionResolution = { ticket: action.executionTicket!, actor, owners: held?.owners ?? [...this.combatants],
+          programs: held?.programs ?? this.combatants.map(unit => unit.ai), baseline, abilityPin: held?.abilityPin ?? canonical(ability),
+          random, candidate, turns: reactions.turns };
+        this.randomState = randomBefore;
+        return;
+      }
+      for (const normal of reactions.normals) {
+        projected.find(unit => unit.id === normal.unit.id)!.conditionIds = [...normal.conditionIds];
+        const entry = staged.find(entry => entry.target === normal.unit);
+        if (entry) entry.state.conditionIds = [...normal.conditionIds];
+      }
       for (const unit of projected) {
         const live = this.combatants.find(current => current.id === unit.id)!;
         const entry = staged.find(candidate => candidate.target === live);
@@ -3866,6 +4025,10 @@ export class BattleGame {
         this.combatants.find((c) => c.id === update.actor)!.behavior =
           update.turn.behavior;
       }
+      for (const normal of reactions.normals) {
+        this.registerActions(normal.actions); this.queue.push(...normal.actions); normal.unit.queued = true;
+      }
+      for (const update of reactions.updates) this.aiClockOwners.delete(update.actor);
       // Function46 enqueues its child during HitCalc, before the parent's
       // completed result wakes receivers. Both preparations commit together.
       const finalActions = reactions.finals.flatMap(next => next.actions);
@@ -3879,7 +4042,7 @@ export class BattleGame {
       action.results = results;
       if (projection.userResults.length) action.userConditionResults = structuredClone(projection.userResults);
       if(projection.userResourceResults)action.userResourceResults=structuredClone(projection.userResourceResults);
-      action.resolved = true;
+      action.resolved = true; this.reactionResolution = null;
     } catch (error) {
       this.randomState = randomBefore;
       throw error;

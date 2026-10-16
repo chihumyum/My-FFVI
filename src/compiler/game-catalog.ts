@@ -1,3 +1,4 @@
+import {compileSourceBattleHandoffCatalog} from './source-battle-handoffs.js';
 import {compileRtsPartyCatalog}from'./field-rts-party.js';
 import { compileSourceRosterGroups } from "./roster-groups.js";
 import {compileCurrentJobCatalog} from "./current-job.js";
@@ -56,7 +57,7 @@ export type GameCatalogCompileOptions = {
 export type GameCatalogModules = {
   common: Omit<BattleCatalog["common"], "players" | "limitations" | "drops">;
   owned: Pick<GameStateContent, "shops" | "characterInitializations" | "characterGrowth" | "characterNaming" | "currentJobs" |
-    "partyActors" | "battleDefinitions" | "fieldConditions" | "fieldAbilities" | "magicStones" | "sourceRosterGroups" | "sourceRtsParty"> & {
+    "partyActors" | "battleDefinitions" | "fieldConditions" | "fieldAbilities" | "magicStones" | "sourceRosterGroups" | "sourceRtsParty" | "sourceBattleHandoffs"> & {
     sourceNewGame: NewGameDefinition;
     equipmentSystem: NonNullable<GameStateContent["equipmentSystem"]>;
   };
@@ -389,6 +390,7 @@ export async function compileGameCatalogModules(root: string, source: SharedBatt
   const owned: GameCatalogModules["owned"] = {
     shops: shops.catalog, characterInitializations, characterGrowth,
     sourceRosterGroups: compileSourceRosterGroups(tables).catalog,
+    sourceBattleHandoffs: compileSourceBattleHandoffCatalog(tables, handoffSystem.sourceSetHash),
     characterNaming: compileSourceCharacterNameCatalog(handoffSystem.reader, handoffSystem.tables["character_status.csv"]!, name).catalog,
     sourceRtsParty: compileRtsPartyCatalog(handoffSystem.reader,handoffSystem.tables,(()=>{const rows=handoffSystem.assets.filter(a=>a.source.assetPath.endsWith("/serial_misc_assets.json"));if(rows.length!==1)throw Error("Missing or ambiguous RTS Misc provider");return rows[0]!.data;})()),
     partyActors: structuredClone(source.partyActors),

@@ -1,7 +1,10 @@
+import {sourceBattleHandoffSelectors,compileSourceBattleHandoffInstruction} from './source-battle-handoffs.js';
 import { compileFieldUiInstruction, sourceFieldUiSelectors } from "./field-ui.js";
 import { sourceOwnedEquipmentSelectors, compileSourceOwnedEquipmentInstruction } from "./source-owned-equipment.js";
+import { compileFieldMapTransform } from "./field-map-transforms.js";
 import { compileFieldLayerInstruction, sourceFieldLayerSelectors } from "./field-layer-scrolling.js";
 import {sourceRtsPartySelectors,compileRtsPartyInstruction}from'./field-rts-party.js';
+import {sourceMultiCorpsSelectors,compileMultiCorpsInstruction}from'./field-multi-corps.js';
 import { rosterGroupSelectors, compileRosterGroupEvent } from "./roster-groups.js";
 import {compileSourceCharacterNamingInstruction,sourceCharacterNamingSelectors} from './source-character-naming.js';
 import {compileFieldSkyboxScroll,sourceSkyboxScrollSelectors}from"./field-skybox-scroll.js";
@@ -250,7 +253,12 @@ export function decodeFieldOp(
   }
   const o = record(m.operands), i = list(o.iValues).map(integer),
     r = list(o.rValues).map(Number), s = list(o.sValues).map(string);
+  if (["Orient","ChangeMapRenderArea","Water"].includes(name)) {try{return{...site,...compileFieldMapTransform(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if (name === "SysCall" && sourceFieldLayerSelectors.includes(s[0] ?? "")) { try { return { ...site, ...compileFieldLayerInstruction(raw) }; } catch (error) { return blocked(error instanceof Error ? error.message : String(error)); } }
+  if (name === 'SysCall' && (sourceBattleHandoffSelectors as readonly unknown[]).includes(s[0])) {
+    try { return {...site, ...compileSourceBattleHandoffInstruction(raw)}; }
+    catch (error) { return blocked(error instanceof Error ? error.message : String(error)); }
+  }
   if(name==='SysCall'&&(sourceSkyboxScrollSelectors as readonly string[]).includes(s[0]??'')){try{return {...site,...compileFieldSkyboxScroll(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if(name==='SysCall'&&(screenPresentationSelectors as readonly string[]).includes(s[0]??'')){try{return {...site,...compileFieldScreenPresentation(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if(name==='SysCall'&&Object.hasOwn(sourceCharacterNamingSelectors,s[0]??'')){try{return {...site,...compileSourceCharacterNamingInstruction(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
@@ -264,6 +272,7 @@ export function decodeFieldOp(
   }
   if(name==='SysCall'&&s[0]==='戦闘結果取得'){try{return {...site,...compileSourceBattleResultInstruction(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if(name==='SysCall'&&Object.hasOwn(sourceRtsPartySelectors,s[0]!)){try{return {...site,...compileRtsPartyInstruction(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
+  if(name==='SysCall'&&Object.hasOwn(sourceMultiCorpsSelectors,s[0]!)){try{return {...site,...compileMultiCorpsInstruction(raw)};}catch(error){return blocked(error instanceof Error?error.message:String(error));}}
   if(name==='SysCall'&&sourcePuppetReplacementSelectors.includes(s[0]!)){
     try{return {...site,...compileFieldPuppetReplacementInstruction(raw)};}
     catch(error){return blocked(error instanceof Error?error.message:String(error));}

@@ -27,6 +27,7 @@ export type DevelopmentProfile = {
    * This does not grant native group-material or water-shader acceptance. */
   fieldPresentation?: "framework-ordinary-field-flat-v1";
   skyboxPresentation?: import("./field-skybox.js").WebFlatSkybox;
+  mapTransforms?: import("./field-map-transforms.js").WebFieldMapTransforms;
   fieldLayerScrolling?: import("./field-layer-scrolling.js").WebFieldLayerScrolling;
   screenPresentation?: import("./field-screen-presentation.js").WebFieldScreenPresentation;
   worldAutoMove?: 'web-flat-world-auto-move-v1';

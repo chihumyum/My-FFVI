@@ -16,7 +16,6 @@ export function compileSourcePartySelectionInstruction(raw: unknown): SourcePart
   }
   const selector=(o.sValues as unknown[])[0],index=sourcePartySelectionSelectors.indexOf(selector as never);
   if(index<0) throw new Error('Unknown source party selection selector');
-  if(index===4) throw new Error('Source final battle ordering and downstream consumer are unresolved');
-  const modes:SourcePartySelectionCommand['mode'][]=['one','opera','two','three'];
+  const modes:SourcePartySelectionCommand['mode'][]=['one','opera','two','three','final'];
   return {kind:'source-party-selection',command:{kind:'source-party-selection',mode:modes[index]!}};
 }

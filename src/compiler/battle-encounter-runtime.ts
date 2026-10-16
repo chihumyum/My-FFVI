@@ -447,6 +447,8 @@ export function compileBattleEncounterRuntime(reader: Reader, input: BattleEncou
       const dynamicEntries = lifecycle?.mode === "script" ? lifecycle.program.instructions.flatMap(({ op }, pc) =>
         op.kind === "add-enemy" || op.kind === "change-enemy-party" ? [{ op, pc }] : []) : [];
       if (lifecycle?.mode === "script") for (const [pc, { op }] of lifecycle.program.instructions.entries()) {
+        if (op.kind === 'source-final-player-switch') add('blocked','source-final-owned-borrow-policy',
+          'Native final-wave player switch requires its actual menu-produced waiting owned IDs and complete existing borrowed candidate/resource/return policy; ordinary source final flag3 result remains independently unadmitted', {pc});
         if (op.kind === "add-player") add("blocked", "owned-player-borrow-policy",
           `Battle event PC ${pc} requires an admitted existing owned source ${op.sourceId}, resource closure and explicit return policy`,
           { pc, dependency: { table: "character_status.csv", id: op.sourceId } });

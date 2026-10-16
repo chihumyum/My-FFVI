@@ -106,8 +106,8 @@ async function readLockedJson(inputs, root, path) {
 
 async function modules(compiledDir,{board=false}={}) {
   const load = name => import(pathToFileURL(resolve(compiledDir, "src", name + ".js")).href);
-  const [content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost, npcArea, npcFlat, effectFlat, ordinary, skybox, boardTransforms] = await Promise.all([
-    load("compiler/content"), load("core/content-integrity"), load("compiler/world"), load("compiler/source-new-game"),
+  const [mapTransformsApi, content, integrity, world, newGame, framework, sourceCatalog, composition, battle, catalog, playable, logical, corpus, packages, background, periodic, renderHost, npcArea, npcFlat, effectFlat, ordinary, skybox, boardTransforms] = await Promise.all([
+    load("compiler/field-map-transforms"), load("compiler/content"), load("core/content-integrity"), load("compiler/world"), load("compiler/source-new-game"),
     load("compiler/framework-content"), load("core/source-catalog"), load("core/field-native-composition"),
     load("compiler/battle"), load("compiler/game-catalog"), load("compiler/opening-playable"), load("compiler/field-logical-effects"),
     load("compiler/corpus"), load("compiler/map-package"), load("compiler/field-background"),
@@ -115,7 +115,7 @@ async function modules(compiledDir,{board=false}={}) {
     load("compiler/framework-npc-area"), load("compiler/framework-npc-flat-projection"), load("compiler/framework-field-effect-flat-projection"),
     load("compiler/framework-ordinary-presentation"), load("compiler/field-skybox"), ...(board?[load("compiler/framework-field-effect-transforms")]:[]),
   ]);
-  return { ...content, ...integrity, ...world, ...newGame, ...framework, ...sourceCatalog, ...composition,
+  return { ...mapTransformsApi, ...content, ...integrity, ...world, ...newGame, ...framework, ...sourceCatalog, ...composition,
     ...battle, ...catalog, ...playable, ...logical, ...corpus, ...packages, ...background, ...periodic, ...renderHost, ...npcArea, ...npcFlat, ...effectFlat, ...ordinary, ...skybox, ...boardTransforms };
 }
 
@@ -375,7 +375,7 @@ export async function validateSourcePrerequisiteInputs(raw, { root = repository 
 
 /** Pure upstream DAG: current battle capabilities -> source world/new game -> explicit framework
  * derivation. It never writes packages, generated recipes, reports or archives. */
-export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,vehicleLifecycle,transportationParkingUpload,fieldLayerScrolling } = {}) {
+export async function compileSourcePrerequisites({ root = repository, compiledDir = "dist", logicalFieldEffects, periodicMaps, ordinaryFields, mapAnimatedEntities, npcAreas, npcFlat, fieldEffectFlat, worldAutoTasks,birdViewActors,worldAutoMove,mobColorFilter,screenPresentation,skyboxPresentation,fieldEffectTransforms,vehicleLifecycle,transportationParkingUpload,fieldLayerScrolling,mapTransforms } = {}) {
   if(transportationParkingUpload!==undefined&&(transportationParkingUpload!=="web-source-transport-parking-upload-v1"||vehicleLifecycle!=="web-source-vehicle-lifecycle-v1"||fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS))throw Error("Unknown source parking upload policy/dependency");
   if(vehicleLifecycle!==undefined&&vehicleLifecycle!=="web-source-vehicle-lifecycle-v1")throw Error("Unknown source vehicle lifecycle policy");
   if(fieldEffectTransforms!==undefined&&fieldEffectTransforms!==FIELD_EFFECT_TRANSFORMS)throw Error("Unknown board transform policy");
@@ -498,13 +498,14 @@ export async function compileSourcePrerequisites({ root = repository, compiledDi
       compiled:assessments.filter(row=>row.presentation).length,unready:assessments.filter(row=>!row.presentation).length,
       pureCompilations:1,sourceGameplayAdmitted:false,nativeParity:false};
   }
+  if(mapTransforms!==undefined){if(mapTransforms!=="web-flat-field-map-transforms-v1")throw Error("Unknown map-transform policy");frameworkOptions.mapTransforms=mapTransforms;frameworkOptions.fieldWaterCatalog=await api.loadFieldWaterWorldCatalog(root);}
   let ordinaryReport=null;
   if(ordinaryDeclaration){
     const corpus=await api.loadCorpus(root),sources=corpus.manifest.sources.map(({file,sha256})=>({file,sha256}));
     if(corpus.sourceSetHash!==inputs.sourceSetHash||corpus.manifest.parentSourceSetHash!==inputs.parentSourceSetHash)
       throw new Error("Ordinary presentation corpus/input-lock identity mismatch");
     const renderHost=await api.loadFieldCompositionRenderHost(root,sources);
-    frameworkOptions.ordinaryPresentations=api.assessFrameworkOrdinaryWorld(corpus,strict.catalog,strict.maps,renderHost,ordinaryDeclaration.reason);
+    frameworkOptions.ordinaryPresentations=api.assessFrameworkOrdinaryWorld(corpus,strict.catalog,strict.maps,renderHost,ordinaryDeclaration.reason,frameworkOptions.fieldWaterCatalog);
     ordinaryReport={declaration:ordinaryDeclaration,maps:frameworkOptions.ordinaryPresentations.length,
       available:frameworkOptions.ordinaryPresentations.filter(row=>row.presentation).length,
       derived:frameworkOptions.ordinaryPresentations.filter(row=>row.mode==='flat-alternative').length,

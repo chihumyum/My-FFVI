@@ -1,8 +1,12 @@
+import {WEB_BATTLE_FORCED_SAVE} from '../../src/core/battle-forced-save.js';
+import type {BattleEventOp} from '../../src/core/battle-event.js';
+import {WEB_BATTLE_EVENT_CONTROLS} from '../../src/core/battle-controls.js';
+import {WEB_SOURCE_BATTLE_HANDOFFS} from '../../src/core/source-battle-handoffs.js';
 import assert from 'node:assert/strict';
 import { magicStonesSessionFixture } from './magic-stones-session.js';
 import { sealBatchContent } from './content-batch.js';
 import { NewGameFieldEntry } from '../../src/core/new-game-field-entry.js';
-import { GameSession, type GameCheckpoint } from '../../src/core/game-session.js';
+import { GameSession, type GameCheckpoint, type GameSessionRuntime } from '../../src/core/game-session.js';
 import { GameFlow } from '../../src/core/game-flow.js';
 import { GameCommands } from '../../src/core/game-commands.js';
 import { GameContentRepository } from '../../src/core/game-content.js';
@@ -10,10 +14,10 @@ import { WEB_SOURCE_PARTY_SELECTION, type SourcePartySelectionCommand } from '..
 import type { Op } from '../../src/field/types.js';
 export const selectionHost={visible:true,mediaReady:true,overlayOpen:false};
 /** Synthetic programs and two legally declared initial owners, real native factory. */
-export function sourcePartySelectionSessionFixture(options:{policy?:boolean;selectedSecond?:boolean;destinationSelection?:boolean}={}) {
+export function sourcePartySelectionSessionFixture(options:{policy?:boolean;selectedSecond?:boolean;destinationSelection?:boolean;handoffs?:boolean;handoffOps?:BattleEventOp[]|((sourceIds:number[])=>BattleEventOp[]);battleEventEffects?:GameSessionRuntime['battleEventEffects']}={}) {
   const f=magicStonesSessionFixture();delete f.map.walkEncounters;
   f.battle.common.sprites.synthetic={file:'/synthetic/party-selection-battle.png',width:16,height:16};
-  for(const mode of ['one','two','three','opera'] as const) {
+  for(const mode of ['one','two','three','opera','final'] as const) {
     const name='selection-'+mode,command:SourcePartySelectionCommand={kind:'source-party-selection',mode};
     f.map.scripts[name]=[{kind:'source-party-selection',command},{kind:'wait',seconds:.03},{kind:'exit'}]
       .map((op,index)=>({...op,index,script:name,source:f.source}) as Op);
@@ -33,6 +37,23 @@ export function sourcePartySelectionSessionFixture(options:{policy?:boolean;sele
     script:'selection-leave',index:0,source:f.source}];
   f.map.scriptPuppetContexts!['selection-leave']={...f.map.scriptPuppetContexts!.reserved!};
   f.map.scriptLocals!['selection-leave']=null;
+  if(options.handoffs){
+    for(const command of ['colosseum-recovery','restore-0055'] as const){
+      const script='handoff-'+command;f.map.scripts[script]=[{kind:'source-battle-handoff',command},{kind:'exit'}].map((op,index)=>({...op,index,script,source:f.source}) as Op);
+      f.map.scriptPuppetContexts![script]={...f.map.scriptPuppetContexts!.reserved!};(f.map.scriptSystemFlags??={})[script]={keepBadStatusVisual:false};
+      (f.map.scriptLocals??={})[script]=null;
+    }
+    f.battle.gameState.sourceBattleHandoffs={kind:'source-battle-handoff-catalog-v1',policy:WEB_SOURCE_BATTLE_HANDOFFS,
+      sourceSetHash:'a'.repeat(64),conditions:f.battle.common.conditions.rules.definitions.map(({id,type})=>({id,type,untilType:0}))};
+    const configured=typeof options.handoffOps==='function'?options.handoffOps(f.battle.common.players.map(player=>player.sourceId)):options.handoffOps;
+    const encounter=Object.values(f.battle.encounters)[0]!,ops:BattleEventOp[]=[...(configured??[{kind:'source-final-player-switch'},{kind:'force-return'}]),{kind:'exit'}];
+    if(ops.some(op=>op.kind==='force-save-return')) encounter.forcedSavePolicy={kind:WEB_BATTLE_FORCED_SAVE};
+    encounter.lifecycle={kind:'battle-lifecycle-v1',mode:'script',scriptId:1,program:{kind:'battle-event-v1',entry:0,end:ops.length,
+      source:{sourceSetHash:'a'.repeat(64),battleSourceSetHash:'b'.repeat(64),sha256:'c'.repeat(64),file:'authored',
+        assetPath:'authored/handoffs',serializedFile:'authored',objectId:'90071992547409937'},
+      localNames:['AI','unused','phase'],initialLocals:[0,0,0],blockers:[],instructions:ops.map(op=>({mnemonic:op.kind,op}))}};
+    encounter.playerParticipants={kind:'battle-player-plan-v1',profile:'web-owned-borrow-v1',sourceIds:f.battle.common.players.map(player=>player.sourceId),groups:[],rewardScope:'all-entered',returnParty:'preserve-entry'};
+  }
   const sealedTarget=sealBatchContent(target),targetUrl='/authored/selection-target.json';
   f.world.transportation=structuredClone(f.battle.gameState.sourceNewGame!.transportation);
   f.world.maps[targetId]={...f.world.maps[f.map.mapId]!,contentHash:sealedTarget.contentHash,url:targetUrl,name:target.name};
@@ -40,7 +61,7 @@ export function sourcePartySelectionSessionFixture(options:{policy?:boolean;sele
   f.world.maps[f.map.mapId]!.contentHash=f.map.contentHash;f.world=sealBatchContent(f.world);
   f.content.battleCatalogHash=f.battle.contentHash;f.content.worldCatalogHash=f.world.contentHash;
   f.content.mapContentHash=f.map.contentHash;f.content=sealBatchContent(f.content);
-  const runtime=options.policy===false?{}:{sourcePartySelection:WEB_SOURCE_PARTY_SELECTION};
+  const runtime={...(options.policy===false?{}:{sourcePartySelection:WEB_SOURCE_PARTY_SELECTION}),...(options.handoffs?{battleEventControls:WEB_BATTLE_EVENT_CONTROLS}:{}),...(options.battleEventEffects?{battleEventEffects:options.battleEventEffects}:{})};
   function make(){
     const entry=new NewGameFieldEntry(f.content.entry,f.presentation),start=entry.prepareStart(f.fade,{active:true,callbacks:'absent'});start.commit();
     let fade=start.fade;fade.advance(.5);

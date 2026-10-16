@@ -10,6 +10,7 @@ export function webSourceFrameworkInputs() {
     birdViewActors: 'web-flat-bird-view-actors-v1',
     mobColorFilter: 'web-flat-mob-color-filter-v1',
     screenPresentation:'web-field-screen-presentation-2d-v1',
+    mapTransforms:'web-flat-field-map-transforms-v1',
     fieldLayerScrolling:'web-field-layer-scrolling-v1',
     skyboxPresentation:'web-flat-skybox-panorama-v1',
     fieldEffectTransforms:'web-source-logical-board-transforms-v1',

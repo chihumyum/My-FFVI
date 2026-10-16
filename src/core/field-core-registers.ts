@@ -89,6 +89,7 @@ export function projectFieldCoreSlots(current: FieldCoreRegisters,
 export function fieldUsesCoreRegisters(content: Pick<FieldContent, "scripts">): boolean {
   return Object.values(content.scripts).some(program => program.some(op =>
     op.kind === "source-character-naming" && op.command.completion === "first-join-level" ||
+    op.kind === "field-map-transform" && op.command.kind === "render-area" ||
     op.kind === "field-layer-scrolling" && op.command.kind === "tween" || op.kind === "field-skybox-scroll" || op.kind === "standalone-wait" ||
     op.kind === "owned-condition" && op.command.kind === "remove-condition" && op.command.conditionType === 0 ||
     op.kind === "animation-play" && op.repeatCount !== undefined));

@@ -72,25 +72,24 @@ test('explicit incoming type5 never manufactures the HP-zero Final phase',()=>{
   const b=new BattleGame(c,314);assert(b.command(b.players[0]!.id,901,b.enemies[0]!.id));until(b,()=>b.action?.source.id===901&&b.action.resolved);
   assert.equal(b.enemies[0]!.hp,0);assert.equal(b.finalAttackExecution.length,0);assert(!b.pendingActions.some(a=>a.kind==='final'));
 });
-test('explicit type5 respects the pending reaction gate and cancels a reaction-free wake without inventing Final readiness',()=>{
+test('explicit type5 continues required received readiness and cancels a reaction-free wake without inventing Final readiness',()=>{
   for(const reactionRequired of [true,false]){
     const {c}=content(3);c.enemies[0]!.abilities=[13];
     if(!reactionRequired)c.reactions.excludedAbilityIds.push(901);
     c.enemies[0]!.ai=syntheticAI([['Nop'],['SyncAI'],['StartTable',[0]],['VariableAssign',[0,91]],
-      ['Act',[13]],['Blank'],['JumpBattleAI',[4]],['FinalAttackAct',[13]],['EndTable'],['JumpBattleAI',[0]]]);
-    const b=new BattleGame(c,314),enemy=b.enemies[0]!;enemy.atb=100;
-    assert(b.command(b.players[0]!.id,901,enemy.id));until(b,()=>b.action?.source.id===901&&b.action.elapsed===390);
-    assert(b.enemyAIState(enemy.id)!.continuation);assert.equal(enemy.behavior!.variables[0],0);
+      ['Act',[13]],['Blank'],['Blank'],['FinalAttackAct',[13]],['EndTable'],['JumpBattleAI',[0]]]);
+    const b=new BattleGame(c,314),enemy=b.enemies[0]!;
+    assert(b.command(b.players[0]!.id,901,enemy.id));until(b,()=>b.action?.source.id===901&&b.action.elapsed===380);
+    enemy.atb=100;b.advance(10);assert(b.enemyAIState(enemy.id)!.continuation);assert.equal(enemy.behavior!.variables[0],0);
+    const wake=structuredClone(b.enemyAIState(enemy.id)),hp=enemy.hp;b.advance(10);
     if(reactionRequired){
-      const before=snapshot(b),wake=structuredClone(b.enemyAIState(enemy.id));
-      assert.throws(()=>b.advance(10),/pending wake received an action/);
-      assert.deepEqual(snapshot(b),before);assert.deepEqual(b.enemyAIState(enemy.id),wake);
-      continue;
+      assert(b.pendingReactionExecution);assert.equal(b.pendingReactionExecution.receivers[0]!.finalReady,false);
+      assert.equal(enemy.hp,hp);assert.deepEqual(b.enemyAIState(enemy.id),wake);b.advance(10);
     }
-    b.advance(10);assert.equal(enemy.hp,0);assert(enemy.conditionIds.includes(1505));
-    assert.equal(b.finalAttackExecution.length,0);assert(!b.pendingActions.some(a=>a.kind==='final'));
+    assert.equal(b.pendingReactionExecution,null);assert.equal(enemy.hp,0);assert(enemy.conditionIds.includes(1505));
+    assert.equal(b.finalAttackExecution.length,0);assert(!b.pendingActions.some(a=>a.kind==='final'||a.kind==='normal'));
     b.advance(10);assert.equal(b.enemyAIState(enemy.id)!.continuation,undefined);
-    assert.equal(enemy.behavior!.variables[0],0);assert.equal(enemy.queued,false);
+    assert.equal(enemy.behavior!.variables[0],reactionRequired?91:0);assert.equal(enemy.queued,false);
   }
 });
 test('Leviteto application reuses its actual enemy-only lifecycle and never grants the unported player renderer',()=>{

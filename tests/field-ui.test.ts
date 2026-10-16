@@ -45,3 +45,14 @@ test("full batch dependencies retain unknown UI and missing persistent location 
   assert.equal(assessFieldRequirements(requirements, { providers: { sourceFieldUi: "available", sourceLocation: "available" }, actorKind: "unknown" }).status, "ready");
   assert.deepEqual(fieldInstructionRequirements({ ...op, command: { kind: "event" } }).map(row => row.capability), ["sourceFieldUi"]);
 });
+test("active title continuation retains both clocks and rejects absent, expired, reordered or unbounded callbacks", () => {
+  const ui = new FieldUiState("source");
+  ui.prepare(title()).commit(); ui.advance(1000); ui.prepare(title("Second", "Later")).commit();
+  const saved = ui.snapshot(), restored = FieldUiState.restore(saved, "source");
+  ui.advance(1000); restored.advance(1000); assert.deepEqual(restored.snapshot(), ui.snapshot());
+  assert.equal(restored.snapshot().title, null); assert.equal(restored.active, true);
+  for (const timers of [[], [2000], [3000, 2000], [1000, 3000], [3000, 3001], [3000, 9000]]) {
+    assert.throws(() => FieldUiState.restore({ ...saved, closeTimers: timers }, "source"));
+  }
+  restored.advance(1000); assert.equal(restored.active, false);
+});

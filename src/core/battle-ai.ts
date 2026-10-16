@@ -126,6 +126,8 @@ export type BattleAIAct = {
   | { kind: "loop-act"; abilities: number[]; counts: number[] }
 );
 export type BattleAITurn = {
+  /** An incoming receiver flag may coexist with an unfinished normal wake. */
+  normalWake?: true;
   trigger: "initial" | "normal" | "reaction";
   state: BattleAIState;
   behavior: EnemyBehaviorState;
@@ -133,6 +135,8 @@ export type BattleAITurn = {
   visited: number[];
 };
 export type BattleAIReaction = {
+  /** Only receiveBattleAIAtClock carries the already-running normal flag. */
+  normalReady?: true;
   /** A missed/Non calculation wakes received-ability AI, without counter readiness. */
   counterReady: boolean;
   /** Only the Battle owner supplies native Final readiness from a death ticket. */
@@ -168,7 +172,8 @@ function route(
   wake: "initial" | "normal" | BattleAIReaction,
   resuming = false,
 ): BattleAITurn {
-  const normalReady = wake === "normal";
+  const normalReady = wake === "normal" || typeof wake !== "string" && wake.normalReady === true;
+  const mixed = typeof wake !== "string" && wake.normalReady === true ? { normalWake: true as const } : {};
   const trigger = typeof wake === "string" ? wake : "reaction";
   const state: BattleAIState = structuredClone(current);
   const pending = state.continuation;
@@ -216,6 +221,7 @@ function route(
       wake.receivedAbilityId <= 0 ||
       wake.receivedSystemId < 0 ||
       typeof wake.counterReady !== "boolean" ||
+      wake.normalReady !== undefined && (wake.normalReady !== true || !resuming) ||
       wake.finalReady !== undefined && typeof wake.finalReady !== "boolean" ||
       wake.finalMpDeath !== undefined && (typeof wake.finalMpDeath !== "boolean" ||
         wake.finalMpDeath && (wake.finalReady !== true || context.self.mp !== 0))
@@ -242,7 +248,7 @@ function route(
       fail("AI continuation requires its suspended Blank");
     if (!Number.isSafeInteger(context.clock) || context.clock! < pending!.blankClock)
       fail("AI continuation requires a monotonic host clock");
-    if (context.clock === pending!.blankClock) return { trigger, state, behavior, acts, visited };
+    if (context.clock === pending!.blankClock) return { ...mixed, trigger, state, behavior, acts, visited };
     delete state.continuation;
     state.pc++;
   } else if (pending) fail("unfinished AI wake requires clock continuation");
@@ -304,17 +310,17 @@ function route(
         state.continuation = { wake: typeof wake === "string" ? wake : { ...wake },
           blankClock: context.clock!, behavior: copyEnemyBehavior(behavior),
           acts: structuredClone(acts), visited: [...new Set(visited)] };
-        return { trigger, state, behavior, acts, visited };
+        return { ...mixed, trigger, state, behavior, acts, visited };
       }
       case "sync":
         // SyncAI 0x828fe0 calls controller ResetReadyFlag on its first clock;
         // 0x15b8460 clears recevieAbility even when the previous wake missed.
         state.receivedAbility = null;
         state.status = "waiting";
-        return { trigger, state, behavior, acts, visited };
+        return { ...mixed, trigger, state, behavior, acts, visited };
       case "exit":
         state.status = "exited";
-        return { trigger, state, behavior, acts, visited };
+        return { ...mixed, trigger, state, behavior, acts, visited };
       case "jump":
         // The instruction sets the source label address, then Core.Clock's
         // ForwardStep advances once. Do not execute the label instruction.
@@ -550,6 +556,27 @@ export function resumeBattleAI(program: BattleAIProgram, state: BattleAIState, c
   if (!state.continuation)
     throw new BattleAIError(program.source, state.pc, "missing AI clock continuation");
   return route(program, state, context, state.continuation.wake, true);
+}
+
+/** The source controller sets independent received/counter/Final flags while
+ * its core may already be in Internal.Blank. Preserve that exact PC, unfinished
+ * table and unpublished actions; the next Sync clears all flags together.
+ * This is not another wake and never revisits an earlier CounterAct. */
+export function receiveBattleAIAtClock(program: BattleAIProgram, current: BattleAIState,
+  context: BattleAIContext, reaction: BattleAIReaction): BattleAITurn {
+  if (reaction.normalReady !== undefined)
+    throw new BattleAIError(program.source, current.pc, "received readiness cannot grant a normal wake");
+  if (!current.continuation || current.status !== "running")
+    throw new BattleAIError(program.source, current.pc, "received clock requires an unfinished AI wake");
+  if (typeof current.continuation.wake !== "string")
+    throw new BattleAIError(program.source, current.pc, "another received parent action is already pending");
+  const state = structuredClone(current), normalReady = state.continuation!.wake === "normal";
+  state.continuation!.wake = { ...reaction, ...(normalReady ? { normalReady: true } : {}) };
+  // ActSelectFinalAttack only changes readiness. Ordinary ActReceivedAbility
+  // assigns the actual current Ability; Final preserves the previous receiver.
+  if (!reaction.finalReady) state.receivedAbility = { id: reaction.receivedAbilityId,
+    systemId: reaction.receivedSystemId, ...(reaction.receivedAbilityTypeId === undefined ? {} : { typeId: reaction.receivedAbilityTypeId }) };
+  return resumeBattleAI(program, state, context);
 }
 
 export type BattleAIRandom = {

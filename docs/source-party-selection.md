@@ -12,7 +12,7 @@
 
 原版在 UI 打开时就把所选组改为 0，取消回调不调用 `SetSlot`，随后公共 wrapper 仍刷新演员。Web 的 `web-source-party-selection-atomic-v1` 将选择 0 与最终演员刷新一起延到确认或取消时原子提交。取消保留全部旧成员与行，但不是撤销所选组 0 的来源副作用。Web 编辑器将强制成员锁在来源插入的位置，使用可读的标准表单；不宣称原 UI 像素、光标或打开期间写入时序等价。
 
-两处 LastBattle selector 仍被拒绝：该 wrapper 的后继消费独立终战排序列表，不是普通三队 UI 完成就能授予的能力。建立三组成员也不授予未接入的多队地图位置、队伍切换、强制退出或最终战机制。
+两处 LastBattle selector 已接入独立 final 模式和同一 GameState 的数字等待名单 producer；其候选过滤、第一组资格、取消事实和既有 Battle 部分换人 consumer 见 [来源战斗交接](source-battle-handoffs.md)。普通三队模式不授予该名单。原 flag3 最终战结算仍独立 gate，不能从局部编队推断结局已贯通。
 
 ## 运行与提交
 

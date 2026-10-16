@@ -1,3 +1,4 @@
+import {flatMapViewport,projectFlatWaterPixels}from "/runtime/core/field-map-transforms.js";
 import { projectFlatFieldScenery } from "/runtime/core/field-layer-scrolling.js";
 import {renderSkyboxPanorama}from"./field-skybox-renderer.js";
 import {renderScreenPresentation}from"./field-screen-renderer.js";
@@ -305,8 +306,8 @@ export class Renderer {
     for (const [li, layer] of m.layers.entries()) {
       if (!definition.layers.includes(layer.name) || layer.opacity !== 1)
         throw new Error("未绑定的原生图层材质");
-      const scroll=game.fieldTileLayerOffset?.(layer.name)??{x:0,y:0};
-      for (const { x, y, index } of this.tileCells(layer, cx+scroll.x, cy+scroll.y, width, height, topology, range)) {
+      const scroll=game.fieldTileLayerOffset?.(layer.name)??{x:0,y:0},flat=this.mapTileViewport(game,width,height);
+      for (const { x, y, index } of this.tileCells(layer,cx+scroll.x-flat.x/flat.sx,cy+scroll.y-flat.y/flat.sy,width/flat.sx,height/flat.sy,topology,range)) {
         const raw = layer.data[index] >>> 0;
         const gid = (game.tileAnimations.tile(li, index) ?? raw) & 0x0fffffff;
         if (!gid) continue;
@@ -315,7 +316,7 @@ export class Renderer {
         const n = gid - set.firstgid, image = this.compositionPixels(m.textures[set.image]);
         tiles.push({ image, layer: layer.name, source: { x: (n % set.columns) * (16 + (set.spacing ?? 0)) + (set.margin ?? 0),
           y: Math.floor(n / set.columns) * (16 + (set.spacing ?? 0)) + (set.margin ?? 0), width: 16, height: 16 },
-          destination: { x: x * 16 - cx-scroll.x, y: y * 16 - cy-scroll.y, width: 16, height: 16 },
+          destination: { x: flat.x+(x*16-cx-scroll.x)*flat.sx,y:flat.y+(y*16-cy-scroll.y)*flat.sy,width:16*flat.sx,height:16*flat.sy },
           flipX: !!(raw & 0x80000000), flipY: !!(raw & 0x40000000), diagonal: !!(raw & 0x20000000),
           depth: fieldCompositionTileDepth({ layer: layer.name, localRow: y - range.y,
             mapHeight: range.height, cameraY: sourceCamera.cameraPosition.y }) });
@@ -544,18 +545,24 @@ export class Renderer {
     }
     return images.sort((a, b) => a.point.y - b.point.y || a.actor.id.localeCompare(b.actor.id));
   }
+  mapTileViewport(game,width,height){const area=game.mapTransformProjection?.areas.find(a=>a.target===0);return area?flatMapViewport(area,width,height):{sx:1,sy:1,x:0,y:0};}
+  /** The inverse uses the same actual composed-field display transform. The
+   * app currently navigates by commands; future pointer input must call this. */
+  sourceScreenPoint(point,game){const area=game.mapTransformProjection?.areas.find(a=>a.target===1),p=area?flatMapViewport(area,this.canvas.width,this.canvas.height):{sx:1,sy:1,x:0,y:0};return{x:(point.x-p.x)/p.sx,y:(point.y-p.y)/p.sy};}
   layer(l, cx, cy, w, h, game, layerIndex, topology = null) {
     const scroll=game.fieldTileLayerOffset?.(l.name)??{x:0,y:0};cx+=scroll.x;cy+=scroll.y;
-    this.ctx.globalAlpha = l.opacity;
-    for (const { x, y, index } of this.tileCells(l, cx, cy, w, h, topology))
-      this.tile(
-        l.data[index] >>> 0,
-        x * 16 - cx,
-        y * 16 - cy,
-        game.time,
-        game.tileAnimations.tile(layerIndex, index),
-      );
-    this.ctx.globalAlpha = 1;
+    const projection=game.mapTransformProjection,water=l.sourceGroup==="WaterGroup"?projection?.water.find(v=>v.name===l.name):null;
+    if(projection&&l.sourceGroup==="WaterGroup"&&(!water||this.content.map.water?.unresolved.length))throw Error("Water layer lacks its bound source/flat material provider");
+    if(water)cy+=water.values._WaterOffsetY;
+    const original=this.ctx,scratch=water?this.compositionCanvas(w,h):null;
+    if(scratch)this.ctx=scratch.getContext("2d",{willReadFrequently:true});
+    const c=this.ctx,v=this.mapTileViewport(game,w,h);
+    c.save();try{
+      c.imageSmoothingEnabled=false;c.translate(v.x,v.y);c.scale(v.sx,v.sy);c.globalAlpha=l.opacity;
+      for (const {x,y,index}of this.tileCells(l,cx-v.x/v.sx,cy-v.y/v.sy,w/v.sx,h/v.sy,topology))
+        this.tile(l.data[index]>>>0,x*16-cx,y*16-cy,game.time,game.tileAnimations.tile(layerIndex,index));
+    }finally{c.restore();this.ctx=original;}
+    if(scratch){const pixels=projectFlatWaterPixels(c.getImageData(0,0,w,h),water.values,projection.timeMs),image=c.createImageData(w,h);image.data.set(pixels.data);c.putImageData(image,0,0);original.drawImage(scratch,0,0);}
   }
   /** Development overview: source map/markers, fitted to the current map range. */
   overview(game) {
@@ -629,8 +636,8 @@ export class Renderer {
   draw(game) {
     if (game.fieldEffectsSnapshot != null && !this.effectsDeferred(game) && typeof this.effectProvider?.prepare !== "function")
       throw new Error("来源字段特效缺少粒子、材质和离屏纹理渲染宿主");
-    const c = this.ctx,
-      m = this.content.map,
+    const visibleContext=this.ctx;let c=visibleContext;
+    const m = this.content.map,
       p = this.point(game.player),
       w = this.canvas.width,
       h = this.canvas.height,
@@ -669,6 +676,9 @@ export class Renderer {
       this.prepareNativeComposition(game, actors, sourceCamera, cx, cy, viewportWidth, viewportHeight, topology);
     if (!native && game.fieldEffectsSnapshot != null && !this.effectsDeferred(game)) throw new Error("来源字段特效需要共享原生颜色与深度缓冲");
     const actorImages = native ? [] : this.actorImages(actors, cx, cy, w, h, topology, game);
+    const mainArea=game.mapTransformProjection?.areas.find(a=>a.target===1),main=mainArea?flatMapViewport(mainArea,w,h):null;
+    const mapCanvas=main&&(main.sx!==1||main.sy!==1)?this.compositionCanvas(w,h):null;
+    if(mapCanvas){c=mapCanvas.getContext("2d");this.ctx=c;}
     c.imageSmoothingEnabled = false;
     const auto=game.worldAutoPose?projectFlatWorldAutoPose(game.worldAutoPose):null;
     const screen=game.screenPresentation;
@@ -695,7 +705,8 @@ export class Renderer {
         if (l.name === "CeilLayer") drawActors(3);
       }
     if(!native)this.closeScenery(c,sourceCamera,w,h,game);
-    } finally {c.restore();}
+    } finally {c.restore();this.ctx=visibleContext;}
+    if(mapCanvas){c=visibleContext;c.save();try{this.fillBackdrop(c,w,h,screen?.backdrop);c.translate(main.x,main.y);c.scale(main.sx,main.sy);c.imageSmoothingEnabled=false;c.drawImage(mapCanvas,0,0);}finally{c.restore();}}
     renderScreenPresentation(c,w,h,screen);
     const message = game.sourceMessage?.projection;
     // The sequence projection uses the shared DOM dialogue panel, which wraps

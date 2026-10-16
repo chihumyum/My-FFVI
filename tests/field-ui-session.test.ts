@@ -8,10 +8,13 @@ import { GameBattleHandoff } from "../src/core/game-battle-handoff.js";
 import { GameEventSaveCoordinator } from "../src/core/game-event-save.js";
 import { WEB_SOURCE_FIELD_UI, type FieldUiCommand } from "../src/core/field-ui.js";
 import type { Op } from "../src/field/types.js";
+import { compileFieldAutoSaveInstruction } from "../src/compiler/field-auto-save.js";
+import { WEB_AUTO_SAVE_POLICY } from "../src/core/field-auto-save.js";
+import { autoSaveRaw } from "./fixtures/field-auto-save.js";
 const command = (kind: "event" | "all" | "minimap"): FieldUiCommand => ({ kind });
 const first: FieldUiCommand = { kind: "title", location: { areaId: "AREA_A", locationId: "LOC_A" }, area: "Region", title: "Town" };
 const second: FieldUiCommand = { kind: "title", location: { areaId: "", locationId: "LOC_B" }, area: "", title: "Cave" };
-function fixture(runtime = true, initializer = false) {
+function fixture(runtime = true, initializer = false, autoSave = false) {
   const f = nonEncounterSessionFixture();
   const commands: Record<string, Record<string, unknown>[]> = {
     "ui-title": [{ kind: "source-field-ui", command: first }, { kind: "exit" }],
@@ -21,7 +24,14 @@ function fixture(runtime = true, initializer = false) {
     "ui-all": [{ kind: "source-field-ui", command: command("all") }, { kind: "exit" }],
     "ui-checkpoint": [{ kind: "source-field-ui", command: command("minimap") }, { kind: "event-save" },
       { kind: "source-field-ui", command: command("all") }, { kind: "exit" }],
+    "ui-title-save": [{ kind: "source-field-ui", command: first }, compileFieldAutoSaveInstruction(autoSaveRaw()),
+      { kind: "source-field-ui", command: second }, { kind: "exit" }],
   };
+  if (autoSave) for (const content of [f.map, f.world, f.content]) {
+    content.developmentProfile ??= { kind: "framework-development-v1", policy: "omit-anonymous-environment-particles-v1",
+      sourceContentHash: content.contentHash, omissions: [] };
+    content.developmentProfile.autoSave = WEB_AUTO_SAVE_POLICY;
+  }
   for (const [name, values] of Object.entries(commands)) {
     f.map.scripts[name] = values.map((value, index) => ({ ...value, script: name, index, source: f.source }) as Op);
     f.map.scriptPuppetContexts![name] = { ...f.map.scriptPuppetContexts!.reserved!, scriptHash: "7".repeat(64) };
@@ -49,7 +59,7 @@ test("actual Session/Flow keeps title nonblocking, persists one location owner, 
   const f = fixture(), live = f.make(); run(live, "ui-title");
   assert.deepEqual(live.game.state.fieldLocation.read(), first.location);
   assert.equal(live.game.state.snapshot().formatVersion, 16);
-  assert.ok(live.game.field.sourceFieldUiSnapshot?.title); assert.equal(live.game.checkpointReady, false);
+  assert.ok(live.game.field.sourceFieldUiSnapshot?.title); assert.equal(live.game.checkpointReady, true);
   assert.equal(live.flow.move("up"), true, "a nonblocking map title does not suspend player movement");
   live.flow.advance(240, encounterReady);
   const before = live.game.field.sourceFieldUiSnapshot;
@@ -138,4 +148,59 @@ test("a real destination initializer writes only its existing owned draft until 
   assert.deepEqual(live.game.state.fieldLocation.read(), second.location);
   assert.equal(live.game.world.commit(stale), false); assert.deepEqual(live.game.state.fieldLocation.read(), second.location);
   stable(live); const saved = live.game.checkpoint(); assert.deepEqual(f.restore(saved).checkpoint(), saved);
+});
+
+test("source title→AutoSave persists the active callback queue; quota failure, cancellation and retry cannot close or replay it", async () => {
+  const f = fixture(true, false, true), live = f.make(); run(live, "ui-title");
+  live.flow.advance(1000, encounterReady);
+  assert.equal(live.game.field.startEvent("ui-title-save"), true);
+  assert.equal(live.game.eventSaveRequest, null, "source AutoSave keeps its first-clock yield");
+  live.flow.advance(10, encounterReady);
+  const request = live.game.eventSaveRequest!, ui = live.game.field.sourceFieldUiSnapshot!;
+  assert.ok(request); assert.equal(ui.closeTimers.length, 2); assert.equal(ui.title?.title, "Town");
+  const owner = live.game.state, field = live.game.field, bytes = new Map<string, string>(); let fail = true, writes = 0;
+  const storage = new CheckpointStorage({ getItem: key => bytes.get(key) ?? null, setItem: (key, value) => {
+    if (fail) throw new Error("controlled quota"); writes++; bytes.set(key, value);
+  } }, "framework", "active-ui");
+  const coordinator = new GameEventSaveCoordinator(live.flow, storage);
+  assert.equal((await coordinator.save(1)).status, "failed"); assert.equal(writes, 0);
+  assert.equal(live.game.eventSaveRequest, request); assert.deepEqual(field.sourceFieldUiSnapshot, ui);
+  let entered!: () => void, release!: () => void;
+  const waiting = new Promise<void>(yes => { entered = yes; }), ready = new Promise<void>(yes => { release = yes; });
+  const cancelled = new GameEventSaveCoordinator(live.flow, { prepareSave: async (...args) => {
+    const prepared = await storage.prepareSave(...args); entered(); await ready; return prepared;
+  } });
+  const pending = cancelled.save(2); await waiting;
+  live.flow.advance(3000, encounterReady); assert.deepEqual(field.sourceFieldUiSnapshot, ui, "preparation freezes the existing clock");
+  cancelled.cancel(); release(); assert.equal((await pending).status, "cancelled"); assert.equal(writes, 0);
+  assert.equal(live.game.eventSaveRequest, request); assert.deepEqual(field.sourceFieldUiSnapshot, ui);
+  fail = false; assert.equal((await coordinator.save(3)).status, "committed"); assert.equal(writes, 1);
+  assert.equal(live.game.state, owner); assert.equal(live.game.field, field);
+  const saved = (await storage.load())!.checkpoint; assert.equal(saved.world.field.kind, "event-field-v9");
+  const restored = f.restore(saved); assert.deepEqual(restored.field.sourceFieldUiSnapshot, ui);
+  live.flow.advance(10, encounterReady); restored.advance(10);
+  assert.equal(restored.field.sourceFieldUiSnapshot?.title?.title, "Cave");
+  assert.equal(restored.field.sourceFieldUiSnapshot?.closeTimers.length, 3, "post-save title runs once without replaying the first two");
+  assert.deepEqual(restored.checkpoint(), live.game.checkpoint());
+  const at = restored.field.sourceFieldUiSnapshot!.clockMs;
+  live.flow.advance(2000 - at, encounterReady); restored.advance(2000 - at);
+  assert.equal(restored.field.sourceFieldUiSnapshot?.title, null, "the earlier callback closes the later title after restore");
+  assert.deepEqual(restored.checkpoint(), live.game.checkpoint());
+  assert.equal(restored.state.fieldLocation.read()?.locationId, second.location.locationId);
+});
+
+test("active idle UI round-trips without advancing time or granting a missing runtime; malformed and foreign queues reject", async () => {
+  const f = fixture(), live = f.make(); run(live, "ui-title"); live.flow.advance(170, encounterReady);
+  const ui = live.game.field.sourceFieldUiSnapshot!; assert.ok(ui.title); assert.equal(live.game.checkpointReady, true);
+  const saved = live.game.checkpoint(), restored = f.restore(saved);
+  assert.deepEqual(restored.checkpoint(), saved); assert.deepEqual(restored.field.sourceFieldUiSnapshot, ui);
+  for (const change of ["foreign", "no-callback", "later-deadline"] as const) {
+    const forged = structuredClone(saved), state = (forged.world.field as { sourceUi: typeof ui }).sourceUi;
+    if (change === "foreign") state.sourceSetHash = "foreign";
+    else if (change === "no-callback") state.closeTimers = [];
+    else state.closeTimers.push(state.clockMs + 9000);
+    assert.throws(() => f.restore(forged));
+  }
+  delete f.runtime.sourceFieldUi; assert.throws(() => f.restore(saved), /runtime authority/);
+  assert.deepEqual(live.game.field.sourceFieldUiSnapshot, ui);
 });

@@ -7,6 +7,7 @@ import { sourceRosterGroupCatalog } from '../../src/core/roster-groups.js';
 import { compileRosterGroupEvent } from '../../src/compiler/roster-groups.js';
 import { compileRosterLifecycleEvent } from '../../src/compiler/roster.js';
 import { compilePartyEvent } from '../../src/compiler/party.js';
+import {compileMultiCorpsInstruction,sourceMultiCorpsSelectors}from'../../src/compiler/field-multi-corps.js';
 import { GameSession, type GameCheckpoint } from '../../src/core/game-session.js';
 import { GameFlow } from '../../src/core/game-flow.js';
 import { GameContentRepository } from '../../src/core/game-content.js';
@@ -19,7 +20,7 @@ export const rosterGroupHost={visible:true,mediaReady:true,overlayOpen:false};
 /** Controlled source-parameter catalog and real factory/session. Only the first
  * authored owner is initialized; every Moogle must come from the group command.
  * Media and formulas are synthetic, never a claim of original plot execution. */
-export function rosterGroupsSessionFixture(options:{missingMedia?:boolean;targetInitializer?:boolean;catalog?:boolean;rts?:boolean}={}) {
+export function rosterGroupsSessionFixture(options:{missingMedia?:boolean;targetInitializer?:boolean;catalog?:boolean;rts?:boolean;multiCorps?:boolean;multiCorpsFailure?:boolean}={}) {
   const f=magicStonesSessionFixture();if(options.rts){f.map.parentSourceSetHash='e'.repeat(64);f.world.parentSourceSetHash=f.map.parentSourceSetHash;f.content.parentSourceSetHash=f.map.parentSourceSetHash;}const owner=f.battle.gameState,[first,modelId]=f.playerIds;
   delete f.map.walkEncounters;
   owner.rosterLifecycle.firstJoinLevelAdjustments={2:0,3:0};
@@ -85,9 +86,17 @@ export function rosterGroupsSessionFixture(options:{missingMedia?:boolean;target
     const name='sc_sht_corps_after';(f.map.reservedScriptBindings??={})[name]={kind:'source-reserved-field-script-v1',name,rawHash:'d'.repeat(64),sourceSetHash:f.map.sourceSetHash,parentSourceSetHash:f.map.parentSourceSetHash,source:{...f.source,objectId:'1',serializedFile:'authored-rts',sha256:'a'.repeat(64)}};
     f.map.scriptPuppetContexts![name]!.scriptHash='d'.repeat(64);f.map.scriptLocals![name]={labels:[],values:[]};for(const id of Object.keys(f.map.scripts))(f.map.scriptTransitionMetadata??={})[id]={customAnimations:'none'};f.map.scriptSystemFlags![name]={keepBadStatusVisual:false};
   }
+  if(options.multiCorps){
+    for(const[selector,command]of Object.entries(sourceMultiCorpsSelectors))add(command,[{kind:'blank'},compileMultiCorpsInstruction({type:1,mnemonic:'SysCall',operands:{iValues:Array(8).fill(0),rValues:Array(8).fill(0),sValues:[selector,...Array(7).fill('')]}}),{kind:'exit'}]);
+    add('multi-draft-separate',[{kind:'multi-corps',command:'dream-separate'},...(options.multiCorpsFailure?[{kind:'blocked' as const,mnemonic:'AuthoredLateFailure',reason:'Controlled multi-Corps candidate failure'}]:[{kind:'wait' as const,seconds:0.02},{kind:'exit' as const}])]);
+    for(const character of Object.values(f.world.characters))character.animations.Dying={...structuredClone(character.animations.Default!)};
+    for(const row of Object.values(f.world.nativeAnimationKeys!.assets))if(!row.keys.includes('Dying'))row.keys.push('Dying');
+    f.content.animationKeys=structuredClone(f.world.nativeAnimationKeys!);
+    for(const id of Object.keys(f.map.scripts))(f.map.scriptTransitionMetadata??={})[id]={customAnimations:'none'};
+  }
   const target=structuredClone(f.map),targetId=f.map.mapId+1,targetUrl='/authored/roster-group-target.json';
   target.mapId=targetId;target.map!.identity!.mapId=targetId;target.map!.entryContext!.mapId=targetId;target.partyEntry!.mapId=targetId;if(target.entryView)target.entryView.mapId=targetId;
-  target.initializer=options.targetInitializer?'group-source-sequence':'group-arrived';
+  target.initializer=options.targetInitializer?(options.multiCorps?'multi-draft-separate':'group-source-sequence'):'group-arrived';
   target.scripts['group-arrived']=ops('group-arrived',[{kind:'exit'}]);target.scriptPuppetContexts!['group-arrived']={...context};target.scriptLocals!['group-arrived']=null;
   add('group-change-map',[{kind:'change-map',request:{mapId:targetId,entrance:target.partyEntry!.pointIns[0]!.id,continuation:null,birdview:false,skipFade:true,skipBgm:true,origin:'script'}}]);
   if(options.missingMedia)delete f.world.characters.charlie!.animations.Default;

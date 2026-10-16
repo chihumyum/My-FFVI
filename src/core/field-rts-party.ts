@@ -27,6 +27,8 @@ export interface FieldRtsPartyPort {
   available():boolean;
   read(): {catalog:SourceRtsPartyCatalog;view:RtsOwnedView};
   prepare(slot:PartySlotIndex):RtsOwnedTransaction;
+  /** Same live/draft GameState owner; absent on older/custom hosts. */
+  prepareCorps?(command:import('./field-multi-corps.js').MultiCorpsCommand):RtsOwnedTransaction;
 }
 export function validateRtsPolicy(policy:unknown):asserts policy is WebRtsPartySwitch|undefined {
   if(policy!==undefined&&policy!==WEB_RTS_PARTY_SWITCH)throw Error('Unknown source RTS party policy');

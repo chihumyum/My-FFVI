@@ -1,4 +1,6 @@
 import { WEB_SOURCE_TRANSPORT_PARKING_UPLOAD, type WebSourceTransportParkingUpload } from "../core/transportation-parking-upload.js";
+import {WEB_FIELD_MAP_TRANSFORMS,projectFieldWaterLayers,type WebFieldMapTransforms}from "../core/field-map-transforms.js";
+import {verifyFieldWaterWorldCatalog,type FieldWaterWorldCatalog}from "./field-map-transforms.js";
 import { WEB_FIELD_LAYER_SCROLLING, type WebFieldLayerScrolling } from "../core/field-layer-scrolling.js";
 import { verifyFieldSceneryWorldCatalog, type FieldSceneryWorldCatalog } from "./field-background.js";
 import {fieldVehicleActionAdmitted} from "../core/field-vehicle-action.js";
@@ -32,6 +34,7 @@ export type LogicalFieldEffectsDeclaration = {
   mapIds: readonly number[]; reason: string;
 };
 export type FrameworkContentOptions = {
+  mapTransforms?:WebFieldMapTransforms;fieldWaterCatalog?:FieldWaterWorldCatalog;
   fieldLayerScrolling?: WebFieldLayerScrolling;
   fieldSceneryCatalog?: FieldSceneryWorldCatalog;
   transportationParkingUpload?:WebSourceTransportParkingUpload;
@@ -213,8 +216,10 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   if (!initial || strictEntry.mapContentHash !== initial.contentHash)
     throw new Error("Framework strict entry/map binding mismatch");
 
-  if (Object.keys(options).some(key => key !== 'fieldLayerScrolling' && key !== 'fieldSceneryCatalog' && key !== 'transportationParkingUpload' && key !== 'vehicleLifecycle' && key !== 'fieldEffectTransforms' && key !== 'fieldEffectTransformCatalog' && key !== 'skyboxPresentation' && key !== 'skyboxCatalog' && key !== 'screenPresentation' && key !== 'mobColorFilter' && key !== 'worldAutoMove' && key !== 'birdViewActors' && key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
+  if (Object.keys(options).some(key => key !== 'mapTransforms' && key !== 'fieldWaterCatalog' && key !== 'fieldLayerScrolling' && key !== 'fieldSceneryCatalog' && key !== 'transportationParkingUpload' && key !== 'vehicleLifecycle' && key !== 'fieldEffectTransforms' && key !== 'fieldEffectTransformCatalog' && key !== 'skyboxPresentation' && key !== 'skyboxCatalog' && key !== 'screenPresentation' && key !== 'mobColorFilter' && key !== 'worldAutoMove' && key !== 'birdViewActors' && key !== 'worldAutoTasks' && key !== "logicalFieldEffects" && key !== "periodicPresentations" && key !== "ordinaryPresentations" && key !== "mapAnimatedEntities" && key !== "npcAreaAssessments" && key !== "npcFlatAssessments" && key !== "fieldEffectFlat"))
     throw new Error("Unknown framework derivation option");
+  if((options.mapTransforms===undefined)!==(options.fieldWaterCatalog===undefined)||options.mapTransforms!==undefined&&options.mapTransforms!==WEB_FIELD_MAP_TRANSFORMS)throw Error("Map transforms require exact policy and complete water catalog");
+  if(options.fieldWaterCatalog){verifyFieldWaterWorldCatalog(options.fieldWaterCatalog);if(options.fieldWaterCatalog.sourceSetHash!==strictCatalog.sourceSetHash||options.fieldWaterCatalog.parentSourceSetHash!==strictCatalog.parentSourceSetHash)throw Error("Foreign map-transform source catalog");}
   if((options.fieldLayerScrolling===undefined)!==(options.fieldSceneryCatalog===undefined)||options.fieldLayerScrolling!==undefined&&options.fieldLayerScrolling!==WEB_FIELD_LAYER_SCROLLING)throw new Error("Flat scenery requires its explicit policy and complete source catalog");
   if(options.fieldSceneryCatalog){verifyFieldSceneryWorldCatalog(options.fieldSceneryCatalog);if(options.fieldSceneryCatalog.sourceSetHash!==strictCatalog.sourceSetHash||options.fieldSceneryCatalog.parentSourceSetHash!==strictCatalog.parentSourceSetHash)throw new Error("Flat scenery framework source identity mismatch");}
   if(options.transportationParkingUpload!==undefined&&(options.transportationParkingUpload!==WEB_SOURCE_TRANSPORT_PARKING_UPLOAD||options.vehicleLifecycle!==WEB_SOURCE_VEHICLE_LIFECYCLE))throw Error("Unknown framework parking upload policy/dependency");
@@ -252,7 +257,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
     validateLogicalEffectCatalog(logical.catalog);
   }
   const derivedProfile = (sourceContentHash: string, local: DevelopmentOmission[]): DevelopmentProfile => ({
-    ...profile(sourceContentHash, local), ...(options.fieldLayerScrolling?{fieldLayerScrolling:options.fieldLayerScrolling}:{}), ...(options.transportationParkingUpload?{transportationParkingUpload:options.transportationParkingUpload}:{}), ...(options.vehicleLifecycle?{vehicleLifecycle:options.vehicleLifecycle}:{}), ...(options.skyboxPresentation?{skyboxPresentation:options.skyboxPresentation}:{}), ...(screenPresentation?{screenPresentation}:{}), ...(mobColorFilter ? {mobColorFilter} : {}), ...(birdViewActors ? { birdViewActors } : {}), ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
+    ...profile(sourceContentHash, local), ...(options.mapTransforms?{mapTransforms:options.mapTransforms}:{}), ...(options.fieldLayerScrolling?{fieldLayerScrolling:options.fieldLayerScrolling}:{}), ...(options.transportationParkingUpload?{transportationParkingUpload:options.transportationParkingUpload}:{}), ...(options.vehicleLifecycle?{vehicleLifecycle:options.vehicleLifecycle}:{}), ...(options.skyboxPresentation?{skyboxPresentation:options.skyboxPresentation}:{}), ...(screenPresentation?{screenPresentation}:{}), ...(mobColorFilter ? {mobColorFilter} : {}), ...(birdViewActors ? { birdViewActors } : {}), ...(mapAnimatedEntities ? { mapAnimatedEntities } : {}), ...(logical ? { logicalFieldEffects: WEB_LOGICAL_FIELD_EFFECTS } : {}),
     ...(options.worldAutoMove?{worldAutoMove:options.worldAutoMove}:{}),
     ...(options.worldAutoTasks?{worldAutoTasks:options.worldAutoTasks}:{}),
   });
@@ -260,6 +265,7 @@ export function compileFrameworkContent(strictCatalog: WorldCatalog, strictMaps:
   for (const map of strictMaps) referenceStrings(map.scripts, scriptReferences);
   const maps = [...strictMaps].sort((a, b) => a.mapId - b.mapId).map((strictMap) => {
     const map = structuredClone(strictMap), local: DevelopmentOmission[] = [];
+    if(options.fieldWaterCatalog&&map.map){const water=options.fieldWaterCatalog.maps[String(map.mapId)];if(!water||canonical(map.map.water)!==canonical(water))throw Error("Map water differs from the complete source provider");if(water.layers.length&&!water.unresolved.length)map.map.layers=projectFieldWaterLayers(map.map,water);}
     if(options.fieldSceneryCatalog&&map.map){const catalog=options.fieldSceneryCatalog.maps[String(map.mapId)];if(!catalog||canonical(map.map.scenery)!==canonical(catalog))throw new Error("Flat scenery does not match the current source map provider");}
     if(skyboxCatalog&&map.map){const skybox=fieldSkyboxDefinition(skyboxCatalog,map);if(skybox)map.map.skybox=skybox;}
     const removed: { entity: FieldEntity; particleBlockers: Set<string> }[] = [];

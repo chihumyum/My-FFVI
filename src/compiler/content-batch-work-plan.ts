@@ -154,7 +154,9 @@ const diagnosticOwners: Readonly<Record<string, ContentBatchSystem>> = {
   BATCH_ENTRY_UNSCANNED: "content-batch-interface",
 };
 const capabilityOwners: Record<FieldCapability, ContentBatchSystem> = {
+  sourceBattleHandoffs: "battle-and-return",
   sourceFieldUi: "map-event-and-travel",
+  mapTransforms:"map-event-and-travel",
   fieldLayerScrolling: "map-event-and-travel",
   sourceLocation: "owned-menus-economy-and-growth",
   sourceCharacterNaming:"owned-menus-economy-and-growth",
