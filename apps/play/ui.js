@@ -827,11 +827,24 @@ export class GameUI {
     revision++;
   }
   handleKey(event) {
-    if (!this.popup) return false;
-    if (event.key === "Escape") {
-      this.closeSelect();
-      event.preventDefault();
+    if (this.popup) {
+      if (event.key === "Escape") {
+        this.closeSelect();
+        event.preventDefault();
+      }
+      return true;
     }
-    return true;
+    const dialogue = this.get("dialogue");
+    if (dialogue?.hidden !== false || this.editor || event.ctrlKey || event.metaKey || event.altKey)
+      return false;
+    const direction = { w: -1, s: 1, ArrowUp: -1, ArrowDown: 1 }[
+      event.key.length === 1 ? event.key.toLowerCase() : event.key
+    ];
+    if (direction) {
+      this.page(dialogue, direction);
+      event.preventDefault();
+      return true;
+    }
+    return false;
   }
 }
