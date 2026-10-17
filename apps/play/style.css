@@ -261,3 +261,15 @@ footer {
   font: 0/0 sans-serif;
   background: transparent;
 }
+
+/* Menus use the renderer's independent high-resolution UI viewport. */
+body.modern-menu main {
+  width: 100vw;
+}
+body.modern-menu canvas {
+  image-rendering: auto;
+}
+.pixi-accessibility button:focus-visible {
+  outline: 2px solid #b9dcff;
+  outline-offset: -2px;
+}

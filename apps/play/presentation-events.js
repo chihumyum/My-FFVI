@@ -28,7 +28,22 @@ const visualInstructions = new Set([
   "BackdropColor",
   "CueAnim",
   "PlayAnim",
+  "SetPos",
+  "Move",
+  "MoveBirdView",
+  "MoveTo",
+  "Lerp",
+  "Route",
 ]);
+export function existingPresentationActor(game, selector) {
+  if (selector == null || selector === -1001 || selector === -1010) return game.player;
+  if (selector === 0) return game.camera;
+  if (selector <= -1030 && selector >= -1032)
+    return game.partyPositions?.[-1030 - selector] || game.player;
+  if (selector <= -1002 && selector >= -1005)
+    selector = -(game.partySlots?.[game.partyIndex || 0]?.[-selector - 1001] || 1);
+  return game.actors?.get(String(selector)) || null;
+}
 const visualSelector = /モノクロフィルター|幻獣界フィルター|近景|遠景|背景変更|スクロール/;
 export const observingAudioInstruction = (game) => Boolean(listening.get(game));
 export const isAudioInstruction = (name) => audioInstructions.has(name);
@@ -64,8 +79,20 @@ export function withPresentation(Base) {
             index,
             time: this.time,
             mapId: this.mapId,
-            ...(["CueAnim", "PlayAnim"].includes(op[0])
-              ? { animationActor: this.actor(task.actor) }
+            ...([
+              "CueAnim",
+              "PlayAnim",
+              "SetPos",
+              "Move",
+              "MoveBirdView",
+              "MoveTo",
+              "Lerp",
+              "Route",
+            ].includes(op[0])
+              ? {
+                  animationActor: existingPresentationActor(this, task.actor),
+                  customAnimations: program.animations || [],
+                }
               : {}),
           });
         } catch (error) {

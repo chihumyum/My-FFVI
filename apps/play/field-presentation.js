@@ -89,8 +89,9 @@ function color(value, fallback) {
 
 /** Scenery clocks and camera projection live here, outside saved game state. */
 export class FieldPresentation {
-  constructor({ layers, getTexture, warn, sampleActor }) {
+  constructor({ layers, getTexture, warn, sampleActor, diagnostics }) {
     this.getTexture = getTexture;
+    this.diagnostics = diagnostics;
     this.warn = warn;
     this.sampleActor = sampleActor;
     this.far = plane("pr-far-scenery", layers.far);
@@ -266,7 +267,11 @@ export class FieldPresentation {
   _sprites(pool, parent, images, offset, kind) {
     let count = 0;
     for (const row of images) {
-      const texture = this.getTexture(row.image.url);
+      const texture = this.getTexture(row.image?.url, {
+        required: true,
+        entityId: `scene:${kind}:${row.name || count}`,
+        animation: kind,
+      });
       if (!texture) continue;
       const p = row.properties || {};
       const w = row.image.width,
@@ -311,7 +316,11 @@ export class FieldPresentation {
     if (this.waterPlane.visible) {
       this.waterPlane.tint = 0xffffff;
       const sea = water.textures[0] || water.image;
-      const texture = this.getTexture(sea.url);
+      const texture = this.getTexture(sea?.url, {
+        required: true,
+        entityId: "scene:water",
+        animation: water.name,
+      });
       if (texture) this.waterPlane.texture = texture;
       this.waterPlane.width = 320;
       this.waterPlane.height = 180;
@@ -354,10 +363,20 @@ export class FieldPresentation {
       const worldName = /10020/.test(name) ? "Map_10020" : "Map_10010";
       const sky = this.catalog.sky[`bird_view_skybox_${worldName}_normal`];
       if (sky) images.push({ image: sky, alpha: 1 });
+      else
+        this.diagnostics?.record("sky-texture-missing", {
+          entityId: "scene:sky",
+          resource: worldName,
+        });
       const char = data?.characters?.[game.player.asset?.toLowerCase()];
       const frame = char && this.sampleActor?.(game.player, char, game.time);
       const info = frame?.info;
-      const texture = this.getTexture(info?.file);
+      const texture = this.getTexture(info?.file, {
+        required: true,
+        entityId: game.player.id,
+        asset: game.player.asset,
+        animation: game.player.animation,
+      });
       this.flightActor.visible = !!texture;
       if (texture) {
         this.flightActor.texture = texture;
@@ -414,7 +433,7 @@ export class FieldPresentation {
     let count = 0;
     if (this.gps.visible && gps) {
       for (const row of [gps.screen, gps.overlay]) {
-        const texture = row && this.getTexture(row.url);
+        const texture = row && this.getTexture(row.url, { required: true, entityId: "scene:gps" });
         if (!texture) continue;
         const sprite = (this.gpsSprites[count] ||= this.gps.addChildAt(new Sprite(texture), count));
         sprite.texture = texture;

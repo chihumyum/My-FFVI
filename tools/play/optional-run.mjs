@@ -1,5 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { WebData } from "../../apps/play/data.js";
 import { PlayGame } from "../../src/play/game.js";
 import { Battle } from "../../src/play/battle.js";
 import { findStoryTarget, followTarget } from "../../src/play/story-route.js";
@@ -16,6 +18,7 @@ import { extraOptionalCases } from "./optional-extra-cases.mjs";
 import { recruitOptionalCases } from "./optional-recruit-cases.mjs";
 import { esperOptionalCases } from "./optional-esper-cases.mjs";
 import { questOptionalCases } from "./optional-quest-cases.mjs";
+import { PresentationAudit } from "./audit-presentation.mjs";
 import {
   selectColosseumWager,
   selectColosseumChallenger,
@@ -63,12 +66,42 @@ const selected = option("--cases", "all").split(","),
     : optionalCases.filter((c) => selected.includes("all") || selected.includes(c.id));
 if (!cases.length && !summarizeOnly) throw Error("No matching optional content cases");
 const json = async (file) => JSON.parse(await readFile(file));
-const [data, battleData, saved] = await Promise.all([
-  json(path.join(dataRoot, "data.json")),
-  json(path.join(dataRoot, "battle.json")),
+const packed = process.env.PLAY_STATIC_DIR
+  ? new WebData(pathToFileURL(path.resolve(process.env.PLAY_STATIC_DIR, "data/index.json")), {
+      fetcher: async (url) => new Response(await readFile(fileURLToPath(url))),
+    })
+  : null;
+const [loaded, saved] = await Promise.all([
+  packed
+    ? packed.open()
+    : Promise.all([
+        json(path.join(dataRoot, "data.json")),
+        json(path.join(dataRoot, "battle.json")),
+      ]).then(([data, battleData]) => ({ data, battleData })),
   json(startFile),
 ]);
-data.navigation = await json(path.join(dataRoot, "navigation.json"));
+const { data, battleData } = loaded;
+if (packed) await packed.preloadRegression();
+else data.navigation = await json(path.join(dataRoot, "navigation.json"));
+const assetAuditDir = args.includes("--no-asset-audit")
+  ? null
+  : path.resolve(option("--asset-audit", path.join(out, "asset-audit")));
+const auditTemplate = assetAuditDir
+  ? await PresentationAudit.open({
+      dataRoot,
+      assetRoot: process.env.PLAY_STATIC_DIR,
+      data,
+      battleData,
+    })
+  : null;
+if (auditTemplate) {
+  await mkdir(assetAuditDir, { recursive: true });
+  await auditTemplate.write(path.join(assetAuditDir, "static.json"), {
+    start: "static-catalog",
+    stop: "static-only",
+  });
+}
+const assetAuditResults = [];
 await mkdir(out, { recursive: true });
 if (mapCheckpointDir) await mkdir(mapCheckpointDir, { recursive: true });
 const maxTicks = Number(option("--ticks", "40000")),
@@ -220,6 +253,8 @@ function objectiveTarget(game, objective, fixedRoutes) {
   return projected;
 }
 for (const test of cases) {
+  const assetAudit = auditTemplate?.fork();
+  if (packed) packed.boundaryChunks.clear();
   let caseStart = args.includes("--start")
     ? startFile
     : path.resolve(root, test.startSave || startFile);
@@ -228,6 +263,10 @@ for (const test of cases) {
       report = await json(path.join(out, `${dependency}.json`)).catch(() => null);
     if (report?.stop !== "passed") {
       const result = {
+        assetAudit: assetAuditDir ? path.join(assetAuditDir, `${test.id}.json`) : null,
+        acceptanceNote: assetAuditDir
+          ? null
+          : "Asset audit explicitly disabled; development probe only, not formal acceptance.",
         content: test.id,
         title: test.title,
         stop: "dependency-unverified",
@@ -238,6 +277,26 @@ for (const test of cases) {
         mode: "boosted-regression",
       };
       await writeFile(path.join(out, `${test.id}.json`), JSON.stringify(result, null, 2));
+      if (assetAudit) {
+        const file = path.join(assetAuditDir, `${test.id}.json`);
+        const audit = await assetAudit.write(
+          file,
+          {
+            caseId: test.id,
+            stop: result.stop,
+            mode: result.mode,
+            start: "dependency-not-entered",
+          },
+          { includeStatic: false },
+        );
+        assetAuditResults.push({
+          caseId: test.id,
+          stop: result.stop,
+          file,
+          scope: audit.scope.runtime,
+          coverageGaps: audit.coverageGaps,
+        });
+      }
       results.push(result);
       continue;
     }
@@ -255,9 +314,32 @@ for (const test of cases) {
     executedOps = new Set();
   class ObservedGame extends PlayGame {
     step(task) {
+      const sourceIndex = task.pc,
+        sourceProgram = assetAudit && this.data.programs[task.program],
+        sourceOp = sourceProgram?.ops[sourceIndex];
       executedPrograms.add(String(task.program));
       executedOps.add(`${task.program}:${task.pc}`);
-      return super.step(task);
+      if (
+        packed &&
+        packed.index.programFiles[task.program] &&
+        !packed.boundaryChunks.has(packed.index.programFiles[task.program])
+      )
+        throw Error(
+          `Executed program ${task.program} missing from map ${this.mapId} preload closure`,
+        );
+      const result = super.step(task);
+      if (sourceOp)
+        assetAudit.instruction(this, {
+          name: sourceOp[0],
+          i: sourceOp[1],
+          r: sourceOp[2],
+          s: sourceOp[3],
+          script: sourceProgram.name,
+          program: sourceProgram,
+          index: sourceIndex,
+          actor: task.actor,
+        });
+      return result;
     }
   }
   const random = () => {
@@ -270,14 +352,17 @@ for (const test of cases) {
     Battle,
     testBoost: true,
     random,
-    loadMap: async (id) => json(path.join(dataRoot, `maps/${id}.json`)),
+    loadMap: async (id) =>
+      packed ? packed.loadMap(id) : json(path.join(dataRoot, `maps/${id}.json`)),
     onEvent: (event) => {
+      assetAudit?.event(game, event);
       if (["map", "script", "battle", "battle-end"].includes(event.kind)) events.push(event);
     },
   });
   // Restore a real save, then apply the existing explicit boosted mode. No plot
   // flags, actor positions, available members or event program counters are set.
   await game.restore(structuredClone(caseSaved.snapshot || caseSaved), { testBoost: true });
+  assetAudit?.observe(game);
   const initialBattles = game.battles.length,
     initialHistory = game.history.length;
   const checkpointStates = new Set(),
@@ -356,6 +441,7 @@ for (const test of cases) {
       if (game.busy) {
         game.tick(0.1, { auto: true });
         if (game.loading) await game.pending;
+        assetAudit?.observe(game);
         continue;
       }
       stop = completed.length > alreadyComplete.length ? "passed" : "already-complete";
@@ -381,6 +467,7 @@ for (const test of cases) {
         if (unit.ready && game.battle.choose(index, fixedBattleInput.abilityId))
           inputs["fixed-quest-battle-input"] = (inputs["fixed-quest-battle-input"] || 0) + 1;
     if (game.loading) await game.pending;
+    assetAudit?.observe(game);
     recordCompletions();
     await recordMapCheckpoint();
     if (game.busy) continue;
@@ -434,10 +521,15 @@ for (const test of cases) {
   if (stop === "passed" && test.members?.some((id) => !availableMembers.includes(id)))
     stop = "member-unavailable";
   const result = {
+    assetAudit: assetAuditDir ? path.join(assetAuditDir, `${test.id}.json`) : null,
+    acceptanceNote: assetAuditDir
+      ? null
+      : "Asset audit explicitly disabled; development probe only, not formal acceptance.",
     content: test.id,
     title: test.title,
     startSave: path.relative(root, caseStart),
     mode: "boosted-regression",
+    executionBudget: { maxTicks, maxWallSeconds: maxSeconds },
     stop,
     completed,
     skipped,
@@ -480,6 +572,28 @@ for (const test of cases) {
   };
   await writeFile(path.join(out, `${test.id}.json`), JSON.stringify(result, null, 2));
   await writeFile(path.join(out, `${test.id}-save.json`), JSON.stringify(game.snapshot()));
+  if (assetAudit) {
+    const file = path.join(assetAuditDir, `${test.id}.json`);
+    const audit = await assetAudit.write(
+      file,
+      {
+        caseId: test.id,
+        startSave: result.startSave,
+        mode: result.mode,
+        executionBudget: result.executionBudget,
+        stop,
+        battleCount: result.battles.length,
+      },
+      { includeStatic: false },
+    );
+    assetAuditResults.push({
+      caseId: test.id,
+      stop,
+      file,
+      scope: audit.scope.runtime,
+      coverageGaps: audit.coverageGaps,
+    });
+  }
   if (mapCheckpointDir)
     await writeFile(
       path.join(mapCheckpointDir, `${test.id}.manifest.json`),
@@ -533,6 +647,74 @@ const currentReports = await Promise.all(
         };
   }),
 );
+if (assetAuditDir) {
+  const audits = [];
+  for (const test of optionalCases) {
+    const report = await json(path.join(assetAuditDir, `${test.id}.json`)).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+      return null;
+    });
+    if (report) audits.push(report);
+  }
+  const unique = new Map(),
+    maps = new Set(),
+    scripts = new Set(),
+    categories = {};
+  for (const report of audits) {
+    for (const id of report.coverage.maps) maps.add(id);
+    for (const name of report.coverage.scripts) scripts.add(name);
+    for (const row of report.issues) {
+      const key = JSON.stringify([
+        row.category,
+        row.mapId,
+        row.script,
+        row.instructionIndex,
+        row.entityId,
+        row.resource,
+        row.asset,
+        row.animation,
+        row.reason,
+        row.fallback,
+      ]);
+      let combined = unique.get(key);
+      if (!combined) unique.set(key, (combined = { ...row, count: 0, cases: [] }));
+      combined.count += row.count;
+      combined.cases.push(report.run.caseId);
+    }
+  }
+  for (const row of unique.values()) {
+    const category = (categories[row.category] ||= { contexts: 0, calls: 0 });
+    category.contexts++;
+    category.calls += row.count;
+  }
+  await writeFile(
+    path.join(assetAuditDir, "summary.json"),
+    JSON.stringify(
+      {
+        mode: "headless-presentation-reference-audit",
+        static: "static.json",
+        expectedCases: optionalCases.length,
+        observedCases: audits.length,
+        cases: audits.map((report) => ({
+          caseId: report.run.caseId,
+          stop: report.run.stop,
+          file: `${report.run.caseId}.json`,
+          scope: report.scope.runtime,
+        })),
+        currentInvocation: assetAuditResults.map((row) => row.caseId),
+        runtime: { categories, contexts: unique.size },
+        coveredSources: { maps: [...maps].sort((a, b) => a - b), scripts: [...scripts].sort() },
+        issues: [...unique.values()].sort((a, b) => b.count - a.count),
+        coverageGaps: currentReports
+          .filter((r) => r.stop !== "passed")
+          .map((r) => ({ caseId: r.content, stop: r.stop, blockers: r.blockers })),
+        note: "Cases that did not pass remain coverage gaps; partial runtime resource observations do not credit their completion. No GPU validation.",
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+}
 await writeFile(
   path.join(out, "summary.json"),
   JSON.stringify(

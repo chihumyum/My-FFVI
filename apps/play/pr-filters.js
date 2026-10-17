@@ -386,7 +386,14 @@ export class PRFilter extends Filter {
   _texture(name, resource, rect) {
     const descriptor = this.material.textures?.[name],
       texture =
-        this._textures[name] || (descriptor?.url ? this.getTexture(descriptor.url) : Texture.WHITE);
+        this._textures[name] ||
+        (descriptor?.url
+          ? this.getTexture(descriptor.url, {
+              required: true,
+              entityId: `shader:${this.shaderName}:${name}`,
+              animation: name,
+            })
+          : Texture.WHITE);
     if (!texture || texture.destroyed || !texture.source || texture.source.destroyed) {
       this.resources[resource] = Texture.EMPTY.source;
       return !descriptor;
@@ -661,7 +668,13 @@ export class PRMaterialCache {
     if (entry?.checkedFrame === this._frame) return entry.ready ? entry.target : null;
     if (this._pending.get(material) === this._frame) return null;
     const main = material.textures?._MainTex,
-      texture = main?.url ? this.getTexture(main.url) : Texture.WHITE;
+      texture = main?.url
+        ? this.getTexture(main.url, {
+            required: true,
+            entityId: `material:${material.name || material.shader}:_MainTex`,
+            animation: "_MainTex",
+          })
+        : Texture.WHITE;
     if (!texture || texture.destroyed || texture.source.destroyed) {
       this._pending.set(material, this._frame);
       return null;

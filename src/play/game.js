@@ -43,6 +43,12 @@ import {
   configureSyscallTimer,
   finishSyscallTimer,
 } from "./syscalls.js";
+// Puppet selectors use character_id. The table's row id diverges for vehicles
+// and story doubles (for example row39 is transformed character200).
+const fieldCharacterAsset = (data, id) =>
+  Object.entries(data.fieldAssets || {}).find(
+    ([key, row]) => Number(row.character_id ?? key) === id,
+  )?.[1]?.asset_name;
 const dirs = ["up", "right", "down", "left"],
   delta = [
     [0, -1],
@@ -333,7 +339,7 @@ export class PlayGame {
       }
       const id = selector < 0 ? -selector : null,
         asset = id
-          ? this.data.fieldAssets?.[id]?.asset_name || `mo_ff6_p${String(id).padStart(3, "0")}`
+          ? fieldCharacterAsset(this.data, id) || `mo_ff6_p${String(id).padStart(3, "0")}`
           : undefined;
       this.actors.set(key, {
         id: selector,
@@ -1430,7 +1436,21 @@ export class PlayGame {
     });
     Object.assign(this.player, saved.player);
     this.groups = new Set(saved.groups);
-    if (saved.actors) this.actors = new Map(saved.actors);
+    if (saved.actors)
+      this.actors = new Map(
+        saved.actors.map(([key, actor]) => {
+          const id = -Number(key),
+            canonical = id > 0 && fieldCharacterAsset(this.data, id);
+          // Repair only the old nonexistent numeric fallback, preserving authored
+          // costumes/vehicles and without rewriting the caller's saved object.
+          return [
+            key,
+            canonical && actor.asset === `mo_ff6_p${String(id).padStart(3, "0")}`
+              ? { ...actor, asset: canonical }
+              : actor,
+          ];
+        }),
+      );
     this.refreshActors({ preserveMissing: !!saved.actors });
     if (!saved.actors) this.startScript(this.map.initializer, { init: true });
     for (const cursor of saved.assignedRoutes || []) {

@@ -49,6 +49,11 @@ export async function loadPresentation(repository, renderer, ui) {
       document.fonts.add(face);
       presentation.fontFamily = font.family;
     } catch (error) {
+      renderer.diagnostics?.record("font-load-failed", {
+        entityId: "ui:font",
+        resource: font.url,
+        reason: error.message,
+      });
       console.warn("[UI guess] PR/CJK font unavailable; system fallback:", error.message);
     }
   }

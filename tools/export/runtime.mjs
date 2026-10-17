@@ -135,7 +135,16 @@ export async function compileRuntime(out) {
           compileMap(row, binding, tables, media, messages)
         : compileMap(row, binding, tables, media, messages);
     cache.maps[row.id] = cacheKey;
-    if (!Object.hasOwn(byMap[row.id], map.initializer)) map.initializer = null;
+    // Cached maps may have been normalized before the current global registry
+    // existed. Re-read the declared name and use the VM's local/global lookup.
+    const initializer = tables["map_script.csv"]?.find(
+      (script) => String(script.id) === String(row.script_id),
+    )?.script_name;
+    map.initializer =
+      initializer &&
+      (Object.hasOwn(byMap[row.id], initializer) || Object.hasOwn(global, initializer))
+        ? initializer
+        : null;
     sourceMaps.push(map);
     await write(path.join(out, `maps/${map.id}.json`), map);
   }

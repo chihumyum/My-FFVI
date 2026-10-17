@@ -8,7 +8,13 @@ import { PlayGame } from "../../src/play/game.js";
 import { Battle } from "../../src/play/battle.js";
 import { advanceStory } from "../../src/play/story-route.js";
 import { storyChoice } from "../../src/play/story-plan.js";
+import { PresentationAudit } from "./audit-presentation.mjs";
 const dataRoot = process.env.PLAY_DATA_DIR || "build/web-data";
+const reportFile = process.env.PLAY_REPORT || "build/play/playthrough.json";
+const assetAuditFile =
+  process.env.PLAY_ASSET_AUDIT === "0"
+    ? null
+    : process.env.PLAY_ASSET_AUDIT || reportFile.replace(/\.[^/.]+$/, "") + "-assets.json";
 await mkdir("build/play", { recursive: true });
 let randomState = Number(process.env.PLAY_SEED || 1) >>> 0;
 const random = () => {
@@ -34,6 +40,14 @@ if (process.env.PLAY_STATIC_DIR) {
 let last = "";
 const events = [];
 if (!packed) data.navigation = JSON.parse(await readFile(`${dataRoot}/navigation.json`));
+const assetAudit = assetAuditFile
+  ? await PresentationAudit.open({
+      dataRoot,
+      assetRoot: process.env.PLAY_STATIC_DIR,
+      data,
+      battleData,
+    })
+  : null;
 let through = process.env.PLAY_THROUGH;
 if (process.env.PLAY_CHECKPOINT_DIR)
   await mkdir(process.env.PLAY_CHECKPOINT_DIR, { recursive: true });
@@ -48,6 +62,9 @@ const coverage = process.env.PLAY_COVERAGE_REPORT
 const ObservedGame = withPresentation(PlayGame);
 class RegressionGame extends ObservedGame {
   step(task) {
+    const sourceIndex = task.pc,
+      sourceProgram = assetAudit && this.data.programs[task.program],
+      sourceOp = sourceProgram?.ops[sourceIndex];
     if (coverage) {
       coverage.programs.add(String(task.program));
       coverage.operations.add(`${task.program}:${task.pc}`);
@@ -61,7 +78,19 @@ class RegressionGame extends ObservedGame {
       throw Error(
         `Executed program ${task.program} missing from map ${this.mapId} preload closure`,
       );
-    return super.step(task);
+    const result = super.step(task);
+    if (sourceOp)
+      assetAudit.instruction(this, {
+        name: sourceOp[0],
+        i: sourceOp[1],
+        r: sourceOp[2],
+        s: sourceOp[3],
+        script: sourceProgram.name,
+        program: sourceProgram,
+        index: sourceIndex,
+        actor: task.actor,
+      });
+    return result;
   }
 }
 const game = new RegressionGame({
@@ -77,6 +106,7 @@ const game = new RegressionGame({
   loadMap: async (id) =>
     packed ? packed.loadMap(id) : JSON.parse(await readFile(`${dataRoot}/maps/${id}.json`)),
   onEvent: (e) => {
+    assetAudit?.event(game, e);
     if (["script", "map", "battle", "battle-end"].includes(e.kind)) {
       events.push(e);
       if (e.kind === "script" && last !== e.script) {
@@ -170,6 +200,7 @@ for (let tick = 0; tick < Number(process.env.TICKS || 120000); tick++) {
   }
   game.tick(0.1, { auto: true });
   if (game.loading) await game.pending;
+  assetAudit?.observe(game);
   if (observedBattle && observedBattle.phase !== "active") {
     recordBattle(observedBattle);
     observedBattle = null;
@@ -294,6 +325,10 @@ const battleDebug = game.battle
   : null;
 if (observedBattle) recordBattle(observedBattle);
 const result = {
+  assetAudit: assetAuditFile,
+  acceptanceNote: assetAuditFile
+    ? null
+    : "Asset audit explicitly disabled; development probe only, not formal acceptance.",
   start: process.env.PLAY_RESUME ? "resume" : "new-game",
   resumedMode,
   boostReason: process.env.PLAY_BOOST_REASON || null,
@@ -325,10 +360,17 @@ const result = {
   groups: [...game.groups],
   events,
 };
-await writeFile(
-  process.env.PLAY_REPORT || "build/play/playthrough.json",
-  JSON.stringify(result, null, 2),
-);
+await writeFile(reportFile, JSON.stringify(result, null, 2));
+if (assetAudit)
+  await assetAudit.write(assetAuditFile, {
+    start: result.start,
+    mode: result.mode,
+    stop,
+    through,
+    titleScreen: Boolean(game.titleScreen),
+    battleCount: game.battles.length,
+    finalBattleVictory: game.battles.some((b) => b.encounterId === 472 && b.outcome === "victory"),
+  });
 console.log(
   JSON.stringify(
     {

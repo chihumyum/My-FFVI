@@ -23,15 +23,44 @@ function clipsFor(character) {
 }
 
 /** PR play_speed is the duration of the entire authored frame sequence, in seconds. */
-export function sampleFieldClip(character, name, elapsed, normalized, warn = () => {}) {
-  const clips = clipsFor(character);
+export function sampleFieldClip(
+  character,
+  name,
+  elapsed,
+  normalized,
+  warn = () => {},
+  resolvedClips = null,
+) {
+  const clips = resolvedClips || clipsFor(character);
   let clip = clips.get(name) || clips.get(name === "Walk" ? "Default" : name);
   if (!clip) {
-    warn(`clip:${name}`, `Missing PR field animation ${name}; holding its Default pose.`);
     clip = clips.get("Default") || clips.values().next().value;
+    warn(`clip:${name}`, `Missing PR field animation ${name}; holding its Default pose.`, {
+      category: "animation-missing",
+      animation: name,
+      fallback: clip?.name || null,
+    });
+    warn(
+      `pose-fallback:${name}`,
+      `Field pose falls back from ${name} to ${clip?.name || "no clip"}.`,
+      {
+        category: "pose-fallback",
+        animation: name,
+        fallback: clip?.name || null,
+      },
+    );
   }
   if (!clip?.frames?.length) {
     const key = Object.keys(character.sprites || {}).sort()[0];
+    warn(
+      `empty-clip:${name}`,
+      `Field animation ${name} has no frames; selecting ${key || "no sprite"}.`,
+      {
+        category: "frame-fallback",
+        animation: name,
+        fallback: key || null,
+      },
+    );
     return key ? { info: character.sprites[key], name: key, flip: false } : null;
   }
   let at = Math.max(0, elapsed || 0);
@@ -52,6 +81,11 @@ export function sampleFieldClip(character, name, elapsed, normalized, warn = () 
       warn(
         `chain:${clip.name}`,
         `PR chained field clip ${clip.name} has no next clip; holding its final frame.`,
+        {
+          category: "animation-chain-missing",
+          animation: clip.name,
+          requestedNext: clip.next_anim_name || null,
+        },
       );
       break;
     }
@@ -62,7 +96,10 @@ export function sampleFieldClip(character, name, elapsed, normalized, warn = () 
     normalized == null ? (clip.play_speed > 0 ? at / clip.play_speed : 0) : clamp(normalized);
   if (normalized == null && clip.play_mode === 1) progress %= 1;
   if (normalized == null && clip.play_mode === 2) {
-    warn("field-mode2", "PR field animation mode2 is approximated as ping-pong playback.");
+    warn("field-mode2", "PR field animation mode2 is approximated as ping-pong playback.", {
+      category: "animation-playback-approximate",
+      animation: clip.name,
+    });
     progress = 1 - Math.abs((progress % 2) - 1);
   }
   const index = Math.min(clip.frames.length - 1, Math.floor(clamp(progress) * clip.frames.length));
@@ -72,12 +109,18 @@ export function sampleFieldClip(character, name, elapsed, normalized, warn = () 
     warn(
       `frame:${frame.sprite_name}`,
       `Missing PR field sprite ${frame.sprite_name}; holding an available pose.`,
+      { category: "sprite-frame-missing", frame: frame.sprite_name },
     );
     frame = clip.frames.find((frame) => character.sprites?.[frame.sprite_name]) ||
       clips.get("Default")?.frames.findLast((frame) => character.sprites?.[frame.sprite_name]) || {
         sprite_name: Object.keys(character.sprites || {}).sort()[0],
       };
     info = character.sprites?.[frame.sprite_name];
+    warn(
+      `frame-fallback:${name}`,
+      `Field frame falls back to ${frame.sprite_name || "no sprite"}.`,
+      { category: "frame-fallback", fallback: frame.sprite_name || null },
+    );
     if (!info) return null;
   }
   const rgb = frame.rgb || { r: 1, g: 1, b: 1 };
@@ -105,16 +148,48 @@ export class FieldAnimations {
   reset() {
     this.actors = new WeakMap();
     this.cues = new WeakMap();
+    this.custom = new WeakMap();
   }
   event(event) {
     if (!event?.animationActor) return;
+    const cue = ["CueAnim", "PlayAnim"].includes(event.name);
+    if (!cue && !event.s?.[0]) return;
+    if (event.customAnimations) {
+      let binding = this.custom.get(event.animationActor);
+      if (!binding)
+        this.custom.set(
+          event.animationActor,
+          (binding = { cache: new Map(), catalogs: new WeakMap() }),
+        );
+      binding.source = event.customAnimations;
+      binding.script = event.script;
+    }
+    if (!cue) return;
     this.cues.set(event.animationActor, {
       time: event.time,
       animation: event.animationActor.animation,
       x: event.animationActor.x,
       y: event.animationActor.y,
-      normalized: event.name === "CueAnim" ? clamp(event.r?.[0]) : null,
+      // FieldSpriteEntity.CueAnimation RVAaead30: a negative normalized time
+      // selects 1.0 (last pose), rather than clamping to the first frame.
+      normalized: event.name === "CueAnim" ? (event.r?.[0] < 0 ? 1 : clamp(event.r?.[0])) : null,
     });
+  }
+  clips(actor, character) {
+    const base = clipsFor(character),
+      binding = this.custom.get(actor);
+    if (!binding) return base;
+    let row = binding.catalogs.get(character);
+    if (row?.source !== binding.source) {
+      // Native SetupAnimCommon looks up the character's own anim_info first,
+      // then cached script definitions, then the executing script's Animations.
+      const clips = new Map((binding.source || []).map((clip) => [clip.name, clip]));
+      for (const [name, clip] of binding.cache) clips.set(name, clip);
+      for (const [name, clip] of base) clips.set(name, clip);
+      row = { source: binding.source, clips };
+      binding.catalogs.set(character, row);
+    }
+    return row.clips;
   }
   sample(actor, character, time, asset = actor.asset) {
     let states = this.actors.get(actor);
@@ -128,7 +203,7 @@ export class FieldAnimations {
       this.cues.delete(actor);
       cue = null;
     }
-    const clips = clipsFor(character);
+    const clips = this.clips(actor, character);
     const locomotion = walking.test(actor.animation || "Default") && clips.has("WalkB");
     const name = locomotion ? facing[actor.direction] || "Default" : actor.animation || "Default";
     if (!state || state.name !== name || state.cue !== cue || time < state.lastTime) {
@@ -147,7 +222,28 @@ export class FieldAnimations {
     const idle = locomotion && !moving && !cue;
     // Walking clips end on the neutral pose; standing does not keep marching.
     const normalized = idle ? 1 : cue?.normalized;
-    return sampleFieldClip(character, name, time - state.start, normalized, this.warn);
+    const binding = this.custom.get(actor);
+    if (binding && !clipsFor(character).has(name) && clips.has(name))
+      binding.cache.set(name, clips.get(name));
+    const result = sampleFieldClip(
+      character,
+      name,
+      time - state.start,
+      normalized,
+      (key, message, details) =>
+        this.warn(key, message, {
+          entityId: actor.id,
+          asset,
+          resource: asset,
+          animation: name,
+          ...details,
+          animationSource: binding?.script || null,
+        }),
+      clips,
+    );
+    if (binding && result?.clip && !clipsFor(character).has(result.clip))
+      binding.cache.set(result.clip, clips.get(result.clip));
+    return result;
   }
 }
 

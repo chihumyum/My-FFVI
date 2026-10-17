@@ -255,12 +255,14 @@ export class PRParticles {
     warn = console.warn,
     renderer = null,
     materials = null,
+    diagnostics = null,
   } = {}) {
     if (!container || !getTexture) throw Error("PRParticles requires container and getTexture");
     this.parent = container;
     this.getTexture = getTexture;
     this.maxParticles = maxParticles;
     this.warn = warn;
+    this.diagnostics = diagnostics;
     this.catalog = { effects: {}, effectIds: {} };
     this.instances = [];
     this.pool = [];
@@ -321,6 +323,11 @@ export class PRParticles {
     const asset = mapping?.asset || effectId,
       fx = this.catalog.effects[asset];
     if (!fx) {
+      this.diagnostics?.record("effect-pack-missing", {
+        entityId: "effect",
+        resource: asset,
+        effectId,
+      });
       this._warning(
         `missing:${asset}`,
         `Effect ${asset} is not loaded; presentation skipped without touching battle.`,
@@ -671,7 +678,7 @@ export class PRParticles {
       this._draw(instance, state, p, velocity);
     }
   }
-  _texture(image, uv, particle, state, materialTexture = undefined) {
+  _texture(image, uv, particle, state, materialTexture = undefined, details = {}) {
     const t = clamp(particle.age / particle.lifetime);
     if (uv?.mode === 1 && uv.sprites?.length) {
       const count = uv.sprites.length;
@@ -688,13 +695,26 @@ export class PRParticles {
       const at = Math.floor(
         (evaluateCurve(uv.startFrame, 0, fraction(particle.seed, 4)) + animation) * count,
       );
-      return this.getTexture(uv.sprites[((at % count) + count) % count].url);
+      return this.getTexture(uv.sprites[((at % count) + count) % count]?.url, {
+        ...details,
+        required: true,
+      });
     }
     if (materialTexture === null) return null;
-    if (!image && materialTexture === undefined) return Texture.WHITE;
+    if (!image && materialTexture === undefined) {
+      this.diagnostics?.record("effect-texture-fallback", {
+        ...details,
+        resource: "Unity/white",
+        reason: "No _MainTex assigned; rendering an untextured particle with Texture.WHITE",
+      });
+      return Texture.WHITE;
+    }
     // Calling the shared texture accessor each frame also pins atlas pages in
     // the renderer LRU. Null is a pending load, never a shared texture mutation.
-    const texture = materialTexture === undefined ? this.getTexture(image.url) : materialTexture;
+    const texture =
+      materialTexture === undefined
+        ? this.getTexture(image.url, { ...details, required: true })
+        : materialTexture;
     if (!texture) return null;
     if (!uv) return texture;
     const cols = Math.max(1, uv.tilesX || 1),
@@ -762,7 +782,11 @@ export class PRParticles {
         `sprite-material:${instance.asset}`,
         `${instance.asset}: Sprite-list animation uses direct frames and Sprite tint; material preprocessing is not applied to these frames.`,
       );
-    const texture = this._texture(material?.textures._MainTex, uv, p, state, materialTexture);
+    const texture = this._texture(material?.textures._MainTex, uv, p, state, materialTexture, {
+      entityId: `effect:${instance.asset}:system:${state.index}`,
+      asset: instance.asset,
+      animation: d.name || String(state.index),
+    });
     const position = d.space ? transform(state.matrix, p.position) : p.position;
     if (!p.sprite) return;
     p.sprite.visible = Boolean(texture) && d.renderer.mode !== 5;
@@ -851,7 +875,12 @@ export class PRParticles {
         }
     }
     for (const { definition: row, sprite } of instance.staticSprites) {
-      const texture = this.getTexture(row.texture.url);
+      const texture = this.getTexture(row.texture?.url, {
+        required: true,
+        entityId: `effect:${instance.asset}:node:${row.node}`,
+        asset: instance.asset,
+        animation: "static-sprite",
+      });
       sprite.visible = Boolean(texture) && instance.age >= instance.delays[row.node];
       if (!texture) continue;
       const m = instance.transforms[row.node],

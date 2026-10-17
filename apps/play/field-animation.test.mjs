@@ -167,3 +167,137 @@ test("observing field animation commands preserves game state exactly", () => {
   assert.deepEqual(a, b);
   assert.equal(events[0].animationActor, observed.player);
 });
+
+test("PR script-defined poses preserve offsets, mirroring and the character's own clip priority", async () => {
+  const bundle = JSON.parse(
+    await readFile(
+      new URL(
+        "../../build/web-data/raw/bundles/map_30410_assets_all_3a0fcd17ae2e239f93aef97c86d25daa.json",
+        import.meta.url,
+      ),
+    ),
+  );
+  const source = bundle.find((row) => row.source.assetPath.endsWith("/sc_map_30410.json"));
+  assert(source?.data.Animations?.length);
+  const warnings = [],
+    animation = new FieldAnimations((...row) => warnings.push(row));
+  const actor = { id: "tent", asset: "mo_ff6_b121_c00", animation: "Tent_Yoffset", x: 1, y: 1 };
+  const before = structuredClone(actor);
+  animation.event({
+    name: "CueAnim",
+    s: [actor.animation],
+    r: [0],
+    script: "sc_map_30410",
+    time: 0,
+    animationActor: actor,
+    customAnimations: source.data.Animations,
+  });
+  const frame = animation.sample(actor, data.characters[actor.asset], 0);
+  assert.equal(frame.name, "Default_00");
+  assert.equal(frame.offsety, 16);
+  assert.equal(frame.clip, "Tent_Yoffset");
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(actor, before);
+  actor.asset = "mo_ff6_p003";
+  actor.animation = "WalkR";
+  animation.event({
+    name: "Move",
+    s: ["WalkR"],
+    script: "sc_map_30410",
+    time: 1,
+    animationActor: actor,
+    customAnimations: source.data.Animations,
+  });
+  assert.equal(
+    animation.clips(actor, edgar).get("WalkR"),
+    edgar.animation.data.animation.find((clip) => clip.name === "WalkR"),
+  );
+});
+
+test("custom animation chains retain authored color, alpha and the native last-pose cue", () => {
+  const custom = [
+    {
+      name: "Start",
+      play_mode: 3,
+      play_speed: 0.5,
+      next_anim_name: "End",
+      frames: [{ sprite_name: "first" }],
+    },
+    {
+      name: "End",
+      play_mode: 0,
+      play_speed: 1,
+      is_reverse: true,
+      frames: [
+        { sprite_name: "first" },
+        {
+          sprite_name: "last",
+          offsetx: 3,
+          offsety: 7,
+          flip: true,
+          alpha: 0.25,
+          rgb: { r: 1, g: 0.5, b: 0 },
+        },
+      ],
+    },
+  ];
+  const character = { sprites: { first: { file: "first.png" }, last: { file: "last.png" } } };
+  const actor = { id: 7, animation: "Start", x: 0, y: 0 },
+    warnings = [];
+  const animation = new FieldAnimations((...row) => warnings.push(row));
+  animation.event({ name: "PlayAnim", time: 0, animationActor: actor, customAnimations: custom });
+  animation.sample(actor, character, 0);
+  const end = animation.sample(actor, character, 2);
+  assert.equal(end.name, "last");
+  assert.deepEqual(
+    [end.offsetx, end.offsety, end.alpha, end.tint, end.flip],
+    [3, 7, 0.25, 0xff8000, false],
+  );
+  actor.animation = "End";
+  animation.event({
+    name: "CueAnim",
+    time: 3,
+    r: [-1],
+    animationActor: actor,
+    customAnimations: custom,
+  });
+  assert.equal(animation.sample(actor, character, 3).name, "last");
+  // Once resolved, native animation caches keep that script clip available.
+  animation.event({
+    name: "SetPos",
+    time: 4,
+    s: ["End"],
+    animationActor: actor,
+    customAnimations: [],
+  });
+  assert.equal(animation.sample(actor, character, 4).name, "last");
+  assert.deepEqual(warnings, []);
+});
+
+test("observing a script custom animation does not lazily create or rewrite actors", () => {
+  const custom = [{ name: "Offset", frames: [{ sprite_name: "Default_00", offsety: 16 }] }];
+  class Base {
+    constructor() {
+      this.data = {
+        programs: {
+          p: { name: "p", animations: custom, ops: [["SetPos", [1, 2], [], ["Offset"]]] },
+        },
+      };
+      this.player = { id: -1 };
+      this.actors = new Map();
+    }
+    actor() {
+      throw Error("observer must never materialize actors");
+    }
+    step(task) {
+      task.pc++;
+    }
+  }
+  const events = [],
+    game = new (withPresentation(Base))({ onPresentation: (event) => events.push(event) });
+  const before = structuredClone([...game.actors]);
+  game.step({ program: "p", pc: 0, actor: -1001 });
+  assert.equal(events[0].animationActor, game.player);
+  assert.equal(events[0].customAnimations, custom);
+  assert.deepEqual([...game.actors], before);
+});

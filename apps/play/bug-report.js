@@ -112,6 +112,7 @@ export function describeBugState(game, renderer, events, mapNames = {}) {
       : null,
     events,
     rendering: renderer.metrics(),
+    renderIssues: renderer.diagnostics?.summary() || [],
     viewport: {
       width: renderer.canvas?.width || renderer._width,
       height: renderer.canvas?.height || renderer._height,

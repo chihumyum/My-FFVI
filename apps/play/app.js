@@ -37,8 +37,11 @@ import { storyChoice } from "../../src/play/story-plan.js";
 import { Battle } from "../../src/play/battle.js";
 const canvas = document.getElementById("screen");
 const renderer = new GameRenderer(canvas);
+renderer.diagnostics.acceptance = new URLSearchParams(location.search).get("acceptance") === "1";
+window.ffviRenderDiagnostics = () => renderer.diagnostics.summary();
 await renderer.init();
-const ui = new GameUI(renderer.layers.ui, (url) => renderer.getTexture(url));
+const ui = new GameUI(renderer.layers.ui, (url, details) => renderer.getTexture(url, details));
+window.ffviUIDiagnostics = () => ui.diagnostics();
 const $ = (id) => ui.get(id) || document.getElementById(id);
 let game,
   battleDialogue = null,
@@ -728,12 +731,19 @@ function loop(now) {
       $("confirm").hidden = !!dialogue.choices;
     } else ui.setDialogue(null);
   }
+  renderer.setMenuMode(
+    extras.active ||
+      ["menu", "shop", "save", "naming", "formation"].some(
+        (id) => ui.get(id) && !ui.get(id).hidden,
+      ),
+  );
   ui.render();
   opera.update(dt);
   renderer.render(started ? game : null, data, battleData);
   requestAnimationFrame(loop);
 }
 await loadPresentation(new WebData(webIndexURL()), renderer, ui);
+renderer.diagnostics.mapNames = ui.presentation.mapNames || {};
 opera.fontFamily = ui.presentation.fontFamily || opera.fontFamily;
 if (import.meta.env.DEV) {
   // These isolated UI fixtures restore real regression checkpoints. They do not

@@ -15,6 +15,7 @@ import { PRParticles } from "./particles.js";
 import { EffectLibrary } from "./effects.js";
 import { FieldPresentation } from "./field-presentation.js";
 import { PRFilter } from "./pr-filters.js";
+import { RenderDiagnostics } from "./render-diagnostics.js";
 import {
   FieldAnimations,
   fieldActorParts,
@@ -58,6 +59,7 @@ function hideUnused(pool, count) {
 export class GameRenderer {
   constructor(canvas) {
     this.canvas = canvas;
+    this.diagnostics = new RenderDiagnostics();
     this.app = new Application();
     this.world = container("world");
     this.world.accessibleChildren = false;
@@ -106,9 +108,11 @@ export class GameRenderer {
       this.layers.mapLayers.addChild(layer);
       return layer;
     });
-    this.fieldAnimations = new FieldAnimations((key, message) =>
-      this._warnOnce(`field-animation:${key}`, message),
-    );
+    this.fieldAnimations = new FieldAnimations((key, message, details) => {
+      if (details?.category)
+        this.diagnostics.record(details.category, { ...details, reason: message });
+      else this._warnOnce(`field-animation:${key}`, message);
+    });
     this._battleSprites = [];
     this._battleNames = [];
     this._battleTargets = [];
@@ -130,19 +134,22 @@ export class GameRenderer {
     this.layers.effects.addChild(this._particleLayer);
     this.particles = new PRParticles({
       container: this._particleLayer,
-      getTexture: (url) => this._texture(url),
+      diagnostics: this.diagnostics,
+      getTexture: (url, details) => this._texture(url, { entityId: "particle", ...details }),
       warn: (message) => this._warnOnce(`particles:${message}`, message),
     });
     this.battlePresentation = new BattlePresentation({
       actors: this.layers.actors,
       effects: this.layers.effects,
-      getTexture: (url) => this._texture(url),
+      getTexture: (url, details) => this._texture(url, { entityId: "battle", ...details }),
+      diagnostics: this.diagnostics,
       warn: (message) => this._warnOnce(`battle:${message}`, message),
       onEffect: (event, actor, target) => this._battleEffect(event, actor, target),
     });
     this.fieldPresentation = new FieldPresentation({
       layers: this.layers,
-      getTexture: (url) => this._texture(url),
+      diagnostics: this.diagnostics,
+      getTexture: (url, details) => this._texture(url, { entityId: "scene", ...details }),
       warn: (key, message) => this._warnOnce(key, message),
       sampleActor: (actor, character, time) => this.fieldAnimations.sample(actor, character, time),
     });
@@ -223,15 +230,38 @@ export class GameRenderer {
     const parentWidth = this.canvas.parentElement?.clientWidth || window.innerWidth;
     const width = availableWidth ?? parentWidth;
     const height = availableHeight ?? Math.max(HEIGHT, window.innerHeight - 40);
-    const scale = Math.max(1, Math.floor(Math.min(width / this._width, height / this._height)));
-    const resolution = scale * Math.max(1, Math.round(window.devicePixelRatio || 1));
-    if (resolution !== this._resolution) {
-      this.app.renderer.resize(this._width, this._height, resolution);
+    const screenWidth = this._menuMode ? 1920 : this._width,
+      screenHeight = this._menuMode ? 1080 : this._height,
+      fit = Math.min(width / screenWidth, height / screenHeight),
+      scale = this._menuMode ? Math.max(0.1, fit) : Math.max(1, Math.floor(fit)),
+      resolution = this._menuMode
+        ? scale * Math.max(1, window.devicePixelRatio || 1)
+        : scale * Math.max(1, Math.round(window.devicePixelRatio || 1));
+    if (
+      resolution !== this._resolution ||
+      screenWidth !== this._screenWidth ||
+      screenHeight !== this._screenHeight
+    ) {
+      this.app.renderer.resize(screenWidth, screenHeight, resolution);
       this._resolution = resolution;
+      this._screenWidth = screenWidth;
+      this._screenHeight = screenHeight;
     }
     this._displayScale = scale;
-    this.canvas.style.width = `${this._width * scale}px`;
-    this.canvas.style.height = `${this._height * scale}px`;
+    this.canvas.style.width = `${screenWidth * scale}px`;
+    this.canvas.style.height = `${screenHeight * scale}px`;
+  }
+
+  // Menus use PR's full UI reference canvas and the physical viewport. The
+  // game camera and its integer-pixel layout remain unchanged when closing it.
+  setMenuMode(enabled) {
+    if (this._menuMode === Boolean(enabled)) return;
+    this._menuMode = Boolean(enabled);
+    document.body.classList.toggle("modern-menu", this._menuMode);
+    this.layers.ui.scale.set(this._menuMode ? 1 : this._width / 1920);
+    this.world.scale.set(this._menuMode ? 1920 / this._width : 1);
+    this.canvas.style.imageRendering = this._menuMode ? "auto" : "pixelated";
+    this.resize();
   }
 
   setBattlePresentation(catalog) {
@@ -245,7 +275,8 @@ export class GameRenderer {
   setShaderCatalog(catalog) {
     this.shaderCatalog = catalog;
     this._backgroundShader ||= new PRFilter("Last/LastBackGround", {
-      getTexture: (url) => this._texture(url),
+      getTexture: (url, details) =>
+        this._texture(url, { entityId: "background-shader", ...details }),
       warn: (message) => this._warnOnce("background:" + message, message),
     });
   }
@@ -257,7 +288,13 @@ export class GameRenderer {
   _battleEffect(event, actor, target) {
     if (event.abilityId === 1 && !event.result.hit) return;
     const library = this.effectLibrary;
-    if (!library) return;
+    if (!library) {
+      this.diagnostics.record("effect-catalog-missing", {
+        entityId: event.actorIndex,
+        resource: `ability:${event.abilityId}`,
+      });
+      return;
+    }
     const battle = this.battlePresentation.battle;
     const unit = (event.actorSide === "player" ? battle.players : battle.enemies)[event.actorIndex];
     let effectId = library.catalog.abilities[event.abilityId];
@@ -281,12 +318,20 @@ export class GameRenderer {
       ? [mapping.criticalSE]
       : mapping?.se || [])
       this.onBattleSound?.(id);
+    const context = { ...this.diagnostics.context };
     const task = library
       .play(effectId, position, () => this.battlePresentation.battle === battle)
       .catch((error) =>
-        this._warnOnce(
-          `effect:${effectId}`,
-          `Effect ${effectId}: ${error.message}; battle continues.`,
+        this.diagnostics.record(
+          "effect-load-failed",
+          {
+            entityId: `${event.actorSide}:${event.actorIndex}`,
+            resource: mapping?.asset || effectId,
+            effectId,
+            abilityId: event.abilityId,
+            reason: error.message,
+          },
+          context,
         ),
       );
     this._effectTasks.add(task);
@@ -316,7 +361,8 @@ export class GameRenderer {
     this._width = width;
     this._height = height;
     this._resolution = null;
-    this.layers.ui.scale.set(width / 1920);
+    this.layers.ui.scale.set(this._menuMode ? 1 : width / 1920);
+    this.world.scale.set(this._menuMode ? 1920 / width : 1);
     this.world.filterArea = new Rectangle(0, 0, width, height);
     for (const s of [this._background, this._fade, this._flashSprite]) {
       s.width = width;
@@ -326,6 +372,7 @@ export class GameRenderer {
   }
 
   resetPresentation() {
+    this.diagnostics.reset();
     this.fieldAnimations.reset();
     this.battlePresentation.clear();
     this.particles.clear();
@@ -357,14 +404,19 @@ export class GameRenderer {
     return this;
   }
 
-  getTexture(url) {
-    return this._texture(url);
+  getTexture(url, details) {
+    return this._texture(url, { entityId: "ui", ...details });
   }
 
   captureFrame() {
     return this.app.renderer.extract.base64({
       target: this.app.stage,
-      frame: new Rectangle(0, 0, this._width, this._height),
+      frame: new Rectangle(
+        0,
+        0,
+        this._screenWidth || this._width,
+        this._screenHeight || this._height,
+      ),
       format: "png",
       resolution: this._resolution || 1,
       clearColor: "#080e1b",
@@ -413,6 +465,16 @@ export class GameRenderer {
       case "BackdropColor":
       case "ChangeView":
       case "SysCall":
+      // FieldAnimations consumes these above; the VM owns positions and the
+      // renderer samples their authored clips without a second implementation.
+      case "CueAnim":
+      case "PlayAnim":
+      case "SetPos":
+      case "Move":
+      case "MoveBirdView":
+      case "MoveTo":
+      case "Lerp":
+      case "Route":
         break;
       case "ShakeStop":
         this._shake = null;
@@ -478,10 +540,20 @@ export class GameRenderer {
     } else this._flashSprite.visible = false;
   }
 
-  _texture(url) {
-    if (!url) return null;
+  _texture(url, details = {}) {
+    if (!url) {
+      if (details.required)
+        this.diagnostics.record("texture-reference-missing", {
+          ...details,
+          resource: url ?? details.resource ?? null,
+        });
+      return null;
+    }
+    if (this._assetGeneration && !this._assetImages[url] && !/^(data:|blob:)/.test(url))
+      this.diagnostics.record("atlas-entry-missing", { ...details, resource: url });
     let record = this._textures.get(url);
     if (!record) {
+      const requestContext = { ...this.diagnostics.context };
       const entry = this._assetImages[url];
       let sourceURL = url;
       if (entry) {
@@ -504,7 +576,9 @@ export class GameRenderer {
           .then(() => Assets.load(sourceURL))
           .then(
             (texture) => {
-              texture.source.style.scaleMode = "nearest";
+              // Generated artwork previews have their own pages; pixel-game
+              // atlases retain nearest sampling without mutating shared styles.
+              texture.source.style.scaleMode = entry?.sampling || "nearest";
               source.texture = texture;
               source.pending = false;
               source.bytes = texture.source.pixelWidth * texture.source.pixelHeight * 4;
@@ -538,7 +612,9 @@ export class GameRenderer {
               frame.x + frame.w > base.width ||
               frame.y + frame.h > base.height
             )
-              throw new Error(`Invalid atlas frame for ${url}`);
+              throw Object.assign(new Error(`Invalid atlas frame for ${url}`), {
+                category: "atlas-frame-invalid",
+              });
             texture = new Texture({
               source: base.source,
               frame: new Rectangle(
@@ -554,11 +630,25 @@ export class GameRenderer {
           record.loading = false;
         })
         .catch((error) => {
+          if (generation !== this._assetGeneration) return;
           record.loading = false;
           record.failed = true;
-          this._warnOnce(`texture:${sourceURL}`, `Texture unavailable: ${url}: ${error.message}`);
+          record.error = error.message;
+          record.errorCategory = error.category || "texture-load-failed";
+          this.diagnostics.record(
+            record.errorCategory,
+            { ...details, resource: url, page: sourceURL, reason: record.error },
+            requestContext,
+          );
         });
     }
+    if (record.failed)
+      this.diagnostics.record(record.errorCategory, {
+        ...details,
+        resource: url,
+        page: record.sourceURL,
+        reason: record.error,
+      });
     const source = this._textureSources.get(record.sourceURL);
     if (source) source.lastUsed = this._frameCount;
     return record.texture;
@@ -613,8 +703,8 @@ export class GameRenderer {
       );
   }
 
-  _crop(url, index, set, tileSize) {
-    const base = this._texture(url);
+  _crop(url, index, set, tileSize, details = {}) {
+    const base = this._texture(url, { required: true, ...details });
     if (!base) return null;
     const w = set.tilewidth || tileSize;
     const h = set.tileheight || tileSize;
@@ -623,7 +713,16 @@ export class GameRenderer {
     const columns = set.columns || Math.floor((base.width - margin * 2 + spacing) / (w + spacing));
     const x = margin + (index % columns) * (w + spacing);
     const y = margin + Math.floor(index / columns) * (h + spacing);
-    if (x < 0 || y < 0 || x + w > base.width || y + h > base.height) return null;
+    if (x < 0 || y < 0 || x + w > base.width || y + h > base.height) {
+      this.diagnostics.record("tile-frame-out-of-bounds", {
+        ...details,
+        resource: url,
+        frameIndex: index,
+        frame: { x, y, width: w, height: h },
+        image: { width: base.width, height: base.height },
+      });
+      return null;
+    }
     const key = `${url}:${x},${y},${w},${h}`;
     let texture = this._crops.get(key);
     if (!texture) {
@@ -699,6 +798,13 @@ export class GameRenderer {
       state.container.zIndex = fieldTileOrder(layer);
       state.container.visible = layer.visible !== false;
       state.container.alpha = layer.opacity ?? 1;
+      if (layer.sourceGroup === "WaterGroup" && layer.data?.some(Boolean))
+        this.diagnostics.record("water-material-unimplemented", {
+          entityId: `map-layer:${li}`,
+          resource: layer.name,
+          reason:
+            "PR WaterGroup control tiles are drawn directly; water/floor/reflection compositing is missing",
+        });
       const plane = fieldTilePlane(layer);
       let count = 0;
       if (layer.data) {
@@ -725,14 +831,23 @@ export class GameRenderer {
             const gid = raw & 0x0fffffff;
             if (!gid) continue;
             const entry = metadata.find(({ set }) => set.firstgid <= gid);
-            if (!entry) continue;
+            if (!entry) {
+              this.diagnostics.record("tileset-missing", {
+                entityId: `tile:${li}:${sx},${sy}`,
+                resource: `gid:${gid}`,
+              });
+              continue;
+            }
             const { set, animations } = entry;
             let index = gid - set.firstgid;
             const animation = animations.get(index);
             if (animation) {
               index = sampleFieldTile(animation, game.time, sx, sy, plane, tileRegions);
             }
-            const texture = this._crop(map.textures?.[set.image], index, set, tile);
+            const texture = this._crop(map.textures?.[set.image], index, set, tile, {
+              entityId: `tile:${li}:${sx},${sy}`,
+              tileset: set.image,
+            });
             if (!texture) continue;
             const sprite = pooledSprite(state.sprites, state.container, count++);
             sprite.texture = texture;
@@ -750,7 +865,12 @@ export class GameRenderer {
             sprite.visible = true;
           }
         }
-      }
+      } else
+        this.diagnostics.record("map-layer-data-missing", {
+          entityId: `map-layer:${li}`,
+          resource: layer.name,
+          reason: "A declared runtime tile layer has no cell data",
+        });
       hideUnused(state.sprites, count);
       this._visibleTiles += count;
     }
@@ -782,6 +902,7 @@ export class GameRenderer {
       this.frameActors.push(record);
       if (!char?.sprites) {
         record.reason = "missing-character-data";
+        this.diagnostics.record(record.reason, { ...record, resource: asset });
         return;
       }
       const frame = this.fieldAnimations.sample(actor, char, game.time, asset);
@@ -789,9 +910,15 @@ export class GameRenderer {
       Object.assign(record, { frame: frame?.name, clip: frame?.clip, resource: info?.file });
       if (!info) {
         record.reason = "missing-animation-frame";
+        this.diagnostics.record(record.reason, { ...record, resource: asset });
         return;
       }
-      let texture = this._texture(info?.file);
+      let texture = this._texture(info?.file, {
+        required: true,
+        entityId: actor.id,
+        asset,
+        animation: frame.clip,
+      });
       if (!texture) {
         record.reason = this._textures.get(info?.file)?.failed
           ? "texture-failed"
@@ -801,10 +928,16 @@ export class GameRenderer {
       const w = info.logicalWidth || info.width || texture.width;
       const h = info.logicalHeight || info.height || texture.height;
       if (hideFeet)
-        texture = this._crop(info.file, 0, {
-          tilewidth: texture.width,
-          tileheight: Math.max(1, texture.height - Math.round((hideFeet * texture.height) / h)),
-        });
+        texture = this._crop(
+          info.file,
+          0,
+          {
+            tilewidth: texture.width,
+            tileheight: Math.max(1, texture.height - Math.round((hideFeet * texture.height) / h)),
+          },
+          undefined,
+          { entityId: actor.id, asset, animation: frame.clip },
+        );
       if (x + w < ox || x - w > ox + viewWidth || y < oy || y - h > oy + viewHeight) {
         record.reason = "outside-viewport";
         return;
@@ -850,6 +983,12 @@ export class GameRenderer {
           drawn: false,
           reason: "missing-character-asset",
         });
+      if (!parts.length && (actor === game.player || [6, 10, 17].includes(actor.kind)))
+        this.diagnostics.record("missing-character-asset", {
+          entityId: actor.id,
+          resource: `character:${actor.characterId ?? actor.id}`,
+          animation: actor.animation,
+        });
       for (const [order, part] of parts.entries()) draw(actor, part, position.x, position.y, order);
     }
     hideUnused(this._fieldSprites, count);
@@ -871,6 +1010,7 @@ export class GameRenderer {
     this._background.visible = true;
     const background = this._texture(
       battleData?.backgrounds?.[battle.formation?.backgroundId]?.sprite?.url,
+      { entityId: "battle-background", required: battle.formation?.backgroundId > 0 },
     );
     this._battleBackground.visible = !!background;
     if (background) {
@@ -953,6 +1093,7 @@ export class GameRenderer {
 
   render(game, data, battleData) {
     if (!this._ready) return;
+    this.diagnostics.begin(game);
     this.frameActors = [];
     const start = performance.now();
     if (this._previousFrame && start > this._previousFrame) {
@@ -1008,7 +1149,7 @@ export class GameRenderer {
     if (overlay) {
       const rect = this.canvas.getBoundingClientRect();
       // Position can change without a canvas resize (centered document layout).
-      overlay.style.transform = `translate(${rect.left}px, ${rect.top}px) scale(${rect.width / this._width}, ${rect.height / this._height})`;
+      overlay.style.transform = `translate(${rect.left}px, ${rect.top}px) scale(${rect.width / (this._screenWidth || this._width)}, ${rect.height / (this._screenHeight || this._height)})`;
     }
     if (this._textureBudgetDirty || this._frameCount % 120 === 0) this._trimTextureCache();
     this._frameCount++;

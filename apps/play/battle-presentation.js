@@ -2,8 +2,8 @@ import { Container, Rectangle, Sprite, Texture } from "pixi.js";
 
 // All clocks, poses and queues here belong to the renderer, never the combat engine.
 export class BattlePresentation {
-  constructor({ actors, effects, getTexture, warn, onEffect }) {
-    Object.assign(this, { actors, effects, getTexture, warn, onEffect });
+  constructor({ actors, effects, getTexture, warn, onEffect, diagnostics }) {
+    Object.assign(this, { actors, effects, getTexture, warn, onEffect, diagnostics });
     this.units = new Map();
     this.events = [];
     this.numbers = [];
@@ -149,6 +149,19 @@ export class BattlePresentation {
     const url = unit.side === "player" ? source?.url || unit.sprite?.url : unit.sprite?.url;
     const asset = url?.match(/\/(bc_ff6_[^/]+?)_assets_all_/i)?.[1]?.toLowerCase();
     const transformed = unit.trance && this.catalog?.groups[asset + "_tr"];
+    if (unit.trance && !transformed)
+      this.diagnostics?.record("battle-transformation-fallback", {
+        entityId: unit.id,
+        asset,
+        resource: asset + "_tr",
+        fallback: asset,
+      });
+    if (!transformed && !this.catalog?.groups[asset])
+      this.diagnostics?.record("battle-animation-group-missing", {
+        entityId: unit.id,
+        asset,
+        resource: url || asset || null,
+      });
     return transformed || this.catalog?.groups[asset];
   }
   mountedPose(group, alias, now, mirror) {
@@ -249,6 +262,13 @@ export class BattlePresentation {
               }[state];
       const mounted = this.mountedPose(group, aliases?.[key], now, mirror);
       if (mounted) return mounted;
+      this.diagnostics?.record("battle-mounted-pose-fallback", {
+        entityId: unit.id,
+        animation: key,
+        resource: this.catalog.magitek?.asset,
+        fallback: state,
+        reason: "Missing rider/armor frame or magic_armor_table alias",
+      });
     }
     const facing = mirror && group[state + "R_00"] ? state + "R" : state;
     const frames = Object.keys(group)
@@ -259,6 +279,13 @@ export class BattlePresentation {
       : group.Default_00
         ? "Default_00"
         : Object.keys(group)[0];
+    if (!frames.length)
+      this.diagnostics?.record("battle-pose-fallback", {
+        entityId: unit.id,
+        resource: group[key]?.url || null,
+        animation: facing,
+        fallback: key || null,
+      });
     return { info: group[key], explicitRight: facing.endsWith("R") };
   }
   consume(now) {
@@ -281,6 +308,7 @@ export class BattlePresentation {
         position,
         at: e.at + 0.12,
         tint: e.result.amount < 0 ? 0x80ff90 : e.result.mp ? 0x80cfff : 0xffffff,
+        entityId: `${e.targetSide}:${e.targetIndex}`,
       });
       this.onEffect?.(e, this.position(e.actorSide, e.actorIndex), position);
     }
@@ -303,10 +331,21 @@ export class BattlePresentation {
       if (hand && !weapon) continue;
       const asset = this.catalog.equipment[weapon?.battle_equipment_asset_id || 72];
       const group = this.catalog.groups[asset?.asset];
-      if (!group) continue;
+      if (!group) {
+        this.diagnostics?.record("battle-weapon-group-missing", {
+          entityId: unit.id,
+          resource: asset?.asset || `equipment:${weapon?.battle_equipment_asset_id || 72}`,
+        });
+        continue;
+      }
       const frames = Object.keys(group).sort();
       const info = group[frames[Math.min(frames.length - 1, Math.floor((age - 0.12) * 12))]];
-      const texture = this.getTexture(info.url);
+      const texture = this.getTexture(info?.url, {
+        required: true,
+        entityId: unit.id,
+        asset: asset.asset,
+        animation: "weapon-attack",
+      });
       if (!texture) continue;
       const w = row.weapons[hand];
       w.texture = texture;
@@ -316,7 +355,13 @@ export class BattlePresentation {
     }
   }
   draw(battle, data, now = performance.now() / 1000) {
-    if (!this.catalog) return 0;
+    if (!this.catalog) {
+      this.diagnostics?.record("battle-catalog-missing", {
+        entityId: "battle",
+        resource: "battle-presentation",
+      });
+      return 0;
+    }
     this.attach(battle, data);
     this.consume(now);
     let count = 0;
@@ -343,7 +388,13 @@ export class BattlePresentation {
           riderOffset: pose?.riderOffset,
           riderPosition: pose?.riderPosition,
         };
-        const texture = this.getTexture(info?.url);
+        const texture = this.getTexture(info?.url, {
+          required: true,
+          entityId: unit.id,
+          side,
+          animation: row.renderInfo.animation,
+          asset: row.renderInfo.asset,
+        });
         if (!texture) continue;
         const dead = unit.hp <= 0;
         if (side === "enemy" && dead && now - row.hurtAt > 0.7) continue;
@@ -363,7 +414,14 @@ export class BattlePresentation {
         );
         row.sprite.alpha = side === "enemy" && dead ? Math.max(0, 1 - (now - row.hurtAt) / 0.7) : 1;
         row.sprite.tint = unit.trance ? 0xffc5ff : 0xffffff;
-        const armor = pose?.armor && this.getTexture(pose.armor.url);
+        const armor =
+          pose?.armor &&
+          this.getTexture(pose.armor.url, {
+            required: true,
+            entityId: unit.id,
+            asset: this.catalog.magitek?.asset,
+            animation: "magitek-armor",
+          });
         row.armor.visible = Boolean(armor);
         if (armor) row.armor.texture = armor;
         this.drawWeapons(unit, row, now);
@@ -388,7 +446,12 @@ export class BattlePresentation {
       let width = 0;
       for (let i = 0; i < infos.length; i++) {
         const info = infos[i],
-          texture = this.getTexture(info.url);
+          texture = this.getTexture(info?.url, {
+            required: true,
+            entityId: n.entityId,
+            animation: "damage-number",
+            resource: info?.url || (n.text === null ? "MISS" : `digit:${n.text[i]}`),
+          });
         let s = n.container.children[i];
         if (!s) {
           s = new Sprite(Texture.EMPTY);
@@ -400,7 +463,7 @@ export class BattlePresentation {
           s.tint = n.tint;
           s.x = width;
         }
-        width += info.width;
+        width += info?.width || 0;
       }
       n.container.position.set(
         Math.round(n.position.x - width / 2),

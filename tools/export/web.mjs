@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { buildExtrasPreviews } from "./extras-previews.mjs";
 const project = path.resolve(import.meta.dirname, "../..");
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex").slice(0, 20);
 const read = async (file) => JSON.parse(await readFile(file));
@@ -21,6 +22,7 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
   const shaders = await read(path.join(dataRoot, "shaders.json"));
   const opera = await read(path.join(dataRoot, "opera.json"));
   const extras = await read(path.join(dataRoot, "extras.json"));
+  const extrasPreviews = await buildExtrasPreviews({ dataRoot });
   const shaderMaterials = Object.fromEntries(
     Object.entries(shaders.materials).filter(
       ([, material]) => material.shader !== "Last/LastEffectMaster",
@@ -135,6 +137,7 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
     fieldPresentation: await payload(fieldPresentation, "field-presentation"),
     opera: await payload(opera, "opera"),
     extras: await payload(extras, "extras"),
+    extrasPreviews: await payload(extrasPreviews, "extras-previews"),
     shaders: await payload(
       {
         ...shaders,
@@ -176,6 +179,16 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
   }
   for (const file of new Set(Object.values(index.assets.images).map((i) => i.file)))
     await copy(path.join(atlasRoot, file), file);
+  for (const preview of Object.values(extrasPreviews.images)) {
+    const source = path.join(dataRoot, preview.url.replace(/^\/web-data\//, ""));
+    const file = `previews/${path.basename(preview.url)}`;
+    await copy(source, file);
+    index.assets.images[preview.url] = {
+      file,
+      sampling: "linear",
+      frame: { x: 0, y: 0, w: preview.width, h: preview.height },
+    };
+  }
   for (const font of presentation.fonts) {
     for (const url of [font.url, font.licenseFile].filter(Boolean)) {
       const source = path.join(dataRoot, url.replace(/^\/web-data\//, ""));
@@ -213,6 +226,7 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
       fonts: presentation.fonts.length,
       fontBytes: presentation.fonts.reduce((sum, font) => sum + font.bytes, 0),
     },
+    extrasPreviews: extrasPreviews.summary,
   };
   await writeFile(path.join(out, "data/summary.json"), JSON.stringify(summary, null, 2));
   files.add("data/summary.json");

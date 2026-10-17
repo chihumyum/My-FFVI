@@ -1,8 +1,14 @@
 import { Container, Graphics, Rectangle, Text, Sprite, NineSliceSprite } from "pixi.js";
+import { SingleHover } from "./ui-interaction.js";
 
 // Retained game controls. These nodes hold labels and input callbacks; Pixi draws
 // every visible window. DOM is used only for initial markup and accessibility.
 let revision = 0;
+let layoutRevision = 0;
+const layoutChanged = () => {
+  revision++;
+  layoutRevision++;
+};
 class Widget {
   constructor(tag) {
     this.tag = tag.toLowerCase();
@@ -22,7 +28,7 @@ class Widget {
     if (this._text === value && !this.children.length) return;
     this._text = value;
     this.children = [];
-    revision++;
+    layoutChanged();
   }
   get hidden() {
     return this._hidden;
@@ -30,7 +36,7 @@ class Widget {
   set hidden(value) {
     if (this._hidden !== !!value) {
       this._hidden = !!value;
-      revision++;
+      layoutChanged();
     }
   }
   get disabled() {
@@ -39,7 +45,7 @@ class Widget {
   set disabled(value) {
     if (this._disabled !== !!value) {
       this._disabled = !!value;
-      revision++;
+      layoutChanged();
     }
   }
   get value() {
@@ -48,25 +54,25 @@ class Widget {
   set value(value) {
     if (this._value !== value) {
       this._value = value;
-      revision++;
+      layoutChanged();
     }
   }
   append(...nodes) {
     this.children.push(...nodes);
-    revision++;
+    layoutChanged();
   }
   prepend(...nodes) {
     this.children.unshift(...nodes);
-    revision++;
+    layoutChanged();
   }
   replaceChildren(...nodes) {
     this._text = "";
     this.children = nodes;
-    revision++;
+    layoutChanged();
   }
   setAttribute(name, value) {
     this.attributes[name] = String(value);
-    revision++;
+    layoutChanged();
   }
   click() {
     if (!this.disabled) this.onclick?.();
@@ -98,6 +104,13 @@ export class GameUI {
     this.texture = texture;
     this.visibleImages = new Map();
     this.presentation = {};
+    this.hover = new SingleHover(() => revision++);
+    addEventListener("blur", () => this.clearHover());
+    addEventListener("resize", () => {
+      this.clearHover();
+      layoutChanged();
+    });
+    document.querySelector("canvas")?.addEventListener("pointerleave", () => this.clearHover());
     for (const element of document.querySelectorAll("main > section, main > aside")) {
       const root = this.read(element);
       this.windows.push(root);
@@ -165,9 +178,32 @@ export class GameUI {
     );
     revision++;
   }
-  image(url) {
+  diagnostics() {
+    const visible = [...this.views].filter(([, view]) => {
+      for (let p = view.container; p; p = p.parent) if (!p.visible) return false;
+      return true;
+    });
+    return {
+      hovered: visible.filter(([, view]) => view.hover).map(([node]) => this.label(node)),
+      selected: visible.filter(([node]) => node.dataset.selected).map(([node]) => this.label(node)),
+      cards: visible
+        .filter(([node]) => node.dataset.card)
+        .map(([node, view]) => ({
+          label: this.label(node),
+          url: node.attributes.src || null,
+          loaded: !!view.image?.visible,
+        })),
+      images: visible
+        .filter(([node]) => ["img", "viewer"].includes(node.tag))
+        .map(([node, view]) => ({
+          url: node.attributes.src || null,
+          loaded: !!view.image?.visible,
+        })),
+    };
+  }
+  image(url, details) {
     if (!url) return null;
-    const texture = this.texture(url);
+    const texture = this.texture(url, details);
     this.visibleImages.set(url, texture);
     return texture;
   }
@@ -176,6 +212,16 @@ export class GameUI {
     return this.presentation.portraits?.[key]?.url;
   }
   skin(view, width, height) {
+    if (view.modern) {
+      view.box
+        .clear()
+        .roundRect(0, 0, width, height, 18)
+        .fill(0x111d31)
+        .stroke({ color: 0x40556f, width: 2 });
+      if (view.background) view.background.visible = false;
+      if (view.skin) view.skin.visible = false;
+      return;
+    }
     view.box.clear().rect(0, 0, width, height).fill({ color: 0x0b2460, alpha: 0.97 });
     const source = this.presentation.sprites?.window,
       texture = this.image(source?.url);
@@ -239,9 +285,13 @@ export class GameUI {
     this.scroll(root, direction * Math.max(42, Math.floor(viewport / 12) * 6));
   }
   scroll(root, delta) {
+    this.clearHover();
     const range = this.ranges?.get(root) || 0;
     this.scrolls.set(root, Math.max(0, Math.min(range, (this.scrolls.get(root) || 0) + delta)));
     revision++;
+  }
+  clearHover() {
+    this.hover.clear();
   }
   view(node) {
     if (!this.views.has(node)) {
@@ -264,14 +314,17 @@ export class GameUI {
         else if (node.tag === "input") this.openTextInput(node);
         else node.click();
       });
-      container.on("pointerover", () => {
-        this.view(node).hover = true;
-        revision++;
-      });
-      container.on("pointerout", () => {
-        this.view(node).hover = false;
-        revision++;
-      });
+      if (["button", "select", "input"].includes(node.tag)) {
+        const enter = () => {
+          if (!node.hidden && !node.disabled && container.visible)
+            this.hover.enter(this.views.get(node));
+        };
+        const leave = () => this.hover.leave(this.views.get(node));
+        container.on("pointerover", enter);
+        container.on("pointerout", leave);
+        container.on("mouseover", enter);
+        container.on("mouseout", leave);
+      }
       this.views.set(node, { container, box, text });
     }
     return this.views.get(node);
@@ -279,7 +332,10 @@ export class GameUI {
   label(node) {
     if (node.id === "message" && this.dialogue?.source)
       return Array.from(node._text).slice(0, this.dialogue.shown).join("");
-    if (node.tag === "input") return `${node.attributes["aria-label"] || "名称"}：${node.value}`;
+    if (node.tag === "input" && !node.value && node.attributes.placeholder)
+      return node.attributes.placeholder;
+    if (node.tag === "input")
+      return `${node.attributes["aria-label"] || "名称"}：${node.value || node.attributes.placeholder || ""}`;
     if (node.tag === "select")
       return `${node.attributes["aria-label"] || ""}：${node.children.find((o) => String(o.value) === String(node.value))?.textContent || "未选择"} ▾`;
     return node._text;
@@ -288,14 +344,21 @@ export class GameUI {
     const v = this.view(node),
       interactive = ["button", "select", "input"].includes(node.tag);
     const label = this.label(node);
-    if (v.text.text !== label) v.text.text = label;
+    const captionLimit = Math.max(12, Math.floor((width - 24) / 22) * 2 - 1);
+    const visibleLabel =
+      node.dataset.card && Array.from(label).length > captionLimit
+        ? Array.from(label).slice(0, captionLimit).join("") + "…"
+        : label;
+    if (v.text.text !== visibleLabel) v.text.text = visibleLabel;
     v.text.style.wordWrapWidth = Math.max(60, width - 30);
-    v.text.style.fontSize = ["h1", "h2"].includes(node.tag) ? 42 : 30;
+    v.text.style.fontSize = node.dataset.card ? 22 : ["h1", "h2"].includes(node.tag) ? 42 : 30;
+    v.text.style.lineHeight = node.dataset.card ? 28 : 42;
     v.text.style.fill = node.disabled ? 0x8391ac : 0xf4f1e8;
     let height = Math.max(42, Math.ceil(v.text.height / 6) * 6);
     if (interactive) height += 18;
     if (node.tag === "progress") height = 30;
     if (node.tag === "img") height = Number(node.dataset.height) || 156;
+    if (node.dataset.card || node.tag === "viewer") height = Number(node.dataset.height) || 150;
     const c = v.container;
     if (c.parent !== parent) parent.addChild(c);
     c.position.set(x, y);
@@ -309,6 +372,7 @@ export class GameUI {
     c.cursor = interactive ? "pointer" : "default";
     c.hitArea = new Rectangle(0, 0, width, height);
     c.accessible = c.visible && interactive && !node.disabled;
+    if (!c.visible) this.hover.leave(v);
     c.accessibleTitle = label;
     c.accessibleHint = label;
     c.accessibleText = label;
@@ -319,10 +383,17 @@ export class GameUI {
       c._accessibleDiv.setAttribute("aria-label", label);
       c._accessibleDiv.textContent = label;
     }
-    v.text.position.set(interactive ? 12 : 0, interactive ? 6 : 0);
-    v.text.visible = !["progress", "img"].includes(node.tag);
+    v.text.position.set(
+      interactive ? 12 : 0,
+      node.dataset.card ? height - 56 : interactive ? 6 : 0,
+    );
+    v.text.visible = !["progress", "img", "viewer"].includes(node.tag);
+    if (node.dataset.card) {
+      v.text.style.wordWrapWidth = width - 24;
+      v.text.style.breakWords = true;
+    }
     const iconKey = this.presentation.contentIcons?.[node.dataset.contentId],
-      icon = this.image(this.presentation.icons?.[iconKey]?.url);
+      icon = c.visible && this.image(this.presentation.icons?.[iconKey]?.url);
     if (icon) {
       if (!v.icon) {
         v.icon = new Sprite();
@@ -338,7 +409,7 @@ export class GameUI {
     } else if (v.icon) v.icon.visible = false;
     v.box.clear();
     if (interactive)
-      v.box.rect(0, 0, width, height).fill({
+      v.box.roundRect(0, 0, width, height, node.dataset.card ? 10 : 4).fill({
         color: 0x426495,
         alpha: node.dataset.titleButton
           ? 1
@@ -348,8 +419,9 @@ export class GameUI {
               ? 0.4
               : 0.12,
       });
-    const pointer = this.image(this.presentation.sprites?.cursor?.url);
-    if (pointer && interactive) {
+    const pointer =
+      c.visible && !node.dataset.modern && this.image(this.presentation.sprites?.cursor?.url);
+    if (pointer && interactive && !node.dataset.card) {
       if (!v.pointer) {
         v.pointer = new Sprite();
         c.addChild(v.pointer);
@@ -360,10 +432,23 @@ export class GameUI {
       v.pointer.height = 42;
       v.pointer.visible = !!v.hover && !node.disabled;
     } else if (v.pointer) v.pointer.visible = false;
-    if (node.tag === "img") {
-      const texture = this.image(
-        node.dataset.actorId ? this.portrait(node.dataset.actorId) : node.attributes.src,
-      );
+    if (node.tag === "img" || node.dataset.card || node.tag === "viewer") {
+      const source = node.dataset.actorId
+        ? this.portrait(node.dataset.actorId)
+        : node.attributes.src;
+      const texture =
+        c.visible &&
+        this.image(
+          source,
+          node.dataset.required
+            ? {
+                required: true,
+                entityId: node.dataset.entityId,
+                resource: node.dataset.resource || "ui-image",
+                asset: source,
+              }
+            : undefined,
+        );
       if (!v.image) {
         v.image = new Sprite();
         c.addChild(v.image);
@@ -371,10 +456,12 @@ export class GameUI {
       v.image.visible = !!texture;
       if (texture) {
         v.image.texture = texture;
-        const fit = Math.min((width - 24) / texture.width, height / texture.height),
+        const imageHeight = node.dataset.card ? height - 60 : height;
+        const fit = Math.min((width - 24) / texture.width, imageHeight / texture.height),
           scale = node.dataset.actorId ? Math.max(1, Math.floor(fit)) : fit;
         v.image.scale.set(scale);
         v.image.position.set(Math.round((width - texture.width * scale) / 2), 0);
+        if (node.tag === "viewer") this.viewer(v, node, width, height, fit);
       }
     }
     if (node.tag === "progress") {
@@ -386,6 +473,51 @@ export class GameUI {
     this.used.add(node);
     return height;
   }
+  viewer(view, node, width, height, fit) {
+    const scale = fit * Math.max(1, Number(node.dataset.zoom) || 1),
+      limitX = Math.max(0, (view.image.texture.width * scale - width) / 2),
+      limitY = Math.max(0, (view.image.texture.height * scale - height) / 2),
+      panX = Math.max(-limitX, Math.min(limitX, Number(node.dataset.panX) || 0)),
+      panY = Math.max(-limitY, Math.min(limitY, Number(node.dataset.panY) || 0));
+    view.image.anchor.set(0.5);
+    view.image.scale.set(scale);
+    view.image.position.set(width / 2 + panX, height / 2 + panY);
+    if (!view.viewerMask) {
+      view.viewerMask = new Graphics();
+      view.container.addChild(view.viewerMask);
+      view.image.mask = view.viewerMask;
+      view.container.on("pointerdown", (event) => {
+        const p = event.getLocalPosition(view.container);
+        view.drag = {
+          x: p.x,
+          y: p.y,
+          panX: Number(node.dataset.panX) || 0,
+          panY: Number(node.dataset.panY) || 0,
+        };
+        view.container.cursor = "grabbing";
+        event.stopPropagation();
+      });
+      view.container.on("globalpointermove", (event) => {
+        if (!view.drag) return;
+        const p = event.getLocalPosition(view.container);
+        node.dataset.panX = String(view.drag.panX + p.x - view.drag.x);
+        node.dataset.panY = String(view.drag.panY + p.y - view.drag.y);
+        node.onpan?.(Number(node.dataset.panX), Number(node.dataset.panY));
+        revision++;
+      });
+      const release = () => {
+        view.drag = null;
+        view.container.cursor = "grab";
+      };
+      view.container.on("pointerup", release);
+      view.container.on("pointerupoutside", release);
+    }
+    view.viewerMask.clear().rect(0, 0, width, height).fill(0xffffff);
+    view.container.eventMode = "static";
+    view.container.cursor = view.drag ? "grabbing" : "grab";
+    node.dataset.panX = String(panX);
+    node.dataset.panY = String(panY);
+  }
   flow(nodes, parent, x, y, width, clip) {
     let left = 0,
       rowHeight = 0;
@@ -396,17 +528,44 @@ export class GameUI {
     };
     for (const node of nodes) {
       if (node.hidden || node.tag === "option") continue;
+      if (node.tag === "grid") {
+        newline();
+        const columns = Math.max(1, Number(node.dataset.columns) || 6),
+          rows = Math.max(1, Number(node.dataset.rows) || 4),
+          gap = 14,
+          height = Number(node.dataset.height) || 600,
+          cellWidth = Math.floor((width - gap * (columns - 1)) / columns),
+          cellHeight = Math.floor((height - gap * (rows - 1)) / rows);
+        for (let i = 0; i < node.children.length; i++) {
+          const child = node.children[i];
+          child.dataset.height = String(cellHeight);
+          this.item(
+            child,
+            parent,
+            x + (i % columns) * (cellWidth + gap),
+            y + Math.floor(i / columns) * (cellHeight + gap),
+            cellWidth,
+            clip,
+          );
+        }
+        y += height + 12;
+        continue;
+      }
       const inline = ["button", "select", "input", "img"].includes(node.tag) && !node.dataset.block;
       if (!inline) newline();
       if (
         node._text ||
         inline ||
-        ["progress", "button", "select", "input", "img"].includes(node.tag)
+        ["progress", "button", "select", "input", "img", "viewer"].includes(node.tag)
       ) {
         const w = inline
-          ? node.tag === "img"
-            ? Number(node.dataset.width) || 180
-            : Math.min(width, Math.max(132, Math.ceil((this.label(node).length * 30 + 36) / 6) * 6))
+          ? Number(node.dataset.width) ||
+            (node.tag === "img"
+              ? 180
+              : Math.min(
+                  width,
+                  Math.max(132, Math.ceil((this.label(node).length * 30 + 36) / 6) * 6),
+                ))
           : width;
         if (left + w > width) newline();
         const height = this.item(node, parent, x + left, y, w, clip);
@@ -441,6 +600,7 @@ export class GameUI {
     return y;
   }
   bounds(root) {
+    if (root.id === "extras") return [24, 18, 1872, 1044];
     // The serialized message root is positioned by a runtime animation. Retain
     // its PR size and bottom margin; compose the PR touch battle window widths.
     if (root.id === "dialogue" && this.presentation.layouts?.message?.bounds) {
@@ -615,6 +775,10 @@ export class GameUI {
         revision++;
       }
     }
+    if (this.lastLayoutRevision !== layoutRevision) {
+      this.clearHover();
+      this.lastLayoutRevision = layoutRevision;
+    }
     if (this.popup || this.lastRevision === revision) return;
     this.lastRevision = revision;
     this.visibleImages.clear();
@@ -625,6 +789,7 @@ export class GameUI {
         [x, y, width, height] = this.bounds(root);
       if (v.container.parent !== this.layer) this.layer.addChild(v.container);
       v.container.visible = !root.hidden;
+      v.modern = root.dataset.modern === "1";
       v.container.position.set(x, y);
       v.text.visible = false;
       this.skin(v, width, height);
@@ -656,15 +821,20 @@ export class GameUI {
         this.battleStatus(v, width, height);
       }
       if (root.id === "title") {
-        const logo = this.image(this.presentation.sprites?.titleLogo?.url);
-        if (logo) {
-          if (!v.logo) {
-            v.logo = new Sprite();
-            v.container.addChild(v.logo);
+        const logoSource = this.presentation.sprites?.titleLogo,
+          logo = this.image(logoSource?.url);
+        // Loading an image must not move a button between pointerdown/up.
+        // Reserve the PR title layout from its declaration, including on 404.
+        if (logoSource) {
+          if (logo) {
+            if (!v.logo) {
+              v.logo = new Sprite();
+              v.container.addChild(v.logo);
+            }
+            v.logo.texture = logo;
+            v.logo.position.set(Math.round((width - logo.width) / 12) * 6, 54);
+            v.logo.scale.set(1);
           }
-          v.logo.texture = logo;
-          v.logo.position.set(Math.round((width - logo.width) / 12) * 6, 54);
-          v.logo.scale.set(1);
           v.box.clear().rect(0, 0, width, height).fill(0xffffff);
           if (v.background) v.background.visible = false;
           if (v.skin) v.skin.visible = false;
@@ -734,6 +904,7 @@ export class GameUI {
     }
     for (const [node, view] of this.views)
       if (!this.used.has(node)) {
+        this.hover.leave(view);
         view.container.visible = false;
         view.container.accessible = false;
         // Dynamic menus can be rebuilt; release detached controls rather than retain
@@ -746,6 +917,7 @@ export class GameUI {
     this.layer.setChildIndex(this.popupLayer, this.layer.children.length - 1);
   }
   openSelect(node, page = 0) {
+    this.clearHover();
     this.closeSelect();
     const backdrop = new Graphics().rect(0, 0, 1920, 1080).fill({ color: 0x000000, alpha: 0.3 });
     backdrop.eventMode = "static";
@@ -792,17 +964,24 @@ export class GameUI {
     }
     const input = document.createElement("input");
     input.value = node.value;
-    input.maxLength = 12;
+    input.maxLength = Number(node.dataset.maxLength) || 12;
+    input.type = node.attributes.type || "text";
     input.setAttribute("aria-label", node.attributes["aria-label"] || "名称");
     input.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;";
     const commit = () => {
-      node.value = input.value;
-      node.onchange?.();
+      // Input has already committed each keystroke. Repeating onchange on blur
+      // would rebuild the destination button between pointerdown and pointerup.
+      if (node.value !== input.value) {
+        node.value = input.value;
+        node.onchange?.();
+      }
       if (input.value !== node.value) input.value = node.value;
     };
     input.oninput = commit;
     input.onchange = commit;
     input.onkeydown = (e) => {
+      // Reports must remain available while editing any search/name field.
+      if (e.key === "F9") return;
       e.stopPropagation();
       if (e.key === "Enter" || e.key === "Escape") {
         input.blur();
@@ -821,6 +1000,7 @@ export class GameUI {
     input.select();
   }
   closeSelect() {
+    this.clearHover();
     for (const root of this.windows) this.view(root).container.accessibleChildren = true;
     for (const [node, view] of this.views)
       if (view.container.parent === this.popupLayer) {

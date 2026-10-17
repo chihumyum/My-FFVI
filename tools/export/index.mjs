@@ -10,6 +10,7 @@ import { compileFieldPresentation } from "./field-presentation.mjs";
 import { compileShaders } from "./shaders.mjs";
 import { compileOpera } from "./opera.mjs";
 import { compileExtras } from "./extras.mjs";
+import { compileFieldAnimations } from "./field-animations.mjs";
 const root = path.resolve(import.meta.dirname, "../..");
 const args = process.argv.slice(2),
   option = (name) => {
@@ -53,6 +54,7 @@ await run("native.py", ["--game", source, "--out", path.join(out, "raw/magic-sto
 await run("colosseum.py", ["--game", source, "--out", path.join(out, "raw/colosseum.json")]);
 await run("audio.py", ["--out", out, ...(args.includes("--aac") ? ["--aac"] : [])]);
 const counts = await compileRuntime(out);
+const fieldAnimationCounts = await compileFieldAnimations(out);
 await compilePresentation(out, { game: source });
 const battlePresentationCounts = await compileBattlePresentation(out);
 const { summary: particleCounts } = await compileParticles(out);
@@ -116,6 +118,7 @@ const manifest = {
   mediaClasses,
   audioClasses,
   visualClasses: {
+    fieldAnimations: fieldAnimationCounts,
     battle: {
       ...battlePresentationCounts,
       bytes: (await stat(path.join(out, "battle-presentation.json"))).size,
