@@ -1,6 +1,6 @@
 # FFVI Reweb
 
-Goal: port FF6 Pixel Remaster to the Web, playable from a new game to the ending. Diagnose ordinary battle failures, but do not require a perfect automatic normal-stat run. HD-2D comes later.
+Goal: port FF6 Pixel Remaster to the Web, playable from a new game to the ending. Automatic play is regression only: boosted fresh new game through the ending, and normal stats through the three story branches (M3). HD-2D comes later.
 
 ## Principles
 - Playable first. Report how far the story actually runs and which test mode was used. Test counts, covered sites and successful builds are not progress.
@@ -10,6 +10,7 @@ Goal: port FF6 Pixel Remaster to the Web, playable from a new game to the ending
 - Original game assets, extracted text and generated output stay out of Git.
 
 ## Don't
+- Don't add game-strategy intelligence to the automatic player. Freeze existing policy; no new shopping, grinding, supplies, MP budgets or counter-cost prediction. Diagnose genuine game bugs and fix them; use explicit boosted mode for strategy failures.
 - Don't add source hashes, evidence levels or "verified" flags to objects.
 - Don't write a doc per feature. Maintain only README.md (how to run it) and STATUS.md (how far it plays, known issues, list of guessed implementations).
 - Don't rebuild all 649 maps on every change; rebuild only what's affected. Don't copy the whole workspace to integrate.
@@ -18,4 +19,8 @@ Goal: port FF6 Pixel Remaster to the Web, playable from a new game to the ending
 - Don't run multiple parallel sub-agents in "integration waves". Two genuinely independent pieces (e.g. battle formulas and map instructions) may run in parallel and merge directly when done.
 
 ## Reporting
-Self-accept using automated playthroughs and browser checks, then continue toward the ending without waiting for user confirmation. Ordinary failures must be classified before choosing a fix or a boosted continuation. Report how far it plays, the mode and checkpoint transition, new guessed implementations, known bugs and time spent. No percentages. A strategy failure does not block story migration; boosted completion is not normal battle-balance acceptance.
+Implement in order: battle commands/effects, foundation adjustment (format only; independent PR export; Opus/Web Audio; Pixi/WebGL; Vite static bundle), PR UI, battle presentation, field/audio, optional content, peripheral systems. At each stage, run boosted fresh-new-game-to-ending regression, update a one-screen STATUS.md, report browser screenshots/new guesses/issues/elapsed time, and continue without asking for acceptance. Ordinary failures must be classified before choosing a fix or a boosted continuation. Report how far it plays, the mode and checkpoint transition, new guessed implementations, known bugs and time spent. No percentages. A strategy failure does not block story migration; boosted completion is not normal battle-balance acceptance.
+
+Foundation steps are sequential and separately committed. Every step must pass boosted fresh-new-game-to-ending regression and add a result line to STATUS.md. No game-logic changes in this phase; src/play must never import a renderer. Audio work moves from field presentation into foundation. Never deploy original assets publicly or commit them to Git.
+
+After the formatter is introduced, run npm run format:check before every commit.

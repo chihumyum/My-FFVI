@@ -164,7 +164,7 @@ function fixture(ops, extra = {}) {
 }
 
 test("an unsupported AI-selected effect logs its source and executes Fight", () => {
-  for (const functionId of [999,70]) {
+  for (const functionId of [999]) {
   const { battle, warnings } = fixture(
     [op("SyncAI"), op("Act", [777], [100]), op("JumpBattleAI", [0])],
     {

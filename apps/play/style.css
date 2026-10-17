@@ -6,3 +6,4 @@
 
 #vehicle{inset:22% 16% 30%;z-index:4}#vehicle-actions{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px}
 #menu{overflow:auto;z-index:5}#party fieldset{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}#party legend{font-weight:600}#party label{display:flex;gap:6px;align-items:center}#party select{max-width:155px;font:inherit;color:#fff;background:#1b2d58;padding:5px}#party button,#items button{padding:6px 10px}#items{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+#commands{max-height:240px;overflow:auto}#targets{max-height:150px;overflow:auto;display:flex;gap:6px;flex-wrap:wrap}#targets button{padding:5px 10px}#commands p{width:100%;margin:4px}header{padding:12px}header h1{font-size:22px}header select{font:inherit;background:#1b2d58;color:white;padding:6px}header~#battle{position:relative;left:auto;right:auto;bottom:auto}progress{width:100%;height:22px}

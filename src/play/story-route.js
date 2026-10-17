@@ -41,7 +41,7 @@ export function followTarget(game, input) {
 export function advanceStory(game, { through = "all" } = {}) {
   if (game.over) return { status: "game-over" };
   if (game.busy) return { status: "busy" };
-  const preparation = prepareFieldInput(game, pathTo);
+  const preparation = game.regressionOnly ? null : prepareFieldInput(game, pathTo);
   if (preparation) return followTarget(game, preparation);
   if (
     !game.history.some((entry) => entry.script === "sc_e_0001_0") ||
@@ -81,7 +81,7 @@ export function advanceStory(game, { through = "all" } = {}) {
   const input = prepareStoryParty(game, objective, pathTo) || (objective.action === "random-encounter"
     ? randomEncounterInput(game, objective, pathTo)
     : findStoryTarget(game, objective));
-  const readiness = prepareBattleReadiness(game, objective, input, pathTo);
+  const readiness = game.regressionOnly ? null : prepareBattleReadiness(game, objective, input, pathTo);
   if (readiness?.status === "training-walk")
     return { ...readiness, objective: objective.id, chapter: objective.chapter };
   return {

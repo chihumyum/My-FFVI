@@ -1,3 +1,6 @@
+import {canEquip,equip as equipResource} from './resources.js';
+import {commandMenu,actionFor,blitzInputs,validBlitz,effectiveCommandIds} from './battle-commands.js';
+import {initRole,observeLore,beginRoleAction,forcedRoleTurn,tickRole,finishRoles} from './role-commands.js';
 import { abilityMpCost, applyBattleRewards } from './progression.js';
 import { MonsterAI } from "./monster-ai.js";
 import { BattleEvents } from "./battle-events.js";
@@ -61,7 +64,7 @@ export function calculateDamage(
               1.5,
           );
     base = Math.floor(base * value(ability.multiplier, 1));
-    if (actor.row === "back" && !ability.backRow && !(ability.id === 1 && actor.weaponBackRow)) base = Math.floor(base / 2);
+    if (actor.row === "back" && !actor.ignoreRow && !ability.backRow && !(ability.id === 1 && actor.weaponBackRow)) base = Math.floor(base / 2);
   } else {
     const magic = value(actor.magic, 30);
     base =
@@ -77,6 +80,7 @@ export function calculateDamage(
   if (conditions.includes(13) && physical) base = Math.min(base, value(actor.level, 1));
   base *= value(physical ? actor.physicalDamageMultiplier : actor.magicDamageMultiplier, 1);
   base += weaponPlan?.baseBonus || 0;
+  if(physical && target.rearAttacked)base*=1.5;
   let amount = Math.floor((base * (224 + Math.floor(random() * 32))) / 256) + 1;
   if (!healing && !ability.flags?.includes(5)) {
     const defense = clamp(
@@ -87,7 +91,7 @@ export function calculateDamage(
     amount = Math.floor((amount * (255 - defense)) / 256) + 1;
     if ((physical && target.protect) || (!physical && target.shell))
       amount = Math.floor((amount * 170) / 256) + 1;
-    if (physical && target.row === "back" && !ability.backRow && !(ability.id === 1 && actor.weaponBackRow)) amount = Math.floor(amount / 2);
+    if (physical && target.row === "back" && !target.ignoreRow && !ability.backRow && !(ability.id === 1 && actor.weaponBackRow)) amount = Math.floor(amount / 2);
     if (physical && target.defending) amount = Math.floor(amount / 2);
   }
   const critical = physical && !weaponPlan?.noCritical && random() * 100 < value(actor.criticalRate, 0);
@@ -205,6 +209,7 @@ export class Battle {
       this.completeUnit(enemy, base, "enemy", index);
       this.enemies.push(enemy);
     }
+    this.initializePattern();
     if (!data.parties?.[encounterId])
       this.warning(
         `Missing formation ${encounterId}; empty battle returns victory.`,
@@ -287,10 +292,29 @@ export class Battle {
     unit.protect = hasConditionType(this.data,unit,19);
     unit.shell = hasConditionType(this.data,unit,412);
     unit.trance = hasConditionType(this.data,unit,621);
+    initRole(this,unit);
     unit.normalSprite ??= base.sprite ?? unit.sprite;
     unit.sprite = unit.magitek
       ? (unit.magitekSprite ?? unit.sprite)
       : (unit.normalSprite ?? unit.sprite);
+  }
+
+  initializePattern() {
+    const bits=this.formation.battlePatterns??[1,0,0,0,0,0];
+    const choices=bits.flatMap((enabled,n)=>enabled?[n]:[]);
+    this.pattern=choices.includes(this.context.pattern)?this.context.pattern:choices.length===1?choices[0]:0;
+    if(choices.length>1 && this.context.pattern===undefined){
+      const weights=[224,32,32,16,16,16],total=choices.reduce((n,i)=>n+weights[i],0);let roll=this.random()*total;
+      this.pattern=choices.find(i=>(roll-=weights[i])<0)??choices[0];
+      this.warning('PR battle_pattern1–6 are eligibility flags. Web selection uses SNES-inspired normal/ambush weights; exact PR probability modifiers are approximated.');
+    }
+    const label=['普通阵型','先制攻击','背袭','敌方先制','敌方夹击','我方夹击'][this.pattern];
+    if(this.pattern)this.addLog(label);
+    for(const u of this.players){u.ignoreRow=[4,5].includes(this.pattern);u.rearAttacked=this.pattern===2||this.pattern===4;}
+    for(const u of this.enemies){u.ignoreRow=[4,5].includes(this.pattern);u.rearAttacked=this.pattern===5;}
+    if([1,2,3].includes(this.pattern))for(const u of [...this.players,...this.enemies]){
+      u.atb=(this.pattern===1?u.side==='player':u.side==='enemy')?100:0;u.ready=u.atb>=100;
+    }
   }
 
   setupAI(unit) {
@@ -479,7 +503,7 @@ export class Battle {
     if (this.log.length > 120) this.log.shift();
   }
 
-  commandsFor(actorIndex) {
+  legacyActionsFor(actorIndex) {
     const unit = this.players[actorIndex];
     if (!unit) return [];
     const summonId = !unit.magiciteUsed && this.data.magicStones?.[unit.magicite]?.summonAbilityId;
@@ -533,6 +557,80 @@ export class Battle {
       .concat(this.itemsFor(actorIndex));
   }
 
+  commandsFor(actorIndex) { return commandMenu(this,actorIndex); }
+  actionsFor(actorIndex) {
+    // Small independent formula fixtures do not contain a PR command table.
+    if(!Object.keys(this.data.commands??{}).length)return this.legacyActionsFor(actorIndex);
+    return this.commandsFor(actorIndex).filter(menu=>!menu.disabled).flatMap(menu=>menu.actions);
+  }
+  setInput(mode=null) { this.inputMode=mode; }
+  requestEquipment(actor) {this.equipmentInput={index:this.players.indexOf(actor)};this.setInput('equipment');}
+  equipmentChoices(index,slot) {
+    const unit=this.players[index];if(!unit||slot>1)return [];
+    return [...new Set([unit.equipment?.[slot]??0,...Object.entries(this.inventory).filter(([,n])=>n>0).map(([id])=>Number(id))])]
+      .filter(id=>canEquip(this.data,unit,id,slot)).map(id=>({id,name:this.data.contentNames?.[id]??`装备 ${id}`}));
+  }
+  equipInBattle(index,slot,id) {
+    if(this.equipmentInput?.index!==index||slot>1)return false;
+    const actor=this.players[index];
+    const host={battleData:this.data,inventory:this.inventory,roster:Object.fromEntries(this.players.map(u=>[u.id,u])),
+      unit:id=>this.players.find(u=>u.id===id),event:this.event,warn:(_,message)=>this.warning(message)};
+    return equipResource(host,actor.id,slot,id,{duringEvent:true});
+  }
+  beginSlots(index) {
+    if(!this.players[index]?.ready || !this.commandsFor(index).some(c=>c.commandId===20))return false;
+    this.slots={index,start:this.elapsed,stopped:[]};
+    this.warning('Slots use six PR outcome symbols with uniformly spaced web reels; native PR reel strips, forced-stop bias and timing are not exported.');return true;
+  }
+  slotSymbols() {
+    return [0,1,2].map(n=>this.slots?.stopped[n]??Math.floor((this.elapsed-(this.slots?.start??0))*(9+n*2)+n*2)%6);
+  }
+  stopSlot(index) {
+    if(!this.slots || this.slots.index!==index)return false;
+    this.slots.stopped.push(this.slotSymbols()[this.slots.stopped.length]);
+    if(this.slots.stopped.length<3)return true;
+    const reels=this.slots.stopped;this.slots=null;
+    const equal=reels[0]===reels[1]&&reels[1]===reels[2];
+    const bahamut=Object.values(this.data.magicStones??{}).find(s=>/巴哈姆特|Bahamut/i.test(s.name))?.summonAbilityId;
+    const id=equal?([215,bahamut??214,214,212,211,213][reels[0]]):reels[0]===0&&reels[1]===0&&reels[2]===2?216:210;
+    const actor=this.players[index],ability=this.data.abilities[id];
+    if(!ability)return false;
+    const pool=id===216?this.players:id===215?this.enemies:ability.target==='ally'?this.players:this.enemies;
+    const targets=pool.filter(u=>this.eligibleTarget(u,ability)),sequence={};
+    for(const target of targets)this.perform(actor,target,ability,targets.length,{sequence});
+    this.addLog(`转轮 ${reels.map(n=>['7','龙','BAR','飞空艇','陆行鸟','钻石'][n]).join(' / ')}：${ability.name}`);
+    this.consumeTurn(actor);this.checkEnd();return true;
+  }
+  submitBlitz(index,id,inputs,target) {
+    const actor=this.players[index];
+    if(!actor?.ready || !this.commandsFor(index).some(c=>c.commandId===15&&c.actions.some(a=>a.id===id)))return false;
+    if(!validBlitz(id,inputs)){this.addLog(`${actor.name}必杀技输入失败！`);this.consumeTurn(actor);return true;}
+    return this.choose(index,id,target,{validated:true});
+  }
+  beginBushido(index) {
+    if(!this.players[index]?.ready || !this.commandsFor(index).some(c=>c.commandId===12))return false;
+    this.bushido={index,start:this.elapsed};
+    this.warning('Bushido charges one level per 0.6 seconds, capped by learned PR skills; PR native charge timing is approximated.');return true;
+  }
+  bushidoLevel(index) { return this.bushido?.index===index?Math.min(8,1+Math.floor((this.elapsed-this.bushido.start)/.6)):0; }
+  releaseBushido(index,id,target) {
+    const skills=this.commandsFor(index).find(c=>c.commandId===12)?.actions??[];
+    if(skills.findIndex(a=>a.id===id)>=this.bushidoLevel(index))return false;
+    this.bushido=null;return this.choose(index,id,target,{validated:true});
+  }
+  chooseDualcast(index,selections) {
+    const actor=this.players[index],menu=this.commandsFor(index).find(c=>c.commandId===31);
+    if(!actor?.ready||!menu||selections.length!==2)return false;
+    const actions=selections.map(s=>menu.actions.find(a=>a.id===s.id&&!a.magiciteSummon));
+    if(actions.some(a=>!a||a.disabled)||actions.reduce((n,a)=>n+a.mp,0)>actor.mp)return false;
+    let executed=false;
+    for(let n=0;n<2 && this.phase==='active' && this.targetable(actor);n++){
+      if(!this.choose(index,selections[n].id,selections[n].target,{validated:true,dualcast:true,deferTurn:true}))break;
+      executed=true;
+    }
+    if(executed){this.consumeTurn(actor);this.checkEnd();}return executed;
+  }
+
   itemsFor(actorIndex) {
     const actor = this.players[actorIndex];
     if (!actor) return [];
@@ -540,7 +638,7 @@ export class Battle {
       const content = this.data.contents?.[contentId];
       const item = content?.type_id === 1 ? this.data.items?.[content.type_value] : null;
       if (!(count > 0) || !item?.battle_function_group_id) return [];
-      if (item.machine_flag && !(actor.commands || this.data.characters?.[actor.id]?.commands || []).includes(14)) return [];
+      if (item.machine_flag && !effectiveCommandIds(this.data,actor).includes(14)) return [];
       const source = abilityFromItem(this.data, item, Number(contentId));
       source.name = this.data.itemNames?.[item.id] || source.name;
       if (item.id === 23 && this.enemies.some(enemy => [549,550].includes(enemy.monsterId) && this.targetable(enemy))) source.target = "enemy";
@@ -551,6 +649,7 @@ export class Battle {
 
   useItem(actorIndex, contentId, targetIndex = actorIndex) {
     const actor = this.players[actorIndex], command = this.itemsFor(actorIndex).find(item => item.contentId === Number(contentId));
+    if(Object.keys(this.data.commands??{}).length && !this.actionsFor(actorIndex).some(a=>a.id===command?.id&&!a.disabled))return false;
     if (this.phase !== "active" || !actor || !this.targetable(actor) || !this.events.interactive || this.events.paused ||
         !actor.ready || !command || actionBlocked(this.data, actor) || actor.stopUntil > this.elapsed) return false;
     const sideRequest = typeof targetIndex === "object" && targetIndex !== null ? targetIndex.side : command.target === "enemy" ? "enemy" : "player";
@@ -575,7 +674,7 @@ export class Battle {
     return this.players.map((_, index) => this.commandsFor(index));
   }
   get readyPlayers() {
-    return this.players.filter((unit) => unit.hp > 0 && unit.ready);
+    return this.players.filter((unit) => unit.hp > 0 && unit.ready && !unit.rageMonster && !unit.danceAbility && unit.id!==14);
   }
 
   tick(seconds, auto = false) {
@@ -583,6 +682,7 @@ export class Battle {
     while (remaining > 0 && this.phase === "active") {
       const step = Math.min(remaining, 1 / 30);
       remaining -= step;
+      if(!auto && this.context.settings?.atbMode==='wait' && ['list','target','dualcast','equipment'].includes(this.inputMode))continue;
       this.elapsed += step;
       this.events.tick(step);
       for (const ai of this.ais) if (!ai.unit.removed) ai.tick();
@@ -593,6 +693,7 @@ export class Battle {
       if (tickEscape(this, step)) { this.checkEnd(); if(this.phase !== 'active') break; }
       for (const unit of [...this.players, ...this.enemies]) {
         tickConditions(this, unit, step);
+        tickRole(this,unit,step);
         if (
           !this.alive(unit) ||
           unit.hidden && !unit.chargedAbility ||
@@ -609,12 +710,12 @@ export class Battle {
         }
         unit.atb = Math.min(
           100,
-          unit.atb + atbRate(unit, this.data.battleSpeed ?? 3) * conditionSpeed(this.data,unit) * step,
+          unit.atb + atbRate(unit, this.context.settings?.battleSpeed ?? this.data.battleSpeed ?? 3) * conditionSpeed(this.data,unit) * step,
         );
         unit.ready = unit.atb >= 100;
         if (!unit.ready) continue;
         if (unit.chargedAbility) this.releaseCharged(unit);
-        else if (this.events.interactive && this.forcedTurn(unit)) { /* source condition owns this turn */ }
+        else if (this.events.interactive && (forcedRoleTurn(this,unit)||this.forcedTurn(unit))) { /* source condition owns this turn */ }
         else if (unit.side === "enemy") this.enemyTurn(unit);
         else if (auto && this.events.interactive) this.autoTurn(unit);
         if (this.phase !== "active") break;
@@ -627,7 +728,21 @@ export class Battle {
   }
 
   autoTurn(unit) {
-    return autoBattleInput(this, unit, (...args)=>calculateDamage(...args,this.data));
+    const index=this.players.indexOf(unit),rage=this.actionsFor(index).find(a=>a.kind==='rage');
+    if(unit.id===12&&rage)return this.choose(index,rage.id,{side:'player',index});
+    // Interface adapter only: the existing regression policy stays frozen.
+    const view=this.automaticInputView();
+    return autoBattleInput(view, unit, (...args)=>calculateDamage(...args,this.data));
+  }
+
+  automaticInputView() {
+    return new Proxy(this,{get:(battle,key)=>key==='commandsFor'?battle.actionsFor.bind(battle):
+      key==='choose'?(i,id,target)=>{
+        const command=battle.actionsFor(i).find(a=>a.id===id);
+        if(command?.commandId===15)return battle.submitBlitz(i,id,blitzInputs[id]??[],target);
+        if(command?.commandId===20){battle.beginSlots(i);for(let n=0;n<3;n++)battle.stopSlot(i);return true;}
+        return battle.choose(i,id,target,{validated:true});
+      }:typeof battle[key]==='function'?battle[key].bind(battle):battle[key]});
   }
 
   forcedTurn(unit) {
@@ -644,7 +759,8 @@ export class Battle {
   requestEscape() { return requestBattleEscape(this); }
   get canEscape() { return canEscape(this); }
 
-  choose(actorIndex, abilityId = 0, targetIndex = 0) {
+  choose(actorIndex, abilityId = 0, targetIndex = 0, input = {}) {
+    if(typeof abilityId==='string' && abilityId.startsWith('control:'))return this.chooseControlled(actorIndex,abilityId,targetIndex);
     if (typeof abilityId === "string" && /^(item|tool):/.test(abilityId))
       return this.useItem(actorIndex, Number(abilityId.split(":")[1]), targetIndex);
     const actor = this.players[actorIndex];
@@ -659,14 +775,18 @@ export class Battle {
       actor.stopUntil > this.elapsed
     )
       return false;
-    const id = typeof abilityId === 'string' && abilityId.startsWith('throw:') ? abilityId : Number(abilityId) || 1;
-    const command = this.commandsFor(actorIndex).find(
+    const id = typeof abilityId === 'string' && /^(throw|rage):/.test(abilityId) ? abilityId : Number(abilityId) || 1;
+    const command = this.actionsFor(actorIndex).find(
       (command) => command.id === id,
     );
     if (!command || command.disabled) {
       this.warning(`Unavailable ability ${id}; command rejected.`);
       return false;
     }
+    if(command.commandId===31 && !input.dualcast)return this.chooseDualcast(actorIndex,[{id,target:targetIndex},{id,target:targetIndex}]);
+    if([12,15,20].includes(command.commandId)&&!input.validated)return false;
+    if(id===4){actor.row=actor.row==='back'?'front':'back';this.addLog(`${actor.name}移到${actor.row==='back'?'后':'前'}排。`);this.consumeTurn(actor);return true;}
+    if(beginRoleAction(this,actor,command)){this.clearRunic(actor);this.consumeTurn(actor);this.checkEnd();return true;}
     const ability = command.throwContentId ? { ...command, id:10, kind:command.effect.kind } : command;
     const requested = typeof targetIndex === 'object' && targetIndex !== null ? targetIndex : null;
     const side = requested ? (requested.side === 2 || requested.side === 'enemy' ? 'enemy' : 'player') :
@@ -699,12 +819,27 @@ export class Battle {
         throwContentId:command.throwContentId}));
     }
     if (command.magiciteSummon) actor.magiciteUsed = true;
-    this.consumeTurn(actor);
+    if(!input.deferTurn)this.consumeTurn(actor);
     this.checkEnd();
     return true;
   }
 
+  chooseControlled(index,id,request) {
+    const actor=this.players[index],controlled=this.enemies[actor?.controlledEnemyIndex];
+    if(this.phase!=='active'||!actor?.ready||!controlled||actionBlocked(this.data,actor)||!this.events.interactive||this.events.paused)return false;
+    if(!this.actionsFor(index).some(a=>a.id===id&&!a.disabled))return false;
+    if(id==='control:cancel'){setCondition(this,controlled,85,false);setCondition(this,actor,66,false);actor.controlledEnemyIndex=null;this.consumeTurn(actor);return true;}
+    const ability=this.data.abilities[Number(id.split(':')[1])];
+    const pool=request?.side==='enemy'?this.enemies:this.players,target=pool[request?.index??0];
+    if(!ability||!this.eligibleTarget(target,ability)||controlled.mp<(ability.mp??0))return false;
+    controlled.mp-=ability.mp??0;
+    const targets=ability.all?pool.filter(u=>this.eligibleTarget(u,ability)):[target],sequence={};
+    for(const u of targets)this.perform(controlled,u,ability,targets.length,{sequence});
+    this.consumeTurn(actor);this.checkEnd();return true;
+  }
+
   consumeTurn(actor) {
+    actor.rearAttacked=false;
     actor.atb = 0;
     actor.ready = false;
     this.turns += 1;
@@ -718,6 +853,7 @@ export class Battle {
   }
 
   enemyTurn(actor) {
+    if((actor.conditions??[]).includes(85)){this.consumeTurn(actor);return;}
     actor.aiState?.wake("normal");
     this.drainAI();
     this.consumeTurn(actor);
@@ -759,15 +895,27 @@ export class Battle {
       const pool=(target.side==='player'?this.enemies:this.players).filter(u=>this.targetable(u));
       if(pool.length)return this.perform(actor,pool[Math.floor(this.random()*pool.length)],ability,targetCount,{...options,reflected:true});
     }
+    observeLore(this,ability);
+    if(ability.id===13 && (this.data.notManipulateMonsters??[]).some(row=>row.monster_id===target.monsterId)){
+      this.addLog(`${target.name}无法被操纵。`);return;
+    }
     const result = executeAbilityEffects(this,actor,target,ability,targetCount,options,
       (...args)=>calculateDamage(...args,this.data));
+    if(result.delegated)return;
+    if(ability.id===13 && result.hit && (target.conditions??[]).includes(85))actor.controlledEnemyIndex=this.enemies.indexOf(target);
+    if(target.side==='enemy' && ability.kind==='physical' && result.amount>0 && (target.conditions??[]).includes(85)){
+      setCondition(this,target,85,false);
+      for(const controller of this.players)if(controller.controlledEnemyIndex===this.enemies.indexOf(target)){setCondition(this,controller,66,false);controller.controlledEnemyIndex=null;}
+    }
     // PR monster flag4 is the EnemyCharacterParameter zero-MP death rule.
     // It applies to MP damage/drain too; ordinary enemies can remain at 0 MP.
     if(target.diesAtZeroMp&&target.mp===0&&target.hp>0&&result.mp>0)target.hp=0;
     if(target.hp<=0){target.ready=false;target.atb=0;}
     const action={actor,target,ability,...result,depth:this.actionDepth||0,selectedAbilityId:ability.id,time:this.elapsed,...(options.item?{item:options.item}:{})};
-    if(actor.side==='player' && !options.item && ability.id!==17)this.lastMimicAction=action;
+    if(actor.side==='player' && !options.mimic && ability.id!==17)this.lastMimicAction={...action,throwCommand:options.sequence?.throwCommand};
     this.addLog(`${actor.name} → ${target.name}：${ability.name || "战斗"}${result.hit ? (result.amount ? " " + (result.amount < 0 ? "回复 " : "") + Math.abs(result.amount) : result.mp ? " MP " + result.mp : "") : " 未命中"}`);
+    this.event('battle-action',{actorSide:actor.side,actorIndex:actor.index,targetSide:target.side,targetIndex:target.index,
+      abilityId:ability.id,time:this.elapsed,result:{amount:result.amount,mp:result.mp,hit:result.hit,critical:result.critical}});
     this.notifyAction(action);
     applyWeaponEffects(this,actor,target,ability,result,options);
   }
@@ -831,6 +979,7 @@ export class Battle {
       this.result.ap = this.formation.ap ?? 0;
       applyBattleRewards(this.data, this.players, this.result, { log: message => this.addLog(message) });
     }
+    finishRoles(this,outcome);
     for (const unit of this.players) {
       unit.conditions = (unit.conditions || []).filter(id =>
         !this.data.conditions?.[id] || this.data.conditions[id].until_type === 3);

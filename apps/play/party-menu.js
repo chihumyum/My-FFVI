@@ -22,10 +22,22 @@ export function renderPartyMenu(game, elements, refresh) {
     for (const target of units) elements.items.append(button(`${target.name}  HP ${target.hp}/${target.maxHp}`, () => run(() => action(target))));
     elements.items.append(button('返回菜单', refresh));
   };
+  const settings=document.createElement('fieldset'),title=document.createElement('legend');title.textContent='设置';settings.append(title);
+  for(const [key,label,choices] of [['atbMode','ATB 模式',[['wait','等待'],['active','主动']]],['battleSpeed','战斗速度',Array.from({length:6},(_,i)=>[i,`${i+1}`])]]){
+    const labelNode=document.createElement('label'),select=document.createElement('select');labelNode.textContent=label;select.setAttribute('aria-label',label);
+    for(const [value,text]of choices){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}select.value=game.settings[key];select.onchange=()=>game.settings[key]=key==='atbMode'?select.value:Number(select.value);labelNode.append(select);settings.append(labelNode);
+  }
+  elements.party.append(settings);
   for (const unit of game.party) {
     const section = document.createElement('fieldset'), title = document.createElement('legend');
     title.textContent = `${unit.name}  Lv ${unit.level}  HP ${unit.hp}/${unit.maxHp}  MP ${unit.mp}/${unit.maxMp}`;
     section.append(title);
+    section.append(button(unit.row==='back'?'改为前排':'改为后排',()=>{unit.row=unit.row==='back'?'front':'back';refresh();}));
+    if(unit.id===13)for(let n=0;n<3;n++){
+      const select=document.createElement('select');select.setAttribute('aria-label',`戈戈自选指令 ${n+1}`);
+      for(const id of [1,3,7,10,12,13,14,15,16,17,18,20,21,22,23]){const option=document.createElement('option');option.value=id;option.textContent=data.commands[id]?.name??`指令 ${id}`;select.append(option);}
+      select.value=(unit.customCommands??[1,7,3])[n];select.onchange=()=>{const ids=[...(unit.customCommands??[1,7,3])];ids[n]=Number(select.value);configureGogo(data,unit,ids);refresh();};section.append(select);
+    }
     section.append(button('最强装备', () => run(() => game.optimizeEquipment(unit.id))));
     const slots = ['右手', '左手', '身体', '头部', '饰品 1', '饰品 2'];
     for (let slot = 0; slot < 6; slot++) {
@@ -67,4 +79,5 @@ export function renderPartyMenu(game, elements, refresh) {
       targetInput(name(id), target => game.useItem(Number(id), target.id))));
   }
 }
+import {configureGogo} from '/play-runtime/battle-commands.js';
 import { canEquip } from '/play-runtime/resources.js';

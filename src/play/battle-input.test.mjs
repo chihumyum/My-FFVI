@@ -93,7 +93,7 @@ function sourceBattle(abilities,monsterId=280,program=null,party=null){
   const players=party||[{id:1,hp:800,maxHp:800,mp:299,maxMp:299,level:22,magic:35,attack:80,abilities}];
   const battle=new Battle({data,party:players,encounterId:99999,random:()=>{draws++;return .5;}});
   players[0].ready=true;
-  return {battle,actor:players[0],enemy:battle.enemies[0],calculate:(...args)=>calculateDamage(...args,data),draws:()=>draws};
+  return {battle:battle.automaticInputView(),actor:players[0],enemy:battle.enemies[0],calculate:(...args)=>calculateDamage(...args,data),draws:()=>draws};
 }
 
 test('owned PR Dispel removes effective Protect/Shell/Haste/Reflect, spending only its real MP and no preview RNG',()=>{

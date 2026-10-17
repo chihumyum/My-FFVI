@@ -7,35 +7,35 @@ export const FUNCTION_EFFECTS = {
   10: ['add condition group', 'implemented'], 11: ['remove condition', 'implemented'],
   12: ['remove condition group', 'implemented'], 13: ['return drained resource', 'implemented'],
   15: ['defend', 'implemented'], 16: ['escape', 'implemented'], 17: ['change row', 'implemented'],
-  18: ['equipment menu', 'deferred'], 19: ['non-damaging action', 'implemented'],
+  18: ['equipment menu', 'input-dependent'], 19: ['non-damaging action', 'implemented'],
   20: ['summon enemy slot', 'implemented'], 23: ['process-specific action', 'implemented'],
   32: ['caster HP recovery', 'implemented'], 33: ['current HP fixed damage', 'implemented'],
   34: ['max HP recovery', 'implemented'], 38: ['caster condition', 'implemented'],
-  41: ['delayed ability', 'approximate'], 43: ['finish charged action', 'implemented'],
+  41: ['delayed ability', 'implemented'], 43: ['finish charged action', 'implemented'],
   46: ['weighted random ability', 'implemented'], 50: ['scan', 'implemented'],
   51: ['throw selected inventory', 'implemented'], 52: ['steal', 'implemented'],
-  54: ['conditional child ability', 'approximate'], 56: ['set resource value', 'implemented'],
+  54: ['conditional child ability', 'implemented'], 56: ['set resource value', 'implemented'],
   59: ['mimic', 'implemented'], 63: ['condition-gated group application', 'implemented'],
   64: ['swap conditions', 'implemented'], 66: ['force participant escape', 'implemented'],
-  69: ['magic resource drain', 'implemented'], 70: ['source summon preset', 'deferred'],
+  69: ['magic resource drain', 'implemented'], 70: ['source summon preset', 'approximate'],
   71: ['ordered child abilities', 'implemented'], 77: ['physical resource drain', 'implemented'],
-  78: ['Interceptor damage', 'approximate'],
+  78: ['Interceptor damage', 'implemented'],
 };
 export const PROCESS_EFFECTS = Object.fromEntries([
   ['None','implemented'], ['multiply','implemented'], ['StealAttack','implemented'],
-  ['ff6_ability_sketch','approximate'], ['GIL_THROW','implemented'], ['GOLEM','implemented'],
-  ['SM_RAGNAROK','approximate'], ['SM_RAGNAROK_ITEM','approximate'], ['DRAGON','approximate'],
+  ['ff6_ability_sketch','implemented'], ['GIL_THROW','implemented'], ['GOLEM','implemented'],
+  ['SM_RAGNAROK','implemented'], ['SM_RAGNAROK_ITEM','implemented'], ['DRAGON','implemented'],
   ['CHAKRA','implemented'], ['FixedDamage','implemented'], ['LEVEL5','implemented'],
   ['LEVEL4','implemented'], ['LEVEL3','implemented'], ['LEVEL_RANDOM_HOLY','implemented'],
-  ['WALK_COUNT','approximate'], ['ForceField','implemented'], ['DISCHORD','implemented'],
+  ['WALK_COUNT','implemented'], ['ForceField','implemented'], ['DISCHORD','implemented'],
   ['STONE','implemented'], ['BAKU','implemented'], ['GAST_SMOKE','implemented'],
-  ['CRANE_BATTLE_VARIABLE_CALC','deferred'], ['BARRIERCHANGE','implemented'],
-  ['ADD_VARIABLE_CALC','implemented'], ['FLARE_STAR','implemented'], ['THROW_PLAYER','approximate'],
+  ['CRANE_BATTLE_VARIABLE_CALC','approximate'], ['BARRIERCHANGE','implemented'],
+  ['ADD_VARIABLE_CALC','implemented'], ['FLARE_STAR','implemented'], ['THROW_PLAYER','implemented'],
   ['SM_ERASER','implemented'], ['BATTLE_FORCE','implemented'], ['IMP_CRITICAL','implemented'],
-  ['IFRIT_SHIVA_BATTLE_VARIABLE_CALC','implemented'], ['MOVE','approximate'], ['CHADSWITCH','implemented'],
+  ['IFRIT_SHIVA_BATTLE_VARIABLE_CALC','implemented'], ['MOVE','implemented'], ['CHADSWITCH','implemented'],
   ['VARGAS_BATTLE_VARIABLE_CALC','implemented'], ['SET_VARIABLE_CALC','implemented'],
-  ['USE_HAMON_TARGET_HEIST_PLAYER','approximate'], ['ADD_VARIABLE_CALC_TWO_DIMENTIONAL','implemented'],
-  ['ALIVE_PLAYER_TO_USE_TAKOASHI','approximate'], ['ATB_CHANGE','implemented'],
+  ['USE_HAMON_TARGET_HEIST_PLAYER','implemented'], ['ADD_VARIABLE_CALC_TWO_DIMENTIONAL','implemented'],
+  ['ALIVE_PLAYER_TO_USE_TAKOASHI','implemented'], ['ATB_CHANGE','implemented'],
   ['BATTLE_FORCE_ON_SAVE','implemented'], ['NOSELECT_REMOVE','implemented'],
 ]);
 export function functionsFor(data, groupId) {
@@ -48,6 +48,36 @@ export function conditionIdsForGroup(data, groupId) {
 }
 export function hasConditionType(data, unit, type) {
   return (unit.conditions || []).some(id=>(data.conditions?.[id]?.condition_type ?? id)===type);
+}
+function releaseCapture(host, unit) {
+  for (const [owner, victim] of host.captures || []) if (owner === unit || victim === unit) {
+    host.captures.delete(owner);
+    for (const id of [...(victim.conditions || [])]) if (host.data.conditions?.[id]?.condition_type === 627)
+      setCondition(host, victim, id, false);
+    for (const id of [...(owner.conditions || [])]) if (host.data.conditions?.[id]?.condition_type === 682)
+      setCondition(host, owner, id, false);
+    host.event?.('battle-release', { actorId: owner.id, targetId: victim.id });
+  }
+}
+export function sourceSummonPlan(data, actor, formation, preset) {
+  if (preset === 2) return { members: (formation?.members || []).filter(member =>
+    member.slot + 1 !== (actor.uniqueId ?? actor.slot + 1)).map(member => ({ monsterId: member.monsterId, uniqueId: member.slot + 1 })) };
+  const program = data.aiPrograms?.[actor.aiName] || Object.values(data.aiPrograms || {}).find(row => row.name === actor.aiName);
+  const calls = (program?.ops || []).flatMap(([, ints = []]) => ints.flatMap(id =>
+    (data.abilities?.[id]?.functions || []).filter(fn => fn.id === 20).map(fn => fn.values)));
+  const counts = new Map();
+  for (const [monsterId] of calls) counts.set(monsterId, (counts.get(monsterId) || 0) + 1);
+  const monsterId = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (!monsterId) return { members: [], guess: `preset ${preset} has no PR companion Function20 summons` };
+  let slots = [...new Set(calls.filter(call => call[0] === monsterId).map(call => call[1]))];
+  if (preset === 3) {
+    // Satellite's first two PR calls supply two and three soldiers. The last
+    // preset restores four; the missing cardinal grid slot follows that layout.
+    slots = [...new Set([...slots, ...[2, 4, 6, 8]])];
+    return { members: slots.map(uniqueId => ({ monsterId, uniqueId })),
+      guess: 'preset3 completes the four cardinal slots from the PR two/three-soldier calls and SNES Telstar restore-four behavior' };
+  }
+  return { members: slots.map(uniqueId => ({ monsterId, uniqueId })) };
 }
 export function isRevival(data, ability) {
   return (ability.functions || []).some(f=> f.id===34) && (ability.functions || []).some(f=>
@@ -122,6 +152,8 @@ export function setCondition(host, unit, id, add=true, {force=false}={}) {
   if(type===667)unit.untargetable=has(667);
   if(type===665 || type===666)unit.disguise=has(665)?2:has(666)?1:0;
   if(type===628 && present){unit.hp=0;unit.mp=0;unit.ready=false;unit.atb=0;}
+  if (type === 627 && present) { unit.ready = false; unit.atb = 0; }
+  if (type === 5 && present || [627,682].includes(type) && !present) releaseCapture(host, unit);
   if(type===17){unit.stopUntil=present?unit.conditionUntil?.[id]??host.elapsed+30:0;unit.ready=false;unit.stopConditionId=present?id:null;}
   // Removed conflicting conditions also clear their derived modifiers.
   if([id,...previous.filter(active=>!unit.conditions.includes(active))].some(active=>[412,19,621,612,410].includes(host.data.conditions?.[active]?.condition_type))) {
@@ -130,7 +162,7 @@ export function setCondition(host, unit, id, add=true, {force=false}={}) {
   return present===add;
 }
 export function actionBlocked(data, unit) {
-  return [5,7,11,34,17].some(type=>hasConditionType(data,unit,type));
+  return [5,7,11,34,17,627].some(type=>hasConditionType(data,unit,type));
 }
 export function conditionSpeed(data, unit) {
   // The provider-bearing versions (e.g. 95) are aliases of a condition type,
@@ -267,6 +299,8 @@ export function tickConditions(host, unit, seconds) {
     if(host.data.conditions?.[id]?.condition_type===404)setCondition(host,unit,5,true,{force:true});
     setCondition(host,unit,Number(id),false);
   }
+  for (const [owner, victim] of host.captures || []) if (owner.hp <= 0 || victim.hp <= 0 || owner.removed || owner.escaped)
+    releaseCapture(host, owner);
   if(unit.hp<=0 || wasStopped || host.events?.paused)return;
   const dt=Number(seconds);
   if(!Number.isFinite(dt)||dt<=0)return;
@@ -274,7 +308,7 @@ export function tickConditions(host, unit, seconds) {
   // poison twice. Cleared statuses discard their elapsed time.
   const groups=new Map();
   for(const id of unit.conditions||[]){const row=host.data.conditions?.[id],type=row?.condition_type;
-    if([10,407,25].includes(type)){
+    if([10,407,25,627].includes(type)){
       if(!groups.has(type))groups.set(type,[]);
       groups.get(type).push(row);
     }
@@ -293,7 +327,10 @@ export function tickConditions(host, unit, seconds) {
     while(clock.elapsed+1e-9>=interval && unit.hp>0){
       clock.elapsed=Math.max(0,clock.elapsed-interval);clock.first=false;
       const amount=rows.map(row=>periodicStatusAmount(unit,row)).reduce((best,n)=>Math.abs(n)>Math.abs(best)?n:best,0);
+      const previous = unit.hp;
       unit.hp=clamp(unit.hp-amount,0,unit.maxHp);
+      if (type === 627) for (const [owner, victim] of host.captures || []) if (victim === unit)
+        owner.hp = clamp(owner.hp + previous - unit.hp, 0, owner.maxHp);
       host.addLog(`${unit.name} ${amount<0?'持续回复':'持续伤害'} ${Math.abs(amount)}`);
       interval=periodicStatusInterval(host.data,unit,type);
     }
@@ -302,7 +339,7 @@ export function tickConditions(host, unit, seconds) {
 const approximate=(host,ability,what)=>host.warning(`Ability ${ability.id} (${ability.process||'None'}): ${what}`);
 export function executeAbilityEffects(host, actor, target, ability, targetCount, options, calculateDamage) {
   const random=host.random,data=host.data, fns=ability.functions||[],process=ability.process||'None';
-  let amount=0,mpAmount=0,hit=true,critical=false,numeric=false,lastDamage=0,handledProcess=false;
+  let amount=0,mpAmount=0,hit=true,critical=false,numeric=false,lastDamage=0,handledProcess=false,delegated=false;
   const apply=(n,resource='hp')=>{n=Math.trunc(n);const max=resource==='mp'?target.maxMp:target.maxHp;
     if(resource==='hp')n=host.events?.beforeDamage(actor,target,ability,n)??n;
     const before=target[resource]||0;target[resource]=clamp(before-clamp(n,-9999,9999),0,max||0);
@@ -312,7 +349,7 @@ export function executeAbilityEffects(host, actor, target, ability, targetCount,
     return actual;
   };
   const damage=(kind=ability.kind,resource='hp',extra={})=>{
-    numeric=true;
+    numeric=true;lastDamage=0;
     const effect={...ability,kind,...extra};
     const imageId=(target.conditions||[]).find(id=>data.conditions?.[id]?.condition_type===14);
     const guaranteed=effect.flags?.includes(1) || (effect.accuracy??actor.accuracy??100)>=255;
@@ -335,14 +372,15 @@ export function executeAbilityEffects(host, actor, target, ability, targetCount,
         actor[key]=clamp((actor[key]||0)+Math.trunc(actual*(result.drainPercent??100)/100),0,actor[max]||0);}
     }
   };
-  const child=(id,retarget=false)=>{
+  const child=(id,retarget=false,recipient=null)=>{
     const a=data.abilities?.[id];if(!a){approximate(host,ability,`missing child ${id}; child skipped.`);return;}
     if((host.effectDepth||0)>=8){approximate(host,ability,'child chain yielded at depth 8.');return;}
     const previous=host.effectDepth||0;host.effectDepth=previous+1;
-    const targets=retarget?host.selectAITargets(actor,a,null,a.all):[target];
-    const sequence={};
-    for(const [index,t] of targets.entries())host.perform(actor,t,a,targets.length,{updateVariables:index===0,sequence});
-    host.effectDepth=previous;
+    try {
+      const targets=recipient?[recipient]:retarget?host.selectAITargets(actor,a,null,a.all):[target];
+      const sequence={};
+      for(const [index,t] of targets.entries())host.perform(actor,t,a,targets.length,{updateVariables:index===0,sequence});
+    } finally { host.effectDepth=previous; }
   };
   const vars=actor.aiState?.vars;
   if(options.updateVariables!==false){
@@ -361,14 +399,15 @@ export function executeAbilityEffects(host, actor, target, ability, targetCount,
   switch(process){
     case 'SM_ERASER':target.hp=0;target.removed=true;handledProcess=true;break;
     case 'NOSELECT_REMOVE':target.removed=true;target.hidden=true;handledProcess=true;break;
-    case 'MOVE':actor.x=(actor.x||0)+(ability.dataA||0);approximate(host,ability,'movement animation resolves immediately.');break;
+    case 'MOVE':{const from={x:actor.x||0,y:actor.y||0};actor.x=from.x+(ability.dataA||0);
+      host.event('battle-move',{actorId:actor.id,from,to:{x:actor.x,y:actor.y||0},wait:ability.abilityWait||0});break;}
     case 'ATB_CHANGE':target.atb=clamp(ability.dataA||0,0,100);target.ready=target.atb>=100;handledProcess=true;break;
     case 'BARRIERCHANGE':{const weak=1+Math.floor(random()*8);target.elementResistances=Object.fromEntries(Array.from({length:8},(_,i)=>[i+1,i+1===weak?1:4]));target.affinities=target.elementResistances;handledProcess=true;break;}
     case 'ForceField':{host.forceFieldElements??=[];if(options.updateVariables!==false){const pool=[1,2,3,4,5,6,7,8].filter(e=>!host.forceFieldElements.includes(e));if(pool.length)host.forceFieldElements.push(pool[Math.floor(random()*pool.length)]);}handledProcess=true;break;}
     case 'DISCHORD':target.level=Math.max(1,Math.floor(target.level/2));handledProcess=true;break;
     case 'FixedDamage':apply(1000);handledProcess=true;break;
     case 'FLARE_STAR':apply(Math.floor(target.level*(ability.power||80)/Math.max(1,targetCount)));handledProcess=true;break;
-    case 'WALK_COUNT':apply(Math.floor((host.context.steps||host.banks.SystemVariable?.[3]||0)/32));approximate(host,ability,'step counter uses context.steps; time-derived MP cost remains PR use_value.');handledProcess=true;break;
+    case 'WALK_COUNT':apply(Math.floor((host.context.steps||host.banks.SystemVariable?.[3]||0)/Math.max(1,ability.power||32)));handledProcess=true;break;
     case 'GIL_THROW':{
       const sequence=options.sequence||{};
       if(sequence.gilSpent===undefined){const cost=actor.level*30,budget=actor.side==='enemy'?actor.gil||0:host.context.gil||0;
@@ -380,9 +419,38 @@ export function executeAbilityEffects(host, actor, target, ability, targetCount,
     }
     case 'CHAKRA':if(target!==actor)apply(-Math.floor(actor.maxHp/Math.max(1,targetCount)));handledProcess=true;break;
     case 'GOLEM':if(options.updateVariables!==false)host.golemShield={side:actor.side,hp:actor.hp};handledProcess=true;break;
-    case 'SM_RAGNAROK':case 'SM_RAGNAROK_ITEM':{const loot=target.drops?.find(x=>x.id>0);if(!target.boss && loot && random()<0.25){host.inventory[loot.id]=(host.inventory[loot.id]||0)+(loot.count||1);target.removed=true;}approximate(host,ability,'Metamorph uses PR drop content at a provisional 25 percent rate; dedicated morph table absent.');handledProcess=true;break;}
-    case 'ff6_ability_sketch':{const rows=(data.randomAbilityGroups||[]).filter(r=>r.group_id===target.sketchGroup);if(rows.length)child(rows[Math.floor(random()*rows.length)].ability_id,true);else damage('physical');approximate(host,ability,'Sketch selects PR enemy sketch group when present; otherwise copies its physical attack.');handledProcess=true;break;}
-    case 'DRAGON':damage('magic');approximate(host,ability,'Dragon resolves its source magic hit immediately; repeated animation timing is omitted.');handledProcess=true;break;
+    case 'SM_RAGNAROK':case 'SM_RAGNAROK_ITEM':{
+      const exchange=(data.monsterExchangeItems||[]).find(row=>Number(row.monster_id)===Number(target.monsterId??target.id));
+      const weight=(data.monsterExchangeWeights||[]).find(row=>Number(row.weight_id)===Number(exchange?.weight_id));
+      if(!exchange || !weight){hit=false;approximate(host,ability,'PR metamorph row is missing; no drop-table substitute or item grant is made.');}
+      else if(target.side==='player' || random()*100>=Number(weight.weight))hit=false;
+      else {const choices=exchange.exchange_content_ids.filter(id=>Number(id)>0),id=Number(choices[Math.floor(random()*choices.length)]);
+        if(!id)hit=false;else {host.inventory[id]=Math.min(data.limits?.MAX_ITEM||99,(host.inventory[id]||0)+1);target.removed=true;target.ready=false;
+          host.event('battle-metamorph',{monsterId:target.monsterId??target.id,contentId:id});}}
+      handledProcess=true;break;
+    }
+    case 'ff6_ability_sketch':{
+      const rows=(data.randomAbilityGroups||[]).filter(row=>row.group_id===target.sketchGroup && row.invocation_rate>0);
+      const chance=Math.min(1,(actor.level||1)/Math.max(1,target.level||1));
+      if(target.side==='player' || target.sketchDisabled || !rows.length || random()>=chance){hit=false;handledProcess=true;break;}
+      let roll=random()*rows.reduce((sum,row)=>sum+row.invocation_rate,0),selected=rows.at(-1);
+      for(const row of rows){roll-=row.invocation_rate;if(roll<0){selected=row;break;}}
+      const sketch=data.abilities?.[selected.ability_id];
+      if(sketch){const saved={magic:actor.magic,strength:actor.strength,attack:actor.attack};
+        // SNES dispatches the imitation with monster parameters, then
+        // InitAttackerLevel overrides its level with the character using Sketch.
+        Object.assign(actor,{magic:target.magic,strength:target.strength,attack:target.attack});
+        try{child(selected.ability_id,true);}finally{Object.assign(actor,saved);}
+      }else {hit=false;approximate(host,ability,`missing PR Sketch child ${selected.ability_id}.`);}
+      handledProcess=true;break;
+    }
+    case 'DRAGON':{
+      for(const [resource,power] of [['hp',ability.dataA||ability.power],['mp',ability.dataB||Math.floor((ability.dataA||ability.power)/4)]]){
+        damage('magic',resource,{power,functions:[{id:69,values:[resource==='mp'?2:1,0,0]},{id:13,values:[resource==='mp'?2:1,100,0]}]});
+        actor[resource]=clamp((actor[resource]||0)+lastDamage,0,actor[resource==='mp'?'maxMp':'maxHp']||0);
+      }
+      handledProcess=true;break;
+    }
     case 'STONE':damage('magic', 'hp',{multiplier:actor.level===target.level?7:1});handledProcess=true;break;
     case 'LEVEL_RANDOM_HOLY':{
       const divisor=Math.max(0,Math.trunc(host.context.gil||0))%10;
@@ -390,14 +458,13 @@ export function executeAbilityEffects(host, actor, target, ability, targetCount,
       handledProcess=true;break;
     }
     case 'GAST_SMOKE':{const ids=conditionIdsForGroup(data,408);for(const id of ids)if(random()<0.5)setCondition(host,target,id,true);handledProcess=true;break;}
-    case 'THROW_PLAYER':target.row=target.row==='back'?'front':'back';approximate(host,ability,'Throw Player changes row; animation collision damage is deferred.');handledProcess=true;break;
+    case 'THROW_PLAYER':releaseCapture(host,actor);handledProcess=true;break;
     case 'ALIVE_PLAYER_TO_USE_TAKOASHI':{
-      // PR variants share power146 and carry masks1/6/15: first player,
-      // middle two, all four. Keep its actual physical function, not Fight.
-      const mask=ability.dataC||15,index=host.players.indexOf(target);
-      if(index<0||!(mask&(1<<index)))return {amount:0,mp:0,hit:false,critical:false};
-      targetCount=Math.max(1,host.players.filter((u,n)=>(mask&(1<<n))&&host.targetable(u)).length);
-      approximate(host,ability,'dataC is interpreted as the living player-slot mask for Tentacle; its PR physical power is retained.');break;
+      // PR Ultros AI labels these three branches Terra/Sabin/Banon, and
+      // dataC is their character ID (1/6/15), not a player-slot bit mask.
+      if(!host.players.includes(target)||target.id!==ability.dataC||!host.targetable(target))return {amount:0,mp:0,hit:false,critical:false};
+      targetCount=1;
+      break;
     }
     case 'CRANE_BATTLE_VARIABLE_CALC':if(options.updateVariables!==false)approximate(host,ability,'special helper has no PR operands identifying a variable; source AI/event retains variable ownership.');break;
   }
@@ -406,15 +473,33 @@ export function executeAbilityEffects(host, actor, target, ability, targetCount,
       case 1:if(!handledProcess && (b===3 || target.hp>0)){if(a===1)apply(-(ability.power||0),b===3?'mp':'hp');else damage('heal',b===3?'mp':'hp');}break;
       case 2:case 3:case 69:case 77:case 78:if(!handledProcess){const kind=[2,77,78].includes(fn.id)?'physical':'magic',resource=[3,69,77].includes(fn.id)&&a===2?'mp':'hp';
         const count=fn.id===2&&a===2?Math.max(1,Math.min(16,b)):1;
-        if(count>1)approximate(host,ability,'source physical hit count is retained; repeated hits currently share the selected target rather than selecting a new random opponent.');
-        for(let n=0;n<count && target.hp>0;n++)damage(kind,resource);if(fn.id===78)approximate(host,ability,'Interceptor uses the PR physical power; dog animation and interception timing are simplified.');}break;
+        if(count>1){
+          // Quadra Slam/Flurry select a living opponent again for every strike.
+          // Each child passes through ordinary hit/counter/status processing.
+          const single={...ability,functions:fns.map(entry=>entry===fn?{...entry,values:[0,0,0]}:entry)};
+          hit=false;delegated=true;
+          for(let n=0;n<count;n++){
+            const pool=(actor.side==='enemy'?host.players:host.enemies).filter(unit=>host.targetable(unit));
+            if(!pool.length)break;
+            const victim=pool[Math.min(pool.length-1,Math.floor(random()*pool.length))],hp=victim.hp,mp=victim.mp;
+            host.perform(actor,victim,single,1,{...options,sequence:{},updateVariables:n===0});
+            amount+=hp-victim.hp;mpAmount+=mp-victim.mp;hit=true;
+          }
+          if(actor.side==='player')host.lastMimicAction={actor,ability,target};
+          return {amount,mp:mpAmount,hit,critical,delegated};
+        }
+        if(target.hp>0)damage(kind,resource);}break;
       case 9:case 10:{if(!hit)break;const rows=fn.id===9?[{condition_id:a,invocation_rate:100}]: (data.conditionGroups||[]).filter(r=>r.group_id===a);
         for(const row of rows){const id=row.condition_id,definition=data.conditions?.[id]||{};
           if(ability.invalidBoss&&target.boss)continue;
           const force=b===1||ability.flags?.includes(1),rate=row.invocation_rate||ability.accuracy||100;
-          if(force || random()*100<Math.min(100,rate))setCondition(host,target,id,true,{force:ability.flags?.includes(4)});
+          if(definition.condition_type===627 && (target.side!=='player' || host.captures?.has(actor) || [...(host.captures?.values()||[])].includes(target))){hit=false;continue;}
+          if(force || random()*100<Math.min(100,rate)){
+            const applied=setCondition(host,target,id,true,{force:ability.flags?.includes(4)});
+            if(applied && definition.condition_type===627){host.captures??=new Map();host.captures.set(actor,target);}
+          }
           else if(rows.length===1)hit=false;
-          if(definition.condition_type>=500 && ![625,673,667,665,666,621,612].includes(definition.condition_type))approximate(host,ability,`condition ${id}/${definition.condition_type} is retained as a source marker; specialized animation/command behavior may be simplified.`);
+          if(definition.condition_type>=500 && ![625,673,667,665,666,621,612,627,682].includes(definition.condition_type))approximate(host,ability,`condition ${id}/${definition.condition_type} is retained as a source marker; specialized animation/command behavior may be simplified.`);
         }break;}
       case 11:case 12:{const fallen=target.hp<=0;for(const id of fn.id===11?[a]:conditionIdsForGroup(data,a))setCondition(host,target,id,false);if(fallen&&isRevival(data,ability))target.hp=0;break;}
       case 13:{const resource=a===2?'mp':'hp',max=resource==='mp'?actor.maxMp:actor.maxHp;const drain=lastDamage*b/100;actor[resource]=clamp(actor[resource]+Math.trunc(drain),0,max);break;}
@@ -425,13 +510,13 @@ export function executeAbilityEffects(host, actor, target, ability, targetCount,
         }
         target.escaped=true;target.hidden=true;target.ready=false;break;
       case 17:target.row=target.row==='back'?'front':'back';break;
-      case 18:approximate(host,ability,'battle equipment menu is deferred; current equipment remains active.');host.event('battle-input-request',{kind:'equipment',actorId:actor.id});break;
+      case 18:if(host.requestEquipment)host.requestEquipment(actor);else host.event('battle-input-request',{kind:'equipment',actorId:actor.id});break;
       case 19:case 23:break;
       case 20:if(options.updateVariables!==false)host.addEnemy(a,b);break;
       case 32:{const unit=a===1?actor:target;apply(-(b===1?unit.hp:b===2?Math.floor(unit.hp*c/100):b===3?Math.floor(unit.hp/Math.max(1,c)):unit.maxHp-unit.hp));break;}
       case 33:{if(target.boss){hit=false;break;}const unit=a===1?actor:target;let n=b===1?unit.hp:b===2?Math.floor(unit.hp*c/100):b===3?Math.floor(unit.hp/Math.max(1,c)):b===6?unit.maxHp-unit.hp:0;apply(n);break;}
       case 34:apply(-Math.max(1,b===4?Math.floor(target.maxHp*c/100):Math.floor(target.maxHp/Math.max(1,c))));target.atb=0;target.ready=false;break;
-      case 38:setCondition(host,actor,a,c===0);break;
+      case 38:if(data.conditions?.[a]?.condition_type!==682 || c!==0 || host.captures?.has(actor))setCondition(host,actor,a,c===0);break;
       case 41:{const owner=fns.some(f=>f.id===9&&data.conditions?.[f.values?.[0]]?.condition_type===420)?target:actor;
         owner.chargedAbility=a;owner.chargedTarget=owner===actor?target:null;owner.atb=0;owner.ready=false;
         approximate(host,ability,'charged ability resolves on its condition holder next ATB turn; exact native animation delay is simplified.');break;}
@@ -459,13 +544,41 @@ export function executeAbilityEffects(host, actor, target, ability, targetCount,
         break;
       }
       case 52:steal();break;
-      case 54:child(actor.conditions?.length?a:b,true);approximate(host,ability,'conditional child tests whether the caster currently has conditions.');break;
+      case 54:{
+        if(process==='USE_HAMON_TARGET_HEIST_PLAYER'){
+          const players=host.players.filter(unit=>host.targetable(unit)&&hasConditionType(data,unit,15));
+          const hasted=players[Math.min(players.length-1,Math.floor(random()*players.length))];
+          if(hasted)child(b,false,hasted);else child(a,false,actor);
+        } else {child(actor.conditions?.length?a:b,true);approximate(host,ability,'unknown conditional child uses caster-condition fallback.');}
+        break;
+      }
       case 56:{const key=a===2?'mp':'hp';apply((target[key]||0)-b,key);break;}
-      case 59:{const previous=host.lastMimicAction;if(previous?.ability && previous.ability.id!==ability.id)child(previous.ability.id,true);break;}
+      case 59:{
+        const previous=host.lastMimicAction;
+        if(previous?.ability && previous.ability.id!==ability.id && (host.effectDepth||0)<8){
+          const copied=previous.ability,targets=host.selectAITargets(actor,copied,previous.target,copied.all);
+          const sequence=previous.throwCommand?{throwCommand:previous.throwCommand}:{};
+          host.effectDepth=(host.effectDepth||0)+1;
+          try{for(const unit of targets)host.perform(actor,unit,copied,targets.length,{mimic:true,sequence});}
+          finally{host.effectDepth--;}
+        }break;
+      }
       case 63:{if(c && !(target.conditions||[]).includes(c)){hit=false;break;}for(const id of conditionIdsForGroup(data,a))setCondition(host,target,id,true);break;}
-      case 64:{const left=[...(actor.conditions||[])],right=[...(target.conditions||[])];for(const id of left)setCondition(host,actor,id,false);for(const id of right)setCondition(host,target,id,false);for(const id of left)setCondition(host,target,id,true);for(const id of right)setCondition(host,actor,id,true);break;}
+      case 64:{const left=(actor.conditions||[]).filter(id=>!target.conditions?.includes(id)),right=(target.conditions||[]).filter(id=>!actor.conditions?.includes(id));
+        // Common statuses remain untouched, including their running clocks.
+        for(const id of left)setCondition(host,actor,id,false);for(const id of right)setCondition(host,target,id,false);
+        for(const id of left)setCondition(host,target,id,true);for(const id of right)setCondition(host,actor,id,true);break;}
       case 66:target.escaped=true;target.hidden=true;target.ready=false;break;
-      case 70:approximate(host,ability,`summon preset ${a} has no exported monster/slot rows; explicit Function20 summons still execute.`);host.event('battle-summon-preset',{preset:a,actorId:actor.id});break;
+      case 70:if(options.updateVariables!==false){
+        const plan=sourceSummonPlan(data,actor,host.formation,a);
+        if(plan.guess)approximate(host,ability,plan.guess);
+        for(const member of plan.members){
+          const present=host.enemies.find(enemy=>enemy.uniqueId===member.uniqueId || enemy.slot+1===member.uniqueId);
+          if(!present || present.hp<=0 || present.removed || present.escaped)host.addEnemy(member.monsterId,member.uniqueId);
+        }
+        host.event('battle-summon-preset',{preset:a,actorId:actor.id,members:plan.members});
+        break;
+      }break;
       case 71:for(const id of [a,b,c].filter(Boolean))child(id,true);break;
       default:approximate(host,ability,`function ${fn.id} has no effect handler; skipped without replacing its other functions.`);
     }

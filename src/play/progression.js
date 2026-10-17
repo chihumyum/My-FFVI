@@ -100,7 +100,7 @@ export function recalculateEquipment(data, unit) {
 }
 
 export function applyTestBoost(unit) {
-  return Object.assign(unit, { testBoost: true, level: 99, hp: 9999, maxHp: 9999, mp: 999, maxMp: 999,
+  return Object.assign(unit, { testBoost: true, level: 99, hp: 999999, maxHp: 999999, mp: 999, maxMp: 999,
     strength: 255, magic: 255, attack: 255, defense: 250, magicDefense: 250, speed: 255, accuracy: 255 });
 }
 

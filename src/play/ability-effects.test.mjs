@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { executeAbilityEffects, setCondition, functionsFor, applyRecovery, abilityFromItem, tickConditions, conditionSpeed, periodicStatusInterval, periodicStatusAmount, forcedConditionAction, throwableCommands, applyWeaponEffects } from './ability-effects.js';
+import { executeAbilityEffects, setCondition, functionsFor, applyRecovery, abilityFromItem, tickConditions, conditionSpeed, periodicStatusInterval, periodicStatusAmount, forcedConditionAction, throwableCommands, applyWeaponEffects, actionBlocked, sourceSummonPlan } from './ability-effects.js';
 import { Battle, calculateDamage } from './battle.js';
 import { auditAbilities } from '../../scripts/audit-play-abilities.mjs';
 const data=JSON.parse(fs.readFileSync(new URL('../../build/play/battle.json',import.meta.url),'utf8'));
@@ -304,20 +304,89 @@ test('Gil Toss pays once for source twice-spent damage and level-question Holy u
 });
 
 test('PR four-hit physical operands and nested child chains retain all hits',()=>{
-  const f=fixture();f.target.hp=f.target.maxHp=5000;const result=f.cast(127);assert.equal(result.amount,320);
+  const f=fixture();f.target.hp=f.target.maxHp=5000;
   let fights=0;f.host.perform=(actor,target,ability,count,options)=>{
     if(ability.id===1)fights++;
     executeAbilityEffects(f.host,actor,target,ability,count,options,()=>({amount:80,missed:false,critical:false}));
   };
+  const result=f.cast(127);assert.equal(result.amount,320);assert.equal(result.delegated,true);
   f.cast(1345);assert.equal(fights,4);
 });
 
-test('Tentacle uses its PR physical power and the source player-slot mask instead of substituting Fight',()=>{
-  const f=fixture(),players=Array.from({length:4},()=>unit());f.host.players=players;
+test('four-hit Bushido retargets after a kill and Mimic remembers the whole command',()=>{
+  const f=fixture(),other=unit({side:'enemy'}),strikes=[];f.actor.side='player';f.target.side='enemy';f.target.hp=50;f.host.enemies.push(other);f.host.random=()=>0;
+  f.host.perform=(actor,target,ability,count,options)=>{
+    strikes.push(target);executeAbilityEffects(f.host,actor,target,ability,count,options,()=>({amount:80,missed:false}));
+  };
+  const result=f.cast(127);
+  assert.deepEqual(strikes,[f.target,other,other,other]);assert.equal(result.amount,290);assert.equal(other.hp,260);
+  assert.equal(f.host.lastMimicAction.ability,data.abilities[127]);
+});
+
+test('Empowerer separately drains PR HP/MP powers, clamps supply and never reuses a missed hit',()=>{
+  const f=fixture();Object.assign(f.actor,{side:'player',hp:100,mp:10,magic:30});Object.assign(f.target,{side:'enemy',hp:120,mp:7});
+  const cast=()=>executeAbilityEffects(f.host,f.actor,f.target,data.abilities[128],1,{},calculateDamage);
+  const result=cast();assert.equal(result.amount,120);assert.equal(result.mp,7);assert.equal(f.actor.hp,220);assert.equal(f.actor.mp,17);
+  const g=fixture();g.actor.hp=100;g.actor.mp=10;let calls=0;
+  executeAbilityEffects(g.host,g.actor,g.target,data.abilities[128],1,{},()=>++calls===1?{amount:80}:{missed:true,amount:0});
+  assert.equal(g.actor.hp,180);assert.equal(g.actor.mp,10);assert.equal(g.target.mp,40);
+  const undead=fixture();Object.assign(undead.target,{undead:true,hp:900,mp:90});Object.assign(undead.actor,{hp:30,mp:4});
+  executeAbilityEffects(undead.host,undead.actor,undead.target,data.abilities[128],1,{},calculateDamage);
+  assert.equal(undead.actor.hp,0);assert.equal(undead.actor.mp,0);assert.equal(undead.target.hp,930);assert.equal(undead.target.mp,94);
+});
+
+test('Metamorph uses PR exchange rates/items and never substitutes the ordinary drop table',()=>{
+  const f=fixture();f.target.monsterId=1;f.target.side='enemy';f.target.drops=[{id:999,count:1}];f.host.random=()=>0;
+  f.cast(113);assert.equal(f.target.removed,true);assert.deepEqual(f.host.inventory,{12:1});
+  const g=fixture();Object.assign(g.target,{monsterId:99999,side:'enemy',drops:[{id:999,count:1}]});g.cast(113);
+  assert.deepEqual(g.host.inventory,{});assert.equal(g.target.removed,undefined);assert(g.warnings.some(s=>s.includes('no drop-table substitute')));
+  const h=fixture(),row=data.monsterExchangeItems.find(row=>row.weight_id===6);h.target.monsterId=row.monster_id;h.target.side='enemy';h.host.random=()=>.07;
+  assert.equal(h.cast(113).hit,false);assert.deepEqual(h.host.inventory,{});
+});
+
+test('Sketch selects the actual PR group and temporarily uses copied monster parameters',()=>{
+  const f=fixture(),seen=[];Object.assign(f.actor,{level:20,magic:25,strength:30,attack:35});Object.assign(f.target,{...data.monsters[2],side:'enemy'});
+  f.host.random=()=>.6;f.host.perform=(actor,target,ability)=>seen.push({id:ability.id,level:actor.level,magic:actor.magic,attack:actor.attack,target});
+  f.cast(12);assert.equal(seen.length,1);assert.equal(seen[0].id,1);assert.equal(seen[0].level,20);assert.equal(seen[0].magic,f.target.magic);
+  assert.equal(f.actor.level,20);assert.equal(f.actor.magic,25);assert.equal(f.actor.attack,35);assert.equal(f.actor.mp,40);
+  f.target.sketchGroup=0;assert.equal(f.cast(12).hit,false);assert.equal(seen.length,1);
+});
+
+test('Rippler leaves shared status clocks intact and Blue Dragon specifically seeks a hasted player',()=>{
+  const f=fixture();setCondition(f.host,f.actor,7,true);setCondition(f.host,f.target,7,true);setCondition(f.host,f.actor,21,true);
+  f.host.elapsed=10;const clock=f.actor.conditionUntil[7];f.cast(159);
+  assert(f.actor.conditions.includes(7));assert(f.target.conditions.includes(7));assert.equal(f.actor.conditionUntil[7],clock);
+  assert(!f.actor.conditions.includes(21));assert(f.target.conditions.includes(21));
+  const g=fixture(),hasted=unit({side:'player',conditions:[21]}),seen=[];g.actor.side='enemy';g.host.players=[g.target,hasted];g.actor.conditions=[22];
+  g.host.perform=(_actor,target,ability)=>seen.push([target,ability.id]);g.cast(1257);assert.deepEqual(seen,[[hasted,159]]);
+  hasted.conditions=[];g.cast(1257);assert.deepEqual(seen[1],[g.actor,1256]);
+});
+
+test('source summon presets restore real missing formation slots without refreshing living allies',()=>{
+  const f=fixture(),summoned=[];Object.assign(f.actor,{...data.monsters[292],side:'enemy',slot:4,uniqueId:5});
+  f.host.formation=data.parties[465];f.host.enemies=[f.actor,unit({slot:0,uniqueId:1,hp:123})];f.host.addEnemy=(monsterId,uniqueId)=>summoned.push({monsterId,uniqueId});
+  executeAbilityEffects(f.host,f.actor,f.actor,data.abilities[726],1,{},()=>({amount:0}));
+  assert.deepEqual(summoned,[{monsterId:355,uniqueId:2},{monsterId:295,uniqueId:6},{monsterId:353,uniqueId:9}]);assert.equal(f.host.enemies[1].hp,123);
+  const first=sourceSummonPlan(data,data.monsters[279],null,1);assert.deepEqual(first.members.map(m=>m.uniqueId).sort(),[1,2,3,6]);assert(first.members.every(m=>m.monsterId===223));
+  const third=sourceSummonPlan(data,data.monsters[69],null,3);assert.deepEqual(third.members.map(m=>m.uniqueId).sort(),[2,4,6,8]);assert(third.guess);
+});
+
+test('Seize blocks the captured player, drains to its owner and Release removes capture without changing rows',()=>{
+  const f=fixture();f.actor.side='enemy';f.actor.hp=100;f.target.side='player';f.target.row='front';f.host.players=[f.target];f.host.enemies=[f.actor];
+  f.cast(337);assert.equal(f.host.captures.get(f.actor),f.target);assert(actionBlocked(data,f.target));assert(f.actor.conditions.includes(112));
+  tickConditions(f.host,f.target,20);assert(f.target.hp<500);assert.equal(f.actor.hp,100+500-f.target.hp);
+  f.cast(356);assert.equal(f.host.captures.size,0);assert(!actionBlocked(data,f.target));assert(!f.target.conditions.includes(63));assert(!f.actor.conditions.includes(112));assert.equal(f.target.row,'front');
+  f.cast(337);setCondition(f.host,f.actor,5,true);assert.equal(f.host.captures.size,0);assert(!f.target.conditions.includes(63));
+  const g=fixture();g.target.side='player';g.target.conditionImmunities=[63];g.cast(337);assert(!g.actor.conditions.includes(112));
+});
+
+test('Ultros Tentacle targets its PR character ID after party reorder, never a slot mask or full-party attack',()=>{
+  const f=fixture(),players=[15,4,6,1].map(id=>unit({id,side:'player'}));f.host.players=players;
   const seen=[];const calculate=(actor,target,ability,_random,count)=>{seen.push([ability.power,count]);return {amount:80,missed:false,critical:false};};
-  executeAbilityEffects(f.host,f.actor,players[0],data.abilities[1301],4,{},calculate);
-  executeAbilityEffects(f.host,f.actor,players[3],data.abilities[1301],4,{},calculate);
-  assert.equal(players[0].hp,420);assert.equal(players[3].hp,500);assert.deepEqual(seen,[[146,1]]);
+  for(const id of [1301,1302,1303])for(const target of players)executeAbilityEffects(f.host,f.actor,target,data.abilities[id],4,{},calculate);
+  assert.deepEqual(players.map(u=>u.hp),[420,500,420,420]);assert.deepEqual(seen,[[146,1],[146,1],[146,1]]);
+  players[0].hp=0;executeAbilityEffects(f.host,f.actor,players[1],data.abilities[1303],4,{},calculate);
+  assert.equal(players[1].hp,500);assert.equal(seen.length,3);
 });
 
 test('Jump and all-party Quetzalli charge each actual condition holder and hide it until landing',()=>{

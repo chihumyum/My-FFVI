@@ -12,7 +12,7 @@ test('an explicit boosted checkpoint continuation preserves the normal save and 
   const saved=structuredClone(source.snapshot()),before=JSON.stringify(saved);
   const game=new PlayGame({data,loadMap:async()=>map});
   await game.restore(saved,{testBoost:true});
-  assert.equal(game.testBoost,true);assert.equal(game.party[0].level,99);assert.equal(game.party[0].hp,9999);
+  assert.equal(game.testBoost,true);assert.equal(game.party[0].level,99);assert.equal(game.party[0].hp,999999);
   assert.equal(game.unit(9).testBoost,true);
   assert.deepEqual(game.banks,saved.banks);assert.deepEqual(game.partySlots,saved.partySlots);
   assert.deepEqual(game.battles,saved.battles);assert.deepEqual(game.history,saved.history);

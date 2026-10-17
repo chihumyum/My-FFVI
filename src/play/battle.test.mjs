@@ -117,7 +117,7 @@ test('source character commands expose Runic and it absorbs an entire area spell
     } };
   const party = [{id:7,hp:300,maxHp:300,mp:10,maxMp:50,commands:[16]}, {id:2,hp:300,maxHp:300}];
   const battle = new Battle({data,party,encounterId:1,random:()=>0.25});
-  assert(battle.commandsFor(0).some(command=>command.id===11));
+  assert(battle.actionsFor(0).some(command=>command.id===11));
   party[0].ready=true;
   assert.equal(battle.choose(0,11),true);
   battle.queueAIAction({actor:battle.enemies[0],abilityId:40,all:true,script:'fixture',index:0});
@@ -134,7 +134,7 @@ test('Throw is a selectable owned inventory command and cannot consume an equipp
     abilities:{10:{id:10,range:3,mp:0,functions:[{id:51,values:[0,0,0]}]}} };
   const party = [{id:4,hp:300,maxHp:300,abilities:[10],equipment:[100]}], inventory={100:1};
   const battle = new Battle({data,party,inventory,encounterId:1,random:()=>.25});
-  assert(battle.commandsFor(0).some(command=>command.id==='throw:100'));
+  assert(battle.actionsFor(0).some(command=>command.id==='throw:100'));
   party[0].ready=true;
   assert.equal(battle.choose(0,'throw:999',0),false);
   assert.equal(inventory[100],1);
@@ -142,7 +142,7 @@ test('Throw is a selectable owned inventory command and cannot consume an equipp
   assert.equal(inventory[100],0);
   assert.equal(party[0].equipment[0],100);
   assert(battle.enemies[0].hp < 1000);
-  assert(!battle.commandsFor(0).some(command=>command.id==='throw:100'));
+  assert(!battle.actionsFor(0).some(command=>command.id==='throw:100'));
 });
 
 test('Berserk owns an ordinary ready turn even with automatic play switched off', () => {
@@ -178,14 +178,14 @@ test('equipped magicite exposes its source summon once per battle and charges re
       functions:[{id:3,values:[1,0,0]}]}}};
   const party=[{id:2,hp:200,maxHp:200,mp:80,maxMp:80,magicite:62}];
   const battle=new Battle({data,party,encounterId:1,random:()=>.25});
-  assert(battle.commandsFor(0).some(command=>command.id===88));
+  assert(battle.actionsFor(0).some(command=>command.id===88));
   party[0].ready=true;assert.equal(battle.choose(0,88,0),true);
   assert.equal(party[0].mp,55);
-  assert(!battle.commandsFor(0).some(command=>command.id===88));
+  assert(!battle.actionsFor(0).some(command=>command.id===88));
   party[0].ready=true;assert.equal(battle.choose(0,88,0),false);
   assert.equal(party[0].mp,55);
   const next=new Battle({data,party,encounterId:1,random:()=>.25});
-  assert(next.commandsFor(0).some(command=>command.id===88));
+  assert(next.actionsFor(0).some(command=>command.id===88));
 });
 
 test('battle items use fixed PR recovery, shared content stock and an ordinary action turn', () => {

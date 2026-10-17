@@ -327,7 +327,7 @@ export function executeEventSystem(game, task, name, i, r, { characterSelectors,
     return true;
   }
   if (name === 'ティナトランス解除' || name === 'ティナトランス再開') { game.unit(1).morphed = name.endsWith('再開'); return true; }
-  if (name === 'コマンド追加：トランス') { const unit = game.unit(1); unit.commands = [...new Set([...(unit.commands ?? []), 9])]; return true; }
+  if (name === 'コマンド追加：トランス') { const unit = game.unit(1); unit.commands = [...new Set([...(unit.commands ?? []), 8, 9])]; return true; }
   if (name.startsWith('アビリティ習得：')) {
     const id = subject === '夢幻闘舞' ? 6 : subject === '必殺剣' ? 3 : null;
     if (!id) return false;

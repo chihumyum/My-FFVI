@@ -23,6 +23,7 @@ export async function buildPlayBattle({
   // These PR dictionaries were already extracted in the original source
   // catalog. Reuse only their integer values, never its old admission gates.
   const catalog = await fs.readFile('build/game/source-catalog.json', 'utf8').then(JSON.parse).catch(() => ({}));
+  const extra = JSON.parse(await fs.readFile('build/corpus/bundles/battleextradata_assets_all_1295049eaf8a1a34aca99fdc338e0a02.json','utf8'))[0].data;
   const dictionaries = catalog.gameState?.magicStones?.stones ?? {};
   const cleanName = value => typeof value === 'string' ? value.replace(/<[^>]+>/g, '').trim() : '';
   const localizedAbilities = catalog.common?.abilities ?? {};
@@ -92,6 +93,10 @@ export async function buildPlayBattle({
     10: "西捷亚",
     11: "莫古",
     12: "嘎",
+    13: "戈戈",
+    14: "乌玛洛",
+    15: "巴南",
+    16: "雷欧",
     17: "幽灵",
     18: "幽灵",
     31: "魏吉",
@@ -347,6 +352,9 @@ export async function buildPlayBattle({
         role,
         aiName,
         scriptId: row.script_id,
+        rageGroup: row.rage_ability_random_group_id,
+        sketchGroup: row.release_ability_random_group_id,
+        commandGroup: row.command_group_type,
         steal: Array.from({ length: 8 }, (_, k) => ({
           id: row[`steal_content_id${k + 1}`],
           count: row[`steal_content_id${k + 1}_value`] || 1,
@@ -376,6 +384,7 @@ export async function buildPlayBattle({
       id: row.id,
       backgroundId: row.battle_background_asset_id,
       bgmId: row.battle_bgm_asset_id,
+      battlePatterns: Array.from({length:6}, (_,n) => row[`battle_pattern${n+1}`]),
       // FFVI magic learning points use get_value. get_ap is a separate
       // cross-title field and is zero throughout this PR table.
       ap: row.get_value,
@@ -398,6 +407,10 @@ export async function buildPlayBattle({
     conditionGroups: rows("condition_group"),
     eraseConditionGroups: rows("erase_condition_group"),
     randomAbilityGroups: rows("ability_random_group"),
+    monsterExchangeItems: extra.monster_exchange_item,
+    notManipulateMonsters: extra.not_manipulate_monster_list,
+    commandGroups: rows("command_group"),
+    monsterExchangeWeights: extra.monster_exchange_weight,
     abilityGroups: rows("ability_group"),
     itemNames: Object.fromEntries(rows("item").map(row => {
       const content = Object.values(contents).find(c => c.type_id === 1 && c.type_value === row.id);
@@ -409,7 +422,14 @@ export async function buildPlayBattle({
     parties,
     abilities,
     characters,
-    commands: byId("command"),
+    commands: Object.fromEntries(rows('command').map(row => {
+      const old = catalog.common?.commands?.[row.id];
+      const types = rows('ability_group').filter(g => g.group_id === row.ability_group_id)
+        .map(g => byId('chanting')[g.type_id]?.ability_type_id);
+      return [row.id, {...row, name: old?.name || cleanName(localizedAbilities[row.ability_id]?.name) ||
+        ({8:'幻化',11:'夺取',13:'投掷',18:'素描',19:'操纵',20:'老虎机',21:'扔钱',28:'激震',30:'跳跃',31:'连续魔'})[row.id] || `指令 ${row.id}`,
+        abilityTypes:types, forbiddenConditions: rows('condition_group').filter(g=>g.group_id===row.condition_group_id).map(g=>g.condition_id)}];
+    })),
     items: byId("item"),
     contents,
     contentNames: Object.fromEntries(Object.values(contents).map(content => [content.id,

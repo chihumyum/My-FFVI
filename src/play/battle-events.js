@@ -208,7 +208,7 @@ export class BattleEvents {
         targetIndex: { side: 'enemy', index: b.enemies.indexOf(gau) } };
     }
     if (this.state.magicOnly) {
-      const ability = this.battle.commandsFor(this.battle.players.indexOf(unit)).find(ability =>
+      const ability = this.battle.actionsFor(this.battle.players.indexOf(unit)).find(ability =>
         !ability.disabled && ability.kind === 'magic' && ability.power > 0);
       const target = this.battle.enemies.find(enemy => this.alive(enemy) && !enemy.hidden && !enemy.untargetable);
       if (ability && target) return { abilityId: ability.id, targetIndex: this.battle.enemies.indexOf(target) };
